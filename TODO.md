@@ -8,6 +8,19 @@
   - `regression_tests/test_string_upcase_large.cr`
 - Runtime crash class remains for scheduler path:
   - minimal repro `puts "before"; Fiber.suspend` still segfaults (`exit 139`) in debug build.
+  - Update (2026-02-16): fixed AArch64 ABI crash in `Fiber.new(..., &block)` call path.
+    - root cause: by-value union arg (`Nil | String`) in synthesized `*_block` helper
+      was lowered into mismatched caller/callee stack layout for trailing args.
+    - change: in `llvm_backend`, pass union params by pointer only for synthesized
+      `*_block` helpers, then materialize union SSA at function entry.
+    - validation:
+      - `/tmp/fiber_trace.cr` (`puts`, `Fiber.new`, `resume`) no longer segfaults;
+        now reaches fiber body output (`before new`, `before resume`, `in fiber`).
+      - generated ASM now passes `Fiber$Dnew$$Nil$_$OR$_String_block(ptr, ptr)`
+        (no broken by-value union stack packing).
+    - behavior parity note: script stops after `in fiber` by design for `Fiber#resume`
+      (current fiber is not auto-reenqueued). Confirmed identical output on
+      Crystal 1.19.1.
 - Output-path regression is still open:
   - trivial `puts "hi"` binary exits `0` but prints nothing (stdout path unresolved).
 - Regression note (2026-02-15): `regression_tests/test_hash_stress.cr` currently
@@ -3860,3 +3873,47 @@ crystal build -Ddebug_hooks src/crystal_v2.cr -o bin/crystal_v2 --no-debug
       - produced binaries currently exit `0` without expected stdout markers (`hello`, `test_case_in_predicate_subject`, `hash_stress`);
       - IR inspection shows `Crystal$Dmain$$block` path returns after runtime init and does not execute `Crystal$Dmain_user_code...` in the normal `setjmp == 0` branch.
       - next task: fix main wrapper/control-flow in `Crystal$Dmain$$block` lowering so user code executes in non-exception path.
+
+### 8.16 Handoff Checkpoint (2026-02-16)
+
+- [ ] **WIP (not re-verified after final patch):** MIR call-block outlining/capture environment refactor for `spawn`/block-capture crashes.
+  - Goal:
+    - eliminate cases where lowered call-block receives `ptr null` env and crashes/returns wrong behavior (`test_case_in_predicate_subject` path).
+  - Implemented in `src/compiler/mir/hir_to_mir.cr`:
+    - added `OutlinedCapture` and `OutlinedCallBlockInfo` (outline metadata now includes captures + env layout);
+    - changed call-block outline cache to keep full metadata, not only function id;
+    - replaced single `@current_block_param_id` flow with `@current_block_param_ids : Set(HIR::ValueId)`;
+    - added `@current_hir_values_by_id` map for capture/source recovery;
+    - added `infer_block_param_ids` and `root_copy_source_id` helpers;
+    - updated `lower_yield`:
+      - block-param yield now loads function pointer from env and performs indirect call as `fn(env, args...)`;
+      - previous pointer/proc path kept as fallback;
+    - relaxed `call_block_outlineable?` (do not require every operand to be locally defined in block);
+    - added env size/alignment and capture collection/build helpers:
+      - `size_and_align_for_mir_type`
+      - `size_and_align_for_hir_type`
+      - `collect_call_block_captures`
+      - `call_block_env_size_and_align`
+      - `build_call_block_environment`
+    - `outline_call_block_to_func_pointer` now emits outlined function with hidden `__env` parameter and reconstructs captures from env slots.
+  - Important:
+    - this refactor was applied incrementally and **must be re-run through build/regression before trusting results**.
+
+- [ ] Additional in-flight edits present in the same checkpoint:
+  - `src/compiler/hir/ast_to_hir.cr`
+  - `src/compiler/mir/llvm_backend.cr`
+  - `src/compiler/cli.cr`
+  - `src/compiler/driver.cr`
+  - `src/stdlib/io/file_descriptor.cr`
+  - `src/stdlib/crystal/system/unix/file_descriptor.cr`
+  - temporary debug scripts in `tmp/` removed; several ad-hoc repro/test files added under `tools/` and `regression_tests/`.
+
+- [ ] **DoD for next session (Claude/GPT handoff):**
+  1. `scripts/build.sh debug`
+  2. `regression_tests/run_all.sh bin/crystal_v2`
+  3. focused repro:
+     - `bin/crystal_v2 regression_tests/test_case_in_predicate_subject.cr -o /tmp/tc_pred`
+     - `scripts/run_safe.sh /tmp/tc_pred 10 768`
+  4. if regression appears only in release:
+     - `scripts/build.sh release`
+     - rerun step 2 and compare behavior/debug vs release.

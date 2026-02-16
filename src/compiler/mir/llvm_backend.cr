@@ -350,6 +350,8 @@ module Crystal::MIR
     @current_return_type_ref : TypeRef = TypeRef::VOID
     @current_func_name : String = ""
     @current_func_params : Array(Parameter) = [] of Parameter
+    @union_param_pointer_types : Hash(ValueId, TypeRef) = {} of ValueId => TypeRef
+    @union_param_loaded_values : Hash(ValueId, String) = {} of ValueId => String
     @current_slab_frame : Bool = false
     @tsan_needs_func_entry : Bool = false
     @constant_values : Hash(ValueId, String)  # For inlining constants
@@ -551,6 +553,15 @@ module Crystal::MIR
         end
       end
       nil
+    end
+
+    @[AlwaysInline]
+    private def union_param_passed_by_pointer?(func_name : String, param_index : Int32, type_ref : TypeRef) : Bool
+      llvm_type = @type_mapper.llvm_type(type_ref)
+      return false unless llvm_type.includes?(".union")
+      # Narrow workaround: synthesized *_block helpers hit AArch64 aggregate ABI
+      # mismatch for by-value unions followed by closure/proc args.
+      func_name.ends_with?("_block")
     end
 
     @[AlwaysInline]
@@ -4704,8 +4715,12 @@ module Crystal::MIR
       # Function signature
       # Note: void is not valid for parameters, substitute with ptr
       used_param_names = Hash(String, Int32).new(0)
-      param_types = func.params.map do |p|
+      param_types = func.params.map_with_index do |p, idx|
         llvm_type = @type_mapper.llvm_type(p.type)
+        if union_param_passed_by_pointer?(func.name, idx, p.type)
+          llvm_type = "ptr"
+          @union_param_pointer_types[p.index] = p.type
+        end
         llvm_type = "ptr" if llvm_type == "void"
 
         base_name = sanitize_llvm_local_name(p.name)
@@ -4795,6 +4810,16 @@ module Crystal::MIR
       # Use fn_entry to avoid conflict with parameter names like %entry
       emit_raw "fn_entry:\n"
       emit_hoisted_allocas(func)
+      # Materialize by-value union SSA for params that were passed by pointer.
+      @union_param_pointer_types.each do |param_id, union_type_ref|
+        llvm_name = @value_names[param_id]?
+        next unless llvm_name
+        union_llvm = @type_mapper.llvm_type(union_type_ref)
+        loaded_name = "%#{llvm_name}.byval"
+        emit_raw "  #{loaded_name} = load #{union_llvm}, ptr %#{llvm_name}\n"
+        @union_param_loaded_values[param_id] = loaded_name
+        record_emitted_type(loaded_name, union_llvm)
+      end
       if @current_slab_frame
         emit_raw "  call void @__crystal_v2_slab_frame_push()\n"
       end
@@ -5145,8 +5170,10 @@ module Crystal::MIR
                 STDERR.puts "[SLOT_TYPES] func=#{func.name} call_id=#{inst.id} callee=#{callee_func.name}"
                 STDERR.puts "[SLOT_TYPES] inst_type=#{inst.type} #{inst_type_name} llvm=#{@type_mapper.llvm_type(inst.type)}"
               end
+              inst_type_str = @type_mapper.llvm_type(inst.type)
               callee_ret_type = @type_mapper.llvm_type(callee_func.return_type)
               callee_name = mangle_function_name(callee_func.name)
+              callee_core = method_core_from_name(callee_func.name)
               # Known void functions (inspect, puts, print, etc.)
               # Check various naming patterns since functions can be mangled differently
               is_known_void = callee_name == "inspect" ||
@@ -5159,8 +5186,11 @@ module Crystal::MIR
                               callee_name.includes?("print_") ||
                               callee_name == "p" ||
                               callee_name.ends_with?("_p")
-              if callee_ret_type == "void" || is_known_void
-                inst_type_str = @type_mapper.llvm_type(inst.type)
+              # If MIR says union but callee is non-union, prefer callee return type for
+              # non-query methods to keep call-site ABI aligned with emitted callee.
+              if inst_type_str.includes?(".union") && !callee_ret_type.includes?(".union") && !callee_core.ends_with?('?')
+                effective_type = callee_func.return_type
+              elsif callee_ret_type == "void" || is_known_void
                 # Only override to VOID when the MIR type is actually void/nil or a pointer fallback.
                 # Preserve concrete/non-pointer types (e.g., union/struct/tuple) inferred at callsite.
                 if inst.type == TypeRef::VOID || inst.type == TypeRef::NIL || inst_type_str == "ptr"
@@ -5898,6 +5928,8 @@ module Crystal::MIR
       @block_names.clear
       @constant_values.clear
       @value_types.clear
+      @union_param_pointer_types.clear
+      @union_param_loaded_values.clear
       @void_values.clear
       @array_info.clear
       @phi_zext_conversions.clear
@@ -6122,11 +6154,22 @@ module Crystal::MIR
 
         convert_name, src_union_type, dst_union_type = info
         val_ref_str = value_ref(val_id)
+        val_ref_type = @emitted_value_types[val_ref_str]?
+        if !val_ref_type && val_ref_str.starts_with?('%')
+          val_ref_type = @emitted_value_types[val_ref_str.byte_slice(1, val_ref_str.bytesize - 1)]?
+        end
+        store_union_type = if val_ref_type && val_ref_type.includes?(".union")
+                             val_ref_type
+                           else
+                             src_union_type
+                           end
 
-        # Reinterpret union: alloca source type → store → load as destination type
-        emit "%#{convert_name}.alloca = alloca #{src_union_type}, align 8"
-        emit "store #{src_union_type} #{val_ref_str}, ptr %#{convert_name}.alloca"
+        # Reinterpret union: alloca source type → store → load as destination type.
+        # Use actual emitted SSA type when it differs from the prepass source type.
+        emit "%#{convert_name}.alloca = alloca #{store_union_type}, align 8"
+        emit "store #{store_union_type} #{val_ref_str}, ptr %#{convert_name}.alloca"
         emit "%#{convert_name} = load #{dst_union_type}, ptr %#{convert_name}.alloca"
+        record_emitted_type("%#{convert_name}", dst_union_type)
       end
     end
 
@@ -6440,6 +6483,24 @@ module Crystal::MIR
           emit "%#{base}.slot_unwrap_pay = getelementptr #{llvm_type}, ptr %#{base}.slot_unwrap_ptr, i32 0, i32 1"
           emit "%#{base}.slot_unwrap_val = load #{slot_llvm_type}, ptr %#{base}.slot_unwrap_pay, align 4"
           store_val = "%#{base}.slot_unwrap_val"
+          store_type = slot_llvm_type
+        elsif slot_llvm_type.includes?(".union") && llvm_type.includes?(".union") && slot_llvm_type != llvm_type
+          # Reinterpret union payload between compatible union layouts.
+          # Use the actual emitted SSA type when available, because value_ref can
+          # cast to a different union type than @value_types[inst_id].
+          source_union_type = if actual_name_type && actual_name_type.includes?(".union")
+                                actual_name_type
+                              else
+                                llvm_type
+                              end
+          if source_union_type == slot_llvm_type
+            store_val = name
+          else
+            emit "%#{base}.slot_u2u_ptr = alloca #{source_union_type}, align 8"
+            emit "store #{source_union_type} #{name}, ptr %#{base}.slot_u2u_ptr"
+            emit "%#{base}.slot_u2u_val = load #{slot_llvm_type}, ptr %#{base}.slot_u2u_ptr"
+            store_val = "%#{base}.slot_u2u_val"
+          end
           store_type = slot_llvm_type
         elsif llvm_type.starts_with?('i') && slot_llvm_type.starts_with?('i') && !llvm_type.includes?('.') && !slot_llvm_type.includes?('.')
           val_bits = llvm_type[1..].to_i? || 64
@@ -9076,10 +9137,17 @@ module Crystal::MIR
                       emitted_ret
                     elsif callee_func
                       callee_ret = @type_mapper.llvm_type(callee_func.return_type)
+                      callee_core = method_core_from_name(raw_callee_name || callee_name)
                       # If inst.type is a union (nilable) but callee says non-union,
-                      # use inst.type — the HIR correctly typed this as nilable
+                      # keep union ABI only for query-style methods (`foo?`, `[]?`).
+                      # For non-query methods prefer callee return type to avoid
+                      # call-site ABI mismatch (union call to ptr-returning callee).
                       if inst_return_type.includes?(".union") && !callee_ret.includes?(".union")
-                        inst_return_type
+                        if callee_core.ends_with?('?')
+                          inst_return_type
+                        else
+                          callee_ret
+                        end
                       # Prefer inst.type when callee returns void but MIR expects a value
                       elsif callee_ret == "void" && inst_return_type != "void"
                         inst_return_type
@@ -9192,6 +9260,9 @@ module Crystal::MIR
         (call_args.size...callee_func.params.size).each do |i|
           param = callee_func.params[i]
           param_llvm = @type_mapper.llvm_type(param.type)
+          if union_param_passed_by_pointer?(callee_func.name, i, param.type)
+            param_llvm = "ptr"
+          end
           pad_val = if default_val = param.default_value
                       # Use the stored default literal value from the function definition.
                       # Guard against type mismatches (e.g., Bool default with ptr LLVM type).
@@ -9247,6 +9318,9 @@ module Crystal::MIR
                call_args.map_with_index { |a, i|
                  param_type = callee_func.params[i].type
                  expected_llvm_type = @type_mapper.llvm_type(param_type)
+                 if union_param_passed_by_pointer?(callee_func.name, i, param_type)
+                   expected_llvm_type = "ptr"
+                 end
                  actual_type = @value_types[a]? || TypeRef::POINTER
                  actual_llvm_type = @type_mapper.llvm_type(actual_type)
                  if @cross_block_slot_types[a]? == "ptr"
@@ -12145,6 +12219,9 @@ module Crystal::MIR
         end
         return const_val
       end
+      if loaded_union_param = @union_param_loaded_values[id]?
+        return loaded_union_param
+      end
       # Check if this was a void call - return safe default literal
       if @void_values.includes?(id)
         return "0"
@@ -12254,8 +12331,10 @@ module Crystal::MIR
             record_emitted_type(cast_name, expected_type)
             return cast_name
           elsif llvm_type.includes?(".union") && expected_type.includes?(".union") && llvm_type != expected_type
-            # Different union types - bitcast through ptr (they have same layout)
-            emit "#{cast_name} = bitcast #{llvm_type} #{temp_name} to #{expected_type}"
+            # Different union types - reinterpret through memory to satisfy LLVM typing.
+            emit "#{cast_name}.u2u_ptr = alloca #{llvm_type}, align 8"
+            emit "store #{llvm_type} #{temp_name}, ptr #{cast_name}.u2u_ptr"
+            emit "#{cast_name} = load #{expected_type}, ptr #{cast_name}.u2u_ptr"
             record_emitted_type(cast_name, expected_type)
             return cast_name
           end

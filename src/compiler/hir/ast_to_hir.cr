@@ -11432,6 +11432,10 @@ module Crystal::HIR
         end
       end
       if existing_def = @function_defs[full_name]?
+        if existing_def.object_id == member.object_id
+          register_function_type(full_name, return_type) unless @function_types.has_key?(full_name)
+          return
+        end
         previous_base = "#{base_name}_previous"
         previous_full = function_full_name_for_def(previous_base, param_types, member.params, has_block)
         if prev_return = @function_types[full_name]?
@@ -15785,7 +15789,25 @@ module Crystal::HIR
 
       init_params = @init_params[class_name]? || [] of {String, TypeRef}
       allocator_params = init_params.map { |param| {param[0], param[1]} }
-      if allocator_params.empty?
+      use_call_shape = false
+      unless allocator_params.empty?
+        limit = Math.min(call_arg_types.size, allocator_params.size)
+        i = 0
+        while i < limit
+          call_type = call_arg_types[i]
+          param_type = allocator_params[i][1]
+          if call_type != TypeRef::VOID &&
+             param_type != TypeRef::VOID &&
+             call_type != param_type
+            # Classes with multiple initialize overloads can retain init params from
+            # a different overload. Build this allocator from the callsite shape.
+            use_call_shape = true
+            break
+          end
+          i += 1
+        end
+      end
+      if allocator_params.empty? || use_call_shape
         allocator_params = call_arg_types.map_with_index { |type_ref, idx| {"arg#{idx}", type_ref} }
       else
         allocator_params.each_with_index do |(param_name, param_type), idx|
@@ -18361,8 +18383,9 @@ module Crystal::HIR
       element_type = if recv_desc && recv_desc.name.starts_with?("Pointer(")
                        pointer_element_type(recv_desc.name)
                      else
-                       TypeRef::INT32
+                       TypeRef::INT8
                      end
+      element_type = TypeRef::INT8 if element_type == TypeRef::VOID
       result_type = receiver_type == TypeRef::VOID ? TypeRef::POINTER : receiver_type
       add_node = PointerAdd.new(ctx.next_id, result_type, receiver_id, offset_id, element_type)
       ctx.emit(add_node)
@@ -21105,6 +21128,20 @@ module Crystal::HIR
       return offset if alignment <= 1
       remainder = offset % alignment
       remainder == 0 ? offset : offset + (alignment - remainder)
+    end
+
+    # Register a function discovered from flattened parser roots with an explicit lexical owner.
+    # This keeps module/class methods scoped correctly even when parser roots include nested defs.
+    def register_function_for_owner(
+      node : CrystalV2::Compiler::Frontend::DefNode,
+      owner_name : String,
+      owner_is_module : Bool
+    ) : Nil
+      if owner_is_module
+        register_module_method_from_def(node, owner_name)
+      else
+        register_type_method_from_def(node, owner_name)
+      end
     end
 
     # Register a function signature (for forward reference support)
@@ -33111,8 +33148,9 @@ module Crystal::HIR
         element_type = if left_desc && left_desc.kind == TypeKind::Pointer
                          pointer_element_type(left_desc.name)
                        else
-                         TypeRef::INT32
+                         TypeRef::INT8
                        end
+        element_type = TypeRef::INT8 if element_type == TypeRef::VOID
         element_size = type_size(element_type)
         element_size = 1 if element_size <= 0
 
@@ -33151,9 +33189,9 @@ module Crystal::HIR
         element_type = if left_desc && left_desc.kind == TypeKind::Pointer
                          pointer_element_type(left_desc.name)
                        else
-                         TypeRef::INT32
+                         TypeRef::INT8
                        end
-        element_type = TypeRef::INT32 if element_type == TypeRef::VOID
+        element_type = TypeRef::INT8 if element_type == TypeRef::VOID
         result_type = left_desc && left_desc.kind == TypeKind::Pointer ? left_type : TypeRef::POINTER
         add_node = PointerAdd.new(ctx.next_id, result_type, left_id, offset_id, element_type)
         ctx.emit(add_node)
@@ -43072,6 +43110,11 @@ module Crystal::HIR
           call_arg_values = args
 
           skip_inline = false
+          # Methods mangled with "$block" require block semantics for correctness.
+          # When inline-yield detection misses (e.g. stdlib arena drift), falling back
+          # to non-inline lowering can drop the block body and execute with nil handler.
+          force_block_signature_inline = mangled_method_name.ends_with?("$block") ||
+                                         base_method_name.ends_with?("$block")
           # NOTE: We used to skip when block return type param wasn't in type_param_map.
           # However, this prevented valid inlining of methods like min_by { |x| x } where
           # the block's return type can be inferred from the actual block body.
@@ -43117,7 +43160,9 @@ module Crystal::HIR
             # which requires inline expansion to resolve the block return type correctly.
             is_known_yield = @yield_functions.includes?(mangled_method_name) ||
                              @yield_functions.includes?(base_method_name)
-            unless is_known_yield || yield_return_function_for_call(mangled_method_name, base_method_name)
+            unless force_block_signature_inline ||
+                   is_known_yield ||
+                   yield_return_function_for_call(mangled_method_name, base_method_name)
               if block_return_type_param_name(mangled_method_name, base_method_name).nil?
                 resolved_receiver_type = receiver_id ? ctx.type_of(receiver_id) : TypeRef::VOID
                 receiver_hint = resolved_receiver_type == TypeRef::VOID ? nil : resolved_receiver_type
@@ -43132,6 +43177,7 @@ module Crystal::HIR
           end
           inline_required = yield_return_function_for_call(mangled_method_name, base_method_name) ||
                             !block_return_type_param_name(mangled_method_name, base_method_name).nil? ||
+                            force_block_signature_inline ||
                             @yield_functions.includes?(mangled_method_name) ||
                             @yield_functions.includes?(base_method_name)
           if !skip_inline && !inline_required
@@ -43173,6 +43219,19 @@ module Crystal::HIR
                 callee_arena = @function_def_arenas[mangled_method_name]? || @arena
                 return inline_yield_function(ctx, func_def, mangled_method_name, receiver_id, call_arg_values, block_cast, block_param_types_inline, callee_arena)
               end
+            end
+          end
+          if !skip_inline && force_block_signature_inline
+            forced_name = mangled_method_name
+            forced_def = @function_defs[mangled_method_name]?
+            if forced_def.nil?
+              forced_name = base_method_name
+              forced_def = @function_defs[base_method_name]?
+            end
+            if forced_def
+              debug_hook("call.inline.yield", "callee=#{forced_name} current=#{@current_class || ""} forced=block_signature")
+              callee_arena = @function_def_arenas[forced_name]? || @arena
+              return inline_yield_function(ctx, forced_def, forced_name, receiver_id, call_arg_values, block_cast, block_param_types_inline, callee_arena)
             end
           end
           # Also try base method name (for functions without overloading)
@@ -44069,8 +44128,9 @@ module Crystal::HIR
           element_type = if recv_type_desc && recv_type_desc.name.starts_with?("Pointer(")
                            pointer_element_type(recv_type_desc.name)
                          else
-                           TypeRef::INT32
+                           TypeRef::INT8
                          end
+          element_type = TypeRef::INT8 if element_type == TypeRef::VOID
           result_type = receiver_type == TypeRef::VOID ? TypeRef::POINTER : receiver_type
           add_node = PointerAdd.new(ctx.next_id, result_type, receiver_id, offset_id, element_type)
           ctx.emit(add_node)
@@ -44175,6 +44235,7 @@ module Crystal::HIR
 
       # For method calls that return void but are likely returning the receiver or a value,
       # use pointer type as fallback to avoid void type errors in LLVM
+      method_name_base = strip_type_suffix(method_name)
       if return_type == TypeRef::VOID && receiver_id
         # Methods that typically return self or a collection (stdlib methods)
         methods_returning_self_or_value = ["to_a", "to_s", "map", "select", "reduce", "each",
@@ -44193,7 +44254,7 @@ module Crystal::HIR
                                            "group_by", "partition", "zip", "transpose",
                                            "shuffle", "rotate", "pop", "shift", "slice",
                                            "to_slice", "to_unsafe", "to_h", "to_set", "copy_from"]
-        if methods_returning_self_or_value.includes?(method_name)
+        if methods_returning_self_or_value.includes?(method_name_base)
           return_type = TypeRef::POINTER
           if debug_get_cache
             STDERR.puts "[GET_CACHE_RT] 2a. methods_returning_self_or_value => Pointer"
@@ -44202,7 +44263,7 @@ module Crystal::HIR
       end
 
       # Force rindex/index to return Nil | Int32 (nullable search methods).
-      if method_name == "rindex" || method_name == "index"
+      if method_name_base == "rindex" || method_name_base == "index"
         return_type = create_union_type_for_nullable(TypeRef::INT32)
       end
 
@@ -44210,7 +44271,7 @@ module Crystal::HIR
       # Handle this even if return_type is NIL (often incorrectly registered for abstract modules).
       methods_returning_receiver_type = ["tap", "itself", "clamp", "abs", "ceil", "floor", "round", "truncate",
                                          "remainder", "tdiv", "unsafe_mod", "unsafe_div", "gcd", "lcm"]
-      if receiver_id && methods_returning_receiver_type.includes?(method_name)
+      if receiver_id && methods_returning_receiver_type.includes?(method_name_base)
         recv_type = ctx.type_of(receiver_id)
         # Only override if receiver is not Nil (these methods don't make sense on Nil)
         if recv_type != TypeRef::NIL && recv_type != TypeRef::VOID
@@ -44223,7 +44284,7 @@ module Crystal::HIR
         end
       end
 
-      if receiver_id && method_name == "hash" && !arg_types.empty?
+      if receiver_id && method_name_base == "hash" && !arg_types.empty?
         first_arg = arg_types.first
         if first_arg != TypeRef::VOID && (return_type == TypeRef::VOID || return_type == TypeRef::POINTER || return_type == TypeRef::NIL)
           return_type = first_arg
@@ -44244,7 +44305,7 @@ module Crystal::HIR
       # These methods return a new object (typically the class's instance type)
       if return_type == TypeRef::VOID && receiver_id.nil?
         class_methods_returning_value = ["build", "new", "create", "from", "parse", "load", "open"]
-        if class_methods_returning_value.includes?(method_name)
+        if class_methods_returning_value.includes?(method_name_base)
           return_type = TypeRef::POINTER
           if debug_get_cache
             STDERR.puts "[GET_CACHE_RT] 2c. class_methods_returning_value => Pointer"
@@ -44765,6 +44826,18 @@ module Crystal::HIR
           unless is_nilable_query && is_union_or_nilable_type?(return_type)
             return_type = func_rt
           end
+        end
+      end
+
+      # Methods like `tap` return the receiver regardless of declared owner return
+      # (`Object#tap$arity`) and block arity suffixes.
+      method_name_base = strip_type_suffix(method_name)
+      methods_returning_receiver_type = ["tap", "itself", "clamp", "abs", "ceil", "floor", "round", "truncate",
+                                         "remainder", "tdiv", "unsafe_mod", "unsafe_div", "gcd", "lcm"]
+      if receiver_id && methods_returning_receiver_type.includes?(method_name_base)
+        recv_type = ctx.type_of(receiver_id)
+        if recv_type != TypeRef::VOID && recv_type != TypeRef::NIL
+          return_type = recv_type
         end
       end
 
@@ -52163,21 +52236,23 @@ module Crystal::HIR
         end
       end
 
+      member_name_base = strip_type_suffix(member_name)
+
       # Fallback for stdlib methods that should return a value (like to_a, map, etc.)
       # Same logic as in lower_call for consistency
       if return_type == TypeRef::VOID
-        if member_name == "find" || member_name == "find!"
+        if member_name_base == "find" || member_name_base == "find!"
           if type_desc = @module.get_type_descriptor(ctx.type_of(object_id))
             if elem_name = element_type_for_type_name(type_desc.name)
               elem_type = type_ref_for_name(elem_name)
-              return_type = member_name == "find!" ? elem_type : create_union_type_for_nullable(elem_type)
+              return_type = member_name_base == "find!" ? elem_type : create_union_type_for_nullable(elem_type)
             end
           end
-        elsif member_name == "find_index"
+        elsif member_name_base == "find_index"
           return_type = create_union_type_for_nullable(TypeRef::INT32)
         end
         if return_type == TypeRef::VOID
-          if inferred = infer_unannotated_search_return_type(member_name, ctx.type_of(object_id))
+          if inferred = infer_unannotated_search_return_type(member_name_base, ctx.type_of(object_id))
             return_type = inferred
           end
         end
@@ -52189,9 +52264,9 @@ module Crystal::HIR
         # Methods returning Int32
         methods_returning_int32 = ["size", "length", "count", "bytesize", "hash",
                                    "index", "rindex", "ord"]
-        if methods_returning_bool.includes?(member_name)
+        if methods_returning_bool.includes?(member_name_base)
           return_type = TypeRef::BOOL
-        elsif methods_returning_int32.includes?(member_name)
+        elsif methods_returning_int32.includes?(member_name_base)
           return_type = TypeRef::INT32
         else
           methods_returning_self_or_value = ["to_a", "to_s", "map", "select", "reduce", "each",
@@ -52210,7 +52285,7 @@ module Crystal::HIR
                                              "group_by", "partition", "zip", "transpose",
                                              "shuffle", "rotate", "pop", "shift", "slice",
                                              "to_slice", "to_unsafe", "to_h", "to_set", "copy_from"]
-          if methods_returning_self_or_value.includes?(member_name)
+          if methods_returning_self_or_value.includes?(member_name_base)
             return_type = TypeRef::POINTER
           end
         end
@@ -52221,7 +52296,7 @@ module Crystal::HIR
       # pollutes String#rindex into a 3-way union (Nil | Int32 | Pointer).
       # This prevents if-narrowing from working (unwrap_non_nil_to_block only
       # handles 2-way unions). Override unconditionally to Nil | Int32.
-      if member_name == "rindex" || member_name == "index"
+      if member_name_base == "rindex" || member_name_base == "index"
         return_type = create_union_type_for_nullable(TypeRef::INT32)
       end
 
@@ -52229,7 +52304,7 @@ module Crystal::HIR
       # Handle this even if return_type is NIL (often incorrectly registered for abstract modules).
       methods_returning_receiver_type = ["tap", "itself", "clamp", "abs", "ceil", "floor", "round", "truncate",
                                          "remainder", "tdiv", "unsafe_mod", "unsafe_div", "gcd", "lcm"]
-      if methods_returning_receiver_type.includes?(member_name)
+      if methods_returning_receiver_type.includes?(member_name_base)
         recv_type = ctx.type_of(object_id)
         # Only override if receiver is not Nil (these methods don't make sense on Nil)
         if recv_type != TypeRef::NIL && recv_type != TypeRef::VOID

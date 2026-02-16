@@ -155,7 +155,7 @@ class IO::FileDescriptor < IO
   #
   # Use `File.info` if the file is not open and a path to the file is available.
   def info : File::Info
-    system_info
+    self.system_info
   end
 
   # Seeks to a given *offset* (in bytes) according to the *whence* argument.

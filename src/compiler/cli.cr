@@ -436,12 +436,13 @@ module CrystalV2
                              when nil, "", "0", "false", "False", "FALSE" then false
                              else                                                true
                              end
-        # Inline-yield lowering is currently unstable in full link mode for some stdlib paths
-        # (e.g., DWARF parsing callbacks). Keep it disabled by default for deterministic bootstrap.
-        auto_disable_inline_yield = !force_inline_yield
+        # Inline-yield is required for runtime-correct with-block semantics in linked binaries.
+        # Keep auto-disable only for --no-link compile-only workflows where stability/perf
+        # matters more than executing generated code during that pass.
+        auto_disable_inline_yield = !options.link && !force_inline_yield
         disable_inline_yield = ENV.has_key?("CRYSTAL_V2_DISABLE_INLINE_YIELD") || auto_disable_inline_yield
         if auto_disable_inline_yield && !ENV.has_key?("CRYSTAL_V2_DISABLE_INLINE_YIELD")
-          log(options, out_io, "  Auto: disabling inline-yield by default (set CRYSTAL_V2_FORCE_INLINE_YIELD=1 to override)")
+          log(options, out_io, "  Auto: disabling inline-yield for --no-link (set CRYSTAL_V2_FORCE_INLINE_YIELD=1 to override)")
         end
         hir_converter = HIR::AstToHir.new(
           first_arena,
@@ -454,6 +455,7 @@ module CrystalV2
 
         # Collect nodes by type
         def_nodes = [] of Tuple(Frontend::DefNode, Frontend::ArenaLike)
+        scoped_def_nodes = [] of Tuple(Frontend::DefNode, Frontend::ArenaLike, String, Bool)
         class_nodes = [] of Tuple(Frontend::ClassNode, Frontend::ArenaLike)
         module_nodes = [] of Tuple(Frontend::ModuleNode, Frontend::ArenaLike)
         enum_nodes = [] of Tuple(Frontend::EnumNode, Frontend::ArenaLike)
@@ -463,16 +465,19 @@ module CrystalV2
         constant_exprs = [] of Tuple(Frontend::ExprId, Frontend::ArenaLike)
         main_exprs = [] of Tuple(Frontend::ExprId, Frontend::ArenaLike)
         acyclic_types = Set(String).new
+        owner_indexes_by_arena = {} of Frontend::ArenaLike => DefOwnerIndex
 
         flags = Runtime.target_flags
         all_arenas.each do |arena, exprs, file_path, source|
           next if skip_file_directive?(source, flags)
           pending_annotations = [] of Tuple(Frontend::AnnotationNode, Frontend::ArenaLike)
+          owner_indexes_by_arena[arena] = build_def_owner_index(source)
           exprs.each do |expr_id|
             collect_top_level_nodes(
               arena,
               expr_id,
               def_nodes,
+              scoped_def_nodes,
               class_nodes,
               module_nodes,
               enum_nodes,
@@ -485,7 +490,8 @@ module CrystalV2
               acyclic_types,
               flags,
               sources_by_arena,
-              source
+              source,
+              owner_indexes_by_arena
             )
           end
         end
@@ -653,11 +659,20 @@ module CrystalV2
         hir_converter.refresh_void_type_params
 
         # Pass 2: Register function signatures
-        log(options, out_io, "  Pass 2: Registering #{def_nodes.size} function signatures...")
-        def_nodes.each_with_index do |(n, a), i|
+        total_function_nodes = def_nodes.size + scoped_def_nodes.size
+        log(options, out_io, "  Pass 2: Registering #{total_function_nodes} function signatures (top-level=#{def_nodes.size}, scoped=#{scoped_def_nodes.size})...")
+        registered_count = 0
+        scoped_def_nodes.each do |n, a, owner_name, owner_is_module|
+          hir_converter.arena = a
+          hir_converter.register_function_for_owner(n, owner_name, owner_is_module)
+          registered_count += 1
+          STDERR.print "\r    Registered function #{registered_count}/#{total_function_nodes}" if options.progress && (registered_count % 50 == 0 || registered_count == total_function_nodes)
+        end
+        def_nodes.each do |n, a|
           hir_converter.arena = a
           hir_converter.register_function(n)
-          STDERR.print "\r    Registered function #{i+1}/#{def_nodes.size}" if options.progress && (i % 50 == 0 || i == def_nodes.size - 1)
+          registered_count += 1
+          STDERR.print "\r    Registered function #{registered_count}/#{total_function_nodes}" if options.progress && (registered_count % 50 == 0 || registered_count == total_function_nodes)
         end
         STDERR.puts if options.progress
 
@@ -1484,10 +1499,217 @@ module CrystalV2
         end
       end
 
+      private struct DefOwner
+        getter name : String
+        getter module_owner : Bool
+
+        def initialize(@name : String, @module_owner : Bool)
+        end
+      end
+
+      private struct DefOwnerIndex
+        getter by_position : Hash(Tuple(Int32, Int32), DefOwner)
+        getter by_line : Hash(Int32, DefOwner)
+
+        def initialize(@by_position : Hash(Tuple(Int32, Int32), DefOwner), @by_line : Hash(Int32, DefOwner))
+        end
+      end
+
+      private def build_def_owner_index(source : String) : DefOwnerIndex
+        lexer = Frontend::Lexer.new(source)
+        tokens = [] of Frontend::Token
+        loop do
+          token = lexer.next_token
+          next if token.kind == Frontend::Token::Kind::Whitespace || token.kind == Frontend::Token::Kind::Comment
+          tokens << token
+          break if token.kind == Frontend::Token::Kind::EOF
+        end
+
+        by_position = {} of Tuple(Int32, Int32) => DefOwner
+        by_line = {} of Int32 => DefOwner
+        owner_stack = [] of DefOwner
+        block_stack = [] of Tuple(Frontend::Token::Kind, Bool)
+
+        macro_control_depth = 0
+        macro_expr_depth = 0
+        i = 0
+        while i < tokens.size
+          tok = tokens[i]
+          case tok.kind
+          when Frontend::Token::Kind::LBracePercent
+            macro_control_depth += 1
+            i += 1
+            next
+          when Frontend::Token::Kind::PercentRBrace
+            macro_control_depth -= 1 if macro_control_depth > 0
+            i += 1
+            next
+          when Frontend::Token::Kind::MacroExprStart
+            macro_expr_depth += 1
+            i += 1
+            next
+          when Frontend::Token::Kind::MacroExprEnd
+            macro_expr_depth -= 1 if macro_expr_depth > 0
+            i += 1
+            next
+          end
+
+          if macro_control_depth > 0 || macro_expr_depth > 0
+            i += 1
+            next
+          end
+
+          if owner = owner_stack.last?
+            by_line[tok.span.start_line] = owner unless by_line.has_key?(tok.span.start_line)
+          end
+
+          advance = 1
+          case tok.kind
+          when Frontend::Token::Kind::Module,
+               Frontend::Token::Kind::Class,
+               Frontend::Token::Kind::Struct,
+               Frontend::Token::Kind::Enum
+            raw_owner_name, consumed = parse_declared_owner_name(tokens, i + 1)
+            advance += consumed
+            if raw_owner_name
+              full_owner_name = qualify_lexical_owner_name(raw_owner_name, owner_stack.last?.try(&.name))
+              owner = DefOwner.new(full_owner_name, tok.kind == Frontend::Token::Kind::Module)
+              owner_stack << owner
+              block_stack << {tok.kind, true}
+            else
+              block_stack << {tok.kind, false}
+            end
+          when Frontend::Token::Kind::Def
+            if owner = owner_stack.last?
+              key = {tok.span.start_line, tok.span.start_column}
+              by_position[key] = owner
+              by_line[tok.span.start_line] = owner unless by_line.has_key?(tok.span.start_line)
+            end
+            # `abstract def` does not have a matching `end`; pushing it corrupts
+            # lexical owner balance and leaks owner scope into following top-level code.
+            block_stack << {tok.kind, false} if def_keyword_starts_block?(tokens, i)
+          when Frontend::Token::Kind::Macro,
+               Frontend::Token::Kind::Case,
+               Frontend::Token::Kind::For,
+               Frontend::Token::Kind::Loop,
+               Frontend::Token::Kind::Begin,
+               Frontend::Token::Kind::Select,
+               Frontend::Token::Kind::With,
+               Frontend::Token::Kind::Do,
+               Frontend::Token::Kind::Lib,
+               Frontend::Token::Kind::Union,
+               Frontend::Token::Kind::Annotation
+            block_stack << {tok.kind, false}
+          when Frontend::Token::Kind::If,
+               Frontend::Token::Kind::Unless,
+               Frontend::Token::Kind::While,
+               Frontend::Token::Kind::Until
+            # Postfix modifiers (`expr if cond`, `expr while cond`) don't open blocks
+            # and don't consume a matching `end`.
+            block_stack << {tok.kind, false} if control_keyword_starts_block?(tokens, i)
+          when Frontend::Token::Kind::End
+            if entry = block_stack.pop?
+              owner_stack.pop? if entry[1]
+            end
+          end
+          i += advance
+        end
+
+        DefOwnerIndex.new(by_position, by_line)
+      end
+
+      private def control_keyword_starts_block?(tokens : Array(Frontend::Token), index : Int32) : Bool
+        prev = previous_significant_token(tokens, index)
+        return true unless prev
+
+        case prev.kind
+        when Frontend::Token::Kind::Newline,
+             Frontend::Token::Kind::Semicolon,
+             Frontend::Token::Kind::Then,
+             Frontend::Token::Kind::Do,
+             Frontend::Token::Kind::Else,
+             Frontend::Token::Kind::Elsif,
+             Frontend::Token::Kind::When
+          true
+        else
+          false
+        end
+      end
+
+      private def def_keyword_starts_block?(tokens : Array(Frontend::Token), index : Int32) : Bool
+        prev = previous_significant_token(tokens, index)
+        return true unless prev
+        prev.kind != Frontend::Token::Kind::Abstract
+      end
+
+      private def previous_significant_token(tokens : Array(Frontend::Token), index : Int32) : Frontend::Token?
+        i = index - 1
+        while i >= 0
+          tok = tokens[i]
+          return tok unless tok.kind == Frontend::Token::Kind::Whitespace || tok.kind == Frontend::Token::Kind::Comment
+          i -= 1
+        end
+        nil
+      end
+
+      private def parse_declared_owner_name(tokens : Array(Frontend::Token), start_index : Int32) : {String?, Int32}
+        i = start_index
+        size = tokens.size
+        leading_absolute = false
+        if i < size && tokens[i].kind == Frontend::Token::Kind::ColonColon
+          leading_absolute = true
+          i += 1
+        end
+
+        parts = [] of String
+        expect_ident = true
+        while i < size
+          tok = tokens[i]
+          case tok.kind
+          when Frontend::Token::Kind::Identifier
+            break unless expect_ident
+            parts << tok.lexeme
+            expect_ident = false
+            i += 1
+          when Frontend::Token::Kind::ColonColon
+            break if expect_ident
+            expect_ident = true
+            i += 1
+          else
+            break
+          end
+        end
+
+        return {nil, i - start_index} if parts.empty?
+        name = parts.join("::")
+        name = "::#{name}" if leading_absolute
+        {name, i - start_index}
+      end
+
+      private def qualify_lexical_owner_name(raw_owner_name : String, parent_owner_name : String?) : String
+        owner_name = if raw_owner_name.starts_with?("::")
+                       raw_owner_name.byte_slice(2, raw_owner_name.bytesize - 2).not_nil!
+                     else
+                       raw_owner_name
+                     end
+        return owner_name if raw_owner_name.includes?("::")
+        if parent_owner_name
+          "#{parent_owner_name}::#{owner_name}"
+        else
+          owner_name
+        end
+      end
+
+      private def lookup_def_owner(index : DefOwnerIndex?, span : Frontend::Span) : DefOwner?
+        return nil unless index
+        index.by_position[{span.start_line, span.start_column}]? || index.by_line[span.start_line]?
+      end
+
       private def collect_top_level_nodes(
         arena : Frontend::ArenaLike,
         expr_id : Frontend::ExprId,
         def_nodes : Array(Tuple(Frontend::DefNode, Frontend::ArenaLike)),
+        scoped_def_nodes : Array(Tuple(Frontend::DefNode, Frontend::ArenaLike, String, Bool)),
         class_nodes : Array(Tuple(Frontend::ClassNode, Frontend::ArenaLike)),
         module_nodes : Array(Tuple(Frontend::ModuleNode, Frontend::ArenaLike)),
         enum_nodes : Array(Tuple(Frontend::EnumNode, Frontend::ArenaLike)),
@@ -1501,14 +1723,21 @@ module CrystalV2
         flags : Set(String),
         sources_by_arena : Hash(Frontend::ArenaLike, String),
         source : String,
+        owner_indexes_by_arena : Hash(Frontend::ArenaLike, DefOwnerIndex),
         depth : Int32 = 0,
         collect_main_exprs : Bool = true
       ) : Nil
         return if depth > 4
         node = arena[expr_id]
+        owner_for_expr = lookup_def_owner(owner_indexes_by_arena[arena]?, node.span)
+        debug_main_expr = ENV["DEBUG_MAIN_EXPR_LEAK"]?
         case node
         when Frontend::DefNode
-          def_nodes << {node, arena}
+          if owner = owner_for_expr
+            scoped_def_nodes << {node, arena, owner.name, owner.module_owner}
+          else
+            def_nodes << {node, arena}
+          end
           pending_annotations.clear
         when Frontend::ClassNode
           class_nodes << {node, arena}
@@ -1526,8 +1755,13 @@ module CrystalV2
           macro_nodes << {node, arena}
           pending_annotations.clear
         when Frontend::ConstantNode
-          constant_exprs << {expr_id, arena}
-          main_exprs << {expr_id, arena} if collect_main_exprs
+          if owner_for_expr.nil?
+            constant_exprs << {expr_id, arena}
+            main_exprs << {expr_id, arena} if collect_main_exprs
+          elsif collect_main_exprs && debug_main_expr
+            text = extract_span_text(node.span, source).try(&.strip) || ""
+            STDERR.puts "[DEBUG_MAIN_EXPR] skip constant kind=#{node.class} line=#{node.span.start_line} col=#{node.span.start_column} depth=#{depth} text=#{text[0, Math.min(text.size, 120)]}"
+          end
           pending_annotations.clear
         when Frontend::AliasNode
           alias_nodes << {node, arena}
@@ -1536,13 +1770,13 @@ module CrystalV2
           lib_nodes << {node, arena, pending_annotations.dup}
           pending_annotations.clear
         when Frontend::AnnotationNode
-          pending_annotations << {node, arena}
+          pending_annotations << {node, arena} if owner_for_expr.nil?
         when Frontend::RequireNode
           # Skip - already processed
         when Frontend::MacroExpressionNode
-          collect_top_level_nodes(arena, node.expression, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, flags, sources_by_arena, source, depth, collect_main_exprs)
+          collect_top_level_nodes(arena, node.expression, def_nodes, scoped_def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, flags, sources_by_arena, source, owner_indexes_by_arena, depth, collect_main_exprs)
         when Frontend::VisibilityModifierNode
-          collect_top_level_nodes(arena, node.expression, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, flags, sources_by_arena, source, depth, collect_main_exprs)
+          collect_top_level_nodes(arena, node.expression, def_nodes, scoped_def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, flags, sources_by_arena, source, owner_indexes_by_arena, depth, collect_main_exprs)
         when Frontend::MacroIfNode
           if ENV["DEBUG_MACRO_EXPAND"]?
             STDERR.puts "[DEBUG_MACRO_EXPAND] MacroIfNode condition=#{evaluate_macro_condition(arena, node.condition, flags).inspect}"
@@ -1565,8 +1799,9 @@ module CrystalV2
                   program, sanitized = parsed
                   parsed_any = true
                   sources_by_arena[program.arena] = sanitized
+                  owner_indexes_by_arena[program.arena] = build_def_owner_index(sanitized)
                   program.roots.each do |inner_id|
-                    collect_top_level_nodes(program.arena, inner_id, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, flags, sources_by_arena, sanitized, depth + 1, false)
+                    collect_top_level_nodes(program.arena, inner_id, def_nodes, scoped_def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, flags, sources_by_arena, sanitized, owner_indexes_by_arena, depth + 1, false)
                   end
                 end
               end
@@ -1585,15 +1820,15 @@ module CrystalV2
               then_node = arena[node.then_body]
               STDERR.puts "[DEBUG_MACRO_EXPAND] MacroIfNode then_body type=#{then_node.class}"
             end
-            collect_top_level_nodes(arena, node.then_body, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, flags, sources_by_arena, source, depth, collect_main_exprs)
+            collect_top_level_nodes(arena, node.then_body, def_nodes, scoped_def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, flags, sources_by_arena, source, owner_indexes_by_arena, depth, collect_main_exprs)
           elsif condition == false
             if else_body = node.else_body
-              collect_top_level_nodes(arena, else_body, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, flags, sources_by_arena, source, depth, collect_main_exprs)
+              collect_top_level_nodes(arena, else_body, def_nodes, scoped_def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, flags, sources_by_arena, source, owner_indexes_by_arena, depth, collect_main_exprs)
             end
           else
-            collect_top_level_nodes(arena, node.then_body, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, flags, sources_by_arena, source, depth, collect_main_exprs)
+            collect_top_level_nodes(arena, node.then_body, def_nodes, scoped_def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, flags, sources_by_arena, source, owner_indexes_by_arena, depth, collect_main_exprs)
             if else_body = node.else_body
-              collect_top_level_nodes(arena, else_body, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, flags, sources_by_arena, source, depth, collect_main_exprs)
+              collect_top_level_nodes(arena, else_body, def_nodes, scoped_def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, flags, sources_by_arena, source, owner_indexes_by_arena, depth, collect_main_exprs)
             end
           end
         when Frontend::MacroLiteralNode
@@ -1615,8 +1850,9 @@ module CrystalV2
                 if parsed = parse_top_level_macro_expansion(expanded)
                   program, exp_source = parsed
                   sources_by_arena[program.arena] = exp_source
+                  owner_indexes_by_arena[program.arena] = build_def_owner_index(exp_source)
                   program.roots.each do |inner_id|
-                    collect_top_level_nodes(program.arena, inner_id, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, flags, sources_by_arena, exp_source, depth + 1, false)
+                    collect_top_level_nodes(program.arena, inner_id, def_nodes, scoped_def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, flags, sources_by_arena, exp_source, owner_indexes_by_arena, depth + 1, false)
                   end
                 end
               end
@@ -1629,22 +1865,33 @@ module CrystalV2
               if parsed = parse_macro_literal_program(combined)
                 program, sanitized = parsed
                 sources_by_arena[program.arena] = sanitized
+                owner_indexes_by_arena[program.arena] = build_def_owner_index(sanitized)
                 program.roots.each do |inner_id|
-                  collect_top_level_nodes(program.arena, inner_id, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, flags, sources_by_arena, sanitized, depth + 1, false)
+                  collect_top_level_nodes(program.arena, inner_id, def_nodes, scoped_def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, flags, sources_by_arena, sanitized, owner_indexes_by_arena, depth + 1, false)
                 end
               end
             end
           end
         when Frontend::MacroForNode
-          expand_top_level_macro_for(node, arena, source, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, flags, sources_by_arena, depth)
+          expand_top_level_macro_for(node, arena, source, def_nodes, scoped_def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, flags, sources_by_arena, owner_indexes_by_arena, depth)
         when Frontend::AssignNode
           target = arena[node.target]
-          if target.is_a?(Frontend::ConstantNode)
+          if owner_for_expr.nil? && target.is_a?(Frontend::ConstantNode)
             constant_exprs << {expr_id, arena}
           end
-          main_exprs << {expr_id, arena} if collect_main_exprs
+          if owner_for_expr.nil? && collect_main_exprs
+            main_exprs << {expr_id, arena}
+          elsif collect_main_exprs && debug_main_expr
+            text = extract_span_text(node.span, source).try(&.strip) || ""
+            STDERR.puts "[DEBUG_MAIN_EXPR] skip assign kind=#{target.class} line=#{node.span.start_line} col=#{node.span.start_column} depth=#{depth} text=#{text[0, Math.min(text.size, 120)]}"
+          end
         else
-          main_exprs << {expr_id, arena} if collect_main_exprs
+          if owner_for_expr.nil? && collect_main_exprs
+            main_exprs << {expr_id, arena}
+          elsif collect_main_exprs && debug_main_expr
+            text = extract_span_text(node.span, source).try(&.strip) || ""
+            STDERR.puts "[DEBUG_MAIN_EXPR] skip kind=#{node.class} line=#{node.span.start_line} col=#{node.span.start_column} depth=#{depth} text=#{text[0, Math.min(text.size, 120)]}"
+          end
         end
       end
 
@@ -1670,6 +1917,7 @@ module CrystalV2
         arena : Frontend::ArenaLike,
         source : String,
         def_nodes : Array(Tuple(Frontend::DefNode, Frontend::ArenaLike)),
+        scoped_def_nodes : Array(Tuple(Frontend::DefNode, Frontend::ArenaLike, String, Bool)),
         class_nodes : Array(Tuple(Frontend::ClassNode, Frontend::ArenaLike)),
         module_nodes : Array(Tuple(Frontend::ModuleNode, Frontend::ArenaLike)),
         enum_nodes : Array(Tuple(Frontend::EnumNode, Frontend::ArenaLike)),
@@ -1682,6 +1930,7 @@ module CrystalV2
         acyclic_types : Set(String),
         flags : Set(String),
         sources_by_arena : Hash(Frontend::ArenaLike, String),
+        owner_indexes_by_arena : Hash(Frontend::ArenaLike, DefOwnerIndex),
         depth : Int32
       ) : Nil
         return if depth > 3
@@ -1724,8 +1973,9 @@ module CrystalV2
         if parsed = parse_top_level_macro_expansion(expanded)
           program, exp_source = parsed
           sources_by_arena[program.arena] = exp_source
+          owner_indexes_by_arena[program.arena] = build_def_owner_index(exp_source)
           program.roots.each do |inner_id|
-            collect_top_level_nodes(program.arena, inner_id, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, flags, sources_by_arena, exp_source, depth + 1, false)
+            collect_top_level_nodes(program.arena, inner_id, def_nodes, scoped_def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, flags, sources_by_arena, exp_source, owner_indexes_by_arena, depth + 1, false)
           end
         end
       end
@@ -2606,6 +2856,8 @@ module CrystalV2
       ) : Bool?
         node = arena[expr_id]
         case node
+        when Frontend::GroupingNode
+          evaluate_macro_condition(arena, node.expression, flags)
         when Frontend::BoolNode
           node.value
         when Frontend::NilNode

@@ -20,6 +20,9 @@ module Crystal
   # ═══════════════════════════════════════════════════════════════════════════
 
   class HIRToMIRLowering
+    record OutlinedCapture, value_id : HIR::ValueId, type : HIR::TypeRef, offset : UInt32
+    record OutlinedCallBlockInfo, outlined_name : String, captures : Array(OutlinedCapture), env_size : UInt64, env_align : UInt32
+
     getter hir_module : HIR::Module
     getter mir_module : Module
 
@@ -48,9 +51,13 @@ module Crystal
     @slab_frame_enabled : Bool
     @current_slab_frame : Bool = false
     @current_block_param_id : HIR::ValueId?
+    @current_block_param_ids : Set(HIR::ValueId)
+    @current_hir_values_by_id : Hash(HIR::ValueId, HIR::Value)
     @inline_block_arg_stack : Array(Array(ValueId))
     @inlined_block_ids : Set(HIR::BlockId)
     @class_children : Hash(String, Array(String))
+    @outlined_call_block_cache : Hash({String, HIR::BlockId}, OutlinedCallBlockInfo) = {} of {String, HIR::BlockId} => OutlinedCallBlockInfo
+    @outlined_call_block_counter : UInt32 = 0_u32
 
     # Index: base_name (before "$") → first matching MIR function.
     # Eliminates O(N) linear scans during fuzzy call resolution.
@@ -84,6 +91,8 @@ module Crystal
       @stack_slot_types = {} of ValueId => TypeRef
       @slab_frame_enabled = slab_frame
       @current_block_param_id = nil
+      @current_block_param_ids = Set(HIR::ValueId).new
+      @current_hir_values_by_id = {} of HIR::ValueId => HIR::Value
       @inline_block_arg_stack = [] of Array(ValueId)
       @inlined_block_ids = Set(HIR::BlockId).new
       @class_children = {} of String => Array(String)
@@ -391,11 +400,13 @@ module Crystal
 
       @current_hir_func = hir_func
       @current_mir_func = mir_func
-      @current_block_param_id = function_contains_yield?(hir_func) ? infer_block_param_id(hir_func) : nil
+      @current_block_param_ids = infer_block_param_ids(hir_func)
+      @current_block_param_id = function_contains_yield?(hir_func) ? @current_block_param_ids.first? : nil
       @current_slab_frame = should_use_slab_frame?(hir_func)
       mir_func.slab_frame = @current_slab_frame
       @value_map.clear
       @hir_value_types.clear
+      @current_hir_values_by_id.clear
       @block_map.clear
       @pending_phis.clear
       @stack_slot_values.clear
@@ -418,6 +429,7 @@ module Crystal
       hir_func.blocks.each do |hir_block|
         hir_block.instructions.each do |inst|
           @hir_value_types[inst.id] = inst.type
+          @current_hir_values_by_id[inst.id] = inst
         end
       end
 
@@ -444,6 +456,8 @@ module Crystal
 
       @stats.functions_lowered += 1
       @current_block_param_id = nil
+      @current_block_param_ids.clear
+      @current_hir_values_by_id.clear
     end
 
     # Resolve phi incoming values after all blocks are lowered
@@ -1143,6 +1157,374 @@ module Crystal
       end
     end
 
+    private def find_hir_block(block_id : HIR::BlockId) : HIR::Block?
+      hir_func = @current_hir_func
+      return nil unless hir_func
+      hir_func.blocks.find { |block| block.id == block_id }
+    end
+
+    # block-pass forwarding pattern:
+    #   block(param0, ...) { captured_proc.call(param0, ...) }
+    # In this case we can pass captured_proc directly as call block argument.
+    private def forwarded_proc_value_from_block(block_id : HIR::BlockId) : ValueId?
+      hir_block = find_hir_block(block_id)
+      return nil unless hir_block
+
+      call_inst = hir_block.instructions.find { |inst| inst.is_a?(HIR::Call) }
+      return nil unless call_inst
+      call_val = call_inst.as(HIR::Call)
+      return nil unless call_val.receiver
+      return nil unless call_val.method_name.includes?("Proc#call")
+
+      param_ids = [] of HIR::ValueId
+      hir_block.instructions.each do |inst|
+        if param = inst.as?(HIR::Parameter)
+          param_ids << param.id
+        end
+      end
+      return nil unless call_val.args == param_ids
+
+      return_term = hir_block.terminator.as?(HIR::Return)
+      return nil unless return_term
+      return nil unless return_term.value == call_val.id
+
+      recv_id = call_val.receiver.not_nil!
+      if mapped = @value_map[recv_id]?
+        return mapped
+      end
+      nil
+    end
+
+    private def call_block_operand_ids(inst : HIR::Value) : Array(HIR::ValueId)?
+      case inst
+      when HIR::Literal,
+           HIR::Parameter,
+           HIR::Local,
+           HIR::ClassVarGet,
+           HIR::GetException,
+           HIR::TryBegin,
+           HIR::TryEnd
+        [] of HIR::ValueId
+      when HIR::Copy
+        [inst.source]
+      when HIR::Call
+        values = [] of HIR::ValueId
+        if recv = inst.receiver
+          values << recv
+        end
+        inst.args.each { |arg| values << arg }
+        values
+      when HIR::ExternCall
+        inst.args.dup
+      when Crystal::HIR::BinaryOperation
+        [inst.left, inst.right]
+      when Crystal::HIR::UnaryOperation
+        [inst.operand]
+      when HIR::Cast
+        [inst.value]
+      when HIR::IsA
+        [inst.value]
+      when HIR::FieldGet
+        [inst.object]
+      when HIR::FieldSet
+        [inst.object, inst.value]
+      when HIR::IndexGet
+        [inst.object, inst.index]
+      when HIR::IndexSet
+        [inst.object, inst.index, inst.value]
+      when HIR::Allocate
+        inst.constructor_args.dup
+      when HIR::ArrayLiteral
+        inst.elements.dup
+      when HIR::ArraySize
+        [inst.array_value]
+      when HIR::ArraySetSize
+        [inst.array_value, inst.size_value]
+      when HIR::ArrayNew
+        [inst.capacity_value]
+      when HIR::StringInterpolation
+        inst.parts.dup
+      when HIR::Raise
+        if exc = inst.exception
+          [exc]
+        else
+          [] of HIR::ValueId
+        end
+      when HIR::PointerMalloc
+        [inst.count]
+      when HIR::PointerLoad
+        values = [inst.pointer]
+        if idx = inst.index
+          values << idx
+        end
+        values
+      when HIR::PointerStore
+        values = [inst.pointer, inst.value]
+        if idx = inst.index
+          values << idx
+        end
+        values
+      when HIR::PointerAdd
+        [inst.pointer, inst.offset]
+      when HIR::PointerRealloc
+        [inst.pointer, inst.new_size]
+      when HIR::AddressOf
+        [inst.operand]
+      when HIR::UnionWrap
+        [inst.value]
+      when HIR::UnionUnwrap
+        [inst.union_value]
+      when HIR::UnionTypeId
+        [inst.union_value]
+      when HIR::UnionIs
+        [inst.union_value]
+      when HIR::Yield
+        inst.args.dup
+      when HIR::ClassVarSet
+        [inst.value]
+      when HIR::Phi
+        inst.incoming.map(&.[1])
+      else
+        nil
+      end
+    end
+
+    private def call_block_outlineable?(hir_block : HIR::Block) : Bool
+      hir_block.instructions.each do |inst|
+        operands = call_block_operand_ids(inst)
+        return false unless operands
+      end
+
+      hir_block.terminator.is_a?(HIR::Return) || hir_block.terminator.is_a?(HIR::Unreachable)
+    end
+
+    private def size_and_align_for_mir_type(type_ref : TypeRef) : {UInt64, UInt32}
+      if type = @mir_module.type_registry.get(type_ref)
+        size = type.size
+        align = type.alignment
+        size = 8_u64 if size == 0
+        align = 8_u32 if align == 0
+        return {size, align}
+      end
+
+      case type_ref
+      when TypeRef::BOOL, TypeRef::INT8, TypeRef::UINT8
+        {1_u64, 1_u32}
+      when TypeRef::INT16, TypeRef::UINT16
+        {2_u64, 2_u32}
+      when TypeRef::INT32, TypeRef::UINT32, TypeRef::FLOAT32, TypeRef::CHAR
+        {4_u64, 4_u32}
+      when TypeRef::INT64, TypeRef::UINT64, TypeRef::FLOAT64
+        {8_u64, 8_u32}
+      when TypeRef::INT128, TypeRef::UINT128
+        {16_u64, 16_u32}
+      else
+        {8_u64, 8_u32}
+      end
+    end
+
+    private def size_and_align_for_hir_type(type_ref : HIR::TypeRef) : {UInt64, UInt32}
+      mir_type = convert_type(type_ref)
+      size_and_align_for_mir_type(mir_type)
+    end
+
+    private def collect_call_block_captures(hir_block : HIR::Block) : Array(OutlinedCapture)
+      defined = Set(HIR::ValueId).new
+      hir_block.instructions.each { |inst| defined << inst.id }
+
+      capture_ids = [] of HIR::ValueId
+      capture_set = Set(HIR::ValueId).new
+
+      add_capture = ->(value_id : HIR::ValueId) do
+        return if defined.includes?(value_id)
+        return if capture_set.includes?(value_id)
+        capture_set << value_id
+        capture_ids << value_id
+      end
+
+      hir_block.instructions.each do |inst|
+        operands = call_block_operand_ids(inst)
+        next unless operands
+        operands.each { |operand| add_capture.call(operand) }
+      end
+
+      if ret = hir_block.terminator.as?(HIR::Return)
+        if value = ret.value
+          add_capture.call(value)
+        end
+      end
+
+      captures = [] of OutlinedCapture
+      offset = 8_u64 # [0..7] reserved for fn ptr
+      capture_ids.each do |value_id|
+        type = @hir_value_types[value_id]? || HIR::TypeRef::POINTER
+        type = HIR::TypeRef::POINTER if type == HIR::TypeRef::VOID
+        size, align = size_and_align_for_hir_type(type)
+        offset = align_u64(offset, align)
+        captures << OutlinedCapture.new(value_id, type, offset.to_u32)
+        offset += size
+      end
+
+      captures
+    end
+
+    private def call_block_env_size_and_align(captures : Array(OutlinedCapture)) : {UInt64, UInt32}
+      offset = 8_u64 # fn ptr
+      env_align = 8_u32
+      captures.each do |cap|
+        size, align = size_and_align_for_hir_type(cap.type)
+        env_align = align if align > env_align
+        offset = align_u64(offset, align)
+        offset += size
+      end
+      {align_u64(offset, env_align), env_align}
+    end
+
+    private def outline_call_block_to_func_pointer(block_id : HIR::BlockId) : ValueId?
+      caller_builder = @builder.not_nil!
+      current_name = @current_lowering_func_name
+      cache_key = {current_name, block_id}
+
+      info = @outlined_call_block_cache[cache_key]?
+      unless info
+        hir_block = find_hir_block(block_id)
+        return nil unless hir_block
+        return nil unless call_block_outlineable?(hir_block)
+
+        outlined_name = "__crystal_call_block_#{@outlined_call_block_counter}"
+        @outlined_call_block_counter += 1
+        captures = collect_call_block_captures(hir_block)
+        env_size, env_align = call_block_env_size_and_align(captures)
+
+        return_type = TypeRef::VOID
+        if ret = hir_block.terminator.as?(HIR::Return)
+          if ret_val = ret.value
+            if hir_type = @hir_value_types[ret_val]?
+              return_type = convert_type(hir_type)
+            end
+          end
+        end
+
+        outlined_func = @mir_module.create_function(outlined_name, return_type)
+        outlined_func.add_param("__env", TypeRef::POINTER)
+
+        block_params = hir_block.instructions.select { |inst| inst.is_a?(HIR::Parameter) }
+          .map(&.as(HIR::Parameter))
+          .sort_by(&.index)
+        block_params.each do |param|
+          outlined_func.add_param(param.name, convert_type(param.type))
+        end
+
+        saved_current_mir_func = @current_mir_func
+        saved_builder = @builder
+        saved_current_lowering_func_name = @current_lowering_func_name
+        saved_value_map = @value_map
+        saved_block_map = @block_map
+        saved_pending_phis = @pending_phis
+        saved_stack_slot_values = @stack_slot_values
+        saved_stack_slot_types = @stack_slot_types
+        saved_inline_block_arg_stack = @inline_block_arg_stack
+        saved_inlined_block_ids = @inlined_block_ids
+        saved_current_block_param_id = @current_block_param_id
+        saved_current_block_param_ids = @current_block_param_ids
+        saved_hir_values_by_id = @current_hir_values_by_id
+
+        begin
+          @current_mir_func = outlined_func
+          @builder = Builder.new(outlined_func)
+          @current_lowering_func_name = outlined_name
+          @value_map = {} of HIR::ValueId => ValueId
+          @block_map = {} of HIR::BlockId => BlockId
+          @pending_phis = [] of Tuple(Phi, HIR::Phi)
+          @stack_slot_values = Set(ValueId).new
+          @stack_slot_types = {} of ValueId => TypeRef
+          @inline_block_arg_stack = [] of Array(ValueId)
+          @inlined_block_ids = Set(HIR::BlockId).new
+          @current_block_param_id = nil
+          @current_block_param_ids = Set(HIR::ValueId).new
+          @current_hir_values_by_id = {} of HIR::ValueId => HIR::Value
+
+          block_params.each_with_index do |param, idx|
+            @value_map[param.id] = (idx + 1).to_u32
+          end
+
+          hir_block.instructions.each do |inst|
+            @current_hir_values_by_id[inst.id] = inst
+          end
+
+          env_param = 0_u32
+          captures.each do |cap|
+            slot_ptr = @builder.not_nil!.gep(env_param, [cap.offset], TypeRef::POINTER)
+            loaded = @builder.not_nil!.load(slot_ptr, convert_type(cap.type))
+            @value_map[cap.value_id] = loaded
+          end
+
+          hir_block.instructions.each do |inst|
+            next if inst.is_a?(HIR::Parameter)
+            lower_value(inst)
+          end
+          lower_terminator(hir_block.terminator)
+        ensure
+          @current_mir_func = saved_current_mir_func
+          @builder = saved_builder
+          @current_lowering_func_name = saved_current_lowering_func_name
+          @value_map = saved_value_map
+          @block_map = saved_block_map
+          @pending_phis = saved_pending_phis
+          @stack_slot_values = saved_stack_slot_values
+          @stack_slot_types = saved_stack_slot_types
+          @inline_block_arg_stack = saved_inline_block_arg_stack
+          @inlined_block_ids = saved_inlined_block_ids
+          @current_block_param_id = saved_current_block_param_id
+          @current_block_param_ids = saved_current_block_param_ids
+          @current_hir_values_by_id = saved_hir_values_by_id
+        end
+
+        info = OutlinedCallBlockInfo.new(outlined_name, captures, env_size, env_align)
+        @outlined_call_block_cache[cache_key] = info
+      end
+
+      fp = MIR::FuncPointer.new(caller_builder.next_id, TypeRef::POINTER, info.outlined_name)
+      caller_builder.emit(fp)
+      fp.id
+    end
+
+    private def build_call_block_environment(func_ptr : ValueId, info : OutlinedCallBlockInfo) : ValueId
+      builder = @builder.not_nil!
+      env_ptr = builder.alloc(MemoryStrategy::GC, TypeRef::POINTER, info.env_size, info.env_align)
+
+      fn_slot = builder.gep(env_ptr, [0_u32], TypeRef::POINTER)
+      builder.store(fn_slot, func_ptr)
+
+      info.captures.each do |cap|
+        cap_value = @value_map[cap.value_id]?
+        unless cap_value
+          cap_type = convert_type(cap.type)
+          cap_value = default_value_for_type(builder, cap_type)
+          cap_value ||= builder.const_nil_typed(cap_type == TypeRef::VOID ? TypeRef::POINTER : cap_type)
+        end
+        slot = builder.gep(env_ptr, [cap.offset], TypeRef::POINTER)
+        builder.store(slot, cap_value)
+      end
+
+      env_ptr
+    end
+
+    private def lower_call_block_argument(block_id : HIR::BlockId) : ValueId?
+      if forwarded = forwarded_proc_value_from_block(block_id)
+        return forwarded
+      end
+      func_ptr = outline_call_block_to_func_pointer(block_id)
+      return nil unless func_ptr
+
+      cache_key = {@current_lowering_func_name, block_id}
+      if info = @outlined_call_block_cache[cache_key]?
+        return build_call_block_environment(func_ptr, info)
+      end
+
+      func_ptr
+    end
+
     private def lower_call(call : HIR::Call) : ValueId
       builder = @builder.not_nil!
       debug_virtual = ENV.has_key?("DEBUG_VIRTUAL_CALLS")
@@ -1158,6 +1540,8 @@ module Crystal
       if recv = call.receiver
         args.unshift(get_value(recv))
       end
+
+      block_arg_value = nil.as(ValueId?)
 
       # Crystal.trace(&block) wrappers currently lower to calls with detached
       # `with_block` HIR blocks. Inline the call-site block here so scheduling
@@ -1176,6 +1560,7 @@ module Crystal
             return lowered
           end
         end
+        block_arg_value = lower_call_block_argument(block_id)
       end
 
       if debug_virtual && call.virtual
@@ -1234,7 +1619,11 @@ module Crystal
       # Proc accessors: our current ABI uses receiver value as callable pointer.
       # Avoid lowering through stdlib Proc#internal_representation path, which
       # expects tuple-backed Proc storage not guaranteed by HIR func_pointer.
-      if call.receiver && recv_desc && recv_desc.kind == HIR::TypeKind::Proc
+      #
+      # Some call sites type the receiver as TypeKind::Proc, others as Struct Proc
+      # (for example Fiber#makecontext argument paths). Handle both forms.
+      is_proc_receiver = recv_desc && (recv_desc.kind == HIR::TypeKind::Proc || recv_desc.name == "Proc")
+      if call.receiver && is_proc_receiver
         if method_suffix = extract_method_suffix_loose(call.method_name)
           case method_suffix
           when "pointer"
@@ -1268,7 +1657,8 @@ module Crystal
         recv_type = @hir_value_types[call.receiver.not_nil!]?
         recv_desc = recv_type ? @hir_module.get_type_descriptor(recv_type) : nil
         if recv_type
-          if recv_desc && recv_desc.kind == HIR::TypeKind::Proc
+          proc_like_receiver = recv_desc && (recv_desc.kind == HIR::TypeKind::Proc || recv_desc.name == "Proc")
+          if proc_like_receiver
             # Proc is a function pointer - emit indirect call
             # args[0] = receiver (func ptr), args[1..] = actual arguments
             filtered_args = [] of ValueId
@@ -1383,13 +1773,20 @@ module Crystal
 
       if func
         callee_id = func.id
+        call_args = args
+        if block_arg = block_arg_value
+          if call_args.size < func.params.size
+            call_args = args.dup
+            call_args << block_arg
+          end
+        end
         # Build hir_args that matches mir_args ordering (receiver first, then explicit args)
         hir_args_for_coerce = if recv = call.receiver
                                  [recv] + call.args
                                else
                                  call.args
                                end
-        coerced_args = coerce_call_args(builder, args, hir_args_for_coerce, func)
+        coerced_args = coerce_call_args(builder, call_args, hir_args_for_coerce, func)
         return builder.call(callee_id, coerced_args, convert_type(call.type))
       end
 
@@ -2807,8 +3204,18 @@ module Crystal
         next unless @value_map.has_key?(arg)
         args << get_value(arg)
       end
+      block_root_id = root_copy_source_id(block_param_id)
       block_val = get_value(block_param_id)
-      block_type = @hir_value_types[block_param_id]? || HIR::TypeRef::POINTER
+
+      # Block params passed via `with_block` are lowered as closure env pointers.
+      # Layout: [0..7]=fn_ptr, captures start at byte offset 8.
+      if @current_block_param_ids.includes?(block_root_id)
+        fn_slot = builder.gep(block_val, [0_u32], TypeRef::POINTER)
+        fn_ptr = builder.load(fn_slot, TypeRef::POINTER)
+        return builder.call_indirect(fn_ptr, [block_val] + args, convert_type(yld.type))
+      end
+
+      block_type = @hir_value_types[block_root_id]? || @hir_value_types[block_param_id]? || HIR::TypeRef::POINTER
       block_desc = @hir_module.get_type_descriptor(block_type)
       is_ptr = block_type == HIR::TypeRef::POINTER || (block_desc && block_desc.kind == HIR::TypeKind::Proc)
       unless is_ptr
@@ -2830,15 +3237,38 @@ module Crystal
       false
     end
 
-    private def infer_block_param_id(hir_func : HIR::Function) : HIR::ValueId?
-      # Prefer explicit Proc-typed param if present.
-      hir_func.params.reverse_each do |param|
+    private def infer_block_param_ids(hir_func : HIR::Function) : Set(HIR::ValueId)
+      ids = Set(HIR::ValueId).new
+
+      # Prefer explicit Proc-typed params.
+      hir_func.params.each do |param|
         if desc = @hir_module.get_type_descriptor(param.type)
-          return param.id if desc.kind == HIR::TypeKind::Proc
+          ids << param.id if desc.kind == HIR::TypeKind::Proc
         end
       end
-      # Fallback: use the last parameter as the block param.
-      hir_func.params.last?.try(&.id)
+
+      # Fallback for legacy `_block` methods where the block param type was inferred as Void.
+      if ids.empty? && hir_func.name.includes?("_block")
+        if last = hir_func.params.last?
+          ids << last.id
+        end
+      end
+
+      ids
+    end
+
+    private def root_copy_source_id(value_id : HIR::ValueId) : HIR::ValueId
+      current = value_id
+      seen = Set(HIR::ValueId).new
+      loop do
+        break if seen.includes?(current)
+        seen << current
+        value = @current_hir_values_by_id[current]?
+        copy = value.as?(HIR::Copy)
+        break unless copy
+        current = copy.source
+      end
+      current
     end
 
     # ─────────────────────────────────────────────────────────────────────────

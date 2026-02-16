@@ -2052,6 +2052,8 @@ module Crystal::V2
     ) : Bool?
       node = arena[expr_id]
       case node
+      when CrystalV2::Compiler::Frontend::GroupingNode
+        evaluate_macro_condition(arena, node.expression, flags)
       when CrystalV2::Compiler::Frontend::BoolNode
         node.value
       when CrystalV2::Compiler::Frontend::NilNode

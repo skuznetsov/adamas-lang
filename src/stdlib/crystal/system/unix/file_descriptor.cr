@@ -18,6 +18,30 @@ module Crystal::System::FileDescriptor
   STDOUT_HANDLE = 1
   STDERR_HANDLE = 2
 
+  private def system_read(slice : Bytes) : Int32
+    # Bootstrap-safe fallback: before thread/scheduler is initialized,
+    # `Crystal::EventLoop.current` may force `Thread.current` bootstrap and crash.
+    # In that phase we can still do direct blocking syscalls.
+    if loop = event_loop?
+      loop.read(self, slice)
+    else
+      size = LibC.read(fd, slice, slice.size)
+      raise IO::Error.from_errno("Error reading file", target: self) if size == -1
+      size
+    end
+  end
+
+  private def system_write(slice : Bytes) : Int32
+    # Same reasoning as `system_read`: use direct write until event loop exists.
+    if loop = event_loop?
+      loop.write(self, slice)
+    else
+      size = LibC.write(fd, slice, slice.size)
+      raise IO::Error.from_errno("Error writing file", target: self) if size == -1
+      size
+    end
+  end
+
   private def system_blocking?
     flags = system_fcntl(LibC::F_GETFL)
     !flags.bits_set? LibC::O_NONBLOCK
