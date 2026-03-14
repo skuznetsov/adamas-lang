@@ -5049,7 +5049,9 @@ module Crystal::HIR
 
     private def unwrap_visibility_member_in_arena(member, arena : CrystalV2::Compiler::Frontend::ArenaLike)
       while member.is_a?(CrystalV2::Compiler::Frontend::VisibilityModifierNode)
-        member = arena[member.expression]
+        expr = member.expression
+        break if expr.null_ptr? || expr.invalid?
+        member = arena[expr]
       end
       member
     end
@@ -7958,7 +7960,18 @@ module Crystal::HIR
       arena_for_expr?(expr_id) || @arena
     end
 
+    # Safe arena access: returns nil for null/invalid ExprId or OOB index.
+    # Use this in all body iteration loops to avoid crashes in stage2.
+    @[AlwaysInline]
+    private def safe_node(expr_id : ExprId) : CrystalV2::Compiler::Frontend::Node?
+      return nil if expr_id.null_ptr? || expr_id.invalid?
+      @arena.[]?(expr_id)
+    end
+
     private def node_for_expr(expr_id : ExprId) : CrystalV2::Compiler::Frontend::Node?
+      # V2 struct-as-pointer: guard against null/dangling ExprId pointer.
+      return nil if expr_id.null_ptr?
+      return nil if expr_id.invalid?
       arena = arena_for_expr?(expr_id)
       unless arena
         if env_get("DEBUG_INFER_CRASH")
@@ -7979,6 +7992,8 @@ module Crystal::HIR
       expr_id : ExprId,
       preferred_arena : CrystalV2::Compiler::Frontend::ArenaLike?,
     ) : CrystalV2::Compiler::Frontend::Node?
+      return nil if expr_id.null_ptr?
+      return nil if expr_id.invalid?
       if arena = preferred_arena
         if expr_id.index >= 0 && expr_id.index < arena.size
           return arena[expr_id]
@@ -9303,7 +9318,9 @@ module Crystal::HIR
 
     private def unwrap_visibility_member(member)
       while member.is_a?(CrystalV2::Compiler::Frontend::VisibilityModifierNode)
-        member = @arena[member.expression]
+        expr = member.expression
+        break if expr.null_ptr? || expr.invalid?
+        member = @arena[expr]
       end
       member
     end
@@ -11114,15 +11131,25 @@ module Crystal::HIR
       resolved_arena : CrystalV2::Compiler::Frontend::ArenaLike,
       debug_infer : Bool,
     ) : TypeRef?
+      # V2 codegen: guard against null/corrupted Array buffer.
+      return nil if body.to_unsafe.address == 0_u64
+      return nil if body.empty?
+
       return_types = [] of TypeRef
       body.each do |expr_id|
+        next if expr_id.null_ptr?
+        next if expr_id.invalid?
         collect_return_types(expr_id, self_type_name, return_types, resolved_arena)
       end
       if return_types.any?
         inferred = merge_return_types(return_types)
         # If we have explicit returns, still consider the final expression
         # as a possible implicit return type.
-        expr_id = body.last
+        last_expr = body.unsafe_fetch(body.size - 1)
+        if last_expr.null_ptr? || last_expr.invalid?
+          return inferred
+        end
+        expr_id = last_expr
         loop do
           expr_node = node_for_return_infer(expr_id, resolved_arena)
           break unless expr_node
@@ -11146,7 +11173,9 @@ module Crystal::HIR
       end
 
       # Use the last expression as a heuristic return (handles simple multi-line bodies).
-      expr_id = body.last
+      last_expr2 = body.unsafe_fetch(body.size - 1)
+      return nil if last_expr2.null_ptr? || last_expr2.invalid?
+      expr_id = last_expr2
       loop do
         expr_node = node_for_return_infer(expr_id, resolved_arena)
         break unless expr_node
@@ -11222,6 +11251,7 @@ module Crystal::HIR
       expr_id : ExprId,
       resolved_arena : CrystalV2::Compiler::Frontend::ArenaLike,
     ) : CrystalV2::Compiler::Frontend::Node?
+      return nil if expr_id.null_ptr?
       return nil if expr_id.invalid?
       return nil if expr_id.index < 0 || expr_id.index >= resolved_arena.size
       with_arena(resolved_arena) { @arena[expr_id] }
@@ -11232,6 +11262,7 @@ module Crystal::HIR
       self_type_name : String?,
       resolved_arena : CrystalV2::Compiler::Frontend::ArenaLike,
     ) : TypeRef?
+      return nil if expr_id.null_ptr?
       return nil if expr_id.invalid?
       return nil if expr_id.index < 0 || expr_id.index >= resolved_arena.size
       with_arena(resolved_arena) { infer_type_from_expr(expr_id, self_type_name) }
@@ -13370,6 +13401,7 @@ module Crystal::HIR
         end
         if body = node.body
           body.each do |expr_id|
+            next if expr_id.null_ptr? || expr_id.invalid?
             member = unwrap_visibility_member(@arena[expr_id])
             case member
             when CrystalV2::Compiler::Frontend::ModuleNode
@@ -13409,6 +13441,7 @@ module Crystal::HIR
       # but still contain class definitions that must be registered.
       if body = node.body
         body.each do |expr_id|
+          next if expr_id.null_ptr? || expr_id.invalid?
           member = unwrap_visibility_member(@arena[expr_id])
           case member
           when CrystalV2::Compiler::Frontend::ClassNode
@@ -13438,6 +13471,7 @@ module Crystal::HIR
       if module_name == "Enum"
         if body = node.body
           body.each do |expr_id|
+            next if expr_id.null_ptr? || expr_id.invalid?
             member = unwrap_visibility_member(@arena[expr_id])
             next unless member.is_a?(CrystalV2::Compiler::Frontend::DefNode)
             if recv = member.receiver
@@ -13506,12 +13540,14 @@ module Crystal::HIR
           STDERR.puts "[EXTEND_SCAN] module=#{module_name} body_size=#{body.size}"
         end
         body.each do |expr_id|
+          next if expr_id.null_ptr? || expr_id.invalid?
           member = unwrap_visibility_member(@arena[expr_id])
           if env_get("DEBUG_EXTEND_REGISTER") && module_name.includes?("ImplInfo")
             STDERR.puts "[EXTEND_SCAN_MEMBER] module=#{module_name} member=#{member.class.name}"
           end
           next unless member.is_a?(CrystalV2::Compiler::Frontend::ExtendNode)
           extend_nodes << member
+          next if member.target.null_ptr? || member.target.invalid?
           target_node = @arena[member.target]
           case target_node
           when CrystalV2::Compiler::Frontend::SelfNode
@@ -13525,6 +13561,7 @@ module Crystal::HIR
 
         # PASS 1: Register aliases and nested modules first (so they're available for function type resolution)
         body.each do |expr_id|
+          next if expr_id.null_ptr? || expr_id.invalid?
           member = unwrap_visibility_member(@arena[expr_id])
           if member.is_a?(CrystalV2::Compiler::Frontend::AliasNode)
             alias_name = String.new(member.name)
@@ -13555,6 +13592,7 @@ module Crystal::HIR
         old_class = @current_class
         @current_class = module_name
         body.each do |expr_id|
+          next if expr_id.null_ptr? || expr_id.invalid?
           member = unwrap_visibility_member(@arena[expr_id])
           if member.is_a?(CrystalV2::Compiler::Frontend::EnumNode)
             enum_name = String.new(member.name)
@@ -13566,6 +13604,7 @@ module Crystal::HIR
         # PASS 1.7: Register macros BEFORE macro expansion.
         # Macro calls inside a module body must see macros defined earlier in the same module.
         body.each do |expr_id|
+          next if expr_id.null_ptr? || expr_id.invalid?
           member = unwrap_visibility_member(@arena[expr_id])
           next unless member.is_a?(CrystalV2::Compiler::Frontend::MacroDefNode)
           register_macro(member, module_name)
@@ -13574,6 +13613,7 @@ module Crystal::HIR
         # This ensures nested types (e.g., record structs) and macro‑generated defs
         # (e.g., class_getter) are available for type resolution when registering methods.
         body.each do |expr_id|
+          next if expr_id.null_ptr? || expr_id.invalid?
           member = unwrap_visibility_member(@arena[expr_id])
           case member
           when CrystalV2::Compiler::Frontend::CallNode
@@ -13625,6 +13665,7 @@ module Crystal::HIR
         begin
           record_constants_in_body(module_name, body)
           body.each do |expr_id|
+            next if expr_id.null_ptr? || expr_id.invalid?
             member = unwrap_visibility_member(@arena[expr_id])
             case member
             when CrystalV2::Compiler::Frontend::ClassVarDeclNode
@@ -14721,6 +14762,7 @@ module Crystal::HIR
     )
       return unless body = node.body
       body.each do |expr_id|
+        next if expr_id.null_ptr? || expr_id.invalid?
         member = unwrap_visibility_member_in_arena(@arena[expr_id], @arena)
         case member
         when CrystalV2::Compiler::Frontend::DefNode
@@ -14760,6 +14802,7 @@ module Crystal::HIR
             body = mod_node.body
             next unless body
             body.each do |expr_id|
+              next if expr_id.null_ptr? || expr_id.invalid?
               member = unwrap_visibility_member(@arena[expr_id])
               next unless member.is_a?(CrystalV2::Compiler::Frontend::DefNode)
               next if member.receiver # skip class methods
@@ -14774,6 +14817,7 @@ module Crystal::HIR
     private def extract_enum_members_from_body(node : CrystalV2::Compiler::Frontend::EnumNode, members : Hash(String, Int64), enum_name : String? = nil)
       return unless body = node.body
       body.each do |expr_id|
+        next if expr_id.null_ptr? || expr_id.invalid?
         body_node = @arena[expr_id]
         case body_node
         when CrystalV2::Compiler::Frontend::MacroIfNode
@@ -15954,9 +15998,12 @@ module Crystal::HIR
         end_line = node.span.end_line rescue 0
         if b = node.body
           b.each do |id|
+            next if id.null_ptr? || id.invalid?
             mem = @arena[id]
             while mem.is_a?(CrystalV2::Compiler::Frontend::VisibilityModifierNode)
-              mem = @arena[mem.expression]
+              expr = mem.expression
+              break if expr.null_ptr? || expr.invalid?
+              mem = @arena[expr]
             end
             if mem.is_a?(CrystalV2::Compiler::Frontend::DefNode)
               param_count = mem.params.try(&.size) || 0
@@ -15968,8 +16015,10 @@ module Crystal::HIR
       end
 
       if body = node.body
+        return if body.to_unsafe.address == 0_u64
         # PASS 1: Register aliases first (so they're available for function type resolution)
         body.each do |expr_id|
+          next if expr_id.null_ptr? || expr_id.invalid?
           member = unwrap_visibility_member(@arena[expr_id])
           if member.is_a?(CrystalV2::Compiler::Frontend::AliasNode)
             alias_name = String.new(member.name)
@@ -15997,8 +16046,10 @@ module Crystal::HIR
         end
         # Scan for extend self before PASS 2
         body.each do |expr_id|
+          next if expr_id.null_ptr? || expr_id.invalid?
           member = unwrap_visibility_member(@arena[expr_id])
           if member.is_a?(CrystalV2::Compiler::Frontend::ExtendNode)
+            next if member.target.null_ptr? || member.target.invalid?
             target_node = @arena[member.target]
             is_self = case target_node
                       when CrystalV2::Compiler::Frontend::SelfNode
@@ -16015,8 +16066,10 @@ module Crystal::HIR
         end
         # Process extend SomeModule(...) patterns (not extend self)
         extend_nodes = body.compact_map do |expr_id|
+          next if expr_id.null_ptr? || expr_id.invalid?
           member = unwrap_visibility_member(@arena[expr_id])
           next unless member.is_a?(CrystalV2::Compiler::Frontend::ExtendNode)
+          next if member.target.null_ptr? || member.target.invalid?
           target_node = @arena[member.target]
           is_self = case target_node
                     when CrystalV2::Compiler::Frontend::SelfNode
@@ -16034,6 +16087,7 @@ module Crystal::HIR
           defined_class_method_full_names = Set(String).new
           # Pre-populate with already defined methods
           body.each do |expr_id|
+            next if expr_id.null_ptr? || expr_id.invalid?
             member = unwrap_visibility_member(@arena[expr_id])
             if member.is_a?(CrystalV2::Compiler::Frontend::DefNode)
               recv = member.receiver
@@ -16064,6 +16118,7 @@ module Crystal::HIR
         end
         # PASS 1.75: Expand macros that define types before method registration.
         body.each do |expr_id|
+          next if expr_id.null_ptr? || expr_id.invalid?
           member = unwrap_visibility_member(@arena[expr_id])
           case member
           when CrystalV2::Compiler::Frontend::CallNode
@@ -16118,6 +16173,7 @@ module Crystal::HIR
           # Register constants before functions (e.g., CACHE constant in ImplInfo_Float32)
           record_constants_in_body(full_name, body)
           body.each do |expr_id|
+            next if expr_id.null_ptr? || expr_id.invalid?
             member = unwrap_visibility_member(@arena[expr_id])
             case member
             when CrystalV2::Compiler::Frontend::DefNode
@@ -16238,6 +16294,7 @@ module Crystal::HIR
               process_macro_literal_in_module(member, full_name)
             when CrystalV2::Compiler::Frontend::CallNode
               # Handle macro calls like `record UInt128, ...` inside nested modules
+              next if member.callee.null_ptr? || member.callee.invalid?
               callee = @arena[member.callee]
               if callee.is_a?(CrystalV2::Compiler::Frontend::IdentifierNode)
                 method_name = String.new(callee.name)
@@ -16301,6 +16358,7 @@ module Crystal::HIR
     private def register_class_aliases(node : CrystalV2::Compiler::Frontend::ClassNode, class_name : String)
       if body = node.body
         body.each do |expr_id|
+          next if expr_id.null_ptr? || expr_id.invalid?
           member = unwrap_visibility_member(@arena[expr_id])
           if member.is_a?(CrystalV2::Compiler::Frontend::AliasNode)
             alias_name = String.new(member.name)
@@ -16323,11 +16381,13 @@ module Crystal::HIR
       body : Array(ExprId),
     )
       body.each do |expr_id|
+        next if expr_id.null_ptr? || expr_id.invalid?
         # Unwrap visibility modifier and track inner ExprId for deferred init
         raw_node = @arena[expr_id]
         inner_expr_id = expr_id
         while raw_node.is_a?(CrystalV2::Compiler::Frontend::VisibilityModifierNode)
           inner_expr_id = raw_node.expression
+          break if inner_expr_id.null_ptr? || inner_expr_id.invalid?
           raw_node = @arena[inner_expr_id]
         end
         member = raw_node
@@ -27892,6 +27952,7 @@ module Crystal::HIR
     end
 
     private def contains_block_call_in_expr?(expr_id : ExprId, block_name : String) : Bool
+      return false if expr_id.null_ptr?
       return false if expr_id.invalid?
       node = node_for_expr(expr_id)
       return false unless node

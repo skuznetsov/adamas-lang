@@ -3775,6 +3775,15 @@ module CrystalV2
           @nodes[id.index]
         end
 
+        # Safe indexer: returns nil for null/invalid ExprId (V2 struct-as-pointer guard).
+        def []?(id : ExprId) : TypedNode?
+          return nil if id.null_ptr?
+          return nil if id.invalid?
+          idx = id.index
+          return nil if idx < 0 || idx >= @nodes.size
+          @nodes.unsafe_fetch(idx)
+        end
+
         # Compatibility helpers while callers migrate off legacy helper signatures
         @[AlwaysInline]
         def typed?(id : ExprId) : Bool
@@ -3853,6 +3862,17 @@ module CrystalV2
           # Otherwise search in file arenas
           arena_idx, local_idx = decompose_id(id.index)
           @file_arenas[arena_idx][ExprId.new(local_idx)]
+        end
+
+        # Safe indexer: returns nil for null/invalid ExprId (V2 struct-as-pointer guard).
+        def []?(id : ExprId) : TypedNode?
+          return nil if id.null_ptr?
+          return nil if id.invalid?
+          idx = id.index
+          return nil if idx < 0 || idx >= size
+          self[id]
+        rescue
+          nil
         end
 
         # For LSP: find which file contains this global ID
@@ -3990,6 +4010,19 @@ module CrystalV2
           page_index = idx // PAGE
           offset = idx % PAGE
           @pages[page_index][offset]
+        end
+
+        # Safe indexer: returns nil for null/invalid ExprId (V2 struct-as-pointer guard).
+        def []?(id : ExprId) : TypedNode?
+          return nil if id.null_ptr?
+          return nil if id.invalid?
+          idx = id.index
+          return nil if idx < 0 || idx >= @count
+          page_index = idx // PAGE
+          offset = idx % PAGE
+          @pages[page_index][offset]
+        rescue
+          nil
         end
 
         # Keep source strings alive for slices stored in nodes.
