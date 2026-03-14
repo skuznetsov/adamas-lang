@@ -26595,13 +26595,19 @@ module Crystal::HIR
     private def infer_getter_return_type(node : CrystalV2::Compiler::Frontend::DefNode, ivars : Array(IVarInfo)) : TypeRef?
       body = node.body
       return nil unless body && body.size == 1
+      # V2 codegen: guard against null Array buffer (dangling struct pointer).
+      return nil if body.to_unsafe.address == 0_u64
+
+      first_expr = body.unsafe_fetch(0)
+      return nil if first_expr.null_ptr?
+      return nil if first_expr.invalid?
 
       # Resolve the correct arena for this DefNode (may differ from @arena
       # when called via lower_super with a parent class's DefNode)
       def_arena = resolve_arena_for_def(node, @arena)
 
       # Single expression in body - check if it's an ivar access
-      body_node = def_arena[body[0]]
+      body_node = def_arena[first_expr]
       case body_node
       when CrystalV2::Compiler::Frontend::InstanceVarNode
         # Body is just "@x" - find the ivar type
@@ -27758,6 +27764,7 @@ module Crystal::HIR
       expr_id : ExprId,
       preferred_arena : CrystalV2::Compiler::Frontend::ArenaLike? = nil,
     ) : Bool
+      return false if expr_id.null_ptr?
       return false if expr_id.invalid?
       node = node_for_yield_scan(expr_id, preferred_arena)
       return false unless node

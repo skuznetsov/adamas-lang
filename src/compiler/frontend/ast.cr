@@ -23,6 +23,14 @@ module CrystalV2
         def invalid?
           @index < 0
         end
+
+        # V2 passes structs as pointers. When the pointer is null (dangling
+        # field reference), any field access segfaults. This method checks for
+        # null self before dereferencing. In Crystal (stage1), structs are value
+        # types so self is never null and this always returns false.
+        def null_ptr?
+          pointerof(@index).address == 0
+        end
       end
 
       # Numeric literal kind for precise type inference
