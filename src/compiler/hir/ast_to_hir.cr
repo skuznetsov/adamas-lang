@@ -8635,16 +8635,19 @@ module Crystal::HIR
       arena : CrystalV2::Compiler::Frontend::ArenaLike,
       body : Array(ExprId)?,
     ) : Bool
-      return true unless body && !body.empty?
+      return true if body.nil?
+      sz = body.size
+      return true if sz == 0
+      return true if body.to_unsafe.address == 0_u64
 
-      first_id = body.first
-      last_id = body.last
+      first_id = body.unsafe_fetch(0)
+      last_id = body.unsafe_fetch(sz - 1)
 
       return false unless expr_id_matches_arena?(arena, first_id)
       return false unless expr_id_matches_arena?(arena, last_id)
 
       true
-    rescue IndexError
+    rescue
       false
     end
 
@@ -8657,6 +8660,8 @@ module Crystal::HIR
       node = arena[expr_id]
       CrystalV2::Compiler::Frontend.node_kind(node)
       true
+    rescue
+      false
     end
 
     private def debug_def_arena_enabled_for?(base_name : String) : Bool
@@ -30046,6 +30051,9 @@ module Crystal::HIR
     # E.g., if @current_class is "CrystalV2::Compiler::Frontend::Span" and name is "Span",
     # returns "CrystalV2::Compiler::Frontend::Span"
     private def resolve_class_name_in_context(name : String) : String
+      # Safety: V2 codegen can produce null String references in non-nil params.
+      # Use pointer cast to detect and return empty string.
+      return "" if name.unsafe_as(UInt64) == 0_u64
       record_resolve_histo(name) if @debug_resolve_histo_enabled
       if @signature_scan_mode
         if fast = resolve_class_name_in_signature_context(name)
@@ -31062,6 +31070,8 @@ module Crystal::HIR
 
     @[NoInline]
     private def split_generic_base_and_args(name : String) : GenericSplitInfo?
+      return nil if name.unsafe_as(UInt64) == 0_u64
+      return nil if name.bytesize == 0
       bypass_cache = env_has?("CRYSTAL2_DEBUG_BYPASS_GENERIC_SPLIT_CACHE")
 
       unless bypass_cache
@@ -37035,6 +37045,8 @@ module Crystal::HIR
       when "execution_context", "preview_mt"
         false
       when "use_pcre2"
+        true
+      when "bootstrap_fast"
         true
       else
         # Check using macro-style syntax flag?("evloop=kqueue")
@@ -71236,13 +71248,24 @@ module Crystal::HIR
           dedup_names << canonical
         end
         # Canonicalize order: sort by name, but keep Nil first (matches Crystal semantics).
-        ordered = dedup_names.zip(dedup_refs)
-        ordered.sort_by! do |(vname, vref)|
-          nil_flag = (vref == TypeRef::NIL || vname == "Nil" || vname.ends_with?("::Nil")) ? 0 : 1
-          {nil_flag, vname}
+        # Use manual insertion sort to avoid sort_by! Proc (V2 codegen null Proc bug).
+        n = dedup_names.size
+        i = 1
+        while i < n
+          j = i
+          while j > 0
+            a_nil = (dedup_refs[j - 1] == TypeRef::NIL || dedup_names[j - 1] == "Nil" || dedup_names[j - 1].ends_with?("::Nil")) ? 0 : 1
+            b_nil = (dedup_refs[j] == TypeRef::NIL || dedup_names[j] == "Nil" || dedup_names[j].ends_with?("::Nil")) ? 0 : 1
+            should_swap = a_nil > b_nil || (a_nil == b_nil && dedup_names[j - 1] > dedup_names[j])
+            break unless should_swap
+            dedup_names[j - 1], dedup_names[j] = dedup_names[j], dedup_names[j - 1]
+            dedup_refs[j - 1], dedup_refs[j] = dedup_refs[j], dedup_refs[j - 1]
+            j -= 1
+          end
+          i += 1
         end
-        resolved_variant_names = ordered.map(&.[0])
-        variant_refs = ordered.map(&.[1])
+        resolved_variant_names = dedup_names
+        variant_refs = dedup_refs
 
         normalized_name = resolved_variant_names.join(" | ")
         if resolved_variant_names.size == 1
