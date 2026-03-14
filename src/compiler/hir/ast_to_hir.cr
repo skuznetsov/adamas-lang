@@ -27468,6 +27468,23 @@ module Crystal::HIR
           return mod_method if @yield_functions.includes?(mod_method)
           mod_block = "#{mod_base}##{method_short}$block"
           return mod_block if @yield_functions.includes?(mod_block)
+          # Also check _splat variants: methods with splat params get
+          # $block_splat or $splat_block suffixes during registration.
+          mod_block_splat = "#{mod_base}##{method_short}$block_splat"
+          return mod_block_splat if @yield_functions.includes?(mod_block_splat)
+          mod_splat_block = "#{mod_base}##{method_short}$splat_block"
+          return mod_splat_block if @yield_functions.includes?(mod_splat_block)
+          mod_splat = "#{mod_base}##{method_short}$splat"
+          return mod_splat if @yield_functions.includes?(mod_splat)
+          # Check the stripped-name map: methods with typed splat params get
+          # registered as e.g. "Enumerable#zip$Indexable | Iterable | Iterator_block_splat"
+          # which none of the above exact checks will match.
+          if @yield_functions.size != @yield_functions_stripped_map_size
+            rebuild_yield_functions_stripped_map
+          end
+          if found = @yield_functions_stripped_map[mod_method]?
+            return found
+          end
           # Enqueue sub-modules
           if submods = @class_included_modules[mod]?
             submods.each { |m| queue << m }
@@ -47243,8 +47260,8 @@ module Crystal::HIR
                 end
               end
 
-              if expects = expects_block
-                if expects
+              unless expects_block.nil?
+                if expects_block
                   next unless member_has_block || def_contains_yield?(member, mod_arena)
                 else
                   next if member_has_block
