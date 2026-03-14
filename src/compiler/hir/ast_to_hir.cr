@@ -2869,6 +2869,7 @@ module Crystal::HIR
       @type_alias_keys_by_suffix = {} of String => Array(String)
       @generated_allocators = Set(String).new
       @deferred_allocators = Set(String).new
+      @type_ref_depth = 0
       @type_cache = {} of String => TypeRef
       @type_cache_keys_by_component = {} of String => Array(String)
       @type_cache_keys_by_generic_prefix = {} of String => Array(String)
@@ -23223,8 +23224,13 @@ module Crystal::HIR
       return TypeRef::FLOAT64 if types.any? { |t| t == TypeRef::FLOAT64 }
       return TypeRef::FLOAT32 if types.any? { |t| t == TypeRef::FLOAT32 }
 
-      max_bits = types.map { |t| integer_bit_width(t) }.compact.max?
-      return nil unless max_bits
+      max_bits = 0
+      types.each do |t|
+        if bw = integer_bit_width(t)
+          max_bits = bw if bw > max_bits
+        end
+      end
+      return nil if max_bits == 0
 
       has_unsigned = types.any? do |t|
         t == TypeRef::UINT8 || t == TypeRef::UINT16 || t == TypeRef::UINT32 ||
@@ -32886,8 +32892,8 @@ module Crystal::HIR
       param_map : Hash(String, String)?,
       call_arg_types : Array(TypeRef)? = nil,
     ) : Array(TypeRef)?
-      debug_trace_each = env_get("DEBUG_TRACE_EACH_WITH_INDEX") &&
-                         (func_name.includes?("each_with_index") || base_method_name.includes?("each_with_index"))
+      debug_trace_each = !!(env_get("DEBUG_TRACE_EACH_WITH_INDEX") &&
+                         (func_name.includes?("each_with_index") || base_method_name.includes?("each_with_index")))
       body = func_def.body
       return nil unless body && !body.empty?
 
@@ -32976,58 +32982,62 @@ module Crystal::HIR
           end
         end
 
-        compute = -> do
-          merged_types = nil
-          lists.each do |args|
-            next if args.empty?
-            inferred = args.map do |arg|
-              infer_type_from_expr(arg, self_type_name) || TypeRef::VOID
-            end
-            if debug_trace_each
-              arg_nodes = args.map do |arg|
-                arg_node = node_for_expr(arg)
-                case arg_node
-                when CrystalV2::Compiler::Frontend::IdentifierNode
-                  String.new(arg_node.name)
-                else
-                  arg_node.class.name.split("::").last
-                end
-              end
-              inferred_dbg = inferred.map { |t| get_type_name_from_ref(t) }.join(",")
-              STDERR.puts "[TRACE_EWI] yield_args=#{arg_nodes.join(",")} inferred=#{inferred_dbg}"
-            end
-            next if inferred.all? { |t| t == TypeRef::VOID }
-            if merged_types.nil?
-              merged_types = inferred
-            elsif merged_types.size == inferred.size
-              merged_types = merged_types.zip(inferred).map do |left, right|
-                if left == TypeRef::VOID
-                  right
-                elsif right == TypeRef::VOID
-                  left
-                else
-                  union_type_for_values(left, right)
-                end
-              end
-            end
-          end
-          if debug_trace_each && merged_types
-            merged_dbg = merged_types.map { |t| get_type_name_from_ref(t) }.join(",")
-            STDERR.puts "[TRACE_EWI] merged_types=#{merged_dbg}"
-          end
-          merged_types
-        end
-
         if param_map && !param_map.empty?
-          return with_type_param_map(param_map) { compute.call }
+          return with_type_param_map(param_map) { compute_yield_merged_types(lists, self_type_name, debug_trace_each) }
         end
-        compute.call
+        compute_yield_merged_types(lists, self_type_name, debug_trace_each)
       ensure
         @current_typeof_locals = old_locals
         @current_typeof_local_names = old_names
         @current_namespace_override = old_namespace
         @arena = old_arena
       end
+    end
+
+    private def compute_yield_merged_types(
+      lists : Array(Array(ExprId)),
+      self_type_name : String?,
+      debug_trace_each : Bool,
+    ) : Array(TypeRef)?
+      merged_types = nil.as(Array(TypeRef)?)
+      lists.each do |args|
+        next if args.empty?
+        inferred = args.map do |arg|
+          infer_type_from_expr(arg, self_type_name) || TypeRef::VOID
+        end
+        if debug_trace_each
+          arg_nodes = args.map do |arg|
+            arg_node = node_for_expr(arg)
+            case arg_node
+            when CrystalV2::Compiler::Frontend::IdentifierNode
+              String.new(arg_node.name)
+            else
+              arg_node.class.name.split("::").last
+            end
+          end
+          inferred_dbg = inferred.map { |t| get_type_name_from_ref(t) }.join(",")
+          STDERR.puts "[TRACE_EWI] yield_args=#{arg_nodes.join(",")} inferred=#{inferred_dbg}"
+        end
+        next if inferred.all? { |t| t == TypeRef::VOID }
+        if merged_types.nil?
+          merged_types = inferred
+        elsif (mt = merged_types) && mt.size == inferred.size
+          merged_types = mt.zip(inferred).map do |left, right|
+            if left == TypeRef::VOID
+              right
+            elsif right == TypeRef::VOID
+              left
+            else
+              union_type_for_values(left, right)
+            end
+          end
+        end
+      end
+      if debug_trace_each && merged_types
+        merged_dbg = merged_types.not_nil!.map { |t| get_type_name_from_ref(t) }.join(",")
+        STDERR.puts "[TRACE_EWI] merged_types=#{merged_dbg}"
+      end
+      merged_types
     end
 
     private def fallback_block_param_types(
@@ -70408,6 +70418,19 @@ module Crystal::HIR
 
     private def type_ref_for_name(name : String) : TypeRef
       return TypeRef::VOID if name == "_"
+      # Guard against infinite recursion (V2 stage2 string/alias bugs can cause cycles)
+      if @type_ref_depth > 64
+        return TypeRef::VOID
+      end
+      @type_ref_depth += 1
+      begin
+        type_ref_for_name_inner(name)
+      ensure
+        @type_ref_depth -= 1
+      end
+    end
+
+    private def type_ref_for_name_inner(name : String) : TypeRef
 
       # Strip outer grouping parentheses: (Char | String) → Char | String
       # Crystal allows parenthesized union types in annotations: def foo(x : (A | B))
@@ -70537,10 +70560,13 @@ module Crystal::HIR
       # Handle type literals early to avoid namespace prefixing on ".class"
       if lookup_name.ends_with?(".class") || lookup_name.ends_with?(".metaclass")
         if base_name = resolve_type_literal_class_name(lookup_name)
-          cache_key = type_cache_key(lookup_name)
-          result = type_ref_for_name(base_name)
-          store_type_cache(cache_key, result)
-          return result
+          # Guard against infinite recursion if base_name still ends with .class/.metaclass
+          unless base_name.ends_with?(".class") || base_name.ends_with?(".metaclass") || base_name == lookup_name
+            cache_key = type_cache_key(lookup_name)
+            result = type_ref_for_name(base_name)
+            store_type_cache(cache_key, result)
+            return result
+          end
         end
       end
 
