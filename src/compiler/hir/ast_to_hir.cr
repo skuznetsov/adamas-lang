@@ -68130,6 +68130,25 @@ module Crystal::HIR
         end
       end
 
+      # Proc literals keep lexical `self` even when it isn't referenced
+      # explicitly as an identifier. Without capturing it, implicit receiver
+      # calls (e.g., store_extra_source(...)) inside proc bodies pass null
+      # as self. Mirror the logic from lower_block_as_proc.
+      parent_self_id = parent_locals["self"]?
+      if parent_self_id.nil?
+        parent_self_param = ctx.function.params.find { |p| p.name == "self" }
+        if parent_self_param.nil? && ctx.function.name.includes?('#')
+          parent_self_param = ctx.function.params.first?
+        end
+        parent_self_id = parent_self_param.try(&.id)
+      end
+      if parent_self = parent_self_id
+        parent_self_type = ctx.type_of(parent_self)
+        if parent_self_type != TypeRef::VOID && !captures.any? { |name, _, _| name == "self" }
+          captures << {"self", parent_self, parent_self_type}
+        end
+      end
+
       explicit_yield_target = nil.as({String, ValueId, TypeRef}?)
       if contains_yield?(node.body, @arena)
         if candidate = find_enclosing_yield_target(ctx, parent_locals)
@@ -68179,6 +68198,18 @@ module Crystal::HIR
           @closure_ref_cells[cap_name] = {class_name, cell_name, cap_type}
         end
         @closure_ref_prefer_cell.add(cap_name) if written_captures.includes?(cap_name)
+      end
+
+      # Bind captured lexical `self` into the proc context so implicit receiver
+      # calls inside the proc resolve as instance calls, not bare extern calls.
+      if captures.any? { |name, _, _| name == "self" }
+        if self_cell = @closure_ref_cells["self"]?
+          cell_class, cell_name, cell_type = self_cell
+          self_get = ClassVarGet.new(proc_ctx.next_id, cell_type, cell_class, cell_name)
+          proc_ctx.emit(self_get)
+          proc_ctx.register_type(self_get.id, cell_type)
+          proc_ctx.register_local("self", self_get.id)
+        end
       end
 
       # Add parameters to the standalone function
