@@ -2947,6 +2947,20 @@ module Crystal::HIR
       @deferred_constant_inits = [] of Tuple(String, String, Int32, CrystalV2::Compiler::Frontend::ArenaLike)
       @pending_offsetof_constants = [] of Tuple(String, CrystalV2::Compiler::Frontend::ExprId, CrystalV2::Compiler::Frontend::ArenaLike, String?)
       @pending_enum_constant_resolutions = [] of Tuple(String, String, String) # (enum_name, member_name, constant_key)
+      # Explicit initialization for ivars with inline defaults (V2 may not handle
+      # inline default initialization syntax correctly in stage2).
+      @function_lookup_cache = Hash(FunctionLookupKey, FunctionLookupEntry).new(initial_capacity: 16384)
+      @function_lookup_cache_size = 0
+      @function_lookup_last_name_id = 0_u64
+      @function_lookup_last_arg_count = -1
+      @function_lookup_last_args_hash = 0_u64
+      @function_lookup_last_flags = 0_u8
+      @function_lookup_last_result = nil.as(Tuple(String, CrystalV2::Compiler::Frontend::DefNode)?)
+      @function_lookup_last_result_valid = false
+      @function_lookup_last_base_epoch = 0
+      @function_lookup_args_hash_owner = 0_u64
+      @function_lookup_args_hash_value = 0_u64
+      @function_lookup_base_epoch = {} of String => Int32
     end
 
     # Fresh self-hosted stage2 can miscompile the large constructor path and
