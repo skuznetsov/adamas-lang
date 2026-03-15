@@ -226,8 +226,9 @@ module Crystal::HIR
 
     # Balanced mode: auto-infer best strategy
     private def determine_balanced(lifetime : LifetimeTag, taints : Taint, size : UInt32) : MemoryStrategy
-      # Rule 1: Cyclic or FFI → GC (safest)
-      if taints.cyclic? || taints.ffi_exposed?
+      # Rule 1: Cyclic → GC (safest). FFI-exposed values continue through
+      # the normal decision tree — most FFI calls are borrows, not transfers.
+      if taints.cyclic?
         return MemoryStrategy::GC
       end
 
@@ -270,8 +271,8 @@ module Crystal::HIR
 
     # Aggressive mode: maximize performance
     private def determine_aggressive(lifetime : LifetimeTag, taints : Taint, size : UInt32) : MemoryStrategy
-      # Cyclic or FFI still needs GC
-      if taints.cyclic? || taints.ffi_exposed?
+      # Cyclic still needs GC; FFI-exposed goes through normal path
+      if taints.cyclic?
         return MemoryStrategy::GC
       end
 

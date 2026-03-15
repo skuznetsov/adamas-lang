@@ -74,6 +74,12 @@ module Crystal
     # These need special FieldGet handling: GEP without load for struct-typed fields.
     @inline_struct_ptrs : Set(HIR::ValueId) = Set(HIR::ValueId).new
 
+    # ARC cleanup: track stack slots holding ARC-allocated pointers per function
+    # so we can emit rc_dec at return points. Each slot is initialized to null
+    # at function entry and stores the ARC pointer after allocation.
+    # Key = MIR ValueId of the stack slot, Value = true if atomic (AtomicARC).
+    @arc_cleanup_slots : Array({ValueId, Bool}) = [] of {ValueId, Bool}
+
     @[AlwaysInline]
     private def mir_setup_trace? : Bool
       ENV.has_key?("CRYSTAL_V2_MIR_SETUP_TRACE") || ENV.has_key?("CRYSTAL2_MIR_SETUP_TRACE")
@@ -836,6 +842,7 @@ module Crystal
       @stack_slot_values = Set(ValueId).new
       @stack_slot_types = {} of ValueId => TypeRef
       @inline_struct_ptrs = Set(HIR::ValueId).new
+      @arc_cleanup_slots = [] of {ValueId, Bool}
       STDERR.puts "[MIR_LOWER] caches reinitialized" if mir_lower_trace?
       @builder = Builder.new(mir_func)
       # In MIR::Function, entry block is created first and is always 0.
@@ -4480,6 +4487,8 @@ module Crystal
         else
           builder.ret
         end
+        # TODO: Insert rc_dec cleanup for @arc_cleanup_slots here once
+        # the runtime implements real reference counting (currently stubs).
       when HIR::Branch
         cond = get_value(term.condition)
         then_block = mir_block_for(term.then_block)
@@ -4572,6 +4581,27 @@ module Crystal
     private def record_stack_slot(slot : ValueId, type : TypeRef)
       @stack_slot_values.add(slot)
       @stack_slot_types[slot] = type
+    end
+
+    # Create a cleanup slot for an ARC allocation. The slot is allocated in
+    # the entry block (so it dominates all return points), initialized to null,
+    # and the ARC pointer is stored into it at the current position.
+    private def track_arc_for_cleanup(builder : Builder, ptr : ValueId, atomic : Bool)
+      # Save current block, switch to entry to allocate the slot
+      saved_block = builder.current_block
+      entry_block = @current_mir_func.not_nil!.entry_block
+      builder.current_block = entry_block
+
+      # Allocate slot and init to null (rc_dec(null) is safe)
+      slot = builder.alloc(MemoryStrategy::Stack, TypeRef::POINTER)
+      null_val = builder.const_nil_typed(TypeRef::POINTER)
+      builder.store(slot, null_val)
+
+      # Switch back to the allocation block and store the ARC pointer
+      builder.current_block = saved_block
+      builder.store(slot, ptr)
+
+      @arc_cleanup_slots << {slot, atomic}
     end
 
     private def default_value_for_type(builder : Builder, type : TypeRef) : ValueId?
