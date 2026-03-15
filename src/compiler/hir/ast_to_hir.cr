@@ -2961,6 +2961,168 @@ module Crystal::HIR
       @function_lookup_args_hash_owner = 0_u64
       @function_lookup_args_hash_value = 0_u64
       @function_lookup_base_epoch = {} of String => Int32
+      # --- Begin: explicit init for ALL remaining inline-default ivars ---
+      # V2 stage2 does not initialize inline-default ivars; they stay null/garbage.
+      # Function def processing caches
+      @function_defs_processed_for_overloads = 0
+      @function_types_processed_for_keys = 0
+      # Method index
+      @method_index = {} of String => Hash(String, Array(String))
+      @method_index_built = false
+      @method_index_size_at_build = 0
+      @method_index_processed_count = 0
+      @method_index_last_owner = nil.as(String?)
+      @method_index_last_method = nil.as(String?)
+      @method_index_last_candidates = nil.as(Array(String)?)
+      # Parent lookup
+      @parent_lookup_cache = {} of String => ParentLookupResult?
+      @parent_class_for_method = {} of String => String?
+      @parent_chains = {} of String => Array(String)
+      # Yield/block check caches
+      @yield_check_cache = {} of {Int32, Int32, UInt64} => Bool
+      @block_call_check_cache = {} of {UInt64, UInt64} => Bool
+      # Arena caches
+      @arena_for_def_cache = {} of {UInt64, UInt64, UInt64} => CrystalV2::Compiler::Frontend::ArenaLike
+      @unique_def_arenas = {} of UInt64 => CrystalV2::Compiler::Frontend::ArenaLike
+      @unique_def_arenas_list = [] of CrystalV2::Compiler::Frontend::ArenaLike
+      @unique_def_arenas_list_size = 0
+      @unique_def_arenas_by_path = {} of String => Array(CrystalV2::Compiler::Frontend::ArenaLike)
+      @def_body_max_index_cache = {} of UInt64 => Int32
+      @reparsed_lib_programs_by_path = {} of String => CrystalV2::Compiler::Frontend::Program
+      # Yield name caches
+      @yield_name_cache = {} of String => String?
+      @yield_functions_stripped_map = {} of String => String
+      @yield_functions_stripped_map_size = 0
+      # Strip generic receiver caches
+      @strip_generic_receiver_last_id = 0_u64
+      @strip_generic_receiver_last = nil.as(String?)
+      @strip_generic_receiver_table_keys = Array(UInt64).new(2048, 0_u64)
+      @strip_generic_receiver_table_vals = Array(String?).new(2048, nil)
+      @strip_generic_receiver_table_mask = 2047_u64
+      @strip_generic_receiver_name_cache = {} of String => String
+      @strip_generic_receiver_name_cache_size = 0
+      @strip_generic_receiver_name_cache_limit = 20000
+      # Function def overloads caches
+      @function_def_overloads_stripped_cache = {} of String => Array(String)
+      @function_def_overloads_stripped_index = {} of String => Array(String)
+      @function_def_overloads_stripped_index_complete = false
+      @function_def_overloads_cache = {} of String => Array(String)
+      @function_def_overloads_cache_size = 0
+      @function_def_overloads_stripped_by_base = {} of String => String
+      # Method name parts caches
+      @method_name_parts_cache = {} of UInt64 => MethodNameParts
+      @method_name_parts_cache_size = 0
+      @method_name_parts_cache_limit = 65536
+      @method_name_parts_last_id = 0_u64
+      @method_name_parts_last = nil.as(MethodNameParts?)
+      # Type param map hash
+      @type_param_map_hash_owner = 0_u64
+      @type_param_map_hash_value = 0_u64
+      # Resolved type name caches
+      @resolved_type_name_cache_last_ctx_key = nil.as(TypeNameContextKey?)
+      @resolved_type_name_cache_last_ctx_map = nil.as(Hash(String, ResolvedTypeNameCacheEntry)?)
+      @resolved_type_name_last_entry_ctx = nil.as(TypeNameContextKey?)
+      @resolved_type_name_last_entry_name_id = 0_u64
+      @resolved_type_name_last_entry_value = nil.as(String?)
+      @resolved_type_name_last_entry_epoch = 0
+      # Method name compact caches
+      @method_name_compact_cache = {} of UInt64 => MethodNamePartsCompact
+      @method_name_compact_cache_size = 0
+      @method_name_compact_cache_limit = 65536
+      @method_name_compact_last_id = 0_u64
+      @method_name_compact_last = nil.as(MethodNamePartsCompact?)
+      # Substitute type params
+      @substitute_type_params_stack = Set(String).new
+      @substitute_type_params_depth = 0
+      @subst_cache = {} of String => Hash(String, String)
+      @subst_cache_gen = 0_u64
+      @subst_cache_last_gen = 0_u64
+      # Generic owner info
+      @generic_owner_info_cache = {} of String => GenericOwnerInfo?
+      @generic_owner_info_cache_gen = 0_u64
+      # Split generic args
+      @split_generic_args_cache = {} of String => Array(String)
+      @split_generic_args_last_input = nil.as(String?)
+      @split_generic_args_last_output = nil.as(Array(String)?)
+      @generic_split_last_input = nil.as(String?)
+      @generic_split_last_output = nil.as(GenericSplitInfo?)
+      # Unresolved generic arg
+      @unresolved_generic_arg_stack = Set(String).new
+      @unresolved_generic_arg_depth = 0
+      @unresolved_generic_arg_cache = {} of String => Bool
+      @unresolved_generic_arg_cache_gen = 0_u64
+      @unresolved_generic_arg_cache_class = nil.as(String?)
+      # Resolve type name stack
+      @resolve_type_name_stack = Set(String).new
+      # Split union type
+      @split_union_type_cache = {} of String => Array(String)
+      @split_union_type_cache_size = 0
+      @split_union_type_cache_limit = 20000
+      @split_union_last_input = nil.as(String?)
+      @split_union_last_output = nil.as(Array(String)?)
+      # Env cache
+      @env_cache = {} of String => String
+      # Block lookup caches
+      @block_lookup_cache = {} of BlockLookupKey => Tuple(String, CrystalV2::Compiler::Frontend::DefNode)?
+      @block_lookup_cache_size = 0
+      @block_fallback_lookup_cache = {} of BlockLookupKey => Tuple(String, CrystalV2::Compiler::Frontend::DefNode)?
+      @block_fallback_method_candidates = {} of String => Array(String)
+      # Yield allowed owner caches
+      @yield_allowed_owner_cache = {} of String => Set(String)
+      @yield_allowed_owner_cache_class_info_version = -1
+      @yield_allowed_owner_cache_module_version = -1
+      @yield_owner_compat_cache = {} of String => Hash(String, Bool)
+      @yield_owner_compat_cache_class_info_version = -1
+      @yield_owner_compat_cache_module_version = -1
+      # Allocator name caches
+      @allocator_new_name_cache = {} of String => String
+      @allocator_init_name_cache = {} of String => String
+      @allocator_init_mangled_prefix_cache = {} of String => String
+      @allocator_instance_new_name_cache = {} of String => String
+      @allocator_init_def_key_cache = {} of String => String
+      @allocator_init_def_key_negative_cache = Set(String).new
+      @allocator_init_def_key_cache_function_defs_size = 0
+      # Lower histogram
+      @lower_histo_counts = {} of String => Int32
+      @lower_histo_last = nil.as(Time::Instant?)
+      @lower_histo_since_check = 0
+      @lower_histo_total = 0_i64
+      # Function lowering
+      @function_lowering_states = Hash(String, FunctionLoweringState).new(initial_capacity: 32768)
+      @pending_function_queue = [] of String
+      @pending_queue_remove_set = Set(String).new
+      @pending_source_counts = {} of String => Int32
+      @pending_source_samples = {} of String => Array(String)
+      @mono_source_counts = {} of String => Int32
+      @mono_source_samples = {} of String => Array(String)
+      @mono_sources_reported = false
+      @mono_caller_counts = {} of String => Int32
+      # Lookup branch stats
+      @lookup_branch_counts = Hash(String, Int32).new(0)
+      @lookup_branch_time_ns = Hash(String, Int64).new(0_i64)
+      @lookup_total_count = 0
+      @lookup_total_time_ns = 0_i64
+      # RTA / live types
+      @live_types = Set(String).new
+      @live_types_initialized = false
+      @rta_deferred_functions = [] of String
+      @rta_deferred_set = Set(String).new
+      @rta_module_base_names = Set(String).new
+      @rta_scan_start_idx = 0
+      @rta_type_scan_start_idx = 0
+      @lazy_rta_active = false
+      @rta_called_methods = Set(String).new
+      @rta_called_method_parts = Set(String).new
+      @rta_virtual_receivers = Hash(String, Set(String)).new
+      @rta_type_to_modules = nil.as(Hash(String, Set(String))?)
+      @rta_type_to_modules_version = -1
+      # Lowering depth
+      @lowering_depth = 0
+      @lowering_depth_limit = 0
+      @force_lower_return_type_depth = 0
+      @suppress_force_lower_return_type_depth = 0
+      @defer_body_return_inference = false
+      # --- End: explicit init for ALL remaining inline-default ivars ---
     end
 
     # Fresh self-hosted stage2 can miscompile the large constructor path and
@@ -20205,9 +20367,6 @@ module Crystal::HIR
 
       base_name = allocator_new_name_for(class_name)
       overload_name = mangle_function_name(base_name, call_arg_types)
-      if class_name == "Crystal::HIR::AstToHir"
-        STDERR.puts "[ALLOC_OVERLOAD] class=#{class_name} base=#{base_name} overload=#{overload_name} same=#{overload_name == base_name} exists=#{@module.has_function?(overload_name)}"
-      end
       return if overload_name == base_name
       return if @module.has_function?(overload_name)
 
@@ -20242,9 +20401,6 @@ module Crystal::HIR
       # In that case, keep generating the allocator overload for this concrete shape.
       if explicit_match = lookup_function_def_for_call(base_name, call_arg_types.size, false, call_arg_types, false, call_has_named_args)
         explicit_name, explicit_def = explicit_match
-        if class_name == "Crystal::HIR::AstToHir"
-          STDERR.puts "[ALLOC_OVERLOAD_EXPLICIT] class=#{class_name} explicit_match=#{explicit_name} → BLOCKED"
-        end
         allow_allocator_overload = false
 
         if base_name.ends_with?(".new") && def_has_untyped_regular_param?(explicit_def)
@@ -26749,7 +26905,7 @@ module Crystal::HIR
         # Check if it's a union type we've registered
         mir_type_ref = hir_to_mir_type_ref(type)
         if descriptor = @union_descriptors[mir_type_ref]?
-          return descriptor.total_size
+          return union_ivar_storage_size(descriptor)
         end
         # Type aliases (e.g., ArenaLike = AstArena | VirtualArena | PageArena) have
         # a different TypeRef than the underlying union. Resolve through aliases and
@@ -26761,7 +26917,7 @@ module Crystal::HIR
             alias_ref = type_ref_for_name(alias_target)
             mir_alias_ref = hir_to_mir_type_ref(alias_ref)
             if descriptor = @union_descriptors[mir_alias_ref]?
-              return descriptor.total_size
+              return union_ivar_storage_size(descriptor)
             end
           end
         end
@@ -26787,6 +26943,49 @@ module Crystal::HIR
           end
         end
         pointer_word_bytes_i32 # Pointer size for reference types
+      end
+    end
+
+    # Return the effective ivar storage size for a union type.
+    # In Crystal, unions where ALL non-Nil variants are reference types (classes)
+    # are stored as a single pointer (8 bytes on x86_64). The type discriminator
+    # lives in the object header, not alongside the pointer. Nil is represented
+    # as a null pointer. Only unions containing value types (primitives, structs,
+    # enums) need the full tagged layout (type_id + payload).
+    private def union_ivar_storage_size(descriptor : MIR::UnionDescriptor) : Int32
+      if union_all_reference_types?(descriptor)
+        pointer_word_bytes_i32
+      else
+        descriptor.total_size
+      end
+    end
+
+    # Check if every variant in a union is a reference type (class) or Nil.
+    private def union_all_reference_types?(descriptor : MIR::UnionDescriptor) : Bool
+      descriptor.variants.all? do |variant|
+        vname = variant.full_name
+        # Nil is pointer-compatible (null pointer)
+        if vname == "Nil"
+          next true
+        end
+        # Known primitive value types
+        case vname
+        when "Bool", "Int8", "Int16", "Int32", "Int64", "Int128",
+             "UInt8", "UInt16", "UInt32", "UInt64", "UInt128",
+             "Float32", "Float64", "Char", "Symbol"
+          next false
+        end
+        # Enums are value types
+        if ei = @enum_info
+          next false if ei.has_key?(vname)
+        end
+        # Check class_info: structs are value types in Crystal (stored inline)
+        if info = @class_info[vname]?
+          next !info.is_struct
+        end
+        # Unknown types with pointer size are likely reference types
+        # (generic classes like Array(T), Hash(K,V), etc.)
+        variant.size == pointer_word_bytes_i32
       end
     end
 
@@ -37018,11 +37217,9 @@ module Crystal::HIR
       canonical_type_name = type_name.dup
       old_class = @current_class
       @current_class = lib_name
-      begin
-        type_ref_for_c_type(canonical_type_name)
-      ensure
-        @current_class = old_class
-      end
+      result = type_ref_for_c_type(canonical_type_name)
+      @current_class = old_class
+      result
     end
 
     private def register_extern_global(lib_name : String, var_name : String, type_ref : TypeRef, real_name : String? = nil)
@@ -69592,7 +69789,9 @@ module Crystal::HIR
     end
 
     private def type_cache_context : String?
-      @current_namespace_override || @current_class
+      ns_override = @current_namespace_override
+      return ns_override if ns_override
+      @current_class
     end
 
     private def type_name_cache_depends_on_context?(name : String) : Bool
@@ -69659,11 +69858,13 @@ module Crystal::HIR
       if name.includes?('(')
         base = strip_generic_args(name)
         if BUILTIN_GENERIC_BASES.includes?(base)
-          return name unless type_name_cache_depends_on_context?(name)
+          depends = type_name_cache_depends_on_context?(name)
+          return name unless depends
         end
       end
       context = type_cache_context
-      return name if context.nil? || context.empty?
+      return name if context.nil?
+      return name if context.empty?
       "#{context}::#{name}"
     end
 
@@ -70383,11 +70584,9 @@ module Crystal::HIR
         return TypeRef::VOID
       end
       @type_ref_depth += 1
-      begin
-        type_ref_for_name_inner(name)
-      ensure
-        @type_ref_depth -= 1
-      end
+      result = type_ref_for_name_inner(name)
+      @type_ref_depth -= 1
+      result
     end
 
     private def type_ref_for_name_inner(name : String) : TypeRef
