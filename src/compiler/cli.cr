@@ -2882,6 +2882,11 @@ module CrystalV2
           def_nodes << {node, arena}
           pending_annotations.clear
         when Frontend::ClassNode
+          # Check for @[Acyclic] annotation to override cyclic type detection
+          if pending_annotations.any? { |ann| annotation_name_from_expr(arena, ann.name) == "Acyclic" }
+            class_name = String.new(node.name)
+            acyclic_types << class_name
+          end
           class_nodes << {node, arena}
           pending_annotations.clear
         when Frontend::ModuleNode

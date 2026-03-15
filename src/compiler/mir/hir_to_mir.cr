@@ -87,6 +87,18 @@ module Crystal
     # Used to store ARC pointers into their cleanup slots after allocation
     @arc_slot_map : Hash(HIR::ValueId, ValueId) = {} of HIR::ValueId => ValueId
 
+    # Per-block ARC cleanup: reference-typed Call results that need rc_dec at block end.
+    # Each entry is (HIR value ID, MIR value ID) for a Call result with reference type.
+    @block_arc_temps : Array({HIR::ValueId, ValueId}) = [] of {HIR::ValueId, ValueId}
+
+    # Values that are used outside their defining block — must NOT be rc_dec'd at block end.
+    @cross_block_values : Set(HIR::ValueId) = Set(HIR::ValueId).new
+
+    # Functions whose return value is a freshly allocated ARC object (+1 ownership).
+    # Call results from these functions can be safely rc_dec'd at the caller's scope exit.
+    # Built by interprocedural analysis tracing return values back to Allocate instructions.
+    @owned_return_funcs : Set(String) = Set(String).new
+
     @[AlwaysInline]
     private def mir_setup_trace? : Bool
       ENV.has_key?("CRYSTAL_V2_MIR_SETUP_TRACE") || ENV.has_key?("CRYSTAL2_MIR_SETUP_TRACE")
@@ -200,6 +212,7 @@ module Crystal
 
     # Lower all function bodies (serial). Call prepare() first.
     def lower_all_bodies(progress : Bool = false) : Nil
+      build_owned_return_set
       total = @hir_module.functions.size
       STDERR.puts "    Pass 2: Lowering #{total} function bodies..." if progress
       profile_mir = ENV.has_key?("CRYSTAL_V2_MIR_PROFILE")
@@ -853,6 +866,8 @@ module Crystal
       @inline_struct_ptrs = Set(HIR::ValueId).new
       @arc_cleanup_slots = [] of {ValueId, Bool}
       @arc_slot_map = {} of HIR::ValueId => ValueId
+      @block_arc_temps = [] of {HIR::ValueId, ValueId}
+      @cross_block_values = Set(HIR::ValueId).new
       STDERR.puts "[MIR_LOWER] caches reinitialized" if mir_lower_trace?
       @builder = Builder.new(mir_func)
       # In MIR::Function, entry block is created first and is always 0.
@@ -951,15 +966,79 @@ module Crystal
         end
       end
 
+      # Pre-scan: build cross-block values set for per-block ARC cleanup.
+      # Values used outside their defining block must NOT be rc_dec'd at block end.
+      value_def_block = {} of HIR::ValueId => UInt32
+      hir_func.blocks.each do |hir_block|
+        hir_block.instructions.each do |inst|
+          value_def_block[inst.id] = hir_block.id
+        end
+      end
+      @cross_block_values = Set(HIR::ValueId).new
+      hir_func.blocks.each do |hir_block|
+        hir_block.instructions.each do |inst|
+          hir_instruction_used_values(inst).each do |used_val|
+            if def_blk = value_def_block[used_val]?
+              if def_blk != hir_block.id
+                @cross_block_values << used_val
+              end
+            end
+          end
+        end
+        # Check terminator uses
+        hir_terminator_used_values(hir_block.terminator).each do |used_val|
+          if def_blk = value_def_block[used_val]?
+            if def_blk != hir_block.id
+              @cross_block_values << used_val
+            end
+          end
+        end
+        # Phi incomings are always cross-block
+        hir_block.instructions.each do |inst|
+          if inst.is_a?(HIR::Phi)
+            inst.incoming.each { |(_, v)| @cross_block_values << v }
+          end
+        end
+        # Return values must not be cleaned up
+        if ret = hir_block.terminator.as?(HIR::Return)
+          if v = ret.value
+            @cross_block_values << v
+          end
+        end
+      end
+      # Trace backward: if a cross-block value is produced by Copy/Cast, the source
+      # must also be excluded from cleanup (it feeds the cross-block value).
+      changed = true
+      while changed
+        changed = false
+        hir_func.blocks.each do |hir_block|
+          hir_block.instructions.each do |inst|
+            next unless @cross_block_values.includes?(inst.id)
+            sources = case inst
+                      when HIR::Copy then [inst.source]
+                      when HIR::Cast then [inst.value]
+                      else [] of HIR::ValueId
+                      end
+            sources.each do |src|
+              unless @cross_block_values.includes?(src)
+                @cross_block_values << src
+                changed = true
+              end
+            end
+          end
+        end
+      end
+
       # NOTE: ARC cleanup slots (rc_dec at function return) are disabled for now.
-      # Enabling them causes use-after-free because rc_inc is not yet emitted at all
-      # sharing points (only constructor args and FieldSet). When an object is shared
-      # via function call args or Copy chains that escape, the refcount stays at 1,
-      # and rc_dec at return frees objects still in use.
+      # rc_inc is now emitted at all persistent storage points (FieldSet, ClassVarSet,
+      # PointerStore, IndexSet), but values stored into local variable alloca slots
+      # (via HIR Copy → MIR Store) don't get rc_inc. This means cleanup at function
+      # return or block end would free values still accessible through alloca loads.
       #
       # To enable safely, we need EITHER:
-      # (a) rc_inc at ALL sharing points (call args with ownership transfer, etc.), OR
-      # (b) A much more precise escape analysis that tracks all transitive uses.
+      # (a) rc_inc when storing to alloca slots + rc_dec at return, OR
+      # (b) Alloca-aware escape analysis, OR
+      # (c) Variable reassignment rc_dec for loop patterns (PLAN_RC_DEC Task 2).
       #
       # The escape filter infrastructure is kept for when we're ready:
       if false # TODO: enable when rc_inc coverage is complete
@@ -1106,10 +1185,26 @@ module Crystal
       mir_block_id = mir_block_for(hir_block.id)
       builder.current_block = mir_block_id
 
+      # Reset per-block ARC temp tracking
+      @block_arc_temps.clear
+
       # Lower each instruction
       hir_block.instructions.each do |inst|
         lower_value(inst)
       end
+
+      # NOTE: Per-block ARC cleanup is disabled. Without rc_inc at call sites
+      # for reference-typed arguments, many values have refcount=1 but are still
+      # reachable through local variable alloca slots loaded in other blocks.
+      # The cross-block analysis doesn't catch this because the HIR ValueId is only
+      # used in the defining block (stored to slot), while the slot is loaded elsewhere.
+      #
+      # Safe cleanup requires EITHER:
+      # (a) rc_inc at call sites + rc_dec at block end (full borrowing protocol), OR
+      # (b) Alloca-aware cross-block analysis (tracking values through stack slots), OR
+      # (c) Variable reassignment rc_dec (Task 2 in PLAN_RC_DEC) for loop patterns.
+      #
+      # The block_arc_temps infrastructure is kept for when (a), (b), or (c) is ready.
 
       # Lower terminator
       lower_terminator(hir_block.terminator)
@@ -1226,6 +1321,24 @@ module Crystal
       end
 
       @value_map[hir_value.id] = mir_id if mir_id
+
+      # Track reference-typed Call results for per-block ARC cleanup.
+      # Only track calls to functions that return OWNED (+1) references —
+      # i.e., functions that allocate and return (directly or transitively).
+      # Property getters and borrowed references are NOT tracked.
+      if mir_id && hir_value.is_a?(HIR::Call)
+        if callee_returns_owned?(hir_value.method_name)
+          if hir_type = @hir_value_types[hir_value.id]?
+            mir_type_ref = convert_type(hir_type)
+            if mir_type_info = @mir_module.type_registry.get(mir_type_ref)
+              if mir_type_info.kind.reference? || mir_type_info.kind.array?
+                @block_arc_temps << {hir_value.id, mir_id}
+              end
+            end
+          end
+        end
+      end
+
       @stats.values_lowered += 1
     end
 
@@ -1456,6 +1569,202 @@ module Crystal
       end
 
       ptr
+    end
+
+    # Extract all ValueIds referenced by an HIR instruction (for cross-block analysis).
+    private def hir_instruction_used_values(inst : HIR::Value) : Array(HIR::ValueId)
+      case inst
+      when HIR::Call
+        result = inst.args.dup
+        if recv = inst.receiver
+          result << recv
+        end
+        result
+      when HIR::ExternCall     then inst.args.dup
+      when HIR::FieldGet       then [inst.object]
+      when HIR::FieldSet       then [inst.object, inst.value]
+      when HIR::Allocate       then inst.constructor_args.dup
+      when HIR::BinaryOperation then [inst.left, inst.right]
+      when HIR::UnaryOperation then [inst.operand]
+      when HIR::Cast           then [inst.value]
+      when HIR::IsA            then [inst.value]
+      when HIR::Copy           then [inst.source]
+      when HIR::Phi            then inst.incoming.map { |(_, v)| v }
+      when HIR::IndexGet       then [inst.object, inst.index]
+      when HIR::IndexSet       then [inst.object, inst.index, inst.value]
+      when HIR::UnionWrap      then [inst.value]
+      when HIR::UnionUnwrap    then [inst.union_value]
+      when HIR::UnionTypeId    then [inst.union_value]
+      when HIR::UnionIs        then [inst.union_value]
+      when HIR::PointerLoad    then inst.index ? [inst.pointer, inst.index.not_nil!] : [inst.pointer]
+      when HIR::PointerStore   then inst.index ? [inst.pointer, inst.value, inst.index.not_nil!] : [inst.pointer, inst.value]
+      when HIR::PointerAdd     then [inst.pointer, inst.offset]
+      when HIR::PointerRealloc then [inst.pointer, inst.new_size]
+      when HIR::PointerMalloc  then [inst.count]
+      when HIR::AddressOf      then [inst.operand]
+      when HIR::ArraySize      then [inst.array_value]
+      when HIR::ArraySetSize   then [inst.array_value, inst.size_value]
+      when HIR::ArrayNew       then [inst.capacity_value]
+      when HIR::ClassVarSet    then [inst.value]
+      when HIR::Raise          then inst.exception ? [inst.exception.not_nil!] : [] of HIR::ValueId
+      when HIR::MakeClosure    then inst.captures.map(&.value_id)
+      when HIR::Yield          then inst.args.dup
+      when HIR::StringInterpolation then inst.parts.dup
+      else [] of HIR::ValueId
+      end
+    end
+
+    # Extract ValueIds referenced by an HIR terminator.
+    private def hir_terminator_used_values(term : HIR::Terminator) : Array(HIR::ValueId)
+      case term
+      when HIR::Return then term.value ? [term.value.not_nil!] : [] of HIR::ValueId
+      when HIR::Branch then [term.condition]
+      when HIR::Switch then [term.value] + term.cases.map { |(v, _)| v }
+      else [] of HIR::ValueId
+      end
+    end
+
+    # Build the set of functions that return freshly allocated ARC objects.
+    # These functions return +1 ownership — callers can safely rc_dec the result.
+    # Uses interprocedural fixed-point analysis tracing return values back to origins.
+    private def build_owned_return_set
+      @owned_return_funcs = Set(String).new
+
+      # Build instruction map per function for fast lookup
+      func_inst_map = {} of String => Hash(HIR::ValueId, HIR::Value)
+      @hir_module.functions.each do |func|
+        inst_map = {} of HIR::ValueId => HIR::Value
+        func.blocks.each do |block|
+          block.instructions.each { |inst| inst_map[inst.id] = inst }
+        end
+        func_inst_map[func.name] = inst_map
+      end
+
+      # Phase 1: Seed with functions that return direct Allocate results
+      @hir_module.functions.each do |func|
+        next if @owned_return_funcs.includes?(func.name)
+        if returns_allocated_value?(func, func_inst_map[func.name])
+          @owned_return_funcs << func.name
+        end
+      end
+
+      # Phase 2: Transitive closure — if a function returns a Call result from
+      # an "owned return" function, it's also "owned return".
+      changed = true
+      while changed
+        changed = false
+        @hir_module.functions.each do |func|
+          next if @owned_return_funcs.includes?(func.name)
+          if returns_owned_call_result?(func, func_inst_map[func.name])
+            @owned_return_funcs << func.name
+            changed = true
+          end
+        end
+      end
+    end
+
+    # Check if a function returns a direct Allocate (with ARC strategy) result.
+    # Exclude functions where the return value is also stored via ClassVarSet/PointerStore/IndexSet
+    # (these consume ownership without rc_inc, so the return is borrowed).
+    private def returns_allocated_value?(func : HIR::Function, inst_map : Hash(HIR::ValueId, HIR::Value)) : Bool
+      func.blocks.each do |block|
+        if ret = block.terminator.as?(HIR::Return)
+          if val_id = ret.value
+            origins = trace_value_origins(val_id, inst_map)
+            if origins.any? { |o| o.is_a?(HIR::Allocate) && !o.is_value_type }
+              # Check if the return value is also stored in a persistent location
+              return false if value_ownership_consumed?(val_id, func, inst_map)
+              return true
+            end
+          end
+        end
+      end
+      false
+    end
+
+    # Check if a function returns a Call result from a function in @owned_return_funcs.
+    # Uses exact name matching only — fuzzy matching causes false positives.
+    private def returns_owned_call_result?(func : HIR::Function, inst_map : Hash(HIR::ValueId, HIR::Value)) : Bool
+      func.blocks.each do |block|
+        if ret = block.terminator.as?(HIR::Return)
+          if val_id = ret.value
+            origins = trace_value_origins(val_id, inst_map)
+            if origins.any? { |o| o.is_a?(HIR::Call) && @owned_return_funcs.includes?(o.method_name) }
+              return false if value_ownership_consumed?(val_id, func, inst_map)
+              return true
+            end
+          end
+        end
+      end
+      false
+    end
+
+    # Check if a value (or any Copy/Cast alias of it) is stored via ClassVarSet,
+    # PointerStore, or IndexSet in the function. These stores consume ownership
+    # without rc_inc, so a return of the same value is borrowed, not owned.
+    private def value_ownership_consumed?(val_id : HIR::ValueId, func : HIR::Function, inst_map : Hash(HIR::ValueId, HIR::Value)) : Bool
+      # Collect all aliases of val_id (the value and all Copy/Cast/Phi chains)
+      aliases = Set(HIR::ValueId).new
+      queue = Deque(HIR::ValueId).new
+      queue << val_id
+      # Also trace backward to find the original value
+      trace_value_origins(val_id, inst_map).each { |o| queue << o.id }
+      while v = queue.shift?
+        next if aliases.includes?(v)
+        aliases << v
+        # Forward: find instructions that Copy/Cast from this value
+        inst_map.each_value do |inst|
+          case inst
+          when HIR::Copy then queue << inst.id if inst.source == v
+          when HIR::Cast then queue << inst.id if inst.value == v
+          end
+        end
+      end
+
+      # Check if any alias is stored via ownership-consuming instruction
+      func.blocks.each do |block|
+        block.instructions.each do |inst|
+          case inst
+          when HIR::ClassVarSet
+            return true if aliases.includes?(inst.value)
+          when HIR::PointerStore
+            return true if aliases.includes?(inst.value)
+          when HIR::IndexSet
+            return true if aliases.includes?(inst.value)
+          end
+        end
+      end
+      false
+    end
+
+    # Check if a callee returns an owned (+1) reference.
+    # Matches against the @owned_return_funcs set, handling name variations.
+    private def callee_returns_owned?(method_name : String) : Bool
+      @owned_return_funcs.includes?(method_name)
+    end
+
+    # Trace a value backward through Copy/Cast/Phi to find origin instructions.
+    private def trace_value_origins(value_id : HIR::ValueId, inst_map : Hash(HIR::ValueId, HIR::Value)) : Array(HIR::Value)
+      visited = Set(HIR::ValueId).new
+      queue = Deque(HIR::ValueId).new
+      queue << value_id
+      origins = [] of HIR::Value
+
+      while val_id = queue.shift?
+        next if visited.includes?(val_id)
+        visited << val_id
+        inst = inst_map[val_id]?
+        next unless inst
+
+        case inst
+        when HIR::Copy then queue << inst.source
+        when HIR::Cast then queue << inst.value
+        when HIR::Phi  then inst.incoming.each { |(_, v)| queue << v }
+        else                origins << inst
+        end
+      end
+
+      origins
     end
 
     private def select_memory_strategy(alloc : HIR::Allocate) : MemoryStrategy
@@ -1896,6 +2205,20 @@ module Crystal
         value
       )
       builder.emit(arr_set)
+
+      # rc_inc for reference-typed values: the array now holds a reference.
+      # Skip constants (string literals, globals) — they have INT64_MAX sentinel.
+      unless @hir_constant_values.includes?(idx.value)
+        if value_hir_type = @hir_value_types[idx.value]?
+          value_mir_type = convert_type(value_hir_type)
+          if mir_type_info = @mir_module.type_registry.get(value_mir_type)
+            if mir_type_info.kind.reference? || mir_type_info.kind.array?
+              builder.rc_inc(value)
+            end
+          end
+        end
+      end
+
       value
     end
 
@@ -4146,6 +4469,21 @@ module Crystal
       global_name = extern ? extern.real_name : HIRToMIRLowering.class_var_global_name(cv.class_name, cv.var_name)
       hir_type = (extern && cv.type == HIR::TypeRef::VOID) ? extern.type : cv.type
       builder.global_store(global_name, value, convert_type(hir_type))
+
+      # rc_inc for reference-typed values: the class variable now holds a reference.
+      # Without this, destructors would double-free objects stored in class vars.
+      # Skip constants (string literals, globals) — they have INT64_MAX sentinel.
+      unless @hir_constant_values.includes?(cv.value)
+        if value_hir_type = @hir_value_types[cv.value]?
+          value_mir_type = convert_type(value_hir_type)
+          if mir_type_info = @mir_module.type_registry.get(value_mir_type)
+            if mir_type_info.kind.reference? || mir_type_info.kind.array?
+              builder.rc_inc(value)
+            end
+          end
+        end
+      end
+
       value
     end
 
@@ -4491,6 +4829,20 @@ module Crystal
       else
         # ptr.value = val - direct store
         builder.store(ptr, val)
+      end
+
+      # rc_inc for reference-typed values: the buffer now holds a reference.
+      # Without this, destructors would free objects still referenced by arrays/buffers.
+      # Skip constants (string literals, globals) — they have INT64_MAX sentinel.
+      unless @hir_constant_values.includes?(store.value)
+        if value_hir_type = @hir_value_types[store.value]?
+          value_mir_type = convert_type(value_hir_type)
+          if mir_type_info = @mir_module.type_registry.get(value_mir_type)
+            if mir_type_info.kind.reference? || mir_type_info.kind.array?
+              builder.rc_inc(val)
+            end
+          end
+        end
       end
 
       val  # Return stored value

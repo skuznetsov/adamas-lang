@@ -5000,7 +5000,8 @@ module Crystal::MIR
         next unless fields
         has_ref_field = fields.any? do |field|
           if ft = @module.type_registry.get(field.type_ref)
-            ft.kind.reference? || ft.kind.array?
+            ft.kind.reference? || ft.kind.array? ||
+              (ft.kind.union? && @type_mapper.is_all_ref_union?(field.type_ref))
           else
             false
           end
@@ -5022,14 +5023,19 @@ module Crystal::MIR
         field_idx = 0
         fields.each do |field|
           ft = @module.type_registry.get(field.type_ref)
-          next unless ft && (ft.kind.reference? || ft.kind.array?)
+          next unless ft
+          is_ref = ft.kind.reference? || ft.kind.array?
+          is_all_ref_union = ft.kind.union? && @type_mapper.is_all_ref_union?(field.type_ref)
+          next unless is_ref || is_all_ref_union
 
           # Load the reference field at the given byte offset.
           # Object layout: [i32 type_id][fields...] — offsets are from object start.
           # Class objects have 4-byte type_id header, struct fields start at 0.
+          # All-ref unions (e.g. TreeNode?) are stored as raw ptr, same layout.
           emit_raw "  %fptr.#{field_idx} = getelementptr i8, ptr %obj, i64 #{field.offset}\n"
           emit_raw "  %fval.#{field_idx} = load ptr, ptr %fptr.#{field_idx}, align 8\n"
           # rc_dec the field value — this will cascade to child destructors
+          # For all-ref unions, null (Nil variant) is handled by rc_dec's null check
           emit_raw "  call void @__crystal_v2_rc_dec(ptr %fval.#{field_idx}, ptr @__crystal_v2_dtor_dispatch)\n"
           field_idx += 1
         end
@@ -10615,6 +10621,13 @@ module Crystal::MIR
     end
 
     private def emit_rc_dec(inst : RCDecrement)
+      # Safety: rc_dec only makes sense for pointer-typed values.
+      # HIR/MIR type may say "reference" but actual LLVM type could be i32
+      # (e.g., File.open with a block returning Int32). Skip non-pointer values.
+      if ptr_type_ref = @value_types[inst.ptr]?
+        llvm_type = @type_mapper.llvm_type(ptr_type_ref)
+        return unless llvm_type == "ptr"
+      end
       ptr = value_ref(inst.ptr)
       # Use the universal destructor dispatch function — it reads the object's
       # type_id and calls the appropriate per-type destructor (which rc_dec's
