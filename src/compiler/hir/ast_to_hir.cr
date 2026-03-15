@@ -2158,7 +2158,7 @@ module Crystal::HIR
             required = 0
             all_untyped = true
 
-            params.each do |p|
+            each_param(params) do |p|
               next if p.is_block || named_only_separator?(p)
               if p.is_splat || p.is_double_splat
                 has_splat = true
@@ -3662,9 +3662,76 @@ module Crystal::HIR
       resolved
     end
 
+    # V2 stage2: struct-as-pointer stores Parameter as 8-byte pointers in arrays.
+    # Null pointers (uninitialized elements) must be skipped before any field access.
+    # In Crystal (stage1), sizeof(Parameter) is 248, so this always returns false.
+    @[AlwaysInline]
+    private def null_param?(param : CrystalV2::Compiler::Frontend::Parameter) : Bool
+      sizeof(CrystalV2::Compiler::Frontend::Parameter) <= 8 && param.unsafe_as(UInt64) == 0
+    end
+
+    # Safely iterate Parameter arrays, skipping null pointers in V2's struct-as-pointer ABI.
+    # In Crystal (stage1), sizeof(Parameter) > 8 and the pointer check never fires.
+    # In V2 (stage2), sizeof(Parameter) == 8 (pointer), and null elements crash on dereference
+    # BEFORE any user-level null check can fire. This method checks the raw buffer pointer
+    # before dereferencing, avoiding the crash.
+    @[AlwaysInline]
+    private def each_param(params : Array(CrystalV2::Compiler::Frontend::Parameter), &)
+      if sizeof(CrystalV2::Compiler::Frontend::Parameter) <= 8
+        # V2 struct-as-pointer ABI: iterate buffer manually, skip null pointers.
+        # Also guard against null buffer (can happen when V2 reads wrong Array offset).
+        buf = params.to_unsafe
+        return if buf.unsafe_as(UInt64) == 0
+        params.size.times do |i|
+          raw = buf[i].unsafe_as(UInt64)
+          next if raw == 0
+          yield buf[i]
+        end
+      else
+        params.each { |p| yield p }
+      end
+    end
+
+    # Safely iterate with index, skipping null pointers.
+    @[AlwaysInline]
+    private def each_param_with_index(params : Array(CrystalV2::Compiler::Frontend::Parameter), &)
+      if sizeof(CrystalV2::Compiler::Frontend::Parameter) <= 8
+        buf = params.to_unsafe
+        return if buf.unsafe_as(UInt64) == 0
+        params.size.times do |i|
+          raw = buf[i].unsafe_as(UInt64)
+          next if raw == 0
+          yield buf[i], i
+        end
+      else
+        params.each_with_index { |p, i| yield p, i }
+      end
+    end
+
+    # Count non-null params matching a condition.
+    @[AlwaysInline]
+    private def count_params(params : Array(CrystalV2::Compiler::Frontend::Parameter), &) : Int32
+      count = 0
+      each_param(params) { |p| count += 1 if yield p }
+      count
+    end
+
+    # Check if any non-null param matches a condition.
+    @[AlwaysInline]
+    private def any_param?(params : Array(CrystalV2::Compiler::Frontend::Parameter), &) : Bool
+      each_param(params) { |p| return true if yield p }
+      false
+    end
+
+    # Find first non-null param matching a condition.
+    @[AlwaysInline]
+    private def find_param(params : Array(CrystalV2::Compiler::Frontend::Parameter), &) : CrystalV2::Compiler::Frontend::Parameter?
+      each_param(params) { |p| return p if yield p }
+      nil
+    end
+
     private def named_only_separator?(param : CrystalV2::Compiler::Frontend::Parameter) : Bool
-      # V2 stage2: struct-as-pointer can produce null Parameter elements
-      return false if param.unsafe_as(UInt64) == 0
+      return false if null_param?(param)
       param.is_splat && param.name.nil? && param.external_name.nil?
     end
 
@@ -9585,7 +9652,7 @@ module Crystal::HIR
               param_types = [] of TypeRef
               has_block = false
               if params = member.params
-                params.each do |param|
+                each_param(params) do |param|
                   next if named_only_separator?(param)
                   if param.is_block
                     has_block = true
@@ -9623,7 +9690,7 @@ module Crystal::HIR
               if param_types.any? { |t| t == TypeRef::VOID }
                 param_count = 0
                 if params = member.params
-                  params.each do |param|
+                  each_param(params) do |param|
                     next if named_only_separator?(param) || param.is_block
                     param_count += 1
                   end
@@ -9717,7 +9784,7 @@ module Crystal::HIR
               param_types = [] of TypeRef
               has_block = false
               if params = member.params
-                params.each do |param|
+                each_param(params) do |param|
                   next if named_only_separator?(param)
                   if param.is_block
                     has_block = true
@@ -9823,7 +9890,7 @@ module Crystal::HIR
         param_types = [] of TypeRef
         has_block = false
         if params = member.params
-          params.each do |param|
+          each_param(params) do |param|
             next if named_only_separator?(param)
             if param.is_block
               has_block = true
@@ -9965,7 +10032,7 @@ module Crystal::HIR
         ivar_index_by_name[ivars[ivar_idx].name] = ivar_idx
         ivar_idx += 1
       end
-      params.each do |param|
+      each_param(params) do |param|
         next if named_only_separator?(param)
         param_name = param.name.nil? ? "_" : String.new(param.name.not_nil!)
         is_ivar_param = param.is_instance_var || param_name.starts_with?('@')
@@ -10437,7 +10504,7 @@ module Crystal::HIR
                     param_types = [] of TypeRef
                     has_block = false
                     if params = member.params
-                      params.each do |param|
+                      each_param(params) do |param|
                         next if named_only_separator?(param)
                         if param.is_block
                           has_block = true
@@ -10710,7 +10777,7 @@ module Crystal::HIR
                     param_types = [] of TypeRef
                     has_block = false
                     if params = member.params
-                      params.each do |param|
+                      each_param(params) do |param|
                         next if named_only_separator?(param)
                         if param.is_block
                           has_block = true
@@ -10820,7 +10887,7 @@ module Crystal::HIR
                     if debug_hook_filter_match?(class_name, method_name)
                       block_type = ""
                       if params = member.params
-                        if blk = params.find(&.is_block)
+                        if blk = find_param(params) { |_p| _p.is_block }
                           block_type = blk.type_annotation ? String.new(blk.type_annotation.not_nil!) : ""
                         end
                       end
@@ -10829,7 +10896,7 @@ module Crystal::HIR
 
                     block_unbound = false
                     if params = member.params
-                      params.each do |param|
+                      each_param(params) do |param|
                         next unless param.is_block
                         if ta = param.type_annotation
                           if type_param_name = extract_proc_return_type_name(String.new(ta))
@@ -10844,7 +10911,7 @@ module Crystal::HIR
 
                     has_untyped_params = false
                     if params = member.params
-                      params.each do |param|
+                      each_param(params) do |param|
                         next if named_only_separator?(param)
                         next if param.is_block || param.is_splat || param.is_double_splat
                         if param.type_annotation.nil?
@@ -10869,7 +10936,7 @@ module Crystal::HIR
                         param_types = [] of TypeRef
                         has_block = false
                         if params = member.params
-                          params.each do |param|
+                          each_param(params) do |param|
                             next if named_only_separator?(param)
                             if param.is_block
                               has_block = true
@@ -10905,7 +10972,7 @@ module Crystal::HIR
                     param_types = [] of TypeRef
                     has_block = false
                     if params = member.params
-                      params.each do |param|
+                      each_param(params) do |param|
                         next if named_only_separator?(param)
                         if param.is_block
                           has_block = true
@@ -12280,7 +12347,7 @@ module Crystal::HIR
             end
             if def_node
               if params = def_node.params
-                params.each do |param|
+                each_param(params) do |param|
                   next unless param.name && slice_eq?(param.name, name)
                   if type_slice = param.type_annotation
                     type_name = normalize_declared_type_name(String.new(type_slice), owner_name)
@@ -13406,7 +13473,7 @@ module Crystal::HIR
           if block_node.is_a?(CrystalV2::Compiler::Frontend::BlockNode)
             if params = block_node.params
               param_index = nil
-              params.each_with_index do |param, idx|
+              each_param_with_index(params) do |param, idx|
                 next unless param.name
                 if slice_eq?(param.name, name)
                   param_index = idx
@@ -13944,7 +14011,7 @@ module Crystal::HIR
                                   infer_concrete_return_type_from_body(member, nil, member_arena) || TypeRef::VOID
                                 end
                   if params = member.params
-                    params.each do |param|
+                    each_param(params) do |param|
                       next if named_only_separator?(param)
                       if param.is_block
                         has_block = true
@@ -14768,7 +14835,7 @@ module Crystal::HIR
                           infer_concrete_return_type_from_body(member, nil, member_arena) || TypeRef::VOID
                         end
           if params = member.params
-            params.each do |param|
+            each_param(params) do |param|
               next if named_only_separator?(param)
               if param.is_block
                 has_block = true
@@ -15371,7 +15438,7 @@ module Crystal::HIR
       has_block = false
       contains_yield : Bool? = nil
       if params = effective_member.params
-        params.each do |param|
+        each_param(params) do |param|
           next if named_only_separator?(param)
           if param.is_block
             has_block = true
@@ -16436,7 +16503,7 @@ module Crystal::HIR
                                 infer_concrete_return_type_from_body(member, nil, member_arena) || TypeRef::VOID
                               end
                 if params = member.params
-                  params.each do |param|
+                  each_param(params) do |param|
                     next if named_only_separator?(param)
                     if param.is_block
                       has_block = true
@@ -16460,7 +16527,7 @@ module Crystal::HIR
                 STDERR.puts "[DEBUG_WUINT128] register return method=#{method_name} return=#{ret_name}"
                 if params = member.params
                   param_index = 0
-                  params.each do |param|
+                  each_param(params) do |param|
                     next if named_only_separator?(param)
                     if param.is_block
                       next
@@ -16703,7 +16770,7 @@ module Crystal::HIR
               param_types = [] of TypeRef
               has_block = false
               if params = member.params
-                params.each do |param|
+                each_param(params) do |param|
                   next if named_only_separator?(param)
                   if param.is_block
                     has_block = true
@@ -16797,7 +16864,7 @@ module Crystal::HIR
           param_types = [] of TypeRef
           has_block = false
           if params = member.params
-            params.each do |param|
+            each_param(params) do |param|
               next if named_only_separator?(param)
               if param.is_block
                 has_block = true
@@ -17046,7 +17113,7 @@ module Crystal::HIR
       splat_param_name : String? = nil
 
       if params = node.params
-        params.each do |param|
+        each_param(params) do |param|
           next if named_only_separator?(param)
           param_name = param.name.nil? ? "_" : String.new(param.name.not_nil!)
           is_ivar_param = param.is_instance_var || param_name.starts_with?('@')
@@ -18124,7 +18191,7 @@ module Crystal::HIR
               has_block = false
               param_start = mono_debug ? Time.instant : nil
               if params = member.params
-                params.each do |param|
+                each_param(params) do |param|
                   next if named_only_separator?(param)
                   if param.is_block
                     has_block = true
@@ -18587,7 +18654,7 @@ module Crystal::HIR
             next unless member.is_a?(CrystalV2::Compiler::Frontend::DefNode)
             # Scan parameters for ivar shortcuts: def foo(@field : Type)
             if params = member.params
-              params.each do |param|
+              each_param(params) do |param|
                 next unless param.is_instance_var
                 next unless (pname = param.name)
                 ivar_name = "@#{String.new(pname)}"
@@ -18704,7 +18771,7 @@ module Crystal::HIR
           return true if type_expr_references_nested_generic?(String.new(member.type), nested_short_name, nested_full_name)
         when CrystalV2::Compiler::Frontend::DefNode
           next unless (params = member.params)
-          params.each do |param|
+          each_param(params) do |param|
             next unless param.is_instance_var
             next unless (ta = param.type_annotation)
             return true if type_expr_references_nested_generic?(String.new(ta), nested_short_name, nested_full_name)
@@ -19505,7 +19572,7 @@ module Crystal::HIR
             param_types = [] of TypeRef
             has_block = false
             if params = member.params
-              params.each do |param|
+              each_param(params) do |param|
                 next if named_only_separator?(param)
                 if param.is_block
                   has_block = true
@@ -19655,7 +19722,7 @@ module Crystal::HIR
               param_types = [] of TypeRef
               has_block = false
               if params = member.params
-                params.each do |param|
+                each_param(params) do |param|
                   next if named_only_separator?(param)
                   if param.is_block
                     has_block = true
@@ -20508,7 +20575,7 @@ module Crystal::HIR
             if alt_params = alt_def.params
               alt_init_params = [] of {String, TypeRef}
               param_idx = 0
-              alt_params.each do |p|
+              each_param(alt_params) do |p|
                 next if p.is_block || named_only_separator?(p)
                 break if param_idx >= call_arg_types.size
                 pname = p.name ? String.new(p.name.not_nil!) : "arg#{param_idx}"
@@ -21510,7 +21577,7 @@ module Crystal::HIR
         if env_get("DEBUG_UNTYPED_DEFER") && (base_name == "hexstring" || base_name == "calculate_new_capacity")
           param_count = 0
           if params = node.params
-            params.each do |param|
+            each_param(params) do |param|
               next if named_only_separator?(param) || param.is_block
               param_count += 1
             end
@@ -21532,7 +21599,7 @@ module Crystal::HIR
           if params = node.params
             inferred = [] of TypeRef
             all_defaulted = true
-            params.each do |param|
+            each_param(params) do |param|
               next if param.is_block || named_only_separator?(param)
               if ta = param.type_annotation
                 inferred << type_ref_for_name(String.new(ta))
@@ -21554,7 +21621,7 @@ module Crystal::HIR
         end
         if call_types.empty? || call_types.all? { |t| t == TypeRef::VOID }
           if params = node.params
-            param_count = params.count { |p| !p.is_block && !named_only_separator?(p) }
+            param_count = count_params(params) { |p| !p.is_block && !named_only_separator?(p) }
             base_key = base_callsite_key(full_name_override || base_name)
             if !base_key.empty?
               if by_arity = @pending_arg_types_by_arity[base_key]?
@@ -21579,7 +21646,7 @@ module Crystal::HIR
           if params = node.params
             if body = node.body
               inferred = [] of TypeRef
-              params.each do |param|
+              each_param(params) do |param|
                 next if named_only_separator?(param) || param.is_block
                 if ta = param.type_annotation
                   inferred << type_ref_for_name(String.new(ta))
@@ -21657,7 +21724,7 @@ module Crystal::HIR
       splat_param_name : String? = nil
 
       if params = node.params
-        params.each do |param|
+        each_param(params) do |param|
           next if named_only_separator?(param)
           param_name = param.name.nil? ? "_" : String.new(param.name.not_nil!)
           is_ivar_param = param.is_instance_var || param_name.starts_with?('@')
@@ -22953,7 +23020,7 @@ module Crystal::HIR
 
           # Map position to param (accounting for block params)
           param_index = 0
-          params.each do |param|
+          each_param(params) do |param|
             next if named_only_separator?(param)
             next if param.is_block
 
@@ -23605,7 +23672,7 @@ module Crystal::HIR
       has_block : Bool,
     ) : String
       if params
-        params.each do |param|
+        each_param(params) do |param|
           if param.is_block
             has_block = true
             break
@@ -23619,7 +23686,7 @@ module Crystal::HIR
       has_splat = false
       has_double_splat = false
       has_untyped = param_types.any? { |t| t == TypeRef::VOID }
-      params.each do |param|
+      each_param(params) do |param|
         if named_only_separator?(param)
           has_named_only = true
           next
@@ -23677,7 +23744,7 @@ module Crystal::HIR
       param_types = [] of TypeRef
       has_block = false
       if params = node.params
-        params.each do |param|
+        each_param(params) do |param|
           next if named_only_separator?(param)
           if param.is_block
             has_block = true
@@ -23748,7 +23815,7 @@ module Crystal::HIR
     private def count_non_block_params(def_node : CrystalV2::Compiler::Frontend::DefNode) : Int32
       params = def_node.params
       return 0 unless params
-      params.count { |param| !param.is_block && !named_only_separator?(param) }
+      count_params(params) { |param| !param.is_block && !named_only_separator?(param) }
     end
 
     private def infer_indexer_element_return_type(
@@ -25177,7 +25244,7 @@ module Crystal::HIR
       after_named_only_separator = false
 
       if params = def_node.params
-        params.each do |param|
+        each_param(params) do |param|
           if param.is_block
             has_block = true
             next
@@ -26060,7 +26127,7 @@ module Crystal::HIR
       min_args = 0
       max_args = 0
       has_splat = false
-      params.each do |param|
+      each_param(params) do |param|
         next if param.is_block
         next if named_only_separator?(param)
         if param.is_splat || param.is_double_splat
@@ -26074,7 +26141,7 @@ module Crystal::HIR
       return false if !has_splat && arg_types.size > max_args
 
       arg_idx = 0
-      params.each do |param|
+      each_param(params) do |param|
         next if param.is_block
         next if named_only_separator?(param)
         if param.is_splat || param.is_double_splat
@@ -26294,7 +26361,7 @@ module Crystal::HIR
 
       score = 0
       arg_idx = 0
-      params.each do |param|
+      each_param(params) do |param|
         next if param.is_block
         next if named_only_separator?(param)
         break if arg_idx >= arg_types.size
@@ -26821,7 +26888,7 @@ module Crystal::HIR
         def_id = func_def.object_id
         next if seen_defs.includes?(def_id)
         non_block_params = if params = func_def.params
-                             params.count { |p| !p.is_block && !named_only_separator?(p) }
+                             count_params(params) { |p| !p.is_block && !named_only_separator?(p) }
                            else
                              0
                            end
@@ -27141,7 +27208,7 @@ module Crystal::HIR
       old_typeof_locals = @current_typeof_locals
       @current_typeof_locals = param_type_map
       if params = node.params
-        params.each do |param|
+        each_param(params) do |param|
           next if named_only_separator?(param)
           if param.is_block
             has_block = true
@@ -27421,7 +27488,7 @@ module Crystal::HIR
     private def def_contains_block_call_uncached?(node : CrystalV2::Compiler::Frontend::DefNode, resolved_arena : CrystalV2::Compiler::Frontend::ArenaLike) : Bool
       params = node.params
       return false unless params
-      block_param = params.find(&.is_block)
+      block_param = find_param(params) { |_p| _p.is_block }
       return false unless block_param
       return false unless name_slice = block_param.name
       block_name = String.new(name_slice)
@@ -31912,7 +31979,7 @@ module Crystal::HIR
 
     private def def_has_unbound_type_params?(node : CrystalV2::Compiler::Frontend::DefNode) : Bool
       if params = node.params
-        params.each do |param|
+        each_param(params) do |param|
           if ta = param.type_annotation
             if param.is_block
               if type_param_name = extract_proc_return_type_name(String.new(ta))
@@ -32347,7 +32414,7 @@ module Crystal::HIR
       name_map = old_names ? old_names.dup : {} of String => String
 
       if params = block.params
-        params.each_with_index do |param, idx|
+        each_param_with_index(params) do |param, idx|
           next unless pname = param.name
           name = String.new(pname)
           param_type = if param_types && (override = param_types[idx]?)
@@ -32395,7 +32462,7 @@ module Crystal::HIR
       name_map = old_names ? old_names.dup : {} of String => String
 
       if params = proc_node.params
-        params.each_with_index do |param, idx|
+        each_param_with_index(params) do |param, idx|
           next unless pname = param.name
           name = String.new(pname)
           param_type = if param_types && (override = param_types[idx]?)
@@ -32547,7 +32614,7 @@ module Crystal::HIR
 
       if params = node.params
         call_index = 0
-        params.each do |param|
+        each_param(params) do |param|
           next if named_only_separator?(param)
           if param.is_block
             next
@@ -32649,7 +32716,7 @@ module Crystal::HIR
       return_type_name = String.new(return_type_slice)
       return nil if return_type_name.empty?
 
-      block_param = func_def.params.try(&.find(&.is_block))
+      block_param = func_def.params.try { |ps| find_param(ps) { |_p| _p.is_block } }
       return nil unless block_param
 
       block_type = block_param.type_annotation
@@ -32672,7 +32739,7 @@ module Crystal::HIR
       func_def = @function_defs[mangled_method_name]? || @function_defs[base_method_name]?
       return nil unless func_def
 
-      block_param = func_def.params.try(&.find(&.is_block))
+      block_param = func_def.params.try { |ps| find_param(ps) { |_p| _p.is_block } }
       return nil unless block_param
 
       block_type = block_param.type_annotation
@@ -32945,7 +33012,7 @@ module Crystal::HIR
         return [type_ref_for_name("Pointer(UInt8)"), TypeRef::INT32, TypeRef::BOOL]
       end
 
-      block_param = func_def.params.try(&.find(&.is_block))
+      block_param = func_def.params.try { |ps| find_param(ps) { |_p| _p.is_block } }
       if debug_block_params
         STDERR.puts "[BLOCK_PARAMS] block_param=#{!block_param.nil?}"
       end
@@ -33132,7 +33199,7 @@ module Crystal::HIR
 
       if params = func_def.params
         call_arg_index = 0
-        params.each do |param|
+        each_param(params) do |param|
           next unless pname = param.name
           is_block_param = param.is_block
           name = String.new(pname)
@@ -34880,7 +34947,7 @@ module Crystal::HIR
 
       if params = node.params
         param_loop = -> {
-          params.each do |param|
+          each_param(params) do |param|
             next if named_only_separator?(param)
             param_name = param.name.nil? ? "_" : String.new(param.name.not_nil!)
             type_ann_str : String? = nil
@@ -35643,7 +35710,7 @@ module Crystal::HIR
       param_types = [] of TypeRef
       has_block = false
       if params = node.params
-        params.each do |param|
+        each_param(params) do |param|
           next if named_only_separator?(param)
           if param.is_block
             has_block = true
@@ -37175,7 +37242,7 @@ module Crystal::HIR
       return_type = TypeRef::VOID
       begin
         if params = node.params
-          params.each do |param|
+          each_param(params) do |param|
             if type_ann = param.type_annotation
               type_name = String.new(type_ann)
               param_types << type_ref_for_c_type(type_name)
@@ -39649,6 +39716,11 @@ module Crystal::HIR
         STDERR.puts "[LIB_MACRO_PARSE] reason=roots_empty" if debug_macro_parse
         return nil
       end
+      # V2 stage2 bug: parser may not populate the external arena (struct-as-pointer ABI).
+      if parsed_arena.size == 0
+        STDERR.puts "[LIB_MACRO_PARSE] reason=arena_empty roots=#{program.roots.size}" if debug_macro_parse
+        return nil
+      end
       set_source_for_arena(parsed_arena, wrapped)
       if debug_macro_parse
         root_kinds = program.roots.first(4).map { |id| parsed_arena[id] }.first(4).map { |n| CrystalV2::Compiler::Frontend.node_kind(n).to_s }.join(",")
@@ -39715,6 +39787,8 @@ module Crystal::HIR
         STDERR.puts "[MACRO_CLASS_PARSE] code=#{wrapped.inspect}"
       end
       return nil if program.roots.empty?
+      # V2 stage2 bug: parser may not populate the external arena (struct-as-pointer ABI).
+      return nil if parsed_arena.size == 0
       set_source_for_arena(parsed_arena, wrapped)
 
       class_node = program.roots.map { |id| parsed_arena[id] }
@@ -39739,6 +39813,8 @@ module Crystal::HIR
       parser = CrystalV2::Compiler::Frontend::Parser.new(lexer, parsed_arena, recovery_mode: true)
       program = parser.parse_program
       return nil if program.roots.empty?
+      # V2 stage2 bug: parser may not populate the external arena (struct-as-pointer ABI).
+      return nil if parsed_arena.size == 0
       set_source_for_arena(parsed_arena, wrapped)
 
       def_node = program.roots.map { |id| parsed_arena[id] }
@@ -39923,7 +39999,7 @@ module Crystal::HIR
       param_types = [] of TypeRef
       has_block = false
       if params = node.params
-        params.each do |param|
+        each_param(params) do |param|
           next if named_only_separator?(param)
           if param.is_block
             has_block = true
@@ -40800,10 +40876,10 @@ module Crystal::HIR
       if entry = lookup_function_def_for_call(previous_base, args.size, false, arg_types)
         actual_prev_name, actual_prev_def = entry
         if params = actual_prev_def.params
-          param_count = params.count { |p| !p.is_block && !named_only_separator?(p) }
+          param_count = count_params(params) { |p| !p.is_block && !named_only_separator?(p) }
           if param_count > args.size
             param_idx = 0
-            params.each do |param|
+            each_param(params) do |param|
               next if param.is_block || named_only_separator?(param)
               if param_idx >= args.size
                 if default_val = param.default_value
@@ -40854,10 +40930,10 @@ module Crystal::HIR
               actual_func_def = found[0]
               def_arena = found[1]
               if params = actual_func_def.params
-                param_count = params.count { |p| !p.is_block && !named_only_separator?(p) }
+                param_count = count_params(params) { |p| !p.is_block && !named_only_separator?(p) }
                 if param_count > args.size
                   param_idx = 0
-                  params.each do |param|
+                  each_param(params) do |param|
                     next if param.is_block || named_only_separator?(param)
                     if param_idx >= args.size
                       if default_val = param.default_value
@@ -40937,10 +41013,10 @@ module Crystal::HIR
           candidate_args = args.dup
           callable = true
           if params = candidate_def.params
-            param_count = params.count { |p| !p.is_block && !named_only_separator?(p) }
+            param_count = count_params(params) { |p| !p.is_block && !named_only_separator?(p) }
             if param_count > candidate_args.size
               param_idx = 0
-              params.each do |param|
+              each_param(params) do |param|
                 next if param.is_block || named_only_separator?(param)
                 if param_idx >= candidate_args.size
                   if default_val = param.default_value
@@ -44659,7 +44735,7 @@ module Crystal::HIR
       names = Set(String).new
 
       if params = func_def.params
-        params.each do |param|
+        each_param(params) do |param|
           if pname = param.name
             names.add(String.new(pname))
           end
@@ -44756,7 +44832,7 @@ module Crystal::HIR
             unless visited_blocks.includes?(block_obj_id)
               visited_blocks.add(block_obj_id)
               if params = block_node.params
-                params.each do |param|
+                each_param(params) do |param|
                   if pname = param.name
                     names.add(String.new(pname))
                   end
@@ -44780,7 +44856,7 @@ module Crystal::HIR
             end
             begin
               if params = inline_block.params
-                params.each do |param|
+                each_param(params) do |param|
                   if pname = param.name
                     names.add(String.new(pname))
                   end
@@ -46226,7 +46302,7 @@ module Crystal::HIR
       end
       return fallback_return.call unless func_def
 
-      block_param = func_def.not_nil!.params.try(&.find(&.is_block))
+      block_param = func_def.not_nil!.params.try { |ps| find_param(ps) { |_p| _p.is_block } }
       return fallback_return.call unless block_param
 
       block_type = block_param.type_annotation
@@ -46882,7 +46958,7 @@ module Crystal::HIR
       return nil unless params
 
       has_block = params.any?(&.is_block)
-      param_count = params.count { |p| !p.is_block && !named_only_separator?(p) }
+      param_count = count_params(params) { |p| !p.is_block && !named_only_separator?(p) }
       call_signature_for_base(base, param_count, has_block)
     end
 
@@ -47145,7 +47221,7 @@ module Crystal::HIR
       param_count = 0
       required_count = 0
       has_splat = false
-      params.each do |param|
+      each_param(params) do |param|
         next if named_only_separator?(param) || param.is_block || param.is_double_splat
         if param.is_splat
           has_splat = true
@@ -47284,7 +47360,7 @@ module Crystal::HIR
               has_double_splat_param = false
               has_block_param = false
               if params = member.params
-                params.each do |param|
+                each_param(params) do |param|
                   next if named_only_separator?(param)
                   if param.is_block
                     has_block_param = true
@@ -47351,7 +47427,7 @@ module Crystal::HIR
       param_types = [] of TypeRef
       has_block = false
       if params = def_node.params
-        params.each do |param|
+        each_param(params) do |param|
           next if named_only_separator?(param)
           if param.is_block
             has_block = true
@@ -47394,7 +47470,7 @@ module Crystal::HIR
       return true unless params
 
       regular_params = [] of CrystalV2::Compiler::Frontend::Parameter
-      params.each do |p|
+      each_param(params) do |p|
         next if p.is_block || p.is_splat || p.is_double_splat || named_only_separator?(p)
         regular_params << p
       end
@@ -47407,7 +47483,7 @@ module Crystal::HIR
       end
       if suffix_types.size < regular_params.size
         required_count = 0
-        regular_params.each do |param|
+        each_param(regular_params) do |param|
           required_count += 1 if param.default_value.nil?
         end
         return false if suffix_types.size < required_count
@@ -47563,7 +47639,7 @@ module Crystal::HIR
               member_has_block = false
               has_splat_param = false
               if params = member.params
-                params.each do |param|
+                each_param(params) do |param|
                   if param.is_block
                     member_has_block = true
                     next
@@ -47720,7 +47796,7 @@ module Crystal::HIR
             actual_param_count = 0
             typed_param_count = 0
             if params = member.params
-              params.each do |param|
+              each_param(params) do |param|
                 next if param.is_block || param.is_splat || param.is_double_splat || named_only_separator?(param)
                 actual_param_count += 1
                 typed_param_count += 1 if param.type_annotation
@@ -47735,7 +47811,7 @@ module Crystal::HIR
                 compatible = true
                 if params = member.params
                   param_idx = 0
-                  params.each do |param|
+                  each_param(params) do |param|
                     next if param.is_block || param.is_splat || param.is_double_splat || named_only_separator?(param)
                     break if param_idx >= call_arg_types.size
 
@@ -48489,9 +48565,9 @@ module Crystal::HIR
               params = def_node.params
               next unless params
 
-              param_count = params.count { |p| !p.is_block && !named_only_separator?(p) }
-              has_splat = params.any? { |p| p.is_splat && !named_only_separator?(p) }
-              has_double_splat = params.any? { |p| p.is_double_splat }
+              param_count = count_params(params) { |p| !p.is_block && !named_only_separator?(p) }
+              has_splat = any_param?(params) { |p| p.is_splat && !named_only_separator?(p) }
+              has_double_splat = any_param?(params) { |p| p.is_double_splat }
               required = params.count do |p|
                 !p.is_block && !named_only_separator?(p) && p.default_value.nil? && !p.is_splat && !p.is_double_splat
               end
@@ -48542,7 +48618,7 @@ module Crystal::HIR
             arena = @function_def_arenas[best_name]
             has_untyped = false
             if params = best_def.params
-              params.each do |param|
+              each_param(params) do |param|
                 next if named_only_separator?(param) || param.is_block
                 if param.type_annotation.nil?
                   has_untyped = true
@@ -48581,7 +48657,7 @@ module Crystal::HIR
               # Check if this overload has all untyped params
               has_all_untyped = true
               if params = def_node.params
-                params.each do |param|
+                each_param(params) do |param|
                   next if param.is_block || param.is_splat || param.is_double_splat || named_only_separator?(param)
                   if param.type_annotation
                     has_all_untyped = false
@@ -48924,7 +49000,7 @@ module Crystal::HIR
               if candidate = @function_defs[object_base]?
                 # Guard: don't pick Object's no-arg method for a call that has args.
                 # e.g., Object#hash (0 params) should not match SomeType#hash$Crystal::Hasher (1 param).
-                candidate_arity = candidate.params.try { |ps| ps.count { |p| !p.is_block && !named_only_separator?(p) } } || 0
+                candidate_arity = candidate.params.try { |ps| count_params(ps) { |p| !p.is_block && !named_only_separator?(p) } } || 0
                 if expected_arity == 0 || candidate_arity >= expected_arity
                   func_def = candidate
                   arena = @function_def_arenas[object_base]
@@ -49259,7 +49335,7 @@ module Crystal::HIR
             canonical_param_types = [] of TypeRef
             has_block_param = false
             if params = func_def.params
-              params.each do |param|
+              each_param(params) do |param|
                 next if named_only_separator?(param)
                 if param.is_block
                   has_block_param = true
@@ -49356,7 +49432,7 @@ module Crystal::HIR
               if params_for_align = func_def.params
                 param_count = 0
                 annotated_count = 0
-                params_for_align.each do |p|
+                each_param(params_for_align) do |p|
                   next if p.is_block || named_only_separator?(p)
                   param_count += 1
                   annotated_count += 1 if p.type_annotation
@@ -49365,7 +49441,7 @@ module Crystal::HIR
                   aligned = Array(TypeRef).new(param_count, TypeRef::VOID)
                   suffix_idx = 0
                   param_idx = 0
-                  params_for_align.each do |p|
+                  each_param(params_for_align) do |p|
                     next if p.is_block || named_only_separator?(p)
                     if p.type_annotation && suffix_idx < parsed_types.size
                       aligned[param_idx] = parsed_types[suffix_idx]
@@ -49434,13 +49510,13 @@ module Crystal::HIR
         has_double_splat_param = false
         if params = func_def.params
           params_for_bare = [] of CrystalV2::Compiler::Frontend::Parameter
-          params.each do |param|
+          each_param(params) do |param|
             next if named_only_separator?(param) || param.is_block
             params_for_bare << param
           end
           has_double_splat_param = params.any?(&.is_double_splat)
           if params_for_bare
-            params_for_bare.each_with_index do |param, idx|
+            each_param_with_index(params_for_bare) do |param, idx|
               if param.is_splat || param.is_double_splat
                 splat_index = idx
                 break
@@ -49501,7 +49577,7 @@ module Crystal::HIR
           params = func_def.params
           requires_args = false
           if params
-            params.each do |param|
+            each_param(params) do |param|
               next if named_only_separator?(param) || param.is_block || param.is_double_splat
               next unless param.default_value.nil?
               requires_args = true
@@ -53698,7 +53774,7 @@ module Crystal::HIR
         if params = entry_def.params
           splat_index : Int32? = nil
           param_index = 0
-          params.each do |param|
+          each_param(params) do |param|
             next if param.is_block || named_only_separator?(param)
             if param.is_splat && !param.is_double_splat
               splat_index = param_index
@@ -53770,7 +53846,7 @@ module Crystal::HIR
         elsif !arg_types.empty?
           untyped_params = true
           if params = entry_def.params
-            params.each do |param|
+            each_param(params) do |param|
               next if param.is_block || named_only_separator?(param)
               if param.is_double_splat
                 untyped_params = false
@@ -53926,13 +54002,13 @@ module Crystal::HIR
         explicit_new = !!explicit_match
         if explicit_new && explicit_match
           matched_def = explicit_match[1]
-          if matched_def.params && matched_def.params.not_nil!.any? { |p| p.is_splat }
+          if matched_def.params && any_param?(matched_def.params.not_nil!) { |p| p.is_splat }
             # Explicit .new with splat — the body function was lowered with
             # packed Tuple arg types and a _splat suffix. Compute the correct
             # function name to call instead of the allocator.
             splat_pos = 0
             non_splat_count = 0
-            matched_def.params.not_nil!.each do |p|
+            each_param(matched_def.params.not_nil!) do |p|
               next if p.is_block || named_only_separator?(p)
               if p.is_splat
                 splat_pos = non_splat_count
@@ -54350,7 +54426,7 @@ module Crystal::HIR
                                     if block_def && call_args.size > 0
                                       non_block_params = 0
                                       if bp = block_def.params
-                                        bp.each do |p|
+                                        each_param(bp) do |p|
                                           non_block_params += 1 unless p.is_block
                                         end
                                       end
@@ -54676,7 +54752,7 @@ module Crystal::HIR
           if def_node.return_type && def_node.params
             _forall_params = def_node.params.not_nil!
             _forall_call_idx = 0
-            _forall_params.each do |_fp|
+            each_param(_forall_params) do |_fp|
               next if named_only_separator?(_fp) || _fp.is_block || _fp.is_double_splat
               if _fp.type_annotation
                 _ann = String.new(_fp.type_annotation.not_nil!)
@@ -54963,7 +55039,7 @@ module Crystal::HIR
         param_map = {} of String => String
         if params = def_node.params
           param_index = 0
-          params.each do |param|
+          each_param(params) do |param|
             next if named_only_separator?(param)
             next if param.is_block
             break if param_index >= callsite_arg_types.size
@@ -57466,7 +57542,7 @@ module Crystal::HIR
 
       # Add parameters from the proc literal
       if params = proc_node.params
-        params.each_with_index do |param, idx|
+        each_param_with_index(params) do |param, idx|
           if param_name = param.name
             name = String.new(param_name)
             param_type = if ta = param.type_annotation
@@ -57687,7 +57763,7 @@ module Crystal::HIR
       splat_is_last = true
       param_index = 0
       saw_splat = false
-      params.each do |param|
+      each_param(params) do |param|
         next if param.is_block || named_only_separator?(param)
         if param.is_splat && !param.is_double_splat
           splat_index = param_index
@@ -57718,7 +57794,7 @@ module Crystal::HIR
         if non_splat_match
           ns_def = non_splat_match[1]
           if ns_params = ns_def.params
-            ns_has_splat = ns_params.any? { |p| p.is_splat && !p.is_double_splat }
+            ns_has_splat = any_param?(ns_params) { |p| p.is_splat && !p.is_double_splat }
             unless ns_has_splat
               # Verify type compatibility
               ns_context = function_context_from_name(non_splat_match[0])
@@ -57785,7 +57861,7 @@ module Crystal::HIR
 
       double_splat_index : Int32? = nil
       param_index = 0
-      params.each do |param|
+      each_param(params) do |param|
         next if param.is_block || named_only_separator?(param)
         if param.is_double_splat
           double_splat_index = param_index
@@ -58388,7 +58464,7 @@ module Crystal::HIR
             score += class_method_owner_match_bonus(func_name, name, arg_types)
           end
           if debug_merge_sort_lookup
-            param_ann = def_node.params.try(&.find { |param| !param.is_block && !named_only_separator?(param) && !param.is_splat && !param.is_double_splat })
+            param_ann = def_node.params.try { |ps| find_param(ps) { |param| !param.is_block && !named_only_separator?(param) && !param.is_splat && !param.is_double_splat } }
             param_type = param_ann.try(&.type_annotation).try { |ann| String.new(ann) } || ""
             arg_names = arg_types.map { |t| get_type_name_from_ref(t) }.join("|")
             STDERR.puts "[MERGE_SORT_LOOKUP] func=#{func_name} cand=#{name} ctx=#{func_context || ""} param=#{param_type} compat=#{compatible} score=#{score} args=#{arg_names}"
@@ -58907,7 +58983,7 @@ module Crystal::HIR
       param_type_names = [] of String?
 
       if params = func_def.params
-        params.each do |param|
+        each_param(params) do |param|
           next if param.is_block
           next if named_only_separator?(param)
 
@@ -58996,7 +59072,7 @@ module Crystal::HIR
         if func_def && (params = func_def.params)
           named_args.each do |na|
             arg_name = String.new(na.name)
-            params.each do |p|
+            each_param(params) do |p|
               next if p.is_block || named_only_separator?(p)
               ext = p.external_name ? String.new(p.external_name.not_nil!) : nil
               pname = p.name ? String.new(p.name.not_nil!) : nil
@@ -59018,7 +59094,7 @@ module Crystal::HIR
               init_match = false
               named_args.each do |na|
                 arg_name = String.new(na.name)
-                init_params.each do |p|
+                each_param(init_params) do |p|
                   next if p.is_block || named_only_separator?(p)
                   ext = p.external_name ? String.new(p.external_name.not_nil!) : nil
                   pname = p.name ? String.new(p.name.not_nil!) : nil
@@ -59048,7 +59124,7 @@ module Crystal::HIR
         param_type_names = [] of String?
         double_splat_index : Int32? = nil
 
-        params.each do |p|
+        each_param(params) do |p|
           next if p.is_block
           next if named_only_separator?(p)
           call_name = if ext = p.external_name
@@ -59271,7 +59347,7 @@ module Crystal::HIR
               init_def_da = init_match_da[1]
               if init_params_da = init_def_da.params
                 real_param_count = 0
-                init_params_da.each do |p|
+                each_param(init_params_da) do |p|
                   next if p.is_block || named_only_separator?(p)
                   real_param_count += 1
                 end
@@ -59287,7 +59363,7 @@ module Crystal::HIR
       param_types = [] of TypeRef
       param_type_names = [] of String?
 
-      params.each do |p|
+      each_param(params) do |p|
         next if p.is_block
         next if named_only_separator?(p)
         local_name = p.name ? String.new(p.name.not_nil!) : ""
@@ -59758,7 +59834,7 @@ module Crystal::HIR
       if params = block.params
         if params.size > 1
           # Tuple destructuring - extract each element
-          params.each_with_index do |param, idx|
+          each_param_with_index(params) do |param, idx|
             if pname = param.name
               name = String.new(pname)
               idx_lit = Literal.new(ctx.next_id, TypeRef::INT32, idx.to_i64)
@@ -59941,7 +60017,7 @@ module Crystal::HIR
       if params = block.params
         if params.size > 1
           # Tuple destructuring - extract each element
-          params.each_with_index do |param, idx|
+          each_param_with_index(params) do |param, idx|
             if pname = param.name
               name = String.new(pname)
               idx_lit = Literal.new(ctx.next_id, TypeRef::INT32, idx.to_i64)
@@ -60620,7 +60696,7 @@ module Crystal::HIR
           # Tuple destructuring: |(a, b, ...), idx| → params = [a, b, ..., idx]
           # Last param is the index, the rest are destructured tuple element names
           tuple_destruct_names = [] of String
-          params[0...-1].each do |p|
+          each_param(params[0...-1]) do |p|
             if pname = p.name
               tuple_destruct_names << String.new(pname)
             else
@@ -62522,7 +62598,7 @@ module Crystal::HIR
 
       # Bind block params to receiver_id
       if params = block_node.params
-        params.each_with_index do |param, i|
+        each_param_with_index(params) do |param, i|
           param_name = if param.name
                          String.new(param.name.not_nil!)
                        else
@@ -62564,7 +62640,7 @@ module Crystal::HIR
         # the receiver bound as the implicit block param.
         if params = proc_node.params
           # Bind each block param - for &.method, there's typically one implicit param
-          params.each_with_index do |param, i|
+          each_param_with_index(params) do |param, i|
             param_name = if param.name
                            String.new(param.name.not_nil!)
                          else
@@ -62618,7 +62694,7 @@ module Crystal::HIR
       ctx.push_scope(ScopeKind::Block)
 
       if params = block_node.params
-        params.each_with_index do |param, i|
+        each_param_with_index(params) do |param, i|
           param_name = if param.name
                          String.new(param.name.not_nil!)
                        else
@@ -62672,7 +62748,7 @@ module Crystal::HIR
       ctx.push_scope(ScopeKind::Block)
 
       if params = proc_node.params
-        params.each_with_index do |param, i|
+        each_param_with_index(params) do |param, i|
           param_name = if param.name
                          String.new(param.name.not_nil!)
                        else
@@ -63207,7 +63283,7 @@ module Crystal::HIR
 
           # Bind function parameters to call arguments
           if params = func_def.params
-            params.each_with_index do |param, idx|
+            each_param_with_index(params) do |param, idx|
               if pname = param.name
                 param_name = String.new(pname)
                 if param.is_block
@@ -63605,7 +63681,7 @@ module Crystal::HIR
                        caller_locals_before_params = ctx.save_locals
                        param_names = [] of String
                        if params = block.params
-                         params.each do |param|
+                         each_param(params) do |param|
                            if pname = param.name
                              param_names << String.new(pname)
                            end
@@ -67958,7 +68034,7 @@ module Crystal::HIR
       end
       assigned_vars = collect_assigned_vars(node.body).to_set
       if params = node.params
-        params.each do |param|
+        each_param(params) do |param|
           next unless param_name = param.name
           assigned_vars.delete(String.new(param_name))
         end
@@ -67988,7 +68064,7 @@ module Crystal::HIR
             end
           end
         end
-        params.each_with_index do |param, idx|
+        each_param_with_index(params) do |param, idx|
           if param_name = param.name
             name = String.new(param_name)
             param_type = if ta = param.type_annotation
@@ -68387,7 +68463,7 @@ module Crystal::HIR
       # Determine param types
       proc_param_types = [] of TypeRef
       if params = node.params
-        params.each_with_index do |param, idx|
+        each_param_with_index(params) do |param, idx|
           if param_name = param.name
             param_type = if ta = param.type_annotation
                            type_ref_for_name(String.new(ta))
@@ -68415,7 +68491,7 @@ module Crystal::HIR
       # Collect proc param names (to exclude from capture detection)
       proc_param_names = Set(String).new
       if params = node.params
-        params.each do |param|
+        each_param(params) do |param|
           if param_name = param.name
             proc_param_names.add(String.new(param_name))
           end
@@ -68519,7 +68595,7 @@ module Crystal::HIR
 
       # Add parameters to the standalone function
       if params = node.params
-        params.each_with_index do |param, idx|
+        each_param_with_index(params) do |param, idx|
           if param_name = param.name
             name = String.new(param_name)
             param_type = proc_param_types[idx]? || TypeRef::VOID
@@ -68659,7 +68735,7 @@ module Crystal::HIR
       # Determine param types from annotation or override
       proc_param_types = [] of TypeRef
       if params = block_node.params
-        params.each_with_index do |param, idx|
+        each_param_with_index(params) do |param, idx|
           if param_name = param.name
             param_type = if ta = param.type_annotation
                            type_ref_for_name(String.new(ta))
@@ -68733,7 +68809,7 @@ module Crystal::HIR
       # Collect block param names (to exclude from capture detection)
       block_param_names = Set(String).new
       if params = block_node.params
-        params.each do |param|
+        each_param(params) do |param|
           if pname = param.name
             block_param_names.add(String.new(pname))
           end
@@ -68836,7 +68912,7 @@ module Crystal::HIR
 
       # Add parameters to the standalone function
       if params = block_node.params
-        params.each_with_index do |param, idx|
+        each_param_with_index(params) do |param, idx|
           if pname = param.name
             name = String.new(pname)
             param_type = proc_param_types[idx]? || TypeRef::VOID
@@ -70373,7 +70449,7 @@ module Crystal::HIR
     private def signature_param_types_for_suffix_merge(node : CrystalV2::Compiler::Frontend::DefNode) : Array(TypeRef)
       types = [] of TypeRef
       if params = node.params
-        params.each do |param|
+        each_param(params) do |param|
           next if named_only_separator?(param) || param.is_block
           if ta = param.type_annotation
             types << type_ref_for_name(String.new(ta))
@@ -70478,7 +70554,7 @@ module Crystal::HIR
       return false unless params
 
       has_regular = false
-      params.each do |param|
+      each_param(params) do |param|
         next if named_only_separator?(param) || param.is_block || param.is_double_splat
         has_regular = true
         if ta = param.type_annotation
@@ -70496,7 +70572,7 @@ module Crystal::HIR
       params = func_def.params
       return false unless params
 
-      params.each do |param|
+      each_param(params) do |param|
         next if named_only_separator?(param) || param.is_block || param.is_double_splat
         if ta = param.type_annotation
           type_name = String.new(ta)
@@ -70514,7 +70590,7 @@ module Crystal::HIR
       params = func_def.params
       return false unless params
 
-      params.each do |param|
+      each_param(params) do |param|
         next if named_only_separator?(param) || param.is_block || param.is_double_splat
         next unless ta = param.type_annotation
         type_name = resolve_type_alias_chain(String.new(ta))
@@ -70530,7 +70606,7 @@ module Crystal::HIR
       params = func_def.params
       return false unless params
 
-      params.each do |param|
+      each_param(params) do |param|
         next if named_only_separator?(param) || param.is_block || param.is_double_splat
         next unless ta = param.type_annotation
         type_name = resolve_type_alias_chain(String.new(ta))
@@ -70548,7 +70624,7 @@ module Crystal::HIR
       params = func_def.params
       return false unless params
 
-      params.each do |param|
+      each_param(params) do |param|
         next if named_only_separator?(param) || param.is_block
         return true if param.is_splat && !param.is_double_splat
       end
