@@ -42753,6 +42753,20 @@ module Crystal::HIR
         end
       end
 
+      # Pointer(T) types that weren't registered with TypeKind::Pointer
+      # (e.g., Pointer(NamedTuple(...)) in complex generic monomorphizations)
+      # should get a null check, not a union nil check.
+      if value_type.id >= TypeRef::FIRST_USER_TYPE
+        type_name = get_type_name_from_ref(value_type)
+        if type_name.starts_with?("Pointer(")
+          nil_val = Literal.new(ctx.next_id, TypeRef::POINTER, 0_i64)
+          ctx.emit(nil_val)
+          ne_check = BinaryOperation.new(ctx.next_id, TypeRef::BOOL, BinaryOp::Ne, value_id, nil_val.id)
+          ctx.emit(ne_check)
+          return ne_check.id
+        end
+      end
+
       if is_union_or_nilable_type?(value_type)
         is_nil = lower_nil_check_intrinsic(ctx, value_id, value_type)
         not_nil = UnaryOperation.new(ctx.next_id, TypeRef::BOOL, UnaryOp::Not, is_nil)
