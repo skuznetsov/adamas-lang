@@ -132,7 +132,12 @@ module Crystal::MIR
       return false unless desc
       desc.variants.all? do |variant|
         next true if variant.type_ref == TypeRef::NIL || variant.type_ref == TypeRef::VOID
-        runtime_pointer_backed_union_variant?(@type_registry.get(variant.type_ref))
+        type = @type_registry.get(variant.type_ref)
+        if type
+          runtime_pointer_backed_union_variant?(type)
+        else
+          variant_name_is_pointer_backed?(variant.full_name)
+        end
       end
     end
 
@@ -261,7 +266,13 @@ module Crystal::MIR
           next unless desc.name == name
           return desc.variants.all? do |variant|
             next true if variant.type_ref == TypeRef::NIL || variant.type_ref == TypeRef::VOID
-            runtime_pointer_backed_union_variant?(@type_registry.get(variant.type_ref))
+            type = @type_registry.get(variant.type_ref)
+            if type
+              runtime_pointer_backed_union_variant?(type)
+            else
+              # Variant type not in registry — check ivar-qualified name
+              variant_name_is_pointer_backed?(variant.full_name)
+            end
           end
         end
       end
@@ -272,7 +283,8 @@ module Crystal::MIR
         if found = @type_registry.get_by_name(stripped)
           runtime_pointer_backed_union_variant?(found)
         else
-          false  # Unknown type — assume not all-ref to be safe
+          # Check for ivar-qualified names like "ClassName::ivar:TypeName"
+          variant_name_is_pointer_backed?(stripped)
         end
       end
     end
@@ -280,6 +292,22 @@ module Crystal::MIR
     private def runtime_pointer_backed_union_variant?(type : Type?) : Bool
       return false unless type
       type.kind.reference? || type.kind.array? || type.kind.pointer?
+    end
+
+    # Check if a variant type name represents a pointer-backed type by extracting
+    # the base type from an ivar-qualified name like "ClassName::ivar_name:TypeName".
+    private def variant_name_is_pointer_backed?(name : String) : Bool
+      i = name.bytesize - 1
+      while i > 0
+        if name.byte_at(i) == ':'.ord && name.byte_at(i - 1) != ':'.ord
+          base_name = name[(i + 1)..]
+          base_type = @type_registry.get_by_name(base_name)
+          return runtime_pointer_backed_union_variant?(base_type) if base_type
+          return false
+        end
+        i -= 1
+      end
+      false
     end
 
     private def compute_tuple_type(type : Type) : String

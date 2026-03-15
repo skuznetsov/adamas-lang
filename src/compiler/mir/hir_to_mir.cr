@@ -646,13 +646,38 @@ module Crystal
     private def all_ref_union_descriptor?(descriptor : UnionDescriptor) : Bool
       descriptor.variants.all? do |variant|
         next true if variant.type_ref == TypeRef::NIL || variant.type_ref == TypeRef::VOID
-        runtime_pointer_backed_union_variant?(@mir_module.type_registry.get(variant.type_ref))
+        type = @mir_module.type_registry.get(variant.type_ref)
+        if type
+          runtime_pointer_backed_union_variant?(type)
+        else
+          # Variant type not in registry — possibly an ivar-qualified type name
+          # like "Crystal::HIR::AstToHir::class_name:String". Extract the base
+          # type after the last single colon (not part of ::) and check it.
+          variant_name_is_pointer_backed?(variant.full_name)
+        end
       end
     end
 
     private def runtime_pointer_backed_union_variant?(type : Type?) : Bool
       return false unless type
       type.kind.reference? || type.kind.array? || type.kind.pointer?
+    end
+
+    # Check if a variant type name represents a pointer-backed type by extracting
+    # the base type from an ivar-qualified name like "ClassName::ivar_name:TypeName".
+    private def variant_name_is_pointer_backed?(name : String) : Bool
+      # Walk backwards to find the last single colon (not part of ::)
+      i = name.bytesize - 1
+      while i > 0
+        if name.byte_at(i) == ':'.ord && name.byte_at(i - 1) != ':'.ord
+          base_name = name[(i + 1)..]
+          base_type = @mir_module.type_registry.get_by_name(base_name)
+          return runtime_pointer_backed_union_variant?(base_type) if base_type
+          return false
+        end
+        i -= 1
+      end
+      false
     end
 
     private def finalize_pointer_backed_union_layouts : Nil
