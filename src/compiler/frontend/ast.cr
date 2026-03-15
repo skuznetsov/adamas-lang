@@ -3995,13 +3995,6 @@ module CrystalV2
           if idx < 0 || idx >= @count
             if ENV["DEBUG_PAGEARENA_OOB"]?
               STDERR.puts "[PAGEARENA_OOB] idx=#{idx} size=#{@count}"
-              begin
-                raise "page arena oob"
-              rescue ex
-                if bt = ex.backtrace?
-                  bt.first(20).each { |line| STDERR.puts "[PAGEARENA_OOB] #{line}" }
-                end
-              end
             end
             raise IndexError.new("PageArena index out of bounds: #{idx} (size #{@count})")
           end

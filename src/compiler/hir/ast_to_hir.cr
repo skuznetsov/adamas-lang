@@ -5244,6 +5244,7 @@ module Crystal::HIR
         if body = node.body
           # First pass: register lib-local types so extern param/return types resolve correctly.
           body.each_with_index do |expr_id, i|
+            next if expr_id.null_ptr? || expr_id.invalid?
             body_node = @arena[expr_id]
             if debug_lib_member
               STDERR.puts "[LIB_MEMBER] lib=#{lib_name} pass=types idx=#{i + 1}/#{body.size} kind=#{body_node.class.name.split("::").last} node_kind=#{CrystalV2::Compiler::Frontend.node_kind(body_node)} is_alias=#{body_node.is_a?(CrystalV2::Compiler::Frontend::AliasNode) ? 1 : 0} detail=#{debug_lib_member_label(body_node)}"
@@ -5253,6 +5254,7 @@ module Crystal::HIR
 
           # Second pass: register extern functions after types are available.
           body.each_with_index do |expr_id, i|
+            next if expr_id.null_ptr? || expr_id.invalid?
             body_node = @arena[expr_id]
             if debug_lib_member
               STDERR.puts "[LIB_MEMBER] lib=#{lib_name} pass=externs idx=#{i + 1}/#{body.size} kind=#{body_node.class.name.split("::").last} node_kind=#{CrystalV2::Compiler::Frontend.node_kind(body_node)} is_alias=#{body_node.is_a?(CrystalV2::Compiler::Frontend::AliasNode) ? 1 : 0} detail=#{debug_lib_member_label(body_node)}"
@@ -5286,10 +5288,22 @@ module Crystal::HIR
       case node
       when CrystalV2::Compiler::Frontend::AliasNode
         return unless pass == :types
-        alias_name = String.new(node.name)
+        # V2 stage2: Slice(UInt8) struct fields (name, value) may be dangling pointers.
+        # Always prefer source-based extraction for reliability.
+        pair = extract_alias_name_value_from_source(node, @arena)
+        if pair
+          alias_name = pair[0]
+          raw_value = pair[1]
+        else
+          # Fallback to direct Slice access (works in stage1)
+          alias_name = safe_slice_to_string(node.name)
+          raw_value = safe_slice_to_string(node.value)
+        end
+        return if alias_name.nil? || alias_name.empty?
+        return if raw_value.nil? || raw_value.empty?
         old_class = @current_class
         @current_class = lib_name
-        target_name = resolve_alias_target(String.new(node.value), lib_name)
+        target_name = resolve_alias_target(raw_value, lib_name)
         @current_class = old_class
         full_alias_name = "#{lib_name}::#{alias_name}"
         register_type_alias(full_alias_name, target_name)
@@ -7713,6 +7727,11 @@ module Crystal::HIR
 
     private def resolve_alias_target(target_name : String, context : String? = nil) : String
       raw = target_name
+      # Fast path: builtin/primitive type names don't need normalization.
+      # This avoids potential V2 stage2 crashes in normalize_declared_type_name.
+      if builtin_alias_target?(raw) || LIBC_TYPE_ALIASES.has_key?(raw) || BUILTIN_TYPE_NAMES.includes?(raw)
+        return raw
+      end
       # IMPORTANT: When `context` is provided we intentionally avoid pre/post qualification here.
       # `normalize_declared_type_name(..., context)` already resolves names under `@current_class=context`
       # (including `typeof(self)`), and qualifying first can mis-classify `typeof(...)` as a generic
@@ -7819,8 +7838,8 @@ module Crystal::HIR
               bare_resolved = strip_generic_args(resolved_base)
               bare_ctx = strip_generic_args(ctx_base)
               # Also resolve the annotation base to handle module/namespace differences
-              bare_resolved_full = resolve_type_name_in_context(bare_resolved) rescue bare_resolved
-              bare_ctx_full = resolve_type_name_in_context(bare_ctx) rescue bare_ctx
+              bare_resolved_full = safe_resolve_type_name_in_context(bare_resolved) || bare_resolved
+              bare_ctx_full = safe_resolve_type_name_in_context(bare_ctx) || bare_ctx
               if bare_resolved == bare_ctx || bare_resolved_full == bare_ctx_full ||
                  bare_resolved_full == bare_ctx || bare_resolved == bare_ctx_full
                 ctx_args = split_top_level_type_args(ctx_split[:args])
@@ -7973,6 +7992,44 @@ module Crystal::HIR
     private def safe_node(expr_id : ExprId) : CrystalV2::Compiler::Frontend::Node?
       return nil if expr_id.null_ptr? || expr_id.invalid?
       @arena.[]?(expr_id)
+    end
+
+    # V2 stage2 safe Slice(UInt8) → String conversion.
+    # In V2, Slice is a struct (pointer + size) that may be dangling.
+    # Validates the pointer address and size before constructing a String.
+    private def safe_slice_to_string(slice : Slice(UInt8)) : String?
+      ptr = slice.to_unsafe
+      return nil if ptr.address == 0_u64
+      return nil if ptr.address < 4096_u64 # likely corrupted/null-page pointer
+      sz = slice.size
+      return nil if sz < 0 || sz > 10_000_000 # sanity check
+      return "" if sz == 0
+      String.new(slice)
+    end
+
+    # Extract alias name and target type from source text when Slice fields are corrupted.
+    # Parses "alias Foo = Bar" or "type Foo = Bar" from the source span.
+    private def extract_alias_name_value_from_source(
+      node : CrystalV2::Compiler::Frontend::AliasNode,
+      arena : CrystalV2::Compiler::Frontend::ArenaLike,
+    ) : {String, String}?
+      source = source_for_arena(arena)
+      return nil unless source
+      snippet = slice_source_for_span(node.span, source)
+      return nil unless snippet
+      text = strip_single_line_comments(snippet).strip
+      # Match "alias Foo = Bar" or "type Foo = Bar"
+      eq_idx = text.index('=')
+      return nil unless eq_idx
+      left = text.byte_slice(0, eq_idx).strip
+      target = text.byte_slice(eq_idx + 1, text.bytesize - eq_idx - 1).strip
+      return nil if target.empty?
+      # Left side: "alias Foo" or "type Foo" — extract the name
+      space_idx = left.rindex(' ') || left.rindex('\t')
+      return nil unless space_idx
+      alias_name = left.byte_slice(space_idx + 1, left.bytesize - space_idx - 1).strip
+      return nil if alias_name.empty?
+      {alias_name, target}
     end
 
     private def node_for_expr(expr_id : ExprId) : CrystalV2::Compiler::Frontend::Node?
@@ -8543,13 +8600,12 @@ module Crystal::HIR
 
       if body = node.body
         body.each do |expr_id|
+          next if expr_id.null_ptr? || expr_id.invalid?
           return false unless expr_id_matches_arena?(arena, expr_id)
         end
       end
 
       span_fits_source?(arena, node.span)
-    rescue IndexError
-      false
     end
 
     private def resolve_arena_for_enum_node(
@@ -8649,8 +8705,6 @@ module Crystal::HIR
     ) : Bool
       body = func_def.body
       body_ids_match_arena?(arena, body)
-    rescue IndexError
-      false
     end
 
     private def body_ids_match_arena?(
@@ -8712,11 +8766,10 @@ module Crystal::HIR
       arena : CrystalV2::Compiler::Frontend::ArenaLike,
       expr_id : ExprId,
     ) : String
+      return "null_ptr" if expr_id.null_ptr?
       return "invalid" if expr_id.invalid?
       return "oob(#{expr_id.index}/#{arena.size})" if expr_id.index < 0 || expr_id.index >= arena.size
       arena[expr_id].class.name.split("::").last
-    rescue ex
-      "error(#{ex.class.name.split("::").last})"
     end
 
     private def debug_def_arena_summary(
@@ -15032,13 +15085,12 @@ module Crystal::HIR
       member_name = String.new(node.name)
       value = members.values.max? || -1_i64
       value += 1
-      begin
-        resolved = resolve_constant_value_from_source(node, @arena)
-        resolved ||= resolve_enum_member_value(node.value)
-        if resolved
-          value = resolved
-        end
-      rescue ex
+      resolved = resolve_constant_value_from_source(node, @arena)
+      if resolved.nil? && !node.value.null_ptr? && !node.value.invalid?
+        resolved = resolve_enum_member_value(node.value)
+      end
+      if resolved
+        value = resolved
       end
       members[member_name] = value unless members.has_key?(member_name)
     end
@@ -15999,8 +16051,8 @@ module Crystal::HIR
       if full_name.includes?("BinaryFormat") && full_name == "Float::FastFloat::BinaryFormat"
         body_methods = [] of String
         body_size = node.body.try(&.size) || 0
-        start_line = node.span.start_line rescue 0
-        end_line = node.span.end_line rescue 0
+        start_line = node.span.start_line
+        end_line = node.span.end_line
         if b = node.body
           b.each do |id|
             next if id.null_ptr? || id.invalid?
@@ -20006,21 +20058,11 @@ module Crystal::HIR
             saved_class = @current_class
             @arena = default_arena
             @current_class = class_name
-            begin
-              default_id = lower_expr(ctx, default_expr_id)
-              ivar_store = FieldSet.new(ctx.next_id, ivar.type, alloc.id, ivar.name, default_id, ivar.offset)
-              ctx.emit(ivar_store)
-            rescue ex
-              # Fallback to zero/nil if expression can't be lowered
-              STDERR.puts "[ALLOC_DEFAULT_FAIL] #{class_name}##{ivar.name}: #{ex.message} (#{ex.class})"
-              default_val = Literal.new(ctx.next_id, ivar.type, nil)
-              ctx.emit(default_val)
-              ivar_store = FieldSet.new(ctx.next_id, ivar.type, alloc.id, ivar.name, default_val.id, ivar.offset)
-              ctx.emit(ivar_store)
-            ensure
-              @arena = saved_arena
-              @current_class = saved_class
-            end
+            default_id = lower_expr(ctx, default_expr_id)
+            ivar_store = FieldSet.new(ctx.next_id, ivar.type, alloc.id, ivar.name, default_id, ivar.offset)
+            ctx.emit(ivar_store)
+            @arena = saved_arena
+            @current_class = saved_class
             next
           end
           # Fall through for lazy getters: zero/nil the field below
@@ -20424,19 +20466,11 @@ module Crystal::HIR
             saved_class = @current_class
             @arena = default_arena
             @current_class = class_name
-            begin
-              default_id = lower_expr(ctx, default_expr_id)
-              ivar_store = FieldSet.new(ctx.next_id, ivar.type, alloc.id, ivar.name, default_id, ivar.offset)
-              ctx.emit(ivar_store)
-            rescue ex
-              default_val = Literal.new(ctx.next_id, ivar.type, nil)
-              ctx.emit(default_val)
-              ivar_store = FieldSet.new(ctx.next_id, ivar.type, alloc.id, ivar.name, default_val.id, ivar.offset)
-              ctx.emit(ivar_store)
-            ensure
-              @arena = saved_arena
-              @current_class = saved_class
-            end
+            default_id = lower_expr(ctx, default_expr_id)
+            ivar_store = FieldSet.new(ctx.next_id, ivar.type, alloc.id, ivar.name, default_id, ivar.offset)
+            ctx.emit(ivar_store)
+            @arena = saved_arena
+            @current_class = saved_class
             next
           end
         end
@@ -21229,24 +21263,21 @@ module Crystal::HIR
           source = source_for_arena(@arena)
           body.each_with_index do |expr_id, idx|
             break if idx >= 50
-            begin
-              node_at = @arena[expr_id]
-              snippet = nil
-              if source
-                source_str = source.not_nil!
-                span = node_at.span
-                start = span.start_offset
-                length = span.end_offset - span.start_offset
-                if length > 0 && start >= 0 && start < source_str.bytesize
-                  slice_len = length > 80 ? 80 : length
-                  snippet = source_str.byte_slice(start, slice_len).gsub(/\s+/, " ").strip
-                end
+            next if expr_id.null_ptr? || expr_id.invalid?
+            node_at = @arena[expr_id]
+            snippet = nil
+            if source
+              source_str = source.not_nil!
+              span = node_at.span
+              start = span.start_offset
+              length = span.end_offset - span.start_offset
+              if length > 0 && start >= 0 && start < source_str.bytesize
+                slice_len = length > 80 ? 80 : length
+                snippet = source_str.byte_slice(start, slice_len).gsub(/\s+/, " ").strip
               end
-              snippet_label = snippet ? " \"#{snippet}\"" : ""
-              STDERR.puts "[DEBUG_STRING_COMPARE_DUMP] idx=#{idx} expr=#{expr_id.index} node=#{node_at.class.name}#{snippet_label}"
-            rescue ex
-              STDERR.puts "[DEBUG_STRING_COMPARE_DUMP] idx=#{idx} expr=#{expr_id.index} error=#{ex.message}"
             end
+            snippet_label = snippet ? " \"#{snippet}\"" : ""
+            STDERR.puts "[DEBUG_STRING_COMPARE_DUMP] idx=#{idx} expr=#{expr_id.index} node=#{node_at.class.name}#{snippet_label}"
           end
         end
       end
@@ -21922,12 +21953,13 @@ module Crystal::HIR
             if debug_env_filter_match?("DEBUG_LOWER_BYTE", method_name, base_name)
               STDERR.puts "[LOWER_METHOD] BODY size=#{body.size} expressions"
               body.each_with_index do |expr_id, i|
-                begin
-                  expr_node = @arena[expr_id]
-                  STDERR.puts "[LOWER_METHOD]   [#{i}] expr=#{expr_id.index} type=#{expr_node.class.name.split("::").last}"
-                rescue
+                next if expr_id.null_ptr? || expr_id.invalid?
+                if expr_id.index < 0 || expr_id.index >= @arena.size
                   STDERR.puts "[LOWER_METHOD]   [#{i}] expr=#{expr_id.index} (OOB)"
+                  next
                 end
+                expr_node = @arena[expr_id]
+                STDERR.puts "[LOWER_METHOD]   [#{i}] expr=#{expr_id.index} type=#{expr_node.class.name.split("::").last}"
               end
             end
             # Use the stored arena for this function to avoid cross-file contamination.
@@ -22010,7 +22042,7 @@ module Crystal::HIR
                       STDERR.puts "[LOWER_PROGRESS] method=#{base_name} idx=#{idx}/#{body.size}"
                     end
                   else
-                    begin
+                    if !expr_id.null_ptr? && !expr_id.invalid? && expr_id.index >= 0 && expr_id.index < @arena.size
                       expr_node = @arena[expr_id]
                       if source = source_for_arena(@arena)
                         source_str = source.not_nil!
@@ -22027,7 +22059,7 @@ module Crystal::HIR
                       else
                         STDERR.puts "[LOWER_PROGRESS] method=#{base_name} idx=#{idx} node=#{expr_node.class.name}"
                       end
-                    rescue
+                    else
                       STDERR.puts "[LOWER_PROGRESS] method=#{base_name} idx=#{idx} node=(OOB)"
                     end
                   end
@@ -22035,7 +22067,7 @@ module Crystal::HIR
                 expr_start = slow_ms ? Time.instant : nil
                 if debug_env_filter_match?("DEBUG_CALL_TRACE", method_name, base_name, full_name)
                   STDERR.puts "[LOWER_METHOD] expr=#{expr_id.index} idx=#{idx} arena=#{@arena.size}"
-                  begin
+                  if !expr_id.null_ptr? && !expr_id.invalid? && expr_id.index >= 0 && expr_id.index < @arena.size
                     expr_node = @arena[expr_id]
                     if source = source_for_arena(@arena)
                       source_str = source.not_nil!
@@ -22052,17 +22084,11 @@ module Crystal::HIR
                     else
                       STDERR.puts "[LOWER_METHOD] node=#{expr_node.class} span=#{expr_node.span.start_offset}..#{expr_node.span.end_offset}"
                     end
-                  rescue ex
-                    STDERR.puts "[LOWER_METHOD] inspect_failed expr=#{expr_id.index} error=#{ex.message}"
+                  else
+                    STDERR.puts "[LOWER_METHOD] inspect_failed expr=#{expr_id.index} (null/invalid/OOB)"
                   end
                 end
-                begin
-                  last_value = lower_expr(ctx, expr_id)
-                rescue ex : KeyError
-                  STDERR.puts "[KEY_ERROR] method=#{base_name} idx=#{idx} expr=#{expr_id.index} error=#{ex.message}"
-                  STDERR.puts ex.backtrace.first(20).join("\n")
-                  raise ex
-                end
+                last_value = lower_expr(ctx, expr_id)
                 if slow_ms && expr_start
                   elapsed = (Time.instant - expr_start).total_milliseconds
                   if elapsed >= slow_ms
@@ -24263,7 +24289,7 @@ module Crystal::HIR
 
       # DEBUG: Trace empty class names for specific methods
       if env_has?("DEBUG_EMPTY_CLASS") && class_name.empty?
-        func_name = ctx.function.name rescue "unknown"
+        func_name = ctx.function.name
         current = @current_class || "(nil)"
         recv_value = ctx.value_for(receiver_id)
         recv_info = recv_value ? "#{recv_value.class.name.split("::").last}(src=#{recv_value.is_a?(Copy) ? recv_value.source : "N/A"})" : "nil"
@@ -26850,43 +26876,33 @@ module Crystal::HIR
         changed = false
         iterations += 1
         @lib_structs.each do |struct_name|
-          begin
-            info = @class_info[struct_name]?
-            next unless info && info.is_struct && !info.ivars.empty?
+          info = @class_info[struct_name]?
+          next unless info && info.is_struct && !info.ivars.empty?
 
-            # Recompute size from fields using current (possibly updated) type sizes
-            offset = 0_i32
-            new_ivars = [] of IVarInfo
-            source_ivars = info.ivars
-            ivar_idx = 0
-            while ivar_idx < source_ivars.size
-              ivar = source_ivars[ivar_idx]
-              offset = align_offset(offset, type_alignment(ivar.type, true))
-              new_ivars << IVarInfo.new(ivar.name, ivar.type, offset, ivar.default_expr_id, ivar.default_arena)
-              offset += field_storage_size(ivar.type, true)
-              ivar_idx += 1
-            end
+          # Recompute size from fields using current (possibly updated) type sizes
+          offset = 0_i32
+          new_ivars = [] of IVarInfo
+          source_ivars = info.ivars
+          ivar_idx = 0
+          while ivar_idx < source_ivars.size
+            ivar = source_ivars[ivar_idx]
+            offset = align_offset(offset, type_alignment(ivar.type, true))
+            new_ivars << IVarInfo.new(ivar.name, ivar.type, offset, ivar.default_expr_id, ivar.default_arena)
+            offset += field_storage_size(ivar.type, true)
+            ivar_idx += 1
+          end
 
-            if !new_ivars.empty?
-              max_align = new_ivars.max_of { |iv| type_alignment(iv.type, true) }
-              offset = align_offset(offset, max_align)
-            end
+          if !new_ivars.empty?
+            max_align = new_ivars.max_of { |iv| type_alignment(iv.type, true) }
+            offset = align_offset(offset, max_align)
+          end
 
-            if offset != info.size
-              new_info = ClassInfo.new(info.name, info.type_ref, new_ivars, info.class_vars, offset, info.is_struct, info.parent_name)
-              @class_info[struct_name] = new_info
-              @class_info_by_type_id[info.type_ref.id] = new_info
-              bump_class_info_version
-              changed = true
-            end
-          rescue ex
-            if ENV["DEBUG_C_STRUCT_RECOMPUTE"]? || ENV["STAGE2_BOOTSTRAP_TRACE"]?
-              STDERR.puts "[C_STRUCT_RECOMPUTE_FAIL] struct=#{struct_name} ex=#{ex.class} msg=#{ex.message.inspect}"
-              if bt = ex.backtrace?
-                bt.first(12).each { |line| STDERR.puts "[C_STRUCT_RECOMPUTE_FAIL]   #{line}" }
-              end
-            end
-            raise ex
+          if offset != info.size
+            new_info = ClassInfo.new(info.name, info.type_ref, new_ivars, info.class_vars, offset, info.is_struct, info.parent_name)
+            @class_info[struct_name] = new_info
+            @class_info_by_type_id[info.type_ref.id] = new_info
+            bump_class_info_version
+            changed = true
           end
         end
       end
@@ -29633,6 +29649,13 @@ module Crystal::HIR
       end
     end
 
+    # V2 stage2 safe wrapper: avoids rescue (broken setjmp) by returning nil on failure indicators.
+    @[AlwaysInline]
+    private def safe_resolve_type_name_in_context(name : String) : String?
+      return nil if name.empty?
+      resolve_type_name_in_context(name)
+    end
+
     private def resolve_type_name_in_signature_context_impl(name : String) : String
       return name if name.empty?
       name = normalize_missing_generic_parens(name)
@@ -31135,12 +31158,7 @@ module Crystal::HIR
       return unless env_has?("DEBUG_GENERIC_SPLIT_VALIDATE")
 
       if value
-        begin
-          STDERR.puts "[GEN_SPLIT_VALIDATE] label=#{label} name=#{name} base=#{value.base} args=#{value.args}"
-        rescue ex
-          STDERR.puts "[GEN_SPLIT_VALIDATE_ERR] label=#{label} name=#{name} ex=#{ex.class} msg=#{ex.message}"
-          raise ex
-        end
+        STDERR.puts "[GEN_SPLIT_VALIDATE] label=#{label} name=#{name} base=#{value.base} args=#{value.args}"
       else
         STDERR.puts "[GEN_SPLIT_VALIDATE] label=#{label} name=#{name} nil"
       end
@@ -35198,28 +35216,26 @@ module Crystal::HIR
         end
         @deferred_constant_inits.each do |(owner, const_name, value_index, init_arena)|
           value_id = CrystalV2::Compiler::Frontend::ExprId.new(value_index)
+          next if value_id.null_ptr? || value_id.invalid?
           @arena = init_arena
           old_class = @current_class
           @current_class = owner == "$" ? nil : owner
-          begin
-            if env_has?("DEBUG_DEFERRED_CONST")
+          if env_has?("DEBUG_DEFERRED_CONST")
+            if value_id.index >= 0 && value_id.index < @arena.size
               val_node = @arena[value_id]
               STDERR.puts "[DEFERRED_CONST] Lowering #{owner}::#{const_name} val_node=#{val_node.class.name}"
             end
-            value = lower_expr(ctx, value_id)
-            value_type = ctx.type_of(value)
-            full_name = constant_full_name(owner == "$" ? nil : owner, const_name)
-            storage_owner, storage_name = constant_storage_info(full_name)
-            if env_has?("DEBUG_DEFERRED_CONST")
-              STDERR.puts "[DEFERRED_CONST] OK #{owner}::#{const_name} → value=#{value} type=#{value_type.id}"
-            end
-            set = ClassVarSet.new(ctx.next_id, value_type, storage_owner, storage_name, value)
-            ctx.emit(set)
-          rescue ex
-            STDERR.puts "[DEFERRED_CONST_ERROR] Failed to lower #{owner}::#{const_name}: #{ex.message}"
-          ensure
-            @current_class = old_class
           end
+          value = lower_expr(ctx, value_id)
+          value_type = ctx.type_of(value)
+          full_name = constant_full_name(owner == "$" ? nil : owner, const_name)
+          storage_owner, storage_name = constant_storage_info(full_name)
+          if env_has?("DEBUG_DEFERRED_CONST")
+            STDERR.puts "[DEFERRED_CONST] OK #{owner}::#{const_name} → value=#{value} type=#{value_type.id}"
+          end
+          set = ClassVarSet.new(ctx.next_id, value_type, storage_owner, storage_name, value)
+          ctx.emit(set)
+          @current_class = old_class
         end
         @arena = old_arena
         @deferred_constant_inits.clear
@@ -35287,21 +35303,17 @@ module Crystal::HIR
         end
         @deferred_constant_inits.each do |(owner, const_name, value_index, init_arena)|
           value_id = CrystalV2::Compiler::Frontend::ExprId.new(value_index)
+          next if value_id.null_ptr? || value_id.invalid?
           @arena = init_arena
           old_class = @current_class
           @current_class = owner == "$" ? nil : owner
-          begin
-            value = lower_expr(ctx, value_id)
-            value_type = ctx.type_of(value)
-            full_name = constant_full_name(owner == "$" ? nil : owner, const_name)
-            storage_owner, storage_name = constant_storage_info(full_name)
-            set = ClassVarSet.new(ctx.next_id, value_type, storage_owner, storage_name, value)
-            ctx.emit(set)
-          rescue ex
-            STDERR.puts "[DEFERRED_CONST_ERROR] Failed to lower #{owner}::#{const_name}: #{ex.message}"
-          ensure
-            @current_class = old_class
-          end
+          value = lower_expr(ctx, value_id)
+          value_type = ctx.type_of(value)
+          full_name = constant_full_name(owner == "$" ? nil : owner, const_name)
+          storage_owner, storage_name = constant_storage_info(full_name)
+          set = ClassVarSet.new(ctx.next_id, value_type, storage_owner, storage_name, value)
+          ctx.emit(set)
+          @current_class = old_class
         end
         @arena = old_arena
         @deferred_constant_inits.clear
@@ -36150,25 +36162,21 @@ module Crystal::HIR
             STDERR.puts "[INLINE_CRASH] block_oob expr=#{expr_id.index} block=#{ctx.current_block} size=#{ctx.function.blocks.size} stack=#{stack}"
           end
           STDERR.puts "[INLINE_CRASH] lower_expr id=#{expr_id.index} arena=#{@arena.class} size=#{@arena.size} stack=#{stack}"
-          if expr_id.index >= 300 && expr_id.index <= 306
-            begin
-              node = @arena[expr_id]
-              if source = source_for_arena(@arena)
-                span = node.span
-                start = span.start_offset
-                length = span.end_offset - span.start_offset
-                if length > 0 && start >= 0 && start < source.bytesize
-                  slice_len = length > 120 ? 120 : length
-                  snippet = source.byte_slice(start, slice_len).gsub(/\s+/, " ").strip
-                  STDERR.puts "[INLINE_CRASH] node=#{node.class} span=#{start}..#{span.end_offset} \"#{snippet}\""
-                else
-                  STDERR.puts "[INLINE_CRASH] node=#{node.class} span=#{start}..#{span.end_offset}"
-                end
+          if expr_id.index >= 300 && expr_id.index <= 306 && expr_id.index < @arena.size
+            node = @arena[expr_id]
+            if source = source_for_arena(@arena)
+              span = node.span
+              start = span.start_offset
+              length = span.end_offset - span.start_offset
+              if length > 0 && start >= 0 && start < source.bytesize
+                slice_len = length > 120 ? 120 : length
+                snippet = source.byte_slice(start, slice_len).gsub(/\s+/, " ").strip
+                STDERR.puts "[INLINE_CRASH] node=#{node.class} span=#{start}..#{span.end_offset} \"#{snippet}\""
               else
-                STDERR.puts "[INLINE_CRASH] node=#{node.class} span=#{node.span.start_offset}..#{node.span.end_offset}"
+                STDERR.puts "[INLINE_CRASH] node=#{node.class} span=#{start}..#{span.end_offset}"
               end
-            rescue ex
-              STDERR.puts "[INLINE_CRASH] failed to inspect expr=#{expr_id.index} error=#{ex.message}"
+            else
+              STDERR.puts "[INLINE_CRASH] node=#{node.class} span=#{node.span.start_offset}..#{node.span.end_offset}"
             end
           end
         end
@@ -36188,7 +36196,7 @@ module Crystal::HIR
           stack = @inline_yield_name_stack.join(" -> ")
           block_debug = ""
           if blk = @inline_yield_block_stack.last?
-            invalid_body = blk.body.count(&.invalid?) rescue 0
+            invalid_body = blk.body.count(&.invalid?)
             block_debug = " block_invalid=#{invalid_body}"
           end
           STDERR.puts "[EXPR_OOB] expr=#{expr_id.index} arena=#{arena.class}:#{arena.size} func=#{ctx.function.name} current=#{@current_class || ""} method=#{@current_method || ""} inline=#{stack}#{block_debug}"
@@ -47622,45 +47630,26 @@ module Crystal::HIR
       old_arena = @arena
       @arena = arena
 
-      begin
-        # Extract self_type from name for context
-        self_type = nil
-        if hash_idx = base_name.rindex('#')
-          self_type = base_name[0, hash_idx]
-        elsif dot_idx = base_name.rindex('.')
-          self_type = base_name[0, dot_idx]
-        end
-
-        # Try to infer return type from body
-        # Wrap in rescue to handle arena mismatches gracefully
-        begin
-          if inferred = infer_concrete_return_type_from_body(func_def, self_type)
-            # Cache the inferred return type
-            if inferred != TypeRef::VOID
-              @function_base_return_types[base_name] = inferred
-            end
-          end
-        rescue ex
-          # Arena mismatch or other error - just skip eager inference
-          # The type will be inferred later when the function is fully lowered
-        end
-      ensure
-        @arena = old_arena
+      # Extract self_type from name for context
+      self_type = nil
+      if hash_idx = base_name.rindex('#')
+        self_type = base_name[0, hash_idx]
+      elsif dot_idx = base_name.rindex('.')
+        self_type = base_name[0, dot_idx]
       end
+
+      # Try to infer return type from body
+      if inferred = infer_concrete_return_type_from_body(func_def, self_type)
+        # Cache the inferred return type
+        if inferred != TypeRef::VOID
+          @function_base_return_types[base_name] = inferred
+        end
+      end
+      @arena = old_arena
     end
 
     private def lower_function_if_needed(name : String) : Nil
-      begin
-        lower_function_if_needed_impl(name)
-      rescue ex : KeyError
-        STDERR.puts "[KEY_ERROR_TOP] name=#{name} error=#{ex.message}"
-        STDERR.flush
-        ex.backtrace.first(30).each do |line|
-          STDERR.puts line
-        end
-        STDERR.flush
-        raise ex
-      end
+      lower_function_if_needed_impl(name)
     end
 
     # Force-lower a function immediately even if we're inside lowering.
@@ -47698,23 +47687,10 @@ module Crystal::HIR
       saved_depth = @lowering_depth
       @lowering_depth = 0
       @force_lower_return_type_depth += 1
-      begin
-        lower_function_if_needed_impl(name)
-        true
-      rescue ex
-        STDERR.puts "[FORCE_LOWER_ERROR] name=#{name} error=#{ex.message}"
-        if env_get("DEBUG_FORCE_LOWER")
-          STDERR.flush
-          ex.backtrace.first(30).each do |line|
-            STDERR.puts line
-          end
-          STDERR.flush
-        end
-        false
-      ensure
-        @lowering_depth = saved_depth
-        @force_lower_return_type_depth -= 1
-      end
+      lower_function_if_needed_impl(name)
+      @lowering_depth = saved_depth
+      @force_lower_return_type_depth -= 1
+      true
     end
 
     private def lower_function_if_needed_impl(name : String) : Nil
@@ -49543,7 +49519,6 @@ module Crystal::HIR
               merged_params = extra_type_params ? extra_params.merge(extra_type_params) : extra_params
               with_isolated_type_param_map(merged_params) do
                 with_namespace_override_or_clear(namespace_override) do
-                  begin
                     # Arity mismatch fix: if func_def has fewer params than
                     # call_arg_types, the base-name lookup found the wrong
                     # overload. Try to find the correct arity version.
@@ -49577,11 +49552,6 @@ module Crystal::HIR
                       STDERR.puts "[ENTRY_MATCHES_LOWER] name=#{name} target=#{target_name} owner=#{owner} override=#{override} param_count=#{param_count} call_arg_types=#{call_arg_types.try(&.map(&.id).join(",")) || "nil"} type_params=#{type_param_map_debug_string}"
                     end
                     lower_method(owner, class_info, func_def, call_arg_types, call_arg_literals, call_arg_enum_names, override, force_class_method: force_class_method)
-                  rescue ex : KeyError
-                    STDERR.puts "[KEY_ERROR_DEFERRED] target=#{target_name} owner=#{owner} override=#{override} call_arg_types=#{call_arg_types.try(&.map(&.id).join(",")) || "nil"}"
-                    STDERR.puts ex.backtrace.first(20).join("\n")
-                    raise ex
-                  end
                 end
               end
               @current_class = old_class
@@ -62837,8 +62807,7 @@ module Crystal::HIR
       ctx.restore_locals(preserved_locals)
       @inline_yield_function_depth += 1
 
-      begin
-        pushed_name = false
+      pushed_name = false
         pushed_block = false
         pushed_override = false
 
@@ -63125,15 +63094,6 @@ module Crystal::HIR
               phi.id
             end
           end
-        rescue ex
-          if env_has?("DEBUG_INLINE_RETURN")
-            STDERR.puts "[INLINE_RETURN] error=#{ex.message} callee=#{inline_key} func=#{ctx.function.name} incoming=#{inline_return.incoming.size} blocks=#{ctx.function.blocks.size}"
-            inline_return.incoming.each do |(blk, val)|
-              STDERR.puts "[INLINE_RETURN]   blk=#{blk} val=%#{val} type=#{get_type_name_from_ref(ctx.type_of(val))}"
-            end
-          end
-          raise ex
-        end
       ensure
         @current_class = old_current_class
         @current_method = old_current_method
