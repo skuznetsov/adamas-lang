@@ -5567,6 +5567,7 @@ module Crystal::HIR
         end
       when CrystalV2::Compiler::Frontend::ClassNode
         return unless pass == :types
+        safe_str_guard(node.name, "return")
         struct_name = String.new(node.name)
         full_struct_name = "#{lib_name}::#{struct_name}"
         @lib_structs.add(full_struct_name)
@@ -8228,10 +8229,29 @@ module Crystal::HIR
     # V2 stage2 safe Slice(UInt8) → String conversion.
     # In V2, Slice is a struct (pointer + size) that may be dangling.
     # Validates the pointer address and size before constructing a String.
+    #
+    # safe_str_guard: Inline validation macro. Checks pointer validity and
+    # executes on_fail (next/return) if corrupted. After the guard, String.new
+    # is safe to call. Using a macro avoids function call overhead that causes
+    # massive monomorphization slowdown in V2's self-compilation (~24x).
+    macro safe_str_guard(slice_expr, on_fail)
+      %ptr = ({{slice_expr}}).to_unsafe
+      %addr = %ptr.address
+      if %addr == 0_u64 || %addr < 4096_u64 || %addr > 0x0000_7FFF_FFFF_FFFF_u64
+        {{on_fail.id}}
+      end
+      %sz = ({{slice_expr}}).size
+      if %sz < 0 || %sz > 10_000_000
+        {{on_fail.id}}
+      end
+    end
+
     private def safe_slice_to_string(slice : Slice(UInt8)) : String?
       ptr = slice.to_unsafe
-      return nil if ptr.address == 0_u64
-      return nil if ptr.address < 4096_u64 # likely corrupted/null-page pointer
+      addr = ptr.address
+      return nil if addr == 0_u64
+      return nil if addr < 4096_u64 # likely corrupted/null-page pointer
+      return nil if addr > 0x0000_7FFF_FFFF_FFFF_u64
       sz = slice.size
       return nil if sz < 0 || sz > 10_000_000 # sanity check
       return "" if sz == 0
@@ -17693,14 +17713,17 @@ module Crystal::HIR
                 member = unwrap_visibility_member(@arena[expr_id])
                 case member
                 when CrystalV2::Compiler::Frontend::ClassNode
+                  safe_str_guard(member.name, "next")
                   nested_name = String.new(member.name)
                   full_nested_name = "#{class_name}::#{nested_name}"
                   register_class_with_name(member, full_nested_name)
                 when CrystalV2::Compiler::Frontend::EnumNode
+                  safe_str_guard(member.name, "next")
                   enum_name = String.new(member.name)
                   full_enum_name = "#{class_name}::#{enum_name}"
                   register_enum_with_name(member, full_enum_name)
                 when CrystalV2::Compiler::Frontend::ModuleNode
+                  safe_str_guard(member.name, "next")
                   nested_name = String.new(member.name)
                   full_nested_name = "#{class_name}::#{nested_name}"
                   register_nested_module(member, full_nested_name)
@@ -17854,6 +17877,7 @@ module Crystal::HIR
           member = unwrap_visibility_member_in_arena(@arena[expr_id], @arena)
           case member
           when CrystalV2::Compiler::Frontend::ClassNode
+            safe_str_guard(member.name, "next")
             nested_name = String.new(member.name)
             full_nested_name = "#{nested_prefix}::#{nested_name}"
             register_class_with_name(member, full_nested_name)
@@ -17878,10 +17902,12 @@ module Crystal::HIR
               end
             end
           when CrystalV2::Compiler::Frontend::EnumNode
+            safe_str_guard(member.name, "next")
             enum_name = String.new(member.name)
             full_enum_name = "#{nested_prefix}::#{enum_name}"
             register_enum_with_name(member, full_enum_name)
           when CrystalV2::Compiler::Frontend::ModuleNode
+            safe_str_guard(member.name, "next")
             nested_name = String.new(member.name)
             full_nested_name = "#{nested_prefix}::#{nested_name}"
             register_nested_module(member, full_nested_name)
@@ -17992,6 +18018,8 @@ module Crystal::HIR
               next
             when CrystalV2::Compiler::Frontend::InstanceVarDeclNode
               # Instance variable declaration: @value : Int32 = expr
+              safe_str_guard(member.name, "next")
+              safe_str_guard(member.type, "next")
               ivar_name = String.new(member.name)
               ivar_decl = String.new(member.type)
               ivar_type = resolve_explicit_ivar_annotation_type(ivar_decl, class_name)
@@ -18052,6 +18080,8 @@ module Crystal::HIR
               # Lib struct field declaration or ivar type declaration from macro expansion:
               #   value : Type        (struct/lib field)
               #   @value : Type       (class ivar declaration)
+              safe_str_guard(member.name, "next")
+              safe_str_guard(member.declared_type, "next")
               field_name = String.new(member.name)
               if is_struct || field_name.starts_with?('@')
                 field_name = String.new(member.name)
@@ -18070,6 +18100,8 @@ module Crystal::HIR
             when CrystalV2::Compiler::Frontend::ClassVarDeclNode
               # Class variable declaration: @@total : Int32 = 0
               # Name includes @@ prefix, strip it
+              safe_str_guard(member.name, "next")
+              safe_str_guard(member.type, "next")
               raw_name = String.new(member.name)
               cvar_name = raw_name.lstrip('@')
               cvar_type = type_ref_for_name(String.new(member.type))
@@ -18100,6 +18132,7 @@ module Crystal::HIR
               end
             when CrystalV2::Compiler::Frontend::ClassVarNode
               # Parser quirk: @@var : Type appears as ClassVarNode + PathNode.
+              safe_str_guard(member.name, "next")
               raw_name = String.new(member.name)
               cvar_name = raw_name.lstrip('@')
               if idx + 1 < class_body.size
@@ -18118,6 +18151,7 @@ module Crystal::HIR
               remember_effect_annotation(member, @arena)
             when CrystalV2::Compiler::Frontend::DefNode
               # Register method signature
+              safe_str_guard(member.name, "next")
               method_name = String.new(member.name)
               if env_get("DEBUG_PROC_METHOD") && method_name == "internal_representation"
                 STDERR.puts "[PROC_METHOD] class=#{class_name} method=#{method_name} rt=#{member.return_type ? String.new(member.return_type.not_nil!) : "(nil)"}"
@@ -18549,6 +18583,8 @@ module Crystal::HIR
               end
             when CrystalV2::Compiler::Frontend::AliasNode
               # Type alias within class: alias Handle = Int32
+              safe_str_guard(member.name, "next")
+              safe_str_guard(member.value, "next")
               alias_name = String.new(member.name)
               target_name = resolve_alias_target(String.new(member.value), class_name)
               full_alias_name = "#{class_name}::#{alias_name}"
@@ -18616,9 +18652,11 @@ module Crystal::HIR
               next unless member.is_a?(CrystalV2::Compiler::Frontend::DefNode)
               next if member.is_abstract
               if recv = member.receiver
+                safe_str_guard(recv, "next")
                 next if String.new(recv) == "self"
               end
               next unless def_params_untyped?(member)
+              safe_str_guard(member.name, "next")
               method_name = String.new(member.name)
               base_name = "#{class_name}##{method_name}"
               has_typed = if cached = typed_overload_cache[base_name]?
@@ -18768,12 +18806,14 @@ module Crystal::HIR
         member = unwrap_visibility_member(@arena[expr_id])
         case member
         when CrystalV2::Compiler::Frontend::InstanceVarDeclNode
+          safe_str_guard(member.type, "next")
           return true if type_expr_references_nested_generic?(String.new(member.type), nested_short_name, nested_full_name)
         when CrystalV2::Compiler::Frontend::DefNode
           next unless (params = member.params)
           each_param(params) do |param|
             next unless param.is_instance_var
             next unless (ta = param.type_annotation)
+            safe_str_guard(ta, "next")
             return true if type_expr_references_nested_generic?(String.new(ta), nested_short_name, nested_full_name)
           end
         end
@@ -19549,9 +19589,13 @@ module Crystal::HIR
           case member
           when CrystalV2::Compiler::Frontend::DefNode
             recv = member.receiver
+            if recv
+              safe_str_guard(recv, "next")
+            end
             next unless recv && String.new(recv) == "self"
             next if member.is_abstract
 
+            safe_str_guard(member.name, "next")
             method_name = String.new(member.name)
             base_method = "#{specialized_name}.#{method_name}"
             member_arena = if arena_fits_def?(@arena, member)
@@ -19671,9 +19715,11 @@ module Crystal::HIR
             member = unwrap_visibility_member(@arena[expr_id])
             case member
             when CrystalV2::Compiler::Frontend::ClassNode
+              safe_str_guard(member.name, "next")
               nested_name = String.new(member.name)
               lower_class_with_name(member, "#{nested_prefix}::#{nested_name}")
             when CrystalV2::Compiler::Frontend::ModuleNode
+              safe_str_guard(member.name, "next")
               nested_name = String.new(member.name)
               lower_module_with_name(member, "#{nested_prefix}::#{nested_name}")
             end
@@ -19712,8 +19758,10 @@ module Crystal::HIR
                 # type params are known (macros like T.size require concrete args).
                 next
               end
+              safe_str_guard(member.name, "next")
               method_name = String.new(member.name)
               is_class_method = if recv = member.receiver
+                                  safe_str_guard(recv, "next")
                                   String.new(recv) == "self"
                                 else
                                   false
@@ -19879,16 +19927,19 @@ module Crystal::HIR
         end
         add_defined_instance_methods_from_expr(class_name, defined_full_names, expr_id)
       when CrystalV2::Compiler::Frontend::ClassNode
+        safe_str_guard(member.name, "return")
         nested_name = String.new(member.name)
         full_name = "#{class_name}::#{nested_name}"
         register_class_with_name(member, full_name)
         lower_class_with_name(member, full_name)
       when CrystalV2::Compiler::Frontend::ModuleNode
+        safe_str_guard(member.name, "return")
         nested_name = String.new(member.name)
         full_name = "#{class_name}::#{nested_name}"
         register_module_with_name(member, full_name)
         lower_module_with_name(member, full_name)
       when CrystalV2::Compiler::Frontend::EnumNode
+        safe_str_guard(member.name, "return")
         nested_name = String.new(member.name)
         full_name = "#{class_name}::#{nested_name}"
         register_enum_with_name(member, full_name)

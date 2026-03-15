@@ -2084,6 +2084,10 @@ module CrystalV2
             clang_cmd = "clang #{opt_flag} #{lto_flag} #{pgo_flags.join(" ")} -o #{options.output} #{opt_ll_file}"
             clang_cmd += " #{runtime_stub}" if File.exists?(runtime_stub)
             clang_cmd += " #{link_flags_str}" unless link_flags_str.empty?
+            # On macOS, set 64MB main thread stack for deep recursive-descent parsing.
+            {% if flag?(:darwin) %}
+              clang_cmd += " -Wl,-stack_size,0x4000000"
+            {% end %}
             if extra = ENV["CRYSTAL_V2_EXTRA_LINK_FLAGS"]?
               clang_cmd += " #{extra}"
             end
@@ -2099,6 +2103,9 @@ module CrystalV2
           else
             link_cmd = "cc -o #{options.output} #{link_objs.join(" ")}"
             link_cmd += " #{link_flags_str}" unless link_flags_str.empty?
+            {% if flag?(:darwin) %}
+              link_cmd += " -Wl,-stack_size,0x4000000"
+            {% end %}
             if extra = ENV["CRYSTAL_V2_EXTRA_LINK_FLAGS"]?
               link_cmd += " #{extra}"
             end
