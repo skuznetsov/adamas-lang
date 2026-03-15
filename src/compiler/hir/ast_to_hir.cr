@@ -41629,6 +41629,13 @@ module Crystal::HIR
       left_type = ctx.type_of(left_id)
       left_desc = @module.get_type_descriptor(left_type)
       is_pointer_type = left_type == TypeRef::POINTER || (left_desc && left_desc.kind == TypeKind::Pointer)
+      # Fallback: check type name for pointer unions like "Pointer | Pointer(T)"
+      unless is_pointer_type
+        left_name = get_type_name_from_ref(left_type)
+        is_pointer_type = left_name.starts_with?("Pointer(") ||
+                          left_name.starts_with?("Pointer |") ||
+                          left_name == "Pointer"
+      end
       right_type = ctx.type_of(right_id)
       right_desc = @module.get_type_descriptor(right_type)
       right_is_pointer = right_type == TypeRef::POINTER || (right_desc && right_desc.kind == TypeKind::Pointer)
@@ -42756,9 +42763,10 @@ module Crystal::HIR
       # Pointer(T) types that weren't registered with TypeKind::Pointer
       # (e.g., Pointer(NamedTuple(...)) in complex generic monomorphizations)
       # should get a null check, not a union nil check.
+      # Also handles unions of pointer types like "Pointer | Pointer(T)".
       if value_type.id >= TypeRef::FIRST_USER_TYPE
         type_name = get_type_name_from_ref(value_type)
-        if type_name.starts_with?("Pointer(")
+        if type_name.starts_with?("Pointer(") || type_name.starts_with?("Pointer |") || type_name == "Pointer"
           nil_val = Literal.new(ctx.next_id, TypeRef::POINTER, 0_i64)
           ctx.emit(nil_val)
           ne_check = BinaryOperation.new(ctx.next_id, TypeRef::BOOL, BinaryOp::Ne, value_id, nil_val.id)
@@ -55853,11 +55861,28 @@ module Crystal::HIR
       end
 
       # ptr.realloc(new_count) -> PointerRealloc
+      # In Crystal stdlib, realloc is only defined on Pointer(T). If the receiver
+      # type was mis-inferred (e.g., Int32 due to pointer union type propagation),
+      # we still emit PointerRealloc. Cast the receiver to ptr if needed.
       if receiver_id && method_name == "realloc" && args.size == 1
         receiver_type = ctx.type_of(receiver_id)
         recv_type_desc = @module.get_type_descriptor(receiver_type)
         is_pointer_type = receiver_type == TypeRef::POINTER ||
                           (recv_type_desc && recv_type_desc.name.starts_with?("Pointer"))
+        # Fallback: check type name for pointer unions like "Pointer | Pointer(T)"
+        unless is_pointer_type
+          recv_type_name = get_type_name_from_ref(receiver_type)
+          is_pointer_type = recv_type_name.starts_with?("Pointer(") ||
+                            recv_type_name.starts_with?("Pointer |") ||
+                            recv_type_name == "Pointer"
+        end
+        # realloc only exists on Pointer(T) in Crystal — if receiver type was
+        # mis-inferred (e.g., Int32 from pointer union type propagation through
+        # root_buffer), force PointerRealloc with TypeRef::POINTER.
+        unless is_pointer_type
+          is_pointer_type = true
+          receiver_type = TypeRef::POINTER
+        end
         if is_pointer_type
           result_type = receiver_type == TypeRef::VOID ? TypeRef::POINTER : receiver_type
           realloc_node = PointerRealloc.new(ctx.next_id, result_type, receiver_id, args[0])
