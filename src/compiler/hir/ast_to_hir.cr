@@ -3663,6 +3663,8 @@ module Crystal::HIR
     end
 
     private def named_only_separator?(param : CrystalV2::Compiler::Frontend::Parameter) : Bool
+      # V2 stage2: struct-as-pointer can produce null Parameter elements
+      return false if param.unsafe_as(UInt64) == 0
       param.is_splat && param.name.nil? && param.external_name.nil?
     end
 
