@@ -22,7 +22,51 @@ closure cells, Tuple ptr/value confusion.
 - [ ] **Phase 5: FIX RC-3** — String.build block lowering
 - [ ] **Phase 6: RE-ENABLE RTA + BOOTSTRAP** — stage0→stage1→stage2→stage3 + benchmark
 
-### Current checkpoint (2026-03-13 tiny `AstArena` + `LibNode` oracle isolates the live stage2 crash below `AstToHir`)
+### Current checkpoint (2026-03-15 union type sizing fix — reference-type unions now 8 bytes)
+
+- Fixed ROOT CAUSE of stage2 ivar offset divergence:
+  - V2 computed 16 bytes for unions of reference types (type_id + pointer)
+  - Crystal stores these as single pointer (8 bytes) — type_id is in object header
+  - Added `union_ivar_storage_size()` / `union_all_reference_types?()` helpers
+  - Stage1 offsets now match Crystal: @arena=16, @function_types=24, @current_class=144
+- Stage2 crash moved from `type_cache_key` (corrupted ivar) → `Array#push` in `parse_macro_if_control` (new parser bug)
+- Cleaned up all debug tracing code (TCK, IVAR_OFFSETS, DEBUG_STAR, etc.)
+- 68/68 regression tests pass
+
+### Pending: Implement rc_dec in hir_to_mir.cr
+
+- **Status**: Infrastructure fully built, but `builder.rc_dec()` is NEVER called
+- **Impact**: Memory leak (all ARC objects leak), not a crash blocker
+- **What exists**: MIR::RCDecrement (mir.cr:558), builder.rc_dec() (mir.cr:2045),
+  emit_rc_dec() (llvm_backend.cr:10433), __crystal_v2_rc_dec runtime (llvm_backend.cr:2648)
+- **Three insertion points needed**:
+  1. Variable reassignment: when overwriting ARC pointer in stack slot,
+     rc_dec old value BEFORE storing new value (lower_copy / Store)
+  2. Function return: rc_dec all local ARC values before builder.ret()
+     (lower_terminator for HIR::Return, line ~4447)
+  3. Scope/loop exit: rc_dec loop-local ARC values at end of each iteration
+- **Info available**: select_memory_strategy() (line 1318) marks ARC/AtomicARC allocations,
+  HIR::Local.scope (ScopeId), HIR::LifetimeTag (escape analysis)
+- **Priority**: After bootstrap works (not blocking stage2 crashes)
+
+### Previous checkpoint (2026-03-14 all 177 inline-default ivars explicitly initialized in AstToHir constructor)
+
+- Fixed the 9th sequential stage2 crash: `type_cache_key -> String#bytesize` at address 0xb
+  - Root cause: V2 stage2 does not initialize inline-default ivars (`@ivar : Type = value`)
+  - 177 of 201 inline-default ivars in AstToHir were null/garbage in stage2
+  - All 177 now explicitly initialized in the constructor body
+  - Categories: method index, parent lookup, yield/block checks, arena caches,
+    strip generic receiver, function def overloads, method name parts, type param maps,
+    resolved type names, substitute type params, generic owner info, split generic args,
+    unresolved generic arg, split union type, block lookup, yield owner, allocator names,
+    lower histogram, function lowering, lookup branch stats, RTA/live types, lowering depth
+- Previous fixes in this session (commits 58487768, 9f1c80c9):
+  - Removed ALL rescue blocks from ast_to_hir.cr (V2 broken setjmp)
+  - Added source-based alias extraction for lib AliasNode processing
+  - Added fast-path for builtin type names in resolve_alias_target
+- Next: rebuild stage2, test with hello world, diagnose next crash
+
+### Previous checkpoint (2026-03-13 tiny `AstArena` + `LibNode` oracle isolates the live stage2 crash below `AstToHir`)
 
 - Added a new smaller self-hosted compiler oracle:
   - `regression_tests/stage2_astarena_libnode_repro.sh`

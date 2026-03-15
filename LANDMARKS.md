@@ -1,7 +1,49 @@
 # LANDMARKS
 
-Updated: 2026-03-13
+Updated: 2026-03-15
 Context: compiler/bootstrap/stage2-stability
+
+[LM-176|noted]: rc_dec is NEVER emitted in hir_to_mir.cr. builder.rc_inc is called
+at 4 allocation points but builder.rc_dec is called NOWHERE. Full infrastructure
+exists: MIR::RCDecrement class, builder.rc_dec() method, emit_rc_dec() LLVM backend,
+__crystal_v2_rc_dec runtime function. Three insertion points needed: (1) variable
+reassignment — rc_dec old value before storing new, (2) function return — rc_dec
+all local ARC values before ret, (3) scope/loop exit — rc_dec loop-local ARC values.
+Impact: memory leak, not a crash blocker. Priority: after bootstrap works.
+{F/G/R: 0.95/0.90/0.95} [noted — not blocking]
+
+[LM-175|verified]: V2 union type sizing fixed for reference-type unions. Crystal
+stores unions of exclusively reference types (classes) and Nil as a single pointer
+(8 bytes on x86_64) because the type discriminator lives in the object header.
+V2 was computing 16 bytes (4-byte type_id + 4 padding + 8 pointer) for ALL unions.
+Fix: union_ivar_storage_size() returns pointer_word_bytes when all non-Nil variants
+are reference types (checked via class_info.is_struct, enum_info, primitive names).
+Verified: stage1 ivar offsets match Crystal layout (@arena=16→24 gap=8, @current_class=144).
+Stage2 crash moved from type_cache_key (corrupted @current_class at wrong offset)
+to Array#push in parse_macro_if_control (new bug, different root cause).
+68/68 regression tests pass. Commit 3ab720ce.
+{F/G/R: 0.90/0.85/0.90} [verified — stage1 offsets correct]
+
+[LM-174|working]: all 177 inline-default ivars in AstToHir class now explicitly
+initialized in the constructor. V2 stage2 does not honor inline-default ivar
+syntax (`@ivar : Type = value`), leaving them as null/garbage pointers. Previous
+sessions fixed 8 sequential stage2 crashes; the 9th crash was in
+`type_cache_key -> String#bytesize` at address 0xb, caused by a corrupted ivar
+on the AstToHir object during GlobalVarDeclNode processing in `register_lib_member`.
+Root cause analysis revealed 177 of 201 inline-default ivars were missing from
+the constructor — only `@function_lookup_*` (24 ivars) had been explicitly added
+in commit `45f8acb0`. Categories of missing ivars: method index caches (7),
+parent lookup caches (3), yield/block check caches (2), arena caches (6),
+yield name caches (3), strip generic receiver caches (10), function def overloads
+caches (6), method name parts caches (5), type param map hash (2), resolved type
+name caches (6), method name compact caches (5), substitute type params (5),
+generic owner info (2), split generic args (4), unresolved generic arg (5),
+resolve type name stack (1), split union type (5), env cache (1), block lookup
+caches (4), yield allowed owner caches (6), allocator name caches (7), lower
+histogram (4), function lowering (8), lookup branch stats (4), RTA/live types (13),
+lowering depth (5). All rescue blocks had been removed in previous sessions
+(commit `9f1c80c9`). Build succeeds, regression tests pending.
+{F/G/R: 0.75/0.85/0.70} [working — needs stage2 test]
 
 [LM-173|working]: the smallest current no-prelude compiler frontier now points
 at a narrower member of the older tuple-key sort family, not at another fresh
