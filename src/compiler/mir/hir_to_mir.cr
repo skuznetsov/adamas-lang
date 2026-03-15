@@ -30,6 +30,9 @@ module Crystal
     # (needed to lower HIR::Cast into correct MIR::CastKind)
     @hir_value_types : Hash(HIR::ValueId, HIR::TypeRef)
 
+    # HIR values that are compile-time constants (Literal, GlobalRef) — no rc_inc/rc_dec needed
+    @hir_constant_values : Set(HIR::ValueId)
+
     # Mapping from HIR BlockId to MIR BlockId
     @block_map : Array(BlockId?)
 
@@ -77,8 +80,12 @@ module Crystal
     # ARC cleanup: track stack slots holding ARC-allocated pointers per function
     # so we can emit rc_dec at return points. Each slot is initialized to null
     # at function entry and stores the ARC pointer after allocation.
-    # Key = MIR ValueId of the stack slot, Value = true if atomic (AtomicARC).
+    # Tuple: (MIR slot ValueId, atomic?)
     @arc_cleanup_slots : Array({ValueId, Bool}) = [] of {ValueId, Bool}
+
+    # Maps HIR Allocate ValueId → MIR cleanup slot ValueId
+    # Used to store ARC pointers into their cleanup slots after allocation
+    @arc_slot_map : Hash(HIR::ValueId, ValueId) = {} of HIR::ValueId => ValueId
 
     @[AlwaysInline]
     private def mir_setup_trace? : Bool
@@ -99,6 +106,7 @@ module Crystal
       @value_map = {} of HIR::ValueId => ValueId
       STDERR.puts "[MIR_INIT] value_map" if trace
       @hir_value_types = {} of HIR::ValueId => HIR::TypeRef
+      @hir_constant_values = Set(HIR::ValueId).new
       STDERR.puts "[MIR_INIT] hir_value_types" if trace
       @block_map = [] of BlockId?
       STDERR.puts "[MIR_INIT] block_map" if trace
@@ -837,12 +845,14 @@ module Crystal
       # Reinitialize per-function lowering maps instead of mutating in place.
       @value_map = {} of HIR::ValueId => ValueId
       @hir_value_types = {} of HIR::ValueId => HIR::TypeRef
+      @hir_constant_values = Set(HIR::ValueId).new
       @block_map = [] of BlockId?
       @pending_phis = [] of Tuple(Phi, HIR::Phi)
       @stack_slot_values = Set(ValueId).new
       @stack_slot_types = {} of ValueId => TypeRef
       @inline_struct_ptrs = Set(HIR::ValueId).new
       @arc_cleanup_slots = [] of {ValueId, Bool}
+      @arc_slot_map = {} of HIR::ValueId => ValueId
       STDERR.puts "[MIR_LOWER] caches reinitialized" if mir_lower_trace?
       @builder = Builder.new(mir_func)
       # In MIR::Function, entry block is created first and is always 0.
@@ -864,6 +874,10 @@ module Crystal
       hir_func.blocks.each do |hir_block|
         hir_block.instructions.each do |inst|
           @hir_value_types[inst.id] = inst.type
+          # Track constants (Literal) — these are static data, not heap-allocated
+          if inst.is_a?(HIR::Literal)
+            @hir_constant_values << inst.id
+          end
         end
       end
       STDERR.puts "[MIR_LOWER] value types indexed blocks=#{hir_func.blocks.size}" if mir_lower_trace?
@@ -880,6 +894,89 @@ module Crystal
       set_block_map(hir_func.entry_block, 0_u32)
       STDERR.puts "[MIR_LOWER] entry map after size=#{@block_map.size}" if mir_lower_trace?
       STDERR.puts "[MIR_LOWER] entry mapped entry=#{hir_func.entry_block}=>#{mir_func.entry_block}" if mir_lower_trace?
+
+      # Pre-scan: allocate ARC cleanup slots in entry block for rc_dec at return.
+      # Each ARC allocation gets a stack slot initialized to null. After the actual
+      # allocation, the pointer is stored into the slot. At function return, we load
+      # from each slot and emit rc_dec (null is safe — rc_dec(null) is a no-op).
+      #
+      # Conservative escape filter: exclude allocations that might be referenced
+      # after function return — returned values, values stored into fields,
+      # constructor args, and function call arguments. Only true local temps
+      # get cleanup slots.
+      builder = @builder.not_nil!
+      builder.current_block = mir_func.entry_block
+
+      # Build set of HIR values that escape the function
+      escaping_values = Set(HIR::ValueId).new
+      hir_func.blocks.each do |hir_block|
+        # Returned values
+        if ret = hir_block.terminator.as?(HIR::Return)
+          if v = ret.value
+            escaping_values << v
+          end
+        end
+        hir_block.instructions.each do |inst|
+          case inst
+          when HIR::FieldSet
+            escaping_values << inst.value
+          when HIR::Allocate
+            inst.constructor_args.each { |arg| escaping_values << arg }
+          when HIR::Call
+            inst.args.each { |arg| escaping_values << arg }
+          end
+        end
+      end
+      # Trace escaping_values backward through transparent instructions (Copy, Cast, Phi):
+      # if the result escapes, the source(s) also escape.
+      changed = true
+      while changed
+        changed = false
+        hir_func.blocks.each do |hir_block|
+          hir_block.instructions.each do |inst|
+            next unless escaping_values.includes?(inst.id)
+            sources = case inst
+                      when HIR::Copy then [inst.source]
+                      when HIR::Cast then [inst.value]
+                      when HIR::Phi  then inst.incoming.map { |(_, v)| v }
+                      else [] of HIR::ValueId
+                      end
+            sources.each do |src|
+              unless escaping_values.includes?(src)
+                escaping_values << src
+                changed = true
+              end
+            end
+          end
+        end
+      end
+
+      # NOTE: ARC cleanup slots (rc_dec at function return) are disabled for now.
+      # Enabling them causes use-after-free because rc_inc is not yet emitted at all
+      # sharing points (only constructor args and FieldSet). When an object is shared
+      # via function call args or Copy chains that escape, the refcount stays at 1,
+      # and rc_dec at return frees objects still in use.
+      #
+      # To enable safely, we need EITHER:
+      # (a) rc_inc at ALL sharing points (call args with ownership transfer, etc.), OR
+      # (b) A much more precise escape analysis that tracks all transitive uses.
+      #
+      # The escape filter infrastructure is kept for when we're ready:
+      if false # TODO: enable when rc_inc coverage is complete
+        hir_func.blocks.each do |hir_block|
+          hir_block.instructions.each do |inst|
+            next unless inst.is_a?(HIR::Allocate)
+            next if escaping_values.includes?(inst.id)
+            strategy = select_memory_strategy(inst)
+            next unless strategy == MemoryStrategy::ARC || strategy == MemoryStrategy::AtomicARC
+            slot = builder.alloc(MemoryStrategy::Stack, TypeRef::POINTER)
+            null_val = builder.const_nil_typed(TypeRef::POINTER)
+            builder.store(slot, null_val)
+            @arc_slot_map[inst.id] = slot
+            @arc_cleanup_slots << {slot, strategy == MemoryStrategy::AtomicARC}
+          end
+        end
+      end
 
       # Lower each block (phi incoming resolution is deferred)
       ordered_blocks = order_blocks_for(hir_func)
@@ -1322,20 +1419,34 @@ module Crystal
                         end
           field_ptr = builder.gep(ptr, [byte_offset], TypeRef::POINTER)
           store_id = builder.store(field_ptr, arg_val)
+
+          # rc_inc for reference-typed constructor args: the new object holds a reference.
+          # Skip constants (string literals, globals) — they're static data, not heap-allocated.
+          unless @hir_constant_values.includes?(arg_hir_id)
+            if arg_hir_type = @hir_value_types[arg_hir_id]?
+              arg_mir_type = convert_type(arg_hir_type)
+              if mir_type_info = @mir_module.type_registry.get(arg_mir_type)
+                if mir_type_info.kind.reference? || mir_type_info.kind.array?
+                  builder.rc_inc(arg_val)
+                end
+              end
+            end
+          end
+
           if ENV["DEBUG_ALLOC_ARGS"]?
             STDERR.puts "[ALLOC_ARGS]   [#{idx}] hir=#{arg_hir_id} mir_val=#{arg_val} byte_offset=#{byte_offset} gep=#{field_ptr} store=#{store_id}"
           end
         end
       end
 
-      # Insert RC increment for ARC allocations
+      # Track ARC allocations (refcount is already initialized to 1 by the alloc)
       case strategy
-      when MemoryStrategy::ARC
-        builder.rc_inc(ptr)
+      when MemoryStrategy::ARC, MemoryStrategy::AtomicARC
         @stats.arc_allocations += 1
-      when MemoryStrategy::AtomicARC
-        builder.rc_inc(ptr, atomic: true)
-        @stats.arc_allocations += 1
+        # Store pointer into pre-allocated cleanup slot for rc_dec at return
+        if arc_slot = @arc_slot_map[alloc.id]?
+          builder.store(arc_slot, ptr)
+        end
       when MemoryStrategy::Stack
         @stats.stack_allocations += 1
       when MemoryStrategy::Slab
@@ -1573,6 +1684,19 @@ module Crystal
                   end
                 end
               end
+            end
+          end
+        end
+      end
+
+      # rc_inc for reference-typed field values: the object now holds a reference.
+      # Skip constants (string literals, globals) — they're static data, not heap-allocated.
+      unless @hir_constant_values.includes?(field.value)
+        if value_hir_type = @hir_value_types[field.value]?
+          value_mir_type = convert_type(value_hir_type)
+          if mir_type_info = @mir_module.type_registry.get(value_mir_type)
+            if mir_type_info.kind.reference? || mir_type_info.kind.array?
+              builder.rc_inc(value)
             end
           end
         end
@@ -4477,6 +4601,12 @@ module Crystal
 
       case term
       when HIR::Return
+        # Emit rc_dec cleanup for all non-returned ARC locals before returning.
+        # Returned allocations are excluded from @arc_cleanup_slots during pre-scan.
+        @arc_cleanup_slots.each do |(slot, atomic)|
+          current_val = builder.load(slot, TypeRef::POINTER)
+          builder.rc_dec(current_val, atomic: atomic)
+        end
         if v = term.value
           value = get_value(v)
           if hir_func = @current_hir_func
@@ -4487,8 +4617,6 @@ module Crystal
         else
           builder.ret
         end
-        # TODO: Insert rc_dec cleanup for @arc_cleanup_slots here once
-        # the runtime implements real reference counting (currently stubs).
       when HIR::Branch
         cond = get_value(term.condition)
         then_block = mir_block_for(term.then_block)
@@ -4581,27 +4709,6 @@ module Crystal
     private def record_stack_slot(slot : ValueId, type : TypeRef)
       @stack_slot_values.add(slot)
       @stack_slot_types[slot] = type
-    end
-
-    # Create a cleanup slot for an ARC allocation. The slot is allocated in
-    # the entry block (so it dominates all return points), initialized to null,
-    # and the ARC pointer is stored into it at the current position.
-    private def track_arc_for_cleanup(builder : Builder, ptr : ValueId, atomic : Bool)
-      # Save current block, switch to entry to allocate the slot
-      saved_block = builder.current_block
-      entry_block = @current_mir_func.not_nil!.entry_block
-      builder.current_block = entry_block
-
-      # Allocate slot and init to null (rc_dec(null) is safe)
-      slot = builder.alloc(MemoryStrategy::Stack, TypeRef::POINTER)
-      null_val = builder.const_nil_typed(TypeRef::POINTER)
-      builder.store(slot, null_val)
-
-      # Switch back to the allocation block and store the ARC pointer
-      builder.current_block = saved_block
-      builder.store(slot, ptr)
-
-      @arc_cleanup_slots << {slot, atomic}
     end
 
     private def default_value_for_type(builder : Builder, type : TypeRef) : ValueId?

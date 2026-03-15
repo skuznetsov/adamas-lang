@@ -2112,10 +2112,12 @@ module Crystal::MIR
       @string_type_id = string_type_id
 
       if string_mir_type
-        # Prelude mode: Crystal String objects
-        emit_raw "@.str.empty = private unnamed_addr constant { i32, i32, i32, [1 x i8] } { i32 #{string_type_id}, i32 0, i32 0, [1 x i8] c\"\\00\" }, align 8\n"
+        # Prelude mode: Crystal String objects — prefixed with i64 sentinel for ARC safety
+        emit_raw "@.str.empty.data = private unnamed_addr constant { i64, i32, i32, i32, [1 x i8] } { i64 9223372036854775807, i32 #{string_type_id}, i32 0, i32 0, [1 x i8] c\"\\00\" }, align 8\n"
+        emit_raw "@.str.empty = private unnamed_addr alias i8, getelementptr inbounds (i8, ptr @.str.empty.data, i64 8)\n"
         # Error message strings for builtin overrides
-        emit_raw "@.str.file_open_error = private unnamed_addr constant { i32, i32, i32, [26 x i8] } { i32 #{string_type_id}, i32 25, i32 25, [26 x i8] c\"Error opening file (open)\\00\" }, align 8\n"
+        emit_raw "@.str.file_open_error.data = private unnamed_addr constant { i64, i32, i32, i32, [26 x i8] } { i64 9223372036854775807, i32 #{string_type_id}, i32 25, i32 25, [26 x i8] c\"Error opening file (open)\\00\" }, align 8\n"
+        emit_raw "@.str.file_open_error = private unnamed_addr alias i8, getelementptr inbounds (i8, ptr @.str.file_open_error.data, i64 8)\n"
         emit_raw "@.str.dbg_open_label = private unnamed_addr constant [5 x i8] c\"open\\00\", align 1\n"
       else
         # No-prelude mode: C strings
@@ -2141,7 +2143,10 @@ module Crystal::MIR
       if @string_type_id != 0
         bytesize = str.bytesize
         charsize = str.size
-        emit_raw "#{global_name} = private unnamed_addr constant { i32, i32, i32, [#{len} x i8] } { i32 #{@string_type_id}, i32 #{bytesize}, i32 #{charsize}, [#{len} x i8] c\"#{escaped}\\00\" }, align 8\n"
+        # Prefix with i64 sentinel (INT64_MAX) so rc_inc/rc_dec at ptr-8 safely skip static strings.
+        # The .data global has the full layout; the alias points past the sentinel.
+        emit_raw "#{global_name}.data = private unnamed_addr constant { i64, i32, i32, i32, [#{len} x i8] } { i64 9223372036854775807, i32 #{@string_type_id}, i32 #{bytesize}, i32 #{charsize}, [#{len} x i8] c\"#{escaped}\\00\" }, align 8\n"
+        emit_raw "#{global_name} = private unnamed_addr alias i8, getelementptr inbounds (i8, ptr #{global_name}.data, i64 8)\n"
       else
         emit_raw "#{global_name} = private unnamed_addr constant [#{len} x i8] c\"#{escaped}\\00\", align 1\n"
       end
@@ -2615,8 +2620,10 @@ module Crystal::MIR
         emit_raw "@.str.true = private constant [5 x i8] c\"true\\00\", align 1\n"
         emit_raw "@.str.false = private constant [6 x i8] c\"false\\00\", align 1\n"
       else
-        emit_raw "@.str.true = private constant { i32, i32, i32, [5 x i8] } { i32 #{@string_type_id}, i32 4, i32 4, [5 x i8] c\"true\\00\" }, align 8\n"
-        emit_raw "@.str.false = private constant { i32, i32, i32, [6 x i8] } { i32 #{@string_type_id}, i32 5, i32 5, [6 x i8] c\"false\\00\" }, align 8\n"
+        emit_raw "@.str.true.data = private constant { i64, i32, i32, i32, [5 x i8] } { i64 9223372036854775807, i32 #{@string_type_id}, i32 4, i32 4, [5 x i8] c\"true\\00\" }, align 8\n"
+        emit_raw "@.str.true = private unnamed_addr alias i8, getelementptr inbounds (i8, ptr @.str.true.data, i64 8)\n"
+        emit_raw "@.str.false.data = private constant { i64, i32, i32, i32, [6 x i8] } { i64 9223372036854775807, i32 #{@string_type_id}, i32 5, i32 5, [6 x i8] c\"false\\00\" }, align 8\n"
+        emit_raw "@.str.false = private unnamed_addr alias i8, getelementptr inbounds (i8, ptr @.str.false.data, i64 8)\n"
       end
       emit_raw "\n"
       STDERR.puts "  [RT_DECL] after format constants" if runtime_decl_trace
@@ -2668,20 +2675,93 @@ module Crystal::MIR
       emit_raw "  ret ptr %new_ptr\n"
       emit_raw "}\n\n"
 
-      # ARC runtime - stubs (no-op for bootstrap)
+      # ARC runtime — real reference counting with null safety
+      # Layout: [i64 refcount][object data...], ptr points to object data (refcount at ptr-8)
+
+      # rc_inc (non-atomic): null-safe increment, sentinel-safe (skips static/GC objects)
+      # Sentinel threshold: 0x4000000000000000 (2^62) — any refcount >= this is static
       emit_raw "define void @__crystal_v2_rc_inc(ptr %ptr) {\n"
+      emit_raw "  %is_null = icmp eq ptr %ptr, null\n"
+      emit_raw "  br i1 %is_null, label %done, label %check\n"
+      emit_raw "check:\n"
+      emit_raw "  %rc_ptr = getelementptr i8, ptr %ptr, i64 -8\n"
+      emit_raw "  %old = load i64, ptr %rc_ptr, align 8\n"
+      emit_raw "  %is_static = icmp uge i64 %old, 4611686018427387904\n"
+      emit_raw "  br i1 %is_static, label %done, label %inc\n"
+      emit_raw "inc:\n"
+      emit_raw "  %new = add i64 %old, 1\n"
+      emit_raw "  store i64 %new, ptr %rc_ptr, align 8\n"
+      emit_raw "  br label %done\n"
+      emit_raw "done:\n"
       emit_raw "  ret void\n"
       emit_raw "}\n\n"
 
+      # rc_dec (non-atomic): null-safe decrement, sentinel-safe, free when count reaches 0
       emit_raw "define void @__crystal_v2_rc_dec(ptr %ptr, ptr %destructor) {\n"
+      emit_raw "  %is_null = icmp eq ptr %ptr, null\n"
+      emit_raw "  br i1 %is_null, label %done, label %check\n"
+      emit_raw "check:\n"
+      emit_raw "  %rc_ptr = getelementptr i8, ptr %ptr, i64 -8\n"
+      emit_raw "  %old = load i64, ptr %rc_ptr, align 8\n"
+      emit_raw "  %is_static = icmp uge i64 %old, 4611686018427387904\n"
+      emit_raw "  br i1 %is_static, label %done, label %dec\n"
+      emit_raw "dec:\n"
+      emit_raw "  %new = sub i64 %old, 1\n"
+      emit_raw "  store i64 %new, ptr %rc_ptr, align 8\n"
+      emit_raw "  %should_free = icmp eq i64 %new, 0\n"
+      emit_raw "  br i1 %should_free, label %do_free, label %done\n"
+      emit_raw "do_free:\n"
+      emit_raw "  %has_dtor = icmp ne ptr %destructor, null\n"
+      emit_raw "  br i1 %has_dtor, label %call_dtor, label %free_only\n"
+      emit_raw "call_dtor:\n"
+      emit_raw "  call void %destructor(ptr %ptr)\n"
+      emit_raw "  br label %free_only\n"
+      emit_raw "free_only:\n"
+      emit_raw "  call void @free(ptr %rc_ptr)\n"
+      emit_raw "  br label %done\n"
+      emit_raw "done:\n"
       emit_raw "  ret void\n"
       emit_raw "}\n\n"
 
+      # rc_inc_atomic: null-safe, sentinel-safe atomic increment
       emit_raw "define void @__crystal_v2_rc_inc_atomic(ptr %ptr) {\n"
+      emit_raw "  %is_null = icmp eq ptr %ptr, null\n"
+      emit_raw "  br i1 %is_null, label %done, label %check\n"
+      emit_raw "check:\n"
+      emit_raw "  %rc_ptr = getelementptr i8, ptr %ptr, i64 -8\n"
+      emit_raw "  %old = load i64, ptr %rc_ptr, align 8\n"
+      emit_raw "  %is_static = icmp uge i64 %old, 4611686018427387904\n"
+      emit_raw "  br i1 %is_static, label %done, label %inc\n"
+      emit_raw "inc:\n"
+      emit_raw "  %old2 = atomicrmw add ptr %rc_ptr, i64 1 seq_cst\n"
+      emit_raw "  br label %done\n"
+      emit_raw "done:\n"
       emit_raw "  ret void\n"
       emit_raw "}\n\n"
 
+      # rc_dec_atomic: null-safe, sentinel-safe atomic decrement, free when count reaches 0
       emit_raw "define void @__crystal_v2_rc_dec_atomic(ptr %ptr, ptr %destructor) {\n"
+      emit_raw "  %is_null = icmp eq ptr %ptr, null\n"
+      emit_raw "  br i1 %is_null, label %done, label %check\n"
+      emit_raw "check:\n"
+      emit_raw "  %rc_ptr = getelementptr i8, ptr %ptr, i64 -8\n"
+      emit_raw "  %peek = load i64, ptr %rc_ptr, align 8\n"
+      emit_raw "  %is_static = icmp uge i64 %peek, 4611686018427387904\n"
+      emit_raw "  br i1 %is_static, label %done, label %dec\n"
+      emit_raw "dec:\n"
+      emit_raw "  %old = atomicrmw sub ptr %rc_ptr, i64 1 acq_rel\n"
+      emit_raw "  %should_free = icmp eq i64 %old, 1\n"
+      emit_raw "  br i1 %should_free, label %do_free, label %done\n"
+      emit_raw "do_free:\n"
+      emit_raw "  %has_dtor = icmp ne ptr %destructor, null\n"
+      emit_raw "  br i1 %has_dtor, label %call_dtor, label %free_only\n"
+      emit_raw "call_dtor:\n"
+      emit_raw "  call void %destructor(ptr %ptr)\n"
+      emit_raw "  br label %free_only\n"
+      emit_raw "free_only:\n"
+      emit_raw "  call void @free(ptr %rc_ptr)\n"
+      emit_raw "  br label %done\n"
+      emit_raw "done:\n"
       emit_raw "  ret void\n"
       emit_raw "}\n\n"
       STDERR.puts "  [RT_DECL] after rc stubs" if runtime_decl_trace
@@ -10408,7 +10488,12 @@ module Crystal::MIR
         emit "store i64 1, ptr %raw#{inst.id}, align 8"
         emit "#{name} = getelementptr i8, ptr %raw#{inst.id}, i64 8"
       when MemoryStrategy::GC
-        emit "#{name} = call ptr @__crystal_v2_malloc64(i64 #{inst.size})"
+        # GC: allocate extra 8 bytes for RC header (sentinel value prevents free).
+        # This uniform header layout makes rc_inc/rc_dec safe on ANY heap pointer.
+        gc_total = inst.size + 8
+        emit "%raw#{inst.id} = call ptr @__crystal_v2_malloc64(i64 #{gc_total})"
+        emit "store i64 9223372036854775807, ptr %raw#{inst.id}, align 8"  # INT64_MAX sentinel
+        emit "#{name} = getelementptr i8, ptr %raw#{inst.id}, i64 8"
       end
       # Alloc always produces a pointer
       @value_types[inst.id] = TypeRef::POINTER
@@ -10441,49 +10526,18 @@ module Crystal::MIR
     private def emit_rc_inc(inst : RCIncrement)
       ptr = value_ref(inst.ptr)
       if inst.atomic
-        # Inline atomic increment for thread-safe RC
-        # RC is stored at ptr - 8 (object layout: [RC:i64][data...])
-        emit "%rc_ptr.#{inst.id} = getelementptr i8, ptr #{ptr}, i64 -8"
-        # atomicrmw add with seq_cst ordering for full thread safety
-        emit "%old_rc.#{inst.id} = atomicrmw add ptr %rc_ptr.#{inst.id}, i64 1 seq_cst"
-
-        # TSan: release semantics - this thread "releases" the object
-        # Other threads that later acquire this object will see our writes
-        if @emit_tsan
-          emit "call void @__tsan_release(ptr #{ptr})"
-        end
+        emit "call void @__crystal_v2_rc_inc_atomic(ptr #{ptr})"
       else
-        # Non-atomic: simple load/add/store (faster for single-threaded)
         emit "call void @__crystal_v2_rc_inc(ptr #{ptr})"
       end
     end
 
     private def emit_rc_dec(inst : RCDecrement)
       ptr = value_ref(inst.ptr)
+      destructor = "null"  # TODO: per-type destructor functions
       if inst.atomic
-        # TSan: acquire semantics before decrement
-        # This thread "acquires" all writes from threads that released this object
-        if @emit_tsan
-          emit "call void @__tsan_acquire(ptr #{ptr})"
-        end
-
-        # Inline atomic decrement with conditional deallocation
-        # RC is stored at ptr - 8
-        emit "%rc_ptr.#{inst.id} = getelementptr i8, ptr #{ptr}, i64 -8"
-        # atomicrmw sub with acq_rel ordering (release on dec, acquire on read for dealloc check)
-        emit "%old_rc.#{inst.id} = atomicrmw sub ptr %rc_ptr.#{inst.id}, i64 1 acq_rel"
-        # Check if old RC was 1 (meaning new RC is 0 → deallocate)
-        emit "%should_free.#{inst.id} = icmp eq i64 %old_rc.#{inst.id}, 1"
-        emit "br i1 %should_free.#{inst.id}, label %do_free.#{inst.id}, label %skip_free.#{inst.id}"
-        emit_raw "do_free.#{inst.id}:\n"
-        @indent = 1
-        # Free the raw allocation (ptr - 8 is start of allocation)
-        emit "call void @free(ptr %rc_ptr.#{inst.id})"
-        emit "br label %skip_free.#{inst.id}"
-        emit_raw "skip_free.#{inst.id}:\n"
+        emit "call void @__crystal_v2_rc_dec_atomic(ptr #{ptr}, ptr #{destructor})"
       else
-        # Non-atomic: call runtime function
-        destructor = "null"  # TODO: function pointer for destructor
         emit "call void @__crystal_v2_rc_dec(ptr #{ptr}, ptr #{destructor})"
       end
     end
