@@ -75,7 +75,8 @@ module CrystalV2
   module Compiler
     VERSION = "0.1.0-dev"
 
-    # Standard library path - relative to compiler source
+    # Standard library path - relative to compiler source by default.
+    # CRYSTAL_PATH env var overrides at runtime (like the original compiler).
     STDLIB_PATH = File.expand_path("../stdlib", File.dirname(__FILE__))
 
     # Original Crystal compiler source path - for require'ing compiler modules
@@ -90,6 +91,25 @@ module CrystalV2
       @pipeline_cache_hits : Int32 = 0
       @pipeline_cache_misses : Int32 = 0
       @parse_trace : Bool = ENV.has_key?("CRYSTAL_V2_PARSE_TRACE")
+
+      # Resolve stdlib path: CRYSTAL_PATH env var (first component) > compiled-in default.
+      # Deferred to runtime so V2-compiled binaries don't crash in constant init.
+      @@stdlib_path : String?
+
+      private def stdlib_path : String
+        @@stdlib_path ||= begin
+          if cp = ENV["CRYSTAL_PATH"]?
+            first = cp.split(':', remove_empty: true).first?
+            if first && first.size > 0 && File.directory?(first)
+              first
+            else
+              STDLIB_PATH
+            end
+          else
+            STDLIB_PATH
+          end
+        end
+      end
       # Top-level macro variable assignments (e.g., {% nums = %w(Int8 ...) %})
       @macro_text_vars = {} of String => String
 
@@ -731,10 +751,10 @@ module CrystalV2
         unless options.no_prelude
           stage2_debug("[STAGE2_DEBUG] loading prelude branch", err_io)
           prelude_path = if options.prelude_file.empty?
-                           path_join(STDLIB_PATH, "prelude.cr")
+                           path_join(stdlib_path, "prelude.cr")
                          elsif !options.prelude_file.includes?(File::SEPARATOR) && !options.prelude_file.ends_with?(".cr")
                            # Short name like "prelude" -> resolve to stdlib path
-                           path_join(STDLIB_PATH, "#{options.prelude_file}.cr")
+                           path_join(stdlib_path, "#{options.prelude_file}.cr")
                          else
                            options.prelude_file
                          end
@@ -4201,7 +4221,7 @@ module CrystalV2
           # On macOS aarch64, resolve to lib_c/aarch64-darwin/c/*
           # TODO: Detect actual platform
           platform = "aarch64-darwin"
-          platform_path = path_join(STDLIB_PATH, "lib_c", platform, req_path)
+          platform_path = path_join(stdlib_path, "lib_c", platform, req_path)
           result = try_require_path(platform_path)
           return result if result
         end
@@ -4224,8 +4244,8 @@ module CrystalV2
           return result if result
 
           # Try stdlib
-          stdlib_path = File.expand_path(req_path, STDLIB_PATH)
-          result = try_require_path(stdlib_path)
+          resolved_stdlib = File.expand_path(req_path, stdlib_path)
+          result = try_require_path(resolved_stdlib)
           return result if result
 
           # Try original Crystal compiler source (for compiler modules like lexer/parser)
@@ -4285,7 +4305,7 @@ module CrystalV2
         if pattern.starts_with?("./") || pattern.starts_with?("../")
           full_dir = File.expand_path(pattern, base_dir)
         else
-          full_dir = File.expand_path(pattern, STDLIB_PATH)
+          full_dir = File.expand_path(pattern, stdlib_path)
         end
 
         return nil unless Dir.exists?(full_dir)
