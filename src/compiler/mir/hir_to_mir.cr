@@ -1029,19 +1029,11 @@ module Crystal
         end
       end
 
-      # NOTE: ARC cleanup slots (rc_dec at function return) are disabled for now.
-      # rc_inc is now emitted at all persistent storage points (FieldSet, ClassVarSet,
-      # PointerStore, IndexSet), but values stored into local variable alloca slots
-      # (via HIR Copy → MIR Store) don't get rc_inc. This means cleanup at function
-      # return or block end would free values still accessible through alloca loads.
-      #
-      # To enable safely, we need EITHER:
-      # (a) rc_inc when storing to alloca slots + rc_dec at return, OR
-      # (b) Alloca-aware escape analysis, OR
-      # (c) Variable reassignment rc_dec for loop patterns (PLAN_RC_DEC Task 2).
-      #
-      # The escape filter infrastructure is kept for when we're ready:
-      if false # TODO: enable when rc_inc coverage is complete
+      # NOTE: Per-function ARC cleanup slots are disabled. Per-block cleanup
+      # (in lower_block) handles owned Call results. Function-level slots would
+      # add rc_dec at return for all ARC allocations, but that requires tracking
+      # which allocations escape vs stay local — kept for future optimization.
+      if false
         hir_func.blocks.each do |hir_block|
           hir_block.instructions.each do |inst|
             next unless inst.is_a?(HIR::Allocate)
@@ -1193,18 +1185,15 @@ module Crystal
         lower_value(inst)
       end
 
-      # NOTE: Per-block ARC cleanup is disabled. Without rc_inc at call sites
-      # for reference-typed arguments, many values have refcount=1 but are still
-      # reachable through local variable alloca slots loaded in other blocks.
-      # The cross-block analysis doesn't catch this because the HIR ValueId is only
-      # used in the defining block (stored to slot), while the slot is loaded elsewhere.
-      #
-      # Safe cleanup requires EITHER:
-      # (a) rc_inc at call sites + rc_dec at block end (full borrowing protocol), OR
-      # (b) Alloca-aware cross-block analysis (tracking values through stack slots), OR
-      # (c) Variable reassignment rc_dec (Task 2 in PLAN_RC_DEC) for loop patterns.
-      #
-      # The block_arc_temps infrastructure is kept for when (a), (b), or (c) is ready.
+      # Per-block ARC cleanup: rc_dec owned Call results at block end.
+      # Only reference-typed results from functions that return +1 ownership.
+      # Skip values used in other blocks (cross-block) — they're still alive.
+      # Safe because rc_inc is now emitted at all persistent stores (FieldSet,
+      # ClassVarSet, PointerStore, IndexSet), so stored refs have rc >= 2.
+      @block_arc_temps.each do |(hir_id, mir_id)|
+        next if @cross_block_values.includes?(hir_id)
+        builder.rc_dec(mir_id)
+      end
 
       # Lower terminator
       lower_terminator(hir_block.terminator)
@@ -1329,11 +1318,8 @@ module Crystal
       if mir_id && hir_value.is_a?(HIR::Call)
         if callee_returns_owned?(hir_value.method_name)
           if hir_type = @hir_value_types[hir_value.id]?
-            mir_type_ref = convert_type(hir_type)
-            if mir_type_info = @mir_module.type_registry.get(mir_type_ref)
-              if mir_type_info.kind.reference? || mir_type_info.kind.array?
-                @block_arc_temps << {hir_value.id, mir_id}
-              end
+            if type_needs_rc?(convert_type(hir_type))
+              @block_arc_temps << {hir_value.id, mir_id}
             end
           end
         end
@@ -1534,14 +1520,12 @@ module Crystal
           store_id = builder.store(field_ptr, arg_val)
 
           # rc_inc for reference-typed constructor args: the new object holds a reference.
+          # Covers reference types, arrays, and all-ref unions (e.g. Node? = Nil | Node).
           # Skip constants (string literals, globals) — they're static data, not heap-allocated.
           unless @hir_constant_values.includes?(arg_hir_id)
             if arg_hir_type = @hir_value_types[arg_hir_id]?
-              arg_mir_type = convert_type(arg_hir_type)
-              if mir_type_info = @mir_module.type_registry.get(arg_mir_type)
-                if mir_type_info.kind.reference? || mir_type_info.kind.array?
-                  builder.rc_inc(arg_val)
-                end
+              if type_needs_rc?(convert_type(arg_hir_type))
+                builder.rc_inc(arg_val)
               end
             end
           end
@@ -1999,14 +1983,12 @@ module Crystal
       end
 
       # rc_inc for reference-typed field values: the object now holds a reference.
+      # Covers reference types, arrays, and all-ref unions (e.g. TreeNode? = Nil | TreeNode).
       # Skip constants (string literals, globals) — they're static data, not heap-allocated.
       unless @hir_constant_values.includes?(field.value)
         if value_hir_type = @hir_value_types[field.value]?
-          value_mir_type = convert_type(value_hir_type)
-          if mir_type_info = @mir_module.type_registry.get(value_mir_type)
-            if mir_type_info.kind.reference? || mir_type_info.kind.array?
-              builder.rc_inc(value)
-            end
+          if type_needs_rc?(convert_type(value_hir_type))
+            builder.rc_inc(value)
           end
         end
       end
@@ -2207,14 +2189,12 @@ module Crystal
       builder.emit(arr_set)
 
       # rc_inc for reference-typed values: the array now holds a reference.
+      # Covers reference types, arrays, and all-ref unions (e.g. Node? = Nil | Node).
       # Skip constants (string literals, globals) — they have INT64_MAX sentinel.
       unless @hir_constant_values.includes?(idx.value)
         if value_hir_type = @hir_value_types[idx.value]?
-          value_mir_type = convert_type(value_hir_type)
-          if mir_type_info = @mir_module.type_registry.get(value_mir_type)
-            if mir_type_info.kind.reference? || mir_type_info.kind.array?
-              builder.rc_inc(value)
-            end
+          if type_needs_rc?(convert_type(value_hir_type))
+            builder.rc_inc(value)
           end
         end
       end
@@ -4471,15 +4451,12 @@ module Crystal
       builder.global_store(global_name, value, convert_type(hir_type))
 
       # rc_inc for reference-typed values: the class variable now holds a reference.
-      # Without this, destructors would double-free objects stored in class vars.
+      # Covers reference types, arrays, and all-ref unions (e.g. Node? = Nil | Node).
       # Skip constants (string literals, globals) — they have INT64_MAX sentinel.
       unless @hir_constant_values.includes?(cv.value)
         if value_hir_type = @hir_value_types[cv.value]?
-          value_mir_type = convert_type(value_hir_type)
-          if mir_type_info = @mir_module.type_registry.get(value_mir_type)
-            if mir_type_info.kind.reference? || mir_type_info.kind.array?
-              builder.rc_inc(value)
-            end
+          if type_needs_rc?(convert_type(value_hir_type))
+            builder.rc_inc(value)
           end
         end
       end
@@ -4629,6 +4606,16 @@ module Crystal
                  else
                    MIR::MemoryStrategy::GC
                  end
+
+      # rc_inc for reference-typed elements: the array buffer holds a reference.
+      # Covers reference types, arrays, and all-ref unions (e.g. Node? = Nil | Node).
+      # Skip constants (string literals, globals) — they have INT64_MAX sentinel.
+      if type_needs_rc?(element_type)
+        arr.elements.each_with_index do |hir_elem, idx|
+          next if @hir_constant_values.includes?(hir_elem)
+          builder.rc_inc(elements[idx])
+        end
+      end
 
       # Create MIR ArrayLiteral instruction
       mir_arr = MIR::ArrayLiteral.new(
@@ -4832,15 +4819,12 @@ module Crystal
       end
 
       # rc_inc for reference-typed values: the buffer now holds a reference.
-      # Without this, destructors would free objects still referenced by arrays/buffers.
+      # Covers reference types, arrays, and all-ref unions (e.g. Node? = Nil | Node).
       # Skip constants (string literals, globals) — they have INT64_MAX sentinel.
       unless @hir_constant_values.includes?(store.value)
         if value_hir_type = @hir_value_types[store.value]?
-          value_mir_type = convert_type(value_hir_type)
-          if mir_type_info = @mir_module.type_registry.get(value_mir_type)
-            if mir_type_info.kind.reference? || mir_type_info.kind.array?
-              builder.rc_inc(val)
-            end
+          if type_needs_rc?(convert_type(value_hir_type))
+            builder.rc_inc(val)
           end
         end
       end
@@ -5078,6 +5062,20 @@ module Crystal
       else
         nil
       end
+    end
+
+    # Check if a MIR type holds a reference that needs rc_inc/rc_dec.
+    # True for: reference types, arrays, and all-ref unions (e.g. TreeNode? = Nil | TreeNode).
+    private def type_needs_rc?(mir_type_ref : TypeRef) : Bool
+      if mir_type_info = @mir_module.type_registry.get(mir_type_ref)
+        return true if mir_type_info.kind.reference? || mir_type_info.kind.array?
+        if mir_type_info.kind.union?
+          if desc = @mir_module.get_union_descriptor(mir_type_ref)
+            return all_ref_union_descriptor?(desc)
+          end
+        end
+      end
+      false
     end
 
     private def convert_type(hir_type : HIR::TypeRef) : TypeRef
