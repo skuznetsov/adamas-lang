@@ -34143,6 +34143,41 @@ module Crystal::HIR
       nil
     end
 
+    # Infer ALL type args for a multi-param generic constructor call.
+    # Returns Array(String) of inferred type args matching template.type_params,
+    # or nil if inference fails for any param.
+    # Works by matching each constructor arg's type to the corresponding type parameter.
+    private def infer_generic_type_args_multi(
+      class_name : String,
+      args : Array(CrystalV2::Compiler::Frontend::ExprId)?,
+      ctx : LoweringContext,
+    ) : Array(String)?
+      template = @generic_templates[class_name]?
+      return nil unless template
+      num_params = template.type_params.size
+      return nil if num_params < 2
+      return nil unless args && args.size >= num_params
+
+      inferred = Array(String).new(num_params)
+      num_params.times do |i|
+        arg_id = args[i]
+        arg_node = @arena[arg_id]
+        if type_name = infer_type_from_expr(arg_node)
+          inferred << type_name
+        elsif type_ref = infer_type_from_expr(arg_id, @current_class)
+          ref_name = get_type_name_from_ref(type_ref)
+          if !ref_name.empty? && ref_name != "Void" && ref_name != "Unknown"
+            inferred << ref_name
+          else
+            return nil
+          end
+        else
+          return nil
+        end
+      end
+      inferred
+    end
+
     # Infer type name from an expression AST node
     private def infer_type_from_expr(node) : String?
       case node
@@ -51570,19 +51605,28 @@ module Crystal::HIR
                     class_name_str = specialized_name
                   end
                 else
-                  inferred_type = infer_generic_type_arg(resolved, call_args, block_expr, ctx, node.named_args)
-                  if inferred_type
-                    specialized_name = "#{resolved}(#{inferred_type})"
+                  # Try multi-param inference first (e.g. Pair(A,B), Hash(K,V))
+                  if multi_args = infer_generic_type_args_multi(resolved, call_args, ctx)
+                    specialized_name = "#{resolved}(#{multi_args.join(", ")})"
                     if !@monomorphized.includes?(specialized_name)
-                      monomorphize_generic_class(resolved, [inferred_type], specialized_name)
+                      monomorphize_generic_class(resolved, multi_args, specialized_name)
                     end
                     class_name_str = specialized_name
-                  elsif resolved == "Array"
-                    specialized_name = "Array(String)"
-                    if !@monomorphized.includes?(specialized_name)
-                      monomorphize_generic_class(resolved, ["String"], specialized_name)
+                  else
+                    inferred_type = infer_generic_type_arg(resolved, call_args, block_expr, ctx, node.named_args)
+                    if inferred_type
+                      specialized_name = "#{resolved}(#{inferred_type})"
+                      if !@monomorphized.includes?(specialized_name)
+                        monomorphize_generic_class(resolved, [inferred_type], specialized_name)
+                      end
+                      class_name_str = specialized_name
+                    elsif resolved == "Array"
+                      specialized_name = "Array(String)"
+                      if !@monomorphized.includes?(specialized_name)
+                        monomorphize_generic_class(resolved, ["String"], specialized_name)
+                      end
+                      class_name_str = specialized_name
                     end
-                    class_name_str = specialized_name
                   end
                 end
               end
@@ -51655,19 +51699,28 @@ module Crystal::HIR
                     class_name_str = specialized_name
                   end
                 else
-                  inferred_type = infer_generic_type_arg(resolved_name, call_args, block_expr, ctx, node.named_args)
-                  if inferred_type
-                    specialized_name = "#{resolved_name}(#{inferred_type})"
+                  # Try multi-param inference first (e.g. Pair(A,B), Hash(K,V))
+                  if multi_args = infer_generic_type_args_multi(resolved_name, call_args, ctx)
+                    specialized_name = "#{resolved_name}(#{multi_args.join(", ")})"
                     if !@monomorphized.includes?(specialized_name)
-                      monomorphize_generic_class(resolved_name, [inferred_type], specialized_name)
+                      monomorphize_generic_class(resolved_name, multi_args, specialized_name)
                     end
                     class_name_str = specialized_name
-                  elsif resolved_name == "Array"
-                    specialized_name = "Array(String)"
-                    if !@monomorphized.includes?(specialized_name)
-                      monomorphize_generic_class(resolved_name, ["String"], specialized_name)
+                  else
+                    inferred_type = infer_generic_type_arg(resolved_name, call_args, block_expr, ctx, node.named_args)
+                    if inferred_type
+                      specialized_name = "#{resolved_name}(#{inferred_type})"
+                      if !@monomorphized.includes?(specialized_name)
+                        monomorphize_generic_class(resolved_name, [inferred_type], specialized_name)
+                      end
+                      class_name_str = specialized_name
+                    elsif resolved_name == "Array"
+                      specialized_name = "Array(String)"
+                      if !@monomorphized.includes?(specialized_name)
+                        monomorphize_generic_class(resolved_name, ["String"], specialized_name)
+                      end
+                      class_name_str = specialized_name
                     end
-                    class_name_str = specialized_name
                   end
                 end
               end
@@ -51700,20 +51753,23 @@ module Crystal::HIR
                     # It's a module method call
                     class_name_str = resolved_name
                   elsif @generic_templates.has_key?(resolved_name) && method_name == "new"
-                    # Calling .new on a generic template (e.g., Array.new, Hash.new)
-                    # Try to infer type argument from constructor arguments or block
-                    inferred_type = infer_generic_type_arg(resolved_name, call_args, block_expr, ctx, node.named_args)
-                    if inferred_type
-                      specialized_name = "#{resolved_name}(#{inferred_type})"
-                      # Monomorphize if not already done
+                    # Calling .new on a generic template (e.g., Array.new, Hash.new, Pair.new)
+                    # Try multi-param inference first, then single-param fallback
+                    if multi_args = infer_generic_type_args_multi(resolved_name, call_args, ctx)
+                      specialized_name = "#{resolved_name}(#{multi_args.join(", ")})"
                       if !@monomorphized.includes?(specialized_name)
-                        monomorphize_generic_class(resolved_name, [inferred_type], specialized_name)
+                        monomorphize_generic_class(resolved_name, multi_args, specialized_name)
                       end
                       class_name_str = specialized_name
                     else
-                      # Can't infer type - use fallback or report error
-                      # For now, use String as default for Array (common case)
-                      if resolved_name == "Array"
+                      inferred_type = infer_generic_type_arg(resolved_name, call_args, block_expr, ctx, node.named_args)
+                      if inferred_type
+                        specialized_name = "#{resolved_name}(#{inferred_type})"
+                        if !@monomorphized.includes?(specialized_name)
+                          monomorphize_generic_class(resolved_name, [inferred_type], specialized_name)
+                        end
+                        class_name_str = specialized_name
+                      elsif resolved_name == "Array"
                         specialized_name = "Array(String)"
                         if !@monomorphized.includes?(specialized_name)
                           monomorphize_generic_class(resolved_name, ["String"], specialized_name)
@@ -51884,13 +51940,21 @@ module Crystal::HIR
             if class_name_str && method_name == "new"
               resolved = resolve_type_alias_chain(class_name_str)
               if @generic_templates.has_key?(resolved) && !resolved.includes?('(')
-                inferred_type = infer_generic_type_arg(resolved, call_args, block_expr, ctx, node.named_args)
-                if inferred_type
-                  specialized_name = "#{resolved}(#{inferred_type})"
+                if multi_args = infer_generic_type_args_multi(resolved, call_args, ctx)
+                  specialized_name = "#{resolved}(#{multi_args.join(", ")})"
                   if !@monomorphized.includes?(specialized_name)
-                    monomorphize_generic_class(resolved, [inferred_type], specialized_name)
+                    monomorphize_generic_class(resolved, multi_args, specialized_name)
                   end
                   class_name_str = specialized_name
+                else
+                  inferred_type = infer_generic_type_arg(resolved, call_args, block_expr, ctx, node.named_args)
+                  if inferred_type
+                    specialized_name = "#{resolved}(#{inferred_type})"
+                    if !@monomorphized.includes?(specialized_name)
+                      monomorphize_generic_class(resolved, [inferred_type], specialized_name)
+                    end
+                    class_name_str = specialized_name
+                  end
                 end
               end
             end

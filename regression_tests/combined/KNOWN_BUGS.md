@@ -6,10 +6,5 @@
 ## test_oop_dispatch — FIXED
 - **Fixed**: `self.class` type literals (nil pointers at runtime) were passed to `.to_s` in string interpolation, calling `Person#to_s(null)`. Added dot_class_literal check in `lower_string_interpolation` to convert type literals to class name strings.
 
-## test_generics_unions (CRASH)
-- **Pattern 1**: `Box#map` with `forall U` — generic type parameter not correctly resolved
-- **Root cause**: V2's forall handling doesn't properly create new generic instantiation for return type. `Box(String)` gets value from `Box(Int32)` instead.
-- **Pattern 2**: `Pair#swap` returning `Pair(B, A)` — multi-type-param generic swap
-- **Root cause**: Similar — V2 doesn't properly instantiate the swapped generic type.
-- **Crash**: Segfault in String#bytesize (null String from wrong generic instantiation)
-- **Tracking**: RC-forall-generics
+## test_generics_unions — FIXED
+- **Fixed**: Multi-type-param generics (e.g. `Pair(A, B)`) were not being monomorphized because `infer_generic_type_arg` only handled single-param templates. Added `infer_generic_type_args_multi` which infers each type arg from the corresponding constructor arg. Applied at all 4 `.new` call sites.
