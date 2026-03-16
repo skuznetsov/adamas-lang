@@ -2345,6 +2345,52 @@ module Crystal
         end
       end
 
+      # Intercept unsafe_as calls: when HIR-level interception failed (stringify_type_expr
+      # returned nil), the call arrives here as e.g. "UInt32#unsafe_as" / "Pointer(UInt8)#unsafe_as".
+      # Lower it as a reinterpret cast instead of a broken method call.
+      if call.method_name.includes?("unsafe_as") || call.method_name.includes?("Hunsafe_as")
+        src_val = args[0] # receiver = value to cast
+        dst_type = convert_type(call.type)
+        src_hir_type = call.receiver ? @hir_value_types[call.receiver.not_nil!]? : nil
+        dst_hir_type = call.type
+
+        # Classify source and destination as primitive-int, primitive-ptr, or object-ptr
+        src_prim = primitive_hir_type?(src_hir_type)
+        dst_prim = primitive_hir_type?(dst_hir_type)
+
+        if src_prim && dst_prim
+          # Both primitive: use type_size to pick cast kind
+          src_size = type_size(src_hir_type.not_nil!)
+          dst_size = type_size(dst_hir_type)
+          src_is_ptr = src_hir_type == HIR::TypeRef::POINTER
+          dst_is_ptr = dst_hir_type == HIR::TypeRef::POINTER
+          if src_is_ptr && dst_is_ptr
+            return src_val
+          elsif !src_is_ptr && dst_is_ptr
+            return builder.cast(CastKind::IntToPtr, src_val, dst_type)
+          elsif src_is_ptr && !dst_is_ptr
+            return builder.cast(CastKind::PtrToInt, src_val, dst_type)
+          elsif dst_size < src_size
+            return builder.cast(CastKind::Trunc, src_val, dst_type)
+          elsif dst_size > src_size
+            return builder.cast(CastKind::ZExt, src_val, dst_type)
+          else
+            return builder.cast(CastKind::Bitcast, src_val, dst_type)
+          end
+        elsif !src_prim && dst_prim
+          # Object ptr → primitive int: ptrtoint
+          dst_is_ptr = dst_hir_type == HIR::TypeRef::POINTER
+          return dst_is_ptr ? src_val : builder.cast(CastKind::PtrToInt, src_val, dst_type)
+        elsif src_prim && !dst_prim
+          # Primitive int → object ptr: inttoptr
+          src_is_ptr = src_hir_type == HIR::TypeRef::POINTER
+          return src_is_ptr ? src_val : builder.cast(CastKind::IntToPtr, src_val, dst_type)
+        else
+          # Both object types: ptr → ptr passthrough
+          return src_val
+        end
+      end
+
       # Special handling for Proc#call - emit indirect call through function pointer
       # Proc calls have format "call$Type" or just "call" and receiver is a Proc type
       # Also match "call(...)" patterns from typed proc calls
@@ -4985,6 +5031,22 @@ module Crystal
       when HIR::TypeRef::CHAR    then 4
       when HIR::TypeRef::POINTER then pointer_word_bytes_i32
       else                            pointer_word_bytes_i32
+      end
+    end
+
+    # Returns true if the HIR type is a primitive (not a class/struct/union pointer)
+    private def primitive_hir_type?(hir_type : HIR::TypeRef?) : Bool
+      return false unless hir_type
+      case hir_type
+      when HIR::TypeRef::BOOL, HIR::TypeRef::INT8, HIR::TypeRef::INT16,
+           HIR::TypeRef::INT32, HIR::TypeRef::INT64, HIR::TypeRef::INT128,
+           HIR::TypeRef::UINT8, HIR::TypeRef::UINT16, HIR::TypeRef::UINT32,
+           HIR::TypeRef::UINT64, HIR::TypeRef::UINT128,
+           HIR::TypeRef::FLOAT32, HIR::TypeRef::FLOAT64,
+           HIR::TypeRef::CHAR, HIR::TypeRef::POINTER
+        true
+      else
+        false
       end
     end
 
