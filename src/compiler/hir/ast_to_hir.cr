@@ -45494,21 +45494,62 @@ module Crystal::HIR
         # operands and break case branches like `when {false, false}`.
         element_checks = [] of ValueId
         cond_node.elements.each_with_index do |elem_expr, idx|
-          cond_val = lower_expr(ctx, elem_expr)
-          cond_type = ctx.type_of(cond_val)
+          elem_node = @arena[elem_expr]
 
-          idx_lit = Literal.new(ctx.next_id, TypeRef::INT32, idx.to_i64)
-          ctx.emit(idx_lit)
-          ctx.register_type(idx_lit.id, TypeRef::INT32)
+          # Detect predicate pattern: .method? on implicit object.
+          # Handles {.foo?, .bar?} in tuple case/when (e.g. Atomic::Ordering).
+          is_predicate = false
+          if elem_node.is_a?(CrystalV2::Compiler::Frontend::MemberAccessNode)
+            obj_node = @arena[elem_node.object]
+            is_predicate = obj_node.is_a?(CrystalV2::Compiler::Frontend::ImplicitObjNode)
+          elsif elem_node.is_a?(CrystalV2::Compiler::Frontend::CallNode)
+            callee_node = @arena[elem_node.callee]
+            if callee_node.is_a?(CrystalV2::Compiler::Frontend::MemberAccessNode)
+              obj_node = @arena[callee_node.object]
+              is_predicate = obj_node.is_a?(CrystalV2::Compiler::Frontend::ImplicitObjNode)
+            end
+          end
 
-          subject_elem = IndexGet.new(ctx.next_id, cond_type, subject_id, idx_lit.id)
-          ctx.emit(subject_elem)
-          ctx.register_type(subject_elem.id, cond_type)
+          if is_predicate
+            # Extract subject tuple element with correct type from type descriptor
+            elem_type = TypeRef::INT32 # fallback (covers most enum base types)
+            subject_type = ctx.type_of(subject_id)
+            if type_desc = @module.get_type_descriptor(subject_type)
+              if type_desc.type_params.size > idx
+                param_type = type_desc.type_params[idx]
+                elem_type = param_type if param_type != TypeRef::VOID
+              end
+            end
 
-          eq = BinaryOperation.new(ctx.next_id, TypeRef::BOOL, BinaryOp::Eq, subject_elem.id, cond_val)
-          ctx.emit(eq)
-          ctx.register_type(eq.id, TypeRef::BOOL)
-          element_checks << eq.id
+            idx_lit = Literal.new(ctx.next_id, TypeRef::INT32, idx.to_i64)
+            ctx.emit(idx_lit)
+            ctx.register_type(idx_lit.id, TypeRef::INT32)
+
+            subject_elem = IndexGet.new(ctx.next_id, elem_type, subject_id, idx_lit.id)
+            ctx.emit(subject_elem)
+            ctx.register_type(subject_elem.id, elem_type)
+
+            # Recursively handle: reuses MemberAccessNode/CallNode predicate logic
+            check = emit_case_comparison(ctx, subject_elem.id, elem_expr)
+            element_checks << check
+          else
+            # Non-predicate: lower condition value and compare with equality
+            cond_val = lower_expr(ctx, elem_expr)
+            cond_type = ctx.type_of(cond_val)
+
+            idx_lit = Literal.new(ctx.next_id, TypeRef::INT32, idx.to_i64)
+            ctx.emit(idx_lit)
+            ctx.register_type(idx_lit.id, TypeRef::INT32)
+
+            subject_elem = IndexGet.new(ctx.next_id, cond_type, subject_id, idx_lit.id)
+            ctx.emit(subject_elem)
+            ctx.register_type(subject_elem.id, cond_type)
+
+            eq = BinaryOperation.new(ctx.next_id, TypeRef::BOOL, BinaryOp::Eq, subject_elem.id, cond_val)
+            ctx.emit(eq)
+            ctx.register_type(eq.id, TypeRef::BOOL)
+            element_checks << eq.id
+          end
         end
 
         if element_checks.empty?
