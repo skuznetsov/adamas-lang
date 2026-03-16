@@ -3538,7 +3538,11 @@ module Crystal
         end
       elsif recv_desc.kind == HIR::TypeKind::Class
         base = recv_desc.name
-        ([base] + subclasses_for(base)).each do |class_name|
+        all_classes = [base] + subclasses_for(base)
+        # Track classes that had no MIR function found — we'll fill them in
+        # with the nearest parent's implementation in a second pass.
+        missing_classes = [] of {String, Crystal::MIR::Type}
+        all_classes.each do |class_name|
           func_name = "#{class_name}##{method_suffix}"
           func = @mir_module.get_function(func_name)
           # Verify arity: an untyped alias (e.g. Foo#hash) may match a different
@@ -3549,15 +3553,68 @@ module Crystal
             func = nil
           end
           func = func || resolve_virtual_method_for_class(class_name, method_suffix, arg_count)
-          next unless func
-          next unless mir_type = @mir_module.type_registry.get_by_name(class_name)
-          candidates << {
-            type_id: mir_type.id.to_i32,
-            type_ref: TypeRef.new(mir_type.id),
-            variant_id: mir_type.id.to_i32,
-            func: func,
-            dispatch_class: nil
-          }
+          if func
+            next unless mir_type = @mir_module.type_registry.get_by_name(class_name)
+            candidates << {
+              type_id: mir_type.id.to_i32,
+              type_ref: TypeRef.new(mir_type.id),
+              variant_id: mir_type.id.to_i32,
+              func: func,
+              dispatch_class: nil
+            }
+          else
+            # No function found for this class — record for fallback pass.
+            # Only reference types: value types can't appear in class dispatch.
+            if mir_type = @mir_module.type_registry.get_by_name(class_name)
+              missing_classes << {class_name, mir_type} unless mir_type.is_value_type?
+            end
+          end
+        end
+        # Second pass: for classes with no MIR function, find the nearest ancestor
+        # that has an implementation by searching ALL MIR functions (not just
+        # existing candidates). This handles inherited methods that RTA filtered
+        # out (e.g. String#hash(hasher) inherited from Reference — the HIR never
+        # generated it for String, but a sibling like IO has the same inherited
+        # default). We walk up the class hierarchy checking siblings.
+        unless missing_classes.empty?
+          # Build a set of class names that already have candidates
+          have_candidate = Set(String).new
+          candidates.each do |c|
+            if mt = @mir_module.type_registry.get(c[:type_ref])
+              have_candidate.add(mt.name)
+            end
+          end
+          missing_classes.each do |class_name, mir_type|
+            fallback_func = nil.as(Crystal::MIR::Function?)
+            # Walk up the class hierarchy from the missing class
+            current = class_name
+            walked = Set(String).new
+            while !current.empty? && !walked.includes?(current)
+              walked.add(current)
+              # Check if any sibling (subclass of current's parent) has a candidate
+              parent = @hir_module.class_parents[current]?
+              if parent
+                sibling_func = find_sibling_candidate_func(parent, method_suffix, arg_count, have_candidate)
+                if sibling_func
+                  fallback_func = sibling_func
+                  break
+                end
+              end
+              current = parent || ""
+            end
+            if ff = fallback_func
+              if ENV["DEBUG_VDISPATCH_FALLBACK"]?
+                STDERR.puts "[VDISPATCH_FALLBACK] #{class_name}##{method_suffix} → #{ff.name}"
+              end
+              candidates << {
+                type_id: mir_type.id.to_i32,
+                type_ref: TypeRef.new(mir_type.id),
+                variant_id: mir_type.id.to_i32,
+                func: ff,
+                dispatch_class: nil
+              }
+            end
+          end
         end
       elsif recv_desc.kind == HIR::TypeKind::Module || recv_desc.kind == HIR::TypeKind::Generic
         seen = Set(String).new
@@ -3831,6 +3888,37 @@ module Crystal
         end
         parent = @hir_module.class_parents[current]?
         current = parent || ""
+      end
+      nil
+    end
+
+    # Find a candidate function for a virtual dispatch method by looking at
+    # siblings (other subclasses of the given parent class) that already have
+    # the method resolved. This handles the case where RTA filters out an
+    # inherited method for one subclass but keeps it for another (both share
+    # the same inherited implementation).
+    private def find_sibling_candidate_func(
+      parent_class : String,
+      method_suffix : String,
+      arg_count : Int32,
+      have_candidate : Set(String)
+    ) : Crystal::MIR::Function?
+      # Check parent itself first
+      parent_func_name = "#{parent_class}##{method_suffix}"
+      if func = @mir_module.get_function(parent_func_name)
+        return func if arg_count == -1 || func.params.size == arg_count + 1
+      end
+      # Check siblings (subclasses of the parent that already have a candidate)
+      subclasses_for(parent_class).each do |sibling|
+        next unless have_candidate.includes?(sibling)
+        sibling_func_name = "#{sibling}##{method_suffix}"
+        if func = @mir_module.get_function(sibling_func_name)
+          return func if arg_count == -1 || func.params.size == arg_count + 1
+        end
+        # Also check the resolve cache for this sibling
+        if func = resolve_virtual_method_for_class(sibling, method_suffix, arg_count)
+          return func
+        end
       end
       nil
     end
