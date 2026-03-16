@@ -33962,7 +33962,7 @@ module Crystal::HIR
     # E.g., Array.new(size, value) -> infer T from value's type
     #       Array.new(size) { block } -> infer T from block's return type
     private def infer_type_name_from_expr_id(expr_id : ExprId) : String?
-      if inferred = infer_type_from_expr(@arena[expr_id])
+      if inferred = infer_type_name_from_node(@arena[expr_id])
         return inferred
       end
       if inferred_ref = infer_type_from_expr(expr_id, @current_class)
@@ -33982,7 +33982,7 @@ module Crystal::HIR
       # For Array.new(size, initial_value), infer from initial_value (second arg)
       if class_name == "Array" && args && args.size >= 2
         value_arg = @arena[args[1]]
-        return infer_type_from_expr(value_arg)
+        return infer_type_name_from_node(value_arg)
       end
 
       # For Array.new(size) { block }, infer from block's return type
@@ -33994,7 +33994,7 @@ module Crystal::HIR
             last_expr_id = body.last?
             if last_expr_id
               last_expr = @arena[last_expr_id]
-              return infer_type_from_expr(last_expr)
+              return infer_type_name_from_node(last_expr)
             end
           end
         end
@@ -34003,7 +34003,7 @@ module Crystal::HIR
       # For Atomic.new(value), infer from the value type.
       if class_name == "Atomic" && args && args.size >= 1
         arg_node = @arena[args[0]]
-        if inferred = infer_type_from_expr(arg_node)
+        if inferred = infer_type_name_from_node(arg_node)
           return inferred
         end
       end
@@ -34011,7 +34011,7 @@ module Crystal::HIR
       # For Pointer::Appender.new(pointer), infer element type from Pointer(T).
       if class_name == "Pointer::Appender" && args && args.size >= 1
         arg_node = @arena[args[0]]
-        if inferred = infer_type_from_expr(arg_node)
+        if inferred = infer_type_name_from_node(arg_node)
           if elem_ref = pointer_element_type(inferred)
             elem_name = get_type_name_from_ref(elem_ref)
             return elem_name unless elem_name.empty? || elem_name == "Void" || elem_name == "Unknown"
@@ -34050,7 +34050,7 @@ module Crystal::HIR
           end
         end
 
-        if inferred_name = infer_type_from_expr(pointer_arg)
+        if inferred_name = infer_type_name_from_node(pointer_arg)
           if elem_ref = pointer_element_type(inferred_name)
             elem_name = get_type_name_from_ref(elem_ref)
             return elem_name unless elem_name.empty? || elem_name == "Void" || elem_name == "Unknown"
@@ -34101,7 +34101,7 @@ module Crystal::HIR
           if args && !args.empty?
             arg_id = args[0]
             arg_node = @arena[arg_id]
-            if inferred = infer_type_from_expr(arg_node)
+            if inferred = infer_type_name_from_node(arg_node)
               return inferred
             end
             if inferred_ref = infer_type_from_expr(arg_id, @current_class)
@@ -34115,7 +34115,7 @@ module Crystal::HIR
             if selected
               arg_id = selected.value
               arg_node = @arena[arg_id]
-              if inferred = infer_type_from_expr(arg_node)
+              if inferred = infer_type_name_from_node(arg_node)
                 return inferred
               end
               if inferred_ref = infer_type_from_expr(arg_id, @current_class)
@@ -34134,7 +34134,7 @@ module Crystal::HIR
           return inferred_name unless inferred_name.empty? || inferred_name == "Void" || inferred_name == "Unknown"
         end
         value_node = @arena[args[0]]
-        if inferred_name = infer_type_from_expr(value_node)
+        if inferred_name = infer_type_name_from_node(value_node)
           return inferred_name
         end
       end
@@ -34162,7 +34162,7 @@ module Crystal::HIR
       num_params.times do |i|
         arg_id = args[i]
         arg_node = @arena[arg_id]
-        if type_name = infer_type_from_expr(arg_node)
+        if type_name = infer_type_name_from_node(arg_node)
           inferred << type_name
         elsif type_ref = infer_type_from_expr(arg_id, @current_class)
           ref_name = get_type_name_from_ref(type_ref)
@@ -34178,8 +34178,8 @@ module Crystal::HIR
       inferred
     end
 
-    # Infer type name from an expression AST node
-    private def infer_type_from_expr(node) : String?
+    # Infer type name from an expression AST node (returns String name, not TypeRef)
+    private def infer_type_name_from_node(node) : String?
       case node
       when CrystalV2::Compiler::Frontend::StringNode, CrystalV2::Compiler::Frontend::StringInterpolationNode
         "String"
@@ -34259,7 +34259,7 @@ module Crystal::HIR
             if name == "Array"
               if args = node.args
                 if args.size >= 2
-                  if inferred = infer_type_from_expr(@arena[args[1]])
+                  if inferred = infer_type_name_from_node(@arena[args[1]])
                     return "Array(#{inferred})"
                   end
                 end
@@ -34269,7 +34269,7 @@ module Crystal::HIR
                 if block_node.is_a?(CrystalV2::Compiler::Frontend::BlockNode)
                   if body = block_node.body
                     if last_id = body.last?
-                      if inferred = infer_type_from_expr(@arena[last_id])
+                      if inferred = infer_type_name_from_node(@arena[last_id])
                         return "Array(#{inferred})"
                       end
                     end
@@ -34509,7 +34509,7 @@ module Crystal::HIR
     end
 
     private def infer_type_from_class_ivar_assign(value_node) : TypeRef
-      if inferred_name = infer_type_from_expr(value_node)
+      if inferred_name = infer_type_name_from_node(value_node)
         inferred_ref = type_ref_for_name(inferred_name)
         return inferred_ref unless inferred_ref == TypeRef::VOID
       end
@@ -34588,7 +34588,7 @@ module Crystal::HIR
         if elements = value_node.elements
           if first_id = elements.first?
             first_node = @arena[first_id]
-            if elem_type = infer_type_from_expr(first_node)
+            if elem_type = infer_type_name_from_node(first_node)
               return type_ref_for_name("Array(#{elem_type})")
             end
           end
@@ -34608,8 +34608,8 @@ module Crystal::HIR
           if first_entry = entries.first?
             key_node = @arena[first_entry.key]
             value_node_inner = @arena[first_entry.value]
-            key_type = infer_type_from_expr(key_node)
-            value_type = infer_type_from_expr(value_node_inner)
+            key_type = infer_type_name_from_node(key_node)
+            value_type = infer_type_name_from_node(value_node_inner)
             if key_type && value_type
               return type_ref_for_name("Hash(#{key_type}, #{value_type})")
             end
@@ -34619,7 +34619,7 @@ module Crystal::HIR
       when CrystalV2::Compiler::Frontend::NamedTupleLiteralNode
         entries = [] of String
         value_node.entries.each do |entry|
-          value_name = infer_type_from_expr(@arena[entry.value]) || "Unknown"
+          value_name = infer_type_name_from_node(@arena[entry.value]) || "Unknown"
           value_name = "Unknown" if value_name == "Void" || value_name == "Unknown"
           key_name = normalize_named_tuple_key_name((safe_slice_to_string(entry.key) || ""))
           entries << "#{key_name}: #{value_name}"
