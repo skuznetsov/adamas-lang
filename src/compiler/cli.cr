@@ -2449,7 +2449,12 @@ module CrystalV2
         # Process requires first
         base_dir = File.dirname(abs_path)
         requires = [] of String
-        exprs.each do |expr_id|
+        # V2 stage2: Array(ExprId)#each yields ExprId pointers that may be corrupted
+        # (8-byte GEP stride reads past actual element boundaries). Use index-based
+        # access with unsafe_fetch to work around the iteration bug.
+        i = 0
+        while i < exprs.size
+          expr_id = exprs.unsafe_fetch(i)
           begin
             process_require_node(arena, expr_id, base_dir, input_file, results, loaded, options, out_io, requires)
           rescue ex : IndexError
@@ -2457,6 +2462,7 @@ module CrystalV2
               log(options, out_io, "    [req] IndexError in require scan expr=#{expr_id.index}: #{ex.message}")
             end
           end
+          i += 1
         end
         if @parse_trace
           STDERR.puts "[REQSCAN_DONE] #{abs_path} reqs=#{requires.size}"
