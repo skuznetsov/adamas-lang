@@ -10612,6 +10612,13 @@ module Crystal::MIR
     end
 
     private def emit_rc_inc(inst : RCIncrement)
+      # Safety: rc_inc only makes sense for pointer-typed values.
+      # MIR type may say "reference" but actual LLVM type could be i32/i64
+      # (e.g., enum or small struct stored as scalar). Skip non-pointer values.
+      if ptr_type_ref = @value_types[inst.ptr]?
+        llvm_type = @type_mapper.llvm_type(ptr_type_ref)
+        return unless llvm_type == "ptr"
+      end
       ptr = value_ref(inst.ptr)
       if inst.atomic
         emit "call void @__crystal_v2_rc_inc_atomic(ptr #{ptr})"
