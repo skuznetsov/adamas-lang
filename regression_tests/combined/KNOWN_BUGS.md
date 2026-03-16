@@ -3,12 +3,8 @@
 ## test_strings_join — FIXED
 - **Fixed**: Inline yield arity check was too weak (`non_block_params == 0` instead of `< call_args.size`), causing `Enumerable#join$block` (1-param wrapper) to be inlined instead of `Enumerable#join$arity2_block` (2-param iteration body). Three fixes: tightened arity check, added arity guard on `yield_function_name_for` fallback, added module-level arity variant search.
 
-## test_oop_dispatch (CRASH)
-- **Pattern**: Module method calling `self.class` in string interpolation
-- **Root cause**: `self.class` in module method context returns empty string / null receiver. When module includes trigger `to_s` call, `self` is null.
-- **Crash**: Segfault in Person#to_s (null self, accessing field at offset 0x8)
-- **Workaround**: Avoid `self.class` in module methods; use direct instance var access instead
-- **Tracking**: RC-module-self
+## test_oop_dispatch — FIXED
+- **Fixed**: `self.class` type literals (nil pointers at runtime) were passed to `.to_s` in string interpolation, calling `Person#to_s(null)`. Added dot_class_literal check in `lower_string_interpolation` to convert type literals to class name strings.
 
 ## test_generics_unions (CRASH)
 - **Pattern 1**: `Box#map` with `forall U` — generic type parameter not correctly resolved

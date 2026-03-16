@@ -40557,6 +40557,19 @@ module Crystal::HIR
                 val_id = cast.id
               end
             elsif val_type.id >= TypeRef::FIRST_USER_TYPE && !is_union_type?(val_type)
+              # Type literals (from .class) are nil pointers at runtime — convert
+              # to the class name string instead of calling to_s on null.
+              if ctx.dot_class_literal?(val_id)
+                dcl_name = get_type_name_from_ref(val_type)
+                unless dcl_name.empty?
+                  str_lit = Literal.new(ctx.next_id, TypeRef::STRING, dcl_name)
+                  ctx.emit(str_lit)
+                  ctx.register_type(str_lit.id, TypeRef::STRING)
+                  val_id = str_lit.id
+                  parts << val_id
+                  next
+                end
+              end
               # User type (class instance, not union) — call to_s() to convert
               # to String before adding to interpolation parts. Without this,
               # the ptr would be treated as a String ptr in the LLVM backend,
