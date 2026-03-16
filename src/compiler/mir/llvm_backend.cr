@@ -2689,8 +2689,12 @@ module Crystal::MIR
       emit_raw "check:\n"
       emit_raw "  %rc_ptr = getelementptr i8, ptr %ptr, i64 -8\n"
       emit_raw "  %old = load i64, ptr %rc_ptr, align 8\n"
+      # Skip if sentinel (large value) OR if zero (no ARC header — runtime-allocated object)
       emit_raw "  %is_static = icmp uge i64 %old, 4611686018427387904\n"
-      emit_raw "  br i1 %is_static, label %done, label %inc\n"
+      emit_raw "  br i1 %is_static, label %done, label %check_zero\n"
+      emit_raw "check_zero:\n"
+      emit_raw "  %is_zero = icmp eq i64 %old, 0\n"
+      emit_raw "  br i1 %is_zero, label %done, label %inc\n"
       emit_raw "inc:\n"
       emit_raw "  %new = add i64 %old, 1\n"
       emit_raw "  store i64 %new, ptr %rc_ptr, align 8\n"
@@ -2706,8 +2710,12 @@ module Crystal::MIR
       emit_raw "check:\n"
       emit_raw "  %rc_ptr = getelementptr i8, ptr %ptr, i64 -8\n"
       emit_raw "  %old = load i64, ptr %rc_ptr, align 8\n"
+      # Skip if sentinel (large value) OR if zero (no ARC header — runtime-allocated object)
       emit_raw "  %is_static = icmp uge i64 %old, 4611686018427387904\n"
-      emit_raw "  br i1 %is_static, label %done, label %dec\n"
+      emit_raw "  br i1 %is_static, label %done, label %check_zero\n"
+      emit_raw "check_zero:\n"
+      emit_raw "  %is_zero = icmp eq i64 %old, 0\n"
+      emit_raw "  br i1 %is_zero, label %done, label %dec\n"
       emit_raw "dec:\n"
       emit_raw "  %new = sub i64 %old, 1\n"
       emit_raw "  store i64 %new, ptr %rc_ptr, align 8\n"
@@ -2726,7 +2734,7 @@ module Crystal::MIR
       emit_raw "  ret void\n"
       emit_raw "}\n\n"
 
-      # rc_inc_atomic: null-safe, sentinel-safe atomic increment
+      # rc_inc_atomic: null-safe, sentinel-safe, zero-safe atomic increment
       emit_raw "define void @__crystal_v2_rc_inc_atomic(ptr %ptr) {\n"
       emit_raw "  %is_null = icmp eq ptr %ptr, null\n"
       emit_raw "  br i1 %is_null, label %done, label %check\n"
@@ -2734,7 +2742,10 @@ module Crystal::MIR
       emit_raw "  %rc_ptr = getelementptr i8, ptr %ptr, i64 -8\n"
       emit_raw "  %old = load i64, ptr %rc_ptr, align 8\n"
       emit_raw "  %is_static = icmp uge i64 %old, 4611686018427387904\n"
-      emit_raw "  br i1 %is_static, label %done, label %inc\n"
+      emit_raw "  br i1 %is_static, label %done, label %check_zero\n"
+      emit_raw "check_zero:\n"
+      emit_raw "  %is_zero = icmp eq i64 %old, 0\n"
+      emit_raw "  br i1 %is_zero, label %done, label %inc\n"
       emit_raw "inc:\n"
       emit_raw "  %old2 = atomicrmw add ptr %rc_ptr, i64 1 seq_cst\n"
       emit_raw "  br label %done\n"
@@ -2742,7 +2753,7 @@ module Crystal::MIR
       emit_raw "  ret void\n"
       emit_raw "}\n\n"
 
-      # rc_dec_atomic: null-safe, sentinel-safe atomic decrement, free when count reaches 0
+      # rc_dec_atomic: null-safe, sentinel-safe, zero-safe atomic decrement, free when count reaches 0
       emit_raw "define void @__crystal_v2_rc_dec_atomic(ptr %ptr, ptr %destructor) {\n"
       emit_raw "  %is_null = icmp eq ptr %ptr, null\n"
       emit_raw "  br i1 %is_null, label %done, label %check\n"
@@ -2750,7 +2761,10 @@ module Crystal::MIR
       emit_raw "  %rc_ptr = getelementptr i8, ptr %ptr, i64 -8\n"
       emit_raw "  %peek = load i64, ptr %rc_ptr, align 8\n"
       emit_raw "  %is_static = icmp uge i64 %peek, 4611686018427387904\n"
-      emit_raw "  br i1 %is_static, label %done, label %dec\n"
+      emit_raw "  br i1 %is_static, label %done, label %check_zero\n"
+      emit_raw "check_zero:\n"
+      emit_raw "  %is_zero = icmp eq i64 %peek, 0\n"
+      emit_raw "  br i1 %is_zero, label %done, label %dec\n"
       emit_raw "dec:\n"
       emit_raw "  %old = atomicrmw sub ptr %rc_ptr, i64 1 acq_rel\n"
       emit_raw "  %should_free = icmp eq i64 %old, 1\n"
@@ -5520,7 +5534,9 @@ module Crystal::MIR
       when "String$Dnew$$Pointer$LUInt8$R_Int32_Int32"
         # String.new(chars : UInt8*, bytesize : Int32, size : Int32)
         # Allocates a Crystal String, copies data from chars pointer.
-        emit_raw "; String.new(UInt8*, Int32, Int32) — runtime override\n"
+        # Must include 8-byte GC sentinel header (INT64_MAX) at ptr-8 so
+        # rc_inc/rc_dec safely skip dynamically-created strings.
+        emit_raw "; String.new(UInt8*, Int32, Int32) — runtime override (with GC sentinel)\n"
         emit_raw "define ptr @#{mangled}(ptr %chars, i32 %bytesize, i32 %size) {\n"
         emit_raw "entry:\n"
         emit_raw "  %is_empty = icmp eq i32 %bytesize, 0\n"
@@ -5528,9 +5544,11 @@ module Crystal::MIR
         emit_raw "ret_empty:\n"
         emit_raw "  ret ptr @.str.empty\n"
         emit_raw "do_alloc:\n"
-        emit_raw "  %alloc_i32 = add i32 %bytesize, 13\n"
+        emit_raw "  %alloc_i32 = add i32 %bytesize, 21\n"  # 8 (sentinel) + 4+4+4 (header) + bytesize + 1 (null)
         emit_raw "  %alloc = sext i32 %alloc_i32 to i64\n"
-        emit_raw "  %str = call ptr @__crystal_v2_malloc64(i64 %alloc)\n"
+        emit_raw "  %raw = call ptr @__crystal_v2_malloc64(i64 %alloc)\n"
+        emit_raw "  store i64 9223372036854775807, ptr %raw, align 8\n"  # INT64_MAX sentinel at raw
+        emit_raw "  %str = getelementptr i8, ptr %raw, i64 8\n"  # object starts at raw+8
         emit_raw "  store i32 #{@string_type_id}, ptr %str\n"
         emit_raw "  %bs_ptr = getelementptr i8, ptr %str, i32 4\n"
         emit_raw "  store i32 %bytesize, ptr %bs_ptr\n"
@@ -17018,10 +17036,20 @@ module Crystal::MIR
 
       # StaticArray: data is inline (no buffer pointer), use direct element GEP
       is_static_array = false
-      if array_value_type
-        sa_type = @module.type_registry.get(array_value_type)
+      # First check MIR container_type from hir_to_mir (most reliable)
+      if ct = inst.container_type
+        sa_type = @module.type_registry.get(ct)
         if sa_type && sa_type.name.starts_with?("StaticArray(")
           is_static_array = true
+        end
+      end
+      # Fallback: check @value_types for the array operand
+      unless is_static_array
+        if array_value_type
+          sa_type = @module.type_registry.get(array_value_type)
+          if sa_type && sa_type.name.starts_with?("StaticArray(")
+            is_static_array = true
+          end
         end
       end
       normalized_index = index
@@ -17241,10 +17269,20 @@ module Crystal::MIR
 
       # Detect StaticArray — data is stored inline (no buffer pointer)
       is_static_array = false
-      if array_value_type
-        sa_type = @module.type_registry.get(array_value_type)
+      # First check MIR container_type from hir_to_mir (most reliable)
+      if ct = inst.container_type
+        sa_type = @module.type_registry.get(ct)
         if sa_type && sa_type.name.starts_with?("StaticArray(")
           is_static_array = true
+        end
+      end
+      # Fallback: check @value_types for the array operand
+      unless is_static_array
+        if array_value_type
+          sa_type = @module.type_registry.get(array_value_type)
+          if sa_type && sa_type.name.starts_with?("StaticArray(")
+            is_static_array = true
+          end
         end
       end
 
