@@ -18414,15 +18414,30 @@ module Crystal::HIR
 
               # Capture initialize parameters for new()
               # Also extract ivars from shorthand: def initialize(@value : T)
-              # Note: Only capture from FIRST initialize (for multiple overloads, each gets its own mangled name)
               # Use init_capture.source (not init_params.empty?) to track whether we've
               # already seen an initialize — a zero-param initialize legitimately has empty params.
-              if method_name == "initialize" && init_capture.source == :none
-                init_capture.source = :class
+              # If the first initialize captured is a copy constructor (param type == class type),
+              # allow a later initialize with non-self-referencing params to replace it.
+              # This prevents the base allocator from using a copy constructor that crashes
+              # when called with 0 args (null padding for self-typed param).
+              if method_name == "initialize" && (init_capture.source == :none || init_capture.source == :copy_ctor)
+                is_first = init_capture.source == :none
                 if params = member.params
                   new_params = capture_initialize_params(params, ivars, pointerof(offset), class_name)
-                  init_params.clear
-                  new_params.each { |param| init_params << param }
+                  class_type = type_ref_for_name(class_name)
+                  is_copy_ctor = new_params.size == 1 && new_params[0][1] == class_type
+                  if is_first
+                    init_capture.source = is_copy_ctor ? :copy_ctor : :class
+                    init_params.clear
+                    new_params.each { |param| init_params << param }
+                  elsif init_capture.source == :copy_ctor && !is_copy_ctor
+                    # Replace copy constructor with a better initialize
+                    init_capture.source = :class
+                    init_params.clear
+                    new_params.each { |param| init_params << param }
+                  end
+                elsif is_first
+                  init_capture.source = :class
                 end
               end
               if method_name == "initialize"
