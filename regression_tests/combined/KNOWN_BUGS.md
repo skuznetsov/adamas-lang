@@ -1,10 +1,7 @@
 # Known Bugs in Combined Regression Tests
 
-## test_strings_join (CRASH)
-- **Pattern**: `Array(Bool)#join("|")` — join on non-String arrays
-- **Root cause**: V2 assigns wrong method body to join overloads. All join variants get the wrapper body instead of the correct iteration body. `Indexable#join` calls `super(separator)` but the super resolution picks wrong DefNode.
-- **Crash**: Segfault in String#bytesize (null pointer from corrupted return value)
-- **Tracking**: RC-method-body-assignment
+## test_strings_join — FIXED
+- **Fixed**: Inline yield arity check was too weak (`non_block_params == 0` instead of `< call_args.size`), causing `Enumerable#join$block` (1-param wrapper) to be inlined instead of `Enumerable#join$arity2_block` (2-param iteration body). Three fixes: tightened arity check, added arity guard on `yield_function_name_for` fallback, added module-level arity variant search.
 
 ## test_oop_dispatch (CRASH)
 - **Pattern**: Module method calling `self.class` in string interpolation

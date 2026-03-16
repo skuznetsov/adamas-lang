@@ -22442,8 +22442,34 @@ module Crystal::HIR
               end
               # For typed variants (e.g., $Int32), also try base_name
               # since the arena is registered under the base method name.
-              if stored.nil? && full_name != base_name
+              # Skip for super calls — base_name is "Class#method" which stores
+              # the child class's overload arena. The correct arena comes from
+              # @arena (set by caller via with_arena).
+              if stored.nil? && full_name != base_name && full_name_override.nil?
                 stored = @function_def_arenas[base_name]?
+              end
+              # Verify the stored arena actually contains valid body nodes for
+              # this specific DefNode. When multiple overloads share a base_name
+              # (e.g., Indexable#join vs Enumerable#join), the stored arena may
+              # be from a different overload where body ExprIds resolve to wrong
+              # node types. Check that body node spans fall within the DefNode's
+              # own span — a node from a different overload will have a disjoint span.
+              if stored && !body.nil? && !body.not_nil!.empty?
+                def_span = node.span
+                def_start = def_span.start_offset
+                def_end = def_span.end_offset
+                if def_start >= 0 && def_end > def_start
+                  first_body_id = body.not_nil![0]
+                  if !first_body_id.null_ptr? && !first_body_id.invalid? &&
+                     first_body_id.index >= 0 && first_body_id.index < stored.size
+                    body_node = stored[first_body_id]
+                    body_span = body_node.span
+                    # Body node's span must be within the DefNode's span
+                    unless body_span.start_offset >= def_start && body_span.end_offset <= def_end
+                      stored = nil
+                    end
+                  end
+                end
               end
               if stored
                 arena_from_stored = true
@@ -41206,16 +41232,6 @@ module Crystal::HIR
             if found = find_module_def_recursive(module_base, method_name, args.size, visited, typed_lookup_arg_types)
               actual_func_def = found[0]
               def_arena = found[1]
-              if env_has?("DEBUG_SUPER_JOIN") && method_name == "join"
-                body_size = actual_func_def.body.try(&.size) || 0
-                body_preview = if (b = actual_func_def.body) && b.size > 0
-                                 first_expr = @arena[b[0]]?
-                                 first_expr ? first_expr.class.name.split("::").last : "nil"
-                               else
-                                 "empty"
-                               end
-                STDERR.puts "[SUPER_JOIN] class=#{class_name} module=#{module_base} body_size=#{body_size} first_node=#{body_preview} arena=#{def_arena.class.name.split("::").last}:#{def_arena.size}"
-              end
               if params = actual_func_def.params
                 param_count = count_params(params) { |p| !p.is_block && !named_only_separator?(p) }
                 if param_count > args.size
@@ -41244,7 +41260,13 @@ module Crystal::HIR
                 receiver_map = type_param_map_for_receiver_name("#{class_name}##{method_name}")
                 old_super_source = @current_super_source_module
                 @current_super_source_module = module_base
-                with_arena(def_arena) do
+                # Resolve the correct arena for the DefNode's body.
+                # def_arena is the module's outer body arena, but the DefNode's
+                # own body expressions may live in a different arena (same file,
+                # different parse pass). resolve_arena_for_def searches all known
+                # arenas to find one where body ExprIds actually resolve correctly.
+                resolved_def_arena = resolve_arena_for_def(actual_func_def, def_arena)
+                with_arena(resolved_def_arena) do
                   with_type_param_map(receiver_map) do
                     lower_method(class_name, class_info, actual_func_def, arg_types, nil, nil, super_name, force_class_method: @current_method_is_class)
                   end
@@ -54749,6 +54771,9 @@ module Crystal::HIR
                                     # Verify the $block variant's arity matches the call arity.
                                     # $block may be the zero-arg overload (e.g. Tuple#reduce(&))
                                     # while the call has arguments (e.g. reduce("X") { ... }).
+                                    # Also reject when $block has fewer params than the call args
+                                    # (e.g. Enumerable#join$block has 1 param but join(io, sep) { }
+                                    # has 2 args — should use $arity2_block instead).
                                     block_def = @function_defs[block_variant]?
                                     block_arity_ok = true
                                     if block_def && call_args.size > 0
@@ -54758,33 +54783,54 @@ module Crystal::HIR
                                           non_block_params += 1 unless p.is_block
                                         end
                                       end
-                                      if non_block_params == 0 && call_args.size > 0
+                                      if non_block_params < call_args.size
                                         block_arity_ok = false
                                       end
                                     end
                                     if block_arity_ok
                                       block_variant
                                     else
-                                      # Try arity-specific variant
+                                      # Try arity-specific variant (class-level first, then modules)
                                       arity_variant = base_method_name + "$arity#{call_args.size}"
+                                      found_arity : String? = nil
                                       if @yield_functions.includes?(arity_variant)
-                                        arity_variant
+                                        found_arity = arity_variant
                                       elsif @function_defs.has_key?(arity_variant)
-                                        # Not yet in yield_functions but registered as function_def
                                         if arity_def = @function_defs[arity_variant]?
                                           arity_arena = @function_def_arenas[arity_variant]? || @arena
                                           if def_contains_yield?(arity_def, arity_arena)
                                             @yield_functions.add(arity_variant)
-                                            arity_variant
-                                          else
-                                            nil
+                                            found_arity = arity_variant
                                           end
-                                        else
-                                          nil
                                         end
-                                      else
-                                        nil
                                       end
+                                      # Search included modules for arity-specific yield variant
+                                      if found_arity.nil?
+                                        method_short = method_short_from_name(base_method_name)
+                                        if method_short
+                                          owner_for_search = method_owner(base_method_name)
+                                          if owner_for_search
+                                            owner_base_search = strip_generic_args(owner_for_search)
+                                            search_mods = @class_included_modules[owner_for_search]? || @class_included_modules[owner_base_search]?
+                                            if search_mods
+                                              search_mods.each do |mod|
+                                                mod_base = strip_generic_args(mod)
+                                                mod_arity = "#{mod_base}##{method_short}$arity#{call_args.size}_block"
+                                                if @yield_functions.includes?(mod_arity)
+                                                  found_arity = mod_arity
+                                                  break
+                                                end
+                                                mod_arity2 = "#{mod_base}##{method_short}$arity#{call_args.size}"
+                                                if @yield_functions.includes?(mod_arity2)
+                                                  found_arity = mod_arity2
+                                                  break
+                                                end
+                                              end
+                                            end
+                                          end
+                                        end
+                                      end
+                                      found_arity
                                     end
                                   else
                                     nil
@@ -54875,9 +54921,23 @@ module Crystal::HIR
           if !skip_inline
             if yield_name = yield_function_name_for(base_method_name)
               if func_def = @function_defs[yield_name]?
-                debug_hook("call.inline.yield", "callee=#{yield_name} current=#{@current_class || ""}")
-                callee_arena = @function_def_arenas[yield_name]? || @arena
-                return inline_yield_function(ctx, func_def, yield_name, receiver_id, call_arg_values, block_cast, block_param_types_inline, callee_arena)
+                # Verify the yield function's arity matches the call arity.
+                # yield_function_name_for doesn't consider arity, so it may return
+                # a $block variant with fewer params (e.g. Enumerable#join$block with
+                # 1 param for a call with 2 args). Skip and let the arity-aware
+                # lookup_block_function_def_for_call handle it instead.
+                yield_arity_ok = true
+                if call_args.size > 0
+                  yield_non_block = count_non_block_params(func_def)
+                  if yield_non_block < call_args.size
+                    yield_arity_ok = false
+                  end
+                end
+                if yield_arity_ok
+                  debug_hook("call.inline.yield", "callee=#{yield_name} current=#{@current_class || ""}")
+                  callee_arena = @function_def_arenas[yield_name]? || @arena
+                  return inline_yield_function(ctx, func_def, yield_name, receiver_id, call_arg_values, block_cast, block_param_types_inline, callee_arena)
+                end
               end
             end
           end
