@@ -99,8 +99,11 @@ module CrystalV2
       private def stdlib_path : String
         @@stdlib_path ||= begin
           if cp = ENV["CRYSTAL_PATH"]?
-            first = cp.split(':', remove_empty: true).first?
-            if first && first.size > 0 && File.directory?(first)
+            # Avoid .split.first? chain — V2 mishandles Array#first? union return.
+            # Use index + byte_slice for a single allocation.
+            colon = cp.index(':')
+            first = colon ? cp.byte_slice(0, colon) : cp
+            if first.size > 0 && File.directory?(first)
               first
             else
               STDLIB_PATH
