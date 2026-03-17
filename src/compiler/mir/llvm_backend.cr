@@ -15680,10 +15680,6 @@ module Crystal::MIR
       union_type = @type_mapper.llvm_type(inst.union_type)
       unless union_type.includes?(".union")
         # Guard: union wrap on a non-union LLVM type. Treat as a cast to the target type.
-        if ENV.has_key?("DEBUG_UNION_WRAP")
-          src_type = @value_types[inst.value]? || TypeRef::POINTER
-          STDERR.puts "[UNION_WRAP] non-union target=#{union_type} src=#{@type_mapper.llvm_type(src_type)}"
-        end
         if union_type == "ptr"
           val = value_ref(inst.value)
           src_type = @emitted_value_types[val]? || @type_mapper.llvm_type(@value_types[inst.value]? || TypeRef::POINTER)

@@ -4286,6 +4286,67 @@ module Crystal
         return value
       end
 
+      # Enum → integer: V2 registers UInt8-backed enums as Struct in HIR, but MIR
+      # correctly identifies them as TypeKind::Enum stored as i32. Without this
+      # check, the fall-through Bitcast path emits ptrtoint ptr→i8 which truncates
+      # 64-bit pointers to 1 byte.
+      if src_hir_type.id >= HIR::TypeRef::FIRST_USER_TYPE
+        if mir_type = @mir_module.type_registry.get(src_type)
+          if mir_type.kind.enum?
+            dst_int = case dst_hir_type
+                      when HIR::TypeRef::BOOL,
+                           HIR::TypeRef::INT8, HIR::TypeRef::INT16, HIR::TypeRef::INT32, HIR::TypeRef::INT64, HIR::TypeRef::INT128,
+                           HIR::TypeRef::UINT8, HIR::TypeRef::UINT16, HIR::TypeRef::UINT32, HIR::TypeRef::UINT64, HIR::TypeRef::UINT128,
+                           HIR::TypeRef::CHAR
+                        true
+                      else
+                        false
+                      end
+            if dst_int
+              enum_size = mir_type.size > 0 ? mir_type.size.to_i32 : 4
+              dst_size = type_size(dst_hir_type)
+              kind = if dst_size < enum_size
+                       CastKind::Trunc
+                     elsif dst_size > enum_size
+                       CastKind::ZExt
+                     else
+                       CastKind::Bitcast
+                     end
+              return builder.cast(kind, value, dst_type)
+            end
+          end
+        end
+      end
+
+      # Integer → enum: reverse direction (e.g., UInt8 → TypeKind)
+      if dst_hir_type.id >= HIR::TypeRef::FIRST_USER_TYPE
+        if mir_type = @mir_module.type_registry.get(dst_type)
+          if mir_type.kind.enum?
+            src_int = case src_hir_type
+                      when HIR::TypeRef::BOOL,
+                           HIR::TypeRef::INT8, HIR::TypeRef::INT16, HIR::TypeRef::INT32, HIR::TypeRef::INT64, HIR::TypeRef::INT128,
+                           HIR::TypeRef::UINT8, HIR::TypeRef::UINT16, HIR::TypeRef::UINT32, HIR::TypeRef::UINT64, HIR::TypeRef::UINT128,
+                           HIR::TypeRef::CHAR
+                        true
+                      else
+                        false
+                      end
+            if src_int
+              enum_size = mir_type.size > 0 ? mir_type.size.to_i32 : 4
+              src_size = type_size(src_hir_type)
+              kind = if src_size < enum_size
+                       CastKind::ZExt
+                     elsif src_size > enum_size
+                       CastKind::Trunc
+                     else
+                       CastKind::Bitcast
+                     end
+              return builder.cast(kind, value, dst_type)
+            end
+          end
+        end
+      end
+
       # Helpers (HIR types carry signedness via Int*/UInt*)
       int_like = ->(t : HIR::TypeRef) do
         case t
