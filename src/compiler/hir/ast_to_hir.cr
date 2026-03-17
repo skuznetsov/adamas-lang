@@ -37698,7 +37698,8 @@ module Crystal::HIR
         # Return type
         return_type = if ret = node.return_type
                         safe_str_guard(ret, "return")
-                        type_ref_for_c_type(String.new(ret))
+                        ret_str = (safe_slice_to_string(ret) || "")
+                        type_ref_for_c_type(ret_str)
                       else
                         TypeRef::VOID
                       end
