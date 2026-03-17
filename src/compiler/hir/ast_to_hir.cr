@@ -7389,6 +7389,23 @@ module Crystal::HIR
         return normalize_typeof_type_name(resolved)
       end
 
+      # flat_map_type(yield Enumerable.element_type(self)) — stdlib flat_map typeof.
+      # flat_map_type unwraps Array(T)/Iterator(T) to T at runtime. Resolve statically
+      # by extracting the inner element type and then unwrapping one level.
+      if expr.starts_with?("flat_map_type(")
+        inner = extract_balanced_paren_content(expr[("flat_map_type".size)..])
+        if inner
+          # Strip "yield " prefix if present
+          inner = inner.lstrip
+          inner = inner[6..].lstrip if inner.starts_with?("yield ")
+          if elem_type = resolve_element_type_expression(inner)
+            # flat_map_type: Array(T)/Iterator(T) → T, else identity
+            unwrapped = element_type_for_type_name(elem_type)
+            return normalize_typeof_type_name(unwrapped || elem_type)
+          end
+        end
+      end
+
       # Split on dots to get the call chain
       # Handle patterns like: str.to_unsafe.value, str.to_slice, @buffer.to_unsafe
       parts = split_method_chain(expr)
@@ -7606,6 +7623,15 @@ module Crystal::HIR
         # Look up return type
         if ret_type = @function_types[method_name]?
           return get_type_name_from_ref(ret_type)
+        end
+        # flat_map_type(expr): unwraps Array(T)/Iterator(T) → T, else identity.
+        # Used in Enumerable#flat_map typeof resolution.
+        if method_name == "flat_map_type" && node.args.size > 0
+          arg_type = resolve_typeof_expr(node.args.first)
+          if arg_type != "Pointer(Void)"
+            unwrapped = element_type_for_type_name(arg_type)
+            return normalize_typeof_type_name(unwrapped || arg_type)
+          end
         end
       end
 
@@ -43069,6 +43095,24 @@ module Crystal::HIR
         local_type = ctx.type_of(local_id)
         next if local_type == target_type
 
+        # Skip narrowing when the value is already a generic instantiation of the
+        # target (e.g., Array(Int32) is already an Array). Casting would create a new
+        # object of the bare generic type, losing the original data.
+        local_desc = @module.get_type_descriptor(local_type)
+        target_desc = @module.get_type_descriptor(target_type)
+        if local_desc && target_desc
+          local_name = local_desc.name
+          target_name_narrow = target_desc.name
+          if !target_name_narrow.includes?('(') && local_name.starts_with?(target_name_narrow) &&
+             local_name.size > target_name_narrow.size && local_name[target_name_narrow.size] == '('
+            next
+          end
+          # Also skip if target is a parent class (is_a narrowing to a wider type is a no-op)
+          if statically_is_a_type?(local_type, target_type) == true
+            next
+          end
+        end
+
         if is_union_type?(local_type)
           variant_id = get_union_member_variant_id(local_type, target_type)
           if variant_id >= 0
@@ -43190,6 +43234,21 @@ module Crystal::HIR
       check_name = check_desc.name
       return true if value_name == check_name
 
+      # Generic base class matching: Array(Int32).is_a?(Array) → true
+      # If check_name has no type params, see if value_name is a generic instantiation of it.
+      if !check_name.includes?('(') && value_name.starts_with?(check_name) &&
+         value_name.size > check_name.size && value_name[check_name.size] == '('
+        return true
+      end
+
+      # Module inclusion matching: check if value's class includes the checked module.
+      if check_desc.kind == TypeKind::Module || @module_defs.has_key?(check_name)
+        # Walk up the value's class hierarchy checking included modules
+        if class_includes_module?(value_name, check_name)
+          return true
+        end
+      end
+
       # Walk UP from value_type: if check_type is an ancestor, return true
       current = @class_info[value_name]?
       while current
@@ -43209,6 +43268,37 @@ module Crystal::HIR
         current = @class_info[parent]?
       end
 
+      false
+    end
+
+    # Check if a class (or its ancestors) includes a given module.
+    # Uses @class_included_modules for direct checks and walks parent chain.
+    private def class_includes_module?(class_name : String, module_name : String) : Bool
+      current = class_name
+      visited = Set(String).new
+      while current && !visited.includes?(current)
+        visited << current
+        # Check direct module inclusions
+        if mods = @class_included_modules[current]?
+          mods.each do |mod|
+            return true if mod == module_name || strip_generics_simple(mod) == module_name
+          end
+        end
+        # Also check generic-stripped class name
+        base = strip_generics_simple(current)
+        if base != current
+          if mods = @class_included_modules[base]?
+            mods.each do |mod|
+              return true if mod == module_name || strip_generics_simple(mod) == module_name
+            end
+          end
+        end
+        # Walk up parent chain
+        info = @class_info[current]?
+        info = @class_info[base]? if info.nil? && base != current
+        break unless info
+        current = info.parent_name
+      end
       false
     end
 
