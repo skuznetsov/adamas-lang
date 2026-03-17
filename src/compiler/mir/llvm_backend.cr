@@ -14571,17 +14571,27 @@ module Crystal::MIR
               "ptr #{val}"
             end
           elsif arg_llvm_type.includes?(".union")
-            # For union types, check if we have a cross-block slot to use
+            # Indirect calls are yield dispatch to block procs. Block procs
+            # expect the unwrapped element value (ptr for reference types,
+            # value-as-ptr for primitives), NOT a pointer to the whole union.
+            # Union layout: { i32 type_id, [N x i32] payload }
+            # Extract payload (field 1) and load as ptr.
             if slot_name = @cross_block_slots[a]?
-              "ptr %#{slot_name}"
+              union_ptr = "%#{slot_name}"
             else
-              # No slot - need to alloca and store the union value
               temp_slot = "%indirect_union_arg.#{@cond_counter}"
               @cond_counter += 1
               emit "#{temp_slot} = alloca #{arg_llvm_type}, align 8"
               emit "store #{arg_llvm_type} #{value_ref(a)}, ptr #{temp_slot}"
-              "ptr #{temp_slot}"
+              union_ptr = temp_slot
             end
+            payload_ptr = "%indirect_union_pay.#{@cond_counter}"
+            @cond_counter += 1
+            emit "#{payload_ptr} = getelementptr #{arg_llvm_type}, ptr #{union_ptr}, i32 0, i32 1"
+            extracted = "%indirect_union_val.#{@cond_counter}"
+            @cond_counter += 1
+            emit "#{extracted} = load ptr, ptr #{payload_ptr}, align 4"
+            "ptr #{extracted}"
           else
             "#{arg_llvm_type} #{value_ref(a)}"
           end
