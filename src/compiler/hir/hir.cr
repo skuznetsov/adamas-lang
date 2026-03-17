@@ -1520,6 +1520,7 @@ module Crystal::HIR
     end
 
     def create_function(name : String, return_type : TypeRef) : Function
+      # Debug removed
       if ENV.has_key?("DBG_FILE_NEW") && (name.includes?("File") || name.includes?("file"))
         STDERR.puts "[FUNC_CREATE_FILE] name=#{name} return=#{return_type.id}"
       end

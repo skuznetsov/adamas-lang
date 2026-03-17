@@ -18412,7 +18412,7 @@ module Crystal::HIR
                   param_type = if ta = param.type_annotation
                                  safe_str_guard(ta, "next")
                                  ta_str = (safe_slice_to_string(ta) || "")
-                                 ref = type_ref_for_name(ta_str)
+                                 ref = annotation_type_ref(ta_str, class_name)
                                  # Forall type parameter resolution: when a method
                                  # has a parameter like Slice(U) (from `forall U`),
                                  # the raw annotation can't be resolved. Substitute
@@ -18420,7 +18420,7 @@ module Crystal::HIR
                                  # the owner's concrete generic type.
                                  if ref == TypeRef::VOID && ta_str.includes?('(') && class_name.includes?('(')
                                    resolved_ta = resolve_forall_type_params(ta_str, class_name)
-                                   ref = type_ref_for_name(resolved_ta) if resolved_ta != ta_str
+                                   ref = annotation_type_ref(resolved_ta, class_name) if resolved_ta != ta_str
                                  end
                                  ref
                                elsif param.is_double_splat
@@ -19971,7 +19971,7 @@ module Crystal::HIR
                     next
                   end
                   param_type = if ta = param.type_annotation
-                                 type_ref_for_name((safe_slice_to_string(ta) || ""))
+                                 annotation_type_ref((safe_slice_to_string(ta) || ""), class_name)
                                elsif param.is_double_splat
                                  type_ref_for_name("NamedTuple")
                                else
@@ -24176,7 +24176,41 @@ module Crystal::HIR
         return type_name
       end
       if candidates = @short_type_index[type_name]?
-        return candidates.first if candidates.size == 1
+        if candidates.size == 1
+          if type_name == "Context" && env_has?("DEBUG_NESTED_RESOLVE")
+            STDERR.puts "[NESTED_RESOLVE] fast_resolve_1cand type_name=Context current_class=#{@current_class || "nil"} candidate=#{candidates.first}"
+          end
+          # Before returning the sole candidate, check if the current class has
+          # a closer nested type with the same short name. The nested class may
+          # not yet be in @short_type_index (it's registered during body iteration
+          # which runs AFTER the signature scan), but @nested_type_names is
+          # populated earlier by record_nested_type_names.
+          if current = @current_class
+            current_base = if info = split_generic_base_and_args(current)
+                             info.base
+                           else
+                             current
+                           end
+            # Walk the namespace chain (current class and all ancestors) looking
+            # for a closer nested type, since @short_type_index may only contain
+            # the outer scope's resolution.
+            ns = current_base
+            found_nested = false
+            loop do
+              if (nested = @nested_type_names[ns]?) && nested.includes?(type_name)
+                found_nested = true
+                break
+              end
+              idx = ns.rindex("::")
+              break unless idx
+              ns = ns[0, idx]
+            end
+            if found_nested
+              return resolve_type_name_in_context(type_name)
+            end
+          end
+          return candidates.first
+        end
       end
       resolve_type_name_in_context(type_name)
     end
@@ -31506,6 +31540,15 @@ module Crystal::HIR
         return direct if match_set.includes?(direct)
       end
 
+      # If the primary namespace (current class) has a nested TYPE with this name,
+      # don't fall through to hint-based alias matching. The nested type takes
+      # precedence over sibling-namespace aliases (e.g., MacroExpander::Context
+      # should not be shadowed by Semantic::Context).
+      primary_namespaces.each do |ns|
+        nested = "#{ns}::#{name}"
+        return nil if @class_info.has_key?(nested) || type_name_exists?(nested)
+      end
+
       module_namespaces = alias_context_module_namespaces(primary_namespaces)
       module_namespaces.each do |ns|
         direct = "#{ns}::#{name}"
@@ -35338,7 +35381,7 @@ module Crystal::HIR
                          end
             type_ann_str : String? = nil
             param_type = if (ta = param.type_annotation) && (type_ann_str = safe_slice_to_string(ta))
-                           type_ref_for_name(type_ann_str)
+                           annotation_type_ref(type_ann_str, @current_class)
                          elsif param.is_double_splat
                            type_ref_for_name("NamedTuple")
                          else
