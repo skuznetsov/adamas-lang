@@ -98,14 +98,24 @@ module Crystal::HIR
     FIRST_USER_TYPE = 32_u32
 
     def primitive? : Bool
+      return false if null_ptr?
       @id < FIRST_USER_TYPE
     end
 
+    # V2 workaround: heap-allocated struct pointers can be null.
+    def null_ptr? : Bool
+      pointerof(@id).address == 0
+    end
+
     def ==(other : TypeRef) : Bool
+      # V2 workaround: guard against null struct pointers
+      return other.null_ptr? if null_ptr?
+      return false if other.null_ptr?
       @id == other.id
     end
 
     def hash(hasher)
+      return hasher if null_ptr?
       hasher = @id.hash(hasher)
       hasher
     end
