@@ -4017,10 +4017,11 @@ module Crystal::HIR
       chain.includes?(parent_name)
     end
 
-    private def collect_subclasses(parents : Enumerable(String)) : Array(String)
+    private def collect_subclasses(parents : Array(String)) : Array(String)
       results = [] of String
       visited = Set(String).new
-      queue = parents.to_a
+      queue = Array(String).new(parents.size) # BFS queue — must be a fresh copy since we append during traversal
+      parents.each { |p| queue << p }
       queue.each { |parent| visited.add(parent) }
       idx = 0
       while idx < queue.size
