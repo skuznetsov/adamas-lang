@@ -669,6 +669,8 @@ module Crystal::HIR
     # V2 safety: check if String byte data is readable (last byte probe)
     @[AlwaysInline]
     private def v2_string_readable?(str : String) : Bool
+      # V2 safety: String reference can be null
+      return false if str.unsafe_as(UInt64) == 0_u64
       sz = str.bytesize
       return true if sz <= 0
       addr = str.to_unsafe.address
@@ -679,6 +681,10 @@ module Crystal::HIR
     end
 
     private def parse_method_name_compact(name : String) : MethodNamePartsCompact
+      # V2 safety: String reference can be null
+      if name.unsafe_as(UInt64) == 0_u64
+        return MethodNamePartsCompact.new("", nil, nil, "")
+      end
       name_id = name.object_id
       if name_id == @method_name_compact_last_id
         if last = @method_name_compact_last
@@ -8337,8 +8343,6 @@ module Crystal::HIR
       if sizeof(Slice(UInt8)) <= 8
         raw = slice.unsafe_as(UInt64)
         return nil if raw == 0_u64 || raw < 4096_u64 || raw > 0x0000_7FFF_FFFF_FFFF_u64
-        # V2: Slice is heap-allocated. The pointer may pass range checks but
-        # point to unmapped memory. Probe using vm_read_overwrite.
         return nil unless readable_address?(raw)
       end
       ptr = slice.to_unsafe
@@ -8346,7 +8350,6 @@ module Crystal::HIR
       return nil if addr == 0_u64
       return nil if addr < 4096_u64 # likely corrupted/null-page pointer
       return nil if addr > 0x0000_7FFF_FFFF_FFFF_u64
-      # V2 only: also probe the data pointer in case it's unmapped
       if sizeof(Slice(UInt8)) <= 8
         return nil unless readable_address?(addr)
       end
@@ -17867,7 +17870,7 @@ module Crystal::HIR
               current_path = source_path_for(@arena) || "(unknown)"
               STDERR.puts "[GENERIC_TEMPLATE] #{class_name}: body_size=#{new_body_size} file=#{File.basename(current_path)}"
             end
-            param_names = type_params.map { |p| String.new(p) }
+            param_names = type_params.map { |p| safe_slice_to_string(p) || "" }
             new_template = GenericClassTemplate.new(class_name, param_names, node, @arena, is_struct)
 
             if existing = @generic_templates[class_name]?
@@ -18065,7 +18068,10 @@ module Crystal::HIR
                !@type_param_map.empty? &&
                (nested_type_params = member.type_params) &&
                nested_type_params.size > 0
-              type_args = nested_type_params.map { |p| @type_param_map[String.new(p)]? || String.new(p) }
+              type_args = nested_type_params.map { |p|
+                pname = safe_slice_to_string(p) || ""
+                @type_param_map[pname]? || pname
+              }
               if concrete_type_args?(type_args)
                 specialized_nested = "#{full_nested_name}(#{type_args.join(", ")})"
                 unless @monomorphized.includes?(specialized_nested)
@@ -19767,7 +19773,9 @@ module Crystal::HIR
       old_map = @type_param_map.dup
       if type_params = template_def.type_params
         type_params.each_with_index do |param, i|
-          @type_param_map[String.new(param)] = resolve_type_alias_chain(type_args[i])
+          pname = safe_slice_to_string(param) || ""
+          next if pname.empty?
+          @type_param_map[pname] = resolve_type_alias_chain(type_args[i])
         end
         @subst_cache_gen &+= 1
       end
@@ -24549,6 +24557,7 @@ module Crystal::HIR
     # Resolve method call for a receiver type and method name
     # Returns the properly mangled method name that should be used in the Call node
     private def normalize_method_owner_name(name : String) : String
+      return "" if name.unsafe_as(UInt64) == 0_u64
       return name if name.empty?
       if mapped = @type_param_map[name]?
         return mapped
@@ -29954,6 +29963,7 @@ module Crystal::HIR
     end
 
     private def type_name_exists?(name : String) : Bool
+      return false if name.unsafe_as(UInt64) == 0_u64
       # Hot path: type resolution calls this millions of times when lowering stdlib.
       # Cache positives directly and negatives with a universe stamp (invalidates on growth).
       cache = (@type_name_exists_cache ||= {} of String => TypeNameExistsCacheEntry)
@@ -30286,6 +30296,7 @@ module Crystal::HIR
     end
 
     private def resolve_type_name_in_context(name : String) : String
+      return "" if name.unsafe_as(UInt64) == 0_u64
       return name if name.empty?
       if @resolve_type_name_stack.includes?(name)
         return name
@@ -31460,6 +31471,7 @@ module Crystal::HIR
     end
 
     private def resolve_type_alias_chain(name : String) : String
+      return "" if name.unsafe_as(UInt64) == 0_u64
       contextual = !name.includes?("::")
       cache_key = if contextual
                     ns_override = @current_namespace_override || ""
@@ -33865,6 +33877,7 @@ module Crystal::HIR
     # Returns the fully qualified method name (e.g., "Animal#age" or "Animal#age:Int32") or nil if not found
     # Note: Returns the base name without mangling - caller should mangle with actual arg types
     private def resolve_method_with_inheritance(class_name : String, method_name : String) : String?
+      return nil if class_name.unsafe_as(UInt64) == 0_u64 || method_name.unsafe_as(UInt64) == 0_u64
       class_name = normalize_method_owner_name(class_name)
       origin = class_name
       if env_get("DEBUG_METHOD_INHERIT") && method_name == "internal_representation"
@@ -34044,6 +34057,8 @@ module Crystal::HIR
     end
 
     private def class_method_overload_exists?(base_name : String) : Bool
+      # V2 safety: String reference can be null
+      return false if base_name.unsafe_as(UInt64) == 0_u64
       return false unless base_name.includes?('.')
       overloads = function_def_overloads(base_name)
       return false if overloads.empty?
@@ -34056,6 +34071,8 @@ module Crystal::HIR
     end
 
     private def class_method_defined?(name : String) : Bool
+      # V2 safety: String reference can be null
+      return false if name.unsafe_as(UInt64) == 0_u64
       return false if name.empty?
       @function_defs.has_key?(name) ||
         @function_types.has_key?(name) ||
@@ -48067,7 +48084,7 @@ module Crystal::HIR
       elsif mod_defs = @module_defs[base]?
         mod_defs.each do |mod_node, _|
           if type_params = mod_node.type_params
-            candidate = type_params.map { |param| String.new(param) }
+            candidate = type_params.map { |param| safe_slice_to_string(param) || "" }
             if candidate.size == raw_args.size
               param_names = candidate
               break
@@ -71382,6 +71399,7 @@ module Crystal::HIR
     end
 
     private def type_ref_for_name(name : String) : TypeRef
+      return TypeRef::VOID if name.unsafe_as(UInt64) == 0_u64
       return TypeRef::VOID if name == "_"
       # Guard against infinite recursion (V2 stage2 string/alias bugs can cause cycles)
       if @type_ref_depth > 64

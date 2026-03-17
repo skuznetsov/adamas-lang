@@ -1321,6 +1321,10 @@ module CrystalV2
                                          else
                                            {"", nil}
                                          end
+          # V2 safety: recursive evaluate_* calls may return corrupted String pointers
+          if base_value.unsafe_as(Pointer(Void)).address < 4096_u64
+            base_value = ""
+          end
 
           if base_macro_value
             result = base_macro_value.call_method(member, [] of MacroValue, nil)
@@ -1407,6 +1411,10 @@ module CrystalV2
         # :foo.id → foo
         # foo.id → foo (no change)
         private def macro_id(value : String) : String
+          # V2 safety: heap-allocated String pointers can be corrupted
+          if value.unsafe_as(Pointer(Void)).address < 4096_u64
+            return ""
+          end
           # Remove string quotes
           if value.starts_with?('"') && value.ends_with?('"') && value.size >= 2
             return value[1..-2]
@@ -2623,7 +2631,26 @@ module CrystalV2
         end
 
         private def intern_name(slice : Slice(UInt8)) : String
-          @string_pool.intern_string(slice)
+          # V2 safety: Slice is heap-allocated as pointer, can be null/corrupted.
+          if sizeof(Slice(UInt8)) <= 8
+            raw = slice.unsafe_as(UInt64)
+            if raw == 0_u64 || raw < 4096_u64 || raw > 0x0000_7FFF_FFFF_FFFF_u64
+              return ""
+            end
+          end
+          ptr = slice.to_unsafe
+          if ptr.address < 4096_u64 || slice.size <= 0 || slice.size > 1_000_000
+            return ""
+          end
+          # V2 safety: @string_pool can be null due to V2 field access bugs.
+          # Return plain String without interning if pool is unavailable.
+          str = String.new(slice)
+          pool = @string_pool
+          pool_addr = pointerof(pool).as(Pointer(UInt64)).value
+          if pool_addr == 0_u64 || pool_addr < 4096_u64
+            return str
+          end
+          pool.intern_string(str)
         end
       end
     end
