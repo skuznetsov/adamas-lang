@@ -4776,8 +4776,20 @@ module Crystal
           return param.id if desc.kind == HIR::TypeKind::Proc
         end
       end
-      # Fallback: use the last parameter as the block param.
-      hir_func.params.last?.try(&.id)
+      # Fallback: use the last parameter only if it could be a block (Pointer or VOID type).
+      # Non-callable types (Int32, String, etc.) must not be used as yield targets.
+      if last_param = hir_func.params.last?
+        pt = last_param.type
+        if pt == HIR::TypeRef::POINTER || pt == HIR::TypeRef::VOID
+          return last_param.id
+        end
+        # Also accept if the MIR type maps to Pointer
+        mir_type = convert_type(pt)
+        if mir_type == TypeRef::POINTER
+          return last_param.id
+        end
+      end
+      nil
     end
 
     # ─────────────────────────────────────────────────────────────────────────

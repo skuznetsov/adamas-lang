@@ -7351,6 +7351,14 @@ module Crystal::HIR
         if br = @type_param_map["__block_return__"]?
           return normalize_typeof_type_name(br) unless br.empty? || br == "Void" || br == "Unknown"
         end
+        # In typeof context, yield's result type approximates the argument type
+        # (identity block assumption). Resolve yield args as the result type.
+        if (yield_args = node.args) && yield_args.size > 0
+          arg_type = resolve_typeof_expr(yield_args.first)
+          unless arg_type == "Pointer(Void)"
+            return normalize_typeof_type_name(arg_type)
+          end
+        end
         "Pointer(Void)"
       else
         "Pointer(Void)"
@@ -27652,6 +27660,54 @@ module Crystal::HIR
       preferred_arena : CrystalV2::Compiler::Frontend::ArenaLike? = nil,
     ) : Bool
       body.any? { |expr_id| contains_yield_in_expr?(expr_id, preferred_arena) }
+    end
+
+    # Deep yield check that also scans CaseNode values and when-conditions.
+    # Used by lower_block_to_proc to find yields in all expression positions.
+    # The regular contains_yield? intentionally doesn't scan case values
+    # to avoid affecting method registration semantics.
+    private def contains_yield_deep?(
+      body : Array(ExprId),
+      preferred_arena : CrystalV2::Compiler::Frontend::ArenaLike? = nil,
+    ) : Bool
+      return true if contains_yield?(body, preferred_arena)
+      # Scan case values and when-conditions that contains_yield? misses
+      body.any? { |expr_id| contains_yield_in_case_positions?(expr_id, preferred_arena) }
+    end
+
+    private def contains_yield_in_case_positions?(
+      expr_id : ExprId,
+      preferred_arena : CrystalV2::Compiler::Frontend::ArenaLike? = nil,
+    ) : Bool
+      return false if expr_id.null_ptr? || expr_id.invalid?
+      node = node_for_yield_scan(expr_id, preferred_arena)
+      return false unless node
+      case node
+      when CrystalV2::Compiler::Frontend::CaseNode
+        # Check case value (e.g. `case yield e` — yield is in the value position)
+        if case_val = node.value
+          return true if contains_yield_in_expr?(case_val, preferred_arena)
+        end
+        # Check when conditions
+        node.when_branches.each do |w|
+          w.conditions.each do |c|
+            return true if contains_yield_in_expr?(c, preferred_arena)
+          end
+          # Recurse into when bodies for nested cases
+          return true if w.body.any? { |e| contains_yield_in_case_positions?(e, preferred_arena) }
+        end
+        if else_body = node.else_branch
+          return true if else_body.any? { |e| contains_yield_in_case_positions?(e, preferred_arena) }
+        end
+      when CrystalV2::Compiler::Frontend::IfNode
+        node.then_body.any? { |e| contains_yield_in_case_positions?(e, preferred_arena) } ||
+          (node.else_body ? node.else_body.not_nil!.any? { |e| contains_yield_in_case_positions?(e, preferred_arena) } : false)
+      when CrystalV2::Compiler::Frontend::WhileNode
+        node.body.any? { |e| contains_yield_in_case_positions?(e, preferred_arena) }
+      when CrystalV2::Compiler::Frontend::BlockNode
+        node.body.any? { |e| contains_yield_in_case_positions?(e, preferred_arena) }
+      end
+      false
     end
 
     private def contains_block_call?(body : Array(ExprId), block_name : String) : Bool
@@ -69576,7 +69632,7 @@ module Crystal::HIR
       # (e.g. `io`, `separator` in Enumerable#join's each_with_index block).
       # We must scan those block bodies NOW to capture all referenced names,
       # otherwise the variables won't be captured and will be unresolved at runtime.
-      if contains_yield?(block_node.body, block_arena)
+      if contains_yield_deep?(block_node.body, block_arena)
         yield_block_stack_idx = @inline_yield_block_stack.size - 1
         while yield_block_stack_idx >= 0
           yield_blk = @inline_yield_block_stack[yield_block_stack_idx]
@@ -69589,7 +69645,7 @@ module Crystal::HIR
             yield_block_refs.each { |name| referenced_names.add(name) }
           end
           # If the yield target block ALSO contains yield, scan the next level
-          break unless contains_yield?(yield_blk.body, yield_blk_arena || block_arena)
+          break unless contains_yield_deep?(yield_blk.body, yield_blk_arena || block_arena)
           yield_block_stack_idx -= 1
         end
       end
@@ -69626,7 +69682,12 @@ module Crystal::HIR
       explicit_yield_target = nil.as({String, ValueId, TypeRef}?)
       saved_yield_arena = @arena
       @arena = block_arena
-      if contains_yield?(block_node.body, block_arena)
+      # Use deep yield scan that also checks CaseNode values and when-conditions.
+      # The regular contains_yield? intentionally doesn't scan case values to avoid
+      # affecting method registration semantics, but for block-to-proc yield target
+      # capture we need to find yields in ALL expression positions.
+      has_yield = contains_yield_deep?(block_node.body, block_arena)
+      if has_yield
         if candidate = find_enclosing_yield_target(ctx, parent_locals)
           explicit_yield_target = candidate
           if env_get("DEBUG_EXPLICIT_YIELD_TARGET")
