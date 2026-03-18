@@ -27356,6 +27356,15 @@ module Crystal::HIR
             end
           end
         end
+        # Check HIR type descriptor for union types not yet in MIR descriptors.
+        # During align_all_class_ivars, @union_descriptors may not be populated yet.
+        # Non-all-ref unions (e.g., Nil | Slice(UInt8)) need tagged layout:
+        # { i32 type_id, [N x i32] payload } — larger than pointer size.
+        if desc = @module.get_type_descriptor(type)
+          if desc.kind == HIR::TypeKind::Union
+            return hir_union_ivar_storage_size(desc.name, c_context)
+          end
+        end
         # Check if it's a struct (value type) with known layout
         if info = @class_info_by_type_id[type.id]?
           if info.is_struct && info.size > 0
@@ -27421,6 +27430,57 @@ module Crystal::HIR
         # Unknown types with pointer size are likely reference types
         # (generic classes like Array(T), Hash(K,V), etc.)
         variant.size == pointer_word_bytes_i32
+      end
+    end
+
+    # Compute ivar storage size for a union type using only HIR-level info.
+    # Used during align_all_class_ivars when @union_descriptors (MIR) aren't populated yet.
+    # In V2 ABI, structs are heap-allocated as pointers. A union where ALL non-Nil variants
+    # are pointer-backed (classes, structs, arrays, etc.) can be stored as a nullable pointer
+    # (8 bytes). Otherwise, a tagged layout { i32 type_id, payload } is needed.
+    private def hir_union_ivar_storage_size(union_name : String, c_context : Bool = false) : Int32
+      variants = union_name.split(" | ")
+      all_ref = variants.all? do |vname|
+        vname = vname.strip
+        next true if vname == "Nil"
+        # Primitives are value types — need tagged union
+        case vname
+        when "Bool", "Int8", "Int16", "Int32", "Int64", "Int128",
+             "UInt8", "UInt16", "UInt32", "UInt64", "UInt128",
+             "Float32", "Float64", "Char", "Symbol"
+          next false
+        end
+        # Enums are value types
+        if ei = @enum_info
+          next false if ei.has_key?(vname)
+        end
+        # V2 ABI: structs are heap-allocated as pointers, so they're pointer-compatible.
+        # Unlike union_all_reference_types? (MIR), we treat structs as reference-compatible
+        # because V2 stores them as pointers — they CAN be nil-distinguished via null check.
+        true
+      end
+      if all_ref
+        pointer_word_bytes_i32
+      else
+        # Tagged union: { i32 type_id, [N x i32] payload }
+        # Compute max variant size to determine payload
+        max_payload = 0_i32
+        variants.each do |vname|
+          vname = vname.strip
+          next if vname == "Nil"
+          vsize = case vname
+                  when "Bool", "Int8", "UInt8"   then 1
+                  when "Int16", "UInt16"          then 2
+                  when "Int32", "UInt32", "Float32", "Char" then 4
+                  when "Int64", "UInt64", "Float64" then 8
+                  when "Int128", "UInt128"        then 16
+                  else pointer_word_bytes_i32 # Classes, structs, arrays → pointer size in V2
+                  end
+          max_payload = vsize if vsize > max_payload
+        end
+        # Payload is stored as [N x i32], ceil to 4-byte boundary
+        payload_words = (max_payload + 3) // 4
+        4 + payload_words * 4
       end
     end
 
