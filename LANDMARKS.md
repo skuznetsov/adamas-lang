@@ -75,6 +75,40 @@ and toward a timing-sensitive parser/front-end corridor during or just after
 prelude parsing on self-hosted release stage2. {F/G/R: 0.95/0.80/0.96}
 [verified]
 
+[LM-182|verified]: scalarizing the transient block-body builder in
+`src/compiler/frontend/parser.cr` fixes a real self-hosted parser-only crash
+family even though it does not yet stabilize the full compiler. The helper
+`parse_block_body_with_optional_rescue` now stores raw `Int32` indexes during
+body collection and reconstructs `ExprId` wrappers only once at the end,
+instead of pushing `ExprId` directly into a growable container. Fresh release
+stage2 `/tmp/codex_stage2_release_bodyidx_fresh` built from the same
+source tree in `223.19s`. On parser-only no-prelude controls, the boundary is
+clean and reproducible: with `CRYSTAL_V2_STOP_AFTER_PARSE=1 --release
+--no-prelude`, baseline `/tmp/codex_stage2_release_classfix` fails `5/5` on
+both `regression_tests/stage2_block_body_exprid_parser_repro.cr` and
+`/tmp/reduced_with_overflow0.cr` (`rc=138` every run), while fresh
+`/tmp/codex_stage2_release_bodyidx_fresh` passes the same commands `5/5`
+(`rc=0` every run). This matches older verified wrapper/container patterns in
+the repo: growable generic buffers are unsafe when they carry wrapper structs
+directly on self-hosted release stage2. Boundary: this fix removes the reduced
+parser-only crash corridor, but it does not make full release-stage2 or stage3
+stable. {F/G/R: 0.96/0.82/0.97} [verified]
+
+[LM-183|verified]: after the parser-body scalarization, the active frontier is
+later HIR extern registration rather than the reduced parser-only body path.
+Fresh release stage2 `/tmp/codex_stage2_release_bodyidx_fresh` still crashes on
+a trivial HIR-only control:
+`CRYSTAL_V2_STOP_AFTER_HIR=1 /tmp/codex_stage2_release_bodyidx_fresh --release
+/tmp/stage2_simple_one.cr` fails `3/3` with `rc=139`. Fresh LLDB on that same
+control stops in `Crystal::HIR::AstToHir#register_extern_fun(...)+704`, and
+full compile of `/tmp/reduced_with_overflow0.cr` is still red on the same
+binary (`3/3 rc=139`). Stage3 self-bootstrap also remains blocked:
+`scripts/build_stage2_release.sh /tmp/codex_stage2_release_bodyidx_fresh
+/tmp/codex_stage3_release_bodyidx_fresh` exits `139` after `2.26s`. This means
+the parser-body fix moved only the earlier parser corridor; the remaining
+self-hosted blocker is now a generic HIR/lib-extern path that reproduces even
+on a simple source file. {F/G/R: 0.95/0.79/0.97} [verified]
+
 [LM-176|noted]: rc_dec is NEVER emitted in hir_to_mir.cr. builder.rc_inc is called
 at 4 allocation points but builder.rc_dec is called NOWHERE. Full infrastructure
 exists: MIR::RCDecrement class, builder.rc_dec() method, emit_rc_dec() LLVM backend,

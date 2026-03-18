@@ -130,7 +130,11 @@ module CrystalV2
         end
 
         private def parse_block_body_with_optional_rescue : Tuple(Array(ExprId), Array(RescueClause)?, Array(ExprId)?, Array(ExprId)?)
-          body_ids_b = SmallVec(ExprId, 4).new
+          # Self-hosted release builds still show corruption when growable
+          # parser buffers store ExprId wrappers directly. Keep the transient
+          # body builder scalar and reconstruct ExprId objects only once at the
+          # end, after the final size is known.
+          body_id_indexes = Array(Int32).new(16)
           without_inline_rescue do
             loop do
               skip_statement_end
@@ -141,7 +145,7 @@ module CrystalV2
 
               saved_index = @index
               expr = parse_statement
-              body_ids_b << expr unless expr.invalid?
+              body_id_indexes << expr.index unless expr.invalid?
               # Error recovery: if parse_statement returned without advancing
               # the token position, skip one token to prevent infinite loop.
               advance if @index == saved_index
@@ -157,7 +161,11 @@ module CrystalV2
             rescue_clauses, else_body, ensure_body = parse_rescue_sections
           end
 
-          {body_ids_b.to_a, rescue_clauses, else_body, ensure_body}
+          body_ids = Array(ExprId).new(body_id_indexes.size) do |i|
+            ExprId.new(body_id_indexes.unsafe_fetch(i))
+          end
+
+          {body_ids, rescue_clauses, else_body, ensure_body}
         end
 
         # Phase 87B-2: Constructor for reparsing with existing arena
