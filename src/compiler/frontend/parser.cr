@@ -2164,6 +2164,12 @@ module CrystalV2
           # Phase 36: Abstract methods have no body
           body_ids = nil
           if !is_abstract
+            if filter = ENV["DEBUG_PARSE_DEF"]?
+              method_debug_name = String.new(method_name_slice)
+              if filter == "1" || method_debug_name.includes?(filter)
+                STDERR.puts "[PARSE_DEF] line=#{def_token.span.start_line + 1} name=#{method_debug_name}"
+              end
+            end
             body_ids_arr, rescue_clauses, else_body, ensure_body = parse_block_body_with_optional_rescue
 
             if current_token.kind == Token::Kind::End
@@ -4623,6 +4629,10 @@ module CrystalV2
 
         # Phase 42: Parse pointerof (pointer to variable/expression)
         # Grammar: pointerof(expr)
+        # Crystal accepts exactly one expression argument here. Parsing it via
+        # parse_op_assign keeps pointerof aligned with the original parser and
+        # avoids re-entering the generic expression suffix loop for comma-rich
+        # call sites like `foo(..., pointerof(offset))`.
         private def parse_pointerof : ExprId
           pointerof_token = current_token
           advance
@@ -4636,22 +4646,8 @@ module CrystalV2
           advance # consume (
           skip_trivia
 
-          args_b = SmallVec(ExprId, 2).new
-
-          # Parse at least one argument
-          with_pointer_suffix do
-            loop do
-              arg = parse_expression(0)
-              return PREFIX_ERROR if arg.invalid?
-              args_b << arg
-
-              skip_trivia
-              break if current_token.kind != Token::Kind::Comma
-
-              advance # consume comma
-              skip_trivia
-            end
-          end
+          arg = parse_op_assign
+          return PREFIX_ERROR if arg.invalid?
 
           # Expect closing parenthesis (tolerate stray tokens by fast-forwarding)
           unless current_token.kind == Token::Kind::RParen
@@ -4683,7 +4679,7 @@ module CrystalV2
           @arena.add_typed(
             PointerofNode.new(
               pointerof_token.span.cover(rparen_token.span),
-              args_b.to_a
+              [arg]
             )
           )
         end
@@ -10926,7 +10922,8 @@ module CrystalV2
 
                 # Phase 101: Check for block shorthand (&.method) or block capture (&block)
                 # This creates: { |__arg0| __arg0.method } or passes block argument
-                arg_expr : ExprId? = nil
+                arg_expr = PREFIX_ERROR
+                have_arg_expr = false
                 pushed = false
                 if current_token.kind == Token::Kind::Amp
                   # Save position in case this is not block shorthand
@@ -10938,6 +10935,7 @@ module CrystalV2
                   if current_token.kind == Token::Kind::Operator
                     # This is block shorthand: try &.method (with space: Amp + Operator)
                     arg_expr = parse_block_shorthand(amp_token)
+                    have_arg_expr = true
                     if arg_expr.invalid?
                       emit_unexpected(current_token)
                       return PREFIX_ERROR
@@ -10953,6 +10951,7 @@ module CrystalV2
                     # Create block argument node (UnaryNode with & operator)
                     arg_span = amp_token.span.cover(identifier_span)
                     arg_expr = @arena.add_typed(UnaryNode.new(arg_span, amp_token.slice, identifier_node))
+                    have_arg_expr = true
                   elsif current_token.kind == Token::Kind::ThinArrow
                     # Phase 103J: Proc pointer as block argument: foo(&->bar) or foo(&->Type.method)
                     # Parse the proc pointer (->target) and wrap with &
@@ -10970,6 +10969,7 @@ module CrystalV2
                     # Wrap with &: &(->target)
                     arg_span = amp_token.span.cover(proc_span)
                     arg_expr = @arena.add_typed(UnaryNode.new(arg_span, amp_token.slice, proc_pointer))
+                    have_arg_expr = true
                   else
                     # Not block shorthand or capture, rewind and parse normally
                     # This handles cases like: foo(& other_expr)
@@ -10977,10 +10977,11 @@ module CrystalV2
                     # Disable type declarations to allow identifier: syntax for named args
                     @no_type_declaration += 1
                     arg_expr = with_pointer_suffix { parse_expression(0) }
+                    have_arg_expr = true
                     @no_type_declaration -= 1
                     return PREFIX_ERROR if arg_expr.invalid?
                   end
-                  if arg_expr && !arg_expr.invalid? && !pushed
+                  if have_arg_expr && !arg_expr.invalid? && !pushed
                     args_b << arg_expr
                     pushed = true
                   end
@@ -10991,6 +10992,7 @@ module CrystalV2
                   advance
                   skip_whitespace_and_optional_newlines
                   arg_expr = parse_block_shorthand(amp_token)
+                  have_arg_expr = true
                   if arg_expr.invalid?
                     emit_unexpected(current_token)
                     return PREFIX_ERROR
@@ -11028,6 +11030,7 @@ module CrystalV2
                     amp_slice = "&".to_slice
                     arg_span = amp_minus_token.span.cover(@arena[target].span)
                     arg_expr = @arena.add_typed(UnaryNode.new(arg_span, amp_slice, proc_pointer))
+                    have_arg_expr = true
                     args_b << arg_expr
                     pushed = true
                   else
@@ -11035,6 +11038,7 @@ module CrystalV2
                     unadvance
                     @no_type_declaration += 1
                     arg_expr = with_pointer_suffix { parse_expression(0) }
+                    have_arg_expr = true
                     @no_type_declaration -= 1
                     return PREFIX_ERROR if arg_expr.invalid?
                   end
@@ -11048,6 +11052,7 @@ module CrystalV2
                     return PREFIX_ERROR if value_expr.invalid?
                     span = star_token.span.cover(@arena[value_expr].span)
                     arg_expr = @arena.add_typed(SplatNode.new(span, value_expr))
+                    have_arg_expr = true
                     args_b << arg_expr
                     pushed = true
                     skip_whitespace_and_optional_newlines
@@ -11120,6 +11125,7 @@ module CrystalV2
                     # Disable type declarations to allow identifier: syntax for named args
                     @no_type_declaration += 1
                     arg_expr = with_pointer_suffix { parse_op_assign }
+                    have_arg_expr = true
                     @no_type_declaration -= 1
                     if arg_expr.invalid?
                       emit_unexpected(current_token)
@@ -11162,7 +11168,7 @@ module CrystalV2
                     end
                   end # close if named_arg_start?
                   # After any branch, ensure amp-based arguments are captured
-                  if arg_expr && !arg_expr.invalid? && !pushed
+                  if have_arg_expr && !arg_expr.invalid? && !pushed
                     # If additional expression fragments remain (e.g., ternary tails),
                     # keep parsing until we hit the next argument delimiter.
                     frag_prev_index = @index
@@ -11174,6 +11180,7 @@ module CrystalV2
                       cont = with_pointer_suffix { parse_expression(0) }
                       break if cont.invalid?
                       arg_expr = cont
+                      have_arg_expr = true
                     end
                     args_b << arg_expr
                   end

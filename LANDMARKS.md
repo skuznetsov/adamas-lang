@@ -1,7 +1,41 @@
 # LANDMARKS
 
-Updated: 2026-03-15
+Updated: 2026-03-18
 Context: compiler/bootstrap/stage2-stability
+
+[LM-178|verified]: the fresh release-stage1 parser crash on `ast_to_hir.cr` was
+not an unavoidable whole-file failure; it reduced to a smaller release-only
+oracle centered on a long parenthesized call whose last argument is
+`pointerof(offset)` inside nested `do`/`if` blocks. The new fixture
+`regression_tests/stage2_pointerof_nested_call_parser_repro.cr` reproduces the
+same `parse_prefix -> parse_pointerof -> parse_op_assign -> parse_parenthesized_call`
+stack on the old release-stage1, while original Crystal and non-release stage1
+compile it cleanly. Two falsifiers proved the hot edge: replacing
+`pointerof(offset)` with `offset` makes the repro pass, and collapsing the long
+`register_class_members_from_expansion(...)` call to a single argument also
+makes it pass. Fix: in `src/compiler/frontend/parser.cr`, `parse_pointerof`
+now parses exactly one argument via `parse_op_assign` instead of looping over
+`parse_expression(0)`. Fresh verification on
+`/tmp/codex_stage1_release_pointerof_fix`: the exact repro passes, direct
+compile of `src/compiler/hir/ast_to_hir.cr` passes, `70/70` + `20/20`
+regressions pass, and stage2 self-bootstrap now succeeds in `248.42s`.
+{F/G/R: 0.97/0.84/0.97} [verified]
+
+[LM-179|verified]: removing the release-stage1 parser blocker was sufficient to
+unblock one full self-hosted release bootstrap, but it exposed a new later
+stage2 frontier in HIR class registration rather than yielding a stable stage3.
+Fresh stage2 `/tmp/codex_stage2_release_pointerof_fix` is produced successfully
+from fresh stage1 `/tmp/codex_stage1_release_pointerof_fix`, yet the new stage2
+binary crashes immediately on the exact nested-pointerof parser repro
+(`exit 138` / Bus error), crashes on direct compile of
+`src/compiler/hir/ast_to_hir.cr` (`exit 138`), and crashes on stage3
+self-bootstrap after `2.04s` (`exit 139`). LLDB on the exact repro stops in
+`Crystal::HIR::AstToHir#register_concrete_class(...)+10344` with a garbage
+address, so the active frontier has moved from parser recursion to
+`register_concrete_class` / class-body registration state inside stage2.
+Use `regression_tests/stage2_pointerof_nested_call_parser_repro.sh` as the new
+cheap stage2 oracle before rerunning full stage3. {F/G/R: 0.93/0.79/0.95}
+[verified]
 
 [LM-176|noted]: rc_dec is NEVER emitted in hir_to_mir.cr. builder.rc_inc is called
 at 4 allocation points but builder.rc_dec is called NOWHERE. Full infrastructure
