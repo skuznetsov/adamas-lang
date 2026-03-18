@@ -37,6 +37,44 @@ Use `regression_tests/stage2_pointerof_nested_call_parser_repro.sh` as the new
 cheap stage2 oracle before rerunning full stage3. {F/G/R: 0.93/0.79/0.95}
 [verified]
 
+[LM-180|verified]: source-backed name recovery in
+`src/compiler/hir/ast_to_hir.cr` materially moved the old self-hosted
+enum/class registration frontier instead of just hiding it. The active local
+change adds source-first helpers for enum/class/module headers and uses them in
+enum registration plus nested class/module/enum registration, with reparsed
+module/class fallback when the original slice-backed `node.name` is empty or
+corrupted. Fresh verification on a debug self-hosted stage2 built from
+`/tmp/codex_stage1_release_exprfix` shows the cheap no-prelude enum oracle now
+survives cleanly: `DEBUG_ENUM_PARSE_BODY=1 DEBUG_ENUM_ARENA=1
+CRYSTAL_V2_STOP_AFTER_HIR=1 ... /tmp/codex_stage2_dbg_enumfallback6
+--no-prelude /tmp/tiny_enum_stage2.cr` exits `0` in `1.06s`, and the trace
+shows recovered names/values for `Tiny`, `A`, and `B`. A stronger medium oracle
+also moved: on fresh debug stage2, `--release src/compiler/hir/hir.cr` no
+longer dies immediately in `register_concrete_class`; it now runs until wrapper
+memory caps (`29.15s` at 4 GB with tracing, `60.00s` at 12 GB without tracing).
+Boundary: this hardens the earlier HIR name-corruption corridor, but it does
+not yet make the resulting release stage2 compiler stable enough for stage3.
+{F/G/R: 0.94/0.78/0.95} [verified]
+
+[LM-181|verified]: after the source-backed `ast_to_hir` hardening, a fresh
+release stage2 bootstrap succeeds again from the known-good parser-fix stage1,
+but the resulting self-hosted compiler still fails almost immediately on both
+the exact cheap repro and stage3 bootstrap. Fresh release build command
+`scripts/build_stage2_release.sh /tmp/codex_stage1_release_exprfix
+/tmp/codex_stage2_release_classfix` exits `0` in `178.41s`, producing
+`/tmp/codex_stage2_release_classfix`. The next bootstrap command using that new
+compiler dies in `1.06s` with `Bus error: 10`. The same fresh stage2 also still
+reproduces on `regression_tests/stage2_pointerof_nested_call_parser_repro.sh`.
+The important new boundary is heisenbuggy: `CRYSTAL_V2_STOP_AFTER_PARSE=1`
+often still bus-errors, but `CRYSTAL_V2_PARSE_TRACE=1
+CRYSTAL_V2_STOP_AFTER_PARSE=1` makes the same compile survive and emit parse
+logs, while `CRYSTAL_V2_PARSE_TRACE=1 CRYSTAL_V2_STOP_AFTER_MIR=1` still dies
+quickly and in PTY only reaches `[PARSE] .../src/stdlib/prelude.cr`. This
+shifts the active frontier away from the old early HIR class-registration crash
+and toward a timing-sensitive parser/front-end corridor during or just after
+prelude parsing on self-hosted release stage2. {F/G/R: 0.95/0.80/0.96}
+[verified]
+
 [LM-176|noted]: rc_dec is NEVER emitted in hir_to_mir.cr. builder.rc_inc is called
 at 4 allocation points but builder.rc_dec is called NOWHERE. Full infrastructure
 exists: MIR::RCDecrement class, builder.rc_dec() method, emit_rc_dec() LLVM backend,

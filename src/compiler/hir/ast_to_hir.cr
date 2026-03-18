@@ -4139,10 +4139,210 @@ module Crystal::HIR
     # Track active class-var inference to avoid recursion.
     @class_var_infer_stack : Set(String)
 
-    private def enum_base_type_for_node(node : CrystalV2::Compiler::Frontend::EnumNode) : TypeRef
+    private def source_text_for_arena_or_file(
+      arena : CrystalV2::Compiler::Frontend::ArenaLike,
+    ) : String?
+      source = source_for_arena(arena)
+      if source.nil?
+        if path = source_path_for(arena)
+          source = File.read(path) if File.file?(path)
+        end
+      end
+      source
+    end
+
+    private def definition_header_text_from_source(
+      span : CrystalV2::Compiler::Frontend::Span,
+      source : String,
+      prefixes : Array(String),
+    ) : String?
+      snippet = slice_source_for_span(span, source)
+      if snippet
+        snippet.each_line do |line|
+          stripped = line.lstrip
+          next if stripped.empty?
+          prefixes.each do |prefix|
+            return stripped if stripped.starts_with?(prefix)
+          end
+        end
+      end
+
+      nil
+    end
+
+    private def definition_header_text_before_offset(
+      search_end : Int32,
+      source : String,
+      prefixes : Array(String),
+    ) : String?
+      if search_end > 0 && search_end <= source.bytesize
+        prefix = source.byte_slice(0, search_end)
+        lines = prefix.lines
+        i = lines.size - 1
+        while i >= 0
+          line = lines.unsafe_fetch(i)
+          stripped = line.lstrip
+          if stripped.empty?
+            i -= 1
+            next
+          end
+          prefixes.each do |prefix_text|
+            return stripped if stripped.starts_with?(prefix_text)
+          end
+          i -= 1
+        end
+      end
+
+      nil
+    end
+
+    private def definition_name_from_header_text(
+      header : String,
+      prefixes : Array(String),
+    ) : String?
+      matched_prefix = prefixes.find { |prefix| header.starts_with?(prefix) }
+      return nil unless matched_prefix
+
+      rest = header.byte_slice(matched_prefix.bytesize, header.bytesize - matched_prefix.bytesize).strip
+      return nil if rest.empty?
+
+      name_end = 0
+      while name_end < rest.bytesize
+        ch = rest.byte_at(name_end)
+        break if ch == ' '.ord || ch == '\t'.ord || ch == ':'.ord || ch == ';'.ord || ch == '<'.ord || ch == '('.ord
+        name_end += 1
+      end
+      return nil if name_end == 0
+
+      name = rest.byte_slice(0, name_end)
+      return nil if name.empty?
+
+      name
+    end
+
+    private def enum_header_text_from_source(
+      node : CrystalV2::Compiler::Frontend::EnumNode,
+      source : String,
+    ) : String?
+      if header = definition_header_text_from_source(node.span, source, ["enum "])
+        return header
+      end
+
+      if first_member = node.members.first?
+        search_end = first_member.name_span.start_offset
+        if search_end > 0 && search_end <= source.bytesize
+          prefix = source.byte_slice(0, search_end)
+          lines = prefix.lines
+          i = lines.size - 1
+          while i >= 0
+            line = lines.unsafe_fetch(i)
+            stripped = line.lstrip
+            if stripped.empty?
+              i -= 1
+              next
+            end
+            return stripped if stripped.starts_with?("enum ")
+            i -= 1
+          end
+        end
+      end
+
+      nil
+    end
+
+    private def enum_name_from_node(
+      node : CrystalV2::Compiler::Frontend::EnumNode,
+      source : String? = nil,
+    ) : String?
+      source ||= source_text_for_arena_or_file(@arena)
+      return nil unless source
+      header = enum_header_text_from_source(node, source)
+      return nil unless header
+
+      if name = definition_name_from_header_text(header, ["enum "])
+        return name
+      end
+
+      if name = safe_slice_to_string(node.name)
+        return name unless name.empty?
+      end
+
+      nil
+    end
+
+    private def enum_base_type_name_from_node(
+      node : CrystalV2::Compiler::Frontend::EnumNode,
+      source : String? = nil,
+    ) : String?
+      source ||= source_text_for_arena_or_file(@arena)
+      return nil unless source
+      header = enum_header_text_from_source(node, source)
+      return nil unless header
+
+      rest = header.byte_slice(5, header.bytesize - 5).strip
+      return nil if rest.empty?
+      colon_index = rest.index(':')
+      return nil unless colon_index
+
+      base = rest.byte_slice(colon_index + 1, rest.bytesize - colon_index - 1).strip
+      if semi_index = base.index(';')
+        base = base.byte_slice(0, semi_index).strip
+      end
+      return base unless base.empty?
+
       if base = node.base_type
-        safe_str_guard(base, "return TypeRef::INT32")
-        type_ref_for_name(String.new(base))
+        if base_name = safe_slice_to_string(base)
+          return base_name unless base_name.empty?
+        end
+      end
+
+      nil
+    end
+
+    private def enum_member_name_from_node(
+      member : CrystalV2::Compiler::Frontend::EnumMember,
+      source : String? = nil,
+    ) : String?
+      if source
+        snippet = slice_source_for_span(member.name_span, source)
+        if snippet
+          name = strip_single_line_comments(snippet).strip
+          return name unless name.empty?
+        end
+      end
+
+      if member_name = safe_slice_to_string(member.name)
+        return member_name unless member_name.empty?
+      end
+
+      nil
+    end
+
+    private def class_name_from_node(
+      node : CrystalV2::Compiler::Frontend::ClassNode,
+      source : String? = nil,
+    ) : String?
+      if name = safe_slice_to_string(node.name)
+        return name unless name.empty?
+      end
+
+      nil
+    end
+
+    private def module_name_from_node(
+      node : CrystalV2::Compiler::Frontend::ModuleNode,
+      source : String? = nil,
+    ) : String?
+      if name = safe_slice_to_string(node.name)
+        return name unless name.empty?
+      end
+
+      nil
+    end
+
+    private def enum_base_type_for_node(node : CrystalV2::Compiler::Frontend::EnumNode) : TypeRef
+      if base_name = enum_base_type_name_from_node(node)
+        type_ref_for_name(base_name)
       else
         TypeRef::INT32
       end
@@ -4253,7 +4453,7 @@ module Crystal::HIR
 
     # Register an enum type (pass 1)
     def register_enum(node : CrystalV2::Compiler::Frontend::EnumNode)
-      enum_name = (safe_slice_to_string(node.name) || "")
+      enum_name = enum_name_from_node(node) || ""
       @enum_info ||= {} of String => Hash(String, Int64)
       debug_enum = debug_enum_arena_enabled_for?(enum_name)
       if debug_enum
@@ -4315,10 +4515,10 @@ module Crystal::HIR
       member : CrystalV2::Compiler::Frontend::EnumMember,
     ) : String?
       debug_member_filter = env_get("DEBUG_ENUM_SOURCE")
-      member_name = (safe_slice_to_string(member.name) || "")
+      source = source_for_arena(@arena)
+      member_name = enum_member_name_from_node(member, source) || ""
       debug_source = debug_member_filter == "1" || debug_member_filter == member_name
 
-      source = source_for_arena(@arena)
       snippet = enum_member_value_source_snippet_from_text(enum_node, member, source) if source
       if debug_source
         path = source_path_for(@arena)
@@ -4333,7 +4533,8 @@ module Crystal::HIR
           file_snippet = enum_member_value_source_snippet_from_text(enum_node, member, file_source)
           if debug_source
             enum_hit = if enum_node
-                         file_source.includes?("enum #{(safe_slice_to_string(enum_node.name) || "")}") ? 1 : 0
+                         enum_name = enum_name_from_node(enum_node, file_source) || ""
+                         file_source.includes?("enum #{enum_name}") ? 1 : 0
                        else
                          -1
                        end
@@ -4382,8 +4583,8 @@ module Crystal::HIR
       member : CrystalV2::Compiler::Frontend::EnumMember,
       source : String,
     ) : String?
-      enum_name = (safe_slice_to_string(enum_node.name) || "")
-      member_name = (safe_slice_to_string(member.name) || "")
+      enum_name = enum_name_from_node(enum_node, source) || ""
+      member_name = enum_member_name_from_node(member, source) || ""
       in_target_enum = false
 
       source.each_line do |line|
@@ -4585,7 +4786,7 @@ module Crystal::HIR
       enum_file_source = nil
 
       node.members.each do |member|
-        member_name = (safe_slice_to_string(member.name) || "")
+        member_name = enum_member_name_from_node(member, enum_source) || ""
         if val_id = member.value
           source_text = enum_source ? enum_member_value_source_snippet_from_text(node, member, enum_source.not_nil!) : nil
           if source_text.nil? && enum_source.nil?
@@ -5308,7 +5509,17 @@ module Crystal::HIR
            CrystalV2::Compiler::Frontend::ModuleNode,
            CrystalV2::Compiler::Frontend::EnumNode,
            CrystalV2::Compiler::Frontend::AliasNode
-        set << (safe_slice_to_string(node.name) || "")
+        nested_name = case node
+                      when CrystalV2::Compiler::Frontend::ClassNode
+                        class_name_from_node(node) || ""
+                      when CrystalV2::Compiler::Frontend::ModuleNode
+                        module_name_from_node(node) || ""
+                      when CrystalV2::Compiler::Frontend::EnumNode
+                        enum_name_from_node(node) || ""
+                      else
+                        safe_slice_to_string(node.name) || ""
+                      end
+        set << nested_name unless nested_name.empty?
       end
     end
 
@@ -5980,6 +6191,82 @@ module Crystal::HIR
       @arena = reparsed_arena
       begin
         yield enum_node.as(CrystalV2::Compiler::Frontend::EnumNode)
+      ensure
+        @arena = old_arena
+      end
+      true
+    end
+
+    private def with_reparsed_module_from_current_source(
+      node : CrystalV2::Compiler::Frontend::ModuleNode,
+      &
+    ) : Bool
+      source = source_text_for_arena_or_file(@arena)
+      return false unless source
+
+      snippet = slice_source_for_span(node.span, source)
+      return false unless snippet
+
+      lexer = CrystalV2::Compiler::Frontend::Lexer.new(snippet)
+      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer, recovery_mode: true)
+      program = parser.parse_program
+      return false if program.roots.empty?
+
+      reparsed_arena = program.ast_arena?
+      return false unless reparsed_arena
+
+      set_source_for_arena(reparsed_arena, snippet)
+      if path = source_path_for(@arena)
+        set_path_for_arena(reparsed_arena, path)
+      end
+
+      module_node = program.roots
+        .map { |expr_id| reparsed_arena[expr_id] }
+        .find(&.is_a?(CrystalV2::Compiler::Frontend::ModuleNode))
+      return false unless module_node
+
+      old_arena = @arena
+      @arena = reparsed_arena
+      begin
+        yield module_node.as(CrystalV2::Compiler::Frontend::ModuleNode)
+      ensure
+        @arena = old_arena
+      end
+      true
+    end
+
+    private def with_reparsed_class_from_current_source(
+      node : CrystalV2::Compiler::Frontend::ClassNode,
+      &
+    ) : Bool
+      source = source_text_for_arena_or_file(@arena)
+      return false unless source
+
+      snippet = slice_source_for_span(node.span, source)
+      return false unless snippet
+
+      lexer = CrystalV2::Compiler::Frontend::Lexer.new(snippet)
+      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer, recovery_mode: true)
+      program = parser.parse_program
+      return false if program.roots.empty?
+
+      reparsed_arena = program.ast_arena?
+      return false unless reparsed_arena
+
+      set_source_for_arena(reparsed_arena, snippet)
+      if path = source_path_for(@arena)
+        set_path_for_arena(reparsed_arena, path)
+      end
+
+      class_node = program.roots
+        .map { |expr_id| reparsed_arena[expr_id] }
+        .find(&.is_a?(CrystalV2::Compiler::Frontend::ClassNode))
+      return false unless class_node
+
+      old_arena = @arena
+      @arena = reparsed_arena
+      begin
+        yield class_node.as(CrystalV2::Compiler::Frontend::ClassNode)
       ensure
         @arena = old_arena
       end
@@ -13808,15 +14095,40 @@ module Crystal::HIR
     # Modules are like classes but with only class methods (self.method)
     # Also handles nested classes: module Foo; class Bar; end; end -> Foo::Bar
     def register_module(node : CrystalV2::Compiler::Frontend::ModuleNode)
-      old_class = @current_class
-      old_override = @current_namespace_override
-      @current_class = nil
-      @current_namespace_override = nil
-      begin
-        register_module_with_name(node, (safe_slice_to_string(node.name) || ""))
-      ensure
-        @current_class = old_class
-        @current_namespace_override = old_override
+      module_name = module_name_from_node(node) || ""
+      if module_name.empty?
+        if with_reparsed_module_from_current_source(node) do |reparsed_node|
+             register_module(reparsed_node)
+           end
+          return
+        end
+      end
+
+      if arena_fits_body_ids?(@arena, node.body, node.span)
+        old_class = @current_class
+        old_override = @current_namespace_override
+        @current_class = nil
+        @current_namespace_override = nil
+        begin
+          register_module_with_name(node, module_name)
+        ensure
+          @current_class = old_class
+          @current_namespace_override = old_override
+        end
+        return
+      end
+
+      with_resolved_body_arena(node.body, node.span, @arena) do
+        old_class = @current_class
+        old_override = @current_namespace_override
+        @current_class = nil
+        @current_namespace_override = nil
+        begin
+          register_module_with_name(node, module_name_from_node(node) || "")
+        ensure
+          @current_class = old_class
+          @current_namespace_override = old_override
+        end
       end
     end
 
@@ -13877,18 +14189,15 @@ module Crystal::HIR
             member = unwrap_visibility_member(@arena[expr_id])
             case member
             when CrystalV2::Compiler::Frontend::ModuleNode
-              safe_str_guard(member.name, "next")
-              nested_name = (safe_slice_to_string(member.name) || "")
+              nested_name = module_name_from_node(member) || ""
               full_nested_name = "#{module_name}::#{nested_name}"
               register_nested_module(member, full_nested_name)
             when CrystalV2::Compiler::Frontend::ClassNode
-              safe_str_guard(member.name, "next")
-              nested_name = (safe_slice_to_string(member.name) || "")
+              nested_name = class_name_from_node(member) || ""
               full_nested_name = "#{module_name}::#{nested_name}"
               register_class_with_name(member, full_nested_name)
             when CrystalV2::Compiler::Frontend::EnumNode
-              safe_str_guard(member.name, "next")
-              nested_name = (safe_slice_to_string(member.name) || "")
+              nested_name = enum_name_from_node(member) || ""
               full_nested_name = "#{module_name}::#{nested_name}"
               register_enum_with_name(member, full_nested_name)
             when CrystalV2::Compiler::Frontend::AliasNode
@@ -13939,18 +14248,15 @@ module Crystal::HIR
           member = unwrap_visibility_member(@arena[expr_id])
           case member
           when CrystalV2::Compiler::Frontend::ClassNode
-            safe_str_guard(member.name, "next")
-            nested_name = (safe_slice_to_string(member.name) || "")
+            nested_name = class_name_from_node(member) || ""
             full_nested_name = "#{module_name}::#{nested_name}"
             register_class_with_name(member, full_nested_name)
           when CrystalV2::Compiler::Frontend::EnumNode
-            safe_str_guard(member.name, "next")
-            nested_name = (safe_slice_to_string(member.name) || "")
+            nested_name = enum_name_from_node(member) || ""
             full_nested_name = "#{module_name}::#{nested_name}"
             register_enum_with_name(member, full_nested_name)
           when CrystalV2::Compiler::Frontend::ModuleNode
-            safe_str_guard(member.name, "next")
-            nested_name = (safe_slice_to_string(member.name) || "")
+            nested_name = module_name_from_node(member) || ""
             full_nested_name = "#{module_name}::#{nested_name}"
             register_nested_module(member, full_nested_name)
           when CrystalV2::Compiler::Frontend::AliasNode
@@ -14079,14 +14385,12 @@ module Crystal::HIR
             end
           elsif member.is_a?(CrystalV2::Compiler::Frontend::ModuleNode)
             # Nested module: Foo::Bar (as module)
-            safe_str_guard(member.name, "next")
-            nested_name = (safe_slice_to_string(member.name) || "")
+            nested_name = module_name_from_node(member) || ""
             full_nested_name = "#{module_name}::#{nested_name}"
             register_module_with_name(member, full_nested_name)
           elsif member.is_a?(CrystalV2::Compiler::Frontend::ClassNode)
             # Register class/struct type alias and any aliases inside the class
-            safe_str_guard(member.name, "next")
-            class_name = (safe_slice_to_string(member.name) || "")
+            class_name = class_name_from_node(member) || ""
             full_class_name = "#{module_name}::#{class_name}"
             register_type_alias(full_class_name, full_class_name)
             register_class_aliases(member, full_class_name)
@@ -14100,8 +14404,7 @@ module Crystal::HIR
           next if expr_id.null_ptr? || expr_id.invalid?
           member = unwrap_visibility_member(@arena[expr_id])
           if member.is_a?(CrystalV2::Compiler::Frontend::EnumNode)
-            safe_str_guard(member.name, "next")
-            enum_name = (safe_slice_to_string(member.name) || "")
+            enum_name = enum_name_from_node(member) || ""
             full_enum_name = "#{module_name}::#{enum_name}"
             register_enum_with_name(member, full_enum_name)
           end
@@ -14301,8 +14604,7 @@ module Crystal::HIR
                 register_class_accessor_entry(module_name, spec, :setter)
               end
             when CrystalV2::Compiler::Frontend::ClassNode
-              safe_str_guard(member.name, "next")
-              class_name = (safe_slice_to_string(member.name) || "")
+              class_name = class_name_from_node(member) || ""
               full_class_name = "#{module_name}::#{class_name}"
               if debug_env_filter_match?("DEBUG_NESTED_CLASS", full_class_name)
                 STDERR.puts "[DEBUG_NESTED_CLASS] Registering nested class: #{full_class_name}"
@@ -17834,19 +18136,47 @@ module Crystal::HIR
 
     # Register a class type and its methods (pass 1)
     def register_class(node : CrystalV2::Compiler::Frontend::ClassNode)
-      class_name = (safe_slice_to_string(node.name) || "")
-      if debug_env_filter_match?("DEBUG_NESTED_CLASS", class_name)
-        STDERR.puts "[DEBUG_CLASS_REG] register_class called: #{class_name}"
+      class_name = class_name_from_node(node) || ""
+      if class_name.empty?
+        if with_reparsed_class_from_current_source(node) do |reparsed_node|
+             register_class(reparsed_node)
+           end
+          return
+        end
       end
-      old_class = @current_class
-      old_override = @current_namespace_override
-      @current_class = nil
-      @current_namespace_override = nil
-      begin
-        register_class_with_name(node, class_name)
-      ensure
-        @current_class = old_class
-        @current_namespace_override = old_override
+
+      if arena_fits_body_ids?(@arena, node.body, node.span)
+        if debug_env_filter_match?("DEBUG_NESTED_CLASS", class_name)
+          STDERR.puts "[DEBUG_CLASS_REG] register_class called: #{class_name}"
+        end
+        old_class = @current_class
+        old_override = @current_namespace_override
+        @current_class = nil
+        @current_namespace_override = nil
+        begin
+          register_class_with_name(node, class_name)
+        ensure
+          @current_class = old_class
+          @current_namespace_override = old_override
+        end
+        return
+      end
+
+      with_resolved_body_arena(node.body, node.span, @arena) do
+        class_name = class_name_from_node(node) || ""
+        if debug_env_filter_match?("DEBUG_NESTED_CLASS", class_name)
+          STDERR.puts "[DEBUG_CLASS_REG] register_class called: #{class_name}"
+        end
+        old_class = @current_class
+        old_override = @current_namespace_override
+        @current_class = nil
+        @current_namespace_override = nil
+        begin
+          register_class_with_name(node, class_name)
+        ensure
+          @current_class = old_class
+          @current_namespace_override = old_override
+        end
       end
     end
 
@@ -17926,18 +18256,15 @@ module Crystal::HIR
                 member = unwrap_visibility_member(@arena[expr_id])
                 case member
                 when CrystalV2::Compiler::Frontend::ClassNode
-                  safe_str_guard(member.name, "next")
-                  nested_name = (safe_slice_to_string(member.name) || "")
+                  nested_name = class_name_from_node(member) || ""
                   full_nested_name = "#{class_name}::#{nested_name}"
                   register_class_with_name(member, full_nested_name)
                 when CrystalV2::Compiler::Frontend::EnumNode
-                  safe_str_guard(member.name, "next")
-                  enum_name = (safe_slice_to_string(member.name) || "")
+                  enum_name = enum_name_from_node(member) || ""
                   full_enum_name = "#{class_name}::#{enum_name}"
                   register_enum_with_name(member, full_enum_name)
                 when CrystalV2::Compiler::Frontend::ModuleNode
-                  safe_str_guard(member.name, "next")
-                  nested_name = (safe_slice_to_string(member.name) || "")
+                  nested_name = module_name_from_node(member) || ""
                   full_nested_name = "#{class_name}::#{nested_name}"
                   register_nested_module(member, full_nested_name)
                 when CrystalV2::Compiler::Frontend::MacroDefNode
@@ -18090,8 +18417,7 @@ module Crystal::HIR
           member = unwrap_visibility_member_in_arena(@arena[expr_id], @arena)
           case member
           when CrystalV2::Compiler::Frontend::ClassNode
-            safe_str_guard(member.name, "next")
-            nested_name = (safe_slice_to_string(member.name) || "")
+            nested_name = class_name_from_node(member) || ""
             full_nested_name = "#{nested_prefix}::#{nested_name}"
             register_class_with_name(member, full_nested_name)
             # When parent has active type substitutions and nested type is generic,
@@ -18118,13 +18444,11 @@ module Crystal::HIR
               end
             end
           when CrystalV2::Compiler::Frontend::EnumNode
-            safe_str_guard(member.name, "next")
-            enum_name = (safe_slice_to_string(member.name) || "")
+            enum_name = enum_name_from_node(member) || ""
             full_enum_name = "#{nested_prefix}::#{enum_name}"
             register_enum_with_name(member, full_enum_name)
           when CrystalV2::Compiler::Frontend::ModuleNode
-            safe_str_guard(member.name, "next")
-            nested_name = (safe_slice_to_string(member.name) || "")
+            nested_name = module_name_from_node(member) || ""
             full_nested_name = "#{nested_prefix}::#{nested_name}"
             register_nested_module(member, full_nested_name)
           when CrystalV2::Compiler::Frontend::MacroDefNode
