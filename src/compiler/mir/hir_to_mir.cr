@@ -687,7 +687,8 @@ module Crystal
 
     private def runtime_pointer_backed_union_variant?(type : Type?) : Bool
       return false unless type
-      type.kind.reference? || type.kind.array? || type.kind.pointer?
+      type.kind.reference? || type.kind.array? || type.kind.pointer? ||
+        type.kind.tuple? || type.kind.struct?
     end
 
     # Check if a variant type name represents a pointer-backed type by extracting
@@ -2416,9 +2417,11 @@ module Crystal
             return builder.cast(CastKind::Bitcast, src_val, dst_type)
           end
         elsif !src_prim && dst_prim
-          # Object ptr → primitive int: ptrtoint
+          # V2 struct-as-pointer ABI: object pointer → primitive value.
+          # In V2, primitives in unions/vdispatch are heap-allocated pointers.
+          # Load the actual value instead of truncating the pointer address.
           dst_is_ptr = dst_hir_type == HIR::TypeRef::POINTER
-          return dst_is_ptr ? src_val : builder.cast(CastKind::PtrToInt, src_val, dst_type)
+          return dst_is_ptr ? src_val : builder.load(src_val, dst_type)
         elsif src_prim && !dst_prim
           # Primitive int → object ptr: inttoptr
           src_is_ptr = src_hir_type == HIR::TypeRef::POINTER
@@ -4284,6 +4287,26 @@ module Crystal
       # No-op cast
       if src_type == dst_type
         return value
+      end
+
+      # V2 struct-as-pointer ABI fix: when casting from a heap-allocated struct/class
+      # to a small primitive, the MIR Cast would produce ptrtoint ptr → iN which
+      # truncates 64-bit addresses. In original Crystal structs are inlined, so
+      # Cast(StaticArray(UInt8,1) → UInt8) is a no-op. In V2 the struct is a pointer
+      # to heap memory. The correct operation is to LOAD the primitive from the struct
+      # data, not cast the pointer itself.
+      if src_hir_type.id >= HIR::TypeRef::FIRST_USER_TYPE
+        src_mir = @mir_module.type_registry.get(src_type)
+        if src_mir
+          k = src_mir.kind
+          if k.struct? || k.reference? || k.array? || k.tuple?
+            dst_mir = @mir_module.type_registry.get(dst_type)
+            if dst_mir && dst_mir.kind.primitive? && !dst_mir.kind.void?
+              # Load the primitive value from the struct's memory (first bytes)
+              return builder.load(value, dst_type)
+            end
+          end
+        end
       end
 
       # Enum → integer: V2 registers UInt8-backed enums as Struct in HIR, but MIR

@@ -473,6 +473,10 @@ module Crystal::MIR
     @emitted_allocas : Set(ValueId) = Set(ValueId).new  # Track pre-emitted allocas
     @alloc_types : Hash(ValueId, TypeRef) = {} of ValueId => TypeRef  # Track original alloc_type for enum detection
     @inttoptr_value_ids : Set(ValueId) = Set(ValueId).new  # Track values created by inttoptr (packed scalars)
+    # When a ptrtoint from a heap pointer to a small int (<64 bits) would truncate
+    # the address, we skip emitting the ptrtoint and alias the result to the original
+    # ptr. Downstream zext/inttoptr chain is also skipped. Maps ValueId → "ptr %name".
+    @ptr_passthrough : Hash(ValueId, String) = {} of ValueId => String
     @addressable_allocas : Hash(ValueId, String) = {} of ValueId => String  # operand_id -> alloca SSA name
     @addressable_alloca_initialized : Set(ValueId) = Set(ValueId).new  # Track which addressable allocas have been stored to
     @pending_allocas : Array({String, String, Int32}) = [] of {String, String, Int32}  # name, type, align
@@ -1569,7 +1573,7 @@ module Crystal::MIR
           ret_type = is_cmp ? "i1" : llvm_type
           return "; #{recv_type_name}##{op_name} primitive\n" \
                  "define #{ret_type} @#{name}(ptr %self, #{llvm_type} %other) {\n" \
-                 "  %self_val = ptrtoint ptr %self to #{llvm_type}\n" \
+                 "  %self_val = load #{llvm_type}, ptr %self\n" \
                  "  %result = #{op_ir} #{llvm_type} %self_val, %other\n" \
                  "  ret #{ret_type} %result\n" \
                  "}\n"
@@ -1593,7 +1597,7 @@ module Crystal::MIR
           div_op = is_signed ? "srem" : "urem"
           return "; Int#remainder(#{arg_type_name}) primitive\n" \
                  "define #{llvm_type} @#{name}(ptr %self, #{llvm_type} %other) {\n" \
-                 "  %self_val = ptrtoint ptr %self to #{llvm_type}\n" \
+                 "  %self_val = load #{llvm_type}, ptr %self\n" \
                  "  %result = #{div_op} #{llvm_type} %self_val, %other\n" \
                  "  ret #{llvm_type} %result\n" \
                  "}\n"
@@ -1601,7 +1605,7 @@ module Crystal::MIR
           div_op = is_signed ? "sdiv" : "udiv"
           return "; Int#tdiv(#{arg_type_name}) primitive\n" \
                  "define ptr @#{name}(ptr %self, #{llvm_type} %other) {\n" \
-                 "  %self_val = ptrtoint ptr %self to #{llvm_type}\n" \
+                 "  %self_val = load #{llvm_type}, ptr %self\n" \
                  "  %result = #{div_op} #{llvm_type} %self_val, %other\n" \
                  "  %result_ptr = inttoptr #{llvm_type} %result to ptr\n" \
                  "  ret ptr %result_ptr\n" \
@@ -6810,8 +6814,8 @@ module Crystal::MIR
         emit_raw "; Number#<=> — cycle-breaking builtin override\n"
         emit_raw "define %Nil$_$OR$_Int32.union @#{mangled}(ptr %self, ptr %other) {\n"
         emit_raw "entry:\n"
-        emit_raw "  %self_val = ptrtoint ptr %self to i32\n"
-        emit_raw "  %other_val = ptrtoint ptr %other to i32\n"
+        emit_raw "  %self_val = load i32, ptr %self\n"
+        emit_raw "  %other_val = load i32, ptr %other\n"
         emit_raw "  %gt = icmp sgt i32 %self_val, %other_val\n"
         emit_raw "  br i1 %gt, label %ret_pos, label %check_lt\n"
         emit_raw "check_lt:\n"
@@ -6849,8 +6853,8 @@ module Crystal::MIR
         emit_raw "; Number#> — cycle-breaking builtin override\n"
         emit_raw "define i1 @#{mangled}(ptr %self, ptr %other) {\n"
         emit_raw "entry:\n"
-        emit_raw "  %self_val = ptrtoint ptr %self to i32\n"
-        emit_raw "  %other_val = ptrtoint ptr %other to i32\n"
+        emit_raw "  %self_val = load i32, ptr %self\n"
+        emit_raw "  %other_val = load i32, ptr %other\n"
         emit_raw "  %result = icmp sgt i32 %self_val, %other_val\n"
         emit_raw "  ret i1 %result\n"
         emit_raw "}\n\n"
@@ -6860,8 +6864,8 @@ module Crystal::MIR
         emit_raw "; Number#< — cycle-breaking builtin override\n"
         emit_raw "define i1 @#{mangled}(ptr %self, ptr %other) {\n"
         emit_raw "entry:\n"
-        emit_raw "  %self_val = ptrtoint ptr %self to i32\n"
-        emit_raw "  %other_val = ptrtoint ptr %other to i32\n"
+        emit_raw "  %self_val = load i32, ptr %self\n"
+        emit_raw "  %other_val = load i32, ptr %other\n"
         emit_raw "  %result = icmp slt i32 %self_val, %other_val\n"
         emit_raw "  ret i1 %result\n"
         emit_raw "}\n\n"
@@ -7556,9 +7560,10 @@ module Crystal::MIR
         emit_raw "; #{type_name}##{rest.split("$$").first} primitive override\n"
         emit_raw "define #{ret_type} @#{mangled}(#{self_llvm} %self, #{other_llvm} %other) {\n"
 
-        # Get self value (ptrtoint if needed)
+        # Get self value — V2 heap-allocates primitives, so self is a pointer.
+        # Load the actual value from the heap instead of truncating the pointer.
         self_val = if needs_self_ptrtoint
-                     emit_raw "  %self_val = ptrtoint ptr %self to #{actual_self_llvm}\n"
+                     emit_raw "  %self_val = load #{actual_self_llvm}, ptr %self\n"
                      "%self_val"
                    else
                      "%self"
@@ -9324,6 +9329,7 @@ module Crystal::MIR
       @alloc_types.clear
       @alloc_element_types.clear
       @inttoptr_value_ids.clear
+      @ptr_passthrough.clear
       @phi_zext_conversions.clear
       @zext_value_names.clear
       @phi_nil_incoming_blocks.clear
@@ -9336,10 +9342,19 @@ module Crystal::MIR
         # Use POINTER for void params (void is not valid for values)
         param_type = param.type == TypeRef::VOID ? TypeRef::POINTER : param.type
         @value_types[param.index] = param_type
-        # Parameters typed as ptr may hold packed scalars (inttoptr'd at call site).
-        # Mark them so ptr→int conversion uses ptrtoint instead of load.
+        # In V2, parameters typed as ptr may be either:
+        # 1. Heap pointers to reference/class/array/union data → load to access
+        # 2. Packed scalars (inttoptr'd small ints at call site) → ptrtoint to access
+        # Mark as packed scalar only if MIR type is a small primitive, not a heap type.
         if @type_mapper.llvm_type(param_type) == "ptr"
-          @inttoptr_value_ids.add(param.index)
+          param_mir = @module.type_registry.get(param_type)
+          if param_mir
+            k = param_mir.kind
+            is_heap = k.reference? || k.union? || k.array? || k.struct? || k.tuple?
+          else
+            is_heap = false
+          end
+          @inttoptr_value_ids.add(param.index) unless is_heap
         end
       end
 
@@ -10061,11 +10076,9 @@ module Crystal::MIR
           end
           store_type = slot_llvm_type
         elsif llvm_type == "ptr" && slot_llvm_type.starts_with?('i')
-          # Decide: ptrtoint (packed scalar) vs load (pointer to data)
-          mir_val_type = val_type ? @type_mapper.llvm_type(val_type) : "ptr"
-          is_packed = (mir_val_type.starts_with?('i') && !mir_val_type.includes?(".union")) ||
-                      mir_val_type == "float" || mir_val_type == "double" ||
-                      @inttoptr_value_ids.includes?(inst_id)
+          # V2 ABI: ptr values are heap pointers, not packed scalars.
+          # Only use ptrtoint for values explicitly created by inttoptr.
+          is_packed = @inttoptr_value_ids.includes?(inst_id)
           if is_packed
             emit "%#{base}.slot_ptrtoint = ptrtoint ptr #{name} to #{slot_llvm_type}"
             store_val = "%#{base}.slot_ptrtoint"
@@ -12520,6 +12533,54 @@ module Crystal::MIR
         return
       end
 
+      # Passthrough: ptrtoint from heap pointer to small int (<64 bits) would
+      # truncate the 64-bit address. Emit a no-op bitcast ptr→ptr instead so the
+      # SSA name exists. Downstream zext/inttoptr chain is also converted to no-ops.
+      if op == "ptrtoint" && src_type == "ptr"
+        dst_bits = dst_type[1..].to_i? || 64
+        if dst_bits < 64
+          src_ref = @value_types[inst.value]? || TypeRef::POINTER
+          src_mir = @module.type_registry.get(src_ref)
+          src_is_heap_ptr = if src_mir
+                              k = src_mir.kind
+                              k.reference? || k.union? || k.array? || k.struct? || k.pointer? || k.tuple?
+                            else
+                              false
+                            end
+          if src_is_heap_ptr
+            # Emit no-op bitcast instead of truncating ptrtoint
+            emit "#{name} = bitcast ptr #{value} to ptr"
+            @ptr_passthrough[inst.id] = "ptr #{name.lstrip('%')}"
+            record_emitted_type(name, "ptr")
+            @value_types[inst.id] = TypeRef::POINTER
+            return
+          end
+        end
+      end
+
+      # Passthrough: zext/sext/trunc from a ptr_passthrough value — the "i8" is
+      # actually still a ptr, so emit a no-op bitcast and keep the passthrough chain.
+      if (op == "zext" || op == "sext" || op == "trunc") && @ptr_passthrough.has_key?(inst.value)
+        src_ptr_ref = @ptr_passthrough[inst.value]
+        src_ptr_val = src_ptr_ref.lchop("ptr ").lstrip('%')
+        emit "#{name} = bitcast ptr %#{src_ptr_val} to ptr"
+        @ptr_passthrough[inst.id] = "ptr #{name.lstrip('%')}"
+        record_emitted_type(name, "ptr")
+        @value_types[inst.id] = TypeRef::POINTER
+        return
+      end
+
+      # Passthrough: inttoptr/bitcast from a ptr_passthrough value — already a ptr.
+      if (op == "inttoptr" || op == "bitcast") && @ptr_passthrough.has_key?(inst.value)
+        src_ptr_ref = @ptr_passthrough[inst.value]
+        src_ptr_val = src_ptr_ref.lchop("ptr ").lstrip('%')
+        emit "#{name} = bitcast ptr %#{src_ptr_val} to ptr"
+        @ptr_passthrough[inst.id] = "ptr #{name.lstrip('%')}"
+        record_emitted_type(name, "ptr")
+        @value_types[inst.id] = TypeRef::POINTER
+        return
+      end
+
       emit "#{name} = #{op} #{src_type} #{value} to #{dst_type}"
       record_emitted_type(name, dst_type)
       # Track actual destination type for downstream use
@@ -13955,6 +14016,9 @@ module Crystal::MIR
                      "ptr #{slot_name}"
                    elsif val == "0"
                      "ptr null"
+                   elsif passthrough = @ptr_passthrough[a]?
+                     # Value is a ptr that bypassed a truncating ptrtoint chain.
+                     passthrough
                    else
                      c = @cond_counter
                      @cond_counter += 1
@@ -14148,17 +14212,13 @@ module Crystal::MIR
                        end
                      end
                    else
-                     # Decide: ptrtoint (packed scalar) vs load (pointer to data).
-                     # Three signals identify packed scalars:
-                     # 1. MIR type is scalar (i32,i8,etc) but emitted as ptr → packed via inttoptr
-                     # 2. Value created by explicit inttoptr instruction
-                     # 3. Value from an alloc'd enum/struct (already tracked in @alloc_types)
-                     # Everything else (GEP results, allocas, loaded pointers) → load the data.
+                     # V2 struct-as-pointer ABI: ptr values holding primitives are
+                     # heap pointers, not packed scalars. Only use ptrtoint for values
+                     # explicitly created by inttoptr (packed scalar encoding).
+                     # Everything else: load the actual primitive from the heap pointer.
                      c = @cond_counter
                      @cond_counter += 1
-                     is_packed_scalar = (mir_llvm_type.starts_with?('i') && !mir_llvm_type.includes?(".union")) ||
-                                        mir_llvm_type == "float" || mir_llvm_type == "double" ||
-                                        @inttoptr_value_ids.includes?(a)
+                     is_packed_scalar = @inttoptr_value_ids.includes?(a)
                      if is_packed_scalar
                        temp_int = "%ptrtoint.#{c}"
                        emit "#{temp_int} = ptrtoint ptr #{val} to #{expected_llvm_type}"
@@ -16016,6 +16076,19 @@ module Crystal::MIR
           end
         elsif result_type.starts_with?('i')
           if actual_union_val_type == "ptr"
+            # Passthrough for heap pointer union unwrap to small int
+            result_bits = result_type[1..].to_i? || 64
+            if result_bits < 64
+              union_src_ref = @value_types[inst.union_value]? || TypeRef::POINTER
+              union_src_mir = @module.type_registry.get(union_src_ref)
+              if union_src_mir && (union_src_mir.kind.reference? || union_src_mir.kind.union? || union_src_mir.kind.array? || union_src_mir.kind.struct? || union_src_mir.kind.pointer? || union_src_mir.kind.tuple?)
+                emit "#{name} = bitcast ptr #{union_val} to ptr"
+                @ptr_passthrough[inst.id] = "ptr #{name.lstrip('%')}"
+                record_emitted_type(name, "ptr")
+                @value_types[inst.id] = TypeRef::POINTER
+                return
+              end
+            end
             emit "#{name} = ptrtoint ptr #{union_val} to #{result_type}"
           elsif actual_union_val_type.starts_with?('i') && !actual_union_is_union
             if actual_union_val_type == result_type
@@ -17388,6 +17461,14 @@ module Crystal::MIR
           end
         end
 
+        # Passthrough: if this value was a heap pointer that bypassed a truncating
+        # ptrtoint chain, the actual emitted type is ptr (not the MIR's small int).
+        # Treat it as a string/ptr for interpolation.
+        if @ptr_passthrough.has_key?(part_id)
+          string_parts << part_ref
+          next
+        end
+
         # Check if part is an Array (stored as ptr but tracked in @array_info)
         if arr_info = @array_info[part_id]?
           elem_llvm_type = arr_info[0]  # LLVM type: "i32", "ptr", etc.
@@ -18011,15 +18092,11 @@ module Crystal::MIR
               emit "%ret_inttoptr.#{c} = inttoptr #{val_llvm_type} #{val_ref} to ptr"
               emit "ret ptr %ret_inttoptr.#{c}"
             elsif @current_return_type.starts_with?('i') && val_llvm_type == "ptr"
-              # Pointer to integer conversion — decide ptrtoint vs load.
-              # If MIR type is scalar or value was created by inttoptr → packed scalar → ptrtoint
-              # Otherwise (GEP, alloca, etc.) → pointer to data → load
+              # V2 ABI: ptr values are heap pointers — load the value.
+              # Only ptrtoint for values explicitly created by inttoptr.
               c = @cond_counter
               @cond_counter += 1
-              mir_ret_type = val_type ? @type_mapper.llvm_type(val_type) : "ptr"
-              is_packed = (mir_ret_type.starts_with?('i') && !mir_ret_type.includes?(".union")) ||
-                          mir_ret_type == "float" || mir_ret_type == "double" ||
-                          (val && @inttoptr_value_ids.includes?(val))
+              is_packed = val && @inttoptr_value_ids.includes?(val)
               if is_packed
                 emit "%ret_ptrtoint.#{c} = ptrtoint ptr #{val_ref} to #{@current_return_type}"
                 emit "ret #{@current_return_type} %ret_ptrtoint.#{c}"
