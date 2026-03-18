@@ -2,9 +2,8 @@
 
 ## Current State
 - **Branch**: `bootstrap-benchmark`
-- **Latest committed baseline**: `781b7f28` — restore fresh self-hosted stage2 on nameprio branch
+- **Latest committed baseline**: `24bf5d7c` — restore parser rewind token state
 - **Working tree**:
-  - uncommitted parser rewind hardening in `src/compiler/frontend/parser.cr`
   - unrelated local diffs in `src/compiler/mir/hir_to_mir.cr` and `src/crystal_v2.cr` must stay out of the next commit
 - **Fresh release stage1 (current tree)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_funlookahead`
 - **Fresh release stage2 (current tree)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_funlookahead_fresh`
@@ -12,7 +11,11 @@
   - original Crystal -> fresh `stage1_release_funlookahead`: `544.95s`
   - fresh `stage1_release_funlookahead` -> fresh `stage2_release_funlookahead_fresh`: `174.80s`
   - previous fresh self-hosted release stage2 checkpoint (`stage2_release_nameprio_fresh`): `164.03s`
-- **Compiler parse-only status**: fresh `stage2_release_funlookahead_fresh` survives `CRYSTAL_V2_STOP_AFTER_PARSE=1 src/crystal_v2.cr --release` `3/3`
+- **New regression surface**:
+  - `bash regression_tests/stage2_full_compiler_parse_only_repro.sh <compiler>`
+- **Compiler parse-only status**:
+  - baseline `stage2_release_nameprio_fresh`: `rc=0,138,138,138,138`
+  - fresh `stage2_release_funlookahead_fresh`: `rc=0,0,0,0,0`
 - **Stage3 bootstrap**: **FAILS** after `1.06s` with `status=139` on `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_funlookahead_fresh`
 - **Current smallest clean/red HIR controls**:
   - `--release --no-prelude /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_simple_one.cr` is green in `0.02s`
@@ -22,16 +25,16 @@
 ### Completed In This Cycle
 1. **Parser rewind hardening moved the active frontier past full-compiler parse-only**
    - `src/compiler/frontend/parser.cr` now restores `@previous_token` together with `@index` inside `lookahead_for_arrow?`, including the early `::Foo` false return, the generic false return, and the speculative trailing `.class` rewind
-   - full compiler parse-only on the fresh stage2 is now clean:
+   - full compiler parse-only regression surface now cleanly separates old vs fresh stage2:
      ```bash
-     for i in 1 2 3; do
-       env CRYSTAL_V2_STOP_AFTER_PARSE=1 \
-         /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_funlookahead_fresh \
-         src/crystal_v2.cr --release \
-         -o /Users/sergey/Projects/Crystal/.codex_artifacts/stage3_funlookahead_parse_only_$i
-     done
+     bash regression_tests/stage2_full_compiler_parse_only_repro.sh \
+       /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_nameprio_fresh
+     bash regression_tests/stage2_full_compiler_parse_only_repro.sh \
+       /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_funlookahead_fresh
      ```
-     Result: `rc=0, 0, 0`
+     Result:
+     - baseline `stage2_release_nameprio_fresh`: `rc=0,138,138,138,138`
+     - fresh `stage2_release_funlookahead_fresh`: `rc=0,0,0,0,0`
 
 2. **Fresh release bootstrap remains green with the parser rewind patch**
    - fresh original-Crystal rebuild:
@@ -133,16 +136,16 @@ The current `ast_to_hir` branch restores a full fresh `stage1 -> stage2` release
    ```
    Result: `exit 0` / `not reproduced`
 
-3. **Plain parse-only on the full compiler source is now green**
+3. **Plain parse-only on the full compiler source is now green on the fresh stage2 and red on the previous baseline**
    ```bash
-   for i in 1 2 3; do
-     env CRYSTAL_V2_STOP_AFTER_PARSE=1 \
-       /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_funlookahead_fresh \
-       src/crystal_v2.cr --release \
-       -o /Users/sergey/Projects/Crystal/.codex_artifacts/stage3_funlookahead_parse_only_$i
-   done
+   bash regression_tests/stage2_full_compiler_parse_only_repro.sh \
+     /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_nameprio_fresh
+   bash regression_tests/stage2_full_compiler_parse_only_repro.sh \
+     /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_funlookahead_fresh
    ```
-   Result: `rc=0, 0, 0`
+   Result:
+   - baseline `stage2_release_nameprio_fresh`: `rc=0,138,138,138,138`
+   - fresh `stage2_release_funlookahead_fresh`: `rc=0,0,0,0,0`
 
 4. **The smallest clean/red HIR controls are now separated cleanly**
    ```bash
@@ -181,10 +184,10 @@ The current `ast_to_hir` branch restores a full fresh `stage1 -> stage2` release
    Result: `status=139`, `real 1.06s`
 
 ### What To Debug Next
-1. Keep `regression_tests/stage2_block_body_exprid_parser_repro.sh` as the cheap parser-only control for future parser experiments
-2. Treat the current parser rewind patch as a separate boundary-shift commit; do **not** mix it with the next HIR/module experiment
+1. Keep `regression_tests/stage2_full_compiler_parse_only_repro.sh` as the strongest current parser regression surface, with `stage2_block_body_exprid_parser_repro.sh` as the smaller parser-only control
+2. Keep parser rewind commit `24bf5d7c` isolated; do **not** mix the next HIR/module experiment into that boundary shift
 3. Use `CRYSTAL_V2_STOP_AFTER_HIR=1 --release --no-prelude src/stdlib/prelude.cr` as the new smallest stdlib red control and `... stage2_simple_one.cr --no-prelude` as the new green control
-4. Narrow the failing `require` chain inside `src/stdlib/prelude.cr` before returning to another full stage3
+4. Falsify the leading `register_module -> module_name_from_node -> with_reparsed_module_from_current_source` recursion hypothesis before returning to another full stage3
 
 ---
 

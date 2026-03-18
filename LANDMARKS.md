@@ -12,11 +12,13 @@ trailing `.class` suffix rewind in type parsing. Fresh verification on the
 current tree:
 `stage1_release_funlookahead` builds from original Crystal in `544.95s`,
 `stage2_release_funlookahead_fresh` then builds from that fresh stage1 in
-`174.80s`, and the reduced parser-body oracle
+`174.80s`, the reduced parser-body oracle
 `regression_tests/stage2_block_body_exprid_parser_repro.sh` stays green on the
-fresh stage2. Boundary shift: on the fresh stage2, plain
-`CRYSTAL_V2_STOP_AFTER_PARSE=1 src/crystal_v2.cr --release` now survives
-`3/3`, `CRYSTAL_V2_STOP_AFTER_HIR=1 --release --no-prelude
+fresh stage2, and the new full-compiler parse-only regression surface
+`regression_tests/stage2_full_compiler_parse_only_repro.sh` cleanly separates
+old vs new binaries: previous `stage2_release_nameprio_fresh` fails
+`rc=0,138,138,138,138`, while fresh `stage2_release_funlookahead_fresh` passes
+`rc=0,0,0,0,0`. Boundary shift: `CRYSTAL_V2_STOP_AFTER_HIR=1 --release --no-prelude
 /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_simple_one.cr` exits `0`
 in `0.02s`, while the new smallest red HIR-bounded stdlib control
 `CRYSTAL_V2_STOP_AFTER_HIR=1 --release --no-prelude src/stdlib/prelude.cr`
