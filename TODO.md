@@ -2,22 +2,24 @@
 
 ## Current State
 - **Branch**: `bootstrap-benchmark`
-- **Latest committed baseline**: `24bf5d7c` — restore parser rewind token state
+- **Latest committed baseline**: `3e1626b7` — widen macro body piece capacity
 - **Working tree**:
   - unrelated local diffs in `src/compiler/mir/hir_to_mir.cr` and `src/crystal_v2.cr` must stay out of the next commit
 - **Fresh release stage1 (current tree)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_funlookahead`
 - **Fresh release stage2 (current tree)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_funlookahead_fresh`
 - **Previous local stage2 checkpoint (class reparse fallback)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_reparse_class_clean`
-- **Current local stage2 candidate (macro-body piece capacity 128)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_macro_piececap128`
+- **Current local stage2 candidate (MIR prepare timing guard)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_current_dirty_mirtimingfix_clean`
 - **Current timings**:
   - original Crystal -> fresh `stage1_release_funlookahead`: `544.95s`
   - fresh `stage1_release_funlookahead` -> fresh `stage2_release_funlookahead_fresh`: `174.80s`
   - previous fresh self-hosted release stage2 checkpoint (`stage2_release_nameprio_fresh`): `164.03s`
   - fresh `stage1_release_funlookahead` -> current local `stage2_release_macro_piececap128`: `177.18s`
+  - fresh `stage1_release_funlookahead` -> current local `stage2_release_current_dirty_mirtimingfix_clean`: `175.10s`
 - **New regression surface**:
   - `bash regression_tests/stage2_full_compiler_parse_only_repro.sh <compiler>`
   - `bash regression_tests/stage2_object_hir_noprelude_repro.sh <compiler>`
   - `bash regression_tests/stage2_nested_macro_method_missing_repro.sh <compiler>`
+  - `bash regression_tests/stage2_mir_prepare_timing_repro.sh <compiler>`
   - `bash regression_tests/stage2_reparsed_module_wrapper_repro.sh <compiler>`
   - `bash regression_tests/stage2_require_boehm_noprelude_parse_repro.sh <compiler>`
 - **Compiler parse-only status**:
@@ -28,7 +30,7 @@
   - `bash regression_tests/stage2_require_boehm_noprelude_parse_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_reparse_class_clean` -> `exit 1` / wrapper `status=138`
   - `bash regression_tests/stage2_require_boehm_noprelude_parse_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_macro_piececap128` -> `exit 0` / `not reproduced`
 - **Stage3 bootstrap**: **FAILS** after `1.06s` with `status=139` on `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_funlookahead_fresh`
-- **Current local stage3 probe**: still **FAILS** after `1.06s` with `status=139` on `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_macro_piececap128`
+- **Current local stage3 probe**: still **FAILS** after `1.05s` with `status=138` on `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_current_dirty_mirtimingfix_clean`
 - **Current smallest clean/red HIR controls**:
   - `--release --no-prelude /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_simple_one.cr` is green in `0.02s`
   - the path-wrapper oracle stays green on the newest local candidate:
@@ -39,8 +41,36 @@
     - Result: `exit 0` / `not reproduced`
 - **Benchmark status**: blocked — stage2 compiler is still unstable and crashes before finishing stage3
 
-### New Verified Locally (Uncommitted)
-1. **Widening `parse_macro_body`'s initial `Array(MacroPiece)` capacity to `128` removes the focused `require "gc/boehm"` parser-only crash without regressing broader parser stability**
+### New Verified In This Cycle
+1. **Guarding unconditional MIR prepare/lower timing in `cli.cr` moves the active stage2 frontier past the old pre-`Pass 2` crash**
+   - driver change:
+     - `src/compiler/cli.cr`: the serial MIR path now computes `mir_prepare_ms` and `mir_lower_ms` only when `options.stats` is enabled, instead of always executing `(Time.instant - start).total_milliseconds`
+   - focused regression surface:
+     ```bash
+     bash regression_tests/stage2_mir_prepare_timing_repro.sh \
+       /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_current_dirty_climir
+     bash regression_tests/stage2_mir_prepare_timing_repro.sh \
+       /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_current_dirty_mirtimingfix_clean
+     ```
+     Result:
+     - old pre-fix stage2: `exit 1` / `reproduced: compiler crashed before MIR body lowering on the minimal prepare-timing repro`
+     - current clean local candidate: `exit 0` / `not reproduced: compiler reached MIR body lowering on the minimal prepare-timing repro`
+   - deeper localization on the same minimal `1` no-prelude control:
+     - old traced binary reached `Stub 1/1...` and died before `Pass 2`
+     - the current timing-guard candidate reaches `Pass 2: Lowering 1 function bodies...` and `Body 1/1...`, and with diagnostic breadcrumbs continues into `MIR_LOWER] function=__crystal_main`
+   - integration boundary:
+     ```bash
+     /usr/bin/time -p env CRYSTAL_CACHE_DIR_STAGE3_RELEASE=/Users/sergey/Projects/Crystal/.codex_artifacts/cache_stage3_release_current_dirty_mirtimingfix_clean \
+       CRYSTAL_V2_PIPELINE_CACHE=0 CRYSTAL_V2_LLVM_CACHE=0 \
+       scripts/timeout_sample_lldb.sh -t 2400 -m 40960 -s 8 -l 20 -n 12 --no-series \
+       -o /Users/sergey/Projects/Crystal/.codex_artifacts/logs/stage3_release_current_dirty_mirtimingfix_clean_timeout \
+       -- scripts/build_stage2_release.sh \
+       /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_current_dirty_mirtimingfix_clean \
+       /Users/sergey/Projects/Crystal/.codex_artifacts/stage3_release_current_dirty_mirtimingfix_clean
+     ```
+     Result: `status=138`, `real 1.05s`, underlying `Bus error: 10`
+
+2. **Widening `parse_macro_body`'s initial `Array(MacroPiece)` capacity to `128` removes the focused `require "gc/boehm"` parser-only crash without regressing broader parser stability**
    - parser change:
      - `src/compiler/frontend/parser.cr`: `pieces = Array(MacroPiece).new(128)` in `parse_macro_body`
    - focused regression surface:
@@ -70,7 +100,7 @@
      - `CRYSTAL_V2_STOP_AFTER_HIR=1 --release --no-prelude regression_tests/stage2_require_boehm_noprelude_parse_repro.cr` still fails on the same local candidate with wrapper `status=139`
      - `stage2_release_macro_piececap128 -> stage3_release_macro_piececap128` still dies in `1.06s` with `status=139`
 
-2. **The abandoned `MacroPieceBuffer` experiment is a verified false path**
+3. **The abandoned `MacroPieceBuffer` experiment is a verified false path**
    - the scalarizing `MacroPieceBuffer#<<` branch temporarily made the focused `gc/boehm` parse-only oracle green, but it introduced a new smaller parser-only crash surface:
      - `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_macro_begin_inline_if_repro.cr`
    - split:

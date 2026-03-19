@@ -1781,12 +1781,20 @@ module CrystalV2
           # Serial path: full MIR lowering + optimization
           STDERR.puts "  Lowering #{hir_module.functions.size} functions to MIR..." if options.progress
           STDERR.puts "[MIR_SETUP] lowering bodies count=#{hir_module.functions.size}" if mir_setup_trace
-          mir_prepare_start = Time.instant
+          mir_prepare_start = options.stats ? Time.instant : nil
           mir_module = mir_lowering.prepare(options.progress)
-          mir_prepare_ms = (Time.instant - mir_prepare_start).total_milliseconds
-          mir_lower_start = Time.instant
+          mir_prepare_ms = if start = mir_prepare_start
+                             (Time.instant - start).total_milliseconds
+                           else
+                             0.0
+                           end
+          mir_lower_start = options.stats ? Time.instant : nil
           mir_lowering.lower_all_bodies(options.progress)
-          mir_lower_ms = (Time.instant - mir_lower_start).total_milliseconds
+          mir_lower_ms = if start = mir_lower_start
+                           (Time.instant - start).total_milliseconds
+                         else
+                           0.0
+                         end
           STDERR.puts "[MIR_SETUP] lowering bodies done funcs=#{mir_module.functions.size}" if mir_setup_trace
           timings["mir_prepare"] = mir_prepare_ms if options.stats
           timings["mir_lower"] = mir_lower_ms if options.stats

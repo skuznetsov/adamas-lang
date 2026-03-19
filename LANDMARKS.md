@@ -3,6 +3,32 @@
 Updated: 2026-03-18
 Context: compiler/bootstrap/stage2-stability
 
+[LM-192|verified]: unconditional MIR timing math in the serial MIR driver was a
+real stage2-only crash frontier, and guarding it behind `options.stats` moves
+the self-hosted compiler materially later. In `src/compiler/cli.cr`, the serial
+MIR path used to compute `mir_prepare_ms = (Time.instant - mir_prepare_start)
+.total_milliseconds` and the matching `mir_lower_ms` unconditionally, even when
+timings were not requested. Fresh local candidate
+`/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_current_dirty_mirtimingfix_clean`
+now computes those deltas only when `options.stats` is enabled. The new focused
+oracle `bash regression_tests/stage2_mir_prepare_timing_repro.sh <compiler>`
+cleanly separates the boundary: old pre-fix stage2
+`/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_current_dirty_climir`
+returns `exit 1` / `reproduced: compiler crashed before MIR body lowering on
+the minimal prepare-timing repro`, while the clean timing-guard candidate
+returns `exit 0` / `not reproduced: compiler reached MIR body lowering on the
+minimal prepare-timing repro`. Direct traced runs on the same minimal
+`--progress --release --no-prelude --no-link --no-ast-cache 1` control show the
+boundary shift precisely: the old binary dies after `Stub 1/1...`, but the new
+candidate reaches `Pass 2: Lowering 1 function bodies...`, `Body 1/1...`, and
+then `MIR_LOWER] function=__crystal_main`. Boundary: this is still not a full
+stage3 unblock. `stage2_release_current_dirty_mirtimingfix_clean ->
+stage3_release_current_dirty_mirtimingfix_clean` remains fast-red at `real
+1.05s`, but the failure class shifts from the earlier fast `status=139` to
+`status=138` / `Bus error: 10`, so the active frontier is now inside later
+MIR-lowering state, not the old pre-`Pass 2` timing path. {F/G/R:
+0.97/0.81/0.98} [verified]
+
 [LM-191|verified]: the field-unpacking `MacroPieceBuffer` experiment is a
 refuted path even though it temporarily moved one parser oracle. Replacing the
 growable `Array(MacroPiece)` in `parse_macro_body` with a custom buffer that
