@@ -46,11 +46,12 @@
 - **Current smallest standalone parser-shape oracle**:
   - `bash regression_tests/stage2_parse_args_tail_if_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_funlookahead` -> `exit 0` / `not reproduced: compiler reached STOP_AFTER_PARSE on all 10 parse_args tail-if parser-shape repro attempts`
   - `bash regression_tests/stage2_parse_args_tail_if_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_rootidx_w1` -> `exit 1` / `reproduced` on attempt `1` with wrapper `status=139`
-  - this witness is smaller than the current repo-root `bootstrap_shims + cli` corridor, refutes the hypothesis that the active frontier is specific to recursive `cli.cr` require-loading, and also shows that the outer `elsif` branch from the first standalone witness is not required for reproduction
+  - this witness is smaller than the current repo-root `bootstrap_shims + cli` corridor, refutes the hypothesis that the active frontier is specific to recursive `cli.cr` require-loading, and also shows that the outer `elsif`, the second indexed read, `to_i32?`, and `not_nil!` are not required for reproduction
   - adversary note: the same rootidx binary can go green on all attempts under `PARSER_DEBUG=1` or direct batch LLDB, so the bug is still heisenbug-sensitive parser corruption rather than a stable syntax rejection
   - local refutation ledger on this witness:
     - `stage2_release_ifwhileidx_w1` (scalarized transient `ExprId` builders in `parse_if` + `parse_while`) built cleanly but stayed red `5/5` on the tail-if oracle while the trimmed control stayed green `3/3`
     - `stage2_release_ifbranchidx_w1` (further `parse_if` carrier scalarization for `ElsifBranch` / else-body materialization) overfit and regressed the previously green trimmed control to red `3/3`
+    - `tmp_parse_args_shape_assign_no_inner_if_tailand.cr` stays green `5/5`, so local assignment itself is not the trigger; the current smallest red shape still needs the nested truthy `if arg`
 - **Stage3 bootstrap**: **FAILS** after `1.06s` with `status=139` on `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_funlookahead_fresh`
 - **Current local stage3 probe**: pending on `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_parseprogramroots_loadedreq_lazydbg_fresh_w2`; last verified fast-red remains `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_reqscanidx` with `status=139`
 - **Current smallest clean/red HIR controls**:

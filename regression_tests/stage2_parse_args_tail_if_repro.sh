@@ -25,9 +25,8 @@ class Probe
       arg = @args[i]
       if arg == "-O"
         if i + 1 < @args.size
-          parsed = @args[i + 1].to_i32?
-          if parsed
-            status = parsed.not_nil!
+          if arg
+            status = 1
             i += 1
           else
             opt_level_invalid = true
