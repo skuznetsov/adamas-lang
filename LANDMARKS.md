@@ -73,6 +73,18 @@ runs:
 - removing only the `Options#ast_cache` wrapper is also only a mild shift:
   `RCS: 139 0 0 139 139 139 139 139 0 0`
   => `4 green / 6 red`
+- removing the top-level require wrapper together with only the pre-parse
+  AST-cache load wrapper also lands in that same mild-shift bucket:
+  `RCS: 139 139 139 0 0 139 0 0 139 139`
+  => `4 green / 6 red`
+  so the top-level require improvement does not stack with the pre-load wrapper
+  the way it did with the save-side split
+- removing the top-level require wrapper on top of the already-bad
+  `load+save removed` state does not rescue the corridor:
+  `RCS: 139 0 139 139 139 139 0 139 139 139`
+  => `2 green / 8 red`
+  which is worse than baseline and confirms that once both larger AST-cache
+  wrappers are gone, their interaction dominates the top-level require effect
 Adversary/refutation:
 - the standalone extracted witness with only the top-level require block,
   `src/compiler/stage2_cli_top_require_unless_repro_fixed.cr`, stayed green
@@ -84,8 +96,11 @@ Reusable lesson: the surviving `cli.cr` frontier is an exact-path macro
 conjunction, not a single small witness. The top-level `lsp/ast_cache` require
 wrapper increases crash probability, but the `bootstrap_fast` AST-cache family
 is non-monotonic: each load/save wrapper alone slightly improves odds when
-removed, while removing both together is worst-case. Standalone reductions are
-therefore unreliable unless they preserve the original full-file context.
+removed, while removing both together is worst-case. Compositions are
+asymmetric: `top+save` preserves the `5/5` improvement, `top+load` falls back
+to the mild `4/6` class, and `top+load+save` degrades to `2/8`. Standalone
+reductions are therefore unreliable unless they preserve the original full-file
+context.
 {F/G/R: 0.97/0.74/0.98}
 [verified]
 

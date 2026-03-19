@@ -116,10 +116,19 @@
     - removing only the `Options#ast_cache` wrapper (`692-696`) is also only a mild shift:
       - `RCS: 139 0 0 139 139 139 139 139 0 0`
       - summary: `4 green / 6 red`
+    - pairing the harmful top-level require wrapper removal with only the pre-parse AST-cache load wrapper removal does **not** reproduce the stronger `top+save` improvement:
+      - `RCS: 139 139 139 0 0 139 0 0 139 139`
+      - summary: `4 green / 6 red`
+      - this lands in the same mild-shift bucket as `pre-load only`, `save only`, and `Options#ast_cache only`, so the top-level require effect does not stack with the pre-load wrapper the way it did with the save-side split
+    - removing the top-level require wrapper on top of the already-bad `load+save removed` state does **not** rescue that corridor:
+      - `RCS: 139 0 139 139 139 139 0 139 139 139`
+      - summary: `2 green / 8 red`
+      - this is worse than baseline `3 green / 7 red` and confirms that once both larger AST-cache wrappers are gone, their interaction dominates the top-level require effect
     - consequence:
       - the live `cli.cr` frontier is an exact-path conjunction
       - the top-level `lsp/ast_cache` require wrapper increases crash probability
       - the larger AST-cache load/save wrappers participate non-monotonically: each alone slightly improves odds when removed, but removing both together is worst-case
+      - removing the top-level require wrapper composes asymmetrically with the larger wrappers: `top+save` keeps the `5 green / 5 red` improvement, while `top+load` falls back to the mild `4 green / 6 red` class and `top+load+save` degrades to `2 green / 8 red`
       - simple standalone extracts do not preserve the crash surface
   - adversary controls on `stage2_release_genericann_whileidx_w3`:
     - `tmp_parse_args_shape_init_unknown_generic_literal_direct_ivar_read_if_true_tailand.cr` is green `5/5`
