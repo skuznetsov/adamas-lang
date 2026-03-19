@@ -3,6 +3,29 @@
 Updated: 2026-03-18
 Context: compiler/bootstrap/stage2-stability
 
+[LM-194|verified]: after the MIR order-block hardening, the smallest current
+stage2-specific red control reduces below full `src/crystal_v2.cr` to
+`src/stdlib/lib_c/aarch64-darwin/c/pthread.cr`, and it fails even under
+`CRYSTAL_V2_STOP_AFTER_PARSE=1`. The focused oracle
+`bash regression_tests/stage2_c_pthread_parse_repro.sh <compiler>` separates
+the boundary cleanly: fresh release stage1
+`/Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_funlookahead`
+returns `exit 0` / `not reproduced: compiler reached STOP_AFTER_PARSE on all 5
+c/pthread stage2 repro attempts`, while the clean order-block candidate
+`/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_current_dirty_orderbool_clean`
+returns `exit 1` / `reproduced: compiler crashed before STOP_AFTER_PARSE on the
+c/pthread stage2 repro`, with wrapper `status=138` / `Bus error: 10`. The file
+surface is compact and extern-heavy: `c/pthread.cr` contains one local
+`require "./sys/types"` and a short `lib LibC` block with `pthread_*`
+declarations. Two higher wrappers also remain red on the same candidate:
+`src/stdlib/crystal/system/unix/pthread_mutex.cr` and
+`src/stdlib/crystal/system/thread_mutex.cr`, so the lower C-binding file is the
+tighter frontier. Adversary note: this parser/file-loading control is
+heisenbug-sensitive under trace instrumentation. With `STAGE2_BOOTSTRAP_TRACE=1`
+enabled, the same `STOP_AFTER_PARSE` probe goes green, so the crash is still in
+unstable self-hosted state rather than a stable semantic compiler error in the
+source file itself. {F/G/R: 0.96/0.77/0.97} [verified]
+
 [LM-193|verified]: MIR block-order traversal was the next real stage2-only
 frontier after the serial timing guard, and hardening it moves the minimal
 self-hosted compiler path through MIR lowering and into LLVM emission. The
