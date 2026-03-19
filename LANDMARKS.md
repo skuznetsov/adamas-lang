@@ -111,13 +111,21 @@ runs:
   strict worst-case now requires their conjunction:
   `scan-only` (keep the `exprs` require-scan loop and `save_require_cache`,
   remove the `needs_source_fallback` subtree) yields
-  `RCS: 139 139 139 139 0 139 0 139 139 0` => `3 green / 7 red`,
+  fresh rerun `RCS: 139 139 139 0 139 139 139 139 0 139` => `2 green / 8 red`,
   and `fallback-only` (remove the `exprs` require-scan loop, keep the
   `needs_source_fallback` subtree and `save_require_cache`) yields
-  `RCS: 139 139 139 0 0 139 0 139 139 139` => `3 green / 7 red`
-  therefore neither half alone carries the `0 green / 10 red` class; it
-  currently depends on the combined miss-side
-  `require-scan + source-fallback/resolve_require_path` corridor
+  fresh rerun `RCS: 0 139 0 139 0 139 139 139 0 139` => `4 green / 6 red`
+  Removing only the recursive `parse_file_recursive(...)` fanout inside the
+  fallback loop, while keeping `needs_source_fallback`,
+  `extract_require_literals_from_source`, `resolve_require_path`, and
+  `requires << ...`, yields the same fresh
+  `RCS: 139 139 139 0 139 139 139 139 0 139` => `2 green / 8 red` as
+  `scan-only`. Therefore neither half alone carries the `0 green / 10 red`
+  class; it currently depends on the combined miss-side
+  `require-scan + source-fallback/resolve_require_path` corridor, and the
+  fallback-side contribution to that strict worst-case appears to enter
+  specifically through recursive parse fanout rather than through
+  `needs_source_fallback?` / `resolve_require_path` bookkeeping alone
 - removing the top-level require wrapper together with `Options#ast_cache`
   did not hold as a stable new class:
   first run `RCS: 139 139 139 139 139 139 139 139 139 0` => `1 green / 9 red`,
@@ -143,9 +151,10 @@ to the mild `4/6` class, and `top+load+save` degrades to `2/8`.
 reruns. Within the pre-load wrapper, that `0/10` is now localized further to
 the miss-side require-scan/source-fallback `else` subtree, not to the earlier
 `AstCache.load` or `cached_requires` hit-path skeletons. Within that `else`
-body, neither scan-only nor fallback-only is sufficient; the strict worst-case
-depends on their conjunction. Standalone reductions are therefore unreliable
-unless they preserve the original full-file context.
+body, the require-scan half is heavier, the fallback half alone is milder, and
+the extra drop to the strict `0/10` class appears to come through recursive
+fallback `parse_file_recursive` fanout. Standalone reductions are therefore
+unreliable unless they preserve the original full-file context.
 {F/G/R: 0.97/0.74/0.98}
 [verified]
 
