@@ -139,12 +139,17 @@ runs:
   local bookkeeping steps `fallback_resolved += 1` and `requires << resolved`
   lands in between at
   `RCS: 0 139 139 139 0 0 139 0 0 139` => `5 green / 5 red`.
+  Keeping the same recursive call together with `requires << resolved` but
+  removing only `fallback_resolved += 1` softens the strict worst-case only
+  slightly, to `RCS: 0 139 139 139 139 139 0 139 139 139` => `2 green / 8 red`.
   Wildcard requires are still a live input class in `src`, but
   `resolve_wildcard_require` returns `Array(String)`, so the strict
   `0 green / 10 red` class is not dominated by wildcard/array expansion; the
   main remaining fallback-side carrier now sits in the `when String` recursive
   fanout itself rather than in adjacent `requires << resolved` bookkeeping,
-  though that bookkeeping still adds some extra red weight
+  though that bookkeeping still adds some extra red weight, while
+  `fallback_resolved += 1` itself does not look causal and may even act as a
+  weak stabilizing perturbation
 - removing the top-level require wrapper together with `Options#ast_cache`
   did not hold as a stable new class:
   first run `RCS: 139 139 139 139 139 139 139 139 139 0` => `1 green / 9 red`,
