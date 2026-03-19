@@ -15,6 +15,8 @@
 - **Current local stage2 fix candidate (scalarized nested container name segments)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_constsegmentslice_w1`
 - **Current local stage2 parse-stop hardening candidate**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_lazyparse_earlyret_w1`
 - **Current local stage2 macro-text no-span falsifier candidate**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_macrotext_nospan_w1`
+- **Current local stage2 fixed-path superclass HIR candidate**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_verify_ast_only_w1`
+- **Current clean committed-HEAD comparison candidate**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_verify_head_baseline_w1`
 - **Current timings**:
   - original Crystal -> fresh `stage1_release_funlookahead`: `544.95s`
   - fresh `stage1_release_funlookahead` -> fresh `stage2_release_funlookahead_fresh`: `174.80s`
@@ -42,6 +44,19 @@
   - `bash regression_tests/stage2_parse_args_tail_if_repro.sh <compiler>`
   - `bash regression_tests/stage2_bootstrap_shims_begin_puts_repro.sh <compiler>`
   - `bash regression_tests/stage2_process_executable_path_parse_repro.sh <compiler>`
+  - `bash regression_tests/stage2_class_super_hir_repro.sh <compiler>`
+- **Current fixed-path HIR boundary**:
+  - `bash regression_tests/stage2_class_super_hir_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_nonhirtrio_w1` -> `exit 0` / `not reproduced` on all `5/5`
+  - `bash regression_tests/stage2_class_super_hir_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_verify_head_baseline_w1` -> `exit 1` / reproduced on attempt `1` with wrapper `status=139`
+  - `bash regression_tests/stage2_class_super_hir_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_verify_ast_only_w1` -> `exit 0` / `not reproduced` on all `5/5`
+  - branch split around that fixed-path oracle:
+    - parser-only candidate `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_verify_parser_only_w1` stays red on attempt `1` with wrapper `status=139`
+    - parser+ast candidate `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_verifyhead_parser_ast_w1` also goes green `5/5` on the same fixed path, so the parser bundle is not required for this oracle but also does not regress it on the committed source path
+    - fixed-path adjacent control `class A; end` stays green `3/3` on committed-HEAD candidate `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_verify_head_baseline_w1`
+    - fixed-path `class A(T); end` remains red on both the old active baseline and the new ast-only candidate, so generic-class HIR lowering is still a separate corridor and not a regression from the superclass fix
+  - current stage3 state from the same ast-only candidate:
+    - `scripts/build_stage2_release.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_verify_ast_only_w1 /Users/sergey/Projects/Crystal/.codex_artifacts/stage3_release_verify_ast_only_w1` -> fast-red `status=139`
+    - direct batch LLDB stack moved to `Parser#parse_method_params -> parse_def -> parse_module -> parse_program_roots_impl`
 - **Compiler parse-only status**:
   - baseline `stage2_release_nameprio_fresh`: `rc=0,138,138,138,138`
   - fresh `stage2_release_funlookahead_fresh`: `rc=0,0,0,0,0`

@@ -1295,16 +1295,17 @@ module CrystalV2
         end
 
         getter name : Slice(UInt8)
-        getter super_name : Slice(UInt8)?
         getter body : Array(ExprId)?
         getter is_abstract : Bool?
         getter is_struct : Bool?
         getter is_union : Bool?
         getter type_params : Array(Slice(UInt8))?
+        getter super_name : Slice(UInt8)?
 
-        def initialize(@span : Span, @name : Slice(UInt8), @super_name : Slice(UInt8)?,
+        def initialize(@span : Span, @name : Slice(UInt8), super_name : Slice(UInt8)?,
                        @body : Array(ExprId)?, @is_abstract : Bool? = nil, @is_struct : Bool? = nil,
                        @is_union : Bool? = nil, @type_params : Array(Slice(UInt8))? = nil)
+          @super_name = super_name
         end
 
         # Compatibility accessors (legacy ExpressionNode API)

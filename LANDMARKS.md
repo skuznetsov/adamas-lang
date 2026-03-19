@@ -3,6 +3,51 @@
 Updated: 2026-03-19
 Context: compiler/bootstrap/stage2-stability
 
+[LM-213|verified]: the current committed-HEAD HIR frontier includes a fixed-path
+explicit-superclass class witness, and the clean mover on that witness is the
+`ClassNode.super_name` field-layout change in `ast.cr`, not the uncommitted
+parser bundle. New committed oracle:
+`bash regression_tests/stage2_class_super_hir_repro.sh <compiler>`, which
+compiles `regression_tests/stage2_class_super_hir_repro.cr`
+(`class A < B; end`) under `CRYSTAL_V2_STOP_AFTER_HIR=1 --release --no-prelude`.
+Verified split on the same fixed absolute source path:
+- fresh release stage1
+  `/Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_nonhirtrio_w1`:
+  green `5/5`
+- clean committed-HEAD comparison candidate
+  `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_verify_head_baseline_w1`:
+  red on attempt `1` with wrapper `status=139`
+- clean ast-only candidate
+  `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_verify_ast_only_w1`:
+  green `5/5`
+Adversary/refutation on the same fixed-path surface:
+- parser-only candidate
+  `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_verify_parser_only_w1`
+  stays red on attempt `1`, so the parser bundle is not sufficient for this
+  HIR corridor
+- parser+ast candidate
+  `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_verifyhead_parser_ast_w1`
+  also stays green `5/5` on the same committed source path, so the parser
+  bundle is not required for this fixed-path HIR oracle but also does not
+  regress it there; the causality claim remains that ast-only is sufficient
+- fixed-path adjacent control `class A; end` stays green `3/3` on the clean
+  committed-HEAD candidate, so the new oracle is not “any class node under HIR”
+- fixed-path `class A(T); end` remains red on both the old active baseline and
+  the new ast-only candidate, so generic-class HIR lowering is still a separate
+  corridor and not a regression from the superclass fix
+- stage3 on the ast-only candidate is still fast-red `139`; direct batch LLDB
+  moves the frontier to `Parser#parse_method_params -> parse_def -> parse_module
+  -> parse_program_roots_impl`, so this is a real boundary shift but not a full
+  bootstrap completion
+Reusable lesson: the live committed-HEAD bedrock is now a fixed-path HIR oracle
+for explicit superclass classes. `ClassNode.super_name` layout perturbation in
+`ast.cr` is sufficient to move that oracle, while the parser bundle is not
+necessary for it. That strongly suggests a representation/layout
+bug family around optional slice-like AST header fields, but the next surviving
+frontier has already moved back into parser `parse_method_params` during stage3.
+{F/G/R: 0.96/0.72/0.95}
+[verified]
+
 [LM-211|verified]: the current post-`lazyparse_earlyret` macro-control
 frontier is reproducible on an existing stdlib source file below
 `crystal_v2.cr`. The new committed oracle
