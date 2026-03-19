@@ -3,6 +3,31 @@
 Updated: 2026-03-18
 Context: compiler/bootstrap/stage2-stability
 
+[LM-198|verified]: after the `reqscanidx` boundary shift, the smallest current
+stage2-specific parse/file-loading oracle moved again and now sits inside
+no-prelude loading of `crystal/compiler_rt`. The new focused oracle
+`bash regression_tests/stage2_require_compiler_rt_noprelude_parse_repro.sh <compiler>`
+is a clean split on the current candidate: fresh release stage1
+`/Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_funlookahead`
+returns `exit 0` / `not reproduced: compiler reached STOP_AFTER_PARSE on all 5
+compiler_rt no-prelude repro attempts`, while
+`/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_reqscanidx`
+returns `exit 1` / `reproduced: compiler crashed before STOP_AFTER_PARSE on the
+compiler_rt no-prelude repro`. The tighter second-level oracle
+`bash regression_tests/stage2_compiler_rt_fixint_float_noprelude_parse_repro.sh <compiler>`
+is also a clean split with stage1 green `5/5` and current stage2 red `5/5`.
+This is not just “any two requires”: `fixint` alone and `float` alone are both
+green `5/5`; `fixint + mul` is also green; but `fixint + float` and
+`mul + float` are red `5/5`, while `float + fixint` weakens to `red=2 green=3`.
+With `STAGE2_DEBUG=1 CRYSTAL_V2_PARSE_TRACE=1`, the `fixint + float` oracle
+reaches `PARSE_OK` and `REQSCAN_DONE ... reqs=0` for `float.cr` and dies only
+before `parse_file_recursive appended ... float.cr`, while direct LLDB on the
+broader `require "crystal/compiler_rt"` oracle stays in recursive
+`CLI#parse_file_recursive` frames rather than HIR/MIR. This pushes the live
+hypothesis away from raw `pthread`/prelude syntax and toward a later
+parse-accumulation path in recursive file loading. {F/G/R: 0.99/0.88/0.99}
+[verified]
+
 [LM-197|verified]: the next real parser/file-loading bug after the
 default-prelude corridor was not in `pthread` syntax itself but in two
 remaining `Array(ExprId)#each` traversals inside `src/compiler/cli.cr`'s
