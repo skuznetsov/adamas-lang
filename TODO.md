@@ -13,6 +13,7 @@
 - **Previous local stage2 candidate (cached input base dir + scalarized parse_program_roots root buffer)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_rootidx_w1`
 - **Current local stage2 candidate (retained generic annotation spans + scalarized while body ids)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_genericann_whileidx_w3`
 - **Current local stage2 fix candidate (scalarized nested container name segments)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_constsegmentslice_w1`
+- **Current local stage2 parse-stop hardening candidate**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_lazyparse_earlyret_w1`
 - **Current timings**:
   - original Crystal -> fresh `stage1_release_funlookahead`: `544.95s`
   - fresh `stage1_release_funlookahead` -> fresh `stage2_release_funlookahead_fresh`: `174.80s`
@@ -62,6 +63,16 @@
     - fixed `src/stage2_bootstrap_shims_begin_puts_repro_fixed.cr` is red on attempt `1`
     - fixed `src/stage2_bootstrap_shims_begin_puts_repro.AAA111.cr` is red on attempt `4`
     - fixed `src/stage2_bootstrap_shims_begin_puts.cr` is red on attempt `5`
+  - new verified parse-stop boundary on the same fixed-path bootstrap oracle:
+    - `bash regression_tests/stage2_bootstrap_shims_begin_puts_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_lazyparse_earlyret_w1` -> `exit 0` / `not reproduced` on all `5/5`
+    - `bash regression_tests/stage2_parse_args_tail_if_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_lazyparse_earlyret_w1` -> `exit 0` / `not reproduced` on all `10/10`
+    - `bash regression_tests/stage2_symbol_table_parse_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_lazyparse_earlyret_w1` -> `exit 0` / `not reproduced` on all `5/5`
+    - local branch ledger behind that fix:
+      - `stage2_release_stopafter_summarystr_w1` reintroduces the fixed-path bootstrap repro on attempt `5`, so eager summary string construction is one real carrier
+      - `stage2_release_stopafter_sizeonly_w1` stays green `5/5`, so `all_arenas.size` alone is not enough
+      - `stage2_release_lazyparsepostlog_w1` still red on attempt `1`, so lazy summary/debug materialization alone is not sufficient while `STOP_AFTER_PARSE` remains below post-parse bookkeeping
+      - `stage2_release_lazyparse_skiplink_w1` improves the same oracle from attempt `1` to attempt `4` but does not clear it, so simply substituting `link_libs = [] of String` is still not enough
+      - the winning committed shape is: lazy summary/debug string materialization plus `STOP_AFTER_PARSE` before any post-parse link-lib bookkeeping
   - adversary controls on `stage2_release_genericann_whileidx_w3`:
     - `tmp_parse_args_shape_init_unknown_generic_literal_direct_ivar_read_if_true_tailand.cr` is green `5/5`
     - generic `A(B)` alias+while-only local control is green `5/5`
@@ -93,7 +104,18 @@
     - `no_loop_read` and `assign_no_read_loop_uses_z` are both red on direct probes, so the body still needs a local read of `z` but it no longer has to happen specifically inside the loop body
     - `tail_if_opt_only` and `tail_if_status_only` are green on direct probes, so the exact conjunction `status == 0 && opt_level_invalid` is still part of the carrier
     - `loop_one_if` and `loop_two_if_no_inner_true` are green on direct probes, so the third nested `if true` remains part of the current live loop shape
-- **Stage3 bootstrap**: still **FAILS** with `status=139`; the latest safe-wrapped self-hosted probe runs `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_constsegmentslice_w1 src/crystal_v2.cr --release -o /Users/sergey/Projects/Crystal/.codex_artifacts/stage3_release_constsegmentslice_w1_safeprobe` and segfaults immediately under `scripts/timeout_sample_lldb.sh`
+- **Stage3 bootstrap**: still **FAILS** with `status=139`; the latest self-hosted release build attempt `scripts/build_stage2_release.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_lazyparse_earlyret_w1 /Users/sergey/Projects/Crystal/.codex_artifacts/stage3_release_lazyparse_earlyret_w1` segfaults immediately
+- **Current clean stage3 frontier (lazy parse-stop hardening candidate)**:
+  - direct LLDB on `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_lazyparse_earlyret_w1 src/crystal_v2.cr --release -o ...` stops in `libsystem_malloc.dylib` `mfm_alloc`
+  - first user frames are:
+    - `Parser#flush_macro_text`
+    - `Parser#parse_macro_body`
+    - `Parser#parse_macro_body_until_branch`
+    - `Parser#parse_macro_if_control`
+    - `Parser#parse_class`
+    - `Parser#parse_module`
+    - `Parser#parse_program_roots_impl`
+    - `CLI#parse_file_recursive`
 - **Current local stage3 probe**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage3_release_constsegmentslice_w1_safeprobe` is the newest fast-red checkpoint; older verified fast-red checkpoints remain `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_parseprogramroots_loadedreq_lazydbg_fresh_w2` and `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_reqscanidx`
 - **Current smallest clean/red HIR controls**:
   - `--release --no-prelude /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_simple_one.cr` is green in `0.02s`

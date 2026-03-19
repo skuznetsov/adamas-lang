@@ -864,17 +864,27 @@ module CrystalV2
         # Iterating tuple payloads here is diagnostic-only and has triggered
         # stage2 instability in self-hosted builds.
         total_exprs = 0
-        log(options, out_io, "  Files: #{all_arenas.size}, Expressions: #{total_exprs}")
-        stage2_debug("[STAGE2_DEBUG] lowering start (all_arenas=#{all_arenas.size})", err_io)
+        stop_after_parse = ENV.has_key?("CRYSTAL_V2_STOP_AFTER_PARSE")
+        debug_trace_enabled = env_enabled?("STAGE2_DEBUG") || env_enabled?("STAGE2_BOOTSTRAP_TRACE")
+        if options.verbose
+          log(options, out_io, "  Files: #{all_arenas.size}, Expressions: #{total_exprs}")
+        end
+        if debug_trace_enabled
+          stage2_debug("[STAGE2_DEBUG] lowering start (all_arenas=#{all_arenas.size})", err_io)
+        end
 
-        stage2_debug("[STAGE2_DEBUG] collect_link_libraries start", err_io)
-        link_libs = collect_link_libraries(all_arenas, options, out_io)
-        stage2_debug("[STAGE2_DEBUG] collect_link_libraries done count=#{link_libs.size}", err_io)
-
-        if ENV.has_key?("CRYSTAL_V2_STOP_AFTER_PARSE")
+        if stop_after_parse
           log(options, out_io, "  Stop after parse (CRYSTAL_V2_STOP_AFTER_PARSE)")
           emit_timings(options, out_io, timings, total_start)
           return 0
+        end
+
+        if debug_trace_enabled
+          stage2_debug("[STAGE2_DEBUG] collect_link_libraries start", err_io)
+        end
+        link_libs = collect_link_libraries(all_arenas, options, out_io)
+        if debug_trace_enabled
+          stage2_debug("[STAGE2_DEBUG] collect_link_libraries done count=#{link_libs.size}", err_io)
         end
 
         # Pipeline cache: hash all source files → skip HIR/MIR/LLVM on hit
