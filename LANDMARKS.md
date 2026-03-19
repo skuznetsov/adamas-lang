@@ -3,6 +3,35 @@
 Updated: 2026-03-19
 Context: compiler/bootstrap/stage2-stability
 
+[LM-201|verified]: the current parser frontier is not specific to recursive
+`cli.cr` require-loading; there is a smaller standalone parser-shape oracle
+that reproduces on the current root-buffer candidate alone. The new oracle
+`bash regression_tests/stage2_parse_args_tail_if_repro.sh <compiler>` generates
+a temporary repo-root source containing the `parse_args_safe`-shaped
+`while -> if/elsif -> nested if -> tail if status == 0 && opt_level_invalid`
+method body and compiles it with `--release --no-prelude` under
+`CRYSTAL_V2_STOP_AFTER_PARSE=1`. Verified split:
+- fresh release stage1
+  `/Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_funlookahead`:
+  green `10/10`
+- current local stage2 candidate
+  `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_rootidx_w1`:
+  red on attempt `4` with wrapper `status=139`
+This refutes the narrower hypothesis that the active crash requires
+`bootstrap_shims -> cli.cr` recursive loading. Adversary note: the same rootidx
+binary can go green under `PARSER_DEBUG=1` and under direct batch LLDB, so the
+bug remains heisenbug-sensitive parser corruption rather than a stable syntax
+error. Refutation ledger on the same oracle:
+- `stage2_release_ifwhileidx_w1` (scalarized transient `ExprId` builders in
+  `parse_if` + `parse_while`) stayed red `5/5` while the trimmed standalone
+  control remained green `3/3`
+- `stage2_release_ifbranchidx_w1` (further `parse_if` carrier scalarization for
+  `ElsifBranch` / else-body materialization) overfit and regressed the trimmed
+  control to red `3/3`
+Reusable lesson: keep the new standalone oracle as the cheapest current parser
+shape witness, and treat both `ifwhileidx` and `ifbranchidx` as refuted local
+branches rather than partial fixes. {F/G/R: 0.92/0.74/0.96} [verified]
+
 [LM-200|verified]: caching `input_base_dir` once in recursive require fallback,
 together with scalarizing `parse_program_roots_impl`'s growable root buffer to
 raw `Int32` indexes, removes the current default-prelude parser crash and moves
