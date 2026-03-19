@@ -168,8 +168,23 @@
               - rerun:
                 - `RCS: 139 139 139 139 139 0 139 139 139 139`
                 - summary: `1 green / 9 red`
+            - forcing every `when String` recursive call through the callee's early `loaded.includes?` return by pre-seeding `loaded << resolved` before the call softens much more:
+              - first run:
+                - `RCS: 0 139 0 0 0 139 0 0 139 139`
+                - summary: `6 green / 4 red`
+              - rerun:
+                - `RCS: 139 0 139 139 139 0 139 0 139 0`
+                - summary: `4 green / 6 red`
+            - a narrower caller-side duplicate prefilter `parse_file_recursive(resolved, ...) unless loaded.includes?(resolved)` did **not** hold:
+              - first run:
+                - `RCS: 139 0 139 0 139 139 139 139 139 139`
+                - summary: `2 green / 8 red`
+              - rerun:
+                - `RCS: 139 139 0 139 139 0 139 0 139 139`
+                - summary: `3 green / 7 red`
             - wildcard requires are still a live input class in `src`, but `resolve_wildcard_require` returns `Array(String)`, so the strict `0 green / 10 red` class is not dominated by wildcard/array expansion
           - therefore the strict `0 green / 10 red` class is not carried by scan-only or fallback-only in isolation; it currently requires the combined miss-side `require-scan + source-fallback` corridor, and within the fallback-side contribution the main remaining weight is the `when String` recursive fanout itself rather than `when Array`, with `requires << resolved` acting as an additional but weaker carrier while `fallback_resolved += 1` does not look causal and, if it matters at all, behaves like a weak stabilizing perturbation
+          - the new callee-side split sharpens that interpretation further: forcing `when String` calls down the immediate `loaded` return path lands in the milder `6/4` then `4/6` range, while a caller-side duplicate prefilter does not reliably improve over baseline; so the remaining weight is not the duplicate-return fast path itself but the deeper unseen-file work that happens after entering `parse_file_recursive`
     - removing the top-level require wrapper together with `Options#ast_cache` did **not** hold as a new stable class:
       - first run: `RCS: 139 139 139 139 139 139 139 139 139 0` => `1 green / 9 red`
       - rerun: `RCS: 0 139 0 139 139 139 0 139 139 139` => `3 green / 7 red`

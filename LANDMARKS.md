@@ -143,6 +143,16 @@ runs:
   removing only `fallback_resolved += 1` never improved across reruns:
   first run `RCS: 0 139 139 139 139 139 0 139 139 139` => `2 green / 8 red`,
   rerun `RCS: 139 139 139 139 139 0 139 139 139 139` => `1 green / 9 red`.
+  Forcing every `when String` recursive call through the callee's early
+  `loaded.includes?` return by pre-seeding `loaded << resolved` before the
+  call softens much more:
+  first run `RCS: 0 139 0 0 0 139 0 0 139 139` => `6 green / 4 red`,
+  rerun `RCS: 139 0 139 139 139 0 139 0 139 0` => `4 green / 6 red`.
+  A narrower caller-side duplicate prefilter
+  `parse_file_recursive(resolved, ...) unless loaded.includes?(resolved)` does
+  not hold as an improvement:
+  first run `RCS: 139 0 139 0 139 139 139 139 139 139` => `2 green / 8 red`,
+  rerun `RCS: 139 139 0 139 139 0 139 0 139 139` => `3 green / 7 red`.
   Wildcard requires are still a live input class in `src`, but
   `resolve_wildcard_require` returns `Array(String)`, so the strict
   `0 green / 10 red` class is not dominated by wildcard/array expansion; the
@@ -150,7 +160,12 @@ runs:
   fanout itself rather than in adjacent `requires << resolved` bookkeeping,
   though that bookkeeping still adds some extra red weight, while
   `fallback_resolved += 1` itself does not look causal and, if it matters at
-  all, behaves like a weak stabilizing perturbation
+  all, behaves like a weak stabilizing perturbation. The new callee-side split
+  strengthens that interpretation: routing every `when String` recursive call
+  through the immediate `loaded` return path is clearly milder than baseline,
+  while merely filtering already-loaded duplicates at the caller side is not.
+  So the remaining weight is not the duplicate-return fast path itself but the
+  deeper unseen-file work that happens after entering `parse_file_recursive`
 - removing the top-level require wrapper together with `Options#ast_cache`
   did not hold as a stable new class:
   first run `RCS: 139 139 139 139 139 139 139 139 139 0` => `1 green / 9 red`,
