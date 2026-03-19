@@ -208,8 +208,10 @@ module CrystalV2
         end
 
         private def parse_program_roots_impl : Array(ExprId)
-          # Use SmallVec to reduce heap churn when collecting roots
-          roots_builder = SmallVec(ExprId, 64).new
+          # Keep raw indexes in the growable root buffer. ExprId wrappers are
+          # fragile in self-hosted release builds when stored directly in
+          # growable containers.
+          root_indexes = SmallVec(Int32, 64).new
           while current_token.kind != Token::Kind::EOF
             # Ensure global progress and allow watchdog to interrupt if needed
             Watchdog.check!
@@ -218,7 +220,7 @@ module CrystalV2
 
             if macro_definition_start?
               macro_def = parse_macro_definition
-              roots_builder << macro_def unless macro_def.invalid?
+              root_indexes << macro_def.index unless macro_def.invalid?
               consume_newlines
               next
             end
@@ -228,7 +230,7 @@ module CrystalV2
             if macro_control_start?
               debug { "parse_program: macro_control_start? returned true, calling parse_percent_macro_control" }
               macro_ctrl = parse_percent_macro_control
-              roots_builder << macro_ctrl unless macro_ctrl.invalid?
+              root_indexes << macro_ctrl.index unless macro_ctrl.invalid?
               consume_newlines
               next
             end
@@ -256,7 +258,7 @@ module CrystalV2
             end
 
             if node
-              roots_builder << node unless node.invalid?
+              root_indexes << node.index unless node.invalid?
               skip_statement_end
               next
             end
@@ -297,20 +299,22 @@ module CrystalV2
                      else
                        PREFIX_ERROR
                      end
-              roots_builder << node unless node.invalid?
+              root_indexes << node.index unless node.invalid?
               skip_statement_end
               next
             end
 
             saved_index = @index
             expr = parse_statement
-            roots_builder << expr unless expr.invalid?
+            root_indexes << expr.index unless expr.invalid?
             # Error recovery: if parse_statement returned without advancing,
             # skip one token to prevent infinite loop.
             advance if @index == saved_index
             skip_statement_end
           end
-          roots_builder.to_a
+          Array(ExprId).new(root_indexes.size) do |i|
+            ExprId.new(root_indexes.unsafe_fetch(i))
+          end
         end
 
         def parse_program_roots : Array(ExprId)

@@ -2,7 +2,7 @@
 
 ## Current State
 - **Branch**: `bootstrap-benchmark`
-- **Latest committed baseline**: `cb0ba092` — compiler_rt no-prelude parse repro
+- **Latest committed baseline**: `58a85c8f` — harden recursive compiler_rt parse loading
 - **Working tree**:
   - unrelated local diffs in `src/compiler/frontend/lexer.cr`, `src/compiler/hir/ast_to_hir.cr`, `src/compiler/mir/hir_to_mir.cr`, and `src/crystal_v2.cr` must stay out of the next commit
   - untracked local benchmarks in `examples/bench_fib42_crystal` and `examples/bench_tree_crystal` must stay out of the next commit
@@ -10,7 +10,7 @@
 - **Fresh release stage2 (current tree)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_parseprogramroots_loadedreq_lazydbg_fresh_w2`
 - **Previous local stage2 checkpoint (class reparse fallback)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_reparse_class_clean`
 - **Previous local stage2 checkpoint (require-scan index traversal)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_reqscanidx`
-- **Current local stage2 candidate (parse_program_roots + resolved fallback check + lazy parse debug gating)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_parseprogramroots_loadedreq_lazydbg_fresh_w2`
+- **Current local stage2 candidate (cached input base dir + scalarized parse_program_roots root buffer)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_rootidx_w1`
 - **Current timings**:
   - original Crystal -> fresh `stage1_release_funlookahead`: `544.95s`
   - fresh `stage1_release_funlookahead` -> fresh `stage2_release_funlookahead_fresh`: `174.80s`
@@ -18,6 +18,7 @@
   - fresh `stage1_release_funlookahead` -> current local `stage2_release_macro_piececap128`: `177.18s`
   - fresh `stage1_release_funlookahead` -> current local `stage2_release_current_dirty_mirtimingfix_clean`: `175.10s`
   - fresh `stage1_release_funlookahead` -> current local `stage2_release_current_dirty_orderbool_clean`: `176.83s`
+  - fresh `stage1_release_funlookahead` -> current local `stage2_release_rootidx_w1`: `158.47s`
 - **New regression surface**:
   - `bash regression_tests/stage2_require_compiler_rt_noprelude_parse_repro.sh <compiler>`
   - `bash regression_tests/stage2_compiler_rt_fixint_float_noprelude_parse_repro.sh <compiler>`
@@ -32,6 +33,7 @@
   - `bash regression_tests/stage2_mir_prepare_timing_repro.sh <compiler>`
   - `bash regression_tests/stage2_reparsed_module_wrapper_repro.sh <compiler>`
   - `bash regression_tests/stage2_require_boehm_noprelude_parse_repro.sh <compiler>`
+  - `bash regression_tests/stage2_symbol_table_parse_repro.sh <compiler>`
 - **Compiler parse-only status**:
   - baseline `stage2_release_nameprio_fresh`: `rc=0,138,138,138,138`
   - fresh `stage2_release_funlookahead_fresh`: `rc=0,0,0,0,0`
@@ -86,6 +88,32 @@
     - `bash regression_tests/stage2_nested_macro_method_missing_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_reparse_class_clean`
     - Result: `exit 0` / `not reproduced`
 - **Benchmark status**: blocked — stage2 compiler is still unstable and crashes before finishing stage3
+
+### New Verified In This Cycle
+- **Caching `input_base_dir` in recursive require fallback, together with scalarizing the growable parser root buffer to raw indexes, clears the generic default-prelude parser crash and moves the live frontier later into compiler-source parsing**
+  - implementation:
+    - `src/compiler/cli.cr` now computes `input_base_dir = safe_dirname(File.expand_path(input_file))` once in `compile(...)`, threads it through recursive parsing helpers, and reuses it in `resolve_require_path(...)` instead of recomputing `safe_dirname(File.expand_path(input_file))` on every recursive fallback
+    - `src/compiler/frontend/parser.cr` now stores raw `Int32` indexes in `parse_program_roots_impl`'s growable root buffer and reconstructs `ExprId` only once on return, instead of storing `ExprId` wrappers directly in `SmallVec(ExprId, 64)`
+  - focused old/new boundary on the default-prelude oracle:
+    - `bash regression_tests/stage2_default_prelude_parse_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_funlookahead`
+    - Result: `exit 0` / `not reproduced: compiler reached STOP_AFTER_PARSE on all 5 default-prelude plain-1 repro attempts`
+    - `bash regression_tests/stage2_default_prelude_parse_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_58a85c8f_clean_w1`
+    - Result: `exit 1` / reproduced on attempt `3` with wrapper `status=138`
+    - `bash regression_tests/stage2_default_prelude_parse_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_rootidx_w1`
+    - Result: `exit 0` / `not reproduced: compiler reached STOP_AFTER_PARSE on all 5 default-prelude plain-1 repro attempts`
+  - adversary checks:
+    - tighter `bash regression_tests/stage2_compiler_rt_fixint_float_noprelude_parse_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_rootidx_w1` stays green `5/5`
+    - broader `bash regression_tests/stage2_require_compiler_rt_noprelude_parse_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_rootidx_w1` still fails on attempt `1` with wrapper `status=138`
+    - `bash regression_tests/stage2_symbol_table_parse_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_rootidx_w1` still fails on attempt `1` with wrapper `status=139`
+    - `bash regression_tests/stage2_full_compiler_parse_only_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_rootidx_w1 src/crystal_v2.cr 5` still fails on iteration `1` with `rcs: 139`
+  - new localization on the moved frontier:
+    - direct LLDB on the same current candidate under `CRYSTAL_V2_STOP_AFTER_PARSE=1 src/crystal_v2.cr --release` now crashes in `Parser#parse_method_params -> parse_def -> parse_module -> parse_program_roots_impl`
+    - `CRYSTAL_V2_PARSE_TRACE=1` on the same path reaches:
+      - `PARSE_OK` + `REQSCAN_DONE` for `src/stdlib/prelude.cr`
+      - `PARSE_OK` + `REQSCAN_DONE` for `src/crystal_v2.cr`
+      - then dies while entering `src/compiler/bootstrap_shims.cr`
+  - boundary:
+    - this is a verified parser/file-loading boundary shift that removes the live default-prelude crash corridor and moves the next red path to later compiler-source parsing; it is not yet a full `stage3` unblock
 
 ### New Verified In This Cycle
 - **Bypassing the `Program` wrapper in `parse_file_recursive` moves the `compiler_rt` boundary again, but only if the hot-path debug strings stay lazy**

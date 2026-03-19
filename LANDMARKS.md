@@ -3,6 +3,32 @@
 Updated: 2026-03-19
 Context: compiler/bootstrap/stage2-stability
 
+[LM-200|verified]: caching `input_base_dir` once in recursive require fallback,
+together with scalarizing `parse_program_roots_impl`'s growable root buffer to
+raw `Int32` indexes, removes the current default-prelude parser crash and moves
+the active frontier later into compiler-source parsing. On the old clean
+baseline `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_58a85c8f_clean_w1`,
+`bash regression_tests/stage2_default_prelude_parse_repro.sh <compiler>`
+fails on attempt `3` with wrapper `status=138`; on the new candidate
+`/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_rootidx_w1`,
+the same oracle is green `5/5`. Adversary checks keep the split honest: the
+tighter
+`bash regression_tests/stage2_compiler_rt_fixint_float_noprelude_parse_repro.sh <compiler>`
+stays green `5/5`, while the broader
+`bash regression_tests/stage2_require_compiler_rt_noprelude_parse_repro.sh <compiler>`
+still fails on attempt `1`, `stage2_symbol_table_parse_repro.sh <compiler>`
+still fails on attempt `1` with `status=139`, and
+`stage2_full_compiler_parse_only_repro.sh <compiler> src/crystal_v2.cr 5`
+still fails on iteration `1` with `rcs: 139`. New localization on the moved
+frontier: direct LLDB on the same current candidate under
+`CRYSTAL_V2_STOP_AFTER_PARSE=1 src/crystal_v2.cr --release` now crashes in
+`Parser#parse_method_params -> parse_def -> parse_module ->
+parse_program_roots_impl`, and `CRYSTAL_V2_PARSE_TRACE=1` reaches `PARSE_OK` +
+`REQSCAN_DONE` for both `src/stdlib/prelude.cr` and `src/crystal_v2.cr` before
+dying while entering `src/compiler/bootstrap_shims.cr`. This is a verified
+parser/file-loading boundary shift, not a full `stage3` fix.
+{F/G/R: 0.96/0.84/0.98} [verified]
+
 [LM-199|verified]: bypassing the `Program` wrapper in
 `CLI#parse_file_recursive` via `parser.parse_program_roots` plus
 `parser.arena`, together with hardening `source_requires_fallback?(...)` to
