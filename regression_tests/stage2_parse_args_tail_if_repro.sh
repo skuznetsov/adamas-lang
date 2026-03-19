@@ -21,7 +21,7 @@ class Probe
     x = 1
   end
 
-  private def parse_args_safe : Int32
+  private def run() : Int32
     status = 0
     opt_level_invalid = false
     z = 1

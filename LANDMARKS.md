@@ -3,6 +3,37 @@
 Updated: 2026-03-19
 Context: compiler/bootstrap/stage2-stability
 
+[LM-208|verified]: the standalone parser oracle tightens once more, and the
+live header carrier no longer needs the old `parse_args_safe` method name or a
+no-paren `def` header. The current committed oracle
+`bash regression_tests/stage2_parse_args_tail_if_repro.sh <compiler>` now
+generates `def touch; end`, then `def seed; x = 1; end`, then
+`private def run() : Int32` with `z = 1`, a standalone bare `z` read before
+the loop, a `while` body that uses literal `1`, the same triple nested `if`
+shape, and the exact tail condition `status == 0 && opt_level_invalid`.
+Verified split:
+- fresh release stage1
+  `/Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_funlookahead`:
+  green `10/10`
+- current local stage2 candidate
+  `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_genericann_whileidx_w3`:
+  red on attempt `1` with wrapper `status=139`
+Adversary/control checks on the same candidate:
+- `one_seed_no_touch_run_probe` and `touch_no_seed_run_probe`: both green on
+  direct probes, so the live cross-def state still needs both earlier methods
+  together
+- `protected def run() : Int32`: red on a direct stage2 probe, while the same
+  shape is green on a direct stage1 probe, so the carrier is not tied to the
+  exact `private` token once the visibility path is taken
+- the committed `private def run() : Int32` shape is green on a direct stage1
+  probe and red on a direct stage2 probe, so adding `()` does not remove the
+  crash and the no-paren fast path is not required
+Reusable lesson: the current live corridor still needs both earlier methods,
+but it is already smaller than the previous `parse_args_safe` witness because
+the surviving header-side carrier is `visibility path + return type + later
+body shape`, not the old method name or a no-paren header. {F/G/R:
+0.98/0.92/0.98} [verified]
+
 [LM-207|verified]: the standalone parser oracle tightens again, and the live
 carrier no longer needs the loop itself to read the local temporary. The
 current committed oracle
