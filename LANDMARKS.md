@@ -135,11 +135,16 @@ runs:
   Keeping the `when String` recursive call but removing only
   `requires << resolved` softens less, to
   `RCS: 0 139 0 139 139 139 139 139 0 0` => `4 green / 6 red`.
+  Keeping only the `when String` recursive call itself while removing both
+  local bookkeeping steps `fallback_resolved += 1` and `requires << resolved`
+  lands in between at
+  `RCS: 0 139 139 139 0 0 139 0 0 139` => `5 green / 5 red`.
   Wildcard requires are still a live input class in `src`, but
   `resolve_wildcard_require` returns `Array(String)`, so the strict
   `0 green / 10 red` class is not dominated by wildcard/array expansion; the
   main remaining fallback-side carrier now sits in the `when String` recursive
-  fanout itself rather than in adjacent `requires << resolved` bookkeeping
+  fanout itself rather than in adjacent `requires << resolved` bookkeeping,
+  though that bookkeeping still adds some extra red weight
 - removing the top-level require wrapper together with `Options#ast_cache`
   did not hold as a stable new class:
   first run `RCS: 139 139 139 139 139 139 139 139 139 0` => `1 green / 9 red`,
@@ -168,8 +173,9 @@ the miss-side require-scan/source-fallback `else` subtree, not to the earlier
 body, the require-scan half is heavier, the fallback half alone is milder, and
 the extra drop to the strict `0/10` class now localizes further to recursive
 `when String` fallback fanout itself rather than `when Array` expansion or
-adjacent `requires << resolved` bookkeeping. Standalone reductions are
-therefore unreliable unless they preserve the original full-file context.
+adjacent `requires << resolved` bookkeeping, though that bookkeeping remains a
+secondary carrier. Standalone reductions are therefore unreliable unless they
+preserve the original full-file context.
 {F/G/R: 0.97/0.74/0.98}
 [verified]
 
