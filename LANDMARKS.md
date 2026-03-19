@@ -95,6 +95,18 @@ runs:
   (`RCS: 139 139 139 139 139 139 139 139 139 139` => `0 green / 10 red`)
   so the current `Options#ast_cache` interaction is sharply load/save
   asymmetric, not just another mild shift
+- further exact-path bisect inside the pre-load wrapper localizes that
+  `Options+load` worst-case below the early load/hit skeleton:
+  keeping only `AstCache.load -> cached roots -> ParsedUnit -> return` under
+  forced-true `Options#ast_cache` yields
+  `RCS: 139 139 0 139 139 0 0 139 0 0` => `5 green / 5 red`,
+  and restoring the `cached_requires` hit-path while still deleting the
+  miss-side `else` subtree yields
+  `RCS: 139 0 0 0 0 139 139 139 0 139` => `5 green / 5 red`
+  therefore neither the early `AstCache.load` skeleton nor the
+  `load_require_cache + cached_requires.each` hit-path is enough for the
+  `0 green / 10 red` class; the remaining live carrier now sits in the
+  miss-side require-scan/source-fallback `else` body
 - removing the top-level require wrapper together with `Options#ast_cache`
   did not hold as a stable new class:
   first run `RCS: 139 139 139 139 139 139 139 139 139 0` => `1 green / 9 red`,
@@ -117,8 +129,10 @@ asymmetric: `top+save` preserves the `5/5` improvement, `top+load` falls back
 to the mild `4/6` class, and `top+load+save` degrades to `2/8`.
 `Options#ast_cache` is sharper: `Options+save` reproducibly lands in `5/5`,
 `Options+load` collapses to `0/10`, while `top+Options` stays unstable across
-reruns. Standalone reductions are therefore unreliable unless they preserve the
-original full-file context.
+reruns. Within the pre-load wrapper, that `0/10` is now localized further to
+the miss-side require-scan/source-fallback `else` subtree, not to the earlier
+`AstCache.load` or `cached_requires` hit-path skeletons. Standalone reductions
+are therefore unreliable unless they preserve the original full-file context.
 {F/G/R: 0.97/0.74/0.98}
 [verified]
 

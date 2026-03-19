@@ -132,6 +132,12 @@
         - `RCS: 139 139 139 139 139 139 139 139 139 139`
         - summary: `0 green / 10 red`
       - so `Options#ast_cache` composes cleanly with the save-side split but catastrophically with the load-side split
+      - further exact-path bisect inside that pre-load wrapper localizes the strongest carrier to the miss-side `else` subtree, not the whole wrapper:
+        - keeping only `AstCache.load -> cached roots -> ParsedUnit -> return` under forced-true `Options#ast_cache` yields `RCS: 139 139 0 139 139 0 0 139 0 0`
+          - summary: `5 green / 5 red`
+        - restoring the `cached_requires` hit-path but still deleting the miss-side `else` subtree yields `RCS: 139 0 0 0 0 139 139 139 0 139`
+          - summary: `5 green / 5 red`
+        - so neither the `load/hit/return` skeleton nor `load_require_cache + cached_requires.each` is enough for the `0 green / 10 red` class; the remaining live carrier sits in the miss-side require-scan/source-fallback body
     - removing the top-level require wrapper together with `Options#ast_cache` did **not** hold as a new stable class:
       - first run: `RCS: 139 139 139 139 139 139 139 139 139 0` => `1 green / 9 red`
       - rerun: `RCS: 0 139 0 139 139 139 0 139 139 139` => `3 green / 7 red`
@@ -142,6 +148,7 @@
       - the larger AST-cache load/save wrappers participate non-monotonically: each alone slightly improves odds when removed, but removing both together is worst-case
       - removing the top-level require wrapper composes asymmetrically with the larger wrappers: `top+save` keeps the `5 green / 5 red` improvement, while `top+load` falls back to the mild `4 green / 6 red` class and `top+load+save` degrades to `2 green / 8 red`
       - `Options#ast_cache` now shows a sharper asymmetry than the top-level require: `Options+save` reproducibly lands in the `5 green / 5 red` class, while `Options+load` collapses to `0 green / 10 red`
+      - inside the pre-load wrapper, the strict worst-case is now localized below `load_require_cache` into the miss-side `else` subtree rather than the earlier `AstCache.load` skeleton
       - simple standalone extracts do not preserve the crash surface
   - adversary controls on `stage2_release_genericann_whileidx_w3`:
     - `tmp_parse_args_shape_init_unknown_generic_literal_direct_ivar_read_if_true_tailand.cr` is green `5/5`
