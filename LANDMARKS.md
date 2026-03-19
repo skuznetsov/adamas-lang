@@ -3,6 +3,35 @@
 Updated: 2026-03-19
 Context: compiler/bootstrap/stage2-stability
 
+[LM-206|verified]: the standalone parser oracle tightens again, and the live
+carrier is now a pure multi-def ordering shape rather than a generic-annotation
+or ivar-specific one. The current committed oracle
+`bash regression_tests/stage2_parse_args_tail_if_repro.sh <compiler>` now
+generates `def touch; end`, then `def seed; x = 1; end`, then a final
+`private def parse_args_safe : Int32` containing `z = 1`, a bare `z` read, and
+the same literal-bound `while -> if -> if -> tail-if` skeleton. Verified split:
+- fresh release stage1
+  `/Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_funlookahead`:
+  green `10/10`
+- current local stage2 candidate
+  `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_genericann_whileidx_w3`:
+  red on attempt `1` with wrapper `status=139`
+Adversary/control checks on the same candidate:
+- `init_then_body`: green `3/3`, so the red shape still needs an earlier extra
+  `def`, not just an assignment-bearing second method
+- `touch_empty_init_empty_alias`: green `3/3`, so the second method still
+  needs an assignment
+- `touch_empty_init_assign_local`: red on attempt `1`, while
+  `touch_empty_init_assign_noalias` is green on a direct probe, so the third
+  method still needs a local pre-loop assignment+read and not just the later
+  control skeleton alone
+- `seed` instead of `initialize`: red on a direct probe, so the second method
+  name is not part of the remaining live carrier
+Reusable lesson: the live parser frontier is now primarily about cross-def
+state plus a later local assign+read/control skeleton; it no longer requires
+generic syntax, typed params, ivar writes/reads, or the `initialize` name.
+{F/G/R: 0.98/0.90/0.98} [verified]
+
 [LM-205|verified]: retaining stable generic annotation spans for `A(B)`-style
 method parameter types, plus scalarizing the transient `while` body builder,
 clears the broader `symbol_table` parser oracle without clearing the tighter

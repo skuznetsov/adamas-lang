@@ -14,14 +14,17 @@ make_source_file() {
   local path=$1
   cat >"$path" <<'EOF'
 class Probe
-  def initialize(x : A(B))
-    @y = 1
+  def touch
+  end
+
+  def seed
+    x = 1
   end
 
   private def parse_args_safe : Int32
     status = 0
     opt_level_invalid = false
-    z = @y
+    z = 1
     i = 0
     while i < 4
       z
