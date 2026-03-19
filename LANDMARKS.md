@@ -126,6 +126,17 @@ runs:
   fallback-side contribution to that strict worst-case appears to enter
   specifically through recursive parse fanout rather than through
   `needs_source_fallback?` / `resolve_require_path` bookkeeping alone
+- splitting that recursive fallback fanout by resolved branch localizes the
+  remaining fallback-side weight further:
+  removing only `when Array` recursive calls keeps the strict worst-case
+  `RCS: 139 139 139 139 139 139 139 139 139 139` => `0 green / 10 red`,
+  while removing only `when String` recursive calls softens sharply to
+  `RCS: 0 0 139 0 0 139 0 0 139 139` => `6 green / 4 red`.
+  Wildcard requires are still a live input class in `src`, but
+  `resolve_wildcard_require` returns `Array(String)`, so the strict
+  `0 green / 10 red` class is not dominated by wildcard/array expansion; the
+  main remaining fallback-side carrier now sits in the `when String` recursive
+  fanout
 - removing the top-level require wrapper together with `Options#ast_cache`
   did not hold as a stable new class:
   first run `RCS: 139 139 139 139 139 139 139 139 139 0` => `1 green / 9 red`,
@@ -152,9 +163,10 @@ reruns. Within the pre-load wrapper, that `0/10` is now localized further to
 the miss-side require-scan/source-fallback `else` subtree, not to the earlier
 `AstCache.load` or `cached_requires` hit-path skeletons. Within that `else`
 body, the require-scan half is heavier, the fallback half alone is milder, and
-the extra drop to the strict `0/10` class appears to come through recursive
-fallback `parse_file_recursive` fanout. Standalone reductions are therefore
-unreliable unless they preserve the original full-file context.
+the extra drop to the strict `0/10` class now localizes further to recursive
+`when String` fallback fanout rather than `when Array` expansion. Standalone
+reductions are therefore unreliable unless they preserve the original full-file
+context.
 {F/G/R: 0.97/0.74/0.98}
 [verified]
 

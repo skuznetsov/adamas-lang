@@ -148,7 +148,15 @@
           - removing only the recursive `parse_file_recursive(...)` fanout inside the fallback loop, while still keeping `needs_source_fallback`, `extract_require_literals_from_source`, `resolve_require_path`, and `requires << ...`, does **not** worsen the `scan-only` class:
             - `RCS: 139 139 139 0 139 139 139 139 0 139`
             - summary: `2 green / 8 red`
-          - therefore the strict `0 green / 10 red` class is not carried by scan-only or fallback-only in isolation; it currently requires the combined miss-side `require-scan + source-fallback` corridor, and the fallback-side contribution appears to enter specifically through the recursive parse fanout rather than through `needs_source_fallback?` / `resolve_require_path` bookkeeping alone
+          - branch split inside that recursive fallback fanout is now asymmetric too:
+            - removing only `when Array` recursive calls keeps the strict worst-case:
+              - `RCS: 139 139 139 139 139 139 139 139 139 139`
+              - summary: `0 green / 10 red`
+            - removing only `when String` recursive calls softens sharply:
+              - `RCS: 0 0 139 0 0 139 0 0 139 139`
+              - summary: `6 green / 4 red`
+            - wildcard requires are still a live input class in `src`, but `resolve_wildcard_require` returns `Array(String)`, so the strict `0 green / 10 red` class is not dominated by wildcard/array expansion
+          - therefore the strict `0 green / 10 red` class is not carried by scan-only or fallback-only in isolation; it currently requires the combined miss-side `require-scan + source-fallback` corridor, and within the fallback-side contribution the main remaining weight is the `when String` recursive fanout rather than `when Array`
     - removing the top-level require wrapper together with `Options#ast_cache` did **not** hold as a new stable class:
       - first run: `RCS: 139 139 139 139 139 139 139 139 139 0` => `1 green / 9 red`
       - rerun: `RCS: 0 139 0 139 139 139 0 139 139 139` => `3 green / 7 red`
@@ -160,7 +168,7 @@
       - removing the top-level require wrapper composes asymmetrically with the larger wrappers: `top+save` keeps the `5 green / 5 red` improvement, while `top+load` falls back to the mild `4 green / 6 red` class and `top+load+save` degrades to `2 green / 8 red`
       - `Options#ast_cache` now shows a sharper asymmetry than the top-level require: `Options+save` reproducibly lands in the `5 green / 5 red` class, while `Options+load` collapses to `0 green / 10 red`
       - inside the pre-load wrapper, the strict worst-case is now localized below `load_require_cache` into the miss-side `else` subtree rather than the earlier `AstCache.load` skeleton
-      - inside that miss-side body, the `exprs` require-scan loop is the heavier half (`2 green / 8 red` fresh rerun), the fallback half alone is milder (`4 green / 6 red` fresh rerun), and the extra fallback-side drop to `0 green / 10 red` appears to come specifically from recursive `parse_file_recursive` fanout
+      - inside that miss-side body, the `exprs` require-scan loop is the heavier half (`2 green / 8 red` fresh rerun), the fallback half alone is milder (`4 green / 6 red` fresh rerun), and the extra fallback-side drop to `0 green / 10 red` now localizes further to recursive `when String` fanout rather than `when Array`
       - simple standalone extracts do not preserve the crash surface
   - adversary controls on `stage2_release_genericann_whileidx_w3`:
     - `tmp_parse_args_shape_init_unknown_generic_literal_direct_ivar_read_if_true_tailand.cr` is green `5/5`
