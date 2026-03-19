@@ -21,6 +21,7 @@
   - `bash regression_tests/stage2_object_hir_noprelude_repro.sh <compiler>`
   - `bash regression_tests/stage2_nested_macro_method_missing_repro.sh <compiler>`
   - `bash regression_tests/stage2_c_pthread_parse_repro.sh <compiler>`
+  - `bash regression_tests/stage2_pthread_cond_parse_repro.sh <compiler>`
   - `bash regression_tests/stage2_mir_order_blocks_repro.sh <compiler>`
   - `bash regression_tests/stage2_mir_prepare_timing_repro.sh <compiler>`
   - `bash regression_tests/stage2_reparsed_module_wrapper_repro.sh <compiler>`
@@ -37,6 +38,11 @@
 - **Current smallest clean/red HIR controls**:
   - `--release --no-prelude /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_simple_one.cr` is green in `0.02s`
   - the current smallest stage2-specific parser/file-loading control is now:
+    - `bash regression_tests/stage2_pthread_cond_parse_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_funlookahead`
+    - Result: `exit 0` / `not reproduced: compiler reached STOP_AFTER_PARSE on all 5 pthread cond stage2 repro attempts`
+    - `bash regression_tests/stage2_pthread_cond_parse_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_current_dirty_orderbool_clean`
+    - Result: `exit 1` / `reproduced: compiler crashed before STOP_AFTER_PARSE on the pthread cond stage2 repro`
+  - the broader `c/pthread` oracle remains useful and still splits the same boundary:
     - `bash regression_tests/stage2_c_pthread_parse_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_funlookahead`
     - Result: `exit 0` / `not reproduced: compiler reached STOP_AFTER_PARSE on all 5 c/pthread stage2 repro attempts`
     - `bash regression_tests/stage2_c_pthread_parse_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_current_dirty_orderbool_clean`
@@ -50,7 +56,28 @@
 - **Benchmark status**: blocked — stage2 compiler is still unstable and crashes before finishing stage3
 
 ### New Verified In This Cycle
-1. **After the MIR order-block fix, the smallest current stage2-specific frontier is already in parse/file-loading on `src/stdlib/lib_c/aarch64-darwin/c/pthread.cr`**
+1. **The `c/pthread` parser/file-loading frontier reduces further to a two-declaration `pthread_cond_*` repro**
+   - focused regression surface:
+     ```bash
+     bash regression_tests/stage2_pthread_cond_parse_repro.sh \
+       /Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_funlookahead
+     bash regression_tests/stage2_pthread_cond_parse_repro.sh \
+       /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_current_dirty_orderbool_clean
+     ```
+     Result:
+     - fresh release stage1: `exit 0` / `not reproduced: compiler reached STOP_AFTER_PARSE on all 5 pthread cond stage2 repro attempts`
+     - clean order-block stage2: `exit 1` / `reproduced: compiler crashed before STOP_AFTER_PARSE on the pthread cond stage2 repro`
+   - minimized file shape:
+     - `regression_tests/stage2_pthread_cond_parse_repro.cr` keeps only:
+       - `fun pthread_cond_init(x0 : PthreadCondT*, x1 : PthreadCondattrT*) : Int`
+       - `fun pthread_cond_timedwait_relative_np(x0 : PthreadCondT*, x1 : PthreadMutexT*, x2 : Timespec*) : Int`
+     - the old suspects from pure syntax review do not dominate empirically:
+       - isolated `pthread_create(... Void* -> Void* ...)` stayed green in local trials
+       - `mutex_only` also stayed green
+   - reduction note:
+     - this tighter repro still requires the original `sys/types` definitions, but it no longer needs the rest of `c/pthread.cr`
+
+2. **After the MIR order-block fix, the smaller current stage2-specific frontier is already in parse/file-loading on `src/stdlib/lib_c/aarch64-darwin/c/pthread.cr`**
    - focused regression surface:
      ```bash
      bash regression_tests/stage2_c_pthread_parse_repro.sh \
@@ -67,7 +94,7 @@
    - adversary note:
      - this control is heisenbug-sensitive under trace instrumentation: enabling `STAGE2_BOOTSTRAP_TRACE=1` makes the same `STOP_AFTER_PARSE` probe go green
 
-2. **Replacing `order_blocks_for`'s visited `Set(Int32)` with a scalar bool array, together with a literal MIR entry-block reuse, moves the minimal stage2 frontier past MIR block ordering and into LLVM emission**
+3. **Replacing `order_blocks_for`'s visited `Set(Int32)` with a scalar bool array, together with a literal MIR entry-block reuse, moves the minimal stage2 frontier past MIR block ordering and into LLVM emission**
    - MIR change:
      - `src/compiler/mir/hir_to_mir.cr` now reuses the known-good literal entry block id (`0_u32`) instead of re-reading `mir_func.entry_block` in the pre-scan setup path
      - `order_blocks_for(...)` now tracks visited HIR blocks with a growable `Array(Bool)` indexed by block id, instead of `Set(Int32)`
@@ -99,7 +126,7 @@
      ```
      Result: `status=138`, `real 1.05s`
 
-3. **Guarding unconditional MIR prepare/lower timing in `cli.cr` moves the active stage2 frontier past the old pre-`Pass 2` crash**
+4. **Guarding unconditional MIR prepare/lower timing in `cli.cr` moves the active stage2 frontier past the old pre-`Pass 2` crash**
    - driver change:
      - `src/compiler/cli.cr`: the serial MIR path now computes `mir_prepare_ms` and `mir_lower_ms` only when `options.stats` is enabled, instead of always executing `(Time.instant - start).total_milliseconds`
    - focused regression surface:
@@ -127,7 +154,7 @@
      ```
      Result: `status=138`, `real 1.05s`, underlying `Bus error: 10`
 
-4. **Widening `parse_macro_body`'s initial `Array(MacroPiece)` capacity to `128` removes the focused `require "gc/boehm"` parser-only crash without regressing broader parser stability**
+5. **Widening `parse_macro_body`'s initial `Array(MacroPiece)` capacity to `128` removes the focused `require "gc/boehm"` parser-only crash without regressing broader parser stability**
    - parser change:
      - `src/compiler/frontend/parser.cr`: `pieces = Array(MacroPiece).new(128)` in `parse_macro_body`
    - focused regression surface:
@@ -157,7 +184,7 @@
      - `CRYSTAL_V2_STOP_AFTER_HIR=1 --release --no-prelude regression_tests/stage2_require_boehm_noprelude_parse_repro.cr` still fails on the same local candidate with wrapper `status=139`
      - `stage2_release_macro_piececap128 -> stage3_release_macro_piececap128` still dies in `1.06s` with `status=139`
 
-5. **The abandoned `MacroPieceBuffer` experiment is a verified false path**
+6. **The abandoned `MacroPieceBuffer` experiment is a verified false path**
    - the scalarizing `MacroPieceBuffer#<<` branch temporarily made the focused `gc/boehm` parse-only oracle green, but it introduced a new smaller parser-only crash surface:
      - `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_macro_begin_inline_if_repro.cr`
    - split:

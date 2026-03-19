@@ -3,6 +3,25 @@
 Updated: 2026-03-18
 Context: compiler/bootstrap/stage2-stability
 
+[LM-195|verified]: the broader `c/pthread` parser frontier reduces further to a
+two-declaration lib repro centered on `pthread_cond_init(...)` and
+`pthread_cond_timedwait_relative_np(...)`. The new oracle
+`bash regression_tests/stage2_pthread_cond_parse_repro.sh <compiler>` uses
+`CRYSTAL_V2_STOP_AFTER_PARSE=1` and five attempts to absorb the heisenbug
+behavior. Fresh release stage1
+`/Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_funlookahead`
+returns `exit 0` / `not reproduced: compiler reached STOP_AFTER_PARSE on all 5
+pthread cond stage2 repro attempts`, while the clean order-block candidate
+`/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_current_dirty_orderbool_clean`
+returns `exit 1` / `reproduced: compiler crashed before STOP_AFTER_PARSE on the
+pthread cond stage2 repro`, failing on attempt 2 in the latest verified run
+with wrapper `status=138`. This refines the shape diagnosis: isolated
+`pthread_create(... Void* -> Void* ...)` stayed green in local trials and the
+`mutex_only` subset also stayed green, while condition-variable declarations
+remain red. The active parser/file-loading frontier is therefore no longer
+“callback-type fun headers in general” but a tighter `pthread_cond_*` corridor.
+{F/G/R: 0.96/0.80/0.97} [verified]
+
 [LM-194|verified]: after the MIR order-block hardening, the smallest current
 stage2-specific red control reduces below full `src/crystal_v2.cr` to
 `src/stdlib/lib_c/aarch64-darwin/c/pthread.cr`, and it fails even under
