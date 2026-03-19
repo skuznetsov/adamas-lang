@@ -7,7 +7,7 @@
   - unrelated local diffs in `src/compiler/mir/hir_to_mir.cr` and `src/crystal_v2.cr` must stay out of the next commit
 - **Fresh release stage1 (current tree)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_funlookahead`
 - **Fresh release stage2 (current tree)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_funlookahead_fresh`
-- **Current local stage2 candidate (reparsed-wrapper fix)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_reparse_clean_fix`
+- **Current local stage2 candidate (class reparse fallback)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_reparse_class_clean`
 - **Current timings**:
   - original Crystal -> fresh `stage1_release_funlookahead`: `544.95s`
   - fresh `stage1_release_funlookahead` -> fresh `stage2_release_funlookahead_fresh`: `174.80s`
@@ -23,12 +23,38 @@
 - **Stage3 bootstrap**: **FAILS** after `1.06s` with `status=139` on `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_funlookahead_fresh`
 - **Current smallest clean/red HIR controls**:
   - `--release --no-prelude /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_simple_one.cr` is green in `0.02s`
-  - fresh stage1 survives `regression_tests/stage2_nested_macro_method_missing_repro.cr` in `1.06s`
-  - fresh stage2 reproduces on the same file in `20.51s` (`wrapper status=125`, underlying bus error before kill)
-  - the new path-wrapper oracle cleanly separates the old reparse-loop binary from the current local fix:
+  - the path-wrapper oracle stays green on the newest local candidate:
     - `stage2_release_reparse_fix_dbg2`: `exit 1` / `reproduced: compiler failed before lower_main on the path-wrapper module repro`
-    - `stage2_release_reparse_clean_fix`: `exit 0` / `not reproduced: compiler reached lower_main exprs=0 on the path-wrapper repro`
+    - `stage2_release_reparse_class_clean`: `exit 0` / `not reproduced: compiler reached lower_main exprs=0 on the path-wrapper repro`
+  - the previously smallest nested-macro red control is now also green on the same candidate:
+    - `bash regression_tests/stage2_nested_macro_method_missing_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_reparse_class_clean`
+    - Result: `exit 0` / `not reproduced`
 - **Benchmark status**: blocked — stage2 compiler is still unstable and crashes before finishing stage3
+
+### New Verified Since `30a4a88c`
+1. **Class-side snippet fallback removes the old `register_class` reparse loop on the nested-macro micro-probe**
+   - `src/compiler/hir/ast_to_hir.cr` now extracts a one-shot class name directly from the reparsed snippet header and uses that recovered name to call `register_class_with_name(...)`, instead of recursively calling `register_class(...)` again on the same nameless reparsed node
+   - fresh verification:
+     ```bash
+     bash regression_tests/stage2_reparsed_module_wrapper_repro.sh \
+       /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_reparse_class_clean
+     bash regression_tests/stage2_nested_macro_method_missing_repro.sh \
+       /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_reparse_class_clean
+     ```
+     Result:
+     - path-wrapper oracle: `exit 0` / `not reproduced: compiler reached lower_main exprs=0 on the path-wrapper repro`
+     - nested-macro oracle: `exit 0` / `not reproduced`
+   - integration boundary:
+     ```bash
+     /usr/bin/time -p env CRYSTAL_CACHE_DIR_STAGE2_RELEASE=/Users/sergey/Projects/Crystal/.codex_artifacts/cache_stage3_release_reparse_class_clean \
+       CRYSTAL_V2_PIPELINE_CACHE=0 CRYSTAL_V2_LLVM_CACHE=0 \
+       scripts/timeout_sample_lldb.sh -t 1800 -m 40960 -s 8 -l 20 -n 12 --no-series \
+       -o /Users/sergey/Projects/Crystal/.codex_artifacts/logs/stage3_release_reparse_class_clean_timeout \
+       -- scripts/build_stage2_release.sh \
+       /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_reparse_class_clean \
+       /Users/sergey/Projects/Crystal/.codex_artifacts/stage3_release_reparse_class_clean
+     ```
+     Result: `status=138`, `real 1.07s`, underlying `Bus error: 10`
 
 ### Completed In This Cycle
 1. **Path-wrapper module-name recovery moved the stage2 frontier past the old reparsed-module loop**

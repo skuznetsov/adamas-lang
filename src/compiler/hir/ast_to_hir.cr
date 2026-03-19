@@ -4200,6 +4200,24 @@ module Crystal::HIR
       nil
     end
 
+    private def class_name_from_leading_snippet_header(
+      snippet : String,
+      is_struct : Bool,
+    ) : String?
+      prefix = is_struct ? "struct " : "class "
+      header_end = snippet.index('\n') || snippet.bytesize
+      line_start = 0
+      while line_start < header_end
+        ch = snippet.byte_at(line_start)
+        break unless ch == ' '.ord || ch == '\t'.ord
+        line_start += 1
+      end
+      return nil if line_start >= header_end
+
+      header = snippet.byte_slice(line_start, header_end - line_start)
+      definition_name_from_header_text(header, [prefix])
+    end
+
     private def definition_header_text_before_offset(
       search_end : Int32,
       source : String,
@@ -6297,6 +6315,7 @@ module Crystal::HIR
 
       snippet = slice_source_for_span(node.span, source)
       return false unless snippet
+      reparsed_name_from_snippet = class_name_from_leading_snippet_header(snippet, node.is_struct == true)
 
       lexer = CrystalV2::Compiler::Frontend::Lexer.new(snippet)
       parser = CrystalV2::Compiler::Frontend::Parser.new(lexer, recovery_mode: true)
@@ -6319,7 +6338,7 @@ module Crystal::HIR
       old_arena = @arena
       @arena = reparsed_arena
       begin
-        yield class_node.as(CrystalV2::Compiler::Frontend::ClassNode)
+        yield class_node.as(CrystalV2::Compiler::Frontend::ClassNode), reparsed_name_from_snippet
       ensure
         @arena = old_arena
       end
@@ -18191,8 +18210,20 @@ module Crystal::HIR
     def register_class(node : CrystalV2::Compiler::Frontend::ClassNode)
       class_name = class_name_from_node(node) || ""
       if class_name.empty?
-        if with_reparsed_class_from_current_source(node) do |reparsed_node|
-             register_class(reparsed_node)
+        if with_reparsed_class_from_current_source(node) do |reparsed_node, reparsed_name|
+             resolved_name = reparsed_name || class_name_from_node(reparsed_node)
+             if resolved_name && !resolved_name.empty?
+               old_class = @current_class
+               old_override = @current_namespace_override
+               @current_class = nil
+               @current_namespace_override = nil
+               begin
+                 register_class_with_name(reparsed_node, resolved_name)
+               ensure
+                 @current_class = old_class
+                 @current_namespace_override = old_override
+               end
+             end
            end
           return
         end

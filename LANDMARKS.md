@@ -3,6 +3,26 @@
 Updated: 2026-03-18
 Context: compiler/bootstrap/stage2-stability
 
+[LM-189|verified]: the current local `ast_to_hir` branch also removes the old
+class-side empty-name reparse loop on the focused nested-macro micro-probe.
+The fix is narrower than a general class-name rewrite: when
+`with_reparsed_class_from_current_source(...)` already has a reparsed snippet,
+it now extracts a one-shot class name directly from that snippet header and
+uses the recovered name to call `register_class_with_name(...)`, instead of
+recursively calling `register_class(...)` again on the same nameless reparsed
+node. Fresh verification on
+`/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_reparse_class_clean`
+shows both cheap stage2 oracles are now green:
+`bash regression_tests/stage2_reparsed_module_wrapper_repro.sh ...` returns
+`exit 0` / `not reproduced: compiler reached lower_main exprs=0 on the
+path-wrapper repro`, and
+`bash regression_tests/stage2_nested_macro_method_missing_repro.sh ...`
+returns `exit 0` / `not reproduced`. Boundary: this is still not a full stage3
+unblock. `stage2 -> stage3` on the same candidate remains fast-red at `real
+1.07s`, but the failure has moved again to `status=138` / `Bus error: 10`
+instead of the earlier class/module reparse loops. {F/G/R: 0.97/0.82/0.98}
+[verified]
+
 [LM-188|verified]: the current local `ast_to_hir` branch removes the old
 empty-name reparsed-module loop for path-wrapped declarations like
 `struct A::B` and moves the active stage2 frontier later than
