@@ -5871,11 +5871,11 @@ module CrystalV2
           normalized.to_slice
         end
 
-        # Parse a constant name path (A::B::C) and return all segments as tokens.
-        # Returns array of tokens for each segment, or nil on error.
+        # Parse a constant name path (A::B::C) and return all segments as slices.
+        # Returns array of slices for each segment, or nil on error.
         # Used for creating nested module/class structures.
-        private def parse_constant_name_segments : Array(Token)?
-          segments = [] of Token
+        private def parse_constant_name_segments : Array(Slice(UInt8))?
+          segments = [] of Slice(UInt8)
           token = current_token
 
           # Handle optional leading ::
@@ -5890,7 +5890,7 @@ module CrystalV2
             return nil
           end
 
-          segments << token
+          segments << token.slice
           advance
 
           while current_token.kind == Token::Kind::ColonColon
@@ -5903,7 +5903,7 @@ module CrystalV2
               return nil
             end
 
-            segments << token
+            segments << token.slice
             advance
           end
 
@@ -6087,12 +6087,12 @@ module CrystalV2
           # For class A::B::C, we create:
           # ModuleNode(A, body: [ModuleNode(B, body: [ClassNode(C, ...)])])
           innermost_idx = name_segments.size - 1
-          innermost_token = name_segments[innermost_idx]
+          innermost_name = name_segments[innermost_idx]
           # Phase 32: Create the innermost ClassNode
           result_id = @arena.add_typed(
             ClassNode.new(
               class_span,
-              innermost_token.slice,
+              innermost_name,
               super_name_slice,
               body_ids_b.to_a,
               is_abstract,
@@ -6104,11 +6104,11 @@ module CrystalV2
 
           # Wrap with outer modules (from inside out) for namespace segments
           (innermost_idx - 1).downto(0) do |i|
-            segment_token = name_segments[i]
+            segment_name = name_segments[i]
             result_id = @arena.add_typed(
               ModuleNode.new(
                 class_span,
-                segment_token.slice,
+                segment_name,
                 [result_id],
                 nil # Namespace modules don't have type params
               )
@@ -7172,11 +7172,11 @@ module CrystalV2
 
           # Start with innermost module (last segment)
           innermost_idx = name_segments.size - 1
-          innermost_token = name_segments[innermost_idx]
+          innermost_name = name_segments[innermost_idx]
           result_id = @arena.add_typed(
             ModuleNode.new(
               module_span,
-              innermost_token.slice,
+              innermost_name,
               body,
               type_params # Type params only on innermost
             )
@@ -7184,11 +7184,11 @@ module CrystalV2
 
           # Wrap with outer modules (from inside out)
           (innermost_idx - 1).downto(0) do |i|
-            segment_token = name_segments[i]
+            segment_name = name_segments[i]
             result_id = @arena.add_typed(
               ModuleNode.new(
                 module_span,
-                segment_token.slice,
+                segment_name,
                 [result_id],
                 nil # Outer modules don't have type params
               )

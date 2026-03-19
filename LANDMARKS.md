@@ -3,6 +3,46 @@
 Updated: 2026-03-19
 Context: compiler/bootstrap/stage2-stability
 
+[LM-209|verified]: nested container name-segment storage was one real active
+parser carrier after the earlier `parse_args_tail_if` tightening. Replacing
+`parse_constant_name_segments`'s growable `Array(Token)` with plain
+`Array(Slice(UInt8))` moves the current parser frontier substantially on the
+same branch. Verified boundary:
+- fresh release stage1
+  `/Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_funlookahead`:
+  green `10/10` on
+  `bash regression_tests/stage2_parse_args_tail_if_repro.sh <compiler>`
+- previous local stage2 candidate
+  `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_genericann_whileidx_w3`:
+  red on attempt `1` with wrapper `status=139`
+- new local stage2 fix candidate
+  `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_constsegmentslice_w1`:
+  green `10/10` on the same oracle and green `5/5` on
+  `bash regression_tests/stage2_symbol_table_parse_repro.sh <compiler>`
+Adversary/control checks on the new candidate:
+- the old container split is gone: direct `module Probe ...`, `struct Probe ...`,
+  and the committed `class Probe ...` witness are all green, while the same
+  module/struct/class shapes were red on
+  `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_genericann_whileidx_w3`
+- the top-level version of the same `def touch -> def seed -> private def run`
+  witness was already green on the old candidate, so this was specifically a
+  nested-container carrier and not a generic `def`-header problem
+- `bash regression_tests/stage2_compiler_rt_fixint_float_noprelude_parse_repro.sh <compiler>`:
+  green `5/5`
+- `bash regression_tests/stage2_require_compiler_rt_noprelude_parse_repro.sh <compiler>`:
+  still red on attempt `1` with wrapper `status=139`
+- `bash regression_tests/stage2_full_compiler_parse_only_repro.sh <compiler> src/crystal_v2.cr 5`:
+  still red on iteration `1` with `rcs: 139`
+- self-hosted release `stage2 -> stage3` still fast-red: the safe-wrapped
+  probe
+  `stage2_release_constsegmentslice_w1 src/crystal_v2.cr --release -o /Users/sergey/Projects/Crystal/.codex_artifacts/stage3_release_constsegmentslice_w1_safeprobe`
+  segfaults immediately under `scripts/timeout_sample_lldb.sh` with
+  `status=139`
+Reusable lesson: after the earlier body/header tightening, one remaining live
+parser carrier was not the container body append buffer itself but the
+growable `Token[]` that held nested class/module name segments across body
+parsing and finalization. {F/G/R: 0.98/0.93/0.98} [verified]
+
 [LM-208|verified]: the standalone parser oracle tightens once more, and the
 live header carrier no longer needs the old `parse_args_safe` method name or a
 no-paren `def` header. The current committed oracle

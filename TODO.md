@@ -12,6 +12,7 @@
 - **Previous local stage2 checkpoint (require-scan index traversal)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_reqscanidx`
 - **Previous local stage2 candidate (cached input base dir + scalarized parse_program_roots root buffer)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_rootidx_w1`
 - **Current local stage2 candidate (retained generic annotation spans + scalarized while body ids)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_genericann_whileidx_w3`
+- **Current local stage2 fix candidate (scalarized nested container name segments)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_constsegmentslice_w1`
 - **Current timings**:
   - original Crystal -> fresh `stage1_release_funlookahead`: `544.95s`
   - fresh `stage1_release_funlookahead` -> fresh `stage2_release_funlookahead_fresh`: `174.80s`
@@ -45,6 +46,12 @@
   - `bash regression_tests/stage2_symbol_table_parse_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_rootidx_w1` -> `exit 1` / reproduced on attempt `1` with wrapper `status=139`
   - `bash regression_tests/stage2_symbol_table_parse_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_genericann_whileidx_w3` -> `exit 0` / `not reproduced: compiler reached STOP_AFTER_PARSE on all 5 symbol_table parse repro attempts`
   - `bash regression_tests/stage2_parse_args_tail_if_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_genericann_whileidx_w3` -> `exit 1` / reproduced on attempt `1` with wrapper `status=139`
+  - `bash regression_tests/stage2_parse_args_tail_if_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_constsegmentslice_w1` -> `exit 0` / `not reproduced: compiler reached STOP_AFTER_PARSE on all 10 parse_args tail-if parser-shape repro attempts`
+  - `bash regression_tests/stage2_symbol_table_parse_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_constsegmentslice_w1` -> `exit 0` / `not reproduced: compiler reached STOP_AFTER_PARSE on all 5 symbol_table parse repro attempts`
+  - broader checks on `stage2_release_constsegmentslice_w1`:
+    - `bash regression_tests/stage2_compiler_rt_fixint_float_noprelude_parse_repro.sh ...` -> green `5/5`
+    - `bash regression_tests/stage2_require_compiler_rt_noprelude_parse_repro.sh ...` -> red on attempt `1` with wrapper `status=139`
+    - `bash regression_tests/stage2_full_compiler_parse_only_repro.sh ... src/crystal_v2.cr 5` -> red on iteration `1` / `rcs: 139`
   - adversary controls on `stage2_release_genericann_whileidx_w3`:
     - `tmp_parse_args_shape_init_unknown_generic_literal_direct_ivar_read_if_true_tailand.cr` is green `5/5`
     - generic `A(B)` alias+while-only local control is green `5/5`
@@ -55,9 +62,13 @@
 - **Current smallest standalone parser-shape oracle**:
   - `bash regression_tests/stage2_parse_args_tail_if_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_funlookahead` -> `exit 0` / `not reproduced: compiler reached STOP_AFTER_PARSE on all 10 parse_args tail-if parser-shape repro attempts`
   - `bash regression_tests/stage2_parse_args_tail_if_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_genericann_whileidx_w3` -> `exit 1` / `reproduced` on attempt `1` with wrapper `status=139`
+  - the old genericann candidate also splits on direct container scope:
+    - top-level `def touch; def seed; private def run() : Int32 ...` is green on both stage1 and `stage2_release_genericann_whileidx_w3`
+    - `class`, `module`, and `struct` wrappers around the same witness are all red on `stage2_release_genericann_whileidx_w3`
+    - the new `stage2_release_constsegmentslice_w1` turns all three nested-container variants green
   - the current committed witness now reduces further to: `def touch; end -> def seed; x = 1; end -> private def run() : Int32; z = 1; bare z read before loop; while literal-body with triple nested if; tail if status == 0 && opt_level_invalid`
   - this means the active carrier no longer requires generic syntax, typed params, ivar writes/reads, the `initialize` name, stdlib type names, indexed reads, loop-carried local reads, string compare, or param-to-ivar dataflow
-  - this witness is smaller than both the old generic-annotation corridor and the previous multi-def witness, so the live parser frontier is now primarily about cross-def state plus the conjunction `visibility+return-type header` and a narrow body/control shape
+  - with the new fix candidate, the remaining carrier is no longer just “multi-def + visibility header + body shape”; it specifically needs a nested container that holds constant-name segments across body parsing
   - adversary note: the same rootidx binary can go green on all attempts under `PARSER_DEBUG=1` or direct batch LLDB, so the bug is still heisenbug-sensitive parser corruption rather than a stable syntax rejection
   - local refutation ledger on this witness:
     - `stage2_release_ifwhileidx_w1` (scalarized transient `ExprId` builders in `parse_if` + `parse_while`) built cleanly but stayed red `5/5` on the tail-if oracle while the trimmed control stayed green `3/3`
@@ -72,8 +83,8 @@
     - `no_loop_read` and `assign_no_read_loop_uses_z` are both red on direct probes, so the body still needs a local read of `z` but it no longer has to happen specifically inside the loop body
     - `tail_if_opt_only` and `tail_if_status_only` are green on direct probes, so the exact conjunction `status == 0 && opt_level_invalid` is still part of the carrier
     - `loop_one_if` and `loop_two_if_no_inner_true` are green on direct probes, so the third nested `if true` remains part of the current live loop shape
-- **Stage3 bootstrap**: **FAILS** after `1.06s` with `status=139` on `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_funlookahead_fresh`
-- **Current local stage3 probe**: pending on `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_parseprogramroots_loadedreq_lazydbg_fresh_w2`; last verified fast-red remains `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_reqscanidx` with `status=139`
+- **Stage3 bootstrap**: still **FAILS** with `status=139`; the latest safe-wrapped self-hosted probe runs `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_constsegmentslice_w1 src/crystal_v2.cr --release -o /Users/sergey/Projects/Crystal/.codex_artifacts/stage3_release_constsegmentslice_w1_safeprobe` and segfaults immediately under `scripts/timeout_sample_lldb.sh`
+- **Current local stage3 probe**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage3_release_constsegmentslice_w1_safeprobe` is the newest fast-red checkpoint; older verified fast-red checkpoints remain `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_parseprogramroots_loadedreq_lazydbg_fresh_w2` and `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_reqscanidx`
 - **Current smallest clean/red HIR controls**:
   - `--release --no-prelude /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_simple_one.cr` is green in `0.02s`
   - the current strongest stage2-specific parse/file-loading controls are now:
