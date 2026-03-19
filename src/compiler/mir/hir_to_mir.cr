@@ -921,7 +921,9 @@ module Crystal
       # constructor args, and function call arguments. Only true local temps
       # get cleanup slots.
       builder = @builder.not_nil!
-      builder.current_block = mir_func.entry_block
+      # MIR::Function creates the entry block first, so its id is 0.
+      # Reuse that invariant instead of re-reading the getter on unstable stage2 code.
+      builder.current_block = 0_u32
 
       # Build set of HIR values that escape the function
       escaping_values = Set(HIR::ValueId).new
@@ -1112,15 +1114,18 @@ module Crystal
     end
 
     private def order_blocks_for(hir_func : HIR::Function) : Array(HIR::Block)
-      visited = Set(Int32).new
+      visited = [] of Bool
       ordered = [] of HIR::Block
       stack = [] of HIR::BlockId
       stack << hir_func.entry_block
 
       while block_id = stack.pop?
         block_key = block_id.to_i32
-        next if visited.includes?(block_key)
-        visited.add(block_key)
+        next if block_key < visited.size && visited.unsafe_fetch(block_key)
+        while block_key >= visited.size
+          visited << false
+        end
+        visited[block_key] = true
         block = hir_func.get_block(block_id)
         ordered << block
 
@@ -1131,7 +1136,8 @@ module Crystal
 
       # Append unreachable blocks to keep lowering deterministic.
       hir_func.blocks.each do |block|
-        next if visited.includes?(block.id.to_i32)
+        block_key = block.id.to_i32
+        next if block_key < visited.size && visited.unsafe_fetch(block_key)
         ordered << block
       end
 

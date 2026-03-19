@@ -3,6 +3,34 @@
 Updated: 2026-03-18
 Context: compiler/bootstrap/stage2-stability
 
+[LM-193|verified]: MIR block-order traversal was the next real stage2-only
+frontier after the serial timing guard, and hardening it moves the minimal
+self-hosted compiler path through MIR lowering and into LLVM emission. The
+repair in `src/compiler/mir/hir_to_mir.cr` is narrow but two-part: during the
+ARC pre-scan setup it now reuses the existing MIR invariant that the entry
+block is created first and therefore has id `0_u32`, and `order_blocks_for(...)`
+now tracks visited HIR blocks with a growable `Array(Bool)` keyed by block id
+instead of `Set(Int32)`. The new focused oracle
+`bash regression_tests/stage2_mir_order_blocks_repro.sh <compiler>` separates
+the boundary cleanly: old timing-guard stage2
+`/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_current_dirty_mirtimingfix_clean`
+returns `exit 1` / `reproduced: compiler failed before LLVM emission on the
+minimal MIR order-blocks repro`, while the clean order-bool candidate
+`/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_current_dirty_orderbool_clean`
+returns `exit 0` / `not reproduced: compiler reached LLVM emission on the
+minimal MIR order-blocks repro`. Direct traced runs on the same minimal
+`--progress --release --no-prelude --no-link --no-ast-cache 1` control confirm
+the local shift: before the fix, tracing reached `Pass 2: Lowering 1 function
+bodies...`, `Body 1/1...`, and then died before LLVM activity; after the fix,
+the compiler reaches `before sort count=1`, `after sort count=1`, `ordered
+blocks count=1`, completes MIR lowering, and in the full no-link path reaches
+`[LLVM] emit_header...`, `[LLVM] emit_type_definitions...`, and `[LLVM] total
+MIR functions: 1`. Boundary: this is still not a full stage3 unblock.
+`stage2_release_current_dirty_orderbool_clean ->
+stage3_release_current_dirty_orderbool_clean` remains fast-red at `real 1.05s`
+with `status=138`, so the active frontier has moved again beyond MIR block
+ordering. {F/G/R: 0.97/0.80/0.98} [verified]
+
 [LM-192|verified]: unconditional MIR timing math in the serial MIR driver was a
 real stage2-only crash frontier, and guarding it behind `options.stats` moves
 the self-hosted compiler materially later. In `src/compiler/cli.cr`, the serial
