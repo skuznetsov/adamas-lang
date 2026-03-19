@@ -153,6 +153,17 @@ runs:
   not hold as an improvement:
   first run `RCS: 139 0 139 0 139 139 139 139 139 139` => `2 green / 8 red`,
   rerun `RCS: 139 139 0 139 139 0 139 0 139 139` => `3 green / 7 red`.
+  A cleaner recursive parser-stage cut that still preserves `ParsedUnit`
+  append but skips post-parse require walk also softens:
+  non-top-level recursive files run through `parser.parse_program_roots`, then
+  `arena = parser.arena`, then `results << ParsedUnit.new(...)`, then return
+  before `expr_count` / require-scan.
+  First run `RCS: 0 139 0 139 0 0 139 0 0 139` => `6 green / 4 red`,
+  rerun `RCS: 0 139 139 0 139 0 0 139 139 139` => `4 green / 6 red`.
+  The cruder `parse_program_roots -> bare return` cut without `ParsedUnit`
+  append is not the trustworthy version:
+  first run `RCS: 139 139 139 139 0 0 139 0 139 139` => `3 green / 7 red`,
+  rerun `RCS: 0 139 139 139 0 139 139 139 139 139` => `2 green / 8 red`.
   Wildcard requires are still a live input class in `src`, but
   `resolve_wildcard_require` returns `Array(String)`, so the strict
   `0 green / 10 red` class is not dominated by wildcard/array expansion; the
@@ -165,7 +176,12 @@ runs:
   through the immediate `loaded` return path is clearly milder than baseline,
   while merely filtering already-loaded duplicates at the caller side is not.
   So the remaining weight is not the duplicate-return fast path itself but the
-  deeper unseen-file work that happens after entering `parse_file_recursive`
+  deeper unseen-file work that happens after entering `parse_file_recursive`.
+  The newer parser-stage split sharpens it again: allowing recursive files to
+  parse and be appended to `results`, while cutting them off before their own
+  post-parse require walk, still lands in the milder `6/4` then `4/6` range.
+  So the strict worst-case depends substantially on recursive post-parse
+  require-walk/fallback below `parse_program_roots`, not only on parser entry
 - removing the top-level require wrapper together with `Options#ast_cache`
   did not hold as a stable new class:
   first run `RCS: 139 139 139 139 139 139 139 139 139 0` => `1 green / 9 red`,
