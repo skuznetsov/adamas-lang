@@ -85,6 +85,22 @@ runs:
   => `2 green / 8 red`
   which is worse than baseline and confirms that once both larger AST-cache
   wrappers are gone, their interaction dominates the top-level require effect
+- `Options#ast_cache` composes asymmetrically with the larger wrappers:
+  removing `Options#ast_cache` together with only the post-parse save wrapper
+  twice lands in the stronger `5 green / 5 red` class
+  (`RCS: 139 0 139 0 0 139 0 139 139 0` and
+  `RCS: 0 139 139 139 0 0 0 139 139 0`),
+  while removing `Options#ast_cache` together with only the pre-parse load
+  wrapper is strict worst-case
+  (`RCS: 139 139 139 139 139 139 139 139 139 139` => `0 green / 10 red`)
+  so the current `Options#ast_cache` interaction is sharply load/save
+  asymmetric, not just another mild shift
+- removing the top-level require wrapper together with `Options#ast_cache`
+  did not hold as a stable new class:
+  first run `RCS: 139 139 139 139 139 139 139 139 139 0` => `1 green / 9 red`,
+  rerun `RCS: 0 139 0 139 139 139 0 139 139 139` => `3 green / 7 red`
+  so that pair remains heisenbug-sensitive and should stay out of the stable
+  interaction map for now
 Adversary/refutation:
 - the standalone extracted witness with only the top-level require block,
   `src/compiler/stage2_cli_top_require_unless_repro_fixed.cr`, stayed green
@@ -98,9 +114,11 @@ wrapper increases crash probability, but the `bootstrap_fast` AST-cache family
 is non-monotonic: each load/save wrapper alone slightly improves odds when
 removed, while removing both together is worst-case. Compositions are
 asymmetric: `top+save` preserves the `5/5` improvement, `top+load` falls back
-to the mild `4/6` class, and `top+load+save` degrades to `2/8`. Standalone
-reductions are therefore unreliable unless they preserve the original full-file
-context.
+to the mild `4/6` class, and `top+load+save` degrades to `2/8`.
+`Options#ast_cache` is sharper: `Options+save` reproducibly lands in `5/5`,
+`Options+load` collapses to `0/10`, while `top+Options` stays unstable across
+reruns. Standalone reductions are therefore unreliable unless they preserve the
+original full-file context.
 {F/G/R: 0.97/0.74/0.98}
 [verified]
 

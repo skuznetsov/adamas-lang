@@ -124,11 +124,24 @@
       - `RCS: 139 0 139 139 139 139 0 139 139 139`
       - summary: `2 green / 8 red`
       - this is worse than baseline `3 green / 7 red` and confirms that once both larger AST-cache wrappers are gone, their interaction dominates the top-level require effect
+    - `Options#ast_cache` interacts asymmetrically with the larger wrappers:
+      - removing `Options#ast_cache` together with only the post-parse save wrapper (`2611-2622`) twice lands in the stronger `5 green / 5 red` bucket:
+        - run A: `RCS: 139 0 139 0 0 139 0 139 139 0`
+        - run B: `RCS: 0 139 139 139 0 0 0 139 139 0`
+      - removing `Options#ast_cache` together with only the pre-parse load wrapper (`2400-2494`) is strict worst-case:
+        - `RCS: 139 139 139 139 139 139 139 139 139 139`
+        - summary: `0 green / 10 red`
+      - so `Options#ast_cache` composes cleanly with the save-side split but catastrophically with the load-side split
+    - removing the top-level require wrapper together with `Options#ast_cache` did **not** hold as a new stable class:
+      - first run: `RCS: 139 139 139 139 139 139 139 139 139 0` => `1 green / 9 red`
+      - rerun: `RCS: 0 139 0 139 139 139 0 139 139 139` => `3 green / 7 red`
+      - treat this pair as heisenbug-sensitive and keep it out of the stable interaction map for now
     - consequence:
       - the live `cli.cr` frontier is an exact-path conjunction
       - the top-level `lsp/ast_cache` require wrapper increases crash probability
       - the larger AST-cache load/save wrappers participate non-monotonically: each alone slightly improves odds when removed, but removing both together is worst-case
       - removing the top-level require wrapper composes asymmetrically with the larger wrappers: `top+save` keeps the `5 green / 5 red` improvement, while `top+load` falls back to the mild `4 green / 6 red` class and `top+load+save` degrades to `2 green / 8 red`
+      - `Options#ast_cache` now shows a sharper asymmetry than the top-level require: `Options+save` reproducibly lands in the `5 green / 5 red` class, while `Options+load` collapses to `0 green / 10 red`
       - simple standalone extracts do not preserve the crash surface
   - adversary controls on `stage2_release_genericann_whileidx_w3`:
     - `tmp_parse_args_shape_init_unknown_generic_literal_direct_ivar_read_if_true_tailand.cr` is green `5/5`
