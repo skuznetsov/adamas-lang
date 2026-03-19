@@ -89,6 +89,26 @@
       - `bash regression_tests/stage2_symbol_table_parse_repro.sh ...` -> green `5/5`
     - local refutation on the same branch:
       - widening `parse_macro_body`'s initial `Array(MacroPiece)` capacity from `128` to `512` on top of the no-span falsifier (`/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_macrotext_nospan_macrocap512_w1`) does **not** improve `src/compiler/cli.cr`; the reduced oracle remains red on iteration `1`
+  - new exact-path `src/compiler/cli.cr` conjunction ledger on the same committed baseline `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_lazyparse_earlyret_w1`:
+    - baseline distribution over `10` safe-wrapped `CRYSTAL_V2_STOP_AFTER_PARSE=1 src/compiler/cli.cr --release` runs:
+      - `RCS: 0 139 0 0 139 139 139 139 139 139`
+      - summary: `3 green / 7 red`
+    - removing only the top-level `%unless flag?(:bootstrap_fast) % require "./lsp/ast_cache"` wrapper shifts that same exact-path distribution to:
+      - `RCS: 0 139 139 0 139 0 0 139 0 139`
+      - summary: `5 green / 5 red`
+      - standalone extracted witness `src/compiler/stage2_cli_top_require_unless_repro_fixed.cr` stayed green `5/5` on both stage1 and stage2, so this wrapper is not sufficient by itself outside the full `cli.cr` context
+    - removing only the two larger `%unless flag?(:bootstrap_fast) %` blocks around AST-cache load/save makes the same exact-path distribution strictly worse:
+      - `RCS: 139 139 139 139 139 139 139 139 139 139`
+      - summary: `0 green / 10 red`
+      - so those bigger macro blocks are currently protective, not causal
+    - removing only the `debug_hooks` wrapper pair is essentially neutral:
+      - `RCS: 0 0 139 139 0 139 139 139 139 139`
+      - summary: `3 green / 7 red`
+    - consequence:
+      - the live `cli.cr` frontier is an exact-path conjunction
+      - the top-level `lsp/ast_cache` require wrapper increases crash probability
+      - the larger AST-cache load/save wrappers decrease it
+      - simple standalone extracts do not preserve the crash surface
   - adversary controls on `stage2_release_genericann_whileidx_w3`:
     - `tmp_parse_args_shape_init_unknown_generic_literal_direct_ivar_read_if_true_tailand.cr` is green `5/5`
     - generic `A(B)` alias+while-only local control is green `5/5`

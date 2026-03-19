@@ -40,6 +40,41 @@ existing-source oracle in `%if/%elsif/%else` stdlib control-heavy code
 yet reproducible enough to count as a verified carrier. {F/G/R: 0.98/0.83/0.98}
 [verified]
 
+[LM-212|verified]: the remaining `src/compiler/cli.cr` parser frontier is not a
+single standalone macro witness; it is an exact-path conjunction with opposing
+macro-block effects. On the committed baseline
+`/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_lazyparse_earlyret_w1`,
+measured over `10` safe-wrapped `CRYSTAL_V2_STOP_AFTER_PARSE=1 src/compiler/cli.cr --release`
+runs:
+- baseline exact-path distribution:
+  `RCS: 0 139 0 0 139 139 139 139 139 139`
+  => `3 green / 7 red`
+- removing only the top-level
+  `%unless flag?(:bootstrap_fast) % require "./lsp/ast_cache"` wrapper shifts
+  the same exact-path distribution to:
+  `RCS: 0 139 139 0 139 0 0 139 0 139`
+  => `5 green / 5 red`
+- removing only the two larger `%unless flag?(:bootstrap_fast) %` blocks around
+  AST-cache load/save makes the same exact-path distribution strictly worse:
+  `RCS: 139 139 139 139 139 139 139 139 139 139`
+  => `0 green / 10 red`
+- removing only the `debug_hooks` wrapper pair is effectively neutral:
+  `RCS: 0 0 139 139 0 139 139 139 139 139`
+  => `3 green / 7 red`
+Adversary/refutation:
+- the standalone extracted witness with only the top-level require block,
+  `src/compiler/stage2_cli_top_require_unless_repro_fixed.cr`, stayed green
+  `5/5` on both stage1 and stage2, so the top-level wrapper is not sufficient
+  by itself outside the full `cli.cr` context
+- extracted AST-cache block witnesses also stayed green, so the live carrier
+  is not preserved by simply copying one macro island into a new file
+Reusable lesson: the surviving `cli.cr` frontier is an exact-path macro
+conjunction, not a single small witness. The top-level `lsp/ast_cache` require
+wrapper increases crash probability, while the larger AST-cache load/save macro
+blocks currently decrease it. Standalone reductions are therefore unreliable
+unless they preserve the original full-file context. {F/G/R: 0.97/0.74/0.98}
+[verified]
+
 [LM-210|verified]: the current post-`constsegmentslice` bootstrap frontier can
 be reproduced with a much smaller `bootstrap_shims`-only no-prelude witness.
 The new committed oracle
