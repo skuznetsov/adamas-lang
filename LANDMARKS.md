@@ -3,6 +3,40 @@
 Updated: 2026-03-18
 Context: compiler/bootstrap/stage2-stability
 
+[LM-197|verified]: the next real parser/file-loading bug after the
+default-prelude corridor was not in `pthread` syntax itself but in two
+remaining `Array(ExprId)#each` traversals inside `src/compiler/cli.cr`'s
+require-scan path. The repair is narrow and both sites are in the same family
+as earlier stage2 container fixes: cached parse-file require scanning now walks
+`exprs` via `unsafe_fetch` + index, and `process_require_node(...)` now walks
+`Frontend::ModuleNode#body` the same way instead of using `body.each`.
+The new focused oracle
+`bash regression_tests/stage2_prelude_prefix25_parse_repro.sh <compiler>`
+captures the smallest verified old/new split so far with a static fixture that
+inlines the first 25 `require` entries from `src/stdlib/prelude.cr` and then
+adds a trailing `1`, while compiling with `--no-prelude` to keep the source
+surface minimal and reproducible. Verified boundary:
+- fresh release stage1 `/Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_funlookahead`:
+  `exit 0` / `not reproduced` across 5 attempts
+- old order-block candidate
+  `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_current_dirty_orderbool_clean`:
+  `exit 1` / `reproduced`, latest verified split `red=3, green=2`
+- new require-scan candidate
+  `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_reqscanidx`:
+  `exit 0` / `not reproduced` across 5 attempts
+Prefix bisect note on the old order-block candidate:
+- first 23 `prelude.cr` requires: `green=5/5`
+- first 25 `prelude.cr` requires: `red=3/5, green=2/5`
+Broader confirmation: the same old/new pair also flips both committed `pthread`
+oracles from red to green:
+- `bash regression_tests/stage2_c_pthread_parse_repro.sh <compiler>`
+- `bash regression_tests/stage2_pthread_cond_parse_repro.sh <compiler>`
+Boundary: this is still not a full bootstrap unblock.
+`stage2_release_reqscanidx -> stage3_release_reqscanidx` remains fast-red with
+`status=139` in `scripts/build_stage2_cached.sh`, so the active frontier has
+moved again beyond the current parse/file-loading corridor.
+{F/G/R: 0.97/0.86/0.98} [verified]
+
 [LM-196|verified]: after the MIR order-block checkpoint, the smallest current
 stage2-specific parser/file-loading frontier is no longer the `pthread_cond_*`
 wrapper but plain `1` compiled with the default prelude. The new focused oracle

@@ -2,13 +2,13 @@
 
 ## Current State
 - **Branch**: `bootstrap-benchmark`
-- **Latest committed baseline**: `42415c44` — harden mir order block traversal
+- **Latest committed baseline**: `b7abaf13` — default prelude parse repro
 - **Working tree**:
   - unrelated local diffs in `src/compiler/mir/hir_to_mir.cr` and `src/crystal_v2.cr` must stay out of the next commit
 - **Fresh release stage1 (current tree)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_funlookahead`
 - **Fresh release stage2 (current tree)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_funlookahead_fresh`
 - **Previous local stage2 checkpoint (class reparse fallback)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_reparse_class_clean`
-- **Current local stage2 candidate (MIR order-block hardening)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_current_dirty_orderbool_clean`
+- **Current local stage2 candidate (require-scan index traversal)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_reqscanidx`
 - **Current timings**:
   - original Crystal -> fresh `stage1_release_funlookahead`: `544.95s`
   - fresh `stage1_release_funlookahead` -> fresh `stage2_release_funlookahead_fresh`: `174.80s`
@@ -17,6 +17,7 @@
   - fresh `stage1_release_funlookahead` -> current local `stage2_release_current_dirty_mirtimingfix_clean`: `175.10s`
   - fresh `stage1_release_funlookahead` -> current local `stage2_release_current_dirty_orderbool_clean`: `176.83s`
 - **New regression surface**:
+  - `bash regression_tests/stage2_prelude_prefix25_parse_repro.sh <compiler>`
   - `bash regression_tests/stage2_default_prelude_parse_repro.sh <compiler>`
   - `bash regression_tests/stage2_full_compiler_parse_only_repro.sh <compiler>`
   - `bash regression_tests/stage2_object_hir_noprelude_repro.sh <compiler>`
@@ -35,29 +36,34 @@
   - `bash regression_tests/stage2_require_boehm_noprelude_parse_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_reparse_class_clean` -> `exit 1` / wrapper `status=138`
   - `bash regression_tests/stage2_require_boehm_noprelude_parse_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_macro_piececap128` -> `exit 0` / `not reproduced`
 - **Stage3 bootstrap**: **FAILS** after `1.06s` with `status=139` on `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_funlookahead_fresh`
-- **Current local stage3 probe**: still **FAILS** after `1.05s` with `status=138` on `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_current_dirty_orderbool_clean`
+- **Current local stage3 probe**: still **FAILS** fast with `status=139` on `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_reqscanidx`
 - **Current smallest clean/red HIR controls**:
   - `--release --no-prelude /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_simple_one.cr` is green in `0.02s`
   - the current smallest stage2-specific parser/file-loading control is now:
+    - `bash regression_tests/stage2_prelude_prefix25_parse_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_funlookahead`
+    - Result: `exit 0` / `not reproduced: compiler reached STOP_AFTER_PARSE on all 5 prelude-prefix25 repro attempts`
+    - `bash regression_tests/stage2_prelude_prefix25_parse_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_current_dirty_orderbool_clean`
+    - Result: `exit 1` / `reproduced: compiler crashed before STOP_AFTER_PARSE on the prelude-prefix25 repro`
+    - `bash regression_tests/stage2_prelude_prefix25_parse_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_reqscanidx`
+    - Result: `exit 0` / `not reproduced: compiler reached STOP_AFTER_PARSE on all 5 prelude-prefix25 repro attempts`
+  - prefix bisect note on the old order-block candidate:
+    - first `23` requires from `src/stdlib/prelude.cr`: `green=5/5`
+    - first `25` requires from `src/stdlib/prelude.cr`: `red=3/5, green=2/5`
+  - the previously smallest default-prelude plain-`1` control is now broader and more heisenbug-sensitive:
     - `bash regression_tests/stage2_default_prelude_parse_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_funlookahead`
     - Result: `exit 0` / `not reproduced: compiler reached STOP_AFTER_PARSE on all 5 default-prelude plain-1 repro attempts`
-    - `bash regression_tests/stage2_default_prelude_parse_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_current_dirty_mirtimingfix_clean`
-    - Result: `exit 0` / `not reproduced: compiler reached STOP_AFTER_PARSE on all 5 default-prelude plain-1 repro attempts`
-    - `bash regression_tests/stage2_default_prelude_parse_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_current_dirty_orderbool_clean`
-    - Result: `exit 1` / `reproduced: compiler crashed before STOP_AFTER_PARSE on the default-prelude plain-1 repro`
-  - the same current clean candidate stays green once prelude loading is removed:
-    - `CRYSTAL_V2_STOP_AFTER_PARSE=1 /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_current_dirty_orderbool_clean regression_tests/stage2_default_prelude_parse_repro.cr --release --no-prelude`
-    - Result: `status=0` on all 5 verified runs
-  - the older `pthread_cond` and broader `c/pthread` parser/file-loading controls remain red on the same candidate, but they are no longer the smallest boundary:
+    - `bash regression_tests/stage2_default_prelude_parse_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_reqscanidx`
+    - Result: `exit 0` / `not reproduced` in the latest verified 5-attempt run
+  - the older `pthread_cond` and broader `c/pthread` parser/file-loading controls now also turn green on the same current candidate:
     - `bash regression_tests/stage2_pthread_cond_parse_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_funlookahead`
     - Result: `exit 0` / `not reproduced: compiler reached STOP_AFTER_PARSE on all 5 pthread cond stage2 repro attempts`
-    - `bash regression_tests/stage2_pthread_cond_parse_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_current_dirty_orderbool_clean`
-    - Result: `exit 1` / `reproduced: compiler crashed before STOP_AFTER_PARSE on the pthread cond stage2 repro`
-  - the broader `c/pthread` oracle remains useful and still splits the same boundary:
+    - `bash regression_tests/stage2_pthread_cond_parse_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_reqscanidx`
+    - Result: `exit 0` / `not reproduced: compiler reached STOP_AFTER_PARSE on all 5 pthread cond stage2 repro attempts`
+  - the broader `c/pthread` oracle also turns green on the same current candidate:
     - `bash regression_tests/stage2_c_pthread_parse_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_funlookahead`
     - Result: `exit 0` / `not reproduced: compiler reached STOP_AFTER_PARSE on all 5 c/pthread stage2 repro attempts`
-    - `bash regression_tests/stage2_c_pthread_parse_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_current_dirty_orderbool_clean`
-    - Result: `exit 1` / `reproduced: compiler crashed before STOP_AFTER_PARSE on the c/pthread stage2 repro`
+    - `bash regression_tests/stage2_c_pthread_parse_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_reqscanidx`
+    - Result: `exit 0` / `not reproduced: compiler reached STOP_AFTER_PARSE on all 5 c/pthread stage2 repro attempts`
   - the path-wrapper oracle stays green on the newest local candidate:
     - `stage2_release_reparse_fix_dbg2`: `exit 1` / `reproduced: compiler failed before lower_main on the path-wrapper module repro`
     - `stage2_release_reparse_class_clean`: `exit 0` / `not reproduced: compiler reached lower_main exprs=0 on the path-wrapper repro`
@@ -67,7 +73,38 @@
 - **Benchmark status**: blocked — stage2 compiler is still unstable and crashes before finishing stage3
 
 ### New Verified In This Cycle
-1. **After the MIR order-block rebuild, the smallest current parser/file-loading frontier is plain `1` with the default prelude, not the old `pthread_cond_*` wrapper**
+1. **Index-based require-scan traversal moves the active parser/file-loading frontier below the old default-prelude corridor and clears the broader `pthread` witnesses**
+   - `src/compiler/cli.cr` now avoids two remaining `Array(ExprId)#each` paths inside the require-scan corridor:
+     - cached parse-file require scan now walks `exprs` with `unsafe_fetch` + index
+     - `process_require_node(...)` now walks `Frontend::ModuleNode#body` with `unsafe_fetch` + index
+   - focused regression surface:
+     ```bash
+     bash regression_tests/stage2_prelude_prefix25_parse_repro.sh \
+       /Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_funlookahead
+     bash regression_tests/stage2_prelude_prefix25_parse_repro.sh \
+       /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_current_dirty_orderbool_clean
+     bash regression_tests/stage2_prelude_prefix25_parse_repro.sh \
+       /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_reqscanidx
+     ```
+     Result:
+     - fresh release stage1: `exit 0` / `not reproduced`
+     - old order-block candidate: `exit 1` / `reproduced`
+     - current require-scan candidate: `exit 0` / `not reproduced`
+   - prefix-bisect note on the old order-block candidate:
+     - first `23` requires from `src/stdlib/prelude.cr`: `green=5/5`
+     - first `25` requires from `src/stdlib/prelude.cr`: `red=3/5, green=2/5`
+   - broader confirmation on the same old/new pair:
+     ```bash
+     bash regression_tests/stage2_c_pthread_parse_repro.sh <compiler>
+     bash regression_tests/stage2_pthread_cond_parse_repro.sh <compiler>
+     ```
+     Result:
+     - old order-block candidate reproduces both oracles
+     - current require-scan candidate reaches `STOP_AFTER_PARSE` on all 5 attempts for both
+   - integration boundary:
+     - `stage2_release_reqscanidx -> stage3_release_reqscanidx` still fails fast with `status=139`, so this is a confirmed parse/file-loading boundary shift, not a full stage3 unblock
+
+2. **After the MIR order-block rebuild, the smallest current parser/file-loading frontier is plain `1` with the default prelude, not the old `pthread_cond_*` wrapper**
    - focused regression surface:
      ```bash
      bash regression_tests/stage2_default_prelude_parse_repro.sh \
@@ -98,7 +135,7 @@
    - implication:
      - the previously useful `pthread_cond_*` and `c/pthread` oracles still reproduce on the same candidate, but they are no longer minimal; their red path sits inside a broader default-prelude corridor
 
-2. **The `c/pthread` parser/file-loading frontier reduces further to a two-declaration `pthread_cond_*` repro**
+3. **The `c/pthread` parser/file-loading frontier reduces further to a two-declaration `pthread_cond_*` repro**
    - focused regression surface:
      ```bash
      bash regression_tests/stage2_pthread_cond_parse_repro.sh \
@@ -119,7 +156,7 @@
    - reduction note:
      - this tighter repro still requires the original `sys/types` definitions, but it no longer needs the rest of `c/pthread.cr`
 
-3. **After the MIR order-block fix, the smaller current stage2-specific frontier is already in parse/file-loading on `src/stdlib/lib_c/aarch64-darwin/c/pthread.cr`**
+4. **After the MIR order-block fix, the smaller current stage2-specific frontier is already in parse/file-loading on `src/stdlib/lib_c/aarch64-darwin/c/pthread.cr`**
    - focused regression surface:
      ```bash
      bash regression_tests/stage2_c_pthread_parse_repro.sh \
@@ -136,7 +173,7 @@
    - adversary note:
      - this control is heisenbug-sensitive under trace instrumentation: enabling `STAGE2_BOOTSTRAP_TRACE=1` makes the same `STOP_AFTER_PARSE` probe go green
 
-4. **Replacing `order_blocks_for`'s visited `Set(Int32)` with a scalar bool array, together with a literal MIR entry-block reuse, moves the minimal stage2 frontier past MIR block ordering and into LLVM emission**
+5. **Replacing `order_blocks_for`'s visited `Set(Int32)` with a scalar bool array, together with a literal MIR entry-block reuse, moves the minimal stage2 frontier past MIR block ordering and into LLVM emission**
    - MIR change:
      - `src/compiler/mir/hir_to_mir.cr` now reuses the known-good literal entry block id (`0_u32`) instead of re-reading `mir_func.entry_block` in the pre-scan setup path
      - `order_blocks_for(...)` now tracks visited HIR blocks with a growable `Array(Bool)` indexed by block id, instead of `Set(Int32)`

@@ -2402,7 +2402,11 @@ module CrystalV2
             else
               log(options, out_io, "  Require cache miss: #{abs_path}") if options.verbose
               requires = [] of String
-              exprs.each do |expr_id|
+              # Cached AST roots hit the same ExprId iteration corruption as the
+              # uncached path in self-hosted stage2. Keep this scalar/indexed.
+              expr_i = 0
+              while expr_i < exprs.size
+                expr_id = exprs.unsafe_fetch(expr_i)
                 begin
                   process_require_node(arena, expr_id, base_dir, input_file, results, loaded, options, out_io, requires)
                 rescue ex : IndexError
@@ -2410,6 +2414,7 @@ module CrystalV2
                     log(options, out_io, "    [req] IndexError in require scan expr=#{expr_id.index}: #{ex.message}")
                   end
                 end
+                expr_i += 1
               end
               needs_source_fallback = source_requires_fallback?(source, requires, loaded)
               if needs_source_fallback
@@ -2638,8 +2643,13 @@ module CrystalV2
         case node
         when Frontend::ModuleNode
           if body = node.body
-            body.each do |child_id|
+            # Module bodies carry ExprId arrays too; avoid Array#each on them
+            # in the self-hosted require-scan corridor.
+            body_i = 0
+            while body_i < body.size
+              child_id = body.unsafe_fetch(body_i)
               process_require_node(arena, child_id, base_dir, input_file, results, loaded, options, out_io, requires_out)
+              body_i += 1
             end
           end
         when Frontend::RequireNode
