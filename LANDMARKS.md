@@ -3,6 +3,49 @@
 Updated: 2026-03-19
 Context: compiler/bootstrap/stage2-stability
 
+[LM-214|verified]: the remaining parser frontier after the committed
+`ClassNode.super_name` fix is another AST layout bug family, and the clean
+mover is a `DefNode` field-layout change in `ast.cr`, not more parser surgery.
+The candidate `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_defnode_layout_test_w1`
+reorders `DefNode` so the stable header (`name`, `is_abstract`, `visibility`,
+`receiver`) comes first and the optional payload (`params`, `return_type`,
+`body`) is assigned late. Verified consequences on the old post-`4d248597`
+frontier:
+- reduced fixed-path red witnesses from the `object.cr` family go green `5/5`
+  under `CRYSTAL_V2_STOP_AFTER_PARSE=1 --release --no-prelude`:
+  `/Users/sergey/Projects/Crystal/.codex_artifacts/worktrees/verify-ast-only/tmp_object_prettypair_b_plus_one_simple_probe.cr`
+  and
+  `/Users/sergey/Projects/Crystal/.codex_artifacts/worktrees/verify-ast-only/tmp_object_early_defs_tail_probe.cr`
+- `src/stdlib/object.cr` itself goes green `5/5` under the same parse-only stop
+- the broader compiler parse-only corridor also moves:
+  `bash regression_tests/stage2_full_compiler_parse_only_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_defnode_layout_test_w1 src/crystal_v2.cr 5`
+  -> `not reproduced`, `rcs: 0 0 0 0 0`
+Adversary/guard checks that stay green on the same candidate:
+- `stage2_class_super_hir_repro.sh` -> green `5/5`
+- `stage2_symbol_table_parse_repro.sh` -> green `5/5`
+- `stage2_process_executable_path_parse_repro.sh` -> green `5/5`
+- `stage2_bootstrap_shims_begin_puts_repro.sh` -> green `5/5`
+- `stage2_parse_args_tail_if_repro.sh` -> green `10/10`
+- `stage2_compiler_rt_fixint_float_noprelude_parse_repro.sh` -> green `5/5`
+Important refutations behind this pivot:
+- `parse_class` body-id scalarization was already refuted for this frontier
+- replacing `SmallVec(Parameter, 2)` with `Array(Parameter)` in
+  `parse_method_params` preserved the older superclass oracle but did not move
+  either reduced `object.cr` witness, so the container choice alone is not the
+  carrier
+- reduced subset work around `object.cr` showed the heaviest header shapes are
+  the generic `unsafe_as(type : T.class) forall T` family and, secondarily, the
+  typed `in?(collection : Object) : Bool` family; `abstract def dup` by itself
+  is not the primary carrier
+Reusable lesson: once multiple parser-only branches are refuted, repeated
+heterogeneous `DefNode` allocation can still be the actual bedrock. This is the
+same representation/layout bug family as the earlier `ClassNode.super_name`
+fix, not a grammar bug. The new post-fix frontier is no longer parser-only:
+direct `stage2 -> stage3` now fast-reds with `status=133`, and LLDB stops in
+`Crystal::MIR::LLVMIRGenerator#generate` after `[LLVM] total MIR functions: 1`.
+{F/G/R: 0.97/0.84/0.96}
+[verified]
+
 [LM-213|verified]: the current committed-HEAD HIR frontier includes a fixed-path
 explicit-superclass class witness, and the clean mover on that witness is the
 `ClassNode.super_name` field-layout change in `ast.cr`, not the uncommitted

@@ -1273,17 +1273,23 @@ module CrystalV2
         end
 
         getter name : Slice(UInt8)
-        getter params : Array(Parameter)?
-        getter return_type : Slice(UInt8)?
-        getter body : Array(ExprId)?
         getter is_abstract : Bool?
         getter visibility : Visibility?
         getter receiver : Slice(UInt8)? # Phase PERCENT_LITERALS: self or object name for class/singleton methods
+        getter params : Array(Parameter)?
+        getter return_type : Slice(UInt8)?
+        getter body : Array(ExprId)?
 
-        def initialize(@span : Span, @name : Slice(UInt8), @params : Array(Parameter)?,
-                       @return_type : Slice(UInt8)?, @body : Array(ExprId)?,
-                       @is_abstract : Bool? = nil, @visibility : Visibility? = nil,
-                       @receiver : Slice(UInt8)? = nil)
+        def initialize(@span : Span, @name : Slice(UInt8), params : Array(Parameter)?,
+                       return_type : Slice(UInt8)?, body : Array(ExprId)?,
+                       is_abstract : Bool? = nil, visibility : Visibility? = nil,
+                       receiver : Slice(UInt8)? = nil)
+          @is_abstract = is_abstract
+          @visibility = visibility
+          @receiver = receiver
+          @params = params
+          @return_type = return_type
+          @body = body
         end
       end
 

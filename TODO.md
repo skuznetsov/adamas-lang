@@ -1,8 +1,8 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-03-19)
 
 ## Current State
-- **Branch**: `bootstrap-benchmark`
-- **Latest committed baseline**: `58a85c8f` — harden recursive compiler_rt parse loading
+- **Branch**: `codex/class-super-hir-fix`
+- **Latest committed baseline**: `4d248597` — harden class superclass hir layout
 - **Working tree**:
   - unrelated local diffs in `src/compiler/frontend/lexer.cr`, `src/compiler/hir/ast_to_hir.cr`, `src/compiler/mir/hir_to_mir.cr`, and `src/crystal_v2.cr` must stay out of the next commit
   - untracked local benchmarks in `examples/bench_fib42_crystal` and `examples/bench_tree_crystal` must stay out of the next commit
@@ -16,6 +16,7 @@
 - **Current local stage2 parse-stop hardening candidate**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_lazyparse_earlyret_w1`
 - **Current local stage2 macro-text no-span falsifier candidate**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_macrotext_nospan_w1`
 - **Current local stage2 fixed-path superclass HIR candidate**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_verify_ast_only_w1`
+- **Current local stage2 DefNode layout candidate**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_defnode_layout_test_w1`
 - **Current clean committed-HEAD comparison candidate**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_verify_head_baseline_w1`
 - **Current timings**:
   - original Crystal -> fresh `stage1_release_funlookahead`: `544.95s`
@@ -57,6 +58,25 @@
   - current stage3 state from the same ast-only candidate:
     - `scripts/build_stage2_release.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_verify_ast_only_w1 /Users/sergey/Projects/Crystal/.codex_artifacts/stage3_release_verify_ast_only_w1` -> fast-red `status=139`
     - direct batch LLDB stack moved to `Parser#parse_method_params -> parse_def -> parse_module -> parse_program_roots_impl`
+- **Current DefNode layout boundary**:
+  - the clean DefNode-only layout candidate `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_defnode_layout_test_w1` moves the remaining parser frontier well past the old `object.cr` corridor:
+    - fixed-path reduced red witnesses go green `5/5` under `CRYSTAL_V2_STOP_AFTER_PARSE=1 --release --no-prelude`:
+      - `/Users/sergey/Projects/Crystal/.codex_artifacts/worktrees/verify-ast-only/tmp_object_prettypair_b_plus_one_simple_probe.cr`
+      - `/Users/sergey/Projects/Crystal/.codex_artifacts/worktrees/verify-ast-only/tmp_object_early_defs_tail_probe.cr`
+    - `src/stdlib/object.cr` itself goes green `5/5` under the same parse-only stop
+    - `bash regression_tests/stage2_full_compiler_parse_only_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_defnode_layout_test_w1 src/crystal_v2.cr 5`
+      -> `not reproduced`, `rcs: 0 0 0 0 0`
+  - adversary/guard checks on the same candidate all stay green:
+    - `bash regression_tests/stage2_class_super_hir_repro.sh ...` -> green `5/5`
+    - `bash regression_tests/stage2_symbol_table_parse_repro.sh ...` -> green `5/5`
+    - `bash regression_tests/stage2_process_executable_path_parse_repro.sh ...` -> green `5/5`
+    - `bash regression_tests/stage2_bootstrap_shims_begin_puts_repro.sh ...` -> green `5/5`
+    - `bash regression_tests/stage2_parse_args_tail_if_repro.sh ...` -> green `10/10`
+    - `bash regression_tests/stage2_compiler_rt_fixint_float_noprelude_parse_repro.sh ...` -> green `5/5`
+  - post-fix stage3 frontier is now later and different:
+    - direct `stage2_release_defnode_layout_test_w1 src/crystal_v2.cr --release -o ...` still fast-red with `status=133`
+    - direct LLDB stop site moved to `Crystal::MIR::LLVMIRGenerator#generate` after `[LLVM] total MIR functions: 1`
+    - this is a real boundary shift, not full bootstrap completion yet
 - **Compiler parse-only status**:
   - baseline `stage2_release_nameprio_fresh`: `rc=0,138,138,138,138`
   - fresh `stage2_release_funlookahead_fresh`: `rc=0,0,0,0,0`
