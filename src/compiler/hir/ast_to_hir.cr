@@ -38181,7 +38181,18 @@ module Crystal::HIR
           case body_node
           when CrystalV2::Compiler::Frontend::FunNode
             # Register external function
-            register_extern_fun(lib_name, body_node)
+            if env_get("DEBUG_SKIP_LIB_FUN_EXTERN_REG")
+              next
+            end
+            register_extern_fun_parts(
+              lib_name,
+              body_node.span,
+              body_node.name,
+              body_node.real_name,
+              body_node.params,
+              body_node.return_type,
+              body_node.varargs
+            )
           when CrystalV2::Compiler::Frontend::GlobalVarDeclNode
             raw_name = (safe_slice_to_string(body_node.name) || "")
             var_name = raw_name.lstrip('$')
@@ -38231,23 +38242,65 @@ module Crystal::HIR
       nil_lit.id
     end
 
-    private def register_extern_fun(lib_name : String?, node : CrystalV2::Compiler::Frontend::FunNode)
-      safe_str_guard(node.name, "return")
-      fun_name = (safe_slice_to_string(node.name) || "")
-      real_name = if rn = node.real_name
-                    safe_str_guard(rn, "return")
-                    (safe_slice_to_string(rn) || "")
-                  else
-                    fun_name
-                  end
-
-      # Top-level `fun main` in the stdlib is a C-ABI entrypoint in the real compiler.
-      # Our bootstrap uses a synthetic wrapper main, so skip registering it as an extern
-      # to avoid LLVM redefinition (declare + define).
-      if lib_name.nil? && fun_name == "main"
-        return
+    private def read_extern_identifier(source : String, start_index : Int32) : {String, Int32}?
+      start = start_index
+      while start < source.bytesize && source.byte_at(start).unsafe_chr.ascii_whitespace?
+        start += 1
       end
 
+      finish = start
+      while finish < source.bytesize
+        ch = source.byte_at(finish).unsafe_chr
+        break unless ch.alphanumeric? || ch == '_'
+        finish += 1
+      end
+
+      return nil if finish <= start
+      {source.byte_slice(start, finish - start), finish}
+    end
+
+    private def extern_fun_names_from_source(
+      span : CrystalV2::Compiler::Frontend::Span,
+      arena : CrystalV2::Compiler::Frontend::ArenaLike
+    ) : {String, String}?
+      source = source_for_arena(arena)
+      return nil unless source
+
+      start = span.start_offset
+      finish = span.end_offset
+      return nil if start < 0 || finish <= start || finish > source.bytesize
+
+      snippet = source.byte_slice(start, finish - start)
+      cursor = snippet.index("fun")
+      return nil unless cursor
+      cursor += 3
+
+      name_and_cursor = read_extern_identifier(snippet, cursor)
+      return nil unless name_and_cursor
+      fun_name = name_and_cursor[0]
+      cursor = name_and_cursor[1]
+      real_name = fun_name
+
+      while cursor < snippet.bytesize && snippet.byte_at(cursor).unsafe_chr.ascii_whitespace?
+        cursor += 1
+      end
+
+      if cursor < snippet.bytesize && snippet.byte_at(cursor).unsafe_chr == '='
+        cursor += 1
+        real_name_and_cursor = read_extern_identifier(snippet, cursor)
+        return nil unless real_name_and_cursor
+        real_name = real_name_and_cursor[0]
+        cursor = real_name_and_cursor[1]
+      end
+
+      {fun_name, real_name}
+    end
+
+    private def resolve_extern_fun_signature(
+      lib_name : String?,
+      params : Array(CrystalV2::Compiler::Frontend::Parameter)?,
+      return_type_slice : Slice(UInt8)?
+    ) : {Array(TypeRef), TypeRef}
       old_class = @current_class
       @current_class = lib_name if lib_name
       # Self-hosted release builds still corrupt some transient wrapper-heavy
@@ -38256,10 +38309,9 @@ module Crystal::HIR
       param_type_ids = [] of UInt32
       return_type_id = TypeRef::VOID.id
       begin
-        if params = node.params
+        if params
           each_param(params) do |param|
             if type_ann = param.type_annotation
-              safe_str_guard(type_ann, "next")
               type_name = (safe_slice_to_string(type_ann) || "")
               param_type_ids << type_ref_for_c_type(type_name).id
             else
@@ -38268,9 +38320,7 @@ module Crystal::HIR
           end
         end
 
-        # Return type
-        return_type_id = if ret = node.return_type
-                           safe_str_guard(ret, "return")
+        return_type_id = if ret = return_type_slice
                            ret_str = (safe_slice_to_string(ret) || "")
                            type_ref_for_c_type(ret_str).id
                          else
@@ -38283,26 +38333,62 @@ module Crystal::HIR
       param_types = Array(TypeRef).new(param_type_ids.size) do |i|
         TypeRef.new(param_type_ids.unsafe_fetch(i))
       end
-      return_type = TypeRef.new(return_type_id)
+      {param_types, TypeRef.new(return_type_id)}
+    end
+
+    private def register_extern_fun_parts(
+      lib_name : String?,
+      span : CrystalV2::Compiler::Frontend::Span,
+      name_slice : Slice(UInt8),
+      real_name_slice : Slice(UInt8)?,
+      params : Array(CrystalV2::Compiler::Frontend::Parameter)?,
+      return_type_slice : Slice(UInt8)?,
+      varargs : Bool
+    ) : Nil
+      if names = extern_fun_names_from_source(span, @arena)
+        fun_name = names[0]
+        real_name = names[1]
+      else
+        safe_str_guard(name_slice, "return")
+        fun_name = (safe_slice_to_string(name_slice) || "")
+        real_name = if rn = real_name_slice
+                      safe_str_guard(rn, "return")
+                      (safe_slice_to_string(rn) || "")
+                    else
+                      fun_name
+                    end
+      end
+
+      # Top-level `fun main` in the stdlib is a C-ABI entrypoint in the real compiler.
+      # Our bootstrap uses a synthetic wrapper main, so skip registering it as an extern
+      # to avoid LLVM redefinition (declare + define).
+      if lib_name.nil? && fun_name == "main"
+        return
+      end
+
+      param_types, return_type = resolve_extern_fun_signature(lib_name, params, return_type_slice)
 
       if env_get("DEBUG_LIBC_EXTERN") && lib_name == "LibC" && fun_name == "dladdr"
         param_names = param_types.map { |t| get_type_name_from_ref(t) }.join(", ")
         STDERR.puts "[DEBUG_LIBC_EXTERN] #{lib_name}.#{fun_name} params=[#{param_names}] return=#{get_type_name_from_ref(return_type)}"
       end
 
-      # Register the external function
       @module.add_extern_function(ExternFunction.new(
         name: fun_name,
         real_name: real_name,
         lib_name: lib_name,
         param_types: param_types,
         return_type: return_type,
-        varargs: node.varargs
+        varargs: varargs
       ))
 
       if env_get("DEBUG_LIB_REG") && lib_name == "LibUnwind" && fun_name == "raise_exception"
         STDERR.puts "[LIB_REG] extern lib=#{lib_name} fun=#{fun_name} real=#{real_name}"
       end
+    end
+
+    private def register_extern_fun(lib_name : String?, node : CrystalV2::Compiler::Frontend::FunNode)
+      register_extern_fun_parts(lib_name, node.span, node.name, node.real_name, node.params, node.return_type, node.varargs)
     end
 
     private def resolve_extern_global_type(lib_name : String, type_name : String) : TypeRef
@@ -43096,6 +43182,8 @@ module Crystal::HIR
       node : CrystalV2::Compiler::Frontend::BinaryNode,
       op_str : String,
     ) : ValueId
+      truthy_targets = truthy_narrowing_targets(node.left)
+      falsy_targets = falsy_narrowing_targets(node.left)
       left_id = lower_expr(ctx, node.left)
       left_type = ctx.type_of(left_id)
 
@@ -43108,10 +43196,12 @@ module Crystal::HIR
             then_type = ctx.type_of(left_id)
             return unwrap_non_nil_to_block(ctx, ctx.current_block, left_id, then_type)
           else
+            apply_truthy_narrowing(ctx, falsy_targets)
             return lower_expr(ctx, node.right)
           end
         else
           if static_left
+            apply_truthy_narrowing(ctx, truthy_targets)
             return lower_expr(ctx, node.right)
           else
             return left_id
@@ -43133,6 +43223,7 @@ module Crystal::HIR
       then_value = if op_str == "||"
                      left_id
                    else
+                     apply_truthy_narrowing(ctx, truthy_targets)
                      lower_expr(ctx, node.right)
                    end
       # In the then-branch, `left` is proven truthy by `cond_id`.
@@ -43158,6 +43249,7 @@ module Crystal::HIR
       ctx.current_block = else_block
       ctx.restore_locals(pre_branch_locals)
       else_value = if op_str == "||"
+                     apply_truthy_narrowing(ctx, falsy_targets)
                      lower_expr(ctx, node.right)
                    else
                      left_id
@@ -43238,32 +43330,99 @@ module Crystal::HIR
       nil_lit.id
     end
 
+    private def merge_narrowing_target_names(left : Array(String), right : Array(String)) : Array(String)
+      right.each do |entry|
+        left << entry unless left.includes?(entry)
+      end
+      left
+    end
+
     private def truthy_narrowing_targets(condition_id : ExprId) : Array(String)
+      non_nil_narrowing_targets(condition_id, when_truthy: true)
+    end
+
+    private def falsy_narrowing_targets(condition_id : ExprId) : Array(String)
+      non_nil_narrowing_targets(condition_id, when_truthy: false)
+    end
+
+    private def non_nil_narrowing_targets(condition_id : ExprId, *, when_truthy : Bool) : Array(String)
       return [] of String if condition_id.invalid?
 
       node = @arena[condition_id]
       case node
       when CrystalV2::Compiler::Frontend::GroupingNode
-        truthy_narrowing_targets(node.expression)
+        non_nil_narrowing_targets(node.expression, when_truthy: when_truthy)
+      when CrystalV2::Compiler::Frontend::UnaryNode
+        op = (safe_slice_to_string(node.operator) || "")
+        if op == "!"
+          non_nil_narrowing_targets(node.operand, when_truthy: !when_truthy)
+        else
+          [] of String
+        end
       when CrystalV2::Compiler::Frontend::IdentifierNode
-        [(safe_slice_to_string(node.name) || "")]
+        if when_truthy
+          [(safe_slice_to_string(node.name) || "")]
+        else
+          [] of String
+        end
       when CrystalV2::Compiler::Frontend::AssignNode
-        target = @arena[node.target]
-        if target.is_a?(CrystalV2::Compiler::Frontend::IdentifierNode)
-          [(safe_slice_to_string(target.name) || "")]
+        if when_truthy
+          target = @arena[node.target]
+          if target.is_a?(CrystalV2::Compiler::Frontend::IdentifierNode)
+            [(safe_slice_to_string(target.name) || "")]
+          else
+            [] of String
+          end
         else
           [] of String
         end
       when CrystalV2::Compiler::Frontend::BinaryNode
         op = (safe_slice_to_string(node.operator) || "")
         if op == "&&"
-          left = truthy_narrowing_targets(node.left)
-          right = truthy_narrowing_targets(node.right)
-          right.each { |entry| left << entry }
-          left
+          if when_truthy
+            left = non_nil_narrowing_targets(node.left, when_truthy: true)
+            right = non_nil_narrowing_targets(node.right, when_truthy: true)
+            merge_narrowing_target_names(left, right)
+          else
+            [] of String
+          end
+        elsif op == "||"
+          if when_truthy
+            [] of String
+          else
+            left = non_nil_narrowing_targets(node.left, when_truthy: false)
+            right = non_nil_narrowing_targets(node.right, when_truthy: false)
+            merge_narrowing_target_names(left, right)
+          end
         else
           [] of String
         end
+      when CrystalV2::Compiler::Frontend::CallNode
+        callee_node = @arena[node.callee]
+        if callee_node.is_a?(CrystalV2::Compiler::Frontend::MemberAccessNode) && node.args.empty?
+          non_nil_narrowing_targets_for_member_access(callee_node, when_truthy: when_truthy)
+        else
+          [] of String
+        end
+      when CrystalV2::Compiler::Frontend::MemberAccessNode
+        non_nil_narrowing_targets_for_member_access(node, when_truthy: when_truthy)
+      else
+        [] of String
+      end
+    end
+
+    private def non_nil_narrowing_targets_for_member_access(
+      node : CrystalV2::Compiler::Frontend::MemberAccessNode,
+      *,
+      when_truthy : Bool
+    ) : Array(String)
+      member_name = (safe_slice_to_string(node.member) || "")
+      return [] of String unless member_name == "nil?" || member_name == "null?"
+      return [] of String if when_truthy
+
+      recv_node = @arena[node.object]
+      if recv_node.is_a?(CrystalV2::Compiler::Frontend::IdentifierNode)
+        [(safe_slice_to_string(recv_node.name) || "")]
       else
         [] of String
       end
@@ -43277,6 +43436,8 @@ module Crystal::HIR
       else_block : BlockId,
     ) : Nil
       op_str = node.operator_string
+      truthy_targets = truthy_narrowing_targets(node.left)
+      falsy_targets = falsy_narrowing_targets(node.left)
       left_id = lower_expr(ctx, node.left)
       left_type = ctx.type_of(left_id)
       left_cond = lower_truthy_check(ctx, left_id, left_type)
@@ -43289,6 +43450,7 @@ module Crystal::HIR
           if static_left
             ctx.terminate(Jump.new(rhs_block))
             ctx.current_block = rhs_block
+            apply_truthy_narrowing(ctx, truthy_targets)
             lower_condition_branch(ctx, node.right, then_block, else_block)
           else
             ctx.terminate(Jump.new(else_block))
@@ -43299,6 +43461,7 @@ module Crystal::HIR
           else
             ctx.terminate(Jump.new(rhs_block))
             ctx.current_block = rhs_block
+            apply_truthy_narrowing(ctx, falsy_targets)
             lower_condition_branch(ctx, node.right, then_block, else_block)
           end
         end
@@ -43307,10 +43470,12 @@ module Crystal::HIR
       if op_str == "&&"
         ctx.terminate(Branch.new(left_cond, rhs_block, else_block))
         ctx.current_block = rhs_block
+        apply_truthy_narrowing(ctx, truthy_targets)
         lower_condition_branch(ctx, node.right, then_block, else_block)
       else
         ctx.terminate(Branch.new(left_cond, then_block, rhs_block))
         ctx.current_block = rhs_block
+        apply_truthy_narrowing(ctx, falsy_targets)
         lower_condition_branch(ctx, node.right, then_block, else_block)
       end
     end
@@ -44150,6 +44315,7 @@ module Crystal::HIR
 
     private def lower_if(ctx : LoweringContext, node : CrystalV2::Compiler::Frontend::IfNode) : ValueId
       truthy_targets = truthy_narrowing_targets(node.condition)
+      falsy_targets = falsy_narrowing_targets(node.condition)
       is_a_targets = is_a_narrowing_targets(node.condition)
       static_cond = static_is_a_condition_value(ctx, node.condition)
       static_cond = static_nil_condition_value(ctx, node.condition) if static_cond.nil?
@@ -44164,6 +44330,7 @@ module Crystal::HIR
         end
 
         ctx.push_scope(ScopeKind::Block)
+        apply_truthy_narrowing(ctx, falsy_targets)
         else_value = if else_body = node.else_body
                        if else_body.empty?
                          nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
@@ -44226,6 +44393,7 @@ module Crystal::HIR
           end
 
           ctx.push_scope(ScopeKind::Block)
+          apply_truthy_narrowing(ctx, falsy_targets)
           else_value = if else_body = node.else_body
                          if else_body.empty?
                            nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
@@ -44251,6 +44419,7 @@ module Crystal::HIR
       # Branch lowering must restore that stack as well, otherwise then-branch updates
       # can leak into elsif/else and produce invalid phi incoming values.
       pre_inline_caller_locals = @inline_caller_locals_stack.map(&.dup)
+      accumulated_falsy_targets = falsy_targets.dup
 
       # Process "then" branch
       @inline_caller_locals_stack = pre_inline_caller_locals.map(&.dup)
@@ -44287,9 +44456,11 @@ module Crystal::HIR
 
           # We're now in the test block for this elsif
           ctx.current_block = next_test_block
+          apply_truthy_narrowing(ctx, accumulated_falsy_targets)
 
           # Lower elsif condition
           elsif_truthy_targets = truthy_narrowing_targets(elsif_branch.condition)
+          elsif_falsy_targets = falsy_narrowing_targets(elsif_branch.condition)
           elsif_is_a_targets = is_a_narrowing_targets(elsif_branch.condition)
           elsif_cond_id = lower_expr(ctx, elsif_branch.condition)
           elsif_cond_type = ctx.type_of(elsif_cond_id)
@@ -44309,6 +44480,7 @@ module Crystal::HIR
           # Process elsif body
           ctx.current_block = elsif_body_block
           ctx.push_scope(ScopeKind::Block)
+          apply_truthy_narrowing(ctx, accumulated_falsy_targets)
           apply_truthy_narrowing(ctx, elsif_truthy_targets)
           apply_is_a_narrowing(ctx, elsif_is_a_targets)
           elsif_value = lower_body(ctx, elsif_branch.body)
@@ -44330,6 +44502,7 @@ module Crystal::HIR
             ctx.terminate(Jump.new(merge_block))
           end
           branches << {elsif_exit_block, elsif_value, elsif_locals, elsif_flows_to_merge, elsif_inline_locals}
+          merge_narrowing_target_names(accumulated_falsy_targets, elsif_falsy_targets)
         end
       end
 
@@ -44338,6 +44511,7 @@ module Crystal::HIR
       @inline_caller_locals_stack = pre_inline_caller_locals.map(&.dup)
       ctx.current_block = next_test_block
       ctx.push_scope(ScopeKind::Block)
+      apply_truthy_narrowing(ctx, accumulated_falsy_targets)
       else_value = if else_body = node.else_body
                      if else_body.empty?
                        nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
@@ -44885,6 +45059,7 @@ module Crystal::HIR
       pre_branch_locals = ctx.save_locals
       pre_inline_caller_locals = @inline_caller_locals_stack.map(&.dup)
       truthy_targets = truthy_narrowing_targets(node.condition)
+      falsy_targets = falsy_narrowing_targets(node.condition)
       is_a_targets = is_a_narrowing_targets(node.condition)
 
       # Negate condition
@@ -44902,6 +45077,7 @@ module Crystal::HIR
       ctx.current_block = then_block
       ctx.restore_locals(pre_branch_locals)
       ctx.push_scope(ScopeKind::Block)
+      apply_truthy_narrowing(ctx, falsy_targets)
       then_value = lower_body(ctx, node.then_branch)
       then_exit = ctx.current_block
       ctx.pop_scope
@@ -46247,6 +46423,7 @@ module Crystal::HIR
     private def lower_ternary(ctx : LoweringContext, node : CrystalV2::Compiler::Frontend::TernaryNode) : ValueId
       # Collect narrowing targets BEFORE lowering condition
       truthy_targets = truthy_narrowing_targets(node.condition)
+      falsy_targets = falsy_narrowing_targets(node.condition)
       is_a_targets = is_a_narrowing_targets(node.condition)
 
       cond_id = lower_expr(ctx, node.condition)
@@ -46281,6 +46458,7 @@ module Crystal::HIR
 
       ctx.current_block = else_block
       ctx.restore_locals(pre_branch_locals)
+      apply_truthy_narrowing(ctx, falsy_targets)
       else_value = lower_expr(ctx, node.false_branch)
       else_exit = ctx.current_block
       else_locals = ctx.save_locals
@@ -51425,6 +51603,60 @@ module Crystal::HIR
       lower_call(ctx, call_node)
     end
 
+    private def prelude_io_print_available?(method_name : String) : Bool
+      !resolve_method_with_inheritance("IO", method_name).nil?
+    end
+
+    private def emit_runtime_print_fallback(
+      ctx : LoweringContext,
+      method_name : String,
+      arg_id : ValueId,
+      arg_type : TypeRef,
+    ) : ValueId?
+      return nil if prelude_io_print_available?(method_name)
+
+      lowered_arg_id = arg_id
+      extern_name = case arg_type
+                    when TypeRef::INT8, TypeRef::INT16, TypeRef::INT32
+                      if arg_type != TypeRef::INT32
+                        cast = Cast.new(ctx.next_id, TypeRef::INT32, arg_id, TypeRef::INT32, safe: false)
+                        ctx.emit(cast)
+                        ctx.register_type(cast.id, TypeRef::INT32)
+                        lowered_arg_id = cast.id
+                      end
+                      method_name == "puts" ? "__crystal_v2_print_int32_ln" : "__crystal_v2_print_int32"
+                    when TypeRef::UINT8, TypeRef::UINT16, TypeRef::UINT32
+                      if arg_type != TypeRef::UINT32
+                        cast = Cast.new(ctx.next_id, TypeRef::UINT32, arg_id, TypeRef::UINT32, safe: false)
+                        ctx.emit(cast)
+                        ctx.register_type(cast.id, TypeRef::UINT32)
+                        lowered_arg_id = cast.id
+                      end
+                      method_name == "puts" ? "__crystal_v2_print_uint32_ln" : "__crystal_v2_print_uint32"
+                    when TypeRef::INT64
+                      method_name == "puts" ? "__crystal_v2_print_int64_ln" : "__crystal_v2_print_int64"
+                    when TypeRef::UINT64
+                      method_name == "puts" ? "__crystal_v2_print_uint64_ln" : "__crystal_v2_print_uint64"
+                    when TypeRef::FLOAT64
+                      method_name == "puts" ? "__crystal_v2_print_float64_ln" : "__crystal_v2_print_float64"
+                    when TypeRef::FLOAT32
+                      method_name == "puts" ? "__crystal_v2_print_float32_ln" : "__crystal_v2_print_float32"
+                    when TypeRef::STRING
+                      method_name == "puts" ? "__crystal_v2_print_string_ln" : "__crystal_v2_print_string"
+                    when TypeRef::BOOL
+                      method_name == "puts" ? "__crystal_v2_print_bool_ln" : "__crystal_v2_print_bool"
+                    else
+                      nil
+                    end
+
+      return nil unless extern_name
+
+      ext_call = ExternCall.new(ctx.next_id, TypeRef::VOID, extern_name, [lowered_arg_id])
+      ctx.emit(ext_call)
+      ctx.register_type(ext_call.id, TypeRef::NIL)
+      ext_call.id
+    end
+
     private def lower_call(ctx : LoweringContext, node : CrystalV2::Compiler::Frontend::CallNode) : ValueId
       if env_get("DEBUG_MISSING_SYMS")
         callee_node_dbg = @arena[node.callee]
@@ -53621,6 +53853,10 @@ module Crystal::HIR
             # Lower the argument (reuse eagerly lowered result if available)
             arg_id = eager_arg_id || with_arena(call_arena) { lower_expr(ctx, call_args[0]) }
 
+            if runtime_print = emit_runtime_print_fallback(ctx, method_name, arg_id, arg_type)
+              return runtime_print
+            end
+
             # For Float32/Float64, use direct printf-based extern calls to avoid
             # broken Float::Printer.shortest (yield/block issues)
             float_extern = case arg_type
@@ -53813,8 +54049,11 @@ module Crystal::HIR
                              _post_arg_type == TypeRef::BOOL ||
                              _post_arg_type == TypeRef::FLOAT32 ||
                              _post_arg_type == TypeRef::FLOAT64
-        if _post_is_primitive
+        if _post_is_primitive || _post_arg_type == TypeRef::STRING
           _post_arg_id = args[0]
+          if _runtime_print = emit_runtime_print_fallback(ctx, method_name, _post_arg_id, _post_arg_type)
+            return _runtime_print
+          end
           # Float special handling
           _float_extern = case _post_arg_type
                           when TypeRef::FLOAT64

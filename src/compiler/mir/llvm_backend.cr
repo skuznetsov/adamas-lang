@@ -560,6 +560,7 @@ module Crystal::MIR
     # String type_id for runtime helpers and string literals
     @string_type_id : Int32 = 16  # TypeRef::STRING.id default, updated during prelude emission
     @dtor_type_ids : Set(UInt32) = Set(UInt32).new  # Type IDs that have ARC destructors
+    @emit_regex_runtime : Bool = false
 
     # Cross-block value tracking for dominance fix
     @value_def_block : Hash(ValueId, BlockId) = {} of ValueId => BlockId  # value → block where defined
@@ -833,6 +834,7 @@ module Crystal::MIR
       @output = output || IO::Memory.new
       @toplevel_output = nil
       generated_in_memory = output.nil?
+      @emit_regex_runtime = regex_runtime_needed?(@module.functions)
 
       STDERR.puts "  [LLVM] emit_header..." if @progress
       emit_header
@@ -1213,7 +1215,7 @@ module Crystal::MIR
     end
 
     private def runtime_declared_extern_names : Array(String)
-      [
+      names = [
         # C/stdio/memory/string
         "malloc", "calloc", "realloc", "free", "printf", "puts", "exit", "abort",
         "perror", "dprintf", "fwrite", "fflush", "fclose", "fopen", "fileno", "fdopen",
@@ -1247,15 +1249,55 @@ module Crystal::MIR
         "GC_get_push_other_roots", "GC_set_push_other_roots",
         "GC_push_all_eager", "GC_get_my_stackbottom",
         "_NSGetExecutablePath",
-        # PCRE2
-        "pcre2_compile_8", "pcre2_match_8", "pcre2_match_data_create_from_pattern_8",
-        "pcre2_jit_compile_8", "pcre2_get_ovector_pointer_8", "pcre2_get_ovector_count_8",
-        "pcre2_match_data_free_8",
       ] of String
+      if @emit_regex_runtime
+        names.concat([
+          "pcre2_compile_8", "pcre2_match_8", "pcre2_match_data_create_from_pattern_8",
+          "pcre2_jit_compile_8", "pcre2_get_ovector_pointer_8", "pcre2_get_ovector_count_8",
+          "pcre2_match_data_free_8",
+        ])
+      end
+      names
     end
 
     private def add_runtime_declared_extern_names(already_declared : Set(String))
       runtime_declared_extern_names.each { |name| already_declared << name }
+    end
+
+    private def regex_runtime_needed?(functions : Enumerable(Function)) : Bool
+      functions.any? do |func|
+        regex_runtime_needed_for_function?(func)
+      end
+    end
+
+    private def regex_runtime_needed_for_function?(func : Function) : Bool
+      mangled = mangle_function_name(func.name)
+      return true if regex_runtime_override_function?(mangled)
+
+      func.blocks.any? do |block|
+        block.instructions.any? do |inst|
+          case inst
+          when ExternCall
+            regex_runtime_helper_extern?(inst.extern_name)
+          else
+            false
+          end
+        end
+      end
+    end
+
+    private def regex_runtime_override_function?(mangled : String) : Bool
+      return true if mangled == "String$Hmatches$Q$$Regex_Int32_Regex$CCMatchOptions"
+      return true if mangled.starts_with?("String$Hgsub$$Regex")
+      return true if mangled.starts_with?("Regex$Hmatch_at_byte_index")
+      return true if mangled == "Regex$CCMatchData$Hbyte_begin$$Int32"
+      return true if mangled == "Regex$CCMatchData$Hbyte_begin$$arity1"
+      return true if mangled == "Regex$CCMatchData$H$IDX$$Int32"
+      false
+    end
+
+    private def regex_runtime_helper_extern?(extern_name : String) : Bool
+      extern_name.starts_with?("__crystal_v2_regex_") || extern_name == "__crystal_v2_string_gsub_regex"
     end
 
     private def emit_undefined_extern_declarations
@@ -1289,11 +1331,12 @@ module Crystal::MIR
       already_declared << "__crystal_v2_sort_i32_array_dup" << "__crystal_v2_sort_string_array_dup"
       already_declared << "__cmp_i32" << "__cmp_string"
       already_declared << "llvm.memcpy.p0.p0.i32" << "llvm.memcpy.p0.p0.i64" << "llvm.memmove.p0.p0.i64"
-      # PCRE2 functions (declared in emit_runtime_declarations)
-      already_declared << "pcre2_compile_8" << "pcre2_match_8"
-      already_declared << "pcre2_match_data_create_from_pattern_8"
-      already_declared << "pcre2_jit_compile_8" << "pcre2_get_ovector_pointer_8"
-      already_declared << "pcre2_get_ovector_count_8" << "pcre2_match_data_free_8"
+      if @emit_regex_runtime
+        already_declared << "pcre2_compile_8" << "pcre2_match_8"
+        already_declared << "pcre2_match_data_create_from_pattern_8"
+        already_declared << "pcre2_jit_compile_8" << "pcre2_get_ovector_pointer_8"
+        already_declared << "pcre2_get_ovector_count_8" << "pcre2_match_data_free_8"
+      end
       # C stdlib functions already declared in emit_runtime_declarations
       already_declared << "getcwd" << "realpath"
       # Declared with concrete signatures in emit_runtime_declarations.
@@ -2603,24 +2646,30 @@ module Crystal::MIR
       emit_raw "\n"
       STDERR.puts "  [RT_DECL] after c decls" if runtime_decl_trace
 
-      # PCRE2 library functions
-      emit_raw "declare ptr @pcre2_compile_8(ptr, i64, i32, ptr, ptr, ptr)\n"
-      emit_raw "declare i32 @pcre2_match_8(ptr, ptr, i64, i64, i32, ptr, ptr)\n"
-      emit_raw "declare ptr @pcre2_match_data_create_from_pattern_8(ptr, ptr)\n"
-      emit_raw "declare i32 @pcre2_jit_compile_8(ptr, i32)\n"
-      emit_raw "declare ptr @pcre2_get_ovector_pointer_8(ptr)\n"
-      emit_raw "declare i32 @pcre2_get_ovector_count_8(ptr)\n"
-      emit_raw "declare void @pcre2_match_data_free_8(ptr)\n"
-      # Keep declarations only; missing-stub filtering already has these names
-      # in the built-in allowlist.
-      emit_raw "\n"
+      if @emit_regex_runtime
+        # PCRE2 library functions
+        emit_raw "declare ptr @pcre2_compile_8(ptr, i64, i32, ptr, ptr, ptr)\n"
+        emit_raw "declare i32 @pcre2_match_8(ptr, ptr, i64, i64, i32, ptr, ptr)\n"
+        emit_raw "declare ptr @pcre2_match_data_create_from_pattern_8(ptr, ptr)\n"
+        emit_raw "declare i32 @pcre2_jit_compile_8(ptr, i32)\n"
+        emit_raw "declare ptr @pcre2_get_ovector_pointer_8(ptr)\n"
+        emit_raw "declare i32 @pcre2_get_ovector_count_8(ptr)\n"
+        emit_raw "declare void @pcre2_match_data_free_8(ptr)\n"
+        # Keep declarations only; missing-stub filtering already has these names
+        # in the built-in allowlist.
+        emit_raw "\n"
+      end
       STDERR.puts "  [RT_DECL] after pcre2 decls" if runtime_decl_trace
 
       # Format strings for printing
       emit_raw "@.int_fmt = private constant [4 x i8] c\"%d\\0A\\00\"\n"
       emit_raw "@.int_fmt_no_nl = private constant [3 x i8] c\"%d\\00\"\n"
+      emit_raw "@.uint_fmt = private constant [4 x i8] c\"%u\\0A\\00\"\n"
+      emit_raw "@.uint_fmt_no_nl = private constant [3 x i8] c\"%u\\00\"\n"
       emit_raw "@.long_fmt = private constant [5 x i8] c\"%ld\\0A\\00\"\n"
       emit_raw "@.long_fmt_no_nl = private constant [4 x i8] c\"%ld\\00\"\n"
+      emit_raw "@.ulong_fmt = private constant [5 x i8] c\"%lu\\0A\\00\"\n"
+      emit_raw "@.ulong_fmt_no_nl = private constant [4 x i8] c\"%lu\\00\"\n"
       emit_raw "@.float_fmt_no_nl = private constant [3 x i8] c\"%g\\00\"\n"
       emit_raw "@.float_fmt = private constant [4 x i8] c\"%g\\0A\\00\"\n"
       # bool_to_string constants: Crystal String structs in prelude mode, C strings in no-prelude mode
@@ -2804,6 +2853,16 @@ module Crystal::MIR
       emit_raw "  ret void\n"
       emit_raw "}\n\n"
 
+      emit_raw "define void @__crystal_v2_print_uint32(i32 %val) {\n"
+      emit_raw "  call i32 (ptr, ...) @printf(ptr @.uint_fmt_no_nl, i32 %val)\n"
+      emit_raw "  ret void\n"
+      emit_raw "}\n\n"
+
+      emit_raw "define void @__crystal_v2_print_uint32_ln(i32 %val) {\n"
+      emit_raw "  call i32 (ptr, ...) @printf(ptr @.uint_fmt, i32 %val)\n"
+      emit_raw "  ret void\n"
+      emit_raw "}\n\n"
+
       emit_raw "define void @__crystal_v2_print_int64(i64 %val) {\n"
       emit_raw "  call i32 (ptr, ...) @printf(ptr @.long_fmt_no_nl, i64 %val)\n"
       emit_raw "  ret void\n"
@@ -2811,6 +2870,54 @@ module Crystal::MIR
 
       emit_raw "define void @__crystal_v2_print_int64_ln(i64 %val) {\n"
       emit_raw "  call i32 (ptr, ...) @printf(ptr @.long_fmt, i64 %val)\n"
+      emit_raw "  ret void\n"
+      emit_raw "}\n\n"
+
+      emit_raw "define void @__crystal_v2_print_uint64(i64 %val) {\n"
+      emit_raw "  call i32 (ptr, ...) @printf(ptr @.ulong_fmt_no_nl, i64 %val)\n"
+      emit_raw "  ret void\n"
+      emit_raw "}\n\n"
+
+      emit_raw "define void @__crystal_v2_print_uint64_ln(i64 %val) {\n"
+      emit_raw "  call i32 (ptr, ...) @printf(ptr @.ulong_fmt, i64 %val)\n"
+      emit_raw "  ret void\n"
+      emit_raw "}\n\n"
+
+      emit_raw "define void @__crystal_v2_print_string(ptr %str) {\n"
+      emit_raw "entry:\n"
+      emit_raw "  %str_null = icmp eq ptr %str, null\n"
+      emit_raw "  br i1 %str_null, label %done, label %print\n"
+      emit_raw "print:\n"
+      emit_raw "  %bs_ptr = getelementptr i8, ptr %str, i32 4\n"
+      emit_raw "  %bytesize = load i32, ptr %bs_ptr\n"
+      emit_raw "  %data = getelementptr i8, ptr %str, i32 12\n"
+      emit_raw "  %bs64 = sext i32 %bytesize to i64\n"
+      emit_raw "  call i64 @write(i32 1, ptr %data, i64 %bs64)\n"
+      emit_raw "  br label %done\n"
+      emit_raw "done:\n"
+      emit_raw "  ret void\n"
+      emit_raw "}\n\n"
+
+      emit_raw "define void @__crystal_v2_print_string_ln(ptr %str) {\n"
+      emit_raw "  call void @__crystal_v2_print_string(ptr %str)\n"
+      emit_raw "  call i64 @write(i32 1, ptr @.str_newline, i64 1)\n"
+      emit_raw "  ret void\n"
+      emit_raw "}\n\n"
+
+      emit_raw "define void @__crystal_v2_print_bool(i1 %val) {\n"
+      emit_raw "entry:\n"
+      emit_raw "  br i1 %val, label %print_true, label %print_false\n"
+      emit_raw "print_true:\n"
+      emit_raw "  call i64 @write(i32 1, ptr @.str.true, i64 4)\n"
+      emit_raw "  ret void\n"
+      emit_raw "print_false:\n"
+      emit_raw "  call i64 @write(i32 1, ptr @.str.false, i64 5)\n"
+      emit_raw "  ret void\n"
+      emit_raw "}\n\n"
+
+      emit_raw "define void @__crystal_v2_print_bool_ln(i1 %val) {\n"
+      emit_raw "  call void @__crystal_v2_print_bool(i1 %val)\n"
+      emit_raw "  call i64 @write(i32 1, ptr @.str_newline, i64 1)\n"
       emit_raw "  ret void\n"
       emit_raw "}\n\n"
       STDERR.puts "  [RT_DECL] after int print helpers" if runtime_decl_trace
@@ -5163,254 +5270,256 @@ module Crystal::MIR
       emit_raw "  ret ptr %exc\n"
       emit_raw "}\n\n"
 
-      # ═══════════════════════════════════════════════════════════════════════
-      # REGEX RUNTIME (PCRE2-based)
-      # ═══════════════════════════════════════════════════════════════════════
-      # Our regex struct layout: { ptr @code, ptr @match_data }
-      # - offset 0: pcre2_code_8* (compiled pattern)
-      # - offset 8: pcre2_match_data_8* (reusable match data)
+      if @emit_regex_runtime
+        # ═══════════════════════════════════════════════════════════════════════
+        # REGEX RUNTIME (PCRE2-based)
+        # ═══════════════════════════════════════════════════════════════════════
+        # Our regex struct layout: { ptr @code, ptr @match_data }
+        # - offset 0: pcre2_code_8* (compiled pattern)
+        # - offset 8: pcre2_match_data_8* (reusable match data)
 
-      # PCRE2 external functions are already declared in emit_external_declarations
+        # PCRE2 external functions are already declared in emit_external_declarations
 
-      # Global: last match data for $~ / capture group access
-      emit_raw "@__crystal_v2_last_match_data = global ptr null\n"
-      emit_raw "@__crystal_v2_last_match_str = global ptr null\n\n"
+        # Global: last match data for $~ / capture group access
+        emit_raw "@__crystal_v2_last_match_data = global ptr null\n"
+        emit_raw "@__crystal_v2_last_match_str = global ptr null\n\n"
 
-      # __crystal_v2_regex_new(pattern_str: Crystal::String*, options: i32) -> ptr
-      # Compiles a PCRE2 regex pattern. Returns pointer to {code, match_data} struct.
-      emit_raw "define ptr @__crystal_v2_regex_new(ptr %pattern_str, i32 %options) {\n"
-      emit_raw "entry:\n"
-      emit_raw "  %bs_ptr = getelementptr i8, ptr %pattern_str, i32 4\n"
-      emit_raw "  %bytesize = load i32, ptr %bs_ptr\n"
-      emit_raw "  %data = getelementptr i8, ptr %pattern_str, i32 12\n"
-      emit_raw "  %bs64 = sext i32 %bytesize to i64\n"
-      # PCRE2 default options: UTF(0x80000) | DUPNAMES(0x40) | UCP(0x20000) = 0xA0040 = 655424
-      emit_raw "  %pcre_opts = or i32 %options, 655424\n"
-      emit_raw "  %errorcode = alloca i32\n"
-      emit_raw "  %erroroffset = alloca i64\n"
-      emit_raw "  %re = call ptr @pcre2_compile_8(ptr %data, i64 %bs64, i32 %pcre_opts, ptr %errorcode, ptr %erroroffset, ptr null)\n"
-      emit_raw "  %re_null = icmp eq ptr %re, null\n"
-      emit_raw "  br i1 %re_null, label %fail, label %ok\n"
-      emit_raw "ok:\n"
-      # Allocate 16-byte struct: {code*, match_data*}
-      emit_raw "  %regex = call ptr @__crystal_v2_malloc64(i64 16)\n"
-      emit_raw "  store ptr %re, ptr %regex\n"
-      emit_raw "  %md = call ptr @pcre2_match_data_create_from_pattern_8(ptr %re, ptr null)\n"
-      emit_raw "  %md_slot = getelementptr i8, ptr %regex, i32 8\n"
-      emit_raw "  store ptr %md, ptr %md_slot\n"
-      # JIT compile (ignore errors)
-      emit_raw "  call i32 @pcre2_jit_compile_8(ptr %re, i32 1)\n"
-      emit_raw "  ret ptr %regex\n"
-      emit_raw "fail:\n"
-      # Return null on compilation failure
-      emit_raw "  ret ptr null\n"
-      emit_raw "}\n\n"
+        # __crystal_v2_regex_new(pattern_str: Crystal::String*, options: i32) -> ptr
+        # Compiles a PCRE2 regex pattern. Returns pointer to {code, match_data} struct.
+        emit_raw "define ptr @__crystal_v2_regex_new(ptr %pattern_str, i32 %options) {\n"
+        emit_raw "entry:\n"
+        emit_raw "  %bs_ptr = getelementptr i8, ptr %pattern_str, i32 4\n"
+        emit_raw "  %bytesize = load i32, ptr %bs_ptr\n"
+        emit_raw "  %data = getelementptr i8, ptr %pattern_str, i32 12\n"
+        emit_raw "  %bs64 = sext i32 %bytesize to i64\n"
+        # PCRE2 default options: UTF(0x80000) | DUPNAMES(0x40) | UCP(0x20000) = 0xA0040 = 655424
+        emit_raw "  %pcre_opts = or i32 %options, 655424\n"
+        emit_raw "  %errorcode = alloca i32\n"
+        emit_raw "  %erroroffset = alloca i64\n"
+        emit_raw "  %re = call ptr @pcre2_compile_8(ptr %data, i64 %bs64, i32 %pcre_opts, ptr %errorcode, ptr %erroroffset, ptr null)\n"
+        emit_raw "  %re_null = icmp eq ptr %re, null\n"
+        emit_raw "  br i1 %re_null, label %fail, label %ok\n"
+        emit_raw "ok:\n"
+        # Allocate 16-byte struct: {code*, match_data*}
+        emit_raw "  %regex = call ptr @__crystal_v2_malloc64(i64 16)\n"
+        emit_raw "  store ptr %re, ptr %regex\n"
+        emit_raw "  %md = call ptr @pcre2_match_data_create_from_pattern_8(ptr %re, ptr null)\n"
+        emit_raw "  %md_slot = getelementptr i8, ptr %regex, i32 8\n"
+        emit_raw "  store ptr %md, ptr %md_slot\n"
+        # JIT compile (ignore errors)
+        emit_raw "  call i32 @pcre2_jit_compile_8(ptr %re, i32 1)\n"
+        emit_raw "  ret ptr %regex\n"
+        emit_raw "fail:\n"
+        # Return null on compilation failure
+        emit_raw "  ret ptr null\n"
+        emit_raw "}\n\n"
 
-      # __crystal_v2_regex_match_q(regex: ptr, str: Crystal::String*) -> i1
-      # Returns true if regex matches the string. Sets last match data for capture groups.
-      emit_raw "define i1 @__crystal_v2_regex_match_q(ptr %regex, ptr %str) {\n"
-      emit_raw "entry:\n"
-      emit_raw "  %re_null = icmp eq ptr %regex, null\n"
-      emit_raw "  br i1 %re_null, label %ret_false, label %check_str\n"
-      emit_raw "check_str:\n"
-      emit_raw "  %str_null = icmp eq ptr %str, null\n"
-      emit_raw "  br i1 %str_null, label %ret_false, label %do_match\n"
-      emit_raw "do_match:\n"
-      emit_raw "  %re_ptr = load ptr, ptr %regex\n"
-      emit_raw "  %md_slot = getelementptr i8, ptr %regex, i32 8\n"
-      emit_raw "  %md = load ptr, ptr %md_slot\n"
-      emit_raw "  %bs_ptr = getelementptr i8, ptr %str, i32 4\n"
-      emit_raw "  %bytesize = load i32, ptr %bs_ptr\n"
-      emit_raw "  %data = getelementptr i8, ptr %str, i32 12\n"
-      emit_raw "  %bs64 = sext i32 %bytesize to i64\n"
-      emit_raw "  %rc = call i32 @pcre2_match_8(ptr %re_ptr, ptr %data, i64 %bs64, i64 0, i32 0, ptr %md, ptr null)\n"
-      emit_raw "  %matched = icmp sge i32 %rc, 0\n"
-      # Store last match data for capture group access
-      emit_raw "  br i1 %matched, label %store_match, label %ret_false\n"
-      emit_raw "store_match:\n"
-      emit_raw "  store ptr %md, ptr @__crystal_v2_last_match_data\n"
-      emit_raw "  store ptr %str, ptr @__crystal_v2_last_match_str\n"
-      emit_raw "  ret i1 1\n"
-      emit_raw "ret_false:\n"
-      # Clear last match data on failure
-      emit_raw "  store ptr null, ptr @__crystal_v2_last_match_data\n"
-      emit_raw "  ret i1 0\n"
-      emit_raw "}\n\n"
+        # __crystal_v2_regex_match_q(regex: ptr, str: Crystal::String*) -> i1
+        # Returns true if regex matches the string. Sets last match data for capture groups.
+        emit_raw "define i1 @__crystal_v2_regex_match_q(ptr %regex, ptr %str) {\n"
+        emit_raw "entry:\n"
+        emit_raw "  %re_null = icmp eq ptr %regex, null\n"
+        emit_raw "  br i1 %re_null, label %ret_false, label %check_str\n"
+        emit_raw "check_str:\n"
+        emit_raw "  %str_null = icmp eq ptr %str, null\n"
+        emit_raw "  br i1 %str_null, label %ret_false, label %do_match\n"
+        emit_raw "do_match:\n"
+        emit_raw "  %re_ptr = load ptr, ptr %regex\n"
+        emit_raw "  %md_slot = getelementptr i8, ptr %regex, i32 8\n"
+        emit_raw "  %md = load ptr, ptr %md_slot\n"
+        emit_raw "  %bs_ptr = getelementptr i8, ptr %str, i32 4\n"
+        emit_raw "  %bytesize = load i32, ptr %bs_ptr\n"
+        emit_raw "  %data = getelementptr i8, ptr %str, i32 12\n"
+        emit_raw "  %bs64 = sext i32 %bytesize to i64\n"
+        emit_raw "  %rc = call i32 @pcre2_match_8(ptr %re_ptr, ptr %data, i64 %bs64, i64 0, i32 0, ptr %md, ptr null)\n"
+        emit_raw "  %matched = icmp sge i32 %rc, 0\n"
+        # Store last match data for capture group access
+        emit_raw "  br i1 %matched, label %store_match, label %ret_false\n"
+        emit_raw "store_match:\n"
+        emit_raw "  store ptr %md, ptr @__crystal_v2_last_match_data\n"
+        emit_raw "  store ptr %str, ptr @__crystal_v2_last_match_str\n"
+        emit_raw "  ret i1 1\n"
+        emit_raw "ret_false:\n"
+        # Clear last match data on failure
+        emit_raw "  store ptr null, ptr @__crystal_v2_last_match_data\n"
+        emit_raw "  ret i1 0\n"
+        emit_raw "}\n\n"
 
-      # __crystal_v2_regex_match_pos(regex: ptr, str: Crystal::String*) -> i32
-      # Returns byte position of match start, or -1 if no match.
-      emit_raw "define i32 @__crystal_v2_regex_match_pos(ptr %regex, ptr %str) {\n"
-      emit_raw "entry:\n"
-      emit_raw "  %re_null = icmp eq ptr %regex, null\n"
-      emit_raw "  br i1 %re_null, label %ret_neg, label %check_str\n"
-      emit_raw "check_str:\n"
-      emit_raw "  %str_null = icmp eq ptr %str, null\n"
-      emit_raw "  br i1 %str_null, label %ret_neg, label %do_match\n"
-      emit_raw "do_match:\n"
-      emit_raw "  %re_ptr = load ptr, ptr %regex\n"
-      emit_raw "  %md_slot = getelementptr i8, ptr %regex, i32 8\n"
-      emit_raw "  %md = load ptr, ptr %md_slot\n"
-      emit_raw "  %bs_ptr = getelementptr i8, ptr %str, i32 4\n"
-      emit_raw "  %bytesize = load i32, ptr %bs_ptr\n"
-      emit_raw "  %data = getelementptr i8, ptr %str, i32 12\n"
-      emit_raw "  %bs64 = sext i32 %bytesize to i64\n"
-      emit_raw "  %rc = call i32 @pcre2_match_8(ptr %re_ptr, ptr %data, i64 %bs64, i64 0, i32 0, ptr %md, ptr null)\n"
-      emit_raw "  %matched = icmp sge i32 %rc, 0\n"
-      emit_raw "  br i1 %matched, label %get_pos, label %ret_neg\n"
-      emit_raw "get_pos:\n"
-      emit_raw "  store ptr %md, ptr @__crystal_v2_last_match_data\n"
-      emit_raw "  store ptr %str, ptr @__crystal_v2_last_match_str\n"
-      emit_raw "  %ovector = call ptr @pcre2_get_ovector_pointer_8(ptr %md)\n"
-      emit_raw "  %start64 = load i64, ptr %ovector\n"
-      emit_raw "  %start = trunc i64 %start64 to i32\n"
-      emit_raw "  ret i32 %start\n"
-      emit_raw "ret_neg:\n"
-      emit_raw "  store ptr null, ptr @__crystal_v2_last_match_data\n"
-      emit_raw "  ret i32 -1\n"
-      emit_raw "}\n\n"
+        # __crystal_v2_regex_match_pos(regex: ptr, str: Crystal::String*) -> i32
+        # Returns byte position of match start, or -1 if no match.
+        emit_raw "define i32 @__crystal_v2_regex_match_pos(ptr %regex, ptr %str) {\n"
+        emit_raw "entry:\n"
+        emit_raw "  %re_null = icmp eq ptr %regex, null\n"
+        emit_raw "  br i1 %re_null, label %ret_neg, label %check_str\n"
+        emit_raw "check_str:\n"
+        emit_raw "  %str_null = icmp eq ptr %str, null\n"
+        emit_raw "  br i1 %str_null, label %ret_neg, label %do_match\n"
+        emit_raw "do_match:\n"
+        emit_raw "  %re_ptr = load ptr, ptr %regex\n"
+        emit_raw "  %md_slot = getelementptr i8, ptr %regex, i32 8\n"
+        emit_raw "  %md = load ptr, ptr %md_slot\n"
+        emit_raw "  %bs_ptr = getelementptr i8, ptr %str, i32 4\n"
+        emit_raw "  %bytesize = load i32, ptr %bs_ptr\n"
+        emit_raw "  %data = getelementptr i8, ptr %str, i32 12\n"
+        emit_raw "  %bs64 = sext i32 %bytesize to i64\n"
+        emit_raw "  %rc = call i32 @pcre2_match_8(ptr %re_ptr, ptr %data, i64 %bs64, i64 0, i32 0, ptr %md, ptr null)\n"
+        emit_raw "  %matched = icmp sge i32 %rc, 0\n"
+        emit_raw "  br i1 %matched, label %get_pos, label %ret_neg\n"
+        emit_raw "get_pos:\n"
+        emit_raw "  store ptr %md, ptr @__crystal_v2_last_match_data\n"
+        emit_raw "  store ptr %str, ptr @__crystal_v2_last_match_str\n"
+        emit_raw "  %ovector = call ptr @pcre2_get_ovector_pointer_8(ptr %md)\n"
+        emit_raw "  %start64 = load i64, ptr %ovector\n"
+        emit_raw "  %start = trunc i64 %start64 to i32\n"
+        emit_raw "  ret i32 %start\n"
+        emit_raw "ret_neg:\n"
+        emit_raw "  store ptr null, ptr @__crystal_v2_last_match_data\n"
+        emit_raw "  ret i32 -1\n"
+        emit_raw "}\n\n"
 
-      # __crystal_v2_regex_capture(capture_idx: i32) -> Crystal::String* (or null)
-      # Returns the captured substring from the last regex match.
-      emit_raw "define ptr @__crystal_v2_regex_capture(i32 %idx) {\n"
-      emit_raw "entry:\n"
-      emit_raw "  %md = load ptr, ptr @__crystal_v2_last_match_data\n"
-      emit_raw "  %md_null = icmp eq ptr %md, null\n"
-      emit_raw "  br i1 %md_null, label %ret_null, label %get_ovector\n"
-      emit_raw "get_ovector:\n"
-      emit_raw "  %ovector = call ptr @pcre2_get_ovector_pointer_8(ptr %md)\n"
-      # ovector[idx*2] = start, ovector[idx*2+1] = end (both i64/size_t)
-      emit_raw "  %idx2 = mul i32 %idx, 2\n"
-      emit_raw "  %start_ptr = getelementptr i64, ptr %ovector, i32 %idx2\n"
-      emit_raw "  %start64 = load i64, ptr %start_ptr\n"
-      emit_raw "  %idx2p1 = add i32 %idx2, 1\n"
-      emit_raw "  %end_ptr = getelementptr i64, ptr %ovector, i32 %idx2p1\n"
-      emit_raw "  %end64 = load i64, ptr %end_ptr\n"
-      # Check for unmatched group (PCRE2 uses PCRE2_UNSET = ~0)
-      emit_raw "  %unset = icmp eq i64 %start64, -1\n"
-      emit_raw "  br i1 %unset, label %ret_null, label %extract\n"
-      emit_raw "extract:\n"
-      emit_raw "  %str = load ptr, ptr @__crystal_v2_last_match_str\n"
-      emit_raw "  %str_data = getelementptr i8, ptr %str, i32 12\n"
-      emit_raw "  %start = trunc i64 %start64 to i32\n"
-      emit_raw "  %end = trunc i64 %end64 to i32\n"
-      emit_raw "  %len = sub i32 %end, %start\n"
-      emit_raw "  %src = getelementptr i8, ptr %str_data, i32 %start\n"
-      # Use existing create_substring helper (needs type_id for String)
-      emit_raw "  %result = call ptr @__crystal_v2_create_substring(ptr %src, i32 %len, i32 #{@string_type_id})\n"
-      emit_raw "  ret ptr %result\n"
-      emit_raw "ret_null:\n"
-      emit_raw "  ret ptr null\n"
-      emit_raw "}\n\n"
+        # __crystal_v2_regex_capture(capture_idx: i32) -> Crystal::String* (or null)
+        # Returns the captured substring from the last regex match.
+        emit_raw "define ptr @__crystal_v2_regex_capture(i32 %idx) {\n"
+        emit_raw "entry:\n"
+        emit_raw "  %md = load ptr, ptr @__crystal_v2_last_match_data\n"
+        emit_raw "  %md_null = icmp eq ptr %md, null\n"
+        emit_raw "  br i1 %md_null, label %ret_null, label %get_ovector\n"
+        emit_raw "get_ovector:\n"
+        emit_raw "  %ovector = call ptr @pcre2_get_ovector_pointer_8(ptr %md)\n"
+        # ovector[idx*2] = start, ovector[idx*2+1] = end (both i64/size_t)
+        emit_raw "  %idx2 = mul i32 %idx, 2\n"
+        emit_raw "  %start_ptr = getelementptr i64, ptr %ovector, i32 %idx2\n"
+        emit_raw "  %start64 = load i64, ptr %start_ptr\n"
+        emit_raw "  %idx2p1 = add i32 %idx2, 1\n"
+        emit_raw "  %end_ptr = getelementptr i64, ptr %ovector, i32 %idx2p1\n"
+        emit_raw "  %end64 = load i64, ptr %end_ptr\n"
+        # Check for unmatched group (PCRE2 uses PCRE2_UNSET = ~0)
+        emit_raw "  %unset = icmp eq i64 %start64, -1\n"
+        emit_raw "  br i1 %unset, label %ret_null, label %extract\n"
+        emit_raw "extract:\n"
+        emit_raw "  %str = load ptr, ptr @__crystal_v2_last_match_str\n"
+        emit_raw "  %str_data = getelementptr i8, ptr %str, i32 12\n"
+        emit_raw "  %start = trunc i64 %start64 to i32\n"
+        emit_raw "  %end = trunc i64 %end64 to i32\n"
+        emit_raw "  %len = sub i32 %end, %start\n"
+        emit_raw "  %src = getelementptr i8, ptr %str_data, i32 %start\n"
+        # Use existing create_substring helper (needs type_id for String)
+        emit_raw "  %result = call ptr @__crystal_v2_create_substring(ptr %src, i32 %len, i32 #{@string_type_id})\n"
+        emit_raw "  ret ptr %result\n"
+        emit_raw "ret_null:\n"
+        emit_raw "  ret ptr null\n"
+        emit_raw "}\n\n"
 
-      # __crystal_v2_string_gsub_regex(str: Crystal::String*, regex: ptr, repl: Crystal::String*) -> Crystal::String*
-      # Simple gsub: replaces all non-overlapping matches with replacement string.
-      emit_raw "define ptr @__crystal_v2_string_gsub_regex(ptr %str, ptr %regex, ptr %repl) {\n"
-      emit_raw "entry:\n"
-      emit_raw "  %re_null = icmp eq ptr %regex, null\n"
-      emit_raw "  br i1 %re_null, label %ret_orig, label %check_str\n"
-      emit_raw "check_str:\n"
-      emit_raw "  %str_null = icmp eq ptr %str, null\n"
-      emit_raw "  br i1 %str_null, label %ret_orig, label %init\n"
-      emit_raw "init:\n"
-      emit_raw "  %re_ptr = load ptr, ptr %regex\n"
-      emit_raw "  %md_slot = getelementptr i8, ptr %regex, i32 8\n"
-      emit_raw "  %md = load ptr, ptr %md_slot\n"
-      emit_raw "  %str_bs_ptr = getelementptr i8, ptr %str, i32 4\n"
-      emit_raw "  %str_bs = load i32, ptr %str_bs_ptr\n"
-      emit_raw "  %str_data = getelementptr i8, ptr %str, i32 12\n"
-      emit_raw "  %str_bs64 = sext i32 %str_bs to i64\n"
-      emit_raw "  %repl_bs_ptr = getelementptr i8, ptr %repl, i32 4\n"
-      emit_raw "  %repl_bs = load i32, ptr %repl_bs_ptr\n"
-      emit_raw "  %repl_data = getelementptr i8, ptr %repl, i32 12\n"
-      # Allocate output buffer (worst case: every char replaced)
-      emit_raw "  %max_out = add i32 %str_bs, %str_bs\n"
-      emit_raw "  %max_out2 = add i32 %max_out, %repl_bs\n"
-      emit_raw "  %max_out3 = add i32 %max_out2, 256\n"
-      emit_raw "  %max64 = sext i32 %max_out3 to i64\n"
-      emit_raw "  %buf = call ptr @__crystal_v2_malloc64(i64 %max64)\n"
-      emit_raw "  br label %loop\n"
-      emit_raw "loop:\n"
-      emit_raw "  %pos = phi i64 [0, %init], [%next_pos, %copy_rest_of_match]\n"
-      emit_raw "  %out_pos = phi i32 [0, %init], [%new_out_pos, %copy_rest_of_match]\n"
-      emit_raw "  %rc = call i32 @pcre2_match_8(ptr %re_ptr, ptr %str_data, i64 %str_bs64, i64 %pos, i32 0, ptr %md, ptr null)\n"
-      emit_raw "  %has_match = icmp sge i32 %rc, 0\n"
-      emit_raw "  br i1 %has_match, label %do_replace, label %finish\n"
-      emit_raw "do_replace:\n"
-      emit_raw "  %ovector = call ptr @pcre2_get_ovector_pointer_8(ptr %md)\n"
-      emit_raw "  %m_start64 = load i64, ptr %ovector\n"
-      emit_raw "  %m_end_ptr = getelementptr i64, ptr %ovector, i32 1\n"
-      emit_raw "  %m_end64 = load i64, ptr %m_end_ptr\n"
-      # Copy pre-match portion
-      emit_raw "  %pre_len64 = sub i64 %m_start64, %pos\n"
-      emit_raw "  %pre_len = trunc i64 %pre_len64 to i32\n"
-      emit_raw "  %pos32 = trunc i64 %pos to i32\n"
-      emit_raw "  %src_pre = getelementptr i8, ptr %str_data, i32 %pos32\n"
-      emit_raw "  %dst_pre = getelementptr i8, ptr %buf, i32 %out_pos\n"
-      emit_raw "  %pre64 = sext i32 %pre_len to i64\n"
-      emit_raw "  call void @llvm.memcpy.p0.p0.i64(ptr %dst_pre, ptr %src_pre, i64 %pre64, i1 false)\n"
-      emit_raw "  %out_after_pre = add i32 %out_pos, %pre_len\n"
-      # Copy replacement
-      emit_raw "  %dst_repl = getelementptr i8, ptr %buf, i32 %out_after_pre\n"
-      emit_raw "  %repl64 = sext i32 %repl_bs to i64\n"
-      emit_raw "  call void @llvm.memcpy.p0.p0.i64(ptr %dst_repl, ptr %repl_data, i64 %repl64, i1 false)\n"
-      emit_raw "  %new_out_pos = add i32 %out_after_pre, %repl_bs\n"
-      # Advance past match (ensure at least 1 byte progress to avoid infinite loop)
-      emit_raw "  %match_len64 = sub i64 %m_end64, %m_start64\n"
-      emit_raw "  %zero_len = icmp eq i64 %match_len64, 0\n"
-      emit_raw "  %advance = select i1 %zero_len, i64 1, i64 0\n"
-      emit_raw "  %next_pos = add i64 %m_end64, %advance\n"
-      emit_raw "  br label %copy_rest_of_match\n"
-      emit_raw "copy_rest_of_match:\n"
-      emit_raw "  %past_end = icmp sge i64 %next_pos, %str_bs64\n"
-      emit_raw "  br i1 %past_end, label %finish, label %loop\n"
-      emit_raw "finish:\n"
-      emit_raw "  %final_out = phi i32 [%out_pos, %loop], [%new_out_pos, %copy_rest_of_match]\n"
-      emit_raw "  %final_pos = phi i64 [%pos, %loop], [%next_pos, %copy_rest_of_match]\n"
-      # Copy remaining after last match
-      emit_raw "  %remain64 = sub i64 %str_bs64, %final_pos\n"
-      emit_raw "  %remain = trunc i64 %remain64 to i32\n"
-      emit_raw "  %fp32 = trunc i64 %final_pos to i32\n"
-      emit_raw "  %src_tail = getelementptr i8, ptr %str_data, i32 %fp32\n"
-      emit_raw "  %dst_tail = getelementptr i8, ptr %buf, i32 %final_out\n"
-      emit_raw "  %rem64 = sext i32 %remain to i64\n"
-      emit_raw "  call void @llvm.memcpy.p0.p0.i64(ptr %dst_tail, ptr %src_tail, i64 %rem64, i1 false)\n"
-      emit_raw "  %total_len = add i32 %final_out, %remain\n"
-      emit_raw "  %result = call ptr @__crystal_v2_create_substring(ptr %buf, i32 %total_len, i32 #{@string_type_id})\n"
-      emit_raw "  ret ptr %result\n"
-      emit_raw "ret_orig:\n"
-      emit_raw "  ret ptr %str\n"
-      emit_raw "}\n\n"
+        # __crystal_v2_string_gsub_regex(str: Crystal::String*, regex: ptr, repl: Crystal::String*) -> Crystal::String*
+        # Simple gsub: replaces all non-overlapping matches with replacement string.
+        emit_raw "define ptr @__crystal_v2_string_gsub_regex(ptr %str, ptr %regex, ptr %repl) {\n"
+        emit_raw "entry:\n"
+        emit_raw "  %re_null = icmp eq ptr %regex, null\n"
+        emit_raw "  br i1 %re_null, label %ret_orig, label %check_str\n"
+        emit_raw "check_str:\n"
+        emit_raw "  %str_null = icmp eq ptr %str, null\n"
+        emit_raw "  br i1 %str_null, label %ret_orig, label %init\n"
+        emit_raw "init:\n"
+        emit_raw "  %re_ptr = load ptr, ptr %regex\n"
+        emit_raw "  %md_slot = getelementptr i8, ptr %regex, i32 8\n"
+        emit_raw "  %md = load ptr, ptr %md_slot\n"
+        emit_raw "  %str_bs_ptr = getelementptr i8, ptr %str, i32 4\n"
+        emit_raw "  %str_bs = load i32, ptr %str_bs_ptr\n"
+        emit_raw "  %str_data = getelementptr i8, ptr %str, i32 12\n"
+        emit_raw "  %str_bs64 = sext i32 %str_bs to i64\n"
+        emit_raw "  %repl_bs_ptr = getelementptr i8, ptr %repl, i32 4\n"
+        emit_raw "  %repl_bs = load i32, ptr %repl_bs_ptr\n"
+        emit_raw "  %repl_data = getelementptr i8, ptr %repl, i32 12\n"
+        # Allocate output buffer (worst case: every char replaced)
+        emit_raw "  %max_out = add i32 %str_bs, %str_bs\n"
+        emit_raw "  %max_out2 = add i32 %max_out, %repl_bs\n"
+        emit_raw "  %max_out3 = add i32 %max_out2, 256\n"
+        emit_raw "  %max64 = sext i32 %max_out3 to i64\n"
+        emit_raw "  %buf = call ptr @__crystal_v2_malloc64(i64 %max64)\n"
+        emit_raw "  br label %loop\n"
+        emit_raw "loop:\n"
+        emit_raw "  %pos = phi i64 [0, %init], [%next_pos, %copy_rest_of_match]\n"
+        emit_raw "  %out_pos = phi i32 [0, %init], [%new_out_pos, %copy_rest_of_match]\n"
+        emit_raw "  %rc = call i32 @pcre2_match_8(ptr %re_ptr, ptr %str_data, i64 %str_bs64, i64 %pos, i32 0, ptr %md, ptr null)\n"
+        emit_raw "  %has_match = icmp sge i32 %rc, 0\n"
+        emit_raw "  br i1 %has_match, label %do_replace, label %finish\n"
+        emit_raw "do_replace:\n"
+        emit_raw "  %ovector = call ptr @pcre2_get_ovector_pointer_8(ptr %md)\n"
+        emit_raw "  %m_start64 = load i64, ptr %ovector\n"
+        emit_raw "  %m_end_ptr = getelementptr i64, ptr %ovector, i32 1\n"
+        emit_raw "  %m_end64 = load i64, ptr %m_end_ptr\n"
+        # Copy pre-match portion
+        emit_raw "  %pre_len64 = sub i64 %m_start64, %pos\n"
+        emit_raw "  %pre_len = trunc i64 %pre_len64 to i32\n"
+        emit_raw "  %pos32 = trunc i64 %pos to i32\n"
+        emit_raw "  %src_pre = getelementptr i8, ptr %str_data, i32 %pos32\n"
+        emit_raw "  %dst_pre = getelementptr i8, ptr %buf, i32 %out_pos\n"
+        emit_raw "  %pre64 = sext i32 %pre_len to i64\n"
+        emit_raw "  call void @llvm.memcpy.p0.p0.i64(ptr %dst_pre, ptr %src_pre, i64 %pre64, i1 false)\n"
+        emit_raw "  %out_after_pre = add i32 %out_pos, %pre_len\n"
+        # Copy replacement
+        emit_raw "  %dst_repl = getelementptr i8, ptr %buf, i32 %out_after_pre\n"
+        emit_raw "  %repl64 = sext i32 %repl_bs to i64\n"
+        emit_raw "  call void @llvm.memcpy.p0.p0.i64(ptr %dst_repl, ptr %repl_data, i64 %repl64, i1 false)\n"
+        emit_raw "  %new_out_pos = add i32 %out_after_pre, %repl_bs\n"
+        # Advance past match (ensure at least 1 byte progress to avoid infinite loop)
+        emit_raw "  %match_len64 = sub i64 %m_end64, %m_start64\n"
+        emit_raw "  %zero_len = icmp eq i64 %match_len64, 0\n"
+        emit_raw "  %advance = select i1 %zero_len, i64 1, i64 0\n"
+        emit_raw "  %next_pos = add i64 %m_end64, %advance\n"
+        emit_raw "  br label %copy_rest_of_match\n"
+        emit_raw "copy_rest_of_match:\n"
+        emit_raw "  %past_end = icmp sge i64 %next_pos, %str_bs64\n"
+        emit_raw "  br i1 %past_end, label %finish, label %loop\n"
+        emit_raw "finish:\n"
+        emit_raw "  %final_out = phi i32 [%out_pos, %loop], [%new_out_pos, %copy_rest_of_match]\n"
+        emit_raw "  %final_pos = phi i64 [%pos, %loop], [%next_pos, %copy_rest_of_match]\n"
+        # Copy remaining after last match
+        emit_raw "  %remain64 = sub i64 %str_bs64, %final_pos\n"
+        emit_raw "  %remain = trunc i64 %remain64 to i32\n"
+        emit_raw "  %fp32 = trunc i64 %final_pos to i32\n"
+        emit_raw "  %src_tail = getelementptr i8, ptr %str_data, i32 %fp32\n"
+        emit_raw "  %dst_tail = getelementptr i8, ptr %buf, i32 %final_out\n"
+        emit_raw "  %rem64 = sext i32 %remain to i64\n"
+        emit_raw "  call void @llvm.memcpy.p0.p0.i64(ptr %dst_tail, ptr %src_tail, i64 %rem64, i1 false)\n"
+        emit_raw "  %total_len = add i32 %final_out, %remain\n"
+        emit_raw "  %result = call ptr @__crystal_v2_create_substring(ptr %buf, i32 %total_len, i32 #{@string_type_id})\n"
+        emit_raw "  ret ptr %result\n"
+        emit_raw "ret_orig:\n"
+        emit_raw "  ret ptr %str\n"
+        emit_raw "}\n\n"
 
-      # __crystal_v2_regex_match(regex: ptr, str: Crystal::String*) -> ptr
-      # Returns non-null pointer (the regex struct itself) on match, null on no match.
-      # Stores match data globally for capture group access via __crystal_v2_regex_capture.
-      emit_raw "define ptr @__crystal_v2_regex_match(ptr %regex, ptr %str) {\n"
-      emit_raw "entry:\n"
-      emit_raw "  %re_null = icmp eq ptr %regex, null\n"
-      emit_raw "  br i1 %re_null, label %ret_null, label %check_str\n"
-      emit_raw "check_str:\n"
-      emit_raw "  %str_null = icmp eq ptr %str, null\n"
-      emit_raw "  br i1 %str_null, label %ret_null, label %do_match\n"
-      emit_raw "do_match:\n"
-      emit_raw "  %re_ptr = load ptr, ptr %regex\n"
-      emit_raw "  %md_slot = getelementptr i8, ptr %regex, i32 8\n"
-      emit_raw "  %md = load ptr, ptr %md_slot\n"
-      emit_raw "  %bs_ptr = getelementptr i8, ptr %str, i32 4\n"
-      emit_raw "  %bytesize = load i32, ptr %bs_ptr\n"
-      emit_raw "  %data = getelementptr i8, ptr %str, i32 12\n"
-      emit_raw "  %bs64 = sext i32 %bytesize to i64\n"
-      emit_raw "  %rc = call i32 @pcre2_match_8(ptr %re_ptr, ptr %data, i64 %bs64, i64 0, i32 0, ptr %md, ptr null)\n"
-      emit_raw "  %matched = icmp sge i32 %rc, 0\n"
-      emit_raw "  br i1 %matched, label %store_match, label %ret_null\n"
-      emit_raw "store_match:\n"
-      emit_raw "  store ptr %md, ptr @__crystal_v2_last_match_data\n"
-      emit_raw "  store ptr %str, ptr @__crystal_v2_last_match_str\n"
-      # Return the regex struct itself as a non-null truthy value
-      emit_raw "  ret ptr %regex\n"
-      emit_raw "ret_null:\n"
-      emit_raw "  store ptr null, ptr @__crystal_v2_last_match_data\n"
-      emit_raw "  ret ptr null\n"
-      emit_raw "}\n\n"
+        # __crystal_v2_regex_match(regex: ptr, str: Crystal::String*) -> ptr
+        # Returns non-null pointer (the regex struct itself) on match, null on no match.
+        # Stores match data globally for capture group access via __crystal_v2_regex_capture.
+        emit_raw "define ptr @__crystal_v2_regex_match(ptr %regex, ptr %str) {\n"
+        emit_raw "entry:\n"
+        emit_raw "  %re_null = icmp eq ptr %regex, null\n"
+        emit_raw "  br i1 %re_null, label %ret_null, label %check_str\n"
+        emit_raw "check_str:\n"
+        emit_raw "  %str_null = icmp eq ptr %str, null\n"
+        emit_raw "  br i1 %str_null, label %ret_null, label %do_match\n"
+        emit_raw "do_match:\n"
+        emit_raw "  %re_ptr = load ptr, ptr %regex\n"
+        emit_raw "  %md_slot = getelementptr i8, ptr %regex, i32 8\n"
+        emit_raw "  %md = load ptr, ptr %md_slot\n"
+        emit_raw "  %bs_ptr = getelementptr i8, ptr %str, i32 4\n"
+        emit_raw "  %bytesize = load i32, ptr %bs_ptr\n"
+        emit_raw "  %data = getelementptr i8, ptr %str, i32 12\n"
+        emit_raw "  %bs64 = sext i32 %bytesize to i64\n"
+        emit_raw "  %rc = call i32 @pcre2_match_8(ptr %re_ptr, ptr %data, i64 %bs64, i64 0, i32 0, ptr %md, ptr null)\n"
+        emit_raw "  %matched = icmp sge i32 %rc, 0\n"
+        emit_raw "  br i1 %matched, label %store_match, label %ret_null\n"
+        emit_raw "store_match:\n"
+        emit_raw "  store ptr %md, ptr @__crystal_v2_last_match_data\n"
+        emit_raw "  store ptr %str, ptr @__crystal_v2_last_match_str\n"
+        # Return the regex struct itself as a non-null truthy value
+        emit_raw "  ret ptr %regex\n"
+        emit_raw "ret_null:\n"
+        emit_raw "  store ptr null, ptr @__crystal_v2_last_match_data\n"
+        emit_raw "  ret ptr null\n"
+        emit_raw "}\n\n"
+      end
 
     end
 

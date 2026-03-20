@@ -6,6 +6,39 @@
 - **Working tree**:
   - unrelated local diffs in `src/compiler/frontend/lexer.cr`, `src/compiler/hir/ast_to_hir.cr`, `src/compiler/mir/hir_to_mir.cr`, and `src/crystal_v2.cr` must stay out of the next commit
   - untracked local benchmarks in `examples/bench_fib42_crystal` and `examples/bench_tree_crystal` must stay out of the next commit
+- **New local debug verification compiler**: `/private/tmp/codex_stage1_regex_runtime_fix_dbg`
+- **Fresh local debug verification compiler**: `/private/tmp/codex_stage1_nilguard_dbg`
+- **Newest local debug verification compiler**: `/private/tmp/codex_stage1_noprelude_io_dbg`
+- **Current verified no-prelude link fix**:
+  - `src/compiler/mir/llvm_backend.cr` now emits PCRE2 declarations/runtime helpers only when the module actually contains regex helper extern calls or regex-specific builtin overrides
+  - fresh debug verification:
+    - `scripts/run_safe.sh ...tiny_noprelude...` -> `exit 0`
+    - `scripts/run_safe.sh ...examples/bench_tree_crystal.cr --no-prelude...` -> `exit 0`
+    - `regression_tests/stage2_no_prelude_regex_unused_link_repro.sh /private/tmp/codex_stage1_regex_runtime_fix_dbg` -> `not reproduced`
+    - tiny `--no-prelude --emit llvm-ir` output contains no `pcre2_*` or `__crystal_v2_regex_*`
+    - matching regex smoke still emits `pcre2_*` / `__crystal_v2_regex_*`, builds cleanly, and prints `a`
+    - `bash regression_tests/run_all.sh /private/tmp/codex_stage1_regex_runtime_fix_dbg 4` -> `81 passed, 0 failed`
+  - remaining boundary: full `--release` bootstrap timings and stage2/stage3 rerun are still pending on top of this fix
+- **Current verified no-prelude nil-guard fallthrough fix**:
+  - `src/compiler/hir/ast_to_hir.cr` now propagates false-branch non-nil narrowing for `nil?` / `!nil?` through `if`, `unless`, ternary, and short-circuit RHS lowering, so fallthrough after `if x.nil?; return; end` rebinds `x` to the non-nil payload instead of leaving it as `Nil | T`
+  - fresh debug verification on `/private/tmp/codex_stage1_nilguard_dbg`:
+    - `scripts/run_safe.sh ...nil_narrow_value_bin...` -> `exit 0`
+    - `scripts/run_safe.sh ...bench_tree_bin...` -> `exit 0`
+    - `regression_tests/stage2_no_prelude_nil_guard_fallthrough_repro.sh /private/tmp/codex_stage1_nilguard_dbg` -> `not reproduced`
+    - emitted `nil_narrow_value_emit.ll` now lowers `foo$$Nil$_$OR$_TreeNode` to a direct `call i32 @TreeNode$Hvalue(ptr ...)`; the old `Nil$Hvalue` path and pointer-typed phi are gone
+  - adversary note:
+    - `bash regression_tests/run_all.sh /private/tmp/codex_stage1_nilguard_dbg 4` -> `80 passed, 1 failed out of 81 tests`
+    - the lone failure `test_select_map_stress` is not evidence against this patch yet: the isolated binary built by the older `/private/tmp/codex_stage1_regex_runtime_fix_dbg` also reproduces the same `exit 138` bus-error class on `4/5` reruns, while the new compiler reproduces `4/5` too, so this currently looks like a pre-existing flaky runtime oracle rather than a deterministic regression from nil-guard narrowing
+- **Current verified no-prelude puts/runtime split fix**:
+  - bare `puts` / `print` lowering in `src/compiler/hir/ast_to_hir.cr` now explicitly distinguishes prelude IO from runtime-only no-prelude mode: when `IO#print` / `IO#puts` are unavailable, basic values are printed via runtime helpers instead of `Object::STDOUT = null` plus dead `IO$Hputs*` stubs
+  - `src/compiler/mir/llvm_backend.cr` now provides runtime-only helpers for `Int32`, `UInt32`, `Int64`, `UInt64`, `Float32`, `Float64`, `String`, and `Bool`
+  - fresh debug verification on `/private/tmp/codex_stage1_noprelude_io_dbg`:
+    - `regression_tests/stage2_no_prelude_puts_runtime_repro.sh /private/tmp/codex_stage1_noprelude_io_dbg` -> `not reproduced`
+    - `regression_tests/stage2_no_prelude_nil_guard_fallthrough_repro.sh /private/tmp/codex_stage1_noprelude_io_dbg` -> `not reproduced`
+    - `regression_tests/stage2_no_prelude_regex_unused_link_repro.sh /private/tmp/codex_stage1_noprelude_io_dbg` -> `not reproduced`
+    - `scripts/run_safe.sh ...examples/bench_tree_crystal.cr --no-prelude...` now prints `180` and exits `0`
+    - `bash regression_tests/run_all.sh /private/tmp/codex_stage1_noprelude_io_dbg 4` -> `81 passed, 0 failed`
+    - emitted no-prelude IR before the fix showed `@Object__classvar__STDOUT = global ptr null` plus dead stub `define i32 @IO$Hputs$$Int32(...) { ret i32 0 }`; the new path bypasses that prelude-only surface entirely
 - **Fresh release stage1 (current tree)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_funlookahead`
 - **Fresh release stage2 (current tree)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_parseprogramroots_loadedreq_lazydbg_fresh_w2`
 - **Previous local stage2 checkpoint (class reparse fallback)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_reparse_class_clean`
@@ -42,6 +75,9 @@
   - `bash regression_tests/stage2_parse_args_tail_if_repro.sh <compiler>`
   - `bash regression_tests/stage2_bootstrap_shims_begin_puts_repro.sh <compiler>`
   - `bash regression_tests/stage2_process_executable_path_parse_repro.sh <compiler>`
+  - `bash regression_tests/stage2_no_prelude_regex_unused_link_repro.sh <compiler>`
+  - `bash regression_tests/stage2_no_prelude_nil_guard_fallthrough_repro.sh <compiler>`
+  - `bash regression_tests/stage2_no_prelude_puts_runtime_repro.sh <compiler>`
 - **Compiler parse-only status**:
   - baseline `stage2_release_nameprio_fresh`: `rc=0,138,138,138,138`
   - fresh `stage2_release_funlookahead_fresh`: `rc=0,0,0,0,0`

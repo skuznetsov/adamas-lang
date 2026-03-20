@@ -3,6 +3,61 @@
 Updated: 2026-03-19
 Context: compiler/bootstrap/stage2-stability
 
+[LM-213|verified]: false-branch nil-guard narrowing was missing in HIR
+control-flow lowering, which left fallthrough locals typed as `Nil | T` after
+guards like `if node.nil?; return 0; end` and caused later union-dispatch to
+emit invalid pointer-shaped IR for plain value getters. The fix lives in
+`src/compiler/hir/ast_to_hir.cr`: `nil?` / `!nil?` now feed non-nil narrowing
+through `if`, `unless`, ternary, and short-circuit RHS lowering. Verified on
+fresh debug compiler `/private/tmp/codex_stage1_nilguard_dbg`:
+- minimal no-prelude runtime oracle
+  `regression_tests/stage2_no_prelude_nil_guard_fallthrough_repro.sh` is green
+  (`not reproduced`)
+- the original larger oracle
+  `examples/bench_tree_crystal.cr --no-prelude` now compiles and runs cleanly
+  under `scripts/run_safe.sh` (`exit 0`)
+- emitted LLVM IR for the reduced witness now lowers
+  `foo$$Nil$_$OR$_TreeNode` to a direct `call i32 @TreeNode$Hvalue(ptr ...)`;
+  the old `Nil$Hvalue` path and pointer-typed phi are gone
+Adversary note:
+- `bash regression_tests/run_all.sh /private/tmp/codex_stage1_nilguard_dbg 4`
+  reported `80 passed, 1 failed`, but the lone failure
+  `test_select_map_stress` is not currently attributable to this patch:
+  isolated binaries built by both `/private/tmp/codex_stage1_nilguard_dbg` and
+  the older `/private/tmp/codex_stage1_regex_runtime_fix_dbg` reproduce the
+  same bus-error/`exit 138` class at similar rates (`4/5` reruns each), so the
+  oracle is presently heisenbug-sensitive and should stay out of this fix's
+  blame set until a stable split appears
+Reusable lesson: the root cause was CFG fact propagation, not backend codegen.
+When a nil-guarded fallthrough still looks like a union at member access time,
+fix the false-branch narrowing first; the later union-dispatch/return-shape
+corruption is a downstream symptom. {F/G/R: 0.96/0.81/0.91} [verified]
+
+[LM-214|verified]: bare `puts` / `print` under `--no-prelude` must not reuse
+the prelude IO lowering path. Before the fix, HIR rewrote receiverless
+`puts 7` to `Object::STDOUT.puts(7)` even when prelude IO was absent; emitted
+LLVM IR then contained `@Object__classvar__STDOUT = global ptr null` and a dead
+stub `define i32 @IO$Hputs$$Int32(...) { ret i32 0 }`, so programs exited `0`
+but printed nothing. The fix makes `src/compiler/hir/ast_to_hir.cr`
+explicitly split prelude IO from runtime-only no-prelude mode and routes basic
+types through runtime helpers from `src/compiler/mir/llvm_backend.cr`
+(`Int32`, `UInt32`, `Int64`, `UInt64`, `Float32`, `Float64`, `String`, `Bool`)
+when `IO#print` / `IO#puts` are unavailable. Verified on
+`/private/tmp/codex_stage1_noprelude_io_dbg`:
+- `regression_tests/stage2_no_prelude_puts_runtime_repro.sh` is green
+  (`not reproduced`)
+- `examples/bench_tree_crystal.cr --no-prelude` now prints `180` and exits `0`
+- the earlier no-prelude fixes remain green on the same compiler:
+  `stage2_no_prelude_nil_guard_fallthrough_repro` and
+  `stage2_no_prelude_regex_unused_link_repro` both report `not reproduced`
+- broader adversary check is clean on the same compiler:
+  `bash regression_tests/run_all.sh /private/tmp/codex_stage1_noprelude_io_dbg 4`
+  => `81 passed, 0 failed`
+Reusable lesson: `--no-prelude` is a separate supported corridor, not a
+degraded prelude build. If lowering depends on `IO`, `STDOUT`, classvars, or
+stdlib method bodies, it needs an explicit runtime-only fallback instead of
+silently compiling to null-backed stubs. {F/G/R: 0.97/0.84/0.94} [verified]
+
 [LM-211|verified]: the current post-`lazyparse_earlyret` macro-control
 frontier is reproducible on an existing stdlib source file below
 `crystal_v2.cr`. The new committed oracle
