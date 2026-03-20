@@ -16278,11 +16278,20 @@ module Crystal::MIR
                          @value_types[inst.union_value]? || def_union_type_ref || TypeRef::POINTER
                        end
       static_union_type = @type_mapper.llvm_type(union_type_ref)
+
+      # CRITICAL: If the union's canonical type_ref maps to an all-ref union,
+      # ALWAYS use ptr dispatch (read type_id from object header) regardless of
+      # emitted/slot types. Cross-block slots or value coercions may have typed
+      # the value as a union struct, but the underlying storage is a raw pointer.
+      canonical_is_allref = @type_mapper.is_all_ref_union?(union_type_ref)
+
       slot_union_type = @cross_block_slot_types[inst.union_value]?
       emitted_union_type = @emitted_value_types[union_val]?
       emitted_union_is_union = !!(emitted_union_type && emitted_union_type.ends_with?(".union"))
       slot_union_is_union = !!(slot_union_type && slot_union_type.ends_with?(".union"))
-      union_type = if emitted_union_is_union
+      union_type = if canonical_is_allref
+                     "ptr"  # Force ptr for all-ref unions
+                   elsif emitted_union_is_union
                      emitted_union_type.not_nil!
                    elsif slot_union_is_union
                      slot_union_type.not_nil!
