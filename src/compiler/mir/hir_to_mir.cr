@@ -3300,8 +3300,22 @@ module Crystal
         )
       end
 
-      # Determine dispatch kind — Generic-wrapped unions get Union dispatch
-      kind = (recv_desc.kind == HIR::TypeKind::Union || generic_union_ref) ? VDispatchKind::Union : VDispatchKind::Class
+      # Determine dispatch kind:
+      # - All-ref unions (every variant is a class/Nil) use Class dispatch
+      #   because they're stored as raw pointers — type_id lives in the object header.
+      # - Mixed/tagged unions use Union dispatch — type_id is the union discriminator.
+      is_union_type = recv_desc.kind == HIR::TypeKind::Union || generic_union_ref
+      recv_mir = convert_type(recv_type)
+      is_allref = if is_union_type
+                    if desc = @mir_module.get_union_descriptor(recv_mir)
+                      all_ref_union_descriptor?(desc)
+                    else
+                      false
+                    end
+                  else
+                    false
+                  end
+      kind = (is_union_type && !is_allref) ? VDispatchKind::Union : VDispatchKind::Class
 
       # Use unified generator
       generate_vdispatch_body(
