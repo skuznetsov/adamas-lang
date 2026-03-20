@@ -28164,6 +28164,23 @@ module Crystal::HIR
         if info = @class_info[vname]?
           next !info.is_struct
         end
+        # Check generic base name (e.g., Slice(UInt8) → check if Slice is a struct).
+        # V2 heap-allocates structs so they're pointer-sized, but they lack runtime
+        # type headers, so they can't participate in raw-pointer unions.
+        paren_idx = vname.index('(')
+        if paren_idx
+          base_name = vname[0...paren_idx]
+          if base_info = @class_info[base_name]?
+            next !base_info.is_struct
+          end
+        end
+        # Check HIR type descriptor: structs/tuples lack runtime type headers
+        hir_vref = TypeRef.new(variant.type_ref.id)
+        if vdesc = @module.get_type_descriptor(hir_vref)
+          if vdesc.kind.struct? || vdesc.kind.tuple? || vdesc.kind.named_tuple?
+            next false
+          end
+        end
         # Unknown types with pointer size are likely reference types
         # (generic classes like Array(T), Hash(K,V), etc.)
         variant.size == pointer_word_bytes_i32
@@ -28195,7 +28212,20 @@ module Crystal::HIR
         if info = @class_info[vname]?
           next !info.is_struct
         end
-        if vname.starts_with?("Tuple(") || vname.starts_with?("Pointer(") || vname.starts_with?("StaticArray(")
+        # Check generic base name (e.g., Slice(UInt8) → check if Slice is a struct).
+        # V2 heap-allocates structs so they're pointer-sized, but they lack runtime
+        # type headers, so they can't participate in raw-pointer unions.
+        paren_idx_hir = vname.index('(')
+        if paren_idx_hir
+          base_name_hir = vname[0...paren_idx_hir]
+          if base_info_hir = @class_info[base_name_hir]?
+            next !base_info_hir.is_struct
+          end
+        end
+        # Known generic struct types that lack runtime type headers
+        if vname.starts_with?("Tuple(") || vname.starts_with?("Pointer(") ||
+           vname.starts_with?("StaticArray(") || vname.starts_with?("Slice(") ||
+           vname.starts_with?("Range(") || vname.starts_with?("NamedTuple(")
           next false
         end
         # Unknown generic classes like Array(T) / Hash(K, V) are heap objects
@@ -28277,8 +28307,9 @@ module Crystal::HIR
       storage = type_size(type, c_context)
       # V2 ABI: non-C Crystal struct types are heap-allocated and stored as pointers.
       # The field slot is always pointer-sized regardless of the struct's inline size.
-      # C lib structs (in @lib_structs) are always inlined at their full size.
-      if !c_context && storage > 0 && storage < pointer_word_bytes_i32 &&
+      # Both small structs (< 8 bytes) and large structs (> 8 bytes) must be upgraded/
+      # downgraded to pointer size. Only C lib structs are inlined at their full size.
+      if !c_context && storage > 0 && storage != pointer_word_bytes_i32 &&
          type.id >= TypeRef::FIRST_USER_TYPE
         if info = @class_info_by_type_id[type.id]?
           if info.is_struct && !@lib_structs.includes?(info.name)

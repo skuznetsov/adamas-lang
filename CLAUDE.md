@@ -19,6 +19,13 @@ scripts/run_safe.sh /tmp/test_hello 5 512                          # run safely
 - **NEVER modify stdlib files** — must be 100% compatible with original Crystal stdlib at `../crystal/src`
 - When in doubt, always check original Crystal compiler code at `../crystal/src`
 - Original Crystal compiler: `../crystal/src/compiler/crystal/codegen/`
+- помни что мы следуем zero-copy memory для уменьшения нагрузки на GC, контроля размера памяти и ускорения работы компилятора.
+- Следи за мусором (временные файлы в /tmp/, ./tmp/, ~/Projects/Crystal/.codex_artifacts/), и удаляй сразу те временные файлы, что уже не нужны. И помни коммитить рабочие фичи и фиксы сразу как они готовы.
+- Eсли нашел проблему, то для нее лучше делать регрессионный скрипт для воспроизводства. Так быстрее будет.
+- Для моментальной отладки и итераций лучше использовать оракулы собраные с --no-prelude: проще и быстрее отлаживать код и изучать .ll, .hir, и .mir файлы.
+- Помни что надо коммитить (гогда есть рабочие фичи и фиксы) и обновлять TODO.md.
+- Часто root cause в том что мы не правильно отслеживаем арены.
+
 
 ## Architecture
 - Pipeline: HIR (ast_to_hir.cr) → MIR (hir_to_mir.cr) → LLVM IR (llvm_backend.cr)
