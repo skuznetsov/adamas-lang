@@ -2,11 +2,23 @@
 
 ## Current State
 - **Branch**: `bootstrap-benchmark`
-- **Latest committed baseline**: `ff2379fc` — constant enum-key hash literal fix
+- **Latest committed baseline**: `557f2e42` — inactive macro require fallback fix
 - **Current focused slice**:
-  - verified root-cause fix for source-fallback reloading `require` literals from inactive macro branches
-  - fresh stage1 and fresh self-hosted stage2 both keep the new inactive-branch oracle green, so the old `reqs=0 -> Source require fallback entries=1 -> crystal/system/windows` corridor is now closed
-  - the live stage2/stage3 blocker has shifted again: stage3 still dies immediately, and the next direct LLDB stack now lands in `Parser#parse_block -> attach_block_to_call -> parse_expression -> parse_op_assign -> parse_statement -> parse_def -> parse_class`
+  - the current local checkpoint keeps growable parser buffers away from by-value wrapper structs: `src/compiler/frontend/small_vec.cr` now has `ExprIdBuffer` and `ParameterBuffer`, and `src/compiler/frontend/parser.cr` rewires transient method/block/proc/fun parameter builders plus many transient body accumulators away from `Array(ExprId)` / `Array(Parameter)` growth
+  - the focused reduced parser oracle moved: `bash regression_tests/stage2_block_body_exprid_parser_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_parambuf_w1` is green (`not reproduced`)
+  - the stronger current corroborating oracle is now direct parse-only `src/stdlib/object.cr --release --no-prelude`, which stays red `5/5` on both `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_parambuf_w1` and the temporary abstract-separator falsifier rebuild
+  - negative finding: the reduced `object.cr` carriers are highly heisenbug-sensitive; exact doc-comment text is not a trustworthy root-cause marker, and a narrow `parse_def(is_abstract)` separator-skipping patch did not improve the main `default_prelude` / `object.cr` frontier, so that branch was reverted
+- **Current parser-buffer checkpoint**:
+  - fresh release checkpoint on the current source-matching compiler pair:
+    - stage1: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_parambuf_w1`
+    - stage2: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_parambuf_w1`
+  - focused verification:
+    - `bash regression_tests/stage2_block_body_exprid_parser_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_parambuf_w1` -> `not reproduced: compiler parsed the reduced block-body ExprId repro`
+    - `bash regression_tests/stage2_object_parse_noprelude_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_parambuf_w1` -> reproduced on attempt `1` (and direct safe-run sampling stayed `5/5` red)
+    - `bash regression_tests/stage2_default_prelude_parse_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_parambuf_w1` -> reproduced on attempt `1`
+  - adversary note:
+    - `array_concat_string_runtime` is not attributed to this checkpoint: the same `llc ... expected '=' in global variable` failure reproduces on both `/Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_parambuf_w1` and the temporary abstract-separator falsifier rebuild
+    - `test_select_map_stress` remains the known flaky `status=138` failure
 - **New local debug verification compiler**: `/private/tmp/codex_stage1_regex_runtime_fix_dbg`
 - **Fresh local debug verification compiler**: `/private/tmp/codex_stage1_nilguard_dbg`
 - **Newest local debug verification compiler**: `/private/tmp/codex_stage1_noprelude_io_dbg`
@@ -100,9 +112,11 @@
 - **Fresh release stage1 (current tree, union fix verified)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_unionhdr_w1`
 - **Fresh release stage1 (current tree, constant enum-key hash fix verified)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_enumlit_w1`
 - **Fresh release stage1 (current tree, inactive-macro fallback fix verified)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_macroreq_w1`
+- **Fresh release stage1 (current tree, parser-buffer checkpoint)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_parambuf_w1`
 - **Fresh release stage2 (built from fixed stage1, still unstable)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_astarena_init_w1`
 - **Fresh release stage2 (built from enum-key-hash-fixed stage1, still unstable for stage3/parse-only)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_enumlit_w1`
 - **Fresh release stage2 (built from inactive-macro-fallback-fixed stage1, still unstable for stage3/parse-only)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_macroreq_w1`
+- **Fresh release stage2 (built from parser-buffer checkpoint stage1, still unstable for stage3/parse-only)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_parambuf_w1`
 - **Previous fresh release stage2 checkpoint (pre-AstArena-init fix)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_unionhdr_fromfixedstage1_w1`
 - **Previous fresh release stage1 checkpoint**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_funlookahead`
 - **Previous fresh release stage2 checkpoint**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_parseprogramroots_loadedreq_lazydbg_fresh_w2`

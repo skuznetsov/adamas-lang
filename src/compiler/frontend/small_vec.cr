@@ -49,6 +49,122 @@ module CrystalV2
           @arr
         end
       end
+
+      # Self-hosted release builds still corrupt growable parser buffers that
+      # store ExprId wrappers directly. Keep the transient storage scalar and
+      # materialize ExprId objects only once after the final size is known.
+      struct ExprIdBuffer
+        @indexes : Array(Int32)
+
+        def initialize(capacity : Int32 = 0)
+          @indexes = Array(Int32).new(capacity)
+        end
+
+        def size : Int32
+          @indexes.size
+        end
+
+        def empty? : Bool
+          @indexes.empty?
+        end
+
+        def last : ExprId
+          ExprId.new(@indexes.last)
+        end
+
+        def pop : ExprId
+          ExprId.new(@indexes.pop)
+        end
+
+        def push(value : ExprId)
+          @indexes << value.index
+        end
+
+        def <<(value : ExprId)
+          push(value)
+          self
+        end
+
+        def to_a : Array(ExprId)
+          Array(ExprId).new(@indexes.size) do |i|
+            ExprId.new(@indexes.unsafe_fetch(i))
+          end
+        end
+      end
+
+      # Parameter wrappers are also fragile in growable parser buffers under
+      # self-hosted release builds. Keep the growable storage reference-typed
+      # and materialize the final Array(Parameter) only once.
+      private class ParameterBox
+        getter value : Parameter
+
+        def initialize(@value : Parameter)
+        end
+      end
+
+      struct ParameterBuffer
+        @items : Array(ParameterBox)
+
+        def initialize(capacity : Int32 = 0)
+          @items = Array(ParameterBox).new(capacity)
+        end
+
+        def push(value : Parameter)
+          @items << ParameterBox.new(value)
+        end
+
+        def <<(value : Parameter)
+          push(value)
+          self
+        end
+
+        def to_a : Array(Parameter)
+          Array(Parameter).new(@items.size) do |i|
+            @items.unsafe_fetch(i).value
+          end
+        end
+      end
+
+      # NamedArgument carries source slices and spans by value, which remains
+      # fragile in self-hosted growable parser buffers. Box during collection
+      # and materialize the final Array(NamedArgument) once at the end.
+      private class NamedArgumentBox
+        getter value : NamedArgument
+
+        def initialize(@value : NamedArgument)
+        end
+      end
+
+      struct NamedArgumentBuffer
+        @items : Array(NamedArgumentBox)
+
+        def initialize(capacity : Int32 = 0)
+          @items = Array(NamedArgumentBox).new(capacity)
+        end
+
+        def size : Int32
+          @items.size
+        end
+
+        def empty? : Bool
+          @items.empty?
+        end
+
+        def push(value : NamedArgument)
+          @items << NamedArgumentBox.new(value)
+        end
+
+        def <<(value : NamedArgument)
+          push(value)
+          self
+        end
+
+        def to_a : Array(NamedArgument)
+          Array(NamedArgument).new(@items.size) do |i|
+            @items.unsafe_fetch(i).value
+          end
+        end
+      end
     end
   end
 end

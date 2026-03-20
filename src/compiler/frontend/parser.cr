@@ -171,6 +171,12 @@ module CrystalV2
           {body_ids, rescue_clauses, else_body, ensure_body}
         end
 
+        private def materialize_expr_ids(indexes : Array(Int32)) : Array(ExprId)
+          Array(ExprId).new(indexes.size) do |i|
+            ExprId.new(indexes.unsafe_fetch(i))
+          end
+        end
+
         # Phase 87B-2: Constructor for reparsing with existing arena
         # Used by macro expander to add parsed nodes to existing arena
         def initialize(lexer : Lexer, @arena : ArenaLike, *, recovery_mode : Bool = false)
@@ -1391,10 +1397,10 @@ module CrystalV2
           skip_whitespace_and_optional_newlines
 
           # Parse optional arguments
-          args_b = SmallVec(ExprId, 4).new
+          args_b = ExprIdBuffer.new(4)
           # Avoid nilable struct union (stage1 generates type_id=-1 for nil.as(SmallVec?),
           # which breaks the nil check). Use a non-nilable SmallVec + empty check instead.
-          named_b = SmallVec(NamedArgument, 2).new
+          named_b = NamedArgumentBuffer.new(2)
 
           if current_token.kind == Token::Kind::LParen
             advance # consume (
@@ -2488,7 +2494,7 @@ module CrystalV2
 
         private def parse_method_params
           @parsing_method_params = true
-          params_b = SmallVec(Parameter, 2).new
+          params_b = ParameterBuffer.new(2)
           skip_trivia
           unless operator_token?(current_token, Token::Kind::LParen)
             @parsing_method_params = false
@@ -2875,7 +2881,7 @@ module CrystalV2
             skip_statement_end
 
             # Parse then body
-            then_body_b = SmallVec(ExprId, 4).new
+            then_body_b = ExprIdBuffer.new(4)
             loop do
               skip_trivia
               token = current_token
@@ -2913,7 +2919,7 @@ module CrystalV2
               skip_statement_end
 
               # Parse elsif body
-              elsif_body_b = SmallVec(ExprId, 2).new
+              elsif_body_b = ExprIdBuffer.new(2)
               loop do
                 skip_trivia
                 token = current_token
@@ -2944,7 +2950,7 @@ module CrystalV2
               advance
               skip_statement_end
 
-              else_body_b = SmallVec(ExprId, 4).new
+              else_body_b = ExprIdBuffer.new(4)
               loop do
                 skip_trivia
                 token = current_token
@@ -3011,7 +3017,7 @@ module CrystalV2
             skip_statement_end
 
             # Parse then body (executed when condition is false)
-            then_body_b = SmallVec(ExprId, 4).new
+            then_body_b = ExprIdBuffer.new(4)
             loop do
               skip_trivia
               token = current_token
@@ -3031,7 +3037,7 @@ module CrystalV2
               advance
               consume_newlines
 
-              else_body_b = SmallVec(ExprId, 4).new
+              else_body_b = ExprIdBuffer.new(4)
               loop do
                 skip_trivia
                 token = current_token
@@ -3171,7 +3177,7 @@ module CrystalV2
             skip_statement_end
 
             # Parse when body
-            when_body_b = SmallVec(ExprId, 2).new
+            when_body_b = ExprIdBuffer.new(2)
             loop do
               skip_trivia
               token = current_token
@@ -3236,7 +3242,7 @@ module CrystalV2
             skip_statement_end
 
             # Parse in body
-            in_body_b = SmallVec(ExprId, 2).new
+            in_body_b = ExprIdBuffer.new(2)
             loop do
               skip_trivia
               token = current_token
@@ -3270,7 +3276,7 @@ module CrystalV2
             # Allow statement separators before else body
             skip_statement_end
 
-            else_body_b = SmallVec(ExprId, 4).new
+            else_body_b = ExprIdBuffer.new(4)
             loop do
               skip_trivia
               token = current_token
@@ -3379,7 +3385,7 @@ module CrystalV2
             consume_newlines
 
             # Parse when body
-            when_body_b = SmallVec(ExprId, 2).new
+            when_body_b = ExprIdBuffer.new(2)
             loop do
               skip_trivia
               token = current_token
@@ -3409,7 +3415,7 @@ module CrystalV2
             advance
             consume_newlines
 
-            else_body_b = SmallVec(ExprId, 4).new
+            else_body_b = ExprIdBuffer.new(4)
             loop do
               skip_trivia
               token = current_token
@@ -3585,7 +3591,7 @@ module CrystalV2
               advance
               consume_newlines
 
-              body_ids_b = SmallVec(ExprId, 4).new
+              body_ids_b = ExprIdBuffer.new(4)
               loop do
                 skip_trivia
                 token = current_token
@@ -3630,7 +3636,7 @@ module CrystalV2
             consume_newlines
 
             # Parse body
-            body_ids_b = SmallVec(ExprId, 4).new
+            body_id_indexes = Array(Int32).new(16)
             loop do
               skip_trivia
               token = current_token
@@ -3638,7 +3644,7 @@ module CrystalV2
               break if token.kind == Token::Kind::EOF
 
               expr = parse_statement
-              body_ids_b << expr unless expr.invalid?
+              body_id_indexes << expr.index unless expr.invalid?
               consume_newlines
             end
 
@@ -3652,11 +3658,13 @@ module CrystalV2
                            spawn_token.span
                          end
 
+            body_ids = materialize_expr_ids(body_id_indexes)
+
             @arena.add_typed(
               SpawnNode.new(
                 spawn_span,
                 nil,
-                body_ids_b.to_a
+                body_ids
               )
             )
           else
@@ -3700,7 +3708,7 @@ module CrystalV2
           consume_newlines
 
           # Parse body
-          body_ids_b = SmallVec(ExprId, 4).new
+          body_id_indexes = Array(Int32).new(16)
           loop do
             # Tolerate newlines and semicolons between members
             skip_statement_end
@@ -3709,7 +3717,7 @@ module CrystalV2
             break if token.kind == Token::Kind::EOF
 
             expr = parse_statement
-            body_ids_b << expr unless expr.invalid?
+            body_id_indexes << expr.index unless expr.invalid?
             consume_newlines
           end
 
@@ -3723,11 +3731,13 @@ module CrystalV2
                          until_token.span
                        end
 
+          body_ids = materialize_expr_ids(body_id_indexes)
+
           @arena.add_typed(
             UntilNode.new(
               until_span,
               condition,
-              body_ids_b.to_a
+              body_ids
             )
           )
         end
@@ -3770,7 +3780,7 @@ module CrystalV2
           consume_newlines
 
           # Parse body
-          body_ids_b = SmallVec(ExprId, 4).new
+          body_id_indexes = Array(Int32).new(16)
           loop do
             # Tolerate newlines and semicolons between members
             skip_statement_end
@@ -3779,7 +3789,7 @@ module CrystalV2
             break if token.kind == Token::Kind::EOF
 
             expr = parse_statement
-            body_ids_b << expr unless expr.invalid?
+            body_id_indexes << expr.index unless expr.invalid?
             consume_newlines
           end
 
@@ -3793,12 +3803,14 @@ module CrystalV2
                        for_token.span
                      end
 
+          body_ids = materialize_expr_ids(body_id_indexes)
+
           @arena.add_typed(
             ForNode.new(
               for_span,
               variable_token.slice,
               collection,
-              body_ids_b.to_a
+              body_ids
             )
           )
         end
@@ -3890,7 +3902,7 @@ module CrystalV2
 
             consume_newlines
 
-            rescue_body_b = SmallVec(ExprId, 2).new
+            rescue_body_b = ExprIdBuffer.new(2)
             without_inline_rescue do
               loop do
                 skip_trivia
@@ -3915,7 +3927,7 @@ module CrystalV2
             advance # consume 'else'
             consume_newlines
 
-            else_body_b = SmallVec(ExprId, 2).new
+            else_body_b = ExprIdBuffer.new(2)
             loop do
               skip_trivia
               token = current_token
@@ -3932,7 +3944,7 @@ module CrystalV2
             advance # consume 'ensure'
             consume_newlines
 
-            ensure_body_b = SmallVec(ExprId, 2).new
+            ensure_body_b = ExprIdBuffer.new(2)
             loop do
               skip_trivia
               token = current_token
@@ -3991,7 +4003,7 @@ module CrystalV2
           consume_newlines
 
           # Parse body
-          body_ids_b = SmallVec(ExprId, 4).new
+          body_id_indexes = Array(Int32).new(16)
           loop do
             # Tolerate newlines and semicolons between members
             skip_statement_end
@@ -4000,7 +4012,7 @@ module CrystalV2
             break if token.kind == Token::Kind::EOF
 
             expr = parse_statement
-            body_ids_b << expr unless expr.invalid?
+            body_id_indexes << expr.index unless expr.invalid?
             # Allow separators between members
             skip_statement_end
           end
@@ -4015,11 +4027,13 @@ module CrystalV2
                         with_token.span
                       end
 
+          body_ids = materialize_expr_ids(body_id_indexes)
+
           @arena.add_typed(
             WithNode.new(
               with_span,
               receiver,
-              body_ids_b.to_a
+              body_ids
             )
           )
         end
@@ -5153,7 +5167,7 @@ module CrystalV2
           skip_trivia
 
           # Parse optional block parameters: |x, y|, supports splat: |*kv|
-          params_b = SmallVec(Parameter, 2).new
+          params_b = ParameterBuffer.new(2)
           if current_token.kind == Token::Kind::Pipe
             advance # consume opening |
             skip_trivia
@@ -5442,7 +5456,7 @@ module CrystalV2
           skip_trivia
 
           # Parse optional parameters: (x : Type, y : Type)
-          params_b = SmallVec(Parameter, 2).new
+          params_b = ParameterBuffer.new(2)
           return_type : Slice(UInt8)? = nil
 
           if current_token.kind == Token::Kind::LParen
@@ -5553,7 +5567,7 @@ module CrystalV2
 
           # Parse proc body - following original parser's parse_expressions pattern
           # Use parse_statement (equivalent to parse_multi_assign) to handle assignments
-          body_b = SmallVec(ExprId, 4).new
+          body_b = ExprIdBuffer.new(4)
 
           # Check for empty body
           if (is_brace_form && current_token.kind == Token::Kind::RBrace) ||
@@ -5950,7 +5964,7 @@ module CrystalV2
           # Allow separators after header (supports one-liners like `struct X; end`)
           skip_statement_end
 
-          body_ids_b = SmallVec(ExprId, 4).new
+          body_id_indexes = Array(Int32).new(16)
           loop do
             skip_trivia
             token = current_token
@@ -6071,7 +6085,7 @@ module CrystalV2
               # Phase 5B: Use parse_statement for assignments
               expr = parse_statement
             end
-            body_ids_b << expr unless expr.invalid?
+            body_id_indexes << expr.index unless expr.invalid?
             # Allow separators between members
             skip_statement_end
           end
@@ -6086,6 +6100,8 @@ module CrystalV2
                          class_token.span
                        end
 
+          body_ids = materialize_expr_ids(body_id_indexes)
+
           # Build nested structure for path-based class names
           # For class A::B::C, we create:
           # ModuleNode(A, body: [ModuleNode(B, body: [ClassNode(C, ...)])])
@@ -6097,7 +6113,7 @@ module CrystalV2
               class_span,
               innermost_name,
               super_name_slice,
-              body_ids_b.to_a,
+              body_ids,
               is_abstract,
               is_struct,
               is_union,
@@ -6340,7 +6356,7 @@ module CrystalV2
             end
           end
           begin
-            body_ids_b = SmallVec(ExprId, 4).new
+            body_id_indexes = Array(Int32).new(16)
             loop do
               skip_trivia
               # Consume semicolons as statement separators at start of lib body loop
@@ -6408,9 +6424,9 @@ module CrystalV2
                            node = @arena[expr]
                            "kind=#{node.class.name} node_kind=#{Frontend.node_kind(node).value} is_alias=#{node.is_a?(AliasNode) ? 1 : 0}"
                          end
-                STDERR.puts "[LIB_PARSE_APPEND] lib=#{lib_trace_name} idx=#{body_ids_b.size + 1} expr=#{expr.index} #{detail} token=#{token.kind}"
+                STDERR.puts "[LIB_PARSE_APPEND] lib=#{lib_trace_name} idx=#{body_id_indexes.size + 1} expr=#{expr.index} #{detail} token=#{token.kind}"
               end
-              body_ids_b << expr unless expr.invalid?
+              body_id_indexes << expr.index unless expr.invalid?
               consume_newlines
               # Also consume semicolons as statement terminators in lib context
               while current_token.kind == Token::Kind::Semicolon
@@ -6429,20 +6445,22 @@ module CrystalV2
                          lib_token.span
                        end
 
+            body_ids = materialize_expr_ids(body_id_indexes)
+
             if trace_lib_body
-              snapshot = body_ids_b.to_a.map do |expr_id|
+              snapshot = body_ids.map do |expr_id|
                 node = @arena[expr_id]
                 "#{expr_id.index}:#{node.class.name}:#{Frontend.node_kind(node).value}:#{node.is_a?(AliasNode) ? 1 : 0}"
               end.join(",")
-              STDERR.puts "[LIB_PARSE_BODY] lib=#{lib_trace_name} count=#{body_ids_b.size} body=#{snapshot}"
+              STDERR.puts "[LIB_PARSE_BODY] lib=#{lib_trace_name} count=#{body_id_indexes.size} body=#{snapshot}"
             end
 
-            STDERR.puts "[LIB_PARSE_RETURN] lib=#{lib_trace_name} before_add body_count=#{body_ids_b.size}" if trace_lib_body
+            STDERR.puts "[LIB_PARSE_RETURN] lib=#{lib_trace_name} before_add body_count=#{body_id_indexes.size}" if trace_lib_body
             lib_id = @arena.add_typed(
               LibNode.new(
                 lib_span,
                 name_token.slice,
-                body_ids_b.to_a
+                body_ids
               )
             )
             if trace_lib_body
@@ -6527,7 +6545,7 @@ module CrystalV2
 
           # Phase 103G: Parse enum members and methods
           members = [] of EnumMember
-          method_bodies_b = SmallVec(ExprId, 4).new # Store method/macro definitions
+          method_body_indexes = Array(Int32).new(16) # Store method/macro definitions
           enum_trace_filter = ENV["DEBUG_ENUM_PARSE_BODY"]?
           enum_trace_name = nil.as(String?)
           trace_enum_body = false
@@ -6545,7 +6563,7 @@ module CrystalV2
             if trace_enum_body
               macro_start = macro_control_start?
               def_start = definition_start?
-              STDERR.puts "[ENUM_PARSE_LOOP] enum=#{enum_trace_name} token=#{token.kind}:#{token_text(token).inspect} peek=#{peek_token.kind}:#{token_text(peek_token).inspect} macro=#{macro_start ? 1 : 0} def=#{def_start ? 1 : 0} members=#{members.size} body=#{method_bodies_b.size}"
+              STDERR.puts "[ENUM_PARSE_LOOP] enum=#{enum_trace_name} token=#{token.kind}:#{token_text(token).inspect} peek=#{peek_token.kind}:#{token_text(peek_token).inspect} macro=#{macro_start ? 1 : 0} def=#{def_start ? 1 : 0} members=#{members.size} body=#{method_body_indexes.size}"
             end
             if token.kind == Token::Kind::End
               STDERR.puts "[ENUM_PARSE_BREAK] enum=#{enum_trace_name} reason=end" if trace_enum_body
@@ -6564,10 +6582,11 @@ module CrystalV2
                   STDERR.puts "[ENUM_PARSE_DROP] enum=#{enum_trace_name} entry=macro invalid=1 current=#{current_token.kind}:#{token_text(current_token).inspect}"
                 end
               else
-                method_bodies_b << macro_expr
+                method_body_indexes << macro_expr.index
                 if trace_enum_body
+                  method_bodies = materialize_expr_ids(method_body_indexes)
                   macro_node = @arena[macro_expr]
-                  snapshot = method_bodies_b.to_a.map do |entry_id|
+                  snapshot = method_bodies.map do |entry_id|
                     entry_node = @arena[entry_id]
                     entry_kind = Frontend.node_kind(entry_node)
                     "#{entry_id.index}:#{entry_kind}"
@@ -6605,8 +6624,9 @@ module CrystalV2
                   STDERR.puts "[ENUM_PARSE_DROP] enum=#{enum_trace_name} entry=definition invalid=1 current=#{current_token.kind}:#{token_text(current_token).inspect}"
                 end
               else
-                method_bodies_b << definition_expr
+                method_body_indexes << definition_expr.index
                 if trace_enum_body
+                  method_bodies = materialize_expr_ids(method_body_indexes)
                   definition_node = @arena[definition_expr]
                   entry_name = if def_name = Frontend.node_def_name(definition_node)
                                  String.new(def_name)
@@ -6624,7 +6644,7 @@ module CrystalV2
                                else
                                  Frontend.node_kind(definition_node).to_s
                                end
-                  snapshot = method_bodies_b.to_a.map do |entry_id|
+                  snapshot = method_bodies.map do |entry_id|
                     entry_node = @arena[entry_id]
                     entry_kind = Frontend.node_kind(entry_node)
                     entry_label = if label = Frontend.node_def_name(entry_node)
@@ -6696,7 +6716,7 @@ module CrystalV2
                         enum_token.span
                       end
 
-          enum_body = method_bodies_b.empty? ? nil : method_bodies_b.to_a
+          enum_body = method_body_indexes.empty? ? nil : materialize_expr_ids(method_body_indexes)
           if trace_enum_body
             if enum_body
               entries = enum_body.map do |expr_id|
@@ -7028,7 +7048,7 @@ module CrystalV2
 
           consume_newlines
 
-          body_ids_b = SmallVec(ExprId, 4).new
+          body_id_indexes = Array(Int32).new(16)
           loop do
             skip_trivia
             token = current_token
@@ -7144,7 +7164,7 @@ module CrystalV2
             else
               expr = parse_statement
             end
-            body_ids_b << expr unless expr.invalid?
+            body_id_indexes << expr.index unless expr.invalid?
             consume_newlines
           end
 
@@ -7171,7 +7191,7 @@ module CrystalV2
           # Build nested module structure from inside out
           # For module A::B::C with body, we create:
           # ModuleNode(A, body: [ModuleNode(B, body: [ModuleNode(C, body: original_body)])])
-          body = body_ids_b.to_a
+          body = materialize_expr_ids(body_id_indexes)
 
           # Start with innermost module (last segment)
           innermost_idx = name_segments.size - 1
@@ -8264,8 +8284,8 @@ module CrystalV2
 
           # Parse arguments separated by commas
           # Build arguments in a small inline buffer to reduce heap churn
-          args_b = SmallVec(ExprId, 4).new
-          named_b = SmallVec(NamedArgument, 2).new
+          args_b = ExprIdBuffer.new(4)
+          named_b = NamedArgumentBuffer.new(2)
 
           # Disable postfix modifiers (if/unless/while/until) inside no-parens call args.
           # "puts s unless s.empty?" must parse as "(puts s) unless (s.empty?)", not
@@ -10943,8 +10963,8 @@ module CrystalV2
             @paren_depth += 1 # Phase 103: entering parentheses
             skip_whitespace_and_optional_newlines
 
-            args_b = SmallVec(ExprId, 4).new
-            named_b = SmallVec(NamedArgument, 2).new
+            args_b = ExprIdBuffer.new(4)
+            named_b = NamedArgumentBuffer.new(2)
 
             # Empty call: foo()
             unless current_token.kind == Token::Kind::RParen
@@ -11392,8 +11412,8 @@ module CrystalV2
           lbracket = current_token
           advance
           @bracket_depth += 1 # Phase 103: entering brackets
-          indexes_b = SmallVec(ExprId, 3).new
-          named_b = SmallVec(NamedArgument, 2).new
+          indexes_b = ExprIdBuffer.new(3)
+          named_b = NamedArgumentBuffer.new(2)
           skip_whitespace_and_optional_newlines
           unless current_token.kind == Token::Kind::RBracket
             loop do
@@ -11477,9 +11497,10 @@ current_token.kind == Token::Kind::Identifier &&
           end
           @bracket_depth -= 1 # Phase 103: exiting brackets
           expect_operator(Token::Kind::RBracket)
+          indexes = indexes_b.to_a
           # Compute span without allocating a spans array
           acc_span = node_span(target).cover(lbracket.span)
-          indexes_b.each { |idx| acc_span = acc_span.cover(node_span(idx)) }
+          indexes.each { |idx| acc_span = acc_span.cover(node_span(idx)) }
           if closing_span = previous_token.try(&.span)
             acc_span = acc_span.cover(closing_span)
           end
@@ -11543,14 +11564,14 @@ current_token.kind == Token::Kind::Identifier &&
               CallNode.new(
                 acc_span,
                 callee,
-                indexes_b.to_a,
+                indexes,
                 nil,
                 named_b.empty? ? nil : named_b.to_a
               )
             )
           else
             index_span = acc_span
-            @arena.add_typed(IndexNode.new(index_span, target, indexes_b.to_a))
+            @arena.add_typed(IndexNode.new(index_span, target, indexes))
           end
         end
 
@@ -11689,8 +11710,8 @@ current_token.kind == Token::Kind::Identifier &&
                 # Try to parse arguments
                 @parsing_call_args += 1
 
-                args_b = SmallVec(ExprId, 4).new
-                named_b = SmallVec(NamedArgument, 2).new
+                args_b = ExprIdBuffer.new(4)
+                named_b = NamedArgumentBuffer.new(2)
 
                 loop do
                   # Stop parsing arguments if a 'do' block starts here; let postfix loop attach it.
@@ -11860,8 +11881,8 @@ current_token.kind == Token::Kind::Identifier &&
                 # Try to parse arguments
                 @parsing_call_args += 1
 
-                args_b = SmallVec(ExprId, 4).new
-                named_b = SmallVec(NamedArgument, 2).new
+                args_b = ExprIdBuffer.new(4)
+                named_b = NamedArgumentBuffer.new(2)
 
                 loop do
                   # Stop parsing arguments if a 'do' block starts here; let postfix loop attach it.
@@ -14784,8 +14805,8 @@ current_token.kind == Token::Kind::Identifier &&
                 # Indexing: &.[0] - need to parse argument and create IndexNode/CallNode
                 skip_trivia
                 @bracket_depth += 1
-                indexes_b = SmallVec(ExprId, 3).new
-                named_b = SmallVec(NamedArgument, 2).new
+                indexes_b = ExprIdBuffer.new(3)
+                named_b = NamedArgumentBuffer.new(2)
                 unless current_token.kind == Token::Kind::RBracket
                   loop do
                     expr = parse_op_assign
@@ -14898,7 +14919,7 @@ current_token.kind == Token::Kind::Identifier &&
                 # Indexing: &.[0] - reparse as index
                 # Create a call with method name [] and argument
                 skip_trivia
-                args_b = SmallVec(ExprId, 2).new
+                args_b = ExprIdBuffer.new(2)
                 loop do
                   arg = parse_expression(0)
                   return PREFIX_ERROR if arg.invalid?
@@ -15102,8 +15123,8 @@ current_token.kind == Token::Kind::Identifier &&
               kind = Frontend.node_kind(@arena[call_expr])
               if kind == Frontend::NodeKind::MemberAccess || kind == Frontend::NodeKind::Call
                 @parsing_call_args += 1
-                args_b = SmallVec(ExprId, 2).new
-                named_b = SmallVec(NamedArgument, 1).new
+                args_b = ExprIdBuffer.new(2)
+                named_b = NamedArgumentBuffer.new(1)
                 loop do
                   # Stop on block delimiters to let outer layer attach them
                   break if current_token.kind.in?(Token::Kind::Do, Token::Kind::LBrace)
@@ -15198,10 +15219,10 @@ current_token.kind == Token::Kind::Identifier &&
         # Example: fun foo(x : Int, callback : Int -> Void, ...) : Bool
         # Returns: {params, varargs_flag} or ExprId on error
         private def parse_fun_params : {Array(Parameter), Bool} | ExprId
-          params = Array(Parameter).new(2)
+          params_b = ParameterBuffer.new(2)
           varargs = false
           skip_trivia
-          return {params, varargs} unless operator_token?(current_token, Token::Kind::LParen)
+          return {params_b.to_a, varargs} unless operator_token?(current_token, Token::Kind::LParen)
 
           advance                               # consume (
           @paren_depth += 1                     # Track delimiter depth for multi-line support
@@ -15277,7 +15298,7 @@ current_token.kind == Token::Kind::Identifier &&
 
               param_span = param_start.span.cover(previous_token.not_nil!.span)
 
-              params << Parameter.new(
+              params_b << Parameter.new(
                 param_name,
                 nil,        # no external name
                 param_type, # type from parse_bare_proc_type
@@ -15302,7 +15323,7 @@ current_token.kind == Token::Kind::Identifier &&
 
           @paren_depth -= 1 # Exiting parentheses
           expect_operator(Token::Kind::RParen)
-          {params, varargs}
+          {params_b.to_a, varargs}
         end
 
         # Phase 103K: Type parsing methods for fun declarations and type annotations
