@@ -4,11 +4,22 @@
 - **Branch**: `bootstrap-benchmark`
 - **Latest committed baseline**: `58a85c8f` — harden recursive compiler_rt parse loading
 - **Working tree**:
-  - unrelated local diffs in `src/compiler/frontend/lexer.cr`, `src/compiler/hir/ast_to_hir.cr`, `src/compiler/mir/hir_to_mir.cr`, and `src/crystal_v2.cr` must stay out of the next commit
-  - untracked local benchmarks in `examples/bench_fib42_crystal` and `examples/bench_tree_crystal` must stay out of the next commit
+  - active uncommitted fixes currently cover source-reparsed extern recovery, arena/source matching hardening, and struct-in-union runtime tagging
+  - latest fixed stage1 is green on the new union oracles, but the self-hosted stage2 frontier still crashes on tiny compile/HIR probes
 - **New local debug verification compiler**: `/private/tmp/codex_stage1_regex_runtime_fix_dbg`
 - **Fresh local debug verification compiler**: `/private/tmp/codex_stage1_nilguard_dbg`
 - **Newest local debug verification compiler**: `/private/tmp/codex_stage1_noprelude_io_dbg`
+- **Current verified struct-in-union runtime type fix**:
+  - `src/compiler/hir/ast_to_hir.cr`, `src/compiler/mir/hir_to_mir.cr`, and `src/compiler/mir/llvm_backend.cr` now reserve the raw-pointer/all-ref union ABI for runtime-header-backed heap objects only; heap-backed structs/tuples still use tagged unions because their body starts with user fields, not a dispatch/type-id header
+  - fresh release verification on `/Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_unionhdr_w1`:
+    - direct union oracle `Set(String) | String` now prints `true / false / true / true`
+    - `Hash(String, Set(String))` lookup oracle now prints `true / false / true / true`
+    - `bash regression_tests/stage2_path_join_interpolation_arena_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_unionhdr_w1` -> `not reproduced`
+    - `bash regression_tests/run_all.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_unionhdr_w1 4` -> `84 passed, 1 failed out of 85 tests`
+  - adversary note:
+    - the lone `run_all` failure is still the long-standing flaky `test_select_map_stress` (`exit 138`), so there is no new broad regression signal against this fix yet
+  - current boundary:
+    - `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_unionhdr_fromfixedstage1_w1` still crashes while compiling the same tiny probes and the existing HIR oracle, so this fix closes one verified runtime root cause but does not yet stabilize stage2/stage3 bootstrap
 - **Current verified no-prelude link fix**:
   - `src/compiler/mir/llvm_backend.cr` now emits PCRE2 declarations/runtime helpers only when the module actually contains regex helper extern calls or regex-specific builtin overrides
   - fresh debug verification:
@@ -39,8 +50,10 @@
     - `scripts/run_safe.sh ...examples/bench_tree_crystal.cr --no-prelude...` now prints `180` and exits `0`
     - `bash regression_tests/run_all.sh /private/tmp/codex_stage1_noprelude_io_dbg 4` -> `81 passed, 0 failed`
     - emitted no-prelude IR before the fix showed `@Object__classvar__STDOUT = global ptr null` plus dead stub `define i32 @IO$Hputs$$Int32(...) { ret i32 0 }`; the new path bypasses that prelude-only surface entirely
-- **Fresh release stage1 (current tree)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_funlookahead`
-- **Fresh release stage2 (current tree)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_parseprogramroots_loadedreq_lazydbg_fresh_w2`
+- **Fresh release stage1 (current tree, union fix verified)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_unionhdr_w1`
+- **Fresh release stage2 (built from fixed stage1, still unstable)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_unionhdr_fromfixedstage1_w1`
+- **Previous fresh release stage1 checkpoint**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_funlookahead`
+- **Previous fresh release stage2 checkpoint**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_parseprogramroots_loadedreq_lazydbg_fresh_w2`
 - **Previous local stage2 checkpoint (class reparse fallback)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_reparse_class_clean`
 - **Previous local stage2 checkpoint (require-scan index traversal)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_reqscanidx`
 - **Previous local stage2 candidate (cached input base dir + scalarized parse_program_roots root buffer)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_rootidx_w1`
@@ -49,6 +62,8 @@
 - **Current local stage2 parse-stop hardening candidate**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_lazyparse_earlyret_w1`
 - **Current local stage2 macro-text no-span falsifier candidate**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_macrotext_nospan_w1`
 - **Current timings**:
+  - original Crystal -> fresh `stage1_release_unionhdr_w1`: `534.40s`
+  - fresh `stage1_release_unionhdr_w1` -> fresh `stage2_release_unionhdr_fromfixedstage1_w1`: `165.71s`
   - original Crystal -> fresh `stage1_release_funlookahead`: `544.95s`
   - fresh `stage1_release_funlookahead` -> fresh `stage2_release_funlookahead_fresh`: `174.80s`
   - previous fresh self-hosted release stage2 checkpoint (`stage2_release_nameprio_fresh`): `164.03s`
@@ -78,6 +93,8 @@
   - `bash regression_tests/stage2_no_prelude_regex_unused_link_repro.sh <compiler>`
   - `bash regression_tests/stage2_no_prelude_nil_guard_fallthrough_repro.sh <compiler>`
   - `bash regression_tests/stage2_no_prelude_puts_runtime_repro.sh <compiler>`
+  - `bash regression_tests/stage2_struct_union_runtime_typecheck_repro.sh <compiler>`
+  - `bash regression_tests/stage2_hash_set_union_dispatch_repro.sh <compiler>`
 - **Compiler parse-only status**:
   - baseline `stage2_release_nameprio_fresh`: `rc=0,138,138,138,138`
   - fresh `stage2_release_funlookahead_fresh`: `rc=0,0,0,0,0`

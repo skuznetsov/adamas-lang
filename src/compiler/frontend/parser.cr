@@ -105,6 +105,9 @@ module CrystalV2
           # Pre-size AstArena capacity heuristically; skip when using PageArena
           unless @arena.is_a?(PageArena)
             @arena = AstArena.new(capacity)
+            # Zero-copy AST slices point into the lexer source, so the resized
+            # arena must retain the source just like the initial temporary one.
+            @arena.retain_source(@source)
           end
         end
 

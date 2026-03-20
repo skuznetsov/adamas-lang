@@ -41,6 +41,10 @@ module CrystalV2
           @arr.each { |e| yield e }
         end
 
+        def unsafe_fetch(index : Int32) : T
+          @arr.unsafe_fetch(index)
+        end
+
         def to_a : Array(T)
           @arr
         end

@@ -134,9 +134,9 @@ module Crystal::MIR
         next true if variant.type_ref == TypeRef::NIL || variant.type_ref == TypeRef::VOID
         type = @type_registry.get(variant.type_ref)
         if type
-          runtime_pointer_backed_union_variant?(type)
+          runtime_header_backed_union_variant?(type)
         else
-          variant_name_is_pointer_backed?(variant.full_name)
+          variant_name_is_runtime_header_backed?(variant.full_name)
         end
       end
     end
@@ -268,10 +268,10 @@ module Crystal::MIR
             next true if variant.type_ref == TypeRef::NIL || variant.type_ref == TypeRef::VOID
             type = @type_registry.get(variant.type_ref)
             if type
-              runtime_pointer_backed_union_variant?(type)
+              runtime_header_backed_union_variant?(type)
             else
               # Variant type not in registry — check ivar-qualified name
-              variant_name_is_pointer_backed?(variant.full_name)
+              variant_name_is_runtime_header_backed?(variant.full_name)
             end
           end
         end
@@ -281,29 +281,32 @@ module Crystal::MIR
         stripped = part.strip
         next true if stripped == "Nil" || stripped == "Void"
         if found = @type_registry.get_by_name(stripped)
-          runtime_pointer_backed_union_variant?(found)
+          runtime_header_backed_union_variant?(found)
         else
           # Check for ivar-qualified names like "ClassName::ivar:TypeName"
-          variant_name_is_pointer_backed?(stripped)
+          variant_name_is_runtime_header_backed?(stripped)
         end
       end
     end
 
-    private def runtime_pointer_backed_union_variant?(type : Type?) : Bool
+    # Raw-pointer union ABI is only valid when each non-nil variant carries its
+    # runtime type_id in an object header. Structs and tuples may be heap-backed,
+    # but their body begins with user fields, so loading `type_id` from offset 0
+    # misclassifies them.
+    private def runtime_header_backed_union_variant?(type : Type?) : Bool
       return false unless type
-      type.kind.reference? || type.kind.array? || type.kind.pointer? ||
-        type.kind.tuple? || type.kind.struct?
+      type.kind.reference? || type.kind.array?
     end
 
-    # Check if a variant type name represents a pointer-backed type by extracting
+    # Check if a variant type name represents a runtime-header-backed heap object by extracting
     # the base type from an ivar-qualified name like "ClassName::ivar_name:TypeName".
-    private def variant_name_is_pointer_backed?(name : String) : Bool
+    private def variant_name_is_runtime_header_backed?(name : String) : Bool
       i = name.bytesize - 1
       while i > 0
         if name.byte_at(i) == ':'.ord && name.byte_at(i - 1) != ':'.ord
           base_name = name[(i + 1)..]
           base_type = @type_registry.get_by_name(base_name)
-          return runtime_pointer_backed_union_variant?(base_type) if base_type
+          return runtime_header_backed_union_variant?(base_type) if base_type
           return false
         end
         i -= 1
@@ -10994,6 +10997,9 @@ module Crystal::MIR
       # non-all-ref union field (stored as struct), the value is just a ptr
       # but the destination expects { i32 type_id, [payload] }. Detect this
       # via the optional field_type annotation and construct the union struct.
+      # Struct payloads need special handling here: their body does not carry
+      # a runtime type header, so a direct load from offset 0 would read the
+      # first user field instead of a discriminator.
       field_type_ref = inst.field_type
       if field_type_ref
         field_type_str = @type_mapper.llvm_type(field_type_ref)
@@ -11003,13 +11009,25 @@ module Crystal::MIR
           ptr_val = val
           # Normalize: if val is "0" or literal, use null
           ptr_val = "null" if ptr_val == "0"
-          # Read type_id from the object header (or 0 for null)
           emit "%#{base}.is_null = icmp eq ptr #{ptr_val}, null"
-          emit "%#{base}.null_tid_ptr = alloca i32, align 4"
-          emit "store i32 0, ptr %#{base}.null_tid_ptr"
-          emit "%#{base}.safe_tid_ptr = select i1 %#{base}.is_null, ptr %#{base}.null_tid_ptr, ptr #{ptr_val}"
-          emit "%#{base}.obj_tid = load i32, ptr %#{base}.safe_tid_ptr"
-          emit "%#{base}.type_id = select i1 %#{base}.is_null, i32 0, i32 %#{base}.obj_tid"
+          source_variant_tid : Int32? = nil
+          if val_type != TypeRef::POINTER
+            if src_type = @module.type_registry.get(val_type)
+              if src_type.kind.struct? || src_type.kind.tuple? || src_type.kind.pointer?
+                source_variant_tid = val_type.id.to_i32
+              end
+            end
+          end
+          if source_variant_tid
+            emit "%#{base}.type_id = select i1 %#{base}.is_null, i32 0, i32 #{source_variant_tid}"
+          else
+            # Read type_id from the object header (or 0 for null).
+            emit "%#{base}.null_tid_ptr = alloca i32, align 4"
+            emit "store i32 0, ptr %#{base}.null_tid_ptr"
+            emit "%#{base}.safe_tid_ptr = select i1 %#{base}.is_null, ptr %#{base}.null_tid_ptr, ptr #{ptr_val}"
+            emit "%#{base}.obj_tid = load i32, ptr %#{base}.safe_tid_ptr"
+            emit "%#{base}.type_id = select i1 %#{base}.is_null, i32 0, i32 %#{base}.obj_tid"
+          end
           # Build the union struct: { i32 type_id, [payload] }
           emit "%#{base}.tmp = alloca #{field_type_str}, align 8"
           emit "store #{field_type_str} zeroinitializer, ptr %#{base}.tmp"
@@ -15936,7 +15954,7 @@ module Crystal::MIR
           ref_variants = union_desc.variants.select do |v|
             next false if v.type_ref == TypeRef::NIL || v.type_ref == TypeRef::VOID
             if v_type = @module.type_registry.get(v.type_ref)
-              v_type.kind.reference? || v_type.kind.array? || v_type.kind.struct?
+              v_type.kind.reference? || v_type.kind.array?
             else
               false
             end

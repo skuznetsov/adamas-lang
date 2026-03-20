@@ -3,6 +3,41 @@
 Updated: 2026-03-19
 Context: compiler/bootstrap/stage2-stability
 
+[LM-215|verified]: raw-pointer/all-ref union ABI must exclude heap-backed
+structs and tuples. Pointer-sized payload is not sufficient for runtime union
+dispatch: `Set(String)` is heap-backed, but its body begins with `@hash`, not a
+type header, so `Set(String) | String` lowered as raw `ptr` makes `is_a?`
+probe the first bytes of `@hash` instead of a discriminator. The fix aligns
+`src/compiler/hir/ast_to_hir.cr`, `src/compiler/mir/hir_to_mir.cr`, and
+`src/compiler/mir/llvm_backend.cr` so the raw-pointer union corridor is used
+only for runtime-header-backed heap objects (reference types / arrays). Struct
+and tuple variants keep tagged union layout, and ptr-to-tagged-union stores use
+the static variant id for struct/tuple payloads instead of loading a fake
+header. Verified on fresh release compiler
+`/Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_unionhdr_w1`:
+- direct root-cause oracle `(Set(String) | String)` now prints
+  `true`, `false`, `true`, `true`
+- downstream symptom oracle `Hash(String, Set(String))` lookup now prints
+  `true`, `false`, `true`, `true`
+- the older arena oracle
+  `regression_tests/stage2_path_join_interpolation_arena_repro.sh` stays green
+  (`not reproduced`) on the same stage1
+Adversary note:
+- the self-hosted release stage2 built from that fixed stage1
+  (`/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_unionhdr_fromfixedstage1_w1`)
+  still segfaults while compiling those tiny probes and the existing HIR
+  oracle, so this landmark verifies one closed runtime root cause, not full
+  bootstrap stabilization
+- broader regression check on the same fixed stage1 is clean except for the
+  known flaky outlier:
+  `bash regression_tests/run_all.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_unionhdr_w1 4`
+  => `84 passed, 1 failed out of 85 tests`, where the only red remains
+  `test_select_map_stress` with the pre-existing `exit 138` / bus-error class
+Reusable lesson: “pointer-backed” and “runtime-header-backed” are different
+properties. Use the raw-pointer union ABI only when non-nil variants carry
+their own runtime type id in-object; heap-backed value types still need tagged
+unions. {F/G/R: 0.97/0.79/0.95} [verified]
+
 [LM-213|verified]: false-branch nil-guard narrowing was missing in HIR
 control-flow lowering, which left fallthrough locals typed as `Nil | T` after
 guards like `if node.nil?; return 0; end` and caused later union-dispatch to

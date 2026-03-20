@@ -248,7 +248,8 @@ module CrystalV2
 
               # Write nodes
               io.write_bytes(@arena.size.to_u32, IO::ByteFormat::LittleEndian)
-              @arena.nodes.each do |node|
+              @arena.nodes.each do |obj|
+                node = obj.as(Frontend::TypedNode)
                 write_node(io, node, string_table)
               end
 
@@ -271,7 +272,8 @@ module CrystalV2
           table = {} of String => UInt32
           index = 0_u32
 
-          @arena.nodes.each do |node|
+          @arena.nodes.each do |obj|
+            node = obj.as(Frontend::TypedNode)
             collect_strings(node, table) do |str|
               unless table.has_key?(str)
                 table[str] = index

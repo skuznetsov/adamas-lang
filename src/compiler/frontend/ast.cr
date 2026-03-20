@@ -3752,7 +3752,10 @@ module CrystalV2
           @nodes << node
           if debug_store
             stored = @nodes[id.index]
-            STDERR.puts "[ARENA_ADD] phase=after id=#{id.index} stored=#{stored.class.name}"
+            arg_kind = Frontend.node_kind(node)
+            stored_kind = Frontend.node_kind(stored)
+            typed_same_type = stored.is_a?(typeof(node))
+            STDERR.puts "[ARENA_ADD] phase=after id=#{id.index} stored=#{stored.class.name} arg_kind=#{arg_kind} stored_kind=#{stored_kind} typed_same_type=#{typed_same_type}"
           end
           id
         end
@@ -3977,7 +3980,10 @@ module CrystalV2
           @pages[page_index][offset] = node
           if debug_store
             stored = @pages[page_index][offset]
-            STDERR.puts "[PAGE_ARENA_ADD] phase=after id=#{idx} stored=#{stored.class.name}"
+            arg_kind = Frontend.node_kind(node)
+            stored_kind = Frontend.node_kind(stored)
+            typed_same_type = stored.is_a?(typeof(node))
+            STDERR.puts "[PAGE_ARENA_ADD] phase=after id=#{idx} stored=#{stored.class.name} arg_kind=#{arg_kind} stored_kind=#{stored_kind} typed_same_type=#{typed_same_type}"
           end
           @count = idx + 1
           ExprId.new(idx)

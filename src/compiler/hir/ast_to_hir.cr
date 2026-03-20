@@ -5786,9 +5786,10 @@ module Crystal::HIR
                            false
                          end
       force_reparse = debug_env_filter_match?("FORCE_LIB_REPARSE", lib_name, source_path_for(@arena) || "")
+      prefer_source_reparse = sizeof(Slice(UInt8)) <= 8
 
       if body = node.body
-        unless !force_reparse && body_ids_match_arena?(@arena, body)
+        unless !force_reparse && !prefer_source_reparse && body_ids_match_arena?(@arena, body)
           if with_reparsed_lib_from_source(node) { |reparsed_node|
                register_lib_body(reparsed_node, lib_name, debug_lib_member)
              }
@@ -5924,6 +5925,7 @@ module Crystal::HIR
         end
       when CrystalV2::Compiler::Frontend::FunNode
         return unless pass == :externs
+        return if register_extern_fun_from_source(lib_name, node.span, @arena)
         register_extern_fun(lib_name, node)
       when CrystalV2::Compiler::Frontend::GlobalVarDeclNode
         return unless pass == :externs
@@ -9351,14 +9353,83 @@ module Crystal::HIR
       arena : CrystalV2::Compiler::Frontend::ArenaLike,
       node : CrystalV2::Compiler::Frontend::ClassNode,
     ) : Bool
-      arena_fits_body_ids?(arena, node.body, node.span)
+      return false unless arena_fits_body_ids?(arena, node.body, node.span)
+      class_body_nodes_match_arena?(arena, node)
     end
 
     private def resolve_arena_for_class_node(
       node : CrystalV2::Compiler::Frontend::ClassNode,
       fallback : CrystalV2::Compiler::Frontend::ArenaLike,
     ) : CrystalV2::Compiler::Frontend::ArenaLike
-      resolve_arena_for_body_ids(node.body, node.span, fallback)
+      return fallback if arena_fits_class_node?(fallback, node)
+
+      fallback_path = source_path_for(fallback)
+      best : CrystalV2::Compiler::Frontend::ArenaLike? = nil
+      best_size = Int32::MAX
+
+      if fallback_path
+        i = 0
+        while i < @main_arenas.size
+          candidate = @main_arenas.unsafe_fetch(i)
+          if source_path_for(candidate) == fallback_path &&
+             arena_fits_class_node?(candidate, node)
+            size = candidate.size
+            if size < best_size
+              best = candidate
+              best_size = size
+            end
+          end
+          i += 1
+        end
+
+        if arenas = @inline_arenas
+          i = 0
+          while i < arenas.size
+            candidate = arenas.unsafe_fetch(i)
+            if source_path_for(candidate) == fallback_path &&
+               arena_fits_class_node?(candidate, node)
+              size = candidate.size
+              if size < best_size
+                best = candidate
+                best_size = size
+              end
+            end
+            i += 1
+          end
+        end
+      end
+
+      unless best
+        i = 0
+        while i < @main_arenas.size
+          candidate = @main_arenas.unsafe_fetch(i)
+          if arena_fits_class_node?(candidate, node)
+            size = candidate.size
+            if size < best_size
+              best = candidate
+              best_size = size
+            end
+          end
+          i += 1
+        end
+
+        if arenas = @inline_arenas
+          i = 0
+          while i < arenas.size
+            candidate = arenas.unsafe_fetch(i)
+            if arena_fits_class_node?(candidate, node)
+              size = candidate.size
+              if size < best_size
+                best = candidate
+                best_size = size
+              end
+            end
+            i += 1
+          end
+        end
+      end
+
+      best || fallback
     end
 
     private def arena_fits_enum_node?(
@@ -9473,7 +9544,235 @@ module Crystal::HIR
       func_def : CrystalV2::Compiler::Frontend::DefNode,
     ) : Bool
       body = func_def.body
-      body_ids_match_arena?(arena, body)
+      return false unless body_ids_match_arena?(arena, body)
+      body_subtrees_match_arena?(arena, body, func_def.span)
+    end
+
+    private def body_subtrees_match_arena?(
+      arena : CrystalV2::Compiler::Frontend::ArenaLike,
+      body : Array(ExprId)?,
+      owner_span : CrystalV2::Compiler::Frontend::Span,
+    ) : Bool
+      return true if body.nil?
+      return true if body.to_unsafe.address == 0_u64
+      sz = body.size
+      return true if sz == 0
+
+      if sz <= 8
+        i = 0
+        while i < sz
+          return false unless expr_subtree_matches_arena?(arena, body.unsafe_fetch(i), owner_span, 0)
+          i += 1
+        end
+      else
+        return false unless expr_subtree_matches_arena?(arena, body.unsafe_fetch(0), owner_span, 0)
+        return false unless expr_subtree_matches_arena?(arena, body.unsafe_fetch(sz // 4), owner_span, 0)
+        return false unless expr_subtree_matches_arena?(arena, body.unsafe_fetch(sz // 2), owner_span, 0)
+        return false unless expr_subtree_matches_arena?(arena, body.unsafe_fetch((sz * 3) // 4), owner_span, 0)
+        return false unless expr_subtree_matches_arena?(arena, body.unsafe_fetch(sz - 1), owner_span, 0)
+      end
+
+      true
+    end
+
+    private def expr_subtree_matches_arena?(
+      arena : CrystalV2::Compiler::Frontend::ArenaLike,
+      expr_id : ExprId,
+      owner_span : CrystalV2::Compiler::Frontend::Span,
+      depth : Int32,
+      allow_synthetic_spans : Bool = false,
+    ) : Bool
+      return true if expr_id.null_ptr? || expr_id.invalid?
+      return false unless expr_id_matches_arena?(arena, expr_id)
+
+      node = arena[expr_id]
+      return false unless allow_synthetic_spans || node_span_matches_owner?(node.span, owner_span)
+      return true if depth >= 6
+
+      child_depth = depth + 1
+      case node
+      when CrystalV2::Compiler::Frontend::VisibilityModifierNode
+        return expr_subtree_matches_arena?(arena, node.expression, owner_span, child_depth, allow_synthetic_spans)
+      when CrystalV2::Compiler::Frontend::BinaryNode
+        return false unless expr_subtree_matches_arena?(arena, node.left, owner_span, child_depth, allow_synthetic_spans)
+        return false unless expr_subtree_matches_arena?(arena, node.right, owner_span, child_depth, allow_synthetic_spans)
+      when CrystalV2::Compiler::Frontend::UnaryNode
+        return false unless expr_subtree_matches_arena?(arena, node.operand, owner_span, child_depth, allow_synthetic_spans)
+      when CrystalV2::Compiler::Frontend::CallNode
+        return false unless expr_subtree_matches_arena?(arena, node.callee, owner_span, child_depth, allow_synthetic_spans)
+        return false unless expr_id_list_matches_arena?(arena, node.args, owner_span, child_depth, allow_synthetic_spans)
+        if named_args = node.named_args
+          i = 0
+          while i < named_args.size
+            return false unless expr_subtree_matches_arena?(arena, named_args.unsafe_fetch(i).value, owner_span, child_depth, allow_synthetic_spans)
+            i += 1
+          end
+        end
+        if block = node.block
+          return false unless expr_subtree_matches_arena?(arena, block, owner_span, child_depth, allow_synthetic_spans)
+        end
+      when CrystalV2::Compiler::Frontend::MemberAccessNode,
+           CrystalV2::Compiler::Frontend::SafeNavigationNode
+        return false unless expr_subtree_matches_arena?(arena, node.object, owner_span, child_depth, allow_synthetic_spans)
+      when CrystalV2::Compiler::Frontend::IfNode
+        return false unless expr_subtree_matches_arena?(arena, node.condition, owner_span, child_depth, allow_synthetic_spans)
+        return false unless expr_id_list_matches_arena?(arena, node.then_body, owner_span, child_depth, allow_synthetic_spans)
+        return false unless expr_id_list_matches_arena?(arena, node.else_body, owner_span, child_depth, allow_synthetic_spans)
+      when CrystalV2::Compiler::Frontend::UnlessNode
+        return false unless expr_subtree_matches_arena?(arena, node.condition, owner_span, child_depth, allow_synthetic_spans)
+        return false unless expr_id_list_matches_arena?(arena, node.then_branch, owner_span, child_depth, allow_synthetic_spans)
+        return false unless expr_id_list_matches_arena?(arena, node.else_branch, owner_span, child_depth, allow_synthetic_spans)
+      when CrystalV2::Compiler::Frontend::WhileNode,
+           CrystalV2::Compiler::Frontend::UntilNode
+        return false unless expr_subtree_matches_arena?(arena, node.condition, owner_span, child_depth, allow_synthetic_spans)
+        return false unless expr_id_list_matches_arena?(arena, node.body, owner_span, child_depth, allow_synthetic_spans)
+      when CrystalV2::Compiler::Frontend::ForNode
+        return false unless expr_subtree_matches_arena?(arena, node.collection, owner_span, child_depth, allow_synthetic_spans)
+        return false unless expr_id_list_matches_arena?(arena, node.body, owner_span, child_depth, allow_synthetic_spans)
+      when CrystalV2::Compiler::Frontend::LoopNode,
+           CrystalV2::Compiler::Frontend::BlockNode,
+           CrystalV2::Compiler::Frontend::ProcLiteralNode
+        return false unless expr_id_list_matches_arena?(arena, node.body, owner_span, child_depth, allow_synthetic_spans)
+      when CrystalV2::Compiler::Frontend::CaseNode
+        if value = node.value
+          return false unless expr_subtree_matches_arena?(arena, value, owner_span, child_depth, allow_synthetic_spans)
+        end
+        node.when_branches.each do |branch|
+          return false unless expr_id_list_matches_arena?(arena, branch.conditions, owner_span, child_depth, allow_synthetic_spans)
+          return false unless expr_id_list_matches_arena?(arena, branch.body, owner_span, child_depth, allow_synthetic_spans)
+        end
+        if in_branches = node.in_branches
+          in_branches.each do |branch|
+            return false unless expr_id_list_matches_arena?(arena, branch.conditions, owner_span, child_depth, allow_synthetic_spans)
+            return false unless expr_id_list_matches_arena?(arena, branch.body, owner_span, child_depth, allow_synthetic_spans)
+          end
+        end
+        return false unless expr_id_list_matches_arena?(arena, node.else_branch, owner_span, child_depth, allow_synthetic_spans)
+      when CrystalV2::Compiler::Frontend::TernaryNode
+        return false unless expr_subtree_matches_arena?(arena, node.condition, owner_span, child_depth, allow_synthetic_spans)
+        return false unless expr_subtree_matches_arena?(arena, node.true_branch, owner_span, child_depth, allow_synthetic_spans)
+        return false unless expr_subtree_matches_arena?(arena, node.false_branch, owner_span, child_depth, allow_synthetic_spans)
+      when CrystalV2::Compiler::Frontend::AssignNode
+        return false unless expr_subtree_matches_arena?(arena, node.target, owner_span, child_depth, allow_synthetic_spans)
+        return false unless expr_subtree_matches_arena?(arena, node.value, owner_span, child_depth, allow_synthetic_spans)
+      when CrystalV2::Compiler::Frontend::MultipleAssignNode
+        return false unless expr_id_list_matches_arena?(arena, node.targets, owner_span, child_depth, allow_synthetic_spans)
+        return false unless expr_subtree_matches_arena?(arena, node.value, owner_span, child_depth, allow_synthetic_spans)
+      when CrystalV2::Compiler::Frontend::ArrayLiteralNode
+        return false unless expr_id_list_matches_arena?(arena, node.elements, owner_span, child_depth, allow_synthetic_spans)
+        if of_type = node.of_type
+          return false unless expr_subtree_matches_arena?(arena, of_type, owner_span, child_depth, allow_synthetic_spans)
+        end
+      when CrystalV2::Compiler::Frontend::TupleLiteralNode
+        return false unless expr_id_list_matches_arena?(arena, node.elements, owner_span, child_depth, allow_synthetic_spans)
+      when CrystalV2::Compiler::Frontend::HashLiteralNode
+        node.entries.each do |entry|
+          return false unless expr_subtree_matches_arena?(arena, entry.key, owner_span, child_depth, allow_synthetic_spans)
+          return false unless expr_subtree_matches_arena?(arena, entry.value, owner_span, child_depth, allow_synthetic_spans)
+        end
+      when CrystalV2::Compiler::Frontend::StringInterpolationNode
+        node.pieces.each do |piece|
+          if expr = piece.expr
+            return false unless expr_subtree_matches_arena?(arena, expr, owner_span, child_depth, true)
+          end
+        end
+      when CrystalV2::Compiler::Frontend::ReturnNode,
+           CrystalV2::Compiler::Frontend::BreakNode,
+           CrystalV2::Compiler::Frontend::NextNode
+        if value = node.value
+          return false unless expr_subtree_matches_arena?(arena, value, owner_span, child_depth, allow_synthetic_spans)
+        end
+      when CrystalV2::Compiler::Frontend::YieldNode,
+           CrystalV2::Compiler::Frontend::PreviousDefNode,
+           CrystalV2::Compiler::Frontend::SuperNode
+        return false unless expr_id_list_matches_arena?(arena, node.args, owner_span, child_depth, allow_synthetic_spans)
+      when CrystalV2::Compiler::Frontend::IndexNode
+        return false unless expr_subtree_matches_arena?(arena, node.object, owner_span, child_depth, allow_synthetic_spans)
+        return false unless expr_id_list_matches_arena?(arena, node.indexes, owner_span, child_depth, allow_synthetic_spans)
+      when CrystalV2::Compiler::Frontend::RangeNode
+        return false unless expr_subtree_matches_arena?(arena, node.begin_expr, owner_span, child_depth, allow_synthetic_spans)
+        return false unless expr_subtree_matches_arena?(arena, node.end_expr, owner_span, child_depth, allow_synthetic_spans)
+      end
+
+      true
+    end
+
+    private def expr_id_list_matches_arena?(
+      arena : CrystalV2::Compiler::Frontend::ArenaLike,
+      exprs : Array(ExprId)?,
+      owner_span : CrystalV2::Compiler::Frontend::Span,
+      depth : Int32,
+      allow_synthetic_spans : Bool = false,
+    ) : Bool
+      return true if exprs.nil?
+      i = 0
+      while i < exprs.size
+        return false unless expr_subtree_matches_arena?(arena, exprs.unsafe_fetch(i), owner_span, depth, allow_synthetic_spans)
+        i += 1
+      end
+      true
+    end
+
+    private def node_span_matches_owner?(
+      node_span : CrystalV2::Compiler::Frontend::Span,
+      owner_span : CrystalV2::Compiler::Frontend::Span,
+    ) : Bool
+      owner_start = owner_span.start_offset
+      owner_end = owner_span.end_offset
+      return true unless owner_start >= 0 && owner_end > owner_start
+
+      node_start = node_span.start_offset
+      node_end = node_span.end_offset
+      return true unless node_start >= 0 && node_end > node_start
+
+      node_start >= owner_start && node_end <= owner_end
+    end
+
+    private def class_body_nodes_match_arena?(
+      arena : CrystalV2::Compiler::Frontend::ArenaLike,
+      node : CrystalV2::Compiler::Frontend::ClassNode,
+    ) : Bool
+      body = node.body
+      return true if body.nil?
+      sz = body.size
+      return true if sz == 0
+
+      owner_span = node.span
+      if sz <= 8
+        body.each do |expr_id|
+          return false unless class_body_member_matches_arena?(arena, expr_id, owner_span)
+        end
+      else
+        return false unless class_body_member_matches_arena?(arena, body.unsafe_fetch(0), owner_span)
+        return false unless class_body_member_matches_arena?(arena, body.unsafe_fetch(sz // 4), owner_span)
+        return false unless class_body_member_matches_arena?(arena, body.unsafe_fetch(sz // 2), owner_span)
+        return false unless class_body_member_matches_arena?(arena, body.unsafe_fetch((sz * 3) // 4), owner_span)
+        return false unless class_body_member_matches_arena?(arena, body.unsafe_fetch(sz - 1), owner_span)
+      end
+
+      true
+    end
+
+    private def class_body_member_matches_arena?(
+      arena : CrystalV2::Compiler::Frontend::ArenaLike,
+      expr_id : ExprId,
+      owner_span : CrystalV2::Compiler::Frontend::Span,
+    ) : Bool
+      return true if expr_id.null_ptr? || expr_id.invalid?
+      return false unless expr_id_matches_arena?(arena, expr_id)
+
+      member = unwrap_visibility_member_in_arena(arena[expr_id], arena)
+      return false if member.class.name == "CrystalV2::Compiler::Frontend::Node"
+
+      owner_start = owner_span.start_offset
+      owner_end = owner_span.end_offset
+      if owner_start >= 0 && owner_end > owner_start
+        member_span = member.span
+        return false unless member_span.start_offset >= owner_start
+        return false unless member_span.end_offset <= owner_end
+      end
+
+      true
     end
 
     private def body_ids_match_arena?(
@@ -9561,7 +9860,11 @@ module Crystal::HIR
                   end
       path = source_path_for(arena) || "(unknown)"
       type_name = arena.class.name.split("::").last
-      "#{label}=#{type_name}@#{arena.object_id}:size=#{arena.size}:fit=#{arena_fits_def?(arena, func_def)}:path=#{path}:first=#{first_desc}:last=#{last_desc}"
+      body_ids_fit = body_ids_match_arena?(arena, body)
+      subtree_fit = body_ids_fit && body_subtrees_match_arena?(arena, body, func_def.span)
+      span_fit = span_fits_source?(arena, func_def.span)
+      fit = body_ids_fit && subtree_fit && span_fit
+      "#{label}=#{type_name}@#{arena.object_id}:size=#{arena.size}:fit=#{fit}:body_ids=#{body_ids_fit}:subtree=#{subtree_fit}:span=#{span_fit}:path=#{path}:first=#{first_desc}:last=#{last_desc}"
     end
 
     private def debug_log_def_arena_candidates(
@@ -9598,6 +9901,32 @@ module Crystal::HIR
           end
         end
       end
+    end
+
+    private def arena_has_source_identity?(arena : CrystalV2::Compiler::Frontend::ArenaLike) : Bool
+      !source_path_for(arena).nil? || !source_for_arena(arena).nil?
+    end
+
+    private def registration_member_arena_for(
+      base_name : String,
+      member : CrystalV2::Compiler::Frontend::DefNode,
+      current_arena : CrystalV2::Compiler::Frontend::ArenaLike = @arena,
+    ) : CrystalV2::Compiler::Frontend::ArenaLike
+      stored_arena = @function_def_arenas[base_name]?
+      current_fits = arena_fits_def?(current_arena, member)
+      stored_fits = stored_arena && arena_fits_def?(stored_arena, member)
+
+      if stored_fits
+        stored_arena = stored_arena.not_nil!
+        stored_has_source = arena_has_source_identity?(stored_arena)
+        current_has_source = arena_has_source_identity?(current_arena)
+        return stored_arena if !current_fits
+        return stored_arena if stored_has_source && !current_has_source
+      end
+
+      return current_arena if current_fits
+      return stored_arena.not_nil! if stored_fits
+      resolve_arena_for_def(member, current_arena)
     end
 
     private def debug_class_arena_summary(
@@ -11005,11 +11334,7 @@ module Crystal::HIR
 
                     method_name = (safe_slice_to_string(member.name) || "")
                     base_name = join_owner_method_name(class_name, '#', method_name)
-                    member_arena = if arena_fits_def?(@arena, member)
-                                     @arena
-                                   else
-                                     resolve_arena_for_def(member, @arena)
-                                   end
+                    member_arena = registration_member_arena_for(base_name, member)
 
                     # Early skip: if the class already defines this method (base_name), skip
                     # the expensive type resolution below. The class's own def takes priority.
@@ -11286,11 +11611,7 @@ module Crystal::HIR
 
                     method_name = (safe_slice_to_string(member.name) || "")
                     base_name = "#{class_name}.#{method_name}"
-                    member_arena = if arena_fits_def?(@arena, member)
-                                     @arena
-                                   else
-                                     resolve_arena_for_def(member, @arena)
-                                   end
+                    member_arena = registration_member_arena_for(base_name, member)
                     if env_get("DEBUG_EXTEND_REGISTER") && class_name.includes?("ImplInfo")
                       STDERR.puts "[EXTEND_REGISTER] class=#{class_name} method=#{method_name} base=#{base_name}"
                     end
@@ -14589,11 +14910,7 @@ module Crystal::HIR
                                 end
               if is_class_method
                 base_name = "#{module_name}.#{method_name}"
-                member_arena = if arena_fits_def?(@arena, member)
-                                 @arena
-                               else
-                                 resolve_arena_for_def(member, @arena)
-                               end
+                member_arena = registration_member_arena_for(base_name, member)
                 return_type = nil.as(TypeRef?)
                 param_types = [] of TypeRef
                 has_block = false
@@ -15415,11 +15732,7 @@ module Crystal::HIR
           return
         end
         base_name = "#{module_name}.#{method_name}"
-        member_arena = if arena_fits_def?(@arena, member)
-                         @arena
-                       else
-                         resolve_arena_for_def(member, @arena)
-                       end
+        member_arena = registration_member_arena_for(base_name, member)
         return_type = nil.as(TypeRef?)
         param_types = [] of TypeRef
         has_block = false
@@ -17086,11 +17399,7 @@ module Crystal::HIR
                 STDERR.puts "[DEBUG_MODULE_LOOKUP] register #{full_name}.#{method_name}"
               end
               base_name = "#{full_name}.#{method_name}"
-              member_arena = if arena_fits_def?(@arena, member)
-                               @arena
-                             else
-                               resolve_arena_for_def(member, @arena)
-                             end
+              member_arena = registration_member_arena_for(base_name, member)
               return_type = nil.as(TypeRef?)
               param_types = [] of TypeRef
               has_block = false
@@ -18229,49 +18538,33 @@ module Crystal::HIR
         end
       end
 
-      if arena_fits_body_ids?(@arena, node.body, node.span)
-        if debug_env_filter_match?("DEBUG_NESTED_CLASS", class_name)
-          STDERR.puts "[DEBUG_CLASS_REG] register_class called: #{class_name}"
-        end
-        old_class = @current_class
-        old_override = @current_namespace_override
-        @current_class = nil
-        @current_namespace_override = nil
-        begin
-          register_class_with_name(node, class_name)
-        ensure
-          @current_class = old_class
-          @current_namespace_override = old_override
-        end
-        return
+      if debug_env_filter_match?("DEBUG_NESTED_CLASS", class_name)
+        STDERR.puts "[DEBUG_CLASS_REG] register_class called: #{class_name}"
       end
-
-      with_resolved_body_arena(node.body, node.span, @arena) do
-        class_name = class_name_from_node(node) || ""
-        if debug_env_filter_match?("DEBUG_NESTED_CLASS", class_name)
-          STDERR.puts "[DEBUG_CLASS_REG] register_class called: #{class_name}"
-        end
-        old_class = @current_class
-        old_override = @current_namespace_override
-        @current_class = nil
-        @current_namespace_override = nil
-        begin
-          register_class_with_name(node, class_name)
-        ensure
-          @current_class = old_class
-          @current_namespace_override = old_override
-        end
+      old_class = @current_class
+      old_override = @current_namespace_override
+      @current_class = nil
+      @current_namespace_override = nil
+      begin
+        register_class_with_name(node, class_name)
+      ensure
+        @current_class = old_class
+        @current_namespace_override = old_override
       end
     end
 
     # Register a class with a specific name (for nested classes like Foo::Bar)
     def register_class_with_name(node : CrystalV2::Compiler::Frontend::ClassNode, class_name : String)
-      if arena_fits_body_ids?(@arena, node.body, node.span)
+      if arena_fits_class_node?(@arena, node)
         register_class_with_name_in_current_arena(node, class_name)
         return
       end
 
-      with_resolved_body_arena(node.body, node.span, @arena) do
+      class_arena = resolve_arena_for_class_node(node, @arena)
+      if debug_class_arena_enabled_for?(class_name)
+        debug_log_class_arena_candidates(class_name, node, class_arena)
+      end
+      with_arena(class_arena) do
         register_class_with_name_in_current_arena(node, class_name)
       end
     end
@@ -18796,11 +19089,7 @@ module Crystal::HIR
               # Resolve arena once for this member and reuse it for both
               # return inference and yield detection to keep registration
               # anchored to the correct source context.
-              member_arena = if arena_fits_def?(@arena, member)
-                               @arena
-                             else
-                               resolve_arena_for_def(member, @arena)
-                             end
+              member_arena = registration_member_arena_for(base_name, member)
               # Register primitive from preceding @[Primitive(:name)] annotation
               if prim = @pending_primitive_kind
                 @pending_primitive_kind = nil
@@ -20242,11 +20531,7 @@ module Crystal::HIR
             safe_str_guard(member.name, "next")
             method_name = (safe_slice_to_string(member.name) || "")
             base_method = "#{specialized_name}.#{method_name}"
-            member_arena = if arena_fits_def?(@arena, member)
-                             @arena
-                           else
-                             resolve_arena_for_def(member, @arena)
-                           end
+            member_arena = registration_member_arena_for(base_method, member)
 
             # Get return type
             return_type = if rt = member.return_type
@@ -20313,6 +20598,18 @@ module Crystal::HIR
       # Skip generic class templates - they're lowered on-demand during monomorphization
       if @generic_templates.has_key?(class_name)
         return
+      end
+
+      unless arena_fits_class_node?(@arena, node)
+        class_arena = resolve_arena_for_class_node(node, @arena)
+        if class_arena != @arena && arena_fits_class_node?(class_arena, node)
+          if debug_class_arena_enabled_for?(class_name)
+            debug_log_class_arena_candidates(class_name, node, class_arena)
+          end
+          return with_arena(class_arena) do
+            lower_class_with_name(node, class_name)
+          end
+        end
       end
 
       if filter = env_get("DEBUG_CLASS_ARENA")
@@ -27843,9 +28140,10 @@ module Crystal::HIR
 
     # Compute ivar storage size for a union type using only HIR-level info.
     # Used during align_all_class_ivars when @union_descriptors (MIR) aren't populated yet.
-    # In V2 ABI, structs are heap-allocated as pointers. A union where ALL non-Nil variants
-    # are pointer-backed (classes, structs, arrays, etc.) can be stored as a nullable pointer
-    # (8 bytes). Otherwise, a tagged layout { i32 type_id, payload } is needed.
+    # Raw-pointer union ABI is only safe for variants whose payload object carries a
+    # runtime type header at offset 0. Heap-backed structs/tuples are pointer-sized,
+    # but they start with user fields, so `type_id` recovery from the payload pointer
+    # would misclassify them. Those unions must stay tagged.
     private def hir_union_ivar_storage_size(union_name : String, c_context : Bool = false) : Int32
       variants = union_name.split(" | ")
       all_ref = variants.all? do |vname|
@@ -27862,9 +28160,14 @@ module Crystal::HIR
         if ei = @enum_info
           next false if ei.has_key?(vname)
         end
-        # V2 ABI: structs are heap-allocated as pointers, so they're pointer-compatible.
-        # Unlike union_all_reference_types? (MIR), we treat structs as reference-compatible
-        # because V2 stores them as pointers — they CAN be nil-distinguished via null check.
+        if info = @class_info[vname]?
+          next !info.is_struct
+        end
+        if vname.starts_with?("Tuple(") || vname.starts_with?("Pointer(") || vname.starts_with?("StaticArray(")
+          next false
+        end
+        # Unknown generic classes like Array(T) / Hash(K, V) are heap objects
+        # with runtime headers, so they can still participate in raw-pointer unions.
         true
       end
       if all_ref
@@ -38336,6 +38639,367 @@ module Crystal::HIR
       {param_types, TypeRef.new(return_type_id)}
     end
 
+    private def resolve_extern_fun_signature_from_source(
+      lib_name : String?,
+      parsed : NamedTuple(params: Array(String), return_type: String?, varargs: Bool),
+      span : CrystalV2::Compiler::Frontend::Span,
+      arena : CrystalV2::Compiler::Frontend::ArenaLike,
+    ) : {Array(TypeRef), TypeRef}
+      if debug = ENV["DEBUG_EXTERN_SIG_SOURCE"]?
+        path = source_path_for(arena) || "?"
+        snippet = callsite_snippet_for(arena, span) || "nil"
+        if debug == "1" || path.includes?(debug) || snippet.includes?(debug)
+          STDERR.puts "[EXTERN_SIG_SOURCE] parsed=1 path=#{path} span=#{span.start_line}:#{span.start_column}-#{span.end_line}:#{span.end_column} snippet=#{snippet.inspect} params=#{parsed[:params].join(" | ")} return=#{parsed[:return_type] || "Void"} varargs=#{parsed[:varargs] ? 1 : 0}"
+        end
+      end
+
+      old_class = @current_class
+      @current_class = lib_name if lib_name
+      begin
+        param_types = Array(TypeRef).new(parsed[:params].size) do |i|
+          type_ref_for_c_type(parsed[:params].unsafe_fetch(i))
+        end
+        return_type = if ret = parsed[:return_type]
+                        type_ref_for_c_type(ret)
+                      else
+                        TypeRef::VOID
+                      end
+        {param_types, return_type}
+      ensure
+        @current_class = old_class
+      end
+    end
+
+    private def extern_fun_signature_from_source(
+      span : CrystalV2::Compiler::Frontend::Span,
+      arena : CrystalV2::Compiler::Frontend::ArenaLike,
+    ) : NamedTuple(params: Array(String), return_type: String?, varargs: Bool)?
+      source = source_for_arena(arena)
+      if source.nil?
+        if path = source_path_for(arena)
+          if File.file?(path)
+            source = File.read(path)
+          end
+        end
+      end
+      return nil unless source
+
+      snippet = slice_source_for_span(span, source)
+      return nil unless snippet
+
+      text = strip_single_line_comments(snippet).strip
+      return nil if text.empty?
+
+      fun_idx = text.index("fun")
+      return nil unless fun_idx
+      cursor = fun_idx + 3
+      bytes = text.to_slice
+      size = bytes.size
+
+      while cursor < size && bytes[cursor].unsafe_chr.ascii_whitespace?
+        cursor += 1
+      end
+
+      name_and_cursor = read_extern_identifier(text, cursor)
+      return nil unless name_and_cursor
+      cursor = name_and_cursor[1]
+
+      while cursor < size && bytes[cursor].unsafe_chr.ascii_whitespace?
+        cursor += 1
+      end
+
+      if cursor < size && bytes[cursor] == '='.ord.to_u8
+        cursor += 1
+        while cursor < size && bytes[cursor].unsafe_chr.ascii_whitespace?
+          cursor += 1
+        end
+
+        if cursor < size && bytes[cursor] == '"'.ord.to_u8
+          cursor += 1
+          while cursor < size
+            byte = bytes[cursor]
+            if byte == '\\'.ord.to_u8
+              cursor += 2
+              next
+            end
+            cursor += 1
+            break if byte == '"'.ord.to_u8
+          end
+        else
+          real_name_and_cursor = read_extern_identifier(text, cursor)
+          return nil unless real_name_and_cursor
+          cursor = real_name_and_cursor[1]
+        end
+      end
+
+      while cursor < size && bytes[cursor].unsafe_chr.ascii_whitespace?
+        cursor += 1
+      end
+      params_text = ""
+      if cursor < size && bytes[cursor] == '('.ord.to_u8
+        params_start = cursor + 1
+        cursor = params_start
+        depth_paren = 1
+        depth_bracket = 0
+        depth_brace = 0
+        in_string = false
+        string_char = '\0'
+        escape_next = false
+
+        while cursor < size
+          byte = bytes[cursor]
+
+          if escape_next
+            escape_next = false
+            cursor += 1
+            next
+          end
+
+          if in_string
+            if byte == '\\'.ord.to_u8
+              escape_next = true
+            elsif byte == string_char.ord.to_u8
+              in_string = false
+            end
+            cursor += 1
+            next
+          end
+
+          if byte == '"'.ord.to_u8 || byte == '\''.ord.to_u8
+            in_string = true
+            string_char = byte.unsafe_chr
+            cursor += 1
+            next
+          end
+
+          case byte
+          when '('.ord.to_u8
+            depth_paren += 1
+          when ')'.ord.to_u8
+            depth_paren -= 1
+            break if depth_paren == 0
+          when '['.ord.to_u8
+            depth_bracket += 1
+          when ']'.ord.to_u8
+            depth_bracket -= 1 if depth_bracket > 0
+          when '{'.ord.to_u8
+            depth_brace += 1
+          when '}'.ord.to_u8
+            depth_brace -= 1 if depth_brace > 0
+          end
+
+          cursor += 1
+        end
+
+        return nil unless cursor < size && depth_paren == 0
+        params_text = text.byte_slice(params_start, cursor - params_start)
+        cursor += 1
+      elsif cursor < size && bytes[cursor] != ':'.ord.to_u8
+        # Crystal externs may omit empty `()` for zero-arg declarations,
+        # e.g. `fun dlerror : Char*`.
+        return nil
+      end
+
+      while cursor < size && bytes[cursor].unsafe_chr.ascii_whitespace?
+        cursor += 1
+      end
+
+      return_type : String? = nil
+      if cursor < size && bytes[cursor] == ':'.ord.to_u8
+        cursor += 1
+        return_type = text.byte_slice(cursor, size - cursor).strip
+        return_type = nil if return_type.empty?
+      end
+
+      parsed_params = split_extern_fun_param_types_from_source(params_text)
+      {
+        params: parsed_params[:types],
+        return_type: return_type,
+        varargs: parsed_params[:varargs],
+      }
+    end
+
+    private def split_extern_fun_param_types_from_source(
+      params_text : String,
+    ) : NamedTuple(types: Array(String), varargs: Bool)
+      result = [] of String
+      return {types: result, varargs: false} if params_text.empty?
+
+      bytes = params_text.to_slice
+      size = bytes.size
+      start = 0
+      depth_paren = 0
+      depth_bracket = 0
+      depth_brace = 0
+      in_string = false
+      string_char = '\0'
+      escape_next = false
+      i = 0
+      varargs = false
+
+      while i <= size
+        at_end = i == size
+        byte = at_end ? 0_u8 : bytes[i]
+
+        if escape_next
+          escape_next = false
+          i += 1
+          next
+        end
+
+        unless at_end
+          if in_string
+            if byte == '\\'.ord.to_u8
+              escape_next = true
+            elsif byte == string_char.ord.to_u8
+              in_string = false
+            end
+            i += 1
+            next
+          end
+
+          if byte == '"'.ord.to_u8 || byte == '\''.ord.to_u8
+            in_string = true
+            string_char = byte.unsafe_chr
+            i += 1
+            next
+          end
+
+          case byte
+          when '('.ord.to_u8
+            depth_paren += 1
+          when ')'.ord.to_u8
+            depth_paren -= 1 if depth_paren > 0
+          when '['.ord.to_u8
+            depth_bracket += 1
+          when ']'.ord.to_u8
+            depth_bracket -= 1 if depth_bracket > 0
+          when '{'.ord.to_u8
+            depth_brace += 1
+          when '}'.ord.to_u8
+            depth_brace -= 1 if depth_brace > 0
+          end
+        end
+
+        if at_end || (byte == ','.ord.to_u8 && depth_paren == 0 && depth_bracket == 0 && depth_brace == 0)
+          part = params_text.byte_slice(start, i - start).strip
+          unless part.empty?
+            if part == "..."
+              varargs = true
+            else
+              result << extern_fun_param_type_from_source(part)
+            end
+          end
+          start = i + 1
+        end
+
+        i += 1
+      end
+
+      {types: result, varargs: varargs}
+    end
+
+    private def extern_fun_param_type_from_source(param_text : String) : String
+      bytes = param_text.to_slice
+      size = bytes.size
+      depth_paren = 0
+      depth_bracket = 0
+      depth_brace = 0
+      in_string = false
+      string_char = '\0'
+      escape_next = false
+      i = 0
+
+      while i < size
+        byte = bytes[i]
+
+        if escape_next
+          escape_next = false
+          i += 1
+          next
+        end
+
+        if in_string
+          if byte == '\\'.ord.to_u8
+            escape_next = true
+          elsif byte == string_char.ord.to_u8
+            in_string = false
+          end
+          i += 1
+          next
+        end
+
+        if byte == '"'.ord.to_u8 || byte == '\''.ord.to_u8
+          in_string = true
+          string_char = byte.unsafe_chr
+          i += 1
+          next
+        end
+
+        case byte
+        when '('.ord.to_u8
+          depth_paren += 1
+        when ')'.ord.to_u8
+          depth_paren -= 1 if depth_paren > 0
+        when '['.ord.to_u8
+          depth_bracket += 1
+        when ']'.ord.to_u8
+          depth_bracket -= 1 if depth_bracket > 0
+        when '{'.ord.to_u8
+          depth_brace += 1
+        when '}'.ord.to_u8
+          depth_brace -= 1 if depth_brace > 0
+        when ':'.ord.to_u8
+          if depth_paren == 0 && depth_bracket == 0 && depth_brace == 0
+            prev = i > 0 ? bytes[i - 1] : 0_u8
+            nxt = i + 1 < size ? bytes[i + 1] : 0_u8
+            unless prev == ':'.ord.to_u8 || nxt == ':'.ord.to_u8
+              return param_text.byte_slice(i + 1, size - i - 1).strip
+            end
+          end
+        end
+
+        i += 1
+      end
+
+      param_text.strip
+    end
+
+    private def register_extern_fun_from_source(
+      lib_name : String?,
+      span : CrystalV2::Compiler::Frontend::Span,
+      arena : CrystalV2::Compiler::Frontend::ArenaLike,
+    ) : Bool
+      names = extern_fun_names_from_source(span, arena)
+      parsed = extern_fun_signature_from_source(span, arena)
+      if debug = ENV["DEBUG_EXTERN_SIG_SOURCE"]?
+        path = source_path_for(arena) || "?"
+        snippet = callsite_snippet_for(arena, span) || "nil"
+        if debug == "1" || path.includes?(debug) || snippet.includes?(debug)
+          STDERR.puts "[EXTERN_SIG_SOURCE] parsed=0 path=#{path} span=#{span.start_line}:#{span.start_column}-#{span.end_line}:#{span.end_column} snippet=#{snippet.inspect}" unless names && parsed
+        end
+      end
+      return false unless names && parsed
+
+      fun_name = names[0]
+      real_name = names[1]
+
+      return true if lib_name.nil? && fun_name == "main"
+
+      param_types, return_type = resolve_extern_fun_signature_from_source(lib_name, parsed, span, arena)
+
+      @module.add_extern_function(ExternFunction.new(
+        name: fun_name,
+        real_name: real_name,
+        lib_name: lib_name,
+        param_types: param_types,
+        return_type: return_type,
+        varargs: parsed[:varargs]
+      ))
+
+      true
+    end
+
     private def register_extern_fun_parts(
       lib_name : String?,
       span : CrystalV2::Compiler::Frontend::Span,
@@ -38366,7 +39030,11 @@ module Crystal::HIR
         return
       end
 
-      param_types, return_type = resolve_extern_fun_signature(lib_name, params, return_type_slice)
+      if parsed = extern_fun_signature_from_source(span, @arena)
+        param_types, return_type = resolve_extern_fun_signature_from_source(lib_name, parsed, span, @arena)
+      else
+        param_types, return_type = resolve_extern_fun_signature(lib_name, params, return_type_slice)
+      end
 
       if env_get("DEBUG_LIBC_EXTERN") && lib_name == "LibC" && fun_name == "dladdr"
         param_names = param_types.map { |t| get_type_name_from_ref(t) }.join(", ")

@@ -3,6 +3,12 @@
 require "./compiler/bootstrap_shims"
 require "./compiler/cli"
 
+{% if flag?(:darwin) %}
+@[Link(ldflags: "-Wl,-stack_size,0x4000000")]
+lib LibC
+end
+{% end %}
+
 trace_bootstrap = CrystalV2::Compiler::BootstrapEnv.get?("STAGE2_BOOTSTRAP_TRACE") == "1"
 
 begin

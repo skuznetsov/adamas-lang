@@ -64,9 +64,8 @@ module CrystalV2
 
           byte = current_byte
 
-          if ::CrystalV2::Compiler::BootstrapEnv.enabled?("STAGE2_DEBUG") && @offset < 200
-            STDOUT.puts "[LEXER_DBG] next_token offset=#{@offset} byte=#{byte} HASH=#{HASH} eq_hash=#{byte == HASH} is_ws=#{whitespace?(byte)} is_nl=#{byte == NEWLINE} id_start=#{identifier_start?(byte)}"
-            STDOUT.flush
+          if ::CrystalV2::Compiler::BootstrapEnv.enabled?("STAGE2_LEXER_DEBUG") && @offset < 200
+            debug { "[LEXER_DBG] next_token offset=#{@offset} byte=#{byte} HASH=#{HASH} eq_hash=#{byte == HASH} is_ws=#{whitespace?(byte)} is_nl=#{byte == NEWLINE} id_start=#{identifier_start?(byte)}" }
           end
 
           token = case
@@ -216,9 +215,8 @@ module CrystalV2
 
           # Slice of the identifier
           id = bytes_range(from, @offset)
-          if ::CrystalV2::Compiler::BootstrapEnv.enabled?("STAGE2_DEBUG")
-            STDOUT.puts "[LEXER_DBG] lex_id from=#{from} offset=#{@offset} rope_size=#{@rope.size} slice_size=#{id.size} expected=#{@offset - from}"
-            STDOUT.flush
+          if ::CrystalV2::Compiler::BootstrapEnv.enabled?("STAGE2_LEXER_DEBUG")
+            debug { "[LEXER_DBG] lex_id from=#{from} offset=#{@offset} rope_size=#{@rope.size} slice_size=#{id.size} expected=#{@offset - from}" }
           end
           # Classify keyword without allocating String
           kind = keyword_kind_for(id)

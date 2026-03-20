@@ -675,32 +675,36 @@ module Crystal
         next true if variant.type_ref == TypeRef::NIL || variant.type_ref == TypeRef::VOID
         type = @mir_module.type_registry.get(variant.type_ref)
         if type
-          runtime_pointer_backed_union_variant?(type)
+          runtime_header_backed_union_variant?(type)
         else
           # Variant type not in registry — possibly an ivar-qualified type name
           # like "Crystal::HIR::AstToHir::class_name:String". Extract the base
-          # type after the last single colon (not part of ::) and check it.
-          variant_name_is_pointer_backed?(variant.full_name)
+          # type after the last single colon (not part of ::) and check whether
+          # it carries a runtime type header.
+          variant_name_is_runtime_header_backed?(variant.full_name)
         end
       end
     end
 
-    private def runtime_pointer_backed_union_variant?(type : Type?) : Bool
+    # Raw-pointer union ABI is only valid when each non-nil variant carries its
+    # own runtime type_id in an object header. Pointer-sized payload alone is not
+    # sufficient: heap-allocated structs/tuples are pointer-backed but their body
+    # starts with user fields, not a dispatch header.
+    private def runtime_header_backed_union_variant?(type : Type?) : Bool
       return false unless type
-      type.kind.reference? || type.kind.array? || type.kind.pointer? ||
-        type.kind.tuple? || type.kind.struct?
+      type.kind.reference? || type.kind.array?
     end
 
-    # Check if a variant type name represents a pointer-backed type by extracting
+    # Check if a variant type name represents a runtime-header-backed heap object by extracting
     # the base type from an ivar-qualified name like "ClassName::ivar_name:TypeName".
-    private def variant_name_is_pointer_backed?(name : String) : Bool
+    private def variant_name_is_runtime_header_backed?(name : String) : Bool
       # Walk backwards to find the last single colon (not part of ::)
       i = name.bytesize - 1
       while i > 0
         if name.byte_at(i) == ':'.ord && name.byte_at(i - 1) != ':'.ord
           base_name = name[(i + 1)..]
           base_type = @mir_module.type_registry.get_by_name(base_name)
-          return runtime_pointer_backed_union_variant?(base_type) if base_type
+          return runtime_header_backed_union_variant?(base_type) if base_type
           return false
         end
         i -= 1
@@ -4613,8 +4617,7 @@ module Crystal
           has_ref_payload = union_desc.variants.any? do |variant|
             next false if variant.type_ref == TypeRef::NIL || variant.type_ref == TypeRef::VOID
             variant_desc = @mir_module.type_registry.get(variant.type_ref)
-            variant.type_ref == TypeRef::POINTER ||
-              (variant_desc && (variant_desc.kind.reference? || variant_desc.kind.struct? || variant_desc.kind.array?))
+            variant_desc && runtime_header_backed_union_variant?(variant_desc)
           end
 
           if has_nil_variant && has_ref_payload
