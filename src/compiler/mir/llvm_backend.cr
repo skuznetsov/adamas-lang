@@ -295,7 +295,7 @@ module Crystal::MIR
     # misclassifies them.
     private def runtime_header_backed_union_variant?(type : Type?) : Bool
       return false unless type
-      type.kind.reference? || type.kind.array?
+      type.kind.reference? || type.kind.array? || type.kind.pointer?
     end
 
     # Check if a variant type name represents a runtime-header-backed heap object by extracting

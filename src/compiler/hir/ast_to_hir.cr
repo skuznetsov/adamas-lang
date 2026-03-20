@@ -59335,6 +59335,26 @@ module Crystal::HIR
         end
       end
       return nil unless has_prim
+      # Safety check: if ALL non-Nil variants in this union are class types
+      # (runtime-header-backed), skip inline dispatch. Even though has_prim may be
+      # true (from type widening adding Pointer/String), if the only concrete
+      # variants are classes, the value at runtime is always a class pointer.
+      # Inline union dispatch reads {tag, payload} from what's stored as a raw
+      # pointer, producing garbage.
+      all_non_nil_are_classes = variants.all? do |v|
+        next true if v == "Nil"
+        r = type_ref_for_name(v)
+        next true if r == TypeRef::VOID
+        # Pointer and String are stored as raw pointers in V2's ABI.
+        # They're "class-like" for dispatch purposes.
+        next true if r == TypeRef::POINTER || r == TypeRef::STRING
+        next false if r.primitive?
+        dd = @module.get_type_descriptor(r)
+        next false unless dd
+        dd.kind == TypeKind::Class || dd.kind == TypeKind::Module ||
+          dd.kind == TypeKind::Generic || dd.kind == TypeKind::Pointer
+      end
+      return nil if all_non_nil_are_classes
       mb = base_method_name.includes?('#') ? base_method_name.split('#', 2).last : base_method_name
 
       # For includes?/any? on unions of different-sized tuples, inline the check

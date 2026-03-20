@@ -692,7 +692,10 @@ module Crystal
     # starts with user fields, not a dispatch header.
     private def runtime_header_backed_union_variant?(type : Type?) : Bool
       return false unless type
-      type.kind.reference? || type.kind.array?
+      # References and arrays have runtime type_id headers.
+      # Pointers are also stored as raw pointers in V2's ABI and can participate
+      # in all-ref unions (dispatched by null check or type_id if wrapped).
+      type.kind.reference? || type.kind.array? || type.kind.pointer?
     end
 
     # Check if a variant type name represents a runtime-header-backed heap object by extracting
