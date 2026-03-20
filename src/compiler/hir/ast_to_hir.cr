@@ -28133,12 +28133,13 @@ module Crystal::HIR
     # lives in the object header, not alongside the pointer. Nil is represented
     # as a null pointer. Only unions containing value types (primitives, structs,
     # enums) need the full tagged layout (type_id + payload).
+    # Return the storage size for a union field from its MIR descriptor.
+    # The descriptor's total_size is computed by hir_to_mir using
+    # `all_ref_union_descriptor?` which checks `runtime_header_backed_union_variant?`
+    # — the SAME classification the LLVM backend uses. Trust it directly instead of
+    # re-classifying with different heuristics (which caused HIR/LLVM size mismatches).
     private def union_ivar_storage_size(descriptor : MIR::UnionDescriptor) : Int32
-      if union_all_reference_types?(descriptor)
-        pointer_word_bytes_i32
-      else
-        descriptor.total_size
-      end
+      descriptor.total_size
     end
 
     # Check if every variant in a union is a reference type (class) or Nil.
@@ -28189,10 +28190,17 @@ module Crystal::HIR
 
     # Compute ivar storage size for a union type using only HIR-level info.
     # Used during align_all_class_ivars when @union_descriptors (MIR) aren't populated yet.
-    # Raw-pointer union ABI is only safe for variants whose payload object carries a
-    # runtime type header at offset 0. Heap-backed structs/tuples are pointer-sized,
-    # but they start with user fields, so `type_id` recovery from the payload pointer
-    # would misclassify them. Those unions must stay tagged.
+    #
+    # For unions where ALL non-Nil variants are known classes (reference types with runtime
+    # headers), the union is stored as a raw pointer (8 bytes). For all other unions —
+    # including those with primitives, enums, structs, or UNKNOWN types — the tagged union
+    # layout is used: { i32 type_id, [N x i32] payload }.
+    #
+    # CONSERVATIVE for unknown types: if a variant is not found in @class_info and not a
+    # known primitive, it defaults to NOT all-ref (tagged union). This is safe because
+    # writing 8 bytes (ptr) into a 12-byte slot never overflows, while the reverse (writing
+    # 12 bytes into an 8-byte slot) causes buffer overflow. Generic struct instantiations
+    # like Slice(UInt8) are not in @class_info and must NOT be treated as all-ref.
     private def hir_union_ivar_storage_size(union_name : String, c_context : Bool = false) : Int32
       variants = union_name.split(" | ")
       all_ref = variants.all? do |vname|
@@ -28209,34 +28217,20 @@ module Crystal::HIR
         if ei = @enum_info
           next false if ei.has_key?(vname)
         end
+        # Check class_info: only non-struct classes have runtime headers
         if info = @class_info[vname]?
           next !info.is_struct
         end
-        # Check generic base name (e.g., Slice(UInt8) → check if Slice is a struct).
-        # V2 heap-allocates structs so they're pointer-sized, but they lack runtime
-        # type headers, so they can't participate in raw-pointer unions.
-        paren_idx_hir = vname.index('(')
-        if paren_idx_hir
-          base_name_hir = vname[0...paren_idx_hir]
-          if base_info_hir = @class_info[base_name_hir]?
-            next !base_info_hir.is_struct
-          end
-        end
-        # Known generic struct types that lack runtime type headers
-        if vname.starts_with?("Tuple(") || vname.starts_with?("Pointer(") ||
-           vname.starts_with?("StaticArray(") || vname.starts_with?("Slice(") ||
-           vname.starts_with?("Range(") || vname.starts_with?("NamedTuple(")
-          next false
-        end
-        # Unknown generic classes like Array(T) / Hash(K, V) are heap objects
-        # with runtime headers, so they can still participate in raw-pointer unions.
-        true
+        # CONSERVATIVE: unknown types (including generic struct instantiations like
+        # Slice(UInt8) that aren't in @class_info) default to NOT all-ref.
+        # This prevents buffer overflow when LLVM generates 12-byte tagged unions
+        # for types the HIR incorrectly sized as 8-byte pointers.
+        false
       end
       if all_ref
         pointer_word_bytes_i32
       else
         # Tagged union: { i32 type_id, [N x i32] payload }
-        # Compute max variant size to determine payload
         max_payload = 0_i32
         variants.each do |vname|
           vname = vname.strip
@@ -28307,9 +28301,11 @@ module Crystal::HIR
       storage = type_size(type, c_context)
       # V2 ABI: non-C Crystal struct types are heap-allocated and stored as pointers.
       # The field slot is always pointer-sized regardless of the struct's inline size.
-      # Both small structs (< 8 bytes) and large structs (> 8 bytes) must be upgraded/
-      # downgraded to pointer size. Only C lib structs are inlined at their full size.
-      if !c_context && storage > 0 && storage != pointer_word_bytes_i32 &&
+      # C lib structs (in @lib_structs) are always inlined at their full size.
+      # NOTE: Only upgrade structs SMALLER than pointer size for now. Large struct
+      # downgrade (> 8 bytes → 8) changes class layouts too aggressively and can
+      # cause field offset mismatches. This will be addressed separately.
+      if !c_context && storage > 0 && storage < pointer_word_bytes_i32 &&
          type.id >= TypeRef::FIRST_USER_TYPE
         if info = @class_info_by_type_id[type.id]?
           if info.is_struct && !@lib_structs.includes?(info.name)
