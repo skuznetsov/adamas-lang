@@ -2,10 +2,11 @@
 
 ## Current State
 - **Branch**: `bootstrap-benchmark`
-- **Latest committed baseline**: `ea39468a` — checkpoint stage1 union tagging and bootstrap oracles
+- **Latest committed baseline**: `ff2379fc` — constant enum-key hash literal fix
 - **Current focused slice**:
-  - verified root-cause fix for self-hosted `AstArena` typed-node storage corruption plus parser span lookup hardening
-  - latest fixed stage1 is green on the new AstArena oracle and broad regressions, while the self-hosted stage2 frontier has moved later into prelude/object parsing and later compile/HIR probes
+  - verified root-cause fix for source-fallback reloading `require` literals from inactive macro branches
+  - fresh stage1 and fresh self-hosted stage2 both keep the new inactive-branch oracle green, so the old `reqs=0 -> Source require fallback entries=1 -> crystal/system/windows` corridor is now closed
+  - the live stage2/stage3 blocker has shifted again: stage3 still dies immediately, and the next direct LLDB stack now lands in `Parser#parse_block -> attach_block_to_call -> parse_expression -> parse_op_assign -> parse_statement -> parse_def -> parse_class`
 - **New local debug verification compiler**: `/private/tmp/codex_stage1_regex_runtime_fix_dbg`
 - **Fresh local debug verification compiler**: `/private/tmp/codex_stage1_nilguard_dbg`
 - **Newest local debug verification compiler**: `/private/tmp/codex_stage1_noprelude_io_dbg`
@@ -80,10 +81,28 @@
       - `bash regression_tests/stage2_full_compiler_parse_only_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_enumlit_w1 /Users/sergey/Projects/Crystal/crystal_v2_repo/src/crystal_v2.cr 3` -> red on iteration `1` with `rcs: 139`
       - `bash regression_tests/stage2_symbol_table_parse_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_enumlit_w1` -> red on attempt `1` with wrapper `status=139`
       - `bash regression_tests/stage2_process_executable_path_parse_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_enumlit_w1` -> red on attempt `1` with wrapper `status=138`
+- **Current verified inactive-macro source-fallback fix**:
+  - `src/compiler/cli.cr` source fallback now respects the same active macro control-flow as AST require scanning: when the raw file contains only simple macro conditionals, fallback scans only active text fragments instead of blindly rescanning inactive platform branches
+  - unsupported raw-macro constructs such as `{% for %}`, `{% begin %}`, and `{% verbatim %}` intentionally stay on the old conservative fallback path so this change does not overclaim a full macro-source expander
+  - new focused oracle: `bash regression_tests/stage2_macro_inactive_require_fallback_repro.sh <compiler>`
+  - fresh release verification on `/Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_macroreq_w1`:
+    - `bash regression_tests/stage2_macro_inactive_require_fallback_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_macroreq_w1` -> `not reproduced: inactive macro require stayed pruned during source fallback`
+    - `bash regression_tests/require_source_fallback_empty_file_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_macroreq_w1` -> `not reproduced`
+    - `bash regression_tests/stage2_process_executable_path_parse_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_macroreq_w1` -> `not reproduced: compiler reached STOP_AFTER_PARSE on all 5 process executable_path parse repro attempts`
+    - `bash regression_tests/stage2_default_prelude_parse_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_macroreq_w1` -> `not reproduced: compiler reached STOP_AFTER_PARSE on all 5 default-prelude plain-1 repro attempts`
+  - fresh self-hosted release checkpoint:
+    - `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_macroreq_w1` builds cleanly from `/Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_macroreq_w1` under `scripts/run_safe.sh` in `164.45s`
+    - the same new focused oracle is green on `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_macroreq_w1`
+    - guarded `stage2 -> stage3` is still immediate red: `scripts/run_safe.sh /private/tmp/run_stage3_release_macroreq_w1.sh 600 24576` -> `status=139` after `~0.60s`
+  - new boundary after this fix:
+    - old `process/executable_path` signature is no longer the strongest root cause marker; the fresh stage2 still has heisenbug-sensitive parse-only reds (`stage2_process_executable_path_parse_repro.sh`, `stage2_symbol_table_parse_repro.sh`, `stage2_default_prelude_parse_repro.sh`), but a direct non-verbose LLDB run on `regression_tests/stage2_default_prelude_parse_repro.cr` now stops in `Parser#parse_block -> attach_block_to_call -> parse_expression -> parse_op_assign -> parse_statement -> parse_def -> parse_class -> parse_program_roots_impl`
+    - the older tiny parser oracle `bash regression_tests/stage2_block_body_exprid_parser_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_macroreq_w1` is red again (`status=138`) while the same oracle stays green on fresh stage1, so the live self-hosted family now points back to wrapper-heavy growable parser buffers rather than the fixed source-fallback corridor
 - **Fresh release stage1 (current tree, union fix verified)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_unionhdr_w1`
 - **Fresh release stage1 (current tree, constant enum-key hash fix verified)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_enumlit_w1`
+- **Fresh release stage1 (current tree, inactive-macro fallback fix verified)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_macroreq_w1`
 - **Fresh release stage2 (built from fixed stage1, still unstable)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_astarena_init_w1`
 - **Fresh release stage2 (built from enum-key-hash-fixed stage1, still unstable for stage3/parse-only)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_enumlit_w1`
+- **Fresh release stage2 (built from inactive-macro-fallback-fixed stage1, still unstable for stage3/parse-only)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_macroreq_w1`
 - **Previous fresh release stage2 checkpoint (pre-AstArena-init fix)**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_unionhdr_fromfixedstage1_w1`
 - **Previous fresh release stage1 checkpoint**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_funlookahead`
 - **Previous fresh release stage2 checkpoint**: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_parseprogramroots_loadedreq_lazydbg_fresh_w2`
@@ -97,8 +116,10 @@
 - **Current timings**:
   - original Crystal -> fresh `stage1_release_unionhdr_w1`: `534.40s`
   - original Crystal -> fresh `stage1_release_enumlit_w1`: `~438s`
+  - original Crystal -> fresh `stage1_release_macroreq_w1`: `503.87s`
   - fresh `stage1_release_unionhdr_w1` -> fresh `stage2_release_astarena_init_w1`: `164.92s`
   - fresh `stage1_release_enumlit_w1` -> fresh `stage2_release_enumlit_w1`: `167s`
+  - fresh `stage1_release_macroreq_w1` -> fresh `stage2_release_macroreq_w1`: `164.45s`
   - fresh `stage1_release_unionhdr_w1` -> fresh `stage2_release_unionhdr_fromfixedstage1_w1`: `165.71s`
   - original Crystal -> fresh `stage1_release_funlookahead`: `544.95s`
   - fresh `stage1_release_funlookahead` -> fresh `stage2_release_funlookahead_fresh`: `174.80s`

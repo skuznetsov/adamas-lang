@@ -3,6 +3,54 @@
 Updated: 2026-03-20
 Context: compiler/bootstrap/stage2-stability
 
+[LM-218|verified]: the old `process/executable_path` / `crystal/system/windows`
+self-hosted crash was a real source-fallback semantics bug, not a surviving
+`path_join` root cause. AST require scanning already pruned inactive
+`{% if flag?(:win32) %}` branches correctly (`REQSCAN_DONE ... reqs=0`), but
+`src/compiler/cli.cr` still fell back to blind raw-source require scanning
+whenever the file text merely contained the token `require`. On a non-win32
+host that reintroduced inactive requires from files such as
+`src/stdlib/process/executable_path.cr`, loading `crystal/system/windows.cr`
+out of the dead branch and crashing later in self-hosted parse-only runs. The
+narrow fix keeps the unresolved-require escape hatch, but makes whole-file
+source fallback macro-aware for simple conditional raw macros: it now scans
+only active source fragments, while conservatively leaving `{% for %}`,
+`{% begin %}`, and `{% verbatim %}` files on the old path. Verified on fresh
+release compiler `/Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_macroreq_w1`:
+- new focused oracle
+  `bash regression_tests/stage2_macro_inactive_require_fallback_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_macroreq_w1`
+  => `not reproduced: inactive macro require stayed pruned during source fallback`
+- adjacent fallback guard
+  `bash regression_tests/require_source_fallback_empty_file_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_macroreq_w1`
+  => `not reproduced`
+- broader parse-only carriers
+  `stage2_process_executable_path_parse_repro.sh` and
+  `stage2_default_prelude_parse_repro.sh` both stay green `5/5` on the same
+  fresh stage1
+- fresh self-hosted release stage2
+  `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_macroreq_w1`
+  still builds cleanly under `scripts/run_safe.sh` in `164.45s`, and the same
+  new focused oracle stays green there as well
+Boundary/adversary:
+- this fix does not clear stage3; guarded
+  `scripts/run_safe.sh /private/tmp/run_stage3_release_macroreq_w1.sh 600 24576`
+  still exits immediately with `status=139` after `~0.60s`
+- the remaining self-hosted parse-only failures are now a different family:
+  `stage2_symbol_table_parse_repro.sh`, `stage2_default_prelude_parse_repro.sh`,
+  and `stage2_process_executable_path_parse_repro.sh` can still fast-red on the
+  fresh stage2, but direct non-verbose LLDB on the minimal default-prelude
+  repro now stops in `Parser#parse_block -> attach_block_to_call ->
+  parse_expression -> parse_op_assign -> parse_statement -> parse_def ->
+  parse_class -> parse_program_roots_impl`, and the older tiny
+  `stage2_block_body_exprid_parser_repro.sh` is red again on the fresh stage2
+  while staying green on the fresh stage1
+Reusable lesson: when AST scanning already has platform/macro semantics, raw
+source fallback must not silently widen the search space again. If a fallback
+exists only as an escape hatch, keep it semantically narrower than the main
+path and verify it against inactive-branch oracles, otherwise it will mask the
+next real blocker behind dead-platform noise. {F/G/R: 0.97/0.80/0.95}
+[verified]
+
 [LM-217|verified]: constant hash literals with enum keys were dropping semantic
 enum typing during HIR synthesis, even though the same enum values kept working
 in local non-constant hashes. The verified carrier lives in

@@ -2636,11 +2636,28 @@ module CrystalV2
           req_i += 1
         end
         return true if unresolved_requires
-        requires.empty? && source_might_contain_require?(source)
+        requires.empty? && active_source_might_contain_require?(source)
       end
 
       private def source_might_contain_require?(source : String) : Bool
         source.includes?("require")
+      end
+
+      # Source fallback must honor the same macro-pruned active text as the AST
+      # require scan; otherwise inactive platform branches are reintroduced.
+      private def active_source_require_fragments(source : String) : Array(String)
+        return [] of String unless source_might_contain_require?(source)
+        return [source] unless source.includes?("{%")
+        if source.includes?("{% for") || source.includes?("{%- for") || source.includes?("{%~ for") ||
+           source.includes?("{% begin") || source.includes?("{%- begin") || source.includes?("{%~ begin") ||
+           source.includes?("{% verbatim") || source.includes?("{%- verbatim") || source.includes?("{%~ verbatim")
+          return [source]
+        end
+        macro_literal_texts_from_raw(source, Runtime.target_flags)
+      end
+
+      private def active_source_might_contain_require?(source : String) : Bool
+        active_source_require_fragments(source).any? { |text| text.includes?("require") }
       end
 
       # Process a node for require statements (recursively handles macro bodies)
@@ -2767,9 +2784,11 @@ module CrystalV2
       end
 
       private def source_has_glob_require?(source : String) : Bool
-        return false unless source_might_contain_require?(source)
-        scan_source_require_literals(source) do |req_path|
-          return true if req_path.includes?('*') || req_path.includes?('?') || req_path.includes?('[')
+        active_source_require_fragments(source).each do |text|
+          next unless text.includes?("require")
+          scan_source_require_literals(text) do |req_path|
+            return true if req_path.includes?('*') || req_path.includes?('?') || req_path.includes?('[')
+          end
         end
         false
       end
@@ -2855,10 +2874,11 @@ module CrystalV2
 
       private def extract_require_literals_from_source(source : String) : Array(String)
         requires = [] of String
-        return requires unless source_might_contain_require?(source)
-
-        scan_source_require_literals(source) do |req_path|
-          requires << req_path
+        active_source_require_fragments(source).each do |text|
+          next unless text.includes?("require")
+          scan_source_require_literals(text) do |req_path|
+            requires << req_path
+          end
         end
         requires.uniq
       end
