@@ -28133,13 +28133,12 @@ module Crystal::HIR
     # lives in the object header, not alongside the pointer. Nil is represented
     # as a null pointer. Only unions containing value types (primitives, structs,
     # enums) need the full tagged layout (type_id + payload).
-    # Return the storage size for a union field from its MIR descriptor.
-    # The descriptor's total_size is computed by hir_to_mir using
-    # `all_ref_union_descriptor?` which checks `runtime_header_backed_union_variant?`
-    # — the SAME classification the LLVM backend uses. Trust it directly instead of
-    # re-classifying with different heuristics (which caused HIR/LLVM size mismatches).
     private def union_ivar_storage_size(descriptor : MIR::UnionDescriptor) : Int32
-      descriptor.total_size
+      if union_all_reference_types?(descriptor)
+        pointer_word_bytes_i32
+      else
+        descriptor.total_size
+      end
     end
 
     # Check if every variant in a union is a reference type (class) or Nil.
@@ -28175,11 +28174,14 @@ module Crystal::HIR
             next !base_info.is_struct
           end
         end
-        # Check HIR type descriptor: structs/tuples lack runtime type headers
-        hir_vref = TypeRef.new(variant.type_ref.id)
-        if vdesc = @module.get_type_descriptor(hir_vref)
-          if vdesc.kind.struct? || vdesc.kind.tuple? || vdesc.kind.named_tuple?
-            next false
+        # Check HIR type descriptor by name: structs/tuples lack runtime type headers.
+        # Cannot use variant.type_ref directly — MIR and HIR have different id spaces.
+        hir_vref = @type_cache[vname]?
+        if hir_vref
+          if vdesc = @module.get_type_descriptor(hir_vref)
+            if vdesc.kind.struct? || vdesc.kind.tuple? || vdesc.kind.named_tuple?
+              next false
+            end
           end
         end
         # Unknown types with pointer size are likely reference types
@@ -28217,15 +28219,15 @@ module Crystal::HIR
         if ei = @enum_info
           next false if ei.has_key?(vname)
         end
-        # Check class_info: only non-struct classes have runtime headers
         if info = @class_info[vname]?
           next !info.is_struct
         end
-        # CONSERVATIVE: unknown types (including generic struct instantiations like
-        # Slice(UInt8) that aren't in @class_info) default to NOT all-ref.
-        # This prevents buffer overflow when LLVM generates 12-byte tagged unions
-        # for types the HIR incorrectly sized as 8-byte pointers.
-        false
+        if vname.starts_with?("Tuple(") || vname.starts_with?("Pointer(") || vname.starts_with?("StaticArray(")
+          next false
+        end
+        # Unknown generic classes like Array(T) / Hash(K, V) are heap objects
+        # with runtime headers, so they can still participate in raw-pointer unions.
+        true
       end
       if all_ref
         pointer_word_bytes_i32
