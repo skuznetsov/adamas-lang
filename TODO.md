@@ -2,12 +2,14 @@
 
 ## Current State
 - **Branch**: `bootstrap-benchmark`
-- **Latest committed baseline**: `557f2e42` — inactive macro require fallback fix
+- **Latest committed baseline**: `05d0aee7` — parser wrapper-buffer checkpoint
 - **Current focused slice**:
   - the current local checkpoint keeps growable parser buffers away from by-value wrapper structs: `src/compiler/frontend/small_vec.cr` now has `ExprIdBuffer` and `ParameterBuffer`, and `src/compiler/frontend/parser.cr` rewires transient method/block/proc/fun parameter builders plus many transient body accumulators away from `Array(ExprId)` / `Array(Parameter)` growth
   - the focused reduced parser oracle moved: `bash regression_tests/stage2_block_body_exprid_parser_repro.sh /Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_parambuf_w1` is green (`not reproduced`)
   - the stronger current corroborating oracle is now direct parse-only `src/stdlib/object.cr --release --no-prelude`, which stays red `5/5` on both `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_parambuf_w1` and the temporary abstract-separator falsifier rebuild
   - negative finding: the reduced `object.cr` carriers are highly heisenbug-sensitive; exact doc-comment text is not a trustworthy root-cause marker, and a narrow `parse_def(is_abstract)` separator-skipping patch did not improve the main `default_prelude` / `object.cr` frontier, so that branch was reverted
+  - new refutation: the follow-up field-unpacked `ParameterRecord` continuation is also a dead end. `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_paramrecord_w1` built cleanly from `/Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_parambuf_w1` in `164.99s`, but the reduced red/green boundary did not move (`comment_unsafe_assign_then_pointerself`, `header_tclass_forall`, `object_slice_real` still red; `header_tclass_no_forall` and `object_slice_spacefill` still green), and the earlier green control `stage2_block_body_exprid_parser_repro.cr` regressed to `status=138`; that branch was reverted
+  - next strongest parser-only frontier: the remaining widest by-value growable parser carriers are `@tokens = [] of Token`, macro `current_param_tokens = [] of Token`, `pieces = Array(MacroPiece).new(128)`, and macro-if branch arrays (`[] of NamedTuple(span: Span, condition: ExprId, body: ExprId)`), which fit the still comment/whitespace-sensitive parse-only crash family better than the reverted `ParameterRecord` continuation
 - **Current parser-buffer checkpoint**:
   - fresh release checkpoint on the current source-matching compiler pair:
     - stage1: `/Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_parambuf_w1`
@@ -19,6 +21,7 @@
   - adversary note:
     - `array_concat_string_runtime` is not attributed to this checkpoint: the same `llc ... expected '=' in global variable` failure reproduces on both `/Users/sergey/Projects/Crystal/.codex_artifacts/stage1_release_parambuf_w1` and the temporary abstract-separator falsifier rebuild
     - `test_select_map_stress` remains the known flaky `status=138` failure
+    - `/Users/sergey/Projects/Crystal/.codex_artifacts/stage2_release_paramrecord_w1` is now a verified false continuation branch: it left `stage2_object_parse_noprelude_repro.sh` red on attempt `1` and regressed the smaller green control `stage2_block_body_exprid_parser_repro.cr` to `status=138`
 - **New local debug verification compiler**: `/private/tmp/codex_stage1_regex_runtime_fix_dbg`
 - **Fresh local debug verification compiler**: `/private/tmp/codex_stage1_nilguard_dbg`
 - **Newest local debug verification compiler**: `/private/tmp/codex_stage1_noprelude_io_dbg`
