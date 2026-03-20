@@ -174,6 +174,17 @@ module CrystalV2
         !env_get(name).nil?
       end
 
+      private def debug_env_filter_match?(env_key : String, *texts : String) : Bool
+        value = env_get(env_key)
+        return false unless value
+        return true if value.empty? || value == "1" || value == "true"
+        tokens = value.split(',').map(&.strip).reject(&.empty?)
+        return true if tokens.empty?
+        texts.any? do |text|
+          tokens.any? { |token| text.includes?(token) }
+        end
+      end
+
       # Bootstrap-safe argument parser used as a fallback when OptionParser
       # misbehaves in self-hosted stage2 binaries.
       private def parse_args_safe(options_ptr : Pointer(Options), parser_help : String, err_io : IO) : Int32
@@ -1213,8 +1224,14 @@ module CrystalV2
         lib_count = lib_nodes.size
         stage2_debug("[STAGE2_DEBUG] lib register start count=#{lib_count}", err_io)
         lib_nodes.each_with_index do |entry, i|
+          lib_name = String.new(entry.node.name)
           if i < 3 || (i % 25 == 0) || i == lib_count - 1
-            stage2_debug("[STAGE2_DEBUG] lib register idx=#{i + 1}/#{lib_count} name=#{String.new(entry.node.name)}", err_io)
+            stage2_debug("[STAGE2_DEBUG] lib register idx=#{i + 1}/#{lib_count} name=#{lib_name}", err_io)
+          end
+          if debug_env_filter_match?("DEBUG_LIB_ARENA", lib_name)
+            entry_arena = entry.arena
+            arena_path = paths_by_arena[entry_arena.object_id.to_u64]? || "(unknown)"
+            STDERR.puts "[LIB_ARENA_CLI] idx=#{i + 1}/#{lib_count} lib=#{lib_name} arena=#{entry_arena.class.name.split("::").last}@#{entry_arena.object_id}:size=#{entry_arena.size} path=#{arena_path}"
           end
           hir_converter.arena = entry.arena
           hir_converter.register_lib(entry.node, entry.annotations)
