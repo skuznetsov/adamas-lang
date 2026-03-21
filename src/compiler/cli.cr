@@ -98,7 +98,7 @@ module CrystalV2
 
       private def stdlib_path : String
         @@stdlib_path ||= begin
-          if cp = ENV["CRYSTAL_PATH"]?
+          if cp = BootstrapEnv.get?("CRYSTAL_PATH")
             # Avoid .split.first? chain — V2 mishandles Array#first? union return.
             # Use index + byte_slice for a single allocation.
             colon = cp.index(':')

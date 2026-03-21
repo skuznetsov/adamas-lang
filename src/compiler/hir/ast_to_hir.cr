@@ -1883,7 +1883,8 @@ module Crystal::HIR
     @lowering_depth : Int32 = 0
     # Allow a shallow amount of recursive lowering before deferring to the queue.
     # 0 = current behavior (defer as soon as inside lowering).
-    @lowering_depth_limit : Int32 = ENV["CRYSTAL_V2_LOWER_DEPTH_LIMIT"]?.try(&.to_i?) || 0
+    # V2 BOOTSTRAP: ENV access crashes V2-compiled binaries. Use 0 default.
+    @lowering_depth_limit : Int32 = 0
     # Tracks nesting depth of force_lower_function_for_return_type to prevent
     # unbounded recursion when inferring return types triggers more return type inferences.
     @force_lower_return_type_depth : Int32 = 0
@@ -2784,7 +2785,9 @@ module Crystal::HIR
       hir_module : Crystal::HIR::Module? = nil,
       link_libraries : Array(String)? = nil,
     )
-      function_type_capacity : Int32 = ENV["CRYSTAL_V2_FUNCTION_TYPE_CAPACITY"]?.try(&.to_i?) || 131072
+      # V2 BOOTSTRAP: ENV access crashes V2-compiled binaries (module constant
+      # initialization issue). Use hardcoded default to avoid crash in constructor.
+      function_type_capacity : Int32 = 131072
       function_type_capacity = 8192 if function_type_capacity < 8192
       function_type_aux_capacity = function_type_capacity // 2
       function_type_aux_capacity = 4096 if function_type_aux_capacity < 4096
@@ -3335,7 +3338,9 @@ module Crystal::HIR
         return cached
       end
 
-      if val = ENV[key]?
+      # V2 BOOTSTRAP: ENV module constant access crashes V2-compiled binaries.
+      # Use BootstrapEnv which has a safe wrapper.
+      if val = ::CrystalV2::Compiler::BootstrapEnv.get?(key)
         @env_cache[key] = val
         return val
       end
