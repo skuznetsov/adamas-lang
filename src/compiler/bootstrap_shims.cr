@@ -15,9 +15,14 @@ end
 
 module CrystalV2::Compiler::BootstrapEnv
   def self.get?(key : String) : String?
-    # Avoid rescue block — V2 stage2 has broken setjmp codegen.
-    # ENV[key]? should not raise for simple lookups.
-    ENV[key]?
+    # V2 BOOTSTRAP: ENV module constant access crashes V2-compiled binaries.
+    # Use LibC.getenv directly to bypass ENV completely.
+    ptr = LibC.getenv(key.to_unsafe)
+    if ptr.null?
+      nil
+    else
+      String.new(ptr)
+    end
   end
 
   def self.get(key : String, default : String) : String
