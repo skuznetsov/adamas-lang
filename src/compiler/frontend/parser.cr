@@ -4,6 +4,7 @@ require "./lexer/token"
 require "./parser/diagnostic"
 require "./small_vec"
 require "./watchdog"
+require "../bootstrap_shims"
 
 module CrystalV2
   module Compiler
@@ -1926,8 +1927,16 @@ module CrystalV2
             skip_statement_end
 
             pieces = parse_macro_body(false)
+            # Propagate trim flags from the first ControlStart piece to the body node
             trim_left = false
             trim_right = false
+            pieces.each do |piece|
+              if piece.kind == MacroPiece::Kind::ControlStart
+                trim_left = piece.trim_left
+                trim_right = piece.trim_right
+                break
+              end
+            end
             # Allow trailing separators before 'end'
             skip_statement_end
 
@@ -14423,8 +14432,16 @@ current_token.kind == Token::Kind::Identifier &&
           # Parse the macro body - it will consume {% end %} automatically
           # parse_macro_body handles the {% end %} internally and adds it to pieces
           pieces = parse_macro_body(false)
+          # Propagate trim flags from the first ControlStart piece to the body node
           macro_trim_left = false
           macro_trim_right = false
+          pieces.each do |piece|
+            if piece.kind == MacroPiece::Kind::ControlStart
+              macro_trim_left = piece.trim_left
+              macro_trim_right = piece.trim_right
+              break
+            end
+          end
 
           # After parse_macro_body, {% end %} has already been consumed
           # Use current token's span start as the end of verbatim block
@@ -14497,8 +14514,16 @@ current_token.kind == Token::Kind::Identifier &&
         private def parse_macro_body_until_branch(stop_on_branch : Bool) : ExprId
           start_span = current_token.span
           pieces = parse_macro_body(stop_on_branch)
+          # Propagate trim flags from the first ControlStart piece to the body node
           macro_trim_left = false
           macro_trim_right = false
+          pieces.each do |piece|
+            if piece.kind == MacroPiece::Kind::ControlStart
+              macro_trim_left = piece.trim_left
+              macro_trim_right = piece.trim_right
+              break
+            end
+          end
           end_span = @previous_token ? @previous_token.not_nil!.span : start_span
           body_span = start_span.cover(end_span)
           body_id = @arena.add_typed(MacroLiteralNode.new(body_span, pieces, macro_trim_left, macro_trim_right))

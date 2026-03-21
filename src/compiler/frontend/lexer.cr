@@ -170,7 +170,8 @@ module CrystalV2
         # so we use the 2-argument Slice#[](start, count) form instead.
         @[AlwaysInline]
         private def bytes_range(from : Int32, to : Int32) : Slice(UInt8)
-          @rope.bytes[from, to - from]
+          count = to - from
+          count > 0 ? @rope.bytes[from, count] : Slice(UInt8).empty
         end
 
         # Lookahead without consuming
