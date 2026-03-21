@@ -32030,7 +32030,9 @@ module Crystal::HIR
             end
             # First, check short_type_index for matches in the current namespace,
             # then fall back to sibling matches in the parent namespace.
-            if result == name && (candidates = @short_type_index[name]?) && candidates.size >= 1
+            candidates = @short_type_index[name]?
+            if result == name && candidates != nil && candidates.not_nil!.size >= 1
+              candidates = candidates.not_nil!
               current_matches = candidates.select { |c| c.starts_with?("#{current_base}::") }
               if current_matches.size == 1
                 result = current_matches.first
