@@ -8765,8 +8765,11 @@ module Crystal::HIR
     end
 
     private def safe_slice_to_string(slice : Slice(UInt8)) : String?
-      # In V2, Slice(UInt8) is stored as a pointer (sizeof=8). The pointer
-      # itself may be corrupted, so validate BEFORE calling .to_unsafe.
+      # V2 ABI: Slice(UInt8) is a heap-allocated struct stored as a pointer.
+      # The pointer may be NULL. In V2, even unsafe_as dereferences memory.
+      # Check the raw pointer value via pointerof (accesses the stack slot,
+      # not the heap object, so it's safe even when the pointer is NULL).
+      return nil if pointerof(slice).as(UInt64*).value == 0_u64
       if sizeof(Slice(UInt8)) <= 8
         raw = slice.unsafe_as(UInt64)
         return nil if raw == 0_u64 || raw < 4096_u64 || raw > 0x0000_7FFF_FFFF_FFFF_u64
