@@ -40,7 +40,7 @@ Crystal Source (.cr)
         ▼
    ┌─────────┐
    │  Parser  │    Parallel file loading, VirtualArena, error recovery
-   │(frontend)│    99.86% parity (2149/2152 tests) with original Crystal parser
+   │(frontend)│    100% parity (2152/2152 tests, 0 failures) with original Crystal parser
    └────┬─────┘
         │  AST (typed nodes in arena pools)
         ▼
