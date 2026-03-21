@@ -37878,6 +37878,58 @@ module Crystal::HIR
         clear_pending_effect_annotations
       end
 
+      # V2 BOOTSTRAP WORKAROUND: V2's compiled case/when with 80+ type branches
+      # crashes with IndexError from incorrect dispatch table generation.
+      # Individual is_a? checks work correctly. Pre-dispatch the most common
+      # node types via is_a? chain to avoid the case statement for hot paths.
+      if node.is_a?(CrystalV2::Compiler::Frontend::CallNode)
+        return lower_call(ctx, node)
+      elsif node.is_a?(CrystalV2::Compiler::Frontend::AssignNode)
+        return lower_assign(ctx, node)
+      elsif node.is_a?(CrystalV2::Compiler::Frontend::IdentifierNode)
+        return lower_identifier(ctx, node)
+      elsif node.is_a?(CrystalV2::Compiler::Frontend::MemberAccessNode)
+        return lower_member_access(ctx, node)
+      elsif node.is_a?(CrystalV2::Compiler::Frontend::NumberNode)
+        return lower_number(ctx, node)
+      elsif node.is_a?(CrystalV2::Compiler::Frontend::StringNode)
+        return lower_string(ctx, node)
+      elsif node.is_a?(CrystalV2::Compiler::Frontend::BoolNode)
+        return lower_bool(ctx, node)
+      elsif node.is_a?(CrystalV2::Compiler::Frontend::NilNode)
+        return lower_nil(ctx, node)
+      elsif node.is_a?(CrystalV2::Compiler::Frontend::IfNode)
+        return lower_if(ctx, node)
+      elsif node.is_a?(CrystalV2::Compiler::Frontend::WhileNode)
+        return lower_while(ctx, node)
+      elsif node.is_a?(CrystalV2::Compiler::Frontend::BlockNode)
+        return lower_block(ctx, node)
+      elsif node.is_a?(CrystalV2::Compiler::Frontend::DefNode)
+        result = lower_def(node)
+        return result.is_a?(UInt32) ? result.as(UInt32) : 0_u32
+      elsif node.is_a?(CrystalV2::Compiler::Frontend::ClassNode)
+        lower_class(node)
+        return 0_u32
+      elsif node.is_a?(CrystalV2::Compiler::Frontend::ModuleNode)
+        lower_module(node)
+        return 0_u32
+      elsif node.is_a?(CrystalV2::Compiler::Frontend::ReturnNode)
+        return lower_return(ctx, node)
+      elsif node.is_a?(CrystalV2::Compiler::Frontend::IndexNode)
+        return lower_index(ctx, node)
+      elsif node.is_a?(CrystalV2::Compiler::Frontend::ArrayLiteralNode)
+        return lower_array_literal(ctx, node)
+      elsif node.is_a?(CrystalV2::Compiler::Frontend::HashLiteralNode)
+        return lower_hash_literal(ctx, node)
+      elsif node.is_a?(CrystalV2::Compiler::Frontend::CaseNode)
+        return lower_case(ctx, node)
+      elsif node.is_a?(CrystalV2::Compiler::Frontend::BinaryNode)
+        return lower_binary(ctx, node)
+      elsif node.is_a?(CrystalV2::Compiler::Frontend::UnaryNode)
+        return lower_unary(ctx, node)
+      end
+      # Fall through to original case statement for remaining node types
+
       case node
       # ═══════════════════════════════════════════════════════════════════
       # LITERALS
