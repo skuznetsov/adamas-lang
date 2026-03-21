@@ -16283,7 +16283,20 @@ module Crystal::MIR
       # ALWAYS use ptr dispatch (read type_id from object header) regardless of
       # emitted/slot types. Cross-block slots or value coercions may have typed
       # the value as a union struct, but the underlying storage is a raw pointer.
-      canonical_is_allref = @type_mapper.is_all_ref_union?(union_type_ref)
+      canonical_is_allref = @type_mapper.is_all_ref_union?(union_type_ref) ||
+                            static_union_type == "ptr"
+      # Also check alternative type refs
+      unless canonical_is_allref
+        if dtr = def_union_type_ref
+          canonical_is_allref = @type_mapper.is_all_ref_union?(dtr)
+        end
+      end
+      unless canonical_is_allref
+        if vtr = @value_types[inst.union_value]?
+          canonical_is_allref = @type_mapper.is_all_ref_union?(vtr) ||
+                                @type_mapper.llvm_type(vtr) == "ptr"
+        end
+      end
 
       slot_union_type = @cross_block_slot_types[inst.union_value]?
       emitted_union_type = @emitted_value_types[union_val]?
