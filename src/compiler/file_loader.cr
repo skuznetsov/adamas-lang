@@ -79,7 +79,7 @@ module CrystalV2
         paths << Dir.current
 
         # CRYSTAL_PATH from environment
-        if crystal_path = ENV["CRYSTAL_PATH"]?
+        if crystal_path = ::CrystalV2::Compiler::BootstrapEnv.get?("CRYSTAL_PATH")
           crystal_path.split(Process::PATH_DELIMITER).each do |entry|
             paths << entry
           end

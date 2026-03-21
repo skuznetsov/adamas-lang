@@ -90,7 +90,7 @@ module CrystalV2
       @llvm_cache_misses : Int32 = 0
       @pipeline_cache_hits : Int32 = 0
       @pipeline_cache_misses : Int32 = 0
-      @parse_trace : Bool = ENV.has_key?("CRYSTAL_V2_PARSE_TRACE")
+      @parse_trace : Bool = BootstrapEnv.enabled?("CRYSTAL_V2_PARSE_TRACE")
 
       # Resolve stdlib path: CRYSTAL_PATH env var (first component) > compiled-in default.
       # Deferred to runtime so V2-compiled binaries don't crash in constant init.
@@ -875,7 +875,7 @@ module CrystalV2
         # Iterating tuple payloads here is diagnostic-only and has triggered
         # stage2 instability in self-hosted builds.
         total_exprs = 0
-        stop_after_parse = ENV.has_key?("CRYSTAL_V2_STOP_AFTER_PARSE")
+        stop_after_parse = BootstrapEnv.enabled?("CRYSTAL_V2_STOP_AFTER_PARSE")
         debug_trace_enabled = env_enabled?("STAGE2_DEBUG") || env_enabled?("STAGE2_BOOTSTRAP_TRACE")
         if options.verbose
           log(options, out_io, "  Files: #{all_arenas.size}, Expressions: #{total_exprs}")
@@ -973,7 +973,7 @@ module CrystalV2
         hir_mod.bootstrap_reinitialize_runtime_state
         hir_converter = HIR::AstToHir.new(first_arena, input_file, sources_by_arena, paths_by_arena, main_arenas, hir_module: hir_mod, link_libraries: link_libs)
         stage2_debug("[STAGE2_DEBUG] hir converter created", err_io)
-        const_map_trace = ENV.has_key?("CRYSTAL_V2_CONST_MAP_TRACE")
+        const_map_trace = BootstrapEnv.enabled?("CRYSTAL_V2_CONST_MAP_TRACE")
         if const_map_trace
           STDERR.puts "[CONST_MAP] phase=hir_converter_created literals=#{hir_converter.constant_literal_values.size} types=#{hir_converter.constant_types.size}"
           STDERR.puts "[CONST_MAP] ids_a const_lit=#{hir_converter.debug_const_lit_object_id} const_types=#{hir_converter.debug_const_types_object_id} const_defs=#{hir_converter.debug_const_defs_object_id} nested=#{hir_converter.debug_nested_type_names_object_id}"
@@ -1206,7 +1206,7 @@ module CrystalV2
         end
 
         # Pass 1: Register types
-        if false && ENV.has_key?("DEBUG_NESTED_CLASS")
+        if false && BootstrapEnv.enabled?("DEBUG_NESTED_CLASS")
           STDERR.puts "[DEBUG_CLI] class_nodes: #{class_nodes.size}, module_nodes: #{module_nodes.size}"
           module_nodes.each do |module_node, arena|
             name = String.new(module_node.name)
@@ -1318,7 +1318,7 @@ module CrystalV2
         log(options, out_io, "    Modules: #{module_nodes.size}")
         module_count = module_nodes.size
         stage2_debug("[STAGE2_DEBUG] module register start count=#{module_count}", err_io)
-        reg_type_profile = ENV.has_key?("CRYSTAL_V2_REG_TYPE_PROFILE")
+        reg_type_profile = BootstrapEnv.enabled?("CRYSTAL_V2_REG_TYPE_PROFILE")
         module_nodes.each_with_index do |(n, a), i|
           if i < 3 || (i % 50 == 0) || i == module_count - 1
             stage2_debug("[STAGE2_DEBUG] module register idx=#{i + 1}/#{module_count}", err_io)
@@ -1479,19 +1479,19 @@ module CrystalV2
 
         after_lower_main = hir_mod.function_count
         STDERR.puts "  lower_main done, #{after_lower_main} functions" if options.progress
-        STDERR.puts "[PHASE_STATS] After lower_main: #{after_lower_main} functions" if ENV.has_key?("CRYSTAL_V2_PHASE_STATS")
+        STDERR.puts "[PHASE_STATS] After lower_main: #{after_lower_main} functions" if BootstrapEnv.enabled?("CRYSTAL_V2_PHASE_STATS")
 
         # Pass 2.5: AST reachability pre-filter (experimental, opt-in)
         # AST reachability pre-filter: skip functions whose method name was never
         # seen transitively from main. Enable with CRYSTAL_V2_AST_FILTER=1.
-        if ENV.has_key?("CRYSTAL_V2_AST_FILTER")
+        if BootstrapEnv.enabled?("CRYSTAL_V2_AST_FILTER")
           ast_filter_start = Time.instant
           ast_result = hir_converter.compute_ast_reachable_functions(main_exprs)
           hir_converter.set_ast_reachable_filter(ast_result[:defs], ast_result[:method_names], ast_result[:owner_types], ast_result[:method_bases])
-          if ENV.has_key?("CRYSTAL_V2_PHASE_STATS")
+          if BootstrapEnv.enabled?("CRYSTAL_V2_PHASE_STATS")
             STDERR.puts "[PHASE_STATS] AST filter: #{ast_result[:defs].size}/#{hir_converter.function_defs_count} defs reachable, #{ast_result[:method_names].size} method names in #{(Time.instant - ast_filter_start).total_milliseconds.round(1)}ms"
           end
-        elsif ENV.has_key?("CRYSTAL_V2_PHASE_STATS")
+        elsif BootstrapEnv.enabled?("CRYSTAL_V2_PHASE_STATS")
           # Just compute for analysis, don't activate filter
           ast_filter_start = Time.instant
           ast_result = hir_converter.compute_ast_reachable_functions(main_exprs)
@@ -1536,7 +1536,7 @@ module CrystalV2
         reachable = hir_module.reachable_function_names(["__crystal_main", "main"])
         if !reachable.empty? && reachable.size < hir_module.functions.size
           total_before = hir_module.functions.size
-          if ENV.has_key?("CRYSTAL_V2_RTA_PRUNED_DUMP")
+          if BootstrapEnv.enabled?("CRYSTAL_V2_RTA_PRUNED_DUMP")
             pruned_owners = Hash(String, Int32).new(0)
             hir_module.functions.each do |func|
               unless reachable.includes?(func.name)
@@ -1564,7 +1564,7 @@ module CrystalV2
           discarded = total_before - hir_module.functions.size
           rta_msg = "  Reachable functions: #{hir_module.functions.size}/#{total_before} (discarded #{discarded}, #{(discarded * 100.0 / total_before).round(1)}%)"
           log(options, out_io, rta_msg)
-          STDERR.puts "[PHASE_STATS] RTA: #{rta_msg.strip}" if ENV.has_key?("CRYSTAL_V2_PHASE_STATS")
+          STDERR.puts "[PHASE_STATS] RTA: #{rta_msg.strip}" if BootstrapEnv.enabled?("CRYSTAL_V2_PHASE_STATS")
         end
         timings["hir_rta"] = (Time.instant - rta_start).total_milliseconds if options.stats
         timings["hir_reachable_funcs"] = hir_module.functions.size.to_f if options.stats
@@ -1588,7 +1588,7 @@ module CrystalV2
           log(options, out_io, "  Wrote: #{hir_file}")
         end
 
-        if ENV.has_key?("CRYSTAL_V2_STOP_AFTER_HIR")
+        if BootstrapEnv.enabled?("CRYSTAL_V2_STOP_AFTER_HIR")
           log(options, out_io, "  Stop after HIR (CRYSTAL_V2_STOP_AFTER_HIR)")
           emit_timings(options, out_io, timings, total_start)
           return 0
@@ -1701,7 +1701,7 @@ module CrystalV2
         # Step 4: Lower to MIR
         log(options, out_io, "\n[4/6] Lowering to MIR...")
         mir_start = Time.instant
-        mir_setup_trace = ENV.has_key?("CRYSTAL_V2_MIR_SETUP_TRACE") || ENV.has_key?("CRYSTAL2_MIR_SETUP_TRACE")
+        mir_setup_trace = BootstrapEnv.enabled?("CRYSTAL_V2_MIR_SETUP_TRACE") || BootstrapEnv.enabled?("CRYSTAL2_MIR_SETUP_TRACE")
         STDERR.puts "[MIR_SETUP] before lowering.new" if mir_setup_trace
         mir_lowering = MIR::HIRToMIRLowering.new(hir_module, slab_frame: options.slab_frame)
         STDERR.puts "[MIR_SETUP] lowering initialized" if mir_setup_trace
@@ -1783,9 +1783,9 @@ module CrystalV2
         # Default off — fused mode has correctness issues with worker-side state (symbols,
         # module singletons, etc.) that get lost across fork boundaries.
         # Enable with CRYSTAL_V2_FUSED_PARALLEL=1 for experimentation.
-        fused_parallel = (ENV["CRYSTAL_V2_FUSED_PARALLEL"]? || "0") != "0"
+        fused_parallel = (BootstrapEnv.get?("CRYSTAL_V2_FUSED_PARALLEL") || "0") != "0"
 
-        if fused_parallel && !options.emit_mir && !ENV.has_key?("CRYSTAL_V2_STOP_AFTER_MIR")
+        if fused_parallel && !options.emit_mir && !BootstrapEnv.enabled?("CRYSTAL_V2_STOP_AFTER_MIR")
           # Fused path: prepare stubs only, defer body lowering to parallel LLVM workers
           STDERR.puts "  Preparing #{hir_module.functions.size} MIR function stubs..." if options.progress
           STDERR.puts "[MIR_SETUP] prepare stubs count=#{hir_module.functions.size}" if mir_setup_trace
@@ -1833,7 +1833,7 @@ module CrystalV2
           timings["mir_funcs"] = mir_module.functions.size.to_f if options.stats
 
           # Optimize MIR — deferred to LLVM workers when parallel (saves ~700ms)
-          workers_available = (ENV["CRYSTAL_V2_LLVM_WORKERS"]?.try(&.to_i?) || System.cpu_count).clamp(1, 8) > 1
+          workers_available = (BootstrapEnv.get?("CRYSTAL_V2_LLVM_WORKERS").try(&.to_i?) || System.cpu_count).clamp(1, 8) > 1
           if options.mir_opt && !workers_available
             # Serial fallback: optimize here when no parallel workers
             log(options, out_io, "  Optimizing MIR (serial)...")
@@ -1890,7 +1890,7 @@ module CrystalV2
             log(options, out_io, "  Wrote: #{mir_file}")
           end
 
-          if ENV.has_key?("CRYSTAL_V2_STOP_AFTER_MIR")
+          if BootstrapEnv.enabled?("CRYSTAL_V2_STOP_AFTER_MIR")
             log(options, out_io, "  Stop after MIR (CRYSTAL_V2_STOP_AFTER_MIR)")
             emit_timings(options, out_io, timings, total_start)
             return 0
@@ -1901,7 +1901,7 @@ module CrystalV2
         # Step 5: Generate LLVM IR
         log(options, out_io, "\n[5/6] Generating LLVM IR...")
         llvm_start = Time.instant
-        llvm_setup_trace = ENV.has_key?("CRYSTAL_V2_LLVM_SETUP_TRACE") || ENV.has_key?("CRYSTAL2_LLVM_SETUP_TRACE")
+        llvm_setup_trace = BootstrapEnv.enabled?("CRYSTAL_V2_LLVM_SETUP_TRACE") || BootstrapEnv.enabled?("CRYSTAL2_LLVM_SETUP_TRACE")
         STDERR.puts "[LLVM_SETUP] before generator.new" if llvm_setup_trace
         llvm_gen = MIR::LLVMIRGenerator.new(mir_module)
         STDERR.puts "[LLVM_SETUP] after generator.new" if llvm_setup_trace
@@ -2199,7 +2199,7 @@ module CrystalV2
             {% if flag?(:darwin) %}
               clang_cmd += " -Wl,-stack_size,0x4000000"
             {% end %}
-            if extra = ENV["CRYSTAL_V2_EXTRA_LINK_FLAGS"]?
+            if extra = BootstrapEnv.get?("CRYSTAL_V2_EXTRA_LINK_FLAGS")
               clang_cmd += " #{extra}"
             end
             clang_cmd += " 2>&1"
@@ -2217,7 +2217,7 @@ module CrystalV2
             {% if flag?(:darwin) %}
               link_cmd += " -Wl,-stack_size,0x4000000"
             {% end %}
-            if extra = ENV["CRYSTAL_V2_EXTRA_LINK_FLAGS"]?
+            if extra = BootstrapEnv.get?("CRYSTAL_V2_EXTRA_LINK_FLAGS")
               link_cmd += " #{extra}"
             end
             link_cmd += " 2>&1"

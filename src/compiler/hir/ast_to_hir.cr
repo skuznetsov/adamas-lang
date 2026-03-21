@@ -20115,7 +20115,7 @@ module Crystal::HIR
 
       # Dump layouts for comparison between stages
       if env_has?("CRYSTAL_V2_DUMP_LAYOUTS")
-        dump_pattern = ENV["CRYSTAL_V2_DUMP_LAYOUTS"]? || ""
+        dump_pattern = env_get("CRYSTAL_V2_DUMP_LAYOUTS") || ""
         sorted_names = @class_info.keys.sort
         sorted_names.each do |class_name|
           next if dump_pattern != "" && dump_pattern != "*" && !class_name.includes?(dump_pattern)

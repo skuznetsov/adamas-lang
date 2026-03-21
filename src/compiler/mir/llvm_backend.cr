@@ -948,7 +948,9 @@ module Crystal::MIR
       # functions that have return values and override the type to "ptr" before emission
       # begins.  Both emit_function (function definition) and emit_call (call sites) then
       # see the corrected type, keeping LLVM IR consistent.
-      precompute_function_return_types(@module.functions) unless ENV["CRYSTAL_V2_NO_PRECOMPUTE"]?
+      # V2 BOOTSTRAP: ENV access crashes V2-compiled binaries.
+      # precompute is always enabled (the ENV skip is only for debugging).
+      precompute_function_return_types(@module.functions)
 
       # Deduplicate functions by mangled name (keep first occurrence).
       dedup_seen = Set(String).new(@emitted_functions.size + functions_to_emit.size)
@@ -1114,7 +1116,8 @@ module Crystal::MIR
       # Phase 2: Scan call sites (Call only, not ExternCall) for better type info.
       # When a Call instruction's type is non-void and the callee is still void,
       # upgrade to that observed call-site type.
-      if !ENV["CRYSTAL_V2_NO_PRECOMPUTE_P2"]?
+      # V2 BOOTSTRAP: ENV access crashes V2-compiled binaries.
+      if true # was: !ENV["CRYSTAL_V2_NO_PRECOMPUTE_P2"]?
         functions.each do |func|
           func.blocks.each do |block|
             block.instructions.each do |inst|
@@ -10342,7 +10345,9 @@ module Crystal::MIR
 
     # Number of parallel LLVM IR worker processes (0 or 1 = sequential)
     private def parallel_llvm_workers : Int32
-      if val = ENV["CRYSTAL_V2_LLVM_WORKERS"]?
+      # V2 BOOTSTRAP: ENV access crashes V2-compiled binaries.
+      # Use BootstrapEnv for safe access.
+      if val = ::CrystalV2::Compiler::BootstrapEnv.get?("CRYSTAL_V2_LLVM_WORKERS")
         return val.to_i? || 1
       end
       # Default: use available cores (capped at 8)
