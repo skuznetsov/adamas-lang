@@ -485,7 +485,12 @@ module CrystalV2
       {% end %}
 
       def run(*, out_io : IO = STDOUT, err_io : IO = STDERR) : Int32
+        STDERR.puts "[S2_RUN] start args=#{@args.size}"; STDERR.flush
+        @args.each_with_index do |arg, i|
+          STDERR.puts "[S2_RUN] arg[#{i}]=#{arg.bytesize}b '#{arg}'"; STDERR.flush
+        end
         options = Options.new
+        STDERR.puts "[S2_RUN] options created"; STDERR.flush
         stage2_debug("[STAGE2_DEBUG] raw args size=#{@args.size}", err_io)
         stage2_debug("[STAGE2_DEBUG] run start args_size=#{@args.size}", err_io)
         mm_stack_threshold_invalid = false
@@ -493,8 +498,10 @@ module CrystalV2
         parser : OptionParser | Nil = nil
         parser_text = parser_help
 
+        STDERR.puts "[S2_RUN] before parse_args_safe"; STDERR.flush
         if !env_enabled?("CRYSTAL2_USE_OPTION_PARSER") || env_enabled?("CRYSTAL2_SAFE_PARSER")
           status = parse_args_safe(pointerof(options), parser_help, err_io)
+          STDERR.puts "[S2_RUN] parse_args_safe done status=#{status}"; STDERR.flush
           return status if status != 0
         elsif (minimal_parser = env_get("CRYSTAL2_MINIMAL_PARSER"))
           if minimal_parser == "2"
@@ -674,9 +681,11 @@ module CrystalV2
         stage2_debug("[STAGE2_DEBUG] selected input is non-empty", err_io)
         stage2_debug("[STAGE2_DEBUG] selected input size=#{input_file.size}, output size=#{options.output.size}, check_only=#{options.check_only}", err_io)
 
+        STDERR.puts "[S2_RUN] input='#{input_file}' output='#{options.output}' no_prelude=#{options.no_prelude}"; STDERR.flush
         if options.check_only
           return run_check(input_file, options, out_io, err_io)
         else
+          STDERR.puts "[S2_RUN] calling compile"; STDERR.flush
           return compile(input_file, options, out_io, err_io)
         end
       end
@@ -707,7 +716,9 @@ module CrystalV2
         {% end %}
         property llvm_opt : Bool = true
         property llvm_cache : Bool = BootstrapEnv.get("CRYSTAL_V2_LLVM_CACHE", "1") != "0"
-        property pipeline_cache : Bool = BootstrapEnv.get("CRYSTAL_V2_PIPELINE_CACHE", "1") != "0"
+        # V2 BOOTSTRAP: Disable pipeline cache — Dir.current/File.expand_path call
+        # check_no_null_byte which is broken in stage2.
+        property pipeline_cache : Bool = false
         property link : Bool = true
         property emit_type_metadata : Bool = true
         property ltp_opt : Bool = true
@@ -812,7 +823,10 @@ module CrystalV2
         loaded_files = Set(String).new
         all_arenas = [] of ParsedUnit
 
-        input_base_dir = safe_dirname(File.expand_path(input_file))
+        STDERR.puts "[S2_COMPILE] before expand_path input='#{input_file}'"; STDERR.flush
+        expanded = File.expand_path(input_file)
+        STDERR.puts "[S2_COMPILE] expanded='#{expanded}'"; STDERR.flush
+        input_base_dir = safe_dirname(expanded)
 
         # Load prelude first (unless --no-prelude)
         unless options.no_prelude
@@ -836,14 +850,14 @@ module CrystalV2
             end
           end
         end
-        stage2_debug("[STAGE2_DEBUG] prelude phase done", err_io)
+        STDERR.puts "[S2_COMPILE] prelude phase done"; STDERR.flush
 
         # Parse user's input file
         user_parse_start = Time.instant
-        stage2_debug("[STAGE2_DEBUG] parsing user file start", err_io)
+        STDERR.puts "[S2_COMPILE] parsing user file start"; STDERR.flush
         parse_file_recursive(input_file, all_arenas, loaded_files, input_file, input_base_dir, options, out_io)
         stage2_debug("[STAGE2_DEBUG] user file parsed", err_io)
-        stage2_debug("[STAGE2_DEBUG] arenas=#{all_arenas.size} loaded_files=#{loaded_files.size}", err_io)
+        STDERR.puts "[S2_COMPILE] parse done arenas=#{all_arenas.size}"; STDERR.flush
         if options.stats
           timings["parse_user"] = (Time.instant - user_parse_start).total_milliseconds
           timings["parse_total"] = (Time.instant - parse_start).total_milliseconds
@@ -2427,31 +2441,59 @@ module CrystalV2
         if debug_parse && file_path.size > 0
           out_io.puts "[STAGE2_DEBUG] parse_file_recursive start file_path=#{file_path} size=#{file_path.size} first=#{file_path.byte_at(0)} last=#{file_path.byte_at(file_path.size - 1)}"
         end
+        STDERR.puts "[S2_PARSE] expand_path('#{file_path}')"; STDERR.flush
         abs_path = File.expand_path(file_path)
+        STDERR.puts "[S2_PARSE] abs_path='#{abs_path}'"; STDERR.flush
         if debug_parse && abs_path.size > 0
           out_io.puts "[STAGE2_DEBUG] parse_file_recursive expanded=#{abs_path} size=#{abs_path.size} first=#{abs_path.byte_at(0)} last=#{abs_path.byte_at(abs_path.size - 1)}"
         end
         out_io.puts "[STAGE2_DEBUG] parse_file_recursive checking loaded" if debug_parse
+        STDERR.puts "[S2_PARSE] checking loaded.includes?"; STDERR.flush
         return if loaded.includes?(abs_path)
-        out_io.puts "[STAGE2_DEBUG] parse_file_recursive adding to loaded" if debug_parse
+        STDERR.puts "[S2_PARSE] adding to loaded"; STDERR.flush
         loaded << abs_path
+        STDERR.puts "[S2_PARSE] checking File.exists?"; STDERR.flush
         log(options, out_io, "  Loading: #{abs_path}") if options.verbose
 
-        out_io.puts "[STAGE2_DEBUG] parse_file_recursive checking exists" if debug_parse
-        unless File.exists?(abs_path)
+        # V2 BOOTSTRAP: File.exists? calls check_no_null_byte which is broken in
+        # stage2 (V2's String#byte_index(0) falsely finds nulls). Use LibC.access.
+        unless LibC.access(abs_path.to_unsafe, LibC::F_OK) == 0
           log(options, out_io, "  Warning: File not found: #{abs_path}")
           return
         end
-        out_io.puts "[STAGE2_DEBUG] parse_file_recursive exists=true, reading" if debug_parse
+        STDERR.puts "[S2_PARSE] file exists, reading"; STDERR.flush
 
-        source = File.read(abs_path)
+        # V2 BOOTSTRAP: File.read also calls check_no_null_byte. Use LibC directly.
+        fd = LibC.open(abs_path.to_unsafe, LibC::O_RDONLY)
+        if fd < 0
+          log(options, out_io, "  Warning: Cannot open: #{abs_path}")
+          return
+        end
+        stat = uninitialized LibC::Stat
+        LibC.fstat(fd, pointerof(stat))
+        file_size = stat.st_size.to_i32
+        buf = GC.malloc_atomic(file_size + 1).as(UInt8*)
+        bytes_read = LibC.read(fd, buf, file_size)
+        LibC.close(fd)
+        buf[bytes_read < 0 ? 0 : bytes_read] = 0_u8
+        source = String.new(buf, bytes_read < 0 ? 0 : bytes_read.to_i32)
+        STDERR.puts "[S2_PARSE] read done size=#{source.bytesize}"; STDERR.flush
         if debug_parse
           out_io.puts "[STAGE2_DEBUG] parse_file_recursive read done size=#{source.size}"
         end
 
         {% unless flag?(:bootstrap_fast) %}
-        if options.ast_cache
-          source_mtime_ns = File.info(abs_path).modification_time.to_unix_ns.to_i64 rescue nil
+        # V2 BOOTSTRAP: Disable AST cache — File operations call check_no_null_byte
+        # which is broken in stage2 (V2's String#byte_index falsely finds null bytes).
+        if false && options.ast_cache
+          source_mtime_ns = begin
+            stat2 = uninitialized LibC::Stat
+            if LibC.stat(abs_path.to_unsafe, pointerof(stat2)) == 0
+              stat2.st_mtimespec.tv_sec.to_i64 * 1_000_000_000_i64 + stat2.st_mtimespec.tv_nsec.to_i64
+            else
+              nil
+            end
+          end
           if cached = LSP::AstCache.load(abs_path, source_mtime_ns)
             @ast_cache_hits += 1
             arena = cached.arena
@@ -2545,18 +2587,21 @@ module CrystalV2
         end
         {% end %}
 
-        out_io.puts "[STAGE2_DEBUG] parse_file_recursive creating lexer" if debug_parse
+        STDERR.puts "[S2_PARSE] creating lexer"; STDERR.flush
         lexer = Frontend::Lexer.new(source)
-        out_io.puts "[STAGE2_DEBUG] parse_file_recursive lexer created, creating parser" if debug_parse
+        STDERR.puts "[S2_PARSE] creating parser"; STDERR.flush
         parser = Frontend::Parser.new(lexer)
+        STDERR.puts "[S2_PARSE] parser created"; STDERR.flush
         if debug_parse
           out_io.puts "[STAGE2_DEBUG] parse_file_recursive parse start abs_path=#{abs_path}"
         end
         if @parse_trace
           STDERR.puts "[PARSE] #{abs_path}"
         end
+        STDERR.puts "[S2_PARSE] parse_program_roots start"; STDERR.flush
         exprs = begin
           res = parser.parse_program_roots
+          STDERR.puts "[S2_PARSE] parse_program_roots done"; STDERR.flush
           if @parse_trace
             STDERR.puts "[PARSE_OK] #{abs_path}"
           end
@@ -2582,6 +2627,7 @@ module CrystalV2
           log(options, out_io, "    arena.size=#{arena.size} exprs.size=#{exprs.size}")
         end
 
+        STDERR.puts "[S2_PARSE] processing requires"; STDERR.flush
         # Process requires first
         base_dir = safe_dirname(abs_path)
         requires = [] of String
@@ -2603,7 +2649,9 @@ module CrystalV2
         if @parse_trace
           STDERR.puts "[REQSCAN_DONE] #{abs_path} reqs=#{requires.size}"
         end
+        STDERR.puts "[S2_PARSE] checking source_requires_fallback"; STDERR.flush
         needs_source_fallback = source_requires_fallback?(source, requires, loaded)
+        STDERR.puts "[S2_PARSE] fallback check done=#{needs_source_fallback}"; STDERR.flush
         if needs_source_fallback
           if options.verbose && !requires.empty?
             missing = 0
