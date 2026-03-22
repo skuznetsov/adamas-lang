@@ -233,7 +233,7 @@ module Crystal::MIR
       when .symbol?                     then "i32"
       when .pointer?                    then "ptr"
       when .reference?                  then "ptr"
-      when .struct?                     then "ptr"  # Structs passed by pointer in our ABI
+      when .struct?                     then "ptr"  # V2 ABI: structs as pointers (to be refactored to inline)
       when .union?
         # Unions of ALL reference types (classes + Nil) are stored as raw pointers.
         # The type_id for dispatch lives in each object's header, so no union
@@ -245,7 +245,7 @@ module Crystal::MIR
           "%#{mangle_name(type.name)}.union"
         end
       when .proc?                       then "%__crystal_proc"  # { ptr, ptr }
-      when .tuple?                      then "ptr"  # Tuple values are represented by pointer in current ABI
+      when .tuple?                      then "ptr"  # V2 ABI: tuples as pointers (to be refactored to inline)
       when .array?
         # Runtime Array(T) values are heap objects passed/stored by pointer.
         # Treating them as `[0 x elem]` only works for synthetic buffer math and
