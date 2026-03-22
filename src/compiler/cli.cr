@@ -1700,11 +1700,13 @@ module CrystalV2
 
         # Step 4: Lower to MIR
         log(options, out_io, "\n[4/6] Lowering to MIR...")
+        STDERR.puts "[STAGE2_TRACE] step4: MIR lowering start"
+        STDERR.flush
         mir_start = Time.instant
         mir_setup_trace = BootstrapEnv.enabled?("CRYSTAL_V2_MIR_SETUP_TRACE") || BootstrapEnv.enabled?("CRYSTAL2_MIR_SETUP_TRACE")
-        STDERR.puts "[MIR_SETUP] before lowering.new" if mir_setup_trace
+        STDERR.puts "[STAGE2_TRACE] step4: before lowering.new"; STDERR.flush
         mir_lowering = MIR::HIRToMIRLowering.new(hir_module, slab_frame: options.slab_frame)
-        STDERR.puts "[MIR_SETUP] lowering initialized" if mir_setup_trace
+        STDERR.puts "[STAGE2_TRACE] step4: lowering initialized"; STDERR.flush
 
         # Register globals from class variables
         globals = [] of Tuple(String, HIR::TypeRef, Int64?)
@@ -1828,6 +1830,7 @@ module CrystalV2
           timings["mir_prepare"] = mir_prepare_ms if options.stats
           timings["mir_lower"] = mir_lower_ms if options.stats
           timings["dbg_count_mir_funcs"] = mir_module.functions.size.to_f if debug_profile
+          STDERR.puts "[STAGE2_TRACE] step4: MIR funcs=#{mir_module.functions.size}"; STDERR.flush
           log(options, out_io, "  Functions: #{mir_module.functions.size}")
           timings["mir"] = (Time.instant - mir_start).total_milliseconds if options.stats
           timings["mir_funcs"] = mir_module.functions.size.to_f if options.stats
@@ -1899,10 +1902,11 @@ module CrystalV2
         end
 
         # Step 5: Generate LLVM IR
+        STDERR.puts "[STAGE2_TRACE] step5: LLVM IR generation start"; STDERR.flush
         log(options, out_io, "\n[5/6] Generating LLVM IR...")
         llvm_start = Time.instant
         llvm_setup_trace = BootstrapEnv.enabled?("CRYSTAL_V2_LLVM_SETUP_TRACE") || BootstrapEnv.enabled?("CRYSTAL2_LLVM_SETUP_TRACE")
-        STDERR.puts "[LLVM_SETUP] before generator.new" if llvm_setup_trace
+        STDERR.puts "[STAGE2_TRACE] step5: before generator.new"; STDERR.flush
         llvm_gen = MIR::LLVMIRGenerator.new(mir_module)
         STDERR.puts "[LLVM_SETUP] after generator.new" if llvm_setup_trace
         llvm_gen.emit_type_metadata = options.emit_type_metadata
