@@ -28196,9 +28196,13 @@ module Crystal::HIR
             end
           end
         end
-        # Unknown types with pointer size are likely reference types
-        # (generic classes like Array(T), Hash(K,V), etc.)
-        variant.size == pointer_word_bytes_i32
+        # CONSERVATIVE: unknown types default to NOT all-ref (tagged union).
+        # This is safe because writing 8 bytes (ptr) into a 12-byte slot never
+        # overflows, while treating a struct as all-ref (8-byte slot) causes
+        # buffer overflow when the tagged union needs 12+ bytes.
+        # Generic structs like Slice(UInt8) reach here and must NOT be all-ref
+        # since they lack runtime type headers.
+        false
       end
     end
 
