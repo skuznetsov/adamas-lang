@@ -1908,20 +1908,26 @@ module CrystalV2
         llvm_setup_trace = BootstrapEnv.enabled?("CRYSTAL_V2_LLVM_SETUP_TRACE") || BootstrapEnv.enabled?("CRYSTAL2_LLVM_SETUP_TRACE")
         STDERR.puts "[STAGE2_TRACE] step5: before generator.new"; STDERR.flush
         llvm_gen = MIR::LLVMIRGenerator.new(mir_module)
-        STDERR.puts "[LLVM_SETUP] after generator.new" if llvm_setup_trace
+        STDERR.puts "[STAGE2_TRACE] step5: generator.new done"; STDERR.flush
         llvm_gen.emit_type_metadata = options.emit_type_metadata
+        STDERR.puts "[STAGE2_TRACE] step5: flags1"; STDERR.flush
+        STDERR.puts "[STAGE2_TRACE] step5: flags2"; STDERR.flush
         llvm_gen.progress = options.progress
+        STDERR.puts "[STAGE2_TRACE] step5: flags3"; STDERR.flush
         llvm_gen.reachability = false  # DISABLED for debugging PC=0 crash
+        STDERR.puts "[STAGE2_TRACE] step5: flags4"; STDERR.flush
         llvm_gen.no_prelude = options.no_prelude
+        STDERR.puts "[STAGE2_TRACE] step5: flags5"; STDERR.flush
         if fused_parallel
           llvm_gen.fused_mir_lowering = mir_lowering
         end
         # Enable per-worker MIR optimization: workers optimize their function chunk
         # before LLVM emission, parallelizing MIR opt across fork workers.
         # This saves the serial MIR opt phase (skipped when workers do it).
+        STDERR.puts "[STAGE2_TRACE] step5: flags6"; STDERR.flush
         llvm_gen.worker_mir_opt = options.mir_opt
         llvm_gen.worker_ltp_opt = options.ltp_opt
-        STDERR.puts "[LLVM_SETUP] generator flags configured" if llvm_setup_trace
+        STDERR.puts "[STAGE2_TRACE] step5: flags7"; STDERR.flush
 
         # Pass constant literal values for global initialization (e.g., Math::PI)
         const_init = {} of String => (Float64 | Int64)
@@ -1939,9 +1945,12 @@ module CrystalV2
             const_init[global_name] = value.value
           end
         end
+        STDERR.puts "[STAGE2_TRACE] step5: const_init done count=#{const_init.size}"; STDERR.flush
         llvm_gen.constant_initial_values = const_init unless const_init.empty?
+        STDERR.puts "[STAGE2_TRACE] step5: const_init assigned"; STDERR.flush
 
         ll_file = options.output + ".ll"
+        STDERR.puts "[STAGE2_TRACE] step5: ll_file=#{ll_file}"; STDERR.flush
 
         llvm_ir = ""
         llvm_ir_bytes = 0_i64
@@ -1953,10 +1962,23 @@ module CrystalV2
           log(options, out_io, "  LLVM IR size: #{llvm_ir_bytes} bytes")
           File.write(ll_file, llvm_ir)
         else
-          File.open(ll_file, "w") do |io|
-            STDERR.puts "[LLVM_SETUP] generate(io) start" if llvm_setup_trace
-            llvm_gen.generate(io)
-            STDERR.puts "[LLVM_SETUP] generate(io) done" if llvm_setup_trace
+          STDERR.puts "[STAGE2_TRACE] step5: File.open start"; STDERR.flush
+          # V2 BOOTSTRAP: File.open block crashes in stage2. Use lower-level LibC.
+          fd = LibC.open(ll_file.to_unsafe, LibC::O_WRONLY | LibC::O_CREAT | LibC::O_TRUNC, 0o644)
+          if fd < 0
+            err_io.puts "Failed to open #{ll_file} for writing"
+            return 1
+          end
+          STDERR.puts "[STAGE2_TRACE] step5: fd opened = #{fd}"; STDERR.flush
+          ll_io = IO::FileDescriptor.new(fd)
+          STDERR.puts "[STAGE2_TRACE] step5: FileDescriptor created"; STDERR.flush
+          begin
+            STDERR.puts "[STAGE2_TRACE] step5: generate(io) start"; STDERR.flush
+            llvm_gen.generate(ll_io)
+            STDERR.puts "[STAGE2_TRACE] step5: generate done"; STDERR.flush
+          ensure
+            ll_io.flush
+            LibC.close(fd)
           end
           llvm_ir_bytes = File.size(ll_file)
           log(options, out_io, "  LLVM IR size: #{llvm_ir_bytes} bytes")

@@ -442,10 +442,11 @@ module Crystal::MIR
   # These are yield-based Enumerable/Indexable methods that weren't lowered
   # as intrinsics. The calls pass block procs but the methods are empty stubs —
   # suppressing the calls is safe and avoids LLVM type conflicts.
-  BARE_ITERATOR_METHODS = Set{
+  # V2 BOOTSTRAP: Array instead of Set — Set constants crash in stage2.
+  BARE_ITERATOR_METHODS = [
     "each", "map", "map_with_index", "each_with_index",
     "each_with_index$Int32", "each_entry_with_index", "sum",
-  }
+  ]
 
   class LLVMIRGenerator
     @module : Module
@@ -493,24 +494,31 @@ module Crystal::MIR
     @string_counter : Int32 = 0
     @cond_counter : Int32 = 0  # For unique branch condition variable names
 
-    C_LIBRARY_FUNCTIONS = Set{
-      "printf", "sprintf", "snprintf", "fprintf", "vprintf",
-      "vsprintf", "vsnprintf", "vfprintf", "scanf", "sscanf",
-      "fscanf", "puts", "fputs", "fgets", "gets",
-      "malloc", "calloc", "realloc", "free",
-      "memcpy", "memmove", "memset", "memcmp",
-      "strlen", "strcpy", "strncpy", "strcat", "strncat",
-      "strcmp", "strncmp", "strchr", "strrchr", "strstr",
-      "exit", "abort", "atexit", "_exit",
-      "setjmp", "longjmp", "sigsetjmp", "siglongjmp",
-      "open", "close", "read", "write", "lseek",
-      "fopen", "fclose", "fread", "fwrite", "fseek", "ftell",
-      "getenv", "setenv", "unsetenv", "system"
-    }
+    # V2 BOOTSTRAP: Use a method-based check instead of Set constant.
+    # Set constants crash in V2 stage2 (null @hash during constant init).
+    private def c_library_function?(name : String) : Bool
+      case name
+      when "printf", "sprintf", "snprintf", "fprintf", "vprintf",
+           "vsprintf", "vsnprintf", "vfprintf", "scanf", "sscanf",
+           "fscanf", "puts", "fputs", "fgets", "gets",
+           "malloc", "calloc", "realloc", "free",
+           "memcpy", "memmove", "memset", "memcmp",
+           "strlen", "strcpy", "strncpy", "strcat", "strncat",
+           "strcmp", "strncmp", "strchr", "strrchr", "strstr",
+           "exit", "abort", "atexit", "_exit",
+           "setjmp", "longjmp", "sigsetjmp", "siglongjmp",
+           "open", "close", "read", "write", "lseek",
+           "fopen", "fclose", "fread", "fwrite", "fseek", "ftell",
+           "getenv", "setenv", "unsetenv", "system"
+        true
+      else
+        false
+      end
+    end
 
     private def mangle_function_name(name : String) : String
       mangled = @type_mapper.mangle_name(name)
-      return "__crystal_v2_fn_#{mangled}" if C_LIBRARY_FUNCTIONS.includes?(mangled)
+      return "__crystal_v2_fn_#{mangled}" if c_library_function?(mangled)
       mangled
     end
 
@@ -664,9 +672,12 @@ module Crystal::MIR
                                       {% end %}
 
     def initialize(@module : Module)
+      STDERR.puts "[LLVM_INIT] start"; STDERR.flush
       @type_mapper = LLVMTypeMapper.new(@module.type_registry)
+      STDERR.puts "[LLVM_INIT] type_mapper done"; STDERR.flush
       @type_mapper.union_descriptors = @module.union_descriptors
       @output = IO::Memory.new
+      STDERR.puts "[LLVM_INIT] output done"; STDERR.flush
       @indent = 0
       @value_names = {} of ValueId => String
       @block_names = {} of BlockId => String
@@ -677,11 +688,15 @@ module Crystal::MIR
       @string_constants = {} of String => String
       @module_singleton_globals = {} of TypeRef => String
       @emitted_value_types = {} of String => String
+      STDERR.puts "[LLVM_INIT] hashes done"; STDERR.flush
       @emitted_value_names = Set(String).new
+      STDERR.puts "[LLVM_INIT] set done"; STDERR.flush
       @func_by_name = {} of String => Function
       @func_by_suffix = {} of String => Function
       @func_by_id = {} of FunctionId => Function
+      STDERR.puts "[LLVM_INIT] func indexes about to build"; STDERR.flush
       build_function_lookup_indexes
+      STDERR.puts "[LLVM_INIT] func indexes done"; STDERR.flush
 
       # Type metadata
       @type_info_entries = [] of TypeInfoEntry
