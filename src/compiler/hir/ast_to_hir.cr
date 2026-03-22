@@ -37905,7 +37905,6 @@ module Crystal::HIR
       # crashes with IndexError from incorrect dispatch table generation.
       # Individual is_a? checks work correctly. Pre-dispatch the most common
       # node types via is_a? chain to avoid the case statement for hot paths.
-      # (debug trace removed)
 
       if node.is_a?(CrystalV2::Compiler::Frontend::CallNode)
         return lower_call(ctx, node)
