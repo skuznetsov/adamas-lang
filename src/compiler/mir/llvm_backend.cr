@@ -1494,30 +1494,11 @@ module Crystal::MIR
       # Catches: $H (#), $D (.), $CC (::), $$ (param separator), $Q (?), $SHL (<<), etc.
       is_v2_mangled = name.includes?("$") && crystalish_extern_name?(name)
 
-      # flag?(Symbol) — V2 evaluates macro conditions but still emits the call.
-      # Implement as a runtime function that checks symbol against known platform flags.
-      # Symbol table: 0=wasi, 1=LibEvent, 2=win32, 3=aarch64, 4=execution_context,
-      #               5=skip_crystal_compiler_rt, 6=bsd, 7=darwin
-      # On Darwin/aarch64: darwin=true, bsd=true, aarch64=true, rest=false.
-      if name == "flag$Q$$Symbol"
-        return "; flag?(Symbol) — runtime platform flag check\n" \
-               "define i1 @#{name}(i32 %sym_id) {\n" \
-               "  switch i32 %sym_id, label %default [\n" \
-               "    i32 3, label %true_label\n" \
-               "    i32 6, label %true_label\n" \
-               "    i32 7, label %true_label\n" \
-               "  ]\n" \
-               "true_label:\n" \
-               "  ret i1 1\n" \
-               "default:\n" \
-               "  ret i1 0\n" \
-               "}\n"
-      end
-
-      # Crystal::EventLoop.has_constant?(Symbol) — check if EventLoop has a named constant.
-      # Symbol 1 = LibEvent. On modern Crystal (1.19+), LibEvent is NOT used (kqueue on Darwin).
-      if name == "Crystal$CCEventLoop$Dhas_constant$Q$$Symbol"
-        return "; Crystal::EventLoop.has_constant?(Symbol) — stub: return false\n" \
+      # flag?(Symbol) and has_constant?(Symbol) — V2 evaluates macro conditions
+      # at compile time and hardcodes the branch direction, but still emits the
+      # call as dead code. Return false since the result is unused for branching.
+      if name == "flag$Q$$Symbol" || name == "Crystal$CCEventLoop$Dhas_constant$Q$$Symbol"
+        return "; #{name} — macro condition already resolved at compile time\n" \
                "define i1 @#{name}(i32 %sym_id) {\n" \
                "  ret i1 0\n" \
                "}\n"
@@ -1551,6 +1532,17 @@ module Crystal::MIR
                "define i64 @#{name}(ptr %self) {\n" \
                "  %addr = ptrtoint ptr %self to i64\n" \
                "  ret i64 %addr\n" \
+               "}\n"
+      end
+
+      # Object#==(T) — cross-type comparison always returns false.
+      # Crystal's Object#== defaults to same? (pointer equality) which can't match
+      # a reference with a primitive value. Applies to any Object#==(T).
+      if name.starts_with?("Object$H$EQ$$")
+        obj_params = arg_types.empty? ? (0...arg_count).map { |i| "ptr %arg#{i}" }.join(", ") : arg_types.map_with_index { |t, i| "#{t} %arg#{i}" }.join(", ")
+        return "; #{name} — cross-type comparison (always false)\n" \
+               "define #{return_type} @#{name}(#{obj_params}) {\n" \
+               "  ret #{return_type} 0\n" \
                "}\n"
       end
 
