@@ -8773,6 +8773,24 @@ module Crystal::HIR
       {% end %}
     end
 
+    # V2 BOOTSTRAP: Set(@hash) can be null when V2 codegen miscomputes field
+    # offsets for classes with many ivars (AstToHir has 402 ivars). The Set's
+    # internal @hash pointer (at offset 0 in the Set object) may be null.
+    # V2 BOOTSTRAP: Set(@hash) can be null when V2 miscompiles field offsets.
+    # In V2 ABI, Set is a class with @hash at offset 0 (no type_id header).
+    # If @hash is null, includes? crashes with null Hash#find_entry_with_index.
+    private def safe_set_includes?(set : Set(String), name : String) : Bool
+      # Check if the Set reference itself is null
+      set_addr = set.unsafe_as(UInt64)
+      return false if set_addr == 0_u64
+      # Read first word of Set object = @hash pointer
+      # Use Pointer(UInt64) dereference to read the field without going through
+      # Set's Crystal methods (which would call includes? and crash)
+      hash_field = Pointer(UInt64).new(set_addr).value
+      return false if hash_field == 0_u64
+      set.includes?(name)
+    end
+
     private def safe_slice_to_string(slice : Slice(UInt8)) : String?
       # V2 ABI: Slice(UInt8) is a heap-allocated struct stored as a pointer.
       # The pointer may be NULL. In V2, even unsafe_as dereferences memory.
@@ -18730,7 +18748,7 @@ module Crystal::HIR
         # Ensure short-name caches are invalidated when introducing nested types
         # that can shadow builtins or top-level types (e.g., WUInt::UInt128).
         if short = last_namespace_component_if_nested(class_name)
-          if BUILTIN_TYPE_NAMES.includes?(short) || @top_level_class_kinds.has_key?(short) || @top_level_type_names.includes?(short)
+          if BUILTIN_TYPE_NAMES.includes?(short) || @top_level_class_kinds.has_key?(short) || safe_set_includes?(@top_level_type_names,short)
             invalidate_type_cache_for_namespace(class_name)
           end
         end
@@ -24949,7 +24967,7 @@ module Crystal::HIR
         return type_name
       end
       if BUILTIN_TYPE_NAMES.includes?(type_name) ||
-         @top_level_type_names.includes?(type_name) ||
+         safe_set_includes?(@top_level_type_names,type_name) ||
          @top_level_class_kinds.has_key?(type_name)
         if shadow = resolve_nested_builtin_shadow(type_name)
           return shadow
@@ -30891,7 +30909,7 @@ module Crystal::HIR
                   end
       stamp = (stamp ^ enum_size) &* prime
       stamp = (stamp ^ @module_defs.size.to_u64) &* prime
-      stamp = (stamp ^ @top_level_type_names.size.to_u64) &* prime
+      stamp = (stamp ^ ((@top_level_type_names.unsafe_as(UInt64) != 0_u64) ? @top_level_type_names.size.to_u64 : 0_u64)) &* prime
       stamp = (stamp ^ @top_level_class_kinds.size.to_u64) &* prime
       stamp
     end
@@ -30912,7 +30930,7 @@ module Crystal::HIR
                (@enum_info && @enum_info.not_nil!.has_key?(name)) ||
                @module_defs.has_key?(name) ||
                (!name.includes?("::") && @module.is_lib?(name)) ||
-               @top_level_type_names.includes?(name) ||
+               safe_set_includes?(@top_level_type_names,name) ||
                @top_level_class_kinds.has_key?(name)
 
       if result
@@ -31388,7 +31406,7 @@ module Crystal::HIR
       if has_ns
         head = ns_idx ? name.byte_slice(0, ns_idx.not_nil!) : name
         anchored_namespace = head == "Crystal" ||
-                             @top_level_type_names.includes?(head) ||
+                             safe_set_includes?(@top_level_type_names,head) ||
                              @top_level_class_kinds.has_key?(head) ||
                              BUILTIN_TYPE_NAMES.includes?(head)
         if anchored_namespace
@@ -31523,7 +31541,7 @@ module Crystal::HIR
           resolved_type_name_cache_set(name, resolved)
           return resolved
         end
-        if @top_level_type_names.includes?(name) || @top_level_class_kinds.has_key?(name) || BUILTIN_TYPE_NAMES.includes?(name)
+        if safe_set_includes?(@top_level_type_names,name) || @top_level_class_kinds.has_key?(name) || BUILTIN_TYPE_NAMES.includes?(name)
           unless nested_shadowed_type_name?(name)
             resolved_type_name_cache_set(name, name)
             return name
@@ -31549,7 +31567,7 @@ module Crystal::HIR
         return resolved_path
       end
       head = ns_idx ? name.byte_slice(0, ns_idx.not_nil!) : name
-      if @top_level_type_names.includes?(head)
+      if safe_set_includes?(@top_level_type_names,head)
         resolved_type_name_cache_set(name, name)
         return name
       end
@@ -31574,7 +31592,7 @@ module Crystal::HIR
 
       resolved_type_name_cache_set(name, name)
       if env_get("DEBUG_FIBER_RESOLVE") && name == "Fiber"
-        STDERR.puts "[DEBUG_FIBER_RESOLVE] name=#{name} current=#{@current_class || "nil"} override=#{@current_namespace_override || "nil"} resolved=#{name} top_level=#{@top_level_type_names.includes?(name)}"
+        STDERR.puts "[DEBUG_FIBER_RESOLVE] name=#{name} current=#{@current_class || "nil"} override=#{@current_namespace_override || "nil"} resolved=#{name} top_level=#{safe_set_includes?(@top_level_type_names,name)}"
       end
       name
     end
@@ -31634,7 +31652,7 @@ module Crystal::HIR
     end
 
     private def nested_shadowed_type_name?(name : String) : Bool
-      return false unless @top_level_type_names.includes?(name) ||
+      return false unless safe_set_includes?(@top_level_type_names,name) ||
                           @top_level_class_kinds.has_key?(name) ||
                           BUILTIN_TYPE_NAMES.includes?(name)
       if override = @current_namespace_override
@@ -31774,12 +31792,12 @@ module Crystal::HIR
         end
       end
       if env_get("DEBUG_FILE_RESOLVE") && name == "File"
-        STDERR.puts "[DEBUG_FILE_RESOLVE] current=#{@current_class || ""} override=#{@current_namespace_override || ""} top_level=#{@top_level_type_names.includes?(name)}"
+        STDERR.puts "[DEBUG_FILE_RESOLVE] current=#{@current_class || ""} override=#{@current_namespace_override || ""} top_level=#{safe_set_includes?(@top_level_type_names,name)}"
       end
       if filter = env_get("DEBUG_TOP_LEVEL_NAMES")
         filters = filter.split(",").map(&.strip)
         if filter == "*" || filters.includes?(name)
-          STDERR.puts "[DEBUG_TOP_LEVEL] name=#{name} current=#{@current_class || ""} top_level=#{@top_level_type_names.includes?(name)}"
+          STDERR.puts "[DEBUG_TOP_LEVEL] name=#{name} current=#{@current_class || ""} top_level=#{safe_set_includes?(@top_level_type_names,name)}"
         end
       end
       if primitive_self_type(name) || LIBC_TYPE_ALIASES.has_key?(name)
@@ -31823,7 +31841,7 @@ module Crystal::HIR
         end
         if !name.empty? && name.to_unsafe[0].unsafe_chr.ascii_uppercase? &&
            !@short_type_index.has_key?(name) &&
-           !@top_level_type_names.includes?(name) &&
+           !safe_set_includes?(@top_level_type_names, name) &&
            !@top_level_class_kinds.has_key?(name) &&
            !@generic_templates.has_key?(name) &&
            !@module_defs.has_key?(name) &&
@@ -31914,7 +31932,7 @@ module Crystal::HIR
             # Avoid resolving to a namespaced struct when a top-level class exists
             # unless we're explicitly inside that namespace (module override or class scope).
             if info = @class_info[qualified_name]?
-              if info.is_struct && @top_level_type_names.includes?(name)
+              if info.is_struct && safe_set_includes?(@top_level_type_names,name)
                 ns = qualified_name.rpartition("::")[0]
                 if !ns.empty?
                   current = @current_class
@@ -32004,7 +32022,7 @@ module Crystal::HIR
       # - NOT to PollDescriptor::Waiters (nested forward reference)
       if result == name && (current = @current_class) && name[0]?.try(&.uppercase?)
         unless builtin_alias_target?(name) || LIBC_TYPE_ALIASES.has_key?(name)
-          unless @top_level_type_names.includes?(name)
+          unless safe_set_includes?(@top_level_type_names,name)
             current_base = if info = split_generic_base_and_args(current)
                              info.base
                            else
@@ -32096,7 +32114,7 @@ module Crystal::HIR
                            current
                          end
           nested = @nested_type_names[current_base]? || @nested_type_names[current]?
-          skip_namespace = @top_level_type_names.includes?(name) || builtin_alias_target?(name) || LIBC_TYPE_ALIASES.has_key?(name)
+          skip_namespace = safe_set_includes?(@top_level_type_names,name) || builtin_alias_target?(name) || LIBC_TYPE_ALIASES.has_key?(name)
           skip_namespace = false if nested && nested.includes?(name)
           unless skip_namespace
             parent_namespace = current_base.includes?("::") ? current_base.rpartition("::")[0] : nil
@@ -32124,7 +32142,7 @@ module Crystal::HIR
               end
             elsif parent_namespace && type_name_exists?("#{parent_namespace}::#{name}")
               result = "#{parent_namespace}::#{name}"
-            elsif parent_namespace && !@top_level_type_names.includes?(name)
+            elsif parent_namespace && !safe_set_includes?(@top_level_type_names,name)
               candidate = "#{parent_namespace}::#{name}"
               if type_name_exists?(candidate)
                 result = candidate
@@ -32191,7 +32209,7 @@ module Crystal::HIR
       # Final fallback: resolve unique short-name matches (avoids short-name leakage)
       # If the name is known to be top-level, keep it as-is to avoid
       # accidentally binding to a namespaced sibling (e.g., Fiber -> Crystal::System::Fiber).
-      if result == name && !@top_level_type_names.includes?(name)
+      if result == name && !safe_set_includes?(@top_level_type_names,name)
         if candidates = @short_type_index[name]?
           if candidates.size == 1
             result = candidates.first
@@ -32207,7 +32225,7 @@ module Crystal::HIR
         STDERR.puts "[DEBUG_PROCESS_RESOLVE] current=#{@current_class || "nil"} override=#{@current_namespace_override || "nil"} resolved=#{result}"
       end
       if env_get("DEBUG_FIBER_RESOLVE") && name == "Fiber"
-        STDERR.puts "[DEBUG_FIBER_RESOLVE] name=#{name} current=#{@current_class || "nil"} override=#{@current_namespace_override || "nil"} result=#{result} top_level=#{@top_level_type_names.includes?(name)}"
+        STDERR.puts "[DEBUG_FIBER_RESOLVE] name=#{name} current=#{@current_class || "nil"} override=#{@current_namespace_override || "nil"} result=#{result} top_level=#{safe_set_includes?(@top_level_type_names,name)}"
       end
       result
     end
@@ -32326,7 +32344,7 @@ module Crystal::HIR
 
       # Prefer top-level types over short_type_index module matches.
       # e.g., "Time" should resolve to top-level "Time" struct, not "Crystal::System::Time" module.
-      if @top_level_type_names.includes?(name) || @top_level_class_kinds.has_key?(name)
+      if safe_set_includes?(@top_level_type_names,name) || @top_level_class_kinds.has_key?(name)
         return name
       end
 
@@ -32392,7 +32410,7 @@ module Crystal::HIR
         return candidates.min_by(&.size)
       end
 
-      return name if @top_level_type_names.includes?(name) || @top_level_class_kinds.has_key?(name)
+      return name if safe_set_includes?(@top_level_type_names,name) || @top_level_class_kinds.has_key?(name)
       nil
     end
 
@@ -32440,7 +32458,7 @@ module Crystal::HIR
       # Never shadow built-in/top-level type names via contextual alias fallback.
       # Otherwise a single alias like `LibC::Char = UInt8` can leak globally and
       # corrupt overload resolution for core APIs expecting `Char`.
-      if @top_level_type_names.includes?(name) || @top_level_class_kinds.has_key?(name)
+      if safe_set_includes?(@top_level_type_names,name) || @top_level_class_kinds.has_key?(name)
         return nil
       end
 
@@ -72348,7 +72366,7 @@ module Crystal::HIR
       return false if primitive_self_type(normalized)
       return false if LIBC_TYPE_ALIASES.has_key?(normalized) || builtin_alias_target?(normalized)
       return false if BUILTIN_TYPE_NAMES.includes?(normalized)
-      return false if @top_level_type_names.includes?(normalized) || @top_level_class_kinds.has_key?(normalized)
+      return false if safe_set_includes?(@top_level_type_names,normalized) || @top_level_class_kinds.has_key?(normalized)
       return false if known_type_name?(normalized) || type_name_exists?(normalized)
       return false if normalized.includes?("::")
 
@@ -72360,7 +72378,7 @@ module Crystal::HIR
       ns_idx = namespace_separator_index(name)
       return name if ns_idx == 0
       return name if ns_idx
-      return name if @top_level_type_names.includes?(name)
+      return name if safe_set_includes?(@top_level_type_names,name)
       return name if builtin_alias_target?(name) || LIBC_TYPE_ALIASES.has_key?(name)
       return name if BUILTIN_TYPE_NAMES.includes?(name)
       if name.includes?('(')
@@ -73255,7 +73273,7 @@ module Crystal::HIR
         should_resolve_in_context = !BUILTIN_TYPE_NAMES.includes?(lookup_name)
         if should_resolve_in_context &&
            !lookup_name.includes?("::") &&
-           (@top_level_type_names.includes?(lookup_name) || @top_level_class_kinds.has_key?(lookup_name))
+           (safe_set_includes?(@top_level_type_names,lookup_name) || @top_level_class_kinds.has_key?(lookup_name))
           # For known top-level short names, avoid contextual resolver unless
           # they are actually shadowed by a nested type in current scope.
           should_resolve_in_context = nested_shadowed_type_name?(lookup_name)
@@ -73263,7 +73281,7 @@ module Crystal::HIR
         if idx = lookup_ns_idx0
           head = lookup_name[0, idx.not_nil!]
           anchored_namespace = head == "Crystal" ||
-                               @top_level_type_names.includes?(head) ||
+                               safe_set_includes?(@top_level_type_names,head) ||
                                @top_level_class_kinds.has_key?(head) ||
                                BUILTIN_TYPE_NAMES.includes?(head)
           should_resolve_in_context = !anchored_namespace

@@ -1544,6 +1544,16 @@ module Crystal::MIR
         end
       end
 
+      # Type alias methods: HIR::BlockId = UInt32, HIR::ValueId = UInt32
+      # Forward to_i/to_u32/etc. as identity (passthrough)
+      if (name.starts_with?("HIR$CCBlockId$H") || name.starts_with?("HIR$CCValueId$H")) &&
+         (name.ends_with?("$Hto_i") || name.ends_with?("$Hto_u32") || name.ends_with?("$Hto_i32") || name.ends_with?("$Hto_u64") || name.ends_with?("$Hto_i64"))
+        return "; #{name} — type alias passthrough\n" \
+               "define i32 @#{name}(i32 %self) {\n" \
+               "  ret i32 %self\n" \
+               "}\n"
+      end
+
       # Pointer#call — invoke a function pointer (Proc() with no args).
       # Crystal Procs store function pointer as the first word. Call it.
       if name == "Pointer$Hcall"
