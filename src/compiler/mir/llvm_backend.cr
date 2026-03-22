@@ -1504,6 +1504,16 @@ module Crystal::MIR
                "}\n"
       end
 
+      # Pointer#call — invoke a function pointer (Proc() with no args).
+      # Crystal Procs store function pointer as the first word. Call it.
+      if name == "Pointer$Hcall"
+        return "; Pointer#call — invoke function pointer\n" \
+               "define void @#{name}(ptr %self) {\n" \
+               "  call void %self()\n" \
+               "  ret void\n" \
+               "}\n"
+      end
+
       # Pointer::Appender#<<(UInt8) — real method, emit proper implementation.
       # Stores byte at current pointer, advances pointer by 1.
       if name == "Pointer$CCAppender$H$SHL$$UInt8"

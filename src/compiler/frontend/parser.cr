@@ -12884,6 +12884,8 @@ current_token.kind == Token::Kind::Identifier &&
         # Phase 103: Optimization - compare slice with string without allocation
         @[AlwaysInline]
         private def slice_eq?(slice : Slice(UInt8), str : String) : Bool
+          # V2 BOOTSTRAP: Slice is heap-allocated in V2. Guard against null pointer.
+          return false if pointerof(slice).as(UInt64*).value == 0_u64
           return false if slice.size != str.bytesize
           slice.each_with_index do |byte, i|
             return false if byte != str.to_unsafe[i]
@@ -12894,6 +12896,8 @@ current_token.kind == Token::Kind::Identifier &&
         # Check if slice starts with given prefix string
         @[AlwaysInline]
         private def slice_starts_with?(slice : Slice(UInt8), prefix : String) : Bool
+          # V2 BOOTSTRAP: Slice is heap-allocated in V2. Guard against null pointer.
+          return false if pointerof(slice).as(UInt64*).value == 0_u64
           return false if slice.size < prefix.bytesize
           prefix.bytesize.times do |i|
             return false if slice[i] != prefix.to_unsafe[i]

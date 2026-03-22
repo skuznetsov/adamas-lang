@@ -1,5 +1,5 @@
 require "option_parser"
-require "digest/sha256"
+# require "digest/sha256"  # V2 BOOTSTRAP: replaced with FNV-1a
 require "file_utils"
 require "./frontend/diagnostic_formatter"
 require "./frontend/lexer"
@@ -906,26 +906,26 @@ module CrystalV2
         if options.pipeline_cache
           pipeline_cache_dir = File.expand_path("tmp/pipeline_cache", Dir.current)
           safe_mkdir_p(pipeline_cache_dir)
-          digest = Digest::SHA256.new
+          # V2 BOOTSTRAP: Use FNV-1a instead of SHA256 (avoids OpenSSL RTA gap)
+          pipeline_hash = 0xcbf29ce484222325_u64
           loaded_files.to_a.sort.each do |f|
-            digest.update(f.to_slice)
-            digest.update(File.read(f).to_slice)
+            f.each_byte { |b| pipeline_hash ^= b.to_u64; pipeline_hash &*= 0x100000001b3_u64 }
+            File.read(f).each_byte { |b| pipeline_hash ^= b.to_u64; pipeline_hash &*= 0x100000001b3_u64 }
           end
-          digest.update("v2|mm=#{options.mm_mode}|thresh=#{options.mm_stack_threshold}|slab=#{options.slab_frame}|opt=#{options.optimize}".to_slice)
+          "v2|mm=#{options.mm_mode}|thresh=#{options.mm_stack_threshold}|slab=#{options.slab_frame}|opt=#{options.optimize}".each_byte { |b| pipeline_hash ^= b.to_u64; pipeline_hash &*= 0x100000001b3_u64 }
           # Include compiler binary fingerprint to invalidate cache when compiler changes.
-          # Seconds-level mtime alone is not enough (quick rebuilds can collide).
           if exe_path = Process.executable_path
             begin
               if exe_info = File.info?(exe_path)
-                digest.update("compiler_path=#{exe_path}".to_slice)
-                digest.update("compiler_size=#{exe_info.size}".to_slice)
-                digest.update("compiler_mtime_ns=#{exe_info.modification_time.to_unix_ns}".to_slice)
+                "compiler_path=#{exe_path}".each_byte { |b| pipeline_hash ^= b.to_u64; pipeline_hash &*= 0x100000001b3_u64 }
+                "compiler_size=#{exe_info.size}".each_byte { |b| pipeline_hash ^= b.to_u64; pipeline_hash &*= 0x100000001b3_u64 }
+                "compiler_mtime_ns=#{exe_info.modification_time.to_unix_ns}".each_byte { |b| pipeline_hash ^= b.to_u64; pipeline_hash &*= 0x100000001b3_u64 }
               end
             rescue
             end
           end
-          pipeline_hash = digest.hexfinal
-          pipeline_cache_file = path_join(pipeline_cache_dir, "#{pipeline_hash}.ll")
+          pipeline_hash_str = pipeline_hash.to_s(16)
+          pipeline_cache_file = path_join(pipeline_cache_dir, "#{pipeline_hash_str}.ll")
 
           pipeline_cache_libs_file = pipeline_cache_file + ".libs"
           if File.exists?(pipeline_cache_file) && File.exists?(pipeline_cache_libs_file)
@@ -933,7 +933,7 @@ module CrystalV2
             FileUtils.cp(pipeline_cache_file, ll_file)
             options.link_libraries = File.read_lines(pipeline_cache_libs_file).reject(&.empty?)
             @pipeline_cache_hits += 1
-            log(options, out_io, "  Pipeline cache HIT (#{pipeline_hash[0, 12]})")
+            log(options, out_io, "  Pipeline cache HIT (#{pipeline_hash_str[0, 12]})")
             timings["pipeline_cache_hit"] = 1.0 if options.stats
           end
         end
@@ -2363,20 +2363,29 @@ module CrystalV2
       end
 
       private def file_sha256(path : String) : String
-        digest = Digest::SHA256.new
+        # V2 BOOTSTRAP: SHA256 depends on OpenSSL module methods that V2's RTA
+        # doesn't discover (inherited Digest#update). Use FNV-1a hash instead.
+        hash = 0xcbf29ce484222325_u64
         File.open(path) do |io|
           buffer = Bytes.new(64 * 1024)
           while (read_bytes = io.read(buffer)) > 0
-            digest.update(buffer[0, read_bytes])
+            read_bytes.times do |i|
+              hash ^= buffer[i].to_u64
+              hash &*= 0x100000001b3_u64
+            end
           end
         end
-        digest.hexfinal
+        hash.to_s(16)
       end
 
       private def digest_string(value : String) : String
-        digest = Digest::SHA256.new
-        digest.update(value.to_slice)
-        digest.hexfinal
+        # V2 BOOTSTRAP: FNV-1a hash (avoids SHA256/OpenSSL dependency)
+        hash = 0xcbf29ce484222325_u64
+        value.each_byte do |byte|
+          hash ^= byte.to_u64
+          hash &*= 0x100000001b3_u64
+        end
+        hash.to_s(16)
       end
 
       private def parse_file_recursive(
