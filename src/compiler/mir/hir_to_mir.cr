@@ -3043,7 +3043,15 @@ module Crystal
       cases = [] of Tuple(Int64, BlockId)
       candidates.each do |candidate|
         case_block = dispatch_func.create_block
-        cases << {candidate[:type_id].to_i64, case_block}
+        # For union dispatch: use type_ref.id (global MIR type ID) to match
+        # what emit_union_wrap stores as the discriminator via variant_global_id().
+        # For class dispatch: type_id already IS the global runtime type_id.
+        case_id = if kind.union? && (tref = candidate[:type_ref])
+                    tref.id.to_i64
+                  else
+                    candidate[:type_id].to_i64
+                  end
+        cases << {case_id, case_block}
       end
 
       # 4. Set up switch in the appropriate block
@@ -3897,6 +3905,17 @@ module Crystal
             return lm
           end
           return func
+        end
+
+        # Default-arg fallback: exact function name exists but has more params
+        # than the call site expects (e.g. Int32#to_s$$IO has 5 params: self, io,
+        # base, precision, upcase — but call site passes only self + io).
+        # Return the function anyway — the LLVM backend will fill default values.
+        if arg_count
+          exact_func = @mir_module.get_function(exact_name)
+          if exact_func && exact_func.params.size > arg_count + 1
+            return exact_func
+          end
         end
 
         if allow_module_method
