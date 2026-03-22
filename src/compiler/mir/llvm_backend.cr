@@ -11141,6 +11141,20 @@ module Crystal::MIR
       if field_type_ref
         field_type_str = @type_mapper.llvm_type(field_type_ref)
         final_emitted = @emitted_value_types[val]? || val_type_str
+        # V2 BOOTSTRAP: If the value's MIR type is a union but it's passed as ptr
+        # (V2 calling convention), the ptr points to union data on the caller's stack.
+        # Memcpy the full union to the destination instead of wrapping ptr as union.
+        if field_type_str.includes?(".union") && (final_emitted == "ptr" || val_type_str == "ptr")
+          if val_mir = @module.type_registry.get(val_type)
+            if val_mir.kind.union? || (val_type != TypeRef::POINTER && val_type != TypeRef::NIL &&
+               val_type != TypeRef::STRING && !val_mir.kind.reference? && !val_mir.kind.array?)
+              # Value is a union passed as ptr — memcpy preserves the tag
+              union_size = val_mir.size > 0 ? val_mir.size : 16
+              emit "call void @llvm.memcpy.p0.p0.i64(ptr #{ptr}, ptr #{val}, i64 #{union_size}, i1 false)"
+              return
+            end
+          end
+        end
         if field_type_str.includes?(".union") && (final_emitted == "ptr" || val_type_str == "ptr")
           base = "r#{inst.id}.ptr2union"
           ptr_val = val
