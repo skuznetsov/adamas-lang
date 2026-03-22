@@ -1494,6 +1494,35 @@ module Crystal::MIR
       # Catches: $H (#), $D (.), $CC (::), $$ (param separator), $Q (?), $SHL (<<), etc.
       is_v2_mangled = name.includes?("$") && crystalish_extern_name?(name)
 
+      # flag?(Symbol) — V2 evaluates macro conditions but still emits the call.
+      # Implement as a runtime function that checks symbol against known platform flags.
+      # Symbol table: 0=wasi, 1=LibEvent, 2=win32, 3=aarch64, 4=execution_context,
+      #               5=skip_crystal_compiler_rt, 6=bsd, 7=darwin
+      # On Darwin/aarch64: darwin=true, bsd=true, aarch64=true, rest=false.
+      if name == "flag$Q$$Symbol"
+        return "; flag?(Symbol) — runtime platform flag check\n" \
+               "define i1 @#{name}(i32 %sym_id) {\n" \
+               "  switch i32 %sym_id, label %default [\n" \
+               "    i32 3, label %true_label\n" \
+               "    i32 6, label %true_label\n" \
+               "    i32 7, label %true_label\n" \
+               "  ]\n" \
+               "true_label:\n" \
+               "  ret i1 1\n" \
+               "default:\n" \
+               "  ret i1 0\n" \
+               "}\n"
+      end
+
+      # Crystal::EventLoop.has_constant?(Symbol) — check if EventLoop has a named constant.
+      # Symbol 1 = LibEvent. On modern Crystal (1.19+), LibEvent is NOT used (kqueue on Darwin).
+      if name == "Crystal$CCEventLoop$Dhas_constant$Q$$Symbol"
+        return "; Crystal::EventLoop.has_constant?(Symbol) — stub: return false\n" \
+               "define i1 @#{name}(i32 %sym_id) {\n" \
+               "  ret i1 0\n" \
+               "}\n"
+      end
+
       # Pointer::Appender#<<(UInt8) — real method, emit proper implementation.
       # Stores byte at current pointer, advances pointer by 1.
       if name == "Pointer$CCAppender$H$SHL$$UInt8"
@@ -1736,24 +1765,29 @@ module Crystal::MIR
         end
       end
 
-      # Build a minimal function body that returns a zero/default value
-      ret_stmt = case return_type
-                 when "void"   then "ret void"
-                 when "i1"     then "ret i1 0"
-                 when "i8"     then "ret i8 0"
-                 when "i16"    then "ret i16 0"
-                 when "i32"    then "ret i32 0"
-                 when "i64"    then "ret i64 0"
-                 when "i128"   then "ret i128 0"
-                 when "float"  then "ret float 0.0"
-                 when "double" then "ret double 0.0"
-                 when "ptr"    then "ret ptr null"
-                 else
-                   if return_type.includes?(".union")
-                     "ret #{return_type} zeroinitializer"
+      # CRITICAL: Dead-code stubs that return null/0 silently corrupt data.
+      # For Nil/Unknown methods, return zero is safe (these methods genuinely
+      # should return nothing). For ALL OTHER methods, abort to catch the bug
+      # early instead of silently corrupting hash/set/array operations.
+      is_safe_stub = is_nil_method || is_unknown_method || is_wrong_receiver
+      ret_stmt = if is_safe_stub
+                   case return_type
+                   when "void"   then "ret void"
+                   when "i1"     then "ret i1 0"
+                   when "i8"     then "ret i8 0"
+                   when "i16"    then "ret i16 0"
+                   when "i32"    then "ret i32 0"
+                   when "i64"    then "ret i64 0"
+                   when "i128"   then "ret i128 0"
+                   when "float"  then "ret float 0.0"
+                   when "double" then "ret double 0.0"
+                   when "ptr"    then "ret ptr null"
                    else
                      "ret #{return_type} zeroinitializer"
                    end
+                 else
+                   # Abort with method name: this function was called but never lowered.
+                   nil  # handled below with name string
                  end
 
       # Build parameter list with proper types from call site instead of varargs (...)
@@ -1764,10 +1798,26 @@ module Crystal::MIR
                      (0...arg_count).map { |i| "ptr %arg#{i}" }.join(", ")
                    end
 
-      "; stub for dead-code method: #{name}\n" \
-      "define #{return_type} @#{name}(#{param_list}) {\n" \
-      "  #{ret_stmt}\n" \
-      "}\n"
+      if ret_stmt
+        "; stub for dead-code method: #{name}\n" \
+        "define #{return_type} @#{name}(#{param_list}) {\n" \
+        "  #{ret_stmt}\n" \
+        "}\n"
+      else
+        # Emit abort stub with method name printed to stderr
+        escaped_name = name.gsub("\\", "\\\\").gsub("\"", "\\\"")
+        str_size = escaped_name.bytesize + 15  # "STUB CALLED: " (13) + \n (1) + \0 (1)
+        str_id = name.hash.abs
+        str_const = "@.stub_name_#{str_id} = private constant [#{str_size} x i8] c\"STUB CALLED: #{escaped_name}\\0A\\00\""
+        "; ABORT stub for unlowered method: #{name}\n" \
+        "#{str_const}\n" \
+        "define #{return_type} @#{name}(#{param_list}) {\n" \
+        "  %fmt = getelementptr [#{str_size} x i8], ptr @.stub_name_#{str_id}, i32 0, i32 0\n" \
+        "  call i32 @dprintf(i32 2, ptr %fmt)\n" \
+        "  call void @abort()\n" \
+        "  unreachable\n" \
+        "}\n"
+      end
     end
 
     # Generate proper declaration for LLVM intrinsics
