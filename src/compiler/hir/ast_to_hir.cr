@@ -28335,14 +28335,13 @@ module Crystal::HIR
     # adjacent fields. Fix by using pointer size as minimum for struct-typed fields.
     private def field_storage_size(type : TypeRef, c_context : Bool = false) : Int32
       storage = type_size(type, c_context)
-      # V2 ABI: ALL non-C Crystal struct types are heap-allocated and stored as pointers.
-      # The field slot is ALWAYS pointer-sized (8 bytes) regardless of the struct's
-      # inline size. This is critical: larger structs like Span (24 bytes) are also
-      # stored as pointers. Without this, field offsets diverge from the actual storage
-      # layout, causing GC to miss pointers and leading to dangling pointer corruption
-      # (the NumberNode.value bug: Span at inline 24 bytes shifts value field to offset
-      # 32, outside the LLVM type's 32-byte boundary, so GC doesn't scan it).
-      if !c_context && storage > 0 && storage != pointer_word_bytes_i32 &&
+      # Inline struct ABI: large structs (> pointer size) are stored INLINE.
+      # Their field_storage_size is the inline size, not pointer size.
+      # Small structs (≤ pointer size) still use pointer size because:
+      # - Constructors still heap-allocate them and store ptrs
+      # - FieldGet/FieldSet still use load/store ptr for them
+      # This will be unified when constructors are updated to inline all structs.
+      if !c_context && storage > 0 && storage < pointer_word_bytes_i32 &&
          type.id >= TypeRef::FIRST_USER_TYPE
         if info = @class_info_by_type_id[type.id]?
           if info.is_struct && !@lib_structs.includes?(info.name)
@@ -28359,19 +28358,7 @@ module Crystal::HIR
           end
         end
       end
-      # V2 ABI fallback: generic struct instantiations (Slice(UInt8), StaticArray, etc.)
-      # may not be in @class_info but are still heap-allocated in V2.
-      # Only normalize if the HIR descriptor confirms it's a struct/tuple type.
-      # Careful: unions/enums with inline size > 8 must NOT be shrunk to 8.
-      if !c_context && storage > pointer_word_bytes_i32 && type.id >= TypeRef::FIRST_USER_TYPE
-        if desc = @module.get_type_descriptor(type)
-          # Only normalize struct/tuple types — NOT unions, enums, or classes
-          if (desc.kind.struct? || desc.kind.tuple? || desc.kind.named_tuple?) &&
-             !desc.name.starts_with?("LibC") && !desc.name.includes?("::Lib")
-            return pointer_word_bytes_i32
-          end
-        end
-      end
+      # Large structs: keep inline size (for inline storage via memcopy)
       storage == 0 && type == TypeRef::NIL ? pointer_word_bytes_i32 : storage
     end
 

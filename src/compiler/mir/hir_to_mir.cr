@@ -1877,13 +1877,17 @@ module Crystal
       # field_offset is byte offset from object start
       field_ptr = builder.gep(obj_ptr, [field.field_offset.to_u32], TypeRef::POINTER)
 
-      # When the object was obtained from Pointer(Struct).value (inline struct data),
-      # struct-typed fields are also stored inline — return the GEP pointer without loading.
-      # For non-inline objects (normal heap-allocated), always load as before.
-      # StaticArray fields are ALWAYS stored inline (never behind an extra pointer),
-      # so skip the load for them regardless of @inline_struct_ptrs.
+      # Large struct fields (> pointer size) are stored INLINE in their parent object.
+      # Return the GEP pointer directly — no additional load needed.
+      # Small structs (≤ 8 bytes) are stored as scalars, need normal load.
+      if hir_type_is_struct?(field.type) && !hir_type_is_lib_struct?(field.type)
+        inline_size = hir_type_inline_size(field.type)
+        if inline_size > pointer_word_bytes_i32
+          @inline_struct_ptrs << field.id
+          return field_ptr
+        end
+      end
       if @inline_struct_ptrs.includes?(field.object) && hir_type_is_struct?(field.type)
-        # Tag the result as also pointing to inline struct data
         @inline_struct_ptrs << field.id
         field_ptr
       elsif hir_type_is_static_array?(field.type)
@@ -1996,12 +2000,16 @@ module Crystal
       # GEP to field address + store
       field_ptr = builder.gep(obj_ptr, [field.field_offset.to_u32], TypeRef::POINTER)
 
-      # For lib struct and StaticArray fields, copy the data inline instead of
-      # storing a pointer. This prevents dangling pointers when the source struct
-      # is stack-allocated and the target outlives the current stack frame.
+      # For struct, lib struct, and StaticArray fields with inline size > pointer size,
+      # copy the data inline using memcpy. Smaller structs (≤ 8 bytes) can be stored
+      # directly as scalar values.
+      is_crystal_struct = hir_type_is_struct?(field.type) && !hir_type_is_lib_struct?(field.type)
       is_lib = hir_type_is_lib_struct?(field.type)
       is_static_array = hir_type_is_static_array?(field.type)
-      if is_lib || is_static_array
+      # Only memcopy if the struct is larger than a pointer (needs inline storage)
+      inline_size = is_crystal_struct ? hir_type_inline_size(field.type).to_u64 : 0_u64
+      use_memcopy = is_lib || is_static_array || (is_crystal_struct && inline_size > pointer_word_bytes_u64)
+      if use_memcopy
         struct_size = if is_lib
                         hir_type_lib_struct_size(field.type)
                       else
