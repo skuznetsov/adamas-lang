@@ -5563,6 +5563,10 @@ module Crystal
     private def type_needs_rc?(mir_type_ref : TypeRef) : Bool
       if mir_type_info = @mir_module.type_registry.get(mir_type_ref)
         return true if mir_type_info.kind.reference? || mir_type_info.kind.array?
+        # V2 ABI: structs and tuples are heap-allocated with RC headers.
+        # They MUST be rc_inc'd when stored in fields, otherwise the struct
+        # gets freed while still referenced (dangling pointer → corruption).
+        return true if mir_type_info.kind.struct? || mir_type_info.kind.tuple?
         if mir_type_info.kind.union?
           if desc = @mir_module.get_union_descriptor(mir_type_ref)
             return all_ref_union_descriptor?(desc)
