@@ -1468,53 +1468,7 @@ module Crystal::MIR
         arg_types = info[2]
         # V2 maps Nil→Void in some generic contexts. If a Void method is missing
         # but the Nil variant exists, emit a forwarding alias.
-        if name.includes?("Void") && !name.includes?("Pointer$LVoid")
-          nil_name = name.gsub("Void", "Nil")
-          # Also try with first arg type appended (naming inconsistency: call may
-          # omit arg types that the definition includes)
-          nil_name_with_arg = nil_name
-          if !@emitted_functions.includes?(nil_name) && arg_count > 1 && !arg_types.empty?
-            # The first arg is self (ptr), second is the key. Try appending key type.
-            key_type = arg_types[1]? || "ptr"
-            type_suffix = case key_type
-                          when "ptr" then "$$String"
-                          when "i32" then "$$Int32"
-                          when "i64" then "$$Int64"
-                          else "$$#{key_type}"
-                          end
-            nil_name_with_arg = nil_name + type_suffix
-          end
-          resolved_nil = if @emitted_functions.includes?(nil_name)
-                           nil_name
-                         elsif @emitted_functions.includes?(nil_name_with_arg)
-                           nil_name_with_arg
-                         else
-                           nil
-                         end
-          if resolved_nil
-            param_list = if !arg_types.empty?
-                           arg_types.map_with_index { |t, i| "#{t} %arg#{i}" }.join(", ")
-                         else
-                           (0...arg_count).map { |i| "ptr %arg#{i}" }.join(", ")
-                         end
-            emit_raw "; Void→Nil forwarding alias: #{name} → #{resolved_nil}\n"
-            emit_raw "define #{return_type} @#{name}(#{param_list}) {\n"
-            call_args = if !arg_types.empty?
-                          arg_types.map_with_index { |t, i| "#{t} %arg#{i}" }.join(", ")
-                        else
-                          (0...arg_count).map { |i| "ptr %arg#{i}" }.join(", ")
-                        end
-            if return_type == "void"
-              emit_raw "  call void @#{resolved_nil}(#{call_args})\n"
-              emit_raw "  ret void\n"
-            else
-              emit_raw "  %result = call #{return_type} @#{resolved_nil}(#{call_args})\n"
-              emit_raw "  ret #{return_type} %result\n"
-            end
-            emit_raw "}\n"
-            next
-          end
-        end
+        # Void→Nil forwarding is now handled inside emit_dead_code_stub
         # Emit a stub function that returns a zero/null value.
         # These are functions the RTA missed or that were skipped during emission.
         if stub = emit_dead_code_stub(name, return_type, arg_count, arg_types)
@@ -1551,6 +1505,43 @@ module Crystal::MIR
                "define i1 @#{name}(i32 %sym_id) {\n" \
                "  ret i1 0\n" \
                "}\n"
+      end
+
+      # Void→Nil forwarding: V2 maps Nil→Void in some generic contexts.
+      # If a Void method is about to become a stub but a Nil variant exists,
+      # emit a forwarding call instead of abort.
+      if name.includes?("Void") && !name.includes?("Pointer$LVoid") && is_v2_mangled
+        nil_name = name.gsub("Void", "Nil")
+        nil_name_prefix = nil_name + "$$"
+        resolved_nil = if @emitted_functions.includes?(nil_name)
+                         nil_name
+                       else
+                         match = nil.as(String?)
+                         @emitted_functions.each do |fn|
+                           if fn.starts_with?(nil_name_prefix)
+                             match = fn
+                             break
+                           end
+                         end
+                         match
+                       end
+        if resolved_nil
+          obj_params = arg_types.empty? ? (0...arg_count).map { |i| "ptr %arg#{i}" }.join(", ") : arg_types.map_with_index { |t, i| "#{t} %arg#{i}" }.join(", ")
+          call_args = obj_params
+          if return_type == "void"
+            return "; Void->Nil forwarding: #{name} -> #{resolved_nil}\n" \
+                   "define void @#{name}(#{obj_params}) {\n" \
+                   "  call void @#{resolved_nil}(#{call_args})\n" \
+                   "  ret void\n" \
+                   "}\n"
+          else
+            return "; Void->Nil forwarding: #{name} -> #{resolved_nil}\n" \
+                   "define #{return_type} @#{name}(#{obj_params}) {\n" \
+                   "  %result = call #{return_type} @#{resolved_nil}(#{call_args})\n" \
+                   "  ret #{return_type} %result\n" \
+                   "}\n"
+          end
+        end
       end
 
       # Pointer#call — invoke a function pointer (Proc() with no args).
