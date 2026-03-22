@@ -28359,6 +28359,19 @@ module Crystal::HIR
           end
         end
       end
+      # V2 ABI fallback: generic struct instantiations (Slice(UInt8), StaticArray, etc.)
+      # may not be in @class_info but are still heap-allocated in V2.
+      # Only normalize if the HIR descriptor confirms it's a struct/tuple type.
+      # Careful: unions/enums with inline size > 8 must NOT be shrunk to 8.
+      if !c_context && storage > pointer_word_bytes_i32 && type.id >= TypeRef::FIRST_USER_TYPE
+        if desc = @module.get_type_descriptor(type)
+          # Only normalize struct/tuple types — NOT unions, enums, or classes
+          if (desc.kind.struct? || desc.kind.tuple? || desc.kind.named_tuple?) &&
+             !desc.name.starts_with?("LibC") && !desc.name.includes?("::Lib")
+            return pointer_word_bytes_i32
+          end
+        end
+      end
       storage == 0 && type == TypeRef::NIL ? pointer_word_bytes_i32 : storage
     end
 
