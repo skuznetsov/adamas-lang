@@ -5575,29 +5575,30 @@ module Crystal
     private def convert_type(hir_type : HIR::TypeRef) : TypeRef
       # Map HIR type IDs to MIR type IDs
       # Note: HIR and MIR have DIFFERENT layouts! HIR: BOOL=1, MIR: NIL=1, BOOL=2
-      result = case hir_type
-      when HIR::TypeRef::VOID    then TypeRef::VOID
-      when HIR::TypeRef::BOOL    then TypeRef::BOOL
-      when HIR::TypeRef::INT8    then TypeRef::INT8
-      when HIR::TypeRef::INT16   then TypeRef::INT16
-      when HIR::TypeRef::INT32   then TypeRef::INT32
-      when HIR::TypeRef::INT64   then TypeRef::INT64
-      when HIR::TypeRef::INT128  then TypeRef::INT128
-      when HIR::TypeRef::UINT8   then TypeRef::UINT8
-      when HIR::TypeRef::UINT16  then TypeRef::UINT16
-      when HIR::TypeRef::UINT32  then TypeRef::UINT32
-      when HIR::TypeRef::UINT64  then TypeRef::UINT64
-      when HIR::TypeRef::UINT128 then TypeRef::UINT128
-      when HIR::TypeRef::FLOAT32 then TypeRef::FLOAT32
-      when HIR::TypeRef::FLOAT64 then TypeRef::FLOAT64
-      when HIR::TypeRef::CHAR    then TypeRef::CHAR
-      when HIR::TypeRef::STRING  then TypeRef::STRING
-      when HIR::TypeRef::NIL     then TypeRef::NIL
-      when HIR::TypeRef::SYMBOL  then TypeRef::SYMBOL
-      when HIR::TypeRef::POINTER then TypeRef::POINTER
+      hir_type_id = hir_type.id
+      result = case hir_type_id
+      when HIR::TypeRef::VOID.id    then TypeRef::VOID
+      when HIR::TypeRef::BOOL.id    then TypeRef::BOOL
+      when HIR::TypeRef::INT8.id    then TypeRef::INT8
+      when HIR::TypeRef::INT16.id   then TypeRef::INT16
+      when HIR::TypeRef::INT32.id   then TypeRef::INT32
+      when HIR::TypeRef::INT64.id   then TypeRef::INT64
+      when HIR::TypeRef::INT128.id  then TypeRef::INT128
+      when HIR::TypeRef::UINT8.id   then TypeRef::UINT8
+      when HIR::TypeRef::UINT16.id  then TypeRef::UINT16
+      when HIR::TypeRef::UINT32.id  then TypeRef::UINT32
+      when HIR::TypeRef::UINT64.id  then TypeRef::UINT64
+      when HIR::TypeRef::UINT128.id then TypeRef::UINT128
+      when HIR::TypeRef::FLOAT32.id then TypeRef::FLOAT32
+      when HIR::TypeRef::FLOAT64.id then TypeRef::FLOAT64
+      when HIR::TypeRef::CHAR.id    then TypeRef::CHAR
+      when HIR::TypeRef::STRING.id  then TypeRef::STRING
+      when HIR::TypeRef::NIL.id     then TypeRef::NIL
+      when HIR::TypeRef::SYMBOL.id  then TypeRef::SYMBOL
+      when HIR::TypeRef::POINTER.id then TypeRef::POINTER
       else
         # User-defined types: offset by primitive count
-        TypeRef.new(hir_type.id + 20_u32)
+        TypeRef.new(hir_type_id + 20_u32)
       end
     end
   end

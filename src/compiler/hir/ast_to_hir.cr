@@ -2827,6 +2827,9 @@ module Crystal::HIR
       @infer_local_type_cache = {} of {UInt64, String, String?} => {Int32, TypeRef}
       @infer_local_type_nil_cache = Set({UInt64, String, String?}).new
       @infer_local_type_cache_scope = nil
+      # Self-hosted stage2 can miss inline-default ivar initialization. Ensure
+      # the ENV cache exists before the first env_has?/env_get call below.
+      @env_cache = {} of String => String
       @debug_infer_guard_enabled = env_has?("DEBUG_INFER_GUARD")
       @infer_guard_hits = 0
       @infer_guard_last_report = nil
@@ -2902,7 +2905,9 @@ module Crystal::HIR
       @union_type_cache = {} of UInt32 => Bool
       @debug_cache_histo = !env_get("DEBUG_CACHE_HISTO").nil?
       @debug_cache_stats = {} of String => Tuple(Int32, Int32)
-      @debug_cache_last = @debug_cache_histo ? Time.instant : nil
+      # Self-hosted stage2 miscompiles this constructor-time Time::Instant?
+      # ternary and dereferences nil during bootstrap. Seed lazily on first use.
+      @debug_cache_last = nil
       @module_extend_self = Set(String).new
       @deferred_module_contexts = {} of String => Array(DeferredModuleContext)
       @deferred_module_context_seen = {} of String => Set(DeferredModuleContextKey)
@@ -33656,7 +33661,10 @@ module Crystal::HIR
       @debug_cache_stats[name] = counts
 
       last = @debug_cache_last
-      return unless last
+      unless last
+        @debug_cache_last = Time.instant
+        return
+      end
       now = Time.instant
       return if (now - last).total_milliseconds < 3000
 

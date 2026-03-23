@@ -16,20 +16,24 @@
 - **Fresh HIR stabilization**:
   - generic param recursion guard no longer crashes hashing `Pointer(UInt8)` in `type_ref_for_name_inner`
   - `CRYSTAL_V2_STOP_AFTER_HIR=1` on the macro oracle is now green and produces a deterministic stage1-vs-stage2 HIR diff instead of a segfault
+- **Fresh reduced post-parse stabilization**:
+  - constructor-time `Time::Instant?` init in `AstToHir` no longer self-hosted-crashes immediately after parse on the reduced trailing-block carrier
+  - `Function` now stores raw parameter snapshots directly instead of a nested parameter object container
+  - MIR `convert_type` now dispatches on raw `type_id` instead of `TypeRef` struct equality, removing the self-hosted `Int32 -> Type#24` regression
+  - on the reduced `callargs_leak_reduced.cr` oracle, current-source `stage1` and self-hosted `stage2` now match byte-for-byte at both HIR and MIR
 - **Focused green oracles**:
   - stage2 float literal parse/FastFloat accessor stub repro is green
   - stage2 `case/when` with `Char` literals inside defs is green
   - narrow literal oracle is green (`literal 42 : Int32`, not `literal nil`)
   - reduced trailing-block call-args oracle is green on the new stage2 candidate
   - `src/stdlib/object.cr --release --no-prelude` parse-only repro is green `5/5` on the new stage2 candidate
+  - reduced trailing-block carrier now reaches `CRYSTAL_V2_STOP_AFTER_MIR=1` on self-hosted stage2 and matches current-source stage1 MIR output
 - **Focused red oracles**:
-  - self-hosted stage2 still diverges from stage1 on the macro HIR oracle:
-    - `__crystal_main` params are missing in stage2 HIR/MIR output
-  - reduced trailing-block no-prelude carrier now parses cleanly on stage2, but the same carrier still segfaults immediately in stage2 HIR/MIR/LL while stage1 emits clean artifacts
+  - reduced trailing-block no-prelude carrier no longer diverges in HIR/MIR, but self-hosted stage2 still segfaults in LLVM generation when allowed past MIR on the same carrier
   - stage3 bootstrap still dies while parsing `src/stdlib/object.cr`
   - `stage2_process_executable_path_parse_repro.sh` is now flaky on the new stage2 candidate (`attempt 1 = green`, `attempt 2 = 139`)
   - full `char_toplevel` compile on self-hosted stage2 still segfaults after parse
-- **Current frontier**: the old parser leak after parenthesized calls with trailing blocks is fixed enough to clear `object.cr --no-prelude`, but the bootstrap blocker has moved lower: stage2 still crashes immediately after parse on the same reduced carrier and remains unstable on default-prelude/process parse-only oracles. Next step is to localize that post-parse self-hosted crash before returning to the macro `__crystal_main(argc, argv)` diff and `stage2 -> stage3`.
+- **Current frontier**: the old reduced-carrier parser/HIR/MIR blockers are fixed enough to clear stage1-vs-stage2 agreement through MIR, but the bootstrap blocker has moved one layer lower again: self-hosted stage2 now crashes in LLVM generation on that same reduced carrier and still remains unstable on broader default-prelude/process parse-only oracles. Next step is to localize the post-MIR LLVM crash before returning to stage3 bootstrap and stage1-vs-stage2 timing.
 
 ## VERIFIED: Fix `ptr 0` → `ptr null` in stage2 LLC
 
@@ -69,10 +73,10 @@ CRYSTAL_V2_STOP_AFTER_MIR=1 /tmp/crystal_v2_s2 /tmp/test.cr -o /tmp/out --no-pre
 1. Build fresh release stage1 from current repo state.
 2. Build fresh release stage2 with that stage1.
 3. Use `regression_tests/stage2_macro_method_char_arg_oracle.sh` plus `CRYSTAL_V2_TRACE_MACRO_DEF=1` / `DEBUG_ARENA_ADD=Macro` to push the remaining failure from HIR `Index out of bounds` to a concrete AST/root-cause fix.
-4. Push the new reduced trailing-block carrier from parse-only green to stage1-vs-stage2 HIR/MIR/LL agreement.
-5. Re-run `stage2_default_prelude_parse_repro.sh` and `stage2_process_executable_path_parse_repro.sh` after the post-parse crash is localized/fixed.
-6. Push `stage2_macro_method_char_arg_oracle.sh` from deterministic HIR/MIR diff (`__crystal_main` params) to full stage1-vs-stage2 HIR/MIR/LL agreement.
-7. Retry stage3 bootstrap once the reduced post-parse carrier and macro/HIR path no longer diverge.
+4. Push the new reduced trailing-block carrier from stage1-vs-stage2 HIR/MIR agreement to stage1-vs-stage2 LLVM/ll agreement.
+5. Re-run `stage2_default_prelude_parse_repro.sh` and `stage2_process_executable_path_parse_repro.sh` after the reduced post-MIR LLVM crash is localized/fixed.
+6. Re-run `stage2_macro_method_char_arg_oracle.sh` now that the synthetic `__crystal_main(argc, argv)` HIR/MIR drift is removed on the reduced carrier.
+7. Retry stage3 bootstrap once the reduced LLVM path and macro/bootstrap path no longer diverge.
 8. If stage3 goes green, benchmark stage1 vs stage2 release compile time for `src/crystal_v2.cr`.
 
 ## ROOT CAUSES FOUND

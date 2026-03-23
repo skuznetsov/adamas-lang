@@ -177,7 +177,6 @@ module Crystal::HIR
       super(id, type)
       @lifetime = LifetimeTag::StackLocal
     end
-    end
 
     def to_s(io : IO) : Nil
       io << "%" << @id << " = literal "
@@ -1188,23 +1187,38 @@ module Crystal::HIR
   class Function
     getter id : FunctionId
     getter name : String
-    getter params : Array(Parameter)
     property return_type : TypeRef
     getter scopes : Array(Scope)
     getter blocks : Array(Block)
     getter entry_block : BlockId
 
     # For incremental ID generation
+    @id : FunctionId
+    @name : String
+    @return_type : TypeRef
+    @scopes : Array(Scope)
+    @blocks : Array(Block)
+    @entry_block : BlockId
     @next_value_id : ValueId = 0_u32
     @next_block_id : BlockId = 0_u32
     @next_scope_id : ScopeId = 0_u32
     @value_locations : Hash(ValueId, SourceLocation)
+    @param_ids : Array(ValueId)
+    @param_type_ids : Array(TypeId)
+    @param_names : Array(String)
+    @param_default_literals : Array(String?)
 
-    def initialize(@id : FunctionId, @name : String, @return_type : TypeRef)
-      @params = [] of Parameter
+    def initialize(id : FunctionId, name : String, return_type : TypeRef)
+      @id = id
+      @name = name
+      @return_type = return_type
       @scopes = [] of Scope
       @blocks = [] of Block
       @value_locations = {} of ValueId => SourceLocation
+      @param_ids = [] of ValueId
+      @param_type_ids = [] of TypeId
+      @param_names = [] of String
+      @param_default_literals = [] of String?
 
       # Create entry block and function scope
       @entry_block = create_block(create_scope(ScopeKind::Function))
@@ -1240,9 +1254,31 @@ module Crystal::HIR
       @scopes[id]
     end
 
+    def params : Array(Parameter)
+      result = [] of Parameter
+      i = 0
+      while i < @param_ids.size
+        param = Parameter.new(
+          @param_ids.unsafe_fetch(i),
+          TypeRef.new(@param_type_ids.unsafe_fetch(i)),
+          i,
+          @param_names.unsafe_fetch(i)
+        )
+        if default_literal = @param_default_literals.unsafe_fetch(i)
+          param.default_literal = default_literal
+        end
+        result << param
+        i += 1
+      end
+      result
+    end
+
     def add_param(name : String, type : TypeRef) : Parameter
-      param = Parameter.new(next_value_id, type, @params.size, name)
-      @params << param
+      param = Parameter.new(next_value_id, type, @param_ids.size, name)
+      @param_ids << param.id
+      @param_type_ids << param.type.id
+      @param_names << param.name
+      @param_default_literals << param.default_literal
       param
     end
 
@@ -1256,8 +1292,11 @@ module Crystal::HIR
 
     def to_s(io : IO) : Nil
       io << "func @" << @name << "("
-      @params.join(io, ", ") do |param, o|
-        o << "%" << param.id << ": " << param.type.id
+      first_param = true
+      params.each do |param|
+        io << ", " unless first_param
+        io << "%" << param.id << ": " << param.type.id
+        first_param = false
       end
       io << ") -> " << @return_type.id << " {\n"
 
