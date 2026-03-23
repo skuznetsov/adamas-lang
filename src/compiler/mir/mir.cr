@@ -455,20 +455,65 @@ module Crystal::MIR
   # Compile-time constant
   class Constant < Value
     getter value : Int64 | UInt64 | Float64 | Bool | Nil | String
+    getter int_value : Int64
+    getter uint_value : UInt64
+    getter float_value : Float64
+    getter bool_value : Bool
+    getter string_value : String?
+
+    property int_value : Int64 = 0_i64
+    property uint_value : UInt64 = 0_u64
+    property float_value : Float64 = 0.0
+    property bool_value : Bool = false
+    property string_value : String? = nil
 
     def initialize(id : ValueId, type : TypeRef, @value)
       super(id, type)
+      sync_cached_value_fields
     end
 
     def to_s(io : IO) : Nil
       io << "%" << @id << " = const "
-      case v = @value
-      when String then io << v.inspect
-      when Bool   then io << (v ? "true" : "false")
-      when Nil    then io << "nil"
-      else             io << v
+      case @type
+      when TypeRef::FLOAT32, TypeRef::FLOAT64
+        io << @float_value
+      when TypeRef::BOOL
+        io << (@bool_value ? "true" : "false")
+      when TypeRef::STRING
+        if value = @string_value
+          io << value.inspect
+        else
+          io << "nil"
+        end
+      when TypeRef::NIL, TypeRef::VOID
+        io << "nil"
+      when TypeRef::UINT8, TypeRef::UINT16, TypeRef::UINT32, TypeRef::UINT64, TypeRef::UINT128
+        io << @uint_value
+      else
+        io << @int_value
       end
       io << " : " << @type
+    end
+
+    private def sync_cached_value_fields : Nil
+      case v = @value
+      when Int64
+        @int_value = v
+        @uint_value = v >= 0 ? v.to_u64 : 0_u64
+      when UInt64
+        @uint_value = v
+        @int_value = v <= Int64::MAX.to_u64 ? v.to_i64 : 0_i64
+      when Float64
+        @float_value = v
+      when Bool
+        @bool_value = v
+        @int_value = v ? 1_i64 : 0_i64
+        @uint_value = v ? 1_u64 : 0_u64
+      when String
+        @string_value = v
+      when Nil
+        # Keep zero defaults for nil/void constants.
+      end
     end
   end
 
@@ -2000,19 +2045,30 @@ module Crystal::MIR
 
     # Constants
     def const_int(value : Int64, type : TypeRef = TypeRef::INT64) : ValueId
-      emit(Constant.new(@function.next_value_id, type, value))
+      constant = Constant.new(@function.next_value_id, type, value)
+      constant.int_value = value
+      constant.uint_value = value >= 0 ? value.to_u64 : 0_u64
+      emit(constant)
     end
 
     def const_uint(value : UInt64, type : TypeRef = TypeRef::UINT64) : ValueId
-      emit(Constant.new(@function.next_value_id, type, value))
+      constant = Constant.new(@function.next_value_id, type, value)
+      constant.uint_value = value
+      emit(constant)
     end
 
     def const_float(value : Float64, type : TypeRef = TypeRef::FLOAT64) : ValueId
-      emit(Constant.new(@function.next_value_id, type, value))
+      constant = Constant.new(@function.next_value_id, type, value)
+      constant.float_value = value
+      emit(constant)
     end
 
     def const_bool(value : Bool) : ValueId
-      emit(Constant.new(@function.next_value_id, TypeRef::BOOL, value))
+      constant = Constant.new(@function.next_value_id, TypeRef::BOOL, value)
+      constant.bool_value = value
+      constant.int_value = value ? 1_i64 : 0_i64
+      constant.uint_value = value ? 1_u64 : 0_u64
+      emit(constant)
     end
 
     def const_nil : ValueId
@@ -2025,7 +2081,9 @@ module Crystal::MIR
     end
 
     def const_string(value : String) : ValueId
-      emit(Constant.new(@function.next_value_id, TypeRef::STRING, value))
+      constant = Constant.new(@function.next_value_id, TypeRef::STRING, value)
+      constant.string_value = value
+      emit(constant)
     end
 
     # Memory operations

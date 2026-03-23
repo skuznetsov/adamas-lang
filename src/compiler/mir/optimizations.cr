@@ -398,9 +398,17 @@ module Crystal::MIR
         block.instructions.each do |inst|
           case inst
           when Constant
-            case v = inst.value
-            when Int64, UInt64, Float64, Bool, Nil
-              constants[inst.id] = v
+            case inst.type
+            when TypeRef::FLOAT32, TypeRef::FLOAT64
+              constants[inst.id] = inst.float_value
+            when TypeRef::BOOL
+              constants[inst.id] = inst.bool_value
+            when TypeRef::NIL, TypeRef::VOID
+              constants[inst.id] = nil
+            when TypeRef::UINT8, TypeRef::UINT16, TypeRef::UINT32, TypeRef::UINT64, TypeRef::UINT128
+              constants[inst.id] = inst.uint_value
+            else
+              constants[inst.id] = inst.int_value
             end
           end
         end
@@ -416,9 +424,17 @@ module Crystal::MIR
             new_instructions << folded_inst
             # Update constants map if we created a new constant
             if folded_inst.is_a?(Constant)
-              case v = folded_inst.value
-              when Int64, UInt64, Float64, Bool, Nil
-                constants[folded_inst.id] = v
+              case folded_inst.type
+              when TypeRef::FLOAT32, TypeRef::FLOAT64
+                constants[folded_inst.id] = folded_inst.float_value
+              when TypeRef::BOOL
+                constants[folded_inst.id] = folded_inst.bool_value
+              when TypeRef::NIL, TypeRef::VOID
+                constants[folded_inst.id] = nil
+              when TypeRef::UINT8, TypeRef::UINT16, TypeRef::UINT32, TypeRef::UINT64, TypeRef::UINT128
+                constants[folded_inst.id] = folded_inst.uint_value
+              else
+                constants[folded_inst.id] = folded_inst.int_value
               end
             end
             @folded += 1
@@ -944,9 +960,17 @@ module Crystal::MIR
             value_types[inst.id] = inst.type
             value_nodes[inst.id] = inst
             if inst.is_a?(Constant)
-              case v = inst.value
-              when Int64, UInt64, Float64, Bool, Nil
-                constants[inst.id] = v
+              case inst.type
+              when TypeRef::FLOAT32, TypeRef::FLOAT64
+                constants[inst.id] = inst.float_value
+              when TypeRef::BOOL
+                constants[inst.id] = inst.bool_value
+              when TypeRef::NIL, TypeRef::VOID
+                constants[inst.id] = nil
+              when TypeRef::UINT8, TypeRef::UINT16, TypeRef::UINT32, TypeRef::UINT64, TypeRef::UINT128
+                constants[inst.id] = inst.uint_value
+              else
+                constants[inst.id] = inst.int_value
               end
             end
             if inst.is_a?(Alloc) && inst.no_alias
@@ -1821,9 +1845,21 @@ module Crystal::MIR
           value_types[inst.id] = inst.type
           value_nodes[inst.id] = inst
           if inst.is_a?(Constant)
-            case v = inst.value
-            when Int64, UInt64, Float64, Bool, Nil, String
-              constants[inst.id] = v
+            case inst.type
+            when TypeRef::FLOAT32, TypeRef::FLOAT64
+              constants[inst.id] = inst.float_value
+            when TypeRef::BOOL
+              constants[inst.id] = inst.bool_value
+            when TypeRef::NIL, TypeRef::VOID
+              constants[inst.id] = nil
+            when TypeRef::STRING
+              if value = inst.string_value
+                constants[inst.id] = value
+              end
+            when TypeRef::UINT8, TypeRef::UINT16, TypeRef::UINT32, TypeRef::UINT64, TypeRef::UINT128
+              constants[inst.id] = inst.uint_value
+            else
+              constants[inst.id] = inst.int_value
             end
           end
         end

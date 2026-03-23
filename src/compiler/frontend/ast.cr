@@ -580,10 +580,9 @@ module CrystalV2
         getter parsed_float : Float64
 
         def initialize(@span : Span, @value : Slice(UInt8), @kind : NumberKind)
-          text = String.new(@value)
-          text = text.gsub('_', "").gsub(/[iuf]\d+$/, "")
+          text = normalized_numeric_text(String.new(@value))
           if @kind.f32? || @kind.f64?
-            @parsed_float = text.to_f64? || 0.0
+            @parsed_float = parse_float_literal_value(text)
             @parsed_int = 0_i64
           else
             raw = if text.starts_with?("0x") || text.starts_with?("0X")
@@ -598,6 +597,42 @@ module CrystalV2
             @parsed_int = raw.to_i64!
             @parsed_float = 0.0
           end
+        end
+
+        private def normalized_numeric_text(text : String) : String
+          limit = numeric_suffix_start(text)
+          String.build(text.bytesize) do |io|
+            i = 0
+            while i < limit
+              byte = text.byte_at(i)
+              io.write_byte(byte) unless byte == '_'.ord.to_u8
+              i += 1
+            end
+          end
+        end
+
+        private def numeric_suffix_start(text : String) : Int32
+          i = text.bytesize - 1
+          while i >= 0
+            byte = text.byte_at(i)
+            break unless byte >= '0'.ord.to_u8 && byte <= '9'.ord.to_u8
+            i -= 1
+          end
+
+          if i >= 0 && i < text.bytesize - 1
+            byte = text.byte_at(i)
+            return i if byte == 'i'.ord.to_u8 || byte == 'u'.ord.to_u8 || byte == 'f'.ord.to_u8
+          end
+
+          text.bytesize
+        end
+
+        private def parse_float_literal_value(text : String) : Float64
+          end_ptr = Pointer(LibC::Char).null
+          parsed = LibC.strtod(text.to_unsafe, pointerof(end_ptr))
+          return 0.0 if end_ptr.null?
+          return parsed if end_ptr == text.to_unsafe + text.bytesize
+          0.0
         end
       end
 

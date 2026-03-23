@@ -15,1941 +15,2058 @@ require "../hir/memory_strategy"
 
 module Crystal
   module MIR
-  # ═══════════════════════════════════════════════════════════════════════════
-  # HIR TO MIR LOWERING
-  # ═══════════════════════════════════════════════════════════════════════════
+    # ═══════════════════════════════════════════════════════════════════════════
+    # HIR TO MIR LOWERING
+    # ═══════════════════════════════════════════════════════════════════════════
 
-  class HIRToMIRLowering
-    getter hir_module : HIR::Module
-    getter mir_module : Crystal::MIR::Module
+    class HIRToMIRLowering
+      getter hir_module : HIR::Module
+      getter mir_module : Crystal::MIR::Module
 
-    # Mapping from HIR ValueId to MIR ValueId per function
-    @value_map : Hash(HIR::ValueId, ValueId)
+      # Mapping from HIR ValueId to MIR ValueId per function
+      @value_map : Hash(HIR::ValueId, ValueId)
 
-    # Mapping from HIR ValueId to HIR TypeRef per function
-    # (needed to lower HIR::Cast into correct MIR::CastKind)
-    @hir_value_types : Hash(HIR::ValueId, HIR::TypeRef)
+      # Mapping from HIR ValueId to HIR TypeRef per function
+      # (needed to lower HIR::Cast into correct MIR::CastKind)
+      @hir_value_types : Hash(HIR::ValueId, HIR::TypeRef)
 
-    # HIR values that are compile-time constants (Literal, GlobalRef) — no rc_inc/rc_dec needed
-    @hir_constant_values : Set(HIR::ValueId)
+      # HIR values that are compile-time constants (Literal, GlobalRef) — no rc_inc/rc_dec needed
+      @hir_constant_values : Set(HIR::ValueId)
 
-    # Mapping from HIR BlockId to MIR BlockId
-    @block_map : Array(BlockId?)
+      # Mapping from HIR BlockId to MIR BlockId
+      @block_map : Array(BlockId?)
 
-    # Pending phi nodes that need incoming resolution after all blocks are lowered
-    @pending_phis : Array(Tuple(Phi, HIR::Phi))
+      # Pending phi nodes that need incoming resolution after all blocks are lowered
+      @pending_phis : Array(Tuple(Phi, HIR::Phi))
 
-    # Stack slots (mutable locals / block params) that require loads on reads
-    @stack_slot_values : Set(ValueId)
-    @stack_slot_types : Hash(ValueId, TypeRef)
+      # Stack slots (mutable locals / block params) that require loads on reads
+      @stack_slot_values : Set(ValueId)
+      @stack_slot_types : Hash(ValueId, TypeRef)
 
-    # Current function being lowered
-    @current_hir_func : HIR::Function?
-    @current_mir_func : Crystal::MIR::Function?
-    @builder : Builder?
-    @current_lowering_func_name : String = ""
-    @slab_frame_enabled : Bool
-    @current_slab_frame : Bool = false
-    @current_block_param_id : HIR::ValueId?
-    @class_children : Hash(String, Array(String))
+      # Current function being lowered
+      @current_hir_func : HIR::Function?
+      @current_mir_func : Crystal::MIR::Function?
+      @builder : Builder?
+      @current_lowering_func_name : String = ""
+      @slab_frame_enabled : Bool
+      @current_slab_frame : Bool = false
+      @current_block_param_id : HIR::ValueId?
+      @class_children : Hash(String, Array(String))
 
-    # Index: base_name (before "$") → first matching MIR function.
-    # Eliminates O(N) linear scans during fuzzy call resolution.
-    @function_by_base_name : Hash(String, Crystal::MIR::Function) = {} of String => Crystal::MIR::Function
-    @functions_by_base_name_all : Hash(String, Array(Crystal::MIR::Function)) = {} of String => Array(Crystal::MIR::Function)
+      # Index: base_name (before "$") → first matching MIR function.
+      # Eliminates O(N) linear scans during fuzzy call resolution.
+      @function_by_base_name : Hash(String, Crystal::MIR::Function) = {} of String => Crystal::MIR::Function
+      @functions_by_base_name_all : Hash(String, Array(Crystal::MIR::Function)) = {} of String => Array(Crystal::MIR::Function)
 
-    # Index: class_name → Array of functions belonging to that class.
-    # Eliminates O(N) full-scan of all functions during virtual dispatch.
-    @functions_by_class : Hash(String, Array(Crystal::MIR::Function)) = {} of String => Array(Crystal::MIR::Function)
+      # Index: class_name → Array of functions belonging to that class.
+      # Eliminates O(N) full-scan of all functions during virtual dispatch.
+      @functions_by_class : Hash(String, Array(Crystal::MIR::Function)) = {} of String => Array(Crystal::MIR::Function)
 
-    # Caches for virtual dispatch (avoid repeated hierarchy traversals)
-    @subclass_cache : Hash(String, Array(String)) = {} of String => Array(String)
-    @module_includers_cache : Hash(String, Array(String)) = {} of String => Array(String)
-    @resolve_virtual_cache : Hash({String, String, Int32?, Bool}, Crystal::MIR::Function?) = {} of {String, String, Int32?, Bool} => Crystal::MIR::Function?
+      # Caches for virtual dispatch (avoid repeated hierarchy traversals)
+      @subclass_cache : Hash(String, Array(String)) = {} of String => Array(String)
+      @module_includers_cache : Hash(String, Array(String)) = {} of String => Array(String)
+      @resolve_virtual_cache : Hash({String, String, Int32?, Bool}, Crystal::MIR::Function?) = {} of {String, String, Int32?, Bool} => Crystal::MIR::Function?
 
-    # Reusable buffer for virtual dispatch candidates to avoid repeated array
-    # allocations that cause heavy GC pressure in the Boehm collector.
-    @vdispatch_candidates_buf = Array(NamedTuple(type_id: Int32, type_ref: TypeRef, variant_id: Int32, func: Crystal::MIR::Function?, dispatch_class: String?)).new(initial_capacity: 16)
+      # Reusable buffer for virtual dispatch candidates to avoid repeated array
+      # allocations that cause heavy GC pressure in the Boehm collector.
+      @vdispatch_candidates_buf = Array(NamedTuple(type_id: Int32, type_ref: TypeRef, variant_id: Int32, func: Crystal::MIR::Function?, dispatch_class: String?)).new(initial_capacity: 16)
 
-    # Memory strategy (note: we use inline selection, not global assigner)
+      # Memory strategy (note: we use inline selection, not global assigner)
 
-    # Track HIR values that point to inline struct data (from Pointer(Struct).value).
-    # These need special FieldGet handling: GEP without load for struct-typed fields.
-    @inline_struct_ptrs : Set(HIR::ValueId) = Set(HIR::ValueId).new
+      # Track HIR values that point to inline struct data (from Pointer(Struct).value).
+      # These need special FieldGet handling: GEP without load for struct-typed fields.
+      @inline_struct_ptrs : Set(HIR::ValueId) = Set(HIR::ValueId).new
 
-    # ARC cleanup: track stack slots holding ARC-allocated pointers per function
-    # so we can emit rc_dec at return points. Each slot is initialized to null
-    # at function entry and stores the ARC pointer after allocation.
-    # Tuple: (MIR slot ValueId, atomic?)
-    @arc_cleanup_slots : Array({ValueId, Bool}) = [] of {ValueId, Bool}
+      # ARC cleanup: track stack slots holding ARC-allocated pointers per function
+      # so we can emit rc_dec at return points. Each slot is initialized to null
+      # at function entry and stores the ARC pointer after allocation.
+      # Tuple: (MIR slot ValueId, atomic?)
+      @arc_cleanup_slots : Array({ValueId, Bool}) = [] of {ValueId, Bool}
 
-    # Maps HIR Allocate ValueId → MIR cleanup slot ValueId
-    # Used to store ARC pointers into their cleanup slots after allocation
-    @arc_slot_map : Hash(HIR::ValueId, ValueId) = {} of HIR::ValueId => ValueId
+      # Maps HIR Allocate ValueId → MIR cleanup slot ValueId
+      # Used to store ARC pointers into their cleanup slots after allocation
+      @arc_slot_map : Hash(HIR::ValueId, ValueId) = {} of HIR::ValueId => ValueId
 
-    # Per-block ARC cleanup: reference-typed Call results that need rc_dec at block end.
-    # Each entry is (HIR value ID, MIR value ID) for a Call result with reference type.
-    @block_arc_temps : Array({HIR::ValueId, ValueId}) = [] of {HIR::ValueId, ValueId}
+      # Per-block ARC cleanup: reference-typed Call results that need rc_dec at block end.
+      # Each entry is (HIR value ID, MIR value ID) for a Call result with reference type.
+      @block_arc_temps : Array({HIR::ValueId, ValueId}) = [] of {HIR::ValueId, ValueId}
 
-    # Values that are used outside their defining block — must NOT be rc_dec'd at block end.
-    @cross_block_values : Set(HIR::ValueId) = Set(HIR::ValueId).new
+      # Values that are used outside their defining block — must NOT be rc_dec'd at block end.
+      @cross_block_values : Set(HIR::ValueId) = Set(HIR::ValueId).new
 
-    # Functions whose return value is a freshly allocated ARC object (+1 ownership).
-    # Call results from these functions can be safely rc_dec'd at the caller's scope exit.
-    # Built by interprocedural analysis tracing return values back to Allocate instructions.
-    @owned_return_funcs : Set(String) = Set(String).new
+      # Functions whose return value is a freshly allocated ARC object (+1 ownership).
+      # Call results from these functions can be safely rc_dec'd at the caller's scope exit.
+      # Built by interprocedural analysis tracing return values back to Allocate instructions.
+      @owned_return_funcs : Set(String) = Set(String).new
 
-    @[AlwaysInline]
-    private def mir_setup_trace? : Bool
-      ENV.has_key?("CRYSTAL_V2_MIR_SETUP_TRACE") || ENV.has_key?("CRYSTAL2_MIR_SETUP_TRACE")
-    end
-
-    # Statistics
-    getter stats : LoweringStats = LoweringStats.new
-
-    # Mapping from MIR function index to HIR function index (built during prepare())
-    getter mir_to_hir_indices : Array(Int32) = [] of Int32
-
-    def initialize(@hir_module : HIR::Module, *, slab_frame : Bool = false)
-      trace = mir_setup_trace?
-      STDERR.puts "[MIR_INIT] begin" if trace
-      @mir_module = Crystal::MIR::Module.new(@hir_module.name)
-      STDERR.puts "[MIR_INIT] mir_module" if trace
-      @value_map = {} of HIR::ValueId => ValueId
-      STDERR.puts "[MIR_INIT] value_map" if trace
-      @hir_value_types = {} of HIR::ValueId => HIR::TypeRef
-      @hir_constant_values = Set(HIR::ValueId).new
-      STDERR.puts "[MIR_INIT] hir_value_types" if trace
-      @block_map = [] of BlockId?
-      STDERR.puts "[MIR_INIT] block_map" if trace
-      @pending_phis = [] of Tuple(Phi, HIR::Phi)
-      STDERR.puts "[MIR_INIT] pending_phis" if trace
-      @stack_slot_values = Set(ValueId).new
-      STDERR.puts "[MIR_INIT] stack_slot_values" if trace
-      @stack_slot_types = {} of ValueId => TypeRef
-      STDERR.puts "[MIR_INIT] stack_slot_types" if trace
-      @slab_frame_enabled = slab_frame
-      @current_block_param_id = nil
-      @class_children = {} of String => Array(String)
-      STDERR.puts "[MIR_INIT] class_children" if trace
-      @hir_module.class_parents.each do |name, parent|
-        next unless parent
-        (@class_children[parent] ||= [] of String) << name
+      @[AlwaysInline]
+      private def mir_setup_trace? : Bool
+        ENV.has_key?("CRYSTAL_V2_MIR_SETUP_TRACE") || ENV.has_key?("CRYSTAL2_MIR_SETUP_TRACE")
       end
-      STDERR.puts "[MIR_INIT] class_parents_indexed" if trace
-    end
 
-    @[AlwaysInline]
-    private def mir_lower_trace? : Bool
-      ENV.has_key?("CRYSTAL_V2_MIR_LOWER_TRACE") || ENV.has_key?("CRYSTAL2_MIR_LOWER_TRACE")
-    end
+      # Statistics
+      getter stats : LoweringStats = LoweringStats.new
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # Main Entry Point
-    # ─────────────────────────────────────────────────────────────────────────
+      # Mapping from MIR function index to HIR function index (built during prepare())
+      getter mir_to_hir_indices : Array(Int32) = [] of Int32
 
-    # Prepare stubs and indices for all functions (serial, fast).
-    # Call this before lower() or lower_bodies_range().
-    def prepare(progress : Bool = false) : Crystal::MIR::Module
-      finalize_pointer_backed_union_layouts
-
-      total = @hir_module.functions.size
-      STDERR.puts "    Pass 1: Creating #{total} function stubs..." if progress
-      seen_names = Set(String).new
-      @mir_to_hir_indices.clear
-      @hir_module.functions.each_with_index do |hir_func, idx|
-        if progress && (idx % 5000 == 0 || idx == total - 1)
-          STDERR.puts "      Stub #{idx + 1}/#{total}..."
+      def initialize(@hir_module : HIR::Module, *, slab_frame : Bool = false)
+        trace = mir_setup_trace?
+        STDERR.puts "[MIR_INIT] begin" if trace
+        @mir_module = Crystal::MIR::Module.new(@hir_module.name)
+        STDERR.puts "[MIR_INIT] mir_module" if trace
+        @value_map = {} of HIR::ValueId => ValueId
+        STDERR.puts "[MIR_INIT] value_map" if trace
+        @hir_value_types = {} of HIR::ValueId => HIR::TypeRef
+        @hir_constant_values = Set(HIR::ValueId).new
+        STDERR.puts "[MIR_INIT] hir_value_types" if trace
+        @block_map = [] of BlockId?
+        STDERR.puts "[MIR_INIT] block_map" if trace
+        @pending_phis = [] of Tuple(Phi, HIR::Phi)
+        STDERR.puts "[MIR_INIT] pending_phis" if trace
+        @stack_slot_values = Set(ValueId).new
+        STDERR.puts "[MIR_INIT] stack_slot_values" if trace
+        @stack_slot_types = {} of ValueId => TypeRef
+        STDERR.puts "[MIR_INIT] stack_slot_types" if trace
+        @slab_frame_enabled = slab_frame
+        @current_block_param_id = nil
+        @class_children = {} of String => Array(String)
+        STDERR.puts "[MIR_INIT] class_children" if trace
+        @hir_module.class_parents.each do |name, parent|
+          next unless parent
+          (@class_children[parent] ||= [] of String) << name
         end
-        next if seen_names.includes?(hir_func.name)
-        seen_names.add(hir_func.name)
-        create_function_stub(hir_func)
-        @mir_to_hir_indices << idx
+        STDERR.puts "[MIR_INIT] class_parents_indexed" if trace
       end
 
-      if (dump_path = ENV["DEBUG_MIR_FUNC_NAMES"]?)
-        path = dump_path.empty? || dump_path == "1" ? "/tmp/mir_function_names.txt" : dump_path
-        match_sub = ENV["DEBUG_MIR_FUNC_MATCH"]?
-        File.open(path, "w") do |io|
-          io.puts "[HIR]"
-          @hir_module.functions.each do |hir_func|
-            name = hir_func.name
-            next if match_sub ? !name.includes?(match_sub) : !name.includes?('(')
-            io.puts name
+      @[AlwaysInline]
+      private def mir_lower_trace? : Bool
+        ENV.has_key?("CRYSTAL_V2_MIR_LOWER_TRACE") || ENV.has_key?("CRYSTAL2_MIR_LOWER_TRACE")
+      end
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # Main Entry Point
+      # ─────────────────────────────────────────────────────────────────────────
+
+      # Prepare stubs and indices for all functions (serial, fast).
+      # Call this before lower() or lower_bodies_range().
+      def prepare(progress : Bool = false) : Crystal::MIR::Module
+        finalize_pointer_backed_union_layouts
+
+        total = @hir_module.functions.size
+        STDERR.puts "    Pass 1: Creating #{total} function stubs..." if progress
+        seen_names = Set(String).new
+        @mir_to_hir_indices.clear
+        @hir_module.functions.each_with_index do |hir_func, idx|
+          if progress && (idx % 5000 == 0 || idx == total - 1)
+            STDERR.puts "      Stub #{idx + 1}/#{total}..."
           end
-          io.puts "[MIR]"
-          @mir_module.functions.each do |mir_func|
-            name = mir_func.name
-            next if match_sub ? !name.includes?(match_sub) : !name.includes?('(')
-            io.puts name
+          next if seen_names.includes?(hir_func.name)
+          seen_names.add(hir_func.name)
+          create_function_stub(hir_func)
+          @mir_to_hir_indices << idx
+        end
+
+        if (dump_path = ENV["DEBUG_MIR_FUNC_NAMES"]?)
+          path = dump_path.empty? || dump_path == "1" ? "/tmp/mir_function_names.txt" : dump_path
+          match_sub = ENV["DEBUG_MIR_FUNC_MATCH"]?
+          File.open(path, "w") do |io|
+            io.puts "[HIR]"
+            @hir_module.functions.each do |hir_func|
+              name = hir_func.name
+              next if match_sub ? !name.includes?(match_sub) : !name.includes?('(')
+              io.puts name
+            end
+            io.puts "[MIR]"
+            @mir_module.functions.each do |mir_func|
+              name = mir_func.name
+              next if match_sub ? !name.includes?(match_sub) : !name.includes?('(')
+              io.puts name
+            end
           end
         end
-      end
 
-      # Build base-name index for fuzzy call resolution
-      @mir_module.functions.each do |func|
-        name = func.name
-        dollar_idx = name.index('$')
-        base = dollar_idx ? name[0, dollar_idx] : name
-        @function_by_base_name[base] = func unless @function_by_base_name.has_key?(base)
-        (@functions_by_base_name_all[base] ||= [] of Crystal::MIR::Function) << func
+        # Build base-name index for fuzzy call resolution
+        @mir_module.functions.each do |func|
+          name = func.name
+          dollar_idx = name.index('$')
+          base = dollar_idx ? name[0, dollar_idx] : name
+          @function_by_base_name[base] = func unless @function_by_base_name.has_key?(base)
+          (@functions_by_base_name_all[base] ||= [] of Crystal::MIR::Function) << func
 
-        hash_idx = name.index('#')
-        dot_idx = name.index('.')
-        sep_idx = if hash_idx && dot_idx
-                    Math.min(hash_idx, dot_idx)
-                  else
-                    hash_idx || dot_idx
-                  end
-        if sep_idx
-          class_name = name[0, sep_idx]
-          (@functions_by_class[class_name] ||= [] of Crystal::MIR::Function) << func
-        end
-      end
-
-      @mir_module
-    end
-
-    # Lower all function bodies (serial). Call prepare() first.
-    def lower_all_bodies(progress : Bool = false) : Nil
-      build_owned_return_set
-      total = @hir_module.functions.size
-      STDERR.puts "    Pass 2: Lowering #{total} function bodies..." if progress
-      profile_mir = ENV.has_key?("CRYSTAL_V2_MIR_PROFILE")
-      processed = Set(String).new
-      slow_funcs = [] of Tuple(String, Float64) if profile_mir
-      @hir_module.functions.each_with_index do |hir_func, idx|
-        if progress && (idx % 5000 == 0 || idx == total - 1)
-          STDERR.puts "      Body #{idx + 1}/#{total}..."
-        end
-        next if processed.includes?(hir_func.name)
-        processed.add(hir_func.name)
-        begin
-          @current_lowering_func_name = hir_func.name
-          t0 = Time.instant if profile_mir
-          lower_function_body(hir_func)
-          if profile_mir
-            ms = (Time.instant - t0.not_nil!).total_milliseconds
-            slow_funcs.not_nil! << {hir_func.name, ms} if ms > 1.0
+          hash_idx = name.index('#')
+          dot_idx = name.index('.')
+          sep_idx = if hash_idx && dot_idx
+                      Math.min(hash_idx, dot_idx)
+                    else
+                      hash_idx || dot_idx
+                    end
+          if sep_idx
+            class_name = name[0, sep_idx]
+            (@functions_by_class[class_name] ||= [] of Crystal::MIR::Function) << func
           end
-        rescue ex : IndexError
-          raise "Index out of bounds in function #{idx + 1}/#{total}: #{hir_func.name}\n#{ex.message}\n#{ex.backtrace.first(10).join("\n")}"
-        rescue ex : KeyError
-          raise "Missing hash key in function #{idx + 1}/#{total}: #{hir_func.name}\n#{ex.message}\n#{ex.backtrace.first(10).join("\n")}"
-        end
-      end
-      if profile_mir && !slow_funcs.not_nil!.empty?
-        STDERR.puts "[MIR_PROFILE] Slow functions (>1ms):"
-        slow_funcs.not_nil!.sort_by { |_, ms| -ms }.first(30).each do |name, ms|
-          STDERR.puts "  #{ms.round(1)}ms #{name}"
-        end
-      end
-    end
-
-    # Lower function bodies for a range of HIR functions (for parallel workers).
-    # Call prepare() first. Worker gets its own copy via fork.
-    def lower_bodies_range(start_idx : Int32, end_idx : Int32) : Nil
-      processed = Set(String).new
-      start_idx.upto(end_idx - 1) do |idx|
-        next if idx >= @hir_module.functions.size
-        hir_func = @hir_module.functions[idx]
-        next if processed.includes?(hir_func.name)
-        processed.add(hir_func.name)
-        begin
-          @current_lowering_func_name = hir_func.name
-          lower_function_body(hir_func)
-        rescue ex : IndexError | KeyError
-          STDERR.puts "Worker error in function #{idx}: #{hir_func.name}: #{ex.message}"
-        end
-      end
-    end
-
-    def lower(progress : Bool = false) : Crystal::MIR::Module
-      prepare(progress)
-      lower_all_bodies(progress)
-      @mir_module
-    end
-
-    # Register class variables as globals
-    # Takes array of (global_name, hir_type, initial_value?)
-    def register_globals(globals : Array(Tuple(String, HIR::TypeRef, Int64?)))
-      globals.each do |global_name, hir_type, initial_value|
-        mir_type = convert_type(hir_type)
-        @mir_module.add_global(global_name, mir_type, initial_value)
-      end
-    end
-
-    def register_extern_globals(globals : Array(HIR::ExternGlobal))
-      globals.each do |glob|
-        mir_type = convert_type(glob.type)
-        @mir_module.add_extern_global(glob.real_name, mir_type)
-      end
-    end
-
-    def self.class_var_global_name(class_name : String, var_name : String) : String
-      "#{class_name}__classvar__#{var_name}"
-    end
-
-    # Register union types from AstToHir
-    # Creates union types in MIR TypeRegistry and stores descriptors for debug info
-    def register_union_types(union_descriptors : Hash(MIR::TypeRef, UnionDescriptor))
-      union_descriptors.each do |mir_type_ref, descriptor|
-        # Register descriptor in MIR module (for debug info / LLVM metadata)
-        @mir_module.register_union(mir_type_ref, descriptor)
-
-        # All-ref unions use the raw object pointer as their runtime value.
-        # Keeping a stale discriminated-union size here makes Pointer(T)/Array(T)
-        # arithmetic scale by 16 instead of pointer size.
-        alignment = pointer_word_align_u32
-        total_size = pointer_word_bytes_u64
-        unless all_ref_union_descriptor?(descriptor)
-          max_variant_size = descriptor.variants.map(&.size).max? || 0
-          # Ensure payload is at least pointer-sized (8 bytes) to match LLVM type
-          # emission and prevent overflow from `store ptr` codegen patterns.
-          max_variant_size = {max_variant_size, 8}.max
-          alignment = descriptor.alignment.to_u32
-
-          # Total size: 4 bytes for type_id + padding + max payload
-          payload_offset = ((4 + alignment - 1) // alignment) * alignment
-          total_size = payload_offset + max_variant_size
         end
 
-        # Create union type in TypeRegistry with the SAME TypeRef id
-        # so that llvm_type lookup finds it
-        union_type = @mir_module.type_registry.create_type_with_id(
-          mir_type_ref.id,
-          TypeKind::Union,
-          descriptor.name,
-          total_size.to_u64,
-          alignment
-        )
+        @mir_module
+      end
 
-        # Add each variant as a sub-type
-        descriptor.variants.each do |v|
-          # Get or create variant type from TypeRegistry
-          if variant_type = @mir_module.type_registry.get(v.type_ref)
-            union_type.add_variant(variant_type)
-          else
-            # Variant is not in the type registry - create temporary Type for it
-            variant_kind = if v.full_name.starts_with?("Tuple(")
-                             TypeKind::Tuple
-                           else
-                             TypeKind::Struct
-                           end
-            prim_type = Type.new(v.type_ref.id, variant_kind, v.full_name, v.size.to_u64, v.alignment.to_u32)
-            union_type.add_variant(prim_type)
+      # Lower all function bodies (serial). Call prepare() first.
+      def lower_all_bodies(progress : Bool = false) : Nil
+        build_owned_return_set
+        total = @hir_module.functions.size
+        STDERR.puts "    Pass 2: Lowering #{total} function bodies..." if progress
+        profile_mir = ENV.has_key?("CRYSTAL_V2_MIR_PROFILE")
+        processed = Set(String).new
+        slow_funcs = [] of Tuple(String, Float64) if profile_mir
+        @hir_module.functions.each_with_index do |hir_func, idx|
+          if progress && (idx % 5000 == 0 || idx == total - 1)
+            STDERR.puts "      Body #{idx + 1}/#{total}..."
+          end
+          next if processed.includes?(hir_func.name)
+          processed.add(hir_func.name)
+          begin
+            @current_lowering_func_name = hir_func.name
+            t0 = Time.instant if profile_mir
+            lower_function_body(hir_func)
+            if profile_mir
+              ms = (Time.instant - t0.not_nil!).total_milliseconds
+              slow_funcs.not_nil! << {hir_func.name, ms} if ms > 1.0
+            end
+          rescue ex : IndexError
+            raise "Index out of bounds in function #{idx + 1}/#{total}: #{hir_func.name}\n#{ex.message}\n#{ex.backtrace.first(10).join("\n")}"
+          rescue ex : KeyError
+            raise "Missing hash key in function #{idx + 1}/#{total}: #{hir_func.name}\n#{ex.message}\n#{ex.backtrace.first(10).join("\n")}"
+          end
+        end
+        if profile_mir && !slow_funcs.not_nil!.empty?
+          STDERR.puts "[MIR_PROFILE] Slow functions (>1ms):"
+          slow_funcs.not_nil!.sort_by { |_, ms| -ms }.first(30).each do |name, ms|
+            STDERR.puts "  #{ms.round(1)}ms #{name}"
           end
         end
       end
-    end
 
-    # Register additional MIR union type aliases from all HIR type descriptors.
-    # The HIR can assign different TypeRef IDs to the same logical union type
-    # in different contexts (e.g., .new vs initialize).  Only one is registered
-    # via register_union_types; this method ensures ALL union TypeRefs in the
-    # HIR type descriptor table resolve correctly in the MIR type registry.
-    def register_union_type_aliases(type_descriptors : Array(Crystal::HIR::TypeDescriptor))
-      registered_count = 0
-      type_descriptors.each_with_index do |desc, idx|
-        next unless desc.kind == HIR::TypeKind::Union
-
-        hir_ref = Crystal::HIR::TypeRef.new(Crystal::HIR::TypeRef::FIRST_USER_TYPE + idx.to_u32)
-        mir_ref = convert_type(hir_ref)
-
-        # Skip if already registered
-        next if @mir_module.type_registry.get(mir_ref)
-
-        # Look up the canonical union type by name
-        canonical = @mir_module.type_registry.get_by_name(desc.name)
-        next unless canonical && canonical.kind.union?
-
-        # Register this MIR TypeRef as the same union type
-        alias_type = @mir_module.type_registry.create_type_with_id(
-          mir_ref.id,
-          TypeKind::Union,
-          desc.name,
-          canonical.size,
-          canonical.alignment
-        )
-
-        # Copy variants from the canonical union
-        if variants = canonical.variants
-          variants.each { |v| alias_type.add_variant(v) }
-        end
-
-        # Also register the union descriptor under this TypeRef
-        if canonical_descriptor = @mir_module.get_union_descriptor(TypeRef.new(canonical.id))
-          @mir_module.register_union(mir_ref, canonical_descriptor)
-        end
-        registered_count += 1
-      end
-      STDERR.puts "[UNION_ALIAS] Registered #{registered_count} union type aliases" if registered_count > 0
-    end
-
-    # Register class/struct types with their fields
-    # This allows LLVM backend to generate proper struct types
-    def register_class_types(class_infos : Hash(String, Crystal::HIR::ClassInfo))
-      class_infos.each do |class_name, info|
-        # Skip primitive types - they should not be registered as struct types
-        # (their LLVM types are handled by the TypeRef case statement)
-        case class_name
-        when "Int8", "Int16", "Int32", "Int64", "Int128",
-             "UInt8", "UInt16", "UInt32", "UInt64", "UInt128",
-             "Float32", "Float64", "Bool", "Char", "Nil", "Void",
-             "Symbol"
-          next
-        end
-
-        # Convert HIR TypeRef to MIR TypeRef
-        mir_type_ref = convert_type(info.type_ref)
-
-        # Determine TypeKind (class = reference type, struct = value type)
-        type_kind = info.is_struct ? TypeKind::Struct : TypeKind::Reference
-
-        # Calculate total size (struct: just ivars, class: 4-byte i32 type_id header + ivars)
-        total_size = info.size.to_u64
-
-        # Create type in registry, or canonicalize an existing placeholder.
-        # Union registration runs before class registration and may seed a
-        # temporary Struct slot for class variants that are not yet in the
-        # registry. If we keep that stale kind, all-ref unions like `Nil | Base`
-        # degrade to non-all-ref and `is_a?`/dispatch lose runtime type_ids.
-        mir_type = @mir_module.type_registry.get(mir_type_ref) ||
-                   @mir_module.type_registry.get_by_name(class_name)
-        if mir_type
-          mir_type.kind = type_kind
-          mir_type.name = class_name
-          mir_type.alignment = pointer_word_align_u32
-          if total_size > 0 && (mir_type.size == 0 || total_size > mir_type.size || !info.ivars.empty?)
-            mir_type.size = total_size
+      # Lower function bodies for a range of HIR functions (for parallel workers).
+      # Call prepare() first. Worker gets its own copy via fork.
+      def lower_bodies_range(start_idx : Int32, end_idx : Int32) : Nil
+        processed = Set(String).new
+        start_idx.upto(end_idx - 1) do |idx|
+          next if idx >= @hir_module.functions.size
+          hir_func = @hir_module.functions[idx]
+          next if processed.includes?(hir_func.name)
+          processed.add(hir_func.name)
+          begin
+            @current_lowering_func_name = hir_func.name
+            lower_function_body(hir_func)
+          rescue ex : IndexError | KeyError
+            STDERR.puts "Worker error in function #{idx}: #{hir_func.name}: #{ex.message}"
           end
-        else
-          mir_type = @mir_module.type_registry.create_type_with_id(
+        end
+      end
+
+      def lower(progress : Bool = false) : Crystal::MIR::Module
+        prepare(progress)
+        lower_all_bodies(progress)
+        @mir_module
+      end
+
+      # Register class variables as globals
+      # Takes array of (global_name, hir_type, initial_value?)
+      def register_globals(globals : Array(Tuple(String, HIR::TypeRef, Int64?)))
+        globals.each do |global_name, hir_type, initial_value|
+          mir_type = convert_type(hir_type)
+          @mir_module.add_global(global_name, mir_type, initial_value)
+        end
+      end
+
+      def register_extern_globals(globals : Array(HIR::ExternGlobal))
+        globals.each do |glob|
+          mir_type = convert_type(glob.type)
+          @mir_module.add_extern_global(glob.real_name, mir_type)
+        end
+      end
+
+      def self.class_var_global_name(class_name : String, var_name : String) : String
+        "#{class_name}__classvar__#{var_name}"
+      end
+
+      # Register union types from AstToHir
+      # Creates union types in MIR TypeRegistry and stores descriptors for debug info
+      def register_union_types(union_descriptors : Hash(MIR::TypeRef, UnionDescriptor))
+        union_descriptors.each do |mir_type_ref, descriptor|
+          # Register descriptor in MIR module (for debug info / LLVM metadata)
+          @mir_module.register_union(mir_type_ref, descriptor)
+
+          # All-ref unions use the raw object pointer as their runtime value.
+          # Keeping a stale discriminated-union size here makes Pointer(T)/Array(T)
+          # arithmetic scale by 16 instead of pointer size.
+          alignment = pointer_word_align_u32
+          total_size = pointer_word_bytes_u64
+          unless all_ref_union_descriptor?(descriptor)
+            max_variant_size = descriptor.variants.map(&.size).max? || 0
+            # Ensure payload is at least pointer-sized (8 bytes) to match LLVM type
+            # emission and prevent overflow from `store ptr` codegen patterns.
+            max_variant_size = {max_variant_size, 8}.max
+            alignment = descriptor.alignment.to_u32
+
+            # Total size: 4 bytes for type_id + padding + max payload
+            payload_offset = ((4 + alignment - 1) // alignment) * alignment
+            total_size = payload_offset + max_variant_size
+          end
+
+          # Create union type in TypeRegistry with the SAME TypeRef id
+          # so that llvm_type lookup finds it
+          union_type = @mir_module.type_registry.create_type_with_id(
             mir_type_ref.id,
-            type_kind,
-            class_name,
-            total_size,
-            pointer_word_align_u32
+            TypeKind::Union,
+            descriptor.name,
+            total_size.to_u64,
+            alignment
           )
-        end
 
-        # Add fields (ivars)
-        info.ivars.each do |ivar|
-          field_type = convert_type(ivar.type)
-          mir_type.add_field(ivar.name, field_type, ivar.offset.to_u32)
+          # Add each variant as a sub-type
+          descriptor.variants.each do |v|
+            # Get or create variant type from TypeRegistry
+            if variant_type = @mir_module.type_registry.get(v.type_ref)
+              union_type.add_variant(variant_type)
+            else
+              # Variant is not in the type registry - create temporary Type for it
+              variant_kind = if v.full_name.starts_with?("Tuple(")
+                               TypeKind::Tuple
+                             else
+                               TypeKind::Struct
+                             end
+              prim_type = Type.new(v.type_ref.id, variant_kind, v.full_name, v.size.to_u64, v.alignment.to_u32)
+              union_type.add_variant(prim_type)
+            end
+          end
         end
       end
-    end
 
-    # Register enum types so the LLVM backend maps them to i32 instead of ptr.
-    # Enums in Crystal are integer types (i32 by default).
-    def register_enum_types(enum_names : Set(String), type_descriptors : Array(Crystal::HIR::TypeDescriptor))
-      type_descriptors.each_with_index do |desc, idx|
-        next unless enum_names.includes?(desc.name)
+      # Register additional MIR union type aliases from all HIR type descriptors.
+      # The HIR can assign different TypeRef IDs to the same logical union type
+      # in different contexts (e.g., .new vs initialize).  Only one is registered
+      # via register_union_types; this method ensures ALL union TypeRefs in the
+      # HIR type descriptor table resolve correctly in the MIR type registry.
+      def register_union_type_aliases(type_descriptors : Array(Crystal::HIR::TypeDescriptor))
+        registered_count = 0
+        type_descriptors.each_with_index do |desc, idx|
+          next unless desc.kind == HIR::TypeKind::Union
 
-        hir_ref = Crystal::HIR::TypeRef.new(Crystal::HIR::TypeRef::FIRST_USER_TYPE + idx.to_u32)
-        mir_ref = convert_type(hir_ref)
-        next if @mir_module.type_registry.get(mir_ref)
+          hir_ref = Crystal::HIR::TypeRef.new(Crystal::HIR::TypeRef::FIRST_USER_TYPE + idx.to_u32)
+          mir_ref = convert_type(hir_ref)
 
-        @mir_module.type_registry.create_type_with_id(
-          mir_ref.id,
-          TypeKind::Enum,
-          desc.name,
-          4_u64,   # i32 size
-          4_u32    # i32 alignment
-        )
+          # Skip if already registered
+          next if @mir_module.type_registry.get(mir_ref)
+
+          # Look up the canonical union type by name
+          canonical = @mir_module.type_registry.get_by_name(desc.name)
+          next unless canonical && canonical.kind.union?
+
+          # Register this MIR TypeRef as the same union type
+          alias_type = @mir_module.type_registry.create_type_with_id(
+            mir_ref.id,
+            TypeKind::Union,
+            desc.name,
+            canonical.size,
+            canonical.alignment
+          )
+
+          # Copy variants from the canonical union
+          if variants = canonical.variants
+            variants.each { |v| alias_type.add_variant(v) }
+          end
+
+          # Also register the union descriptor under this TypeRef
+          if canonical_descriptor = @mir_module.get_union_descriptor(TypeRef.new(canonical.id))
+            @mir_module.register_union(mir_ref, canonical_descriptor)
+          end
+          registered_count += 1
+        end
+        STDERR.puts "[UNION_ALIAS] Registered #{registered_count} union type aliases" if registered_count > 0
       end
-    end
 
-    # Register module types so module literals can be represented as runtime singletons.
-    # This prevents lowering module values as null pointers (which breaks vdispatch).
-    def register_module_types(type_descriptors : Array(Crystal::HIR::TypeDescriptor))
-      type_descriptors.each_with_index do |desc, idx|
-        next unless desc.kind == Crystal::HIR::TypeKind::Module
+      # Register class/struct types with their fields
+      # This allows LLVM backend to generate proper struct types
+      def register_class_types(class_infos : Hash(String, Crystal::HIR::ClassInfo))
+        class_infos.each do |class_name, info|
+          # Skip primitive types - they should not be registered as struct types
+          # (their LLVM types are handled by the TypeRef case statement)
+          case class_name
+          when "Int8", "Int16", "Int32", "Int64", "Int128",
+               "UInt8", "UInt16", "UInt32", "UInt64", "UInt128",
+               "Float32", "Float64", "Bool", "Char", "Nil", "Void",
+               "Symbol"
+            next
+          end
 
-        hir_ref = Crystal::HIR::TypeRef.new(Crystal::HIR::TypeRef::FIRST_USER_TYPE + idx.to_u32)
-        mir_ref = convert_type(hir_ref)
+          # Convert HIR TypeRef to MIR TypeRef
+          mir_type_ref = convert_type(info.type_ref)
 
-        unless @mir_module.type_registry.get(mir_ref)
+          # Determine TypeKind (class = reference type, struct = value type)
+          type_kind = info.is_struct ? TypeKind::Struct : TypeKind::Reference
+
+          # Calculate total size (struct: just ivars, class: 4-byte i32 type_id header + ivars)
+          total_size = info.size.to_u64
+
+          # Create type in registry, or canonicalize an existing placeholder.
+          # Union registration runs before class registration and may seed a
+          # temporary Struct slot for class variants that are not yet in the
+          # registry. If we keep that stale kind, all-ref unions like `Nil | Base`
+          # degrade to non-all-ref and `is_a?`/dispatch lose runtime type_ids.
+          mir_type = @mir_module.type_registry.get(mir_type_ref) ||
+                     @mir_module.type_registry.get_by_name(class_name)
+          if mir_type
+            mir_type.kind = type_kind
+            mir_type.name = class_name
+            mir_type.alignment = pointer_word_align_u32
+            if total_size > 0 && (mir_type.size == 0 || total_size > mir_type.size || !info.ivars.empty?)
+              mir_type.size = total_size
+            end
+          else
+            mir_type = @mir_module.type_registry.create_type_with_id(
+              mir_type_ref.id,
+              type_kind,
+              class_name,
+              total_size,
+              pointer_word_align_u32
+            )
+          end
+
+          # Add fields (ivars)
+          info.ivars.each do |ivar|
+            field_type = convert_type(ivar.type)
+            mir_type.add_field(ivar.name, field_type, ivar.offset.to_u32)
+          end
+        end
+      end
+
+      # Register enum types so the LLVM backend maps them to i32 instead of ptr.
+      # Enums in Crystal are integer types (i32 by default).
+      def register_enum_types(enum_names : Set(String), type_descriptors : Array(Crystal::HIR::TypeDescriptor))
+        type_descriptors.each_with_index do |desc, idx|
+          next unless enum_names.includes?(desc.name)
+
+          hir_ref = Crystal::HIR::TypeRef.new(Crystal::HIR::TypeRef::FIRST_USER_TYPE + idx.to_u32)
+          mir_ref = convert_type(hir_ref)
+          next if @mir_module.type_registry.get(mir_ref)
+
           @mir_module.type_registry.create_type_with_id(
             mir_ref.id,
-            TypeKind::Reference,
+            TypeKind::Enum,
             desc.name,
-            pointer_word_bytes_u64,
-            pointer_word_align_u32
+            4_u64, # i32 size
+            4_u32  # i32 alignment
           )
         end
-
-        @mir_module.register_module_type(mir_ref)
       end
-    end
 
-    # Register generic container types that need stable MIR TypeRegistry entries.
-    # Without this, codegen can't recover runtime type ids for Array(T)/Pointer(T)
-    # specializations and falls back to 0, which breaks dynamic dispatch on values
-    # returned from unions/calls (for example Hash#[] -> Array(Tuple(...))#size).
-    def register_container_types(type_descriptors : Array(Crystal::HIR::TypeDescriptor))
-      type_descriptors.each_with_index do |desc, idx|
-        mir_kind = canonical_container_kind_for_descriptor(desc)
-        next unless mir_kind
+      # Register module types so module literals can be represented as runtime singletons.
+      # This prevents lowering module values as null pointers (which breaks vdispatch).
+      def register_module_types(type_descriptors : Array(Crystal::HIR::TypeDescriptor))
+        type_descriptors.each_with_index do |desc, idx|
+          next unless desc.kind == Crystal::HIR::TypeKind::Module
 
-        hir_ref = Crystal::HIR::TypeRef.new(Crystal::HIR::TypeRef::FIRST_USER_TYPE + idx.to_u32)
-        mir_ref = convert_type(hir_ref)
-        existing_mir_type = @mir_module.type_registry.get(mir_ref)
-        if ENV["DEBUG_CONTAINER_REGISTER"]? && (desc.name.includes?("Array(") || desc.name.includes?("Pointer("))
-          existing = existing_mir_type ? "#{existing_mir_type.name}:#{existing_mir_type.kind}" : "nil"
-          STDERR.puts "[CONTAINER_REG] kind=#{desc.kind} name=#{desc.name} hir=#{hir_ref.id} mir=#{mir_ref.id} existing=#{existing} params=#{desc.type_params.map(&.id).join(",")}"
+          hir_ref = Crystal::HIR::TypeRef.new(Crystal::HIR::TypeRef::FIRST_USER_TYPE + idx.to_u32)
+          mir_ref = convert_type(hir_ref)
+
+          unless @mir_module.type_registry.get(mir_ref)
+            @mir_module.type_registry.create_type_with_id(
+              mir_ref.id,
+              TypeKind::Reference,
+              desc.name,
+              pointer_word_bytes_u64,
+              pointer_word_align_u32
+            )
+          end
+
+          @mir_module.register_module_type(mir_ref)
         end
+      end
 
-        size, align = container_layout_for_descriptor(desc)
+      # Register generic container types that need stable MIR TypeRegistry entries.
+      # Without this, codegen can't recover runtime type ids for Array(T)/Pointer(T)
+      # specializations and falls back to 0, which breaks dynamic dispatch on values
+      # returned from unions/calls (for example Hash#[] -> Array(Tuple(...))#size).
+      def register_container_types(type_descriptors : Array(Crystal::HIR::TypeDescriptor))
+        type_descriptors.each_with_index do |desc, idx|
+          mir_kind = canonical_container_kind_for_descriptor(desc)
+          next unless mir_kind
 
-        mir_type = if existing_mir_type
-                     # Earlier passes can reserve this TypeRef with an alias-shaped
-                     # name/kind (for example Array(Tuple(Int32, ArenaLike)):Reference).
-                     # Canonicalize the slot here so later Array(T) runtime type-id
-                     # lookups and vdispatch agree on the same metadata.
-                     existing_mir_type.kind = mir_kind
-                     existing_mir_type.name = desc.name
-                     existing_mir_type.size = size
-                     existing_mir_type.alignment = align
-                     existing_mir_type
-                   else
-                     @mir_module.type_registry.create_type_with_id(
-                       mir_ref.id,
-                       mir_kind,
-                       desc.name,
-                       size,
-                       align
-                     )
-                   end
+          hir_ref = Crystal::HIR::TypeRef.new(Crystal::HIR::TypeRef::FIRST_USER_TYPE + idx.to_u32)
+          mir_ref = convert_type(hir_ref)
+          existing_mir_type = @mir_module.type_registry.get(mir_ref)
+          if ENV["DEBUG_CONTAINER_REGISTER"]? && (desc.name.includes?("Array(") || desc.name.includes?("Pointer("))
+            existing = existing_mir_type ? "#{existing_mir_type.name}:#{existing_mir_type.kind}" : "nil"
+            STDERR.puts "[CONTAINER_REG] kind=#{desc.kind} name=#{desc.name} hir=#{hir_ref.id} mir=#{mir_ref.id} existing=#{existing} params=#{desc.type_params.map(&.id).join(",")}"
+          end
 
-        if elem_hir_ref = desc.type_params.first?
-          elem_mir_ref = convert_type(elem_hir_ref)
-          elem_type = @mir_module.type_registry.get(elem_mir_ref) || @mir_module.type_registry.get(TypeRef::POINTER)
-          mir_type.set_element_type(elem_type) if elem_type
-          if ENV["DEBUG_CONTAINER_REGISTER"]? && desc.name.includes?("Array(")
-            STDERR.puts "[CONTAINER_REG] element name=#{desc.name} elem_hir=#{elem_hir_ref.id} elem_mir=#{elem_mir_ref.id} elem_type=#{elem_type.try(&.name) || "nil"}"
+          size, align = container_layout_for_descriptor(desc)
+
+          mir_type = if existing_mir_type
+                       # Earlier passes can reserve this TypeRef with an alias-shaped
+                       # name/kind (for example Array(Tuple(Int32, ArenaLike)):Reference).
+                       # Canonicalize the slot here so later Array(T) runtime type-id
+                       # lookups and vdispatch agree on the same metadata.
+                       existing_mir_type.kind = mir_kind
+                       existing_mir_type.name = desc.name
+                       existing_mir_type.size = size
+                       existing_mir_type.alignment = align
+                       existing_mir_type
+                     else
+                       @mir_module.type_registry.create_type_with_id(
+                         mir_ref.id,
+                         mir_kind,
+                         desc.name,
+                         size,
+                         align
+                       )
+                     end
+
+          if elem_hir_ref = desc.type_params.first?
+            elem_mir_ref = convert_type(elem_hir_ref)
+            elem_type = @mir_module.type_registry.get(elem_mir_ref) || @mir_module.type_registry.get(TypeRef::POINTER)
+            mir_type.set_element_type(elem_type) if elem_type
+            if ENV["DEBUG_CONTAINER_REGISTER"]? && desc.name.includes?("Array(")
+              STDERR.puts "[CONTAINER_REG] element name=#{desc.name} elem_hir=#{elem_hir_ref.id} elem_mir=#{elem_mir_ref.id} elem_type=#{elem_type.try(&.name) || "nil"}"
+            end
           end
         end
       end
-    end
 
-    private def canonical_container_kind_for_descriptor(desc : Crystal::HIR::TypeDescriptor) : TypeKind?
-      case desc.kind
-      when Crystal::HIR::TypeKind::Pointer
-        if desc.name == "Pointer" || desc.name.starts_with?("Pointer(")
-          TypeKind::Pointer
-        end
-      when Crystal::HIR::TypeKind::Array
-        if desc.name.starts_with?("Array(")
-          TypeKind::Array
-        end
-      else
-        nil
-      end
-    end
-
-    # Register tuple/named tuple types from HIR descriptors.
-    # This enables tuple element access to lower as struct GEPs instead of array layout.
-    def register_tuple_types(type_descriptors : Array(Crystal::HIR::TypeDescriptor))
-      type_descriptors.each_with_index do |desc, idx|
-        next unless desc.kind == Crystal::HIR::TypeKind::Tuple || desc.kind == Crystal::HIR::TypeKind::NamedTuple
-
-        hir_ref = Crystal::HIR::TypeRef.new(Crystal::HIR::TypeRef::FIRST_USER_TYPE + idx.to_u32)
-        mir_ref = convert_type(hir_ref)
-        existing_mir_type = @mir_module.type_registry.get(mir_ref)
-
-        element_refs = desc.type_params.map { |t| convert_type(t) }
-
-        size = 0_u64
-        align = 1_u32
-        element_refs.each do |elem_ref|
-          elem_type = @mir_module.type_registry.get(elem_ref)
-          # For reference types (classes, structs) our compiler heap-allocates them,
-          # so in a Tuple they occupy pointer size (8 bytes), not their full struct size.
-          # Only primitives and enums are stored inline with their actual size.
-          elem_kind = elem_type.try(&.kind)
-          is_inline = elem_kind && (elem_kind.primitive? || elem_kind.enum?)
-          elem_size = if is_inline && elem_type && elem_type.size > 0
-                        elem_type.size
-                      elsif elem_kind && elem_kind.union? && elem_type && elem_type.size > 8
-                        elem_type.size  # Union discriminated repr needs more than a pointer
-                      else
-                        pointer_word_bytes_u64
-                      end
-          elem_align = if is_inline && elem_type && elem_type.alignment > 0
-                         elem_type.alignment
-                       else
-                         pointer_word_align_u32
-                       end
-          size = align_u64(size, elem_align)
-          size += elem_size
-          align = elem_align if elem_align > align
-        end
-        size = align_u64(size, align)
-
-        # If the type was pre-registered with default pointer size, update it
-        # with the correct computed size and element info.
-        if existing_mir_type
-          if size > existing_mir_type.size
-            existing_mir_type.size = size
-            existing_mir_type.alignment = align
+      private def canonical_container_kind_for_descriptor(desc : Crystal::HIR::TypeDescriptor) : TypeKind?
+        case desc.kind
+        when Crystal::HIR::TypeKind::Pointer
+          if desc.name == "Pointer" || desc.name.starts_with?("Pointer(")
+            TypeKind::Pointer
           end
-          # Add element types if not already populated
-          if existing_mir_type.element_types.nil? || existing_mir_type.element_types.try(&.empty?)
+        when Crystal::HIR::TypeKind::Array
+          if desc.name.starts_with?("Array(")
+            TypeKind::Array
+          end
+        else
+          nil
+        end
+      end
+
+      # Register tuple/named tuple types from HIR descriptors.
+      # This enables tuple element access to lower as struct GEPs instead of array layout.
+      def register_tuple_types(type_descriptors : Array(Crystal::HIR::TypeDescriptor))
+        type_descriptors.each_with_index do |desc, idx|
+          next unless desc.kind == Crystal::HIR::TypeKind::Tuple || desc.kind == Crystal::HIR::TypeKind::NamedTuple
+
+          hir_ref = Crystal::HIR::TypeRef.new(Crystal::HIR::TypeRef::FIRST_USER_TYPE + idx.to_u32)
+          mir_ref = convert_type(hir_ref)
+          existing_mir_type = @mir_module.type_registry.get(mir_ref)
+
+          element_refs = desc.type_params.map { |t| convert_type(t) }
+
+          size = 0_u64
+          align = 1_u32
+          element_refs.each do |elem_ref|
+            elem_type = @mir_module.type_registry.get(elem_ref)
+            # For reference types (classes, structs) our compiler heap-allocates them,
+            # so in a Tuple they occupy pointer size (8 bytes), not their full struct size.
+            # Only primitives and enums are stored inline with their actual size.
+            elem_kind = elem_type.try(&.kind)
+            is_inline = elem_kind && (elem_kind.primitive? || elem_kind.enum?)
+            elem_size = if is_inline && elem_type && elem_type.size > 0
+                          elem_type.size
+                        elsif elem_kind && elem_kind.union? && elem_type && elem_type.size > 8
+                          elem_type.size # Union discriminated repr needs more than a pointer
+                        else
+                          pointer_word_bytes_u64
+                        end
+            elem_align = if is_inline && elem_type && elem_type.alignment > 0
+                           elem_type.alignment
+                         else
+                           pointer_word_align_u32
+                         end
+            size = align_u64(size, elem_align)
+            size += elem_size
+            align = elem_align if elem_align > align
+          end
+          size = align_u64(size, align)
+
+          # If the type was pre-registered with default pointer size, update it
+          # with the correct computed size and element info.
+          if existing_mir_type
+            if size > existing_mir_type.size
+              existing_mir_type.size = size
+              existing_mir_type.alignment = align
+            end
+            # Add element types if not already populated
+            if existing_mir_type.element_types.nil? || existing_mir_type.element_types.try(&.empty?)
+              element_refs.each do |elem_ref|
+                elem_type = @mir_module.type_registry.get(elem_ref) || @mir_module.type_registry.get(TypeRef::POINTER)
+                existing_mir_type.add_element_type(elem_type) if elem_type
+              end
+            end
+          else
+            mir_type = @mir_module.type_registry.create_type_with_id(
+              mir_ref.id,
+              TypeKind::Tuple,
+              desc.name,
+              size,
+              align
+            )
             element_refs.each do |elem_ref|
               elem_type = @mir_module.type_registry.get(elem_ref) || @mir_module.type_registry.get(TypeRef::POINTER)
-              existing_mir_type.add_element_type(elem_type) if elem_type
+              mir_type.add_element_type(elem_type) if elem_type
             end
           end
+        end
+      end
+
+      private def align_u64(value : UInt64, align : UInt32) : UInt64
+        a = align.to_u64
+        return value if a <= 1
+        ((value + a - 1) // a) * a
+      end
+
+      private def container_layout_for_descriptor(desc : Crystal::HIR::TypeDescriptor) : {UInt64, UInt32}
+        case desc.kind
+        when Crystal::HIR::TypeKind::Pointer
+          {pointer_word_bytes_u64, pointer_word_align_u32}
+        when Crystal::HIR::TypeKind::Array
+          if desc.name.starts_with?("StaticArray(")
+            elem_type = desc.type_params.first?.try { |ref| @mir_module.type_registry.get(convert_type(ref)) }
+            elem_size = container_elem_storage_size_u64(elem_type)
+            elem_align = container_elem_alignment_u32(elem_type)
+            count = static_array_count_from_name(desc.name)
+            {elem_size * count, elem_align}
+          else
+            {24_u64, pointer_word_align_u32}
+          end
         else
-          mir_type = @mir_module.type_registry.create_type_with_id(
-            mir_ref.id,
-            TypeKind::Tuple,
-            desc.name,
-            size,
-            align
-          )
-          element_refs.each do |elem_ref|
-            elem_type = @mir_module.type_registry.get(elem_ref) || @mir_module.type_registry.get(TypeRef::POINTER)
-            mir_type.add_element_type(elem_type) if elem_type
+          {pointer_word_bytes_u64, pointer_word_align_u32}
+        end
+      end
+
+      @[AlwaysInline]
+      private def pointer_word_bytes_u64 : UInt64
+        {% if flag?(:i386) || flag?(:arm) || flag?(:wasm32) %}
+          4_u64
+        {% else %}
+          8_u64
+        {% end %}
+      end
+
+      @[AlwaysInline]
+      private def pointer_word_align_u32 : UInt32
+        {% if flag?(:i386) || flag?(:arm) || flag?(:wasm32) %}
+          4_u32
+        {% else %}
+          8_u32
+        {% end %}
+      end
+
+      @[AlwaysInline]
+      private def pointer_word_bytes_i32 : Int32
+        {% if flag?(:i386) || flag?(:arm) || flag?(:wasm32) %}
+          4
+        {% else %}
+          8
+        {% end %}
+      end
+
+      private def all_ref_union_descriptor?(descriptor : UnionDescriptor) : Bool
+        descriptor.variants.all? do |variant|
+          next true if variant.type_ref == TypeRef::NIL || variant.type_ref == TypeRef::VOID
+          type = @mir_module.type_registry.get(variant.type_ref)
+          if type
+            runtime_header_backed_union_variant?(type)
+          else
+            # Variant type not in registry — possibly an ivar-qualified type name
+            # like "Crystal::HIR::AstToHir::class_name:String". Extract the base
+            # type after the last single colon (not part of ::) and check whether
+            # it carries a runtime type header.
+            variant_name_is_runtime_header_backed?(variant.full_name)
           end
         end
       end
-    end
 
-    private def align_u64(value : UInt64, align : UInt32) : UInt64
-      a = align.to_u64
-      return value if a <= 1
-      ((value + a - 1) // a) * a
-    end
-
-    private def container_layout_for_descriptor(desc : Crystal::HIR::TypeDescriptor) : {UInt64, UInt32}
-      case desc.kind
-      when Crystal::HIR::TypeKind::Pointer
-        {pointer_word_bytes_u64, pointer_word_align_u32}
-      when Crystal::HIR::TypeKind::Array
-        if desc.name.starts_with?("StaticArray(")
-          elem_type = desc.type_params.first?.try { |ref| @mir_module.type_registry.get(convert_type(ref)) }
-          elem_size = container_elem_storage_size_u64(elem_type)
-          elem_align = container_elem_alignment_u32(elem_type)
-          count = static_array_count_from_name(desc.name)
-          {elem_size * count, elem_align}
-        else
-          {24_u64, pointer_word_align_u32}
-        end
-      else
-        {pointer_word_bytes_u64, pointer_word_align_u32}
+      # Raw-pointer union ABI is only valid when each non-nil variant carries its
+      # own runtime type_id in an object header. Pointer-sized payload alone is not
+      # sufficient: heap-allocated structs/tuples are pointer-backed but their body
+      # starts with user fields, not a dispatch header.
+      private def runtime_header_backed_union_variant?(type : Type?) : Bool
+        return false unless type
+        # References and arrays have runtime type_id headers.
+        # Pointers are also stored as raw pointers in V2's ABI and can participate
+        # in all-ref unions (dispatched by null check or type_id if wrapped).
+        type.kind.reference? || type.kind.array? || type.kind.pointer?
       end
-    end
 
-    @[AlwaysInline]
-    private def pointer_word_bytes_u64 : UInt64
-      {% if flag?(:i386) || flag?(:arm) || flag?(:wasm32) %}
-        4_u64
-      {% else %}
-        8_u64
-      {% end %}
-    end
-
-    @[AlwaysInline]
-    private def pointer_word_align_u32 : UInt32
-      {% if flag?(:i386) || flag?(:arm) || flag?(:wasm32) %}
-        4_u32
-      {% else %}
-        8_u32
-      {% end %}
-    end
-
-    @[AlwaysInline]
-    private def pointer_word_bytes_i32 : Int32
-      {% if flag?(:i386) || flag?(:arm) || flag?(:wasm32) %}
-        4
-      {% else %}
-        8
-      {% end %}
-    end
-
-    private def all_ref_union_descriptor?(descriptor : UnionDescriptor) : Bool
-      descriptor.variants.all? do |variant|
-        next true if variant.type_ref == TypeRef::NIL || variant.type_ref == TypeRef::VOID
-        type = @mir_module.type_registry.get(variant.type_ref)
-        if type
-          runtime_header_backed_union_variant?(type)
-        else
-          # Variant type not in registry — possibly an ivar-qualified type name
-          # like "Crystal::HIR::AstToHir::class_name:String". Extract the base
-          # type after the last single colon (not part of ::) and check whether
-          # it carries a runtime type header.
-          variant_name_is_runtime_header_backed?(variant.full_name)
+      # Check if a variant type name represents a runtime-header-backed heap object by extracting
+      # the base type from an ivar-qualified name like "ClassName::ivar_name:TypeName".
+      private def variant_name_is_runtime_header_backed?(name : String) : Bool
+        # 1. Check for ivar-qualified names like "ClassName::ivar:TypeName"
+        i = name.bytesize - 1
+        while i > 0
+          if name.byte_at(i) == ':'.ord && name.byte_at(i - 1) != ':'.ord
+            base_name = name[(i + 1)..]
+            base_type = @mir_module.type_registry.get_by_name(base_name)
+            return runtime_header_backed_union_variant?(base_type) if base_type
+            return false
+          end
+          i -= 1
         end
-      end
-    end
-
-    # Raw-pointer union ABI is only valid when each non-nil variant carries its
-    # own runtime type_id in an object header. Pointer-sized payload alone is not
-    # sufficient: heap-allocated structs/tuples are pointer-backed but their body
-    # starts with user fields, not a dispatch header.
-    private def runtime_header_backed_union_variant?(type : Type?) : Bool
-      return false unless type
-      # References and arrays have runtime type_id headers.
-      # Pointers are also stored as raw pointers in V2's ABI and can participate
-      # in all-ref unions (dispatched by null check or type_id if wrapped).
-      type.kind.reference? || type.kind.array? || type.kind.pointer?
-    end
-
-    # Check if a variant type name represents a runtime-header-backed heap object by extracting
-    # the base type from an ivar-qualified name like "ClassName::ivar_name:TypeName".
-    private def variant_name_is_runtime_header_backed?(name : String) : Bool
-      # 1. Check for ivar-qualified names like "ClassName::ivar:TypeName"
-      i = name.bytesize - 1
-      while i > 0
-        if name.byte_at(i) == ':'.ord && name.byte_at(i - 1) != ':'.ord
-          base_name = name[(i + 1)..]
-          base_type = @mir_module.type_registry.get_by_name(base_name)
+        # 2. For generic instantiations (Array(String), Set(UInt32), Hash(K,V), etc.),
+        #    look up the base class name. Generic classes are reference types with
+        #    runtime headers — their instantiations inherit this property.
+        paren_idx = name.index('(')
+        if paren_idx
+          generic_base = name[0...paren_idx]
+          base_type = @mir_module.type_registry.get_by_name(generic_base)
           return runtime_header_backed_union_variant?(base_type) if base_type
-          return false
         end
-        i -= 1
-      end
-      # 2. For generic instantiations (Array(String), Set(UInt32), Hash(K,V), etc.),
-      #    look up the base class name. Generic classes are reference types with
-      #    runtime headers — their instantiations inherit this property.
-      paren_idx = name.index('(')
-      if paren_idx
-        generic_base = name[0...paren_idx]
-        base_type = @mir_module.type_registry.get_by_name(generic_base)
-        return runtime_header_backed_union_variant?(base_type) if base_type
-      end
-      false
-    end
-
-    private def finalize_pointer_backed_union_layouts : Nil
-      @mir_module.union_descriptors.each do |type_ref, descriptor|
-        next unless all_ref_union_descriptor?(descriptor)
-        next unless mir_type = @mir_module.type_registry.get(type_ref)
-        next unless mir_type.kind.union?
-
-        mir_type.size = pointer_word_bytes_u64
-        mir_type.alignment = pointer_word_align_u32
-      end
-    end
-
-    private def container_elem_storage_size_u64(elem_type : Type?) : UInt64
-      return pointer_word_bytes_u64 unless elem_type
-
-      is_inline = elem_type.kind.primitive? || elem_type.kind.enum?
-      if is_inline && elem_type.size > 0
-        return elem_type.size
+        false
       end
 
-      # Unions with explicit payload layout are stored inline.
-      if elem_type.kind.union? && elem_type.size > pointer_word_bytes_u64
-        return elem_type.size
+      private def finalize_pointer_backed_union_layouts : Nil
+        @mir_module.union_descriptors.each do |type_ref, descriptor|
+          next unless all_ref_union_descriptor?(descriptor)
+          next unless mir_type = @mir_module.type_registry.get(type_ref)
+          next unless mir_type.kind.union?
+
+          mir_type.size = pointer_word_bytes_u64
+          mir_type.alignment = pointer_word_align_u32
+        end
       end
 
-      # Classes/structs/non-inline values are represented as pointers in containers.
-      pointer_word_bytes_u64
-    end
+      private def container_elem_storage_size_u64(elem_type : Type?) : UInt64
+        return pointer_word_bytes_u64 unless elem_type
 
-    private def container_elem_alignment_u32(elem_type : Type?) : UInt32
-      return pointer_word_align_u32 unless elem_type
+        is_inline = elem_type.kind.primitive? || elem_type.kind.enum?
+        if is_inline && elem_type.size > 0
+          return elem_type.size
+        end
 
-      is_inline = elem_type.kind.primitive? || elem_type.kind.enum?
-      if is_inline && elem_type.alignment > 0
-        return elem_type.alignment
+        # Unions with explicit payload layout are stored inline.
+        if elem_type.kind.union? && elem_type.size > pointer_word_bytes_u64
+          return elem_type.size
+        end
+
+        # Classes/structs/non-inline values are represented as pointers in containers.
+        pointer_word_bytes_u64
       end
 
-      if elem_type.kind.union? && elem_type.alignment > 0
-        return elem_type.alignment
+      private def container_elem_alignment_u32(elem_type : Type?) : UInt32
+        return pointer_word_align_u32 unless elem_type
+
+        is_inline = elem_type.kind.primitive? || elem_type.kind.enum?
+        if is_inline && elem_type.alignment > 0
+          return elem_type.alignment
+        end
+
+        if elem_type.kind.union? && elem_type.alignment > 0
+          return elem_type.alignment
+        end
+
+        pointer_word_align_u32
       end
 
-      pointer_word_align_u32
-    end
-
-    private def static_array_count_from_name(type_name : String) : UInt64
-      if match = type_name.match(/StaticArray\(.+,\s*(\d+)\)/)
-        return match[1].to_u64
-      end
-      0_u64
-    end
-
-    # Create function stub with params and return type (no body)
-    private def create_function_stub(hir_func : HIR::Function)
-      mir_return_type = convert_type(hir_func.return_type)
-      mir_func = @mir_module.create_function(
-        hir_func.name,
-        mir_return_type
-      )
-
-      # Add parameter types (needed for call site type checking)
-      hir_func.params.each do |param|
-        mir_func.add_param(param.name, convert_type(param.type), param.default_literal)
+      private def static_array_count_from_name(type_name : String) : UInt64
+        if match = type_name.match(/StaticArray\(.+,\s*(\d+)\)/)
+          return match[1].to_u64
+        end
+        0_u64
       end
 
-      # Fix: primitive binary operator methods (like Int32#+$Int32) may have their
-      # HIR created with only "self" as a param, missing the explicit "other" param.
-      # The LLVM backend's primitive override code hardcodes 2 params (self + other)
-      # in the function definition, so the MIR function must also have 2 params to
-      # avoid argument truncation in lower_call.
-      if mir_func.params.size == 1 && hir_func.params.size == 1 &&
-         hir_func.params[0].name == "self" && hir_func.name.includes?('#')
-        # Check if this is a binary operator (e.g., Int32#+$Int32, Int32#-$Int32)
-        hash_pos = hir_func.name.index('#')
-        if hash_pos
-          after_hash = hir_func.name[(hash_pos + 1)..]
-          dollar_pos = after_hash.index('$')
-          if dollar_pos
-            method_part = after_hash[0, dollar_pos]
-            suffix_part = after_hash[(dollar_pos + 1)..]
-            if {"+", "-", "*", "/", "//", "%", "**", "&", "|", "^", "<<", ">>",
-                "===", "<=>", "==", "!=", "<", "<=", ">", ">=",
-                "&+", "&-", "&*", "&**", "unsafe_shr", "unsafe_div",
-                "unsafe_mod"}.includes?(method_part)
-              # Infer the 'other' param type from the suffix
-              other_mir_type = @mir_module.type_registry.get_by_name(suffix_part)
-              if other_mir_type
-                mir_func.add_param("other", TypeRef.new(other_mir_type.id))
-              else
-                # Fallback: use same type as self
-                mir_func.add_param("other", mir_func.params[0].type)
+      # Create function stub with params and return type (no body)
+      private def create_function_stub(hir_func : HIR::Function)
+        mir_return_type = convert_type(hir_func.return_type)
+        mir_func = @mir_module.create_function(
+          hir_func.name,
+          mir_return_type
+        )
+
+        # Add parameter types (needed for call site type checking)
+        hir_func.params.each do |param|
+          mir_func.add_param(param.name, convert_type(param.type), param.default_literal)
+        end
+
+        # Fix: primitive binary operator methods (like Int32#+$Int32) may have their
+        # HIR created with only "self" as a param, missing the explicit "other" param.
+        # The LLVM backend's primitive override code hardcodes 2 params (self + other)
+        # in the function definition, so the MIR function must also have 2 params to
+        # avoid argument truncation in lower_call.
+        if mir_func.params.size == 1 && hir_func.params.size == 1 &&
+           hir_func.params[0].name == "self" && hir_func.name.includes?('#')
+          # Check if this is a binary operator (e.g., Int32#+$Int32, Int32#-$Int32)
+          hash_pos = hir_func.name.index('#')
+          if hash_pos
+            after_hash = hir_func.name[(hash_pos + 1)..]
+            dollar_pos = after_hash.index('$')
+            if dollar_pos
+              method_part = after_hash[0, dollar_pos]
+              suffix_part = after_hash[(dollar_pos + 1)..]
+              if {"+", "-", "*", "/", "//", "%", "**", "&", "|", "^", "<<", ">>",
+                  "===", "<=>", "==", "!=", "<", "<=", ">", ">=",
+                  "&+", "&-", "&*", "&**", "unsafe_shr", "unsafe_div",
+                  "unsafe_mod"}.includes?(method_part)
+                # Infer the 'other' param type from the suffix
+                other_mir_type = @mir_module.type_registry.get_by_name(suffix_part)
+                if other_mir_type
+                  mir_func.add_param("other", TypeRef.new(other_mir_type.id))
+                else
+                  # Fallback: use same type as self
+                  mir_func.add_param("other", mir_func.params[0].type)
+                end
               end
             end
           end
         end
-      end
 
-      # Fix: HIR union-typed parameters may get MIR TypeRefs that aren't
-      # registered as union types in the MIR type registry (because the HIR
-      # assigns different TypeRef IDs for the same logical union type in
-      # different method contexts, e.g., .new vs initialize).  Look up the
-      # correct union type by name and update the parameter so that the LLVM
-      # backend emits the proper union LLVM type instead of ptr.
-      hir_func.params.each_with_index do |param, idx|
-        next if idx >= mir_func.params.size
-        desc = @hir_module.get_type_descriptor(param.type)
-        # (debug output removed)
-        next unless desc && desc.kind == HIR::TypeKind::Union
+        # Fix: HIR union-typed parameters may get MIR TypeRefs that aren't
+        # registered as union types in the MIR type registry (because the HIR
+        # assigns different TypeRef IDs for the same logical union type in
+        # different method contexts, e.g., .new vs initialize).  Look up the
+        # correct union type by name and update the parameter so that the LLVM
+        # backend emits the proper union LLVM type instead of ptr.
+        hir_func.params.each_with_index do |param, idx|
+          next if idx >= mir_func.params.size
+          desc = @hir_module.get_type_descriptor(param.type)
+          # (debug output removed)
+          next unless desc && desc.kind == HIR::TypeKind::Union
 
-        mir_param_type = mir_func.params[idx].type
-        mir_type = @mir_module.type_registry.get(mir_param_type)
-        next if mir_type && mir_type.kind.union?
+          mir_param_type = mir_func.params[idx].type
+          mir_type = @mir_module.type_registry.get(mir_param_type)
+          next if mir_type && mir_type.kind.union?
 
-        # MIR type is not a union — look up the registered union by name
-        union_mir_type = @mir_module.type_registry.get_by_name(desc.name)
-        if union_mir_type && union_mir_type.kind.union?
-          old_param = mir_func.params[idx]
-          mir_func.params[idx] = Parameter.new(
-            old_param.index, old_param.name,
-            TypeRef.new(union_mir_type.id),
-            old_param.default_value
-          )
-        else
-        end
-      end
-    end
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # Function Lowering
-    # ─────────────────────────────────────────────────────────────────────────
-
-    private def lower_function_body(hir_func : HIR::Function)
-      if mir_lower_trace?
-        STDERR.puts "[MIR_LOWER] function=#{hir_func.name} blocks=#{hir_func.blocks.size} params=#{hir_func.params.size}"
-      end
-      # Get the pre-created function stub
-      mir_func = @mir_module.get_function(hir_func.name)
-      if mir_func.nil?
-        # List available functions for debugging
-        available = @mir_module.functions.map(&.name).sort.join(", ")
-        raise "MIR function stub not found for: #{hir_func.name}\nAvailable functions containing 'step': #{@mir_module.functions.select { |f| f.name.includes?("step") }.map(&.name).join(", ")}"
-      end
-
-      @current_hir_func = hir_func
-      @current_mir_func = mir_func
-      @current_block_param_id = function_contains_yield?(hir_func) ? infer_block_param_id(hir_func) : nil
-      @current_slab_frame = should_use_slab_frame?(hir_func)
-      mir_func.slab_frame = @current_slab_frame
-      STDERR.puts "[MIR_LOWER] setup context done block_param=#{@current_block_param_id.inspect} slab=#{@current_slab_frame}" if mir_lower_trace?
-      # Stage2 has shown unstable behavior for Hash/Set#clear in self-hosted mode.
-      # Reinitialize per-function lowering maps instead of mutating in place.
-      @value_map = {} of HIR::ValueId => ValueId
-      @hir_value_types = {} of HIR::ValueId => HIR::TypeRef
-      @hir_constant_values = Set(HIR::ValueId).new
-      @block_map = [] of BlockId?
-      @pending_phis = [] of Tuple(Phi, HIR::Phi)
-      @stack_slot_values = Set(ValueId).new
-      @stack_slot_types = {} of ValueId => TypeRef
-      @inline_struct_ptrs = Set(HIR::ValueId).new
-      @arc_cleanup_slots = [] of {ValueId, Bool}
-      @arc_slot_map = {} of HIR::ValueId => ValueId
-      @block_arc_temps = [] of {HIR::ValueId, ValueId}
-      @cross_block_values = Set(HIR::ValueId).new
-      STDERR.puts "[MIR_LOWER] caches reinitialized" if mir_lower_trace?
-      @builder = Builder.new(mir_func)
-      # In MIR::Function, entry block is created first and is always 0.
-      # Setting explicitly avoids stage2 instability on entry_block getter path.
-      @builder.not_nil!.current_block = 0_u32
-      STDERR.puts "[MIR_LOWER] builder ready entry=#{mir_func.entry_block}" if mir_lower_trace?
-
-      # Map HIR params to MIR params (already added in stub)
-      hir_func.params.each_with_index do |param, idx|
-        # MIR params are value IDs starting from 0
-        @value_map[param.id] = idx.to_u32
-      end
-      STDERR.puts "[MIR_LOWER] params mapped count=#{hir_func.params.size}" if mir_lower_trace?
-
-      # Record HIR value types for cast lowering
-      hir_func.params.each do |param|
-        @hir_value_types[param.id] = param.type
-      end
-      hir_func.blocks.each do |hir_block|
-        hir_block.instructions.each do |inst|
-          @hir_value_types[inst.id] = inst.type
-          # Track constants (Literal) — these are static data, not heap-allocated
-          if inst.is_a?(HIR::Literal)
-            @hir_constant_values << inst.id
+          # MIR type is not a union — look up the registered union by name
+          union_mir_type = @mir_module.type_registry.get_by_name(desc.name)
+          if union_mir_type && union_mir_type.kind.union?
+            old_param = mir_func.params[idx]
+            mir_func.params[idx] = Parameter.new(
+              old_param.index, old_param.name,
+              TypeRef.new(union_mir_type.id),
+              old_param.default_value
+            )
+          else
           end
         end
       end
-      STDERR.puts "[MIR_LOWER] value types indexed blocks=#{hir_func.blocks.size}" if mir_lower_trace?
 
-      # Create all blocks first (for forward references)
-      hir_func.blocks.each do |hir_block|
-        mir_block_id = mir_func.create_block
-        set_block_map(hir_block.id, mir_block_id)
-      end
-      STDERR.puts "[MIR_LOWER] block map created size=#{@block_map.size}" if mir_lower_trace?
+      # ─────────────────────────────────────────────────────────────────────────
+      # Function Lowering
+      # ─────────────────────────────────────────────────────────────────────────
 
-      # Fix entry block mapping
-      STDERR.puts "[MIR_LOWER] entry map before hir=#{hir_func.entry_block} mir=#{mir_func.entry_block} size=#{@block_map.size}" if mir_lower_trace?
-      set_block_map(hir_func.entry_block, 0_u32)
-      STDERR.puts "[MIR_LOWER] entry map after size=#{@block_map.size}" if mir_lower_trace?
-      STDERR.puts "[MIR_LOWER] entry mapped entry=#{hir_func.entry_block}=>#{mir_func.entry_block}" if mir_lower_trace?
-
-      # Pre-scan: allocate ARC cleanup slots in entry block for rc_dec at return.
-      # Each ARC allocation gets a stack slot initialized to null. After the actual
-      # allocation, the pointer is stored into the slot. At function return, we load
-      # from each slot and emit rc_dec (null is safe — rc_dec(null) is a no-op).
-      #
-      # Conservative escape filter: exclude allocations that might be referenced
-      # after function return — returned values, values stored into fields,
-      # constructor args, and function call arguments. Only true local temps
-      # get cleanup slots.
-      builder = @builder.not_nil!
-      # MIR::Function creates the entry block first, so its id is 0.
-      # Reuse that invariant instead of re-reading the getter on unstable stage2 code.
-      builder.current_block = 0_u32
-
-      # Build set of HIR values that escape the function
-      escaping_values = Set(HIR::ValueId).new
-      hir_func.blocks.each do |hir_block|
-        # Returned values
-        if ret = hir_block.terminator.as?(HIR::Return)
-          if v = ret.value
-            escaping_values << v
-          end
+      private def lower_function_body(hir_func : HIR::Function)
+        if mir_lower_trace?
+          STDERR.puts "[MIR_LOWER] function=#{hir_func.name} blocks=#{hir_func.blocks.size} params=#{hir_func.params.size}"
         end
-        hir_block.instructions.each do |inst|
-          case inst
-          when HIR::FieldSet
-            escaping_values << inst.value
-          when HIR::Allocate
-            inst.constructor_args.each { |arg| escaping_values << arg }
-          when HIR::Call
-            inst.args.each { |arg| escaping_values << arg }
-          end
+        # Get the pre-created function stub
+        mir_func = @mir_module.get_function(hir_func.name)
+        if mir_func.nil?
+          # List available functions for debugging
+          available = @mir_module.functions.map(&.name).sort.join(", ")
+          raise "MIR function stub not found for: #{hir_func.name}\nAvailable functions containing 'step': #{@mir_module.functions.select { |f| f.name.includes?("step") }.map(&.name).join(", ")}"
         end
-      end
-      # Trace escaping_values backward through transparent instructions (Copy, Cast, Phi):
-      # if the result escapes, the source(s) also escape.
-      changed = true
-      while changed
-        changed = false
+
+        @current_hir_func = hir_func
+        @current_mir_func = mir_func
+        @current_block_param_id = function_contains_yield?(hir_func) ? infer_block_param_id(hir_func) : nil
+        @current_slab_frame = should_use_slab_frame?(hir_func)
+        mir_func.slab_frame = @current_slab_frame
+        STDERR.puts "[MIR_LOWER] setup context done block_param=#{@current_block_param_id.inspect} slab=#{@current_slab_frame}" if mir_lower_trace?
+        # Stage2 has shown unstable behavior for Hash/Set#clear in self-hosted mode.
+        # Reinitialize per-function lowering maps instead of mutating in place.
+        @value_map = {} of HIR::ValueId => ValueId
+        @hir_value_types = {} of HIR::ValueId => HIR::TypeRef
+        @hir_constant_values = Set(HIR::ValueId).new
+        @block_map = [] of BlockId?
+        @pending_phis = [] of Tuple(Phi, HIR::Phi)
+        @stack_slot_values = Set(ValueId).new
+        @stack_slot_types = {} of ValueId => TypeRef
+        @inline_struct_ptrs = Set(HIR::ValueId).new
+        @arc_cleanup_slots = [] of {ValueId, Bool}
+        @arc_slot_map = {} of HIR::ValueId => ValueId
+        @block_arc_temps = [] of {HIR::ValueId, ValueId}
+        @cross_block_values = Set(HIR::ValueId).new
+        STDERR.puts "[MIR_LOWER] caches reinitialized" if mir_lower_trace?
+        @builder = Builder.new(mir_func)
+        # In MIR::Function, entry block is created first and is always 0.
+        # Setting explicitly avoids stage2 instability on entry_block getter path.
+        @builder.not_nil!.current_block = 0_u32
+        STDERR.puts "[MIR_LOWER] builder ready entry=#{mir_func.entry_block}" if mir_lower_trace?
+
+        # Map HIR params to MIR params (already added in stub)
+        hir_func.params.each_with_index do |param, idx|
+          # MIR params are value IDs starting from 0
+          @value_map[param.id] = idx.to_u32
+        end
+        STDERR.puts "[MIR_LOWER] params mapped count=#{hir_func.params.size}" if mir_lower_trace?
+
+        # Record HIR value types for cast lowering
+        hir_func.params.each do |param|
+          @hir_value_types[param.id] = param.type
+        end
         hir_func.blocks.each do |hir_block|
           hir_block.instructions.each do |inst|
-            next unless escaping_values.includes?(inst.id)
-            sources = case inst
-                      when HIR::Copy then [inst.source]
-                      when HIR::Cast then [inst.value]
-                      when HIR::Phi  then inst.incoming.map { |(_, v)| v }
-                      else [] of HIR::ValueId
-                      end
-            sources.each do |src|
-              unless escaping_values.includes?(src)
-                escaping_values << src
-                changed = true
+            @hir_value_types[inst.id] = inst.type
+            # Track constants (Literal) — these are static data, not heap-allocated
+            if inst.is_a?(HIR::Literal)
+              @hir_constant_values << inst.id
+            end
+          end
+        end
+        STDERR.puts "[MIR_LOWER] value types indexed blocks=#{hir_func.blocks.size}" if mir_lower_trace?
+
+        # Create all blocks first (for forward references)
+        hir_func.blocks.each do |hir_block|
+          mir_block_id = mir_func.create_block
+          set_block_map(hir_block.id, mir_block_id)
+        end
+        STDERR.puts "[MIR_LOWER] block map created size=#{@block_map.size}" if mir_lower_trace?
+
+        # Fix entry block mapping
+        STDERR.puts "[MIR_LOWER] entry map before hir=#{hir_func.entry_block} mir=#{mir_func.entry_block} size=#{@block_map.size}" if mir_lower_trace?
+        set_block_map(hir_func.entry_block, 0_u32)
+        STDERR.puts "[MIR_LOWER] entry map after size=#{@block_map.size}" if mir_lower_trace?
+        STDERR.puts "[MIR_LOWER] entry mapped entry=#{hir_func.entry_block}=>#{mir_func.entry_block}" if mir_lower_trace?
+
+        # Pre-scan: allocate ARC cleanup slots in entry block for rc_dec at return.
+        # Each ARC allocation gets a stack slot initialized to null. After the actual
+        # allocation, the pointer is stored into the slot. At function return, we load
+        # from each slot and emit rc_dec (null is safe — rc_dec(null) is a no-op).
+        #
+        # Conservative escape filter: exclude allocations that might be referenced
+        # after function return — returned values, values stored into fields,
+        # constructor args, and function call arguments. Only true local temps
+        # get cleanup slots.
+        builder = @builder.not_nil!
+        # MIR::Function creates the entry block first, so its id is 0.
+        # Reuse that invariant instead of re-reading the getter on unstable stage2 code.
+        builder.current_block = 0_u32
+
+        # Build set of HIR values that escape the function
+        escaping_values = Set(HIR::ValueId).new
+        hir_func.blocks.each do |hir_block|
+          # Returned values
+          if ret = hir_block.terminator.as?(HIR::Return)
+            if v = ret.value
+              escaping_values << v
+            end
+          end
+          hir_block.instructions.each do |inst|
+            case inst
+            when HIR::FieldSet
+              escaping_values << inst.value
+            when HIR::Allocate
+              inst.constructor_args.each { |arg| escaping_values << arg }
+            when HIR::Call
+              inst.args.each { |arg| escaping_values << arg }
+            end
+          end
+        end
+        # Trace escaping_values backward through transparent instructions (Copy, Cast, Phi):
+        # if the result escapes, the source(s) also escape.
+        changed = true
+        while changed
+          changed = false
+          hir_func.blocks.each do |hir_block|
+            hir_block.instructions.each do |inst|
+              next unless escaping_values.includes?(inst.id)
+              sources = case inst
+                        when HIR::Copy then [inst.source]
+                        when HIR::Cast then [inst.value]
+                        when HIR::Phi  then inst.incoming.map { |(_, v)| v }
+                        else                [] of HIR::ValueId
+                        end
+              sources.each do |src|
+                unless escaping_values.includes?(src)
+                  escaping_values << src
+                  changed = true
+                end
               end
             end
           end
         end
-      end
 
-      # Pre-scan: build cross-block values set for per-block ARC cleanup.
-      # Values used outside their defining block must NOT be rc_dec'd at block end.
-      value_def_block = {} of HIR::ValueId => UInt32
-      hir_func.blocks.each do |hir_block|
-        hir_block.instructions.each do |inst|
-          value_def_block[inst.id] = hir_block.id
+        # Pre-scan: build cross-block values set for per-block ARC cleanup.
+        # Values used outside their defining block must NOT be rc_dec'd at block end.
+        value_def_block = {} of HIR::ValueId => UInt32
+        hir_func.blocks.each do |hir_block|
+          hir_block.instructions.each do |inst|
+            value_def_block[inst.id] = hir_block.id
+          end
         end
-      end
-      @cross_block_values = Set(HIR::ValueId).new
-      hir_func.blocks.each do |hir_block|
-        hir_block.instructions.each do |inst|
-          hir_instruction_used_values(inst).each do |used_val|
+        @cross_block_values = Set(HIR::ValueId).new
+        hir_func.blocks.each do |hir_block|
+          hir_block.instructions.each do |inst|
+            hir_instruction_used_values(inst).each do |used_val|
+              if def_blk = value_def_block[used_val]?
+                if def_blk != hir_block.id
+                  @cross_block_values << used_val
+                end
+              end
+            end
+          end
+          # Check terminator uses
+          hir_terminator_used_values(hir_block.terminator).each do |used_val|
             if def_blk = value_def_block[used_val]?
               if def_blk != hir_block.id
                 @cross_block_values << used_val
               end
             end
           end
-        end
-        # Check terminator uses
-        hir_terminator_used_values(hir_block.terminator).each do |used_val|
-          if def_blk = value_def_block[used_val]?
-            if def_blk != hir_block.id
-              @cross_block_values << used_val
-            end
-          end
-        end
-        # Phi incomings are always cross-block
-        hir_block.instructions.each do |inst|
-          if inst.is_a?(HIR::Phi)
-            inst.incoming.each { |(_, v)| @cross_block_values << v }
-          end
-        end
-        # Return values must not be cleaned up
-        if ret = hir_block.terminator.as?(HIR::Return)
-          if v = ret.value
-            @cross_block_values << v
-          end
-        end
-      end
-      # Trace backward: if a cross-block value is produced by Copy/Cast, the source
-      # must also be excluded from cleanup (it feeds the cross-block value).
-      changed = true
-      while changed
-        changed = false
-        hir_func.blocks.each do |hir_block|
+          # Phi incomings are always cross-block
           hir_block.instructions.each do |inst|
-            next unless @cross_block_values.includes?(inst.id)
-            sources = case inst
-                      when HIR::Copy then [inst.source]
-                      when HIR::Cast then [inst.value]
-                      else [] of HIR::ValueId
-                      end
-            sources.each do |src|
-              unless @cross_block_values.includes?(src)
-                @cross_block_values << src
-                changed = true
-              end
+            if inst.is_a?(HIR::Phi)
+              inst.incoming.each { |(_, v)| @cross_block_values << v }
+            end
+          end
+          # Return values must not be cleaned up
+          if ret = hir_block.terminator.as?(HIR::Return)
+            if v = ret.value
+              @cross_block_values << v
             end
           end
         end
-      end
-
-      # NOTE: Per-function ARC cleanup slots are disabled. Per-block cleanup
-      # (in lower_block) handles owned Call results. Function-level slots would
-      # add rc_dec at return for all ARC allocations, but that requires tracking
-      # which allocations escape vs stay local — kept for future optimization.
-      if false
-        hir_func.blocks.each do |hir_block|
-          hir_block.instructions.each do |inst|
-            next unless inst.is_a?(HIR::Allocate)
-            next if escaping_values.includes?(inst.id)
-            strategy = select_memory_strategy(inst)
-            next unless strategy == MemoryStrategy::ARC || strategy == MemoryStrategy::AtomicARC
-            slot = builder.alloc(MemoryStrategy::Stack, TypeRef::POINTER)
-            null_val = builder.const_nil_typed(TypeRef::POINTER)
-            builder.store(slot, null_val)
-            @arc_slot_map[inst.id] = slot
-            @arc_cleanup_slots << {slot, strategy == MemoryStrategy::AtomicARC}
-          end
-        end
-      end
-
-      # Lower each block (phi incoming resolution is deferred)
-      ordered_blocks = order_blocks_for(hir_func)
-      STDERR.puts "[MIR_LOWER] ordered blocks count=#{ordered_blocks.size}" if mir_lower_trace?
-      ordered_blocks.each do |hir_block|
-        STDERR.puts "[MIR_LOWER] block=#{hir_block.id} insts=#{hir_block.instructions.size} term=#{hir_block.terminator.class}" if mir_lower_trace?
-        lower_block(hir_block)
-      end
-
-      # Now resolve all phi incoming values (after all blocks are lowered)
-      STDERR.puts "[MIR_LOWER] resolving pending phis count=#{@pending_phis.size}" if mir_lower_trace?
-      resolve_pending_phis
-
-      # Compute predecessors for phi resolution
-      STDERR.puts "[MIR_LOWER] compute_predecessors start" if mir_lower_trace?
-      mir_func.compute_predecessors
-      STDERR.puts "[MIR_LOWER] compute_predecessors done" if mir_lower_trace?
-
-      @stats.functions_lowered += 1
-      @current_block_param_id = nil
-    end
-
-    # Resolve phi incoming values after all blocks are lowered
-    private def resolve_pending_phis
-      builder = @builder.not_nil!
-      original_block = builder.current_block
-
-      @pending_phis.each do |(mir_phi, hir_phi)|
-        mir_phi_type = mir_phi.type
-        is_phi_union = is_union_type?(mir_phi_type)
-        union_descriptor = is_phi_union ? @mir_module.get_union_descriptor(mir_phi_type) : nil
-
-        hir_phi.incoming.each do |(hir_block, hir_value)|
-          mir_block = mir_block_for(hir_block)
-          mir_value = get_value(hir_value)
-
-          if is_phi_union && union_descriptor
-            if hir_type = @hir_value_types[hir_value]?
-              incoming_mir_type = convert_type(hir_type)
-              if incoming_mir_type == TypeRef::VOID || incoming_mir_type == TypeRef::NIL
-                if nil_variant = union_descriptor.variants.find { |v| v.type_ref == TypeRef::NIL }
-                  builder.current_block = mir_block
-                  nil_val = builder.const_nil
-                  mir_value = builder.union_wrap(nil_val, nil_variant.type_id, mir_phi_type)
-                end
-              elsif !is_union_type?(incoming_mir_type)
-                variant = union_descriptor.variants.find { |v| v.type_ref == incoming_mir_type }
-                if variant
-                  builder.current_block = mir_block
-                  mir_value = builder.union_wrap(mir_value, variant.type_id, mir_phi_type)
-                end
-              end
-            end
-          end
-
-          mir_phi.add_incoming(from: mir_block, value: mir_value)
-        end
-      end
-
-      builder.current_block = original_block
-    end
-
-    private def order_blocks_for(hir_func : HIR::Function) : Array(HIR::Block)
-      visited = [] of Bool
-      ordered = [] of HIR::Block
-      stack = [] of HIR::BlockId
-      stack << hir_func.entry_block
-
-      while block_id = stack.pop?
-        block_key = block_id.to_i32
-        next if block_key < visited.size && visited.unsafe_fetch(block_key)
-        while block_key >= visited.size
-          visited << false
-        end
-        visited[block_key] = true
-        block = hir_func.get_block(block_id)
-        ordered << block
-
-        successors = block_successors(block)
-        # Preserve a stable order by pushing in reverse.
-        successors.reverse_each { |succ| stack << succ }
-      end
-
-      # Append unreachable blocks to keep lowering deterministic.
-      hir_func.blocks.each do |block|
-        block_key = block.id.to_i32
-        next if block_key < visited.size && visited.unsafe_fetch(block_key)
-        ordered << block
-      end
-
-      # Sort blocks by minimum instruction ID to ensure definitions are
-      # processed before uses. This handles inlined code where the DFS
-      # may visit the continuation block (which uses the PHI value) before
-      # the inline body blocks (which define the PHI). The entry block
-      # must always be first.
-      entry_block_id = hir_func.entry_block
-      ordered.sort_by! do |block|
-        if block.id == entry_block_id
-          # Entry block always first
-          {0_u32, 0_u32}
-        else
-          min_id = block.instructions.first?.try(&.id) || UInt32::MAX
-          {1_u32, min_id}
-        end
-      end
-
-      ordered
-    end
-
-    private def block_successors(block : HIR::Block) : Array(HIR::BlockId)
-      case term = block.terminator
-      when HIR::Branch
-        [term.then_block, term.else_block]
-      when HIR::Jump
-        [term.target]
-      when HIR::Switch
-        succs = term.cases.map { |(_, bid)| bid }
-        succs << term.default
-        succs
-      else
-        [] of HIR::BlockId
-      end
-    end
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # Block Lowering
-    # ─────────────────────────────────────────────────────────────────────────
-
-    private def lower_block(hir_block : HIR::Block)
-      builder = @builder.not_nil!
-      mir_block_id = mir_block_for(hir_block.id)
-      builder.current_block = mir_block_id
-
-      # Reset per-block ARC temp tracking
-      @block_arc_temps.clear
-
-      # Lower each instruction
-      hir_block.instructions.each do |inst|
-        lower_value(inst)
-      end
-
-      # Per-block ARC cleanup: rc_dec owned Call results at block end.
-      # Only reference-typed results from functions that return +1 ownership.
-      # Skip values used in other blocks (cross-block) — they're still alive.
-      # Safe because rc_inc is now emitted at all persistent stores (FieldSet,
-      # ClassVarSet, PointerStore, IndexSet), so stored refs have rc >= 2.
-      @block_arc_temps.each do |(hir_id, mir_id)|
-        next if @cross_block_values.includes?(hir_id)
-        builder.rc_dec(mir_id)
-      end
-
-      # Lower terminator
-      lower_terminator(hir_block.terminator)
-
-      @stats.blocks_lowered += 1
-    end
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # Value Lowering
-    # ─────────────────────────────────────────────────────────────────────────
-
-    private def lower_value(hir_value : HIR::Value)
-      mir_id = begin
-        case hir_value
-        when HIR::Literal
-          lower_literal(hir_value)
-        when HIR::Local
-                 lower_local(hir_value)
-               when HIR::Parameter
-                 # Function parameters are pre-mapped, block parameters need allocation
-                 if existing = @value_map[hir_value.id]?
-                   existing
-                 else
-                   # Block parameter - allocate stack slot for it
-                   builder = @builder.not_nil!
-                   param_type = convert_type(hir_value.type)
-                   slot = builder.alloc(MemoryStrategy::Stack, param_type)
-                   record_stack_slot(slot, param_type)
-                   if (default_id = default_value_for_type(builder, param_type))
-                     builder.store(slot, default_id)
-                   end
-                   @value_map[hir_value.id] = slot
-                   slot
-                 end
-               when HIR::Allocate
-                 lower_allocate(hir_value)
-               when HIR::FieldGet
-                 lower_field_get(hir_value)
-               when HIR::FieldSet
-                 lower_field_set(hir_value)
-               when HIR::IndexGet
-                 lower_index_get(hir_value)
-               when HIR::IndexSet
-                 lower_index_set(hir_value)
-               when HIR::Call
-                 lower_call(hir_value)
-               when HIR::ExternCall
-                 lower_hir_extern_call(hir_value)
-               when Crystal::HIR::BinaryOperation
-                 lower_binary_op(hir_value)
-               when Crystal::HIR::UnaryOperation
-                 lower_unary_op(hir_value)
-               when HIR::Cast
-                 lower_cast(hir_value)
-               when HIR::IsA
-                 lower_is_a(hir_value)
-               when HIR::Phi
-                 lower_phi(hir_value)
-               when HIR::Copy
-                 lower_copy(hir_value)
-               when HIR::MakeClosure
-                 lower_closure(hir_value)
-               when HIR::FuncPointer
-                 lower_func_pointer(hir_value)
-               when HIR::Yield
-                 lower_yield(hir_value)
-               when HIR::ClassVarGet
-                 lower_classvar_get(hir_value)
-               when HIR::ClassVarSet
-                 lower_classvar_set(hir_value)
-               when HIR::UnionWrap
-                 lower_union_wrap(hir_value)
-               when HIR::UnionUnwrap
-                 lower_union_unwrap(hir_value)
-               when HIR::UnionTypeId
-                 lower_union_type_id(hir_value)
-               when HIR::UnionIs
-                 lower_union_is(hir_value)
-               when HIR::ArrayLiteral
-                 lower_array_literal(hir_value)
-               when HIR::ArraySize
-                 lower_array_size(hir_value)
-               when HIR::ArraySetSize
-                 lower_array_set_size(hir_value)
-               when HIR::ArrayNew
-                 lower_array_new(hir_value)
-               when HIR::StringInterpolation
-                 lower_string_interpolation(hir_value)
-               when HIR::Raise
-                 lower_raise(hir_value)
-               when HIR::GetException
-                 lower_get_exception(hir_value)
-               when HIR::TryBegin
-                 lower_try_begin(hir_value)
-               when HIR::TryEnd
-                 lower_try_end(hir_value)
-               when HIR::PointerMalloc
-                 lower_pointer_malloc(hir_value)
-               when HIR::PointerLoad
-                 lower_pointer_load(hir_value)
-               when HIR::PointerStore
-                 lower_pointer_store(hir_value)
-               when HIR::PointerAdd
-                 lower_pointer_add(hir_value)
-               when HIR::PointerRealloc
-                 lower_pointer_realloc(hir_value)
-               when HIR::AddressOf
-                 lower_address_of(hir_value)
-               else
-                 raise "Unsupported HIR value: #{hir_value.class}"
-               end
-      rescue ex : IndexError
-        raise "Index error in #{@current_lowering_func_name} lowering #{hir_value.class} (id=#{hir_value.id}): #{ex.message}\n#{ex.backtrace.first(10).join("\n")}"
-      end
-
-      @value_map[hir_value.id] = mir_id if mir_id
-
-      # Track reference-typed Call results for per-block ARC cleanup.
-      # Only track calls to functions that return OWNED (+1) references —
-      # i.e., functions that allocate and return (directly or transitively).
-      # Property getters and borrowed references are NOT tracked.
-      if mir_id && hir_value.is_a?(HIR::Call)
-        if callee_returns_owned?(hir_value.method_name)
-          if hir_type = @hir_value_types[hir_value.id]?
-            if type_needs_rc?(convert_type(hir_type))
-              @block_arc_temps << {hir_value.id, mir_id}
-            end
-          end
-        end
-      end
-
-      @stats.values_lowered += 1
-    end
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # Literal Lowering
-    # ─────────────────────────────────────────────────────────────────────────
-
-    private def lower_literal(lit : HIR::Literal) : ValueId
-      builder = @builder.not_nil!
-      case v = lit.value
-      when Int64
-        builder.const_int(v, convert_type(lit.type))
-      when UInt64
-        builder.const_uint(v, convert_type(lit.type))
-      when Float64
-        builder.const_float(v, convert_type(lit.type))
-      when Bool
-        builder.const_bool(v)
-      when String
-        if lit.type == HIR::TypeRef::SYMBOL
-          # Symbol literal: intern the name and emit as i32 constant
-          sym_id = @mir_module.intern_symbol(v)
-          builder.const_int(sym_id.to_i64, TypeRef::SYMBOL)
-        else
-          builder.const_string(v)
-        end
-      when Char
-        # Char as i32
-        builder.const_int(v.ord.to_i64, TypeRef::CHAR)
-      when Nil
-        # Preserve original type for nil pointers
-        const_type = convert_type(lit.type)
-        const_type = TypeRef::NIL if const_type == TypeRef::VOID
-        builder.const_nil_typed(const_type)
-      else
-        builder.const_nil
-      end
-    end
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # Local Variable Lowering
-    # ─────────────────────────────────────────────────────────────────────────
-
-    private def lower_local(local : HIR::Local) : ValueId
-      # In SSA, locals are represented as values
-      # If mutable, we allocate on stack and use load/store
-      builder = @builder.not_nil!
-
-      if local.mutable
-        # Allocate space on stack
-        ptr = builder.alloc(MemoryStrategy::Stack, convert_type(local.type))
-        record_stack_slot(ptr, convert_type(local.type))
-        @stats.stack_allocations += 1
-        ptr
-      else
-        # Immutable locals are just values - return placeholder
-        # (actual value will come from assignment)
-        builder.const_nil  # Placeholder, will be replaced
-      end
-    end
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # Allocation Lowering (with Memory Strategy)
-    # ─────────────────────────────────────────────────────────────────────────
-
-    private def lower_allocate(alloc : HIR::Allocate) : ValueId
-      builder = @builder.not_nil!
-
-      # Get the MIR type reference and look up size from type registry
-      mir_type_ref = convert_type(alloc.type)
-      mir_type_name = @mir_module.type_registry.get(mir_type_ref).try(&.name) || ""
-      hir_type_name = @hir_module.get_type_descriptor(alloc.type).try(&.name) || ""
-
-      # StaticArray(T, N) via unresolved MIR name path (mir_type_name == "") can
-      # be lowered incorrectly to tiny raw allocs. Re-route only that unresolved
-      # case to MIR::ArrayNew.
-      #
-      # For resolved StaticArray types keep raw allocation path; some code paths
-      # (for example inline StaticArray ivars) expect direct element-buffer
-      # semantics and are corrupted if we materialize an Array object here.
-      if alloc.constructor_args.empty? && mir_type_name.empty?
-        static_array_name = hir_type_name
-        if match = static_array_name.match(/^StaticArray\((.+),\s*(\d+)\)$/)
-          elem_name = match[1].strip
-          count = match[2].to_i?
-          if count && count >= 0
-            elem_type_ref = if elem_type = @mir_module.type_registry.get_by_name(elem_name)
-                              TypeRef.new(elem_type.id)
-                            elsif hir_desc = @hir_module.get_type_descriptor(alloc.type)
-                              if hir_elem = hir_desc.type_params.first?
-                                convert_type(hir_elem)
-                              end
-                            end
-            if elem_type_ref
-              capacity = builder.const_int(count.to_i64, TypeRef::INT32)
-              mir_new = MIR::ArrayNew.new(builder.next_id, elem_type_ref, capacity)
-              builder.emit(mir_new)
-              return mir_new.id
-            end
-          end
-        end
-      end
-
-      # Determine memory strategy based on escape/taint analysis
-      strategy = select_memory_strategy(alloc)
-
-      alloc_size = pointer_word_bytes_u64
-      if mir_type = @mir_module.type_registry.get(mir_type_ref)
-        alloc_size = mir_type.size
-      elsif !alloc.constructor_args.empty?
-        # Fallback for tuples not in registry: estimate from constructor arg count
-        alloc_size = (alloc.constructor_args.size * pointer_word_bytes_i32).to_u64
-      end
-
-      # Fix StaticArray size: if type is StaticArray but size is 0, compute from name
-      # using container storage ABI (non-inline elements occupy pointer-sized slots).
-      if alloc_size == 0
-        type_name = mir_type_name.empty? ? hir_type_name : mir_type_name
-        if m = type_name.match(/StaticArray\((.+),\s*(\d+)\)/)
-          elem_name = m[1].strip
-          count = m[2].to_u64
-          elem_type = @mir_module.type_registry.get_by_name(elem_name)
-          elem_size = container_elem_storage_size_u64(elem_type)
-          alloc_size = elem_size * count
-        end
-        alloc_size = pointer_word_bytes_u64 if alloc_size == 0
-      end
-
-      # Create allocation with proper size
-      ptr = builder.alloc(strategy, mir_type_ref, alloc_size)
-
-      # Stamp class allocations with their type_id in the header (vtable slot).
-      if !alloc.is_value_type
-        if mir_type = @mir_module.type_registry.get(mir_type_ref)
-          if mir_type.kind.reference?
-            type_id_value = builder.const_int(mir_type_ref.id.to_i64, TypeRef::INT32)
-            header_ptr = builder.gep(ptr, [0_u32], TypeRef::POINTER)
-            builder.store(header_ptr, type_id_value)
-          end
-        end
-      end
-
-      # Store constructor_args into tuple/struct fields
-      unless alloc.constructor_args.empty?
-        if ENV["DEBUG_ALLOC_ARGS"]?
-          func_name = builder.@function.name
-          STDERR.puts "[ALLOC_ARGS] func=#{func_name} type=#{mir_type_ref.id} alloc_ptr=#{ptr} args=#{alloc.constructor_args.size}"
-        end
-
-        # Pre-compute byte offsets for tuple element types (instead of using field index)
-        tuple_byte_offsets : Array(UInt32)? = nil
-        if mir_type = @mir_module.type_registry.get(mir_type_ref)
-          if mir_type.kind.tuple? && (elements = mir_type.element_types)
-            offsets = [] of UInt32
-            current_offset = 0_u64
-            elements.each do |elem|
-              # For reference types (classes, structs) our compiler heap-allocates them,
-              # so in a Tuple they occupy pointer size (8), not their full struct size.
-              is_inline = elem.kind.primitive? || elem.kind.enum?
-              elem_size = if is_inline && elem.size > 0
-                            elem.size
-                          elsif elem.kind.union? && elem.size > 8
-                            elem.size  # Union discriminated repr needs more than a pointer
-                          else
-                            pointer_word_bytes_u64
-                          end
-              elem_align = if is_inline && elem.alignment > 0
-                             elem.alignment
-                           else
-                             pointer_word_align_u32
-                           end
-              current_offset = align_u64(current_offset, elem_align)
-              offsets << current_offset.to_u32
-              current_offset += elem_size
-            end
-            tuple_byte_offsets = offsets
-          elsif fields = mir_type.fields
-            # For struct types with fields, use field byte offsets
-            offsets = fields.map(&.offset)
-            tuple_byte_offsets = offsets unless offsets.empty?
-          end
-        end
-
-        alloc.constructor_args.each_with_index do |arg_hir_id, idx|
-          arg_val = get_value(arg_hir_id)
-          byte_offset = if (offsets = tuple_byte_offsets) && idx < offsets.size
-                          offsets[idx]
-                        else
-                          # Fallback: estimate byte offset using pointer-size elements.
-                          (idx * pointer_word_bytes_i32).to_u32
+        # Trace backward: if a cross-block value is produced by Copy/Cast, the source
+        # must also be excluded from cleanup (it feeds the cross-block value).
+        changed = true
+        while changed
+          changed = false
+          hir_func.blocks.each do |hir_block|
+            hir_block.instructions.each do |inst|
+              next unless @cross_block_values.includes?(inst.id)
+              sources = case inst
+                        when HIR::Copy then [inst.source]
+                        when HIR::Cast then [inst.value]
+                        else                [] of HIR::ValueId
                         end
-          field_ptr = builder.gep(ptr, [byte_offset], TypeRef::POINTER)
-          store_id = builder.store(field_ptr, arg_val)
-
-          # rc_inc for reference-typed constructor args: the new object holds a reference.
-          # Covers reference types, arrays, and all-ref unions (e.g. Node? = Nil | Node).
-          # Skip constants (string literals, globals) — they're static data, not heap-allocated.
-          unless @hir_constant_values.includes?(arg_hir_id)
-            if arg_hir_type = @hir_value_types[arg_hir_id]?
-              if type_needs_rc?(convert_type(arg_hir_type))
-                builder.rc_inc(arg_val)
+              sources.each do |src|
+                unless @cross_block_values.includes?(src)
+                  @cross_block_values << src
+                  changed = true
+                end
               end
             end
           end
+        end
 
-          if ENV["DEBUG_ALLOC_ARGS"]?
-            STDERR.puts "[ALLOC_ARGS]   [#{idx}] hir=#{arg_hir_id} mir_val=#{arg_val} byte_offset=#{byte_offset} gep=#{field_ptr} store=#{store_id}"
+        # NOTE: Per-function ARC cleanup slots are disabled. Per-block cleanup
+        # (in lower_block) handles owned Call results. Function-level slots would
+        # add rc_dec at return for all ARC allocations, but that requires tracking
+        # which allocations escape vs stay local — kept for future optimization.
+        if false
+          hir_func.blocks.each do |hir_block|
+            hir_block.instructions.each do |inst|
+              next unless inst.is_a?(HIR::Allocate)
+              next if escaping_values.includes?(inst.id)
+              strategy = select_memory_strategy(inst)
+              next unless strategy == MemoryStrategy::ARC || strategy == MemoryStrategy::AtomicARC
+              slot = builder.alloc(MemoryStrategy::Stack, TypeRef::POINTER)
+              null_val = builder.const_nil_typed(TypeRef::POINTER)
+              builder.store(slot, null_val)
+              @arc_slot_map[inst.id] = slot
+              @arc_cleanup_slots << {slot, strategy == MemoryStrategy::AtomicARC}
+            end
+          end
+        end
+
+        # Lower each block (phi incoming resolution is deferred)
+        ordered_blocks = order_blocks_for(hir_func)
+        STDERR.puts "[MIR_LOWER] ordered blocks count=#{ordered_blocks.size}" if mir_lower_trace?
+        ordered_blocks.each do |hir_block|
+          STDERR.puts "[MIR_LOWER] block=#{hir_block.id} insts=#{hir_block.instructions.size} term=#{hir_block.terminator.class}" if mir_lower_trace?
+          lower_block(hir_block)
+        end
+
+        # Now resolve all phi incoming values (after all blocks are lowered)
+        STDERR.puts "[MIR_LOWER] resolving pending phis count=#{@pending_phis.size}" if mir_lower_trace?
+        resolve_pending_phis
+
+        # Compute predecessors for phi resolution
+        STDERR.puts "[MIR_LOWER] compute_predecessors start" if mir_lower_trace?
+        mir_func.compute_predecessors
+        STDERR.puts "[MIR_LOWER] compute_predecessors done" if mir_lower_trace?
+
+        @stats.functions_lowered += 1
+        @current_block_param_id = nil
+      end
+
+      # Resolve phi incoming values after all blocks are lowered
+      private def resolve_pending_phis
+        builder = @builder.not_nil!
+        original_block = builder.current_block
+
+        @pending_phis.each do |(mir_phi, hir_phi)|
+          mir_phi_type = mir_phi.type
+          is_phi_union = is_union_type?(mir_phi_type)
+          union_descriptor = is_phi_union ? @mir_module.get_union_descriptor(mir_phi_type) : nil
+
+          hir_phi.incoming.each do |(hir_block, hir_value)|
+            mir_block = mir_block_for(hir_block)
+            mir_value = get_value(hir_value)
+
+            if is_phi_union && union_descriptor
+              if hir_type = @hir_value_types[hir_value]?
+                incoming_mir_type = convert_type(hir_type)
+                if incoming_mir_type == TypeRef::VOID || incoming_mir_type == TypeRef::NIL
+                  if nil_variant = union_descriptor.variants.find { |v| v.type_ref == TypeRef::NIL }
+                    builder.current_block = mir_block
+                    nil_val = builder.const_nil
+                    mir_value = builder.union_wrap(nil_val, nil_variant.type_id, mir_phi_type)
+                  end
+                elsif !is_union_type?(incoming_mir_type)
+                  variant = union_descriptor.variants.find { |v| v.type_ref == incoming_mir_type }
+                  if variant
+                    builder.current_block = mir_block
+                    mir_value = builder.union_wrap(mir_value, variant.type_id, mir_phi_type)
+                  end
+                end
+              end
+            end
+
+            mir_phi.add_incoming(from: mir_block, value: mir_value)
+          end
+        end
+
+        builder.current_block = original_block
+      end
+
+      private def order_blocks_for(hir_func : HIR::Function) : Array(HIR::Block)
+        visited = [] of Bool
+        ordered = [] of HIR::Block
+        stack = [] of HIR::BlockId
+        stack << hir_func.entry_block
+
+        while block_id = stack.pop?
+          block_key = block_id.to_i32
+          next if block_key < visited.size && visited.unsafe_fetch(block_key)
+          while block_key >= visited.size
+            visited << false
+          end
+          visited[block_key] = true
+          block = hir_func.get_block(block_id)
+          ordered << block
+
+          successors = block_successors(block)
+          # Preserve a stable order by pushing in reverse.
+          successors.reverse_each { |succ| stack << succ }
+        end
+
+        # Append unreachable blocks to keep lowering deterministic.
+        hir_func.blocks.each do |block|
+          block_key = block.id.to_i32
+          next if block_key < visited.size && visited.unsafe_fetch(block_key)
+          ordered << block
+        end
+
+        # Sort blocks by minimum instruction ID to ensure definitions are
+        # processed before uses. This handles inlined code where the DFS
+        # may visit the continuation block (which uses the PHI value) before
+        # the inline body blocks (which define the PHI). The entry block
+        # must always be first.
+        entry_block_id = hir_func.entry_block
+        ordered.sort_by! do |block|
+          if block.id == entry_block_id
+            # Entry block always first
+            {0_u32, 0_u32}
+          else
+            min_id = block.instructions.first?.try(&.id) || UInt32::MAX
+            {1_u32, min_id}
+          end
+        end
+
+        ordered
+      end
+
+      private def block_successors(block : HIR::Block) : Array(HIR::BlockId)
+        case term = block.terminator
+        when HIR::Branch
+          [term.then_block, term.else_block]
+        when HIR::Jump
+          [term.target]
+        when HIR::Switch
+          succs = term.cases.map { |(_, bid)| bid }
+          succs << term.default
+          succs
+        else
+          [] of HIR::BlockId
+        end
+      end
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # Block Lowering
+      # ─────────────────────────────────────────────────────────────────────────
+
+      private def lower_block(hir_block : HIR::Block)
+        builder = @builder.not_nil!
+        mir_block_id = mir_block_for(hir_block.id)
+        builder.current_block = mir_block_id
+
+        # Reset per-block ARC temp tracking
+        @block_arc_temps.clear
+
+        # Lower each instruction
+        hir_block.instructions.each do |inst|
+          lower_value(inst)
+        end
+
+        # Per-block ARC cleanup: rc_dec owned Call results at block end.
+        # Only reference-typed results from functions that return +1 ownership.
+        # Skip values used in other blocks (cross-block) — they're still alive.
+        # Safe because rc_inc is now emitted at all persistent stores (FieldSet,
+        # ClassVarSet, PointerStore, IndexSet), so stored refs have rc >= 2.
+        @block_arc_temps.each do |(hir_id, mir_id)|
+          next if @cross_block_values.includes?(hir_id)
+          builder.rc_dec(mir_id)
+        end
+
+        # Lower terminator
+        lower_terminator(hir_block.terminator)
+
+        @stats.blocks_lowered += 1
+      end
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # Value Lowering
+      # ─────────────────────────────────────────────────────────────────────────
+
+      private def lower_value(hir_value : HIR::Value)
+        mir_id = begin
+          case hir_value
+          when HIR::Literal
+            lower_literal(hir_value)
+          when HIR::Local
+            lower_local(hir_value)
+          when HIR::Parameter
+            # Function parameters are pre-mapped, block parameters need allocation
+            if existing = @value_map[hir_value.id]?
+              existing
+            else
+              # Block parameter - allocate stack slot for it
+              builder = @builder.not_nil!
+              param_type = convert_type(hir_value.type)
+              slot = builder.alloc(MemoryStrategy::Stack, param_type)
+              record_stack_slot(slot, param_type)
+              if (default_id = default_value_for_type(builder, param_type))
+                builder.store(slot, default_id)
+              end
+              @value_map[hir_value.id] = slot
+              slot
+            end
+          when HIR::Allocate
+            lower_allocate(hir_value)
+          when HIR::FieldGet
+            lower_field_get(hir_value)
+          when HIR::FieldSet
+            lower_field_set(hir_value)
+          when HIR::IndexGet
+            lower_index_get(hir_value)
+          when HIR::IndexSet
+            lower_index_set(hir_value)
+          when HIR::Call
+            lower_call(hir_value)
+          when HIR::ExternCall
+            lower_hir_extern_call(hir_value)
+          when Crystal::HIR::BinaryOperation
+            lower_binary_op(hir_value)
+          when Crystal::HIR::UnaryOperation
+            lower_unary_op(hir_value)
+          when HIR::Cast
+            lower_cast(hir_value)
+          when HIR::IsA
+            lower_is_a(hir_value)
+          when HIR::Phi
+            lower_phi(hir_value)
+          when HIR::Copy
+            lower_copy(hir_value)
+          when HIR::MakeClosure
+            lower_closure(hir_value)
+          when HIR::FuncPointer
+            lower_func_pointer(hir_value)
+          when HIR::Yield
+            lower_yield(hir_value)
+          when HIR::ClassVarGet
+            lower_classvar_get(hir_value)
+          when HIR::ClassVarSet
+            lower_classvar_set(hir_value)
+          when HIR::UnionWrap
+            lower_union_wrap(hir_value)
+          when HIR::UnionUnwrap
+            lower_union_unwrap(hir_value)
+          when HIR::UnionTypeId
+            lower_union_type_id(hir_value)
+          when HIR::UnionIs
+            lower_union_is(hir_value)
+          when HIR::ArrayLiteral
+            lower_array_literal(hir_value)
+          when HIR::ArraySize
+            lower_array_size(hir_value)
+          when HIR::ArraySetSize
+            lower_array_set_size(hir_value)
+          when HIR::ArrayNew
+            lower_array_new(hir_value)
+          when HIR::StringInterpolation
+            lower_string_interpolation(hir_value)
+          when HIR::Raise
+            lower_raise(hir_value)
+          when HIR::GetException
+            lower_get_exception(hir_value)
+          when HIR::TryBegin
+            lower_try_begin(hir_value)
+          when HIR::TryEnd
+            lower_try_end(hir_value)
+          when HIR::PointerMalloc
+            lower_pointer_malloc(hir_value)
+          when HIR::PointerLoad
+            lower_pointer_load(hir_value)
+          when HIR::PointerStore
+            lower_pointer_store(hir_value)
+          when HIR::PointerAdd
+            lower_pointer_add(hir_value)
+          when HIR::PointerRealloc
+            lower_pointer_realloc(hir_value)
+          when HIR::AddressOf
+            lower_address_of(hir_value)
+          else
+            raise "Unsupported HIR value: #{hir_value.class}"
+          end
+        rescue ex : IndexError
+          raise "Index error in #{@current_lowering_func_name} lowering #{hir_value.class} (id=#{hir_value.id}): #{ex.message}\n#{ex.backtrace.first(10).join("\n")}"
+        end
+
+        @value_map[hir_value.id] = mir_id if mir_id
+
+        # Track reference-typed Call results for per-block ARC cleanup.
+        # Only track calls to functions that return OWNED (+1) references —
+        # i.e., functions that allocate and return (directly or transitively).
+        # Property getters and borrowed references are NOT tracked.
+        if mir_id && hir_value.is_a?(HIR::Call)
+          if callee_returns_owned?(hir_value.method_name)
+            if hir_type = @hir_value_types[hir_value.id]?
+              if type_needs_rc?(convert_type(hir_type))
+                @block_arc_temps << {hir_value.id, mir_id}
+              end
+            end
+          end
+        end
+
+        @stats.values_lowered += 1
+      end
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # Literal Lowering
+      # ─────────────────────────────────────────────────────────────────────────
+
+      private def lower_literal(lit : HIR::Literal) : ValueId
+        builder = @builder.not_nil!
+        case lit.type
+        when HIR::TypeRef::INT8,
+             HIR::TypeRef::INT16,
+             HIR::TypeRef::INT32,
+             HIR::TypeRef::INT64,
+             HIR::TypeRef::INT128
+          builder.const_int(lit.int_value, convert_type(lit.type))
+        when HIR::TypeRef::UINT8,
+             HIR::TypeRef::UINT16,
+             HIR::TypeRef::UINT32,
+             HIR::TypeRef::UINT64,
+             HIR::TypeRef::UINT128
+          builder.const_uint(lit.int_value.to_u64, convert_type(lit.type))
+        when HIR::TypeRef::FLOAT32,
+             HIR::TypeRef::FLOAT64
+          builder.const_float(lit.float_value, convert_type(lit.type))
+        when HIR::TypeRef::BOOL
+          builder.const_bool(lit.int_value != 0)
+        when HIR::TypeRef::STRING
+          case v = lit.value
+          when String then builder.const_string(v)
+          else             builder.const_nil
+          end
+        when HIR::TypeRef::SYMBOL
+          case v = lit.value
+          when String
+            sym_id = @mir_module.intern_symbol(v)
+            builder.const_int(sym_id.to_i64, TypeRef::SYMBOL)
+          else
+            builder.const_nil
+          end
+        when HIR::TypeRef::CHAR
+          case v = lit.value
+          when Char then builder.const_int(v.ord.to_i64, TypeRef::CHAR)
+          else           builder.const_int(lit.int_value, TypeRef::CHAR)
+          end
+        when HIR::TypeRef::NIL,
+             HIR::TypeRef::VOID
+          const_type = convert_type(lit.type)
+          const_type = TypeRef::NIL if const_type == TypeRef::VOID
+          builder.const_nil_typed(const_type)
+        else
+          case v = lit.value
+          when Int64   then builder.const_int(v, convert_type(lit.type))
+          when UInt64  then builder.const_uint(v, convert_type(lit.type))
+          when Float64 then builder.const_float(v, convert_type(lit.type))
+          when Bool    then builder.const_bool(v)
+          when String  then builder.const_string(v)
+          when Char    then builder.const_int(v.ord.to_i64, TypeRef::CHAR)
+          when Nil
+            const_type = convert_type(lit.type)
+            const_type = TypeRef::NIL if const_type == TypeRef::VOID
+            builder.const_nil_typed(const_type)
+          else
+            builder.const_nil
           end
         end
       end
 
-      # Track ARC allocations (refcount is already initialized to 1 by the alloc)
-      case strategy
-      when MemoryStrategy::ARC, MemoryStrategy::AtomicARC
-        @stats.arc_allocations += 1
-        # Store pointer into pre-allocated cleanup slot for rc_dec at return
-        if arc_slot = @arc_slot_map[alloc.id]?
-          builder.store(arc_slot, ptr)
-        end
-      when MemoryStrategy::Stack
-        @stats.stack_allocations += 1
-      when MemoryStrategy::Slab
-        @stats.slab_allocations += 1
-      when MemoryStrategy::GC
-        @stats.gc_allocations += 1
-      end
+      # ─────────────────────────────────────────────────────────────────────────
+      # Local Variable Lowering
+      # ─────────────────────────────────────────────────────────────────────────
 
-      ptr
-    end
+      private def lower_local(local : HIR::Local) : ValueId
+        # In SSA, locals are represented as values
+        # If mutable, we allocate on stack and use load/store
+        builder = @builder.not_nil!
 
-    # Extract all ValueIds referenced by an HIR instruction (for cross-block analysis).
-    private def hir_instruction_used_values(inst : HIR::Value) : Array(HIR::ValueId)
-      case inst
-      when HIR::Call
-        result = inst.args.dup
-        if recv = inst.receiver
-          result << recv
-        end
-        result
-      when HIR::ExternCall     then inst.args.dup
-      when HIR::FieldGet       then [inst.object]
-      when HIR::FieldSet       then [inst.object, inst.value]
-      when HIR::Allocate       then inst.constructor_args.dup
-      when HIR::BinaryOperation then [inst.left, inst.right]
-      when HIR::UnaryOperation then [inst.operand]
-      when HIR::Cast           then [inst.value]
-      when HIR::IsA            then [inst.value]
-      when HIR::Copy           then [inst.source]
-      when HIR::Phi            then inst.incoming.map { |(_, v)| v }
-      when HIR::IndexGet       then [inst.object, inst.index]
-      when HIR::IndexSet       then [inst.object, inst.index, inst.value]
-      when HIR::UnionWrap      then [inst.value]
-      when HIR::UnionUnwrap    then [inst.union_value]
-      when HIR::UnionTypeId    then [inst.union_value]
-      when HIR::UnionIs        then [inst.union_value]
-      when HIR::PointerLoad    then inst.index ? [inst.pointer, inst.index.not_nil!] : [inst.pointer]
-      when HIR::PointerStore   then inst.index ? [inst.pointer, inst.value, inst.index.not_nil!] : [inst.pointer, inst.value]
-      when HIR::PointerAdd     then [inst.pointer, inst.offset]
-      when HIR::PointerRealloc then [inst.pointer, inst.new_size]
-      when HIR::PointerMalloc  then [inst.count]
-      when HIR::AddressOf      then [inst.operand]
-      when HIR::ArraySize      then [inst.array_value]
-      when HIR::ArraySetSize   then [inst.array_value, inst.size_value]
-      when HIR::ArrayNew       then [inst.capacity_value]
-      when HIR::ClassVarSet    then [inst.value]
-      when HIR::Raise          then inst.exception ? [inst.exception.not_nil!] : [] of HIR::ValueId
-      when HIR::MakeClosure    then inst.captures.map(&.value_id)
-      when HIR::Yield          then inst.args.dup
-      when HIR::StringInterpolation then inst.parts.dup
-      else [] of HIR::ValueId
-      end
-    end
-
-    # Extract ValueIds referenced by an HIR terminator.
-    private def hir_terminator_used_values(term : HIR::Terminator) : Array(HIR::ValueId)
-      case term
-      when HIR::Return then term.value ? [term.value.not_nil!] : [] of HIR::ValueId
-      when HIR::Branch then [term.condition]
-      when HIR::Switch then [term.value] + term.cases.map { |(v, _)| v }
-      else [] of HIR::ValueId
-      end
-    end
-
-    # Build the set of functions that return freshly allocated ARC objects.
-    # These functions return +1 ownership — callers can safely rc_dec the result.
-    # Uses interprocedural fixed-point analysis tracing return values back to origins.
-    private def build_owned_return_set
-      @owned_return_funcs = Set(String).new
-
-      # Build instruction map per function for fast lookup
-      func_inst_map = {} of String => Hash(HIR::ValueId, HIR::Value)
-      @hir_module.functions.each do |func|
-        inst_map = {} of HIR::ValueId => HIR::Value
-        func.blocks.each do |block|
-          block.instructions.each { |inst| inst_map[inst.id] = inst }
-        end
-        func_inst_map[func.name] = inst_map
-      end
-
-      # Phase 1: Seed with functions that return direct Allocate results
-      @hir_module.functions.each do |func|
-        next if @owned_return_funcs.includes?(func.name)
-        if returns_allocated_value?(func, func_inst_map[func.name])
-          @owned_return_funcs << func.name
+        if local.mutable
+          # Allocate space on stack
+          ptr = builder.alloc(MemoryStrategy::Stack, convert_type(local.type))
+          record_stack_slot(ptr, convert_type(local.type))
+          @stats.stack_allocations += 1
+          ptr
+        else
+          # Immutable locals are just values - return placeholder
+          # (actual value will come from assignment)
+          builder.const_nil # Placeholder, will be replaced
         end
       end
 
-      # Phase 2: Transitive closure — if a function returns a Call result from
-      # an "owned return" function, it's also "owned return".
-      changed = true
-      while changed
-        changed = false
+      # ─────────────────────────────────────────────────────────────────────────
+      # Allocation Lowering (with Memory Strategy)
+      # ─────────────────────────────────────────────────────────────────────────
+
+      private def lower_allocate(alloc : HIR::Allocate) : ValueId
+        builder = @builder.not_nil!
+
+        # Get the MIR type reference and look up size from type registry
+        mir_type_ref = convert_type(alloc.type)
+        mir_type_name = @mir_module.type_registry.get(mir_type_ref).try(&.name) || ""
+        hir_type_name = @hir_module.get_type_descriptor(alloc.type).try(&.name) || ""
+
+        # StaticArray(T, N) via unresolved MIR name path (mir_type_name == "") can
+        # be lowered incorrectly to tiny raw allocs. Re-route only that unresolved
+        # case to MIR::ArrayNew.
+        #
+        # For resolved StaticArray types keep raw allocation path; some code paths
+        # (for example inline StaticArray ivars) expect direct element-buffer
+        # semantics and are corrupted if we materialize an Array object here.
+        if alloc.constructor_args.empty? && mir_type_name.empty?
+          static_array_name = hir_type_name
+          if match = static_array_name.match(/^StaticArray\((.+),\s*(\d+)\)$/)
+            elem_name = match[1].strip
+            count = match[2].to_i?
+            if count && count >= 0
+              elem_type_ref = if elem_type = @mir_module.type_registry.get_by_name(elem_name)
+                                TypeRef.new(elem_type.id)
+                              elsif hir_desc = @hir_module.get_type_descriptor(alloc.type)
+                                if hir_elem = hir_desc.type_params.first?
+                                  convert_type(hir_elem)
+                                end
+                              end
+              if elem_type_ref
+                capacity = builder.const_int(count.to_i64, TypeRef::INT32)
+                mir_new = MIR::ArrayNew.new(builder.next_id, elem_type_ref, capacity)
+                builder.emit(mir_new)
+                return mir_new.id
+              end
+            end
+          end
+        end
+
+        # Determine memory strategy based on escape/taint analysis
+        strategy = select_memory_strategy(alloc)
+
+        alloc_size = pointer_word_bytes_u64
+        if mir_type = @mir_module.type_registry.get(mir_type_ref)
+          alloc_size = mir_type.size
+        elsif !alloc.constructor_args.empty?
+          # Fallback for tuples not in registry: estimate from constructor arg count
+          alloc_size = (alloc.constructor_args.size * pointer_word_bytes_i32).to_u64
+        end
+
+        # Fix StaticArray size: if type is StaticArray but size is 0, compute from name
+        # using container storage ABI (non-inline elements occupy pointer-sized slots).
+        if alloc_size == 0
+          type_name = mir_type_name.empty? ? hir_type_name : mir_type_name
+          if m = type_name.match(/StaticArray\((.+),\s*(\d+)\)/)
+            elem_name = m[1].strip
+            count = m[2].to_u64
+            elem_type = @mir_module.type_registry.get_by_name(elem_name)
+            elem_size = container_elem_storage_size_u64(elem_type)
+            alloc_size = elem_size * count
+          end
+          alloc_size = pointer_word_bytes_u64 if alloc_size == 0
+        end
+
+        # Create allocation with proper size
+        ptr = builder.alloc(strategy, mir_type_ref, alloc_size)
+
+        # Stamp class allocations with their type_id in the header (vtable slot).
+        if !alloc.is_value_type
+          if mir_type = @mir_module.type_registry.get(mir_type_ref)
+            if mir_type.kind.reference?
+              type_id_value = builder.const_int(mir_type_ref.id.to_i64, TypeRef::INT32)
+              header_ptr = builder.gep(ptr, [0_u32], TypeRef::POINTER)
+              builder.store(header_ptr, type_id_value)
+            end
+          end
+        end
+
+        # Store constructor_args into tuple/struct fields
+        unless alloc.constructor_args.empty?
+          if ENV["DEBUG_ALLOC_ARGS"]?
+            func_name = builder.@function.name
+            STDERR.puts "[ALLOC_ARGS] func=#{func_name} type=#{mir_type_ref.id} alloc_ptr=#{ptr} args=#{alloc.constructor_args.size}"
+          end
+
+          # Pre-compute byte offsets for tuple element types (instead of using field index)
+          tuple_byte_offsets : Array(UInt32)? = nil
+          if mir_type = @mir_module.type_registry.get(mir_type_ref)
+            if mir_type.kind.tuple? && (elements = mir_type.element_types)
+              offsets = [] of UInt32
+              current_offset = 0_u64
+              elements.each do |elem|
+                # For reference types (classes, structs) our compiler heap-allocates them,
+                # so in a Tuple they occupy pointer size (8), not their full struct size.
+                is_inline = elem.kind.primitive? || elem.kind.enum?
+                elem_size = if is_inline && elem.size > 0
+                              elem.size
+                            elsif elem.kind.union? && elem.size > 8
+                              elem.size # Union discriminated repr needs more than a pointer
+                            else
+                              pointer_word_bytes_u64
+                            end
+                elem_align = if is_inline && elem.alignment > 0
+                               elem.alignment
+                             else
+                               pointer_word_align_u32
+                             end
+                current_offset = align_u64(current_offset, elem_align)
+                offsets << current_offset.to_u32
+                current_offset += elem_size
+              end
+              tuple_byte_offsets = offsets
+            elsif fields = mir_type.fields
+              # For struct types with fields, use field byte offsets
+              offsets = fields.map(&.offset)
+              tuple_byte_offsets = offsets unless offsets.empty?
+            end
+          end
+
+          alloc.constructor_args.each_with_index do |arg_hir_id, idx|
+            arg_val = get_value(arg_hir_id)
+            byte_offset = if (offsets = tuple_byte_offsets) && idx < offsets.size
+                            offsets[idx]
+                          else
+                            # Fallback: estimate byte offset using pointer-size elements.
+                            (idx * pointer_word_bytes_i32).to_u32
+                          end
+            field_ptr = builder.gep(ptr, [byte_offset], TypeRef::POINTER)
+            store_id = builder.store(field_ptr, arg_val)
+
+            # rc_inc for reference-typed constructor args: the new object holds a reference.
+            # Covers reference types, arrays, and all-ref unions (e.g. Node? = Nil | Node).
+            # Skip constants (string literals, globals) — they're static data, not heap-allocated.
+            unless @hir_constant_values.includes?(arg_hir_id)
+              if arg_hir_type = @hir_value_types[arg_hir_id]?
+                if type_needs_rc?(convert_type(arg_hir_type))
+                  builder.rc_inc(arg_val)
+                end
+              end
+            end
+
+            if ENV["DEBUG_ALLOC_ARGS"]?
+              STDERR.puts "[ALLOC_ARGS]   [#{idx}] hir=#{arg_hir_id} mir_val=#{arg_val} byte_offset=#{byte_offset} gep=#{field_ptr} store=#{store_id}"
+            end
+          end
+        end
+
+        # Track ARC allocations (refcount is already initialized to 1 by the alloc)
+        case strategy
+        when MemoryStrategy::ARC, MemoryStrategy::AtomicARC
+          @stats.arc_allocations += 1
+          # Store pointer into pre-allocated cleanup slot for rc_dec at return
+          if arc_slot = @arc_slot_map[alloc.id]?
+            builder.store(arc_slot, ptr)
+          end
+        when MemoryStrategy::Stack
+          @stats.stack_allocations += 1
+        when MemoryStrategy::Slab
+          @stats.slab_allocations += 1
+        when MemoryStrategy::GC
+          @stats.gc_allocations += 1
+        end
+
+        ptr
+      end
+
+      # Extract all ValueIds referenced by an HIR instruction (for cross-block analysis).
+      private def hir_instruction_used_values(inst : HIR::Value) : Array(HIR::ValueId)
+        case inst
+        when HIR::Call
+          result = inst.args.dup
+          if recv = inst.receiver
+            result << recv
+          end
+          result
+        when HIR::ExternCall          then inst.args.dup
+        when HIR::FieldGet            then [inst.object]
+        when HIR::FieldSet            then [inst.object, inst.value]
+        when HIR::Allocate            then inst.constructor_args.dup
+        when HIR::BinaryOperation     then [inst.left, inst.right]
+        when HIR::UnaryOperation      then [inst.operand]
+        when HIR::Cast                then [inst.value]
+        when HIR::IsA                 then [inst.value]
+        when HIR::Copy                then [inst.source]
+        when HIR::Phi                 then inst.incoming.map { |(_, v)| v }
+        when HIR::IndexGet            then [inst.object, inst.index]
+        when HIR::IndexSet            then [inst.object, inst.index, inst.value]
+        when HIR::UnionWrap           then [inst.value]
+        when HIR::UnionUnwrap         then [inst.union_value]
+        when HIR::UnionTypeId         then [inst.union_value]
+        when HIR::UnionIs             then [inst.union_value]
+        when HIR::PointerLoad         then inst.index ? [inst.pointer, inst.index.not_nil!] : [inst.pointer]
+        when HIR::PointerStore        then inst.index ? [inst.pointer, inst.value, inst.index.not_nil!] : [inst.pointer, inst.value]
+        when HIR::PointerAdd          then [inst.pointer, inst.offset]
+        when HIR::PointerRealloc      then [inst.pointer, inst.new_size]
+        when HIR::PointerMalloc       then [inst.count]
+        when HIR::AddressOf           then [inst.operand]
+        when HIR::ArraySize           then [inst.array_value]
+        when HIR::ArraySetSize        then [inst.array_value, inst.size_value]
+        when HIR::ArrayNew            then [inst.capacity_value]
+        when HIR::ClassVarSet         then [inst.value]
+        when HIR::Raise               then inst.exception ? [inst.exception.not_nil!] : [] of HIR::ValueId
+        when HIR::MakeClosure         then inst.captures.map(&.value_id)
+        when HIR::Yield               then inst.args.dup
+        when HIR::StringInterpolation then inst.parts.dup
+        else                               [] of HIR::ValueId
+        end
+      end
+
+      # Extract ValueIds referenced by an HIR terminator.
+      private def hir_terminator_used_values(term : HIR::Terminator) : Array(HIR::ValueId)
+        case term
+        when HIR::Return then term.value ? [term.value.not_nil!] : [] of HIR::ValueId
+        when HIR::Branch then [term.condition]
+        when HIR::Switch then [term.value] + term.cases.map { |(v, _)| v }
+        else                  [] of HIR::ValueId
+        end
+      end
+
+      # Build the set of functions that return freshly allocated ARC objects.
+      # These functions return +1 ownership — callers can safely rc_dec the result.
+      # Uses interprocedural fixed-point analysis tracing return values back to origins.
+      private def build_owned_return_set
+        @owned_return_funcs = Set(String).new
+
+        # Build instruction map per function for fast lookup
+        func_inst_map = {} of String => Hash(HIR::ValueId, HIR::Value)
+        @hir_module.functions.each do |func|
+          inst_map = {} of HIR::ValueId => HIR::Value
+          func.blocks.each do |block|
+            block.instructions.each { |inst| inst_map[inst.id] = inst }
+          end
+          func_inst_map[func.name] = inst_map
+        end
+
+        # Phase 1: Seed with functions that return direct Allocate results
         @hir_module.functions.each do |func|
           next if @owned_return_funcs.includes?(func.name)
-          if returns_owned_call_result?(func, func_inst_map[func.name])
+          if returns_allocated_value?(func, func_inst_map[func.name])
             @owned_return_funcs << func.name
-            changed = true
           end
         end
-      end
-    end
 
-    # Check if a function returns a direct Allocate (with ARC strategy) result.
-    # Exclude functions where the return value is also stored via ClassVarSet/PointerStore/IndexSet
-    # (these consume ownership without rc_inc, so the return is borrowed).
-    private def returns_allocated_value?(func : HIR::Function, inst_map : Hash(HIR::ValueId, HIR::Value)) : Bool
-      func.blocks.each do |block|
-        if ret = block.terminator.as?(HIR::Return)
-          if val_id = ret.value
-            origins = trace_value_origins(val_id, inst_map)
-            if origins.any? { |o| o.is_a?(HIR::Allocate) && !o.is_value_type }
-              # Check if the return value is also stored in a persistent location
-              return false if value_ownership_consumed?(val_id, func, inst_map)
-              return true
+        # Phase 2: Transitive closure — if a function returns a Call result from
+        # an "owned return" function, it's also "owned return".
+        changed = true
+        while changed
+          changed = false
+          @hir_module.functions.each do |func|
+            next if @owned_return_funcs.includes?(func.name)
+            if returns_owned_call_result?(func, func_inst_map[func.name])
+              @owned_return_funcs << func.name
+              changed = true
             end
           end
         end
       end
-      false
-    end
 
-    # Check if a function returns a Call result from a function in @owned_return_funcs.
-    # Uses exact name matching only — fuzzy matching causes false positives.
-    private def returns_owned_call_result?(func : HIR::Function, inst_map : Hash(HIR::ValueId, HIR::Value)) : Bool
-      func.blocks.each do |block|
-        if ret = block.terminator.as?(HIR::Return)
-          if val_id = ret.value
-            origins = trace_value_origins(val_id, inst_map)
-            if origins.any? { |o| o.is_a?(HIR::Call) && @owned_return_funcs.includes?(o.method_name) }
-              return false if value_ownership_consumed?(val_id, func, inst_map)
-              return true
+      # Check if a function returns a direct Allocate (with ARC strategy) result.
+      # Exclude functions where the return value is also stored via ClassVarSet/PointerStore/IndexSet
+      # (these consume ownership without rc_inc, so the return is borrowed).
+      private def returns_allocated_value?(func : HIR::Function, inst_map : Hash(HIR::ValueId, HIR::Value)) : Bool
+        func.blocks.each do |block|
+          if ret = block.terminator.as?(HIR::Return)
+            if val_id = ret.value
+              origins = trace_value_origins(val_id, inst_map)
+              if origins.any? { |o| o.is_a?(HIR::Allocate) && !o.is_value_type }
+                # Check if the return value is also stored in a persistent location
+                return false if value_ownership_consumed?(val_id, func, inst_map)
+                return true
+              end
             end
           end
         end
+        false
       end
-      false
-    end
 
-    # Check if a value (or any Copy/Cast alias of it) is stored via ClassVarSet,
-    # PointerStore, or IndexSet in the function. These stores consume ownership
-    # without rc_inc, so a return of the same value is borrowed, not owned.
-    private def value_ownership_consumed?(val_id : HIR::ValueId, func : HIR::Function, inst_map : Hash(HIR::ValueId, HIR::Value)) : Bool
-      # Collect all aliases of val_id (the value and all Copy/Cast/Phi chains)
-      aliases = Set(HIR::ValueId).new
-      queue = Deque(HIR::ValueId).new
-      queue << val_id
-      # Also trace backward to find the original value
-      trace_value_origins(val_id, inst_map).each { |o| queue << o.id }
-      while v = queue.shift?
-        next if aliases.includes?(v)
-        aliases << v
-        # Forward: find instructions that Copy/Cast from this value
-        inst_map.each_value do |inst|
-          case inst
-          when HIR::Copy then queue << inst.id if inst.source == v
-          when HIR::Cast then queue << inst.id if inst.value == v
+      # Check if a function returns a Call result from a function in @owned_return_funcs.
+      # Uses exact name matching only — fuzzy matching causes false positives.
+      private def returns_owned_call_result?(func : HIR::Function, inst_map : Hash(HIR::ValueId, HIR::Value)) : Bool
+        func.blocks.each do |block|
+          if ret = block.terminator.as?(HIR::Return)
+            if val_id = ret.value
+              origins = trace_value_origins(val_id, inst_map)
+              if origins.any? { |o| o.is_a?(HIR::Call) && @owned_return_funcs.includes?(o.method_name) }
+                return false if value_ownership_consumed?(val_id, func, inst_map)
+                return true
+              end
+            end
           end
         end
+        false
       end
 
-      # Check if any alias is stored via ownership-consuming instruction
-      func.blocks.each do |block|
-        block.instructions.each do |inst|
-          case inst
-          when HIR::ClassVarSet
-            return true if aliases.includes?(inst.value)
-          when HIR::PointerStore
-            return true if aliases.includes?(inst.value)
-          when HIR::IndexSet
-            return true if aliases.includes?(inst.value)
+      # Check if a value (or any Copy/Cast alias of it) is stored via ClassVarSet,
+      # PointerStore, or IndexSet in the function. These stores consume ownership
+      # without rc_inc, so a return of the same value is borrowed, not owned.
+      private def value_ownership_consumed?(val_id : HIR::ValueId, func : HIR::Function, inst_map : Hash(HIR::ValueId, HIR::Value)) : Bool
+        # Collect all aliases of val_id (the value and all Copy/Cast/Phi chains)
+        aliases = Set(HIR::ValueId).new
+        queue = Deque(HIR::ValueId).new
+        queue << val_id
+        # Also trace backward to find the original value
+        trace_value_origins(val_id, inst_map).each { |o| queue << o.id }
+        while v = queue.shift?
+          next if aliases.includes?(v)
+          aliases << v
+          # Forward: find instructions that Copy/Cast from this value
+          inst_map.each_value do |inst|
+            case inst
+            when HIR::Copy then queue << inst.id if inst.source == v
+            when HIR::Cast then queue << inst.id if inst.value == v
+            end
           end
         end
+
+        # Check if any alias is stored via ownership-consuming instruction
+        func.blocks.each do |block|
+          block.instructions.each do |inst|
+            case inst
+            when HIR::ClassVarSet
+              return true if aliases.includes?(inst.value)
+            when HIR::PointerStore
+              return true if aliases.includes?(inst.value)
+            when HIR::IndexSet
+              return true if aliases.includes?(inst.value)
+            end
+          end
+        end
+        false
       end
-      false
-    end
 
-    # Check if a callee returns an owned (+1) reference.
-    # Matches against the @owned_return_funcs set, handling name variations.
-    private def callee_returns_owned?(method_name : String) : Bool
-      @owned_return_funcs.includes?(method_name)
-    end
+      # Check if a callee returns an owned (+1) reference.
+      # Matches against the @owned_return_funcs set, handling name variations.
+      private def callee_returns_owned?(method_name : String) : Bool
+        @owned_return_funcs.includes?(method_name)
+      end
 
-    # Trace a value backward through Copy/Cast/Phi to find origin instructions.
-    private def trace_value_origins(value_id : HIR::ValueId, inst_map : Hash(HIR::ValueId, HIR::Value)) : Array(HIR::Value)
-      visited = Set(HIR::ValueId).new
-      queue = Deque(HIR::ValueId).new
-      queue << value_id
-      origins = [] of HIR::Value
+      # Trace a value backward through Copy/Cast/Phi to find origin instructions.
+      private def trace_value_origins(value_id : HIR::ValueId, inst_map : Hash(HIR::ValueId, HIR::Value)) : Array(HIR::Value)
+        visited = Set(HIR::ValueId).new
+        queue = Deque(HIR::ValueId).new
+        queue << value_id
+        origins = [] of HIR::Value
 
-      while val_id = queue.shift?
-        next if visited.includes?(val_id)
-        visited << val_id
-        inst = inst_map[val_id]?
-        next unless inst
+        while val_id = queue.shift?
+          next if visited.includes?(val_id)
+          visited << val_id
+          inst = inst_map[val_id]?
+          next unless inst
 
-        case inst
-        when HIR::Copy then queue << inst.source
-        when HIR::Cast then queue << inst.value
-        when HIR::Phi  then inst.incoming.each { |(_, v)| queue << v }
-        else                origins << inst
+          case inst
+          when HIR::Copy then queue << inst.source
+          when HIR::Cast then queue << inst.value
+          when HIR::Phi  then inst.incoming.each { |(_, v)| queue << v }
+          else                origins << inst
+          end
+        end
+
+        origins
+      end
+
+      private def select_memory_strategy(alloc : HIR::Allocate) : MemoryStrategy
+        # Value types (structs) must not use ARC — type_needs_rc? returns false
+        # for structs, so rc_inc/rc_dec is never emitted. Use Stack for locals,
+        # GC (sentinel header) for escaping values to prevent use-after-free.
+        if alloc.is_value_type
+          if alloc.lifetime.stack_local?
+            return MemoryStrategy::Stack
+          end
+          return MemoryStrategy::GC
+        end
+
+        # If HIR already carries a chosen strategy, honor it.
+        if strat = alloc.memory_strategy
+          mapped = map_hir_strategy(strat)
+          if @current_slab_frame && alloc.lifetime == HIR::LifetimeTag::StackLocal && mapped == MemoryStrategy::ARC
+            return MemoryStrategy::Slab
+          end
+          return mapped
+        end
+
+        # Determine strategy based on lifetime and taints
+        lifetime = alloc.lifetime
+        taints = alloc.taints
+
+        # Cyclic types must use GC
+        if taints.cyclic?
+          return MemoryStrategy::GC
+        end
+
+        # Thread-shared requires atomic operations
+        if taints.thread_shared?
+          return MemoryStrategy::AtomicARC
+        end
+
+        # FFI-exposed uses GC for safety
+        if taints.ffi_exposed?
+          return MemoryStrategy::GC
+        end
+
+        # Strategy based on lifetime
+        case lifetime
+        when HIR::LifetimeTag::StackLocal
+          MemoryStrategy::Stack
+        when HIR::LifetimeTag::ArgEscape
+          MemoryStrategy::Slab
+        when HIR::LifetimeTag::HeapEscape
+          MemoryStrategy::ARC
+        when HIR::LifetimeTag::GlobalEscape
+          MemoryStrategy::AtomicARC
+        else
+          # Unknown/conservative: GC
+          MemoryStrategy::GC
         end
       end
 
-      origins
-    end
-
-    private def select_memory_strategy(alloc : HIR::Allocate) : MemoryStrategy
-      # Value types (structs) must not use ARC — type_needs_rc? returns false
-      # for structs, so rc_inc/rc_dec is never emitted. Use Stack for locals,
-      # GC (sentinel header) for escaping values to prevent use-after-free.
-      if alloc.is_value_type
-        if alloc.lifetime.stack_local?
-          return MemoryStrategy::Stack
-        end
-        return MemoryStrategy::GC
-      end
-
-      # If HIR already carries a chosen strategy, honor it.
-      if strat = alloc.memory_strategy
-        mapped = map_hir_strategy(strat)
-        if @current_slab_frame && alloc.lifetime == HIR::LifetimeTag::StackLocal && mapped == MemoryStrategy::ARC
-          return MemoryStrategy::Slab
-        end
-        return mapped
-      end
-
-      # Determine strategy based on lifetime and taints
-      lifetime = alloc.lifetime
-      taints = alloc.taints
-
-      # Cyclic types must use GC
-      if taints.cyclic?
-        return MemoryStrategy::GC
-      end
-
-      # Thread-shared requires atomic operations
-      if taints.thread_shared?
-        return MemoryStrategy::AtomicARC
-      end
-
-      # FFI-exposed uses GC for safety
-      if taints.ffi_exposed?
-        return MemoryStrategy::GC
-      end
-
-      # Strategy based on lifetime
-      case lifetime
-      when HIR::LifetimeTag::StackLocal
-        MemoryStrategy::Stack
-      when HIR::LifetimeTag::ArgEscape
-        MemoryStrategy::Slab
-      when HIR::LifetimeTag::HeapEscape
-        MemoryStrategy::ARC
-      when HIR::LifetimeTag::GlobalEscape
-        MemoryStrategy::AtomicARC
-      else
-        # Unknown/conservative: GC
-        MemoryStrategy::GC
-      end
-    end
-
-    private def map_hir_strategy(strat : HIR::MemoryStrategy) : MemoryStrategy
-      case strat
-      when HIR::MemoryStrategy::Stack then MemoryStrategy::Stack
-      when HIR::MemoryStrategy::Slab then MemoryStrategy::Slab
-      when HIR::MemoryStrategy::ARC then MemoryStrategy::ARC
-      when HIR::MemoryStrategy::AtomicARC then MemoryStrategy::AtomicARC
-      when HIR::MemoryStrategy::GC then MemoryStrategy::GC
-      else
-        MemoryStrategy::GC
-      end
-    end
-
-    private def should_use_slab_frame?(hir_func : HIR::Function) : Bool
-      return false unless @slab_frame_enabled
-
-      saw_alloc = false
-      hir_func.blocks.each do |block|
-        block.instructions.each do |inst|
-          next unless inst.is_a?(HIR::Allocate)
-          saw_alloc = true
-          return false unless inst.lifetime == HIR::LifetimeTag::StackLocal
-
-          taints = inst.taints
-          return false if taints.thread_shared? || taints.ffi_exposed? || taints.cyclic?
+      private def map_hir_strategy(strat : HIR::MemoryStrategy) : MemoryStrategy
+        case strat
+        when HIR::MemoryStrategy::Stack     then MemoryStrategy::Stack
+        when HIR::MemoryStrategy::Slab      then MemoryStrategy::Slab
+        when HIR::MemoryStrategy::ARC       then MemoryStrategy::ARC
+        when HIR::MemoryStrategy::AtomicARC then MemoryStrategy::AtomicARC
+        when HIR::MemoryStrategy::GC        then MemoryStrategy::GC
+        else
+          MemoryStrategy::GC
         end
       end
 
-      saw_alloc
-    end
+      private def should_use_slab_frame?(hir_func : HIR::Function) : Bool
+        return false unless @slab_frame_enabled
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # Field Access Lowering
-    # ─────────────────────────────────────────────────────────────────────────
+        saw_alloc = false
+        hir_func.blocks.each do |block|
+          block.instructions.each do |inst|
+            next unless inst.is_a?(HIR::Allocate)
+            saw_alloc = true
+            return false unless inst.lifetime == HIR::LifetimeTag::StackLocal
 
-    private def lower_field_get(field : HIR::FieldGet) : ValueId
-      builder = @builder.not_nil!
-      # Nil-typed fields are zero-sized and have no storage.
-      # Loading from such fields must return typed nil directly.
-      if field.type == HIR::TypeRef::NIL
-        return builder.const_nil_typed(convert_type(field.type))
+            taints = inst.taints
+            return false if taints.thread_shared? || taints.ffi_exposed? || taints.cyclic?
+          end
+        end
+
+        saw_alloc
       end
 
-      obj_ptr = get_value(field.object)
+      # ─────────────────────────────────────────────────────────────────────────
+      # Field Access Lowering
+      # ─────────────────────────────────────────────────────────────────────────
 
-      # GEP to field address
-      # field_offset is byte offset from object start
-      field_ptr = builder.gep(obj_ptr, [field.field_offset.to_u32], TypeRef::POINTER)
+      private def lower_field_get(field : HIR::FieldGet) : ValueId
+        builder = @builder.not_nil!
+        # Nil-typed fields are zero-sized and have no storage.
+        # Loading from such fields must return typed nil directly.
+        if field.type == HIR::TypeRef::NIL
+          return builder.const_nil_typed(convert_type(field.type))
+        end
 
-      # Large struct fields (> pointer size) are stored INLINE in their parent object.
-      # Return the GEP pointer directly — no additional load needed.
-      # Small structs (≤ 8 bytes) are stored as scalars, need normal load.
-      if hir_type_is_struct?(field.type) && !hir_type_is_lib_struct?(field.type)
-        inline_size = hir_type_inline_size(field.type)
-        if inline_size > pointer_word_bytes_i32
+        obj_ptr = get_value(field.object)
+
+        # GEP to field address
+        # field_offset is byte offset from object start
+        field_ptr = builder.gep(obj_ptr, [field.field_offset.to_u32], TypeRef::POINTER)
+
+        # Large struct fields (> pointer size) are stored INLINE in their parent object.
+        # Return the GEP pointer directly — no additional load needed.
+        # Small structs (≤ 8 bytes) are stored as scalars, need normal load.
+        if hir_type_is_struct?(field.type) && !hir_type_is_lib_struct?(field.type)
+          inline_size = hir_type_inline_size(field.type)
+          if inline_size > pointer_word_bytes_i32
+            @inline_struct_ptrs << field.id
+            return field_ptr
+          end
+        end
+        if @inline_struct_ptrs.includes?(field.object) && hir_type_is_struct?(field.type)
           @inline_struct_ptrs << field.id
-          return field_ptr
+          field_ptr
+        elsif hir_type_is_static_array?(field.type)
+          # StaticArray is always inline in its parent — return GEP pointer directly
+          @inline_struct_ptrs << field.id
+          field_ptr
+        elsif hir_type_is_lib_struct?(field.type)
+          # Lib struct fields are stored inline (via memcopy in FieldSet).
+          # Return the GEP pointer directly — the data is at the field address.
+          @inline_struct_ptrs << field.id
+          field_ptr
+        else
+          field_mir_type = convert_type(field.type)
+
+          # CRITICAL: If field_mir_type maps to an all-ref union, override to POINTER.
+          # All-ref unions are stored as raw pointers (no union discriminator).
+          # Loading them as tagged union struct {i32, [2 x i32]} reads garbage.
+          if field_mir_type != TypeRef::POINTER
+            if fd_check = @mir_module.get_union_descriptor(field_mir_type)
+              if all_ref_union_descriptor?(fd_check)
+                field_mir_type = TypeRef::POINTER
+              end
+            elsif field_mir_type_info = @mir_module.type_registry.get(field_mir_type)
+              if field_mir_type_info.kind.union? && field_mir_type_info.size == pointer_word_bytes_u64
+                field_mir_type = TypeRef::POINTER
+              end
+            end
+          end
+
+          # Check if the actual field storage type (from class layout) is a wider union
+          # than the FieldGet result type. This happens when type widening expands a
+          # declared type (e.g., ArenaLike = 3 variants, all-ref → ptr) to a wider union
+          # (e.g., 6 variants, non-all-ref → {i32, [N x i32]}). The FieldGet uses the
+          # narrow type but the field actually stores the wider union struct.
+          # In that case, load from the payload offset instead of the field base.
+          actual_load_type = field_mir_type
+          if obj_hir_type = @hir_value_types[field.object]?
+            obj_mir_type = convert_type(obj_hir_type)
+            if mir_type = @mir_module.type_registry.get(obj_mir_type)
+              if fields = mir_type.fields
+                if found_field = fields.find { |f| f.name == field.field_name && f.offset == field.field_offset.to_u32 }
+                  if found_field.type_ref != field_mir_type
+                    if actual_type = @mir_module.type_registry.get(found_field.type_ref)
+                      if actual_type.kind.union?
+                        # The field stores a non-all-ref union struct but FieldGet wants
+                        # a narrower type (ptr-backed all-ref union or plain reference).
+                        # Only adjust if the actual field is NOT an all-ref union (those
+                        # are already stored as ptr and don't need offset adjustment).
+                        actual_descriptor = @mir_module.get_union_descriptor(found_field.type_ref)
+                        if actual_descriptor && !all_ref_union_descriptor?(actual_descriptor)
+                          # Only adjust when the FieldGet type is ptr-backed (all-ref union
+                          # or plain reference). If the FieldGet type is ALSO a non-all-ref
+                          # union, the +4 adjustment would cause a double-unwrap.
+                          field_descriptor = @mir_module.get_union_descriptor(field_mir_type)
+                          field_is_allref = field_descriptor ? all_ref_union_descriptor?(field_descriptor) : true
+                          if field_is_allref
+                            # GEP past the union header to the payload and load from there.
+                            # The LLVM union type is {i32, [N x i32]} with payload at offset 4
+                            # (sizeof(i32) header).
+                            field_ptr = builder.gep(obj_ptr, [(field.field_offset.to_u32 + 4_u32)], TypeRef::POINTER)
+                          end
+                        end
+                      end
+                    end
+                  end
+                end
+              end
+            end
+          end
+
+          builder.load(field_ptr, actual_load_type)
         end
       end
-      if @inline_struct_ptrs.includes?(field.object) && hir_type_is_struct?(field.type)
-        @inline_struct_ptrs << field.id
-        field_ptr
-      elsif hir_type_is_static_array?(field.type)
-        # StaticArray is always inline in its parent — return GEP pointer directly
-        @inline_struct_ptrs << field.id
-        field_ptr
-      elsif hir_type_is_lib_struct?(field.type)
-        # Lib struct fields are stored inline (via memcopy in FieldSet).
-        # Return the GEP pointer directly — the data is at the field address.
-        @inline_struct_ptrs << field.id
-        field_ptr
-      else
-        field_mir_type = convert_type(field.type)
 
-        # CRITICAL: If field_mir_type maps to an all-ref union, override to POINTER.
-        # All-ref unions are stored as raw pointers (no union discriminator).
-        # Loading them as tagged union struct {i32, [2 x i32]} reads garbage.
-        if field_mir_type != TypeRef::POINTER
-          if fd_check = @mir_module.get_union_descriptor(field_mir_type)
-            if all_ref_union_descriptor?(fd_check)
-              field_mir_type = TypeRef::POINTER
+      private def lower_field_set(field : HIR::FieldSet) : ValueId
+        builder = @builder.not_nil!
+        obj_ptr = get_value(field.object)
+        value = get_value(field.value)
+
+        # Nil-typed fields are zero-sized placeholders with no backing storage.
+        # Emitting a physical store for them can clobber adjacent fields that share
+        # the same byte offset (for example in Hash::Entry(K, Nil)).
+        if field.type == HIR::TypeRef::NIL
+          return value
+        end
+
+        # Check if the field is a union type but the value being stored is not.
+        # If so, wrap the value in a union before storing (e.g., storing a Proc
+        # into a (Proc | Nil) ivar).
+        field_mir_type = convert_type(field.type)
+        if is_union_type?(field_mir_type)
+          value_hir_type = @hir_value_types[field.value]?
+          if value_hir_type
+            value_mir_type = convert_type(value_hir_type)
+            if !is_union_type?(value_mir_type)
+              if descriptor = @mir_module.get_union_descriptor(field_mir_type)
+                if variant = descriptor.variants.find { |v| v.type_ref == value_mir_type }
+                  value = builder.union_wrap(value, variant.type_id, field_mir_type)
+                end
+              end
             end
-          elsif field_mir_type_info = @mir_module.type_registry.get(field_mir_type)
-            if field_mir_type_info.kind.union? && field_mir_type_info.size == pointer_word_bytes_u64
-              field_mir_type = TypeRef::POINTER
-            end
+          end
+        elsif field.type != HIR::TypeRef::VOID
+          # Coerce scalar stores to the declared field type.
+          # This is required for assignments like @u8 = 0 where the literal is Int32.
+          value_hir_type = @hir_value_types[field.value]? || field.type
+          value = coerce_value_for_field_store(builder, value, value_hir_type, field.type)
+        end
+
+        # GEP to field address + store
+        field_ptr = builder.gep(obj_ptr, [field.field_offset.to_u32], TypeRef::POINTER)
+
+        # For struct, lib struct, and StaticArray fields with inline size > pointer size,
+        # copy the data inline using memcpy. Smaller structs (≤ 8 bytes) can be stored
+        # directly as scalar values.
+        is_crystal_struct = hir_type_is_struct?(field.type) && !hir_type_is_lib_struct?(field.type)
+        is_lib = hir_type_is_lib_struct?(field.type)
+        is_static_array = hir_type_is_static_array?(field.type)
+        # Only memcopy if the struct is larger than a pointer (needs inline storage)
+        inline_size = is_crystal_struct ? hir_type_inline_size(field.type).to_u64 : 0_u64
+        use_memcopy = is_lib || is_static_array || (is_crystal_struct && inline_size > pointer_word_bytes_u64)
+        if use_memcopy
+          struct_size = if is_lib
+                          hir_type_lib_struct_size(field.type)
+                        else
+                          hir_type_inline_size(field.type).to_u64
+                        end
+          if struct_size > 0
+            builder.memcopy(field_ptr, value, struct_size)
+            return value
           end
         end
 
-        # Check if the actual field storage type (from class layout) is a wider union
-        # than the FieldGet result type. This happens when type widening expands a
-        # declared type (e.g., ArenaLike = 3 variants, all-ref → ptr) to a wider union
-        # (e.g., 6 variants, non-all-ref → {i32, [N x i32]}). The FieldGet uses the
-        # narrow type but the field actually stores the wider union struct.
-        # In that case, load from the payload offset instead of the field base.
-        actual_load_type = field_mir_type
+        # Look up the actual field type from the object's class layout.
+        # The FieldSet may carry a declared type (e.g. 3-variant all-ref union → ptr)
+        # while the class layout has a wider type (e.g. 6-variant non-all-ref union → struct).
+        actual_field_type = field_mir_type
         if obj_hir_type = @hir_value_types[field.object]?
           obj_mir_type = convert_type(obj_hir_type)
           if mir_type = @mir_module.type_registry.get(obj_mir_type)
             if fields = mir_type.fields
+              # Match by both field name and offset for safety
               if found_field = fields.find { |f| f.name == field.field_name && f.offset == field.field_offset.to_u32 }
                 if found_field.type_ref != field_mir_type
+                  # Only override if the actual field type is a union type (non-all-ref)
+                  # This prevents incorrect overrides for fields where types differ
+                  # due to type aliasing but are actually compatible
                   if actual_type = @mir_module.type_registry.get(found_field.type_ref)
                     if actual_type.kind.union?
-                      # The field stores a non-all-ref union struct but FieldGet wants
-                      # a narrower type (ptr-backed all-ref union or plain reference).
-                      # Only adjust if the actual field is NOT an all-ref union (those
-                      # are already stored as ptr and don't need offset adjustment).
-                      actual_descriptor = @mir_module.get_union_descriptor(found_field.type_ref)
-                      if actual_descriptor && !all_ref_union_descriptor?(actual_descriptor)
-                        # Only adjust when the FieldGet type is ptr-backed (all-ref union
-                        # or plain reference). If the FieldGet type is ALSO a non-all-ref
-                        # union, the +4 adjustment would cause a double-unwrap.
-                        field_descriptor = @mir_module.get_union_descriptor(field_mir_type)
-                        field_is_allref = field_descriptor ? all_ref_union_descriptor?(field_descriptor) : true
-                        if field_is_allref
-                          # GEP past the union header to the payload and load from there.
-                          # The LLVM union type is {i32, [N x i32]} with payload at offset 4
-                          # (sizeof(i32) header).
-                          field_ptr = builder.gep(obj_ptr, [(field.field_offset.to_u32 + 4_u32)], TypeRef::POINTER)
-                        end
-                      end
+                      actual_field_type = found_field.type_ref
                     end
                   end
                 end
@@ -1958,2514 +2075,82 @@ module Crystal
           end
         end
 
-        builder.load(field_ptr, actual_load_type)
-      end
-    end
-
-    private def lower_field_set(field : HIR::FieldSet) : ValueId
-      builder = @builder.not_nil!
-      obj_ptr = get_value(field.object)
-      value = get_value(field.value)
-
-      # Nil-typed fields are zero-sized placeholders with no backing storage.
-      # Emitting a physical store for them can clobber adjacent fields that share
-      # the same byte offset (for example in Hash::Entry(K, Nil)).
-      if field.type == HIR::TypeRef::NIL
-        return value
-      end
-
-      # Check if the field is a union type but the value being stored is not.
-      # If so, wrap the value in a union before storing (e.g., storing a Proc
-      # into a (Proc | Nil) ivar).
-      field_mir_type = convert_type(field.type)
-      if is_union_type?(field_mir_type)
-        value_hir_type = @hir_value_types[field.value]?
-        if value_hir_type
-          value_mir_type = convert_type(value_hir_type)
-          if !is_union_type?(value_mir_type)
-            if descriptor = @mir_module.get_union_descriptor(field_mir_type)
-              if variant = descriptor.variants.find { |v| v.type_ref == value_mir_type }
-                value = builder.union_wrap(value, variant.type_id, field_mir_type)
-              end
+        # rc_inc for reference-typed field values: the object now holds a reference.
+        # Covers reference types, arrays, and all-ref unions (e.g. TreeNode? = Nil | TreeNode).
+        # Skip constants (string literals, globals) — they're static data, not heap-allocated.
+        unless @hir_constant_values.includes?(field.value)
+          if value_hir_type = @hir_value_types[field.value]?
+            if type_needs_rc?(convert_type(value_hir_type))
+              builder.rc_inc(value)
             end
           end
         end
-      elsif field.type != HIR::TypeRef::VOID
-        # Coerce scalar stores to the declared field type.
-        # This is required for assignments like @u8 = 0 where the literal is Int32.
-        value_hir_type = @hir_value_types[field.value]? || field.type
-        value = coerce_value_for_field_store(builder, value, value_hir_type, field.type)
+
+        # Create store with optional field_type annotation so the LLVM backend
+        # can detect ptr→union-struct mismatches and construct the proper
+        # tagged union value when a narrow all-ref union is stored to a wider
+        # non-all-ref union field.
+        store_inst = MIR::Store.new(builder.next_id, field_ptr, value)
+        store_inst.field_type = actual_field_type
+
+        builder.emit(store_inst)
+        value
       end
 
-      # GEP to field address + store
-      field_ptr = builder.gep(obj_ptr, [field.field_offset.to_u32], TypeRef::POINTER)
+      private def coerce_value_for_field_store(
+        builder : Builder,
+        value : ValueId,
+        src_hir_type : HIR::TypeRef,
+        dst_hir_type : HIR::TypeRef,
+      ) : ValueId
+        return value if dst_hir_type == HIR::TypeRef::VOID || src_hir_type == dst_hir_type
 
-      # For struct, lib struct, and StaticArray fields with inline size > pointer size,
-      # copy the data inline using memcpy. Smaller structs (≤ 8 bytes) can be stored
-      # directly as scalar values.
-      is_crystal_struct = hir_type_is_struct?(field.type) && !hir_type_is_lib_struct?(field.type)
-      is_lib = hir_type_is_lib_struct?(field.type)
-      is_static_array = hir_type_is_static_array?(field.type)
-      # Only memcopy if the struct is larger than a pointer (needs inline storage)
-      inline_size = is_crystal_struct ? hir_type_inline_size(field.type).to_u64 : 0_u64
-      use_memcopy = is_lib || is_static_array || (is_crystal_struct && inline_size > pointer_word_bytes_u64)
-      if use_memcopy
-        struct_size = if is_lib
-                        hir_type_lib_struct_size(field.type)
-                      else
-                        hir_type_inline_size(field.type).to_u64
-                      end
-        if struct_size > 0
-          builder.memcopy(field_ptr, value, struct_size)
-          return value
+        src_type = convert_type(src_hir_type)
+        dst_type = convert_type(dst_hir_type)
+        return value if src_type == dst_type
+
+        if src_hir_type == HIR::TypeRef::NIL
+          return builder.const_nil_typed(dst_type) if dst_type == TypeRef::POINTER || dst_type == TypeRef::NIL
         end
-      end
 
-      # Look up the actual field type from the object's class layout.
-      # The FieldSet may carry a declared type (e.g. 3-variant all-ref union → ptr)
-      # while the class layout has a wider type (e.g. 6-variant non-all-ref union → struct).
-      actual_field_type = field_mir_type
-      if obj_hir_type = @hir_value_types[field.object]?
-        obj_mir_type = convert_type(obj_hir_type)
-        if mir_type = @mir_module.type_registry.get(obj_mir_type)
-          if fields = mir_type.fields
-            # Match by both field name and offset for safety
-            if found_field = fields.find { |f| f.name == field.field_name && f.offset == field.field_offset.to_u32 }
-              if found_field.type_ref != field_mir_type
-                # Only override if the actual field type is a union type (non-all-ref)
-                # This prevents incorrect overrides for fields where types differ
-                # due to type aliasing but are actually compatible
-                if actual_type = @mir_module.type_registry.get(found_field.type_ref)
-                  if actual_type.kind.union?
-                    actual_field_type = found_field.type_ref
-                  end
-                end
-              end
-            end
-          end
-        end
-      end
+        int_like_src = hir_int_like?(src_hir_type)
+        int_like_dst = hir_int_like?(dst_hir_type)
+        float_like_src = hir_float_like?(src_hir_type)
+        float_like_dst = hir_float_like?(dst_hir_type)
 
-      # rc_inc for reference-typed field values: the object now holds a reference.
-      # Covers reference types, arrays, and all-ref unions (e.g. TreeNode? = Nil | TreeNode).
-      # Skip constants (string literals, globals) — they're static data, not heap-allocated.
-      unless @hir_constant_values.includes?(field.value)
-        if value_hir_type = @hir_value_types[field.value]?
-          if type_needs_rc?(convert_type(value_hir_type))
-            builder.rc_inc(value)
-          end
-        end
-      end
-
-      # Create store with optional field_type annotation so the LLVM backend
-      # can detect ptr→union-struct mismatches and construct the proper
-      # tagged union value when a narrow all-ref union is stored to a wider
-      # non-all-ref union field.
-      store_inst = MIR::Store.new(builder.next_id, field_ptr, value)
-      store_inst.field_type = actual_field_type
-
-      builder.emit(store_inst)
-      value
-    end
-
-    private def coerce_value_for_field_store(
-      builder : Builder,
-      value : ValueId,
-      src_hir_type : HIR::TypeRef,
-      dst_hir_type : HIR::TypeRef
-    ) : ValueId
-      return value if dst_hir_type == HIR::TypeRef::VOID || src_hir_type == dst_hir_type
-
-      src_type = convert_type(src_hir_type)
-      dst_type = convert_type(dst_hir_type)
-      return value if src_type == dst_type
-
-      if src_hir_type == HIR::TypeRef::NIL
-        return builder.const_nil_typed(dst_type) if dst_type == TypeRef::POINTER || dst_type == TypeRef::NIL
-      end
-
-      int_like_src = hir_int_like?(src_hir_type)
-      int_like_dst = hir_int_like?(dst_hir_type)
-      float_like_src = hir_float_like?(src_hir_type)
-      float_like_dst = hir_float_like?(dst_hir_type)
-
-      if src_type == TypeRef::POINTER && int_like_dst
-        return builder.cast(CastKind::PtrToInt, value, dst_type)
-      elsif int_like_src && dst_type == TypeRef::POINTER
-        return builder.cast(CastKind::IntToPtr, value, dst_type)
-      elsif int_like_src && int_like_dst
-        src_size = type_size(src_hir_type)
-        dst_size = type_size(dst_hir_type)
-        if dst_size < src_size
-          return builder.cast(CastKind::Trunc, value, dst_type)
-        elsif dst_size > src_size
-          cast_kind = hir_signed_int?(src_hir_type) ? CastKind::SExt : CastKind::ZExt
-          return builder.cast(cast_kind, value, dst_type)
-        else
-          return builder.cast(CastKind::Bitcast, value, dst_type)
-        end
-      elsif float_like_src && float_like_dst
-        src_size = type_size(src_hir_type)
-        dst_size = type_size(dst_hir_type)
-        cast_kind = dst_size < src_size ? CastKind::FPTrunc : CastKind::FPExt
-        return builder.cast(cast_kind, value, dst_type)
-      elsif float_like_src && int_like_dst
-        cast_kind = hir_signed_int?(dst_hir_type) ? CastKind::FPToSI : CastKind::FPToUI
-        return builder.cast(cast_kind, value, dst_type)
-      elsif int_like_src && float_like_dst
-        cast_kind = hir_signed_int?(src_hir_type) ? CastKind::SIToFP : CastKind::UIToFP
-        return builder.cast(cast_kind, value, dst_type)
-      end
-
-      # Conservative fallback for representationally compatible values.
-      builder.cast(CastKind::Bitcast, value, dst_type)
-    end
-
-    private def hir_int_like?(t : HIR::TypeRef) : Bool
-      case t
-      when HIR::TypeRef::BOOL,
-           HIR::TypeRef::INT8, HIR::TypeRef::INT16, HIR::TypeRef::INT32, HIR::TypeRef::INT64, HIR::TypeRef::INT128,
-           HIR::TypeRef::UINT8, HIR::TypeRef::UINT16, HIR::TypeRef::UINT32, HIR::TypeRef::UINT64, HIR::TypeRef::UINT128,
-           HIR::TypeRef::CHAR
-        true
-      else
-        false
-      end
-    end
-
-    private def hir_float_like?(t : HIR::TypeRef) : Bool
-      t == HIR::TypeRef::FLOAT32 || t == HIR::TypeRef::FLOAT64
-    end
-
-    private def hir_signed_int?(t : HIR::TypeRef) : Bool
-      case t
-      when HIR::TypeRef::INT8, HIR::TypeRef::INT16, HIR::TypeRef::INT32, HIR::TypeRef::INT64, HIR::TypeRef::INT128
-        true
-      else
-        false
-      end
-    end
-
-    # Check if a HIR TypeRef refers to a struct (value type).
-    # Includes generic struct instantiations like Slice(UInt8), Tuple(X,Y).
-    private def hir_type_is_struct?(type : HIR::TypeRef) : Bool
-      return false if type.id < HIR::TypeRef::FIRST_USER_TYPE
-      desc = @hir_module.get_type_descriptor(type)
-      return false unless desc
-      return true if desc.kind == HIR::TypeKind::Struct
-      return true if desc.kind == HIR::TypeKind::Tuple
-      return true if desc.kind == HIR::TypeKind::NamedTuple
-      # Generic instantiations (Slice(UInt8), etc.) — check by MIR type registry
-      if desc.kind == HIR::TypeKind::Generic
-        mir_type = @mir_module.type_registry.get_by_name(desc.name)
-        if mir_type && mir_type.kind.struct?
-          return true
-        end
-        # Fallback: check if the MIR has a named type that's struct
-        base_name = desc.name.partition('(').first
-        if base_name == "Slice" || base_name == "Range" || base_name == "StaticArray"
-          return true
-        end
-      end
-      false
-    end
-
-    private def hir_type_is_static_array?(type : HIR::TypeRef) : Bool
-      return false if type.id < HIR::TypeRef::FIRST_USER_TYPE
-      desc = @hir_module.get_type_descriptor(type)
-      return false unless desc
-      desc.name.starts_with?("StaticArray(")
-    end
-
-    private def hir_type_is_lib_struct?(type : HIR::TypeRef) : Bool
-      return false if type.id < HIR::TypeRef::FIRST_USER_TYPE
-      desc = @hir_module.get_type_descriptor(type)
-      return false unless desc
-      return false unless desc.kind == HIR::TypeKind::Struct
-      lib_set = @hir_module.lib_structs
-      lib_set.includes?(desc.name) || lib_set.any? { |ls| ls.ends_with?("::#{desc.name}") || desc.name.ends_with?("::#{ls.split("::").last}") }
-    end
-
-    private def hir_type_lib_struct_size(type : HIR::TypeRef) : UInt64
-      mir_ref = convert_type(type)
-      if mir_type = @mir_module.type_registry.get(mir_ref)
-        return mir_type.size if mir_type.size > 0
-      end
-      0_u64
-    end
-
-    # Get the inline size of a struct type (from class_info via MIR type registry).
-    private def hir_type_inline_size(type : HIR::TypeRef) : Int32
-      mir_ref = convert_type(type)
-      if mir_type = @mir_module.type_registry.get(mir_ref)
-        return mir_type.size.to_i32 if mir_type.size > 0
-      end
-      0
-    end
-
-    # Resolve MIR element type for HIR Pointer(T).
-    private def pointer_element_mir_type(pointer_hir_type : HIR::TypeRef?) : TypeRef?
-      return nil unless pointer_hir_type
-      desc = @hir_module.get_type_descriptor(pointer_hir_type)
-      return nil unless desc
-      return nil unless desc.name.starts_with?("Pointer(")
-
-      if elem_hir = desc.type_params.first?
-        return convert_type(elem_hir)
-      end
-
-      elem_name = desc.name[8, desc.name.size - 9]
-      if elem_mir = @mir_module.type_registry.get_by_name(elem_name)
-        return TypeRef.new(elem_mir.id)
-      end
-
-      nil
-    end
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # Index Access Lowering
-    # ─────────────────────────────────────────────────────────────────────────
-
-    private def lower_index_get(idx : HIR::IndexGet) : ValueId
-      builder = @builder.not_nil!
-      obj_ptr = get_value(idx.object)
-      index = get_value(idx.index)
-
-      # Get element type from context (default to INT32 for now)
-      element_type = convert_type(idx.type)
-      if element_type == MIR::TypeRef::NIL
-        return builder.const_nil_typed(element_type)
-      end
-      if element_type.id == MIR::TypeRef::VOID.id
-        element_type = MIR::TypeRef::INT32
-      end
-
-      # Detect StaticArray container so LLVM backend uses inline element access
-      container_type : MIR::TypeRef? = nil
-      if obj_hir_type = @hir_value_types[idx.object]?
-        if hir_type_is_static_array?(obj_hir_type)
-          container_type = convert_type(obj_hir_type)
-        end
-      end
-
-      # Emit ArrayGet instruction
-      arr_get = MIR::ArrayGet.new(
-        builder.next_id,
-        element_type,
-        obj_ptr,
-        index,
-        container_type
-      )
-      builder.emit(arr_get)
-    end
-
-    private def lower_index_set(idx : HIR::IndexSet) : ValueId
-      builder = @builder.not_nil!
-      obj_ptr = get_value(idx.object)
-      index = get_value(idx.index)
-      value = get_value(idx.value)
-
-      # Get element type - use type from HIR IndexSet.type or default to INT32
-      element_type = convert_type(idx.type)
-      if element_type == MIR::TypeRef::NIL
-        return builder.const_nil_typed(element_type)
-      end
-      if element_type.id == MIR::TypeRef::VOID.id
-        element_type = MIR::TypeRef::INT32
-      end
-
-      # Detect StaticArray container so LLVM backend uses inline element access
-      container_type : MIR::TypeRef? = nil
-      if obj_hir_type = @hir_value_types[idx.object]?
-        if hir_type_is_static_array?(obj_hir_type)
-          container_type = convert_type(obj_hir_type)
-        end
-      end
-
-      # Emit ArraySet instruction
-      arr_set = MIR::ArraySet.new(
-        builder.next_id,
-        element_type,
-        obj_ptr,
-        index,
-        value,
-        container_type
-      )
-      builder.emit(arr_set)
-
-      # rc_inc for reference-typed values: the array now holds a reference.
-      # Covers reference types, arrays, and all-ref unions (e.g. Node? = Nil | Node).
-      # Skip constants (string literals, globals) — they have INT64_MAX sentinel.
-      unless @hir_constant_values.includes?(idx.value)
-        if value_hir_type = @hir_value_types[idx.value]?
-          if type_needs_rc?(convert_type(value_hir_type))
-            builder.rc_inc(value)
-          end
-        end
-      end
-
-      value
-    end
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # Call Lowering
-    # ─────────────────────────────────────────────────────────────────────────
-
-    # Lower HIR::ExternCall to MIR::ExternCall (direct C function call)
-    private def lower_hir_extern_call(extern_call : HIR::ExternCall) : ValueId
-      builder = @builder.not_nil!
-
-      # Get arguments
-      args = extern_call.args.map { |arg| get_value(arg) }
-
-      # Emit MIR extern_call with the real C function name
-      builder.extern_call(extern_call.extern_name, args, convert_type(extern_call.type))
-    end
-
-    private def lower_call(call : HIR::Call) : ValueId
-      builder = @builder.not_nil!
-      debug_virtual = ENV.has_key?("DEBUG_VIRTUAL_CALLS")
-
-      # Get arguments
-      begin
-        args = call.args.map { |arg| get_value(arg) }
-      rescue ex : IndexError
-        raise "Index error getting args for call to #{call.method_name}: #{ex.message}"
-      end
-
-      # Add receiver as first arg if present
-      if recv = call.receiver
-        args.unshift(get_value(recv))
-      end
-      if debug_virtual && call.virtual
-        recv_type = call.receiver ? @hir_value_types[call.receiver.not_nil!]? : nil
-        recv_type_name = hir_type_name(recv_type)
-        STDERR.puts "[VIRTUAL_CALL] method=#{call.method_name} receiver=#{recv_type_name} args=#{call.args.size} func=#{@current_lowering_func_name}"
-      end
-
-      recv_type = call.receiver ? @hir_value_types[call.receiver.not_nil!]? : nil
-      recv_desc = recv_type ? @hir_module.get_type_descriptor(recv_type) : nil
-
-      # Union numeric conversions (to_i*, to_u*): inline by extracting payload bytes.
-      if recv_desc && recv_desc.kind == HIR::TypeKind::Union && call.args.empty?
-        if method_suffix = extract_method_suffix_loose(call.method_name)
-          if target_type = union_conversion_target_type(method_suffix)
-            if converted = lower_union_numeric_conversion(args[0], recv_type.not_nil!, target_type)
-              return converted
-            end
-          end
-        end
-      end
-
-      # Check if this is an external/runtime call
-      if call.method_name.starts_with?("__crystal_v2_")
-        return builder.extern_call(call.method_name, args, convert_type(call.type))
-      end
-
-      # Atomic intrinsics: Atomic(T)#get → load from self+0, Atomic(T)#set → store to self+0
-      # Original Crystal uses @[Primitive(:load_atomic)] / @[Primitive(:store_atomic)]
-      # but our compiler can't lower those primitives, so we inline them here.
-      if call.method_name.includes?("Atomic") && call.receiver
-        method_suffix = call.method_name.rpartition("#").last.split("$").first
-        if method_suffix == "get" || method_suffix == "Hget"
-          # Atomic#get: load value from self + 0
-          self_ptr = args[0]
-          val_ptr = builder.gep(self_ptr, [0_u32], TypeRef::POINTER)
-          return builder.load(val_ptr, convert_type(call.type))
-        elsif method_suffix == "set" || method_suffix == "Hset"
-          # Atomic#set: store value to self + 0
-          self_ptr = args[0]
-          new_val = args.size > 2 ? args[2] : (args.size > 1 ? args[1] : builder.const_int(0, TypeRef::INT32))
-          val_ptr = builder.gep(self_ptr, [0_u32], TypeRef::POINTER)
-          builder.store(val_ptr, new_val)
-          return new_val
-        elsif method_suffix == "swap" || method_suffix == "Hswap"
-          # Atomic#swap: load old, store new, return old
-          self_ptr = args[0]
-          new_val = args.size > 2 ? args[2] : (args.size > 1 ? args[1] : builder.const_int(0, TypeRef::INT32))
-          val_ptr = builder.gep(self_ptr, [0_u32], TypeRef::POINTER)
-          old_val = builder.load(val_ptr, convert_type(call.type))
-          builder.store(val_ptr, new_val)
-          return old_val
-        elsif method_suffix == "compare_and_set" || method_suffix == "Hcompare_and_set"
-          # Atomic#compare_and_set: non-atomic CAS (sufficient for single-threaded stage2)
-          # Returns {T, Bool} — old value and whether swap succeeded
-          self_ptr = args[0]
-          expected = args.size > 2 ? args[1] : (args.size > 1 ? args[1] : builder.const_int(0, TypeRef::INT32))
-          desired = args.size > 2 ? args[2] : (args.size > 1 ? args[1] : builder.const_int(0, TypeRef::INT32))
-
-          # Determine T from the expected arg's HIR type
-          val_type = if call.args.size >= 1
-                       hir_arg_type = @hir_value_types[call.args[0]]?
-                       hir_arg_type ? convert_type(hir_arg_type) : TypeRef::UINT32
-                     else
-                       TypeRef::UINT32
-                     end
-
-          # Load current value
-          val_ptr = builder.gep(self_ptr, [0_u32], TypeRef::POINTER)
-          old_val = builder.load(val_ptr, val_type)
-
-          # Compare old_val == expected
-          is_equal = builder.eq(old_val, expected)
-
-          # Conditional store: if equal, store desired; otherwise store old (no-op)
-          store_val = builder.select(is_equal, desired, old_val, val_type)
-          builder.store(val_ptr, store_val)
-
-          # Construct {T, Bool} result tuple on stack
-          tuple_type_ref = convert_type(call.type)
-          tuple_mir_type = @mir_module.type_registry.get(tuple_type_ref)
-
-          # Compute tuple size and element offsets using alignment-aware layout
-          val_size = case val_type
-                     when TypeRef::UINT8, TypeRef::INT8, TypeRef::BOOL then 1_u64
-                     when TypeRef::UINT16, TypeRef::INT16              then 2_u64
-                     when TypeRef::UINT32, TypeRef::INT32, TypeRef::FLOAT32 then 4_u64
-                     else 8_u64
-                     end
-          val_align = val_size
-          # Bool at offset = align(val_size, 1) = val_size
-          bool_offset = val_size
-          tuple_size = bool_offset + 1_u64
-          # Round up to alignment of largest element
-          tuple_size = (tuple_size + val_align - 1) & ~(val_align - 1)
-
-          tuple_ptr = builder.alloc(MemoryStrategy::Stack, tuple_type_ref, tuple_size, val_align.to_u32)
-
-          # Store old_val at offset 0
-          field0_ptr = builder.gep(tuple_ptr, [0_u32], TypeRef::POINTER)
-          builder.store(field0_ptr, old_val)
-
-          # Store is_equal (Bool) at bool_offset
-          field1_ptr = builder.gep(tuple_ptr, [bool_offset.to_u32], TypeRef::POINTER)
-          builder.store(field1_ptr, is_equal)
-
-          return tuple_ptr
-        end
-      end
-
-      # Intercept unsafe_as calls: when HIR-level interception failed (stringify_type_expr
-      # returned nil), the call arrives here as e.g. "UInt32#unsafe_as" / "Pointer(UInt8)#unsafe_as".
-      # Lower it as a reinterpret cast instead of a broken method call.
-      if call.method_name.includes?("unsafe_as") || call.method_name.includes?("Hunsafe_as")
-        src_val = args[0] # receiver = value to cast
-        dst_type = convert_type(call.type)
-        src_hir_type = call.receiver ? @hir_value_types[call.receiver.not_nil!]? : nil
-        dst_hir_type = call.type
-
-        # Classify source and destination as primitive-int, primitive-ptr, or object-ptr
-        src_prim = primitive_hir_type?(src_hir_type)
-        dst_prim = primitive_hir_type?(dst_hir_type)
-
-        if src_prim && dst_prim
-          # Both primitive: use type_size to pick cast kind
-          src_size = type_size(src_hir_type.not_nil!)
+        if src_type == TypeRef::POINTER && int_like_dst
+          return builder.cast(CastKind::PtrToInt, value, dst_type)
+        elsif int_like_src && dst_type == TypeRef::POINTER
+          return builder.cast(CastKind::IntToPtr, value, dst_type)
+        elsif int_like_src && int_like_dst
+          src_size = type_size(src_hir_type)
           dst_size = type_size(dst_hir_type)
-          src_is_ptr = src_hir_type == HIR::TypeRef::POINTER
-          dst_is_ptr = dst_hir_type == HIR::TypeRef::POINTER
-          if src_is_ptr && dst_is_ptr
-            return src_val
-          elsif !src_is_ptr && dst_is_ptr
-            return builder.cast(CastKind::IntToPtr, src_val, dst_type)
-          elsif src_is_ptr && !dst_is_ptr
-            return builder.cast(CastKind::PtrToInt, src_val, dst_type)
-          elsif dst_size < src_size
-            return builder.cast(CastKind::Trunc, src_val, dst_type)
+          if dst_size < src_size
+            return builder.cast(CastKind::Trunc, value, dst_type)
           elsif dst_size > src_size
-            return builder.cast(CastKind::ZExt, src_val, dst_type)
+            cast_kind = hir_signed_int?(src_hir_type) ? CastKind::SExt : CastKind::ZExt
+            return builder.cast(cast_kind, value, dst_type)
           else
-            return builder.cast(CastKind::Bitcast, src_val, dst_type)
+            return builder.cast(CastKind::Bitcast, value, dst_type)
           end
-        elsif !src_prim && dst_prim
-          # V2 struct-as-pointer ABI: object pointer → primitive value.
-          # In V2, primitives in unions/vdispatch are heap-allocated pointers.
-          # Load the actual value instead of truncating the pointer address.
-          dst_is_ptr = dst_hir_type == HIR::TypeRef::POINTER
-          return dst_is_ptr ? src_val : builder.load(src_val, dst_type)
-        elsif src_prim && !dst_prim
-          # Primitive int → object ptr: inttoptr
-          src_is_ptr = src_hir_type == HIR::TypeRef::POINTER
-          return src_is_ptr ? src_val : builder.cast(CastKind::IntToPtr, src_val, dst_type)
-        else
-          # Both object types: ptr → ptr passthrough
-          return src_val
-        end
-      end
-
-      # Special handling for Proc#call - emit indirect call through function pointer
-      # Proc calls have format "call$Type" or just "call" and receiver is a Proc type
-      # Also match "call(...)" patterns from typed proc calls
-      # Also handle Proc-shorthand types like "(A, B -> C)#call" from monomorphized generics
-      is_proc_call = call.method_name == "call" ||
-                     call.method_name.starts_with?("call$") ||
-                     call.method_name.starts_with?("call(") ||
-                     call.method_name == "Proc#call" ||
-                     call.method_name.starts_with?("Proc#call$") ||
-                     call.method_name.starts_with?("Proc#call(") ||
-                     call.method_name.includes?("#call") ||  # e.g., "(A, B -> C)#call"
-                     call.method_name.includes?("->") && call.method_name.ends_with?("#call")
-      if ENV.has_key?("DEBUG_PROC_CALL") && call.method_name.includes?("call")
-        recv_type = call.receiver ? @hir_value_types[call.receiver.not_nil!]? : nil
-        recv_desc = recv_type ? @hir_module.get_type_descriptor(recv_type) : nil
-        STDERR.puts "[PROC_CALL] func=#{@current_lowering_func_name} method=#{call.method_name} receiver=#{call.receiver} recv_type=#{recv_type.try(&.id)} recv_desc=#{recv_desc.try(&.name)} kind=#{recv_desc.try(&.kind)}"
-      end
-      if call.receiver && is_proc_call
-        recv_type = @hir_value_types[call.receiver.not_nil!]?
-        recv_desc = recv_type ? @hir_module.get_type_descriptor(recv_type) : nil
-        if recv_type
-          if recv_desc && (recv_desc.kind == HIR::TypeKind::Proc || recv_desc.name == "Proc" || recv_desc.name.starts_with?("Proc("))
-            # Proc is a function pointer - emit indirect call
-            # args[0] = receiver (func ptr), args[1..] = actual arguments
-            filtered_args = [] of ValueId
-            filtered_args << args[0]
-            call.args.each_with_index do |arg_id, idx|
-              arg_type = @hir_value_types[arg_id]?
-              in_map = @value_map.has_key?(arg_id)
-              next if arg_type == HIR::TypeRef::VOID
-              next unless in_map
-              filtered_args << args[idx + 1]
-            end
-            return builder.call_indirect(filtered_args[0], filtered_args[1..].to_a, convert_type(call.type))
-          end
-        end
-      end
-
-      # Intercept IO#puts/print for Float64/Float32 BEFORE virtual dispatch.
-      # Float::Printer.shortest is broken (yield/block issues), so redirect to printf-based helpers.
-      if args.size == 2 # self (IO) + float value
-        _mn = call.method_name
-        float_extern = if _mn.includes?("puts$Float64")
-                          "__crystal_v2_print_float64_ln"
-                        elsif _mn.includes?("puts$Float32")
-                          "__crystal_v2_print_float32_ln"
-                        elsif _mn.includes?("print$Float64")
-                          "__crystal_v2_print_float64"
-                        elsif _mn.includes?("print$Float32")
-                          "__crystal_v2_print_float32"
-                        else
-                          nil
-                        end
-        if float_extern
-          # Pass only the float argument (args[1]), not the IO self
-          return builder.extern_call(float_extern, [args[1]], TypeRef::VOID)
-        end
-      end
-
-      # Some inherited wrappers are lowered with `virtual = false` but still call a
-      # parent-owned instance method on `self` (e.g. IO::Memory#read_fully ->
-      # IO#read_fully?). Treat these as virtual to preserve dynamic dispatch.
-      force_virtual_dispatch = false
-      if !call.virtual && call.receiver && recv_desc && recv_desc.kind == HIR::TypeKind::Class
-        if hash_pos = call.method_name.index('#')
-          owner_name = call.method_name.byte_slice(0, hash_pos)
-          if owner_name != recv_desc.name && !call.method_name.includes?("_super")
-            force_virtual_dispatch = true
-          end
-        end
-      end
-
-      if call.virtual || force_virtual_dispatch
-        if dispatched = lower_virtual_dispatch(call, args)
-          return dispatched
-        end
-      end
-
-      # Strip a synthetic _super call tag from method names generated by
-      # lower_super (ast_to_hir.cr). Some real lowered helper bodies also use
-      # `_super` in their actual symbol name; keep those intact or we'll recurse
-      # back into the current wrapper (for example Slice#reverse! -> Slice#reverse!).
-      method_name_str = call.method_name
-      if method_name_str.ends_with?("_super") && @mir_module.get_function(method_name_str).nil?
-        method_name_str = method_name_str[0, method_name_str.size - 6]
-      end
-      colon_pos = method_name_str.index(':')
-      dollar_pos = method_name_str.index('$')
-      base_method_name = if colon_pos || dollar_pos
-                           split_pos = [colon_pos || method_name_str.size, dollar_pos || method_name_str.size].min
-                           method_name_str[0, split_pos]
-                         else
-                           method_name_str
-                         end
-
-      # Look up function by name - try exact match first, then fuzzy match
-      func = @mir_module.get_function(method_name_str)
-
-      # If not found, try fuzzy matching to handle type variations (e.g., String vs String | Nil)
-      unless func
-        if debug_virtual && call.virtual
-          STDERR.puts "[VIRTUAL_CALL] unresolved method=#{method_name_str} base=#{base_method_name} func=#{@current_lowering_func_name}"
-        end
-        # Only apply fuzzy matching for qualified method names (containing . or #)
-        if method_name_str.includes?('.') || method_name_str.includes?('#')
-          # Extract base name (before $ type suffix) without allocating
-          dollar_idx = method_name_str.index('$')
-          base_name = dollar_idx ? method_name_str[0, dollar_idx] : method_name_str
-
-          # Try to find the best overload by matching the type suffix.
-          # The method_name_str is e.g. "IO#<<$Char" and we need to find
-          # a MIR function with base "IO#<<" and suffix "Char".
-          if all_overloads = @functions_by_base_name_all[base_name]?
-            # First try exact suffix match
-            suffix = dollar_idx ? method_name_str[(dollar_idx + 1)..] : nil
-            if suffix && !suffix.empty?
-              func = all_overloads.find { |f|
-                f_dollar = f.name.index('$')
-                f_dollar && f.name[(f_dollar + 1)..] == suffix
-              }
-            end
-            # Fall back to first overload if no suffix match
-            func = all_overloads.first? unless func
-          else
-            # O(1) lookup via pre-computed index (legacy fallback)
-            func = @function_by_base_name[base_name]?
-          end
-        else
-          # For unqualified method names with a receiver, try to qualify based on receiver type
-          if call.receiver
-            recv_type = @hir_value_types[call.receiver.not_nil!]?
-            if recv_type
-              recv_desc = @hir_module.get_type_descriptor(recv_type)
-              type_name = recv_desc.try(&.name) || hir_type_name(recv_type)
-              if type_name && !type_name.empty?
-                # Try qualified name with type prefix
-                qualified_name = "#{type_name}##{method_name_str}"
-                func = @mir_module.get_function(qualified_name)
-
-                # If not found, try fuzzy matching via index
-                unless func
-                  q_dollar = qualified_name.index('$')
-                  q_base = q_dollar ? qualified_name[0, q_dollar] : qualified_name
-                  func = @function_by_base_name[q_base]?
-                end
-              end
-            end
-          end
-        end
-      end
-
-      if func
-        if ENV["DEBUG_JOIN_MIR_CALL"]? &&
-           @current_lowering_func_name.includes?("Path#join$Tuple") &&
-           call.method_name.includes?("Path#join")
-          STDERR.puts "[JOIN_MIR_CALL] current=#{@current_lowering_func_name} call=#{call.method_name} resolved=#{func.name}"
-        end
-        callee_id = func.id
-        # Build hir_args that matches mir_args ordering (receiver first, then explicit args)
-        hir_args_for_coerce = if recv = call.receiver
-                                 [recv] + call.args
-                               else
-                                 call.args
-                               end
-
-        # Dot-methods (module/class methods) can resolve to static functions whose
-        # signature does not include receiver `self`. For those, drop the receiver
-        # argument before coercion to keep call ABI aligned with callee params.
-        callee_param_count = func.params.size
-        drop_dispatch_receiver = should_drop_dispatch_receiver?(
-          call.receiver,
-          method_name_str,
-          args,
-          func,
-          hir_args_for_coerce
-        )
-
-        effective_args = args
-        effective_hir_args = hir_args_for_coerce
-        if drop_dispatch_receiver
-          effective_args = args[1, callee_param_count]
-          effective_hir_args = call.args
-        end
-        if callee_param_count < effective_args.size
-          effective_args = effective_args[0, callee_param_count]
-          effective_hir_args = effective_hir_args[0, callee_param_count]? || effective_hir_args
-        end
-
-        coerced_args = coerce_call_args(builder, effective_args, effective_hir_args, func)
-        call_return_type = func.return_type
-        hir_call_return_type = convert_type(call.type)
-        if is_union_type?(hir_call_return_type) && !is_union_type?(func.return_type)
-          # Keep HIR-level union contract when callee ABI is scalar/pointer.
-          # Backend will wrap ABI result into expected union shape.
-          call_return_type = hir_call_return_type
-        elsif call_return_type == TypeRef::VOID && hir_call_return_type != TypeRef::VOID
-          call_return_type = hir_call_return_type
-        end
-        return builder.call(callee_id, coerced_args, call_return_type)
-      end
-
-      # Built-in print functions (fallback only when no user-defined function exists).
-      if base_method_name == "puts"
-        # Determine the actual extern based on argument type
-        if args.size == 1
-          # Get arg type - could be from call.args[0] or from receiver
-          arg_type = if call.args.size > 0
-                       get_arg_type(call.args[0])
-                     elsif recv_id = call.receiver
-                       get_arg_type(recv_id)
-                     else
-                       TypeRef::STRING
-                     end
-          extern_name = case arg_type
-                        when TypeRef::INT32, TypeRef::UINT32, TypeRef::CHAR
-                          "__crystal_v2_print_int32_ln"
-                        when TypeRef::INT64, TypeRef::UINT64
-                          "__crystal_v2_print_int64_ln"
-                        when TypeRef::FLOAT32
-                          "__crystal_v2_print_float32_ln"
-                        when TypeRef::FLOAT64
-                          "__crystal_v2_print_float64_ln"
-                        when TypeRef::STRING, TypeRef::POINTER
-                          "__crystal_v2_puts"
-                        else
-                          # Default to int32 for unknown numeric types
-                          "__crystal_v2_print_int32_ln"
-                        end
-          return builder.extern_call(extern_name, args, TypeRef::VOID)
-        end
-      end
-
-      # Handle print (without newline)
-      if base_method_name == "print"
-        if args.size == 1
-          # Get arg type - could be from call.args[0] or from receiver
-          arg_type = if call.args.size > 0
-                       get_arg_type(call.args[0])
-                     elsif recv_id = call.receiver
-                       get_arg_type(recv_id)
-                     else
-                       TypeRef::INT32
-                     end
-          extern_name = case arg_type
-                        when TypeRef::INT32, TypeRef::UINT32, TypeRef::CHAR
-                          "__crystal_v2_print_int32"
-                        when TypeRef::INT64, TypeRef::UINT64
-                          "__crystal_v2_print_int64"
-                        when TypeRef::FLOAT32
-                          "__crystal_v2_print_float32"
-                        when TypeRef::FLOAT64
-                          "__crystal_v2_print_float64"
-                        else
-                          "__crystal_v2_print_int32"
-                        end
-          return builder.extern_call(extern_name, args, TypeRef::VOID)
-        end
-      end
-
-      # Handle exit() - call libc exit
-      if base_method_name == "exit" && args.size == 1
-        return builder.extern_call("exit", args, TypeRef::VOID)
-      end
-
-      # Unknown function - emit as extern call
-      # Last resort: for unqualified method names that weren't resolved, try suffix matching
-      # against all known functions. This handles cases where class method receivers are
-      # typed as Void (e.g., `Location.local` → `Time::Location.local`).
-      unless func
-        # Only try suffix match for short unqualified names (no ::, #, or .)
-        if !call.method_name.includes?("::") && !call.method_name.includes?('#') && !call.method_name.includes?('.')
-          dot_suffix = ".#{base_method_name}"
-          hash_suffix = "##{base_method_name}"
-          candidates = [] of MIR::Function
-          @mir_module.functions.each do |mf|
-            next unless mf.name.ends_with?(dot_suffix) || mf.name.ends_with?(hash_suffix)
-            # Match exact arg count, or (args - 1) for class methods where receiver is extra
-            if mf.params.size == args.size || (call.receiver && mf.params.size == args.size - 1)
-              candidates << mf
-            end
-          end
-          if candidates.size == 1
-            func = candidates[0]
-          end
-        end
-        if func
-          # Drop receiver arg for class methods (func.params.size < args.size)
-          effective_args = if call.receiver && func.params.size < args.size
-                             args[1, func.params.size]
-                           else
-                             args[0, func.params.size]
-                           end
-          hir_args = call.receiver ? [call.receiver.not_nil!] + call.args : call.args
-          if func.params.size < hir_args.size
-            hir_args = hir_args[hir_args.size - func.params.size, func.params.size]
-          end
-          coerced_args = coerce_call_args(builder, effective_args, hir_args, func)
-          call_return_type = func.return_type
-          hir_call_return_type = convert_type(call.type)
-          if call_return_type == TypeRef::VOID && hir_call_return_type != TypeRef::VOID
-            call_return_type = hir_call_return_type
-          end
-          return builder.call(func.id, coerced_args, call_return_type)
-        end
-      end
-      if ENV.has_key?("CRYSTAL_V2_UNRESOLVED_CALL_TRACE")
-        recv_type = call.receiver ? @hir_value_types[call.receiver.not_nil!]? : nil
-        recv_name = hir_type_name(recv_type)
-        STDERR.puts "[UNRESOLVED_CALL] func=#{@current_lowering_func_name} method=#{call.method_name} base=#{base_method_name} recv=#{recv_name} virtual=#{call.virtual} args=#{call.args.size}"
-      elsif ENV.has_key?("DEBUG_CALLS")
-        STDERR.puts "[UNRESOLVED_CALL] #{call.method_name} in #{@current_lowering_func_name}"
-      end
-      extern_return_type = convert_type(call.type)
-      # Fix: class methods (containing '.') on struct types that return a primitive
-      # type are likely factory methods (e.g., MacroPiece.control) whose return type
-      # was incorrectly inferred as the first parameter type instead of the struct type.
-      # Override to use the struct's TypeRef (which maps to ptr in LLVM).
-      if dot_idx = call.method_name.index('.')
-        hir_ret_is_primitive = call.type.id <= 17_u32  # HIR primitive type IDs: 0-17
-        if hir_ret_is_primitive
-          class_name = call.method_name[0, dot_idx]
-          # Strip type suffix (e.g., "$Int32_String_Bool" from specialization)
-          if dollar_idx = class_name.index('$')
-            class_name = class_name[0, dollar_idx]
-          end
-          if struct_type = @mir_module.type_registry.get_by_name(class_name)
-            if struct_type.kind.struct?
-              extern_return_type = TypeRef.new(struct_type.id)
-            end
-          end
-        end
-      end
-      # Skip emitting extern calls for bare unqualified method names (no ::, #, ., __)
-      # that look like Crystal method names but can't be resolved. These are usually
-      # vestigial calls from class_property getters or default arguments that the compiler
-      # failed to fully qualify. Emitting them as extern calls causes linker errors.
-      if !call.method_name.includes?("::") && !call.method_name.includes?('#') &&
-         !call.method_name.includes?('.') && !call.method_name.starts_with?("__") &&
-         !call.method_name.includes?('$') && call.method_name =~ /\A[a-z_][a-zA-Z0-9_]*\z/
-        # This is an unqualified method name like "local", "tempdir" — likely a missing
-        # class method resolution. Return null/zero instead.
-        if extern_return_type == TypeRef::VOID
-          return builder.const_nil
-        else
-          return builder.const_nil_typed(extern_return_type)
-        end
-      end
-      builder.extern_call(call.method_name, args, extern_return_type)
-    end
-
-    private def extract_method_suffix_loose(full_name : String) : String?
-      if suffix = extract_method_suffix(full_name)
-        return suffix
-      end
-      conversions = ["to_i", "to_i8", "to_i16", "to_i32", "to_i64", "to_i128",
-                     "to_u", "to_u8", "to_u16", "to_u32", "to_u64", "to_u128"]
-      conversions.each do |suffix|
-        return suffix if full_name.ends_with?("_#{suffix}") || full_name == suffix
-      end
-      nil
-    end
-
-    private def union_conversion_target_type(method_suffix : String) : TypeRef?
-      # Strip trailing ! (unsafe conversion variant) before matching
-      suffix = method_suffix.rstrip('!')
-      case suffix
-      when "to_i", "to_i32"
-        TypeRef::INT32
-      when "to_i8"
-        TypeRef::INT8
-      when "to_i16"
-        TypeRef::INT16
-      when "to_i64"
-        TypeRef::INT64
-      when "to_i128"
-        TypeRef::INT128
-      when "to_u", "to_u32"
-        TypeRef::UINT32
-      when "to_u8"
-        TypeRef::UINT8
-      when "to_u16"
-        TypeRef::UINT16
-      when "to_u64"
-        TypeRef::UINT64
-      when "to_u128"
-        TypeRef::UINT128
-      else
-        nil
-      end
-    end
-
-    private def union_numeric_bit_width(type_ref : TypeRef) : Int32?
-      case type_ref
-      when TypeRef::INT8, TypeRef::UINT8
-        8
-      when TypeRef::INT16, TypeRef::UINT16
-        16
-      when TypeRef::INT32, TypeRef::UINT32, TypeRef::CHAR
-        32
-      when TypeRef::INT64, TypeRef::UINT64
-        64
-      when TypeRef::INT128, TypeRef::UINT128
-        128
-      else
-        nil
-      end
-    end
-
-    private def union_unsigned_type_for_bits(bits : Int32) : TypeRef
-      case bits
-      when 8
-        TypeRef::UINT8
-      when 16
-        TypeRef::UINT16
-      when 32
-        TypeRef::UINT32
-      when 64
-        TypeRef::UINT64
-      when 128
-        TypeRef::UINT128
-      else
-        TypeRef::UINT64
-      end
-    end
-
-    private def union_signed_type_for_bits(bits : Int32) : TypeRef
-      case bits
-      when 8
-        TypeRef::INT8
-      when 16
-        TypeRef::INT16
-      when 32
-        TypeRef::INT32
-      when 64
-        TypeRef::INT64
-      when 128
-        TypeRef::INT128
-      else
-        TypeRef::INT64
-      end
-    end
-
-    private def union_numeric_conversion_cast_kind(src_bits : Int32, dst_bits : Int32, dst_signed : Bool) : CastKind
-      if dst_bits < src_bits
-        CastKind::Trunc
-      elsif dst_bits > src_bits
-        dst_signed ? CastKind::SExt : CastKind::ZExt
-      else
-        CastKind::Bitcast
-      end
-    end
-
-    private def union_numeric_conversion_signed?(type_ref : TypeRef) : Bool
-      case type_ref
-      when TypeRef::INT8, TypeRef::INT16, TypeRef::INT32, TypeRef::INT64, TypeRef::INT128
-        true
-      else
-        false
-      end
-    end
-
-    private def lower_union_numeric_conversion(
-      union_value : ValueId,
-      recv_type : HIR::TypeRef,
-      target_type : TypeRef
-    ) : ValueId?
-      mir_union_ref = convert_type(recv_type)
-      union_desc = @mir_module.get_union_descriptor(mir_union_ref)
-      return nil unless union_desc
-
-      # Reject unions with Nil (unsafe to ignore tag).
-      union_desc.variants.each do |variant|
-        return nil if variant.type_ref == TypeRef::NIL
-      end
-
-      # Collect numeric variants and determine payload width.
-      max_bits = nil.as(Int32?)
-      union_desc.variants.each do |variant|
-        bits = union_numeric_bit_width(variant.type_ref)
-        return nil unless bits
-        max_bits = max_bits ? (bits > max_bits ? bits : max_bits) : bits
-      end
-      return nil unless max_bits
-
-      payload_type = union_unsigned_type_for_bits(max_bits)
-      payload = @builder.not_nil!.cast(CastKind::Bitcast, union_value, payload_type)
-
-      # If target is same width unsigned payload, reuse directly.
-      return payload if payload_type == target_type
-
-      dst_bits = union_numeric_bit_width(target_type)
-      return nil unless dst_bits
-      kind = union_numeric_conversion_cast_kind(max_bits, dst_bits, union_numeric_conversion_signed?(target_type))
-      @builder.not_nil!.cast(kind, payload, target_type)
-    end
-
-    # Dispatch kind for unified vdispatch generator
-    private enum VDispatchKind
-      Union  # receiver is a union type - use UnionTypeIdGet + UnionUnwrap
-      Class  # receiver is a class pointer - use gep header + load type_id
-    end
-
-    # Unified candidate structure for vdispatch
-    private alias VDispatchCandidate = NamedTuple(
-      type_id: Int32,
-      func: Crystal::MIR::Function?,
-      type_ref: TypeRef?,       # for Union unwrap
-      variant_id: Int32?,       # for Union unwrap
-      dispatch_class: String?   # for nested class dispatch
-    )
-
-    # Unified vdispatch body generator - handles both Union and Class dispatch
-    # Returns the phi node if return type is non-void, nil otherwise
-    private def generate_vdispatch_body(
-      dispatch_func : Crystal::MIR::Function,
-      dispatch_builder : Builder,
-      param_values : Array(ValueId),
-      candidates : Array(VDispatchCandidate),
-      kind : VDispatchKind,
-      method_suffix : String?,
-      hir_call : HIR::Call?
-    ) : Phi?
-      # 1. Get type ID based on dispatch kind.
-      # For class dispatch, guard against null receiver (Nil in V2 is null).
-      # Reading type_id from a null pointer would segfault.
-      class_nil_block : BlockId? = nil
-      switch_block = dispatch_func.entry_block  # block where the switch will go
-      type_id_val = case kind
-        in .union?
-          dispatch_builder.emit(MIR::UnionTypeIdGet.new(dispatch_builder.next_id, param_values[0]))
-        in .class?
-          null_val = dispatch_builder.const_nil_typed(TypeRef::POINTER)
-          is_null = dispatch_builder.eq(param_values[0], null_val)
-          nb = dispatch_func.create_block
-          class_nil_block = nb
-          tid_block = dispatch_func.create_block
-          switch_block = tid_block
-          dispatch_builder.branch(is_null, nb, tid_block)
-
-          dispatch_builder.current_block = tid_block
-          header_ptr = dispatch_builder.gep(param_values[0], [0_u32], TypeRef::POINTER)
-          dispatch_builder.load(header_ptr, TypeRef::INT32)
-      end
-
-      # 2. Create end block and phi (if non-void return)
-      end_block = dispatch_func.create_block
-      phi : Phi? = nil
-      if dispatch_func.return_type != TypeRef::VOID
-        dispatch_builder.current_block = end_block
-        phi = dispatch_builder.phi(dispatch_func.return_type)
-      end
-
-      # Wire up nil block for class dispatch (needs end_block + phi)
-      if (nb = class_nil_block)
-        dispatch_builder.current_block = nb
-        if phi
-          # Return first argument if present (pass-through for hash(hasher) etc),
-          # otherwise return zero. This matches Nil's behavior: most Nil methods
-          # that take an accumulator return it unchanged.
-          nil_ret = if param_values.size > 1
-                      param_values[1]
-                    else
-                      dispatch_builder.const_int(0_i64, dispatch_func.return_type)
-                    end
-          phi.add_incoming(from: nb, value: nil_ret)
-        end
-        dispatch_func.get_block(nb).terminator = Jump.new(end_block)
-      end
-
-      # 3. Create default block and case blocks
-      default_block = dispatch_func.create_block
-      cases = [] of Tuple(Int64, BlockId)
-      candidates.each do |candidate|
-        case_block = dispatch_func.create_block
-        # For union dispatch: use type_ref.id (global MIR type ID) to match
-        # what emit_union_wrap stores as the discriminator via variant_global_id().
-        # For class dispatch: type_id already IS the global runtime type_id.
-        case_id = if kind.union? && (tref = candidate[:type_ref])
-                    tref.id.to_i64
-                  else
-                    candidate[:type_id].to_i64
-                  end
-        cases << {case_id, case_block}
-      end
-
-      # 4. Set up switch in the appropriate block
-      dispatch_func.get_block(switch_block).terminator = Switch.new(type_id_val, cases, default_block)
-
-      # 5. Generate each case
-      candidates.each_with_index do |candidate, idx|
-        case_block = cases[idx][1]
-        dispatch_builder.current_block = case_block
-
-        cand_args = param_values.dup
-
-        # Union: unwrap receiver to concrete type
-        if kind.union? && candidate[:type_ref] && candidate[:variant_id]
-          unwrap = MIR::UnionUnwrap.new(
-            dispatch_builder.next_id,
-            candidate[:type_ref].not_nil!,
-            param_values[0],
-            candidate[:variant_id].not_nil!,
-            false
-          )
-          dispatch_builder.emit(unwrap)
-          cand_args[0] = unwrap.id
-        end
-
-        # Get the function to call (may need nested dispatch for union containing class hierarchy)
-        call_func = candidate[:func]
-        if call_func.nil? && candidate[:dispatch_class] && method_suffix && hir_call
-          call_func = ensure_class_dispatch_for_union(
-            candidate[:dispatch_class].not_nil!,
-            method_suffix,
-            candidate[:type_ref] || TypeRef::POINTER,
-            hir_call
-          )
-        end
-
-        if call_func
-          callee_param_count = call_func.params.size
-          coerced_args = cand_args
-          if hir_call
-            recv_id = hir_call.receiver
-            hir_args_with_receiver = recv_id ? [recv_id] + hir_call.args : hir_call.args
-            # Module/class dispatch can route to static methods whose signature
-            # does not include receiver `self`. Also guard against leaked
-            # dispatch receivers where only shifted arg alignment matches ABI.
-            drop_dispatch_receiver = should_drop_dispatch_receiver?(
-              recv_id,
-              call_func.name,
-              cand_args,
-              call_func,
-              hir_args_with_receiver
-            )
-            effective_args = cand_args
-            effective_hir_args = hir_args_with_receiver
-            if drop_dispatch_receiver
-              effective_args = cand_args[1, callee_param_count]
-              effective_hir_args = hir_call.args
-            end
-
-            if callee_param_count == effective_args.size
-              # Same param count — pass all args including receiver
-              coerced_args = coerce_call_args(dispatch_builder, effective_args, effective_hir_args, call_func)
-            elsif callee_param_count < effective_args.size
-              # Callee has fewer params (e.g. optional arg dropped by overload).
-              # Truncate effective dispatch args to match callee's arity.
-              truncated_args = effective_args[0, callee_param_count]
-              truncated_hir = effective_hir_args[0, callee_param_count]? || effective_hir_args
-              coerced_args = coerce_call_args(dispatch_builder, truncated_args, truncated_hir, call_func)
-            else
-              # Callee expects more args than dispatch provides — pass all, let coercion handle it
-              coerced_args = coerce_call_args(dispatch_builder, effective_args, effective_hir_args, call_func)
-            end
-          else
-            drop_dispatch_receiver = callee_param_count <= cand_args.size - 1 &&
-                                     call_func.name.includes?('.') &&
-                                     !call_func.name.includes?('#')
-            effective_args = drop_dispatch_receiver ? cand_args[1, callee_param_count] : cand_args
-            if callee_param_count < effective_args.size
-              coerced_args = effective_args[0, callee_param_count]
-            else
-              coerced_args = effective_args
-            end
-          end
-
-          call_val = dispatch_builder.call(call_func.id, coerced_args, dispatch_func.return_type)
-          if phi && call_val != 0_u32
-            phi.add_incoming(from: case_block, value: call_val)
-          end
-          dispatch_func.get_block(case_block).terminator = Jump.new(end_block)
-        else
-          # No implementation found - jump to default (unreachable)
-          dispatch_func.get_block(case_block).terminator = Jump.new(default_block)
-        end
-      end
-
-      # 6. Set up end block return
-      if phi
-        dispatch_builder.current_block = end_block
-        dispatch_func.get_block(end_block).terminator = Return.new(phi.id)
-      else
-        dispatch_func.get_block(end_block).terminator = Return.new(nil)
-      end
-
-      # 7. Default block is unreachable
-      dispatch_func.get_block(default_block).terminator = Unreachable.new
-
-      phi
-    end
-
-    private def lower_virtual_dispatch(call : HIR::Call, args : Array(ValueId)) : ValueId?
-      recv_id = call.receiver
-      return nil unless recv_id
-
-      recv_type = @hir_value_types[recv_id]? || return nil
-      recv_desc = @hir_module.get_type_descriptor(recv_type)
-      return nil unless recv_desc
-
-      method_suffix = extract_method_suffix(call.method_name)
-      return nil unless method_suffix
-
-      old_candidates = virtual_dispatch_candidates(recv_desc, recv_type, method_suffix, call.args.size)
-
-      # When receiver is a Generic-kind type wrapping a union (e.g., Union(*Nil | Int32)),
-      # the union descriptor might be at a different ref. Try to find it by name matching.
-      generic_union_ref = nil.as(TypeRef?)
-      if old_candidates.empty? && recv_desc.kind == HIR::TypeKind::Generic && recv_desc.name.starts_with?("Union(")
-        inner_name = recv_desc.name[6..-2] # Strip "Union(" and ")"
-        @mir_module.union_descriptors.each do |ref, desc|
-          if desc.name == inner_name
-            # Found matching union descriptor — build candidates from it
-            desc.variants.each do |variant|
-              next if variant.full_name == "Nil" || variant.full_name.starts_with?('*')
-              if func = resolve_virtual_method_for_class(variant.full_name, method_suffix, call.args.size)
-                old_candidates << {
-                  type_id: variant.type_id,
-                  type_ref: variant.type_ref,
-                  variant_id: variant.type_id,
-                  func: func,
-                  dispatch_class: nil.as(String?)
-                }
-              end
-            end
-            generic_union_ref = ref
-            break
-          end
-        end
-      end
-
-      # Some union call-sites (notably IndexNode lowering paths) can reach MIR
-      # with an incomplete union descriptor candidate set. Augment candidates
-      # directly from HIR union variants so virtual dispatch remains complete.
-      if recv_desc.kind == HIR::TypeKind::Union
-        existing_variant_ids = Set(Int32).new
-        old_candidates.each { |c| existing_variant_ids.add(c[:variant_id]) }
-
-        variant_names = [] of String
-        recv_desc.type_params.each do |variant_hir_ref|
-          variant_desc = @hir_module.get_type_descriptor(variant_hir_ref)
-          variant_name = variant_desc.try(&.name) || hir_type_name(variant_hir_ref)
-          variant_names << variant_name unless variant_name.empty?
-        end
-        if variant_names.size < 2
-          split_union_type_name_loose(recv_desc.name).each { |name| variant_names << name }
-        end
-
-        variant_names.uniq.each do |variant_name|
-          next if variant_name.empty? || variant_name == "Nil" || variant_name.starts_with?('*')
-
-          mir_type = @mir_module.type_registry.get_by_name(variant_name)
-          next unless mir_type
-          variant_mir_ref = TypeRef.new(mir_type.id)
-          variant_id = variant_mir_ref.id.to_i32
-          next if existing_variant_ids.includes?(variant_id)
-
-          if func = resolve_virtual_method_for_class(variant_name, method_suffix, call.args.size)
-            old_candidates << {
-              type_id: variant_id,
-              type_ref: variant_mir_ref,
-              variant_id: variant_id,
-              func: func,
-              dispatch_class: nil.as(String?)
-            }
-            existing_variant_ids.add(variant_id)
-          elsif (mir_type = @mir_module.type_registry.get_by_name(variant_name)) &&
-                !mir_type.is_value_type? &&
-                !subclasses_for(variant_name).empty?
-            old_candidates << {
-              type_id: variant_id,
-              type_ref: variant_mir_ref,
-              variant_id: variant_id,
-              func: nil.as(Crystal::MIR::Function?),
-              dispatch_class: variant_name
-            }
-            existing_variant_ids.add(variant_id)
-          end
-        end
-      end
-
-      return nil if old_candidates.empty?
-
-      # vdispatch cache key must include the static receiver type.
-      # Otherwise, an early narrow call-site (e.g. IO::FileDescriptor) can
-      # create a truncated dispatch table that is incorrectly reused by wider
-      # call-sites (e.g. IO), causing missing runtime variants.
-      dispatch_name = String.build(call.method_name.bytesize + 24) do |io|
-        io << "__vdispatch__"
-        io << call.method_name
-        io << "$T"
-        io << recv_type.id
-      end
-      if existing = @mir_module.get_function(dispatch_name)
-        return @builder.not_nil!.call(existing.id, args, existing.return_type)
-      end
-
-      # Determine return type for dispatch.
-      # `call.type` can be too generic (often POINTER for virtual calls), which causes
-      # primitive returns to be retyped as pointer and breaks downstream codegen.
-      ret_type = convert_type(call.type)
-      first_candidate_ret = nil.as(TypeRef?)
-      unanimous_candidate_ret = nil.as(TypeRef?)
-      mixed_candidate_rets = false
-      old_candidates.each do |c|
-        next unless f = c[:func]
-        cand_ret = f.return_type
-        next if cand_ret == TypeRef::VOID
-        first_candidate_ret ||= cand_ret
-        if unanimous_candidate_ret.nil?
-          unanimous_candidate_ret = cand_ret
-        elsif unanimous_candidate_ret != cand_ret
-          mixed_candidate_rets = true
-          break
-        end
-      end
-      ret_type_too_generic = ret_type == TypeRef::VOID ||
-                             ret_type == TypeRef::NIL ||
-                             ret_type == TypeRef::POINTER
-      # Avoid `nilable_struct && expr` — stage1 miscompiles nilable-struct
-      # union dispatch generated by `&&` on TypeRef?.
-      ret_type_reference_vs_primitive = if ucr = unanimous_candidate_ret
-        ret_type.reference? && ucr.primitive?
-      else
-        false
-      end
-
-      if (ucr2 = unanimous_candidate_ret) &&
-         !mixed_candidate_rets &&
-         (ret_type_too_generic || ret_type_reference_vs_primitive)
-        ret_type = ucr2
-      elsif ret_type == TypeRef::VOID && (fcr = first_candidate_ret)
-        ret_type = fcr
-      end
-
-      # Create dispatch function
-      dispatch_func = @mir_module.create_function(dispatch_name, ret_type)
-      param_values = [] of ValueId
-
-      # For Generic-wrapped unions, use the union descriptor's ref as the receiver param type.
-      # This ensures the LLVM type mapper produces a union struct type, making
-      # UnionTypeIdGet and UnionUnwrap work correctly.
-      recv_param_type = generic_union_ref || convert_type(recv_type)
-      dispatch_func.add_param("recv", recv_param_type)
-      param_values << 0_u32
-
-      # Other params
-      call.args.each_with_index do |arg_id, idx|
-        arg_type = @hir_value_types[arg_id]? || HIR::TypeRef::POINTER
-        dispatch_func.add_param("arg#{idx}", convert_type(arg_type))
-        param_values << (idx + 1).to_u32
-      end
-
-      dispatch_builder = Builder.new(dispatch_func)
-
-      # Convert to unified candidate format
-      candidates = old_candidates.map do |c|
-        VDispatchCandidate.new(
-          type_id: c[:type_id],
-          func: c[:func],
-          type_ref: c[:type_ref],
-          variant_id: c[:variant_id],
-          dispatch_class: c[:dispatch_class]
-        )
-      end
-
-      # Determine dispatch kind:
-      # - All-ref unions (every variant is a class/Nil) use Class dispatch
-      #   because they're stored as raw pointers — type_id lives in the object header.
-      # - Mixed/tagged unions use Union dispatch — type_id is the union discriminator.
-      is_union_type = recv_desc.kind == HIR::TypeKind::Union || generic_union_ref
-      recv_mir = convert_type(recv_type)
-      is_allref = if is_union_type
-                    if desc = @mir_module.get_union_descriptor(recv_mir)
-                      all_ref_union_descriptor?(desc)
-                    else
-                      false
-                    end
-                  else
-                    false
-                  end
-      kind = (is_union_type && !is_allref) ? VDispatchKind::Union : VDispatchKind::Class
-
-      # Use unified generator
-      generate_vdispatch_body(
-        dispatch_func,
-        dispatch_builder,
-        param_values,
-        candidates,
-        kind,
-        method_suffix,
-        call
-      )
-
-      # For Generic-wrapped unions, the caller passes a ptr but the dispatch function
-      # expects a union struct value. Load the union value from the pointer.
-      call_args = args
-      if generic_union_ref
-        builder = @builder.not_nil!
-        union_val = builder.load(args[0], generic_union_ref)
-        call_args = args.dup
-        call_args[0] = union_val
-      end
-
-      @builder.not_nil!.call(dispatch_func.id, call_args, dispatch_func.return_type)
-    end
-
-    private def extract_method_suffix(full_name : String) : String?
-      if idx = full_name.index('#')
-        return full_name[(idx + 1)..-1]
-      end
-      nil
-    end
-
-    private def split_union_type_name_loose(type_name : String) : Array(String)
-      normalized = if type_name.includes?('|')
-                     type_name
-                   elsif type_name.includes?("$_$OR$_")
-                     type_name.gsub("$_$OR$_", "|")
-                   elsif type_name.includes?("___")
-                     type_name.gsub("___", "|")
-                   else
-                     type_name
-                   end
-      unless normalized.includes?('|')
-        trimmed = normalized.strip
-        return trimmed.empty? ? [] of String : [trimmed]
-      end
-
-      parts = [] of String
-      depth = 0
-      start = 0
-      i = 0
-      while i < normalized.bytesize
-        ch = normalized.byte_at(i).unsafe_chr
-        case ch
-        when '(', '{', '['
-          depth += 1
-        when ')', '}', ']'
-          depth -= 1 if depth > 0
-        when '|'
-          if depth == 0
-            part = normalized[start, i - start].strip
-            parts << part unless part.empty?
-            start = i + 1
-          end
-        end
-        i += 1
-      end
-      tail = normalized[start, normalized.size - start].strip
-      parts << tail unless tail.empty?
-      parts
-    end
-
-    private def subclasses_for(base : String) : Array(String)
-      if cached = @subclass_cache[base]?
-        return cached
-      end
-      result = [] of String
-      seen = Set(String).new
-      queue = @class_children[base]?.dup || [] of String
-      until queue.empty?
-        name = queue.shift
-        next if seen.includes?(name)
-        seen.add(name)
-        result << name
-        if children = @class_children[name]?
-          children.each { |child| queue << child }
-        end
-      end
-      @subclass_cache[base] = result
-      result
-    end
-
-    private def module_includers_for(module_name : String) : Array(String)
-      if cached = @module_includers_cache[module_name]?
-        return cached
-      end
-      base_module = strip_generic_args(module_name)
-      includers = @hir_module.module_includers[module_name]? || @hir_module.module_includers[base_module]?
-      if includers.nil? || includers.empty?
-        matches = @hir_module.module_includers.keys.select do |key|
-          key.ends_with?("::#{module_name}") || key.ends_with?("::#{base_module}")
-        end
-        includers = @hir_module.module_includers[matches.first]? if matches.size == 1
-      end
-
-      if includers.nil? || includers.empty?
-        generic_matches = @hir_module.module_includers.keys.select do |key|
-          strip_generic_args(key) == base_module
-        end
-        if generic_matches.size == 1
-          includers = @hir_module.module_includers[generic_matches.first]?
-        elsif generic_matches.size > 1
-          merged = [] of String
-          generic_matches.each do |key|
-            if list = @hir_module.module_includers[key]?
-              list.each { |entry| merged << entry }
-            end
-          end
-          includers = merged.uniq! if merged.any?
-        end
-      end
-
-      if (includers.nil? || includers.empty?) && module_name.includes?("::")
-        short_name = short_module_name(module_name)
-        base_short_name = short_module_name(base_module)
-        includers = @hir_module.module_includers[short_name]? || @hir_module.module_includers[base_short_name]?
-        if includers.nil? || includers.empty?
-          matches = @hir_module.module_includers.keys.select do |key|
-            key.ends_with?("::#{short_name}") || key.ends_with?("::#{base_short_name}")
-          end
-          includers = @hir_module.module_includers[matches.first]? if matches.size == 1
-        end
-      end
-
-      if (includers.nil? || includers.empty?) && module_name.includes?("::")
-        generic_matches = @hir_module.module_includers.keys.select do |key|
-          strip_generic_args(key) == base_short_name
-        end
-        if generic_matches.size == 1
-          includers = @hir_module.module_includers[generic_matches.first]?
-        elsif generic_matches.size > 1
-          merged = [] of String
-          generic_matches.each do |key|
-            if list = @hir_module.module_includers[key]?
-              list.each { |entry| merged << entry }
-            end
-          end
-          includers = merged.uniq! if merged.any?
-        end
-      end
-
-      result = includers ? includers.dup : [] of String
-      @module_includers_cache[module_name] = result
-      result
-    end
-
-    @[AlwaysInline]
-    private def strip_generic_args(name : String) : String
-      if idx = name.index('(')
-        return name.byte_slice(0, idx)
-      end
-      name
-    end
-
-    @[AlwaysInline]
-    private def short_module_name(name : String) : String
-      if idx = name.rindex("::")
-        return name.byte_slice(idx + 2)
-      end
-      name
-    end
-
-    private def ensure_reference_type_for_name(name : String) : Type?
-      if mir_type = @mir_module.type_registry.get_by_name(name)
-        return mir_type
-      end
-
-      hir_index = @hir_module.types.index { |desc| desc.name == name }
-      return nil unless hir_index
-      hir_desc = @hir_module.types[hir_index]
-      return nil unless hir_desc.kind == HIR::TypeKind::Module
-
-      hir_ref = HIR::TypeRef.new(HIR::TypeRef::FIRST_USER_TYPE + hir_index.to_u32)
-      mir_ref = convert_type(hir_ref)
-      @mir_module.type_registry.create_type_with_id(
-        mir_ref.id,
-        TypeKind::Reference,
-        name,
-        pointer_word_bytes_u64,
-        pointer_word_align_u32
-      )
-    end
-
-    private def enclosing_class_for_module(module_name : String) : String?
-      parts = module_name.split("::")
-      while parts.size > 1
-        parts.pop
-        candidate = parts.join("::")
-        return candidate if @hir_module.class_parents.has_key?(candidate)
-      end
-      nil
-    end
-
-    private def virtual_dispatch_candidates(
-      recv_desc : HIR::TypeDescriptor,
-      recv_type : HIR::TypeRef,
-      method_suffix : String,
-      arg_count : Int32
-    ) : Array(NamedTuple(type_id: Int32, type_ref: TypeRef, variant_id: Int32, func: Crystal::MIR::Function?, dispatch_class: String?))
-      candidates = @vdispatch_candidates_buf
-      candidates.clear
-
-      if recv_desc.kind == HIR::TypeKind::Union
-        mir_union_ref = convert_type(recv_type)
-        if union_desc = @mir_module.get_union_descriptor(mir_union_ref)
-          if ENV["DEBUG_VDISPATCH_UNION"]? && method_suffix == "next_power_of_two"
-            variants = union_desc.variants.map(&.full_name).join(",")
-            STDERR.puts "[VDISPATCH_UNION] union=#{union_desc.name} variants=#{variants}"
-          end
-          union_desc.variants.each do |variant|
-            if variant.full_name == "Nil"
-              next
-            end
-            if func = resolve_virtual_method_for_class(variant.full_name, method_suffix, arg_count)
-              if ENV["DEBUG_VDISPATCH_UNION"]? && method_suffix == "next_power_of_two"
-                STDERR.puts "[VDISPATCH_UNION] candidate=#{variant.full_name} func=#{func.name}"
-              end
-              candidates << {
-                type_id: variant.type_id,
-                type_ref: variant.type_ref,
-                variant_id: variant.type_id,
-                func: func,
-                dispatch_class: nil
-              }
-            elsif (mir_type = @mir_module.type_registry.get_by_name(variant.full_name)) &&
-                  !mir_type.is_value_type? &&
-                  !subclasses_for(variant.full_name).empty?
-              candidates << {
-                type_id: variant.type_id,
-                type_ref: variant.type_ref,
-                variant_id: variant.type_id,
-                func: nil,
-                dispatch_class: variant.full_name
-              }
-            end
-          end
-        end
-      elsif recv_desc.kind == HIR::TypeKind::Class
-        base = recv_desc.name
-        all_classes = [base] + subclasses_for(base)
-        # Track classes that had no MIR function found — we'll fill them in
-        # with the nearest parent's implementation in a second pass.
-        missing_classes = [] of {String, Crystal::MIR::Type}
-        all_classes.each do |class_name|
-          func_name = "#{class_name}##{method_suffix}"
-          func = @mir_module.get_function(func_name)
-          # Verify arity: an untyped alias (e.g. Foo#hash) may match a different
-          # overload than intended (e.g. hash(hasher) instead of hash()).
-          # If param count doesn't match, reject the exact-name match and fall
-          # through to arity-aware resolve_virtual_method_for_class.
-          if func && func.params.size != arg_count + 1
-            func = nil
-          end
-          func = func || resolve_virtual_method_for_class(class_name, method_suffix, arg_count)
-          if func
-            next unless mir_type = @mir_module.type_registry.get_by_name(class_name)
-            candidates << {
-              type_id: mir_type.id.to_i32,
-              type_ref: TypeRef.new(mir_type.id),
-              variant_id: mir_type.id.to_i32,
-              func: func,
-              dispatch_class: nil
-            }
-          else
-            # No function found for this class — record for fallback pass.
-            # Only reference types: value types can't appear in class dispatch.
-            if mir_type = @mir_module.type_registry.get_by_name(class_name)
-              missing_classes << {class_name, mir_type} unless mir_type.is_value_type?
-            end
-          end
-        end
-        # Second pass: for classes with no MIR function, find the nearest ancestor
-        # that has an implementation by searching ALL MIR functions (not just
-        # existing candidates). This handles inherited methods that RTA filtered
-        # out (e.g. String#hash(hasher) inherited from Reference — the HIR never
-        # generated it for String, but a sibling like IO has the same inherited
-        # default). We walk up the class hierarchy checking siblings.
-        unless missing_classes.empty?
-          # Build a set of class names that already have candidates
-          have_candidate = Set(String).new
-          candidates.each do |c|
-            if mt = @mir_module.type_registry.get(c[:type_ref])
-              have_candidate.add(mt.name)
-            end
-          end
-          missing_classes.each do |class_name, mir_type|
-            fallback_func = nil.as(Crystal::MIR::Function?)
-            # Walk up the class hierarchy from the missing class
-            current = class_name
-            walked = Set(String).new
-            while !current.empty? && !walked.includes?(current)
-              walked.add(current)
-              # Check if any sibling (subclass of current's parent) has a candidate
-              parent = @hir_module.class_parents[current]?
-              if parent
-                sibling_func = find_sibling_candidate_func(parent, method_suffix, arg_count, have_candidate)
-                if sibling_func
-                  fallback_func = sibling_func
-                  break
-                end
-              end
-              current = parent || ""
-            end
-            if ff = fallback_func
-              if ENV["DEBUG_VDISPATCH_FALLBACK"]?
-                STDERR.puts "[VDISPATCH_FALLBACK] #{class_name}##{method_suffix} → #{ff.name}"
-              end
-              candidates << {
-                type_id: mir_type.id.to_i32,
-                type_ref: TypeRef.new(mir_type.id),
-                variant_id: mir_type.id.to_i32,
-                func: ff,
-                dispatch_class: nil
-              }
-            end
-          end
-        end
-      elsif recv_desc.kind == HIR::TypeKind::Module || recv_desc.kind == HIR::TypeKind::Generic
-        seen = Set(String).new
-        module_name = recv_desc.name
-        if recv_desc.kind == HIR::TypeKind::Generic
-          # Keep the full generic name (e.g., "Enumerable(Fiber)") so that
-          # module_includers_for can narrow to type-parameter-specific includers.
-          # This matches the original compiler's per-type-parameter including_types.
-          # module_includers_for has fallback logic to the base name if needed.
-        end
-        includers = module_includers_for(module_name)
-        if includers.empty?
-          if outer = enclosing_class_for_module(module_name)
-            includers = [outer]
-          end
-        end
-        includers.each do |includer|
-          ([includer] + subclasses_for(includer)).each do |class_name|
-            next if seen.includes?(class_name)
-            seen.add(class_name)
-            func_name = "#{class_name}##{method_suffix}"
-            func = @mir_module.get_function(func_name)
-            if func && func.params.size != arg_count + 1
-              func = nil
-            end
-            func = func || resolve_virtual_method_for_class(class_name, method_suffix, arg_count, allow_module_method: true)
-            next unless func
-            mir_type = ensure_reference_type_for_name(class_name) ||
-              @mir_module.type_registry.get_by_name(class_name)
-            next unless mir_type
-            next if mir_type.is_value_type?
-            candidates << {
-              type_id: mir_type.id.to_i32,
-              type_ref: TypeRef.new(mir_type.id),
-              variant_id: mir_type.id.to_i32,
-              func: func,
-              dispatch_class: nil
-            }
-          end
-        end
-      end
-
-      candidates
-    end
-
-    private def ensure_class_dispatch_for_union(
-      class_name : String,
-      method_suffix : String,
-      receiver_type : TypeRef,
-      call : HIR::Call
-    ) : Crystal::MIR::Function?
-      dispatch_name = "__vdispatch__#{class_name}##{method_suffix}"
-      if existing = @mir_module.get_function(dispatch_name)
-        return existing
-      end
-
-      # Gather candidates from class hierarchy
-      old_candidates = [] of NamedTuple(type_id: Int32, func: Crystal::MIR::Function)
-      ([class_name] + subclasses_for(class_name)).each do |name|
-        if func = resolve_virtual_method_for_class(name, method_suffix, call.args.size)
-          next unless mir_type = @mir_module.type_registry.get_by_name(name)
-          next if mir_type.is_value_type?
-          old_candidates << {type_id: mir_type.id.to_i32, func: func}
-        end
-      end
-      return nil if old_candidates.empty?
-
-      # Determine return type from candidates (not call.type which may be VOID)
-      ret_type = convert_type(call.type)
-      if ret_type == TypeRef::VOID
-        old_candidates.each do |c|
-          if c[:func].return_type != TypeRef::VOID
-            ret_type = c[:func].return_type
-            break
-          end
-        end
-      end
-
-      # Create dispatch function
-      dispatch_func = @mir_module.create_function(dispatch_name, ret_type)
-      param_values = [] of ValueId
-      dispatch_func.add_param("recv", receiver_type)
-      param_values << 0_u32
-      call.args.each_with_index do |arg_id, idx|
-        arg_type = @hir_value_types[arg_id]? || HIR::TypeRef::POINTER
-        dispatch_func.add_param("arg#{idx}", convert_type(arg_type))
-        param_values << (idx + 1).to_u32
-      end
-
-      dispatch_builder = Builder.new(dispatch_func)
-
-      # Convert to unified candidate format (class dispatch = no unwrap needed)
-      candidates = old_candidates.map do |c|
-        VDispatchCandidate.new(
-          type_id: c[:type_id],
-          func: c[:func],
-          type_ref: nil,        # No unwrap for class dispatch
-          variant_id: nil,      # No unwrap for class dispatch
-          dispatch_class: nil   # No nested dispatch
-        )
-      end
-
-      # Use unified generator with Class kind
-      generate_vdispatch_body(
-        dispatch_func,
-        dispatch_builder,
-        param_values,
-        candidates,
-        VDispatchKind::Class,
-        nil,   # No method_suffix needed (direct func calls)
-        nil    # No HIR call needed (simple args)
-      )
-
-      dispatch_func
-    end
-
-    private def resolve_virtual_method_for_class(
-      class_name : String,
-      method_suffix : String,
-      arg_count : Int32? = nil,
-      allow_module_method : Bool = false
-    ) : Crystal::MIR::Function?
-      cache_key = {class_name, method_suffix, arg_count, allow_module_method}
-      if @resolve_virtual_cache.has_key?(cache_key)
-        return @resolve_virtual_cache[cache_key]
-      end
-      result = _resolve_virtual_walk(class_name, method_suffix, arg_count, allow_module_method)
-      @resolve_virtual_cache[cache_key] = result
-      result
-    end
-
-    @[AlwaysInline]
-    private def default_arg_variant_name?(candidate_name : String, exact_name : String) : Bool
-      return false unless candidate_name.starts_with?(exact_name)
-      return false unless candidate_name.bytesize > exact_name.bytesize + 1
-
-      idx = exact_name.bytesize
-      return false unless candidate_name.byte_at(idx).unsafe_chr == '_'
-      idx += 1
-
-      digit_count = 0
-      while idx < candidate_name.bytesize
-        ch = candidate_name.byte_at(idx).unsafe_chr
-        if ch >= '0' && ch <= '9'
-          digit_count += 1
-          idx += 1
-          next
-        end
-        return digit_count > 0 && ch == '$'
-      end
-      digit_count > 0
-    end
-
-    @[AlwaysInline]
-    private def same_method_family_name?(candidate_name : String, method_prefix : String) : Bool
-      return false unless candidate_name.starts_with?(method_prefix)
-      return true if candidate_name.bytesize == method_prefix.bytesize
-
-      next_ch = candidate_name.byte_at(method_prefix.bytesize).unsafe_chr
-      return true if next_ch == '$'
-
-      if next_ch == '_'
-        idx = method_prefix.bytesize + 1
-        digit_count = 0
-        while idx < candidate_name.bytesize
-          ch = candidate_name.byte_at(idx).unsafe_chr
-          if ch >= '0' && ch <= '9'
-            digit_count += 1
-            idx += 1
-            next
-          end
-          return digit_count > 0 && ch == '$'
-        end
-        return digit_count > 0
-      end
-
-      false
-    end
-
-    private def _resolve_virtual_walk(
-      class_name : String,
-      method_suffix : String,
-      arg_count : Int32?,
-      allow_module_method : Bool
-    ) : Crystal::MIR::Function?
-      # Pre-compute the base method name (before '$') once
-      has_explicit_suffix = method_suffix.includes?('$')
-      base_method = if dollar = method_suffix.index('$')
-                      method_suffix[0, dollar]
-                    else
-                      method_suffix
-                    end
-
-      current = class_name
-      seen = Set(String).new
-      while !current.empty? && !seen.includes?(current)
-        seen.add(current)
-
-        # Pre-compute exact name once per iteration (avoid repeated interpolation)
-        exact_name = String.build(current.bytesize + 1 + method_suffix.bytesize) do |io|
-          io << current; io << '#'; io << method_suffix
-        end
-
-        if (func = @mir_module.get_function(exact_name)) &&
-           (arg_count.nil? || func.params.size == arg_count + 1)
-          # Check for naming collision using class index instead of full scan
-          longer_match = nil.as(Crystal::MIR::Function?)
-          if class_funcs = @functions_by_class[current]?
-            class_funcs.each do |candidate|
-              if default_arg_variant_name?(candidate.name, exact_name)
-                if lm_prev = longer_match
-                  longer_match = candidate if candidate.params.size > lm_prev.params.size
-                else
-                  longer_match = candidate
-                end
-              end
-            end
-          end
-          if lm = longer_match
-            func.params.each_with_index do |short_param, pi|
-              if (dv = short_param.default_value) && pi < lm.params.size && lm.params[pi].default_value.nil?
-                old_p = lm.params[pi]
-                lm.params[pi] = Parameter.new(old_p.index, old_p.name, old_p.type, dv)
-              end
-            end
-            return lm
-          end
-          return func
-        end
-
-        # Default-arg fallback: exact function name exists but has more params
-        # than the call site expects (e.g. Int32#to_s$$IO has 5 params: self, io,
-        # base, precision, upcase — but call site passes only self + io).
-        # Return the function anyway — the LLVM backend will fill default values.
-        if arg_count
-          exact_func = @mir_module.get_function(exact_name)
-          if exact_func && exact_func.params.size > arg_count + 1
-            return exact_func
-          end
-        end
-
-        if allow_module_method
-          module_name = String.build(current.bytesize + 1 + method_suffix.bytesize) do |io|
-            io << current; io << '.'; io << method_suffix
-          end
-          if func = @mir_module.get_function(module_name)
-            return func
-          end
-        end
-
-        # Arity-only fallback is safe only for bare method names.
-        # For typed/mangled suffixes (contains '$'), returning by arity alone can
-        # select a wrong overload (e.g. <<$Char -> <<$String) and corrupt ABI.
-        if arg_count && !has_explicit_suffix
-          # Use class index + pre-computed prefix (avoids O(N) full scan + GC from interpolation)
-          instance_prefix = String.build(current.bytesize + 1 + base_method.bytesize) do |io|
-            io << current; io << '#'; io << base_method
-          end
-          if class_funcs = @functions_by_class[current]?
-            candidates = [] of Crystal::MIR::Function
-            class_funcs.each do |candidate|
-              next unless same_method_family_name?(candidate.name, instance_prefix)
-              next unless candidate.params.size == arg_count + 1
-              candidates << candidate
-            end
-            return candidates.first if candidates.size == 1
-          end
-          if allow_module_method
-            module_prefix = String.build(current.bytesize + 1 + base_method.bytesize) do |io|
-              io << current; io << '.'; io << base_method
-            end
-            if class_funcs2 = @functions_by_class[current]?
-              candidates = [] of Crystal::MIR::Function
-              class_funcs2.each do |candidate|
-                next unless same_method_family_name?(candidate.name, module_prefix)
-                next unless candidate.params.size == arg_count
-                candidates << candidate
-              end
-              return candidates.first if candidates.size == 1
-            end
-          end
-        end
-        parent = @hir_module.class_parents[current]?
-        current = parent || ""
-      end
-
-      # Class parent walk failed. Check included modules.
-      # For Array(Int32), modules like Indexable and Enumerable define methods
-      # that should be resolved here (e.g. Indexable#each$block).
-      class_base = class_name.includes?('(') ? class_name[0, class_name.index('(').not_nil!] : class_name
-      @hir_module.module_includers.each do |mod_name, incs|
-        next unless incs.any? { |i| i == class_name || i == class_base }
-        mod_base = mod_name.includes?('(') ? mod_name[0, mod_name.index('(').not_nil!] : mod_name
-        exact_name = "#{mod_base}##{method_suffix}"
-        if (func = @mir_module.get_function(exact_name)) &&
-           (arg_count.nil? || func.params.size == arg_count + 1)
-          return func
-        end
-      end
-
-      nil
-    end
-
-    # Find a candidate function for a virtual dispatch method by looking at
-    # siblings (other subclasses of the given parent class) that already have
-    # the method resolved. This handles the case where RTA filters out an
-    # inherited method for one subclass but keeps it for another (both share
-    # the same inherited implementation).
-    private def find_sibling_candidate_func(
-      parent_class : String,
-      method_suffix : String,
-      arg_count : Int32,
-      have_candidate : Set(String)
-    ) : Crystal::MIR::Function?
-      # Check parent itself first
-      parent_func_name = "#{parent_class}##{method_suffix}"
-      if func = @mir_module.get_function(parent_func_name)
-        return func if arg_count == -1 || func.params.size == arg_count + 1
-      end
-      # Check siblings (subclasses of the parent that already have a candidate)
-      subclasses_for(parent_class).each do |sibling|
-        next unless have_candidate.includes?(sibling)
-        sibling_func_name = "#{sibling}##{method_suffix}"
-        if func = @mir_module.get_function(sibling_func_name)
-          return func if arg_count == -1 || func.params.size == arg_count + 1
-        end
-        # Also check the resolve cache for this sibling
-        if func = resolve_virtual_method_for_class(sibling, method_suffix, arg_count)
-          return func
-        end
-      end
-      nil
-    end
-
-    private def hir_type_name(type_ref : HIR::TypeRef?) : String
-      return "unknown" unless type_ref
-      if desc = @hir_module.get_type_descriptor(type_ref)
-        return desc.name
-      end
-      # Map primitive type IDs to their names
-      case type_ref
-      when HIR::TypeRef::VOID    then "Void"
-      when HIR::TypeRef::BOOL    then "Bool"
-      when HIR::TypeRef::INT8    then "Int8"
-      when HIR::TypeRef::INT16   then "Int16"
-      when HIR::TypeRef::INT32   then "Int32"
-      when HIR::TypeRef::INT64   then "Int64"
-      when HIR::TypeRef::INT128  then "Int128"
-      when HIR::TypeRef::UINT8   then "UInt8"
-      when HIR::TypeRef::UINT16  then "UInt16"
-      when HIR::TypeRef::UINT32  then "UInt32"
-      when HIR::TypeRef::UINT64  then "UInt64"
-      when HIR::TypeRef::UINT128 then "UInt128"
-      when HIR::TypeRef::FLOAT32 then "Float32"
-      when HIR::TypeRef::FLOAT64 then "Float64"
-      when HIR::TypeRef::CHAR    then "Char"
-      when HIR::TypeRef::STRING  then "String"
-      when HIR::TypeRef::NIL     then "Nil"
-      when HIR::TypeRef::SYMBOL  then "Symbol"
-      when HIR::TypeRef::POINTER then "Pointer"
-      else                            type_ref.id.to_s
-      end
-    end
-
-    # Helper to get the MIR type of a HIR value by finding it in the function
-    private def get_arg_type(hir_id : HIR::ValueId) : TypeRef
-      if hir_func = @current_hir_func
-        # Search through all blocks for the value with this ID
-        hir_func.blocks.each do |block|
-          block.instructions.each do |inst|
-            if inst.id == hir_id
-              return convert_type(inst.type)
-            end
-          end
-        end
-        # Also check parameters
-        hir_func.params.each_with_index do |param, idx|
-          if idx.to_u32 == hir_id
-            return convert_type(param.type)
-          end
-        end
-      end
-      TypeRef::INT32  # Default fallback
-    end
-
-    # Helper to get the MIR type of a MIR value by finding it in the current function.
-    private def get_mir_value_type(mir_id : ValueId) : TypeRef?
-      if mir_func = @current_mir_func
-        mir_func.blocks.each do |block|
-          block.instructions.each do |inst|
-            return inst.type if inst.id == mir_id
-          end
-        end
-        mir_func.params.each_with_index do |param, idx|
-          return param.type if idx.to_u32 == mir_id
-        end
-      end
-      nil
-    end
-
-    private def should_drop_dispatch_receiver?(
-      receiver : HIR::ValueId?,
-      method_name : String,
-      mir_args : Array(ValueId),
-      callee_func : MIR::Function,
-      hir_args_with_receiver : Array(HIR::ValueId),
-    ) : Bool
-      callee_param_count = callee_func.params.size
-      return false unless receiver
-      return false unless callee_param_count <= mir_args.size - 1
-
-      # Explicit class/module calls are static at ABI level (no receiver param).
-      if method_name.includes?('.') && !method_name.includes?('#')
-        return true
-      end
-
-      # Generic metaclass dispatch can leak a synthetic receiver value into the
-      # arg list. When arity is receiver+N but callee expects N, keep receiver
-      # only if it matches param[0]; otherwise use shifted args if they match.
-      return false unless mir_args.size == callee_param_count + 1
-      return false if hir_args_with_receiver.size < 2
-      first_param = callee_func.params.first?.try(&.type)
-      return false unless first_param
-
-      keep_type = convert_type(@hir_value_types[hir_args_with_receiver[0]]? || HIR::TypeRef::VOID)
-      drop_type = convert_type(@hir_value_types[hir_args_with_receiver[1]]? || HIR::TypeRef::VOID)
-      keep_match = call_arg_matches_param_type?(keep_type, first_param)
-      drop_match = call_arg_matches_param_type?(drop_type, first_param)
-
-      !keep_match && drop_match
-    end
-
-    private def call_arg_matches_param_type?(arg_type : TypeRef, param_type : TypeRef) : Bool
-      return true if arg_type == param_type
-      if param_type == TypeRef::POINTER
-        return reference_like_mir_type?(arg_type)
-      end
-      if is_union_type?(param_type)
-        return get_union_variant_id(arg_type, param_type) >= 0
-      end
-      false
-    end
-
-    private def reference_like_mir_type?(type : TypeRef) : Bool
-      return true if type == TypeRef::POINTER
-      return true if type.reference?
-      if desc = @mir_module.type_registry.get(type)
-        return true if desc.kind.array?
-      end
-      false
-    end
-
-    private def runtime_pointer_like_union_variant?(variant_type : Type?) : Bool
-      return false unless variant_type
-      variant_type.kind == TypeKind::Reference ||
-        variant_type.kind == TypeKind::Struct ||
-        variant_type.kind == TypeKind::Tuple ||
-        variant_type.kind == TypeKind::Proc ||
-        variant_type.kind == TypeKind::Array
-    end
-
-    # Coerce call arguments to match function parameter types
-    # This handles concrete type -> union type coercion (e.g., Int32 -> Int32 | Nil)
-    private def coerce_call_args(
-      builder : MIR::Builder,
-      mir_args : Array(ValueId),
-      hir_args : Array(HIR::ValueId),
-      func : MIR::Function
-    ) : Array(ValueId)
-      params = func.params
-      result = [] of ValueId
-
-      mir_args.each_with_index do |mir_arg, idx|
-        begin
-          param = params[idx]?
-          unless param
-            # More args than params - pass through
-            result << mir_arg
-            next
-          end
-
-          arg_type = get_mir_value_type(mir_arg) ||
-                     if idx < hir_args.size
-                       get_arg_type(hir_args[idx])
-                     else
-                       TypeRef::INT32  # Fallback
-                     end
-          param_type = param.type
-
-          # Check if coercion needed: different types and param is a union
-          is_param_union = is_union_type?(param_type)
-          is_arg_union = is_union_type?(arg_type)
-          if arg_type != param_type && is_param_union && !is_arg_union
-            # Wrap concrete value in union type
-            variant_id = get_union_variant_id(arg_type, param_type)
-            wrapped = builder.union_wrap(mir_arg, variant_id, param_type)
-            result << wrapped
-          else
-            result << mir_arg
-          end
-        rescue ex : IndexError
-          raise "Index error in coerce_call_args for #{func.name} at arg #{idx}: mir_args.size=#{mir_args.size} params.size=#{params.size} hir_args.size=#{hir_args.size}\n#{ex.message}"
-        end
-      end
-
-      result
-    end
-
-    # Check if a type is a union type based on its ID
-    private def is_union_type?(type : TypeRef) : Bool
-      # First check MIR module's union_descriptors (most authoritative)
-      return true if @mir_module.union_descriptors.has_key?(type)
-
-      # Then check MIR type registry kind (covers late/instantiated union refs).
-      if type_desc = @mir_module.type_registry.get(type)
-        return type_desc.kind == TypeKind::Union
-      end
-
-      # Fall back to checking HIR types
-      if type.id >= HIR::TypeRef::FIRST_USER_TYPE
-        @hir_module.types.each_with_index do |desc, idx|
-          if HIR::TypeRef.new(HIR::TypeRef::FIRST_USER_TYPE + idx.to_u32) == type
-            return desc.kind == HIR::TypeKind::Union
-          end
-        end
-      end
-      false
-    end
-
-    # Get the variant ID for a concrete type when wrapping into a union
-    private def get_union_variant_id(concrete_type : TypeRef, union_type : TypeRef? = nil) : Int32
-      # Look up from union descriptor if available (authoritative source)
-      if union_type
-        if descriptor = @mir_module.union_descriptors[union_type]?
-          descriptor.variants.each do |variant|
-            if variant.type_ref == concrete_type
-              return variant.type_id
-            end
-          end
-
-          if concrete_type == TypeRef::POINTER
-            pointer_like = descriptor.variants.select do |variant|
-              next false if variant.type_ref == TypeRef::NIL || variant.type_ref == TypeRef::VOID
-              next true if variant.type_ref == TypeRef::POINTER || variant.type_ref == TypeRef::STRING
-
-              runtime_pointer_like_union_variant?(@mir_module.type_registry.get(variant.type_ref))
-            end
-
-            if pointer_like.size == 1
-              return pointer_like.first.type_id
-            end
-          end
-
-          # For other pointer-like concrete types, try matching against POINTER variant
-          if concrete_type != TypeRef::NIL
-            descriptor.variants.each do |variant|
-              if variant.type_ref == TypeRef::POINTER
-                return variant.type_id
-              end
-            end
-          end
-        end
-      end
-      # Fallback: Nil is variant 1, other concrete types are variant 0
-      if concrete_type == TypeRef::NIL
-        1
-      else
-        0
-      end
-    end
-
-    private def coerce_return_value(
-      builder : MIR::Builder,
-      value : ValueId,
-      value_hir_type : HIR::TypeRef,
-      return_hir_type : HIR::TypeRef
-    ) : ValueId
-      value_mir_type = get_mir_value_type(value) || convert_type(value_hir_type)
-      return_mir_type = convert_type(return_hir_type)
-
-      return value if value_mir_type == return_mir_type
-
-      if is_union_type?(return_mir_type) && !is_union_type?(value_mir_type)
-        variant_id = get_union_variant_id(value_mir_type, return_mir_type)
-        return builder.union_wrap(value, variant_id, return_mir_type)
-      end
-
-      value
-    end
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # Binary/Unary Operation Lowering
-    # ─────────────────────────────────────────────────────────────────────────
-
-    private def lower_binary_op(binop : HIR::BinaryOperation) : ValueId
-      builder = @builder.not_nil!
-      left = get_value(binop.left)
-      right = get_value(binop.right)
-      result_type = convert_type(binop.type)
-
-      case binop.op
-      when HIR::BinaryOp::Add then builder.add(left, right, result_type)
-      when HIR::BinaryOp::Sub then builder.sub(left, right, result_type)
-      when HIR::BinaryOp::Mul then builder.mul(left, right, result_type)
-      when HIR::BinaryOp::Div then builder.div(left, right, result_type)
-      when HIR::BinaryOp::Mod then builder.rem(left, right, result_type)
-      when HIR::BinaryOp::Eq  then builder.eq(left, right)
-      when HIR::BinaryOp::Ne  then builder.ne(left, right)
-      when HIR::BinaryOp::Lt  then builder.lt(left, right)
-      when HIR::BinaryOp::Le  then builder.le(left, right)
-      when HIR::BinaryOp::Gt  then builder.gt(left, right)
-      when HIR::BinaryOp::Ge  then builder.ge(left, right)
-      when HIR::BinaryOp::BitAnd then builder.bit_and(left, right, result_type)
-      when HIR::BinaryOp::BitOr  then builder.bit_or(left, right, result_type)
-      when HIR::BinaryOp::BitXor then builder.bit_xor(left, right, result_type)
-      when HIR::BinaryOp::Shl then builder.shl(left, right, result_type)
-      when HIR::BinaryOp::Shr then builder.shr(left, right, result_type)
-      when HIR::BinaryOp::And
-        # Logical AND
-        builder.bit_and(left, right, TypeRef::BOOL)
-      when HIR::BinaryOp::Or
-        # Logical OR
-        builder.bit_or(left, right, TypeRef::BOOL)
-      else
-        builder.const_nil  # Fallback
-      end
-    end
-
-    private def lower_unary_op(unop : HIR::UnaryOperation) : ValueId
-      builder = @builder.not_nil!
-      operand = get_value(unop.operand)
-      result_type = convert_type(unop.type)
-
-      case unop.op
-      when HIR::UnaryOp::Neg    then builder.neg(operand, result_type)
-      when HIR::UnaryOp::Not    then builder.not(operand)
-      when HIR::UnaryOp::BitNot then builder.bit_not(operand, result_type)
-      else
-        builder.const_nil
-      end
-    end
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # Cast Lowering
-    # ─────────────────────────────────────────────────────────────────────────
-
-    private def lower_cast(cast : HIR::Cast) : ValueId
-      builder = @builder.not_nil!
-      value = get_value(cast.value)
-      if slot_type = @stack_slot_types[value]?
-        value = builder.load(value, slot_type)
-      end
-      src_hir_type = @hir_value_types[cast.value]? || HIR::TypeRef::POINTER
-      dst_hir_type = cast.target_type
-
-      src_type = convert_type(src_hir_type)
-      dst_type = convert_type(dst_hir_type)
-
-      # Union unwrap: cast union to concrete variant
-      if is_union_type?(src_type) && !is_union_type?(dst_type)
-        if descriptor = @mir_module.get_union_descriptor(src_type)
-          if variant = descriptor.variants.find { |v| v.type_ref == dst_type }
-            unwrap = UnionUnwrap.new(builder.next_id, dst_type, value, variant.type_id, cast.safe)
-            return builder.emit(unwrap)
-          end
-        end
-      end
-
-      # Union wrap: cast concrete value into union variant
-      if !is_union_type?(src_type) && is_union_type?(dst_type)
-        if descriptor = @mir_module.get_union_descriptor(dst_type)
-          if variant = descriptor.variants.find { |v| v.type_ref == src_type }
-            return builder.union_wrap(value, variant.type_id, dst_type)
-          end
-        end
-      end
-
-      # No-op cast
-      if src_type == dst_type
-        return value
-      end
-
-      # V2 struct-as-pointer ABI fix: when casting from a heap-allocated struct/class
-      # to a small primitive, the MIR Cast would produce ptrtoint ptr → iN which
-      # truncates 64-bit addresses. In original Crystal structs are inlined, so
-      # Cast(StaticArray(UInt8,1) → UInt8) is a no-op. In V2 the struct is a pointer
-      # to heap memory. The correct operation is to LOAD the primitive from the struct
-      # data, not cast the pointer itself.
-      if src_hir_type.id >= HIR::TypeRef::FIRST_USER_TYPE
-        src_mir = @mir_module.type_registry.get(src_type)
-        if src_mir
-          k = src_mir.kind
-          if k.struct? || k.reference? || k.array? || k.tuple?
-            dst_mir = @mir_module.type_registry.get(dst_type)
-            if dst_mir && dst_mir.kind.primitive? && !dst_mir.kind.void?
-              # Load the primitive value from the struct's memory (first bytes)
-              return builder.load(value, dst_type)
-            end
-          end
-        end
-      end
-
-      # Enum → integer: V2 registers UInt8-backed enums as Struct in HIR, but MIR
-      # correctly identifies them as TypeKind::Enum stored as i32. Without this
-      # check, the fall-through Bitcast path emits ptrtoint ptr→i8 which truncates
-      # 64-bit pointers to 1 byte.
-      if src_hir_type.id >= HIR::TypeRef::FIRST_USER_TYPE
-        if mir_type = @mir_module.type_registry.get(src_type)
-          if mir_type.kind.enum?
-            dst_int = case dst_hir_type
-                      when HIR::TypeRef::BOOL,
-                           HIR::TypeRef::INT8, HIR::TypeRef::INT16, HIR::TypeRef::INT32, HIR::TypeRef::INT64, HIR::TypeRef::INT128,
-                           HIR::TypeRef::UINT8, HIR::TypeRef::UINT16, HIR::TypeRef::UINT32, HIR::TypeRef::UINT64, HIR::TypeRef::UINT128,
-                           HIR::TypeRef::CHAR
-                        true
-                      else
-                        false
-                      end
-            if dst_int
-              enum_size = mir_type.size > 0 ? mir_type.size.to_i32 : 4
-              dst_size = type_size(dst_hir_type)
-              kind = if dst_size < enum_size
-                       CastKind::Trunc
-                     elsif dst_size > enum_size
-                       CastKind::ZExt
-                     else
-                       CastKind::Bitcast
-                     end
-              return builder.cast(kind, value, dst_type)
-            end
-          end
-        end
-      end
-
-      # Integer → enum: reverse direction (e.g., UInt8 → TypeKind)
-      if dst_hir_type.id >= HIR::TypeRef::FIRST_USER_TYPE
-        if mir_type = @mir_module.type_registry.get(dst_type)
-          if mir_type.kind.enum?
-            src_int = case src_hir_type
-                      when HIR::TypeRef::BOOL,
-                           HIR::TypeRef::INT8, HIR::TypeRef::INT16, HIR::TypeRef::INT32, HIR::TypeRef::INT64, HIR::TypeRef::INT128,
-                           HIR::TypeRef::UINT8, HIR::TypeRef::UINT16, HIR::TypeRef::UINT32, HIR::TypeRef::UINT64, HIR::TypeRef::UINT128,
-                           HIR::TypeRef::CHAR
-                        true
-                      else
-                        false
-                      end
-            if src_int
-              enum_size = mir_type.size > 0 ? mir_type.size.to_i32 : 4
-              src_size = type_size(src_hir_type)
-              kind = if src_size < enum_size
-                       CastKind::ZExt
-                     elsif src_size > enum_size
-                       CastKind::Trunc
-                     else
-                       CastKind::Bitcast
-                     end
-              return builder.cast(kind, value, dst_type)
-            end
-          end
-        end
-      end
-
-      # Helpers (HIR types carry signedness via Int*/UInt*)
-      int_like = ->(t : HIR::TypeRef) do
+        elsif float_like_src && float_like_dst
+          src_size = type_size(src_hir_type)
+          dst_size = type_size(dst_hir_type)
+          cast_kind = dst_size < src_size ? CastKind::FPTrunc : CastKind::FPExt
+          return builder.cast(cast_kind, value, dst_type)
+        elsif float_like_src && int_like_dst
+          cast_kind = hir_signed_int?(dst_hir_type) ? CastKind::FPToSI : CastKind::FPToUI
+          return builder.cast(cast_kind, value, dst_type)
+        elsif int_like_src && float_like_dst
+          cast_kind = hir_signed_int?(src_hir_type) ? CastKind::SIToFP : CastKind::UIToFP
+          return builder.cast(cast_kind, value, dst_type)
+        end
+
+        # Conservative fallback for representationally compatible values.
+        builder.cast(CastKind::Bitcast, value, dst_type)
+      end
+
+      private def hir_int_like?(t : HIR::TypeRef) : Bool
         case t
         when HIR::TypeRef::BOOL,
              HIR::TypeRef::INT8, HIR::TypeRef::INT16, HIR::TypeRef::INT32, HIR::TypeRef::INT64, HIR::TypeRef::INT128,
@@ -4477,11 +2162,11 @@ module Crystal
         end
       end
 
-      float_like = ->(t : HIR::TypeRef) do
+      private def hir_float_like?(t : HIR::TypeRef) : Bool
         t == HIR::TypeRef::FLOAT32 || t == HIR::TypeRef::FLOAT64
       end
 
-      signed_int = ->(t : HIR::TypeRef) do
+      private def hir_signed_int?(t : HIR::TypeRef) : Bool
         case t
         when HIR::TypeRef::INT8, HIR::TypeRef::INT16, HIR::TypeRef::INT32, HIR::TypeRef::INT64, HIR::TypeRef::INT128
           true
@@ -4490,1159 +2175,3503 @@ module Crystal
         end
       end
 
-      # unsafe_as between integer and StaticArray(UInt8, N) must reinterpret bits,
-      # not convert integer values to addresses (inttoptr/ptrtoint).
-      if !cast.safe
-        if int_like.call(src_hir_type)
-          if byte_len = staticarray_u8_length(dst_hir_type)
-            if byte_len == type_size(src_hir_type)
-              ptr_align = pointer_word_align_u32
-              align = byte_len < ptr_align ? byte_len.to_u32 : ptr_align
-              tmp = builder.alloc(MemoryStrategy::Stack, dst_type, byte_len.to_u64, align)
-              builder.store(tmp, value)
-              return tmp
-            end
+      # Check if a HIR TypeRef refers to a struct (value type).
+      # Includes generic struct instantiations like Slice(UInt8), Tuple(X,Y).
+      private def hir_type_is_struct?(type : HIR::TypeRef) : Bool
+        return false if type.id < HIR::TypeRef::FIRST_USER_TYPE
+        desc = @hir_module.get_type_descriptor(type)
+        return false unless desc
+        return true if desc.kind == HIR::TypeKind::Struct
+        return true if desc.kind == HIR::TypeKind::Tuple
+        return true if desc.kind == HIR::TypeKind::NamedTuple
+        # Generic instantiations (Slice(UInt8), etc.) — check by MIR type registry
+        if desc.kind == HIR::TypeKind::Generic
+          mir_type = @mir_module.type_registry.get_by_name(desc.name)
+          if mir_type && mir_type.kind.struct?
+            return true
           end
-        elsif int_like.call(dst_hir_type)
-          if byte_len = staticarray_u8_length(src_hir_type)
-            if byte_len == type_size(dst_hir_type)
-              return builder.load(value, dst_type)
+          # Fallback: check if the MIR has a named type that's struct
+          base_name = desc.name.partition('(').first
+          if base_name == "Slice" || base_name == "Range" || base_name == "StaticArray"
+            return true
+          end
+        end
+        false
+      end
+
+      private def hir_type_is_static_array?(type : HIR::TypeRef) : Bool
+        return false if type.id < HIR::TypeRef::FIRST_USER_TYPE
+        desc = @hir_module.get_type_descriptor(type)
+        return false unless desc
+        desc.name.starts_with?("StaticArray(")
+      end
+
+      private def hir_type_is_lib_struct?(type : HIR::TypeRef) : Bool
+        return false if type.id < HIR::TypeRef::FIRST_USER_TYPE
+        desc = @hir_module.get_type_descriptor(type)
+        return false unless desc
+        return false unless desc.kind == HIR::TypeKind::Struct
+        lib_set = @hir_module.lib_structs
+        lib_set.includes?(desc.name) || lib_set.any? { |ls| ls.ends_with?("::#{desc.name}") || desc.name.ends_with?("::#{ls.split("::").last}") }
+      end
+
+      private def hir_type_lib_struct_size(type : HIR::TypeRef) : UInt64
+        mir_ref = convert_type(type)
+        if mir_type = @mir_module.type_registry.get(mir_ref)
+          return mir_type.size if mir_type.size > 0
+        end
+        0_u64
+      end
+
+      # Get the inline size of a struct type (from class_info via MIR type registry).
+      private def hir_type_inline_size(type : HIR::TypeRef) : Int32
+        mir_ref = convert_type(type)
+        if mir_type = @mir_module.type_registry.get(mir_ref)
+          return mir_type.size.to_i32 if mir_type.size > 0
+        end
+        0
+      end
+
+      # Resolve MIR element type for HIR Pointer(T).
+      private def pointer_element_mir_type(pointer_hir_type : HIR::TypeRef?) : TypeRef?
+        return nil unless pointer_hir_type
+        desc = @hir_module.get_type_descriptor(pointer_hir_type)
+        return nil unless desc
+        return nil unless desc.name.starts_with?("Pointer(")
+
+        if elem_hir = desc.type_params.first?
+          return convert_type(elem_hir)
+        end
+
+        elem_name = desc.name[8, desc.name.size - 9]
+        if elem_mir = @mir_module.type_registry.get_by_name(elem_name)
+          return TypeRef.new(elem_mir.id)
+        end
+
+        nil
+      end
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # Index Access Lowering
+      # ─────────────────────────────────────────────────────────────────────────
+
+      private def lower_index_get(idx : HIR::IndexGet) : ValueId
+        builder = @builder.not_nil!
+        obj_ptr = get_value(idx.object)
+        index = get_value(idx.index)
+
+        # Get element type from context (default to INT32 for now)
+        element_type = convert_type(idx.type)
+        if element_type == MIR::TypeRef::NIL
+          return builder.const_nil_typed(element_type)
+        end
+        if element_type.id == MIR::TypeRef::VOID.id
+          element_type = MIR::TypeRef::INT32
+        end
+
+        # Detect StaticArray container so LLVM backend uses inline element access
+        container_type : MIR::TypeRef? = nil
+        if obj_hir_type = @hir_value_types[idx.object]?
+          if hir_type_is_static_array?(obj_hir_type)
+            container_type = convert_type(obj_hir_type)
+          end
+        end
+
+        # Emit ArrayGet instruction
+        arr_get = MIR::ArrayGet.new(
+          builder.next_id,
+          element_type,
+          obj_ptr,
+          index,
+          container_type
+        )
+        builder.emit(arr_get)
+      end
+
+      private def lower_index_set(idx : HIR::IndexSet) : ValueId
+        builder = @builder.not_nil!
+        obj_ptr = get_value(idx.object)
+        index = get_value(idx.index)
+        value = get_value(idx.value)
+
+        # Get element type - use type from HIR IndexSet.type or default to INT32
+        element_type = convert_type(idx.type)
+        if element_type == MIR::TypeRef::NIL
+          return builder.const_nil_typed(element_type)
+        end
+        if element_type.id == MIR::TypeRef::VOID.id
+          element_type = MIR::TypeRef::INT32
+        end
+
+        # Detect StaticArray container so LLVM backend uses inline element access
+        container_type : MIR::TypeRef? = nil
+        if obj_hir_type = @hir_value_types[idx.object]?
+          if hir_type_is_static_array?(obj_hir_type)
+            container_type = convert_type(obj_hir_type)
+          end
+        end
+
+        # Emit ArraySet instruction
+        arr_set = MIR::ArraySet.new(
+          builder.next_id,
+          element_type,
+          obj_ptr,
+          index,
+          value,
+          container_type
+        )
+        builder.emit(arr_set)
+
+        # rc_inc for reference-typed values: the array now holds a reference.
+        # Covers reference types, arrays, and all-ref unions (e.g. Node? = Nil | Node).
+        # Skip constants (string literals, globals) — they have INT64_MAX sentinel.
+        unless @hir_constant_values.includes?(idx.value)
+          if value_hir_type = @hir_value_types[idx.value]?
+            if type_needs_rc?(convert_type(value_hir_type))
+              builder.rc_inc(value)
             end
           end
         end
+
+        value
       end
 
-      # Unsafe bitcast for numeric types of the same size (unsafe_as semantics).
-      if !cast.safe
-        if (int_like.call(src_hir_type) && float_like.call(dst_hir_type)) ||
-           (float_like.call(src_hir_type) && int_like.call(dst_hir_type))
-          if type_size(src_hir_type) == type_size(dst_hir_type)
-            return builder.cast(CastKind::Bitcast, value, dst_type)
+      # ─────────────────────────────────────────────────────────────────────────
+      # Call Lowering
+      # ─────────────────────────────────────────────────────────────────────────
+
+      # Lower HIR::ExternCall to MIR::ExternCall (direct C function call)
+      private def lower_hir_extern_call(extern_call : HIR::ExternCall) : ValueId
+        builder = @builder.not_nil!
+
+        # Get arguments
+        args = extern_call.args.map { |arg| get_value(arg) }
+
+        # Emit MIR extern_call with the real C function name
+        builder.extern_call(extern_call.extern_name, args, convert_type(extern_call.type))
+      end
+
+      private def lower_call(call : HIR::Call) : ValueId
+        builder = @builder.not_nil!
+        debug_virtual = ENV.has_key?("DEBUG_VIRTUAL_CALLS")
+
+        # Get arguments
+        begin
+          args = call.args.map { |arg| get_value(arg) }
+        rescue ex : IndexError
+          raise "Index error getting args for call to #{call.method_name}: #{ex.message}"
+        end
+
+        # Add receiver as first arg if present
+        if recv = call.receiver
+          args.unshift(get_value(recv))
+        end
+        if debug_virtual && call.virtual
+          recv_type = call.receiver ? @hir_value_types[call.receiver.not_nil!]? : nil
+          recv_type_name = hir_type_name(recv_type)
+          STDERR.puts "[VIRTUAL_CALL] method=#{call.method_name} receiver=#{recv_type_name} args=#{call.args.size} func=#{@current_lowering_func_name}"
+        end
+
+        recv_type = call.receiver ? @hir_value_types[call.receiver.not_nil!]? : nil
+        recv_desc = recv_type ? @hir_module.get_type_descriptor(recv_type) : nil
+
+        # Union numeric conversions (to_i*, to_u*): inline by extracting payload bytes.
+        if recv_desc && recv_desc.kind == HIR::TypeKind::Union && call.args.empty?
+          if method_suffix = extract_method_suffix_loose(call.method_name)
+            if target_type = union_conversion_target_type(method_suffix)
+              if converted = lower_union_numeric_conversion(args[0], recv_type.not_nil!, target_type)
+                return converted
+              end
+            end
           end
+        end
+
+        # Check if this is an external/runtime call
+        if call.method_name.starts_with?("__crystal_v2_")
+          return builder.extern_call(call.method_name, args, convert_type(call.type))
+        end
+
+        # Atomic intrinsics: Atomic(T)#get → load from self+0, Atomic(T)#set → store to self+0
+        # Original Crystal uses @[Primitive(:load_atomic)] / @[Primitive(:store_atomic)]
+        # but our compiler can't lower those primitives, so we inline them here.
+        if call.method_name.includes?("Atomic") && call.receiver
+          method_suffix = call.method_name.rpartition("#").last.split("$").first
+          if method_suffix == "get" || method_suffix == "Hget"
+            # Atomic#get: load value from self + 0
+            self_ptr = args[0]
+            val_ptr = builder.gep(self_ptr, [0_u32], TypeRef::POINTER)
+            return builder.load(val_ptr, convert_type(call.type))
+          elsif method_suffix == "set" || method_suffix == "Hset"
+            # Atomic#set: store value to self + 0
+            self_ptr = args[0]
+            new_val = args.size > 2 ? args[2] : (args.size > 1 ? args[1] : builder.const_int(0, TypeRef::INT32))
+            val_ptr = builder.gep(self_ptr, [0_u32], TypeRef::POINTER)
+            builder.store(val_ptr, new_val)
+            return new_val
+          elsif method_suffix == "swap" || method_suffix == "Hswap"
+            # Atomic#swap: load old, store new, return old
+            self_ptr = args[0]
+            new_val = args.size > 2 ? args[2] : (args.size > 1 ? args[1] : builder.const_int(0, TypeRef::INT32))
+            val_ptr = builder.gep(self_ptr, [0_u32], TypeRef::POINTER)
+            old_val = builder.load(val_ptr, convert_type(call.type))
+            builder.store(val_ptr, new_val)
+            return old_val
+          elsif method_suffix == "compare_and_set" || method_suffix == "Hcompare_and_set"
+            # Atomic#compare_and_set: non-atomic CAS (sufficient for single-threaded stage2)
+            # Returns {T, Bool} — old value and whether swap succeeded
+            self_ptr = args[0]
+            expected = args.size > 2 ? args[1] : (args.size > 1 ? args[1] : builder.const_int(0, TypeRef::INT32))
+            desired = args.size > 2 ? args[2] : (args.size > 1 ? args[1] : builder.const_int(0, TypeRef::INT32))
+
+            # Determine T from the expected arg's HIR type
+            val_type = if call.args.size >= 1
+                         hir_arg_type = @hir_value_types[call.args[0]]?
+                         hir_arg_type ? convert_type(hir_arg_type) : TypeRef::UINT32
+                       else
+                         TypeRef::UINT32
+                       end
+
+            # Load current value
+            val_ptr = builder.gep(self_ptr, [0_u32], TypeRef::POINTER)
+            old_val = builder.load(val_ptr, val_type)
+
+            # Compare old_val == expected
+            is_equal = builder.eq(old_val, expected)
+
+            # Conditional store: if equal, store desired; otherwise store old (no-op)
+            store_val = builder.select(is_equal, desired, old_val, val_type)
+            builder.store(val_ptr, store_val)
+
+            # Construct {T, Bool} result tuple on stack
+            tuple_type_ref = convert_type(call.type)
+            tuple_mir_type = @mir_module.type_registry.get(tuple_type_ref)
+
+            # Compute tuple size and element offsets using alignment-aware layout
+            val_size = case val_type
+                       when TypeRef::UINT8, TypeRef::INT8, TypeRef::BOOL      then 1_u64
+                       when TypeRef::UINT16, TypeRef::INT16                   then 2_u64
+                       when TypeRef::UINT32, TypeRef::INT32, TypeRef::FLOAT32 then 4_u64
+                       else                                                        8_u64
+                       end
+            val_align = val_size
+            # Bool at offset = align(val_size, 1) = val_size
+            bool_offset = val_size
+            tuple_size = bool_offset + 1_u64
+            # Round up to alignment of largest element
+            tuple_size = (tuple_size + val_align - 1) & ~(val_align - 1)
+
+            tuple_ptr = builder.alloc(MemoryStrategy::Stack, tuple_type_ref, tuple_size, val_align.to_u32)
+
+            # Store old_val at offset 0
+            field0_ptr = builder.gep(tuple_ptr, [0_u32], TypeRef::POINTER)
+            builder.store(field0_ptr, old_val)
+
+            # Store is_equal (Bool) at bool_offset
+            field1_ptr = builder.gep(tuple_ptr, [bool_offset.to_u32], TypeRef::POINTER)
+            builder.store(field1_ptr, is_equal)
+
+            return tuple_ptr
+          end
+        end
+
+        # Intercept unsafe_as calls: when HIR-level interception failed (stringify_type_expr
+        # returned nil), the call arrives here as e.g. "UInt32#unsafe_as" / "Pointer(UInt8)#unsafe_as".
+        # Lower it as a reinterpret cast instead of a broken method call.
+        if call.method_name.includes?("unsafe_as") || call.method_name.includes?("Hunsafe_as")
+          src_val = args[0] # receiver = value to cast
+          dst_type = convert_type(call.type)
+          src_hir_type = call.receiver ? @hir_value_types[call.receiver.not_nil!]? : nil
+          dst_hir_type = call.type
+
+          # Classify source and destination as primitive-int, primitive-ptr, or object-ptr
+          src_prim = primitive_hir_type?(src_hir_type)
+          dst_prim = primitive_hir_type?(dst_hir_type)
+
+          if src_prim && dst_prim
+            # Both primitive: use type_size to pick cast kind
+            src_size = type_size(src_hir_type.not_nil!)
+            dst_size = type_size(dst_hir_type)
+            src_is_ptr = src_hir_type == HIR::TypeRef::POINTER
+            dst_is_ptr = dst_hir_type == HIR::TypeRef::POINTER
+            if src_is_ptr && dst_is_ptr
+              return src_val
+            elsif !src_is_ptr && dst_is_ptr
+              return builder.cast(CastKind::IntToPtr, src_val, dst_type)
+            elsif src_is_ptr && !dst_is_ptr
+              return builder.cast(CastKind::PtrToInt, src_val, dst_type)
+            elsif dst_size < src_size
+              return builder.cast(CastKind::Trunc, src_val, dst_type)
+            elsif dst_size > src_size
+              return builder.cast(CastKind::ZExt, src_val, dst_type)
+            else
+              return builder.cast(CastKind::Bitcast, src_val, dst_type)
+            end
+          elsif !src_prim && dst_prim
+            # V2 struct-as-pointer ABI: object pointer → primitive value.
+            # In V2, primitives in unions/vdispatch are heap-allocated pointers.
+            # Load the actual value instead of truncating the pointer address.
+            dst_is_ptr = dst_hir_type == HIR::TypeRef::POINTER
+            return dst_is_ptr ? src_val : builder.load(src_val, dst_type)
+          elsif src_prim && !dst_prim
+            # Primitive int → object ptr: inttoptr
+            src_is_ptr = src_hir_type == HIR::TypeRef::POINTER
+            return src_is_ptr ? src_val : builder.cast(CastKind::IntToPtr, src_val, dst_type)
+          else
+            # Both object types: ptr → ptr passthrough
+            return src_val
+          end
+        end
+
+        # Special handling for Proc#call - emit indirect call through function pointer
+        # Proc calls have format "call$Type" or just "call" and receiver is a Proc type
+        # Also match "call(...)" patterns from typed proc calls
+        # Also handle Proc-shorthand types like "(A, B -> C)#call" from monomorphized generics
+        is_proc_call = call.method_name == "call" ||
+                       call.method_name.starts_with?("call$") ||
+                       call.method_name.starts_with?("call(") ||
+                       call.method_name == "Proc#call" ||
+                       call.method_name.starts_with?("Proc#call$") ||
+                       call.method_name.starts_with?("Proc#call(") ||
+                       call.method_name.includes?("#call") || # e.g., "(A, B -> C)#call"
+                       call.method_name.includes?("->") && call.method_name.ends_with?("#call")
+        if ENV.has_key?("DEBUG_PROC_CALL") && call.method_name.includes?("call")
+          recv_type = call.receiver ? @hir_value_types[call.receiver.not_nil!]? : nil
+          recv_desc = recv_type ? @hir_module.get_type_descriptor(recv_type) : nil
+          STDERR.puts "[PROC_CALL] func=#{@current_lowering_func_name} method=#{call.method_name} receiver=#{call.receiver} recv_type=#{recv_type.try(&.id)} recv_desc=#{recv_desc.try(&.name)} kind=#{recv_desc.try(&.kind)}"
+        end
+        if call.receiver && is_proc_call
+          recv_type = @hir_value_types[call.receiver.not_nil!]?
+          recv_desc = recv_type ? @hir_module.get_type_descriptor(recv_type) : nil
+          if recv_type
+            if recv_desc && (recv_desc.kind == HIR::TypeKind::Proc || recv_desc.name == "Proc" || recv_desc.name.starts_with?("Proc("))
+              # Proc is a function pointer - emit indirect call
+              # args[0] = receiver (func ptr), args[1..] = actual arguments
+              filtered_args = [] of ValueId
+              filtered_args << args[0]
+              call.args.each_with_index do |arg_id, idx|
+                arg_type = @hir_value_types[arg_id]?
+                in_map = @value_map.has_key?(arg_id)
+                next if arg_type == HIR::TypeRef::VOID
+                next unless in_map
+                filtered_args << args[idx + 1]
+              end
+              return builder.call_indirect(filtered_args[0], filtered_args[1..].to_a, convert_type(call.type))
+            end
+          end
+        end
+
+        # Intercept IO#puts/print for Float64/Float32 BEFORE virtual dispatch.
+        # Float::Printer.shortest is broken (yield/block issues), so redirect to printf-based helpers.
+        if args.size == 2 # self (IO) + float value
+          _mn = call.method_name
+          float_extern = if _mn.includes?("puts$Float64")
+                           "__crystal_v2_print_float64_ln"
+                         elsif _mn.includes?("puts$Float32")
+                           "__crystal_v2_print_float32_ln"
+                         elsif _mn.includes?("print$Float64")
+                           "__crystal_v2_print_float64"
+                         elsif _mn.includes?("print$Float32")
+                           "__crystal_v2_print_float32"
+                         else
+                           nil
+                         end
+          if float_extern
+            # Pass only the float argument (args[1]), not the IO self
+            return builder.extern_call(float_extern, [args[1]], TypeRef::VOID)
+          end
+        end
+
+        # Some inherited wrappers are lowered with `virtual = false` but still call a
+        # parent-owned instance method on `self` (e.g. IO::Memory#read_fully ->
+        # IO#read_fully?). Treat these as virtual to preserve dynamic dispatch.
+        force_virtual_dispatch = false
+        if !call.virtual && call.receiver && recv_desc && recv_desc.kind == HIR::TypeKind::Class
+          if hash_pos = call.method_name.index('#')
+            owner_name = call.method_name.byte_slice(0, hash_pos)
+            if owner_name != recv_desc.name && !call.method_name.includes?("_super")
+              force_virtual_dispatch = true
+            end
+          end
+        end
+
+        if call.virtual || force_virtual_dispatch
+          if dispatched = lower_virtual_dispatch(call, args)
+            return dispatched
+          end
+        end
+
+        # Strip a synthetic _super call tag from method names generated by
+        # lower_super (ast_to_hir.cr). Some real lowered helper bodies also use
+        # `_super` in their actual symbol name; keep those intact or we'll recurse
+        # back into the current wrapper (for example Slice#reverse! -> Slice#reverse!).
+        method_name_str = call.method_name
+        if method_name_str.ends_with?("_super") && @mir_module.get_function(method_name_str).nil?
+          method_name_str = method_name_str[0, method_name_str.size - 6]
+        end
+        colon_pos = method_name_str.index(':')
+        dollar_pos = method_name_str.index('$')
+        base_method_name = if colon_pos || dollar_pos
+                             split_pos = [colon_pos || method_name_str.size, dollar_pos || method_name_str.size].min
+                             method_name_str[0, split_pos]
+                           else
+                             method_name_str
+                           end
+
+        # Look up function by name - try exact match first, then fuzzy match
+        func = @mir_module.get_function(method_name_str)
+
+        # If not found, try fuzzy matching to handle type variations (e.g., String vs String | Nil)
+        unless func
+          if debug_virtual && call.virtual
+            STDERR.puts "[VIRTUAL_CALL] unresolved method=#{method_name_str} base=#{base_method_name} func=#{@current_lowering_func_name}"
+          end
+          # Only apply fuzzy matching for qualified method names (containing . or #)
+          if method_name_str.includes?('.') || method_name_str.includes?('#')
+            # Extract base name (before $ type suffix) without allocating
+            dollar_idx = method_name_str.index('$')
+            base_name = dollar_idx ? method_name_str[0, dollar_idx] : method_name_str
+
+            # Try to find the best overload by matching the type suffix.
+            # The method_name_str is e.g. "IO#<<$Char" and we need to find
+            # a MIR function with base "IO#<<" and suffix "Char".
+            if all_overloads = @functions_by_base_name_all[base_name]?
+              # First try exact suffix match
+              suffix = dollar_idx ? method_name_str[(dollar_idx + 1)..] : nil
+              if suffix && !suffix.empty?
+                func = all_overloads.find { |f|
+                  f_dollar = f.name.index('$')
+                  f_dollar && f.name[(f_dollar + 1)..] == suffix
+                }
+              end
+              # Fall back to first overload if no suffix match
+              func = all_overloads.first? unless func
+            else
+              # O(1) lookup via pre-computed index (legacy fallback)
+              func = @function_by_base_name[base_name]?
+            end
+          else
+            # For unqualified method names with a receiver, try to qualify based on receiver type
+            if call.receiver
+              recv_type = @hir_value_types[call.receiver.not_nil!]?
+              if recv_type
+                recv_desc = @hir_module.get_type_descriptor(recv_type)
+                type_name = recv_desc.try(&.name) || hir_type_name(recv_type)
+                if type_name && !type_name.empty?
+                  # Try qualified name with type prefix
+                  qualified_name = "#{type_name}##{method_name_str}"
+                  func = @mir_module.get_function(qualified_name)
+
+                  # If not found, try fuzzy matching via index
+                  unless func
+                    q_dollar = qualified_name.index('$')
+                    q_base = q_dollar ? qualified_name[0, q_dollar] : qualified_name
+                    func = @function_by_base_name[q_base]?
+                  end
+                end
+              end
+            end
+          end
+        end
+
+        if func
+          if ENV["DEBUG_JOIN_MIR_CALL"]? &&
+             @current_lowering_func_name.includes?("Path#join$Tuple") &&
+             call.method_name.includes?("Path#join")
+            STDERR.puts "[JOIN_MIR_CALL] current=#{@current_lowering_func_name} call=#{call.method_name} resolved=#{func.name}"
+          end
+          callee_id = func.id
+          # Build hir_args that matches mir_args ordering (receiver first, then explicit args)
+          hir_args_for_coerce = if recv = call.receiver
+                                  [recv] + call.args
+                                else
+                                  call.args
+                                end
+
+          # Dot-methods (module/class methods) can resolve to static functions whose
+          # signature does not include receiver `self`. For those, drop the receiver
+          # argument before coercion to keep call ABI aligned with callee params.
+          callee_param_count = func.params.size
+          drop_dispatch_receiver = should_drop_dispatch_receiver?(
+            call.receiver,
+            method_name_str,
+            args,
+            func,
+            hir_args_for_coerce
+          )
+
+          effective_args = args
+          effective_hir_args = hir_args_for_coerce
+          if drop_dispatch_receiver
+            effective_args = args[1, callee_param_count]
+            effective_hir_args = call.args
+          end
+          if callee_param_count < effective_args.size
+            effective_args = effective_args[0, callee_param_count]
+            effective_hir_args = effective_hir_args[0, callee_param_count]? || effective_hir_args
+          end
+
+          coerced_args = coerce_call_args(builder, effective_args, effective_hir_args, func)
+          call_return_type = func.return_type
+          hir_call_return_type = convert_type(call.type)
+          if is_union_type?(hir_call_return_type) && !is_union_type?(func.return_type)
+            # Keep HIR-level union contract when callee ABI is scalar/pointer.
+            # Backend will wrap ABI result into expected union shape.
+            call_return_type = hir_call_return_type
+          elsif call_return_type == TypeRef::VOID && hir_call_return_type != TypeRef::VOID
+            call_return_type = hir_call_return_type
+          end
+          return builder.call(callee_id, coerced_args, call_return_type)
+        end
+
+        # Built-in print functions (fallback only when no user-defined function exists).
+        if base_method_name == "puts"
+          # Determine the actual extern based on argument type
+          if args.size == 1
+            # Get arg type - could be from call.args[0] or from receiver
+            arg_type = if call.args.size > 0
+                         get_arg_type(call.args[0])
+                       elsif recv_id = call.receiver
+                         get_arg_type(recv_id)
+                       else
+                         TypeRef::STRING
+                       end
+            extern_name = case arg_type
+                          when TypeRef::INT32, TypeRef::UINT32, TypeRef::CHAR
+                            "__crystal_v2_print_int32_ln"
+                          when TypeRef::INT64, TypeRef::UINT64
+                            "__crystal_v2_print_int64_ln"
+                          when TypeRef::FLOAT32
+                            "__crystal_v2_print_float32_ln"
+                          when TypeRef::FLOAT64
+                            "__crystal_v2_print_float64_ln"
+                          when TypeRef::STRING, TypeRef::POINTER
+                            "__crystal_v2_puts"
+                          else
+                            # Default to int32 for unknown numeric types
+                            "__crystal_v2_print_int32_ln"
+                          end
+            return builder.extern_call(extern_name, args, TypeRef::VOID)
+          end
+        end
+
+        # Handle print (without newline)
+        if base_method_name == "print"
+          if args.size == 1
+            # Get arg type - could be from call.args[0] or from receiver
+            arg_type = if call.args.size > 0
+                         get_arg_type(call.args[0])
+                       elsif recv_id = call.receiver
+                         get_arg_type(recv_id)
+                       else
+                         TypeRef::INT32
+                       end
+            extern_name = case arg_type
+                          when TypeRef::INT32, TypeRef::UINT32, TypeRef::CHAR
+                            "__crystal_v2_print_int32"
+                          when TypeRef::INT64, TypeRef::UINT64
+                            "__crystal_v2_print_int64"
+                          when TypeRef::FLOAT32
+                            "__crystal_v2_print_float32"
+                          when TypeRef::FLOAT64
+                            "__crystal_v2_print_float64"
+                          else
+                            "__crystal_v2_print_int32"
+                          end
+            return builder.extern_call(extern_name, args, TypeRef::VOID)
+          end
+        end
+
+        # Handle exit() - call libc exit
+        if base_method_name == "exit" && args.size == 1
+          return builder.extern_call("exit", args, TypeRef::VOID)
+        end
+
+        # Unknown function - emit as extern call
+        # Last resort: for unqualified method names that weren't resolved, try suffix matching
+        # against all known functions. This handles cases where class method receivers are
+        # typed as Void (e.g., `Location.local` → `Time::Location.local`).
+        unless func
+          # Only try suffix match for short unqualified names (no ::, #, or .)
+          if !call.method_name.includes?("::") && !call.method_name.includes?('#') && !call.method_name.includes?('.')
+            dot_suffix = ".#{base_method_name}"
+            hash_suffix = "##{base_method_name}"
+            candidates = [] of MIR::Function
+            @mir_module.functions.each do |mf|
+              next unless mf.name.ends_with?(dot_suffix) || mf.name.ends_with?(hash_suffix)
+              # Match exact arg count, or (args - 1) for class methods where receiver is extra
+              if mf.params.size == args.size || (call.receiver && mf.params.size == args.size - 1)
+                candidates << mf
+              end
+            end
+            if candidates.size == 1
+              func = candidates[0]
+            end
+          end
+          if func
+            # Drop receiver arg for class methods (func.params.size < args.size)
+            effective_args = if call.receiver && func.params.size < args.size
+                               args[1, func.params.size]
+                             else
+                               args[0, func.params.size]
+                             end
+            hir_args = call.receiver ? [call.receiver.not_nil!] + call.args : call.args
+            if func.params.size < hir_args.size
+              hir_args = hir_args[hir_args.size - func.params.size, func.params.size]
+            end
+            coerced_args = coerce_call_args(builder, effective_args, hir_args, func)
+            call_return_type = func.return_type
+            hir_call_return_type = convert_type(call.type)
+            if call_return_type == TypeRef::VOID && hir_call_return_type != TypeRef::VOID
+              call_return_type = hir_call_return_type
+            end
+            return builder.call(func.id, coerced_args, call_return_type)
+          end
+        end
+        if ENV.has_key?("CRYSTAL_V2_UNRESOLVED_CALL_TRACE")
+          recv_type = call.receiver ? @hir_value_types[call.receiver.not_nil!]? : nil
+          recv_name = hir_type_name(recv_type)
+          STDERR.puts "[UNRESOLVED_CALL] func=#{@current_lowering_func_name} method=#{call.method_name} base=#{base_method_name} recv=#{recv_name} virtual=#{call.virtual} args=#{call.args.size}"
+        elsif ENV.has_key?("DEBUG_CALLS")
+          STDERR.puts "[UNRESOLVED_CALL] #{call.method_name} in #{@current_lowering_func_name}"
+        end
+        extern_return_type = convert_type(call.type)
+        # Fix: class methods (containing '.') on struct types that return a primitive
+        # type are likely factory methods (e.g., MacroPiece.control) whose return type
+        # was incorrectly inferred as the first parameter type instead of the struct type.
+        # Override to use the struct's TypeRef (which maps to ptr in LLVM).
+        if dot_idx = call.method_name.index('.')
+          hir_ret_is_primitive = call.type.id <= 17_u32 # HIR primitive type IDs: 0-17
+          if hir_ret_is_primitive
+            class_name = call.method_name[0, dot_idx]
+            # Strip type suffix (e.g., "$Int32_String_Bool" from specialization)
+            if dollar_idx = class_name.index('$')
+              class_name = class_name[0, dollar_idx]
+            end
+            if struct_type = @mir_module.type_registry.get_by_name(class_name)
+              if struct_type.kind.struct?
+                extern_return_type = TypeRef.new(struct_type.id)
+              end
+            end
+          end
+        end
+        # Skip emitting extern calls for bare unqualified method names (no ::, #, ., __)
+        # that look like Crystal method names but can't be resolved. These are usually
+        # vestigial calls from class_property getters or default arguments that the compiler
+        # failed to fully qualify. Emitting them as extern calls causes linker errors.
+        if !call.method_name.includes?("::") && !call.method_name.includes?('#') &&
+           !call.method_name.includes?('.') && !call.method_name.starts_with?("__") &&
+           !call.method_name.includes?('$') && call.method_name =~ /\A[a-z_][a-zA-Z0-9_]*\z/
+          # This is an unqualified method name like "local", "tempdir" — likely a missing
+          # class method resolution. Return null/zero instead.
+          if extern_return_type == TypeRef::VOID
+            return builder.const_nil
+          else
+            return builder.const_nil_typed(extern_return_type)
+          end
+        end
+        builder.extern_call(call.method_name, args, extern_return_type)
+      end
+
+      private def extract_method_suffix_loose(full_name : String) : String?
+        if suffix = extract_method_suffix(full_name)
+          return suffix
+        end
+        conversions = ["to_i", "to_i8", "to_i16", "to_i32", "to_i64", "to_i128",
+                       "to_u", "to_u8", "to_u16", "to_u32", "to_u64", "to_u128"]
+        conversions.each do |suffix|
+          return suffix if full_name.ends_with?("_#{suffix}") || full_name == suffix
+        end
+        nil
+      end
+
+      private def union_conversion_target_type(method_suffix : String) : TypeRef?
+        # Strip trailing ! (unsafe conversion variant) before matching
+        suffix = method_suffix.rstrip('!')
+        case suffix
+        when "to_i", "to_i32"
+          TypeRef::INT32
+        when "to_i8"
+          TypeRef::INT8
+        when "to_i16"
+          TypeRef::INT16
+        when "to_i64"
+          TypeRef::INT64
+        when "to_i128"
+          TypeRef::INT128
+        when "to_u", "to_u32"
+          TypeRef::UINT32
+        when "to_u8"
+          TypeRef::UINT8
+        when "to_u16"
+          TypeRef::UINT16
+        when "to_u64"
+          TypeRef::UINT64
+        when "to_u128"
+          TypeRef::UINT128
+        else
+          nil
         end
       end
 
-      # Detect pointer-backed MIR types: generic Pointer, typed pointers (Pointer(UInt8)),
-      # reference types (String, Array), and nil. All map to LLVM "ptr".
-      src_ptr_backed = src_type == TypeRef::POINTER ||
-        (src_hir_type.id >= HIR::TypeRef::FIRST_USER_TYPE &&
-          @mir_module.type_registry.get(src_type).try { |t| t.kind.pointer? || t.kind.reference? || t.kind.array? } == true) ||
-        src_hir_type == HIR::TypeRef::NIL || src_hir_type == HIR::TypeRef::STRING
-      dst_ptr_backed = dst_type == TypeRef::POINTER ||
-        (dst_hir_type.id >= HIR::TypeRef::FIRST_USER_TYPE &&
-          @mir_module.type_registry.get(dst_type).try { |t| t.kind.pointer? || t.kind.reference? || t.kind.array? } == true) ||
-        dst_hir_type == HIR::TypeRef::NIL || dst_hir_type == HIR::TypeRef::STRING
+      private def union_numeric_bit_width(type_ref : TypeRef) : Int32?
+        case type_ref
+        when TypeRef::INT8, TypeRef::UINT8
+          8
+        when TypeRef::INT16, TypeRef::UINT16
+          16
+        when TypeRef::INT32, TypeRef::UINT32, TypeRef::CHAR
+          32
+        when TypeRef::INT64, TypeRef::UINT64
+          64
+        when TypeRef::INT128, TypeRef::UINT128
+          128
+        else
+          nil
+        end
+      end
 
-      kind = if src_ptr_backed && int_like.call(dst_hir_type)
-               CastKind::PtrToInt
-             elsif dst_ptr_backed && int_like.call(src_hir_type)
-               CastKind::IntToPtr
-             elsif int_like.call(src_hir_type) && int_like.call(dst_hir_type)
-               src_size = type_size(src_hir_type)
-               dst_size = type_size(dst_hir_type)
-               if dst_size < src_size
-                 CastKind::Trunc
-               elsif dst_size > src_size
-                 signed_int.call(src_hir_type) ? CastKind::SExt : CastKind::ZExt
+      private def union_unsigned_type_for_bits(bits : Int32) : TypeRef
+        case bits
+        when 8
+          TypeRef::UINT8
+        when 16
+          TypeRef::UINT16
+        when 32
+          TypeRef::UINT32
+        when 64
+          TypeRef::UINT64
+        when 128
+          TypeRef::UINT128
+        else
+          TypeRef::UINT64
+        end
+      end
+
+      private def union_signed_type_for_bits(bits : Int32) : TypeRef
+        case bits
+        when 8
+          TypeRef::INT8
+        when 16
+          TypeRef::INT16
+        when 32
+          TypeRef::INT32
+        when 64
+          TypeRef::INT64
+        when 128
+          TypeRef::INT128
+        else
+          TypeRef::INT64
+        end
+      end
+
+      private def union_numeric_conversion_cast_kind(src_bits : Int32, dst_bits : Int32, dst_signed : Bool) : CastKind
+        if dst_bits < src_bits
+          CastKind::Trunc
+        elsif dst_bits > src_bits
+          dst_signed ? CastKind::SExt : CastKind::ZExt
+        else
+          CastKind::Bitcast
+        end
+      end
+
+      private def union_numeric_conversion_signed?(type_ref : TypeRef) : Bool
+        case type_ref
+        when TypeRef::INT8, TypeRef::INT16, TypeRef::INT32, TypeRef::INT64, TypeRef::INT128
+          true
+        else
+          false
+        end
+      end
+
+      private def lower_union_numeric_conversion(
+        union_value : ValueId,
+        recv_type : HIR::TypeRef,
+        target_type : TypeRef,
+      ) : ValueId?
+        mir_union_ref = convert_type(recv_type)
+        union_desc = @mir_module.get_union_descriptor(mir_union_ref)
+        return nil unless union_desc
+
+        # Reject unions with Nil (unsafe to ignore tag).
+        union_desc.variants.each do |variant|
+          return nil if variant.type_ref == TypeRef::NIL
+        end
+
+        # Collect numeric variants and determine payload width.
+        max_bits = nil.as(Int32?)
+        union_desc.variants.each do |variant|
+          bits = union_numeric_bit_width(variant.type_ref)
+          return nil unless bits
+          max_bits = max_bits ? (bits > max_bits ? bits : max_bits) : bits
+        end
+        return nil unless max_bits
+
+        payload_type = union_unsigned_type_for_bits(max_bits)
+        payload = @builder.not_nil!.cast(CastKind::Bitcast, union_value, payload_type)
+
+        # If target is same width unsigned payload, reuse directly.
+        return payload if payload_type == target_type
+
+        dst_bits = union_numeric_bit_width(target_type)
+        return nil unless dst_bits
+        kind = union_numeric_conversion_cast_kind(max_bits, dst_bits, union_numeric_conversion_signed?(target_type))
+        @builder.not_nil!.cast(kind, payload, target_type)
+      end
+
+      # Dispatch kind for unified vdispatch generator
+      private enum VDispatchKind
+        Union # receiver is a union type - use UnionTypeIdGet + UnionUnwrap
+        Class # receiver is a class pointer - use gep header + load type_id
+      end
+
+      # Unified candidate structure for vdispatch
+      private alias VDispatchCandidate = NamedTuple(
+        type_id: Int32,
+        func: Crystal::MIR::Function?,
+        type_ref: TypeRef?,     # for Union unwrap
+        variant_id: Int32?,     # for Union unwrap
+        dispatch_class: String? # for nested class dispatch
+)
+
+      # Unified vdispatch body generator - handles both Union and Class dispatch
+      # Returns the phi node if return type is non-void, nil otherwise
+      private def generate_vdispatch_body(
+        dispatch_func : Crystal::MIR::Function,
+        dispatch_builder : Builder,
+        param_values : Array(ValueId),
+        candidates : Array(VDispatchCandidate),
+        kind : VDispatchKind,
+        method_suffix : String?,
+        hir_call : HIR::Call?,
+      ) : Phi?
+        # 1. Get type ID based on dispatch kind.
+        # For class dispatch, guard against null receiver (Nil in V2 is null).
+        # Reading type_id from a null pointer would segfault.
+        class_nil_block : BlockId? = nil
+        switch_block = dispatch_func.entry_block # block where the switch will go
+        type_id_val = case kind
+                      in .union?
+                        dispatch_builder.emit(MIR::UnionTypeIdGet.new(dispatch_builder.next_id, param_values[0]))
+                      in .class?
+                        null_val = dispatch_builder.const_nil_typed(TypeRef::POINTER)
+                        is_null = dispatch_builder.eq(param_values[0], null_val)
+                        nb = dispatch_func.create_block
+                        class_nil_block = nb
+                        tid_block = dispatch_func.create_block
+                        switch_block = tid_block
+                        dispatch_builder.branch(is_null, nb, tid_block)
+
+                        dispatch_builder.current_block = tid_block
+                        header_ptr = dispatch_builder.gep(param_values[0], [0_u32], TypeRef::POINTER)
+                        dispatch_builder.load(header_ptr, TypeRef::INT32)
+                      end
+
+        # 2. Create end block and phi (if non-void return)
+        end_block = dispatch_func.create_block
+        phi : Phi? = nil
+        if dispatch_func.return_type != TypeRef::VOID
+          dispatch_builder.current_block = end_block
+          phi = dispatch_builder.phi(dispatch_func.return_type)
+        end
+
+        # Wire up nil block for class dispatch (needs end_block + phi)
+        if (nb = class_nil_block)
+          dispatch_builder.current_block = nb
+          if phi
+            # Return first argument if present (pass-through for hash(hasher) etc),
+            # otherwise return zero. This matches Nil's behavior: most Nil methods
+            # that take an accumulator return it unchanged.
+            nil_ret = if param_values.size > 1
+                        param_values[1]
+                      else
+                        dispatch_builder.const_int(0_i64, dispatch_func.return_type)
+                      end
+            phi.add_incoming(from: nb, value: nil_ret)
+          end
+          dispatch_func.get_block(nb).terminator = Jump.new(end_block)
+        end
+
+        # 3. Create default block and case blocks
+        default_block = dispatch_func.create_block
+        cases = [] of Tuple(Int64, BlockId)
+        candidates.each do |candidate|
+          case_block = dispatch_func.create_block
+          # For union dispatch: use type_ref.id (global MIR type ID) to match
+          # what emit_union_wrap stores as the discriminator via variant_global_id().
+          # For class dispatch: type_id already IS the global runtime type_id.
+          case_id = if kind.union? && (tref = candidate[:type_ref])
+                      tref.id.to_i64
+                    else
+                      candidate[:type_id].to_i64
+                    end
+          cases << {case_id, case_block}
+        end
+
+        # 4. Set up switch in the appropriate block
+        dispatch_func.get_block(switch_block).terminator = Switch.new(type_id_val, cases, default_block)
+
+        # 5. Generate each case
+        candidates.each_with_index do |candidate, idx|
+          case_block = cases[idx][1]
+          dispatch_builder.current_block = case_block
+
+          cand_args = param_values.dup
+
+          # Union: unwrap receiver to concrete type
+          if kind.union? && candidate[:type_ref] && candidate[:variant_id]
+            unwrap = MIR::UnionUnwrap.new(
+              dispatch_builder.next_id,
+              candidate[:type_ref].not_nil!,
+              param_values[0],
+              candidate[:variant_id].not_nil!,
+              false
+            )
+            dispatch_builder.emit(unwrap)
+            cand_args[0] = unwrap.id
+          end
+
+          # Get the function to call (may need nested dispatch for union containing class hierarchy)
+          call_func = candidate[:func]
+          if call_func.nil? && candidate[:dispatch_class] && method_suffix && hir_call
+            call_func = ensure_class_dispatch_for_union(
+              candidate[:dispatch_class].not_nil!,
+              method_suffix,
+              candidate[:type_ref] || TypeRef::POINTER,
+              hir_call
+            )
+          end
+
+          if call_func
+            callee_param_count = call_func.params.size
+            coerced_args = cand_args
+            if hir_call
+              recv_id = hir_call.receiver
+              hir_args_with_receiver = recv_id ? [recv_id] + hir_call.args : hir_call.args
+              # Module/class dispatch can route to static methods whose signature
+              # does not include receiver `self`. Also guard against leaked
+              # dispatch receivers where only shifted arg alignment matches ABI.
+              drop_dispatch_receiver = should_drop_dispatch_receiver?(
+                recv_id,
+                call_func.name,
+                cand_args,
+                call_func,
+                hir_args_with_receiver
+              )
+              effective_args = cand_args
+              effective_hir_args = hir_args_with_receiver
+              if drop_dispatch_receiver
+                effective_args = cand_args[1, callee_param_count]
+                effective_hir_args = hir_call.args
+              end
+
+              if callee_param_count == effective_args.size
+                # Same param count — pass all args including receiver
+                coerced_args = coerce_call_args(dispatch_builder, effective_args, effective_hir_args, call_func)
+              elsif callee_param_count < effective_args.size
+                # Callee has fewer params (e.g. optional arg dropped by overload).
+                # Truncate effective dispatch args to match callee's arity.
+                truncated_args = effective_args[0, callee_param_count]
+                truncated_hir = effective_hir_args[0, callee_param_count]? || effective_hir_args
+                coerced_args = coerce_call_args(dispatch_builder, truncated_args, truncated_hir, call_func)
+              else
+                # Callee expects more args than dispatch provides — pass all, let coercion handle it
+                coerced_args = coerce_call_args(dispatch_builder, effective_args, effective_hir_args, call_func)
+              end
+            else
+              drop_dispatch_receiver = callee_param_count <= cand_args.size - 1 &&
+                                       call_func.name.includes?('.') &&
+                                       !call_func.name.includes?('#')
+              effective_args = drop_dispatch_receiver ? cand_args[1, callee_param_count] : cand_args
+              if callee_param_count < effective_args.size
+                coerced_args = effective_args[0, callee_param_count]
+              else
+                coerced_args = effective_args
+              end
+            end
+
+            call_val = dispatch_builder.call(call_func.id, coerced_args, dispatch_func.return_type)
+            if phi && call_val != 0_u32
+              phi.add_incoming(from: case_block, value: call_val)
+            end
+            dispatch_func.get_block(case_block).terminator = Jump.new(end_block)
+          else
+            # No implementation found - jump to default (unreachable)
+            dispatch_func.get_block(case_block).terminator = Jump.new(default_block)
+          end
+        end
+
+        # 6. Set up end block return
+        if phi
+          dispatch_builder.current_block = end_block
+          dispatch_func.get_block(end_block).terminator = Return.new(phi.id)
+        else
+          dispatch_func.get_block(end_block).terminator = Return.new(nil)
+        end
+
+        # 7. Default block is unreachable
+        dispatch_func.get_block(default_block).terminator = Unreachable.new
+
+        phi
+      end
+
+      private def lower_virtual_dispatch(call : HIR::Call, args : Array(ValueId)) : ValueId?
+        recv_id = call.receiver
+        return nil unless recv_id
+
+        recv_type = @hir_value_types[recv_id]? || return nil
+        recv_desc = @hir_module.get_type_descriptor(recv_type)
+        return nil unless recv_desc
+
+        method_suffix = extract_method_suffix(call.method_name)
+        return nil unless method_suffix
+
+        old_candidates = virtual_dispatch_candidates(recv_desc, recv_type, method_suffix, call.args.size)
+
+        # When receiver is a Generic-kind type wrapping a union (e.g., Union(*Nil | Int32)),
+        # the union descriptor might be at a different ref. Try to find it by name matching.
+        generic_union_ref = nil.as(TypeRef?)
+        if old_candidates.empty? && recv_desc.kind == HIR::TypeKind::Generic && recv_desc.name.starts_with?("Union(")
+          inner_name = recv_desc.name[6..-2] # Strip "Union(" and ")"
+          @mir_module.union_descriptors.each do |ref, desc|
+            if desc.name == inner_name
+              # Found matching union descriptor — build candidates from it
+              desc.variants.each do |variant|
+                next if variant.full_name == "Nil" || variant.full_name.starts_with?('*')
+                if func = resolve_virtual_method_for_class(variant.full_name, method_suffix, call.args.size)
+                  old_candidates << {
+                    type_id:        variant.type_id,
+                    type_ref:       variant.type_ref,
+                    variant_id:     variant.type_id,
+                    func:           func,
+                    dispatch_class: nil.as(String?),
+                  }
+                end
+              end
+              generic_union_ref = ref
+              break
+            end
+          end
+        end
+
+        # Some union call-sites (notably IndexNode lowering paths) can reach MIR
+        # with an incomplete union descriptor candidate set. Augment candidates
+        # directly from HIR union variants so virtual dispatch remains complete.
+        if recv_desc.kind == HIR::TypeKind::Union
+          existing_variant_ids = Set(Int32).new
+          old_candidates.each { |c| existing_variant_ids.add(c[:variant_id]) }
+
+          variant_names = [] of String
+          recv_desc.type_params.each do |variant_hir_ref|
+            variant_desc = @hir_module.get_type_descriptor(variant_hir_ref)
+            variant_name = variant_desc.try(&.name) || hir_type_name(variant_hir_ref)
+            variant_names << variant_name unless variant_name.empty?
+          end
+          if variant_names.size < 2
+            split_union_type_name_loose(recv_desc.name).each { |name| variant_names << name }
+          end
+
+          variant_names.uniq.each do |variant_name|
+            next if variant_name.empty? || variant_name == "Nil" || variant_name.starts_with?('*')
+
+            mir_type = @mir_module.type_registry.get_by_name(variant_name)
+            next unless mir_type
+            variant_mir_ref = TypeRef.new(mir_type.id)
+            variant_id = variant_mir_ref.id.to_i32
+            next if existing_variant_ids.includes?(variant_id)
+
+            if func = resolve_virtual_method_for_class(variant_name, method_suffix, call.args.size)
+              old_candidates << {
+                type_id:        variant_id,
+                type_ref:       variant_mir_ref,
+                variant_id:     variant_id,
+                func:           func,
+                dispatch_class: nil.as(String?),
+              }
+              existing_variant_ids.add(variant_id)
+            elsif (mir_type = @mir_module.type_registry.get_by_name(variant_name)) &&
+                  !mir_type.is_value_type? &&
+                  !subclasses_for(variant_name).empty?
+              old_candidates << {
+                type_id:        variant_id,
+                type_ref:       variant_mir_ref,
+                variant_id:     variant_id,
+                func:           nil.as(Crystal::MIR::Function?),
+                dispatch_class: variant_name,
+              }
+              existing_variant_ids.add(variant_id)
+            end
+          end
+        end
+
+        return nil if old_candidates.empty?
+
+        # vdispatch cache key must include the static receiver type.
+        # Otherwise, an early narrow call-site (e.g. IO::FileDescriptor) can
+        # create a truncated dispatch table that is incorrectly reused by wider
+        # call-sites (e.g. IO), causing missing runtime variants.
+        dispatch_name = String.build(call.method_name.bytesize + 24) do |io|
+          io << "__vdispatch__"
+          io << call.method_name
+          io << "$T"
+          io << recv_type.id
+        end
+        if existing = @mir_module.get_function(dispatch_name)
+          return @builder.not_nil!.call(existing.id, args, existing.return_type)
+        end
+
+        # Determine return type for dispatch.
+        # `call.type` can be too generic (often POINTER for virtual calls), which causes
+        # primitive returns to be retyped as pointer and breaks downstream codegen.
+        ret_type = convert_type(call.type)
+        first_candidate_ret = nil.as(TypeRef?)
+        unanimous_candidate_ret = nil.as(TypeRef?)
+        mixed_candidate_rets = false
+        old_candidates.each do |c|
+          next unless f = c[:func]
+          cand_ret = f.return_type
+          next if cand_ret == TypeRef::VOID
+          first_candidate_ret ||= cand_ret
+          if unanimous_candidate_ret.nil?
+            unanimous_candidate_ret = cand_ret
+          elsif unanimous_candidate_ret != cand_ret
+            mixed_candidate_rets = true
+            break
+          end
+        end
+        ret_type_too_generic = ret_type == TypeRef::VOID ||
+                               ret_type == TypeRef::NIL ||
+                               ret_type == TypeRef::POINTER
+        # Avoid `nilable_struct && expr` — stage1 miscompiles nilable-struct
+        # union dispatch generated by `&&` on TypeRef?.
+        ret_type_reference_vs_primitive = if ucr = unanimous_candidate_ret
+                                            ret_type.reference? && ucr.primitive?
+                                          else
+                                            false
+                                          end
+
+        if (ucr2 = unanimous_candidate_ret) &&
+           !mixed_candidate_rets &&
+           (ret_type_too_generic || ret_type_reference_vs_primitive)
+          ret_type = ucr2
+        elsif ret_type == TypeRef::VOID && (fcr = first_candidate_ret)
+          ret_type = fcr
+        end
+
+        # Create dispatch function
+        dispatch_func = @mir_module.create_function(dispatch_name, ret_type)
+        param_values = [] of ValueId
+
+        # For Generic-wrapped unions, use the union descriptor's ref as the receiver param type.
+        # This ensures the LLVM type mapper produces a union struct type, making
+        # UnionTypeIdGet and UnionUnwrap work correctly.
+        recv_param_type = generic_union_ref || convert_type(recv_type)
+        dispatch_func.add_param("recv", recv_param_type)
+        param_values << 0_u32
+
+        # Other params
+        call.args.each_with_index do |arg_id, idx|
+          arg_type = @hir_value_types[arg_id]? || HIR::TypeRef::POINTER
+          dispatch_func.add_param("arg#{idx}", convert_type(arg_type))
+          param_values << (idx + 1).to_u32
+        end
+
+        dispatch_builder = Builder.new(dispatch_func)
+
+        # Convert to unified candidate format
+        candidates = old_candidates.map do |c|
+          VDispatchCandidate.new(
+            type_id: c[:type_id],
+            func: c[:func],
+            type_ref: c[:type_ref],
+            variant_id: c[:variant_id],
+            dispatch_class: c[:dispatch_class]
+          )
+        end
+
+        # Determine dispatch kind:
+        # - All-ref unions (every variant is a class/Nil) use Class dispatch
+        #   because they're stored as raw pointers — type_id lives in the object header.
+        # - Mixed/tagged unions use Union dispatch — type_id is the union discriminator.
+        is_union_type = recv_desc.kind == HIR::TypeKind::Union || generic_union_ref
+        recv_mir = convert_type(recv_type)
+        is_allref = if is_union_type
+                      if desc = @mir_module.get_union_descriptor(recv_mir)
+                        all_ref_union_descriptor?(desc)
+                      else
+                        false
+                      end
+                    else
+                      false
+                    end
+        kind = (is_union_type && !is_allref) ? VDispatchKind::Union : VDispatchKind::Class
+
+        # Use unified generator
+        generate_vdispatch_body(
+          dispatch_func,
+          dispatch_builder,
+          param_values,
+          candidates,
+          kind,
+          method_suffix,
+          call
+        )
+
+        # For Generic-wrapped unions, the caller passes a ptr but the dispatch function
+        # expects a union struct value. Load the union value from the pointer.
+        call_args = args
+        if generic_union_ref
+          builder = @builder.not_nil!
+          union_val = builder.load(args[0], generic_union_ref)
+          call_args = args.dup
+          call_args[0] = union_val
+        end
+
+        @builder.not_nil!.call(dispatch_func.id, call_args, dispatch_func.return_type)
+      end
+
+      private def extract_method_suffix(full_name : String) : String?
+        if idx = full_name.index('#')
+          return full_name[(idx + 1)..-1]
+        end
+        nil
+      end
+
+      private def split_union_type_name_loose(type_name : String) : Array(String)
+        normalized = if type_name.includes?('|')
+                       type_name
+                     elsif type_name.includes?("$_$OR$_")
+                       type_name.gsub("$_$OR$_", "|")
+                     elsif type_name.includes?("___")
+                       type_name.gsub("___", "|")
+                     else
+                       type_name
+                     end
+        unless normalized.includes?('|')
+          trimmed = normalized.strip
+          return trimmed.empty? ? [] of String : [trimmed]
+        end
+
+        parts = [] of String
+        depth = 0
+        start = 0
+        i = 0
+        while i < normalized.bytesize
+          ch = normalized.byte_at(i).unsafe_chr
+          case ch
+          when '(', '{', '['
+            depth += 1
+          when ')', '}', ']'
+            depth -= 1 if depth > 0
+          when '|'
+            if depth == 0
+              part = normalized[start, i - start].strip
+              parts << part unless part.empty?
+              start = i + 1
+            end
+          end
+          i += 1
+        end
+        tail = normalized[start, normalized.size - start].strip
+        parts << tail unless tail.empty?
+        parts
+      end
+
+      private def subclasses_for(base : String) : Array(String)
+        if cached = @subclass_cache[base]?
+          return cached
+        end
+        result = [] of String
+        seen = Set(String).new
+        queue = @class_children[base]?.dup || [] of String
+        until queue.empty?
+          name = queue.shift
+          next if seen.includes?(name)
+          seen.add(name)
+          result << name
+          if children = @class_children[name]?
+            children.each { |child| queue << child }
+          end
+        end
+        @subclass_cache[base] = result
+        result
+      end
+
+      private def module_includers_for(module_name : String) : Array(String)
+        if cached = @module_includers_cache[module_name]?
+          return cached
+        end
+        base_module = strip_generic_args(module_name)
+        includers = @hir_module.module_includers[module_name]? || @hir_module.module_includers[base_module]?
+        if includers.nil? || includers.empty?
+          matches = @hir_module.module_includers.keys.select do |key|
+            key.ends_with?("::#{module_name}") || key.ends_with?("::#{base_module}")
+          end
+          includers = @hir_module.module_includers[matches.first]? if matches.size == 1
+        end
+
+        if includers.nil? || includers.empty?
+          generic_matches = @hir_module.module_includers.keys.select do |key|
+            strip_generic_args(key) == base_module
+          end
+          if generic_matches.size == 1
+            includers = @hir_module.module_includers[generic_matches.first]?
+          elsif generic_matches.size > 1
+            merged = [] of String
+            generic_matches.each do |key|
+              if list = @hir_module.module_includers[key]?
+                list.each { |entry| merged << entry }
+              end
+            end
+            includers = merged.uniq! if merged.any?
+          end
+        end
+
+        if (includers.nil? || includers.empty?) && module_name.includes?("::")
+          short_name = short_module_name(module_name)
+          base_short_name = short_module_name(base_module)
+          includers = @hir_module.module_includers[short_name]? || @hir_module.module_includers[base_short_name]?
+          if includers.nil? || includers.empty?
+            matches = @hir_module.module_includers.keys.select do |key|
+              key.ends_with?("::#{short_name}") || key.ends_with?("::#{base_short_name}")
+            end
+            includers = @hir_module.module_includers[matches.first]? if matches.size == 1
+          end
+        end
+
+        if (includers.nil? || includers.empty?) && module_name.includes?("::")
+          generic_matches = @hir_module.module_includers.keys.select do |key|
+            strip_generic_args(key) == base_short_name
+          end
+          if generic_matches.size == 1
+            includers = @hir_module.module_includers[generic_matches.first]?
+          elsif generic_matches.size > 1
+            merged = [] of String
+            generic_matches.each do |key|
+              if list = @hir_module.module_includers[key]?
+                list.each { |entry| merged << entry }
+              end
+            end
+            includers = merged.uniq! if merged.any?
+          end
+        end
+
+        result = includers ? includers.dup : [] of String
+        @module_includers_cache[module_name] = result
+        result
+      end
+
+      @[AlwaysInline]
+      private def strip_generic_args(name : String) : String
+        if idx = name.index('(')
+          return name.byte_slice(0, idx)
+        end
+        name
+      end
+
+      @[AlwaysInline]
+      private def short_module_name(name : String) : String
+        if idx = name.rindex("::")
+          return name.byte_slice(idx + 2)
+        end
+        name
+      end
+
+      private def ensure_reference_type_for_name(name : String) : Type?
+        if mir_type = @mir_module.type_registry.get_by_name(name)
+          return mir_type
+        end
+
+        hir_index = @hir_module.types.index { |desc| desc.name == name }
+        return nil unless hir_index
+        hir_desc = @hir_module.types[hir_index]
+        return nil unless hir_desc.kind == HIR::TypeKind::Module
+
+        hir_ref = HIR::TypeRef.new(HIR::TypeRef::FIRST_USER_TYPE + hir_index.to_u32)
+        mir_ref = convert_type(hir_ref)
+        @mir_module.type_registry.create_type_with_id(
+          mir_ref.id,
+          TypeKind::Reference,
+          name,
+          pointer_word_bytes_u64,
+          pointer_word_align_u32
+        )
+      end
+
+      private def enclosing_class_for_module(module_name : String) : String?
+        parts = module_name.split("::")
+        while parts.size > 1
+          parts.pop
+          candidate = parts.join("::")
+          return candidate if @hir_module.class_parents.has_key?(candidate)
+        end
+        nil
+      end
+
+      private def virtual_dispatch_candidates(
+        recv_desc : HIR::TypeDescriptor,
+        recv_type : HIR::TypeRef,
+        method_suffix : String,
+        arg_count : Int32,
+      ) : Array(NamedTuple(type_id: Int32, type_ref: TypeRef, variant_id: Int32, func: Crystal::MIR::Function?, dispatch_class: String?))
+        candidates = @vdispatch_candidates_buf
+        candidates.clear
+
+        if recv_desc.kind == HIR::TypeKind::Union
+          mir_union_ref = convert_type(recv_type)
+          if union_desc = @mir_module.get_union_descriptor(mir_union_ref)
+            if ENV["DEBUG_VDISPATCH_UNION"]? && method_suffix == "next_power_of_two"
+              variants = union_desc.variants.map(&.full_name).join(",")
+              STDERR.puts "[VDISPATCH_UNION] union=#{union_desc.name} variants=#{variants}"
+            end
+            union_desc.variants.each do |variant|
+              if variant.full_name == "Nil"
+                next
+              end
+              if func = resolve_virtual_method_for_class(variant.full_name, method_suffix, arg_count)
+                if ENV["DEBUG_VDISPATCH_UNION"]? && method_suffix == "next_power_of_two"
+                  STDERR.puts "[VDISPATCH_UNION] candidate=#{variant.full_name} func=#{func.name}"
+                end
+                candidates << {
+                  type_id:        variant.type_id,
+                  type_ref:       variant.type_ref,
+                  variant_id:     variant.type_id,
+                  func:           func,
+                  dispatch_class: nil,
+                }
+              elsif (mir_type = @mir_module.type_registry.get_by_name(variant.full_name)) &&
+                    !mir_type.is_value_type? &&
+                    !subclasses_for(variant.full_name).empty?
+                candidates << {
+                  type_id:        variant.type_id,
+                  type_ref:       variant.type_ref,
+                  variant_id:     variant.type_id,
+                  func:           nil,
+                  dispatch_class: variant.full_name,
+                }
+              end
+            end
+          end
+        elsif recv_desc.kind == HIR::TypeKind::Class
+          base = recv_desc.name
+          all_classes = [base] + subclasses_for(base)
+          # Track classes that had no MIR function found — we'll fill them in
+          # with the nearest parent's implementation in a second pass.
+          missing_classes = [] of {String, Crystal::MIR::Type}
+          all_classes.each do |class_name|
+            func_name = "#{class_name}##{method_suffix}"
+            func = @mir_module.get_function(func_name)
+            # Verify arity: an untyped alias (e.g. Foo#hash) may match a different
+            # overload than intended (e.g. hash(hasher) instead of hash()).
+            # If param count doesn't match, reject the exact-name match and fall
+            # through to arity-aware resolve_virtual_method_for_class.
+            if func && func.params.size != arg_count + 1
+              func = nil
+            end
+            func = func || resolve_virtual_method_for_class(class_name, method_suffix, arg_count)
+            if func
+              next unless mir_type = @mir_module.type_registry.get_by_name(class_name)
+              candidates << {
+                type_id:        mir_type.id.to_i32,
+                type_ref:       TypeRef.new(mir_type.id),
+                variant_id:     mir_type.id.to_i32,
+                func:           func,
+                dispatch_class: nil,
+              }
+            else
+              # No function found for this class — record for fallback pass.
+              # Only reference types: value types can't appear in class dispatch.
+              if mir_type = @mir_module.type_registry.get_by_name(class_name)
+                missing_classes << {class_name, mir_type} unless mir_type.is_value_type?
+              end
+            end
+          end
+          # Second pass: for classes with no MIR function, find the nearest ancestor
+          # that has an implementation by searching ALL MIR functions (not just
+          # existing candidates). This handles inherited methods that RTA filtered
+          # out (e.g. String#hash(hasher) inherited from Reference — the HIR never
+          # generated it for String, but a sibling like IO has the same inherited
+          # default). We walk up the class hierarchy checking siblings.
+          unless missing_classes.empty?
+            # Build a set of class names that already have candidates
+            have_candidate = Set(String).new
+            candidates.each do |c|
+              if mt = @mir_module.type_registry.get(c[:type_ref])
+                have_candidate.add(mt.name)
+              end
+            end
+            missing_classes.each do |class_name, mir_type|
+              fallback_func = nil.as(Crystal::MIR::Function?)
+              # Walk up the class hierarchy from the missing class
+              current = class_name
+              walked = Set(String).new
+              while !current.empty? && !walked.includes?(current)
+                walked.add(current)
+                # Check if any sibling (subclass of current's parent) has a candidate
+                parent = @hir_module.class_parents[current]?
+                if parent
+                  sibling_func = find_sibling_candidate_func(parent, method_suffix, arg_count, have_candidate)
+                  if sibling_func
+                    fallback_func = sibling_func
+                    break
+                  end
+                end
+                current = parent || ""
+              end
+              if ff = fallback_func
+                if ENV["DEBUG_VDISPATCH_FALLBACK"]?
+                  STDERR.puts "[VDISPATCH_FALLBACK] #{class_name}##{method_suffix} → #{ff.name}"
+                end
+                candidates << {
+                  type_id:        mir_type.id.to_i32,
+                  type_ref:       TypeRef.new(mir_type.id),
+                  variant_id:     mir_type.id.to_i32,
+                  func:           ff,
+                  dispatch_class: nil,
+                }
+              end
+            end
+          end
+        elsif recv_desc.kind == HIR::TypeKind::Module || recv_desc.kind == HIR::TypeKind::Generic
+          seen = Set(String).new
+          module_name = recv_desc.name
+          if recv_desc.kind == HIR::TypeKind::Generic
+            # Keep the full generic name (e.g., "Enumerable(Fiber)") so that
+            # module_includers_for can narrow to type-parameter-specific includers.
+            # This matches the original compiler's per-type-parameter including_types.
+            # module_includers_for has fallback logic to the base name if needed.
+          end
+          includers = module_includers_for(module_name)
+          if includers.empty?
+            if outer = enclosing_class_for_module(module_name)
+              includers = [outer]
+            end
+          end
+          includers.each do |includer|
+            ([includer] + subclasses_for(includer)).each do |class_name|
+              next if seen.includes?(class_name)
+              seen.add(class_name)
+              func_name = "#{class_name}##{method_suffix}"
+              func = @mir_module.get_function(func_name)
+              if func && func.params.size != arg_count + 1
+                func = nil
+              end
+              func = func || resolve_virtual_method_for_class(class_name, method_suffix, arg_count, allow_module_method: true)
+              next unless func
+              mir_type = ensure_reference_type_for_name(class_name) ||
+                         @mir_module.type_registry.get_by_name(class_name)
+              next unless mir_type
+              next if mir_type.is_value_type?
+              candidates << {
+                type_id:        mir_type.id.to_i32,
+                type_ref:       TypeRef.new(mir_type.id),
+                variant_id:     mir_type.id.to_i32,
+                func:           func,
+                dispatch_class: nil,
+              }
+            end
+          end
+        end
+
+        candidates
+      end
+
+      private def ensure_class_dispatch_for_union(
+        class_name : String,
+        method_suffix : String,
+        receiver_type : TypeRef,
+        call : HIR::Call,
+      ) : Crystal::MIR::Function?
+        dispatch_name = "__vdispatch__#{class_name}##{method_suffix}"
+        if existing = @mir_module.get_function(dispatch_name)
+          return existing
+        end
+
+        # Gather candidates from class hierarchy
+        old_candidates = [] of NamedTuple(type_id: Int32, func: Crystal::MIR::Function)
+        ([class_name] + subclasses_for(class_name)).each do |name|
+          if func = resolve_virtual_method_for_class(name, method_suffix, call.args.size)
+            next unless mir_type = @mir_module.type_registry.get_by_name(name)
+            next if mir_type.is_value_type?
+            old_candidates << {type_id: mir_type.id.to_i32, func: func}
+          end
+        end
+        return nil if old_candidates.empty?
+
+        # Determine return type from candidates (not call.type which may be VOID)
+        ret_type = convert_type(call.type)
+        if ret_type == TypeRef::VOID
+          old_candidates.each do |c|
+            if c[:func].return_type != TypeRef::VOID
+              ret_type = c[:func].return_type
+              break
+            end
+          end
+        end
+
+        # Create dispatch function
+        dispatch_func = @mir_module.create_function(dispatch_name, ret_type)
+        param_values = [] of ValueId
+        dispatch_func.add_param("recv", receiver_type)
+        param_values << 0_u32
+        call.args.each_with_index do |arg_id, idx|
+          arg_type = @hir_value_types[arg_id]? || HIR::TypeRef::POINTER
+          dispatch_func.add_param("arg#{idx}", convert_type(arg_type))
+          param_values << (idx + 1).to_u32
+        end
+
+        dispatch_builder = Builder.new(dispatch_func)
+
+        # Convert to unified candidate format (class dispatch = no unwrap needed)
+        candidates = old_candidates.map do |c|
+          VDispatchCandidate.new(
+            type_id: c[:type_id],
+            func: c[:func],
+            type_ref: nil,      # No unwrap for class dispatch
+            variant_id: nil,    # No unwrap for class dispatch
+            dispatch_class: nil # No nested dispatch
+          )
+        end
+
+        # Use unified generator with Class kind
+        generate_vdispatch_body(
+          dispatch_func,
+          dispatch_builder,
+          param_values,
+          candidates,
+          VDispatchKind::Class,
+          nil, # No method_suffix needed (direct func calls)
+          nil  # No HIR call needed (simple args)
+        )
+
+        dispatch_func
+      end
+
+      private def resolve_virtual_method_for_class(
+        class_name : String,
+        method_suffix : String,
+        arg_count : Int32? = nil,
+        allow_module_method : Bool = false,
+      ) : Crystal::MIR::Function?
+        cache_key = {class_name, method_suffix, arg_count, allow_module_method}
+        if @resolve_virtual_cache.has_key?(cache_key)
+          return @resolve_virtual_cache[cache_key]
+        end
+        result = _resolve_virtual_walk(class_name, method_suffix, arg_count, allow_module_method)
+        @resolve_virtual_cache[cache_key] = result
+        result
+      end
+
+      @[AlwaysInline]
+      private def default_arg_variant_name?(candidate_name : String, exact_name : String) : Bool
+        return false unless candidate_name.starts_with?(exact_name)
+        return false unless candidate_name.bytesize > exact_name.bytesize + 1
+
+        idx = exact_name.bytesize
+        return false unless candidate_name.byte_at(idx).unsafe_chr == '_'
+        idx += 1
+
+        digit_count = 0
+        while idx < candidate_name.bytesize
+          ch = candidate_name.byte_at(idx).unsafe_chr
+          if ch >= '0' && ch <= '9'
+            digit_count += 1
+            idx += 1
+            next
+          end
+          return digit_count > 0 && ch == '$'
+        end
+        digit_count > 0
+      end
+
+      @[AlwaysInline]
+      private def same_method_family_name?(candidate_name : String, method_prefix : String) : Bool
+        return false unless candidate_name.starts_with?(method_prefix)
+        return true if candidate_name.bytesize == method_prefix.bytesize
+
+        next_ch = candidate_name.byte_at(method_prefix.bytesize).unsafe_chr
+        return true if next_ch == '$'
+
+        if next_ch == '_'
+          idx = method_prefix.bytesize + 1
+          digit_count = 0
+          while idx < candidate_name.bytesize
+            ch = candidate_name.byte_at(idx).unsafe_chr
+            if ch >= '0' && ch <= '9'
+              digit_count += 1
+              idx += 1
+              next
+            end
+            return digit_count > 0 && ch == '$'
+          end
+          return digit_count > 0
+        end
+
+        false
+      end
+
+      private def _resolve_virtual_walk(
+        class_name : String,
+        method_suffix : String,
+        arg_count : Int32?,
+        allow_module_method : Bool,
+      ) : Crystal::MIR::Function?
+        # Pre-compute the base method name (before '$') once
+        has_explicit_suffix = method_suffix.includes?('$')
+        base_method = if dollar = method_suffix.index('$')
+                        method_suffix[0, dollar]
+                      else
+                        method_suffix
+                      end
+
+        current = class_name
+        seen = Set(String).new
+        while !current.empty? && !seen.includes?(current)
+          seen.add(current)
+
+          # Pre-compute exact name once per iteration (avoid repeated interpolation)
+          exact_name = String.build(current.bytesize + 1 + method_suffix.bytesize) do |io|
+            io << current; io << '#'; io << method_suffix
+          end
+
+          if (func = @mir_module.get_function(exact_name)) &&
+             (arg_count.nil? || func.params.size == arg_count + 1)
+            # Check for naming collision using class index instead of full scan
+            longer_match = nil.as(Crystal::MIR::Function?)
+            if class_funcs = @functions_by_class[current]?
+              class_funcs.each do |candidate|
+                if default_arg_variant_name?(candidate.name, exact_name)
+                  if lm_prev = longer_match
+                    longer_match = candidate if candidate.params.size > lm_prev.params.size
+                  else
+                    longer_match = candidate
+                  end
+                end
+              end
+            end
+            if lm = longer_match
+              func.params.each_with_index do |short_param, pi|
+                if (dv = short_param.default_value) && pi < lm.params.size && lm.params[pi].default_value.nil?
+                  old_p = lm.params[pi]
+                  lm.params[pi] = Parameter.new(old_p.index, old_p.name, old_p.type, dv)
+                end
+              end
+              return lm
+            end
+            return func
+          end
+
+          # Default-arg fallback: exact function name exists but has more params
+          # than the call site expects (e.g. Int32#to_s$$IO has 5 params: self, io,
+          # base, precision, upcase — but call site passes only self + io).
+          # Return the function anyway — the LLVM backend will fill default values.
+          if arg_count
+            exact_func = @mir_module.get_function(exact_name)
+            if exact_func && exact_func.params.size > arg_count + 1
+              return exact_func
+            end
+          end
+
+          if allow_module_method
+            module_name = String.build(current.bytesize + 1 + method_suffix.bytesize) do |io|
+              io << current; io << '.'; io << method_suffix
+            end
+            if func = @mir_module.get_function(module_name)
+              return func
+            end
+          end
+
+          # Arity-only fallback is safe only for bare method names.
+          # For typed/mangled suffixes (contains '$'), returning by arity alone can
+          # select a wrong overload (e.g. <<$Char -> <<$String) and corrupt ABI.
+          if arg_count && !has_explicit_suffix
+            # Use class index + pre-computed prefix (avoids O(N) full scan + GC from interpolation)
+            instance_prefix = String.build(current.bytesize + 1 + base_method.bytesize) do |io|
+              io << current; io << '#'; io << base_method
+            end
+            if class_funcs = @functions_by_class[current]?
+              candidates = [] of Crystal::MIR::Function
+              class_funcs.each do |candidate|
+                next unless same_method_family_name?(candidate.name, instance_prefix)
+                next unless candidate.params.size == arg_count + 1
+                candidates << candidate
+              end
+              return candidates.first if candidates.size == 1
+            end
+            if allow_module_method
+              module_prefix = String.build(current.bytesize + 1 + base_method.bytesize) do |io|
+                io << current; io << '.'; io << base_method
+              end
+              if class_funcs2 = @functions_by_class[current]?
+                candidates = [] of Crystal::MIR::Function
+                class_funcs2.each do |candidate|
+                  next unless same_method_family_name?(candidate.name, module_prefix)
+                  next unless candidate.params.size == arg_count
+                  candidates << candidate
+                end
+                return candidates.first if candidates.size == 1
+              end
+            end
+          end
+          parent = @hir_module.class_parents[current]?
+          current = parent || ""
+        end
+
+        # Class parent walk failed. Check included modules.
+        # For Array(Int32), modules like Indexable and Enumerable define methods
+        # that should be resolved here (e.g. Indexable#each$block).
+        class_base = class_name.includes?('(') ? class_name[0, class_name.index('(').not_nil!] : class_name
+        @hir_module.module_includers.each do |mod_name, incs|
+          next unless incs.any? { |i| i == class_name || i == class_base }
+          mod_base = mod_name.includes?('(') ? mod_name[0, mod_name.index('(').not_nil!] : mod_name
+          exact_name = "#{mod_base}##{method_suffix}"
+          if (func = @mir_module.get_function(exact_name)) &&
+             (arg_count.nil? || func.params.size == arg_count + 1)
+            return func
+          end
+        end
+
+        nil
+      end
+
+      # Find a candidate function for a virtual dispatch method by looking at
+      # siblings (other subclasses of the given parent class) that already have
+      # the method resolved. This handles the case where RTA filters out an
+      # inherited method for one subclass but keeps it for another (both share
+      # the same inherited implementation).
+      private def find_sibling_candidate_func(
+        parent_class : String,
+        method_suffix : String,
+        arg_count : Int32,
+        have_candidate : Set(String),
+      ) : Crystal::MIR::Function?
+        # Check parent itself first
+        parent_func_name = "#{parent_class}##{method_suffix}"
+        if func = @mir_module.get_function(parent_func_name)
+          return func if arg_count == -1 || func.params.size == arg_count + 1
+        end
+        # Check siblings (subclasses of the parent that already have a candidate)
+        subclasses_for(parent_class).each do |sibling|
+          next unless have_candidate.includes?(sibling)
+          sibling_func_name = "#{sibling}##{method_suffix}"
+          if func = @mir_module.get_function(sibling_func_name)
+            return func if arg_count == -1 || func.params.size == arg_count + 1
+          end
+          # Also check the resolve cache for this sibling
+          if func = resolve_virtual_method_for_class(sibling, method_suffix, arg_count)
+            return func
+          end
+        end
+        nil
+      end
+
+      private def hir_type_name(type_ref : HIR::TypeRef?) : String
+        return "unknown" unless type_ref
+        if desc = @hir_module.get_type_descriptor(type_ref)
+          return desc.name
+        end
+        # Map primitive type IDs to their names
+        case type_ref
+        when HIR::TypeRef::VOID    then "Void"
+        when HIR::TypeRef::BOOL    then "Bool"
+        when HIR::TypeRef::INT8    then "Int8"
+        when HIR::TypeRef::INT16   then "Int16"
+        when HIR::TypeRef::INT32   then "Int32"
+        when HIR::TypeRef::INT64   then "Int64"
+        when HIR::TypeRef::INT128  then "Int128"
+        when HIR::TypeRef::UINT8   then "UInt8"
+        when HIR::TypeRef::UINT16  then "UInt16"
+        when HIR::TypeRef::UINT32  then "UInt32"
+        when HIR::TypeRef::UINT64  then "UInt64"
+        when HIR::TypeRef::UINT128 then "UInt128"
+        when HIR::TypeRef::FLOAT32 then "Float32"
+        when HIR::TypeRef::FLOAT64 then "Float64"
+        when HIR::TypeRef::CHAR    then "Char"
+        when HIR::TypeRef::STRING  then "String"
+        when HIR::TypeRef::NIL     then "Nil"
+        when HIR::TypeRef::SYMBOL  then "Symbol"
+        when HIR::TypeRef::POINTER then "Pointer"
+        else                            type_ref.id.to_s
+        end
+      end
+
+      # Helper to get the MIR type of a HIR value by finding it in the function
+      private def get_arg_type(hir_id : HIR::ValueId) : TypeRef
+        if hir_func = @current_hir_func
+          # Search through all blocks for the value with this ID
+          hir_func.blocks.each do |block|
+            block.instructions.each do |inst|
+              if inst.id == hir_id
+                return convert_type(inst.type)
+              end
+            end
+          end
+          # Also check parameters
+          hir_func.params.each_with_index do |param, idx|
+            if idx.to_u32 == hir_id
+              return convert_type(param.type)
+            end
+          end
+        end
+        TypeRef::INT32 # Default fallback
+      end
+
+      # Helper to get the MIR type of a MIR value by finding it in the current function.
+      private def get_mir_value_type(mir_id : ValueId) : TypeRef?
+        if mir_func = @current_mir_func
+          mir_func.blocks.each do |block|
+            block.instructions.each do |inst|
+              return inst.type if inst.id == mir_id
+            end
+          end
+          mir_func.params.each_with_index do |param, idx|
+            return param.type if idx.to_u32 == mir_id
+          end
+        end
+        nil
+      end
+
+      private def should_drop_dispatch_receiver?(
+        receiver : HIR::ValueId?,
+        method_name : String,
+        mir_args : Array(ValueId),
+        callee_func : MIR::Function,
+        hir_args_with_receiver : Array(HIR::ValueId),
+      ) : Bool
+        callee_param_count = callee_func.params.size
+        return false unless receiver
+        return false unless callee_param_count <= mir_args.size - 1
+
+        # Explicit class/module calls are static at ABI level (no receiver param).
+        if method_name.includes?('.') && !method_name.includes?('#')
+          return true
+        end
+
+        # Generic metaclass dispatch can leak a synthetic receiver value into the
+        # arg list. When arity is receiver+N but callee expects N, keep receiver
+        # only if it matches param[0]; otherwise use shifted args if they match.
+        return false unless mir_args.size == callee_param_count + 1
+        return false if hir_args_with_receiver.size < 2
+        first_param = callee_func.params.first?.try(&.type)
+        return false unless first_param
+
+        keep_type = convert_type(@hir_value_types[hir_args_with_receiver[0]]? || HIR::TypeRef::VOID)
+        drop_type = convert_type(@hir_value_types[hir_args_with_receiver[1]]? || HIR::TypeRef::VOID)
+        keep_match = call_arg_matches_param_type?(keep_type, first_param)
+        drop_match = call_arg_matches_param_type?(drop_type, first_param)
+
+        !keep_match && drop_match
+      end
+
+      private def call_arg_matches_param_type?(arg_type : TypeRef, param_type : TypeRef) : Bool
+        return true if arg_type == param_type
+        if param_type == TypeRef::POINTER
+          return reference_like_mir_type?(arg_type)
+        end
+        if is_union_type?(param_type)
+          return get_union_variant_id(arg_type, param_type) >= 0
+        end
+        false
+      end
+
+      private def reference_like_mir_type?(type : TypeRef) : Bool
+        return true if type == TypeRef::POINTER
+        return true if type.reference?
+        if desc = @mir_module.type_registry.get(type)
+          return true if desc.kind.array?
+        end
+        false
+      end
+
+      private def runtime_pointer_like_union_variant?(variant_type : Type?) : Bool
+        return false unless variant_type
+        variant_type.kind == TypeKind::Reference ||
+          variant_type.kind == TypeKind::Struct ||
+          variant_type.kind == TypeKind::Tuple ||
+          variant_type.kind == TypeKind::Proc ||
+          variant_type.kind == TypeKind::Array
+      end
+
+      # Coerce call arguments to match function parameter types
+      # This handles concrete type -> union type coercion (e.g., Int32 -> Int32 | Nil)
+      private def coerce_call_args(
+        builder : MIR::Builder,
+        mir_args : Array(ValueId),
+        hir_args : Array(HIR::ValueId),
+        func : MIR::Function,
+      ) : Array(ValueId)
+        params = func.params
+        result = [] of ValueId
+
+        mir_args.each_with_index do |mir_arg, idx|
+          begin
+            param = params[idx]?
+            unless param
+              # More args than params - pass through
+              result << mir_arg
+              next
+            end
+
+            arg_type = get_mir_value_type(mir_arg) ||
+                       if idx < hir_args.size
+                         get_arg_type(hir_args[idx])
+                       else
+                         TypeRef::INT32 # Fallback
+                       end
+            param_type = param.type
+
+            # Check if coercion needed: different types and param is a union
+            is_param_union = is_union_type?(param_type)
+            is_arg_union = is_union_type?(arg_type)
+            if arg_type != param_type && is_param_union && !is_arg_union
+              # Wrap concrete value in union type
+              variant_id = get_union_variant_id(arg_type, param_type)
+              wrapped = builder.union_wrap(mir_arg, variant_id, param_type)
+              result << wrapped
+            else
+              result << mir_arg
+            end
+          rescue ex : IndexError
+            raise "Index error in coerce_call_args for #{func.name} at arg #{idx}: mir_args.size=#{mir_args.size} params.size=#{params.size} hir_args.size=#{hir_args.size}\n#{ex.message}"
+          end
+        end
+
+        result
+      end
+
+      # Check if a type is a union type based on its ID
+      private def is_union_type?(type : TypeRef) : Bool
+        # First check MIR module's union_descriptors (most authoritative)
+        return true if @mir_module.union_descriptors.has_key?(type)
+
+        # Then check MIR type registry kind (covers late/instantiated union refs).
+        if type_desc = @mir_module.type_registry.get(type)
+          return type_desc.kind == TypeKind::Union
+        end
+
+        # Fall back to checking HIR types
+        if type.id >= HIR::TypeRef::FIRST_USER_TYPE
+          @hir_module.types.each_with_index do |desc, idx|
+            if HIR::TypeRef.new(HIR::TypeRef::FIRST_USER_TYPE + idx.to_u32) == type
+              return desc.kind == HIR::TypeKind::Union
+            end
+          end
+        end
+        false
+      end
+
+      # Get the variant ID for a concrete type when wrapping into a union
+      private def get_union_variant_id(concrete_type : TypeRef, union_type : TypeRef? = nil) : Int32
+        # Look up from union descriptor if available (authoritative source)
+        if union_type
+          if descriptor = @mir_module.union_descriptors[union_type]?
+            descriptor.variants.each do |variant|
+              if variant.type_ref == concrete_type
+                return variant.type_id
+              end
+            end
+
+            if concrete_type == TypeRef::POINTER
+              pointer_like = descriptor.variants.select do |variant|
+                next false if variant.type_ref == TypeRef::NIL || variant.type_ref == TypeRef::VOID
+                next true if variant.type_ref == TypeRef::POINTER || variant.type_ref == TypeRef::STRING
+
+                runtime_pointer_like_union_variant?(@mir_module.type_registry.get(variant.type_ref))
+              end
+
+              if pointer_like.size == 1
+                return pointer_like.first.type_id
+              end
+            end
+
+            # For other pointer-like concrete types, try matching against POINTER variant
+            if concrete_type != TypeRef::NIL
+              descriptor.variants.each do |variant|
+                if variant.type_ref == TypeRef::POINTER
+                  return variant.type_id
+                end
+              end
+            end
+          end
+        end
+        # Fallback: Nil is variant 1, other concrete types are variant 0
+        if concrete_type == TypeRef::NIL
+          1
+        else
+          0
+        end
+      end
+
+      private def coerce_return_value(
+        builder : MIR::Builder,
+        value : ValueId,
+        value_hir_type : HIR::TypeRef,
+        return_hir_type : HIR::TypeRef,
+      ) : ValueId
+        value_mir_type = get_mir_value_type(value) || convert_type(value_hir_type)
+        return_mir_type = convert_type(return_hir_type)
+
+        return value if value_mir_type == return_mir_type
+
+        if is_union_type?(return_mir_type) && !is_union_type?(value_mir_type)
+          variant_id = get_union_variant_id(value_mir_type, return_mir_type)
+          return builder.union_wrap(value, variant_id, return_mir_type)
+        end
+
+        value
+      end
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # Binary/Unary Operation Lowering
+      # ─────────────────────────────────────────────────────────────────────────
+
+      private def lower_binary_op(binop : HIR::BinaryOperation) : ValueId
+        builder = @builder.not_nil!
+        left = get_value(binop.left)
+        right = get_value(binop.right)
+        result_type = convert_type(binop.type)
+
+        case binop.op
+        when HIR::BinaryOp::Add    then builder.add(left, right, result_type)
+        when HIR::BinaryOp::Sub    then builder.sub(left, right, result_type)
+        when HIR::BinaryOp::Mul    then builder.mul(left, right, result_type)
+        when HIR::BinaryOp::Div    then builder.div(left, right, result_type)
+        when HIR::BinaryOp::Mod    then builder.rem(left, right, result_type)
+        when HIR::BinaryOp::Eq     then builder.eq(left, right)
+        when HIR::BinaryOp::Ne     then builder.ne(left, right)
+        when HIR::BinaryOp::Lt     then builder.lt(left, right)
+        when HIR::BinaryOp::Le     then builder.le(left, right)
+        when HIR::BinaryOp::Gt     then builder.gt(left, right)
+        when HIR::BinaryOp::Ge     then builder.ge(left, right)
+        when HIR::BinaryOp::BitAnd then builder.bit_and(left, right, result_type)
+        when HIR::BinaryOp::BitOr  then builder.bit_or(left, right, result_type)
+        when HIR::BinaryOp::BitXor then builder.bit_xor(left, right, result_type)
+        when HIR::BinaryOp::Shl    then builder.shl(left, right, result_type)
+        when HIR::BinaryOp::Shr    then builder.shr(left, right, result_type)
+        when HIR::BinaryOp::And
+          # Logical AND
+          builder.bit_and(left, right, TypeRef::BOOL)
+        when HIR::BinaryOp::Or
+          # Logical OR
+          builder.bit_or(left, right, TypeRef::BOOL)
+        else
+          builder.const_nil # Fallback
+        end
+      end
+
+      private def lower_unary_op(unop : HIR::UnaryOperation) : ValueId
+        builder = @builder.not_nil!
+        operand = get_value(unop.operand)
+        result_type = convert_type(unop.type)
+
+        case unop.op
+        when HIR::UnaryOp::Neg    then builder.neg(operand, result_type)
+        when HIR::UnaryOp::Not    then builder.not(operand)
+        when HIR::UnaryOp::BitNot then builder.bit_not(operand, result_type)
+        else
+          builder.const_nil
+        end
+      end
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # Cast Lowering
+      # ─────────────────────────────────────────────────────────────────────────
+
+      private def lower_cast(cast : HIR::Cast) : ValueId
+        builder = @builder.not_nil!
+        value = get_value(cast.value)
+        if slot_type = @stack_slot_types[value]?
+          value = builder.load(value, slot_type)
+        end
+        src_hir_type = @hir_value_types[cast.value]? || HIR::TypeRef::POINTER
+        dst_hir_type = cast.target_type
+
+        src_type = convert_type(src_hir_type)
+        dst_type = convert_type(dst_hir_type)
+
+        # Union unwrap: cast union to concrete variant
+        if is_union_type?(src_type) && !is_union_type?(dst_type)
+          if descriptor = @mir_module.get_union_descriptor(src_type)
+            if variant = descriptor.variants.find { |v| v.type_ref == dst_type }
+              unwrap = UnionUnwrap.new(builder.next_id, dst_type, value, variant.type_id, cast.safe)
+              return builder.emit(unwrap)
+            end
+          end
+        end
+
+        # Union wrap: cast concrete value into union variant
+        if !is_union_type?(src_type) && is_union_type?(dst_type)
+          if descriptor = @mir_module.get_union_descriptor(dst_type)
+            if variant = descriptor.variants.find { |v| v.type_ref == src_type }
+              return builder.union_wrap(value, variant.type_id, dst_type)
+            end
+          end
+        end
+
+        # No-op cast
+        if src_type == dst_type
+          return value
+        end
+
+        # V2 struct-as-pointer ABI fix: when casting from a heap-allocated struct/class
+        # to a small primitive, the MIR Cast would produce ptrtoint ptr → iN which
+        # truncates 64-bit addresses. In original Crystal structs are inlined, so
+        # Cast(StaticArray(UInt8,1) → UInt8) is a no-op. In V2 the struct is a pointer
+        # to heap memory. The correct operation is to LOAD the primitive from the struct
+        # data, not cast the pointer itself.
+        if src_hir_type.id >= HIR::TypeRef::FIRST_USER_TYPE
+          src_mir = @mir_module.type_registry.get(src_type)
+          if src_mir
+            k = src_mir.kind
+            if k.struct? || k.reference? || k.array? || k.tuple?
+              dst_mir = @mir_module.type_registry.get(dst_type)
+              if dst_mir && dst_mir.kind.primitive? && !dst_mir.kind.void?
+                # Load the primitive value from the struct's memory (first bytes)
+                return builder.load(value, dst_type)
+              end
+            end
+          end
+        end
+
+        # Enum → integer: V2 registers UInt8-backed enums as Struct in HIR, but MIR
+        # correctly identifies them as TypeKind::Enum stored as i32. Without this
+        # check, the fall-through Bitcast path emits ptrtoint ptr→i8 which truncates
+        # 64-bit pointers to 1 byte.
+        if src_hir_type.id >= HIR::TypeRef::FIRST_USER_TYPE
+          if mir_type = @mir_module.type_registry.get(src_type)
+            if mir_type.kind.enum?
+              dst_int = case dst_hir_type
+                        when HIR::TypeRef::BOOL,
+                             HIR::TypeRef::INT8, HIR::TypeRef::INT16, HIR::TypeRef::INT32, HIR::TypeRef::INT64, HIR::TypeRef::INT128,
+                             HIR::TypeRef::UINT8, HIR::TypeRef::UINT16, HIR::TypeRef::UINT32, HIR::TypeRef::UINT64, HIR::TypeRef::UINT128,
+                             HIR::TypeRef::CHAR
+                          true
+                        else
+                          false
+                        end
+              if dst_int
+                enum_size = mir_type.size > 0 ? mir_type.size.to_i32 : 4
+                dst_size = type_size(dst_hir_type)
+                kind = if dst_size < enum_size
+                         CastKind::Trunc
+                       elsif dst_size > enum_size
+                         CastKind::ZExt
+                       else
+                         CastKind::Bitcast
+                       end
+                return builder.cast(kind, value, dst_type)
+              end
+            end
+          end
+        end
+
+        # Integer → enum: reverse direction (e.g., UInt8 → TypeKind)
+        if dst_hir_type.id >= HIR::TypeRef::FIRST_USER_TYPE
+          if mir_type = @mir_module.type_registry.get(dst_type)
+            if mir_type.kind.enum?
+              src_int = case src_hir_type
+                        when HIR::TypeRef::BOOL,
+                             HIR::TypeRef::INT8, HIR::TypeRef::INT16, HIR::TypeRef::INT32, HIR::TypeRef::INT64, HIR::TypeRef::INT128,
+                             HIR::TypeRef::UINT8, HIR::TypeRef::UINT16, HIR::TypeRef::UINT32, HIR::TypeRef::UINT64, HIR::TypeRef::UINT128,
+                             HIR::TypeRef::CHAR
+                          true
+                        else
+                          false
+                        end
+              if src_int
+                enum_size = mir_type.size > 0 ? mir_type.size.to_i32 : 4
+                src_size = type_size(src_hir_type)
+                kind = if src_size < enum_size
+                         CastKind::ZExt
+                       elsif src_size > enum_size
+                         CastKind::Trunc
+                       else
+                         CastKind::Bitcast
+                       end
+                return builder.cast(kind, value, dst_type)
+              end
+            end
+          end
+        end
+
+        # Helpers (HIR types carry signedness via Int*/UInt*)
+        int_like = ->(t : HIR::TypeRef) do
+          case t
+          when HIR::TypeRef::BOOL,
+               HIR::TypeRef::INT8, HIR::TypeRef::INT16, HIR::TypeRef::INT32, HIR::TypeRef::INT64, HIR::TypeRef::INT128,
+               HIR::TypeRef::UINT8, HIR::TypeRef::UINT16, HIR::TypeRef::UINT32, HIR::TypeRef::UINT64, HIR::TypeRef::UINT128,
+               HIR::TypeRef::CHAR
+            true
+          else
+            false
+          end
+        end
+
+        float_like = ->(t : HIR::TypeRef) do
+          t == HIR::TypeRef::FLOAT32 || t == HIR::TypeRef::FLOAT64
+        end
+
+        signed_int = ->(t : HIR::TypeRef) do
+          case t
+          when HIR::TypeRef::INT8, HIR::TypeRef::INT16, HIR::TypeRef::INT32, HIR::TypeRef::INT64, HIR::TypeRef::INT128
+            true
+          else
+            false
+          end
+        end
+
+        # unsafe_as between integer and StaticArray(UInt8, N) must reinterpret bits,
+        # not convert integer values to addresses (inttoptr/ptrtoint).
+        if !cast.safe
+          if int_like.call(src_hir_type)
+            if byte_len = staticarray_u8_length(dst_hir_type)
+              if byte_len == type_size(src_hir_type)
+                ptr_align = pointer_word_align_u32
+                align = byte_len < ptr_align ? byte_len.to_u32 : ptr_align
+                tmp = builder.alloc(MemoryStrategy::Stack, dst_type, byte_len.to_u64, align)
+                builder.store(tmp, value)
+                return tmp
+              end
+            end
+          elsif int_like.call(dst_hir_type)
+            if byte_len = staticarray_u8_length(src_hir_type)
+              if byte_len == type_size(dst_hir_type)
+                return builder.load(value, dst_type)
+              end
+            end
+          end
+        end
+
+        # Unsafe bitcast for numeric types of the same size (unsafe_as semantics).
+        if !cast.safe
+          if (int_like.call(src_hir_type) && float_like.call(dst_hir_type)) ||
+             (float_like.call(src_hir_type) && int_like.call(dst_hir_type))
+            if type_size(src_hir_type) == type_size(dst_hir_type)
+              return builder.cast(CastKind::Bitcast, value, dst_type)
+            end
+          end
+        end
+
+        # Detect pointer-backed MIR types: generic Pointer, typed pointers (Pointer(UInt8)),
+        # reference types (String, Array), and nil. All map to LLVM "ptr".
+        src_ptr_backed = src_type == TypeRef::POINTER ||
+                         (src_hir_type.id >= HIR::TypeRef::FIRST_USER_TYPE &&
+                          @mir_module.type_registry.get(src_type).try { |t| t.kind.pointer? || t.kind.reference? || t.kind.array? } == true) ||
+                         src_hir_type == HIR::TypeRef::NIL || src_hir_type == HIR::TypeRef::STRING
+        dst_ptr_backed = dst_type == TypeRef::POINTER ||
+                         (dst_hir_type.id >= HIR::TypeRef::FIRST_USER_TYPE &&
+                          @mir_module.type_registry.get(dst_type).try { |t| t.kind.pointer? || t.kind.reference? || t.kind.array? } == true) ||
+                         dst_hir_type == HIR::TypeRef::NIL || dst_hir_type == HIR::TypeRef::STRING
+
+        kind = if src_ptr_backed && int_like.call(dst_hir_type)
+                 CastKind::PtrToInt
+               elsif dst_ptr_backed && int_like.call(src_hir_type)
+                 CastKind::IntToPtr
+               elsif int_like.call(src_hir_type) && int_like.call(dst_hir_type)
+                 src_size = type_size(src_hir_type)
+                 dst_size = type_size(dst_hir_type)
+                 if dst_size < src_size
+                   CastKind::Trunc
+                 elsif dst_size > src_size
+                   signed_int.call(src_hir_type) ? CastKind::SExt : CastKind::ZExt
+                 else
+                   CastKind::Bitcast
+                 end
+               elsif float_like.call(src_hir_type) && float_like.call(dst_hir_type)
+                 src_size = type_size(src_hir_type)
+                 dst_size = type_size(dst_hir_type)
+                 dst_size < src_size ? CastKind::FPTrunc : CastKind::FPExt
+               elsif float_like.call(src_hir_type) && int_like.call(dst_hir_type)
+                 signed_int.call(dst_hir_type) ? CastKind::FPToSI : CastKind::FPToUI
+               elsif int_like.call(src_hir_type) && float_like.call(dst_hir_type)
+                 signed_int.call(src_hir_type) ? CastKind::SIToFP : CastKind::UIToFP
                else
                  CastKind::Bitcast
                end
-             elsif float_like.call(src_hir_type) && float_like.call(dst_hir_type)
-               src_size = type_size(src_hir_type)
-               dst_size = type_size(dst_hir_type)
-               dst_size < src_size ? CastKind::FPTrunc : CastKind::FPExt
-             elsif float_like.call(src_hir_type) && int_like.call(dst_hir_type)
-               signed_int.call(dst_hir_type) ? CastKind::FPToSI : CastKind::FPToUI
-             elsif int_like.call(src_hir_type) && float_like.call(dst_hir_type)
-               signed_int.call(src_hir_type) ? CastKind::SIToFP : CastKind::UIToFP
-             else
-               CastKind::Bitcast
-             end
 
-      result = builder.cast(kind, value, dst_type)
-      result
-    end
-
-    private def staticarray_u8_length(type_ref : HIR::TypeRef) : Int32?
-      desc = @hir_module.get_type_descriptor(type_ref)
-      return nil unless desc
-      name = desc.name
-      return nil unless name.starts_with?("StaticArray(")
-      if match = name.match(/^StaticArray\((.+),\s*(\d+)\)$/)
-        element = match[1].strip
-        return nil unless element == "UInt8" || element == "Int8"
-        return match[2].to_i
+        result = builder.cast(kind, value, dst_type)
+        result
       end
-      nil
-    end
 
-    private def lower_is_a(isa : HIR::IsA) : ValueId
-      builder = @builder.not_nil!
-      mir_check_type = convert_type(isa.check_type)
-
-      # Check if the value's type is already known (concrete, non-union).
-      # If so, resolve the is_a? check statically to avoid loading type_id
-      # from a raw value (e.g. Int32 treated as pointer → segfault).
-      if hir_value_type = @hir_value_types[isa.value]?
-        value_desc = @hir_module.get_type_descriptor(hir_value_type)
-        mir_value_type_for_static = convert_type(hir_value_type)
-        # Only resolve statically for truly concrete types: primitives, or
-        # class types that have NO subclasses (leaf classes). Classes with
-        # subclasses can have any runtime type_id → need runtime check.
-        has_subclasses = false
-        if value_desc && value_desc.kind != HIR::TypeKind::Union && !hir_value_type.primitive?
-          val_mir_type = @mir_module.type_registry.get(mir_value_type_for_static)
-          if val_mir_type
-            has_subclasses = !subclasses_for(val_mir_type.name).empty?
-          end
+      private def staticarray_u8_length(type_ref : HIR::TypeRef) : Int32?
+        desc = @hir_module.get_type_descriptor(type_ref)
+        return nil unless desc
+        name = desc.name
+        return nil unless name.starts_with?("StaticArray(")
+        if match = name.match(/^StaticArray\((.+),\s*(\d+)\)$/)
+          element = match[1].strip
+          return nil unless element == "UInt8" || element == "Int8"
+          return match[2].to_i
         end
-        # POINTER is a generic opaque pointer — its runtime type is unknown
-        # (e.g., exception objects). Must NOT resolve statically.
-        is_concrete = hir_value_type != HIR::TypeRef::POINTER &&
-                      (hir_value_type.primitive? ||
-                       (value_desc && value_desc.kind != HIR::TypeKind::Union && !has_subclasses))
-        if is_concrete
-          # Concrete leaf type — resolve statically
-          # Collect matching type_ids (check_type + subclasses)
-          matching_type_ids = Set(UInt32).new
-          matching_type_ids << mir_check_type.id
-          if check_mir_type = @mir_module.type_registry.get(mir_check_type)
-            subclasses_for(check_mir_type.name).each do |sub_name|
-              if sub_mir_type = @mir_module.type_registry.get_by_name(sub_name)
-                matching_type_ids << sub_mir_type.id
-              end
-            end
-          end
-          is_match = matching_type_ids.includes?(mir_value_type_for_static.id)
-          return builder.const_int(is_match ? 1_i64 : 0_i64, TypeRef::BOOL)
-        end
-      end
-
-      obj = get_value(isa.value)
-
-      # For ptr-typed values (class instances represented as raw pointers),
-      # nilable checks must use null comparison instead of loading type_id
-      # from the object header (which would crash on null ptr).
-      # is_a?(Nil) → ptr == null, is_a?(SomeClass) → ptr != null
-      hir_val_type = @hir_value_types[isa.value]?
-      mir_val_type = hir_val_type ? convert_type(hir_val_type) : nil
-      val_is_ptr_type = false
-      if mir_val_type
-        val_desc = @mir_module.type_registry.get(mir_val_type)
-        val_is_ptr_type = mir_val_type == TypeRef::POINTER ||
-                          mir_val_type == TypeRef::NIL ||
-                          (val_desc && (val_desc.kind == MIR::TypeKind::Reference ||
-                                        val_desc.kind == MIR::TypeKind::Struct)) ||
-                          (val_desc.nil? && !mir_val_type.primitive?)  # Not in registry and not primitive → ptr
-      end
-      if val_is_ptr_type && mir_check_type == TypeRef::NIL
-        # is_a?(Nil) on a ptr value → compare to null
-        null_val = builder.const_int(0_i64, TypeRef::POINTER)
-        return builder.eq(obj, null_val)
-      elsif val_is_ptr_type && mir_check_type != TypeRef::NIL
-        # ptr != null is ONLY valid when the static type matches the check type
-        # (i.e., simple nilable checks like `x : Foo?` → is_a?(Foo)).
-        # For class hierarchies (Base → is_a?(SubClass)), need runtime type_id check.
-        if mir_val_type && mir_val_type.id == mir_check_type.id
-          null_val = builder.const_int(0_i64, TypeRef::POINTER)
-          return builder.ne(obj, null_val)
-        end
-        # Otherwise fall through to runtime type_id check below
-      end
-
-      # Collect all type_ids that should match: the check_type itself
-      # plus all its subclasses (for parent type checks like is_a?(Base))
-      matching_type_ids = [] of UInt32
-      matching_type_ids << mir_check_type.id
-
-      # Find check type name and add subclass type_ids
-      if check_mir_type = @mir_module.type_registry.get(mir_check_type)
-        check_name = check_mir_type.name
-        subclasses_for(check_name).each do |sub_name|
-          if sub_mir_type = @mir_module.type_registry.get_by_name(sub_name)
-            matching_type_ids << sub_mir_type.id unless matching_type_ids.includes?(sub_mir_type.id)
-          end
-        end
-      end
-
-      type_id_matches = ->(type_id_value : ValueId) do
-        if matching_type_ids.size == 1
-          expected = builder.const_int(matching_type_ids[0].to_i64, TypeRef::INT32)
-          builder.eq(type_id_value, expected)
-        else
-          first_expected = builder.const_int(matching_type_ids[0].to_i64, TypeRef::INT32)
-          result = builder.eq(type_id_value, first_expected)
-          matching_type_ids[1..].each do |tid|
-            expected = builder.const_int(tid.to_i64, TypeRef::INT32)
-            check = builder.eq(type_id_value, expected)
-            result = builder.bit_or(result, check, TypeRef::BOOL)
-          end
-          result
-        end
-      end
-
-      # All-ref unions (for example `Base | Nil`) are lowered as nullable raw
-      # pointers, so their runtime type_id must be recovered through
-      # UnionTypeIdGet instead of treating the union value itself as a plain
-      # object pointer load.
-      if mir_val_type && is_union_type?(mir_val_type)
-        if union_desc = @mir_module.get_union_descriptor(mir_val_type)
-          if all_ref_union_descriptor?(union_desc)
-            union_type_id = builder.emit(MIR::UnionTypeIdGet.new(builder.next_id, obj))
-            return type_id_matches.call(union_type_id)
-          end
-
-          # Mixed unions like `Nil | Symbol` still expose their payload pointer
-          # through `get_value(...)`. Runtime subclass checks on that payload
-          # must reject the nil variant before loading an object header from it.
-          has_nil_variant = union_desc.variants.any? do |variant|
-            variant.type_ref == TypeRef::NIL || variant.type_ref == TypeRef::VOID
-          end
-          has_ref_payload = union_desc.variants.any? do |variant|
-            next false if variant.type_ref == TypeRef::NIL || variant.type_ref == TypeRef::VOID
-            variant_desc = @mir_module.type_registry.get(variant.type_ref)
-            variant_desc && runtime_header_backed_union_variant?(variant_desc)
-          end
-
-          if has_nil_variant && has_ref_payload
-            null_val = builder.const_int(0_i64, TypeRef::POINTER)
-            not_nil = builder.ne(obj, null_val)
-            type_id_ptr = builder.gep(obj, [0_u32], TypeRef::POINTER)
-            loaded_type_id = builder.load(type_id_ptr, TypeRef::INT32)
-            return builder.bit_and(not_nil, type_id_matches.call(loaded_type_id), TypeRef::BOOL)
-          end
-        end
-      end
-
-      # Load type_id from object header (offset 0, i32)
-      type_id_ptr = builder.gep(obj, [0_u32], TypeRef::POINTER)
-      loaded_type_id = builder.load(type_id_ptr, TypeRef::INT32)
-
-      # Compare against all matching type_ids with OR chain
-      type_id_matches.call(loaded_type_id)
-    end
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # Phi Lowering
-    # ─────────────────────────────────────────────────────────────────────────
-
-    private def lower_phi(hir_phi : HIR::Phi) : ValueId
-      builder = @builder.not_nil!
-      mir_phi = builder.phi(convert_type(hir_phi.type))
-
-      # Defer incoming resolution until all blocks are lowered
-      # This handles forward references from loop bodies
-      @pending_phis << {mir_phi, hir_phi}
-
-      mir_phi.id
-    end
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # Copy/Assignment Lowering
-    # ─────────────────────────────────────────────────────────────────────────
-
-    private def lower_copy(copy : HIR::Copy) : ValueId
-      # Load from stack slot when copy reads a mutable local / block param.
-      source = get_value(copy.source)
-      if slot_type = @stack_slot_types[source]?
-        builder = @builder.not_nil!
-        return builder.load(source, slot_type)
-      end
-      source
-    end
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # Closure Lowering
-    # ─────────────────────────────────────────────────────────────────────────
-
-    private def lower_closure(closure : HIR::MakeClosure) : ValueId
-      builder = @builder.not_nil!
-
-      # Closures become:
-      # 1. Struct containing captured variables
-      # 2. Function pointer to closure body
-
-      # Determine memory strategy based on taints:
-      # - ThreadShared closure → AtomicARC (for thread-safe RC)
-      # - Normal closure → ARC (non-atomic, faster)
-      strategy = if closure.taints.thread_shared?
-                   MemoryStrategy::AtomicARC
-                 else
-                   MemoryStrategy::ARC
-                 end
-
-      # Allocate environment struct
-      env_ptr = builder.alloc(strategy, TypeRef::POINTER)
-
-      # Insert RC increment based on strategy
-      if strategy == MemoryStrategy::AtomicARC
-        builder.rc_inc(env_ptr, atomic: true)
-      else
-        builder.rc_inc(env_ptr)
-      end
-
-      # Store captured values in environment
-      closure.captures.each_with_index do |cap, idx|
-        cap_value = get_value(cap.value_id)
-        field_ptr = builder.gep(env_ptr, [idx.to_u32], TypeRef::POINTER)
-        builder.store(field_ptr, cap_value)
-      end
-
-      @stats.closures_lowered += 1
-      env_ptr
-    end
-
-    private def lower_func_pointer(fp : HIR::FuncPointer) : ValueId
-      builder = @builder.not_nil!
-      mir_fp = MIR::FuncPointer.new(builder.next_id, TypeRef::POINTER, fp.func_name)
-      builder.emit(mir_fp)
-      mir_fp.id
-    end
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # Yield Lowering
-    # ─────────────────────────────────────────────────────────────────────────
-
-    private def lower_yield(yld : HIR::Yield) : ValueId
-      builder = @builder.not_nil!
-      block_param_id = yld.target || @current_block_param_id
-      if ENV.has_key?("DEBUG_EXPLICIT_YIELD_TARGET")
-        STDERR.puts "[EXPLICIT_YIELD_TARGET] mir func=#{@current_lowering_func_name} target=#{block_param_id.inspect} explicit=#{yld.target.inspect} fallback=#{@current_block_param_id.inspect}"
-      end
-      unless block_param_id
-        return builder.const_nil
-      end
-      # Yield becomes indirect call through block parameter.
-      # We treat the block param as a Proc value and emit an indirect call.
-      args = [] of ValueId
-      yld.args.each do |arg|
-        arg_type = @hir_value_types[arg]?
-        next unless @value_map.has_key?(arg)
-        # Don't skip VOID-typed args — when yield args cross inlined block body
-        # boundaries, the HIR type may not be propagated, but the MIR value still
-        # carries the correct type (e.g. elem in Enumerable#join's each block).
-        args << get_value(arg)
-      end
-      block_val = get_value(block_param_id)
-      block_type = @hir_value_types[block_param_id]? || HIR::TypeRef::POINTER
-      # Unannotated `&` block params are currently inferred as VOID in HIR,
-      # but runtime still passes a block function pointer for yield dispatch.
-      block_type = HIR::TypeRef::POINTER if block_type == HIR::TypeRef::VOID
-      block_desc = @hir_module.get_type_descriptor(block_type)
-      is_ptr = block_type == HIR::TypeRef::POINTER || (block_desc && block_desc.kind == HIR::TypeKind::Proc)
-      unless is_ptr
-        block_val = builder.cast(CastKind::IntToPtr, block_val, TypeRef::POINTER)
-      end
-      yield_type = yld.type
-      if yield_type == HIR::TypeRef::VOID || yield_type == HIR::TypeRef::NIL
-        if inferred = infer_yield_type_from_users(yld.id)
-          yield_type = inferred
-        end
-      end
-      @hir_value_types[yld.id] = yield_type
-      builder.call_indirect(block_val, args, convert_type(yield_type))
-    end
-
-    private def infer_yield_type_from_users(yield_id : HIR::ValueId) : HIR::TypeRef?
-      return nil unless hir_func = @current_hir_func
-
-      hir_func.blocks.each do |block|
-        block.instructions.each do |inst|
-          case inst
-          when HIR::Phi
-            if inst.incoming.any? { |(_, value_id)| value_id == yield_id }
-              return inst.type unless inst.type == HIR::TypeRef::VOID || inst.type == HIR::TypeRef::NIL
-            end
-          when HIR::Copy
-            if inst.source == yield_id
-              return inst.type unless inst.type == HIR::TypeRef::VOID || inst.type == HIR::TypeRef::NIL
-            end
-          when HIR::Cast
-            if inst.value == yield_id
-              return inst.target_type unless inst.target_type == HIR::TypeRef::VOID || inst.target_type == HIR::TypeRef::NIL
-            end
-          end
-        end
-
-        if term = block.terminator
-          if term.is_a?(HIR::Return) && term.value == yield_id
-            func_ret = hir_func.return_type
-            return func_ret unless func_ret == HIR::TypeRef::VOID || func_ret == HIR::TypeRef::NIL
-          end
-        end
-      end
-
-      nil
-    end
-
-    # Check if a function contains yield instructions (inline-only function)
-    private def function_contains_yield?(hir_func : HIR::Function) : Bool
-      hir_func.blocks.each do |block|
-        block.instructions.each do |inst|
-          return true if inst.is_a?(HIR::Yield)
-        end
-      end
-      false
-    end
-
-    private def infer_block_param_id(hir_func : HIR::Function) : HIR::ValueId?
-      # Prefer explicit Proc-typed param if present.
-      hir_func.params.reverse_each do |param|
-        if desc = @hir_module.get_type_descriptor(param.type)
-          return param.id if desc.kind == HIR::TypeKind::Proc
-        end
-      end
-      # Fallback: use the last parameter only if it could be a block (Pointer or VOID type).
-      # Non-callable types (Int32, String, etc.) must not be used as yield targets.
-      if last_param = hir_func.params.last?
-        pt = last_param.type
-        if pt == HIR::TypeRef::POINTER || pt == HIR::TypeRef::VOID
-          return last_param.id
-        end
-        # Also accept if the MIR type maps to Pointer
-        mir_type = convert_type(pt)
-        if mir_type == TypeRef::POINTER
-          return last_param.id
-        end
-      end
-      nil
-    end
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # Class Variable Lowering
-    # ─────────────────────────────────────────────────────────────────────────
-
-    private def lower_classvar_get(cv : HIR::ClassVarGet) : ValueId
-      builder = @builder.not_nil!
-      extern = @hir_module.get_extern_global(cv.class_name, cv.var_name)
-      global_name = extern ? extern.real_name : HIRToMIRLowering.class_var_global_name(cv.class_name, cv.var_name)
-      hir_type = (extern && cv.type == HIR::TypeRef::VOID) ? extern.type : cv.type
-      builder.global_load(global_name, convert_type(hir_type))
-    end
-
-    private def lower_classvar_set(cv : HIR::ClassVarSet) : ValueId
-      builder = @builder.not_nil!
-      value = get_value(cv.value)
-      extern = @hir_module.get_extern_global(cv.class_name, cv.var_name)
-      global_name = extern ? extern.real_name : HIRToMIRLowering.class_var_global_name(cv.class_name, cv.var_name)
-      hir_type = (extern && cv.type == HIR::TypeRef::VOID) ? extern.type : cv.type
-      builder.global_store(global_name, value, convert_type(hir_type))
-
-      # rc_inc for reference-typed values: the class variable now holds a reference.
-      # Covers reference types, arrays, and all-ref unions (e.g. Node? = Nil | Node).
-      # Skip constants (string literals, globals) — they have INT64_MAX sentinel.
-      unless @hir_constant_values.includes?(cv.value)
-        if value_hir_type = @hir_value_types[cv.value]?
-          if type_needs_rc?(convert_type(value_hir_type))
-            builder.rc_inc(value)
-          end
-        end
-      end
-
-      value
-    end
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # Union Lowering
-    # ─────────────────────────────────────────────────────────────────────────
-
-    private def lower_union_wrap(wrap : HIR::UnionWrap) : ValueId
-      builder = @builder.not_nil!
-      value = get_value(wrap.value)
-      union_type = convert_type(wrap.type)
-      variant_type_id = wrap.variant_type_id
-
-      if descriptor = @mir_module.get_union_descriptor(union_type)
-        hir_value_type = @hir_value_types[wrap.value]? || HIR::TypeRef::POINTER
-        mir_value_type = convert_type(hir_value_type)
-        if matched_variant = descriptor.variants.find { |variant| variant.type_ref == mir_value_type }
-          variant_type_id = matched_variant.type_id
-        elsif mir_value_type == TypeRef::POINTER
-          pointer_like = descriptor.variants.select do |variant|
-            next false if variant.type_ref == TypeRef::NIL || variant.type_ref == TypeRef::VOID
-            next true if variant.type_ref == TypeRef::POINTER || variant.type_ref == TypeRef::STRING
-
-            runtime_pointer_like_union_variant?(@mir_module.type_registry.get(variant.type_ref))
-          end
-
-          if pointer_like.size == 1
-            variant_type_id = pointer_like.first.type_id
-          end
-        end
-      end
-
-      # Create MIR UnionWrap instruction
-      mir_wrap = MIR::UnionWrap.new(
-        builder.next_id,
-        union_type,
-        value,
-        variant_type_id,
-        union_type  # union_type parameter
-      )
-      builder.emit(mir_wrap)
-    end
-
-    private def lower_union_unwrap(unwrap : HIR::UnionUnwrap) : ValueId
-      builder = @builder.not_nil!
-      union_value = get_value(unwrap.union_value)
-      result_type = convert_type(unwrap.type)
-      if union_hir_type = @hir_value_types[unwrap.union_value]?
-        union_mir_type = convert_type(union_hir_type)
-        if descriptor = @mir_module.union_descriptors[union_mir_type]?
-          if variant = descriptor.variants.find { |v| v.type_id == unwrap.variant_type_id }
-            result_type = variant.type_ref
-            if nested = @mir_module.union_descriptors[result_type]?
-              if nested_variant = nested.variants.find { |v| v.type_ref != TypeRef::NIL && v.type_ref != TypeRef::VOID }
-                result_type = nested_variant.type_ref
-              end
-            end
-            if ENV.has_key?("DEBUG_UNION_UNWRAP")
-              STDERR.puts "[UNION_UNWRAP] union_type=#{union_mir_type.id} variant_id=#{unwrap.variant_type_id} variant_type=#{variant.type_ref.id}"
-            end
-          elsif ENV.has_key?("DEBUG_UNION_UNWRAP")
-            STDERR.puts "[UNION_UNWRAP] union_type=#{union_mir_type.id} variant_id=#{unwrap.variant_type_id} variant_type=nil"
-          end
-        end
-      elsif ENV.has_key?("DEBUG_UNION_UNWRAP")
-        STDERR.puts "[UNION_UNWRAP] missing hir type for union_value=#{unwrap.union_value} unwrap_type=#{unwrap.type} result_type=#{result_type.id}"
-      end
-      if ENV.has_key?("DEBUG_UNION_UNWRAP")
-        if descriptor = @mir_module.union_descriptors[result_type]?
-          variants = descriptor.variants.map { |v| v.type_ref.id }.join(",")
-          STDERR.puts "[UNION_UNWRAP] union_value=#{unwrap.union_value} unwrap_type=#{unwrap.type} result_type=#{result_type.id} has_union=true variants=#{variants}"
-        else
-          STDERR.puts "[UNION_UNWRAP] union_value=#{unwrap.union_value} unwrap_type=#{unwrap.type} result_type=#{result_type.id} has_union=false"
-        end
-      end
-
-      # Create MIR UnionUnwrap instruction
-      mir_unwrap = MIR::UnionUnwrap.new(
-        builder.next_id,
-        result_type,
-        union_value,
-        unwrap.variant_type_id,
-        unwrap.safe
-      )
-      builder.emit(mir_unwrap)
-    end
-
-    private def lower_union_type_id(type_id : HIR::UnionTypeId) : ValueId
-      builder = @builder.not_nil!
-      union_value = get_value(type_id.union_value)
-
-      # Create MIR UnionTypeIdGet instruction (type is hardcoded to INT32)
-      mir_type_id = MIR::UnionTypeIdGet.new(
-        builder.next_id,
-        union_value
-      )
-      builder.emit(mir_type_id)
-    end
-
-    private def lower_union_is(is : HIR::UnionIs) : ValueId
-      builder = @builder.not_nil!
-      union_value = get_value(is.union_value)
-
-      # Convert union type from HIR to MIR
-      mir_union_type = if is.union_type != HIR::TypeRef::VOID
-                         convert_type(is.union_type)
-                       else
-                         MIR::TypeRef::VOID
-                       end
-
-      # Create MIR UnionIs instruction (type is hardcoded to BOOL)
-      mir_is = MIR::UnionIs.new(
-        builder.next_id,
-        union_value,
-        is.variant_type_id,
-        mir_union_type
-      )
-      builder.emit(mir_is)
-    end
-
-    private def lower_array_literal(arr : HIR::ArrayLiteral) : ValueId
-      builder = @builder.not_nil!
-
-      # Convert element values
-      elements = arr.elements.map { |e| get_value(e) }
-      element_type = convert_type(arr.element_type)
-
-      # Determine memory strategy from HIR lifetime tag.
-      # Array is a reference type — default to GC (heap) for safety.
-      # The memory optimizer can demote to Stack when escape analysis proves it safe.
-      strategy = case arr.lifetime
-                 when HIR::LifetimeTag::StackLocal
-                   # Conservative: Array commonly escapes (stored in ivars, returned, etc.)
-                   # Only use Stack if escape analysis explicitly confirms non-escape.
-                   # For now, default to GC since HIR lacks array escape analysis.
-                   MIR::MemoryStrategy::GC
-                 when HIR::LifetimeTag::ArgEscape
-                   MIR::MemoryStrategy::Slab
-                 when HIR::LifetimeTag::HeapEscape
-                   MIR::MemoryStrategy::ARC
-                 when HIR::LifetimeTag::GlobalEscape
-                   MIR::MemoryStrategy::AtomicARC
-                 else
-                   MIR::MemoryStrategy::GC
-                 end
-
-      # rc_inc for reference-typed elements: the array buffer holds a reference.
-      # Covers reference types, arrays, and all-ref unions (e.g. Node? = Nil | Node).
-      # Skip constants (string literals, globals) — they have INT64_MAX sentinel.
-      if type_needs_rc?(element_type)
-        arr.elements.each_with_index do |hir_elem, idx|
-          next if @hir_constant_values.includes?(hir_elem)
-          builder.rc_inc(elements[idx])
-        end
-      end
-
-      # Create MIR ArrayLiteral instruction
-      mir_arr = MIR::ArrayLiteral.new(
-        builder.next_id,
-        element_type,
-        elements,
-        strategy
-      )
-      builder.emit(mir_arr)
-    end
-
-    private def lower_array_size(arr_size : HIR::ArraySize) : ValueId
-      builder = @builder.not_nil!
-      array_val = get_value(arr_size.array_value)
-
-      # Create MIR ArraySize instruction
-      mir_size = MIR::ArraySize.new(
-        builder.next_id,
-        array_val
-      )
-      builder.emit(mir_size)
-    end
-
-    private def lower_array_set_size(set_size : HIR::ArraySetSize) : ValueId
-      builder = @builder.not_nil!
-      array_val = get_value(set_size.array_value)
-      size_val = get_value(set_size.size_value)
-
-      mir_set_size = MIR::ArraySetSize.new(
-        builder.next_id,
-        array_val,
-        size_val
-      )
-      builder.emit(mir_set_size)
-    end
-
-    private def lower_array_new(array_new : HIR::ArrayNew) : ValueId
-      builder = @builder.not_nil!
-      capacity_val = get_value(array_new.capacity_value)
-      mir_new = MIR::ArrayNew.new(
-        builder.next_id,
-        convert_type(array_new.element_type),
-        capacity_val
-      )
-      builder.emit(mir_new)
-    end
-
-    private def lower_string_interpolation(interp : HIR::StringInterpolation) : ValueId
-      builder = @builder.not_nil!
-
-      # Convert part values and track HIR types (for Char vs Int32 distinction)
-      parts = interp.parts.map { |p| get_value(p) }
-      part_types = interp.parts.map { |p|
-        hir_t = @hir_value_types[p]? || HIR::TypeRef::STRING
-        convert_type(hir_t)
-      }
-
-      # Create MIR StringInterpolation instruction with type info
-      mir_interp = MIR::StringInterpolation.new(
-        builder.next_id,
-        parts,
-        part_types
-      )
-      builder.emit(mir_interp)
-    end
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # Exception Handling
-    # ─────────────────────────────────────────────────────────────────────────
-
-    private def lower_raise(raise_inst : HIR::Raise) : ValueId
-      builder = @builder.not_nil!
-
-      # Lower raise as a call to runtime raise function
-      if exc = raise_inst.exception
-        exc_val = get_value(exc)
-        # Check if the exception value is a String (not an Exception object).
-        # In Crystal, `raise "msg"` and `raise string_var` both create RuntimeError.
-        # Only `raise exception_obj` passes the exception directly.
-        exc_type = @hir_value_types[exc]?
-        if exc_type && exc_type.id == HIR::TypeRef::STRING.id
-          builder.extern_call("__crystal_v2_raise_msg", [exc_val], TypeRef::VOID)
-        elsif exc_type.nil? || exc_type.id == HIR::TypeRef::VOID.id
-          # Exception creation wasn't properly compiled (e.g., File::Error.from_errno
-          # expands to complex macro/factory code our compiler can't fully handle).
-          # Skip the raise entirely — let the function return normally.
-          # This is correct for the common case: Dir.mkdir_p rescues
-          # File::AlreadyExistsError from Dir.mkdir; since we can't create the
-          # proper exception type, skipping the raise lets mkdir_p continue
-          # iterating (equivalent to EEXIST being swallowed by rescue).
-          # For non-mkdir cases, the subsequent code will handle the missing
-          # raise deterministically (null checks, default returns, etc.).
-          return exc_val
-        else
-          builder.extern_call("__crystal_v2_raise", [exc_val], TypeRef::VOID)
-        end
-      elsif msg = raise_inst.message
-        # Raise with message string
-        msg_val = builder.const_string(msg)
-        builder.extern_call("__crystal_v2_raise_msg", [msg_val], TypeRef::VOID)
-      else
-        # Re-raise current exception
-        empty_args = Array(ValueId).new
-        builder.extern_call("__crystal_v2_reraise", empty_args, TypeRef::VOID)
-      end
-    end
-
-    private def lower_get_exception(get_exc : HIR::GetException) : ValueId
-      builder = @builder.not_nil!
-
-      # Get current exception from runtime
-      empty_args = Array(ValueId).new
-      builder.extern_call("__crystal_v2_get_exception", empty_args, TypeRef::POINTER)
-    end
-
-    private def lower_try_begin(try_begin : HIR::TryBegin) : ValueId
-      builder = @builder.not_nil!
-
-      # Emit MIR TryBegin which will emit inline setjmp in LLVM IR
-      mir_try = TryBegin.new(builder.function.next_value_id)
-      builder.emit(mir_try)
-      mir_try.id
-    end
-
-    private def lower_try_end(try_end : HIR::TryEnd) : ValueId
-      builder = @builder.not_nil!
-
-      # Emit MIR TryEnd which will clear exception handler
-      mir_try_end = TryEnd.new(builder.function.next_value_id)
-      builder.emit(mir_try_end)
-      mir_try_end.id
-    end
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # Pointer Operations Lowering
-    # ─────────────────────────────────────────────────────────────────────────
-
-    private def lower_pointer_malloc(malloc : HIR::PointerMalloc) : ValueId
-      builder = @builder.not_nil!
-
-      count = get_value(malloc.count)
-      elem_size = type_size(malloc.element_type)
-
-      # Compute total size = count * element_size
-      size_const = builder.const_int(elem_size.to_i64, TypeRef::INT64)
-      # Cast count to i64 if needed
-      count_i64 = builder.cast(CastKind::SExt, count, TypeRef::INT64)
-      total_size = builder.mul(count_i64, size_const, TypeRef::INT64)
-
-      # Call malloc
-      args = [total_size]
-      builder.extern_call("__crystal_v2_malloc64", args, TypeRef::POINTER)
-    end
-
-    private def lower_pointer_load(load : HIR::PointerLoad) : ValueId
-      builder = @builder.not_nil!
-
-      ptr = get_value(load.pointer)
-      result_type = convert_type(load.type)
-
-      if idx = load.index
-        # ptr[idx] - need GEP then load
-        index = get_value(idx)
-        # Element stride must follow container storage ABI:
-        # non-inline values (including tuples/structs) occupy pointer-sized slots.
-        elem_type = pointer_element_mir_type(@hir_value_types[load.pointer]?) || convert_type(load.type)
-        elem_size = container_elem_storage_size_u64(@mir_module.type_registry.get(elem_type))
-        gep = builder.gep_dynamic(ptr, index, elem_type, elem_size)
-        # Our compiler heap-allocates structs, so Pointer(Struct) buffers
-        # store heap pointers (not inline data). Always load the pointer
-        # from the buffer slot, then FieldGet dereferences it.
-        builder.load(gep, result_type)
-      else
-        # ptr.value - direct access
-        # Our compiler heap-allocates structs, so *ptr contains a heap pointer.
-        # Load it so that subsequent FieldGet can dereference it correctly.
-        builder.load(ptr, result_type)
-      end
-    end
-
-    private def lower_pointer_store(store : HIR::PointerStore) : ValueId
-      builder = @builder.not_nil!
-
-      ptr = get_value(store.pointer)
-      val = get_value(store.value)
-
-      # Element stride must come from pointer type (Pointer(T)), not value type.
-      # Value type can be alias/wrapper (e.g. Hash::Entry vs Entry) and produce
-      # wrong GEP scaling.
-      elem_type = pointer_element_mir_type(@hir_value_types[store.pointer]?) || get_arg_type(store.value)
-
-      if idx = store.index
-        # ptr[idx] = val - need GEP then store
-        index = get_value(idx)
-        elem_size = container_elem_storage_size_u64(@mir_module.type_registry.get(elem_type))
-        gep = builder.gep_dynamic(ptr, index, elem_type, elem_size)
-        builder.store(gep, val)
-      else
-        # ptr.value = val - direct store
-        builder.store(ptr, val)
-      end
-
-      # rc_inc for reference-typed values: the buffer now holds a reference.
-      # Covers reference types, arrays, and all-ref unions (e.g. Node? = Nil | Node).
-      # Skip constants (string literals, globals) — they have INT64_MAX sentinel.
-      unless @hir_constant_values.includes?(store.value)
-        if value_hir_type = @hir_value_types[store.value]?
-          if type_needs_rc?(convert_type(value_hir_type))
-            builder.rc_inc(val)
-          end
-        end
-      end
-
-      val  # Return stored value
-    end
-
-    private def lower_pointer_add(add : HIR::PointerAdd) : ValueId
-      builder = @builder.not_nil!
-
-      ptr = get_value(add.pointer)
-      offset = get_value(add.offset)
-      elem_type = convert_type(add.element_type)
-      elem_size = add.element_byte_size
-      if elem_size == 0_u64
-        elem_size = container_elem_storage_size_u64(@mir_module.type_registry.get(elem_type))
-      end
-
-      # GEP with dynamic offset computes ptr + offset * sizeof(elem)
-      builder.gep_dynamic(ptr, offset, elem_type, elem_size)
-    end
-
-    private def lower_pointer_realloc(realloc : HIR::PointerRealloc) : ValueId
-      builder = @builder.not_nil!
-
-      ptr = get_value(realloc.pointer)
-      new_size = get_value(realloc.new_size)
-
-      # Crystal's Pointer#realloc(count) expects element count, but C realloc expects bytes.
-      # Multiply count by element size. Determine element size from the pointer's type descriptor.
-      elem_size = 8 # default: pointer-sized elements (class instances)
-      ptr_type = realloc.type
-      if desc = @hir_module.get_type_descriptor(ptr_type)
-        if desc.name.starts_with?("Pointer(")
-          elem_name = desc.name[8, desc.name.size - 9]
-          elem_size = case elem_name
-                      when "UInt8", "Int8", "Bool" then 1
-                      when "UInt16", "Int16"       then 2
-                      when "UInt32", "Int32", "Float32", "Char" then 4
-                      when "UInt64", "Int64", "Float64" then 8
-                      when "UInt128", "Int128" then 16
-                      else
-                        # Structs, classes, and tuples are heap-allocated in V2 ABI, so
-                        # Pointer(T) buffers store 8-byte pointers, not inline data.
-                        # Only enums use actual element size (enums are stored inline).
-                        if elem_mir_type = @mir_module.type_registry.get_by_name(elem_name)
-                          if elem_mir_type.kind.enum?
-                            elem_mir_type.size > 0 ? elem_mir_type.size.to_i32 : 8
-                          else
-                            8 # heap-allocated → pointer-sized elements
-                          end
-                        else
-                          8 # class/reference instances are pointers (8 bytes)
-                        end
-                      end
-        end
-      end
-
-      # Multiply element count by element size to get byte count
-      elem_size_val = builder.const_int(elem_size.to_i64, TypeRef::INT64)
-      # Extend new_size to i64 for multiplication
-      size_i64 = builder.cast(CastKind::SExt, new_size, TypeRef::INT64)
-      byte_count = builder.mul(size_i64, elem_size_val, TypeRef::INT64)
-
-      args = [ptr, byte_count]
-      builder.extern_call("__crystal_v2_realloc64", args, TypeRef::POINTER)
-    end
-
-    private def lower_address_of(addr_of : HIR::AddressOf) : ValueId
-      builder = @builder.not_nil!
-
-      # Get the operand value
-      operand = get_value(addr_of.operand)
-
-      # For address-of, we need to return the address of the operand
-      # In MIR, this is a pointer to the value's storage location
-      # For now, emit an alloca and return its address
-      builder.addressof(operand, TypeRef::POINTER)
-    end
-
-    # Get size of a type in bytes
-    private def type_size(type : HIR::TypeRef) : Int32
-      case type
-      when HIR::TypeRef::VOID    then 0
-      when HIR::TypeRef::BOOL    then 1
-      when HIR::TypeRef::INT8    then 1
-      when HIR::TypeRef::INT16   then 2
-      when HIR::TypeRef::INT32   then 4
-      when HIR::TypeRef::INT64   then 8
-      when HIR::TypeRef::INT128  then 16
-      when HIR::TypeRef::UINT8   then 1
-      when HIR::TypeRef::UINT16  then 2
-      when HIR::TypeRef::UINT32  then 4
-      when HIR::TypeRef::UINT64  then 8
-      when HIR::TypeRef::UINT128 then 16
-      when HIR::TypeRef::FLOAT32 then 4
-      when HIR::TypeRef::FLOAT64 then 8
-      when HIR::TypeRef::CHAR    then 4
-      when HIR::TypeRef::POINTER then pointer_word_bytes_i32
-      else                            pointer_word_bytes_i32
-      end
-    end
-
-    # Returns true if the HIR type is a primitive (not a class/struct/union pointer)
-    private def primitive_hir_type?(hir_type : HIR::TypeRef?) : Bool
-      return false unless hir_type
-      case hir_type
-      when HIR::TypeRef::BOOL, HIR::TypeRef::INT8, HIR::TypeRef::INT16,
-           HIR::TypeRef::INT32, HIR::TypeRef::INT64, HIR::TypeRef::INT128,
-           HIR::TypeRef::UINT8, HIR::TypeRef::UINT16, HIR::TypeRef::UINT32,
-           HIR::TypeRef::UINT64, HIR::TypeRef::UINT128,
-           HIR::TypeRef::FLOAT32, HIR::TypeRef::FLOAT64,
-           HIR::TypeRef::CHAR, HIR::TypeRef::POINTER
-        true
-      else
-        false
-      end
-    end
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # Terminator Lowering
-    # ─────────────────────────────────────────────────────────────────────────
-
-    private def lower_terminator(term : HIR::Terminator)
-      builder = @builder.not_nil!
-
-      case term
-      when HIR::Return
-        # Emit rc_dec cleanup for all non-returned ARC locals before returning.
-        # Returned allocations are excluded from @arc_cleanup_slots during pre-scan.
-        @arc_cleanup_slots.each do |(slot, atomic)|
-          current_val = builder.load(slot, TypeRef::POINTER)
-          builder.rc_dec(current_val, atomic: atomic)
-        end
-        if v = term.value
-          value = get_value(v)
-          if hir_func = @current_hir_func
-            value_hir_type = @hir_value_types[v]? || hir_func.return_type
-            value = coerce_return_value(builder, value, value_hir_type, hir_func.return_type)
-          end
-          builder.ret(value)
-        else
-          builder.ret
-        end
-      when HIR::Branch
-        cond = get_value(term.condition)
-        then_block = mir_block_for(term.then_block)
-        else_block = mir_block_for(term.else_block)
-        if ENV["DEBUG_BRANCH_LOWER"]? && @current_hir_func.try(&.name).try(&.includes?("upsert"))
-          # Trace what HIR value the condition is
-          hir_val : HIR::Value? = nil
-          @current_hir_func.try do |f|
-            f.blocks.each do |blk|
-              blk.instructions.each do |inst|
-                hir_val = inst if inst.id == term.condition
-              end
-            end
-          end
-          STDERR.puts "[BRANCH_LOWER] func=#{@current_hir_func.try(&.name)} cond_hir=#{term.condition.to_u32} cond_mir=#{cond.to_u32} then=#{then_block} else=#{else_block} hir_val_class=#{hir_val.class.name} hir_val=#{hir_val}"
-        end
-        builder.branch(cond, then_block, else_block)
-      when HIR::Jump
-        target = mir_block_for(term.target)
-        if ENV["DEBUG_BRANCH_LOWER"]? && @current_hir_func.try(&.name).try(&.includes?("upsert"))
-          STDERR.puts "[JUMP_LOWER] func=#{@current_hir_func.try(&.name)} target=#{target}"
-        end
-        builder.jump(target)
-      when HIR::Switch
-        value = get_value(term.value)
-        cases = term.cases.map do |(val_id, block_id)|
-          val = get_value(val_id)
-          mir_block = mir_block_for(block_id)
-          {0_i64, mir_block}  # Would need to extract actual constant value
-        end
-        default_block = mir_block_for(term.default)
-        builder.switch(value, cases, default_block)
-      when HIR::Unreachable
-        builder.unreachable
-      end
-    end
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # Helpers
-    # ─────────────────────────────────────────────────────────────────────────
-
-    private def mir_block_for(hir_block_id : HIR::BlockId) : BlockId
-      if mapped = get_block_map(hir_block_id)
-        return mapped
-      end
-
-      mir_func = @current_mir_func.not_nil!
-      builder = @builder.not_nil!
-      synthetic = mir_func.create_block
-      set_block_map(hir_block_id, synthetic)
-
-      if ::CrystalV2::Compiler::BootstrapEnv.get?("CRYSTAL2_STAGE2_DEBUG") == "1"
-        STDERR.puts "[MIR_MISSING_BLOCK] func=#{@current_lowering_func_name} hir_block=#{hir_block_id} synthetic=#{synthetic}"
-      end
-
-      saved_block = builder.current_block
-      builder.current_block = synthetic
-      builder.unreachable
-      builder.current_block = saved_block
-
-      synthetic
-    end
-
-    @[AlwaysInline]
-    private def set_block_map(hir_block_id : HIR::BlockId, mir_block_id : BlockId) : Nil
-      idx = hir_block_id.to_i
-      while idx >= @block_map.size
-        @block_map << nil
-      end
-      @block_map[idx] = mir_block_id
-    end
-
-    @[AlwaysInline]
-    private def get_block_map(hir_block_id : HIR::BlockId) : BlockId?
-      idx = hir_block_id.to_i
-      return nil if idx < 0 || idx >= @block_map.size
-      @block_map.unsafe_fetch(idx)
-    end
-
-    private def get_value(hir_id : HIR::ValueId) : ValueId
-      if mapped = @value_map[hir_id]?
-        return mapped
-      end
-      if ENV["DEBUG_GET_VALUE"]?
-        STDERR.puts "[GET_VALUE] UNMAPPED hir_id=#{hir_id} in #{@current_lowering_func_name}"
-      end
-      0_u32
-    end
-
-    private def record_stack_slot(slot : ValueId, type : TypeRef)
-      @stack_slot_values.add(slot)
-      @stack_slot_types[slot] = type
-    end
-
-    private def default_value_for_type(builder : Builder, type : TypeRef) : ValueId?
-      case type
-      when TypeRef::BOOL
-        builder.const_bool(false)
-      when TypeRef::INT8, TypeRef::INT16, TypeRef::INT32, TypeRef::INT64, TypeRef::INT128,
-           TypeRef::UINT8, TypeRef::UINT16, TypeRef::UINT32, TypeRef::UINT64, TypeRef::UINT128,
-           TypeRef::CHAR
-        builder.const_int(0_i64, type)
-      when TypeRef::FLOAT32, TypeRef::FLOAT64
-        builder.const_float(0.0, type)
-      when TypeRef::POINTER
-        builder.const_nil_typed(TypeRef::POINTER)
-      else
         nil
       end
-    end
 
-    # Check if a MIR type holds a reference that needs rc_inc/rc_dec.
-    # True for: reference types, arrays, and all-ref unions (e.g. TreeNode? = Nil | TreeNode).
-    private def type_needs_rc?(mir_type_ref : TypeRef) : Bool
-      if mir_type_info = @mir_module.type_registry.get(mir_type_ref)
-        return true if mir_type_info.kind.reference? || mir_type_info.kind.array?
-        if mir_type_info.kind.union?
-          if desc = @mir_module.get_union_descriptor(mir_type_ref)
-            return all_ref_union_descriptor?(desc)
+      private def lower_is_a(isa : HIR::IsA) : ValueId
+        builder = @builder.not_nil!
+        mir_check_type = convert_type(isa.check_type)
+
+        # Check if the value's type is already known (concrete, non-union).
+        # If so, resolve the is_a? check statically to avoid loading type_id
+        # from a raw value (e.g. Int32 treated as pointer → segfault).
+        if hir_value_type = @hir_value_types[isa.value]?
+          value_desc = @hir_module.get_type_descriptor(hir_value_type)
+          mir_value_type_for_static = convert_type(hir_value_type)
+          # Only resolve statically for truly concrete types: primitives, or
+          # class types that have NO subclasses (leaf classes). Classes with
+          # subclasses can have any runtime type_id → need runtime check.
+          has_subclasses = false
+          if value_desc && value_desc.kind != HIR::TypeKind::Union && !hir_value_type.primitive?
+            val_mir_type = @mir_module.type_registry.get(mir_value_type_for_static)
+            if val_mir_type
+              has_subclasses = !subclasses_for(val_mir_type.name).empty?
+            end
+          end
+          # POINTER is a generic opaque pointer — its runtime type is unknown
+          # (e.g., exception objects). Must NOT resolve statically.
+          is_concrete = hir_value_type != HIR::TypeRef::POINTER &&
+                        (hir_value_type.primitive? ||
+                         (value_desc && value_desc.kind != HIR::TypeKind::Union && !has_subclasses))
+          if is_concrete
+            # Concrete leaf type — resolve statically
+            # Collect matching type_ids (check_type + subclasses)
+            matching_type_ids = Set(UInt32).new
+            matching_type_ids << mir_check_type.id
+            if check_mir_type = @mir_module.type_registry.get(mir_check_type)
+              subclasses_for(check_mir_type.name).each do |sub_name|
+                if sub_mir_type = @mir_module.type_registry.get_by_name(sub_name)
+                  matching_type_ids << sub_mir_type.id
+                end
+              end
+            end
+            is_match = matching_type_ids.includes?(mir_value_type_for_static.id)
+            return builder.const_int(is_match ? 1_i64 : 0_i64, TypeRef::BOOL)
           end
         end
+
+        obj = get_value(isa.value)
+
+        # For ptr-typed values (class instances represented as raw pointers),
+        # nilable checks must use null comparison instead of loading type_id
+        # from the object header (which would crash on null ptr).
+        # is_a?(Nil) → ptr == null, is_a?(SomeClass) → ptr != null
+        hir_val_type = @hir_value_types[isa.value]?
+        mir_val_type = hir_val_type ? convert_type(hir_val_type) : nil
+        val_is_ptr_type = false
+        if mir_val_type
+          val_desc = @mir_module.type_registry.get(mir_val_type)
+          val_is_ptr_type = mir_val_type == TypeRef::POINTER ||
+                            mir_val_type == TypeRef::NIL ||
+                            (val_desc && (val_desc.kind == MIR::TypeKind::Reference ||
+                                          val_desc.kind == MIR::TypeKind::Struct)) ||
+                            (val_desc.nil? && !mir_val_type.primitive?) # Not in registry and not primitive → ptr
+        end
+        if val_is_ptr_type && mir_check_type == TypeRef::NIL
+          # is_a?(Nil) on a ptr value → compare to null
+          null_val = builder.const_int(0_i64, TypeRef::POINTER)
+          return builder.eq(obj, null_val)
+        elsif val_is_ptr_type && mir_check_type != TypeRef::NIL
+          # ptr != null is ONLY valid when the static type matches the check type
+          # (i.e., simple nilable checks like `x : Foo?` → is_a?(Foo)).
+          # For class hierarchies (Base → is_a?(SubClass)), need runtime type_id check.
+          if mir_val_type && mir_val_type.id == mir_check_type.id
+            null_val = builder.const_int(0_i64, TypeRef::POINTER)
+            return builder.ne(obj, null_val)
+          end
+          # Otherwise fall through to runtime type_id check below
+        end
+
+        # Collect all type_ids that should match: the check_type itself
+        # plus all its subclasses (for parent type checks like is_a?(Base))
+        matching_type_ids = [] of UInt32
+        matching_type_ids << mir_check_type.id
+
+        # Find check type name and add subclass type_ids
+        if check_mir_type = @mir_module.type_registry.get(mir_check_type)
+          check_name = check_mir_type.name
+          subclasses_for(check_name).each do |sub_name|
+            if sub_mir_type = @mir_module.type_registry.get_by_name(sub_name)
+              matching_type_ids << sub_mir_type.id unless matching_type_ids.includes?(sub_mir_type.id)
+            end
+          end
+        end
+
+        type_id_matches = ->(type_id_value : ValueId) do
+          if matching_type_ids.size == 1
+            expected = builder.const_int(matching_type_ids[0].to_i64, TypeRef::INT32)
+            builder.eq(type_id_value, expected)
+          else
+            first_expected = builder.const_int(matching_type_ids[0].to_i64, TypeRef::INT32)
+            result = builder.eq(type_id_value, first_expected)
+            matching_type_ids[1..].each do |tid|
+              expected = builder.const_int(tid.to_i64, TypeRef::INT32)
+              check = builder.eq(type_id_value, expected)
+              result = builder.bit_or(result, check, TypeRef::BOOL)
+            end
+            result
+          end
+        end
+
+        # All-ref unions (for example `Base | Nil`) are lowered as nullable raw
+        # pointers, so their runtime type_id must be recovered through
+        # UnionTypeIdGet instead of treating the union value itself as a plain
+        # object pointer load.
+        if mir_val_type && is_union_type?(mir_val_type)
+          if union_desc = @mir_module.get_union_descriptor(mir_val_type)
+            if all_ref_union_descriptor?(union_desc)
+              union_type_id = builder.emit(MIR::UnionTypeIdGet.new(builder.next_id, obj))
+              return type_id_matches.call(union_type_id)
+            end
+
+            # Mixed unions like `Nil | Symbol` still expose their payload pointer
+            # through `get_value(...)`. Runtime subclass checks on that payload
+            # must reject the nil variant before loading an object header from it.
+            has_nil_variant = union_desc.variants.any? do |variant|
+              variant.type_ref == TypeRef::NIL || variant.type_ref == TypeRef::VOID
+            end
+            has_ref_payload = union_desc.variants.any? do |variant|
+              next false if variant.type_ref == TypeRef::NIL || variant.type_ref == TypeRef::VOID
+              variant_desc = @mir_module.type_registry.get(variant.type_ref)
+              variant_desc && runtime_header_backed_union_variant?(variant_desc)
+            end
+
+            if has_nil_variant && has_ref_payload
+              null_val = builder.const_int(0_i64, TypeRef::POINTER)
+              not_nil = builder.ne(obj, null_val)
+              type_id_ptr = builder.gep(obj, [0_u32], TypeRef::POINTER)
+              loaded_type_id = builder.load(type_id_ptr, TypeRef::INT32)
+              return builder.bit_and(not_nil, type_id_matches.call(loaded_type_id), TypeRef::BOOL)
+            end
+          end
+        end
+
+        # Load type_id from object header (offset 0, i32)
+        type_id_ptr = builder.gep(obj, [0_u32], TypeRef::POINTER)
+        loaded_type_id = builder.load(type_id_ptr, TypeRef::INT32)
+
+        # Compare against all matching type_ids with OR chain
+        type_id_matches.call(loaded_type_id)
       end
-      false
-    end
 
-    private def convert_type(hir_type : HIR::TypeRef) : TypeRef
-      # Map HIR type IDs to MIR type IDs
-      # Note: HIR and MIR have DIFFERENT layouts! HIR: BOOL=1, MIR: NIL=1, BOOL=2
-      hir_type_id = hir_type.id
-      result = case hir_type_id
-      when HIR::TypeRef::VOID.id    then TypeRef::VOID
-      when HIR::TypeRef::BOOL.id    then TypeRef::BOOL
-      when HIR::TypeRef::INT8.id    then TypeRef::INT8
-      when HIR::TypeRef::INT16.id   then TypeRef::INT16
-      when HIR::TypeRef::INT32.id   then TypeRef::INT32
-      when HIR::TypeRef::INT64.id   then TypeRef::INT64
-      when HIR::TypeRef::INT128.id  then TypeRef::INT128
-      when HIR::TypeRef::UINT8.id   then TypeRef::UINT8
-      when HIR::TypeRef::UINT16.id  then TypeRef::UINT16
-      when HIR::TypeRef::UINT32.id  then TypeRef::UINT32
-      when HIR::TypeRef::UINT64.id  then TypeRef::UINT64
-      when HIR::TypeRef::UINT128.id then TypeRef::UINT128
-      when HIR::TypeRef::FLOAT32.id then TypeRef::FLOAT32
-      when HIR::TypeRef::FLOAT64.id then TypeRef::FLOAT64
-      when HIR::TypeRef::CHAR.id    then TypeRef::CHAR
-      when HIR::TypeRef::STRING.id  then TypeRef::STRING
-      when HIR::TypeRef::NIL.id     then TypeRef::NIL
-      when HIR::TypeRef::SYMBOL.id  then TypeRef::SYMBOL
-      when HIR::TypeRef::POINTER.id then TypeRef::POINTER
-      else
-        # User-defined types: offset by primitive count
-        TypeRef.new(hir_type_id + 20_u32)
+      # ─────────────────────────────────────────────────────────────────────────
+      # Phi Lowering
+      # ─────────────────────────────────────────────────────────────────────────
+
+      private def lower_phi(hir_phi : HIR::Phi) : ValueId
+        builder = @builder.not_nil!
+        mir_phi = builder.phi(convert_type(hir_phi.type))
+
+        # Defer incoming resolution until all blocks are lowered
+        # This handles forward references from loop bodies
+        @pending_phis << {mir_phi, hir_phi}
+
+        mir_phi.id
+      end
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # Copy/Assignment Lowering
+      # ─────────────────────────────────────────────────────────────────────────
+
+      private def lower_copy(copy : HIR::Copy) : ValueId
+        # Load from stack slot when copy reads a mutable local / block param.
+        source = get_value(copy.source)
+        if slot_type = @stack_slot_types[source]?
+          builder = @builder.not_nil!
+          return builder.load(source, slot_type)
+        end
+        source
+      end
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # Closure Lowering
+      # ─────────────────────────────────────────────────────────────────────────
+
+      private def lower_closure(closure : HIR::MakeClosure) : ValueId
+        builder = @builder.not_nil!
+
+        # Closures become:
+        # 1. Struct containing captured variables
+        # 2. Function pointer to closure body
+
+        # Determine memory strategy based on taints:
+        # - ThreadShared closure → AtomicARC (for thread-safe RC)
+        # - Normal closure → ARC (non-atomic, faster)
+        strategy = if closure.taints.thread_shared?
+                     MemoryStrategy::AtomicARC
+                   else
+                     MemoryStrategy::ARC
+                   end
+
+        # Allocate environment struct
+        env_ptr = builder.alloc(strategy, TypeRef::POINTER)
+
+        # Insert RC increment based on strategy
+        if strategy == MemoryStrategy::AtomicARC
+          builder.rc_inc(env_ptr, atomic: true)
+        else
+          builder.rc_inc(env_ptr)
+        end
+
+        # Store captured values in environment
+        closure.captures.each_with_index do |cap, idx|
+          cap_value = get_value(cap.value_id)
+          field_ptr = builder.gep(env_ptr, [idx.to_u32], TypeRef::POINTER)
+          builder.store(field_ptr, cap_value)
+        end
+
+        @stats.closures_lowered += 1
+        env_ptr
+      end
+
+      private def lower_func_pointer(fp : HIR::FuncPointer) : ValueId
+        builder = @builder.not_nil!
+        mir_fp = MIR::FuncPointer.new(builder.next_id, TypeRef::POINTER, fp.func_name)
+        builder.emit(mir_fp)
+        mir_fp.id
+      end
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # Yield Lowering
+      # ─────────────────────────────────────────────────────────────────────────
+
+      private def lower_yield(yld : HIR::Yield) : ValueId
+        builder = @builder.not_nil!
+        block_param_id = yld.target || @current_block_param_id
+        if ENV.has_key?("DEBUG_EXPLICIT_YIELD_TARGET")
+          STDERR.puts "[EXPLICIT_YIELD_TARGET] mir func=#{@current_lowering_func_name} target=#{block_param_id.inspect} explicit=#{yld.target.inspect} fallback=#{@current_block_param_id.inspect}"
+        end
+        unless block_param_id
+          return builder.const_nil
+        end
+        # Yield becomes indirect call through block parameter.
+        # We treat the block param as a Proc value and emit an indirect call.
+        args = [] of ValueId
+        yld.args.each do |arg|
+          arg_type = @hir_value_types[arg]?
+          next unless @value_map.has_key?(arg)
+          # Don't skip VOID-typed args — when yield args cross inlined block body
+          # boundaries, the HIR type may not be propagated, but the MIR value still
+          # carries the correct type (e.g. elem in Enumerable#join's each block).
+          args << get_value(arg)
+        end
+        block_val = get_value(block_param_id)
+        block_type = @hir_value_types[block_param_id]? || HIR::TypeRef::POINTER
+        # Unannotated `&` block params are currently inferred as VOID in HIR,
+        # but runtime still passes a block function pointer for yield dispatch.
+        block_type = HIR::TypeRef::POINTER if block_type == HIR::TypeRef::VOID
+        block_desc = @hir_module.get_type_descriptor(block_type)
+        is_ptr = block_type == HIR::TypeRef::POINTER || (block_desc && block_desc.kind == HIR::TypeKind::Proc)
+        unless is_ptr
+          block_val = builder.cast(CastKind::IntToPtr, block_val, TypeRef::POINTER)
+        end
+        yield_type = yld.type
+        if yield_type == HIR::TypeRef::VOID || yield_type == HIR::TypeRef::NIL
+          if inferred = infer_yield_type_from_users(yld.id)
+            yield_type = inferred
+          end
+        end
+        @hir_value_types[yld.id] = yield_type
+        builder.call_indirect(block_val, args, convert_type(yield_type))
+      end
+
+      private def infer_yield_type_from_users(yield_id : HIR::ValueId) : HIR::TypeRef?
+        return nil unless hir_func = @current_hir_func
+
+        hir_func.blocks.each do |block|
+          block.instructions.each do |inst|
+            case inst
+            when HIR::Phi
+              if inst.incoming.any? { |(_, value_id)| value_id == yield_id }
+                return inst.type unless inst.type == HIR::TypeRef::VOID || inst.type == HIR::TypeRef::NIL
+              end
+            when HIR::Copy
+              if inst.source == yield_id
+                return inst.type unless inst.type == HIR::TypeRef::VOID || inst.type == HIR::TypeRef::NIL
+              end
+            when HIR::Cast
+              if inst.value == yield_id
+                return inst.target_type unless inst.target_type == HIR::TypeRef::VOID || inst.target_type == HIR::TypeRef::NIL
+              end
+            end
+          end
+
+          if term = block.terminator
+            if term.is_a?(HIR::Return) && term.value == yield_id
+              func_ret = hir_func.return_type
+              return func_ret unless func_ret == HIR::TypeRef::VOID || func_ret == HIR::TypeRef::NIL
+            end
+          end
+        end
+
+        nil
+      end
+
+      # Check if a function contains yield instructions (inline-only function)
+      private def function_contains_yield?(hir_func : HIR::Function) : Bool
+        hir_func.blocks.each do |block|
+          block.instructions.each do |inst|
+            return true if inst.is_a?(HIR::Yield)
+          end
+        end
+        false
+      end
+
+      private def infer_block_param_id(hir_func : HIR::Function) : HIR::ValueId?
+        # Prefer explicit Proc-typed param if present.
+        hir_func.params.reverse_each do |param|
+          if desc = @hir_module.get_type_descriptor(param.type)
+            return param.id if desc.kind == HIR::TypeKind::Proc
+          end
+        end
+        # Fallback: use the last parameter only if it could be a block (Pointer or VOID type).
+        # Non-callable types (Int32, String, etc.) must not be used as yield targets.
+        if last_param = hir_func.params.last?
+          pt = last_param.type
+          if pt == HIR::TypeRef::POINTER || pt == HIR::TypeRef::VOID
+            return last_param.id
+          end
+          # Also accept if the MIR type maps to Pointer
+          mir_type = convert_type(pt)
+          if mir_type == TypeRef::POINTER
+            return last_param.id
+          end
+        end
+        nil
+      end
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # Class Variable Lowering
+      # ─────────────────────────────────────────────────────────────────────────
+
+      private def lower_classvar_get(cv : HIR::ClassVarGet) : ValueId
+        builder = @builder.not_nil!
+        extern = @hir_module.get_extern_global(cv.class_name, cv.var_name)
+        global_name = extern ? extern.real_name : HIRToMIRLowering.class_var_global_name(cv.class_name, cv.var_name)
+        hir_type = (extern && cv.type == HIR::TypeRef::VOID) ? extern.type : cv.type
+        builder.global_load(global_name, convert_type(hir_type))
+      end
+
+      private def lower_classvar_set(cv : HIR::ClassVarSet) : ValueId
+        builder = @builder.not_nil!
+        value = get_value(cv.value)
+        extern = @hir_module.get_extern_global(cv.class_name, cv.var_name)
+        global_name = extern ? extern.real_name : HIRToMIRLowering.class_var_global_name(cv.class_name, cv.var_name)
+        hir_type = (extern && cv.type == HIR::TypeRef::VOID) ? extern.type : cv.type
+        builder.global_store(global_name, value, convert_type(hir_type))
+
+        # rc_inc for reference-typed values: the class variable now holds a reference.
+        # Covers reference types, arrays, and all-ref unions (e.g. Node? = Nil | Node).
+        # Skip constants (string literals, globals) — they have INT64_MAX sentinel.
+        unless @hir_constant_values.includes?(cv.value)
+          if value_hir_type = @hir_value_types[cv.value]?
+            if type_needs_rc?(convert_type(value_hir_type))
+              builder.rc_inc(value)
+            end
+          end
+        end
+
+        value
+      end
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # Union Lowering
+      # ─────────────────────────────────────────────────────────────────────────
+
+      private def lower_union_wrap(wrap : HIR::UnionWrap) : ValueId
+        builder = @builder.not_nil!
+        value = get_value(wrap.value)
+        union_type = convert_type(wrap.type)
+        variant_type_id = wrap.variant_type_id
+
+        if descriptor = @mir_module.get_union_descriptor(union_type)
+          hir_value_type = @hir_value_types[wrap.value]? || HIR::TypeRef::POINTER
+          mir_value_type = convert_type(hir_value_type)
+          if matched_variant = descriptor.variants.find { |variant| variant.type_ref == mir_value_type }
+            variant_type_id = matched_variant.type_id
+          elsif mir_value_type == TypeRef::POINTER
+            pointer_like = descriptor.variants.select do |variant|
+              next false if variant.type_ref == TypeRef::NIL || variant.type_ref == TypeRef::VOID
+              next true if variant.type_ref == TypeRef::POINTER || variant.type_ref == TypeRef::STRING
+
+              runtime_pointer_like_union_variant?(@mir_module.type_registry.get(variant.type_ref))
+            end
+
+            if pointer_like.size == 1
+              variant_type_id = pointer_like.first.type_id
+            end
+          end
+        end
+
+        # Create MIR UnionWrap instruction
+        mir_wrap = MIR::UnionWrap.new(
+          builder.next_id,
+          union_type,
+          value,
+          variant_type_id,
+          union_type # union_type parameter
+        )
+        builder.emit(mir_wrap)
+      end
+
+      private def lower_union_unwrap(unwrap : HIR::UnionUnwrap) : ValueId
+        builder = @builder.not_nil!
+        union_value = get_value(unwrap.union_value)
+        result_type = convert_type(unwrap.type)
+        if union_hir_type = @hir_value_types[unwrap.union_value]?
+          union_mir_type = convert_type(union_hir_type)
+          if descriptor = @mir_module.union_descriptors[union_mir_type]?
+            if variant = descriptor.variants.find { |v| v.type_id == unwrap.variant_type_id }
+              result_type = variant.type_ref
+              if nested = @mir_module.union_descriptors[result_type]?
+                if nested_variant = nested.variants.find { |v| v.type_ref != TypeRef::NIL && v.type_ref != TypeRef::VOID }
+                  result_type = nested_variant.type_ref
+                end
+              end
+              if ENV.has_key?("DEBUG_UNION_UNWRAP")
+                STDERR.puts "[UNION_UNWRAP] union_type=#{union_mir_type.id} variant_id=#{unwrap.variant_type_id} variant_type=#{variant.type_ref.id}"
+              end
+            elsif ENV.has_key?("DEBUG_UNION_UNWRAP")
+              STDERR.puts "[UNION_UNWRAP] union_type=#{union_mir_type.id} variant_id=#{unwrap.variant_type_id} variant_type=nil"
+            end
+          end
+        elsif ENV.has_key?("DEBUG_UNION_UNWRAP")
+          STDERR.puts "[UNION_UNWRAP] missing hir type for union_value=#{unwrap.union_value} unwrap_type=#{unwrap.type} result_type=#{result_type.id}"
+        end
+        if ENV.has_key?("DEBUG_UNION_UNWRAP")
+          if descriptor = @mir_module.union_descriptors[result_type]?
+            variants = descriptor.variants.map { |v| v.type_ref.id }.join(",")
+            STDERR.puts "[UNION_UNWRAP] union_value=#{unwrap.union_value} unwrap_type=#{unwrap.type} result_type=#{result_type.id} has_union=true variants=#{variants}"
+          else
+            STDERR.puts "[UNION_UNWRAP] union_value=#{unwrap.union_value} unwrap_type=#{unwrap.type} result_type=#{result_type.id} has_union=false"
+          end
+        end
+
+        # Create MIR UnionUnwrap instruction
+        mir_unwrap = MIR::UnionUnwrap.new(
+          builder.next_id,
+          result_type,
+          union_value,
+          unwrap.variant_type_id,
+          unwrap.safe
+        )
+        builder.emit(mir_unwrap)
+      end
+
+      private def lower_union_type_id(type_id : HIR::UnionTypeId) : ValueId
+        builder = @builder.not_nil!
+        union_value = get_value(type_id.union_value)
+
+        # Create MIR UnionTypeIdGet instruction (type is hardcoded to INT32)
+        mir_type_id = MIR::UnionTypeIdGet.new(
+          builder.next_id,
+          union_value
+        )
+        builder.emit(mir_type_id)
+      end
+
+      private def lower_union_is(is : HIR::UnionIs) : ValueId
+        builder = @builder.not_nil!
+        union_value = get_value(is.union_value)
+
+        # Convert union type from HIR to MIR
+        mir_union_type = if is.union_type != HIR::TypeRef::VOID
+                           convert_type(is.union_type)
+                         else
+                           MIR::TypeRef::VOID
+                         end
+
+        # Create MIR UnionIs instruction (type is hardcoded to BOOL)
+        mir_is = MIR::UnionIs.new(
+          builder.next_id,
+          union_value,
+          is.variant_type_id,
+          mir_union_type
+        )
+        builder.emit(mir_is)
+      end
+
+      private def lower_array_literal(arr : HIR::ArrayLiteral) : ValueId
+        builder = @builder.not_nil!
+
+        # Convert element values
+        elements = arr.elements.map { |e| get_value(e) }
+        element_type = convert_type(arr.element_type)
+
+        # Determine memory strategy from HIR lifetime tag.
+        # Array is a reference type — default to GC (heap) for safety.
+        # The memory optimizer can demote to Stack when escape analysis proves it safe.
+        strategy = case arr.lifetime
+                   when HIR::LifetimeTag::StackLocal
+                     # Conservative: Array commonly escapes (stored in ivars, returned, etc.)
+                     # Only use Stack if escape analysis explicitly confirms non-escape.
+                     # For now, default to GC since HIR lacks array escape analysis.
+                     MIR::MemoryStrategy::GC
+                   when HIR::LifetimeTag::ArgEscape
+                     MIR::MemoryStrategy::Slab
+                   when HIR::LifetimeTag::HeapEscape
+                     MIR::MemoryStrategy::ARC
+                   when HIR::LifetimeTag::GlobalEscape
+                     MIR::MemoryStrategy::AtomicARC
+                   else
+                     MIR::MemoryStrategy::GC
+                   end
+
+        # rc_inc for reference-typed elements: the array buffer holds a reference.
+        # Covers reference types, arrays, and all-ref unions (e.g. Node? = Nil | Node).
+        # Skip constants (string literals, globals) — they have INT64_MAX sentinel.
+        if type_needs_rc?(element_type)
+          arr.elements.each_with_index do |hir_elem, idx|
+            next if @hir_constant_values.includes?(hir_elem)
+            builder.rc_inc(elements[idx])
+          end
+        end
+
+        # Create MIR ArrayLiteral instruction
+        mir_arr = MIR::ArrayLiteral.new(
+          builder.next_id,
+          element_type,
+          elements,
+          strategy
+        )
+        builder.emit(mir_arr)
+      end
+
+      private def lower_array_size(arr_size : HIR::ArraySize) : ValueId
+        builder = @builder.not_nil!
+        array_val = get_value(arr_size.array_value)
+
+        # Create MIR ArraySize instruction
+        mir_size = MIR::ArraySize.new(
+          builder.next_id,
+          array_val
+        )
+        builder.emit(mir_size)
+      end
+
+      private def lower_array_set_size(set_size : HIR::ArraySetSize) : ValueId
+        builder = @builder.not_nil!
+        array_val = get_value(set_size.array_value)
+        size_val = get_value(set_size.size_value)
+
+        mir_set_size = MIR::ArraySetSize.new(
+          builder.next_id,
+          array_val,
+          size_val
+        )
+        builder.emit(mir_set_size)
+      end
+
+      private def lower_array_new(array_new : HIR::ArrayNew) : ValueId
+        builder = @builder.not_nil!
+        capacity_val = get_value(array_new.capacity_value)
+        mir_new = MIR::ArrayNew.new(
+          builder.next_id,
+          convert_type(array_new.element_type),
+          capacity_val
+        )
+        builder.emit(mir_new)
+      end
+
+      private def lower_string_interpolation(interp : HIR::StringInterpolation) : ValueId
+        builder = @builder.not_nil!
+
+        # Convert part values and track HIR types (for Char vs Int32 distinction)
+        parts = interp.parts.map { |p| get_value(p) }
+        part_types = interp.parts.map { |p|
+          hir_t = @hir_value_types[p]? || HIR::TypeRef::STRING
+          convert_type(hir_t)
+        }
+
+        # Create MIR StringInterpolation instruction with type info
+        mir_interp = MIR::StringInterpolation.new(
+          builder.next_id,
+          parts,
+          part_types
+        )
+        builder.emit(mir_interp)
+      end
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # Exception Handling
+      # ─────────────────────────────────────────────────────────────────────────
+
+      private def lower_raise(raise_inst : HIR::Raise) : ValueId
+        builder = @builder.not_nil!
+
+        # Lower raise as a call to runtime raise function
+        if exc = raise_inst.exception
+          exc_val = get_value(exc)
+          # Check if the exception value is a String (not an Exception object).
+          # In Crystal, `raise "msg"` and `raise string_var` both create RuntimeError.
+          # Only `raise exception_obj` passes the exception directly.
+          exc_type = @hir_value_types[exc]?
+          if exc_type && exc_type.id == HIR::TypeRef::STRING.id
+            builder.extern_call("__crystal_v2_raise_msg", [exc_val], TypeRef::VOID)
+          elsif exc_type.nil? || exc_type.id == HIR::TypeRef::VOID.id
+            # Exception creation wasn't properly compiled (e.g., File::Error.from_errno
+            # expands to complex macro/factory code our compiler can't fully handle).
+            # Skip the raise entirely — let the function return normally.
+            # This is correct for the common case: Dir.mkdir_p rescues
+            # File::AlreadyExistsError from Dir.mkdir; since we can't create the
+            # proper exception type, skipping the raise lets mkdir_p continue
+            # iterating (equivalent to EEXIST being swallowed by rescue).
+            # For non-mkdir cases, the subsequent code will handle the missing
+            # raise deterministically (null checks, default returns, etc.).
+            return exc_val
+          else
+            builder.extern_call("__crystal_v2_raise", [exc_val], TypeRef::VOID)
+          end
+        elsif msg = raise_inst.message
+          # Raise with message string
+          msg_val = builder.const_string(msg)
+          builder.extern_call("__crystal_v2_raise_msg", [msg_val], TypeRef::VOID)
+        else
+          # Re-raise current exception
+          empty_args = Array(ValueId).new
+          builder.extern_call("__crystal_v2_reraise", empty_args, TypeRef::VOID)
+        end
+      end
+
+      private def lower_get_exception(get_exc : HIR::GetException) : ValueId
+        builder = @builder.not_nil!
+
+        # Get current exception from runtime
+        empty_args = Array(ValueId).new
+        builder.extern_call("__crystal_v2_get_exception", empty_args, TypeRef::POINTER)
+      end
+
+      private def lower_try_begin(try_begin : HIR::TryBegin) : ValueId
+        builder = @builder.not_nil!
+
+        # Emit MIR TryBegin which will emit inline setjmp in LLVM IR
+        mir_try = TryBegin.new(builder.function.next_value_id)
+        builder.emit(mir_try)
+        mir_try.id
+      end
+
+      private def lower_try_end(try_end : HIR::TryEnd) : ValueId
+        builder = @builder.not_nil!
+
+        # Emit MIR TryEnd which will clear exception handler
+        mir_try_end = TryEnd.new(builder.function.next_value_id)
+        builder.emit(mir_try_end)
+        mir_try_end.id
+      end
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # Pointer Operations Lowering
+      # ─────────────────────────────────────────────────────────────────────────
+
+      private def lower_pointer_malloc(malloc : HIR::PointerMalloc) : ValueId
+        builder = @builder.not_nil!
+
+        count = get_value(malloc.count)
+        elem_size = type_size(malloc.element_type)
+
+        # Compute total size = count * element_size
+        size_const = builder.const_int(elem_size.to_i64, TypeRef::INT64)
+        # Cast count to i64 if needed
+        count_i64 = builder.cast(CastKind::SExt, count, TypeRef::INT64)
+        total_size = builder.mul(count_i64, size_const, TypeRef::INT64)
+
+        # Call malloc
+        args = [total_size]
+        builder.extern_call("__crystal_v2_malloc64", args, TypeRef::POINTER)
+      end
+
+      private def lower_pointer_load(load : HIR::PointerLoad) : ValueId
+        builder = @builder.not_nil!
+
+        ptr = get_value(load.pointer)
+        result_type = convert_type(load.type)
+
+        if idx = load.index
+          # ptr[idx] - need GEP then load
+          index = get_value(idx)
+          # Element stride must follow container storage ABI:
+          # non-inline values (including tuples/structs) occupy pointer-sized slots.
+          elem_type = pointer_element_mir_type(@hir_value_types[load.pointer]?) || convert_type(load.type)
+          elem_size = container_elem_storage_size_u64(@mir_module.type_registry.get(elem_type))
+          gep = builder.gep_dynamic(ptr, index, elem_type, elem_size)
+          # Our compiler heap-allocates structs, so Pointer(Struct) buffers
+          # store heap pointers (not inline data). Always load the pointer
+          # from the buffer slot, then FieldGet dereferences it.
+          builder.load(gep, result_type)
+        else
+          # ptr.value - direct access
+          # Our compiler heap-allocates structs, so *ptr contains a heap pointer.
+          # Load it so that subsequent FieldGet can dereference it correctly.
+          builder.load(ptr, result_type)
+        end
+      end
+
+      private def lower_pointer_store(store : HIR::PointerStore) : ValueId
+        builder = @builder.not_nil!
+
+        ptr = get_value(store.pointer)
+        val = get_value(store.value)
+
+        # Element stride must come from pointer type (Pointer(T)), not value type.
+        # Value type can be alias/wrapper (e.g. Hash::Entry vs Entry) and produce
+        # wrong GEP scaling.
+        elem_type = pointer_element_mir_type(@hir_value_types[store.pointer]?) || get_arg_type(store.value)
+
+        if idx = store.index
+          # ptr[idx] = val - need GEP then store
+          index = get_value(idx)
+          elem_size = container_elem_storage_size_u64(@mir_module.type_registry.get(elem_type))
+          gep = builder.gep_dynamic(ptr, index, elem_type, elem_size)
+          builder.store(gep, val)
+        else
+          # ptr.value = val - direct store
+          builder.store(ptr, val)
+        end
+
+        # rc_inc for reference-typed values: the buffer now holds a reference.
+        # Covers reference types, arrays, and all-ref unions (e.g. Node? = Nil | Node).
+        # Skip constants (string literals, globals) — they have INT64_MAX sentinel.
+        unless @hir_constant_values.includes?(store.value)
+          if value_hir_type = @hir_value_types[store.value]?
+            if type_needs_rc?(convert_type(value_hir_type))
+              builder.rc_inc(val)
+            end
+          end
+        end
+
+        val # Return stored value
+      end
+
+      private def lower_pointer_add(add : HIR::PointerAdd) : ValueId
+        builder = @builder.not_nil!
+
+        ptr = get_value(add.pointer)
+        offset = get_value(add.offset)
+        elem_type = convert_type(add.element_type)
+        elem_size = add.element_byte_size
+        if elem_size == 0_u64
+          elem_size = container_elem_storage_size_u64(@mir_module.type_registry.get(elem_type))
+        end
+
+        # GEP with dynamic offset computes ptr + offset * sizeof(elem)
+        builder.gep_dynamic(ptr, offset, elem_type, elem_size)
+      end
+
+      private def lower_pointer_realloc(realloc : HIR::PointerRealloc) : ValueId
+        builder = @builder.not_nil!
+
+        ptr = get_value(realloc.pointer)
+        new_size = get_value(realloc.new_size)
+
+        # Crystal's Pointer#realloc(count) expects element count, but C realloc expects bytes.
+        # Multiply count by element size. Determine element size from the pointer's type descriptor.
+        elem_size = 8 # default: pointer-sized elements (class instances)
+        ptr_type = realloc.type
+        if desc = @hir_module.get_type_descriptor(ptr_type)
+          if desc.name.starts_with?("Pointer(")
+            elem_name = desc.name[8, desc.name.size - 9]
+            elem_size = case elem_name
+                        when "UInt8", "Int8", "Bool"              then 1
+                        when "UInt16", "Int16"                    then 2
+                        when "UInt32", "Int32", "Float32", "Char" then 4
+                        when "UInt64", "Int64", "Float64"         then 8
+                        when "UInt128", "Int128"                  then 16
+                        else
+                          # Structs, classes, and tuples are heap-allocated in V2 ABI, so
+                          # Pointer(T) buffers store 8-byte pointers, not inline data.
+                          # Only enums use actual element size (enums are stored inline).
+                          if elem_mir_type = @mir_module.type_registry.get_by_name(elem_name)
+                            if elem_mir_type.kind.enum?
+                              elem_mir_type.size > 0 ? elem_mir_type.size.to_i32 : 8
+                            else
+                              8 # heap-allocated → pointer-sized elements
+                            end
+                          else
+                            8 # class/reference instances are pointers (8 bytes)
+                          end
+                        end
+          end
+        end
+
+        # Multiply element count by element size to get byte count
+        elem_size_val = builder.const_int(elem_size.to_i64, TypeRef::INT64)
+        # Extend new_size to i64 for multiplication
+        size_i64 = builder.cast(CastKind::SExt, new_size, TypeRef::INT64)
+        byte_count = builder.mul(size_i64, elem_size_val, TypeRef::INT64)
+
+        args = [ptr, byte_count]
+        builder.extern_call("__crystal_v2_realloc64", args, TypeRef::POINTER)
+      end
+
+      private def lower_address_of(addr_of : HIR::AddressOf) : ValueId
+        builder = @builder.not_nil!
+
+        # Get the operand value
+        operand = get_value(addr_of.operand)
+
+        # For address-of, we need to return the address of the operand
+        # In MIR, this is a pointer to the value's storage location
+        # For now, emit an alloca and return its address
+        builder.addressof(operand, TypeRef::POINTER)
+      end
+
+      # Get size of a type in bytes
+      private def type_size(type : HIR::TypeRef) : Int32
+        case type
+        when HIR::TypeRef::VOID    then 0
+        when HIR::TypeRef::BOOL    then 1
+        when HIR::TypeRef::INT8    then 1
+        when HIR::TypeRef::INT16   then 2
+        when HIR::TypeRef::INT32   then 4
+        when HIR::TypeRef::INT64   then 8
+        when HIR::TypeRef::INT128  then 16
+        when HIR::TypeRef::UINT8   then 1
+        when HIR::TypeRef::UINT16  then 2
+        when HIR::TypeRef::UINT32  then 4
+        when HIR::TypeRef::UINT64  then 8
+        when HIR::TypeRef::UINT128 then 16
+        when HIR::TypeRef::FLOAT32 then 4
+        when HIR::TypeRef::FLOAT64 then 8
+        when HIR::TypeRef::CHAR    then 4
+        when HIR::TypeRef::POINTER then pointer_word_bytes_i32
+        else                            pointer_word_bytes_i32
+        end
+      end
+
+      # Returns true if the HIR type is a primitive (not a class/struct/union pointer)
+      private def primitive_hir_type?(hir_type : HIR::TypeRef?) : Bool
+        return false unless hir_type
+        case hir_type
+        when HIR::TypeRef::BOOL, HIR::TypeRef::INT8, HIR::TypeRef::INT16,
+             HIR::TypeRef::INT32, HIR::TypeRef::INT64, HIR::TypeRef::INT128,
+             HIR::TypeRef::UINT8, HIR::TypeRef::UINT16, HIR::TypeRef::UINT32,
+             HIR::TypeRef::UINT64, HIR::TypeRef::UINT128,
+             HIR::TypeRef::FLOAT32, HIR::TypeRef::FLOAT64,
+             HIR::TypeRef::CHAR, HIR::TypeRef::POINTER
+          true
+        else
+          false
+        end
+      end
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # Terminator Lowering
+      # ─────────────────────────────────────────────────────────────────────────
+
+      private def lower_terminator(term : HIR::Terminator)
+        builder = @builder.not_nil!
+
+        case term
+        when HIR::Return
+          # Emit rc_dec cleanup for all non-returned ARC locals before returning.
+          # Returned allocations are excluded from @arc_cleanup_slots during pre-scan.
+          @arc_cleanup_slots.each do |(slot, atomic)|
+            current_val = builder.load(slot, TypeRef::POINTER)
+            builder.rc_dec(current_val, atomic: atomic)
+          end
+          if v = term.value
+            value = get_value(v)
+            if hir_func = @current_hir_func
+              value_hir_type = @hir_value_types[v]? || hir_func.return_type
+              value = coerce_return_value(builder, value, value_hir_type, hir_func.return_type)
+            end
+            builder.ret(value)
+          else
+            builder.ret
+          end
+        when HIR::Branch
+          cond = get_value(term.condition)
+          then_block = mir_block_for(term.then_block)
+          else_block = mir_block_for(term.else_block)
+          if ENV["DEBUG_BRANCH_LOWER"]? && @current_hir_func.try(&.name).try(&.includes?("upsert"))
+            # Trace what HIR value the condition is
+            hir_val : HIR::Value? = nil
+            @current_hir_func.try do |f|
+              f.blocks.each do |blk|
+                blk.instructions.each do |inst|
+                  hir_val = inst if inst.id == term.condition
+                end
+              end
+            end
+            STDERR.puts "[BRANCH_LOWER] func=#{@current_hir_func.try(&.name)} cond_hir=#{term.condition.to_u32} cond_mir=#{cond.to_u32} then=#{then_block} else=#{else_block} hir_val_class=#{hir_val.class.name} hir_val=#{hir_val}"
+          end
+          builder.branch(cond, then_block, else_block)
+        when HIR::Jump
+          target = mir_block_for(term.target)
+          if ENV["DEBUG_BRANCH_LOWER"]? && @current_hir_func.try(&.name).try(&.includes?("upsert"))
+            STDERR.puts "[JUMP_LOWER] func=#{@current_hir_func.try(&.name)} target=#{target}"
+          end
+          builder.jump(target)
+        when HIR::Switch
+          value = get_value(term.value)
+          cases = term.cases.map do |(val_id, block_id)|
+            val = get_value(val_id)
+            mir_block = mir_block_for(block_id)
+            {0_i64, mir_block} # Would need to extract actual constant value
+          end
+          default_block = mir_block_for(term.default)
+          builder.switch(value, cases, default_block)
+        when HIR::Unreachable
+          builder.unreachable
+        end
+      end
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # Helpers
+      # ─────────────────────────────────────────────────────────────────────────
+
+      private def mir_block_for(hir_block_id : HIR::BlockId) : BlockId
+        if mapped = get_block_map(hir_block_id)
+          return mapped
+        end
+
+        mir_func = @current_mir_func.not_nil!
+        builder = @builder.not_nil!
+        synthetic = mir_func.create_block
+        set_block_map(hir_block_id, synthetic)
+
+        if ::CrystalV2::Compiler::BootstrapEnv.get?("CRYSTAL2_STAGE2_DEBUG") == "1"
+          STDERR.puts "[MIR_MISSING_BLOCK] func=#{@current_lowering_func_name} hir_block=#{hir_block_id} synthetic=#{synthetic}"
+        end
+
+        saved_block = builder.current_block
+        builder.current_block = synthetic
+        builder.unreachable
+        builder.current_block = saved_block
+
+        synthetic
+      end
+
+      @[AlwaysInline]
+      private def set_block_map(hir_block_id : HIR::BlockId, mir_block_id : BlockId) : Nil
+        idx = hir_block_id.to_i
+        while idx >= @block_map.size
+          @block_map << nil
+        end
+        @block_map[idx] = mir_block_id
+      end
+
+      @[AlwaysInline]
+      private def get_block_map(hir_block_id : HIR::BlockId) : BlockId?
+        idx = hir_block_id.to_i
+        return nil if idx < 0 || idx >= @block_map.size
+        @block_map.unsafe_fetch(idx)
+      end
+
+      private def get_value(hir_id : HIR::ValueId) : ValueId
+        if mapped = @value_map[hir_id]?
+          return mapped
+        end
+        if ENV["DEBUG_GET_VALUE"]?
+          STDERR.puts "[GET_VALUE] UNMAPPED hir_id=#{hir_id} in #{@current_lowering_func_name}"
+        end
+        0_u32
+      end
+
+      private def record_stack_slot(slot : ValueId, type : TypeRef)
+        @stack_slot_values.add(slot)
+        @stack_slot_types[slot] = type
+      end
+
+      private def default_value_for_type(builder : Builder, type : TypeRef) : ValueId?
+        case type
+        when TypeRef::BOOL
+          builder.const_bool(false)
+        when TypeRef::INT8, TypeRef::INT16, TypeRef::INT32, TypeRef::INT64, TypeRef::INT128,
+             TypeRef::UINT8, TypeRef::UINT16, TypeRef::UINT32, TypeRef::UINT64, TypeRef::UINT128,
+             TypeRef::CHAR
+          builder.const_int(0_i64, type)
+        when TypeRef::FLOAT32, TypeRef::FLOAT64
+          builder.const_float(0.0, type)
+        when TypeRef::POINTER
+          builder.const_nil_typed(TypeRef::POINTER)
+        else
+          nil
+        end
+      end
+
+      # Check if a MIR type holds a reference that needs rc_inc/rc_dec.
+      # True for: reference types, arrays, and all-ref unions (e.g. TreeNode? = Nil | TreeNode).
+      private def type_needs_rc?(mir_type_ref : TypeRef) : Bool
+        if mir_type_info = @mir_module.type_registry.get(mir_type_ref)
+          return true if mir_type_info.kind.reference? || mir_type_info.kind.array?
+          if mir_type_info.kind.union?
+            if desc = @mir_module.get_union_descriptor(mir_type_ref)
+              return all_ref_union_descriptor?(desc)
+            end
+          end
+        end
+        false
+      end
+
+      private def convert_type(hir_type : HIR::TypeRef) : TypeRef
+        # Map HIR type IDs to MIR type IDs
+        # Note: HIR and MIR have DIFFERENT layouts! HIR: BOOL=1, MIR: NIL=1, BOOL=2
+        hir_type_id = hir_type.id
+        result = case hir_type_id
+                 when HIR::TypeRef::VOID.id    then TypeRef::VOID
+                 when HIR::TypeRef::BOOL.id    then TypeRef::BOOL
+                 when HIR::TypeRef::INT8.id    then TypeRef::INT8
+                 when HIR::TypeRef::INT16.id   then TypeRef::INT16
+                 when HIR::TypeRef::INT32.id   then TypeRef::INT32
+                 when HIR::TypeRef::INT64.id   then TypeRef::INT64
+                 when HIR::TypeRef::INT128.id  then TypeRef::INT128
+                 when HIR::TypeRef::UINT8.id   then TypeRef::UINT8
+                 when HIR::TypeRef::UINT16.id  then TypeRef::UINT16
+                 when HIR::TypeRef::UINT32.id  then TypeRef::UINT32
+                 when HIR::TypeRef::UINT64.id  then TypeRef::UINT64
+                 when HIR::TypeRef::UINT128.id then TypeRef::UINT128
+                 when HIR::TypeRef::FLOAT32.id then TypeRef::FLOAT32
+                 when HIR::TypeRef::FLOAT64.id then TypeRef::FLOAT64
+                 when HIR::TypeRef::CHAR.id    then TypeRef::CHAR
+                 when HIR::TypeRef::STRING.id  then TypeRef::STRING
+                 when HIR::TypeRef::NIL.id     then TypeRef::NIL
+                 when HIR::TypeRef::SYMBOL.id  then TypeRef::SYMBOL
+                 when HIR::TypeRef::POINTER.id then TypeRef::POINTER
+                 else
+                   # User-defined types: offset by primitive count
+                   TypeRef.new(hir_type_id + 20_u32)
+                 end
       end
     end
-  end
 
-  # ═══════════════════════════════════════════════════════════════════════════
-  # LOWERING STATISTICS
-  # ═══════════════════════════════════════════════════════════════════════════
+    # ═══════════════════════════════════════════════════════════════════════════
+    # LOWERING STATISTICS
+    # ═══════════════════════════════════════════════════════════════════════════
 
-  class LoweringStats
-    property functions_lowered : Int32 = 0
-    property blocks_lowered : Int32 = 0
-    property values_lowered : Int32 = 0
-    property closures_lowered : Int32 = 0
+    class LoweringStats
+      property functions_lowered : Int32 = 0
+      property blocks_lowered : Int32 = 0
+      property values_lowered : Int32 = 0
+      property closures_lowered : Int32 = 0
 
-    # Memory strategy counts
-    property stack_allocations : Int32 = 0
-    property slab_allocations : Int32 = 0
-    property arc_allocations : Int32 = 0
-    property gc_allocations : Int32 = 0
+      # Memory strategy counts
+      property stack_allocations : Int32 = 0
+      property slab_allocations : Int32 = 0
+      property arc_allocations : Int32 = 0
+      property gc_allocations : Int32 = 0
 
-    def total_allocations : Int32
-      stack_allocations + slab_allocations + arc_allocations + gc_allocations
+      def total_allocations : Int32
+        stack_allocations + slab_allocations + arc_allocations + gc_allocations
+      end
+
+      def to_s(io : IO) : Nil
+        io << "Lowering Statistics:\n"
+        io << "  Functions: " << functions_lowered << "\n"
+        io << "  Blocks: " << blocks_lowered << "\n"
+        io << "  Values: " << values_lowered << "\n"
+        io << "  Closures: " << closures_lowered << "\n"
+        io << "  Memory allocations:\n"
+        io << "    Stack: " << stack_allocations << "\n"
+        io << "    Slab: " << slab_allocations << "\n"
+        io << "    ARC: " << arc_allocations << "\n"
+        io << "    GC: " << gc_allocations << "\n"
+        io << "    Total: " << total_allocations << "\n"
+      end
     end
 
-    def to_s(io : IO) : Nil
-      io << "Lowering Statistics:\n"
-      io << "  Functions: " << functions_lowered << "\n"
-      io << "  Blocks: " << blocks_lowered << "\n"
-      io << "  Values: " << values_lowered << "\n"
-      io << "  Closures: " << closures_lowered << "\n"
-      io << "  Memory allocations:\n"
-      io << "    Stack: " << stack_allocations << "\n"
-      io << "    Slab: " << slab_allocations << "\n"
-      io << "    ARC: " << arc_allocations << "\n"
-      io << "    GC: " << gc_allocations << "\n"
-      io << "    Total: " << total_allocations << "\n"
-    end
-  end
+    # ═══════════════════════════════════════════════════════════════════════════
+    # CONVENIENCE METHOD ON HIR MODULE
+    # ═══════════════════════════════════════════════════════════════════════════
 
-  # ═══════════════════════════════════════════════════════════════════════════
-  # CONVENIENCE METHOD ON HIR MODULE
-  # ═══════════════════════════════════════════════════════════════════════════
-
-  end  # module MIR
+  end # module MIR
 
   class HIR::Module
     def lower_to_mir : MIR::Module
@@ -5650,4 +5679,4 @@ module Crystal
       lowering.lower
     end
   end
-end  # module Crystal
+end # module Crystal
