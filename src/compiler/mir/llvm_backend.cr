@@ -10199,7 +10199,11 @@ module Crystal::MIR
         if @in_phi_block && produces_value && (slot_name = @cross_block_slots[inst.id]?)
           @deferred_phi_store_ops << {inst.id, name, slot_name}
         elsif produces_value && (slot_name = @cross_block_slots[inst.id]?)
-          if @constant_values.has_key?(inst.id) || @emitted_value_names.includes?(name) || @emitted_value_types.has_key?(name)
+          # Nil/Void casts do not materialize an SSA register. They still need
+          # an explicit per-edge default store when their value crosses blocks.
+          if @void_values.includes?(inst.id)
+            emit_cross_block_slot_default_store(inst.id, slot_name)
+          elsif @constant_values.has_key?(inst.id) || @emitted_value_names.includes?(name) || @emitted_value_types.has_key?(name)
             emit_cross_block_slot_store(inst.id, name, slot_name)
           else
             if ENV["CRYSTAL2_STAGE2_DEBUG"]? == "1" || ENV["STAGE2_BOOTSTRAP_TRACE"]?

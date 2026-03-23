@@ -21,6 +21,13 @@
   - `Function` now stores raw parameter snapshots directly instead of a nested parameter object container
   - MIR `convert_type` now dispatches on raw `type_id` instead of `TypeRef` struct equality, removing the self-hosted `Int32 -> Type#24` regression
   - on the reduced `callargs_leak_reduced.cr` oracle, current-source `stage1` and self-hosted `stage2` now match byte-for-byte at both HIR and MIR
+- **Fresh HIR analysis stabilization**:
+  - `EscapeAnalyzer` and `TaintAnalyzer` no longer rely on Crystal stdlib `Hash` default-proc writes for `@users`
+  - self-hosted stage2 no longer dies in `Missing hash key: 3` / `propagate_escapes` while building compiler MIR
+- **Fresh LLVM nil-slot stabilization**:
+  - cross-block `Cast ... : Nil` / `Cast ... : Void` values now take the default-slot-store path instead of tripping `LLVM_MISSING_VALUE`
+  - the concrete failing optimizer paths were self-hosted `inttoptr ... : Nil` chains inside `Crystal::MIR::PeepholePass#run` and `Crystal::MIR::CopyPropagationPass#run`
+  - new bootstrap regression script: `regression_tests/stage2_nil_slot_bootstrap_repro.sh`
 - **Focused green oracles**:
   - stage2 float literal parse/FastFloat accessor stub repro is green
   - stage2 `case/when` with `Char` literals inside defs is green
@@ -28,12 +35,14 @@
   - reduced trailing-block call-args oracle is green on the new stage2 candidate
   - `src/stdlib/object.cr --release --no-prelude` parse-only repro is green `5/5` on the new stage2 candidate
   - reduced trailing-block carrier now reaches `CRYSTAL_V2_STOP_AFTER_MIR=1` on self-hosted stage2 and matches current-source stage1 MIR output
+  - full self-hosted stage2 debug bootstrap now reaches deep LLVM generation without any `LLVM_MISSING_VALUE` diagnostics on the old `PeepholePass#run` / `CopyPropagationPass#run` nil-slot frontier
 - **Focused red oracles**:
   - reduced trailing-block no-prelude carrier no longer diverges in HIR/MIR, but self-hosted stage2 still segfaults in LLVM generation when allowed past MIR on the same carrier
   - stage3 bootstrap still dies while parsing `src/stdlib/object.cr`
   - `stage2_process_executable_path_parse_repro.sh` is now flaky on the new stage2 candidate (`attempt 1 = green`, `attempt 2 = 139`)
   - full `char_toplevel` compile on self-hosted stage2 still segfaults after parse
-- **Current frontier**: the old reduced-carrier parser/HIR/MIR blockers are fixed enough to clear stage1-vs-stage2 agreement through MIR, but the bootstrap blocker has moved one layer lower again: self-hosted stage2 now crashes in LLVM generation on that same reduced carrier and still remains unstable on broader default-prelude/process parse-only oracles. Next step is to localize the post-MIR LLVM crash before returning to stage3 bootstrap and stage1-vs-stage2 timing.
+  - full self-hosted stage2 debug bootstrap under `scripts/run_safe.sh ... 600 4096` is now killed by memory growth at `4231664KB > 4096MB` after ~293s during LLVM generation
+- **Current frontier**: the old nil/void cross-block slot LLVM blocker is gone; self-hosted stage2 now gets through parser, HIR, MIR, and into deep LLVM generation, but full compiler bootstrap is still blocked by memory growth during `generate(io)` before stage3 and benchmark work can resume.
 
 ## VERIFIED: Fix `ptr 0` → `ptr null` in stage2 LLC
 
@@ -71,13 +80,12 @@ CRYSTAL_V2_STOP_AFTER_MIR=1 /tmp/crystal_v2_s2 /tmp/test.cr -o /tmp/out --no-pre
 ## NEXT: Fresh Release Bootstrap + Benchmark
 
 1. Build fresh release stage1 from current repo state.
-2. Build fresh release stage2 with that stage1.
-3. Use `regression_tests/stage2_macro_method_char_arg_oracle.sh` plus `CRYSTAL_V2_TRACE_MACRO_DEF=1` / `DEBUG_ARENA_ADD=Macro` to push the remaining failure from HIR `Index out of bounds` to a concrete AST/root-cause fix.
-4. Push the new reduced trailing-block carrier from stage1-vs-stage2 HIR/MIR agreement to stage1-vs-stage2 LLVM/ll agreement.
-5. Re-run `stage2_default_prelude_parse_repro.sh` and `stage2_process_executable_path_parse_repro.sh` after the reduced post-MIR LLVM crash is localized/fixed.
-6. Re-run `stage2_macro_method_char_arg_oracle.sh` now that the synthetic `__crystal_main(argc, argv)` HIR/MIR drift is removed on the reduced carrier.
-7. Retry stage3 bootstrap once the reduced LLVM path and macro/bootstrap path no longer diverge.
-8. If stage3 goes green, benchmark stage1 vs stage2 release compile time for `src/crystal_v2.cr`.
+2. Build fresh release stage2 with that stage1 and measure peak RSS / progress through LLVM generation under `scripts/run_safe.sh`.
+3. Decide whether the new `~4.23GB` failure is an actual leak or just a higher legitimate bootstrap watermark; if needed, add one focused memory-growth oracle around full self-hosted LLVM generation.
+4. Re-run `regression_tests/stage2_nil_slot_bootstrap_repro.sh` on the next bootstrap candidate before chasing lower LLVM issues, so the old `LLVM_MISSING_VALUE` nil-slot bug stays closed.
+5. Re-run `stage2_default_prelude_parse_repro.sh` and `stage2_process_executable_path_parse_repro.sh` after the memory frontier is understood.
+6. Retry stage3 bootstrap once full self-hosted stage2 survives LLVM generation.
+7. If stage3 goes green, benchmark stage1 vs stage2 release compile time for `src/crystal_v2.cr`.
 
 ## ROOT CAUSES FOUND
 

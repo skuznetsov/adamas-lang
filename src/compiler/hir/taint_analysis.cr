@@ -67,7 +67,7 @@ module Crystal::HIR
       @cyclic_types = Set(String).new
       @worklist = Deque(ValueId).new
       @definitions = Hash(ValueId, Value).new
-      @users = Hash(ValueId, Array(ValueId)).new { |h, k| h[k] = [] of ValueId }
+      @users = Hash(ValueId, Array(ValueId)).new
       @value_blocks = {} of ValueId => BlockId
 
       # Pre-compute cyclic types if we have type info
@@ -91,7 +91,7 @@ module Crystal::HIR
       @type_info = nil
       @worklist = Deque(ValueId).new
       @definitions = Hash(ValueId, Value).new
-      @users = Hash(ValueId, Array(ValueId)).new { |h, k| h[k] = [] of ValueId }
+      @users = Hash(ValueId, Array(ValueId)).new
       @value_blocks = {} of ValueId => BlockId
     end
 
@@ -200,7 +200,15 @@ module Crystal::HIR
 
     private def record_uses(value : Value)
       each_operand(value) do |operand|
-        @users[operand] << value.id
+        append_user_use(operand, value.id)
+      end
+    end
+
+    private def append_user_use(operand : ValueId, user_id : ValueId) : Nil
+      if users = @users[operand]?
+        users << user_id
+      else
+        @users[operand] = [user_id] of ValueId
       end
     end
 
@@ -365,11 +373,13 @@ module Crystal::HIR
         current_taints = value.taints
 
         # Propagate to users
-        @users[val_id].each do |user_id|
-          user = @definitions[user_id]?
-          next unless user
+        if users = @users[val_id]?
+          users.each do |user_id|
+            user = @definitions[user_id]?
+            next unless user
 
-          propagate_to_user(value, user, current_taints)
+            propagate_to_user(value, user, current_taints)
+          end
         end
 
         propagate_backwards(value, current_taints)

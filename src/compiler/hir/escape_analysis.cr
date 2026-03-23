@@ -57,7 +57,7 @@ module Crystal::HIR
     )
       @summary = EscapeSummary.new(@function.params.size)
       @worklist = Deque(ValueId).new
-      @users = Hash(ValueId, Array(ValueId)).new { |h, k| h[k] = [] of ValueId }
+      @users = Hash(ValueId, Array(ValueId)).new
       @definitions = Hash(ValueId, Value).new
       @param_by_id = Hash(ValueId, Value).new
       @function.params.each { |p| @param_by_id[p.id] = p }
@@ -94,45 +94,53 @@ module Crystal::HIR
     private def record_uses(value : Value)
       case value
       when Copy
-        @users[value.source] << value.id
+        append_user_use(value.source, value.id)
       when BinaryOperation
-        @users[value.left] << value.id
-        @users[value.right] << value.id
+        append_user_use(value.left, value.id)
+        append_user_use(value.right, value.id)
       when UnaryOperation
-        @users[value.operand] << value.id
+        append_user_use(value.operand, value.id)
       when Call
         if recv = value.receiver
-          @users[recv] << value.id
+          append_user_use(recv, value.id)
         end
-        value.args.each { |arg| @users[arg] << value.id }
+        value.args.each { |arg| append_user_use(arg, value.id) }
       when FieldGet
-        @users[value.object] << value.id
+        append_user_use(value.object, value.id)
       when FieldSet
-        @users[value.object] << value.id
-        @users[value.value] << value.id
+        append_user_use(value.object, value.id)
+        append_user_use(value.value, value.id)
       when IndexGet
-        @users[value.object] << value.id
-        @users[value.index] << value.id
+        append_user_use(value.object, value.id)
+        append_user_use(value.index, value.id)
       when IndexSet
-        @users[value.object] << value.id
-        @users[value.index] << value.id
-        @users[value.value] << value.id
+        append_user_use(value.object, value.id)
+        append_user_use(value.index, value.id)
+        append_user_use(value.value, value.id)
       when MakeClosure
-        value.captures.each { |cap| @users[cap.value_id] << value.id }
+        value.captures.each { |cap| append_user_use(cap.value_id, value.id) }
       when Yield
-        value.args.each { |arg| @users[arg] << value.id }
+        value.args.each { |arg| append_user_use(arg, value.id) }
       when Phi
-        value.incoming.each { |(_, val)| @users[val] << value.id }
+        value.incoming.each { |(_, val)| append_user_use(val, value.id) }
       when Cast
-        @users[value.value] << value.id
+        append_user_use(value.value, value.id)
       when IsA
-        @users[value.value] << value.id
+        append_user_use(value.value, value.id)
       when Allocate
-        value.constructor_args.each { |arg| @users[arg] << value.id }
+        value.constructor_args.each { |arg| append_user_use(arg, value.id) }
       when UnionWrap
-        @users[value.value] << value.id
+        append_user_use(value.value, value.id)
       when UnionUnwrap
-        @users[value.union_value] << value.id
+        append_user_use(value.union_value, value.id)
+      end
+    end
+
+    private def append_user_use(operand : ValueId, user_id : ValueId) : Nil
+      if users = @users[operand]?
+        users << user_id
+      else
+        @users[operand] = [user_id] of ValueId
       end
     end
 
@@ -236,11 +244,13 @@ module Crystal::HIR
         current_lifetime = value.lifetime
 
         # Propagate to users
-        @users[val_id].each do |user_id|
-          user = @definitions[user_id]?
-          next unless user
+        if users = @users[val_id]?
+          users.each do |user_id|
+            user = @definitions[user_id]?
+            next unless user
 
-          propagate_to_user(value, user, current_lifetime)
+            propagate_to_user(value, user, current_lifetime)
+          end
         end
 
         # Propagate backwards through data flow
