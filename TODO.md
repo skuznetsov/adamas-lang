@@ -18,11 +18,10 @@
 - **Focused red oracles**:
   - self-hosted stage2 still diverges from stage1 on the macro HIR oracle:
     - `__crystal_main` params are missing in stage2 HIR/MIR output
-    - HIR type pretty-print still emits raw enum ordinal `10` instead of `Pointer`
   - self-hosted stage2 still segfaults while parsing `src/stdlib/object.cr`
   - stage3 bootstrap still dies while parsing `src/stdlib/object.cr`
   - full `char_toplevel` compile on self-hosted stage2 still segfaults after parse
-- **Current frontier**: with macro root leakage and `Pointer(UInt8)` HIR guard crashes removed, debug why self-hosted stage2 drops `__crystal_main(argc, argv)` params and why HIR pretty-print loses `TypeKind` names; then retry the macro oracle through MIR/LL, then `stage2 -> stage3` bootstrap and benchmark stage1 vs stage2
+- **Current frontier**: with macro root leakage, `Pointer(UInt8)` HIR guard crashes, and HIR enum pretty-print noise removed, debug why self-hosted stage2 drops `__crystal_main(argc, argv)` params; then retry the macro oracle through MIR/LL, then `stage2 -> stage3` bootstrap and benchmark stage1 vs stage2
 
 ## VERIFIED: Fix `ptr 0` → `ptr null` in stage2 LLC
 
@@ -62,7 +61,7 @@ CRYSTAL_V2_STOP_AFTER_MIR=1 /tmp/crystal_v2_s2 /tmp/test.cr -o /tmp/out --no-pre
 1. Build fresh release stage1 from current repo state.
 2. Build fresh release stage2 with that stage1.
 3. Use `regression_tests/stage2_macro_method_char_arg_oracle.sh` plus `CRYSTAL_V2_TRACE_MACRO_DEF=1` / `DEBUG_ARENA_ADD=Macro` to push the remaining failure from HIR `Index out of bounds` to a concrete AST/root-cause fix.
-4. Push `stage2_macro_method_char_arg_oracle.sh` from deterministic HIR diff (`__crystal_main` params + `TypeKind` pretty-print) to full stage1-vs-stage2 HIR/MIR/LL agreement.
+4. Push `stage2_macro_method_char_arg_oracle.sh` from deterministic HIR/MIR diff (`__crystal_main` params) to full stage1-vs-stage2 HIR/MIR/LL agreement.
 5. Retry stage3 bootstrap once the macro/HIR path no longer diverges.
 6. If stage3 goes green, benchmark stage1 vs stage2 release compile time for `src/crystal_v2.cr`.
 

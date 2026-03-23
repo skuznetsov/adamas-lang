@@ -1147,12 +1147,29 @@ module Crystal::HIR
       @locals = [] of ValueId
     end
 
+    private def kind_name(kind : ScopeKind) : String
+      case kind
+      when ScopeKind::Function
+        "Function"
+      when ScopeKind::Block
+        "Block"
+      when ScopeKind::Loop
+        "Loop"
+      when ScopeKind::Closure
+        "Closure"
+      when ScopeKind::Rescue
+        "Rescue"
+      else
+        "ScopeKind(#{kind.value})"
+      end
+    end
+
     def add_local(value_id : ValueId)
       @locals << value_id
     end
 
     def to_s(io : IO) : Nil
-      io << "scope." << @id << " (" << @kind << ")"
+      io << "scope." << @id << " (" << kind_name(@kind) << ")"
       if p = @parent
         io << " parent=scope." << p
       end
@@ -2213,6 +2230,37 @@ module Crystal::HIR
     getter name : String
     getter type_params : Array(TypeRef)
 
+    private def kind_name(kind : TypeKind) : String
+      case kind
+      when TypeKind::Primitive
+        "Primitive"
+      when TypeKind::Class
+        "Class"
+      when TypeKind::Struct
+        "Struct"
+      when TypeKind::Module
+        "Module"
+      when TypeKind::Union
+        "Union"
+      when TypeKind::Tuple
+        "Tuple"
+      when TypeKind::NamedTuple
+        "NamedTuple"
+      when TypeKind::Proc
+        "Proc"
+      when TypeKind::Array
+        "Array"
+      when TypeKind::Hash
+        "Hash"
+      when TypeKind::Pointer
+        "Pointer"
+      when TypeKind::Generic
+        "Generic"
+      else
+        "TypeKind(#{kind.value})"
+      end
+    end
+
     def initialize(@kind : TypeKind, @name : String, @type_params : Array(TypeRef) = [] of TypeRef)
     end
 
@@ -2221,7 +2269,7 @@ module Crystal::HIR
     end
 
     def to_s(io : IO) : Nil
-      io << @kind << " " << @name
+      io << kind_name(@kind) << " " << @name
       unless @type_params.empty?
         io << "("
         @type_params.join(io, ", ") { |t, o| o << t.id }
