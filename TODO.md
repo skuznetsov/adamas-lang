@@ -8,6 +8,11 @@
 - **Fresh macro parser stabilization**:
   - boxed `parse_macro_body` depth counters survive ordinary text-token iterations in self-hosted stage2
   - `macro probe(*methods)` oracle now consumes both inner `{% end %}` markers and no longer leaks extra top-level `MacroLiteral` / `Identifier` roots
+- **Fresh parser stabilization**:
+  - `parse_parenthesized_call` now restores `@parsing_call_args` on the ordinary return path instead of relying on the old broad outer `ensure`
+  - new reduced trailing-block oracle flips old self-hosted stage2 red -> green:
+    `regression_tests/stage2_parenthesized_block_call_args_repro.sh`
+  - stronger downstream signal moved as well: `stage2_object_parse_noprelude_repro.sh` is now green `5/5` on the new self-hosted stage2 candidate
 - **Fresh HIR stabilization**:
   - generic param recursion guard no longer crashes hashing `Pointer(UInt8)` in `type_ref_for_name_inner`
   - `CRYSTAL_V2_STOP_AFTER_HIR=1` on the macro oracle is now green and produces a deterministic stage1-vs-stage2 HIR diff instead of a segfault
@@ -15,13 +20,16 @@
   - stage2 float literal parse/FastFloat accessor stub repro is green
   - stage2 `case/when` with `Char` literals inside defs is green
   - narrow literal oracle is green (`literal 42 : Int32`, not `literal nil`)
+  - reduced trailing-block call-args oracle is green on the new stage2 candidate
+  - `src/stdlib/object.cr --release --no-prelude` parse-only repro is green `5/5` on the new stage2 candidate
 - **Focused red oracles**:
   - self-hosted stage2 still diverges from stage1 on the macro HIR oracle:
     - `__crystal_main` params are missing in stage2 HIR/MIR output
-  - self-hosted stage2 still segfaults while parsing `src/stdlib/object.cr`
+  - reduced trailing-block no-prelude carrier now parses cleanly on stage2, but the same carrier still segfaults immediately in stage2 HIR/MIR/LL while stage1 emits clean artifacts
   - stage3 bootstrap still dies while parsing `src/stdlib/object.cr`
+  - `stage2_process_executable_path_parse_repro.sh` is now flaky on the new stage2 candidate (`attempt 1 = green`, `attempt 2 = 139`)
   - full `char_toplevel` compile on self-hosted stage2 still segfaults after parse
-- **Current frontier**: with macro root leakage, `Pointer(UInt8)` HIR guard crashes, and HIR enum pretty-print noise removed, debug why self-hosted stage2 drops `__crystal_main(argc, argv)` params; then retry the macro oracle through MIR/LL, then `stage2 -> stage3` bootstrap and benchmark stage1 vs stage2
+- **Current frontier**: the old parser leak after parenthesized calls with trailing blocks is fixed enough to clear `object.cr --no-prelude`, but the bootstrap blocker has moved lower: stage2 still crashes immediately after parse on the same reduced carrier and remains unstable on default-prelude/process parse-only oracles. Next step is to localize that post-parse self-hosted crash before returning to the macro `__crystal_main(argc, argv)` diff and `stage2 -> stage3`.
 
 ## VERIFIED: Fix `ptr 0` → `ptr null` in stage2 LLC
 
@@ -61,9 +69,11 @@ CRYSTAL_V2_STOP_AFTER_MIR=1 /tmp/crystal_v2_s2 /tmp/test.cr -o /tmp/out --no-pre
 1. Build fresh release stage1 from current repo state.
 2. Build fresh release stage2 with that stage1.
 3. Use `regression_tests/stage2_macro_method_char_arg_oracle.sh` plus `CRYSTAL_V2_TRACE_MACRO_DEF=1` / `DEBUG_ARENA_ADD=Macro` to push the remaining failure from HIR `Index out of bounds` to a concrete AST/root-cause fix.
-4. Push `stage2_macro_method_char_arg_oracle.sh` from deterministic HIR/MIR diff (`__crystal_main` params) to full stage1-vs-stage2 HIR/MIR/LL agreement.
-5. Retry stage3 bootstrap once the macro/HIR path no longer diverges.
-6. If stage3 goes green, benchmark stage1 vs stage2 release compile time for `src/crystal_v2.cr`.
+4. Push the new reduced trailing-block carrier from parse-only green to stage1-vs-stage2 HIR/MIR/LL agreement.
+5. Re-run `stage2_default_prelude_parse_repro.sh` and `stage2_process_executable_path_parse_repro.sh` after the post-parse crash is localized/fixed.
+6. Push `stage2_macro_method_char_arg_oracle.sh` from deterministic HIR/MIR diff (`__crystal_main` params) to full stage1-vs-stage2 HIR/MIR/LL agreement.
+7. Retry stage3 bootstrap once the reduced post-parse carrier and macro/HIR path no longer diverge.
+8. If stage3 goes green, benchmark stage1 vs stage2 release compile time for `src/crystal_v2.cr`.
 
 ## ROOT CAUSES FOUND
 

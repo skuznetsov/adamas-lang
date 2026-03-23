@@ -2068,6 +2068,9 @@ module CrystalV2
         # Phase 37: Modified to support visibility modifier
         private def parse_def(is_abstract : Bool = false, visibility : Visibility? = nil) : ExprId
           def_token = current_token
+          if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_DEF_STATE")
+            STDERR.puts "[DEF_STATE] phase=enter line=#{def_token.span.start_line + 1} token=#{def_token.kind} paren=#{@paren_depth} no_type=#{@no_type_declaration} call_args=#{@parsing_call_args} macro_mode=#{@macro_mode}"
+          end
           advance
           skip_trivia
 
@@ -2189,8 +2192,14 @@ module CrystalV2
             end
           end
 
+          if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_DEF_STATE")
+            STDERR.puts "[DEF_STATE] phase=name line=#{def_token.span.start_line + 1} name=#{String.new(method_name_slice)} paren=#{@paren_depth} no_type=#{@no_type_declaration} call_args=#{@parsing_call_args} macro_mode=#{@macro_mode}"
+          end
           params = parse_method_params
           return PREFIX_ERROR if params.is_a?(ExprId) # Phase 71: Handle error from default value parsing
+          if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_DEF_STATE")
+            STDERR.puts "[DEF_STATE] phase=params line=#{def_token.span.start_line + 1} name=#{String.new(method_name_slice)} paren=#{@paren_depth} no_type=#{@no_type_declaration} call_args=#{@parsing_call_args} macro_mode=#{@macro_mode}"
+          end
 
           # Parse optional return type annotation: : ReturnType
           return_type = nil
@@ -2964,6 +2973,13 @@ module CrystalV2
           else
             STDERR.puts "paren-call event=#{event} callee_line=#{span.start_line}:#{span.start_column}-#{span.end_line}:#{span.end_column} index=#{@index}/#{@tokens.size} token_kind=#{token.kind} token_line=#{token.span.start_line}:#{token.span.start_column}-#{token.span.end_line}:#{token.span.end_column} raw_kind=OUT_OF_RANGE"
           end
+        end
+
+        private def trace_call_args_depth(event : String, token : Token? = nil) : Nil
+          return unless ENV.has_key?("CRYSTAL_V2_TRACE_CALL_ARGS")
+
+          tok = token || current_token
+          STDERR.puts "[CALL_ARGS] event=#{event} depth=#{@parsing_call_args} token=#{tok.kind} line=#{tok.span.start_line + 1}:#{tok.span.start_column + 1} index=#{@index}"
         end
 
         private def trace_macro_def_enabled? : Bool
@@ -5463,6 +5479,7 @@ module CrystalV2
         private def parse_block : ExprId
           is_brace_form = current_token.kind == Token::Kind::LBrace
           start_token = current_token
+          trace_call_args_depth("parse_block-enter", start_token)
           advance # consume { or do
           skip_trivia
 
@@ -5660,6 +5677,7 @@ module CrystalV2
             # This avoids treating nested `{ ... }` as tuple/hash literals when
             # the block itself is parsed while collecting call arguments.
             @parsing_call_args = 0
+            trace_call_args_depth("parse_block-body-reset")
 
             if is_brace_form
               # Brace-form blocks: preserve existing tolerant parsing (no rescue/else)
@@ -5720,6 +5738,7 @@ module CrystalV2
             end
           ensure
             @parsing_call_args = previous_parsing_call_args
+            trace_call_args_depth("parse_block-exit-restore")
           end
 
           # Consume closing delimiter
@@ -7922,6 +7941,16 @@ module CrystalV2
           keyword == "end"
         end
 
+        private def macro_body_token_starts_statement?(token : Token, previous_token : Token?) : Bool
+          return true unless previous_token
+          return true if previous_token.kind.in?(Token::Kind::Newline, Token::Kind::Semicolon)
+          return true if previous_token.span.end_line < token.span.start_line
+          return true if previous_token.kind.in?(Token::Kind::Private, Token::Kind::Protected, Token::Kind::Abstract)
+          previous_token.kind == Token::Kind::Whitespace &&
+            previous_token.span.start_line == token.span.start_line &&
+            previous_token.span.start_column == 1
+        end
+
         private def parse_macro_body(stop_on_branch : Bool = false) : Array(MacroPiece)
           @macro_mode += 1
           begin
@@ -8164,14 +8193,7 @@ module CrystalV2
               # stop on the outer macro 'end' when control_depth == 0 and
               # block_depth == 0 and the current token is End.
               prev_tok = previous_token
-              starts_statement = true
-              if prev_tok
-                starts_statement = prev_tok.kind.in?(Token::Kind::Newline, Token::Kind::Semicolon) ||
-                                   prev_tok.span.end_line < token.span.start_line
-                if !starts_statement
-                  starts_statement = prev_tok.kind.in?(Token::Kind::Private, Token::Kind::Protected, Token::Kind::Abstract)
-                end
-              end
+              starts_statement = macro_body_token_starts_statement?(token, prev_tok)
               abstract_def = starts_statement && token.kind == Token::Kind::Def &&
                              prev_tok && prev_tok.kind == Token::Kind::Abstract
               case token.kind
@@ -8483,6 +8505,7 @@ module CrystalV2
 
         private def try_parse_call_args_without_parens(callee_span : Span, callee_slice : Slice(UInt8)) : ExprId
           debug { "try_parse_call_args_without_parens: callee=#{String.new(callee_slice)}, current_token=#{current_token.kind}" }
+          trace_call_args_depth("noparen-enter")
           # Inside brace literals (named tuples) a trailing colon usually starts a key/value entry,
           # not a named argument label. Bail out early in that shape.
           if @brace_depth > 0 && current_token.kind == Token::Kind::Colon
@@ -8617,6 +8640,7 @@ module CrystalV2
 
           # Set flag to prevent nested calls without parens during argument parsing
           @parsing_call_args += 1
+          trace_call_args_depth("noparen-push")
 
           # Parse arguments separated by commas
           # Build arguments in a small inline buffer to reduce heap churn
@@ -8972,7 +8996,9 @@ module CrystalV2
           ))
 
           # Restore flag
+          trace_call_args_depth("noparen-before-final-pop")
           @parsing_call_args -= 1
+          trace_call_args_depth("noparen-after-final-pop")
           result
         end
 
@@ -11318,416 +11344,425 @@ module CrystalV2
           callee_span = node_span(callee)
           trace_call_transition(callee_span, "enter", current_token)
           @parsing_call_args += 1
-          begin
-            lparen = current_token
-            advance
-            @paren_depth += 1 # Phase 103: entering parentheses
-            skip_whitespace_and_optional_newlines
+          trace_call_args_depth("paren-push")
+          result = parse_parenthesized_call_body(callee, callee_span)
+          trace_call_args_depth("paren-before-final-pop")
+          @parsing_call_args -= 1
+          trace_call_args_depth("paren-after-final-pop")
+          result
+        end
 
-            args_b = ExprIdBuffer.new(4)
-            named_b = NamedArgumentBuffer.new(2)
+        private def parse_parenthesized_call_body(callee : ExprId, callee_span : Span) : ExprId
+          lparen = current_token
+          advance
+          @paren_depth += 1 # Phase 103: entering parentheses
+          skip_whitespace_and_optional_newlines
 
-            # Empty call: foo()
-            unless current_token.kind == Token::Kind::RParen
-              arg_loop_prev_index = -1
-              loop do
+          args_b = ExprIdBuffer.new(4)
+          named_b = NamedArgumentBuffer.new(2)
+
+          # Empty call: foo()
+          unless current_token.kind == Token::Kind::RParen
+            arg_loop_prev_index = -1
+            loop do
+              skip_whitespace_and_optional_newlines
+              break if current_token.kind == Token::Kind::RParen
+              trace_call_transition(callee_span, "arg-loop", current_token)
+              # Guard: break if no token progress to prevent infinite loops
+              if arg_loop_prev_index == @index
+                break
+              end
+              arg_loop_prev_index = @index
+
+              # Phase 101: Check for block shorthand (&.method) or block capture (&block)
+              # This creates: { |__arg0| __arg0.method } or passes block argument
+              arg_expr = PREFIX_ERROR
+              have_arg_expr = false
+              pushed = false
+              if current_token.kind == Token::Kind::Amp
+                # Save position in case this is not block shorthand
+                amp_token = current_token
+                advance
                 skip_whitespace_and_optional_newlines
-                break if current_token.kind == Token::Kind::RParen
-                trace_call_transition(callee_span, "arg-loop", current_token)
-                # Guard: break if no token progress to prevent infinite loops
-                if arg_loop_prev_index == @index
-                  break
-                end
-                arg_loop_prev_index = @index
 
-                # Phase 101: Check for block shorthand (&.method) or block capture (&block)
-                # This creates: { |__arg0| __arg0.method } or passes block argument
-                arg_expr = PREFIX_ERROR
-                have_arg_expr = false
-                pushed = false
-                if current_token.kind == Token::Kind::Amp
-                  # Save position in case this is not block shorthand
-                  amp_token = current_token
-                  advance
-                  skip_whitespace_and_optional_newlines
-
-                  # Check if followed by dot (member access)
-                  if current_token.kind == Token::Kind::Operator
-                    # This is block shorthand: try &.method (with space: Amp + Operator)
-                    arg_expr = parse_block_shorthand(amp_token)
-                    have_arg_expr = true
-                    if arg_expr.invalid?
-                      emit_unexpected(current_token)
-                      return PREFIX_ERROR
-                    end
-                  elsif current_token.kind == Token::Kind::Identifier || current_token.kind == Token::Kind::InstanceVar
-                    # Phase 103I: Block capture argument: foo(&block) or foo(&@block)
-                    # This passes a block as an argument (not block shorthand)
-                    identifier_token = current_token
-                    advance
-                    identifier_span = identifier_token.span
-                    identifier_node = @arena.add_typed(IdentifierNode.new(identifier_span, @string_pool.intern(identifier_token.slice)))
-
-                    # Create block argument node (UnaryNode with & operator)
-                    arg_span = amp_token.span.cover(identifier_span)
-                    arg_expr = @arena.add_typed(UnaryNode.new(arg_span, amp_token.slice, identifier_node))
-                    have_arg_expr = true
-                  elsif current_token.kind == Token::Kind::ThinArrow
-                    # Phase 103J: Proc pointer as block argument: foo(&->bar) or foo(&->Type.method)
-                    # Parse the proc pointer (->target) and wrap with &
-                    arrow_token = current_token
-                    advance
-                    skip_trivia
-                    target = parse_expression(UNARY_PRECEDENCE)
-                    if target.invalid?
-                      emit_unexpected(current_token)
-                      return PREFIX_ERROR
-                    end
-                    # Create proc pointer node: ->target
-                    proc_span = arrow_token.span.cover(@arena[target].span)
-                    proc_pointer = @arena.add_typed(UnaryNode.new(proc_span, arrow_token.slice, target))
-                    # Wrap with &: &(->target)
-                    arg_span = amp_token.span.cover(proc_span)
-                    arg_expr = @arena.add_typed(UnaryNode.new(arg_span, amp_token.slice, proc_pointer))
-                    have_arg_expr = true
-                  else
-                    # Not block shorthand or capture, rewind and parse normally
-                    # This handles cases like: foo(& other_expr)
-                    unadvance # Go back to Amp token
-                    # Disable type declarations to allow identifier: syntax for named args
-                    @no_type_declaration += 1
-                    arg_expr = with_pointer_suffix { parse_expression(0) }
-                    have_arg_expr = true
-                    @no_type_declaration -= 1
-                    return PREFIX_ERROR if arg_expr.invalid?
-                  end
-                  if have_arg_expr && !arg_expr.invalid? && !pushed
-                    args_b << arg_expr
-                    pushed = true
-                  end
-                elsif current_token.kind == Token::Kind::AmpDot
-                  # Phase 101: Block shorthand without space: try &.method (AmpDot token)
-                  # In argument context, AmpDot is block shorthand, not safe navigation
-                  amp_token = current_token
-                  advance
-                  skip_whitespace_and_optional_newlines
+                # Check if followed by dot (member access)
+                if current_token.kind == Token::Kind::Operator
+                  # This is block shorthand: try &.method (with space: Amp + Operator)
                   arg_expr = parse_block_shorthand(amp_token)
                   have_arg_expr = true
                   if arg_expr.invalid?
                     emit_unexpected(current_token)
                     return PREFIX_ERROR
                   end
+                elsif current_token.kind == Token::Kind::Identifier || current_token.kind == Token::Kind::InstanceVar
+                  # Phase 103I: Block capture argument: foo(&block) or foo(&@block)
+                  # This passes a block as an argument (not block shorthand)
+                  identifier_token = current_token
+                  advance
+                  identifier_span = identifier_token.span
+                  identifier_node = @arena.add_typed(IdentifierNode.new(identifier_span, @string_pool.intern(identifier_token.slice)))
+
+                  # Create block argument node (UnaryNode with & operator)
+                  arg_span = amp_token.span.cover(identifier_span)
+                  arg_expr = @arena.add_typed(UnaryNode.new(arg_span, amp_token.slice, identifier_node))
+                  have_arg_expr = true
+                elsif current_token.kind == Token::Kind::ThinArrow
+                  # Phase 103J: Proc pointer as block argument: foo(&->bar) or foo(&->Type.method)
+                  # Parse the proc pointer (->target) and wrap with &
+                  arrow_token = current_token
+                  advance
+                  skip_trivia
+                  target = parse_expression(UNARY_PRECEDENCE)
+                  if target.invalid?
+                    emit_unexpected(current_token)
+                    return PREFIX_ERROR
+                  end
+                  # Create proc pointer node: ->target
+                  proc_span = arrow_token.span.cover(@arena[target].span)
+                  proc_pointer = @arena.add_typed(UnaryNode.new(proc_span, arrow_token.slice, target))
+                  # Wrap with &: &(->target)
+                  arg_span = amp_token.span.cover(proc_span)
+                  arg_expr = @arena.add_typed(UnaryNode.new(arg_span, amp_token.slice, proc_pointer))
+                  have_arg_expr = true
+                else
+                  # Not block shorthand or capture, rewind and parse normally
+                  # This handles cases like: foo(& other_expr)
+                  unadvance # Go back to Amp token
+                  # Disable type declarations to allow identifier: syntax for named args
+                  @no_type_declaration += 1
+                  arg_expr = with_pointer_suffix { parse_expression(0) }
+                  have_arg_expr = true
+                  @no_type_declaration -= 1
+                  return PREFIX_ERROR if arg_expr.invalid?
+                end
+                if have_arg_expr && !arg_expr.invalid? && !pushed
                   args_b << arg_expr
                   pushed = true
-                elsif current_token.kind == Token::Kind::AmpMinus
-                  # Phase 103K: Check if this is &-> (proc pointer as block)
-                  # Lexer tokenizes &-> as AmpMinus (&-) + Greater (>)
-                  amp_minus_token = current_token
+                end
+              elsif current_token.kind == Token::Kind::AmpDot
+                # Phase 101: Block shorthand without space: try &.method (AmpDot token)
+                # In argument context, AmpDot is block shorthand, not safe navigation
+                amp_token = current_token
+                advance
+                skip_whitespace_and_optional_newlines
+                arg_expr = parse_block_shorthand(amp_token)
+                have_arg_expr = true
+                if arg_expr.invalid?
+                  emit_unexpected(current_token)
+                  return PREFIX_ERROR
+                end
+                args_b << arg_expr
+                pushed = true
+              elsif current_token.kind == Token::Kind::AmpMinus
+                # Phase 103K: Check if this is &-> (proc pointer as block)
+                # Lexer tokenizes &-> as AmpMinus (&-) + Greater (>)
+                amp_minus_token = current_token
+                advance
+                if current_token.kind == Token::Kind::Greater
+                  # This is &->target - proc pointer passed as block
+                  greater_token = current_token
                   advance
-                  if current_token.kind == Token::Kind::Greater
-                    # This is &->target - proc pointer passed as block
-                    greater_token = current_token
+                  skip_trivia
+                  target = parse_expression(UNARY_PRECEDENCE)
+                  if target.invalid?
+                    emit_unexpected(current_token)
+                    return PREFIX_ERROR
+                  end
+                  # Create proc pointer node: ->target (use "->" as the operator)
+                  # The span should cover from the "-" in AmpMinus to the target
+                  arrow_slice = "->".to_slice
+                  proc_span = Span.new(
+                    amp_minus_token.span.start_offset + 1, # Skip the & to get to -
+                    @arena[target].span.end_offset,
+                    amp_minus_token.span.start_line,
+                    amp_minus_token.span.end_line,
+                    amp_minus_token.span.start_column + 1,
+                    @arena[target].span.end_column
+                  )
+                  proc_pointer = @arena.add_typed(UnaryNode.new(proc_span, arrow_slice, target))
+                  # Wrap with &: &(->target)
+                  amp_slice = "&".to_slice
+                  arg_span = amp_minus_token.span.cover(@arena[target].span)
+                  arg_expr = @arena.add_typed(UnaryNode.new(arg_span, amp_slice, proc_pointer))
+                  have_arg_expr = true
+                  args_b << arg_expr
+                  pushed = true
+                else
+                  # Just &- (wrapping unary minus as block), rewind and parse normally
+                  unadvance
+                  @no_type_declaration += 1
+                  arg_expr = with_pointer_suffix { parse_expression(0) }
+                  have_arg_expr = true
+                  @no_type_declaration -= 1
+                  return PREFIX_ERROR if arg_expr.invalid?
+                end
+              else
+                # Phase 68: Splat arguments (*args, **kwargs)
+                if current_token.kind == Token::Kind::Star || current_token.kind == Token::Kind::StarStar
+                  star_token = current_token
+                  advance
+                  skip_whitespace_and_optional_newlines
+                  value_expr = with_pointer_suffix { parse_op_assign }
+                  return PREFIX_ERROR if value_expr.invalid?
+                  span = star_token.span.cover(@arena[value_expr].span)
+                  arg_expr = @arena.add_typed(SplatNode.new(span, value_expr))
+                  have_arg_expr = true
+                  args_b << arg_expr
+                  pushed = true
+                  skip_whitespace_and_optional_newlines
+                  goto_comma = current_token.kind == Token::Kind::Comma
+                  if goto_comma
                     advance
-                    skip_trivia
-                    target = parse_expression(UNARY_PRECEDENCE)
-                    if target.invalid?
+                    skip_whitespace_and_optional_newlines
+                    next
+                  else
+                    # Allow immediate closing paren
+                    next
+                  end
+                end
+                # Phase NAMED_ARGUMENTS: Check if this is named argument BEFORE parsing expression
+                # Pattern: identifier/keyword : value
+                # This handles keywords like 'of:' which wouldn't create Identifier nodes
+                # Also handles no-space form: `bar:a` where lexer produces Identifier + Symbol
+                if named_arg_start?
+                  # Named argument detected
+                  name_token = current_token
+                  name_slice = name_token.slice
+                  name_span = name_token.span
+
+                  # Check if this is the no-space form (bar:a) where next is Symbol
+                  no_space_form = named_arg_no_space?
+
+                  advance # consume name (identifier/keyword)
+
+                  if no_space_form
+                    # No-space form: current token is now Symbol like `:a`
+                    # The value identifier is embedded in the symbol slice (minus leading ':')
+                    sym_token = current_token
+                    value_slice = symbol_to_identifier_slice(sym_token)
+                    value_span = Span.new(
+                      sym_token.span.start_line,
+                      sym_token.span.start_column + 1, # skip the ':'
+                      sym_token.span.start_offset + 1,
+                      sym_token.span.end_line,
+                      sym_token.span.end_column,
+                      sym_token.span.end_offset
+                    )
+                    # Create Identifier node for the value
+                    value_expr = @arena.add(IdentifierNode.new(value_span, value_slice))
+                    advance # consume the Symbol
+                    skip_whitespace_and_optional_newlines
+                  else
+                    skip_whitespace_and_optional_newlines
+
+                    # Expect colon (with-space form)
+                    unless current_token.kind == Token::Kind::Colon
                       emit_unexpected(current_token)
                       return PREFIX_ERROR
                     end
-                    # Create proc pointer node: ->target (use "->" as the operator)
-                    # The span should cover from the "-" in AmpMinus to the target
-                    arrow_slice = "->".to_slice
-                    proc_span = Span.new(
-                      amp_minus_token.span.start_offset + 1, # Skip the & to get to -
-                      @arena[target].span.end_offset,
-                      amp_minus_token.span.start_line,
-                      amp_minus_token.span.end_line,
-                      amp_minus_token.span.start_column + 1,
-                      @arena[target].span.end_column
-                    )
-                    proc_pointer = @arena.add_typed(UnaryNode.new(proc_span, arrow_slice, target))
-                    # Wrap with &: &(->target)
-                    amp_slice = "&".to_slice
-                    arg_span = amp_minus_token.span.cover(@arena[target].span)
-                    arg_expr = @arena.add_typed(UnaryNode.new(arg_span, amp_slice, proc_pointer))
-                    have_arg_expr = true
-                    args_b << arg_expr
-                    pushed = true
-                  else
-                    # Just &- (wrapping unary minus as block), rewind and parse normally
-                    unadvance
-                    @no_type_declaration += 1
-                    arg_expr = with_pointer_suffix { parse_expression(0) }
-                    have_arg_expr = true
-                    @no_type_declaration -= 1
-                    return PREFIX_ERROR if arg_expr.invalid?
-                  end
-                else
-                  # Phase 68: Splat arguments (*args, **kwargs)
-                  if current_token.kind == Token::Kind::Star || current_token.kind == Token::Kind::StarStar
-                    star_token = current_token
-                    advance
+                    advance # consume ':'
                     skip_whitespace_and_optional_newlines
+
+                    # Parse value expression (allow assignments inside args)
+                    # Note: We do NOT disable type declarations here because
+                    # the value may include type restrictions like `result : Int32`
                     value_expr = with_pointer_suffix { parse_op_assign }
                     return PREFIX_ERROR if value_expr.invalid?
-                    span = star_token.span.cover(@arena[value_expr].span)
-                    arg_expr = @arena.add_typed(SplatNode.new(span, value_expr))
-                    have_arg_expr = true
-                    args_b << arg_expr
-                    pushed = true
-                    skip_whitespace_and_optional_newlines
-                    goto_comma = current_token.kind == Token::Kind::Comma
-                    if goto_comma
-                      advance
-                      skip_whitespace_and_optional_newlines
-                      next
-                    else
-                      # Allow immediate closing paren
-                      next
-                    end
+                    value_span = @arena[value_expr].span
                   end
-                  # Phase NAMED_ARGUMENTS: Check if this is named argument BEFORE parsing expression
-                  # Pattern: identifier/keyword : value
-                  # This handles keywords like 'of:' which wouldn't create Identifier nodes
-                  # Also handles no-space form: `bar:a` where lexer produces Identifier + Symbol
-                  if named_arg_start?
-                    # Named argument detected
-                    name_token = current_token
-                    name_slice = name_token.slice
-                    name_span = name_token.span
 
-                    # Check if this is the no-space form (bar:a) where next is Symbol
-                    no_space_form = named_arg_no_space?
+                  # Create NamedArgument (zero-copy)
+                  named_b << NamedArgument.new(name_slice, value_expr, name_span, value_span)
+                  skip_whitespace_and_optional_newlines
+                else
+                  # Parse first argument expression (allow assignments)
+                  # Disable type declarations to allow identifier: syntax for named args
+                  @no_type_declaration += 1
+                  arg_expr = with_pointer_suffix { parse_op_assign }
+                  have_arg_expr = true
+                  @no_type_declaration -= 1
+                  if arg_expr.invalid?
+                    emit_unexpected(current_token)
+                    return PREFIX_ERROR
+                  end
+                  skip_whitespace_and_optional_newlines
 
-                    advance # consume name (identifier/keyword)
+                  # Check if this is named argument (identifier followed by colon)
+                  # This handles case where identifier was already parsed
+                  if current_token.kind == Token::Kind::Colon
+                    arg_node = @arena[arg_expr]
+                    if Frontend.node_kind(arg_node) == Frontend::NodeKind::Identifier
+                      # Named argument: name: value (zero-copy)
+                      name_slice = Frontend.node_literal(arg_node).not_nil!
+                      name_span = arg_node.span
 
-                    if no_space_form
-                      # No-space form: current token is now Symbol like `:a`
-                      # The value identifier is embedded in the symbol slice (minus leading ':')
-                      sym_token = current_token
-                      value_slice = symbol_to_identifier_slice(sym_token)
-                      value_span = Span.new(
-                        sym_token.span.start_line,
-                        sym_token.span.start_column + 1, # skip the ':'
-                        sym_token.span.start_offset + 1,
-                        sym_token.span.end_line,
-                        sym_token.span.end_column,
-                        sym_token.span.end_offset
-                      )
-                      # Create Identifier node for the value
-                      value_expr = @arena.add(IdentifierNode.new(value_span, value_slice))
-                      advance # consume the Symbol
-                      skip_whitespace_and_optional_newlines
-                    else
-                      skip_whitespace_and_optional_newlines
-
-                      # Expect colon (with-space form)
-                      unless current_token.kind == Token::Kind::Colon
-                        emit_unexpected(current_token)
-                        return PREFIX_ERROR
-                      end
                       advance # consume ':'
                       skip_whitespace_and_optional_newlines
 
-                      # Parse value expression (allow assignments inside args)
-                      # Note: We do NOT disable type declarations here because
-                      # the value may include type restrictions like `result : Int32`
+                      # Parse value expression
+                      # Disable type declarations in value (may contain nested named tuples/args)
+                      @no_type_declaration += 1
                       value_expr = with_pointer_suffix { parse_op_assign }
+                      @no_type_declaration -= 1
                       return PREFIX_ERROR if value_expr.invalid?
                       value_span = @arena[value_expr].span
-                    end
 
-                    # Create NamedArgument (zero-copy)
-                    named_b << NamedArgument.new(name_slice, value_expr, name_span, value_span)
-                    skip_whitespace_and_optional_newlines
-                  else
-                    # Parse first argument expression (allow assignments)
-                    # Disable type declarations to allow identifier: syntax for named args
-                    @no_type_declaration += 1
-                    arg_expr = with_pointer_suffix { parse_op_assign }
-                    have_arg_expr = true
-                    @no_type_declaration -= 1
-                    if arg_expr.invalid?
+                      # Create NamedArgument
+                      named_b << NamedArgument.new(name_slice, value_expr, name_span, value_span)
+                      skip_whitespace_and_optional_newlines
+                    else
+                      # Expression followed by colon is invalid
                       emit_unexpected(current_token)
                       return PREFIX_ERROR
                     end
-                    skip_whitespace_and_optional_newlines
-
-                    # Check if this is named argument (identifier followed by colon)
-                    # This handles case where identifier was already parsed
-                    if current_token.kind == Token::Kind::Colon
-                      arg_node = @arena[arg_expr]
-                      if Frontend.node_kind(arg_node) == Frontend::NodeKind::Identifier
-                        # Named argument: name: value (zero-copy)
-                        name_slice = Frontend.node_literal(arg_node).not_nil!
-                        name_span = arg_node.span
-
-                        advance # consume ':'
-                        skip_whitespace_and_optional_newlines
-
-                        # Parse value expression
-                        # Disable type declarations in value (may contain nested named tuples/args)
-                        @no_type_declaration += 1
-                        value_expr = with_pointer_suffix { parse_op_assign }
-                        @no_type_declaration -= 1
-                        return PREFIX_ERROR if value_expr.invalid?
-                        value_span = @arena[value_expr].span
-
-                        # Create NamedArgument
-                        named_b << NamedArgument.new(name_slice, value_expr, name_span, value_span)
-                        skip_whitespace_and_optional_newlines
-                      else
-                        # Expression followed by colon is invalid
-                        emit_unexpected(current_token)
-                        return PREFIX_ERROR
-                      end
-                    else
-                      # Positional argument
-                      args_b << arg_expr
-                      pushed = true
-                    end
-                  end # close if named_arg_start?
-                  # After any branch, ensure amp-based arguments are captured
-                  if have_arg_expr && !arg_expr.invalid? && !pushed
-                    # If additional expression fragments remain (e.g., ternary tails),
-                    # keep parsing until we hit the next argument delimiter.
-                    frag_prev_index = @index
-                    loop do
-                      skip_whitespace_and_optional_newlines
-                      break if current_token.kind.in?(Token::Kind::Comma, Token::Kind::RParen, Token::Kind::Amp, Token::Kind::AmpDot, Token::Kind::EOF)
-                      break if frag_prev_index == @index # no progress guard
-                      frag_prev_index = @index
-                      cont = with_pointer_suffix { parse_expression(0) }
-                      break if cont.invalid?
-                      arg_expr = cont
-                      have_arg_expr = true
-                    end
+                  else
+                    # Positional argument
                     args_b << arg_expr
+                    pushed = true
                   end
-                end # close else from Amp/AmpDot check
-
-                # Advance to next argument. Support comma-separated args and
-                # consecutive block shorthands without commas: foo(&.a &.b)
-                skip_whitespace_and_optional_newlines
-                if current_token.kind == Token::Kind::Comma
-                  advance # consume comma
-                  skip_whitespace_and_optional_newlines
-
-                  # Handle trailing comma: foo(x: 1, y: 2,)
-                  break if current_token.kind == Token::Kind::RParen
-                elsif current_token.kind.in?(Token::Kind::Amp, Token::Kind::AmpDot)
-                  # Treat consecutive block shorthands as separate arguments even
-                  # without an explicit comma.
-                  next
-                else
-                  break
+                end # close if named_arg_start?
+                # After any branch, ensure amp-based arguments are captured
+                if have_arg_expr && !arg_expr.invalid? && !pushed
+                  # If additional expression fragments remain (e.g., ternary tails),
+                  # keep parsing until we hit the next argument delimiter.
+                  frag_prev_index = @index
+                  loop do
+                    skip_whitespace_and_optional_newlines
+                    break if current_token.kind.in?(Token::Kind::Comma, Token::Kind::RParen, Token::Kind::Amp, Token::Kind::AmpDot, Token::Kind::EOF)
+                    break if frag_prev_index == @index # no progress guard
+                    frag_prev_index = @index
+                    cont = with_pointer_suffix { parse_expression(0) }
+                    break if cont.invalid?
+                    arg_expr = cont
+                    have_arg_expr = true
+                  end
+                  args_b << arg_expr
                 end
-              end
-            end
+              end # close else from Amp/AmpDot check
 
-            expect_operator(Token::Kind::RParen)
-            @paren_depth -= 1 # Phase 103: exiting parentheses
-
-            # Materialize arrays once, then compute span cheaply (closing paren already consumed)
-            args = args_b.to_a
-            named_args = named_b.to_a
-            closing_span = previous_token.try(&.span)
-            call_span = if named_args.size > 0
-                          node_span(callee).cover(named_args.last.span)
-                        elsif args.size > 0
-                          node_span(callee).cover(@arena[args.last].span)
-                        elsif closing_span
-                          node_span(callee).cover(closing_span)
-                        else
-                          node_span(callee)
-                        end
-
-            # Create Call node with both positional and named args
-            result = @arena.add_typed(CallNode.new(
-              call_span,
-              callee,
-              args,
-              nil, # block
-              named_args.empty? ? nil : named_args
-            ))
-
-            # Support extra no-parens arguments after a parenthesized group:
-            #   foo(expr), more, args
-            skip_whitespace_and_optional_newlines
-            if current_token.kind == Token::Kind::Comma && @parsing_call_args == 0
-              # Seed accumulators from existing args
-              accu_args = (args ? args.dup : [] of ExprId)
-              accu_named = (named_args ? named_args.dup : [] of NamedArgument)
-              loop do
+              # Advance to next argument. Support comma-separated args and
+              # consecutive block shorthands without commas: foo(&.a &.b)
+              skip_whitespace_and_optional_newlines
+              if current_token.kind == Token::Kind::Comma
                 advance # consume comma
                 skip_whitespace_and_optional_newlines
-                break if call_without_parens_disallowed?(current_token)
 
-                if named_arg_start?
-                  name_tok = current_token
-                  name_slice = name_tok.slice
-                  name_span = name_tok.span
-                  advance
-                  skip_whitespace_and_optional_newlines
-                  break unless current_token.kind == Token::Kind::Colon
-                  advance
-                  skip_whitespace_and_optional_newlines
-                  @no_type_declaration += 1
-                  val = with_pointer_suffix { parse_op_assign }
-                  @no_type_declaration -= 1
-                  break if val.invalid?
-                  accu_named << NamedArgument.new(name_slice, val, name_span, @arena[val].span)
-                else
-                  arg = with_pointer_suffix { parse_op_assign }
-                  break if arg.invalid?
-                  accu_args << arg
-                end
-                skip_whitespace_and_optional_newlines
-                break unless current_token.kind == Token::Kind::Comma
-              end
-
-              # Rebuild call node with extended arguments
-              last_span = if accu_named.size > 0
-                            accu_named.last.span
-                          elsif accu_args.size > 0
-                            @arena[accu_args.last].span
-                          else
-                            call_span
-                          end
-              new_span = call_span.cover(last_span)
-              result = @arena.add_typed(CallNode.new(new_span, callee, accu_args, nil, accu_named.empty? ? nil : accu_named))
-            end
-
-            # Parse optional block after parenthesized call: foo(args) do ... end
-            # Keep newline as a statement boundary (match Crystal parser behavior).
-            skip_trivia
-            if current_token.kind == Token::Kind::Do || current_token.kind == Token::Kind::LBrace
-              # Temporarily release the call-args guard to allow nested DSL calls inside the block.
-              @parsing_call_args -= 1
-              block_expr = parse_block
-              @parsing_call_args += 1
-              if block_expr.invalid?
-                return PREFIX_ERROR
-              end
-
-              call_node = @arena[result]
-              if call_node.is_a?(CallNode)
-                block_span = @arena[block_expr].span
-                call_span = call_node.span.cover(block_span)
-                result = @arena.add_typed(CallNode.new(
-                  call_span,
-                  call_node.callee,
-                  call_node.args,
-                  block_expr,
-                  call_node.named_args
-                ))
+                # Handle trailing comma: foo(x: 1, y: 2,)
+                break if current_token.kind == Token::Kind::RParen
+              elsif current_token.kind.in?(Token::Kind::Amp, Token::Kind::AmpDot)
+                # Treat consecutive block shorthands as separate arguments even
+                # without an explicit comma.
+                next
+              else
+                break
               end
             end
-
-            result
-          ensure
-            @parsing_call_args -= 1
           end
+
+          expect_operator(Token::Kind::RParen)
+          @paren_depth -= 1 # Phase 103: exiting parentheses
+
+          # Materialize arrays once, then compute span cheaply (closing paren already consumed)
+          args = args_b.to_a
+          named_args = named_b.to_a
+          closing_span = previous_token.try(&.span)
+          call_span = if named_args.size > 0
+                        node_span(callee).cover(named_args.last.span)
+                      elsif args.size > 0
+                        node_span(callee).cover(@arena[args.last].span)
+                      elsif closing_span
+                        node_span(callee).cover(closing_span)
+                      else
+                        node_span(callee)
+                      end
+
+          # Create Call node with both positional and named args
+          result = @arena.add_typed(CallNode.new(
+            call_span,
+            callee,
+            args,
+            nil, # block
+            named_args.empty? ? nil : named_args
+          ))
+
+          # Support extra no-parens arguments after a parenthesized group:
+          #   foo(expr), more, args
+          skip_whitespace_and_optional_newlines
+          if current_token.kind == Token::Kind::Comma && @parsing_call_args == 0
+            # Seed accumulators from existing args
+            accu_args = (args ? args.dup : [] of ExprId)
+            accu_named = (named_args ? named_args.dup : [] of NamedArgument)
+            loop do
+              advance # consume comma
+              skip_whitespace_and_optional_newlines
+              break if call_without_parens_disallowed?(current_token)
+
+              if named_arg_start?
+                name_tok = current_token
+                name_slice = name_tok.slice
+                name_span = name_tok.span
+                advance
+                skip_whitespace_and_optional_newlines
+                break unless current_token.kind == Token::Kind::Colon
+                advance
+                skip_whitespace_and_optional_newlines
+                @no_type_declaration += 1
+                val = with_pointer_suffix { parse_op_assign }
+                @no_type_declaration -= 1
+                break if val.invalid?
+                accu_named << NamedArgument.new(name_slice, val, name_span, @arena[val].span)
+              else
+                arg = with_pointer_suffix { parse_op_assign }
+                break if arg.invalid?
+                accu_args << arg
+              end
+              skip_whitespace_and_optional_newlines
+              break unless current_token.kind == Token::Kind::Comma
+            end
+
+            # Rebuild call node with extended arguments
+            last_span = if accu_named.size > 0
+                          accu_named.last.span
+                        elsif accu_args.size > 0
+                          @arena[accu_args.last].span
+                        else
+                          call_span
+                        end
+            new_span = call_span.cover(last_span)
+            result = @arena.add_typed(CallNode.new(new_span, callee, accu_args, nil, accu_named.empty? ? nil : accu_named))
+          end
+
+          # Parse optional block after parenthesized call: foo(args) do ... end
+          # Keep newline as a statement boundary (match Crystal parser behavior).
+          skip_trivia
+          if current_token.kind == Token::Kind::Do || current_token.kind == Token::Kind::LBrace
+            # Temporarily release the call-args guard to allow nested DSL calls inside the block.
+            trace_call_args_depth("paren-before-block-pop")
+            @parsing_call_args -= 1
+            trace_call_args_depth("paren-after-block-pop")
+            block_expr = parse_block
+            trace_call_args_depth("paren-after-block-parse")
+            @parsing_call_args += 1
+            trace_call_args_depth("paren-after-block-push")
+            if block_expr.invalid?
+              return PREFIX_ERROR
+            end
+
+            call_node = @arena[result]
+            if call_node.is_a?(CallNode)
+              block_span = @arena[block_expr].span
+              call_span = call_node.span.cover(block_span)
+              result = @arena.add_typed(CallNode.new(
+                call_span,
+                call_node.callee,
+                call_node.args,
+                block_expr,
+                call_node.named_args
+              ))
+            end
+          end
+
+          result
         end
 
         # Phase 103B: Handle postfix operations after brace literal
@@ -13891,9 +13926,19 @@ current_token.kind == Token::Kind::Identifier &&
         end
 
         private def append_macro_gap(buffer : IO::Memory, previous_token : Token, next_token : Token, trim_gap : Bool) : Bool
-          gap = next_token.span.start_offset - previous_token.span.end_offset
+          source_size = @source.bytesize
+          prev_end = previous_token.span.end_offset
+          next_start = next_token.span.start_offset
+          if prev_end < 0 || next_start < prev_end || prev_end > source_size || next_start > source_size
+            if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_MACRO_GAP")
+              STDERR.puts "[MACRO_GAP] skip prev=#{previous_token.kind} prev_end=#{prev_end} next=#{next_token.kind} next_start=#{next_start} source_size=#{source_size}"
+            end
+            return false
+          end
+
+          gap = next_start - prev_end
           return false if gap <= 0
-          slice = @source.to_slice[previous_token.span.end_offset, gap]
+          slice = @source.to_slice[prev_end, gap]
           slice = trim_macro_gap_slice(slice) if trim_gap
           buffer.write(slice) unless slice.empty?
           false
