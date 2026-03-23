@@ -2551,6 +2551,13 @@ module Crystal::MIR
     end
 
     private def emit_raw(s : String)
+      # V2: normalize "ptr 0" → "ptr null" everywhere in LLVM IR output
+      if s.includes?("ptr 0") && !s.includes?("ptr 0x")
+        s = s.gsub("ptr 0,", "ptr null,")
+             .gsub("ptr 0)", "ptr null)")
+             .gsub("ptr 0\n", "ptr null\n")
+             .gsub("ptr 0 ", "ptr null ")
+      end
       @output << s
     end
 
@@ -10765,15 +10772,29 @@ module Crystal::MIR
       # Append parent-emitted functions first
       if parent_output.pos > 0
         parent_output.rewind
-        IO.copy(parent_output, @output)
+        # V2: normalize "ptr 0" → "ptr null" in parent output
+        parent_ir = parent_output.to_s
+        if parent_ir.includes?("ptr 0") && !parent_ir.includes?("ptr 0x")
+          parent_ir = parent_ir.gsub("ptr 0,", "ptr null,")
+                               .gsub("ptr 0)", "ptr null)")
+                               .gsub("ptr 0\n", "ptr null\n")
+                               .gsub("ptr 0 ", "ptr null ")
+        end
+        @output << parent_ir
       end
 
       workers.each do |_, ir_file, se_file|
         # Append function IR
         if File.exists?(ir_file)
-          File.open(ir_file) do |f|
-            IO.copy(f, @output)
+          # V2: normalize "ptr 0" → "ptr null" in worker output
+          worker_ir = File.read(ir_file)
+          if worker_ir.includes?("ptr 0") && !worker_ir.includes?("ptr 0x")
+            worker_ir = worker_ir.gsub("ptr 0,", "ptr null,")
+                                 .gsub("ptr 0)", "ptr null)")
+                                 .gsub("ptr 0\n", "ptr null\n")
+                                 .gsub("ptr 0 ", "ptr null ")
           end
+          @output << worker_ir
         end
 
         # Merge side-effects
@@ -13645,8 +13666,11 @@ module Crystal::MIR
       else_val = value_ref(inst.else_value)
       # Normalize zero/null for type compatibility
       if type == "ptr"
-        then_val = "null" if then_val == "0"
-        else_val = "null" if else_val == "0"
+        then_val = "null" if then_val == "0" || then_val == "0 "
+        else_val = "null" if else_val == "0" || else_val == "0 "
+        # Also handle inttoptr results that resolve to 0
+        then_val = "null" if then_val.starts_with?("%") && @constant_values[inst.then_value]? == "0"
+        else_val = "null" if else_val.starts_with?("%") && @constant_values[inst.else_value]? == "0"
       elsif !type.includes?(".union")
         if type == "double" || type == "float"
           then_val = "0.0" if then_val == "null"
@@ -13656,7 +13680,20 @@ module Crystal::MIR
           else_val = "0" if else_val == "null"
         end
       end
-      emit "#{name} = select i1 #{cond}, #{type} #{then_val}, #{type} #{else_val}"
+      # Final normalization before emit
+      if type == "ptr"
+        then_val = "null" unless then_val.starts_with?('%') || then_val == "null"
+        else_val = "null" unless else_val.starts_with?('%') || else_val == "null"
+      end
+      select_line = "#{name} = select i1 #{cond}, #{type} #{then_val}, #{type} #{else_val}"
+      if select_line.includes?("ptr 0")
+        STDERR.puts "[BUG] ptr 0 in select: #{select_line}"
+        select_line = select_line.gsub("ptr 0,", "ptr null,").gsub("ptr 0)", "ptr null)")
+        if select_line.ends_with?("ptr 0")
+          select_line = select_line[0...-5] + "ptr null"
+        end
+      end
+      emit select_line
       @value_types[inst.id] = inst.type
     end
 
