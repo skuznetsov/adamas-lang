@@ -1,20 +1,28 @@
-# Crystal V2 Bootstrap — TODO (Updated 2026-03-22)
+# Crystal V2 Bootstrap — TODO (Updated 2026-03-23)
 
 ## Current Status
 - **Branch**: `bootstrap-benchmark` (merged `inline-structs`)
 - **Regression baseline**: last broadly re-verified count from the earlier inline-struct phase was `87/88 + 18/20`; later parser/HIR/bootstrap changes have not re-established that full baseline yet
 - **Fresh Stage1 → Stage2 release**: still green from current repo state under `scripts/run_safe.sh` (recent stage2 rebuilds finish in ~154-156s)
 - **Fresh parser stabilization**: forcing `AstArena` in parser bootstrap removes the bogus self-hosted `PageArena` path (`DEBUG_ARENA_ADD` now shows sane `id=0` instead of negative PageArena ids)
+- **Fresh macro parser stabilization**:
+  - boxed `parse_macro_body` depth counters survive ordinary text-token iterations in self-hosted stage2
+  - `macro probe(*methods)` oracle now consumes both inner `{% end %}` markers and no longer leaks extra top-level `MacroLiteral` / `Identifier` roots
+- **Fresh HIR stabilization**:
+  - generic param recursion guard no longer crashes hashing `Pointer(UInt8)` in `type_ref_for_name_inner`
+  - `CRYSTAL_V2_STOP_AFTER_HIR=1` on the macro oracle is now green and produces a deterministic stage1-vs-stage2 HIR diff instead of a segfault
 - **Focused green oracles**:
   - stage2 float literal parse/FastFloat accessor stub repro is green
   - stage2 `case/when` with `Char` literals inside defs is green
   - narrow literal oracle is green (`literal 42 : Int32`, not `literal nil`)
 - **Focused red oracles**:
-  - self-hosted stage2 still fails on macro/HIR paths after parse (`zero_param macro` still segfaults after `parse done`; `stage2_macro_method_char_arg_oracle` now reaches HIR and fails with `Index out of bounds`)
+  - self-hosted stage2 still diverges from stage1 on the macro HIR oracle:
+    - `__crystal_main` params are missing in stage2 HIR/MIR output
+    - HIR type pretty-print still emits raw enum ordinal `10` instead of `Pointer`
   - self-hosted stage2 still segfaults while parsing `src/stdlib/object.cr`
   - stage3 bootstrap still dies while parsing `src/stdlib/object.cr`
   - full `char_toplevel` compile on self-hosted stage2 still segfaults after parse
-- **Current frontier**: with parser arena-selection stabilized, debug why self-hosted AST nodes are still stored/retrieved as base `Node` and why top-level macro defs leak into HIR main expressions; then retry `stage2 -> stage3` bootstrap and benchmark stage1 vs stage2
+- **Current frontier**: with macro root leakage and `Pointer(UInt8)` HIR guard crashes removed, debug why self-hosted stage2 drops `__crystal_main(argc, argv)` params and why HIR pretty-print loses `TypeKind` names; then retry the macro oracle through MIR/LL, then `stage2 -> stage3` bootstrap and benchmark stage1 vs stage2
 
 ## VERIFIED: Fix `ptr 0` → `ptr null` in stage2 LLC
 
@@ -54,8 +62,9 @@ CRYSTAL_V2_STOP_AFTER_MIR=1 /tmp/crystal_v2_s2 /tmp/test.cr -o /tmp/out --no-pre
 1. Build fresh release stage1 from current repo state.
 2. Build fresh release stage2 with that stage1.
 3. Use `regression_tests/stage2_macro_method_char_arg_oracle.sh` plus `CRYSTAL_V2_TRACE_MACRO_DEF=1` / `DEBUG_ARENA_ADD=Macro` to push the remaining failure from HIR `Index out of bounds` to a concrete AST/root-cause fix.
-4. Retry stage3 bootstrap once the macro/HIR path no longer leaks macro defs into `main_exprs`.
-5. If stage3 goes green, benchmark stage1 vs stage2 release compile time for `src/crystal_v2.cr`.
+4. Push `stage2_macro_method_char_arg_oracle.sh` from deterministic HIR diff (`__crystal_main` params + `TypeKind` pretty-print) to full stage1-vs-stage2 HIR/MIR/LL agreement.
+5. Retry stage3 bootstrap once the macro/HIR path no longer diverges.
+6. If stage3 goes green, benchmark stage1 vs stage2 release compile time for `src/crystal_v2.cr`.
 
 ## ROOT CAUSES FOUND
 

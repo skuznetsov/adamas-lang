@@ -2542,7 +2542,9 @@ module Crystal::HIR
     @sanitize_type_part_in_progress : Set(String)
     @sanitize_type_depth : Int32
     # Guard generic param -> type_ref resolution against recursive cycles.
-    @generic_param_resolution_in_progress : Set(String)
+    # Self-hosted stage2 has crashed hashing transient String keys here, so keep
+    # this as a small linear stack instead of a Set.
+    @generic_param_resolution_in_progress : Array(String)
     @generic_param_resolution_log_count : Int32
     # Cache for normalize_declared_type_name keyed on (type_name, context, subst_cache_gen).
     @normalize_decl_cache : Hash({String, String?, UInt64}, String)
@@ -2946,7 +2948,7 @@ module Crystal::HIR
       @sanitize_type_name_in_progress = Set(String).new
       @sanitize_type_part_in_progress = Set(String).new
       @sanitize_type_depth = 0
-      @generic_param_resolution_in_progress = Set(String).new
+      @generic_param_resolution_in_progress = [] of String
       @generic_param_resolution_log_count = 0
       @normalize_decl_cache = Hash({String, String?, UInt64}, String).new(initial_capacity: 4096)
       @annotation_type_ref_cache = Hash({String, String?, Int32, Int32}, TypeRef).new(initial_capacity: 4096)
@@ -73697,17 +73699,18 @@ module Crystal::HIR
             resolve_key = resolve_key[2..]
           end
           resolve_key = stripped_param if resolve_key.empty?
-          debug_candidate = resolve_key.includes?('|') || resolve_key.includes?("Tuple(") || resolve_key.includes?("->")
+          stable_resolve_key = String.new(resolve_key.to_slice)
+          debug_candidate = stable_resolve_key.includes?('|') || stable_resolve_key.includes?("Tuple(") || stable_resolve_key.includes?("->")
           if env_get("DEBUG_TYPE_PARAM_RESOLUTION") && debug_candidate && @generic_param_resolution_log_count < 1200
-            STDERR.puts "[TYPE_PARAM_RESOLVE] param=#{resolve_key} in_progress=#{@generic_param_resolution_in_progress.size}"
+            STDERR.puts "[TYPE_PARAM_RESOLVE] param=#{stable_resolve_key} in_progress=#{@generic_param_resolution_in_progress.size}"
             @generic_param_resolution_log_count += 1
           end
-          if @generic_param_resolution_in_progress.includes?(resolve_key)
+          if @generic_param_resolution_in_progress.includes?(stable_resolve_key)
             if env_get("DEBUG_TYPE_PARAM_RESOLUTION") && debug_candidate && @generic_param_resolution_log_count < 1200
-              STDERR.puts "[TYPE_PARAM_CYCLE] param=#{resolve_key}"
+              STDERR.puts "[TYPE_PARAM_CYCLE] param=#{stable_resolve_key}"
               @generic_param_resolution_log_count += 1
             end
-            cycle_name = resolve_key
+            cycle_name = stable_resolve_key
             if !cycle_name.empty? && union_type_name?(cycle_name)
               union_key = type_cache_key(cycle_name)
               if cached_union = @type_cache[union_key]?
@@ -73721,19 +73724,19 @@ module Crystal::HIR
               TypeRef::VOID
             end
           else
-            @generic_param_resolution_in_progress << resolve_key
+            @generic_param_resolution_in_progress << stable_resolve_key
             begin
-              ref = if !resolve_key.empty? && union_type_name?(resolve_key)
-                      union_key = type_cache_key(resolve_key)
+              ref = if !stable_resolve_key.empty? && union_type_name?(stable_resolve_key)
+                      union_key = type_cache_key(stable_resolve_key)
                       if cached_union = @type_cache[union_key]?
                         cached_union
                       else
-                        provisional_union = @module.intern_type(TypeDescriptor.new(TypeKind::Union, resolve_key))
+                        provisional_union = @module.intern_type(TypeDescriptor.new(TypeKind::Union, stable_resolve_key))
                         store_type_cache(union_key, provisional_union)
                         provisional_union
                       end
                     else
-                      type_ref_for_name(resolve_key)
+                      type_ref_for_name(stable_resolve_key)
                     end
               if ref == TypeRef::VOID
                 stripped = stripped_param
@@ -73767,7 +73770,7 @@ module Crystal::HIR
               end
               ref
             ensure
-              @generic_param_resolution_in_progress.delete(resolve_key)
+              @generic_param_resolution_in_progress.delete(stable_resolve_key)
             end
           end
         end

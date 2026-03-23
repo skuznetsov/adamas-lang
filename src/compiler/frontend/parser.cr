@@ -15,6 +15,9 @@ module CrystalV2
         @macro_expr_brace_cache : Hash(Int32, Bool)
         PREFIX_ERROR     = ExprId.new(-1)
         UNARY_PRECEDENCE = 30
+        MACRO_EFFECT_NONE = 0_i8
+        MACRO_EFFECT_PUSH = 1_i8
+        MACRO_EFFECT_POP  = 2_i8
 
         @macro_terminator : Symbol?
         @previous_token : Token?
@@ -223,6 +226,9 @@ module CrystalV2
           # growable containers.
           root_indexes = SmallVec(Int32, 64).new
           while current_token.kind != Token::Kind::EOF
+            if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_ROOT_LOOP")
+              STDERR.puts "[ROOT_LOOP] start token=#{current_token.kind} index=#{@index}"
+            end
             # Ensure global progress and allow watchdog to interrupt if needed
             Watchdog.check!
             skip_statement_end
@@ -230,7 +236,12 @@ module CrystalV2
 
             if macro_definition_start?
               macro_def = parse_macro_definition
-              root_indexes << macro_def.index unless macro_def.invalid?
+              unless macro_def.invalid?
+                root_indexes << macro_def.index
+                if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_ROOT_LOOP")
+                  STDERR.puts "[ROOT_LOOP] push branch=macrodef expr=#{macro_def.index} token=#{current_token.kind} index=#{@index}"
+                end
+              end
               consume_newlines
               next
             end
@@ -240,7 +251,12 @@ module CrystalV2
             if macro_control_start?
               debug { "parse_program: macro_control_start? returned true, calling parse_percent_macro_control" }
               macro_ctrl = parse_percent_macro_control
-              root_indexes << macro_ctrl.index unless macro_ctrl.invalid?
+              unless macro_ctrl.invalid?
+                root_indexes << macro_ctrl.index
+                if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_ROOT_LOOP")
+                  STDERR.puts "[ROOT_LOOP] push branch=macroctrl expr=#{macro_ctrl.index} token=#{current_token.kind} index=#{@index}"
+                end
+              end
               consume_newlines
               next
             end
@@ -268,7 +284,12 @@ module CrystalV2
             end
 
             if node
-              root_indexes << node.index unless node.invalid?
+              unless node.invalid?
+                root_indexes << node.index
+                if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_ROOT_LOOP")
+                  STDERR.puts "[ROOT_LOOP] push branch=fastpath expr=#{node.index} token=#{current_token.kind} index=#{@index}"
+                end
+              end
               skip_statement_end
               next
             end
@@ -309,14 +330,24 @@ module CrystalV2
                      else
                        PREFIX_ERROR
                      end
-              root_indexes << node.index unless node.invalid?
+              unless node.invalid?
+                root_indexes << node.index
+                if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_ROOT_LOOP")
+                  STDERR.puts "[ROOT_LOOP] push branch=definition expr=#{node.index} token=#{current_token.kind} index=#{@index}"
+                end
+              end
               skip_statement_end
               next
             end
 
             saved_index = @index
             expr = parse_statement
-            root_indexes << expr.index unless expr.invalid?
+            unless expr.invalid?
+              root_indexes << expr.index
+              if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_ROOT_LOOP")
+                STDERR.puts "[ROOT_LOOP] push branch=statement expr=#{expr.index} token=#{current_token.kind} index=#{@index}"
+              end
+            end
             # Error recovery: if parse_statement returned without advancing,
             # skip one token to prevent infinite loop.
             advance if @index == saved_index
@@ -7867,6 +7898,30 @@ module CrystalV2
           end
         end
 
+        private def macro_control_effect_name(effect : Int8) : String
+          case effect
+          when MACRO_EFFECT_PUSH
+            "push"
+          when MACRO_EFFECT_POP
+            "pop"
+          else
+            "none"
+          end
+        end
+
+        private def macro_control_keyword_pushes_control_depth?(keyword : String?) : Bool
+          case keyword
+          when "if", "unless", "for", "while", "comment", "begin", "verbatim"
+            true
+          else
+            false
+          end
+        end
+
+        private def macro_control_keyword_pops_control_depth?(keyword : String?) : Bool
+          keyword == "end"
+        end
+
         private def parse_macro_body(stop_on_branch : Bool = false) : Array(MacroPiece)
           @macro_mode += 1
           begin
@@ -7878,8 +7933,11 @@ module CrystalV2
             buffer = IO::Memory.new
             buffer_start_token : Token? = nil
             buffer_end_token : Token? = nil
-            control_depth = 0
-            block_depth = 0
+            # Self-hosted release stage2 has shown local Int32 depth counters
+            # getting clobbered across ordinary text-token iterations in this
+            # macro loop. Keep them in heap-backed boxes so nesting survives.
+            control_depth = [0] of Int32
+            block_depth = [0] of Int32
             trim_next_left = false
             trim_final = false
             trim_gap = false
@@ -7899,7 +7957,7 @@ module CrystalV2
               if debug_macro_for && debug_macro_for_steps < 32
                 macro_start = macro_control_start?
                 keyword = macro_start ? peek_macro_control_keyword : nil
-                STDERR.puts "[MACRO_BODY_STEP] step=#{debug_macro_for_steps} line=#{token.span.start_line + 1} token=#{token.kind}:#{token_text(token).inspect} peek=#{peek_token.kind}:#{token_text(peek_token).inspect} macro=#{macro_start ? 1 : 0} keyword=#{keyword.inspect} stop=#{stop_on_branch ? 1 : 0} control_depth=#{control_depth} block_depth=#{block_depth}"
+                STDERR.puts "[MACRO_BODY_STEP] step=#{debug_macro_for_steps} line=#{token.span.start_line + 1} token=#{token.kind}:#{token_text(token).inspect} peek=#{peek_token.kind}:#{token_text(peek_token).inspect} macro=#{macro_start ? 1 : 0} keyword=#{keyword.inspect} stop=#{stop_on_branch ? 1 : 0} control_depth=#{control_depth[0]} block_depth=#{block_depth[0]}"
               end
               debug_macro_for_steps += 1
 
@@ -8002,10 +8060,10 @@ module CrystalV2
               if macro_control_start?
                 keyword = peek_macro_control_keyword
                 if ENV["DEBUG_MACRO_BODY"]?
-                  STDERR.puts "[MACRO_BODY] line=#{token.span.start_line + 1} token=#{token.kind}:#{token_text(token).inspect} peek=#{peek_token.kind}:#{token_text(peek_token).inspect} keyword=#{keyword.inspect} stop=#{stop_on_branch ? 1 : 0} control_depth=#{control_depth} block_depth=#{block_depth}"
+                  STDERR.puts "[MACRO_BODY] line=#{token.span.start_line + 1} token=#{token.kind}:#{token_text(token).inspect} peek=#{peek_token.kind}:#{token_text(peek_token).inspect} keyword=#{keyword.inspect} stop=#{stop_on_branch ? 1 : 0} control_depth=#{control_depth[0]} block_depth=#{block_depth[0]}"
                 end
                 if stop_on_branch && keyword
-                  if control_depth == 0 && block_depth == 0 &&
+                  if control_depth[0] == 0 && block_depth[0] == 0 &&
                      keyword.in?(:elsif, :else, :end)
                     break
                   end
@@ -8021,12 +8079,12 @@ module CrystalV2
                 buffer_end_token = nil
                 piece, effect, skip_whitespace = parse_macro_control_piece(left_trim)
                 if ENV["DEBUG_MACRO_BODY"]?
-                  STDERR.puts "[MACRO_BODY_PIECE] keyword=#{piece.control_keyword.inspect} kind=#{piece.kind} effect=#{effect} skip_ws=#{skip_whitespace ? 1 : 0} current=#{current_token.kind}:#{token_text(current_token).inspect}"
+                  STDERR.puts "[MACRO_BODY_PIECE] keyword=#{piece.control_keyword.inspect} kind=#{piece.kind} effect=#{macro_control_effect_name(effect)} skip_ws=#{skip_whitespace ? 1 : 0} current=#{current_token.kind}:#{token_text(current_token).inspect}"
                 end
                 pieces << piece
 
                 # Special handling for comment blocks - skip content
-                if piece.control_keyword == "comment" && effect == :push
+                if piece.control_keyword == "comment" && macro_control_keyword_pushes_control_depth?(piece.control_keyword)
                   comment_depth = 1
                   # Skip tokens until matching {% end %}
                   loop do
@@ -8036,10 +8094,9 @@ module CrystalV2
                     if macro_control_start?
                       inner_left_trim = macro_control_left_trim?
                       inner_piece, inner_effect, _ = parse_macro_control_piece(inner_left_trim)
-                      case inner_effect
-                      when :push
+                      if macro_control_keyword_pushes_control_depth?(inner_piece.control_keyword)
                         comment_depth += 1
-                      when :pop
+                      elsif macro_control_keyword_pops_control_depth?(inner_piece.control_keyword)
                         comment_depth -= 1
                         if comment_depth == 0
                           pieces << inner_piece # Add the closing {% end %}
@@ -8054,14 +8111,16 @@ module CrystalV2
                   next
                 end
 
-                case effect
-                when :push
-                  control_depth += 1
-                when :pop
-                  if !stop_on_branch && control_depth == 0
+                if macro_control_keyword_pushes_control_depth?(piece.control_keyword)
+                  control_depth[0] += 1
+                elsif macro_control_keyword_pops_control_depth?(piece.control_keyword)
+                  if !stop_on_branch && control_depth[0] == 0
                     break
                   end
-                  control_depth -= 1 if control_depth > 0
+                  control_depth[0] -= 1 if control_depth[0] > 0
+                end
+                if ENV["DEBUG_MACRO_BODY"]?
+                  STDERR.puts "[MACRO_BODY_DEPTH] keyword=#{piece.control_keyword.inspect} control_depth=#{control_depth[0]} block_depth=#{block_depth[0]}"
                 end
 
                 trim_next_left = skip_whitespace
@@ -8119,7 +8178,7 @@ module CrystalV2
               when Token::Kind::Begin, Token::Kind::Do
                 # begin/do always introduce a block that must be closed with end,
                 # even when used as expressions (e.g., x = begin ... end, foo do ... end).
-                block_depth += 1
+                block_depth[0] += 1
               when Token::Kind::Def, Token::Kind::Class, Token::Kind::Module,
                    Token::Kind::Struct, Token::Kind::Enum,
                    Token::Kind::If, Token::Kind::Unless, Token::Kind::While,
@@ -8127,14 +8186,14 @@ module CrystalV2
                    Token::Kind::Lib, Token::Kind::Macro
                 # Abstract defs have no body/end; don't advance block depth for them.
                 if !abstract_def && starts_statement
-                  block_depth += 1
+                  block_depth[0] += 1
                 end
               when Token::Kind::End
-                if !stop_on_branch && control_depth == 0 && block_depth == 0 && starts_statement
+                if !stop_on_branch && control_depth[0] == 0 && block_depth[0] == 0 && starts_statement
                   # Do not consume macro-def 'end'; leave it for caller
                   break
                 else
-                  block_depth -= 1 if block_depth > 0
+                  block_depth[0] -= 1 if block_depth[0] > 0
                 end
               end
 
@@ -13899,12 +13958,12 @@ current_token.kind == Token::Kind::Identifier &&
           {vars, iterable}
         end
 
-        private def parse_macro_control_piece(left_trim : Bool)
+        private def parse_macro_control_piece(left_trim : Bool) : {MacroPiece, Int8, Bool}
           start_token = current_token
 
           unless macro_control_start?
             emit_unexpected(start_token)
-            return {MacroPiece.text("", start_token.span), :none, false}
+            return {MacroPiece.text("", start_token.span), MACRO_EFFECT_NONE, false}
           end
 
           # Peek ahead to determine if this is a control keyword or expression.
@@ -13914,7 +13973,7 @@ current_token.kind == Token::Kind::Identifier &&
           if handled_as_control
             # BRANCH A: Macro control (if, for, begin, verbatim, etc.)
             start_span = consume_macro_control_start
-            return {MacroPiece.text("", start_token.span), :none, false} unless start_span
+            return {MacroPiece.text("", start_token.span), MACRO_EFFECT_NONE, false} unless start_span
 
             if macro_trim_token?(current_token)
               left_trim = true
@@ -13925,7 +13984,7 @@ current_token.kind == Token::Kind::Identifier &&
 
             keyword_token = current_token
             keyword_kind = macro_control_keyword(keyword_token)
-            return {MacroPiece.text("", start_token.span), :none, false} unless keyword_kind
+            return {MacroPiece.text("", start_token.span), MACRO_EFFECT_NONE, false} unless keyword_kind
             keyword = macro_control_keyword_name(keyword_kind)
             advance
 
@@ -13945,7 +14004,7 @@ current_token.kind == Token::Kind::Identifier &&
               skip_macro_whitespace
               unless token_text(current_token) == "do"
                 @diagnostics << Diagnostic.new("Expected 'do' after verbatim", current_token.span)
-                return {MacroPiece.text("", start_token.span), :none, false}
+                return {MacroPiece.text("", start_token.span), MACRO_EFFECT_NONE, false}
               end
               advance # consume 'do'
             when :else, :end, :comment, :begin
@@ -13986,11 +14045,11 @@ current_token.kind == Token::Kind::Identifier &&
 
             effect = case keyword_kind
                      when :if, :unless, :for, :while, :comment, :begin, :verbatim
-                       :push
+                       MACRO_EFFECT_PUSH
                      when :end
-                       :pop
+                       MACRO_EFFECT_POP
                      else
-                       :none
+                       MACRO_EFFECT_NONE
                      end
 
             {piece, effect, skip_whitespace}
@@ -13998,7 +14057,7 @@ current_token.kind == Token::Kind::Identifier &&
             # BRANCH B: Macro expression (not a control keyword)
             # Examples: {% x = 1 %}, {% @type %}, {% raise "error" %}
             start_span = consume_macro_control_start
-            return {MacroPiece.text("", start_token.span), :none, false} unless start_span
+            return {MacroPiece.text("", start_token.span), MACRO_EFFECT_NONE, false} unless start_span
 
             if macro_trim_token?(current_token)
               left_trim = true
@@ -14037,7 +14096,7 @@ current_token.kind == Token::Kind::Identifier &&
             macro_span = start_span.cover(closing_span)
             macro_expr_id = @arena.add_typed(MacroExpressionNode.new(macro_span, expr))
             piece = MacroPiece.expression(macro_expr_id, left_trim, right_trim, macro_span)
-            {piece, :none, skip_whitespace}
+            {piece, MACRO_EFFECT_NONE, skip_whitespace}
           end
         end
 
