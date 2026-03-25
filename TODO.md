@@ -16,6 +16,15 @@
   - self-hosted crash in `CLI#macro_literal_require_texts` while scanning stdlib macro requires was real; raw `MacroPiece` access in the require-scan corridor is still unstable enough under self-hosted release to segfault
   - moving require-scan to raw source text via `node.span` and `macro_literal_texts_from_raw` produces a new self-hosted release candidate `/tmp/stage3_paramfix/stage2_release_macrospanfix`, green in `[EXIT: 0] after ~163s`
   - this does not clear stage3, but it does move the parse frontier forward: `stage2_primitives_parse_repro.sh` now progresses well past `primitives.cr` require processing and only fast-crashes later at `src/stdlib/enum.cr` `parse_program_roots start`
+- **Fresh macro parser stabilization (release candidate `/tmp/stage2_release_macrospan_refactor`)**:
+  - `parse_macro_body` no longer stores hot-loop text buffering state in `Token?` / `{Token, Bool}` tuples; the new candidate tracks text-buffer boundaries with `Span` instead
+  - this removes the old self-hosted release crash class on the reduced `abstract struct + {% begin %} + each_char do |char| next if char == 'x' end` oracle: the old candidate `/tmp/stage3_paramfix/stage2_release_macrospanfix` reproducibly died with `exit 139`, while `/tmp/stage2_release_macrospan_refactor` now fails deterministically with `error: Index out of bounds`
+  - downstream signal moved too: isolated `src/stdlib/enum.cr --release --no-prelude --no-ast-cache` parse-only now hits the same deterministic `Index out of bounds` instead of a fast segfault
+  - the new narrowed matrix is:
+    - green on stage2 candidate: `struct` control with the same `% begin` char loop
+    - green on stage2 candidate: `abstract struct` with `% begin` + `buffer = uninitialized UInt8[{{ 1 + 1 }}]`
+    - green on stage2 candidate: `struct` with both `{{ 1 + 1 }}` and the `char` loop inside `% begin`
+    - red on stage2 candidate, green on stage1: `abstract struct` + `% begin` + `do/end` char loop (`regression_tests/stage2_abstract_macro_char_parse_repro.sh`)
 - **Fresh release bootstrap measurements**:
   - original compiler -> current `stage1 --release`: green in `525.13s real` (~8m45s), peak memory footprint `7230019776` bytes (`max resident set size 8062320640`)
   - current `stage1 --release` -> self-hosted `stage2 --release`: green in `[EXIT: 0] after ~163s`, `/usr/bin/time -l = 190.31s real`, output `/tmp/stage2_release_88dfb7f6`
@@ -72,6 +81,9 @@
   - full self-hosted stage2 debug bootstrap now reaches deep LLVM generation without any `LLVM_MISSING_VALUE` diagnostics on the old `PeepholePass#run` / `CopyPropagationPass#run` nil-slot frontier
   - full self-hosted `stage2 --release` bootstrap is green from current `HEAD` via `/tmp/stage1_release_88dfb7f6 -> /tmp/stage2_release_88dfb7f6`
 - **Focused red oracles**:
+  - fresh narrowed parser oracle is still red on the new release candidate but no longer segfaults:
+    `bash regression_tests/stage2_abstract_macro_char_parse_repro.sh /tmp/stage3_paramfix/stage1_release_paramfix /tmp/stage2_release_macrospan_refactor`
+    => stage1 abstract control green, stage2 struct control green, stage2 abstract case red with deterministic `Index out of bounds`
   - fresh self-hosted release stage2 still fast-crashes on stdlib parse-only recursion, but the boundary has moved:
     `bash regression_tests/stage2_primitives_parse_repro.sh /tmp/stage3_paramfix/stage2_release_macrospanfix`
     now reproduces later at `src/stdlib/enum.cr` `parse_program_roots start`, instead of the older `primitives.cr` `macro_literal_require_texts` crash
@@ -94,8 +106,8 @@
   - the older `undefined @Crystal$CCHasher$Hpermute$$UInt64` note is stale on the narrowed no-clear carriers and should not drive the next branch until it is re-derived on a minimal reproducer
   - the leading global hypothesis is now generic `Hash#[]` return-type / method-dispatch corruption, which is a better match for compiler-side map lookups than the earlier object-field-only theory
 - **Current frontier**: stage3 bootstrap is still the top operational blocker (`stage2 --release -> stage3 --release` timing out after `1200s`), but the cleanest newly reduced correctness bug is now the HIR-level `Hash(UInt32, String)#[] -> Union String | UInt32` drift. For backend-only reducers, tiny self-hosted `--emit llvm-ir --no-link` still crashes in `emit_primitive_binary_override`, while float-literal HIR printing still trips the separate `Printer$Dshortest$$Float64_IO` stub.
-  - updated frontier after the default-arg and raw-span macro fixes:
-    `stage2 --release -> stage3 --release` no longer sits at the old comment-loop timeout frontier; the fresh self-hosted release candidate now dies fast during stdlib load after reaching `src/stdlib/enum.cr`
+  - updated frontier after the macro-span + macro-body span-tracking fixes:
+    `stage2 --release -> stage3 --release` no longer sits at the old crash-class frontier; the remaining reduced parser blocker is now `abstract struct + {% begin %} + do/end char loop`, and stdlib `enum.cr` parse-only now fails with the same controlled `Index out of bounds` class instead of a segfault
 
 ## VERIFIED: Fix `ptr 0` → `ptr null` in stage2 LLC
 
@@ -132,12 +144,13 @@ CRYSTAL_V2_STOP_AFTER_MIR=1 /tmp/crystal_v2_s2 /tmp/test.cr -o /tmp/out --no-pre
 
 ## NEXT: Fresh Release Bootstrap + Benchmark
 
-1. Narrow the new fast-crash frontier under `/tmp/stage3_paramfix/stage2_release_macrospanfix` from `src/stdlib/enum.cr parse_program_roots start` to an exact helper / method with direct `lldb`.
-2. Explain why the raw-span macro require fix moved the crash out of `primitives.cr` but did not fully clear stdlib recursion; the next likely cluster is raw macro/source scanning or parser state in the later `enum.cr` corridor.
-3. Localize the remaining self-hosted stage2 tiny default-arg red (`Index out of bounds` on `/tmp/stage3_paramfix/default_arg_repro.cr`) now that the old `foo(0)` mis-lowering is closed.
-4. Re-run `regression_tests/stage2_nil_slot_bootstrap_repro.sh` on the next bootstrap candidate before chasing lower performance issues, so the old `LLVM_MISSING_VALUE` nil-slot bug stays closed.
-5. Retry `stage3 --release` after the `enum.cr` parse frontier is fixed or reduced further.
-6. When stage3 goes green, record the exact stage1 vs stage2 release compile-time delta for `src/crystal_v2.cr`.
+1. Explain why self-hosted release stage2 still throws `Index out of bounds` specifically on `abstract struct + {% begin %} + do/end char loop` while the `struct` control and `abstract struct + {{ 1 + 1 }}` controls are green on `/tmp/stage2_release_macrospan_refactor`.
+2. Reduce the remaining abstract `% begin` char-loop failure below `each_char do |char| next if char == 'x' end`, then compare stage1 vs stage2 with `--no-prelude --emit hir/mir/llvm-ir --no-link` on the smallest surviving oracle.
+3. Re-test `src/stdlib/enum.cr --release --no-prelude --no-ast-cache` after each abstract-char reducer step; it is now a controlled `Index out of bounds` follower rather than a separate segfault family.
+4. Localize the remaining self-hosted stage2 tiny default-arg red (`Index out of bounds` on `/tmp/stage3_paramfix/default_arg_repro.cr`) now that the old `foo(0)` mis-lowering is closed.
+5. Re-run `regression_tests/stage2_nil_slot_bootstrap_repro.sh` on the next bootstrap candidate before chasing lower performance issues, so the old `LLVM_MISSING_VALUE` nil-slot bug stays closed.
+6. Retry `stage3 --release` after the abstract-char / `enum.cr` parse frontier is fixed or reduced further.
+7. When stage3 goes green, record the exact stage1 vs stage2 release compile-time delta for `src/crystal_v2.cr`.
 
 ## ROOT CAUSES FOUND
 

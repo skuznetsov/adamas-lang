@@ -52,18 +52,42 @@ module CrystalV2
         # preventing constructs like `{ expr\n other }` from being glued into a single expression.
         @skip_newlines_in_braces : Bool = false
 
+        private def parser_init_trace_enabled? : Bool
+          ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_PARSER_INIT_TRACE")
+        end
+
+        private def parser_init_trace(message : String) : Nil
+          return unless parser_init_trace_enabled?
+          STDERR.puts "[PARSER_INIT] #{message}"
+          STDERR.flush
+        end
+
         private def token_preload_capacity(source : String, keep_trivia : Bool) : Int32
+          parser_init_trace("token_preload_capacity start bytes=#{source.bytesize} keep_trivia=#{keep_trivia}")
           count = 0
           Lexer.new(source).each_token(skip_trivia: !keep_trivia) do |_token|
             count += 1
+            if parser_init_trace_enabled? && (count % 100_000 == 0)
+              STDERR.puts "[PARSER_INIT] token_preload_capacity count=#{count}"
+              STDERR.flush
+            end
           end
+          parser_init_trace("token_preload_capacity done count=#{count}")
           count
         end
 
         def initialize(lexer : Lexer, *, recovery_mode : Bool = false)
           @source = lexer.source
           keep_trivia = ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_PARSER_KEEP_TRIVIA")
-          @tokens = Array(Token).new(token_preload_capacity(@source, keep_trivia))
+          parser_init_trace("ctor1 start bytes=#{@source.bytesize}")
+          preload_capacity = if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_DISABLE_PARSER_PRELOAD")
+                               parser_init_trace("ctor1 preload disabled")
+                               0
+                             else
+                               token_preload_capacity(@source, keep_trivia)
+                             end
+          @tokens = Array(Token).new(preload_capacity)
+          parser_init_trace("ctor1 tokens array allocated capacity=#{preload_capacity}")
           @index = 0
           # Self-hosted stage2 has shown unstable arena-type selection and
           # corrupted PageArena state very early in parsing. Force AstArena
@@ -100,7 +124,9 @@ module CrystalV2
           # Ensure lexer can emit diagnostics into this parser's buffer
           lexer.diagnostics = @diagnostics
 
+          parser_init_trace("ctor1 token fill start")
           lexer.each_token(skip_trivia: !keep_trivia) { |token| @tokens << token }
+          parser_init_trace("ctor1 token fill done size=#{@tokens.size}")
           @lexer = nil
           @keep_trivia = keep_trivia
           # Pre-size arena capacity heuristically based on token count to reduce reallocations
@@ -117,6 +143,7 @@ module CrystalV2
           # Zero-copy AST slices point into the lexer source, so the resized
           # arena must retain the source just like the initial temporary one.
           @arena.retain_source(@source)
+          parser_init_trace("ctor1 done token_count=#{token_count} arena_capacity=#{capacity}")
         end
 
         # Recognize accessor-like macros where arguments may be type declarations
@@ -186,7 +213,15 @@ module CrystalV2
         def initialize(lexer : Lexer, @arena : ArenaLike, *, recovery_mode : Bool = false)
           @source = lexer.source
           keep_trivia = ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_PARSER_KEEP_TRIVIA")
-          @tokens = Array(Token).new(token_preload_capacity(@source, keep_trivia))
+          parser_init_trace("ctor2 start bytes=#{@source.bytesize}")
+          preload_capacity = if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_DISABLE_PARSER_PRELOAD")
+                               parser_init_trace("ctor2 preload disabled")
+                               0
+                             else
+                               token_preload_capacity(@source, keep_trivia)
+                             end
+          @tokens = Array(Token).new(preload_capacity)
+          parser_init_trace("ctor2 tokens array allocated capacity=#{preload_capacity}")
           @index = 0
           @arena.retain_source(@source)
           @diagnostics = [] of Diagnostic
@@ -215,9 +250,12 @@ module CrystalV2
           @macro_expr_brace_cache = Hash(Int32, Bool).new
           @allow_inline_rescue = true
           @lib_depth = 0
+          parser_init_trace("ctor2 token fill start")
           lexer.each_token(skip_trivia: !keep_trivia) { |token| @tokens << token }
+          parser_init_trace("ctor2 token fill done size=#{@tokens.size}")
           @lexer = nil
           @keep_trivia = keep_trivia
+          parser_init_trace("ctor2 done")
         end
 
         private def parse_program_roots_impl : Array(ExprId)
@@ -3020,6 +3058,25 @@ module CrystalV2
           return nil if end_offset > source_slice.size
 
           source_slice[start_offset, end_offset - start_offset]
+        end
+
+        private def char_literal_source_text_slice(span : Span) : Slice(UInt8)?
+          literal = source_span_slice(span)
+          if literal && literal.size >= 3 &&
+             literal[0] == 0x27_u8 &&
+             literal[literal.size - 1] == 0x27_u8
+            return literal
+          end
+
+          return nil unless macro_context? || @in_macro_expression
+
+          source_slice = @source.to_slice
+          start_offset = span.start_offset
+          end_offset = span.end_offset
+          return nil if start_offset <= 0 || end_offset >= source_slice.size
+          return nil unless source_slice[start_offset - 1] == 0x27_u8 && source_slice[end_offset] == 0x27_u8
+
+          source_slice[start_offset - 1, end_offset - start_offset + 2]
         end
 
         private def rebuild_char_literal_from_span(span : Span) : ExprId?
@@ -7960,8 +8017,8 @@ module CrystalV2
             # MacroPiece representation.
             pieces = Array(MacroPiece).new(128)
             buffer = IO::Memory.new
-            buffer_start_token : Token? = nil
-            buffer_end_token : Token? = nil
+            buffer_start_span : Span? = nil
+            buffer_end_span : Span? = nil
             # Self-hosted release stage2 has shown local Int32 depth counters
             # getting clobbered across ordinary text-token iterations in this
             # macro loop. Keep them in heap-backed boxes so nesting survives.
@@ -7991,30 +8048,30 @@ module CrystalV2
               debug_macro_for_steps += 1
 
               if macro_escape_sequence?
-                buffer_start_token ||= token
-                if buffer_end_token
-                  trim_gap = append_macro_gap(buffer, buffer_end_token, token, trim_gap)
+                buffer_start_span ||= token.span
+                if buffer_end_span
+                  trim_gap = append_macro_gap(buffer, buffer_end_span, token.span, trim_gap)
                 else
                   trim_gap = false
                 end
-                buffer_end_token = token
+                buffer_end_span = token.span
                 advance
                 escaped_start = current_token
                 case escaped_start.kind
                 when Token::Kind::LBracePercent, Token::Kind::MacroExprStart
-                  buffer_end_token, trim_gap = append_macro_text_token(buffer, escaped_start, buffer_end_token, trim_gap)
+                  buffer_end_span, trim_gap = append_macro_text_token(buffer, escaped_start, buffer_end_span, trim_gap)
                   advance
                   if escaped_start.kind == Token::Kind::LBracePercent
                     # Consume until %} so escaped macro controls don't affect nesting.
                     loop do
                       break if current_token.kind == Token::Kind::EOF
-                      buffer_end_token, trim_gap = append_macro_text_token(buffer, current_token, buffer_end_token, trim_gap)
+                      buffer_end_span, trim_gap = append_macro_text_token(buffer, current_token, buffer_end_span, trim_gap)
                       if current_token.kind == Token::Kind::PercentRBrace
                         advance
                         break
                       elsif current_token.kind == Token::Kind::Percent && peek_token.kind == Token::Kind::RBrace
                         advance
-                        buffer_end_token, trim_gap = append_macro_text_token(buffer, current_token, buffer_end_token, trim_gap)
+                        buffer_end_span, trim_gap = append_macro_text_token(buffer, current_token, buffer_end_span, trim_gap)
                         advance
                         break
                       end
@@ -8024,13 +8081,13 @@ module CrystalV2
                     # Consume until }} for escaped macro expressions.
                     loop do
                       break if current_token.kind == Token::Kind::EOF
-                      buffer_end_token, trim_gap = append_macro_text_token(buffer, current_token, buffer_end_token, trim_gap)
+                      buffer_end_span, trim_gap = append_macro_text_token(buffer, current_token, buffer_end_span, trim_gap)
                       if current_token.kind == Token::Kind::MacroExprEnd
                         advance
                         break
                       elsif current_token.kind == Token::Kind::RBrace && peek_token.kind == Token::Kind::RBrace
                         advance
-                        buffer_end_token, trim_gap = append_macro_text_token(buffer, current_token, buffer_end_token, trim_gap)
+                        buffer_end_span, trim_gap = append_macro_text_token(buffer, current_token, buffer_end_span, trim_gap)
                         advance
                         break
                       end
@@ -8039,21 +8096,21 @@ module CrystalV2
                   end
                   next
                 when Token::Kind::LBrace
-                  buffer_end_token, trim_gap = append_macro_text_token(buffer, escaped_start, buffer_end_token, trim_gap)
+                  buffer_end_span, trim_gap = append_macro_text_token(buffer, escaped_start, buffer_end_span, trim_gap)
                   advance
                   if current_token.kind == Token::Kind::Percent
-                    buffer_end_token, trim_gap = append_macro_text_token(buffer, current_token, buffer_end_token, trim_gap)
+                    buffer_end_span, trim_gap = append_macro_text_token(buffer, current_token, buffer_end_span, trim_gap)
                     advance
                     # Consume until %} for escaped \{% ... %}.
                     loop do
                       break if current_token.kind == Token::Kind::EOF
-                      buffer_end_token, trim_gap = append_macro_text_token(buffer, current_token, buffer_end_token, trim_gap)
+                      buffer_end_span, trim_gap = append_macro_text_token(buffer, current_token, buffer_end_span, trim_gap)
                       if current_token.kind == Token::Kind::PercentRBrace
                         advance
                         break
                       elsif current_token.kind == Token::Kind::Percent && peek_token.kind == Token::Kind::RBrace
                         advance
-                        buffer_end_token, trim_gap = append_macro_text_token(buffer, current_token, buffer_end_token, trim_gap)
+                        buffer_end_span, trim_gap = append_macro_text_token(buffer, current_token, buffer_end_span, trim_gap)
                         advance
                         break
                       end
@@ -8061,18 +8118,18 @@ module CrystalV2
                     end
                     next
                   elsif current_token.kind == Token::Kind::LBrace
-                    buffer_end_token, trim_gap = append_macro_text_token(buffer, current_token, buffer_end_token, trim_gap)
+                    buffer_end_span, trim_gap = append_macro_text_token(buffer, current_token, buffer_end_span, trim_gap)
                     advance
                     # Consume until }} for escaped \{{ ... }}.
                     loop do
                       break if current_token.kind == Token::Kind::EOF
-                      buffer_end_token, trim_gap = append_macro_text_token(buffer, current_token, buffer_end_token, trim_gap)
+                      buffer_end_span, trim_gap = append_macro_text_token(buffer, current_token, buffer_end_span, trim_gap)
                       if current_token.kind == Token::Kind::MacroExprEnd
                         advance
                         break
                       elsif current_token.kind == Token::Kind::RBrace && peek_token.kind == Token::Kind::RBrace
                         advance
-                        buffer_end_token, trim_gap = append_macro_text_token(buffer, current_token, buffer_end_token, trim_gap)
+                        buffer_end_span, trim_gap = append_macro_text_token(buffer, current_token, buffer_end_span, trim_gap)
                         advance
                         break
                       end
@@ -8100,12 +8157,12 @@ module CrystalV2
                 left_trim = macro_control_left_trim?
                 already_empty = pieces.empty?
                 trim_applied = left_trim
-                if buffer_end_token
-                  trim_gap = append_macro_gap(buffer, buffer_end_token, token, trim_gap)
+                if buffer_end_span
+                  trim_gap = append_macro_gap(buffer, buffer_end_span, token.span, trim_gap)
                 end
-                flush_macro_text(buffer, pieces, trim_applied, buffer_start_token, buffer_end_token)
-                buffer_start_token = nil
-                buffer_end_token = nil
+                flush_macro_text(buffer, pieces, trim_applied, buffer_start_span, buffer_end_span)
+                buffer_start_span = nil
+                buffer_end_span = nil
                 piece, effect, skip_whitespace = parse_macro_control_piece(left_trim)
                 if ENV["DEBUG_MACRO_BODY"]?
                   STDERR.puts "[MACRO_BODY_PIECE] keyword=#{piece.control_keyword.inspect} kind=#{piece.kind} effect=#{macro_control_effect_name(effect)} skip_ws=#{skip_whitespace ? 1 : 0} current=#{current_token.kind}:#{token_text(current_token).inspect}"
@@ -8158,12 +8215,12 @@ module CrystalV2
                 left_trim = macro_expression_left_trim?
                 already_empty = pieces.empty?
                 trim_applied = left_trim
-                if buffer_end_token
-                  trim_gap = append_macro_gap(buffer, buffer_end_token, token, trim_gap)
+                if buffer_end_span
+                  trim_gap = append_macro_gap(buffer, buffer_end_span, token.span, trim_gap)
                 end
-                flush_macro_text(buffer, pieces, trim_applied, buffer_start_token, buffer_end_token)
-                buffer_start_token = nil
-                buffer_end_token = nil
+                flush_macro_text(buffer, pieces, trim_applied, buffer_start_span, buffer_end_span)
+                buffer_start_span = nil
+                buffer_end_span = nil
                 piece, skip_whitespace = parse_macro_expression_piece(left_trim)
                 pieces << piece
 
@@ -8171,12 +8228,12 @@ module CrystalV2
                 next
               elsif macro_variable_start?
                 already_empty = pieces.empty?
-                if buffer_end_token
-                  trim_gap = append_macro_gap(buffer, buffer_end_token, token, trim_gap)
+                if buffer_end_span
+                  trim_gap = append_macro_gap(buffer, buffer_end_span, token.span, trim_gap)
                 end
-                flush_macro_text(buffer, pieces, false, buffer_start_token, buffer_end_token)
-                buffer_start_token = nil
-                buffer_end_token = nil
+                flush_macro_text(buffer, pieces, false, buffer_start_span, buffer_end_span)
+                buffer_start_span = nil
+                buffer_end_span = nil
                 piece, skip_whitespace = parse_macro_variable_piece
                 pieces << piece
                 trim_next_left = skip_whitespace
@@ -8184,8 +8241,8 @@ module CrystalV2
               end
 
               # Track start of text buffer
-              if buffer_start_token.nil? && buffer.size == 0
-                buffer_start_token = token
+              if buffer_start_span.nil? && buffer.size == 0
+                buffer_start_span = token.span
               end
 
               # Maintain block depth for regular language constructs so we don't
@@ -8219,33 +8276,33 @@ module CrystalV2
                 end
               end
 
-              if buffer_end_token
-                trim_gap = append_macro_gap(buffer, buffer_end_token, token, trim_gap)
+              if buffer_end_span
+                trim_gap = append_macro_gap(buffer, buffer_end_span, token.span, trim_gap)
               else
                 trim_gap = false
               end
               buffer.write(macro_token_text_slice(token))
-              buffer_end_token = token
+              buffer_end_span = token.span
               advance
             end
 
-            flush_macro_text(buffer, pieces, trim_final, buffer_start_token, buffer_end_token)
+            flush_macro_text(buffer, pieces, trim_final, buffer_start_span, buffer_end_span)
             pieces
           ensure
             @macro_mode -= 1
           end
         end
 
-        private def flush_macro_text(buffer, pieces, trim_trailing = false, start_token : Token? = nil, end_token : Token? = nil)
+        private def flush_macro_text(buffer, pieces, trim_trailing = false, start_span : Span? = nil, end_span : Span? = nil)
           return if buffer.size == 0
           text = String.new(buffer.to_slice)
           text = text.rstrip if trim_trailing
 
           # Capture span if we have start and end tokens
-          span = if start_token && end_token
-                   start_token.span.cover(end_token.span)
-                 elsif start_token
-                   start_token.span
+          span = if start_span && end_span
+                   start_span.cover(end_span)
+                 elsif start_span
+                   start_span
                  end
 
           pieces << MacroPiece.text(text, span)
@@ -13902,19 +13959,23 @@ current_token.kind == Token::Kind::Identifier &&
         private def append_macro_text_token(
           buffer : IO::Memory,
           token : Token,
-          previous_token : Token?,
+          previous_span : Span?,
           trim_gap : Bool,
-        ) : {Token, Bool}
-          if previous_token
-            trim_gap = append_macro_gap(buffer, previous_token, token, trim_gap)
+        ) : {Span, Bool}
+          if previous_span
+            trim_gap = append_macro_gap(buffer, previous_span, token.span, trim_gap)
           else
             trim_gap = false
           end
           buffer.write(macro_token_text_slice(token))
-          {token, trim_gap}
+          {token.span, trim_gap}
         end
 
         private def macro_token_text_slice(token : Token) : Slice(UInt8)
+          if literal = char_literal_source_text_slice(token.span)
+            return literal
+          end
+
           span = token.span
           start = span.start_offset
           finish = span.end_offset
@@ -13925,13 +13986,13 @@ current_token.kind == Token::Kind::Identifier &&
           token.slice
         end
 
-        private def append_macro_gap(buffer : IO::Memory, previous_token : Token, next_token : Token, trim_gap : Bool) : Bool
+        private def append_macro_gap(buffer : IO::Memory, previous_span : Span, next_span : Span, trim_gap : Bool) : Bool
           source_size = @source.bytesize
-          prev_end = previous_token.span.end_offset
-          next_start = next_token.span.start_offset
+          prev_end = previous_span.end_offset
+          next_start = next_span.start_offset
           if prev_end < 0 || next_start < prev_end || prev_end > source_size || next_start > source_size
             if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_MACRO_GAP")
-              STDERR.puts "[MACRO_GAP] skip prev=#{previous_token.kind} prev_end=#{prev_end} next=#{next_token.kind} next_start=#{next_start} source_size=#{source_size}"
+              STDERR.puts "[MACRO_GAP] skip prev_end=#{prev_end} next_start=#{next_start} source_size=#{source_size}"
             end
             return false
           end
