@@ -985,7 +985,15 @@ module CrystalV2
         stage2_debug("[STAGE2_DEBUG] hir setup maps ready size=#{main_arenas.size}", err_io)
         hir_mod = HIR::Module.new(input_file)
         hir_mod.bootstrap_reinitialize_runtime_state
-        hir_converter = HIR::AstToHir.new(first_arena, input_file, sources_by_arena, paths_by_arena, main_arenas, hir_module: hir_mod, link_libraries: link_libs)
+        # Self-hosted stage2 has repeatedly miscompiled the wide AstToHir
+        # constructor path. Keep constructor arguments minimal, then rebind
+        # the mutable bootstrap state through the narrower recovery helpers.
+        hir_converter = HIR::AstToHir.new(first_arena, input_file)
+        hir_converter.bootstrap_bind_core_state(first_arena, hir_mod)
+        hir_converter.bootstrap_bind_source_maps(sources_by_arena, paths_by_arena)
+        hir_converter.bootstrap_bind_main_arenas(main_arenas)
+        hir_converter.bootstrap_bind_link_libraries(link_libs)
+        hir_converter.bootstrap_reset_constructor_tail
         stage2_debug("[STAGE2_DEBUG] hir converter created", err_io)
         const_map_trace = BootstrapEnv.enabled?("CRYSTAL_V2_CONST_MAP_TRACE")
         if const_map_trace
@@ -1978,6 +1986,7 @@ module CrystalV2
         else
           STDERR.puts "[STAGE2_TRACE] step5: File.open start"; STDERR.flush
           # V2 BOOTSTRAP: File.open block crashes in stage2. Use lower-level LibC.
+          LibC.unlink(ll_file.to_unsafe)
           fd = LibC.open(ll_file.to_unsafe, LibC::O_WRONLY | LibC::O_CREAT | LibC::O_TRUNC, 0o644)
           if fd < 0
             err_io.puts "Failed to open #{ll_file} for writing"
@@ -2477,6 +2486,10 @@ module CrystalV2
         LibC.close(fd)
         buf[bytes_read < 0 ? 0 : bytes_read] = 0_u8
         source = String.new(buf, bytes_read < 0 ? 0 : bytes_read.to_i32)
+        # Self-hosted release builds can corrupt token/source slices backed by
+        # the raw read buffer. Copy once into a regular String before lexing so
+        # parser slices all point at stable GC-managed storage.
+        source = source.dup
         STDERR.puts "[S2_PARSE] read done size=#{source.bytesize}"; STDERR.flush
         if debug_parse
           out_io.puts "[STAGE2_DEBUG] parse_file_recursive read done size=#{source.size}"
@@ -2518,7 +2531,7 @@ module CrystalV2
               while expr_i < exprs.size
                 expr_id = exprs.unsafe_fetch(expr_i)
                 begin
-                  process_require_node(arena, expr_id, base_dir, input_file, input_base_dir, results, loaded, options, out_io, requires)
+                  process_require_node(arena, expr_id, source, base_dir, input_file, input_base_dir, results, loaded, options, out_io, requires)
                 rescue ex : IndexError
                   if options.verbose
                     log(options, out_io, "    [req] IndexError in require scan expr=#{expr_id.index}: #{ex.message}")
@@ -2621,6 +2634,19 @@ module CrystalV2
         if @parse_trace
           STDERR.puts "[REQSCAN] #{abs_path} exprs=#{expr_count}"
         end
+        if env_enabled?("CRYSTAL_V2_PARSE_ROOTS_TRACE")
+          expr_i = 0
+          while expr_i < expr_count
+            expr_id = exprs.unsafe_fetch(expr_i)
+            if expr_id.index >= 0 && expr_id.index < arena.size
+              node = arena[expr_id]
+              STDERR.puts "[PARSE_ROOT] file=#{abs_path} idx=#{expr_i} expr=#{expr_id.index} kind=#{Frontend.node_kind(node)} class=#{node.class}"
+            else
+              STDERR.puts "[PARSE_ROOT] file=#{abs_path} idx=#{expr_i} expr=#{expr_id.index} kind=INVALID"
+            end
+            expr_i += 1
+          end
+        end
 
         # Bootstrap debug: always log arena/expr stats for diagnosis
         if options.verbose
@@ -2638,7 +2664,7 @@ module CrystalV2
         while i < expr_count
           expr_id = exprs.unsafe_fetch(i)
           begin
-            process_require_node(arena, expr_id, base_dir, input_file, input_base_dir, results, loaded, options, out_io, requires)
+            process_require_node(arena, expr_id, source, base_dir, input_file, input_base_dir, results, loaded, options, out_io, requires)
           rescue ex : IndexError
             if options.verbose
               log(options, out_io, "    [req] IndexError in require scan expr=#{expr_id.index}: #{ex.message}")
@@ -2764,6 +2790,7 @@ module CrystalV2
       private def process_require_node(
         arena : Frontend::AstArena,
         expr_id : Frontend::ExprId,
+        source : String,
         base_dir : String,
         input_file : String,
         input_base_dir : String,
@@ -2799,7 +2826,7 @@ module CrystalV2
             body_i = 0
             while body_i < body.size
               child_id = body.unsafe_fetch(body_i)
-              process_require_node(arena, child_id, base_dir, input_file, input_base_dir, results, loaded, options, out_io, requires_out)
+              process_require_node(arena, child_id, source, base_dir, input_file, input_base_dir, results, loaded, options, out_io, requires_out)
               body_i += 1
             end
           end
@@ -2852,19 +2879,25 @@ module CrystalV2
           # Fall back to both branches if the condition is unknown.
           condition = evaluate_macro_condition(arena, node.condition, Runtime.target_flags)
           if condition == true
-            process_require_node(arena, node.then_body, base_dir, input_file, input_base_dir, results, loaded, options, out_io, requires_out)
+            process_require_node(arena, node.then_body, source, base_dir, input_file, input_base_dir, results, loaded, options, out_io, requires_out)
           elsif condition == false
             if else_body = node.else_body
-              process_require_node(arena, else_body, base_dir, input_file, input_base_dir, results, loaded, options, out_io, requires_out)
+              process_require_node(arena, else_body, source, base_dir, input_file, input_base_dir, results, loaded, options, out_io, requires_out)
             end
           else
-            process_require_node(arena, node.then_body, base_dir, input_file, input_base_dir, results, loaded, options, out_io, requires_out)
+            process_require_node(arena, node.then_body, source, base_dir, input_file, input_base_dir, results, loaded, options, out_io, requires_out)
             if else_body = node.else_body
-              process_require_node(arena, else_body, base_dir, input_file, input_base_dir, results, loaded, options, out_io, requires_out)
+              process_require_node(arena, else_body, source, base_dir, input_file, input_base_dir, results, loaded, options, out_io, requires_out)
             end
           end
         when Frontend::MacroLiteralNode
-          macro_literal_require_texts(arena, node, Runtime.target_flags).each do |text|
+          raw_text = extract_span_text(node.span, source)
+          texts = if raw_text
+                    macro_literal_texts_from_raw(raw_text, Runtime.target_flags)
+                  else
+                    macro_literal_require_texts(arena, node, Runtime.target_flags)
+                  end
+          texts.each do |text|
             next unless text.includes?("require")
             scan_source_require_literals(text) do |req_path|
               resolved = resolve_require_path(req_path, base_dir, input_base_dir)
@@ -3913,8 +3946,9 @@ module CrystalV2
         node : Frontend::MacroLiteralNode,
         flags : Set(String)
       ) : Array(String)
-        if node.pieces.size == 1 && node.pieces[0].kind == Frontend::MacroPiece::Kind::Text
-          if text = node.pieces[0].text
+        pieces = node.pieces
+        if pieces.size == 1 && pieces.unsafe_fetch(0).kind == Frontend::MacroPiece::Kind::Text
+          if text = pieces.unsafe_fetch(0).text
             return [] of String unless text.includes?("require") || text.includes?("skip_file")
             return macro_literal_texts_from_raw(text, flags) if text.includes?("{%")
           end
@@ -3924,7 +3958,9 @@ module CrystalV2
         control_stack = [] of {Bool, Bool, Bool} # {parent_active, branch_taken, active}
         active = true
 
-        node.pieces.each do |piece|
+        piece_i = 0
+        while piece_i < pieces.size
+          piece = pieces.unsafe_fetch(piece_i)
           case piece.kind
           when Frontend::MacroPiece::Kind::Text
             if active && (text = piece.text)
@@ -3983,6 +4019,7 @@ module CrystalV2
           else
             # Ignore expression/macro var pieces for require scanning.
           end
+          piece_i += 1
         end
 
         texts
@@ -3995,19 +4032,23 @@ module CrystalV2
         return nil if node.pieces.empty?
         builder = String::Builder.new
         bytesize = source.bytesize
-        node.pieces.each do |piece|
+        pieces = node.pieces
+        piece_i = 0
+        while piece_i < pieces.size
+          piece = pieces.unsafe_fetch(piece_i)
           if span = piece.span
             start = span.start_offset
             length = span.end_offset - span.start_offset
-            next if length <= 0
-            next if start < 0 || start >= bytesize
-            if start + length > bytesize
-              length = bytesize - start
+            if length > 0 && start >= 0 && start < bytesize
+              if start + length > bytesize
+                length = bytesize - start
+              end
+              builder << source.byte_slice(start, length)
             end
-            builder << source.byte_slice(start, length)
           elsif text = piece.text
             builder << text
           end
+          piece_i += 1
         end
         builder.to_s
       end
