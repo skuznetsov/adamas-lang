@@ -19300,9 +19300,7 @@ module Crystal::HIR
               return_start = mono_debug ? Time.instant : nil
               type_literal_name = infer_type_literal_return_name_from_body(member, class_name)
               enum_return_name : String? = nil
-              return_type = if rt = member.return_type
-                              safe_str_guard(rt, "next")
-                              rt_name = (safe_slice_to_string(rt) || "")
+              return_type = if rt_name = def_explicit_return_type_from_source(member, member_arena)
                               resolved_rt_name = resolve_type_name_in_context(rt_name)
                               enum_return_name = resolve_enum_name(resolved_rt_name)
                               if env_get("DEBUG_ENUM_RETURN") && class_name == "File::Info" && method_name == "type"
