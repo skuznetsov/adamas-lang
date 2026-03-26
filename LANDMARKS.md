@@ -3,6 +3,34 @@
 Updated: 2026-03-26
 Context: compiler/bootstrap/stage2-stability
 
+[LM-244|verified]: the live self-hosted nested-module crash after [LM-242] was
+not fundamentally in nested `DefNode` registration; that model was confounded
+by an earlier `extend` target bug inside `register_module_with_name`. Fresh
+no-prelude reducers split the family cleanly on current-source debug candidates
+built from `/tmp/stage1_release_29966272`:
+- `tmp/reduce_nested_module_extend_self_only.cr` is `stage1 green / stage2 red`
+- `tmp/reduce_nested_module_extend_other.cr` is `stage1 green / stage2 red`
+- `tmp/reduce_nested_module_def_self_receiver.cr` is `stage1 green / stage2 green`
+- `tmp/reduce_nested_module_def_arena.cr` becomes green once the earlier
+  `extend` handling is fixed
+This matrix falsifies generic nested-module method registration as the
+immediate sink and localizes the root cause to module-body `ExtendNode.target`
+classification for nested modules, before any later `register_function_type` /
+`set_function_def_entry` tail. The verified fix is narrow: add
+`extend_target_is_self_in_arena?` and use it in `register_module_with_name`
+instead of directly reading `IdentifierNode#name` in the `extend` scan. On the
+fresh retest candidate `/tmp/stage2_current_debug_modulefix_retest`, all four reducers
+above are green under `CRYSTAL_V2_STOP_AFTER_HIR=1 --release --no-prelude`, and
+the new stage1-vs-stage2 HIR oracle
+`regression_tests/stage2_nested_module_extend_target_hir_oracle.sh` matches.
+Boundary/adversary:
+- stage2 still needs `CRYSTAL_V2_TRUST_SLICE_ADDR=1` on this oracle because the
+  older Mach-readable-address guard family (`LibMachVM.mach_task_self`) remains
+  a separate noise source
+- this landmark closes the nested-module `extend` target crash family, not the
+  full downstream stage3 bootstrap
+{F/G/R: 0.97/0.82/0.97} [verified]
+
 [LM-221|verified]: absolute-path class/struct/enum source recovery must extract
 the leaf name, not the first namespace segment. The live self-hosted stage2
 carrier was narrowed from full `stage3` to a tiny no-prelude file

@@ -7552,6 +7552,30 @@ module Crystal::HIR
       end
     end
 
+    private def extend_target_is_self_in_arena?(
+      expr_id : ExprId,
+      arena : CrystalV2::Compiler::Frontend::ArenaLike,
+    ) : Bool
+      return false if expr_id.invalid?
+
+      node = arena[expr_id]
+      return true if node.is_a?(CrystalV2::Compiler::Frontend::SelfNode)
+
+      if source = source_for_arena(arena)
+        if raw = slice_source_for_expr_in_arena(expr_id, arena, source)
+          text = raw.strip
+          return true if text == "self"
+          return false unless text.empty?
+        end
+      end
+
+      if node.is_a?(CrystalV2::Compiler::Frontend::IdentifierNode)
+        return (safe_slice_to_string(node.name) || "") == "self"
+      end
+
+      false
+    end
+
     private def stringify_type_expr(expr_id : ExprId) : String?
       return nil if expr_id.invalid?
 
@@ -14875,25 +14899,14 @@ module Crystal::HIR
       if body = node.body
         extend_self = false
         extend_nodes = [] of CrystalV2::Compiler::Frontend::ExtendNode
-        if env_get("DEBUG_EXTEND_REGISTER") && module_name.includes?("ImplInfo")
-          STDERR.puts "[EXTEND_SCAN] module=#{module_name} body_size=#{body.size}"
-        end
         body.each do |expr_id|
           next if expr_id.null_ptr? || expr_id.invalid?
           member = unwrap_visibility_member(@arena[expr_id])
-          if env_get("DEBUG_EXTEND_REGISTER") && module_name.includes?("ImplInfo")
-            STDERR.puts "[EXTEND_SCAN_MEMBER] module=#{module_name} member=#{member.class.name}"
-          end
           next unless member.is_a?(CrystalV2::Compiler::Frontend::ExtendNode)
           extend_nodes << member
           next if member.target.null_ptr? || member.target.invalid?
-          target_node = @arena[member.target]
-          case target_node
-          when CrystalV2::Compiler::Frontend::SelfNode
+          if extend_target_is_self_in_arena?(member.target, @arena)
             extend_self = true
-          when CrystalV2::Compiler::Frontend::IdentifierNode
-            safe_str_guard(target_node.name, "next")
-            extend_self = (safe_slice_to_string(target_node.name) || "") == "self"
           end
         end
         @module_extend_self.add(module_name) if extend_self
@@ -15211,10 +15224,6 @@ module Crystal::HIR
           end
           visited_extends = Set(String).new
           extend_nodes.each do |ext|
-            if env_get("DEBUG_EXTEND_REGISTER") && module_name.includes?("ImplInfo")
-              target_str = resolve_path_like_name(ext.target) || "?"
-              STDERR.puts "[EXTEND_REGISTER_CALL] module=#{module_name} target=#{target_str}"
-            end
             register_module_class_methods_for(
               module_name,
               ext.target,

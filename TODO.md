@@ -1,6 +1,19 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-03-26)
 
 ## Current Status
+- **Fresh nested-module extend target root cause split (2026-03-26, current session)**:
+  - the previous “nested module def registration tail” model was too broad for the live self-hosted blocker
+  - clean no-prelude reducers split the family sharply:
+    - `module A; module B; extend self; end; end` was `stage1 green / stage2 red`
+    - `module A; module B; extend M; end; end` with a local helper module was also `stage1 green / stage2 red`
+    - `module A; module B; def self.x : Int32; 1; end; end; end` stayed `stage1 green / stage2 green`
+  - that matrix falsifies generic nested-module method registration as the immediate sink and pins the active root cause to nested-module `ExtendNode` target handling inside `register_module_with_name`, before any later function-registration tail
+  - the verified fix is narrow and source-safe: nested module/module-body `extend` scanning now classifies `member.target` through `extend_target_is_self_in_arena?` instead of directly reading `IdentifierNode#name` in the fragile hot path
+  - verified result:
+    - current-source clean debug candidate keeps `reduce_nested_module_extend_self_only.cr`, `reduce_nested_module_extend_other.cr`, `reduce_nested_module_def_arena.cr`, and `reduce_nested_module_def_self_receiver.cr` all green under `CRYSTAL_V2_STOP_AFTER_HIR=1 --release --no-prelude --no-ast-cache`
+    - stage1-vs-stage2 HIR now matches on the new oracle `regression_tests/stage2_nested_module_extend_target_hir_oracle.sh`
+  - environment note:
+    - the oracle still needs `CRYSTAL_V2_TRUST_SLICE_ADDR=1` on stage2 to bypass the older Mach-readable-address guard family (`LibMachVM.mach_task_self`); that is a pre-existing independent noise source, not part of this fix
 - **Branch**: `bootstrap-benchmark` (merged `inline-structs`)
 - **Regression baseline**: last broadly re-verified count from the earlier inline-struct phase was `87/88 + 18/20`; later parser/HIR/bootstrap changes have not re-established that full baseline yet
 - **Fresh macro-expr brace normalization (2026-03-26)**:
