@@ -2558,37 +2558,39 @@ module Crystal::MIR
           @emitted_value_names.add(s[0...eq])
         end
       end
-      # V2: normalize "ptr 0" → "ptr null" (0 is invalid for ptr type in LLVM IR)
-      if s.includes?("ptr 0")
-        s = s.gsub("ptr 0,", "ptr null,")
-             .gsub("ptr 0)", "ptr null)")
-             .gsub("ptr 0 ", "ptr null ")
-        if s.ends_with?("ptr 0")
-          s = s[0...-1] + "null"
-        end
-      end
-      @output << ("  " * @indent) << s << "\n"
+      @output << ("  " * @indent) << normalize_ptr_zero_line(s) << "\n"
     end
 
     private def emit_raw(s : String)
-      # V2: normalize "ptr 0" → "ptr null" everywhere in LLVM IR output
-      if s.includes?("ptr 0") && !s.includes?("ptr 0x")
-        s = s.gsub("ptr 0,", "ptr null,")
-             .gsub("ptr 0)", "ptr null)")
-             .gsub("ptr 0\n", "ptr null\n")
-             .gsub("ptr 0 ", "ptr null ")
-      end
-      @output << s
+      @output << normalize_ptr_zero_text(s)
     end
 
     # Emit text to the top-level output buffer. During block buffering,
     # this routes to the main output to avoid nesting definitions inside functions.
     # When not buffering, this is the same as emit_raw.
     private def emit_toplevel(s : String)
+      normalized = normalize_ptr_zero_text(s)
       if tl = @toplevel_output
-        tl << s
+        tl << normalized
       else
-        @output << s
+        @output << normalized
+      end
+    end
+
+    private def normalize_ptr_zero_line(line : String) : String
+      return line unless line.includes?("ptr 0")
+      # Do not rewrite LLVM string literal payloads like c"ptr 0,\00":
+      # changing the bytes without updating [N x i8] corrupts IR.
+      return line if line.includes?("c\"")
+      line.gsub(/ptr 0(?=[,\)\]\}\s]|$)/, "ptr null")
+    end
+
+    private def normalize_ptr_zero_text(text : String) : String
+      return text unless text.includes?("ptr 0")
+      String.build(text.bytesize + 16) do |io|
+        text.each_line(chomp: false) do |line|
+          io << normalize_ptr_zero_line(line)
+        end
       end
     end
 

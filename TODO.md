@@ -185,6 +185,17 @@
     - isolated one-line fix host `/tmp/stage1_debug_u64fix_6af60757` => `not reproduced: compiler survived the UInt64 literal MIR overflow carrier`
   - operational proof on an isolated clean worktree with only `builder.const_uint(lit.uint_value, ...)` applied is stronger than the reduced oracle alone: self-hosted `stage1 -> stage2 --debug` no longer dies in MIR, reaches `step4: MIR funcs=31221`, completes `generate(io) done`, and only then fails later in `llc` with `error: constant expression type mismatch: got type '[10 x i8]' but expected '[7 x i8]'` on `c"ptr null,\00"`
   - caveat: this commit class closes the MIR overflow blocker but does **not** fully solve unsigned-literal correctness yet; the large-`u64` no-prelude MIR oracle still zeroes `9223372036854775808u64` and `18446744073709551615u64` to `const 0 : UInt64`, so a second unsigned-literal preservation bug remains below the crash fix
+- **Fresh ptr-zero string-constant normalization hardening (2026-03-26)**:
+  - the new late `llc` mismatch after the unsigned-literal fix was not a second independent LLVM mystery: the smallest self-hosted carrier is just `puts "ptr 0,"`, and the new single-compiler oracle `bash regression_tests/stage1_ptr_zero_string_constant_repro.sh <compiler>` reproduces the exact same failure class on the isolated host with only the unsigned-literal fix applied
+  - the verified root cause is a post-emit text-rewrite bug, not string interning and not `llvm_c_string_escape`: `emit_crystal_string_constant` computes `len = str.bytesize + 1` first, then the old global `ptr 0 -> ptr null` normalization in `emit` / `emit_raw` / `emit_toplevel` rewrote the payload bytes inside LLVM literals like `c"ptr 0,\00"` to `c"ptr null,\00"` without updating `[N x i8]`
+  - that breaks a concrete backend invariant: declared LLVM string-array length must match the emitted escaped payload bytes; the reduced red witness shows the exact drift directly:
+    - old isolated host `/tmp/stage1_debug_u64fix_6af60757` => `llc ... error: constant expression type mismatch: got type '[10 x i8]' but expected '[7 x i8]'`
+    - offending line: `@.str.49.data = ... [7 x i8] c"ptr null,\00"`
+  - the working fix is line-aware instead of global string-wide substitution: funnel `emit`, `emit_raw`, and `emit_toplevel` through `normalize_ptr_zero_line` / `normalize_ptr_zero_text`, and explicitly skip LLVM string literal payload lines (`c"..."`) so only real pointer tokens are normalized
+  - verified on an isolated clean host rebuilt from the same worktree with only that normalization hunk added:
+    - `bash regression_tests/stage1_ptr_zero_string_constant_repro.sh /tmp/stage1_debug_u64_ptrzero_6af60757`
+      => `not reproduced: ptr-zero string literal compiles and runs correctly`
+  - operational proof now matches the reducer: guarded clean `stage1 -> stage2 --debug` with the isolated patched host `/tmp/stage1_debug_u64_ptrzero_6af60757` no longer dies in `llc`, produces `/tmp/stage2_debug_u64_ptrzero_6af60757`, and exits `0` after `~403s`
 - **Current frontier**: stage3 bootstrap is still the top operational blocker (`stage2 --release -> stage3 --release` timing out after `1200s`), but the cleanest newly reduced correctness bug is now the HIR-level `Hash(UInt32, String)#[] -> Union String | UInt32` drift. For backend-only reducers, the abstract-char llvm oracle has now moved below the old empty-block corruption and is concentrated on missing type metadata/type defs, while tiny self-hosted `--emit llvm-ir --no-link` still crashes in `emit_primitive_binary_override` and float-literal HIR printing still trips the separate `Printer$Dshortest$$Float64_IO` stub.
   - updated frontier after the macro-span + macro-body span-tracking fixes:
     `stage2 --release -> stage3 --release` no longer sits at the old crash-class frontier; the remaining reduced parser blocker is now `abstract struct + {% begin %} + do/end char loop`, and stdlib `enum.cr` parse-only now fails with the same controlled `Index out of bounds` class instead of a segfault
@@ -194,6 +205,8 @@
     the alias-specific `register_alias` segfault on tiny no-prelude carriers is closed; the next reduced stop on those carriers is the shared `HIR::Taint << Parameter` abort, while full operational `stage2 --release` stays green and is ready for another `stage2 -> stage3` measurement pass
   - updated frontier after the clean unsigned-literal MIR fix:
     the first clean `stage1 -> stage2` failure is no longer the old MIR `Arithmetic overflow`; the next clean bootstrap blocker is now late LLVM/llc string-constant emission, currently reproducing as `constant expression type mismatch` on `c"ptr null,\00"` after `generate(io) done`
+  - updated frontier after the ptr-zero string-constant hardening:
+    the late `c"ptr null,\00"` length-mismatch class is now reduced and operationally fixed for clean `stage1 -> stage2 --debug`; the next useful operational checks are clean `stage1 -> stage2 --release` and then `stage2 -> stage3`, to see which frontier remains once this backend payload-corruption family is removed
 
 ## VERIFIED: Fix `ptr 0` → `ptr null` in stage2 LLC
 
