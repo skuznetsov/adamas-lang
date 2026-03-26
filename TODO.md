@@ -144,6 +144,19 @@
   - a second enum bug is independent and lower-confidence but verified as separate: self-hosted `stage2` on a fresh local enum carrier (`enum Kind ...`) segfaults before `HIR` in `AstToHir#resolve_enum_member_value` via `register_enum_with_name_in_current_arena`, so the enum-registration crash and the stage1 bare-enum dispatch drift should be tracked as different corridors unless a shared invariant is later proven
   - fresh 2026-03-26 root cause fix: `resolve_method_call` was receiving the correct bare-enum owner via `@enum_value_types[receiver_id]`, but then immediately clobbered it with `get_type_name_from_ref(receiver_type)` (`Int32`), and the method-resolution cache key also ignored the enum owner entirely
   - current debug stage1 candidate `/tmp/stage1_enum_owner_probe` now keeps the split correct on the combined cache oracle: one `Int32#primitive?` for `1.primitive?`, one `Kind#primitive?` for `Kind::V16.primitive?` (`bash regression_tests/stage1_enum_literal_owner_hir_oracle.sh /tmp/stage1_enum_owner_probe`)
+- **Fresh source-fallback require dedupe root-cause split (2026-03-26)**:
+  - old self-hosted `stage2` abort during full-project parse-only was not just “somewhere in macro_expander”: a new synthetic no-prelude oracle with `17` local `require "./dep_N"` entries isolates the failure to `CLI#extract_require_literals_from_source`
+  - exact split:
+    - trusted host stage1 green on `bash regression_tests/stage2_source_require_fallback_uniq_repro.sh /tmp/stage1_requireuniq_probe /tmp/stage2_release_enum_owner` stage1 control
+    - old self-hosted stage2 red on the same oracle, even with `--no-ast-cache`, with `STUB CALLED: Set...` and `Abort (exit 134)` after `source_requires_fallback` flips true
+    - this proves the first live offender is the stdlib `Array(String)#uniq` large-array path (`size > 16` -> `Set`), not only `save_require_cache`
+  - current narrow fix is bootstrap-local and order-preserving: `CLI#extract_require_literals_from_source` and `CLI#save_require_cache` now use a manual stable linear dedupe helper instead of `Array#uniq`
+  - verified on fresh host-built stage1 `/tmp/stage1_requireuniq_probe` and self-hosted release stage2 `/tmp/stage2_requireuniq_probe`:
+    - `bash regression_tests/stage2_source_require_fallback_uniq_repro.sh /tmp/stage1_requireuniq_probe /tmp/stage2_requireuniq_probe`
+      => `not reproduced: stage2 survived synthetic source-fallback require dedupe`
+    - `scripts/run_safe.sh /tmp/build_stage2_requireuniq_probe.sh 1800 12288`
+      => self-hosted `stage2 --release` green, `[EXIT: 0] after ~462s`
+  - this closes one real bootstrap blocker but not the whole parse frontier: full-project `CRYSTAL_V2_STOP_AFTER_PARSE=1 --release --no-ast-cache` on `/tmp/stage2_requireuniq_probe` still fast-segfaults later after `src/stdlib/unicode/unicode.cr` `creating parser`, so the next blocker is now below require dedupe
 - **Current frontier**: stage3 bootstrap is still the top operational blocker (`stage2 --release -> stage3 --release` timing out after `1200s`), but the cleanest newly reduced correctness bug is now the HIR-level `Hash(UInt32, String)#[] -> Union String | UInt32` drift. For backend-only reducers, the abstract-char llvm oracle has now moved below the old empty-block corruption and is concentrated on missing type metadata/type defs, while tiny self-hosted `--emit llvm-ir --no-link` still crashes in `emit_primitive_binary_override` and float-literal HIR printing still trips the separate `Printer$Dshortest$$Float64_IO` stub.
   - updated frontier after the macro-span + macro-body span-tracking fixes:
     `stage2 --release -> stage3 --release` no longer sits at the old crash-class frontier; the remaining reduced parser blocker is now `abstract struct + {% begin %} + do/end char loop`, and stdlib `enum.cr` parse-only now fails with the same controlled `Index out of bounds` class instead of a segfault

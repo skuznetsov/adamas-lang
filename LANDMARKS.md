@@ -1,7 +1,30 @@
 # LANDMARKS
 
-Updated: 2026-03-25
+Updated: 2026-03-26
 Context: compiler/bootstrap/stage2-stability
+
+[LM-219|verified]: self-hosted source-fallback require dedupe must avoid stdlib
+`Array#uniq` on large arrays. The new synthetic oracle
+`regression_tests/stage2_source_require_fallback_uniq_repro.sh` builds a
+no-prelude root file with `17` local `require "./dep_N"` entries; trusted host
+stage1 parses it cleanly, while the old self-hosted release stage2 aborts even
+under `--no-ast-cache` with `STUB CALLED: Set...` / `Abort (exit 134)` after
+`source_requires_fallback` flips true. That isolates the first live offender to
+`src/compiler/cli.cr` `extract_require_literals_from_source` and proves the
+crash is not only in cache-save cleanup. The narrow fix replaces `requires.uniq`
+in both `extract_require_literals_from_source` and `save_require_cache` with a
+manual stable linear dedupe helper; fresh host-built stage1
+`/tmp/stage1_requireuniq_probe` then rebuilds self-hosted release stage2
+`/tmp/stage2_requireuniq_probe` cleanly, and the same oracle turns green
+(`not reproduced`). Boundary/adversary:
+- this closes the `Array(String)#uniq -> Set` bootstrap abort, but not the whole
+  parse frontier; full-project `CRYSTAL_V2_STOP_AFTER_PARSE=1 --release
+  --no-ast-cache` on `/tmp/stage2_requireuniq_probe` still fast-segfaults later
+  after `src/stdlib/unicode/unicode.cr` `creating parser`
+- reusable pattern: when a bootstrap bug only appears once a collection grows
+  past `16`, check whether stdlib switches from linear scan to `Set`/`Hash`
+  internally before blaming the surrounding parser or recursion logic
+{F/G/R: 0.97/0.84/0.96} [verified]
 
 [LM-218|verified]: the old `process/executable_path` / `crystal/system/windows`
 self-hosted crash was a real source-fallback semantics bug, not a surviving

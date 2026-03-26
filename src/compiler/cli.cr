@@ -3013,7 +3013,20 @@ module CrystalV2
             requires << req_path
           end
         end
-        requires.uniq
+        stable_unique_strings(requires)
+      end
+
+      private def stable_unique_strings(values : Array(String)) : Array(String)
+        return values.dup if values.size <= 1
+
+        deduped = [] of String
+        i = 0
+        while i < values.size
+          value = values.unsafe_fetch(i)
+          deduped << value unless deduped.includes?(value)
+          i += 1
+        end
+        deduped
       end
 
       private def require_cache_path(file_path : String) : String
@@ -3038,7 +3051,7 @@ module CrystalV2
       end
 
       private def save_require_cache(file_path : String, requires : Array(String))
-        unique = requires.uniq
+        unique = stable_unique_strings(requires)
         return if unique.empty?
 
         cache_path = require_cache_path(file_path)
