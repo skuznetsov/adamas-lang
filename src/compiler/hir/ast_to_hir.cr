@@ -4227,7 +4227,7 @@ module Crystal::HIR
       return nil if line_start >= header_end
 
       header = snippet.byte_slice(line_start, header_end - line_start)
-      definition_name_from_header_text(header, [prefix])
+      definition_leaf_name_from_header_text(header, [prefix])
     end
 
     private def definition_header_text_before_offset(
@@ -4280,6 +4280,46 @@ module Crystal::HIR
       name
     end
 
+    private def definition_leaf_name_from_header_text(
+      header : String,
+      prefixes : Array(String),
+    ) : String?
+      matched_prefix = prefixes.find { |prefix| header.starts_with?(prefix) }
+      return nil unless matched_prefix
+
+      rest = header.byte_slice(matched_prefix.bytesize, header.bytesize - matched_prefix.bytesize).strip
+      return nil if rest.empty?
+
+      name_end = 0
+      while name_end < rest.bytesize
+        ch = rest.byte_at(name_end)
+        if ch == ':'.ord
+          break unless name_end + 1 < rest.bytesize && rest.byte_at(name_end + 1) == ':'.ord
+          name_end += 2
+          next
+        end
+        break if ch == ' '.ord || ch == '\t'.ord || ch == ';'.ord || ch == '<'.ord || ch == '('.ord
+        name_end += 1
+      end
+      return nil if name_end == 0
+
+      name = rest.byte_slice(0, name_end)
+      return nil if name.empty?
+      if name.starts_with?("::")
+        name = name.bytesize > 2 ? name.byte_slice(2, name.bytesize - 2) : ""
+      end
+      return nil if name.empty?
+      if idx = name.rindex("::")
+        leaf_start = idx + 2
+        leaf_size = name.bytesize - leaf_start
+        return nil if leaf_size <= 0
+        name = name.byte_slice(leaf_start, leaf_size)
+      end
+      return nil if name.empty?
+
+      name
+    end
+
     private def enum_header_text_from_source(
       node : CrystalV2::Compiler::Frontend::EnumNode,
       source : String,
@@ -4319,7 +4359,7 @@ module Crystal::HIR
       header = enum_header_text_from_source(node, source)
       return nil unless header
 
-      if name = definition_name_from_header_text(header, ["enum "])
+      if name = definition_leaf_name_from_header_text(header, ["enum "])
         return name
       end
 
@@ -4394,7 +4434,7 @@ module Crystal::HIR
       if source
         prefixes = node.is_struct ? ["struct "] : ["class "]
         if header = definition_header_text_from_source(node.span, source, prefixes)
-          if name = definition_name_from_header_text(header, prefixes)
+          if name = definition_leaf_name_from_header_text(header, prefixes)
             return name
           end
         end

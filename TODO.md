@@ -9,6 +9,20 @@
   - the actual fix now pre-normalizes brace-like `{{ ... }}` pairs once after token preload and removes the hot-path token-array mutation entirely; fresh self-hosted release `/tmp/stage2_release_macrobrace_normalized` still builds green from `/tmp/stage1_release_29966272` in `[EXIT: 0] after ~167s`
   - downstream signal moved exactly as expected: `bash regression_tests/stage2_time_parse_repro.sh /tmp/stage2_release_macrobrace_normalized` is now green (`not reproduced ... all 5 attempts`), and the old abstract-macro char oracle still stays green through `HIR`/`MIR` and only reaches the pre-existing `ll` diff
   - this does **not** close the whole parse frontier: custom repeated stats on the fixed binary improved but remain non-zero (`trivial-root + default prelude = 1/15`, full `src/crystal_v2.cr --release = 1/5`), and the surviving full-project parse-only crash moved later from the old `time/unicode` corridor into `src/compiler/semantic/types/*` (latest observed failure at `array_type.cr` between `file exists, reading` and `read done`)
+- **Fresh absolute generic header leaf-name fix (2026-03-26)**:
+  - the new `Crystal::Crystal` frontier is now root-caused, not guessed: it was not a corrupted `node.name` slice and not a `Set(String)` primary failure. A narrow debug self-hosted probe on `src/stdlib/crystal/small_deque.cr --release --STOP_AFTER_HIR` showed `class_name_from_node` falling back to source text for absolute-path headers like `struct Crystal::PointerLinkedList(T)` and extracting only the first namespace segment (`Crystal`) because `definition_name_from_header_text` stopped at the first `:`
+  - that made generic accessor registration synthesize `Crystal::Crystal` instead of `Crystal::PointerLinkedList`, which then fed the later `resolve_class_name_in_context` / `Hash(String, Nil)` crash corridor
+  - the verified fix is leaf-aware source recovery for class/struct/enum headers only: `class_name_from_leading_snippet_header`, `class_name_from_node`, and `enum_name_from_node` now use `definition_leaf_name_from_header_text`, while `module_name_from_node` deliberately stays on wrapper/head extraction
+  - new fast oracle:
+    `bash regression_tests/stage2_absolute_generic_header_leaf_hir_oracle.sh /tmp/stage1_release_29966272 /tmp/stage2_release_leafnamefix`
+    => `not reproduced: stage2 preserves absolute generic header leaf names in HIR template registration`
+  - the oracle splits the fix cleanly:
+    - trusted `stage1` on `struct Crystal::PointerLinkedList(T); getter size : Int32 = 0; end` => `Crystal::PointerLinkedList`
+    - old self-hosted `stage2` `/tmp/stage2_release_aliasctxguard` => `Crystal::Crystal`
+    - fixed self-hosted builds (`/tmp/stage2_debug_leafnamefix`, `/tmp/stage2_release_leafnamefix`) => `Crystal::PointerLinkedList`
+  - downstream movement is real but incomplete:
+    - full `src/stdlib/crystal/small_deque.cr --release --STOP_AFTER_HIR` on `/tmp/stage2_release_leafnamefix` no longer logs bogus `Crystal::Crystal`; it now reaches `Crystal::PointerLinkedList`
+    - full `stage3 --release --STOP_AFTER_HIR` on `/tmp/stage2_release_leafnamefix` still reds immediately after parse and remains in the later `Hash(String, Nil)#find_entry_with_index(String) -> resolve_class_name_in_context -> build_template_accessor_class_info` family
 - **Fresh nested-module HIR stabilization (2026-03-26)**:
   - earlier cache-version asymmetry in `register_nested_module` was real but secondary: probe-only `bump_module_defs_cache_version` alone left the minimal no-prelude `module A::B::C` carrier red
   - the actual stage3 blocker sat in the same function's `extend_nodes = body.compact_map { ... }` corridor: under self-hosted stage2, nested-module bodies with no `ExtendNode` members could still enter `extend_nodes.each`, and `lldb` showed the crash at `register_module_class_methods_for(ext.target, ...)` via `Pointer(Void)#target`
@@ -219,7 +233,12 @@
     - `bash regression_tests/stage1_ptr_zero_string_constant_repro.sh /tmp/stage1_debug_u64_ptrzero_6af60757`
       => `not reproduced: ptr-zero string literal compiles and runs correctly`
   - operational proof now matches the reducer: guarded clean `stage1 -> stage2 --debug` with the isolated patched host `/tmp/stage1_debug_u64_ptrzero_6af60757` no longer dies in `llc`, produces `/tmp/stage2_debug_u64_ptrzero_6af60757`, and exits `0` after `~403s`
-- **Current frontier**: stage3 bootstrap is still the top operational blocker (`stage2 --release -> stage3 --release` timing out after `1200s`), but the cleanest newly reduced correctness bug is now the HIR-level `Hash(UInt32, String)#[] -> Union String | UInt32` drift. For backend-only reducers, the abstract-char llvm oracle has now moved below the old empty-block corruption and is concentrated on missing type metadata/type defs, while tiny self-hosted `--emit llvm-ir --no-link` still crashes in `emit_primitive_binary_override` and float-literal HIR printing still trips the separate `Printer$Dshortest$$Float64_IO` stub.
+- **Current frontier**: stage3 bootstrap is still the top operational blocker. After the absolute-header leaf-name fix, the earliest verified self-hosted red point is again the later HIR resolver crash:
+  - full `stage3 --release --STOP_AFTER_HIR` on `/tmp/stage2_release_leafnamefix` still fast-segfaults after `parse done arenas=188`
+  - LLDB on the fixed release candidate now shows the same downstream stack without the old bogus `Crystal::Crystal` carrier:
+    `Hash(String, Nil)#find_entry_with_index(String) -> AstToHir#resolve_class_name_in_context -> resolve_path_string_in_context -> resolve_type_name_in_context_impl -> type_ref_for_name_inner -> build_template_accessor_class_info -> register_class_with_name_in_current_arena`
+  - the practical reduced follower for the next round is still `src/stdlib/crystal/small_deque.cr --release --STOP_AFTER_HIR`, but its template stream now starts with the corrected `Crystal::PointerLinkedList`, so the next investigation should focus on which `Set(String)` / `Hash(String, Nil)` inside `resolve_class_name_in_context` is still null/corrupted after name recovery
+  - older backend-only frontier notes still apply below this HIR blocker: tiny self-hosted `--emit llvm-ir --no-link` can still crash in `emit_primitive_binary_override`, and float-literal HIR printing still trips the separate `Printer$Dshortest$$Float64_IO` stub
   - updated frontier after the macro-span + macro-body span-tracking fixes:
     `stage2 --release -> stage3 --release` no longer sits at the old crash-class frontier; the remaining reduced parser blocker is now `abstract struct + {% begin %} + do/end char loop`, and stdlib `enum.cr` parse-only now fails with the same controlled `Index out of bounds` class instead of a segfault
   - updated frontier after the enum-member constructor fix:
@@ -240,7 +259,6 @@
     the old clean stage3 parse blocker in `src/stdlib/io.cr` is closed; clean self-hosted stage2 now keeps `CRYSTAL_V2_STOP_AFTER_PARSE=1` green on `src/crystal_v2.cr --release`, and the next reducer needs to target the later `CRYSTAL_V2_STOP_AFTER_HIR=1` crash that currently reaches `src/stdlib/time.cr`
   - updated frontier after restoring raw `HIR::Function` param storage:
     the old `Taint << Parameter` abort in `HIR::Function#add_param` is closed again; `regression_tests/stage2_main_param_mir_oracle.sh` is red on `/tmp/stage2_release_head_charfix` and green on `/tmp/stage2_release_head_charfix_paramraw`, and the reduced `src/stdlib/time.cr --release --no-prelude --no-ast-cache` `CRYSTAL_V2_STOP_AFTER_HIR=1` carrier now moves from that abort to a deterministic `error: Index out of bounds`
-
 ## VERIFIED: Fix `ptr 0` → `ptr null` in stage2 LLC
 
 ### Done:

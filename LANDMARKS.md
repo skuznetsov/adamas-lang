@@ -3,6 +3,37 @@
 Updated: 2026-03-26
 Context: compiler/bootstrap/stage2-stability
 
+[LM-221|verified]: absolute-path class/struct/enum source recovery must extract
+the leaf name, not the first namespace segment. The live self-hosted stage2
+carrier was narrowed from full `stage3` to a tiny no-prelude file
+`struct Crystal::PointerLinkedList(T); getter size : Int32 = 0; end`. Trusted
+stage1 logs `Crystal::PointerLinkedList` during generic template registration,
+while the old self-hosted stage2 logged `Crystal::Crystal` on the same carrier.
+Debug probing on the broader prelude follower `src/stdlib/crystal/small_deque.cr`
+showed why: `class_name_from_node` fell back to source text for absolute
+headers like `struct Crystal::PointerLinkedList(T)` and
+`definition_name_from_header_text` stopped at the first `:`, returning the head
+segment `Crystal` instead of the leaf `PointerLinkedList`. The narrow fix adds
+leaf-aware parsing (`definition_leaf_name_from_header_text`) and uses it only
+for class/struct/enum name recovery, while leaving `module_name_from_node` on
+head/wrapper extraction. Verified on fresh self-hosted builds:
+- `bash regression_tests/stage2_absolute_generic_header_leaf_hir_oracle.sh /tmp/stage1_release_29966272 /tmp/stage2_release_leafnamefix`
+  => `not reproduced: stage2 preserves absolute generic header leaf names in HIR template registration`
+- the same oracle on the older stage2 `/tmp/stage2_release_aliasctxguard`
+  reproduces with `Crystal::Crystal`
+- broader follower movement is real: full
+  `src/stdlib/crystal/small_deque.cr --release --STOP_AFTER_HIR` on the fixed
+  stage2 now logs `Crystal::PointerLinkedList` instead of `Crystal::Crystal`
+Boundary/adversary:
+- this fix does not clear stage3; the fixed release stage2 still stops in the
+  later `Hash(String, Nil)#find_entry_with_index(String) ->
+  resolve_class_name_in_context -> build_template_accessor_class_info` corridor
+- reusable lesson: when a path-based definition already has namespace
+  qualifiers in the header, “recover the name from source” and “recover the
+  wrapper namespace” are different operations. Class/struct/enum recovery needs
+  the leaf component; wrapper-module recovery still needs the head component.
+{F/G/R: 0.97/0.83/0.95} [verified]
+
 [LM-220|verified]: the late-moving self-hosted parse-only crashes were not
 primarily `time.cr` or source-fallback noise; one real cluster lived in
 `src/compiler/frontend/parser.cr` `Parser#current_token`, where brace-like
