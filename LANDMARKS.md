@@ -3,6 +3,62 @@
 Updated: 2026-03-26
 Context: compiler/bootstrap/stage2-stability
 
+[LM-245|verified]: the old post-[LM-244] `register_lib_member -> Int32#address`
+stage3 HIR sink was a real lib-class name-guard bug, not a broad lib-body or
+plain-struct frontier. Fresh current-source debug `/tmp/stage2_current_debug_modulefix_retest`
+still crashed on full `stage3 --STOP_AFTER_HIR`, but a sharper reducer matrix
+split the family:
+- `struct PthreadAttrT; x : Int32; end` is `stage1 green / stage2 green`
+- `lib LibC; struct PthreadAttrT; x : Int32; end; end` is `stage1 green / stage2 red`
+Trace on the tiny lib carrier reached `register_lib_member(ClassNode)`
+`phase=class_before_name` and died before `phase=class_after_guard`, which
+ruled out `@lib_structs.add`, `@module.lib_structs.add`, and the later
+`register_class_with_name` setup as the first sink. The decisive falsifier was
+runtime-only: `CRYSTAL_V2_SKIP_LIB_CLASS_NAME_GUARD=1` immediately turned that
+carrier green, localizing the blocker to `safe_str_guard(node.name, "return")`
+in the lib-class path. The verified source fix removes that crashy guard and
+reuses `class_name_from_node(node)` for source-aware header recovery in
+`register_lib_member(ClassNode)`. Fresh self-hosted
+`/tmp/stage2_current_debug_libnamefix` keeps the new oracle
+`regression_tests/stage2_lib_struct_name_guard_hir_oracle.sh` green against
+`/tmp/stage1_release_29966272`, and full `stage3 --STOP_AFTER_HIR` moves off
+the old `Int32#address -> register_lib_member -> with_resolved_body_arena ->
+register_lib_body -> register_lib` stack into a later nested-module/block-body
+arena-fit family.
+Boundary/adversary:
+- this closes the lib-class name-slice guard family only; full stage3 remains
+  red later
+- the old broader [LM-240] model is now stale as a guide for the current
+  frontier
+{F/G/R: 0.97/0.83/0.98} [verified]
+
+[LM-246|working]: after [LM-245], the new honest tiny stage2 HIR blocker is no
+longer lib-specific. The smallest currently verified red carrier is:
+`module A; module B; extend self; def exec(flag, &); yield; end; end; end`
+with `stage1 green / self-hosted stage2 red` under
+`CRYSTAL_V2_STOP_AFTER_HIR=1` (and `CRYSTAL_V2_TRUST_SLICE_ADDR=1` for stage2).
+Further reduction already falsified two nearby hypotheses:
+- `run_initializer(flag) { yield }` is not required
+- `protected` is not required
+So the minimal live shape is nested module + `extend self` + class-method block
+arg + bare `yield`. Tiny phase trace on `/tmp/stage2_current_debug_libnamefix`
+shows nested-module registration itself reaches `phase=def_after_yield_tail` and
+`phase=after_pass2` before crashing, while batch LLDB on the tiny carrier stops
+at `NodeSlot#node -> AstArena#[] -> register_module_with_name`. On full
+`stage3 --STOP_AFTER_HIR`, the corresponding later stack is
+`expr_id_list_matches_arena -> body_subtrees_match_arena -> arena_fits_def ->
+registration_member_arena_for -> register_nested_module`. Strongest current
+interpretation: the next root-cause family is nested-module method
+body/arena-fit validation for block-yield defs, not the older simple
+`extend self` target bug from [LM-244] and not the lib name-slice guard from
+[LM-245].
+Boundary/adversary:
+- tiny and full stacks are related but not identical, so the exact sink may
+  still split further inside `register_module_with_name` vs
+  `registration_member_arena_for`
+- the new carrier is verified as a red reproducer, not yet a fixed family
+{F/G/R: 0.95/0.8/0.97} [working]
+
 [LM-244|verified]: the live self-hosted nested-module crash after [LM-242] was
 not fundamentally in nested `DefNode` registration; that model was confounded
 by an earlier `extend` target bug inside `register_module_with_name`. Fresh

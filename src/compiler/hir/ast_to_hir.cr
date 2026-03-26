@@ -6011,8 +6011,9 @@ module Crystal::HIR
         end
       when CrystalV2::Compiler::Frontend::ClassNode
         return unless pass == :types
-        safe_str_guard(node.name, "return")
-        struct_name = (safe_slice_to_string(node.name) || "")
+        # Self-hosted stage2 can still reject lib-class name slices in the hot guard path.
+        # Reuse the normal source-aware class header recovery instead of forcing a guard.
+        struct_name = class_name_from_node(node) || ""
         full_struct_name = "#{lib_name}::#{struct_name}"
         @lib_structs.add(full_struct_name)
         @module.lib_structs.add(full_struct_name)

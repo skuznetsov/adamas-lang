@@ -1,6 +1,36 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-03-26)
 
 ## Current Status
+- **Fresh lib-class name guard root cause fix (2026-03-26, current session)**:
+  - after commit `654ed48c`, full `stage3 --STOP_AFTER_HIR` on `/tmp/stage2_current_debug_modulefix_retest` still hit the old lib corridor, but the reducer matrix was now narrower than the historical `LM-240` model:
+    - `struct PthreadAttrT; x : Int32; end` was `stage1 green / stage2 green`
+    - `lib LibC; struct PthreadAttrT; x : Int32; end; end` stayed `stage1 green / stage2 red`
+  - phase trace on the tiny lib carrier proved the crash was not in `@lib_structs.add` or later class registration setup: it reached `register_lib_member(ClassNode)` `phase=class_before_name` and died before `phase=class_after_guard`
+  - the decisive falsifier was runtime-only: `CRYSTAL_V2_SKIP_LIB_CLASS_NAME_GUARD=1` turned the tiny lib carrier green immediately, which localized the real blocker to `safe_str_guard(node.name, "return")` in the lib-class path
+  - the verified source fix now removes that crashy guard from `register_lib_member(ClassNode)` and reuses `class_name_from_node(node)` for source-aware header recovery
+  - new oracle:
+    - `bash regression_tests/stage2_lib_struct_name_guard_hir_oracle.sh /tmp/stage1_release_29966272 /tmp/stage2_current_debug_libnamefix`
+    - result: `not reproduced: stage2 matches stage1 on lib-struct name-guard HIR oracle`
+  - downstream movement is real:
+    - tiny lib carrier is green on `/tmp/stage2_current_debug_libnamefix`
+    - full `stage3 --STOP_AFTER_HIR` moved off the old `Int32#address -> register_lib_member -> with_resolved_body_arena -> register_lib_body -> register_lib` sink and now crashes later in a nested-module/block-body arena-fit family
+- **Fresh nested-module block-yield frontier (2026-03-26, current session)**:
+  - after the lib-class name fix, the new honest tiny carrier is:
+    - `module A; module B; extend self; def exec(flag, &); yield; end; end; end`
+  - verified matrix:
+    - `stage1` (`/tmp/stage1_release_29966272`) + `CRYSTAL_V2_STOP_AFTER_HIR=1` -> green
+    - current self-hosted `stage2` (`/tmp/stage2_current_debug_libnamefix`) + `CRYSTAL_V2_TRUST_SLICE_ADDR=1 CRYSTAL_V2_STOP_AFTER_HIR=1` -> `exit 139`
+  - important reduction result:
+    - `run_initializer(flag) { yield }` is **not** required
+    - `protected` is **not** required
+    - the smallest currently verified red shape is nested module + `extend self` + class-method block arg + bare `yield`
+  - tiny trace on that carrier shows nested-module registration itself finishes and then crashes:
+    - last clean markers are `phase=def_after_yield_tail` and `phase=after_pass2`
+  - tiny LLDB and full-stage3 LLDB together suggest the next root-cause family is no longer lib-specific:
+    - tiny carrier: `NodeSlot#node -> AstArena#[] -> register_module_with_name`
+    - full stage3: `expr_id_list_matches_arena -> body_subtrees_match_arena -> arena_fits_def -> registration_member_arena_for -> register_nested_module`
+  - strongest current interpretation:
+    - this is a nested-module method body arena-fit / block-yield family, not the old lib name-slice blocker and not the earlier simple nested-module `extend self` carrier already closed by `654ed48c`
 - **Fresh nested-module extend target root cause split (2026-03-26, current session)**:
   - the previous “nested module def registration tail” model was too broad for the live self-hosted blocker
   - clean no-prelude reducers split the family sharply:
