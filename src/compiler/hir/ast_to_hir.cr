@@ -17370,7 +17370,8 @@ module Crystal::HIR
           end
         end
         # Process extend SomeModule(...) patterns (not extend self)
-        extend_nodes = body.compact_map do |expr_id|
+        extend_nodes = [] of CrystalV2::Compiler::Frontend::ExtendNode
+        body.each do |expr_id|
           next if expr_id.null_ptr? || expr_id.invalid?
           member = unwrap_visibility_member(@arena[expr_id])
           next unless member.is_a?(CrystalV2::Compiler::Frontend::ExtendNode)
@@ -17385,7 +17386,7 @@ module Crystal::HIR
                       false
                     end
           next if is_self
-          member
+          extend_nodes << member
         end
         unless extend_nodes.empty?
           visited_extends = Set(String).new

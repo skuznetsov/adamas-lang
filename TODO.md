@@ -1,8 +1,17 @@
-# Crystal V2 Bootstrap — TODO (Updated 2026-03-25)
+# Crystal V2 Bootstrap — TODO (Updated 2026-03-26)
 
 ## Current Status
 - **Branch**: `bootstrap-benchmark` (merged `inline-structs`)
 - **Regression baseline**: last broadly re-verified count from the earlier inline-struct phase was `87/88 + 18/20`; later parser/HIR/bootstrap changes have not re-established that full baseline yet
+- **Fresh nested-module HIR stabilization (2026-03-26)**:
+  - earlier cache-version asymmetry in `register_nested_module` was real but secondary: probe-only `bump_module_defs_cache_version` alone left the minimal no-prelude `module A::B::C` carrier red
+  - the actual stage3 blocker sat in the same function's `extend_nodes = body.compact_map { ... }` corridor: under self-hosted stage2, nested-module bodies with no `ExtendNode` members could still enter `extend_nodes.each`, and `lldb` showed the crash at `register_module_class_methods_for(ext.target, ...)` via `Pointer(Void)#target`
+  - replacing that one `compact_map` with the already-used manual `[] of ExtendNode` + `body.each` builder closes the minimal HIR oracle and its stdlib follower on main-tree stage2 release `/tmp/stage2_release_main_nestedfix`
+  - new green oracle: `bash regression_tests/stage2_nested_module_depth3_hir_oracle.sh /tmp/stage1_release_29966272 /tmp/stage2_release_main_nestedfix`
+  - downstream signal moved too: `CRYSTAL_V2_STOP_AFTER_HIR=1 /tmp/stage2_release_main_nestedfix src/stdlib/crystal/system/time.cr --release --no-prelude --no-ast-cache --emit hir ...` is now green
+  - fresh release measurement: trusted `stage1` -> current main-tree `stage2 --release` is green in `[EXIT: 0] after ~169s`, `/usr/bin/time -l = 200.82s real`, output `/tmp/stage2_release_main_nestedfix`
+  - stage3 no longer dies in the old nested-module HIR corridor: full-project `CRYSTAL_V2_STOP_AFTER_PARSE=1 /tmp/stage2_release_main_nestedfix src/crystal_v2.cr --release --no-ast-cache ...` is green, while the new direct parse follower is `src/stdlib/time.cr`
+  - new red repro for the moved frontier: `bash regression_tests/stage2_time_parse_repro.sh /tmp/stage2_release_main_nestedfix` => `reproduced: compiler crashed before STOP_AFTER_PARSE on src/stdlib/time.cr`
 - **Fresh default-arg root cause fix**:
   - `HIR::Function` was snapshotting param default literals into parallel arrays before `ast_to_hir` filled them, so omitted default args later degraded to backend zero-padding (`foo(0)`, `advance(0)`, `peek_byte(0)`) instead of their declared defaults
   - narrowed no-prelude LLVM oracle is now green on fresh stage1 release `/tmp/stage3_paramfix/stage1_release_paramfix`:
