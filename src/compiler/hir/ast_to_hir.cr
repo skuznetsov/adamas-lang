@@ -25540,6 +25540,7 @@ module Crystal::HIR
       arg_types : Array(TypeRef),
       type_literal : Bool,
       has_block_call : Bool,
+      receiver_owner_name : String? = nil,
     ) : UInt64
       # V2 safety: String.build/to_s crash in V2-compiled binaries.
       # Use numeric hash as cache key instead.
@@ -25548,6 +25549,12 @@ module Crystal::HIR
       arg_types.each do |t|
         h = h ^ (t.id.to_u64 &* 3266489917_u64)
         h = (h << 5) | (h >> 59)
+      end
+      if owner_name = receiver_owner_name
+        unless owner_name.empty?
+          h = h ^ (owner_name.object_id.to_u64 &* 1099511628211_u64)
+          h = (h << 7) | (h >> 57)
+        end
       end
       h = h ^ (type_literal ? 1_u64 : 0_u64)
       h = h ^ ((has_block_call ? 1_u64 : 0_u64) << 32)
@@ -25575,6 +25582,7 @@ module Crystal::HIR
       receiver_type = ctx.type_of(receiver_id)
       receiver_is_type_literal = ctx.type_literal?(receiver_id)
       type_desc = @module.get_type_descriptor(receiver_type)
+      enum_type_name = @enum_value_types.try(&.[receiver_id]?)
       cache_key : UInt64? = nil
       if @method_resolution_cache
         # V2 safety: use numeric scope hash — string interpolation and .hash crash in V2.
@@ -25586,17 +25594,16 @@ module Crystal::HIR
           @method_resolution_cache.clear
           @method_resolution_cache_scope_hash = scope_hash
         end
-        cache_key = method_resolution_cache_key(receiver_type, method_name, arg_types, receiver_is_type_literal, has_block_call)
+        cache_key = method_resolution_cache_key(receiver_type, method_name, arg_types, receiver_is_type_literal, has_block_call, enum_type_name)
         if cached = @method_resolution_cache[cache_key]?
           return cached
         end
       end
 
       # Get the class name from the type descriptor
-      enum_type_name = @enum_value_types.try(&.[receiver_id]?)
       class_name = enum_type_name || type_desc.try(&.name) || primitive_class_name(receiver_type) || ""
       ref_type_name = get_type_name_from_ref(receiver_type)
-      if !ref_type_name.empty? && ref_type_name != "Void" && ref_type_name != "Unknown"
+      if enum_type_name.nil? && !ref_type_name.empty? && ref_type_name != "Void" && ref_type_name != "Unknown"
         class_name = ref_type_name
       end
       if enum_type_name.nil?

@@ -8242,7 +8242,7 @@ module Crystal::MIR
         emit_block(block, func)
       end
 
-      block_ir_output = @output
+      block_ir_output = @output.as(IO::Memory)
       @output = saved_output
       @toplevel_output = nil
       block_copy_trace = ENV["CRYSTAL2_LLVM_BLOCK_COPY_TRACE"]? || ENV["CRYSTAL_V2_LLVM_BLOCK_COPY_TRACE"]?
