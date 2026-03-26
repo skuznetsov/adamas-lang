@@ -47,6 +47,13 @@
   - current `stage1 --release` -> self-hosted `stage2 --release`: green in `[EXIT: 0] after ~163s`, `/usr/bin/time -l = 190.31s real`, output `/tmp/stage2_release_88dfb7f6`
   - self-hosted `stage2 --release` -> `stage3 --release`: still red; `scripts/run_safe.sh ... 1200 12288` times out with no output binary after `1200s`
   - current speed comparison is only a lower bound: `stage2` compiler is at least `1200 / 525.13 ~= 2.29x` slower than stage1 on `src/crystal_v2.cr --release`, because the stage3 build did not finish inside the safe timeout
+- **Fresh reduced LLVM-metadata stabilization chain (2026-03-25)**:
+  - narrowed carrier `regression_tests/stage2_abstract_macro_char_literal_oracle.sh` is now a high-signal backend oracle: after the char-parser handoff fix it stays green at `HIR` and `MIR`, so remaining red behavior is purely in `LLVM IR`
+  - first blocker was not `emit_primitive_binary_override`: `lldb` showed the reduced carrier trapping immediately after `emit_functions_sequential`, inside the unconditional `Time.instant - func_emit_start` timing path in `LLVMIRGenerator#generate`
+  - gating that timing/logging behind `@progress` removes the old immediate `EXC_BREAKPOINT` and lets the reduced carrier advance into metadata emission
+  - next blocker was `STUB CALLED: Int32$_$OR$_UInt32$H$ADD$$Int32`; `lldb` localized it to `read_string_from_table(UInt32) -> emit_type_name_table`, and normalizing the local string-table indices to `Int32` removes that union-arithmetic stub path
+  - after that, the reduced carrier moved again and `lldb` localized the next crash to `llvm_c_string_escape`, specifically `str.to_slice.each` falling into `Indexable#unsafe_fetch`; rewriting the helper to walk `String#to_unsafe`/`bytesize` directly removes that segfault
+  - current reduced frontier is no longer a crash class: rebuilt candidate `/tmp/stage2_release_timegate_escape` now reaches full `.ll` artifact generation on the oracle, and the remaining red signal is a deterministic stage1-vs-stage2 `ll` diff (missing type metadata/type defs and extra empty blocks), not a parser/HIR/MIR/backend abort
 - **Fresh self-hosted lexer stabilization**:
   - release candidate `/tmp/stage2_release_lexerscanfix_v4` builds green from current source via original `stage1` in `194.59s real`, `[EXIT: 0] after ~167s`
   - self-hosted `stage2 --release --no-prelude` parse-only now survives numeric literals that previously hung or blew memory in lexer preload: `1`, `1_2`, `1.5`, `1e2`, `1_f32`, `1i64`, `1u8`

@@ -983,7 +983,7 @@ module Crystal::MIR
       total_funcs = functions_to_emit.size
       n_workers = parallel_llvm_workers
       STDERR.puts "  [LLVM] emitting #{total_funcs} functions (#{@module.functions.size} total, #{@module.functions.size - total_funcs} pruned, workers=#{n_workers})..." if @progress
-      func_emit_start = Time.instant
+      func_emit_start = @progress ? Time.instant : nil
 
       if n_workers > 1 && total_funcs >= n_workers * 4
         emit_functions_parallel(functions_to_emit, n_workers)
@@ -991,8 +991,10 @@ module Crystal::MIR
         emit_functions_sequential(functions_to_emit)
       end
 
-      func_emit_elapsed = (Time.instant - func_emit_start).total_milliseconds
-      STDERR.puts "  [LLVM] function emission: #{func_emit_elapsed.round(1)}ms for #{total_funcs} functions (workers=#{n_workers})"
+      if @progress
+        func_emit_elapsed = (Time.instant - func_emit_start.not_nil!).total_milliseconds
+        STDERR.puts "  [LLVM] function emission: #{func_emit_elapsed.round(1)}ms for #{total_funcs} functions (workers=#{n_workers})"
+      end
 
       emit_entrypoint_if_needed(functions_to_emit)
 
@@ -2325,11 +2327,7 @@ module Crystal::MIR
     end
 
     private def emit_crystal_string_constant(global_name : String, str : String)
-      escaped = str.gsub("\\", "\\\\")
-                  .gsub("\n", "\\0A")
-                  .gsub("\r", "\\0D")
-                  .gsub("\t", "\\09")
-                  .gsub("\"", "\\22")
+      escaped = llvm_c_string_escape(str)
       len = str.bytesize + 1
       if @string_type_id != 0
         bytesize = str.bytesize
@@ -2352,6 +2350,28 @@ module Crystal::MIR
       sym_globals = sym_names.map { |name| get_or_create_string_global(name) }
       ptrs = sym_globals.map { |g| "ptr #{g}" }.join(", ")
       emit_raw "@.symbol_table = private unnamed_addr constant [#{sym_names.size} x ptr] [#{ptrs}], align 8\n"
+    end
+
+    private def llvm_c_string_escape(str : String) : String
+      ptr = str.to_unsafe
+      size = str.bytesize
+      String.build(size + 8) do |io|
+        i = 0
+        while i < size
+          byte = ptr[i]
+          if (byte >= 0x20_u8 && byte <= 0x21_u8) ||
+             (byte >= 0x23_u8 && byte <= 0x5B_u8) ||
+             (byte >= 0x5D_u8 && byte <= 0x7E_u8)
+            io.write_byte(byte)
+          else
+            io << '\\'
+            hex = byte.to_s(16).upcase
+            io << '0' if hex.size == 1
+            io << hex
+          end
+          i += 1
+        end
+      end
     end
 
     private def module_singleton_global_for(type_ref : TypeRef) : String
@@ -19559,12 +19579,13 @@ module Crystal::MIR
 
     private def read_string_from_table(offset : UInt32) : String
       bytes = @string_table.to_slice
-      return "" if offset >= bytes.size
-      end_pos = offset
+      start = offset.to_i
+      return "" if start >= bytes.size
+      end_pos = start
       while end_pos < bytes.size && bytes[end_pos] != 0
         end_pos += 1
       end
-      String.new(bytes[offset...end_pos])
+      String.new(bytes[start, end_pos - start])
     end
 
     # ═══════════════════════════════════════════════════════════════════════
