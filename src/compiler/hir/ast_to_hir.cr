@@ -5743,8 +5743,19 @@ module Crystal::HIR
     # Register a type alias (pass 1)
     # e.g., alias HIR = Crystal::HIR
     def register_alias(node : CrystalV2::Compiler::Frontend::AliasNode)
-      alias_name = (safe_slice_to_string(node.name) || "")
+      pair = extract_alias_name_value_from_source(node, @arena)
+      if pair
+        alias_name = pair[0]
+        raw_target_name = pair[1]
+      else
+        alias_name = (safe_slice_to_string(node.name) || "")
+        raw_target_name = (safe_slice_to_string(node.value) || "")
+      end
+      if env_has?("CRYSTAL_V2_TRACE_ALIAS_ROOT")
+        STDERR.puts "[ALIAS_ROOT] phase=register_alias.start name_size=#{alias_name.bytesize} target_size=#{raw_target_name.bytesize}"
+      end
       full_alias_name = alias_full_name_from_span(node) || alias_name
+      STDERR.puts "[ALIAS_ROOT] phase=register_alias.full_name size=#{full_alias_name.bytesize}" if env_has?("CRYSTAL_V2_TRACE_ALIAS_ROOT")
       if !full_alias_name.includes?("::")
         if current = @current_class
           full_alias_name = "#{current}::#{full_alias_name}"
@@ -5758,10 +5769,14 @@ module Crystal::HIR
                 end
       old_class = @current_class
       @current_class = context if context
-      target_name = resolve_alias_target((safe_slice_to_string(node.value) || ""), context)
+      STDERR.puts "[ALIAS_ROOT] phase=register_alias.before_resolve context=#{context ? 1 : 0}" if env_has?("CRYSTAL_V2_TRACE_ALIAS_ROOT")
+      target_name = resolve_alias_target(raw_target_name, context)
+      STDERR.puts "[ALIAS_ROOT] phase=register_alias.after_resolve target_size=#{target_name.bytesize}" if env_has?("CRYSTAL_V2_TRACE_ALIAS_ROOT")
       @current_class = old_class if context
       previous = @type_aliases[full_alias_name]?
+      STDERR.puts "[ALIAS_ROOT] phase=register_alias.before_store existing=#{previous ? 1 : 0}" if env_has?("CRYSTAL_V2_TRACE_ALIAS_ROOT")
       register_type_alias(full_alias_name, target_name)
+      STDERR.puts "[ALIAS_ROOT] phase=register_alias.after_store" if env_has?("CRYSTAL_V2_TRACE_ALIAS_ROOT")
       if env_has?("DEBUG_ALIAS") && @type_aliases[full_alias_name]? == target_name && previous != target_name
         STDERR.puts "[ALIAS] Registered (top): #{full_alias_name} => #{target_name}"
       end
@@ -5796,6 +5811,7 @@ module Crystal::HIR
     end
 
     private def register_type_alias(alias_name : String, target_name : String)
+      STDERR.puts "[ALIAS_ROOT] phase=register_type_alias.enter alias_size=#{alias_name.bytesize} target_size=#{target_name.bytesize}" if env_has?("CRYSTAL_V2_TRACE_ALIAS_ROOT")
       if existing = @type_aliases[alias_name]?
         if existing != target_name
           if env_has?("DEBUG_ALIAS")
@@ -5805,13 +5821,16 @@ module Crystal::HIR
         end
       end
       @type_aliases[alias_name] = target_name
+      STDERR.puts "[ALIAS_ROOT] phase=register_type_alias.stored" if env_has?("CRYSTAL_V2_TRACE_ALIAS_ROOT")
       index_type_alias_suffix(alias_name)
+      STDERR.puts "[ALIAS_ROOT] phase=register_type_alias.indexed_suffix" if env_has?("CRYSTAL_V2_TRACE_ALIAS_ROOT")
       @resolved_type_alias_cache.clear
       @module_include_alias_cache.clear
       @module_alias_prefix_cache.clear
       clear_receiver_specialization_caches
       @type_cache.delete(alias_name)
       invalidate_type_cache_for_namespace(alias_name)
+      STDERR.puts "[ALIAS_ROOT] phase=register_type_alias.done" if env_has?("CRYSTAL_V2_TRACE_ALIAS_ROOT")
     end
 
     # Register a C library binding (pass 1)
@@ -8829,21 +8848,33 @@ module Crystal::HIR
       node : CrystalV2::Compiler::Frontend::AliasNode,
       arena : CrystalV2::Compiler::Frontend::ArenaLike,
     ) : {String, String}?
+      trace_alias_root = env_has?("CRYSTAL_V2_TRACE_ALIAS_ROOT")
       source = source_for_arena(arena)
+      STDERR.puts "[ALIAS_ROOT] phase=extract.source present=#{source ? 1 : 0}" if trace_alias_root
       return nil unless source
       snippet = slice_source_for_span(node.span, source)
+      STDERR.puts "[ALIAS_ROOT] phase=extract.snippet present=#{snippet ? 1 : 0} size=#{snippet ? snippet.not_nil!.bytesize : -1}" if trace_alias_root
       return nil unless snippet
       text = strip_single_line_comments(snippet).strip
+      STDERR.puts "[ALIAS_ROOT] phase=extract.text size=#{text.bytesize}" if trace_alias_root
       # Match "alias Foo = Bar" or "type Foo = Bar"
       eq_idx = text.index('=')
+      STDERR.puts "[ALIAS_ROOT] phase=extract.eq present=#{eq_idx ? 1 : 0}" if trace_alias_root
       return nil unless eq_idx
       left = text.byte_slice(0, eq_idx).strip
       target = text.byte_slice(eq_idx + 1, text.bytesize - eq_idx - 1).strip
+      STDERR.puts "[ALIAS_ROOT] phase=extract.split left_size=#{left.bytesize} target_size=#{target.bytesize}" if trace_alias_root
       return nil if target.empty?
       # Left side: "alias Foo" or "type Foo" — extract the name
-      space_idx = left.rindex(' ') || left.rindex('\t')
-      return nil unless space_idx
-      alias_name = left.byte_slice(space_idx + 1, left.bytesize - space_idx - 1).strip
+      alias_name = if left.starts_with?("alias ")
+                     left.byte_slice(6, left.bytesize - 6).strip
+                   elsif left.starts_with?("type ")
+                     left.byte_slice(5, left.bytesize - 5).strip
+                   else
+                     ""
+                   end
+      STDERR.puts "[ALIAS_ROOT] phase=extract.prefix alias=#{left.starts_with?("alias ") ? 1 : 0} type=#{left.starts_with?("type ") ? 1 : 0}" if trace_alias_root
+      STDERR.puts "[ALIAS_ROOT] phase=extract.name size=#{alias_name.bytesize}" if trace_alias_root
       return nil if alias_name.empty?
       {alias_name, target}
     end

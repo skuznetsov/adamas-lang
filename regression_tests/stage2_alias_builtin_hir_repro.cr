@@ -1,0 +1,1 @@
+alias Foo = UInt8

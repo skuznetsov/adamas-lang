@@ -165,11 +165,24 @@
     => `not reproduced: stage2 no longer corrupts implicit enum members on the HIR enum oracle`
   - operational signal moved with it: stage2 tiny enum reducers no longer emit bogus per-member traces and now converge to the separate generic `STUB CALLED: Crystal$CCHIR$CCTaint...Parameter` no-prelude blocker also hit by non-enum controls
   - stage3 also moved off the old enum-registration crash: fresh LLDB on `/tmp/stage2_enumctor_probe src/crystal_v2.cr --release` now stops later in `AstToHir#normalize_declared_type_name -> resolve_alias_target -> register_alias`
+- **Fresh top-level alias extractor stabilization (2026-03-26)**:
+  - the new alias frontier was real and narrower than the original LLDB stack suggested: tiny no-prelude carriers like `alias Foo = UInt8`, `alias Bytes = Slice(UInt8)`, and `alias HIR = Crystal::HIR` all reproduced the same self-hosted `stage2` fast `exit 139` before any codegen, while trusted `stage1` stayed green
+  - source extraction itself was only partially broken: on the reduced `alias Foo = UInt8` carrier, `source_for_arena`, `slice_source_for_span`, comment stripping, and `text.index('=')` all stayed valid; the first verified bad primitive was name extraction from the left-hand side
+  - specifically, self-hosted no-prelude `stage2` failed to recover `Foo` from plain ASCII `left = "alias Foo"` inside `extract_alias_name_value_from_source`: `String#rindex(' ')` failed outright, and even a reverse byte-scan fallback still produced an empty alias name on the same trace
+  - the working bootstrap-local fix is grammar-driven instead of heuristic: `extract_alias_name_value_from_source` now parses alias names by fixed `alias ` / `type ` prefixes, and top-level `register_alias` always prefers the source-extracted `{alias_name, target}` pair before touching dangling `AliasNode` slices
+  - verified on fresh self-hosted release `/tmp/stage2_aliasprefixfix_probe`:
+    - `scripts/run_safe.sh /tmp/build_stage2_aliasprefixfix_probe.sh 1800 12288`
+      => self-hosted `stage2 --release` green, `[EXIT: 0] after ~465s`
+    - `bash regression_tests/stage2_alias_builtin_hir_repro.sh /tmp/stage1_enumctor_probe /tmp/stage2_aliasprefixfix_probe`
+      => `not reproduced: stage2 survives the top-level alias HIR oracle past alias registration`
+  - reduced operational signal moved exactly where expected: tiny no-prelude alias carriers no longer die with `exit 139` and now converge to the separate shared `STUB CALLED: Crystal$CCHIR$CCTaint...Parameter` blocker after `register_alias.after_store`
 - **Current frontier**: stage3 bootstrap is still the top operational blocker (`stage2 --release -> stage3 --release` timing out after `1200s`), but the cleanest newly reduced correctness bug is now the HIR-level `Hash(UInt32, String)#[] -> Union String | UInt32` drift. For backend-only reducers, the abstract-char llvm oracle has now moved below the old empty-block corruption and is concentrated on missing type metadata/type defs, while tiny self-hosted `--emit llvm-ir --no-link` still crashes in `emit_primitive_binary_override` and float-literal HIR printing still trips the separate `Printer$Dshortest$$Float64_IO` stub.
   - updated frontier after the macro-span + macro-body span-tracking fixes:
     `stage2 --release -> stage3 --release` no longer sits at the old crash-class frontier; the remaining reduced parser blocker is now `abstract struct + {% begin %} + do/end char loop`, and stdlib `enum.cr` parse-only now fails with the same controlled `Index out of bounds` class instead of a segfault
   - updated frontier after the enum-member constructor fix:
     the old self-hosted stage3 stop in `resolve_enum_member_value -> register_enum_with_name_in_current_arena` is closed; the next correctness reducer to carve out is now the alias corridor `AstToHir#normalize_declared_type_name -> resolve_alias_target -> register_alias`, preferably with a tiny no-prelude oracle before re-running full stage3 timing
+  - updated frontier after the top-level alias extractor fix:
+    the alias-specific `register_alias` segfault on tiny no-prelude carriers is closed; the next reduced stop on those carriers is the shared `HIR::Taint << Parameter` abort, while full operational `stage2 --release` stays green and is ready for another `stage2 -> stage3` measurement pass
 
 ## VERIFIED: Fix `ptr 0` → `ptr null` in stage2 LLC
 
