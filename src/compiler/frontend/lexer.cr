@@ -113,7 +113,37 @@ module CrystalV2
                     lex_macro_expr_end
                   when byte == SINGLE_QUOTE
                     # Phase 56: Character literals
-                    lex_char
+                    #
+                    # Self-hosted stage2 can corrupt aggregate Token returns from
+                    # lex_char on the simple `'x'` path before parser preload sees
+                    # the token. Keep the non-escape char fast path inline here
+                    # and leave escape-heavy literals on the existing helper.
+                    if (next_b = peek_byte) && next_b != '\\'.ord.to_u8
+                      start_offset, start_line, start_column = capture_position
+                      advance # Skip opening '
+                      from = @offset
+                      bytes_consumed = 0
+
+                      advance
+                      bytes_consumed += 1
+
+                      while @offset < @rope.size && current_byte != SINGLE_QUOTE && bytes_consumed < 4
+                        advance
+                        bytes_consumed += 1
+                      end
+
+                      if @offset < @rope.size && current_byte == SINGLE_QUOTE
+                        advance
+                      end
+
+                      Token.new(
+                        Token::Kind::Char,
+                        bytes_range(from, from + bytes_consumed),
+                        build_span(start_offset, start_line, start_column)
+                      )
+                    else
+                      lex_char
+                    end
                   when byte == HASH
                     lex_comment
                   else

@@ -30,6 +30,18 @@
     - `each_char`, `do/end`, and `next if` are no longer required to reproduce; they were symptom carriers, not the minimal cause
     - instrumentation on a clean `HEAD` diagnostic stage2 shows `lex_char` itself reaches a valid token (`kind=Char`, `offs=58..61`, `size=1`) before returning, while parser-side diagnostics later see the corresponding preloaded token slot corrupted or crash when touching it
     - the strongest current hypothesis is no longer "macro body nesting logic"; it is a parser-side token transport/storage corruption corridor for char literals after `lex_char` returns, likely in the same family as earlier value-type wrapper failures (`Token?` / `ExprId` / `MacroPiece`)
+  - fresh 2026-03-25 clean-head falsifiers sharpen the same corridor further:
+    - `DEBUG_CHAR_FULL_SLICE=1` does not move the real blocker at all on the clean parse-only path; both baseline and full-slice variants still hit the same controlled `error: Index out of bounds`
+    - `DEBUG_CHAR_SENTINEL=1` also does not move the clean blocker; replacing `Token::Kind::Char` with `Identifier` for the returned char token still yields the same corrupted raw slot at parser index `21`
+    - removing the local `token = Token.new(...)` temporary from the simple-char branch in `lex_char` does not help either; the corrupted parser token slot remains
+    - parser-side receive instrumentation narrows the corruption boundary more precisely than before: `incoming/snapshot/stored` all remain valid for token `20`, but the parser block is never entered for token `21`, so the first bad state appears before `@tokens << token` can touch the char token
+    - skipping the `next_token` post-processing path for char literals (`case token.kind` / `@last_token_kind`) also does not help; the same corrupted raw token `21` survives on the clean path
+    - net result: the remaining highest-probability frontier is now the `lex_char -> next_token/each_token` handoff itself, not macro-body logic, not parser root buffering, and not the parser token array store
+  - fresh 2026-03-25 positive corridor test closes that parser blocker:
+    - a diagnostic candidate that inlines the bare non-escape char literal fast path directly in `Lexer#next_token` flips the minimal abstract-macro reducer, the broader `each_char` reducer, and the `src/stdlib/enum.cr` parse-only follower from red to green on self-hosted stage2
+    - the most precise current interpretation is no longer a generic "char token transport" failure; it is a narrower helper-return boundary bug on the simple `'x'` path through `lex_char`
+    - rebuilt main-tree candidate `/tmp/stage2_release_charfix_main` keeps the reduced carrier green through parse and `src/stdlib/enum.cr` parse-only, and the new stage1-vs-stage2 oracle `regression_tests/stage2_abstract_macro_char_literal_oracle.sh` is now green at `HIR` and `MIR`
+    - the same oracle still goes red in the `LLVM IR` phase on the reduced carrier because self-hosted stage2 now reaches `step5: LLVM IR generation start` and then traps before writing the `.ll` artifact; the parser blocker is gone, but a lower LLVM-generation blocker remains
 - **Fresh release bootstrap measurements**:
   - original compiler -> current `stage1 --release`: green in `525.13s real` (~8m45s), peak memory footprint `7230019776` bytes (`max resident set size 8062320640`)
   - current `stage1 --release` -> self-hosted `stage2 --release`: green in `[EXIT: 0] after ~163s`, `/usr/bin/time -l = 190.31s real`, output `/tmp/stage2_release_88dfb7f6`
