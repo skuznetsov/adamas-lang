@@ -12331,11 +12331,29 @@ module Crystal::HIR
 
       case node
       when CrystalV2::Compiler::Frontend::PathNode
-        raw_path = collect_path_string(node)
-        type_name = if path_is_absolute?(node)
-                      raw_path.starts_with?("::") ? raw_path[2..] : raw_path
+        path_arena = arena_for_expr?(expr_id) || @arena
+        raw_path : String? = nil
+        absolute_path = false
+        if source = source_for_arena(path_arena)
+          if snippet = slice_source_for_span(node.span, source)
+            trimmed = strip_ascii_edge_whitespace(snippet)
+            unless trimmed.empty?
+              raw_path = trimmed
+              absolute_path = trimmed.starts_with?("::")
+            end
+          end
+        end
+        unless raw_path
+          with_arena(path_arena) do
+            raw_path = collect_path_string(node)
+            absolute_path = path_is_absolute?(node)
+          end
+        end
+        path_text = raw_path.not_nil!
+        type_name = if absolute_path
+                      strip_absolute_name_prefix(path_text)
                     else
-                      resolve_path_string_in_context(raw_path)
+                      resolve_path_string_in_context(path_text)
                     end
         type_name = resolve_type_name_in_context(type_name)
         type_name = resolve_type_alias_chain(type_name)
@@ -12388,6 +12406,7 @@ module Crystal::HIR
       node : CrystalV2::Compiler::Frontend::DefNode,
       self_type_name : String? = nil,
     ) : String?
+      return nil if env_has?("CRYSTAL_V2_SKIP_EAGER_TYPE_LITERAL_RETURN")
       body = node.body
       return nil unless body && !body.empty?
       expr_id = tail_expr_id_for_body(body)
