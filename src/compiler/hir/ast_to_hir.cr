@@ -3386,6 +3386,30 @@ module Crystal::HIR
       debug_env_filter_match?("DEBUG_HOOK_FILTER", *texts)
     end
 
+    @[AlwaysInline]
+    private def strip_ascii_edge_whitespace(text : String) : String
+      return text if text.bytesize == 0
+
+      left = 0
+      right = text.bytesize - 1
+
+      while left <= right
+        ch = text.byte_at(left)
+        break unless ch == 32_u8 || ch == 9_u8 || ch == 10_u8 || ch == 13_u8
+        left += 1
+      end
+
+      while right >= left
+        ch = text.byte_at(right)
+        break unless ch == 32_u8 || ch == 9_u8 || ch == 10_u8 || ch == 13_u8
+        right -= 1
+      end
+
+      return "" if left > right
+      return text if left == 0 && right == text.bytesize - 1
+      text.byte_slice(left, right - left + 1)
+    end
+
     private def clear_pending_effect_annotations : Nil
       @pending_def_annotations.clear
       @pending_primitive_kind = nil
@@ -31431,6 +31455,12 @@ module Crystal::HIR
       resolve_type_name_in_context(name)
     end
 
+    @[AlwaysInline]
+    private def strip_absolute_name_prefix(name : String) : String
+      return "" if name.bytesize <= 2
+      strip_ascii_edge_whitespace(name.byte_slice(2, name.bytesize - 2))
+    end
+
     private def resolve_type_name_in_signature_context_impl(name : String) : String
       return name if name.empty?
       name = normalize_missing_generic_parens(name)
@@ -31468,7 +31498,7 @@ module Crystal::HIR
         return "#{resolved_base}#{("*" * star_count)}"
       end
       if name.starts_with?("::")
-        stripped = name.size > 2 ? name[2..] : ""
+        stripped = strip_absolute_name_prefix(name)
         return "" if stripped.empty?
         if info = split_generic_base_and_args(stripped)
           resolved_args = split_generic_type_args(info.args).map do |arg|
@@ -31602,7 +31632,7 @@ module Crystal::HIR
         return resolved
       end
       if name.starts_with?("::")
-        stripped = name.size > 2 ? name[2..] : ""
+        stripped = strip_absolute_name_prefix(name)
         if stripped.empty?
           resolved_type_name_cache_set(name, "")
           return ""
@@ -31895,7 +31925,7 @@ module Crystal::HIR
         return path
       end
       if path.starts_with?("::")
-        return path.size > 2 ? path[2..] : ""
+        return strip_absolute_name_prefix(path)
       end
       return resolve_type_name_in_context(path) unless path.includes?("::")
 
@@ -32958,6 +32988,7 @@ module Crystal::HIR
     @[NoInline]
     private def split_generic_base_and_args(name : String) : GenericSplitInfo?
       return nil if name.unsafe_as(UInt64) == 0_u64
+      name = strip_ascii_edge_whitespace(name)
       return nil if name.bytesize == 0
       bypass_cache = env_has?("CRYSTAL2_DEBUG_BYPASS_GENERIC_SPLIT_CACHE")
 
@@ -73270,6 +73301,7 @@ module Crystal::HIR
     end
 
     private def type_ref_for_name_inner(name : String) : TypeRef
+      name = strip_ascii_edge_whitespace(name)
 
       # Strip outer grouping parentheses: (Char | String) → Char | String
       # Crystal allows parenthesized union types in annotations: def foo(x : (A | B))
@@ -73343,7 +73375,7 @@ module Crystal::HIR
            !self_prefixed
           lookup_name = name
           absolute_name = lookup_name.starts_with?("::")
-          lookup_name = lookup_name[2..] if absolute_name
+          lookup_name = strip_absolute_name_prefix(lookup_name) if absolute_name
           lookup_name = resolve_type_name_in_context(lookup_name) unless absolute_name
           cache_key_name = absolute_name ? "::#{lookup_name}" : lookup_name
           pre_resolved_lookup_name = cache_key_name
@@ -73496,7 +73528,7 @@ module Crystal::HIR
       orig_name = lookup_name
       absolute_name = lookup_name.starts_with?("::")
       if absolute_name
-        lookup_name = lookup_name[2..] || ""
+        lookup_name = strip_absolute_name_prefix(lookup_name)
       end
       if type_param_like?(lookup_name)
         mapped = @type_param_map[lookup_name]?

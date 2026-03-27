@@ -1,6 +1,627 @@
-# Crystal V2 Bootstrap — TODO (Updated 2026-03-26)
+# Crystal V2 Bootstrap — TODO (Updated 2026-03-27)
 
 ## Current Status
+- **Fresh absolute-name whitespace root cause fix (2026-03-27, current session)**:
+  - decisive tiny oracle:
+    `regression_tests/stage2_include_target_arena_hir_oracle.sh`
+  - verified root cause:
+    - after the earlier `name[2..] -> byte_slice` fix, absolute names like
+      `::Pointer(self)` still reached the self-hosted stage2 consumer with a
+      **trailing ASCII space**
+    - direct byte trace inside `split_generic_base_and_args` proved the exact
+      payload for the failing carrier:
+      `tail4=108,102,41,32` (`'l','f',')',' '`)
+    - the first-stage symptom was:
+      `lookup=Pointer(self) has_generic=1` but `split_generic_base_and_args`
+      returned `nil`, so HIR degraded to `Class Pointer(self)`
+    - this also proved ordinary `String#strip` was not a safe normalization
+      primitive in this self-hosted corridor
+  - shipped local fix:
+    - added byte-level `strip_ascii_edge_whitespace`
+    - routed `strip_absolute_name_prefix`, `split_generic_base_and_args`, and
+      `type_ref_for_name_inner` through that helper
+  - verified outcomes:
+    - `bash regression_tests/stage2_include_target_arena_hir_oracle.sh /tmp/stage1_release_29966272 /tmp/stage2_current_debug_moddefswhile`
+      -> `not reproduced`
+    - `scripts/run_safe.sh /tmp/run_once_noprelude_stop_after_hir_stage2_moddefswhile.sh 30 2048`
+      -> green
+    - trusted full follower
+      `src/crystal_v2.cr --release --no-ast-cache --emit hir` under
+      `CRYSTAL_V2_STOP_AFTER_HIR=1 CRYSTAL_V2_TRUST_SLICE_ADDR=1`
+      is still red, but no longer on the old `once` include-helper corridor
+  - new live frontier:
+    - current stage3 `STOP_AFTER_HIR` trace now reaches:
+      `pass1_module_before_register idx=5` with `name=SystemError`
+    - crash occurs after successful module registrations for:
+      `Crystal`, `Comparable`, and `Exception`
+    - next reducer should pivot from `once`/`Pointer(self)` to the
+      `SystemError` module-registration corridor
+- **Fresh `Crystal::Once::Operation` include-helper prelude split (2026-03-26, current session)**:
+  - decisive trusted oracle remains:
+    `src/stdlib/crystal/once.cr --release --no-prelude --no-ast-cache`
+    under `CRYSTAL_V2_STOP_AFTER_HIR=1 CRYSTAL_V2_TRUST_SLICE_ADDR=1`
+  - verified narrowing on current debug self-hosted stage2:
+    - second registration still reaches
+      `phase=before_include_expansion count=1`
+    - replacing `include_nodes.each` with `while + unsafe_fetch`, storing
+      `ExprId` targets instead of `IncludeNode`, and adding a no-op helper with
+      the **same full signature** as `register_module_instance_methods_for`
+      all preserve the same overall crash site
+    - the no-op probe prints successfully on the second registration with:
+      `target=2 defs=0 class_defs=0 visited=0 visited_ext=0 ivars=2 offset=0 struct=1 init=1`
+    - immediately after `include_probe_passed`, the real
+      `register_module_instance_methods_for` still segfaults **before**
+      printing its first internal milestone (`defs_ready`)
+  - strongest interpretation:
+    the active sink is no longer the outer `include_nodes` iterator, no longer
+    `IncludeNode` storage/field transport, and no longer the raw multi-arg call
+    ABI itself. The remaining live corridor is now the **early prelude inside**
+    `register_module_instance_methods_for` before `defs = @module_defs[...]`,
+    i.e. one of:
+    `sanitize_type_name`, `resolve_path_like_name(include_target)`,
+    `resolve_module_alias_for_include`, `record_module_inclusion`, or the fresh
+    `visited` checks on the second registration path
+  - practical consequence:
+    next instrumentation/falsification should target those early pre-`defs`
+    helper steps directly instead of widening the reducer or patching more
+    iterator loops
+  - update after richer probe:
+    - the second registration now passes a second prelude probe through:
+      `sanitize_type_name(class_name)`
+    - it then segfaults **before** the next probe print
+      `after_resolve value=...`
+    - strongest current sink is therefore narrowed again to
+      `resolve_path_like_name(include_target)` itself (or the immediate
+      machinery it enters), not `sanitize_type_name`
+- **Fresh `Exception::CallStack` trust-split (2026-03-26, current session)**:
+  - decisive reduced oracle:
+    `tmp/reduce_exception_call_stack_class_getter.cr`
+    ```
+    class Exception
+    end
+
+    struct Exception::CallStack
+      @@skip = 0
+      class_getter empty = 1
+    end
+    ```
+  - verified behavior:
+    - `stage1` is green under `CRYSTAL_V2_STOP_AFTER_HIR=1 --no-prelude`
+    - self-hosted `stage2` is red **without**
+      `CRYSTAL_V2_TRUST_SLICE_ADDR=1`, but that red path dies in the stale
+      guard sink `safe_slice_to_string -> readable_address? ->
+      LibMachVM.mach_task_self`
+    - the **same** self-hosted `stage2` turns green once
+      `CRYSTAL_V2_TRUST_SLICE_ADDR=1` is enabled
+  - strongest interpretation:
+    this reduced carrier does **not** model the current trust-enabled root
+    frontier. It only proves that the old no-trust Mach/readability probe sink
+    is still live on self-hosted stage2 and must not be confused with the
+    deeper root blocker when the active wrapper already sets trust
+  - practical consequence:
+    do not chase `Exception::CallStack` through no-trust `readable_address?`
+    crashes when comparing against the current root `STOP_AFTER_HIR` wrapper;
+    keep trust parity first, then widen the reducer toward the real `call_stack`
+    feature mix
+- **Fresh reduced `Exception::CallStack` body-shape split (2026-03-26, current session)**:
+  - verified trace on the same reduced carrier with trust enabled:
+    - `register_concrete_class("Exception::CallStack")` completes fully, twice
+      (module registration + later class registration)
+    - body loop shape is:
+      - `idx=0`: `AssignNode` for `@@skip = 0`
+      - `idx=1`: raw body entry from the `class_getter` keyword that still
+        prints as `node_kind=0` / no stable `is_a?` match in the trace
+      - `idx=2`: `AssignNode` for `empty = 1`
+    - despite that odd accessor-body shape, the reduced carrier still exits
+      green with trust enabled
+  - strongest interpretation:
+    the bare synthetic namespace wrapper
+    `class Exception; end + struct Exception::CallStack + simple classvar/class_getter`
+    is **insufficient** to reproduce the real trust-enabled root failure. The
+    next meaningful reducer must add more of the real `src/stdlib/exception/call_stack.cr`
+    feature mix rather than re-debugging this already-green miniature
+  - caution:
+    heavy diagnostic rebuilds currently perturb the full root run enough that a
+    temporary earlier crash at `once.cr` reappears; treat that as diagnostic
+    noise until reconfirmed on a cleaner probe
+- **Fresh Pass 1 iterator-contract split (2026-03-26, current session)**:
+  - decisive verified movement on current `/tmp/stage2_current_debug_exprtrace`:
+    - root carrier previously reached `pass1_before_lib_loop` and then crashed
+      before any lib body progress under `lib_nodes.each_with_index`
+    - replacing only the lib loop with manual `while + unsafe_fetch` moved the
+      same carrier through all 16 libs and to `pass1_after_lib_loop`
+    - the new follower then landed at `enum_nodes.each_with_index`
+    - replacing only the enum loop with manual `while + unsafe_fetch` moved the
+      same carrier through all 8 enums and to `pass1_after_enum_loop`
+  - strongest interpretation:
+    this is no longer a one-off `LibEntry` quirk. A real self-hosted root-cause
+    family is now live in Pass 1: `Array#each_with_index` / iterator-yield
+    transport over arrays of composite payloads (`LibEntry`,
+    `Tuple(EnumNode, ArenaLike)`, and likely neighboring registration arrays)
+    is not representation-safe on the current stage2 binary
+  - practical consequence:
+    the next high-signal move is no longer more tracing around prescan. It is
+    systematic falsification of the same iterator contract on the immediately
+    following Pass 1 arrays (`alias_nodes`, `macro_nodes`, `module_nodes`,
+    `class_nodes`, `constant_exprs`, then later `def_nodes`)
+  - update after systematic normalization:
+    - converting `alias_nodes`, `macro_nodes`, `module_nodes`, `class_nodes`,
+      and `constant_exprs` from `each_with_index` to `while + unsafe_fetch`
+      moved the root carrier further again
+    - root now cleanly reaches:
+      `pass1_after_alias_loop`, `pass1_after_macro_loop`,
+      `pass1_after_log_modules`
+    - the current live follower is now **inside** the normalized module
+      registration loop, not in the old iterator entry corridor anymore
+  - strongest current interpretation:
+    the Pass 1 iterator family is now verified and partially mitigated; the
+    next frontier has moved lower to module-registration payload handling
+    (`hir_converter.register_module(n)` and immediate surrounding consumers)
+- **Fresh `DEF_ARENA` false-frontier split (2026-03-26, current session)**:
+  - source already had `debug_def_arena_enabled_for?` effectively disabled, but
+    self-hosted `stage2` was still executing the stale `DEF_ARENA` diagnostic
+    corridor on `once.cr --no-prelude --STOP_AFTER_HIR`
+  - decisive verified comparison:
+    - `stage1` on the same carrier printed no `DEF_ARENA` lines
+    - self-hosted `stage2` did print `DEF_ARENA` lines until the corridor was
+      removed from `registration_member_arena_for`
+    - after rebuilding `/tmp/stage2_current_debug_exprtrace`, the same carrier
+      stayed green and stderr parity with `stage1` was restored for that path
+  - strongest interpretation:
+    this was a real false frontier, not a trustworthy live sink. A
+    diagnostic-only branch that source intended to be dead was executing under
+    self-hosted stage2 and was noisy enough to become its own crash source
+  - practical consequence:
+    the root `STOP_AFTER_HIR` frontier moved below `registration_member_arena_for`
+    and should no longer be debugged through stale `DEF_ARENA` output
+- **Fresh root HIR phase split below prescan (2026-03-26, current session)**:
+  - decisive verified phase trace on current `/tmp/stage2_current_debug_exprtrace`:
+    - `collect_done` is reached cleanly on the root carrier
+    - `seed_names_enter`, `seed_type_names_after`, `seed_class_kinds_after`,
+      and `seed_names_done` are all reached cleanly
+    - `prescan_enter` is reached and both class and module prescan loops run to
+      completion, including the last module from `src/compiler/cli.cr`
+      (`prescan_module_after_scan idx=111 name=CrystalV2`)
+    - only then does the root carrier still exit red (`138/139`)
+  - strongest interpretation:
+    the old root blocker was no longer in top-level collection, no longer in
+    top-level seed helpers, and no longer in class/module prescan. That narrow
+    corridor has now been further resolved by the fresh Pass 1 iterator split
+    above; use that newer landmark as the current frontier
+  - refuted hypotheses:
+    - “root crash is inside one specific `collect_arena` iteration”
+    - “root crash is inside `seed_top_level_type_names` / `seed_top_level_class_kinds`”
+    - “root crash is inside `scan_module_body` for the top-level `CrystalV2`
+      module in `src/compiler/cli.cr`”
+- **Fresh `type_name_exists?` cache-discipline root-cause split (2026-03-26, current session)**:
+  - the later repaired-`resume_all` builtin shadow is no longer best modeled as
+    alias fallback and no longer as generic include-target failure
+  - decisive verified trace on current `/tmp/stage2_current_debug_exprtrace`:
+    - after the builtin guards in contextual/suffix alias fallback, the old
+      `Crystal::PointerLinkedList::Node::Nil` sink is gone on the tiny oracle
+      and on the first repaired `resume_all` resolution
+    - the next follower was a later builtin-shadow path through
+      `resolve_class_name_in_context -> resolve_nested_builtin_shadow`
+    - instrumentation in `nested_type_shadow_in_namespace` showed bogus
+      candidates like `Crystal::Once::Nil` and then `Crystal::Nil` with
+      `sources=` empty, which falsified “real live type exists” and pointed to
+      `type_name_exists?` cache discipline
+    - a direct trace in `type_name_exists?` then verified the stable state:
+      `type_name_exists?("Crystal::Nil")` computes `false`, caches a negative
+      stamp, and later builtin resolution keeps `shadow=(nil)` across the whole
+      repaired `resume_all` corridor
+  - strongest interpretation:
+    one real root-cause family is now verified lower in the stack:
+    type-universe invalidation and `type_name_exists?` caching policy were not
+    epistemically safe for self-hosted stage2. Builtin-shadow logic was willing
+    to trust cached existence for nested candidates even when no live type
+    source still supported them
+  - practical consequence:
+    the later `Nil -> Crystal::Once::Nil` / `Crystal::Nil` follower is no
+    longer live on the current debug probe; the active frontier moved lower
+    again
+- **Fresh repaired-`resume_all` post-include frontier split (2026-03-26, current session)**:
+  - with the builtin-shadow follower gone and
+    `CRYSTAL_V2_FORCE_NO_BLOCK_IF_NO_PARAMS=1`, repaired
+    `Crystal::Once::Operation#resume_all` now registers cleanly as plain
+    `Crystal::Once::Operation#resume_all` and exits the `DefNode` case cleanly
+  - decisive verified phase trace:
+    - `after_type_param_store`
+    - `after_base_name_branch`
+    - `def_case_exit`
+    - `after_body_scan`
+    - `before_include_expansion count=1`
+    - `after_include_expansion`
+    - `after_untyped_reassert`
+    - only then: `error: Comparison of 8 and 8 failed`
+  - decisive falsifier:
+    `CRYSTAL_V2_SKIP_REASSERT_UNTYPED_BASE=1` does **not** remove the crash; it
+    still occurs after `after_untyped_reassert`
+  - strongest interpretation:
+    the live repaired-`Operation` blocker is now below method registration,
+    below include expansion itself, and below the untyped-base reassert pass.
+    The next narrow corridor is the post-include implicit-ivar / class-finalize
+    tail (`class_body.each` implicit ivar scan and immediate follow-up)
+- **Fresh builtin-alias fallback root-cause split (2026-03-26, current session)**:
+  - the old `Crystal::PointerLinkedList::Node::Nil` contamination on repaired
+    `Crystal::Once::Operation#resume_all` is now narrowed to a concrete alias
+    resolution contract hole, not a generic include-target failure and not a
+    by-value return-string transport bug
+  - decisive tiny oracle:
+    `regression_tests/stage2_builtin_nil_alias_repro.cr`
+    (`Crystal::Once::Operation` + `include PointerLinkedList::Node` +
+    `def resume_all : Nil`)
+  - decisive verified trace on current `/tmp/stage2_current_debug_exprtrace`:
+    - first falsifier: the old include-only hypothesis was wrong; even after
+      `resolve_included_type_name` got a builtin guard, the tiny oracle still
+      resolved `raw=Nil` to `Crystal::PointerLinkedList::Node::Nil`
+    - second falsifier: `eq_nil=1` and `builtin_alias=1` were already true at
+      `resolve_type_name_in_context_impl`, so the issue was not “this is some
+      weird non-`Nil` string”
+    - actual sink 1: `resolve_contextual_type_alias_name("Nil")` returned
+      `Crystal::PointerLinkedList::Node::Nil` because its own contract comment
+      said “Never shadow built-in/top-level type names”, but the code only
+      guarded top-level names
+    - after adding the builtin guard there, the same oracle moved and exposed
+      actual sink 2: `resolve_type_alias_by_suffix("Nil")` still returned the
+      same bogus target because it also lacked the same builtin/top-level guard
+    - after adding the symmetric guard there too, the exact same tiny oracle
+      now logs `resolved_return raw=Nil resolved=Nil`
+  - strongest interpretation:
+    one real root-cause family is now verified: builtin/core type names were
+    allowed to leak through both alias-by-context and alias-by-suffix fallback
+    corridors, even though those paths were supposed to be strictly secondary
+    to builtin resolution
+  - current boundary after that fix:
+    the tiny oracle still crashes later, but only after
+    `phase=after_type_param_store`; the old `Node::Nil` misresolution is gone
+  - practical consequence for real `once.cr`:
+    `resume_all` no longer resolves its explicit return annotation through
+    `Crystal::PointerLinkedList::Node::Nil`; the live `once.cr` frontier is now
+    lower and mixes:
+    - a later false builtin shadow (`Nil -> Crystal::Once::Nil`) on a second
+      resolution inside the same method corridor
+    - the old local `has_block=1` flip, which still survives on real
+      `resume_all`
+    - the broader `SpinLock` / `Comparison of 8 and 8 failed` follower
+- **Fresh `resume_all` local-bool corruption split (2026-03-26, current session)**:
+  - the real live `once.cr` blocker is now narrowed inside repaired
+    `Crystal::Once::Operation#resume_all` registration, well below
+    class-repair entry and below `set_function_def_arena(full_name, ...)`
+  - decisive verified trace on current `/tmp/stage2_current_debug_exprtrace`:
+    - `member.receiver` reads cleanly as `nil`
+    - explicit return type is parsed from source as `Nil`, but resolves as
+      `Crystal::PointerLinkedList::Node::Nil`
+    - `member.params` is absent (`params_present size=0`)
+    - yet the local registration bool still flips to `has_block=1` before any
+      yield scan, producing the bogus mangled name
+      `Crystal::Once::Operation#resume_all$block`
+  - strongest interpretation:
+    this is not real block semantics and not a true AST params bug. It is an
+    active local-slot / temporary-state corruption corridor inside
+    `register_concrete_class` method registration, in the same wider family as
+    earlier self-hosted wrapper/bool/value corruption
+  - decisive falsifier:
+    a purely diagnostic env-gated reset
+    `CRYSTAL_V2_FORCE_NO_BLOCK_IF_NO_PARAMS=1` forces `has_block=0` only when
+    `params.nil?`; that changes the same carrier from bogus
+    `#resume_all$block` registration to plain `#resume_all` and moves the crash
+    later into duplicate base-name `set_function_def_entry` replace-path
+    handling. Therefore the earlier sink was caused by corrupted local state,
+    not by true block metadata on the `DefNode`
+  - important secondary anomaly, likely related but not yet proven identical:
+    the same trace still resolves source `: Nil` to
+    `Crystal::PointerLinkedList::Node::Nil`, so there is also a namespace/type
+    resolution contamination corridor active on the repaired class path
+- **Global stage1-vs-stage2 divergence synthesis (2026-03-26, current session)**:
+  - the accumulated verified fixes no longer support the naive model
+    “same source should behave the same, so stage2 is just hitting random edge
+    cases”. Once the compiler becomes self-hosted, `stage2` is a new binary
+    compiled by our own codegen/runtime, so any miscompile of compiler-internal
+    representations shows up as a semantic difference between `stage1` and
+    `stage2` even on identical source text
+  - the strongest cross-session clustering now has four real root-cause
+    families:
+    - **family A: composite value / wrapper transport corruption**. Verified
+      members: `lex_char` helper-return, escaped-char helper-return,
+      enum-member nilable ctor, synthetic `HIR::Function` param storage,
+      false non-nil `DefNode.return_type`, tuple / wrapper / `ArenaLike`
+      transport drift. Reusable lesson: avoid by-value relocation of composite
+      structs in bootstrap-hot paths; inline construction or keep raw/reference
+      snapshots instead
+    - **family B: ownership / arena-admission gaps**. Verified members:
+      snippet-reparsed nested-module defs being stored canonically,
+      shallow `arena_fits_class_node?` validation that ignored
+      `IncludeNode.target` and accessor/default payloads, and the new
+      class-repair frontier after `fit=0`. Reusable lesson: stage2 often fails
+      not because a node is globally corrupted, but because later consumers are
+      allowed to read a node through the wrong arena or after an unsafe repair
+      path
+    - **family C: name/slice ingestion fragility with source-derived recovery
+      as the stable bedrock**. Verified members: absolute generic header leaf
+      names, lib struct/class names, alias prefix extraction, explicit return
+      type recovery from source. Reusable lesson: on self-hosted carriers,
+      source/snippet-derived metadata is often more trustworthy than raw field
+      reads from composite AST/HIR nodes
+    - **family D: explicit representation-contract mismatches in MIR/LLVM**.
+      Verified members: unsigned literal cache mixup, ptr-zero text rewrite
+      after string-length computation, enum-owner cache-key clobber, function
+      param storage drift. Reusable lesson: once the storage contract is wrong,
+      later stages can deterministically diverge even when the frontend looked
+      plausible
+  - why edge cases fail first:
+    edge cases are not random. They are high-sensitivity probes for these
+    families because they disproportionately hit nilable/defaulted fields,
+    union-tag paths, small helper-return values, snippet-repair corridors,
+    nested ownership, and guard-heavy slice/name reads. Normal code paths can
+    stay green longer simply because they avoid those representation-sensitive
+    corridors
+  - stale broad theories that should no longer drive debugging:
+    - “there is one monolithic parser bug”
+    - “the remaining blocker is just LLVM/backend”
+    - “reparsed arena lifetime alone explains the class crashes”
+    - “include target resolution or `Pointer(self)` alone explains `once.cr`”
+  - strongest current interpretation:
+    the active `once.cr` / top-level `Operation` blocker still sits in the
+    overlap of families **A + B**: class registration reaches a `fit=0`
+    situation, then enters a repair/reparse corridor whose nested payload
+    ownership or consumer-side representation contract is still wrong. The
+    already-verified deep class-member fit fix closes the earlier shallow
+    admission bug, but the remaining frontier is lower: semantic/transport
+    correctness of class repair after admission already failed
+  - next root-cause-oriented move:
+    treat `stage1` vs `stage2` as an equivalence problem for
+    compiler-internal invariants, not as a generic source-language bug.
+    The highest-signal next experiment is a paired trace on the same tiny
+    class carrier comparing:
+    1. original node + original arena
+    2. repaired/reparsed node + repaired arena
+    across `register_class_with_name -> register_concrete_class ->
+    resolve_path_like_name_in_arena`
+    If those diverge before HIR semantics diverge, the live root cause is in
+    repair/ownership transport; if they stay aligned until later, the next sink
+    is a consumer-side field/wrapper read inside class registration
+- **Fresh class-member arena-fit root-cause split (2026-03-26, current session)**:
+  - the older wide include-macro matrix is now stale. On the current local
+    deep-fit worktree the verified no-prelude matrix is:
+    - top-level `Operation` + included `property ::Pointer(self)` -> `stage1 green / stage2 red`
+    - `A::B::Operation` + the same include -> `green / green`
+    - `Crystal::B::Operation` + the same include -> `green / green`
+    - `Crystal::Once::Operation` + included `property Int32 = 0` -> `green / green`
+    - real `src/stdlib/crystal/once.cr --STOP_AFTER_HIR` -> still `stage1 green / stage2 red`
+  - decisive verified movement:
+    a local hardening of `arena_fits_class_node?` now descends into
+    class-member substructure (`IncludeNode.target`, accessor/default corridors,
+    typed ivar default expressions) instead of validating only outer body ids
+    and outer spans. After rebuilding `/tmp/stage2_current_debug_exprtrace`,
+    both previously-red nested reducers
+    `tmp/reduce_depth2_include_macro_property_self.cr` and
+    `tmp/reduce_crystal_depth2_include_macro_property_self.cr`
+    turned `stage2 green`, while the old control
+    `tmp/reduce_crystal_once_include_macro_property_int32.cr` stayed green
+  - strongest interpretation:
+    one real root-cause family is now verified: shallow class-member
+    arena validation allowed `register_concrete_class` to proceed on class
+    nodes whose nested member payloads did not belong to the active arena.
+    The first concrete sink for that family was the include-target read in
+    `resolve_path_like_name_in_arena`
+  - new boundary after that movement:
+    top-level `tmp/reduce_include_macro_property_self.cr` still reds with the
+    same `resolve_path_like_name_in_arena -> register_concrete_class` stack,
+    and `once.cr` still reds with `Comparison of 8 and 8 failed`
+  - decisive falsifier for the next branch:
+    a follow-up lifetime-only experiment that retained repaired class snippet
+    arenas in `@main_arenas` made **no** difference for either the top-level
+    reducer or real `once.cr`; so the remaining blocker is not explained by
+    “reparsed class arena gets dropped” alone
+  - strongest current frontier:
+    the live blocker has moved below arena-fit admission and now sits in the
+    class repair/reparse corridor after `fit=0`, not in the already-exposed
+    nested include-path family itself
+- **Fresh `Crystal::Once::Operation` included-macro cluster split (2026-03-26, current session)**:
+  - the old broad model “nested include + `Pointer(self)` is red” is now falsified by a clean no-prelude matrix:
+    - top-level `Operation` -> `stage1 green / stage2 green`
+    - `A::Operation` -> `green / green`
+    - `A::B::Operation` -> `green / green`
+    - `Crystal::Operation` -> `green / green`
+    - `Crystal::B::Operation` -> `green / green`
+    - `A::Once::Operation` -> `green / green`
+    - only `Crystal::Once::Operation` stays `stage1 green / stage2 red`
+  - decisive falsifier: replacing `property previous : ::Pointer(self)` with
+    `property previous : Int32 = 0` in the same `Crystal::Once::Operation`
+    carrier does **not** heal stage2; so `self` type resolution is not the live
+    blocker anymore
+  - additional verified signal on the real carrier:
+    `env DEBUG_MODULE_INCLUDE=1 scripts/run_safe.sh /tmp/run_once_stop_after_hir_stage2_current.sh 30 3072`
+    shows `Crystal::Once::Operation <= PointerLinkedList::Node (resolved: Crystal::PointerLinkedList::Node)`
+    before the same `error: Comparison of 8 and 8 failed`
+  - strongest current interpretation:
+    the live family is now narrower than include-target resolution and narrower
+    than generic nested includes. It sits inside `Crystal::Once::Operation`
+    included-macro property expansion / accessor-registration tail after the
+    include target is already resolved correctly
+  - rejected branch:
+    a source-aware include-target resolver experiment was tried locally and then
+    rolled back from the active branch after it failed to move `once.cr` and
+    introduced `SIGBUS` on tiny reducers; keep the idea only as historical
+    evidence that include-target recovery alone is insufficient
+- **Fresh `Crystal::Once::Operation` class-arena root-cause split (2026-03-26, current session)**:
+  - the old `.new` duplicate-registration model is now stale. Fresh LLDB on
+    `/tmp/stage2_current_debug_exprtrace` for
+    `src/stdlib/crystal/once.cr --release --no-prelude --no-ast-cache` with
+    `CRYSTAL_V2_STOP_AFTER_HIR=1 CRYSTAL_V2_TRUST_SLICE_ADDR=1` lands in:
+    `AstArena#[] -> VirtualArena#[] -> resolve_path_like_name_in_arena ->
+     register_concrete_class -> register_class_with_name_in_current_arena ->
+     register_class_with_name -> register_nested_module`
+  - direct stage2 trace falsifies the older `SpinLock.new` tail:
+    second-pass registration for `Crystal::SpinLock` reaches both duplicate
+    `set_function_def_entry` and `set_function_def_arena` writes, reaches
+    `[CLASS_INFO] Crystal::SpinLock ivars=[] size=0`, and
+    `register_function_type("Crystal::SpinLock.new", ...)` also completes
+    before the next crash family appears
+  - new fast follower remains:
+    `src/stdlib/crystal/once.cr --release --no-prelude --no-ast-cache`
+    gives `stage1 green / stage2 red`
+  - decisive `DEBUG_CLASS_ARENA='Crystal::Once::Operation'` signal on the same
+    carrier:
+    `register_class_with_name` receives `Crystal::Once::Operation` with
+    `current fit=0`, `chosen fit=0`, and no better arena candidate from the
+    same file; stage2 then still enters
+    `[REG_CONCRETE_PHASE] class=Crystal::Once::Operation phase=after_pass0`
+    and only crashes during the later include/extend scan
+  - strongest current interpretation:
+    the real live blocker is no longer `.new` or generic-ivar resolution.
+    The current family is `known-name nested class registration on an unfit
+    ClassNode` plus the lack of a class-source repair/fallback path in
+    `register_class_with_name`; the first observable explosion happens when
+    `register_concrete_class` reads `IncludeNode.target` through
+    `resolve_path_like_name_in_arena`
+- **Fresh nested-generic class-ivar reducer (2026-03-26, current session)**:
+  - the post-`541e3d54` trust-enabled stage3 follower is now reduced from
+    `src/stdlib/crystal/once.cr` to a 190-byte no-prelude carrier:
+    `tmp/reduce_class_ivar_nested_generic.cr`
+    ```cr
+    module A
+      struct Node
+      end
+
+      struct Box(T)
+        def self.new
+          uninitialized self
+        end
+      end
+
+      struct Holder
+        def initialize
+          @waiting = Box(A::Node).new
+        end
+      end
+    end
+    ```
+  - verified matrix:
+    - `scripts/run_safe.sh ./tmp/run_reduce_class_ivar_nested_generic_stage1.sh 30 2048` -> green on `/tmp/stage1_release_29966272`
+    - `scripts/run_safe.sh ./tmp/run_reduce_class_ivar_nested_generic_stage2.sh 30 2048` -> red on `/tmp/stage2_current_debug_exprtrace` with `exit 139`
+  - clean trust-enabled LLDB on the tiny carrier:
+    `Hash(String, Nil)#find_entry_with_index(String) ->
+     Set(String)#includes? ->
+     resolve_class_name_in_context ->
+     resolve_path_string_in_context ->
+     resolve_type_name_in_context_impl ->
+     type_ref_for_name_inner ->
+     infer_type_from_class_ivar_assign ->
+     infer_ivars_from_expr ->
+     infer_ivars_from_body ->
+     register_concrete_class`
+  - strongest current interpretation:
+    the next live blocker is now honestly a nested-generic class-ivar type
+    inference / name-resolution corridor, not the earlier empty-def
+    `DefNode.return_type` metadata read
+- **Fresh empty-def return-type root cause fix (2026-03-26, current session)**:
+  - the trust-enabled no-prelude HIR oracle for a plain empty-def struct is now green:
+    `./regression_tests/stage2_empty_def_return_type_hir_oracle.sh /tmp/stage1_release_29966272 /tmp/stage2_current_debug_exprtrace`
+    -> `not reproduced: stage2 matches stage1 on empty-def return-type HIR oracle`
+  - decisive pre-fix trace on the same current-source stage2 family showed the real sink directly:
+    on `struct SpinLockLike; def lock; end; def unlock; end; end`,
+    `register_concrete_class` logged
+    `[REG_METHOD_PHASE] ... phase=after_return_field present=1`
+    for `def lock` even though the method has no explicit return type
+  - strongest current interpretation:
+    the active blocker there was not broad AST corruption and not getter inference;
+    it was a false non-nil read of `DefNode.return_type` in the class-registration
+    corridor, very likely the same kind of adjacent composite-field / wrapper
+    misread we have seen elsewhere in self-hosted stage2
+  - verified source fix:
+    `register_concrete_class` now takes explicit return-type metadata from
+    `def_explicit_return_type_from_source(member, member_arena)` instead of reading
+    raw `member.return_type` in that corridor
+  - direct post-fix evidence on the same tiny carrier:
+    `[REG_METHOD_PHASE] ... phase=after_return_field present=0`
+    followed by clean `before_getter_infer -> after_getter_infer -> after_body_infer`
+    for both `lock` and `unlock`
+  - downstream movement is real:
+    trust-enabled full `stage3 --STOP_AFTER_HIR` no longer dies in the old empty-def
+    corridor; fresh LLDB now lands later in
+    `Hash(String, Nil)#find_entry_with_index(String) ->
+     resolve_class_name_in_context ->
+     normalize_declared_type_name ->
+     infer_type_from_class_ivar_assign ->
+     register_concrete_class`
+    while processing `src/stdlib/crystal/once.cr`
+  - boundary/adversary:
+    without `CRYSTAL_V2_TRUST_SLICE_ADDR=1`, full `stage3 --STOP_AFTER_HIR` still
+    hits the broader `LibMachVM$Dmach_task_self` guard family first, so this fix
+    closes the trust-enabled `DefNode.return_type` misread corridor, not the
+    remaining guard-family blocker
+- **Fresh no-prelude empty-def root-cause split (2026-03-26, current session)**:
+  - the active self-hosted blocker is now reduced to a 61-byte no-prelude oracle:
+    `tmp/reduce_struct_def_noprelude.cr`
+    ```cr
+    struct SpinLockLike
+      def lock
+      end
+
+      def unlock
+      end
+    end
+    ```
+  - verified matrix (trust-enabled stage2 corridor):
+    - `scripts/run_safe.sh ./tmp/run_reduce_struct_def_noprelude_stage1.sh 30 3072` -> green on `/tmp/stage1_release_29966272`
+    - `scripts/run_safe.sh ./tmp/run_reduce_struct_def_noprelude.sh 30 3072` -> red on `/tmp/stage2_current_debug_exprtrace` with `STUB CALLED: LibMachVM$Dmach_task_self`
+  - clean LLDB on the same stage2 binary and carrier:
+    `LibMachVM.mach_task_self -> readable_address? -> register_concrete_class -> register_class_with_name_in_current_arena -> register_class_with_name -> register_class`
+  - stage2 method-phase trace narrows the live sink below arena resolution and below eager type-literal return inference:
+    - `[REG_METHOD_PHASE] ... phase=after_receiver`
+    - `[REG_METHOD_PHASE] ... phase=base_name`
+    - `[REG_METHOD_PHASE] ... phase=after_member_arena`
+    - `[REG_METHOD_PHASE] ... phase=after_type_literal inferred=(nil)`
+    - crash happens before any later `after_getter_infer` / `after_body_infer` marker
+  - strongest current interpretation:
+    this is no longer honestly modeled as prelude noise, nested-module noise, or broad parser transport.
+    The active frontier is now the first return-type fast path for a plain empty `DefNode`
+    during `register_concrete_class`, likely at or immediately before `infer_getter_return_type`
+    on a corrupted/self-misread `DefNode` field wrapper.
+- **Fresh inline-param source-shape falsifier (2026-03-26, current session)**:
+  - the old live tiny reducer `tmp/reduce_method_yield_block_arena.cr` on fresh current-source debug `/tmp/stage2_current_debug_exprtrace` is no longer honestly modeled as the same `block-body -> HIR def registration -> $IDXS$$String_Crystal::HIR::TypeRef` family
+  - decisive falsifier:
+    replacing the captured block-proc write
+    `each_param_with_index(params) { ... local_map[name] = param_type }`
+    inside `inline_block_return_type_name` / `inline_proc_return_type_name`
+    with direct `while`-based helpers
+    (`seed_inline_param_type_map`, `seed_inline_param_type_map_entry`)
+    moves the same reducer to a different sink with no other source changes
+  - verified movement:
+    - with `CRYSTAL_V2_TRUST_SLICE_ADDR=1`:
+      `scripts/run_safe.sh /tmp/run_reduce_method_yield_block_arena_hir_trust.sh 30 3072`
+      now reds with `STUB CALLED: Int32$Haddress`
+    - without that env on the same rebuilt binary:
+      `env CRYSTAL_V2_STOP_AFTER_HIR=1 /tmp/stage2_current_debug_exprtrace tmp/reduce_method_yield_block_arena.cr ...`
+      reds with `STUB CALLED: LibMachVM$Dmach_task_self`
+  - IR evidence on `/tmp/stage2_current_debug_exprtrace.ll` shows the new sink sits in the trust/readability guard family, not in the old block-proc `Hash(String, TypeRef)#[]=` corridor:
+    - trust path: `env_has?("CRYSTAL_V2_TRUST_SLICE_ADDR") -> Bool#to_unsafe -> Int32#address`
+    - no-trust path: `readable_address? -> LibMachVM.mach_task_self`
+  - strongest current interpretation:
+    the newly exposed live family is `safe_str_guard` / `safe_slice_to_string` / readability probing, likely a narrower value-slot / local access corruption around `Bool` trust flags and later `Slice` reads, not broad AST/arena corruption
+  - next falsifier:
+    move trust-flag acquisition after the first raw/ptr/addr reads in `safe_str_guard` and `safe_slice_to_string`; if the sink moves again, the real root cause is the guard-local value-slot corridor, not the guard policy itself
+- **Fresh block-body handoff falsifier (2026-03-26, current session)**:
+  - the current tiny block-body frontier is no longer honestly modeled as parser or `ParsedUnit` transport corruption
+  - decisive falsifier on fresh current-source debug `/tmp/stage2_current_debug_exprtrace`:
+    - `tmp/reduce_toplevel_block_call.cr` keeps `BlockNode.body` stable at every parser/CLI boundary we can observe:
+      `parse_program_roots_wrapper`, `parse_file_recursive_after_parse`,
+      `parse_file_recursive_after_append`, `top_level_collection_entry`, and even
+      `pass2_before_register_def` all log the same `block=2 size=1 first=1`
+    - only after entering HIR def registration does the same reducer flip into the
+      old self-cycle shape:
+      `expr_subtree_matches_arena?` reads `BlockNode.body idx=0 expr=3`
+  - the corresponding bare-root carrier `tmp/reduce_bare_block_call.cr` also stays
+    clean through `parse_file_recursive_after_parse/append` and
+    `top_level_collection_entry`, then crashes later in `lower_main`
+  - strongest current interpretation:
+    the old broad model “parser/`ParsedUnit`/CLI handoff overlap” is now stale for
+    the live blocker; the first verified corruption boundary sits inside the HIR
+    consumer corridor, between CLI pass2 setup and the first
+    `register_function` / `arena_fits_def?` / `expr_subtree_matches_arena?`
+    walk
 - **Fresh nested-module def reparse root cause fix (2026-03-26, current session)**:
   - the old `LM-246` blocker was real but narrower than “nested-module block-yield arena-fit” in general: the tiny carrier
     `module A; module B; extend self; def exec(flag, &); yield; end; end; end`
@@ -60,6 +681,19 @@
     - stage1-vs-stage2 HIR now matches on the new oracle `regression_tests/stage2_nested_module_extend_target_hir_oracle.sh`
   - environment note:
     - the oracle still needs `CRYSTAL_V2_TRUST_SLICE_ADDR=1` on stage2 to bypass the older Mach-readable-address guard family (`LibMachVM.mach_task_self`); that is a pre-existing independent noise source, not part of this fix
+- **Fresh owner-namespace include root cause split (2026-03-26, current session)**:
+  - the old self-hosted `String$Dbytesize` abort on nested include resolution was real and narrower than the surrounding `include` logic: the tiny no-prelude carrier `tmp/reduce_nested_include_owner_ns.cr` (`module A; module M; ...; struct C; include M; ...; end; end`) is `stage1 green / stage2 red` on the older debug probe, and `lldb` pins it to `resolve_module_name_in_owner_namespaces_impl -> String$Dbytesize`
+  - a local inline owner-namespace scan inside `register_module_instance_methods_for` is a strong falsifier, not a guess: the same tiny carrier turns green on `/tmp/stage2_current_debug_nsinline`, and full `stage3 --release --STOP_AFTER_HIR` moves off the old `String$Dbytesize` sink into a later HIR corridor
+  - strongest current interpretation: this was a helper-call-boundary bug on `String` arguments in the owner-namespace resolver, not a generic include/path-resolution logic failure
+- **Fresh nested-module def registration frontier (2026-03-26, current session)**:
+  - the new post-inline blocker is now reduced to `tmp/reduce_nested_module_def_arena.cr`:
+    `module A; module B; extend self; def x : Int32; 1; end; end; end`
+    which is `stage1 green / self-hosted stage2 red`
+  - traces on `/tmp/stage2_current_debug_nestedposttrace` falsify several earlier hypotheses for this carrier: it reaches `def_after_name`, `def_after_member_arena`, `def_after_namespace`, `def_after_yield_scan`, `def_after_full_name`, and `def_after_register_type`
+  - source-derived return-type recovery is now verified as a real sub-fix inside the same corridor: on the latest probe, `DefNode.return_type` no longer degrades to an empty string; the trace now shows `rt=Int32` on the tiny oracle
+  - with `DEBUG_REGISTER_DEF_RAW=1`, the same carrier also reaches the first `set_function_def_entry("A::B.x", ...)` and a second `def_contains_yield?` pass before aborting, so the live frontier has moved below raw method-name, member-arena, and raw return-type transport
+  - this note is now partially stale:
+    the old carrier remains useful, but the immediate crash on that reducer is no longer modeled as a post-`register_function_type` tail; the stronger current root cause is the earlier nested-module `ExtendNode` target classification bug recorded above
 - **Branch**: `bootstrap-benchmark` (merged `inline-structs`)
 - **Regression baseline**: last broadly re-verified count from the earlier inline-struct phase was `87/88 + 18/20`; later parser/HIR/bootstrap changes have not re-established that full baseline yet
 - **Fresh macro-expr brace normalization (2026-03-26)**:
@@ -318,6 +952,28 @@
     the old clean stage3 parse blocker in `src/stdlib/io.cr` is closed; clean self-hosted stage2 now keeps `CRYSTAL_V2_STOP_AFTER_PARSE=1` green on `src/crystal_v2.cr --release`, and the next reducer needs to target the later `CRYSTAL_V2_STOP_AFTER_HIR=1` crash that currently reaches `src/stdlib/time.cr`
   - updated frontier after restoring raw `HIR::Function` param storage:
     the old `Taint << Parameter` abort in `HIR::Function#add_param` is closed again; `regression_tests/stage2_main_param_mir_oracle.sh` is red on `/tmp/stage2_release_head_charfix` and green on `/tmp/stage2_release_head_charfix_paramraw`, and the reduced `src/stdlib/time.cr --release --no-prelude --no-ast-cache` `CRYSTAL_V2_STOP_AFTER_HIR=1` carrier now moves from that abort to a deterministic `error: Index out of bounds`
+- **Fresh Quadrumvirate synthesis (2026-03-26 late)**:
+  - active contradiction ledger:
+    - **refuted**: `time.cr` itself as the primary root cause; repeated reducers kept moving the stop while the same carriers moved with parser/storage fixes
+    - **refuted**: macro-only explanation for the char/escaped-char family; both abstract-macro and plain `abstract class IO ... '\n'` reducers fell to the same `lex_char` handoff family
+    - **refuted**: `NodeSlot` / `Reference -> Node` as the immediate cause of the tiny HIR blocker `def x; 1; end; y = x`; new arena diagnostics show the same `IdentifierNode` survives add/fetch on both raw and typed paths with stable slice-object pointer and valid `ptr/size=1`
+    - **refuted**: `IdentifierNode#name` getter boundary as the immediate cause of that same reducer; internal `@name` and getter-return diagnostics stay identical on the arena side
+    - **refuted**: the old `(nil)` names in `lower_main` as proof of true AST corruption; they are now better explained as a later reader/validator false negative
+  - strongest new verified split on the tiny no-prelude HIR oracle `def x; 1; end; y = x`:
+    - baseline self-hosted debug stage2: `MAIN_KIND_DEBUG` prints `target/value = (nil)` and later dies in the old `Index out of bounds` class
+    - the same binary with `CRYSTAL_V2_TRUST_SLICE_ADDR=1` flips `MAIN_KIND_DEBUG` to real names `target=y value=x`, then dies later with `exit 139`
+    - this proves the first visible failure was not a missing identifier payload at all; it was the HIR-side slice reader/validator (`safe_slice_to_string` + readable-address guard) rejecting a slice that the AST-side diagnostics still see as structurally valid
+    - with `CRYSTAL_V2_TRUST_SLICE_ADDR=1` plus `DEBUG_IDENT_RESOLVE=1`, `lower_identifier` now reaches `name=x` but still reports `has_def=0 has_type=0 has_base=0` before crashing
+    - `CRYSTAL2_COLLECT_TRACE=1` on the same run proves the top-level `DefNode` is still present during CLI collection (`expr=1 kind=36`), so the next live sink is earlier than identifier lookup and later than AST collection: top-level def name ingestion / registration into `@function_defs`
+  - global root-cause clusters from the accumulated landmarks:
+    - **cluster A: composite value boundary corruption**. Verified members: `lex_char` helper-return, escaped-char helper-return, enum-member nilable ctor, synthetic `HIR::Function` param container, `ArenaLike` / tuple / wrapper transport, `Array(TypedNode)` conditional init. Reusable fix shape: inline construction at the callsite, split nilable/default-arg constructors, store raw snapshots or reference wrappers, avoid by-value relocation of composite structs.
+    - **cluster B: non-bootstrap-safe convenience helpers over composite data**. Verified members: `Array#uniq -> Set`, `compact_map`, hot-path `@tokens.insert`, `IO::Memory#gets`, `String#each_line`, `gsub`/regex number cleanup, `String#rindex` alias parsing. Reusable fix shape: manual byte scans, linear dedupe, grammar-driven source parsing, pre-normalize once instead of mutating hot growable buffers.
+    - **cluster C: representation-contract mismatches**. Verified members: raw-pointer union ABI, unsigned literal cache mixup, ptr-zero text rewrite after string length computation, enum-owner cache key clobber, function param storage drift. Reusable fix shape: make the representation invariant explicit and avoid post-hoc rewrites that assume the wrong storage model.
+    - **cluster D: name/slice ingestion reliability**. Verified members: StringPool owning-canonical-string fix, absolute-header leaf-name parsing, alias prefix extraction, and now the new `safe_slice_to_string` false-negative + missing top-level def registration family. Reusable fix shape: prefer grammar/source-derived extraction or minimal raw/null/range checks over heavyweight guard logic when the data is already structurally valid.
+  - next root-cause-oriented move:
+    - do **not** spend another branch on `lower_assign` / `lower_call` / local HIR patches for the tiny reducer
+    - instead, instrument the def-registration path (`CLI def_nodes -> AstToHir#register_function`) under `CRYSTAL_V2_TRUST_SLICE_ADDR=1` and compare `DefNode.name` readback with the already-verified valid `IdentifierNode.name` carrier
+    - if `DefNode.name` fails only through `safe_slice_to_string`, replace the current Mach-readable-address dependency in the hot name-ingestion path with a lighter bootstrap-safe contract (raw null/range + ptr/size sanity), then re-check both the tiny reducer and the broader `small_deque` / stage3 HIR followers
 ## VERIFIED: Fix `ptr 0` → `ptr null` in stage2 LLC
 
 ### Done:
@@ -400,3 +1056,87 @@ CRYSTAL_V2_STOP_AFTER_MIR=1 /tmp/crystal_v2_s2 /tmp/test.cr -o /tmp/out --no-pre
 - `src/compiler/mir/hir_to_mir.cr` — FieldGet/FieldSet inline; hir_type_is_struct? generic
 - `src/compiler/mir/llvm_backend.cr` — ptr 0→null; union arg fixes; Set→case/when
 - `src/compiler/cli.cr` — LibC file ops; cache disable; trace points
+
+## Fresh Frontier — 2026-03-26 (late)
+
+Verified this turn on current-source self-hosted debug probes:
+
+1. `DefNode.name` false-negative was real and came from the guard itself, not the AST payload.
+   - In `register_function`, `safe_slice_to_string(node.name)` returned nil because
+     `slice.unsafe_as(UInt64)` evaluated to `1`, while `pointerof(slice).as(UInt64*).value`
+     held the valid object ref.
+   - Local diagnostic fix made `register_function` recover `name=x`.
+
+2. The next blocker was not “yield analysis” logic but a bootstrap-unsafe source-span guard.
+   - Tiny oracle `def x; 1; end; y = x` proved `register_function` died in the first
+     `def_contains_yield?` before `return_type/full_name/keying`.
+   - Root cause: `span_fits_source?` lazily computed `line_count` and hit the direct Mach
+     probe `LibMachVM.mach_vm_read_overwrite`.
+   - Structural fix: precompute/store `line_count` when binding or registering arena sources
+     (`bootstrap_bind_source_maps`, `set_source_for_arena`) so normal source validation no
+     longer enters that late Mach path.
+
+3. The following blocker was the same family on compiler-owned method-name strings.
+   - After the line-count fix, `register_function` advanced into `set_function_def_entry`.
+   - `lldb` and step markers showed the crash corridor was
+     `strip_type_suffix -> parse_method_name_compact -> v2_string_readable? -> readable_address?`.
+   - Two fixes moved the frontier:
+     - `strip_type_suffix` now uses the direct uncached `$` stripper instead of full method-name parsing.
+     - `v2_string_readable?` / `parse_method_name_compact` now use slot-raw reads via `pointerof(...)`
+       plus structural range checks, and no longer VM-probe compiler-owned strings.
+
+4. Tiny no-prelude oracle is now far beyond the old HIR blocker.
+   - `/tmp/stage2_current_debug_stringfix /tmp/simple_toplevel_call_oracle.cr --no-prelude --emit hir`
+     now reaches HIR, MIR, and LLVM generation.
+   - It no longer aborts in the Mach/string guard family.
+   - Current tiny follower is a non-crash output/open issue:
+     `open: Bad address` while opening `/tmp/simple_toplevel_call_oracle_out.hir.ll`.
+
+5. Stage3 HIR frontier moved too.
+   - Self-hosted `src/crystal_v2.cr --release --no-ast-cache` with `CRYSTAL_V2_STOP_AFTER_HIR=1`
+     no longer dies in the old Mach/string guard corridor.
+   - New exact LLDB stack:
+     `Int32#address -> AstToHir#register_lib_member -> with_resolved_body_arena -> register_lib_body -> register_lib`
+   - So the live stage3 blocker is now in lib registration, not parser/StringPool and not
+     compiler-owned String guard probing.
+
+Immediate next steps:
+1. Remove temporary debug markers from `ast_to_hir.cr` and isolate a clean commit that keeps only the verified guard fixes.
+2. Reduce the new `register_lib_member -> Int32#address` stage3 HIR blocker to a tiny `lib` carrier.
+3. Check whether the tiny `open: Bad address` follower is a real CLI/output-path bug or just a debug/oracle artifact after `--emit hir`.
+
+## Fresh Frontier — 2026-03-26 (later)
+
+Verified this turn on current-source self-hosted debug probes built from `/tmp/stage1_release_29966272`:
+
+1. The old “lib registration” model was too wide.
+   - Tiny reducer `lib LibC; struct PthreadAttrT; x : Int32; end; end` is red on stage2,
+     but `lib LibC; struct PthreadAttrT; end; end` is green.
+   - So the active blocker is not plain `register_lib_member` or empty lib struct registration;
+     it requires a non-empty struct/class body.
+
+2. The blocker is not lib-specific anymore.
+   - Plain no-prelude reducer `struct PthreadAttrT; x : Int32; end` reproduces the same
+     `Int32#address` abort on self-hosted stage2, while stage1 is green.
+   - This falsifies the narrower hypothesis that only `@lib_structs` / C-struct handling is broken.
+
+3. The live crash corridor is now pinned inside `register_concrete_class`.
+   - LLDB on the plain struct reducer gives:
+     `Int32#address -> AstToHir#register_concrete_class -> register_class_with_name_in_current_arena -> register_class_with_name`.
+   - Phase tracing showed `register_concrete_class` passes:
+     `after_pass0`, `after_include_extend_scan`, `after_record_constants`,
+     `after_provisional_info`, `after_defined_instance_scan`,
+     `after_defined_class_scan`, and reaches `before_body_loop`.
+
+4. The first failing operation in the body loop is after raw arena fetch, before/inside visibility unwrap.
+   - On `struct PthreadAttrT; x : Int32; end`, trace reaches:
+     `loop_entry idx=0 expr=0`
+     `after_arena_fetch idx=0 kind=CrystalV2::Compiler::Frontend::Node`
+   - It crashes before `after_unwrap`, so the current strongest frontier is
+     `unwrap_visibility_member_in_arena(raw_member, @arena)` (or the immediate call boundary around it),
+     not `TypeDeclarationNode` lowering itself.
+
+Immediate next steps:
+1. Finish the active falsifier for `CRYSTAL_V2_SKIP_CLASS_BODY_UNWRAP=1` to check whether bypassing visibility unwrap makes the plain struct-field oracle green.
+2. If it does, replace the broad helper call with a bootstrap-safe fast path for non-visibility nodes and then re-run the plain-struct and lib-struct reducers.
+3. Only after that, re-run `src/crystal_v2.cr --release --no-ast-cache` with `CRYSTAL_V2_STOP_AFTER_HIR=1` and then resume stage2 -> stage3.
