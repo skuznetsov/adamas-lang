@@ -70923,6 +70923,7 @@ module Crystal::HIR
           name = (safe_slice_to_string(target.name) || "")
           written.add(name) if capture_names.includes?(name)
         end
+        detect_written_captures_walk(node.target, capture_names, written)
         detect_written_captures_walk(node.value, capture_names, written)
       when CrystalV2::Compiler::Frontend::IfNode
         detect_written_captures_walk(node.condition, capture_names, written)
@@ -70935,7 +70936,13 @@ module Crystal::HIR
         node.body.each { |e| detect_written_captures_walk(e, capture_names, written) }
       when CrystalV2::Compiler::Frontend::BlockNode
         node.body.each { |e| detect_written_captures_walk(e, capture_names, written) }
+      when CrystalV2::Compiler::Frontend::IndexNode
+        detect_written_captures_walk(node.object, capture_names, written)
+        node.indexes.each { |idx| detect_written_captures_walk(idx, capture_names, written) }
+      when CrystalV2::Compiler::Frontend::MemberAccessNode
+        detect_written_captures_walk(node.object, capture_names, written)
       when CrystalV2::Compiler::Frontend::CallNode
+        detect_written_captures_walk(node.callee, capture_names, written)
         node.args.each { |a| detect_written_captures_walk(a, capture_names, written) }
         if blk = node.block
           detect_written_captures_walk(blk, capture_names, written)
