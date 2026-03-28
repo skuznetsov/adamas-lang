@@ -2523,12 +2523,17 @@ module Crystal::MIR
         # Error message strings for builtin overrides
         emit_raw "@.str.file_open_error.data = private unnamed_addr constant { i64, i32, i32, i32, [26 x i8] } { i64 9223372036854775807, i32 #{string_type_id}, i32 25, i32 25, [26 x i8] c\"Error opening file (open)\\00\" }, align 8\n"
         emit_raw "@.str.file_open_error = private unnamed_addr alias i8, getelementptr inbounds (i8, ptr @.str.file_open_error.data, i64 8)\n"
+        emit_raw "@.str.file_write_error.data = private unnamed_addr constant { i64, i32, i32, i32, [27 x i8] } { i64 9223372036854775807, i32 #{string_type_id}, i32 26, i32 26, [27 x i8] c\"Error writing file (write)\\00\" }, align 8\n"
+        emit_raw "@.str.file_write_error = private unnamed_addr alias i8, getelementptr inbounds (i8, ptr @.str.file_write_error.data, i64 8)\n"
         emit_raw "@.str.dbg_open_label = private unnamed_addr constant [5 x i8] c\"open\\00\", align 1\n"
+        emit_raw "@.str.dbg_write_label = private unnamed_addr constant [6 x i8] c\"write\\00\", align 1\n"
       else
         # No-prelude mode: C strings
         emit_raw "@.str.empty = private unnamed_addr constant [1 x i8] c\"\\00\", align 1\n"
         emit_raw "@.str.file_open_error = private unnamed_addr constant [26 x i8] c\"Error opening file (open)\\00\", align 1\n"
+        emit_raw "@.str.file_write_error = private unnamed_addr constant [27 x i8] c\"Error writing file (write)\\00\", align 1\n"
         emit_raw "@.str.dbg_open_label = private unnamed_addr constant [5 x i8] c\"open\\00\", align 1\n"
+        emit_raw "@.str.dbg_write_label = private unnamed_addr constant [6 x i8] c\"write\\00\", align 1\n"
       end
 
       return if @string_constants.empty?
@@ -6574,6 +6579,41 @@ module Crystal::MIR
         # If read returned error (-1), return 0
         emit_raw "  %is_err = icmp slt i64 %nbytes, 0\n"
         emit_raw "  br i1 %is_err, label %ret_zero, label %ret_ok\n"
+        emit_raw "ret_ok:\n"
+        emit_raw "  %result = trunc i64 %nbytes to i32\n"
+        emit_raw "  ret i32 %result\n"
+        emit_raw "}\n\n"
+        return true
+      end
+
+      # IO::FileDescriptor#system_write(Slice(UInt8)) / File#system_write(Slice(UInt8))
+      # Bypass the broken event-loop write dispatch in self-hosted stage2.
+      if mangled == "IO$CCFileDescriptor$Hsystem_write$$Slice$LUInt8$R" ||
+         mangled == "File$Hsystem_write$$Slice$LUInt8$R"
+        fd_getter = mangled.starts_with?("File$") ? "File$Hfd" : "IO$CCFileDescriptor$Hfd"
+        emit_raw "; #{mangled} — direct syscall system_write override\n"
+        emit_raw "define i32 @#{mangled}(ptr %self, ptr %slice) {\n"
+        emit_raw "entry:\n"
+        emit_raw "  %fd = call i32 @#{fd_getter}(ptr %self)\n"
+        # Load slice.@size from offset 0
+        emit_raw "  %size_ptr = getelementptr i8, ptr %slice, i32 0\n"
+        emit_raw "  %size = load i32, ptr %size_ptr\n"
+        emit_raw "  %is_zero = icmp eq i32 %size, 0\n"
+        emit_raw "  br i1 %is_zero, label %ret_zero, label %do_write\n"
+        emit_raw "ret_zero:\n"
+        emit_raw "  ret i32 0\n"
+        emit_raw "do_write:\n"
+        # Load slice.@pointer from offset 8
+        emit_raw "  %buf_ptr_ptr = getelementptr i8, ptr %slice, i32 8\n"
+        emit_raw "  %buf_ptr = load ptr, ptr %buf_ptr_ptr\n"
+        emit_raw "  %size64 = zext i32 %size to i64\n"
+        emit_raw "  %nbytes = call i64 @write(i32 %fd, ptr %buf_ptr, i64 %size64)\n"
+        emit_raw "  %is_err = icmp slt i64 %nbytes, 0\n"
+        emit_raw "  br i1 %is_err, label %raise_err, label %ret_ok\n"
+        emit_raw "raise_err:\n"
+        emit_raw "  call void @perror(ptr @.str.dbg_write_label)\n"
+        emit_raw "  call void @__crystal_v2_raise_msg(ptr @.str.file_write_error)\n"
+        emit_raw "  unreachable\n"
         emit_raw "ret_ok:\n"
         emit_raw "  %result = trunc i64 %nbytes to i32\n"
         emit_raw "  ret i32 %result\n"
