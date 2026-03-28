@@ -5,7 +5,7 @@ require "yaml"
 require "./protocol"
 require "./messages"
 require "./prelude_cache"
-# require "./ast_cache"  # TODO: Re-enable once cache schema matches current AST
+require "./ast_cache"
 require "./project_cache"
 require "./unified_project"
 require "./debouncer"
@@ -184,6 +184,7 @@ module CrystalV2
         getter debounce_ms : Int32
         getter background_indexing : Bool
         getter project_cache : Bool
+        getter ast_cache : Bool
         getter compiler_flags : Set(String)
 
         def initialize(
@@ -195,6 +196,7 @@ module CrystalV2
           @debounce_ms : Int32 = 300,         # Default 300ms debounce
           @background_indexing : Bool = true, # Default: load prelude in background
           @project_cache : Bool = true,       # Default: cache project state to disk
+          @ast_cache : Bool = false,          # Default: staged rollout behind explicit flag
           @compiler_flags : Set(String) = Set(String).new, # Additional -D flags
         )
         end
@@ -210,6 +212,7 @@ module CrystalV2
           background_indexing = ENV["LSP_BACKGROUND_INDEXING"]? != "0"
           # Project cache enabled by default, can be disabled via env or config
           project_cache = ENV["LSP_PROJECT_CACHE"]? != "0"
+          ast_cache = ENV["LSP_AST_CACHE"]? == "1"
           # Compiler flags from environment (comma-separated) or config
           compiler_flags = Set(String).new
           if env_flags = ENV["LSP_COMPILER_FLAGS"]?
@@ -247,6 +250,9 @@ module CrystalV2
                 if value = hash["project_cache"]?.try(&.as_bool?)
                   project_cache = value
                 end
+                if value = hash["ast_cache"]?.try(&.as_bool?)
+                  ast_cache = value
+                end
                 # Parse compiler_flags as array of strings
                 if flags_arr = hash["compiler_flags"]?.try(&.as_a?)
                   flags_arr.each do |flag|
@@ -263,7 +269,7 @@ module CrystalV2
 
           debug_path = File.expand_path(debug_path) if debug_path
 
-          new(debug_path, recovery_mode, best_effort_inference, prelude_symbol_only, real_prelude, debounce_ms, background_indexing, project_cache, compiler_flags)
+          new(debug_path, recovery_mode, best_effort_inference, prelude_symbol_only, real_prelude, debounce_ms, background_indexing, project_cache, ast_cache, compiler_flags)
         end
       end
 
@@ -629,6 +635,53 @@ module CrystalV2
           end
         end
 
+        private def ast_cache_enabled_for_path?(path : String) : Bool
+          return false unless @config.ast_cache
+          return false unless @config.parser_recovery_mode
+          File.expand_path(path) != COMPILER_DEPENDENCY_PATHS.first
+        end
+
+        private def source_mtime_ns(path : String) : Int64?
+          File.info?(path).try(&.modification_time.to_unix_ns.to_i64)
+        end
+
+        private def load_or_parse_disk_program(
+          path : String,
+          source : String,
+          parser_diagnostics : Array(Frontend::Diagnostic),
+          *,
+          cache_label : String,
+        ) : {Frontend::Program, Bool}
+          if ast_cache_enabled_for_path?(path)
+            if mtime_ns = source_mtime_ns(path)
+              if cached = AstCache.load(path, mtime_ns)
+                debug("Loading #{cache_label} #{path} from AST cache")
+                return {Frontend::Program.new(cached.arena, cached.roots), true}
+              end
+            end
+          end
+
+          lexer = Frontend::Lexer.new(source)
+          parser = Frontend::Parser.new(lexer, recovery_mode: @config.parser_recovery_mode)
+          program = parser.parse_program
+          parser_diagnostics.concat(parser.diagnostics)
+          save_ast_cache_program(path, program, lexer.string_pool) if parser.diagnostics.empty?
+          {program, false}
+        end
+
+        private def save_ast_cache_program(
+          path : String,
+          program : Frontend::Program,
+          string_pool : Frontend::StringPool,
+        ) : Nil
+          return unless ast_cache_enabled_for_path?(path)
+          arena = program.arena.as?(Frontend::AstArena)
+          return unless arena
+          AstCache.new(arena, program.roots, string_pool).save(path)
+        rescue ex
+          debug("AST cache save failed for #{path}: #{ex.message}")
+        end
+
         # Deep search for a symbol by name across nested scopes (class/module).
         private def find_symbol_recursive(table : Semantic::SymbolTable, name : String) : Semantic::Symbol?
           visited = Set(Semantic::SymbolTable).new
@@ -709,7 +762,18 @@ module CrystalV2
           end
           base_dir = File.dirname(path)
           workspace ||= DependencyWorkspace.new
-          diagnostics, program, type_context, identifier_symbols, symbol_table, requires, index = analyze_document(source, base_dir, path, load_requires: recursive, workspace: workspace, build_expr_index: false)
+          parser_diagnostics = [] of Frontend::Diagnostic
+          program, _ast_cache_hit = load_or_parse_disk_program(path, source, parser_diagnostics, cache_label: "dependency")
+          diagnostics, program, type_context, identifier_symbols, symbol_table, requires, index = analyze_parsed_document(
+            source,
+            program,
+            parser_diagnostics,
+            base_dir,
+            path,
+            load_requires: recursive,
+            workspace: workspace,
+            build_expr_index: false
+          )
 
           text_doc = TextDocumentItem.new(uri: uri, language_id: "crystal", version: 0, text: source)
           line_offsets = build_line_offsets(source)
@@ -1702,8 +1766,18 @@ module CrystalV2
           index
         end
 
-        # Analyze document and return diagnostics, program, type context, identifier symbols, and symbol table
-        private def analyze_document(source : String, base_dir : String? = nil, path : String? = nil, load_requires : Bool = true, workspace : DependencyWorkspace? = nil, build_expr_index : Bool = true) : {Array(Diagnostic), Frontend::Program, Semantic::TypeContext?, Hash(Frontend::ExprId, Semantic::Symbol)?, Semantic::SymbolTable?, Array(String), DocumentIndex?}
+        # Analyze an already-parsed program and return diagnostics, type context, identifier symbols, and symbol table.
+        private def analyze_parsed_document(
+          source : String,
+          program : Frontend::Program,
+          parser_diagnostics : Array(Frontend::Diagnostic),
+          base_dir : String? = nil,
+          path : String? = nil,
+          load_requires : Bool = true,
+          workspace : DependencyWorkspace? = nil,
+          build_expr_index : Bool = true,
+          parse_ms : Float64 = 0.0,
+        ) : {Array(Diagnostic), Frontend::Program, Semantic::TypeContext?, Hash(Frontend::ExprId, Semantic::Symbol)?, Semantic::SymbolTable?, Array(String), DocumentIndex?}
           debug("Analyzing document: #{source.lines.size} lines, #{source.size} bytes")
           ensure_prelude_loaded
           notify_indexing("Indexing… loading document") if @config.background_indexing
@@ -1716,17 +1790,13 @@ module CrystalV2
           identifier_symbols = nil
           symbol_table = nil
           requires = [] of String
-
-          # Parse
           total_start = Time.instant
-          parse_start = total_start
-          lexer = Frontend::Lexer.new(source)
-          parser = Frontend::Parser.new(lexer, recovery_mode: @config.parser_recovery_mode)
-          program = parser.parse_program
-          parse_ms = (Time.instant - parse_start).total_seconds * 1000
           debug("[guard] parse took #{parse_ms.round(1)} ms") if parse_ms > GUARD_WARN_MS
           uses_compiler_module = includes_compiler_module?(program)
           dependency_states = [] of DocumentState
+          symbols_ms = 0.0
+          resolve_ms = 0.0
+          infer_ms = 0.0
           requires_start = Time.instant
           if load_requires && !use_project_symbols
             raw_requires = base_dir ? collect_require_paths(program, base_dir) : [] of String
@@ -1740,11 +1810,10 @@ module CrystalV2
           end
           requires_ms = (Time.instant - requires_start).total_seconds * 1000
           analysis_program = program
-          # Convert parser diagnostics
-          parser.diagnostics.each do |diag|
+          parser_diagnostics.each do |diag|
             diagnostics << Diagnostic.from_parser(diag)
           end
-          debug("Parsing complete: #{parser.diagnostics.size} parser diagnostics, #{analysis_program.roots.size} root expressions")
+          debug("Parsing complete: #{parser_diagnostics.size} parser diagnostics, #{analysis_program.roots.size} root expressions")
 
           begin
             context = build_context_with_prelude
@@ -1789,7 +1858,7 @@ module CrystalV2
             end
 
             if semantic_diagnostics_enabled?
-              if parser.diagnostics.empty?
+              if parser_diagnostics.empty?
                 analyzer.semantic_diagnostics.each do |diag|
                   diagnostics << Diagnostic.from_semantic(diag, source)
                 end
@@ -1798,7 +1867,7 @@ module CrystalV2
                   diagnostics << Diagnostic.from_parser(diag)
                 end
               else
-                debug("Skipping semantic diagnostics due to #{parser.diagnostics.size} parser diagnostics")
+                debug("Skipping semantic diagnostics due to #{parser_diagnostics.size} parser diagnostics")
               end
             else
               debug("Semantic diagnostics disabled via configuration")
@@ -1874,6 +1943,27 @@ module CrystalV2
           notify_indexed if @config.background_indexing
           index = build_document_index(analysis_program, path, build_expr_index: build_expr_index)
           {diagnostics, analysis_program, type_context, identifier_symbols, symbol_table, requires, index}
+        end
+
+        # Analyze document and return diagnostics, program, type context, identifier symbols, and symbol table
+        private def analyze_document(source : String, base_dir : String? = nil, path : String? = nil, load_requires : Bool = true, workspace : DependencyWorkspace? = nil, build_expr_index : Bool = true) : {Array(Diagnostic), Frontend::Program, Semantic::TypeContext?, Hash(Frontend::ExprId, Semantic::Symbol)?, Semantic::SymbolTable?, Array(String), DocumentIndex?}
+          parse_start = Time.instant
+          lexer = Frontend::Lexer.new(source)
+          parser = Frontend::Parser.new(lexer, recovery_mode: @config.parser_recovery_mode)
+          program = parser.parse_program
+          parse_ms = (Time.instant - parse_start).total_seconds * 1000
+
+          analyze_parsed_document(
+            source,
+            program,
+            parser.diagnostics,
+            base_dir,
+            path,
+            load_requires: load_requires,
+            workspace: workspace,
+            build_expr_index: build_expr_index,
+            parse_ms: parse_ms
+          )
         end
 
         # Debug helper: analyze a source string and return LSP diagnostics and semantic tokens
@@ -2774,15 +2864,12 @@ module CrystalV2
           source_cache : Hash(String, String),
           diagnostics : Array(Diagnostic),
         ) : Bool
-          # TODO: AST caching disabled until cache schema matches current AST structure
-          # Parse directly for now
           source = File.read(path)
-          lexer = Frontend::Lexer.new(source)
-          parser = Frontend::Parser.new(lexer, recovery_mode: @config.parser_recovery_mode)
-          program = parser.parse_program
-          diag_count = parser.diagnostics.size
+          parser_diagnostics = [] of Frontend::Diagnostic
+          program, _ast_cache_hit = load_or_parse_disk_program(path, source, parser_diagnostics, cache_label: "prelude dependency")
+          diag_count = parser_diagnostics.size
           debug("Prelude dependency #{path} produced #{diag_count} parser diagnostic(s)") if diag_count > 0
-          parser.diagnostics.each { |diag| diagnostics << Diagnostic.from_parser(diag) }
+          parser_diagnostics.each { |diag| diagnostics << Diagnostic.from_parser(diag) }
 
           # Even with recovery diagnostics, keep the parsed program so we retain symbols
           # (especially important for stdlib where some files may emit warnings).

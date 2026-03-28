@@ -119,6 +119,15 @@ module CrystalV2::Compiler::LSP
       @documents[uri]?.try(&.text_document.text)
     end
 
+    def spec_load_prelude_program(
+      path : String,
+      program_cache : Hash(String, CrystalV2::Compiler::Frontend::Program),
+      source_cache : Hash(String, String),
+      diagnostics : Array(CrystalV2::Compiler::LSP::Diagnostic),
+    ) : Bool
+      load_prelude_program(path, program_cache, source_cache, diagnostics)
+    end
+
     private def spec_reset_output
       return unless @output.responds_to?(:clear)
       @output.as(IO::Memory).clear

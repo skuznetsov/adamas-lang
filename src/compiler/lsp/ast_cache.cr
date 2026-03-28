@@ -1504,7 +1504,17 @@ module CrystalV2
             args = read_expr_id_array(io)
             block = read_optional_expr_id(io)
             named_args = read_named_args(io, strings, pool)
-            Frontend::CallNode.new(span, callee, args, block, named_args)
+            if actual_named_args = named_args
+              if actual_block = block
+                Frontend::CallNode.new(span, callee, args, actual_block, actual_named_args)
+              else
+                Frontend::CallNode.new(span, callee, args, nil, actual_named_args)
+              end
+            elsif actual_block = block
+              Frontend::CallNode.new(span, callee, args, actual_block)
+            else
+              Frontend::CallNode.new(span, callee, args, nil)
+            end
 
           when .if_node?
             span = read_span(io)
