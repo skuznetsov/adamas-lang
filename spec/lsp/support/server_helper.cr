@@ -110,6 +110,15 @@ module CrystalV2::Compiler::LSP
       @documents[doc_state.text_document.uri] = doc_state
     end
 
+    def spec_did_change(uri : String, version : Int32, content_changes_json : String)
+      params = JSON.parse(%({"textDocument":{"uri":#{uri.to_json},"version":#{version}},"contentChanges":#{content_changes_json}}))
+      handle_did_change(params)
+    end
+
+    def spec_document_text(uri : String) : String?
+      @documents[uri]?.try(&.text_document.text)
+    end
+
     private def spec_reset_output
       return unless @output.responds_to?(:clear)
       @output.as(IO::Memory).clear

@@ -1,0 +1,67 @@
+require "spec"
+require "file_utils"
+require "random/secure"
+
+require "./support/server_helper"
+
+describe CrystalV2::Compiler::LSP::Server do
+  around_each do |example|
+    prev = ENV["CRYSTALV2_LSP_FORCE_STUB"]?
+    ENV["CRYSTALV2_LSP_FORCE_STUB"] = "1"
+    begin
+      example.run
+    ensure
+      if prev
+        ENV["CRYSTALV2_LSP_FORCE_STUB"] = prev
+      else
+        ENV.delete("CRYSTALV2_LSP_FORCE_STUB")
+      end
+    end
+  end
+
+  it "applies incremental range edits from didChange" do
+    dir = File.join(Dir.tempdir, "lsp_did_change_#{Random::Secure.hex(6)}")
+    FileUtils.mkdir_p(dir)
+    path = File.join(dir, "main.cr")
+    source = "x = 1\ny = x + 1\n"
+    File.write(path, source)
+
+    server = CrystalV2::Compiler::LSP::Server.new(
+      IO::Memory.new,
+      IO::Memory.new,
+      CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
+    )
+    uri = server.spec_store_document(source, dir, path)
+
+    # Replace "1" in "x = 1" with "2" using an incremental range edit.
+    changes = %([{"range":{"start":{"line":0,"character":4},"end":{"line":0,"character":5}},"text":"2"}])
+    server.spec_did_change(uri, 2, changes)
+
+    server.spec_document_text(uri).should eq("x = 2\ny = x + 1\n")
+  ensure
+    FileUtils.rm_rf(dir) if dir
+  end
+
+  it "keeps full-sync didChange behavior when range is absent" do
+    dir = File.join(Dir.tempdir, "lsp_did_change_full_#{Random::Secure.hex(6)}")
+    FileUtils.mkdir_p(dir)
+    path = File.join(dir, "main.cr")
+    source = "a = 10\n"
+    File.write(path, source)
+
+    server = CrystalV2::Compiler::LSP::Server.new(
+      IO::Memory.new,
+      IO::Memory.new,
+      CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
+    )
+    uri = server.spec_store_document(source, dir, path)
+
+    updated = "a = 20\nb = a + 1\n"
+    changes = %([{"text":#{updated.to_json}}])
+    server.spec_did_change(uri, 2, changes)
+
+    server.spec_document_text(uri).should eq(updated)
+  ensure
+    FileUtils.rm_rf(dir) if dir
+  end
+end

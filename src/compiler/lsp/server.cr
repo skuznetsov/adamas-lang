@@ -3409,8 +3409,9 @@ module CrystalV2
           changes = params["contentChanges"].as_a
           return if changes.empty?
 
-          new_text = changes.last["text"].as_s
           existing = @documents[uri]?
+          base_text = existing.try(&.text_document.text) || ""
+          new_text = apply_content_changes(base_text, changes)
           language_id = existing.try(&.text_document.language_id) || "crystal"
 
           doc_path = uri_to_path(uri)
@@ -3444,6 +3445,48 @@ module CrystalV2
 
           publish_diagnostics(uri, diagnostics, version)
           request_semantic_tokens_refresh
+        end
+
+        # Apply LSP content changes to document text.
+        # Supports both full-sync updates (no range) and incremental range edits.
+        private def apply_content_changes(base_text : String, changes : Array(JSON::Any)) : String
+          text = base_text
+
+          changes.each do |change|
+            replacement = change["text"].as_s
+            range = change["range"]?
+            unless range
+              text = replacement
+              next
+            end
+
+            start_pos = range["start"]?
+            end_pos = range["end"]?
+            unless start_pos && end_pos
+              text = replacement
+              next
+            end
+
+            start_line = start_pos["line"].as_i
+            start_char = start_pos["character"].as_i
+            end_line = end_pos["line"].as_i
+            end_char = end_pos["character"].as_i
+
+            start_offset = position_to_offset(text, start_line, start_char) || 0
+            end_offset = position_to_offset(text, end_line, end_char) || text.bytesize
+
+            start_offset = start_offset.clamp(0, text.bytesize)
+            end_offset = end_offset.clamp(0, text.bytesize)
+            if end_offset < start_offset
+              start_offset, end_offset = end_offset, start_offset
+            end
+
+            prefix = text.byte_slice(0, start_offset)
+            suffix = text.byte_slice(end_offset, text.bytesize - end_offset)
+            text = "#{prefix}#{replacement}#{suffix}"
+          end
+
+          text
         end
 
         private def expr_in_document?(program : Frontend::Program, expr_id : Frontend::ExprId, path : String?) : Bool
