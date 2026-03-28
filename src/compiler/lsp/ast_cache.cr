@@ -222,6 +222,27 @@ module CrystalV2
           nil
         end
 
+        def self.current_header?(file_path : String, source_mtime_ns : Int64? = nil) : Bool
+          cache_path = self.cache_path(file_path)
+          File.open(cache_path, "rb") do |io|
+            magic = Bytes.new(4)
+            io.read_fully(magic)
+            return false unless String.new(magic) == MAGIC
+
+            version = io.read_bytes(UInt32, IO::ByteFormat::LittleEndian)
+            return false unless version == VERSION
+
+            cached_compiler_fingerprint = io.read_bytes(UInt64, IO::ByteFormat::LittleEndian)
+            return false unless cached_compiler_fingerprint == compiler_fingerprint
+
+            cached_source_mtime_ns = io.read_bytes(Int64, IO::ByteFormat::LittleEndian)
+            actual_mtime_ns = source_mtime_ns || File.info(file_path).modification_time.to_unix_ns.to_i64
+            cached_source_mtime_ns == actual_mtime_ns
+          end
+        rescue
+          false
+        end
+
         def save(file_path : String)
           cache_path = AstCache.cache_path(file_path)
           Dir.mkdir_p(File.dirname(cache_path))

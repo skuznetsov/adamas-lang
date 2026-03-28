@@ -641,6 +641,10 @@ module CrystalV2
           File.expand_path(path) != COMPILER_DEPENDENCY_PATHS.first
         end
 
+        private def recursive_dependency_load_in_foreground? : Bool
+          !@config.ast_cache
+        end
+
         private def source_mtime_ns(path : String) : Int64?
           File.info?(path).try(&.modification_time.to_unix_ns.to_i64)
         end
@@ -651,8 +655,9 @@ module CrystalV2
           parser_diagnostics : Array(Frontend::Diagnostic),
           *,
           cache_label : String,
+          use_ast_cache : Bool = true,
         ) : {Frontend::Program, Bool}
-          if ast_cache_enabled_for_path?(path)
+          if use_ast_cache && ast_cache_enabled_for_path?(path)
             if mtime_ns = source_mtime_ns(path)
               if cached = AstCache.load(path, mtime_ns)
                 debug("Loading #{cache_label} #{path} from AST cache")
@@ -675,6 +680,8 @@ module CrystalV2
           string_pool : Frontend::StringPool,
         ) : Nil
           return unless ast_cache_enabled_for_path?(path)
+          mtime_ns = source_mtime_ns(path)
+          return if AstCache.current_header?(path, mtime_ns)
           arena = program.arena.as?(Frontend::AstArena)
           return unless arena
           AstCache.new(arena, program.roots, string_pool).save(path)
@@ -705,7 +712,7 @@ module CrystalV2
           nil
         end
 
-        private def load_dependency(path : String, recursive : Bool = true, workspace : DependencyWorkspace? = nil) : DocumentState?
+        private def load_dependency(path : String, recursive : Bool = true, workspace : DependencyWorkspace? = nil, use_ast_cache : Bool = true) : DocumentState?
           # Check watchdog on each dependency load to prevent infinite loops
           Watchdog.check!
 
@@ -763,7 +770,7 @@ module CrystalV2
           base_dir = File.dirname(path)
           workspace ||= DependencyWorkspace.new
           parser_diagnostics = [] of Frontend::Diagnostic
-          program, _ast_cache_hit = load_or_parse_disk_program(path, source, parser_diagnostics, cache_label: "dependency")
+          program, _ast_cache_hit = load_or_parse_disk_program(path, source, parser_diagnostics, cache_label: "dependency", use_ast_cache: use_ast_cache)
           diagnostics, program, type_context, identifier_symbols, symbol_table, requires, index = analyze_parsed_document(
             source,
             program,
@@ -1647,7 +1654,13 @@ module CrystalV2
 
           # Legacy: Analyze and store document (will be removed after full migration)
           doc = TextDocumentItem.new(uri: uri, language_id: language_id, version: version, text: text)
-          diagnostics, program, type_context, identifier_symbols, symbol_table, requires, index = analyze_document(text, base_dir, doc_path, workspace: DependencyWorkspace.new)
+          diagnostics, program, type_context, identifier_symbols, symbol_table, requires, index = analyze_document(
+            text,
+            base_dir,
+            doc_path,
+            recursive_requires: recursive_dependency_load_in_foreground?,
+            workspace: DependencyWorkspace.new
+          )
 
           # Store document state (legacy)
           line_offsets = build_line_offsets(text)
@@ -1774,6 +1787,7 @@ module CrystalV2
           base_dir : String? = nil,
           path : String? = nil,
           load_requires : Bool = true,
+          recursive_requires : Bool = true,
           workspace : DependencyWorkspace? = nil,
           build_expr_index : Bool = true,
           parse_ms : Float64 = 0.0,
@@ -1803,7 +1817,7 @@ module CrystalV2
             requires = filter_required_files(requirements: raw_requires, includes_compiler: uses_compiler_module)
             requires.each do |req_path|
               debug("Loading dependency #{req_path} (shallow)") if ENV["LSP_DEBUG"]?
-              if dep_state = load_dependency(req_path, recursive: true, workspace: workspace)
+              if dep_state = load_dependency(req_path, recursive: recursive_requires, workspace: workspace, use_ast_cache: recursive_requires)
                 dependency_states << dep_state
               end
             end
@@ -1946,7 +1960,7 @@ module CrystalV2
         end
 
         # Analyze document and return diagnostics, program, type context, identifier symbols, and symbol table
-        private def analyze_document(source : String, base_dir : String? = nil, path : String? = nil, load_requires : Bool = true, workspace : DependencyWorkspace? = nil, build_expr_index : Bool = true) : {Array(Diagnostic), Frontend::Program, Semantic::TypeContext?, Hash(Frontend::ExprId, Semantic::Symbol)?, Semantic::SymbolTable?, Array(String), DocumentIndex?}
+        private def analyze_document(source : String, base_dir : String? = nil, path : String? = nil, load_requires : Bool = true, recursive_requires : Bool = true, workspace : DependencyWorkspace? = nil, build_expr_index : Bool = true) : {Array(Diagnostic), Frontend::Program, Semantic::TypeContext?, Hash(Frontend::ExprId, Semantic::Symbol)?, Semantic::SymbolTable?, Array(String), DocumentIndex?}
           parse_start = Time.instant
           lexer = Frontend::Lexer.new(source)
           parser = Frontend::Parser.new(lexer, recovery_mode: @config.parser_recovery_mode)
@@ -1960,6 +1974,7 @@ module CrystalV2
             base_dir,
             path,
             load_requires: load_requires,
+            recursive_requires: recursive_requires,
             workspace: workspace,
             build_expr_index: build_expr_index,
             parse_ms: parse_ms
@@ -1996,6 +2011,10 @@ module CrystalV2
           @prelude_mtime = nil
         end
 
+        private def prelude_cache_enabled? : Bool
+          !@config.ast_cache
+        end
+
         # Background prelude loading
         private def load_prelude_background
           # Spawn background fiber to load prelude
@@ -2024,7 +2043,7 @@ module CrystalV2
           start_time = Time.instant
 
           # Try cache first
-          if File.exists?(PRELUDE_PATH)
+          if prelude_cache_enabled? && File.exists?(PRELUDE_PATH)
             stdlib_path = File.dirname(PRELUDE_PATH)
             cache = PreludeCache.load(stdlib_path)
 
@@ -2135,6 +2154,7 @@ module CrystalV2
         end
 
         private def try_load_prelude_from_cache : Bool
+          return false unless prelude_cache_enabled?
           return false unless File.exists?(PRELUDE_PATH)
 
           stdlib_path = File.dirname(PRELUDE_PATH)
@@ -2234,6 +2254,7 @@ module CrystalV2
         end
 
         private def save_prelude_to_cache
+          return unless prelude_cache_enabled?
           return unless prelude = @prelude_state
           return if prelude.from_cache # Already loaded from cache, no need to re-save
 
@@ -3522,13 +3543,20 @@ module CrystalV2
           end
 
           # Legacy analysis (will be removed)
-          diagnostics, program, type_context, identifier_symbols, symbol_table, requires, index = analyze_document(new_text, base_dir, doc_path, workspace: DependencyWorkspace.new)
+          diagnostics, program, type_context, identifier_symbols, symbol_table, requires, index = analyze_document(
+            new_text,
+            base_dir,
+            doc_path,
+            recursive_requires: recursive_dependency_load_in_foreground?,
+            workspace: DependencyWorkspace.new
+          )
 
           doc = TextDocumentItem.new(uri: uri, language_id: language_id, version: version, text: new_text)
           line_offsets = build_line_offsets(new_text)
           @documents[uri] = DocumentState.new(doc, program, type_context, identifier_symbols, symbol_table, requires, index, line_offsets, path: doc_path)
           register_document_symbols(uri, @documents[uri])
           @semantic_token_cache.delete(uri)  # Invalidate cache on content change
+          warm_dependencies(doc_path, @documents[uri]) if doc_path
 
           publish_diagnostics(uri, diagnostics, version)
           request_semantic_tokens_refresh
@@ -4737,6 +4765,7 @@ module CrystalV2
           @dependencies_warming.add(doc_path)
           spawn do
             begin
+              sleep 1.millisecond
               Watchdog.enable!("Warm dependencies", 5.seconds)
               ensure_dependencies_loaded(doc_state)
             rescue ex : Watchdog::TimeoutError
