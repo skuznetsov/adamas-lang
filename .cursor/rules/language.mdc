@@ -1,0 +1,9 @@
+---
+description: English for repo artifacts; Russian for chat with the owner
+alwaysApply: true
+---
+
+# Language
+
+- **Code comments, markdown under version control, and commit messages** in this project: **English**.
+- **Conversation with the user (Sergey):** **Russian** unless they switch language.

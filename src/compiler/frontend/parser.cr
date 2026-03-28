@@ -47,19 +47,51 @@ module CrystalV2
         @parsing_method_params : Bool
         @recovery_mode : Bool
         @allow_inline_rescue : Bool?
+        @parser_init_trace_enabled : Bool
+        @trace_abstract_char_enabled : Bool
         # When true, newlines inside braces are skipped as trivia (legacy behavior).
         # Default false so that newlines inside hashes/blocks act as statement separators,
         # preventing constructs like `{ expr\n other }` from being glued into a single expression.
         @skip_newlines_in_braces : Bool = false
 
         private def parser_init_trace_enabled? : Bool
-          ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_PARSER_INIT_TRACE")
+          @parser_init_trace_enabled
+        end
+
+        private def parser_raw_trace_puts(message : String) : Nil
+          LibC.write(2, message.to_unsafe, message.bytesize)
+          LibC.write(2, "\n".to_unsafe, 1)
         end
 
         private def parser_init_trace(message : String) : Nil
           return unless parser_init_trace_enabled?
           STDERR.puts "[PARSER_INIT] #{message}"
           STDERR.flush
+        end
+
+        private def trace_abstract_char_token_buffer(stage : String) : Nil
+          return unless @trace_abstract_char_enabled
+          return unless @source.bytesize <= 128
+
+          io = IO::Memory.new
+          idx = 0
+          limit = @tokens.size < 24 ? @tokens.size : 24
+          while idx < limit
+            tok = @tokens[idx]
+            span = tok.span
+            io << idx << ':' << tok.kind.value << ':' << tok.slice.size << ':' << span.start_offset << ".." << span.end_offset
+            io << ' ' if idx + 1 < limit
+            idx += 1
+          end
+          STDERR.puts "[ABSTRACT_CHAR_TOKENS] stage=#{stage} size=#{@tokens.size} window=#{String.new(io.to_slice)}"
+        end
+
+        private def trace_abstract_char_fill(stage : String, idx : Int32, token : Token) : Nil
+          return unless @trace_abstract_char_enabled
+          return unless @source.bytesize <= 128
+
+          span = token.span
+          STDERR.puts "[ABSTRACT_CHAR_FILL] stage=#{stage} idx=#{idx} kind=#{token.kind.value} size=#{token.slice.size} offs=#{span.start_offset}..#{span.end_offset}"
         end
 
         private def token_preload_capacity(source : String, keep_trivia : Bool) : Int32
@@ -78,6 +110,8 @@ module CrystalV2
 
         def initialize(lexer : Lexer, *, recovery_mode : Bool = false)
           @source = lexer.source
+          @parser_init_trace_enabled = ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_PARSER_INIT_TRACE")
+          @trace_abstract_char_enabled = ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_ABSTRACT_CHAR")
           keep_trivia = ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_PARSER_KEEP_TRIVIA")
           parser_init_trace("ctor1 start bytes=#{@source.bytesize}")
           preload_capacity = if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_DISABLE_PARSER_PRELOAD")
@@ -125,9 +159,15 @@ module CrystalV2
           lexer.diagnostics = @diagnostics
 
           parser_init_trace("ctor1 token fill start")
-          lexer.each_token(skip_trivia: !keep_trivia) { |token| @tokens << token }
+          lexer.each_token(skip_trivia: !keep_trivia) do |token|
+            next_idx = @tokens.size
+            trace_abstract_char_fill("ctor1.emit", next_idx, token)
+            @tokens << token
+            trace_abstract_char_fill("ctor1.stored", next_idx, @tokens[next_idx])
+          end
           normalize_preloaded_macro_expr_braces!
           parser_init_trace("ctor1 token fill done size=#{@tokens.size}")
+          trace_abstract_char_token_buffer("ctor1")
           @lexer = nil
           @keep_trivia = keep_trivia
           # Pre-size arena capacity heuristically based on token count to reduce reallocations
@@ -213,6 +253,8 @@ module CrystalV2
         # Used by macro expander to add parsed nodes to existing arena
         def initialize(lexer : Lexer, @arena : ArenaLike, *, recovery_mode : Bool = false)
           @source = lexer.source
+          @parser_init_trace_enabled = ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_PARSER_INIT_TRACE")
+          @trace_abstract_char_enabled = ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_ABSTRACT_CHAR")
           keep_trivia = ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_PARSER_KEEP_TRIVIA")
           parser_init_trace("ctor2 start bytes=#{@source.bytesize}")
           preload_capacity = if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_DISABLE_PARSER_PRELOAD")
@@ -252,9 +294,15 @@ module CrystalV2
           @allow_inline_rescue = true
           @lib_depth = 0
           parser_init_trace("ctor2 token fill start")
-          lexer.each_token(skip_trivia: !keep_trivia) { |token| @tokens << token }
+          lexer.each_token(skip_trivia: !keep_trivia) do |token|
+            next_idx = @tokens.size
+            trace_abstract_char_fill("ctor2.emit", next_idx, token)
+            @tokens << token
+            trace_abstract_char_fill("ctor2.stored", next_idx, @tokens[next_idx])
+          end
           normalize_preloaded_macro_expr_braces!
           parser_init_trace("ctor2 token fill done size=#{@tokens.size}")
+          trace_abstract_char_token_buffer("ctor2")
           @lexer = nil
           @keep_trivia = keep_trivia
           parser_init_trace("ctor2 done")
@@ -393,17 +441,72 @@ module CrystalV2
             advance if @index == saved_index
             skip_statement_end
           end
+          if ENV.has_key?("DEBUG_ROOT_BLOCK_STATE")
+            root_indexes.each do |expr_index|
+              expr_id = ExprId.new(expr_index)
+              node = @arena[expr_id]
+              next unless node.is_a?(CallNode)
+              block_id = node.block
+              next unless block_id
+              debug_block_snapshot("parse_program_roots_return", block_id)
+            end
+          end
           Array(ExprId).new(root_indexes.size) do |i|
             ExprId.new(root_indexes.unsafe_fetch(i))
           end
         end
 
+        private def debug_root_block_state_for_expr(phase : String, expr_id : ExprId) : Nil
+          node = @arena[expr_id]
+          STDERR.puts "[ROOT_BLOCK] phase=#{phase} expr=#{expr_id.index} kind=#{Frontend.node_kind(node)}"
+          case node
+          when CallNode
+            block_id = node.block
+            debug_block_snapshot("#{phase}_call", block_id) if block_id
+          when DefNode
+            if body = node.body
+              body.each do |body_expr|
+                body_node = @arena[body_expr]
+                next unless body_node.is_a?(CallNode)
+                block_id = body_node.block
+                debug_block_snapshot("#{phase}_def_body", block_id) if block_id
+              end
+            end
+          end
+        end
+
         def parse_program_roots : Array(ExprId)
-          parse_program_roots_impl
+          roots = parse_program_roots_impl
+          if ENV.has_key?("DEBUG_ROOT_BLOCK_STATE")
+            roots.each do |expr_id|
+              debug_root_block_state_for_expr("parse_program_roots_wrapper", expr_id)
+            end
+          end
+          roots
         end
 
         def parse_program : Program
           Program.new(@arena, parse_program_roots_impl, @string_pool)
+        end
+
+        private def new_call_node(
+          span : Span,
+          callee : ExprId,
+          args : Array(ExprId),
+          block : ExprId?,
+          named_args : Array(NamedArgument)? = nil,
+        ) : CallNode
+          if actual_named_args = named_args
+            if actual_block = block
+              CallNode.new(span, callee, args, actual_block, actual_named_args)
+            else
+              CallNode.new(span, callee, args, nil, actual_named_args)
+            end
+          elsif actual_block = block
+            CallNode.new(span, callee, args, actual_block)
+          else
+            CallNode.new(span, callee, args, nil)
+          end
         end
 
         # Parse a statement (assignment or expression)
@@ -654,7 +757,7 @@ module CrystalV2
                           node_span(left)
                         end
             new_span = node_span(left).cover(last_span)
-            left = @arena.add_typed(CallNode.new(new_span, callee_expr, accu_args, call_node.block, accu_named.empty? ? call_node.named_args : accu_named))
+            left = @arena.add_typed(new_call_node(new_span, callee_expr, accu_args, call_node.block, accu_named.empty? ? call_node.named_args : accu_named))
             skip_whitespace_and_optional_newlines
             token = current_token
           end
@@ -935,7 +1038,6 @@ module CrystalV2
                               index_node.span,
                               query_member,
                               index_node.indexes,
-                              nil,
                               nil
                             )
                           )
@@ -984,12 +1086,11 @@ module CrystalV2
               value_span = node_span(value)
               assign_span = left_node.span.cover(value_span)
 
-              stmt = @arena.add_typed(CallNode.new(
+              stmt = @arena.add_typed(new_call_node(
                 assign_span,
                 setter_member, # callee: obj.prop=
                 [value],       # args: value
-                nil,           # no block
-                nil            # no named args
+                nil            # no block
               ))
             elsif left_kind == Frontend::NodeKind::Index
               # Index assignment: transform to call of []=
@@ -1008,11 +1109,10 @@ module CrystalV2
               assign_span = left_node.span.cover(value_span)
 
               call_args = index_args + [value]
-              stmt = @arena.add_typed(CallNode.new(
+              stmt = @arena.add_typed(new_call_node(
                 assign_span,
                 setter_member,
                 call_args,
-                nil,
                 nil
               ))
             else
@@ -2121,6 +2221,7 @@ module CrystalV2
         # Phase 37: Modified to support visibility modifier
         private def parse_def(is_abstract : Bool = false, visibility : Visibility? = nil) : ExprId
           def_token = current_token
+          trace_abstract_char("parse_def.enter", def_token, "abstract=#{is_abstract ? 1 : 0}")
           if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_DEF_STATE")
             STDERR.puts "[DEF_STATE] phase=enter line=#{def_token.span.start_line + 1} token=#{def_token.kind} paren=#{@paren_depth} no_type=#{@no_type_declaration} call_args=#{@parsing_call_args} macro_mode=#{@macro_mode}"
           end
@@ -2303,6 +2404,8 @@ module CrystalV2
 
           # Allow separators after header (supports one-liners like `struct X; end`)
           skip_statement_end
+          trace_abstract_char("parse_def.body_start", current_token, "abstract=#{is_abstract ? 1 : 0} name_size=#{method_name_slice.size}")
+          trace_abstract_char_window("parse_def.body_start")
 
           # Phase 36: Abstract methods have no body
           body_ids = nil
@@ -3035,6 +3138,45 @@ module CrystalV2
           STDERR.puts "[CALL_ARGS] event=#{event} depth=#{@parsing_call_args} token=#{tok.kind} line=#{tok.span.start_line + 1}:#{tok.span.start_column + 1} index=#{@index}"
         end
 
+        private def trace_abstract_char_enabled? : Bool
+          ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_ABSTRACT_CHAR")
+        end
+
+        private def trace_abstract_char(event : String, token : Token? = nil, extra : String? = nil) : Nil
+          return unless trace_abstract_char_enabled?
+
+          tok = token || current_token
+          prev = @previous_token
+          prev_kind = prev ? prev.not_nil!.kind.value.to_s : "nil"
+          prev_span = if prev
+                        p = prev.not_nil!.span
+                        "#{p.start_line}:#{p.start_column}-#{p.end_line}:#{p.end_column}"
+                      else
+                        "nil"
+                      end
+          span = tok.span
+          STDERR.puts "[ABSTRACT_CHAR] event=#{event} index=#{@index} current=#{tok.kind.value} span=#{span.start_line}:#{span.start_column}-#{span.end_line}:#{span.end_column} offs=#{span.start_offset}..#{span.end_offset} size=#{tok.slice.size} prev=#{prev_kind} prev_span=#{prev_span} extra=#{extra || ""}"
+        end
+
+        private def trace_abstract_char_window(event : String) : Nil
+          return unless trace_abstract_char_enabled?
+
+          start_idx = @index - 2
+          start_idx = 0 if start_idx < 0
+          end_idx = @index + 2
+          end_idx = @tokens.size - 1 if end_idx >= @tokens.size
+          io = IO::Memory.new
+          idx = start_idx
+          while idx <= end_idx
+            tok = @tokens[idx]
+            span = tok.span
+            io << idx << ':' << tok.kind.value << ':' << tok.slice.size << ':' << span.start_offset << ".." << span.end_offset
+            io << ' ' if idx < end_idx
+            idx += 1
+          end
+          STDERR.puts "[ABSTRACT_CHAR_WINDOW] event=#{event} index=#{@index} window=#{String.new(io.to_slice)}"
+        end
+
         private def trace_macro_def_enabled? : Bool
           ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_MACRO_DEF")
         end
@@ -3051,7 +3193,9 @@ module CrystalV2
         end
 
         private def stable_identifier_token_slice(token : Token) : Slice(UInt8)
+          trace_abstract_char("stable_identifier.enter", token)
           if span_slice = source_span_slice(token.span)
+            trace_abstract_char("stable_identifier.source", token, "source_size=#{span_slice.size}")
             trace_stable_identifier_path(token.span, token, "source", span_slice)
             unless span_slice.empty?
               if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_STABLE_IDENTIFIER_SOURCE_DIRECT")
@@ -3060,6 +3204,7 @@ module CrystalV2
               return @string_pool.intern(span_slice)
             end
           end
+          trace_abstract_char("stable_identifier.fallback", token)
           trace_stable_identifier_path(token.span, token, "token", nil)
           stable_identifier_slice(token.slice)
         end
@@ -3517,7 +3662,7 @@ module CrystalV2
 
             # Parse when conditions (comma-separated)
             # Phase 103: Multi-line when clauses - allow newlines after commas
-            conditions_b = SmallVec(ExprId, 2).new
+            conditions_b = ExprIdBuffer.new(2)
             loop do
               # Support Crystal shorthand: `case expr; when .foo?` => expr.foo?
               # Extended to allow operator method names: .>(0), .<(scale), etc.
@@ -3606,7 +3751,7 @@ module CrystalV2
             # dot-predicate shorthand (e.g., `in .i8? then ...`).
             # In the dot-predicate form we attach the member access to the
             # case value when present so the AST remains consistent.
-            patterns_b = SmallVec(ExprId, 2).new
+            patterns_b = ExprIdBuffer.new(2)
             loop do
               pattern = parse_in_pattern_expr(value)
               return PREFIX_ERROR if pattern.invalid?
@@ -4576,7 +4721,7 @@ module CrystalV2
             advance # consume (
             skip_trivia
 
-            args_b = SmallVec(ExprId, 2).new
+            args_b = ExprIdBuffer.new(2)
 
             # Empty yield: yield()
             if current_token.kind == Token::Kind::RParen
@@ -4628,7 +4773,7 @@ module CrystalV2
             # Yield without args (colon check handles ternary: flag ? yield : else_val)
             @arena.add_typed(YieldNode.new(yield_token.span, nil))
           else
-            args_b = SmallVec(ExprId, 2).new
+            args_b = ExprIdBuffer.new(2)
             loop do
               if current_token.kind == Token::Kind::Star
                 star_token = current_token
@@ -4670,7 +4815,7 @@ module CrystalV2
             advance # consume (
             skip_trivia
 
-            args_b = SmallVec(ExprId, 2).new
+            args_b = ExprIdBuffer.new(2)
 
             # Check for empty parens: super()
             if current_token.kind == Token::Kind::RParen
@@ -4773,7 +4918,7 @@ module CrystalV2
             )
           else
             # No parentheses: either bare `super` (implicit args) or `super arg1, name: value`
-            args_b = SmallVec(ExprId, 2).new
+            args_b = ExprIdBuffer.new(2)
 
             skip_trivia
             arg_token = current_token
@@ -4871,7 +5016,7 @@ module CrystalV2
             advance # consume (
             skip_trivia
 
-            args_b = SmallVec(ExprId, 2).new
+            args_b = ExprIdBuffer.new(2)
 
             # Check for empty parens: previous_def()
             if current_token.kind == Token::Kind::RParen
@@ -4941,7 +5086,7 @@ module CrystalV2
           advance # consume (
           skip_trivia
 
-          args_b = SmallVec(ExprId, 2).new
+          args_b = ExprIdBuffer.new(2)
 
           # Parse at least one argument (treat contents as regular expressions for tolerance)
           with_pointer_suffix do
@@ -5011,7 +5156,7 @@ module CrystalV2
           advance # consume (
           skip_trivia
 
-          args_b = SmallVec(ExprId, 2).new
+          args_b = ExprIdBuffer.new(2)
 
           # Parse at least one argument (treat contents as regular expressions for tolerance)
           with_pointer_suffix do
@@ -5261,7 +5406,7 @@ module CrystalV2
           advance # consume (
           skip_trivia
 
-          args_b = SmallVec(ExprId, 2).new
+          args_b = ExprIdBuffer.new(2)
 
           # Parse at least one argument
           with_pointer_suffix do
@@ -5328,7 +5473,7 @@ module CrystalV2
           advance # consume (
           skip_trivia
 
-          args_b = SmallVec(ExprId, 2).new
+          args_b = ExprIdBuffer.new(2)
 
           # Parse at least one argument
           loop do
@@ -5398,7 +5543,7 @@ module CrystalV2
           @paren_depth += 1 # Track paren depth so newlines are skipped inside ASM
           skip_whitespace_and_optional_newlines
 
-          args_b = SmallVec(ExprId, 8).new
+          args_b = ExprIdBuffer.new(8)
 
           # Parse template string (required)
           template = parse_asm_operand
@@ -5753,7 +5898,7 @@ module CrystalV2
 
             if is_brace_form
               # Brace-form blocks: preserve existing tolerant parsing (no rescue/else)
-              body_b = SmallVec(ExprId, 4).new
+              body_b = ExprIdBuffer.new(4)
               loop do
                 skip_trivia
 
@@ -5833,11 +5978,29 @@ module CrystalV2
           end
 
           block_span = start_token.span.cover(end_token.span)
-          @arena.add_typed(BlockNode.new(
+          if ENV.has_key?("DEBUG_BLOCK_STORE")
+            first_before = block_body_ids.empty? ? -1 : block_body_ids[0].index
+            STDERR.puts "[BLOCK_STORE] phase=before size=#{block_body_ids.size} first=#{first_before}"
+          end
+
+          block_id = @arena.add_typed(BlockNode.new(
             block_span,
             params_b.to_a,
             block_body_ids
           ))
+
+          if ENV.has_key?("DEBUG_BLOCK_STORE")
+            stored_node = @arena[block_id]
+            if stored_node.is_a?(BlockNode)
+              stored_body = stored_node.body
+              first_after = stored_body.empty? ? -1 : stored_body[0].index
+              STDERR.puts "[BLOCK_STORE] phase=after block=#{block_id.index} size=#{stored_body.size} first=#{first_after}"
+            else
+              STDERR.puts "[BLOCK_STORE] phase=after block=#{block_id.index} non_block=#{Frontend.node_kind(stored_node)}"
+            end
+          end
+
+          block_id
         end
 
         # Phase 74: Parse proc literal: ->(x : Int32) : Int32 { x + 1 }
@@ -6019,6 +6182,17 @@ module CrystalV2
           ))
         end
 
+        private def debug_block_snapshot(phase : String, block_id : ExprId) : Nil
+          stored_node = @arena[block_id]
+          if stored_node.is_a?(BlockNode)
+            stored_body = stored_node.body
+            first = stored_body.empty? ? -1 : stored_body[0].index
+            STDERR.puts "[ATTACH_BLOCK] phase=#{phase} block=#{block_id.index} size=#{stored_body.size} first=#{first}"
+          else
+            STDERR.puts "[ATTACH_BLOCK] phase=#{phase} block=#{block_id.index} non_block=#{Frontend.node_kind(stored_node)}"
+          end
+        end
+
         # Phase 10: Attach block to method call
         private def attach_block_to_call(call_expr : ExprId) : ExprId
           return call_expr if call_expr.invalid?
@@ -6030,10 +6204,11 @@ module CrystalV2
           call_node = @arena[call_expr]
           block_span = node_span(block_id)
           call_span = call_node.span.cover(block_span)
+          debug_block_snapshot("before_call_attach", block_id) if ENV.has_key?("DEBUG_ATTACH_BLOCK")
 
           # If it's an identifier, convert it to a call (e.g., "three_times do |n| ... end")
           if Frontend.node_kind(call_node) == Frontend::NodeKind::Identifier
-            return @arena.add_typed(
+            call_id = @arena.add_typed(
               CallNode.new(
                 call_span,
                 call_expr,
@@ -6041,6 +6216,8 @@ module CrystalV2
                 block_id
               )
             )
+            debug_block_snapshot("after_call_attach", block_id) if ENV.has_key?("DEBUG_ATTACH_BLOCK")
+            return call_id
           end
 
           # Verify it's a Call or MemberAccess
@@ -6051,8 +6228,8 @@ module CrystalV2
 
           case call_node
           when CallNode
-            @arena.add_typed(
-              CallNode.new(
+            call_id = @arena.add_typed(
+              new_call_node(
                 call_span,
                 call_node.callee,
                 call_node.args,
@@ -6060,9 +6237,11 @@ module CrystalV2
                 call_node.named_args
               )
             )
+            debug_block_snapshot("after_call_attach", block_id) if ENV.has_key?("DEBUG_ATTACH_BLOCK")
+            call_id
           when SuperNode
             # Attach block to super call
-            @arena.add_typed(
+            call_id = @arena.add_typed(
               CallNode.new(
                 call_span,
                 call_expr,
@@ -6070,8 +6249,10 @@ module CrystalV2
                 block_id
               )
             )
+            debug_block_snapshot("after_call_attach", block_id) if ENV.has_key?("DEBUG_ATTACH_BLOCK")
+            call_id
           when MemberAccessNode
-            @arena.add_typed(
+            call_id = @arena.add_typed(
               CallNode.new(
                 call_span,
                 call_expr,
@@ -6079,6 +6260,8 @@ module CrystalV2
                 block_id
               )
             )
+            debug_block_snapshot("after_call_attach", block_id) if ENV.has_key?("DEBUG_ATTACH_BLOCK")
+            call_id
           else
             @diagnostics << Diagnostic.new("Block attachment to unsupported node", call_node.span)
             PREFIX_ERROR
@@ -6545,8 +6728,10 @@ module CrystalV2
         # Grammar: abstract class Name ... end | abstract def method_name
         private def parse_abstract : ExprId
           abstract_token = current_token
+          trace_abstract_char("parse_abstract.enter", abstract_token)
           advance
           skip_trivia
+          trace_abstract_char("parse_abstract.dispatch", current_token)
 
           case current_token.kind
           when Token::Kind::Class
@@ -7424,6 +7609,11 @@ module CrystalV2
           # Parse all path segments (e.g., [A, B, C] for module A::B::C)
           name_segments = parse_constant_name_segments
           return PREFIX_ERROR unless name_segments
+          trace_parse_module = ENV.has_key?("CRYSTAL_V2_TRACE_PARSE_MODULE") && name_segments.size > 1
+          if trace_parse_module
+            segment_names = name_segments.map { |segment| String.new(segment) }
+            parser_raw_trace_puts "[PARSE_MODULE] phase=segments size=#{segment_names.size} names=#{segment_names.join("::")}"
+          end
           skip_trivia
 
           # Phase 61: Parse optional type parameters: (T, K, V)
@@ -7600,6 +7790,20 @@ module CrystalV2
                 nil # Outer modules don't have type params
               )
             )
+          end
+
+          if trace_parse_module
+            trace_expr = result_id
+            depth = 0
+            while depth < 8 && !trace_expr.invalid?
+              trace_node = @arena[trace_expr]
+              break unless trace_node.is_a?(ModuleNode)
+              trace_body = trace_node.body
+              parser_raw_trace_puts "[PARSE_MODULE] phase=chain depth=#{depth} name=#{String.new(trace_node.name)} body=#{trace_body.try(&.size) || 0}"
+              break unless trace_body && trace_body.size == 1
+              trace_expr = trace_body.unsafe_fetch(0)
+              depth += 1
+            end
           end
 
           result_id
@@ -8506,7 +8710,6 @@ module CrystalV2
                               index_node.span,
                               query_member,
                               index_node.indexes,
-                              nil,
                               nil
                             )
                           )
@@ -8978,7 +9181,7 @@ module CrystalV2
                 block_span = node_span(brace_block)
                 rewritten = case last_arg_node
                             when CallNode
-                              @arena.add_typed(CallNode.new(
+                              @arena.add_typed(new_call_node(
                                 last_arg_node.span.cover(block_span),
                                 last_arg_node.callee,
                                 last_arg_node.args,
@@ -9052,7 +9255,7 @@ module CrystalV2
                         callee_span
                       end
 
-          result = @arena.add_typed(CallNode.new(
+          result = @arena.add_typed(new_call_node(
             call_span,
             callee,
             args,
@@ -9424,8 +9627,11 @@ module CrystalV2
           end
 
           token = current_token
+          trace_abstract_char("parse_prefix.enter", token)
           if token.kind != Token::Kind::Char
+            trace_abstract_char("parse_prefix.rebuild_probe", token)
             if char_node = rebuild_char_literal_from_span(token.span)
+              trace_abstract_char("parse_prefix.rebuild_hit", token)
               advance
               return char_node
             end
@@ -9663,6 +9869,7 @@ module CrystalV2
             end
           when Token::Kind::Char
             # Phase 56: Character literals
+            trace_abstract_char("parse_prefix.char", token)
             if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_CHAR_SOURCE_REBUILD")
               if rebuilt = rebuild_char_literal_from_span(token.span)
                 advance
@@ -10049,8 +10256,12 @@ module CrystalV2
             if current_token.kind == Token::Kind::Of || (current_token.kind == Token::Kind::Identifier && slice_eq?(current_token.slice, "of"))
               advance
               skip_trivia
-              of_type_index = parse_of_type_expression.index
-              has_of_type = true
+              if of_type_expr = parse_of_type_expression
+                of_type_index = of_type_expr.index
+                has_of_type = true
+              else
+                return PREFIX_ERROR
+              end
             end
 
             closing_span = previous_token.try(&.span) || lbracket.span
@@ -10148,14 +10359,18 @@ module CrystalV2
           if current_token.kind == Token::Kind::Of || (current_token.kind == Token::Kind::Identifier && slice_eq?(current_token.slice, "of"))
             advance
             skip_trivia
-            of_type_expr = parse_of_type_expression
-            has_of_type = true
+            if parsed_of_type_expr = parse_of_type_expression
+              of_type_expr = parsed_of_type_expr
+              has_of_type = true
+            else
+              return PREFIX_ERROR
+            end
           end
 
           array_span = lbracket.span.cover(closing_bracket.span)
           elements = elements_b.to_a
           if has_of_type
-            @arena.add_typed(ArrayLiteralNode.new(array_span, elements, of_type_expr))
+            @arena.add_typed(ArrayLiteralNode.new(array_span, elements, of_type_expr.not_nil!))
           else
             @arena.add_typed(ArrayLiteralNode.new(array_span, elements))
           end
@@ -11747,7 +11962,7 @@ module CrystalV2
                       end
 
           # Create Call node with both positional and named args
-          result = @arena.add_typed(CallNode.new(
+          result = @arena.add_typed(new_call_node(
             call_span,
             callee,
             args,
@@ -11799,7 +12014,13 @@ module CrystalV2
                           call_span
                         end
             new_span = call_span.cover(last_span)
-            result = @arena.add_typed(CallNode.new(new_span, callee, accu_args, nil, accu_named.empty? ? nil : accu_named))
+            result = @arena.add_typed(
+              if accu_named.empty?
+                CallNode.new(new_span, callee, accu_args, nil)
+              else
+                CallNode.new(new_span, callee, accu_args, nil, accu_named)
+              end
+            )
           end
 
           # Parse optional block after parenthesized call: foo(args) do ... end
@@ -11822,7 +12043,7 @@ module CrystalV2
             if call_node.is_a?(CallNode)
               block_span = @arena[block_expr].span
               call_span = call_node.span.cover(block_span)
-              result = @arena.add_typed(CallNode.new(
+              result = @arena.add_typed(new_call_node(
                 call_span,
                 call_node.callee,
                 call_node.args,
@@ -12028,7 +12249,7 @@ current_token.kind == Token::Kind::Identifier &&
               )
             )
             @arena.add_typed(
-              CallNode.new(
+              new_call_node(
                 acc_span,
                 callee,
                 indexes,
@@ -12090,11 +12311,10 @@ current_token.kind == Token::Kind::Identifier &&
             )
           )
           @arena.add_typed(
-            CallNode.new(
+            new_call_node(
               node.span.cover(question.span),
               callee,
               node.indexes,
-              nil,
               nil
             )
           )
@@ -12301,7 +12521,7 @@ current_token.kind == Token::Kind::Identifier &&
                 named_args = named_b.to_a
                 last_arg_id = args.last? || named_args.last?.try(&.value) || node
                 call_span = member_span.cover(@arena[last_arg_id].span)
-                result = @arena.add_typed(CallNode.new(
+                result = @arena.add_typed(new_call_node(
                   call_span,
                   node, # MemberAccessNode as callee
                   args,
@@ -12446,7 +12666,7 @@ current_token.kind == Token::Kind::Identifier &&
                 named_args = named_b.to_a
                 last_arg_id = args.last? || named_args.last?.try(&.value) || node
                 call_span = member_span.cover(@arena[last_arg_id].span)
-                result = @arena.add_typed(CallNode.new(
+                result = @arena.add_typed(new_call_node(
                   call_span,
                   node, # MemberAccessNode as callee
                   args,
@@ -12706,7 +12926,7 @@ current_token.kind == Token::Kind::Identifier &&
           @paren_depth += 1
           skip_whitespace_and_optional_newlines
 
-          args_b = SmallVec(ExprId, 3).new
+          args_b = ExprIdBuffer.new(3)
           unless current_token.kind == Token::Kind::RParen
             loop do
               arg = parse_expression(0)
@@ -13044,7 +13264,7 @@ current_token.kind == Token::Kind::Identifier &&
           @paren_depth += 1 # Track depth for newline handling
           skip_whitespace_and_optional_newlines
 
-          type_args_b = SmallVec(ExprId, 2).new
+          type_args_b = ExprIdBuffer.new(2)
           unless current_token.kind == Token::Kind::RParen
             loop do
               arg_expr = parse_generic_type_argument_expr
@@ -15716,7 +15936,13 @@ current_token.kind == Token::Kind::Identifier &&
                               callee_span
                             end
                 call_span = callee_span.cover(last_span)
-                call_expr = @arena.add_typed(CallNode.new(call_span, call_expr, args, nil, named.empty? ? nil : named))
+                call_expr = @arena.add_typed(
+                  if named.empty?
+                    CallNode.new(call_span, call_expr, args, nil)
+                  else
+                    CallNode.new(call_span, call_expr, args, nil, named)
+                  end
+                )
                 @parsing_call_args -= 1
               end
             end

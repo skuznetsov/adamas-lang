@@ -1,6 +1,1861 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-03-27)
 
 ## Current Status
+- **Fresh stage3 split: trustworthy current-debug hosts can again build `stage2 --release` green, but resulting self-hosted stage2 runtime is still broken and now clearly splits into multiple families (2026-03-28, current session)**:
+  - trustworthy setup:
+    - current-source cheap runtime oracles stayed green on original-built current binaries:
+      - `/tmp/stage1_current_debug_envcache`
+      - `/tmp/stage1_current_debug_bytesptr`
+      - `/tmp/stage1_current_debug_identloop`
+    - long trustworthy builds also completed green:
+      - `scripts/run_safe.sh /tmp/build_stage2_current_release_envcache_from_current_debug.sh 600 4096` -> exit `0` after `~515s`
+      - `scripts/run_safe.sh /tmp/build_stage2_current_release_bytesptr.sh 600 4096` -> exit `0` after `~517s`
+      - `scripts/run_safe.sh /tmp/build_stage2_current_release_identloop.sh 600 4096` -> exit `0` after `~519s`
+  - decisive runtime evidence:
+    - `--version` on resulting stage2 binaries still aborts after `RUNPROBE 7` in:
+      `Crystal$CCEventLoop$Hwrite$$IO$CCFileDescriptor_Slice$LUInt8$R`
+    - first post-envcache runtime crash was a verified `Bytes`/`Slice` ivar lowering bug:
+      - LLDB on `/tmp/stage2_current_release_envcache_from_current_debug`
+        stopped in `Lexer#next_token`
+      - crash registers showed `x9 = 0x6`, i.e. the would-be byte pointer held
+        the source length `6`
+    - replacing cached `Bytes` with raw pointer + size removed that crash, but
+      only moved the frontier:
+      - `/tmp/stage2_current_release_bytesptr` no longer segfaults immediately
+      - live `sample` on hanging `assign` points at `Lexer#lex_identifier`
+    - explicit `lex_identifier` loop-shape workaround did not finish runtime stabilization:
+      - resulting `/tmp/stage2_current_release_identloop` still hangs after `RUNPROBE 6b`
+      - live `assign` process on that binary ballooned to `~23-25 GB RSS` in ~10s before manual kill
+  - practical consequence:
+    - the old blocker “stage3 cannot finish bootstrap” is now false on the trustworthy current-debug path
+    - the new top blocker is runtime correctness/stability of the resulting self-hosted stage2 binary
+    - active runtime families now need to be treated separately:
+      - `EventLoop#write` stub on `--version`
+      - verified `Bytes`/`Slice` ivar lowering corruption (source workaround applied)
+      - remaining identifier-loop / huge-RSS hang family
+- **Fresh bootstrap split: cached frontend env flags remove the current-source runtime crash after `RUNPROBE 6b`, but full self-hosted `stage2 --release` is still blocked by a late build tail (2026-03-28, current session)**:
+  - trustworthy setup:
+    - LLDB on the old trustworthy current stage2 binary split the former runtime blocker into repeated `getenv` hot-path calls:
+      - baseline: `getenv -> Lexer#next_token -> Parser#token_preload_capacity`
+      - with `CRYSTAL_V2_DISABLE_PARSER_PRELOAD=1`:
+        `getenv -> Parser#trace_abstract_char_fill -> Parser#initialize`
+    - narrow source fix:
+      - `src/compiler/frontend/lexer.cr` now caches `LEXER_DEBUG` / `STAGE2_LEXER_DEBUG` in `initialize`
+      - `src/compiler/frontend/parser.cr` now caches `CRYSTAL_V2_PARSER_INIT_TRACE` / `CRYSTAL_V2_TRACE_ABSTRACT_CHAR` per parser instance
+  - decisive evidence:
+    - compile gate remained green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+    - trustworthy current-source binary built by original compiler is now green on the exact former runtime oracles:
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/stage1_current_debug_envcache --error-trace`
+      - `scripts/run_safe.sh /tmp/run_stage1_current_debug_envcache_assign.sh 10 512` -> exit `0`
+      - `scripts/run_safe.sh /tmp/run_stage1_current_debug_envcache_version.sh 10 512` -> exit `0`, prints `crystal_v2 0.1.0-dev`
+    - but full self-hosted release bootstrap is still not green:
+      - `scripts/run_safe.sh /tmp/build_stage2_current_release_envcache.sh 420 4096`
+      - survives past the old runtime frontier, reaches `lower_main` and deferred allocator generation, then times out at `420s`
+  - practical consequence:
+    - the old active blocker “current stage2 crashes in parser/lexer right after `RUNPROBE 6b`” is now stale for current source
+    - the env-cache frontend fix is real, but it is not yet the full `successful bootstrap` fix
+    - current stage3 work should pivot back to the remaining late self-hosted release build tail
+- **Fresh LSP perf verification: warm AST cache now materially speeds real `didOpen`/repo `open` on Crystal v2 sources, so the old open-latency symptom is stale on current tree (2026-03-28, current session)**:
+  - trustworthy setup:
+    - no code change in this cycle; only reran existing repo/local LSP harnesses on current HEAD after the committed LSP stack through `c1f7a1a3`
+    - measured both in-process repo eval and `didOpen`-style harnesses:
+      - `crystal run tmp/lsp_repo_eval.cr`
+      - `crystal run tmp/lsp_open_perf_eval.cr`
+  - decisive evidence:
+    - repo eval now shows warm AST cache materially improving `open`:
+      - `src/compiler/lsp/server.cr`: `1608.93ms -> 958.37ms` (`~40%` faster)
+      - `src/compiler/frontend/parser.cr`: `2380.0ms -> 460.41ms` (`~81%` faster)
+    - `didOpen`-style harness confirms the same direction on the real server path:
+      - `baseline_off|open_ms=1403.66`
+      - `ast_cache_cold|open_ms=909.22`
+      - `ast_cache_warm|open_ms=856.6`
+    - warm verify run logged `432` AST cache hits, including stdlib and repo dependencies
+  - practical consequence:
+    - the old symptom “warm AST cache does not speed `open` on `server.cr`” is stale on the current LSP tree
+    - no extra LSP code fix is justified for this performance path right now
+    - next honest LSP work should be Serena/editor smoke and latency measurement on full stdio, not more server-core surgery
+- **Fresh bootstrap pivot: reusable LLVM function block buffers turn `stage1 -> stage2` from red to green on the same release host, but expose a new self-hosted `stage2` runtime frontier in lexer/comment handling (2026-03-28, current session)**:
+  - trustworthy setup:
+    - narrow uncommitted branch in `src/compiler/mir/llvm_backend.cr` adds env-gated reuse of the per-function `IO::Memory` block buffer:
+      - `CRYSTAL_V2_LLVM_REUSE_BLOCK_BUFFER=1`
+    - compile safety gate stayed green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+    - trusted release host built green:
+      - `/tmp/stage1_current_release_reuseblock`
+  - decisive evidence:
+    - same-host A/B on full bootstrap:
+      - baseline single-worker run on `/tmp/stage1_current_release_reuseblock` died at `4441632KB > 4096MB` after `~65s`, around `Emitting function 13801/28413`
+      - with `CRYSTAL_V2_LLVM_REUSE_BLOCK_BUFFER=1`, the same host completed `stage1 -> stage2` green:
+        - `/tmp/stage2_current_release_reuseblock_on`
+        - emitted all `28413/28413` functions
+        - `run_safe` exit `0` after `~152s`
+    - the resulting self-hosted stage2 binary is not yet usable:
+      - tiny non-empty carrier `puts 1` times out under both default and `--no-prelude`, printing only `[RUNPROBE] 0..6b`
+      - live `sample` of the hanging process shows the main thread in:
+        - `Frontend::Lexer#lex_comment`
+        - `Frontend::Lexer#current_byte`
+        - `Frontend::Rope#bytes`
+      - empty file under `--no-prelude` does not hang; it aborts later at:
+        - `STUB CALLED: Crystal$CCHIR$CCAstToHir$Hflush_pending_monomorphizations`
+  - practical consequence:
+    - the old late LLVM wall is no longer the active bootstrap blocker once block-buffer reuse is enabled
+    - the live frontier has moved to two precise self-hosted stage2 carriers:
+      - non-empty file: lexer/comment/Rope loop
+      - empty file: later HIR stub abort in `flush_pending_monomorphizations`
+    - next stage3 work should pivot to these tiny self-hosted reducers, not continue broad late-LLVM falsifiers as if they were still the top blocker
+- **Fresh LSP stabilization result: staged AST cache rollout is now verified for disk-backed dependency/prelude loads without regressing the AstArena semantic path (2026-03-28, current session)**:
+  - trustworthy setup:
+    - committed LSP checkpoints:
+      - `7aed143d` `fix: keep lsp semantic analysis on AstArena`
+      - `8c65063a` `fix: support incremental lsp didChange edits`
+      - `8bdd4427` `test: align lsp require spec with current dependency model`
+      - `7b769cf1` `feat: stage lsp ast cache rollout for disk-backed loads`
+    - rollout shape:
+      - `src/compiler/lsp/server.cr` re-enables `AstCache` behind `ServerConfig.ast_cache` / `LSP_AST_CACHE=1`
+      - cache is used only for disk-backed `load_dependency` and `load_prelude_program`
+      - open-buffer `analyze_document` still parses fresh and semantic analysis still stays on `AstArena`
+  - decisive evidence:
+    - direct cache schema oracle is green:
+      - `spec/lsp/ast_cache_roundtrip_spec.cr`
+      - verifies `CallNode` roundtrip with both `block` and `named_args`
+    - integration oracles are green:
+      - `spec/lsp/ast_cache_dependency_integration_spec.cr`
+      - `spec/lsp/ast_cache_prelude_integration_spec.cr`
+    - full `spec/lsp/*_spec.cr` sweep completed green after the rollout
+    - targeted runtime smoke from earlier AstArena fixes remains green:
+      - `references`, `rename`, `cached_types_cross_file`, `didChange`, stdio init/shutdown
+  - practical consequence:
+    - LSP can now reuse AST cache again on stable disk-backed paths without reintroducing the old `VirtualArena -> AstArena` cast family
+    - the rollout is intentionally staged and off by default; unsaved/open-buffer analysis still avoids cache coupling
+    - the next honest LSP follow-up is performance/latency measurement under Serena-style workloads, not more semantic-path surgery
+- **Fresh mid-size carrier result: instruction-family text output is dominated by `Call`/`Other`, but still only low-single-digit MB and not a standalone late sink (2026-03-27, current session)**:
+  - trustworthy setup:
+    - built current non-release trusted host:
+      `/tmp/stage1_current_debug_insttext`
+    - mid-size carrier:
+      - `src/compiler/frontend/parser.cr`
+      - `CRYSTAL_V2_LLVM_WORKERS=1`
+      - `CRYSTAL_V2_LLVM_MEM_SNAPSHOT_EVERY=50`
+      - `CRYSTAL_V2_LLVM_INST_TEXT_DETAIL=1`
+      - `--release -p`
+  - decisive evidence:
+    - carrier reached sequential LLVM emission and emitted all `2762` functions
+    - by the late window:
+      - `inst_call_bytes=2519436`
+      - `inst_other_bytes=2274464`
+      - `inst_gep_bytes=1201039`
+      - `inst_const_bytes=1015602`
+      - `inst_store_bytes=820853`
+      - remaining families each stayed well below `0.4MB`
+    - total instruction-attributed line bytes are still only about `8.6MB`
+  - practical consequence:
+    - instruction-family line text is useful for prioritization, but not large enough by itself to explain the observed late wall
+    - if we keep attacking text-side emission, the next honest target is `Call` plus the large `Other` bucket, not `ExternCall`, `Load`, or `BinaryOp`
+    - the strongest overall model is still broader allocation pressure during late LLVM emission, not one isolated helper/string family
+- **Fresh same-host A/B result: generic per-line `emit` envelope churn is only a modest contributor on a mid-size carrier, not a dominant late sink (2026-03-27, current session)**:
+  - trustworthy setup:
+    - built current non-release trusted host:
+      `/tmp/stage1_current_debug_splitemit`
+    - mid-size carrier:
+      - `src/compiler/frontend/parser.cr`
+      - `CRYSTAL_V2_LLVM_WORKERS=1`
+      - `CRYSTAL_V2_LLVM_MEM_SNAPSHOT_EVERY=50`
+      - `--release -p`
+    - falsifier:
+      - env-gated split-write path in `emit`, removing combined `("  " * @indent) + normalized + "\n"` allocation
+  - decisive evidence:
+    - baseline repeat and split run both reached sequential LLVM emission and emitted `2762` functions
+    - late window at `idx=2751/2762`:
+      - baseline: `total=1283814768`, `heap=334725120`
+      - split-write: `total=1250975920`, `heap=331546624`
+    - movement is only about `32.8MB` cumulative GC total and about `3.2MB` heap, i.e. low single-digit percent
+  - practical consequence:
+    - generic per-line `emit` envelope churn is real, but not large enough to explain the observed late wall by itself
+    - broad “late wall is mostly line assembly in `emit`” is currently weakened
+    - next frontier should stay on larger allocation-pressure families, not on helper-specific or line-envelope string joins
+- **Fresh mid-size carrier result: `value_ref` dynamic string/output churn is small, not a dominant late sink (2026-03-27, current session)**:
+  - trustworthy setup:
+    - built current non-release trusted host:
+      `/tmp/stage1_current_debug_valueref`
+    - mid-size carrier:
+      - `src/compiler/frontend/parser.cr`
+      - `CRYSTAL_V2_LLVM_WORKERS=1`
+      - `CRYSTAL_V2_LLVM_MEM_SNAPSHOT_EVERY=50`
+      - `CRYSTAL_V2_LLVM_VALUE_REF_DETAIL=1`
+      - `--release -p`
+  - decisive evidence:
+    - carrier reached sequential LLVM emission and emitted all `2762` functions
+    - by the late window:
+      - `value_ref_dyn_calls=99458`
+      - `value_ref_dyn_bytes=716998`
+      - `value_ref_emit_calls=13898`
+      - `value_ref_emit_in=680106`
+    - the same run still accumulated about `~128MB` of GC `total` growth during emission
+  - practical consequence:
+    - `value_ref`-specific dynamic names and local emit lines are far too small to explain the observed late wall
+    - broad “late wall is mostly `value_ref` string churn” is currently weakened
+    - the next frontier should move from helper-specific string families to the generic per-line `emit`/normalization corridor or another larger allocation-pressure family
+- **Fresh mid-size carrier result: external/intrinsic call-arg string assembly is negligible, not a dominant late sink (2026-03-27, current session)**:
+  - trustworthy setup:
+    - built current non-release trusted host:
+      `/tmp/stage1_current_debug_argchurn`
+    - mid-size carrier:
+      - `src/compiler/frontend/parser.cr`
+      - `CRYSTAL_V2_LLVM_WORKERS=1`
+      - `CRYSTAL_V2_LLVM_MEM_SNAPSHOT_EVERY=50`
+      - `CRYSTAL_V2_LLVM_ARG_STRING_DETAIL=1`
+      - `--release -p`
+  - decisive evidence:
+    - carrier reached sequential LLVM emission and emitted all `2763` functions
+    - by the late window:
+      - `ext_arg_calls=1024`
+      - `ext_arg_items=1632`
+      - `ext_arg_bytes=19766`
+      - `intrinsic_arg_calls=6`
+      - `intrinsic_arg_items=13`
+      - `intrinsic_arg_bytes=135`
+    - the same run still accumulated about `~128MB` of GC `total` growth during emission
+  - practical consequence:
+    - external/intrinsic call-arg joins are far too small to explain the observed late wall
+    - broad “late wall is dominated by operand/call-arg string assembly” is currently weakened
+    - the next frontier should stay on larger allocation-pressure families inside late LLVM emission, not on these join sites
+- **Fresh mid-size carrier result: name helper churn is negligible; cache misses in `mangle_name`/`llvm_type` are not a dominant allocation source (2026-03-27, current session)**:
+  - trustworthy setup:
+    - built current non-release trusted host:
+      `/tmp/stage1_current_debug_namechurn`
+    - mid-size carrier:
+      - `src/compiler/frontend/parser.cr`
+      - `CRYSTAL_V2_LLVM_WORKERS=1`
+      - `CRYSTAL_V2_LLVM_MEM_SNAPSHOT_EVERY=50`
+      - `CRYSTAL_V2_LLVM_NAME_CHURN_DETAIL=1`
+      - `--release -p`
+  - decisive evidence:
+    - carrier reached sequential LLVM emission and emitted all `2762` functions
+    - by the late window:
+      - `sanitize_calls=10008`, `sanitize_in=45706`, `sanitize_rebuilds=0`
+      - `mangle_calls=170667`, `mangle_in=8428441`, `mangle_out=9815393`
+      - but only `mangle_miss_calls=5486`, `mangle_miss_out=277662`
+      - `llvm_type_calls=1150476`, `llvm_type_miss_out=35440`
+  - practical consequence:
+    - name-helper cache misses are far too small to explain the observed GC/heap growth
+    - `sanitize_llvm_local_name` is effectively free on this carrier
+    - broad “late wall is mostly name-mangling / llvm-type-string churn” is currently weakened
+- **Fresh mid-size carrier result: MIR module graph structural overhead stays flat at ~2.46MB, not a dominant late sink (2026-03-27, current session)**:
+  - trustworthy setup:
+    - built current non-release trusted host:
+      `/tmp/stage1_current_debug_modulegraph`
+    - mid-size carrier:
+      - `src/compiler/frontend/parser.cr`
+      - `CRYSTAL_V2_LLVM_WORKERS=1`
+      - `CRYSTAL_V2_LLVM_MEM_SNAPSHOT_EVERY=50`
+      - `CRYSTAL_V2_LLVM_MODULE_STRUCT=1`
+      - `--release -p`
+  - decisive evidence:
+    - carrier reached sequential LLVM emission and emitted all `2762` functions
+    - `mir_struct_total` stayed exactly flat at `2458240` bytes across the run
+    - component split was also flat:
+      - `mir_module_struct=93864`
+      - `mir_type_struct=93168`
+      - `mir_function_struct=542224`
+      - `mir_block_struct=178528`
+      - `mir_instr_struct=1402304`
+      - `mir_pred_struct=148152`
+  - practical consequence:
+    - broad “retained MIR module/function/block/instruction arrays are the dominant late wall” is currently weakened
+    - even scaling this carrier up by about `10x` would still land in the low tens of MB, not near the observed `4+ GB` wall
+    - the next frontier should move farther toward native/anonymous runtime families or other untracked retained structures
+- **Fresh mid-size carrier result: reused per-function LLVMIRGenerator state stays flat at ~8.2-8.3MB, not a slab-class late sink (2026-03-27, current session)**:
+  - trustworthy setup:
+    - built current non-release trusted host:
+      `/tmp/stage1_current_debug_funcstruct`
+    - sanity:
+      - `scripts/run_safe.sh /tmp/run_stage1_current_debug_funcstruct_version.sh 5 512`
+        -> `crystal_v2 0.1.0-dev`
+    - mid-size carrier:
+      - `src/compiler/frontend/parser.cr`
+      - `CRYSTAL_V2_LLVM_WORKERS=1`
+      - `CRYSTAL_V2_LLVM_MEM_SNAPSHOT_EVERY=50`
+      - `CRYSTAL_V2_LLVM_FUNC_STATE_STRUCT=1`
+      - `--release -p`
+  - decisive evidence:
+    - carrier reached sequential LLVM emission and emitted all `2762` functions
+    - across the whole run, `func_state_struct_total` stayed essentially flat:
+      - early: `8238088`
+      - mid: `8251600`
+      - late high-water: `8309712`
+    - main components were stable too:
+      - `func_local_struct ~5.25MB`
+      - `func_value_struct ~1.67MB`
+      - `func_cross_struct ~1.32-1.36MB`
+      - `func_phi_struct` grew only to about `24KB`
+  - practical consequence:
+    - broad “reused per-function Hash/Set/Array state needs slab/manual reset and is the dominant late wall” is currently weakened
+    - even if manual reset/slab-style recycling helps a little, this family is far too small and flat to explain the `4+ GB` bootstrap wall by itself
+    - the next frontier should stay on other anonymous/native/run-wide families, not on per-function state reuse
+- **Fresh instrumentation constraint: current non-release trusted host is not practical for late LLVM wall measurement (2026-03-27, current session)**:
+  - trustworthy setup:
+    - `../crystal/bin/crystal build src/crystal_v2.cr --error-trace -o /tmp/stage1_current_debug_funcstruct`
+      -> green
+    - `scripts/run_safe.sh /tmp/run_stage1_current_debug_funcstruct_version.sh 5 512`
+      -> `crystal_v2 0.1.0-dev`
+  - bounded self-hosted run:
+    - `CRYSTAL_V2_LLVM_WORKERS=1`
+    - `CRYSTAL_V2_LLVM_MEM_SNAPSHOT_EVERY=2000`
+    - `CRYSTAL_V2_LLVM_FUNC_STATE_STRUCT=1`
+    - `src/crystal_v2.cr --release -p`
+  - decisive evidence:
+    - `scripts/run_safe.sh /tmp/run_stage1_current_debug_funcstruct_stage2.sh 140 4096`
+      -> timeout after `140s`
+    - stderr never reached LLVM emission; it only advanced through module/class/function registration and `lower_main`
+  - practical consequence:
+    - current non-release host is too slow for late-wall measurement and should not be used as the main falsifier harness for this frontier
+    - late memory instrumentation still needs a trusted release host, or a smaller carrier that genuinely reaches `emit_functions_sequential`
+- **Fresh static audit: no obvious forgotten clear was found in the main per-function phi/cross-block state families (2026-03-27, current session)**:
+  - direct checks in `src/compiler/mir/llvm_backend.cr`:
+    - `@phi_predecessor_conversions`, `@phi_int_to_ptr`, `@phi_predecessor_union_wraps`, `@phi_union_to_ptr_extracts`, `@phi_union_to_union_converts`, `@phi_union_payload_extracts`, `@phi_nil_incoming_blocks`, `@current_func_blocks`
+  - decisive evidence:
+    - these families are either cleared in the top-level `emit_function` reset path, or explicitly cleared in their own per-function prepass before being rebuilt
+    - `@pending_allocas` looks stale/unused rather than growing: it is declared, referenced only by the debug structural probe, and not populated by the active emission path
+  - practical consequence:
+    - broad “one forgotten phi/cross-block container accumulates across functions” is currently weakened
+    - the remaining `func_state_struct_total` probe is still useful, but the cheapest static root-cause from a missing `.clear` has not been found
+- **Fresh structural-hash measurement: tracked run-wide Hash/Set families are too small to explain the late wall (2026-03-27, current session)**:
+  - trustworthy setup:
+    - built fresh trusted release host:
+      `/tmp/stage1_current_release_structdetail`
+    - sanity:
+      - `scripts/run_safe.sh /tmp/run_stage1_current_release_structdetail_version.sh 5 512`
+        -> `crystal_v2 0.1.0-dev`
+    - bounded self-hosted run:
+      - `CRYSTAL_V2_LLVM_WORKERS=1`
+      - `CRYSTAL_V2_LLVM_MEM_SNAPSHOT_EVERY=2000`
+      - `CRYSTAL_V2_LLVM_HASH_STRUCT_DETAIL=1`
+      - `src/crystal_v2.cr --release -p`
+  - bounded result:
+    - killed at `4221952KB > 4096MB` after about `80s`
+  - decisive late-window evidence:
+    - at `idx=12001/28177` the tracked structural bytes were approximately:
+      - `emitted_struct=327680`
+      - `ret_struct=917504`
+      - `called_struct=720896`
+      - `undef_struct=28672`
+      - `global_type_struct=229376`
+      - `func_name_struct=2097152`
+      - `func_suffix_struct=2097152`
+      - `func_id_struct=655360`
+      - `type_ref_struct=163840`
+      - `mangle_struct=2097152`
+    - together these tracked hash/set structures stay in the low single-digit MB range, not anywhere near the `4+ GB` wall
+  - practical consequence:
+    - the obvious run-wide structural overhead of these tracked LLVM/backend caches is currently falsified as the dominant late sink
+    - remaining explanations now have to live in other anonymous families, untracked structures, or allocation churn outside these caches
+- **Fresh same-host A/B refutation: byte-scan block-copy path does not improve the late LLVM wall (2026-03-27, current session)**:
+  - trustworthy setup:
+    - built fresh trusted release host:
+      `/tmp/stage1_current_release_bytecopy`
+    - sanity:
+      - `scripts/run_safe.sh /tmp/run_stage1_current_release_bytecopy_version.sh 5 512`
+        -> `crystal_v2 0.1.0-dev`
+    - same-host A/B harness:
+      - baseline:
+        - `CRYSTAL_V2_LLVM_WORKERS=1`
+      - byte-copy:
+        - same env plus `CRYSTAL_V2_LLVM_BYTE_BLOCK_COPY=1`
+      - both compile:
+        - `src/crystal_v2.cr --release -p`
+  - decisive evidence:
+    - baseline:
+      - killed at `4208944KB > 4096MB` after about `75s`
+      - late progress reached `Emitting function 14601/28735`
+    - byte-copy:
+      - killed at `4344032KB > 4096MB` after about `75s`
+      - late progress reached `Emitting function 14701/28736`
+    - the byte-copy path does not buy memory headroom and likely makes the wall slightly worse on this same-host comparison
+  - practical consequence:
+    - broad “per-line String/Array churn in buffered block rewrite is the dominant late wall” is currently weakened
+    - this family may still contribute, but not as the primary explanation for the present `~4GB` wall
+    - the temporary `BYTE_BLOCK_COPY` code path should not stay in the active tree
+- **Fresh same-host A/B result: dropping emitted MIR function bodies after LLVM emission does not materially move the late wall (2026-03-27, current session)**:
+  - trustworthy setup:
+    - built fresh trusted release host:
+      `/tmp/stage1_current_release_dropbodies`
+    - sanity:
+      - `scripts/run_safe.sh /tmp/run_stage1_current_release_dropbodies_version.sh 5 512`
+        -> `crystal_v2 0.1.0-dev`
+    - same-host A/B harness:
+      - baseline:
+        - `CRYSTAL_V2_LLVM_WORKERS=1`
+      - body-drop:
+        - same env plus `CRYSTAL_V2_LLVM_DROP_EMITTED_BODIES=1`
+      - both compile:
+        - `src/crystal_v2.cr --release -p`
+  - decisive evidence:
+    - baseline:
+      - killed at `4243168KB > 4096MB` after about `100s`
+      - late progress reached `Emitting function 14701/28733`
+    - body-drop:
+      - killed at `4242768KB > 4096MB` after about `105s`
+      - late progress reached `Emitting function 14701/28732`
+    - the env-gated body-drop branch does not move the emitted-function frontier and only changes wall-clock by a few seconds
+  - practical consequence:
+    - broad “retained MIR function bodies are the dominant live graph behind the late wall” is currently weakened
+    - if MIR-body retention contributes, it does not look dominant enough to explain the present `~4GB` wall by itself
+    - the temporary `DROP_EMITTED_BODIES` code path should not stay in the active tree
+- **Fresh same-host A/B refutation: env-gated pre-step5 manual release of parse/HIR/MIR state does not move the late LLVM wall (2026-03-27, current session)**:
+  - trustworthy setup:
+    - built fresh trusted release host:
+      `/tmp/stage1_current_release_prellvm`
+    - sanity:
+      - `scripts/run_safe.sh /tmp/run_stage1_current_release_prellvm_version.sh 5 512`
+        -> `crystal_v2 0.1.0-dev`
+    - same-host A/B harness:
+      - baseline:
+        - `CRYSTAL_V2_LLVM_WORKERS=1`
+      - pre-release:
+        - same env plus `CRYSTAL_V2_PRE_LLVM_RELEASE=1`
+      - both compile:
+        - `src/crystal_v2.cr --release -p`
+  - decisive evidence:
+    - baseline:
+      - killed at `4243200KB > 4096MB` after about `78s`
+      - late progress reached `Emitting function 15101/29057`
+    - pre-release:
+      - killed at `4476784KB > 4096MB` after about `78s`
+      - late progress also reached `Emitting function 15101/29057`
+    - the pre-release branch executes and still collapses to the same emitted-function neighborhood, with no material time/RSS improvement
+  - practical consequence:
+    - simple “the long-lived compile frame is retaining enough parse/HIR/MIR state to explain the dominant wall” is currently weakened
+    - if pre-step5 retention matters at all, it is not the dominant explanation for the present `~4GB` late LLVM wall
+    - the temporary `PRE_LLVM_RELEASE` code path should not stay in the active tree
+- **Fresh same-host A/B refutation: `CRYSTAL_V2_LLVM_REINIT_FUNC_STATE=1` is not a robust late-wall fix, and the earlier timeout-at-140s run was a non-reproducible outlier (2026-03-27, current session)**:
+  - trustworthy setup:
+    - built fresh trusted release host:
+      `/tmp/stage1_current_release_reinitfalsifier`
+    - sanity:
+      - `scripts/run_safe.sh /tmp/run_stage1_current_release_reinitfalsifier_version.sh 5 512`
+        -> `crystal_v2 0.1.0-dev`
+    - same-host A/B wrappers:
+      - baseline:
+        - `CRYSTAL_V2_LLVM_WORKERS=1`
+        - `CRYSTAL_V2_PHASE_STATS=1`
+        - `CRYSTAL_V2_LLVM_MEM_SNAPSHOT_EVERY=2000`
+      - reinit:
+        - same env plus `CRYSTAL_V2_LLVM_REINIT_FUNC_STATE=1`
+  - decisive evidence:
+    - one early `reinit` run timed out at `140s` with `RSS ~3015168KB`, but
+      that shape did not reproduce and must be treated as an outlier
+    - reproducible same-host repeats converge back to the old wall:
+      - baseline:
+        - `4222064KB > 4096MB` after about `75s`
+        - late shape:
+          - `lower_missing: 37289 -> 38111`
+          - `idx=14001/28732`
+      - reinit repeat:
+        - `4464448KB > 4096MB` after about `77s`
+        - late shape:
+          - `lower_missing: 37261 -> 38105`
+          - `idx=14001/28731`
+  - practical consequence:
+    - broad “per-function `.clear` high-water retention is the dominant late
+      wall” is currently falsified
+    - the temporary timeout/no-wall run is not stable enough to drive the next
+      branch
+    - the reinit code hooks should not stay in the active tree as a presumed
+      fix
+- **Fresh retained-state falsifier: the obvious string payload inside run-wide LLVMIRGenerator collections is too small to explain the multi-GB wall (2026-03-27, current session)**:
+  - trustworthy setup:
+    - built fresh trusted host:
+      `/tmp/stage1_current_release_memdetail`
+    - added env-gated size estimates in
+      [llvm_backend.cr](/Users/sergey/Projects/Crystal/crystal_v2_repo/src/compiler/mir/llvm_backend.cr)
+      for:
+      - `@emitted_functions`
+      - `@emitted_function_return_types`
+      - `@called_crystal_functions`
+      - `@undefined_externs`
+      - `@func_by_name`
+      - `@func_by_suffix`
+      - `@global_declared_types`
+      - `@string_constants`
+    - bounded self-hosted run:
+      - `CRYSTAL_V2_LLVM_WORKERS=1`
+      - `CRYSTAL_V2_PHASE_STATS=1`
+      - `CRYSTAL_V2_LLVM_MEM_SNAPSHOT_EVERY=2000`
+      - `CRYSTAL_V2_LLVM_MEM_DETAIL=1`
+  - bounded result:
+    - `scripts/run_safe.sh ...` kills again at
+      `4266592KB > 4096MB` after about `69s`
+  - decisive late-window evidence:
+    - at `idx=14001/28731`:
+      - `emit_fn_bytes=975617`
+      - `emit_ret_bytes=2656235`
+      - `called_bytes=1205728`
+      - `undef_bytes=31432`
+      - `func_idx_name_bytes=4260999`
+      - `func_idx_suffix_bytes=8553880`
+      - `global_type_bytes=437225`
+      - `str_const_bytes=285961`
+    - even summed together, these obvious string payloads stay in the
+      low tens of MB, while the live wall is already in the `4+ GB` RSS range
+  - practical consequence:
+    - plain string content inside these run-wide collections is falsified as the
+      dominant memory sink
+    - any remaining responsibility from this family would have to come from
+      hash/set bucket/object overhead or from a different retained structure,
+      not from the string payload itself
+- **Fresh late-tail GC split: earlier “flat GC heap” model was too broad, because high-frequency mem snapshots expose real late GC heap / OS-growth jumps, but the temporary green build was not reproducible (2026-03-27, current session)**:
+  - trustworthy setup:
+    - reused trusted host:
+      `/tmp/stage1_current_release_profmem`
+    - reran the same bounded self-hosted `stage2` path with:
+      - `CRYSTAL_V2_LLVM_WORKERS=1`
+      - `CRYSTAL_V2_PHASE_STATS=1`
+      - `CRYSTAL_V2_LLVM_MEM_SNAPSHOT_EVERY=100`
+  - decisive evidence:
+    - the late tail no longer keeps `heap/obtained_os` flat:
+      - `idx=25601`:
+        - `heap=2289926144`
+        - `obtained_os=2433056768`
+      - `idx=25701`:
+        - `heap=2323496960`
+        - `obtained_os=2466627584`
+      - `idx=26101`:
+        - `heap=2424193024`
+        - `obtained_os=2567585792`
+      - `idx=26301`:
+        - `heap=2524872704`
+        - `obtained_os=2668527616`
+    - so the earlier flatness result was true only through the observed
+      `idx<=14501` window, not for the whole late tail
+    - adversary follow-up on the same trusted host:
+      - `MEM_SNAPSHOT_EVERY=100` with compiler `stderr -> /dev/null` dies again at
+        `4218608KB > 4096MB`
+      - immediate repeat of the original `mem100 -> file` wrapper also dies at
+        `4259072KB > 4096MB`
+  - practical consequence:
+    - current strongest model now points back toward late GC/heap-section growth
+      as a live contributor to the wall
+    - `LM-320` remains valid for its bounded window, but should no longer be
+      treated as “GC stays flat until the end”
+    - the single green completion was not reproducible and must be treated as
+      a non-deterministic observation, not a mitigation
+- **Fresh threshold-capture split: `run_safe` kill is consistent with direct `ps`, and the late wall resolves to anonymous `VM_ALLOCATE` chunk growth rather than a measurement mismatch (2026-03-27, current session)**:
+  - trustworthy setup:
+    - reused trusted host:
+      `/tmp/stage1_current_release_profmem`
+    - ran bounded self-hosted `stage2` under `scripts/run_safe.sh` with:
+      - a late `ps` comparer that sampled both:
+        - `ps -o rss= -p $PID`
+        - `ps -o pid,ppid,rss,vsz,command -p $PID`
+      - then a threshold-trigger sampler that ran `vmmap` once
+        `rss >= 3500000`
+  - decisive evidence:
+    - direct `ps` forms agree in the same late window:
+      - `rss_only=4045936`
+      - full row: `rss=4045936`
+    - the same bounded run is then killed by `run_safe` at:
+      - `4247952KB > 4096MB`
+    - threshold-trigger `vmmap` in the same neighborhood reports:
+      - `Physical footprint: 3.6G`
+      - `TOTAL, minus reserved VM space: 4.4G`
+      - dominant region family:
+        - `VM_ALLOCATE 3.6G resident`
+    - full `vmmap` resolves that family into hundreds of anonymous writable
+      chunks:
+      - many repeated `rw-/rwx SM=COW` regions of `16.0M`
+      - plus repeated `32.0M`, `64.0M`, `96.0M`, `128.0M`
+      - ordinary malloc zones remain tiny in the same dump
+  - practical consequence:
+    - the earlier `~2.3G` vs `~4.2G` contradiction was a sampling-window issue,
+      not a broken `run_safe` meter
+    - the live frontier is now ownership of the anonymous `VM_ALLOCATE`
+      chunk family
+    - strongest current hypothesis:
+      - these mappings are heap-section growth from a runtime allocator/GC
+        family, not retained LLVM text or Darwin malloc zones
+- **Fresh external-memory split: late RSS accounting is real, and a live sample shows the dominant physical footprint in `VM_ALLOCATE`, not in `MALLOC_*` zones (2026-03-27, current session)**:
+  - trustworthy setup:
+    - reused fresh prof-stats host:
+      `/tmp/stage1_current_release_profmem`
+    - wrapper sampled the live compiler PID once at `~55s` during a bounded
+      self-hosted `stage2` run
+  - decisive external sample:
+    - `ps -o rss,vsz,command -p $PID` at sample time:
+      - `rss=1687168` (`~1.61 GB`)
+    - matching `vmmap -summary $PID` sample:
+      - `Physical footprint: 1.6G`
+      - dominant writable category:
+        - `VM_ALLOCATE 1.6G resident`
+      - ordinary malloc zones stayed tiny:
+        - `MALLOC_SMALL 128K resident`
+        - `MALLOC_TINY 48K resident`
+        - `MALLOC metadata 320K resident`
+  - practical consequence:
+    - `run_safe`'s RSS accounting is not a phantom
+    - the dominant live footprint is not sitting in normal Darwin malloc zones
+    - next narrowing should treat `VM_ALLOCATE` growth as the main external
+      symptom, not `MALLOC_*` fragmentation
+- **Fresh high-frequency prof-stats split: through `idx=14501`, GC-reported heap and cheap byte-weight suspects stay flat while the same run still dies shortly after at `~4.08 GB` RSS (2026-03-27, current session)**:
+  - trustworthy setup:
+    - reused `/tmp/stage1_current_release_profmem`
+    - reran the same bounded self-hosted path with
+      `CRYSTAL_V2_LLVM_MEM_SNAPSHOT_EVERY=500`
+  - bounded run:
+    - `scripts/run_safe.sh ...` kills at
+      `4275280KB > 4096MB` after about `71s`
+  - decisive late-window evidence:
+    - from `idx=11001` through `idx=14501`:
+      - `heap=2173648896` stays flat
+      - `obtained_os=2317041664` stays flat
+      - `non_gc=0` stays flat
+      - `string_table_bytes=6457607` stays flat
+      - `zero_struct_decl_bytes` only grows from `39560` to `41867`
+    - nevertheless the same run dies only a few hundred emitted functions later
+      under the external `~4.08 GB` RSS guardrail
+  - practical consequence:
+    - there is still a large live-RSS component not exposed by the current
+      `GC.stats` / `GC.prof_stats` fields or by these cheap byte-weight suspects
+    - the current frontier is now specifically:
+      - what inside the compiler ends up as large `VM_ALLOCATE` resident growth
+        outside the cheap GC/prof counters
+- **Fresh falsifier: `ptr 0` normalization is not active on the late wall path, and cumulative written LLVM text is still modest in the crash neighborhood (2026-03-27, current session)**:
+  - trustworthy setup:
+    - fresh original-compiler-built release host:
+      `/tmp/stage1_current_release_textchurn`
+    - sanity:
+      - `--version` green under `scripts/run_safe.sh`
+  - temporary diagnostic helper in
+    [llvm_backend.cr](/Users/sergey/Projects/Crystal/crystal_v2_repo/src/compiler/mir/llvm_backend.cr):
+    - retained base env-gated LLVM mem snapshots
+    - added cumulative counters for:
+      - written output bytes
+      - `emit` line count
+      - slow-path `normalize_ptr_zero_text`
+      - rewritten `ptr 0` lines
+  - bounded self-hosted run:
+    - `CRYSTAL_V2_LLVM_WORKERS=1 CRYSTAL_V2_PHASE_STATS=1 CRYSTAL_V2_LLVM_MEM_SNAPSHOT_EVERY=2000 /tmp/stage1_current_release_textchurn src/crystal_v2.cr -o /tmp/stage2_current_release_textchurn`
+    - under `scripts/run_safe.sh`, it dies at
+      `4333744KB > 4096MB` after about `76s`
+  - decisive evidence:
+    - at `idx=14001/28708`:
+      - `out_bytes=102510914`
+      - `emit_calls=851706`
+      - `ptr0_text_calls=0`
+      - `ptr0_text_bytes=0`
+      - `ptr0_lines=0`
+    - the same pattern already holds from `idx=2001` onward:
+      - all `ptr 0` normalization counters stay at zero
+      - cumulative written text grows only from about `31.8 MB` to `102.5 MB`
+    - meanwhile the old late-wall signal remains:
+      - GC heap stays around `2106507264`
+      - metadata vectors stay flat
+      - run-wide bookkeeping still grows with emitted-function count
+  - practical consequence:
+    - the `normalize_ptr_zero_text` slow path is falsified as a live contributor
+      to the wall on this bootstrap path
+    - direct retention of already-written LLVM text also looks too small to
+      explain the `4+ GB` crash neighborhood
+    - next narrowing should move away from output normalization and toward
+      other retained backend/native allocation families
+- **Fresh falsifier: per-function `IO::Memory` block buffers are not the dominant late LLVM wall (2026-03-27, current session)**:
+  - trustworthy setup:
+    - fresh original-compiler-built release host:
+      `/tmp/stage1_current_release_blockbuf`
+    - sanity:
+      - `--version` green under `scripts/run_safe.sh`
+  - temporary diagnostic helper in
+    [llvm_backend.cr](/Users/sergey/Projects/Crystal/crystal_v2_repo/src/compiler/mir/llvm_backend.cr):
+    - retained the existing env-gated LLVM mem snapshots
+    - added running maxima for:
+      - per-function `block_ir_output.pos`
+      - per-function `processed_block_lines` byte total
+  - bounded self-hosted run:
+    - `CRYSTAL_V2_LLVM_WORKERS=1 CRYSTAL_V2_PHASE_STATS=1 CRYSTAL_V2_LLVM_MEM_SNAPSHOT_EVERY=2000 /tmp/stage1_current_release_blockbuf src/crystal_v2.cr -o /tmp/stage2_current_release_blockbuf`
+    - under `scripts/run_safe.sh`, it dies at
+      `4659360KB > 4096MB` after about `69s`
+  - decisive evidence:
+    - the maxima stay completely flat across all snapshots:
+      - `max_block_buf=4159419`
+      - `max_processed_buf=4159386`
+      - both owned by `__crystal_main`
+    - this remains true from `idx=2001` through `idx=14001`
+    - meanwhile the old pattern remains unchanged:
+      - GC heap stays around `2094759936` bytes
+      - metadata vectors stay flat
+      - emitted/called/string bookkeeping keeps growing
+  - practical consequence:
+    - per-function temporary `IO::Memory` / processed-line high-water is
+      falsified as a dominant explanation for the `4+ GB` wall
+    - the live wall is now more likely in:
+      - other retained backend bookkeeping not yet measured,
+      - native/non-GC allocations outside these temp buffers,
+      - or another run-wide structure outside the flat metadata vectors
+- **Fresh RSS-snapshot split: `getrusage.ru_maxrss` is not a trustworthy wall meter here, but the late LLVM wall still persists after a real GC cycle with flat GC heap and flat metadata vectors (2026-03-27, current session)**:
+  - trustworthy setup:
+    - fresh original-compiler-built release host:
+      `/tmp/stage1_current_release_rsssnap`
+    - sanity:
+      - `--version` green
+  - temporary diagnostic helper in
+    [llvm_backend.cr](/Users/sergey/Projects/Crystal/crystal_v2_repo/src/compiler/mir/llvm_backend.cr):
+    - kept the env-gated emission snapshots from the previous mem-snapshot run
+    - added `current_process_maxrss_bytes` via `LibC.getrusage(LibC::RUSAGE_SELF, ...)`
+  - bounded self-hosted run:
+    - `CRYSTAL_V2_LLVM_WORKERS=1 CRYSTAL_V2_PHASE_STATS=1 CRYSTAL_V2_LLVM_MEM_SNAPSHOT_EVERY=2000 /tmp/stage1_current_release_rsssnap src/crystal_v2.cr -o /tmp/stage2_current_release_rsssnap`
+    - under `scripts/run_safe.sh`, it dies at
+      `4348256KB > 4096MB` after about `73s`
+  - decisive in-process evidence:
+    - `heap_size` stays flat around `2104426496` bytes across
+      `idx=2001 .. 14001`
+    - `free_bytes` drops to `75886592` by `idx=10001`, then recovers to
+      `387899392` at `idx=12001`, proving another real GC cycle before the wall
+    - metadata vectors stay effectively flat again:
+      - `ret_types=28715`
+      - `global_types=6787`
+      - `type_meta=9530`
+      - `field_meta=8127`
+      - `union_meta=5166`
+      - `union_vars=130998`
+    - growing families still match the previous run:
+      - `emitted=2000 -> 14000`
+      - `called=3151 -> 12731`
+      - `str_consts=3099 -> 8135`
+      - `undef_ext=161 -> 544`
+      - `zero_structs=154 -> 254`
+  - decisive RSS split:
+    - local Darwin manpage confirms `ru_maxrss` is reported in bytes, not KB
+    - the raw in-process `ru_maxrss` still reaches only about `2275688448`
+      bytes
+    - external `run_safe` kills the same process at about `4348256KB`
+    - therefore `getrusage.ru_maxrss` on this Darwin path is not tracking the
+      real resident wall in the way we need for exact attribution
+  - practical consequence:
+    - the previous GC/metadata split is reinforced, not weakened
+    - but `ru_maxrss` itself is falsified as a trustworthy wall meter here
+    - next honest step should either use a real Mach resident-size path, or
+      skip in-process RSS entirely and target the remaining growing backend
+      bookkeeping families / native allocations directly
+- **Fresh mem-snapshot split: metadata is not the live growth source, GC really runs during emission, and the wall persists with GC heap plateau around ~2.1 GB (2026-03-27, current session)**:
+  - trustworthy setup:
+    - fresh original-compiler-built release host:
+      `/tmp/stage1_current_release_memsnap`
+    - sanity:
+      - `--version` green
+      - tiny compile of `puts 1` green
+  - temporary diagnostic helper in
+    [llvm_backend.cr](/Users/sergey/Projects/Crystal/crystal_v2_repo/src/compiler/mir/llvm_backend.cr):
+    - env-gated snapshots every N functions inside
+      `LLVMIRGenerator#emit_functions_sequential`
+    - each snapshot prints:
+      - `GC.stats` (`heap_size`, `free_bytes`, `unmapped_bytes`,
+        `bytes_since_gc`, `total_bytes`)
+      - sizes of key backend collections
+  - bounded self-hosted run:
+    - `CRYSTAL_V2_LLVM_WORKERS=1 CRYSTAL_V2_PHASE_STATS=1 CRYSTAL_V2_LLVM_MEM_SNAPSHOT_EVERY=2000 /tmp/stage1_current_release_memsnap src/crystal_v2.cr -o /tmp/stage2_current_release_memsnap`
+    - under `scripts/run_safe.sh`, it dies at
+      `4249568KB > 4096MB` after about `104s`
+  - decisive in-process evidence during LLVM emission:
+    - `heap_size` stays flat at `2105999360` bytes from
+      `idx=2001` through `idx=14001`
+    - `free_bytes` falls from `394493952` to `19537920` by `idx=12001`
+    - then recovers sharply to `375681024` at `idx=14001`, while
+      `bytes_since_gc` drops from `680666912` to `119131472`
+    - this is direct evidence that a real GC cycle already happened before the
+      wall, yet the process still dies shortly after
+  - decisive collection-growth evidence:
+    - effectively flat across snapshots:
+      - `ret_types=28708`
+      - `global_types=6787`
+      - `type_meta=9529`
+      - `field_meta=8127`
+      - `union_meta=5165`
+      - `union_vars=130995`
+    - growing during emission:
+      - `emitted=2000 -> 14000`
+      - `called=3151 -> 12734`
+      - `str_consts=3099 -> 8122`
+      - `undef_ext=161 -> 544`
+      - `zero_structs=154 -> 254`
+  - practical consequence:
+    - the old “metadata append is the live wall” model is falsified
+    - the wall is not simply “GC never runs”; GC does run and frees heap space
+      before the crash neighborhood
+    - strongest current model:
+      - either non-GC / non-Boehm RSS dominates the remaining wall,
+      - or live backend state outside the flat metadata vectors grows with
+        emitted-function count
+    - next narrowing step should add real process-RSS counters alongside
+      `GC.stats`, and then target the growing emission bookkeeping families
+- **Fresh paired falsifier: periodic GC during sequential LLVM emission delays the wall, but does not move the kill neighborhood by emitted-function count (2026-03-27, current session)**:
+  - trustworthy paired setup:
+    - fresh original-compiler-built release host:
+      `/tmp/stage1_current_release_gcprobe`
+    - sanity:
+      - `--version` green
+      - tiny compile of `puts 1` green
+  - GC-enabled run:
+    - temporary diagnostic env hook in
+      [llvm_backend.cr](/Users/sergey/Projects/Crystal/crystal_v2_repo/src/compiler/mir/llvm_backend.cr)
+      called `GC.collect` every 200 functions inside
+      `LLVMIRGenerator#emit_functions_sequential`
+    - bounded self-hosted run:
+      - `CRYSTAL_V2_LLVM_WORKERS=1 CRYSTAL_V2_PHASE_STATS=1 CRYSTAL_V2_LLVM_GC_EVERY=200 /tmp/stage1_current_release_gcprobe src/crystal_v2.cr -p -o /tmp/stage2_current_release_gcprobe_gc200`
+      - under `scripts/run_safe.sh`, it dies at
+        `4340496KB > 4096MB` after about `100s`
+      - decisive signal:
+        - periodic GC markers appear during LLVM emission
+        - the run still reaches only the same late neighborhood,
+          `Emitting function 14601/28702`
+  - paired no-GC baseline on the same host:
+    - `CRYSTAL_V2_LLVM_WORKERS=1 CRYSTAL_V2_PHASE_STATS=1 /tmp/stage1_current_release_gcprobe src/crystal_v2.cr -p -o /tmp/stage2_current_release_nogcprobe`
+    - under the same `4 GB` guardrail, it dies at
+      `4315696KB > 4096MB` after about `77s`
+    - decisive signal:
+      - it dies in essentially the same LLVM emission neighborhood,
+        `Emitting function 14601/28701`
+  - practical consequence:
+    - dead temporary garbage inside sequential emission is a real secondary
+      contributor, because periodic GC improves wall-clock survival
+    - but it is not the dominant live root cause: the wall still lands at the
+      same emitted-function neighborhood on the same host
+    - the next honest narrowing step should target live retained state that
+      scales with emitted function count, not just “force GC more often”
+- **Fresh falsifier: `emit_function` block-copy duplication is not the dominant cause of the current 4 GB wall (2026-03-27, current session)**:
+  - tested hypothesis:
+    - in [llvm_backend.cr](/Users/sergey/Projects/Crystal/crystal_v2_repo/src/compiler/mir/llvm_backend.cr)
+      I temporarily replaced `processed_block_lines : Array(String)` with a
+      streaming second pass over buffered block IR, keeping hoisted-alloca
+      semantics the same while removing the obvious duplicate copy of non-alloca
+      block lines
+  - trustworthy comparable rerun:
+    - fresh original-compiler-built host:
+      `/tmp/stage1_current_debug_llvmstreamfix`
+    - sanity:
+      - `--version` green
+    - bounded self-hosted progress run:
+      - `CRYSTAL_V2_LLVM_WORKERS=1 CRYSTAL_V2_PHASE_STATS=1 /tmp/stage1_current_debug_llvmstreamfix src/crystal_v2.cr -p -o /tmp/stage2_current_debug_llvmstreamfix_w1_progress`
+      - under `scripts/run_safe.sh`, it still dies at
+        `4323520KB > 4096MB` after about `303s`
+      - the run reaches the same late sequential LLVM emission corridor and dies
+        at almost the same point:
+        `Emitting function 14601/28701 ...`
+  - practical consequence:
+    - the `processed_block_lines` duplication may still be wasteful, but it is
+      not the dominant live root cause for the current stage2 memory wall
+    - the next narrowing step should focus on run-wide state retained during
+      late LLVM emission (or per-function data that persists longer than one
+      function), not this local block-buffer refactor
+- **Fresh current-source single-worker progress split: the live wall is no longer pre-MIR; it reaches late sequential LLVM emission and dies there under the 4 GB guardrail (2026-03-27, current session)**:
+  - trusted host sanity gate:
+    - fresh original-compiler-built `/tmp/stage1_current_debug_current` is green on
+      `--version`
+    - it is also green on a tiny compile+run control (`puts 1`)
+  - bounded self-hosted current-source rebuild:
+    - `CRYSTAL_V2_LLVM_WORKERS=1 /tmp/stage1_current_debug_current src/crystal_v2.cr -o /tmp/stage2_current_debug_current_w1`
+    - under `scripts/run_safe.sh`, this dies at
+      `4320448KB > 4096MB` after about `297s`
+    - decisive stderr before the kill:
+      - `lower_main ... exprs=31`
+      - `[ALLOC_FLUSH] Generated 4 deferred allocators`
+    - no output binary is produced
+  - stronger progress rerun:
+    - `CRYSTAL_V2_LLVM_WORKERS=1 CRYSTAL_V2_PHASE_STATS=1 /tmp/stage1_current_debug_current src/crystal_v2.cr -p -o /tmp/stage2_current_debug_current_w1_progress`
+    - under the same `4 GB` guardrail, this dies at
+      `4211440KB > 4096MB` after about `300s`
+    - decisive phase evidence:
+      - AST filter and lazy RTA both activate cleanly
+      - pending lowering advances deep into `process_pending_lower_functions`
+        (`[LOWER] ...`)
+      - progress then reaches LLVM sequential function emission from
+        `src/compiler/mir/llvm_backend.cr`
+      - stderr shows `Emitting function ... /28700` and reaches at least
+        `14601/28700` before the memory kill
+    - a partial LLVM file is left behind at
+      `/tmp/stage2_current_debug_current_w1_progress.ll` with size about `823 MB`
+  - practical consequence:
+    - the earlier “single-worker pre-MIR wall” model is now stale
+    - the live frontier has moved later, into late `step5` / sequential LLVM IR
+      emission, not `lower_main`, not final HIR setup, and not worker fanout
+    - the next honest narrowing step should target memory growth inside
+      `emit_functions_sequential` / `emit_function`, not broad HIR surgery or a
+      return to `--no-codegen`
+- **Fresh `--no-codegen` contract split: neither the old AST `run_check` path nor the compile/HIR path is a trustworthy current-source gate on its own (2026-03-27, current session)**:
+  - baseline falsifier on trusted `/tmp/stage1_current_debug_capturefix`:
+    - `/tmp/reduce_nocodegen_unreachable_type_error_noprelude.cr` with
+      `--no-codegen --no-prelude` is correctly red and reports
+      `Operator '+' not defined for Int32 and String`
+    - this confirms the old AST `run_check` path still checks unreachable
+      function bodies in the current file
+  - old-path failure that motivated the branch:
+    - tiny positive oracles
+      `/tmp/reduce_puts_nocodegen.cr` and
+      `/tmp/reduce_require_bootstrap_env.cr`
+      fail on the old path because `run_check` does not load prelude and does
+      not follow recursive `require`
+  - compile/HIR falsifier:
+    - on fresh experimental hosts built from the current source, routing
+      `--no-codegen` through `compile(...)` makes both positive oracles green
+      (`puts` and explicit `require bootstrap_shims`)
+    - however the same branch still exits `0` on
+      `/tmp/reduce_nocodegen_unreachable_type_error_noprelude.cr`, even after
+      an eager-lower-all-defs experiment
+  - practical consequence:
+    - the live problem is deeper than “run_check forgot prelude” and deeper
+      than “compile path was too lazy”
+    - old `run_check` and compile/HIR each fix one half of the matrix and miss
+      the other half
+    - `--no-codegen` should not be used as the primary trustworthy gate for
+      current-source bootstrap work until a third path or a stronger semantic
+      integration is built
+    - for now, the trustworthy current-source operator path remains: build a
+      fresh host binary with the original compiler, then continue bootstrap
+      diagnostics from that host
+- **Fresh build-path split: default self-hosted rebuild was confounded by LLVM worker fanout; single-worker mode removes the process cluster but not the memory wall (2026-03-27, current session)**:
+  - first fresh self-hosted rebuild attempt:
+    - trusted host: `/tmp/stage1_current_debug_capturefix`
+    - target: current source `src/crystal_v2.cr -o /tmp/stage2_current_debug_postinvalidate`
+    - direct `ps` sample during the run showed not one compiler but a cluster of
+      sibling processes with the same argv and multi-GB RSS each
+  - static falsifier:
+    - [llvm_backend.cr](/Users/sergey/Projects/Crystal/crystal_v2_repo/src/compiler/mir/llvm_backend.cr)
+      contains parallel LLVM emission via `fork` workers controlled by
+      `CRYSTAL_V2_LLVM_WORKERS`
+    - there is no normal compile-path `Process.run(...)` in
+      [cli.cr](/Users/sergey/Projects/Crystal/crystal_v2_repo/src/compiler/cli.cr)
+      or [crystal_v2.cr](/Users/sergey/Projects/Crystal/crystal_v2_repo/src/crystal_v2.cr)
+      that would explain recursive self-exec
+  - fresh controlled rerun:
+    - `CRYSTAL_V2_LLVM_WORKERS=1 /tmp/stage1_current_debug_capturefix src/crystal_v2.cr -o /tmp/stage2_current_debug_postinvalidate_w1`
+    - direct `ps` sample shows only one compiler process alive
+    - the old fork-cluster disappears
+    - but the single process still grows to about `8.5 GB RSS` and does not
+      produce `/tmp/stage2_current_debug_postinvalidate_w1`
+    - I manually terminated it to protect the machine
+  - practical consequence:
+    - the old “recursive self-spawn” theory is falsified
+    - `CRYSTAL_V2_LLVM_WORKERS=1` is the correct safe operating mode for fresh
+      self-hosted diagnostics on this frontier
+    - the new live question is narrower:
+      memory blow-up now looks like a single-process compile-cost/codegen wall,
+      not a fork explosion
+- **Fresh stale-frontier invalidation: the old exact `CLI` carrier is green on the trusted post-fix host, so it is no longer a live blocker (2026-03-27, current session)**:
+  - decisive verification on trusted `/tmp/stage1_current_debug_capturefix`:
+    - [reduce_cli_run_show_version_exact.cr](/Users/sergey/Projects/Crystal/crystal_v2_repo/tmp/reduce_cli_run_show_version_exact.cr)
+      now builds green and runs green via `scripts/run_safe.sh`
+    - runtime signal:
+      - prints `[RUNPROBE] 0..6b`
+      - exits `0`
+      - prints `no-input`
+  - practical consequence:
+    - the old standalone `CLI` exact red was just a broader manifestation of the
+      written-capture/member-mutation family already fixed in
+      `detect_written_captures_walk`
+    - the remaining work should not keep treating that exact carrier as an active
+      sink; the next honest check is a **fresh self-hosted** current-source build,
+      not more surgery on the stale exact oracle
+- **Fresh stale-oracle invalidation: `struct Box` under normal prelude is a bad runtime oracle because it collides with stdlib `Box(T)` from [src/stdlib/box.cr](/Users/sergey/Projects/Crystal/crystal_v2_repo/src/stdlib/box.cr) (2026-03-27, current session)**:
+  - decisive falsifier on the old trusted host `/tmp/stage1_current_debug_methodresolve`:
+    - [reduce_box_bool_flag_direct.cr](/Users/sergey/Projects/Crystal/crystal_v2_repo/tmp/reduce_box_bool_flag_direct.cr)
+      dumps `class=Box(Bool)` with body members:
+      `getter object : T`, `def initialize(@object : T)`, `self.box`, `self.unbox`
+    - resulting `CLASS_INFO` is correctly `ivars=[@object:Bool@4]`, which proves
+      this carrier was exercising stdlib `Box(T)`, not the user-defined test struct
+  - faithful renamed controls:
+    - a temporary unique `FlagBox` version of the same direct carrier builds green,
+      runs green via `scripts/run_safe.sh`, prints `flag-false`, and dumps
+      `CLASS_INFO` as `ivars=[@flag:Bool@0]`
+    - a temporary unique `FlagBox` version of the old
+      `reduce_closure_capture_struct_rebind_direct.cr` follower also runs green and
+      prints `flag-false`
+  - practical consequence:
+    - the old `Box`-based “generic accessor / closure rebind” frontier was false
+      because of a type-name collision, not because of a real compiler bug
+    - all default-prelude runtime reducers using bare `Box` should be treated as
+      stale until they are renamed or switched to `--no-prelude`
+    - the former red follower
+      [reduce_closure_capture_struct_rebind_direct.cr](/Users/sergey/Projects/Crystal/crystal_v2_repo/tmp/reduce_closure_capture_struct_rebind_direct.cr)
+      is no longer valid evidence for a remaining closure-cell bug
+- **Fresh verified fix: captured member mutation no longer gets misclassified as local rebinding in closure written-capture analysis (2026-03-27, current session)**:
+  - source fix in
+    [ast_to_hir.cr](/Users/sergey/Projects/Crystal/crystal_v2_repo/src/compiler/hir/ast_to_hir.cr):
+    `detect_written_captures_walk` now marks only direct identifier assignment as
+    a written capture; `obj.field = ...` and `obj[idx] = ...` stay ordinary
+    mutation paths
+  - verified with trusted rebuilt host `/tmp/stage1_current_debug_capturefix`
+  - decisive green signals:
+    - [reduce_closure_capture_struct_local_custom_direct.cr](/Users/sergey/Projects/Crystal/crystal_v2_repo/tmp/reduce_closure_capture_struct_local_custom_direct.cr)
+      now builds green and runs green via `scripts/run_safe.sh`, printing
+      `version-false`
+    - [reduce_closure_capture_struct_local_direct.cr](/Users/sergey/Projects/Crystal/crystal_v2_repo/tmp/reduce_closure_capture_struct_local_direct.cr)
+      now also runs green and prints `version-false`
+    - new permanent regression oracle
+      [stage2_closure_capture_member_mutation_runtime_oracle.sh](/Users/sergey/Projects/Crystal/crystal_v2_repo/regression_tests/stage2_closure_capture_member_mutation_runtime_oracle.sh)
+      is green on `/tmp/stage1_current_debug_capturefix`
+  - practical consequence:
+    - this closes one real root-cause family: over-broad written-capture
+      detection was forcing harmless receiver mutation through the closure-cell
+      readback corridor
+    - the old `struct Box` follower is now invalidated as a false oracle, so this
+      fix should be considered closed until a new non-colliding rebinding carrier
+      reproduces a remaining bug
+- **Fresh strongest split: the live `CLI#run` crash is not the `llvm_cache` default and not the bare `show_version` getter alone; it reproduces on a faithful standalone carrier and disappears when dead `OptionParser` construction branches are removed (2026-03-27, current session)**:
+  - negative control on the real self-hosted binary:
+    - current source changed only
+      `Options#llvm_cache` from `BootstrapEnv.get(..., "1")` to a `get?`-based fallback
+    - rebuilt as `/tmp/stage2_current_debug_runprobe_v7`
+    - decisive runtime result on
+      `scripts/run_safe.sh /tmp/run_stage2_current_debug_runprobe_v7_version.sh ...`:
+      - still prints `[RUNPROBE] 0` through `[RUNPROBE] 6`
+      - still does **not** print `[RUNPROBE] 6b`
+      - still crashes immediately after `[RUNPROBE] 6`
+  - new fast oracle:
+    - trusted faithful standalone carrier
+      `tmp/reduce_cli_run_show_version_exact.cr`
+      compiled by `/tmp/stage1_current_debug_astbody_v3`
+      reproduces the same red shape:
+      - build: green in ~11-12s
+      - run: `[RUNPROBE] 0..6` then `exit 139`
+  - decisive falsifier on that fast oracle:
+    - removing only the dead `OptionParser` construction branches makes the
+      carrier green and prints `[RUNPROBE] 6b`, `[RUNPROBE] 7`,
+      `crystal_v2 0.1.0-dev`
+    - restoring only the wide `else` `OptionParser.new do |p| ... end`
+      branch makes the carrier red again with the original `[RUNPROBE] 0..6`
+      crash
+    - stronger split inside that branch:
+      - `OptionParser.new` with only `p.banner = ...` is green
+      - `p.on("--version") { parser_flag = true }` with capture of a local
+        `Bool` is green
+      - `p.on("--version") { options.show_version = true }` is red
+      - `p.on("--version") { options.release = true }` is red
+      - `p.on("--version") { options.output = "x" }` is red
+      - `p.on("--version") { set_show_version_via_ptr(options_ptr) }` is green
+  - practical consequence:
+    - the live family is now narrower than “first `options.show_version` read”
+    - the strongest current root-cause corridor is closure-capture lowering for
+      outer `Options` struct mutation inside non-executed `OptionParser#on`
+      branches in `CLI#run`
+    - direct capture/mutation of the outer struct is red even across different
+      fields, while helper/pointer-mediated mutation of the same field is green
+    - next step should leave `CLI` and reduce this to a compiler-level oracle
+      for closure capture of mutable struct locals, not re-open
+      `BootstrapEnv.get(...)`, generic `OptionParser`, or bare `Options`
+      getter theories
+- **Fresh compiler-level oracle: direct closure capture of a mutable struct local is red; pointer/helper mediation is green (2026-03-27, current session)**:
+  - new minimal carriers:
+    - [reduce_closure_capture_struct_local_direct.cr](/Users/sergey/Projects/Crystal/crystal_v2_repo/tmp/reduce_closure_capture_struct_local_direct.cr)
+    - [reduce_closure_capture_struct_local_ptr.cr](/Users/sergey/Projects/Crystal/crystal_v2_repo/tmp/reduce_closure_capture_struct_local_ptr.cr)
+  - both are tiny programs with:
+    - local `options = Options.new`
+    - runtime-dead `if ARGV.empty?` `OptionParser` branch
+    - post-branch readback of `options.show_version`
+  - decisive split under trusted `/tmp/stage1_current_debug_astbody_v3`:
+    - `direct` build green, run red with immediate `exit 139`
+    - `ptr` build green, run green and prints `version-false`
+  - only semantic difference:
+    - `direct`: `p.on("--version") { options.show_version = true }`
+    - `ptr`: `p.on("--version") { set_show_version_via_ptr(options_ptr) }`
+  - practical consequence:
+    - the frontier is now cleanly outside `CLI`
+    - strongest root-cause hypothesis is compiler lowering for direct closure
+      capture/mutation of mutable struct locals
+    - next step should target a dedicated closure-capture lowering oracle/fix,
+      not more `CLI` surgery
+- **Fresh cleaner oracle: `OptionParser` is not required; the same split reproduces with a tiny custom `takes_block` helper (2026-03-27, current session)**:
+  - new carriers:
+    - [reduce_closure_capture_struct_local_custom_direct.cr](/Users/sergey/Projects/Crystal/crystal_v2_repo/tmp/reduce_closure_capture_struct_local_custom_direct.cr)
+    - [reduce_closure_capture_struct_local_custom_ptr.cr](/Users/sergey/Projects/Crystal/crystal_v2_repo/tmp/reduce_closure_capture_struct_local_custom_ptr.cr)
+  - both use only:
+    - local `options = Options.new`
+    - runtime-dead `if ARGV.empty?`
+    - custom `takes_block(&block : ->)` that does nothing
+    - post-branch readback of `options.show_version`
+  - decisive split under trusted `/tmp/stage1_current_debug_astbody_v3`:
+    - `custom_direct` build green, run red with immediate `exit 139`
+    - `custom_ptr` build green, run green and prints `version-false`
+  - practical consequence:
+    - `OptionParser` is now fully falsified as a root cause
+    - live bug is a general block-closure lowering problem for direct capture of
+      mutable struct locals
+    - supporting HIR/LLVM signal from the earlier `direct` oracle:
+      post-branch read is redirected to `classvar_get __closure.@@__closure_cell_2`,
+      and in LLVM that global remains `null` when the dead branch is skipped,
+      which explains the crash
+- **Fresh direct sink in real `CLI#run`: crash lands on `show_version = options.show_version` after `parse_args_safe` (2026-03-27, current session)**:
+  - trusted raw-source `RUNPROBE` instrumentation in current `src/compiler/cli.cr`
+    was rebuilt into `/tmp/stage2_current_debug_runprobe_v6`
+  - decisive runtime result on `scripts/run_safe.sh /tmp/run_stage2_current_debug_runprobe_v6_version.sh ...`:
+    - prints `[RUNPROBE] 0` through `[RUNPROBE] 6`
+    - does **not** print `[RUNPROBE] 6b`
+    - crashes immediately after `RUNPROBE 6`
+  - source split:
+    - `RUNPROBE 6` is emitted immediately before
+      `show_version = options.show_version`
+    - `RUNPROBE 6b` is emitted immediately after that assignment
+  - practical consequence:
+    - the live full-source self-hosted runtime crash is now narrowed to the
+      first bool field read from `options` after `parse_args_safe`
+    - this is stronger than the earlier “somewhere before `if options.show_version`”
+      statement
+- **Fresh separate exact reducer bug: `BootstrapEnv.get(String, String)` is still a self-hosted stub hazard in `Options` defaults (2026-03-27, current session)**:
+  - standalone exact reducer `v7` using:
+    - exact current `parse_args_safe`
+    - exact current `Options`
+    - minimal `run` that reads `options.show_version`
+    fails with:
+    - `STUB CALLED: BootstrapEnv$Dget$$String_String`
+  - confounder removal:
+    - `v8` replaces only
+      `property llvm_cache : Bool = BootstrapEnv.get("CRYSTAL_V2_LLVM_CACHE", "1") != "0"`
+      with a `get?`-based fallback
+    - `v8` then goes green and prints:
+      - `[V7] after_parse`
+      - `[V7] before_show_version`
+      - `[V7] show_version=1`
+      - `version-ok`
+  - practical consequence:
+    - there is a real standalone lazy/RTA reachability bug family on
+      `BootstrapEnv.get(String, String)` in field-default initialization
+    - but that is a **separate** frontier from the live full-source `RUNPROBE 6`
+      crash, because the real compiler reaches `RUNPROBE 3/4/5/6` after
+      `Options.new`
+- **Fresh hard split: `stage2_current_debug_astbody_v3` is build-green but runtime-red even on `--version` (2026-03-27, current session)**:
+  - previous over-strong assumption invalidated:
+    - successful self-hosted build of `/tmp/stage2_current_debug_astbody_v3`
+      does **not** mean the produced compiler is already usable as a host
+  - decisive runtime controls on the fresh binary:
+    - `scripts/run_safe.sh /tmp/run_version_stage2_v3.sh 15 1024`
+      -> `exit 139` after ~0s
+    - tiny compile controls also fail immediately:
+      - `simple_one -o out`
+      - `simple_one --release --no-prelude --no-ast-cache -o out`
+      - `tmp/reduce_frontend_ast_only_hir.cr --release --no-prelude --no-ast-cache`
+      - `tmp/reduce_frontend_prefix_hir.cr --release --no-prelude --no-ast-cache`
+    - same shape under LLDB for `--version` and tiny compile:
+      - `EXC_BAD_ACCESS (address=0x58)` in `CrystalV2::Compiler::CLI#run`
+  - practical consequence:
+    - the live frontier is no longer “use fresh stage2 current debug as a
+      trustworthy probe host”
+    - current-source self-hosted debug bootstrap now splits into:
+      - build path green
+      - first runtime invocation red
+    - next narrowing should target the earliest real `CLI#run` context on the
+      produced stage2 binary, not stage3/HIR followers yet
+- **Fresh falsifier matrix for `CLI#run` early-path theories (2026-03-27, current session)**:
+  - trusted standalone reducers compiled by
+    `/tmp/stage1_current_debug_astbody_v3` and run green:
+    - `v1`: local `args.each_with_index + interpolated trace(String)`
+    - `v2`: `@args` ivar + `BootstrapEnv.get?` + `env_enabled?` +
+      `bootstrap_trace_puts` + `stage2_debug`
+    - `v3`: `Options.new + parse_args_safe(pointerof(options)) + show_version`
+    - `v4`: same with near-real wide `Options` struct
+    - `v5`: near-exact early `CLI#run` shape including top traces,
+      `OptionParser | Nil`, `stage2_debug`, `parse_args_safe`, and
+      `show_version`
+  - practical consequence:
+    - current crash is **not** explained by any one of these broad local
+      theories alone:
+      - generic `args.each_with_index`
+      - eager interpolated trace strings
+      - `@args` ivar access by itself
+      - `BootstrapEnv.get?` / `env_enabled?` by themselves
+      - wide `Options` struct copy by itself
+      - the hand-reduced early `run` skeleton by itself
+    - the remaining bug requires broader real `CLI` context than these local
+      reducers capture
+- **Fresh negative control: debug output still has a separate stale sink (2026-03-27, current session)**:
+  - `env STAGE2_DEBUG=1 scripts/run_safe.sh /tmp/run_simple_one_stage2_v3_minargs.sh ...`
+    aborts with:
+    - `STUB CALLED: Crystal::EventLoop#write(IO::FileDescriptor, Slice(UInt8))`
+  - practical consequence:
+    - debug-output paths remain unsafe and can still create false frontiers
+    - but this is **not** the default live crash, because the same binary
+      segfaults at `exit 139` even without `STAGE2_DEBUG`
+- **Fresh verified `file_sha256` overflow root cause is closed; current-source self-hosted debug build is green again (2026-03-27, current session)**:
+  - trusted failure on the restored original-driven host:
+    - `/tmp/stage1_current_debug_astbody_v2 src/crystal_v2.cr -o /tmp/stage2_current_debug_astbody_v2`
+      under `scripts/run_safe.sh ... 900 8192`
+      failed after ~358s with `error: Arithmetic overflow`
+  - decisive LLDB stack on the same carrier:
+    - `__crystal_raise_overflow -> read -> file_sha256 -> compile_llvm_ir -> compile`
+  - artifact check on the same run:
+    - `/tmp/stage2_current_debug_astbody_v2.ll` had already reached `5.9G`
+  - source-level fix in `src/compiler/cli.cr`:
+    - rewrote `file_sha256(path)` from `File.read(path).each_byte` to
+      streamed chunked FNV-1a hashing via `File.open + read(Bytes)`
+  - verified follow-up:
+    - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/stage1_current_debug_astbody_v3`
+      is green
+    - `/tmp/stage1_current_debug_astbody_v3 src/crystal_v2.cr -o /tmp/stage2_current_debug_astbody_v3`
+      under `scripts/run_safe.sh ... 900 8192`
+      is also green with `[EXIT: 0] after ~406s`
+  - practical consequence:
+    - the old current-source self-hosted debug blocker was a real CLI root cause
+      in hashing large generated `.ll` files, not “generic allocator noise”
+    - current-source stage2 debug is available again for trustworthy narrow
+      frontier probes
+- **Fresh post-fix hotspot: giant `.ll` text normalization is now the strongest observed perf sink, not a verified blocker (2026-03-27, current session)**:
+  - live sample during the successful `/tmp/stage2_current_debug_astbody_v3`
+    build showed:
+    - `CLI#compile -> LLVMIRGenerator#generate -> emit_functions_parallel ->
+      normalize_ptr_zero_text`
+    - most sampled time was inside `String#includes?` / `String#index`
+  - important caveat:
+    - the build still completed successfully and produced
+      `/tmp/stage2_current_debug_astbody_v3`
+    - so `normalize_ptr_zero_text` is currently a measured hot path on giant IR
+      text, not yet a demonstrated correctness blocker
+  - practical consequence:
+    - next narrow work should use the new self-hosted debug compiler to resume
+      trustworthy stage3/HIR frontier reduction first
+    - only then decide whether `normalize_ptr_zero_text` needs a dedicated
+      performance reducer
+- **Fresh verified culprit in dirty `register_module_with_name_in_current_arena` window (2026-03-27, current session)**:
+  - decisive local falsifier on `/tmp/exact_window_16052_16871_uq.cr`:
+    - removing only the multiline `bootstrap_trace_puts` block for
+      `"[MODULE_CHILD] owner=..."` inside the `trace_nested_child` branch
+      turns the dirty exact carrier from red to green
+  - source-level follow-up in current dirty tree:
+    - rewrote that block in
+      `src/compiler/hir/ast_to_hir.cr` from multiline string concatenation with
+      trailing `\` continuations to `String.build` + `bootstrap_trace_puts`
+  - verified result on the updated current-source exact carrier
+    `16052..16876`, wrapped as `class ExactWindowK994`:
+    - `DEBUG_PARSE_DEF=process_macro_if_in_module` still logs the late def
+    - `CRYSTAL_V2_TRACE_PARSED_CLASS=ExactWindowK994` and
+      `DEBUG_CLASS_BODY_DUMP=ExactWindowK994` are now green and show four
+      separate defs:
+      `register_module_with_name_in_current_arena`,
+      `process_macro_if_in_module`,
+      `process_macro_body_in_module`,
+      `process_macro_for_in_module`
+  - practical consequence:
+    - one real parser-unsafe construct in the current dirty observation branch
+      has been identified and removed
+    - the exact-window red case around `register_module*` was not just “some
+      vague current dirty drift”; this specific multiline debug string
+      continuation was sufficient to swallow later defs into the first method in
+      the synthetic exact carrier
+    - next step is to continue the same adversarial method on the remaining
+      dirty-only constructs in this corridor, not to reopen the old baseline
+      `AstToHir` theory
+- **Fresh dirty-vs-HEAD exact-window split for `register_module*` (2026-03-27, current session)**:
+  - trusted adversarial comparison on the same restored host
+    `/tmp/stage1_current_debug_astbody`:
+    - dirty exact carrier:
+      current-source slice `16052..16871`, wrapped as `class ExactWindowK992`
+    - committed control:
+      `HEAD` slice `14770..15507`, wrapped as `class HeadWindowK993`
+  - verified result:
+    - dirty carrier is red:
+      `DEBUG_PARSE_DEF=process_macro_if_in_module` logs the late def, but
+      `CRYSTAL_V2_TRACE_PARSED_CLASS=ExactWindowK992` and
+      `DEBUG_CLASS_BODY_DUMP=ExactWindowK992` retain only
+      `register_module_with_name_in_current_arena`
+    - committed `HEAD` carrier is green on the same harness:
+      parsed-class trace and class-body dump both show four separate defs:
+      `register_module_with_name`,
+      `process_macro_if_in_module`,
+      `process_macro_body_in_module`,
+      `process_macro_for_in_module`
+  - practical consequence:
+    - the current exact-window red case is not a stable baseline compiler bug in
+      committed source; it is introduced somewhere in the present dirty
+      `register_module_with_name_in_current_arena` corridor
+    - strongest current root-cause family is therefore self-inflicted
+      diagnostic/compatibility drift in the uncommitted wrapper/window, not the
+      historical `AstToHir` body-drop by itself
+    - next bisection should compare `HEAD` vs dirty source inside this one
+      corridor instead of widening back out to full `AstToHir` or stage3
+- **Fresh trustworthy exact-window renewal for `AstToHir` late-def loss (2026-03-27, current session)**:
+  - restored original-driven debug host:
+    - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/stage1_current_debug_astbody --error-trace`
+      is now green
+  - trustworthy control on full-source probe:
+    - `tmp/ast_to_hir_flush_probe.cr` with
+      `DEBUG_CLASS_BODY_DUMP=AstToHir CRYSTAL_V2_STOP_AFTER_HIR=1`
+      shows late `AstToHir` members again, including
+      `process_macro_if_in_module` and
+      `register_module_with_name_in_current_arena`
+  - important stale-carrier catch:
+    - the old exact source slice `16050..16804` is no longer a valid direct
+      carrier on the current dirty tree because it now starts with a stray
+      preceding `end`
+    - that stale slice still lets `DEBUG_PARSE_DEF` see late defs, but it no
+      longer parses as `class K` body and therefore must not be used as a live
+      anchor
+  - updated trustworthy exact carrier:
+    - exact slice `16052..16871`, wrapped as `class ExactWindowK992 ... end`,
+      is syntactically valid and reproduces the class-body drop on the restored
+      original-driven stage1
+    - `DEBUG_PARSE_DEF=process_macro_if_in_module` logs
+      `[PARSE_DEF] line=607 name=process_macro_if_in_module`
+    - `CRYSTAL_V2_TRACE_PARSED_CLASS=ExactWindowK992` plus
+      `CRYSTAL_V2_TRACE_PARSED_CLASS_MEMBERS=1` reports only one parsed class
+      member:
+      `register_module_with_name_in_current_arena`
+    - the same run with `DEBUG_CLASS_BODY_DUMP=ExactWindowK992` shows only
+      `idx=0/1 def=register_module_with_name_in_current_arena`, while the
+      snippet text still contains later private defs including
+      `process_macro_if_in_module` and `process_macro_for_in_module`
+  - practical consequence:
+    - the live exact-window frontier is still real on a trustworthy
+      original-driven stage1 host
+    - but the loss boundary is now better stated as
+      `parse_def reaches late defs` while `class-body membership` retains only
+      the first def
+    - next bisect should use updated exact windows starting at current line
+      `16052`, not the stale `16050..16804` carrier and not self-hosted
+      body-dump output, which is currently polluted by an `EventLoop.write`
+      stub on this diagnostic path
+- **Fresh AstToHir late-def membership split (2026-03-27, current session)**:
+  - tiny trusted carrier remains:
+    - `tmp/ast_to_hir_flush_probe.cr`
+  - new decisive verified split on current `stage1`:
+    - `DEBUG_PARSE_DEF=register_module_with_name_in_current_arena`
+      logs `[PARSE_DEF] line=16051 name=register_module_with_name_in_current_arena`
+    - `DEBUG_PARSE_DEF=process_macro_if_in_module`
+      logs `[PARSE_DEF] line=16655 name=process_macro_if_in_module`
+    - `DEBUG_PARSE_DEF=flush_pending_monomorphizations`
+      logs `[PARSE_DEF] line=21735 name=flush_pending_monomorphizations`
+    - on the same carrier, `DEBUG_CLASS_BODY_DUMP=AstToHir` still shows
+      `class=Crystal::HIR::AstToHir idx=915/916 node=DefNode
+       def=register_module_with_name_in_current_arena`
+      as the last visible class member; `process_macro_if_in_module` and
+      `flush_pending_monomorphizations` are absent from `AstToHir.body`
+  - practical consequence:
+    - the live frontier is no longer “parser never reaches late defs”
+    - parser reaches those later `def` tokens, but they do not become members
+      of `Crystal::HIR::AstToHir.body`
+    - strongest current family is now the class-body membership / closure
+      boundary around `register_module_with_name_in_current_arena`
+      (premature class close, body truncation, or equivalent parser-side
+      ownership loss), not direct call lowering
+- **Fresh AstToHir class-repair falsifier (2026-03-27, current session)**:
+  - on the same tiny carrier,
+    `DEBUG_CLASS_ARENA=AstToHir DEBUG_CLASS_REPAIR=AstToHir`
+    logs `Crystal::HIR::AstToHir` on the original
+    `AstArena@... path=.../src/compiler/hir/ast_to_hir.cr`
+    with no `CLASS_REPAIR phase=using_reparsed` signal
+  - practical consequence:
+    - the active observed path for this frontier is not currently showing a
+      reparsed-class fallback
+    - keep class-repair/span corruption as a secondary hypothesis only; do not
+      treat it as the primary live explanation unless a later trace shows the
+      fallback actually firing
+- **Fresh isolated-syntax falsifier for `register_module_with_name_in_current_arena` (2026-03-27, current session)**:
+  - two compact reducers were checked and both stayed green:
+    - exact-body reducer with the problematic method body plus following
+      `private def process_macro_*` / `def flush_pending_monomorphizations`
+    - immediate-prefix reducer that also included the closest preceding
+      `@[AlwaysInline]` helpers and `register_module_with_name`
+  - in both reducers, `DEBUG_CLASS_BODY_DUMP=K` showed all later defs present in
+    class body, including `process_macro_if_in_module` and
+    `flush_pending_monomorphizations`
+  - practical consequence:
+    - the trigger is not the isolated syntax of
+      `register_module_with_name_in_current_arena` nor its nearest local prefix
+    - strongest remaining family is a longer-range parser interaction / drop
+      path in the surrounding `AstToHir` class context
+- **Fresh exact-source window localization for late-def loss (2026-03-27, current session)**:
+  - auto-generated exact source slices from
+    `src/compiler/hir/ast_to_hir.cr`, wrapped as `class K ... end`, now give a
+    decisive red family that the hand-written reducers missed:
+    - lines `15962..16940` -> red
+    - lines `16020..16940` -> red
+    - lines `16050..16940` -> red
+    - lines `16050..16867` -> red
+    - lines `16050..16804` -> red
+  - on the smallest verified red window (`16050..16804`),
+    `DEBUG_CLASS_BODY_DUMP=K` shows only
+    `register_module_with_name_in_current_arena` as the final visible class
+    member; later defs are absent
+  - practical consequence:
+    - the trigger no longer looks like a distant earlier-class-context effect
+    - the active loss is reproducible from the *exact real source text* inside
+      `16050..16804`
+    - next search should stay on exact-source windows, not on hand-written
+      approximations
+- **Fresh synthetic member-count falsifier for late-def loss (2026-03-27, current session)**:
+  - a synthetic `class K` with 920 trivial one-line defs stayed green under
+    `DEBUG_CLASS_BODY_DUMP=K`
+  - the dump reported `count 920` and the last visible members were the final
+    generated defs, so no truncation appeared near the old `915/916` frontier
+  - practical consequence:
+    - the current `AstToHir` late-def loss is not explained by a simple class
+      size threshold or “body truncates near 916 members” model
+    - keep focus on exact-source syntax/transport interactions in the real
+      window, not on raw member-count limits
+- **Fresh original-compiler compatibility queue for current dirty tree (2026-03-27, current session)**:
+  - goal:
+    - recover a trustworthy current-source `stage1` debug path, so exact-source
+      `AstToHir` window bisect can resume without self-hosted runtime stub noise
+  - verified movement on `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen`:
+    - old first blocker in `src/compiler/frontend/ast.cr`
+      (`NodeSlot @raw : Reference`) is gone after narrowing `@raw` to
+      `TypedNode`
+    - build then moved through a real parser compatibility queue:
+      `CallNode.new` nilable/named-arg sites, `parse_of_type_expression`
+      nilability, and nearby strict nil guards in parser / ast_cache / cli
+    - current live gate is later and narrower:
+      `src/compiler/cli.cr:373` in `trace_parsed_class_line(...)`, where the
+      old compiler still rejects `Frontend.node_kind(member)` as an `Int32?`
+      slot argument
+  - practical consequence:
+    - the trustworthy current-source stage1-debug route is no longer blocked by
+      one broad “original compiler cannot build dirty tree” failure
+    - it is now a finite compatibility queue; resume exact-source window bisect
+      as soon as this queue is exhausted enough to rebuild the diagnostic host
+- **Fresh string-helper vs module-body split (2026-03-27, current session)**:
+  - new exact LLDB anchor on
+    `tmp/reduce_frontend_ast_only_hir.cr` with
+    `CRYSTAL_V2_STOP_AFTER_HIR=1 CRYSTAL_V2_TRUST_SLICE_ADDR=1
+     CRYSTAL_V2_TRACE_CLASS_FRONTIER=1`:
+    current dirty-tree self-hosted debug candidate can now die *before* any
+    nested-module trace in helper corridors like
+    `resolve_class_name_for_definition` and `debug_env_filter_match?`
+  - decisive falsifiers:
+    - `CRYSTAL_V2_INLINE_RESOLVE_DEF_NAME=1` moved the early crash past
+      `resolve_class_name_for_definition`, proving that helper was a victim,
+      not the first data sink
+    - LLDB on the later `CRYSTAL_V2_TRACE_MODULE_CHILD_ONLY` diagnostic path
+      showed the next crash was in `debug_env_filter_match? ->
+      __crystal_v2_string_includes_string`, so filtered string-debug helpers are
+      also victims on this frontier
+    - boolean `env_has?` trace toggles removed that helper from the experiment
+  - strongest current data-path signal after those falsifiers:
+    - boolean `CRYSTAL_V2_TRACE_MODULE_CHILD_ONLY=1` plus
+      `CRYSTAL_V2_SKIP_RESOLVE_DEF_NAME=1
+       CRYSTAL_V2_INLINE_LAST_NAMESPACE_COMPONENT=1`
+      reaches the top-level child-scan block in
+      `register_module_with_name_in_current_arena`
+    - filtered output now shows:
+      `module_enter CrystalV2`
+      then repeated
+      `MODULE_CHILD_ONLY owner=CrystalV2 expr=29/114/53/4367 ...`
+      **before** any nested registration
+    - the trace line itself still degrades after the raw node-class prefix, so
+      the exact fetched child class/name is not yet trustworthy; however the
+      live sink is now clearly at or before top-level
+      `ModuleNode.body -> @arena[expr_id]` consumption, not only inside the
+      later nested call
+  - practical consequence:
+    - stop using `debug_env_filter_match?` for this frontier; use boolean envs
+      + raw writes only
+    - next reducer/debug step should instrument the top-level `body.each`
+      corridor with even simpler multi-line raw traces (one field per line),
+      or move toward a real `ModuleNode` field-storage normalization if a
+      second independent carrier points to the same family
+- **Fresh nested raw-name split (2026-03-27, current session)**:
+  - with
+    `CRYSTAL_V2_INLINE_RESOLVE_DEF_NAME=1
+     CRYSTAL_V2_INLINE_LAST_NAMESPACE_COMPONENT=1
+     CRYSTAL_V2_TRACE_NESTED_CHILD=1`
+    the reducer advanced to:
+    - `module_enter CrystalV2`
+    - `nested_module_enter CrystalV2::Compiler`
+    - `NESTED_CHILD phase=enter owner=CrystalV2::Compiler owner_raw=CrystalV2 `
+  - synthesis:
+    - caller-computed `full_name` can already be correct while the callee reads
+      `node.name` as outer-name-like / trailing-space-corrupted
+    - this is a strong signal for `ModuleNode.name` read/storage corruption or
+      object transport corruption, but not yet enough to distinguish those two
+      without a cleaner caller-side raw trace
+- **Fresh parser-vs-HIR nested-module split (2026-03-27, current session)**:
+  - decisive trusted reducer remains:
+    - `tmp/reduce_frontend_ast_only_hir.cr`
+    - old trusted red signal on fresh self-hosted release:
+      `CRYSTAL_V2_TRUST_SLICE_ADDR=1 CRYSTAL_V2_TRACE_CLASS_FRONTIER=1`
+      still explodes in ~2s with
+      `module_enter CrystalV2 ->
+       nested_module_enter CrystalV2::Compiler ->
+       CrystalV2::Compiler::Compiler -> ...`
+  - decisive falsifier added and verified:
+    - temporary parser-side trace in `src/compiler/frontend/parser.cr`
+      under `CRYSTAL_V2_TRACE_PARSE_MODULE=1`
+    - same fresh self-hosted release binary prints a correct parser-built chain
+      for the active multi-segment module family:
+      `CrystalV2 -> Compiler -> BootstrapEnv`
+      from `module CrystalV2::Compiler::BootstrapEnv`
+  - practical consequence:
+    - the live loop is **not** born in `parse_module`
+    - the earlier broad frame “stage2 runtime parser builds
+      `Compiler -> Compiler -> ...` wrappers” is now falsified
+    - the corruption boundary moved lower and narrower:
+      parsed nested-module wrappers are correct at parser exit, but HIR-side
+      nested registration later observes the wrong child module name/body
+  - current strongest live family:
+    - `register_nested_module_in_current_arena` consuming wrong nested
+      `ModuleNode` child from `node.body`
+    - likely in one of:
+      - `@arena[expr_id]` on nested body ids
+      - `unwrap_visibility_member`
+      - `ModuleNode.name/body` storage/transport after parse
+    - not in `parse_module` construction itself
+- **Fresh nested-module diagnostic fix attempts (2026-03-27, current session)**:
+  - unverified source changes currently sitting in worktree:
+    - `module_name_from_node` now prefers parser-provided `node.name`
+      before source-header fallback
+    - `arena_fits_module_node?` / `module_body_*` got a recursive depth-guarded
+      nested-module fit attempt
+  - status:
+    - both are still **HYPOTHESIS**, not shipped
+    - they did not close the trusted `Compiler -> Compiler -> ...` loop on the
+      fresh self-hosted release candidate
+  - practical consequence:
+    - do not commit these hunks as a fix
+    - keep them only as active diagnostics / candidate scaffolding until the
+      actual HIR transport sink is isolated
+- **Active module-fit fix branch (2026-03-27, current session)**:
+  - source patch applied in `src/compiler/hir/ast_to_hir.cr`:
+    - `register_module` now routes through `register_module_with_name`
+      without the old direct `arena_fits_body_ids?` / `with_resolved_body_arena`
+      split
+    - `register_module_with_name` now has a real wrapper path:
+      `arena_fits_module_node? -> resolve_arena_for_module_node ->
+      with_reparsed_module_from_current_source -> fallback`
+    - `register_nested_module` now has the same wrapper and a new
+      `register_nested_module_in_current_arena`
+    - one syntax-level helper defect in `resolve_arena_for_module_node`
+      (misindented inline-arena candidate fetch) was corrected
+  - status:
+    - **HYPOTHESIS**, not verified yet
+    - no trusted new stage2/probe binary from this branch yet
+  - verification attempts this cycle:
+    - full self-hosted debug rebuild via
+      `scripts/run_safe.sh tmp/build_stage2_current_debug_frontiertrace.sh ...`
+      stayed parser-hot for >5 minutes with sample anchored in
+      `CLI#parse_file_recursive -> Parser#parse_program_roots_impl ->
+      Parser#parse_string_interpolation`
+    - reduced `hir_frontier_probe` rebuild via
+      `scripts/run_safe.sh tmp/build_hir_frontier_probe.sh ...`
+      was also parser-hot for multiple minutes; cache warm-up lowered RSS but
+      still did not yield a trusted binary inside the bounded attempt window
+    - even debug `hir_frontier_probe` (`/tmp/hir_frontier_probe_debug`) stayed
+      parser-hot for >5 minutes after warm-up and still did not produce a
+      runnable binary inside the bounded attempt window; sample stayed in the
+      same parser/string-interpolation corridor
+  - practical consequence:
+    - next cycle should resume from this already-applied patch and verify it,
+      not rediscover the same wiring
+    - parser-heavy compile cost is now a real secondary constraint on
+      verification strategy
+- **Fresh parser-prefix/module-pass synthesis (2026-03-27, current session)**:
+  - stale sub-frontier invalidated:
+    - `tmp/reduce_frontend_ast_only_hir.cr`
+      ```
+      require "../src/compiler/bootstrap_shims"
+      require "../src/compiler/frontend/ast"
+      ```
+      is now `stage1 green / stage2 green`
+    - `tmp/reduce_frontend_ast_lexer_token_hir.cr`
+      is also `stage2 green`
+  - live red reducer remains:
+    - `tmp/reduce_frontend_prefix_hir.cr`
+      ```
+      require "../src/compiler/bootstrap_shims"
+      require "../src/compiler/frontend/parser"
+      ```
+      with `stage1 green / stage2 red`
+  - decisive runtime narrowing:
+    - trusted trace on the red reducer still reaches
+      `Program` and the same `initialize` body corruption
+      (`Number`, `InstanceVar`, `Def`, `MemberAccess`)
+    - `CRYSTAL_V2_TRACE_PARSED_CLASS=Program` produced no signal on the red
+      reducer, which is consistent with the crash happening during nested
+      registration in **module pass**, before the top-level class loop
+  - decisive code-level narrowing:
+    - `register_module` / `with_resolved_body_arena` only rely on
+      `arena_fits_body_ids?`, which checks first/last ids + span but **not**
+      module-member shape
+    - `arena_fits_class_node?` is stronger, but still only validates class-body
+      members shallowly; `class_body_member_subtree_matches_arena?` does **not**
+      descend into `DefNode.body`
+    - this exactly matches the current `Program` victim signal: the first
+      impossible read appears inside `Program#initialize` body, not at the
+      outer class shell
+  - practical consequence:
+    - the strongest next fix branch is now
+      `reopened module-body fit + DefNode-body fit`, not a local `Program` patch
+    - next highest-value runtime tool is a smaller HIR-only probe, but two
+      instrumented rebuild attempts this cycle (`full compiler`, then
+      `hir_frontier_probe`) were both parse-hot and too expensive to finish in
+      the time budget, so no new runtime binary was trusted from that branch yet
+- **Fresh post-arrayfix `Program` frontier narrowing (2026-03-27, current session)**:
+  - the live trusted-HIR follower after the `[] of T` fix is **not** a local
+    `Program` source bug by itself
+  - decisive falsifier:
+    - standalone `Program` wrapper control
+      `tmp/reduce_program_arena_wrapper.cr`
+      is `stage1 green / stage2 green` under
+      `CRYSTAL_V2_STOP_AFTER_HIR=1 CRYSTAL_V2_TRUST_SLICE_ADDR=1`
+  - stronger middle-ground reducer:
+    - `tmp/reduce_frontend_prefix_hir.cr`
+      ```
+      require "../src/compiler/bootstrap_shims"
+      require "../src/compiler/frontend/parser"
+      ```
+    - verified parity:
+      - `stage1` green
+      - self-hosted `stage2` red in ~1s
+  - decisive trace on the prefix reducer:
+    - `CRYSTAL_V2_TRACE_CLASS_FRONTIER=1 CRYSTAL_V2_TRACE_IVAR_INFER=Program`
+      reaches the same tail as full trusted `stage3`:
+      `NodeSlot#node -> AstArena#[](ExprId) -> register_concrete_class`
+    - last class is still `CrystalV2::Compiler::Frontend::Program`
+    - same ivar/body trace:
+      `body_enter size=4` with node kinds `Number`, `InstanceVar`, `Def`,
+      `MemberAccess`, then segfault
+  - synthesis:
+    - `Program` currently looks like the first visible victim inside the
+      frontend prefix load/order state, not a standalone isolated source bug
+    - next reduction should shrink the `bootstrap_shims + frontend/parser`
+      prefix further, not shrink `Program` in isolation
+- **Fresh typed-array `of_type` root-cause fix (2026-03-27, current session)**:
+  - decisive tiny trusted-HIR carrier:
+    `tmp/reduce_callnode_named_args_array.cr`
+    ```cr
+    class CallNode < Node
+      @named_args_storage : Array(NamedArgument)
+
+      def initialize(...)
+        @named_args_storage = [] of NamedArgument
+      end
+    end
+    ```
+  - verified old red signal before the fix:
+    - `stage2` raw trace reached
+      `infer_type_from_class_ivar_assign(ArrayLiteralNode.of_type)`
+      and showed corrupted `of_type` ids like `100999168` and then `659`,
+      both `oob`, before `stringify_type_expr`
+  - verified shipped fix family:
+    - `ArrayLiteralNode` no longer stores `of_type` as a nullable `ExprId?`
+      ivar directly; it now keeps raw `index + has_of_type`
+    - `ArrayLiteralNode` constructors no longer take optional `ExprId?`;
+      they split into `no of_type` and `ExprId` overloads
+    - `parse_array_literal` no longer carries local `ExprId?` for `of Type`;
+      it now keeps raw `Int32` index plus `has_of_type`
+    - `ast_cache` reconstruction was updated to match the new constructor
+      contract
+  - verified green movement after the fix:
+    - tiny reducer:
+      `env COMPILER=/tmp/stage2_current_debug_frontiertrace SOURCE=.../tmp/reduce_callnode_named_args_array.cr OUT=/tmp/reduce_callnode_s2_latest_trace CRYSTAL_V2_TRUST_SLICE_ADDR=1 CRYSTAL_V2_TRACE_IVAR_INFER=CallNode CRYSTAL_V2_TRACE_ARRAY_OF_TYPE=CallNode scripts/run_safe.sh tmp/run_stage3_stop_after_hir_trace.sh 30 2048`
+      -> green, with
+      `got_of_type expr=18`,
+      `of_type_src text=NamedArgument`,
+      `after_stringify name=NamedArgument`
+    - former heavyweight oracle:
+      `env COMPILER=/tmp/stage2_current_debug_frontiertrace SOURCE=.../src/compiler/frontend/ast.cr OUT=/tmp/ast_cr_s2_latest_trace CRYSTAL_V2_TRUST_SLICE_ADDR=1 CRYSTAL_V2_TRACE_CLASS_FRONTIER=1 CRYSTAL_V2_TRACE_IVAR_INFER=CallNode CRYSTAL_V2_TRACE_ARRAY_OF_TYPE=CallNode scripts/run_safe.sh tmp/run_stage3_stop_after_hir_trace.sh 60 4096`
+      -> green
+    - new stage1-vs-stage2 focused HIR oracle:
+      `bash regression_tests/stage2_array_literal_of_type_hir_oracle.sh /tmp/stage1_release_29966272 /tmp/stage2_current_debug_frontiertrace`
+      -> `not reproduced`
+  - synthesis:
+    - the real root cause was not just `ArrayLiteralNode#of_type` getter
+      storage in isolation; it was the broader self-hosted optional/wrapper
+      transport corridor for typed-array `of_type` across
+      parser local -> constructor arg -> AST field storage
+  - follower after the fix:
+    - trusted full
+      `CRYSTAL_V2_STOP_AFTER_HIR=1 CRYSTAL_V2_TRUST_SLICE_ADDR=1`
+      on `src/crystal_v2.cr` is still red, but now later:
+      `Frontend::NodeSlot#node -> Frontend::AstArena#[](ExprId) ->
+      AstToHir#register_concrete_class -> ... -> register_module_with_name`
+    - `CRYSTAL_V2_TRACE_CLASS_FRONTIER=1` narrows the live class to
+      `CrystalV2::Compiler::Frontend::Program`
+    - `CRYSTAL_V2_TRACE_IVAR_INFER=Program` shows the crash now lands after
+      `body_enter size=4` and nodes `Number`, `InstanceVar`, `Def`,
+      `MemberAccess`
+  - next strongest move:
+    - reduce the new `Program`-class body corruption/transport family to a
+      standalone no-prelude oracle before touching more generic HIR code
+- **Fresh AST-node initialize/body-storage split (2026-03-27, current session)**:
+  - new direct no-prelude reducer:
+    - `src/compiler/frontend/ast.cr` itself is now a faithful standalone oracle
+    - verified parity:
+      - `stage1` green:
+        `env COMPILER=/tmp/stage1_release_29966272 SOURCE=.../src/compiler/frontend/ast.cr OUT=/tmp/ast_cr_s1_hir scripts/run_safe.sh tmp/run_stage3_stop_after_hir_trace.sh 60 4096`
+      - self-hosted `stage2` red:
+        `env COMPILER=/tmp/stage2_current_debug_frontiertrace SOURCE=.../src/compiler/frontend/ast.cr OUT=/tmp/ast_cr_s2_hir CRYSTAL_V2_TRUST_SLICE_ADDR=1 scripts/run_safe.sh tmp/run_stage3_stop_after_hir_trace.sh 60 4096`
+        -> `Bus error`
+  - decisive standalone LLDB stack on that oracle:
+    - `Frontend::AstArena#[](ExprId)`
+    - `AstToHir#stringify_type_expr`
+    - `AstToHir#infer_type_from_class_ivar_assign`
+    - `AstToHir#infer_ivars_from_expr/body`
+    - `AstToHir#register_concrete_class`
+  - targeted raw ivar-infer trace on `CrystalV2::Compiler::Frontend::CallNode`
+    shows the live sink more narrowly:
+    - `CallNode#initialize` body is read correctly as 4 top-level assignments
+    - the crash happens exactly at
+      `@named_args_storage = [] of NamedArgument`
+      before `assign_inferred`, i.e. during
+      `infer_type_from_class_ivar_assign(ArrayLiteralNode.of_type)`
+  - targeted raw ivar-infer trace on
+    `CrystalV2::Compiler::Frontend::DefNode` reveals a second, even stronger split:
+    - `DefNode#initialize` body is seen as `size=4`
+    - but the 4 stored `ExprId`s are already wrong at HIR entry:
+      `39, 58, 75, 94` with node kinds `Nil, Nil, Identifier, Nil`
+    - source-derived expectation is 4 `if` expressions, not `NilNode`s
+  - decisive falsifier:
+    - adding raw `DefNode#body_storage` and comparing it against nullable
+      `DefNode#body` shows they are identical
+    - practical consequence: the live `DefNode` frontier is **not** a bad
+      nullable accessor; the underlying `@body_storage` contents are already
+      wrong by the time HIR reads the node
+  - synthesis:
+    - there are now two connected AST-node families in the same corridor:
+      1. `CallNode#initialize` crashes in ivar-type inference on
+         `[] of NamedArgument`
+      2. `DefNode#initialize` reaches HIR with already-corrupted `@body_storage`
+    - the shared cluster is no longer “generic trusted HIR nested-module noise”
+      but AST-node initialize/storage handling inside `src/compiler/frontend/ast.cr`
+  - next strongest split:
+    - inspect the same `DefNode#initialize` body before HIR, directly after
+      parse/collection, to distinguish parser-built wrong `ExprId`s from
+      post-parse corruption of the stored body array
+- **Fresh eager absolute-path type-literal root cause fix (2026-03-27, current session)**:
+  - decisive tiny trusted-HIR carrier:
+    `regression_tests/stage2_absolute_path_type_literal_hir_repro.cr`
+    ```
+    class Errno
+    end
+
+    class C
+      def value
+        ::Errno
+      end
+    end
+    ```
+  - verified red/green oracle:
+    - `bash regression_tests/stage2_absolute_path_type_literal_hir_repro.sh /tmp/stage1_release_29966272 /tmp/stage2_current_debug_fresh`
+      -> `reproduced`
+    - `bash regression_tests/stage2_absolute_path_type_literal_hir_repro.sh /tmp/stage1_release_29966272 /tmp/stage2_current_debug_pathsourcefix`
+      -> `not reproduced`
+  - decisive falsifier:
+    - `CRYSTAL_V2_SKIP_EAGER_TYPE_LITERAL_RETURN=1` turns the old self-hosted
+      stage2 tiny carrier green, so the live family is specifically in eager
+      `infer_type_literal_return_name_from_body ->
+      infer_type_literal_name_from_expr`
+  - refuted narrower theories:
+    - forcing the caller to pass `member_arena` into the eager return helper
+      did **not** heal the crash
+    - forcing the old PathNode helper to run under
+      `arena_for_expr?(expr_id) || @arena` did **not** heal the crash either
+    - practical consequence: the failure was not “wrong arena chosen for the
+      whole helper”; it was the old AST-based PathNode read contract itself
+  - shipped local fix:
+    - `infer_type_literal_name_from_expr(PathNode)` now first recovers the path
+      directly from `source_for_arena(path_arena) + slice_source_for_span`
+    - that recovery is normalized with byte-level helpers
+      `strip_ascii_edge_whitespace` and `strip_absolute_name_prefix`
+    - only if source recovery is unavailable does it fall back to the old
+      `collect_path_string/path_is_absolute?` AST walk
+  - follower after the fix:
+    - full trusted
+      `CRYSTAL_V2_TRUST_SLICE_ADDR=1 CRYSTAL_V2_STOP_AFTER_HIR=1`
+      on `src/crystal_v2.cr` with `/tmp/stage2_current_debug_pathsourcefix`
+      is still red:
+      `scripts/run_safe.sh tmp/run_stop_after_hir_wrapper.sh ...` -> exit 139
+    - new trusted LLDB stack:
+      - `Frontend::NodeSlot#node`
+      - `Frontend::AstArena#[](ExprId)`
+      - `AstToHir#register_concrete_class`
+      - `AstToHir#register_class_with_name_in_current_arena`
+      - `AstToHir#register_class_with_name`
+      - `AstToHir#register_nested_module`
+      - `AstToHir#register_module_with_name`
+    - practical consequence:
+      the old `SystemError -> mark_module_extend_self -> resolve_path_like_name`
+      frontier below is now stale as a live guide; the next reducer should
+      target late nested-module/class registration after the eager type-literal
+      fix, not return to the old module-macro path
+- **Fresh release-bootstrap and trust-HIR split (2026-03-27, current session)**:
+  - verified shipped movement on current source:
+    - fresh `stage2 --release` now builds green from `/tmp/stage1_release_29966272`
+      into `/tmp/stage2_release_rawiofix`
+    - `stage3 --release` with that self-hosted compiler is still red, but the
+      old no-trust sink is now cleanly separated from the real blocker:
+      - `CRYSTAL_V2_STOP_AFTER_PARSE=1` on `stage3` is green
+      - no-trust `CRYSTAL_V2_STOP_AFTER_HIR=1` aborts in stale
+        `LibMachVM$Dmach_task_self`
+      - trusted `CRYSTAL_V2_TRUST_SLICE_ADDR=1 CRYSTAL_V2_STOP_AFTER_HIR=1`
+        now reaches the real crash and dies with `EXC_BAD_ACCESS`
+  - decisive trusted LLDB stack:
+    - `Frontend::AstArena#[](ExprId)`
+    - `AstToHir#resolve_path_like_name`
+    - `AstToHir#mark_module_extend_self`
+    - `AstToHir#process_macro_literal_in_module`
+    - `AstToHir#record_constants_in_body`
+    - `AstToHir#register_module_with_name`
+  - strongest interpretation:
+    - today’s output/bootstrap fixes are real because they move the root run
+      past the stale no-trust readability guard
+    - the live stage3 blocker is back in trusted HIR, specifically the
+      module-macro corridor where `mark_module_extend_self` resolves a target
+      from a reparsed macro-literal arena
+  - practical next move:
+    - reduce the trusted stage3 HIR crash to a no-prelude carrier for
+      `process_macro_literal_in_module -> mark_module_extend_self ->
+      resolve_path_like_name`, then compare `stage1` vs `stage2` HIR on that
+      reducer before touching more full-prelude code
+- **Fresh self-hosted output/trace root-cause split (2026-03-27, current session)**:
+  - verified live root causes uncovered on tiny `reduce_empty_module_foo.cr`
+    with `--release --no-prelude --no-ast-cache`:
+    - `LLVMIRGenerator#bootstrap_env_enabled?(*names : String)` was not a safe
+      helper contract under self-hosted stage2; LLDB showed
+      `BootstrapEnv.get?` being called through the splat transport with the
+      wrong lowered shape
+    - after replacing that helper with explicit 1-arg/2-arg overloads, the
+      frontier moved again and exposed a separate family:
+      generic `IO::FileDescriptor` string writes in compiler output paths
+  - verified output-path movement:
+    - `--emit llvm-ir --no-link` on the tiny `module Foo; end` carrier is now
+      green on current debug/release self-hosted stage2 after routing
+      `LLVMIRGenerator` and CLI `emit_llvm` output through raw `LibC.write`
+      loops instead of `IO::FileDescriptor#write_string` / `puts`
+    - fresh `stage2 --release` bootstrap is green on the same source tree
+    - `--emit mir --no-link` is still red, so this family is only partially
+      mitigated, not closed
+  - practical consequence:
+    - do not treat “output path fixed” as globally done; only the verified
+      `llvm-ir`/release-bootstrap corridor is green
+    - the immediate bootstrap frontier is no longer late LLVM/file output; it
+      has moved back to trusted HIR module registration
+- **Fresh `SystemError` module-registration reducer (2026-03-27, current session)**:
+  - new reduced carrier:
+    `tmp/reduce_system_error_module.cr`
+    ```
+    class Errno; end
+    class WinError; end
+    class WasiError; end
+
+    module SystemError
+      macro included
+        extend ::SystemError::ClassMethods
+      end
+
+      getter os_error : Errno | WinError | WasiError | Nil
+
+      module ClassMethods
+      end
+    end
+    ```
+  - verified parity:
+    - `stage1` green under `--release --no-prelude --no-ast-cache --emit hir`
+    - self-hosted current debug `stage2` red on the same carrier
+  - exact stage2 sink:
+    - trace reaches:
+      `pass1_module_before_register idx=0`
+      with `name=SystemError`
+    - then aborts in the old guard sink:
+      `STUB CALLED: LibMachVM$Dmach_task_self`
+  - strongest interpretation:
+    - the post-`once` full-prelude stage3 blocker now has a faithful no-prelude
+      reducer in the `SystemError` family
+    - next move should instrument module registration for this carrier first,
+      then only widen back to full `src/crystal_v2.cr` after the reducer moves
 - **Fresh absolute-name whitespace root cause fix (2026-03-27, current session)**:
   - decisive tiny oracle:
     `regression_tests/stage2_include_target_arena_hir_oracle.sh`

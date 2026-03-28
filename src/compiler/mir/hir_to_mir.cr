@@ -91,6 +91,13 @@ module Crystal
       # Each entry is (HIR value ID, MIR value ID) for a Call result with reference type.
       @block_arc_temps : Array({HIR::ValueId, ValueId}) = [] of {HIR::ValueId, ValueId}
 
+      # Ownership transfer: values whose ownership was moved to a field/constructor.
+      # These skip both rc_inc (at FieldSet) and rc_dec (at block end).
+      @moved_values : Set(HIR::ValueId) = Set(HIR::ValueId).new
+
+      # Remaining uses of each value in the current block (for last-use detection).
+      @remaining_uses : Hash(HIR::ValueId, Int32) = Hash(HIR::ValueId, Int32).new(0)
+
       # Values that are used outside their defining block — must NOT be rc_dec'd at block end.
       @cross_block_values : Set(HIR::ValueId) = Set(HIR::ValueId).new
 
@@ -786,6 +793,13 @@ module Crystal
         hir_func.params.each do |param|
           mir_func.add_param(param.name, convert_type(param.type), param.default_literal)
         end
+        if filter = ENV["DEBUG_MIR_DEFAULT_ARGS"]?
+          if filter == "1" || hir_func.name.includes?(filter)
+            hir_defaults = hir_func.params.map { |param| "#{param.name}=#{param.default_literal || "nil"}" }.join(",")
+            mir_defaults = mir_func.params.map { |param| "#{param.name}=#{param.default_value || "nil"}" }.join(",")
+            STDERR.puts "[MIR_DEFAULT_ARGS] func=#{hir_func.name} hir=#{hir_defaults} mir=#{mir_defaults}"
+          end
+        end
 
         # Fix: primitive binary operator methods (like Int32#+$Int32) may have their
         # HIR created with only "self" as a param, missing the explicit "other" param.
@@ -1202,19 +1216,38 @@ module Crystal
 
         # Reset per-block ARC temp tracking
         @block_arc_temps.clear
+        @moved_values.clear
 
-        # Lower each instruction
+        # Pre-scan: count how many times each HIR value is used as an operand.
+        # Used for ownership transfer: last use in a FieldSet → move semantics.
+        @remaining_uses.clear
         hir_block.instructions.each do |inst|
+          hir_value_operands(inst).each do |op|
+            @remaining_uses[op] = (@remaining_uses[op]? || 0) + 1
+          end
+        end
+
+        # Lower each instruction, tracking ownership transfer for Call args
+        hir_block.instructions.each do |inst|
+          # Decrement remaining uses BEFORE lowering
+          hir_value_operands(inst).each do |op|
+            @remaining_uses[op] = (@remaining_uses[op]? || 1) - 1
+          end
+
+          # NOTE: Ownership transfer (move semantics) is NOT yet implemented.
+          # Requires inter-procedural analysis to skip rc_inc in callee
+          # AND rc_dec in caller as a pair. See Quadrumvirate analysis in TODO.md.
+
           lower_value(inst)
         end
 
         # Per-block ARC cleanup: rc_dec owned Call results at block end.
         # Only reference-typed results from functions that return +1 ownership.
         # Skip values used in other blocks (cross-block) — they're still alive.
-        # Safe because rc_inc is now emitted at all persistent stores (FieldSet,
-        # ClassVarSet, PointerStore, IndexSet), so stored refs have rc >= 2.
+        # Skip values that were MOVED (ownership transferred to a field/constructor).
         @block_arc_temps.each do |(hir_id, mir_id)|
           next if @cross_block_values.includes?(hir_id)
+          next if @moved_values.includes?(hir_id)
           builder.rc_dec(mir_id)
         end
 
@@ -1572,8 +1605,10 @@ module Crystal
             store_id = builder.store(field_ptr, arg_val)
 
             # rc_inc for reference-typed constructor args: the new object holds a reference.
-            # Covers reference types, arrays, and all-ref unions (e.g. Node? = Nil | Node).
-            # Skip constants (string literals, globals) — they're static data, not heap-allocated.
+            # NOTE: Ownership transfer optimization is NOT applied here because
+            # initialize's FieldSet also does rc_inc, and removing both requires
+            # inter-procedural analysis (allocator and initialize are separate functions).
+            # See TODO.md for the ownership transfer design.
             unless @hir_constant_values.includes?(arg_hir_id)
               if arg_hir_type = @hir_value_types[arg_hir_id]?
                 if type_needs_rc?(convert_type(arg_hir_type))
@@ -2078,10 +2113,23 @@ module Crystal
         # rc_inc for reference-typed field values: the object now holds a reference.
         # Covers reference types, arrays, and all-ref unions (e.g. TreeNode? = Nil | TreeNode).
         # Skip constants (string literals, globals) — they're static data, not heap-allocated.
+        #
+        # OWNERSHIP TRANSFER: If this is the LAST use of the value in this block,
+        # we can MOVE ownership instead of copying (skip rc_inc here, skip rc_dec
+        # at block end). This eliminates redundant rc_inc/rc_dec pairs for values
+        # that are created and immediately stored in a field (e.g., TreeNode children).
         unless @hir_constant_values.includes?(field.value)
           if value_hir_type = @hir_value_types[field.value]?
             if type_needs_rc?(convert_type(value_hir_type))
-              builder.rc_inc(value)
+              is_last_use = (@remaining_uses[field.value]? || 0) <= 0
+              is_owned_temp = @block_arc_temps.any? { |(hid, _)| hid == field.value }
+              if is_last_use && is_owned_temp && !@cross_block_values.includes?(field.value)
+                # MOVE: transfer ownership, skip rc_inc, mark for skipping rc_dec
+                @moved_values << field.value
+              else
+                # COPY: normal rc_inc (value still used or cross-block)
+                builder.rc_inc(value)
+              end
             end
           end
         end
@@ -2172,6 +2220,50 @@ module Crystal
           true
         else
           false
+        end
+      end
+
+      # Trace a value back through union_wrap, copy, cast to find the
+      # original Call result that might be in @block_arc_temps.
+      private def trace_to_owned_origin(val_id : HIR::ValueId, block : HIR::Block) : HIR::ValueId?
+        current = val_id
+        5.times do  # max depth to prevent infinite loops
+          inst = block.instructions.find { |i| i.id == current }
+          return current unless inst
+          case inst
+          when HIR::UnionWrap then current = inst.value
+          when HIR::Copy      then current = inst.source
+          when HIR::Cast      then current = inst.value
+          else                     return current
+          end
+        end
+        current
+      end
+
+      # Extract value operands from an HIR instruction for use-counting.
+      # Returns the HIR ValueIds that this instruction reads/uses.
+      private def hir_value_operands(inst : HIR::Value) : Array(HIR::ValueId)
+        case inst
+        when HIR::FieldSet
+          [inst.value, inst.object]
+        when HIR::FieldGet
+          [inst.object]
+        when HIR::Call
+          result = inst.args.dup
+          if recv = inst.receiver
+            result << recv
+          end
+          result
+        when HIR::ExternCall
+          inst.args.dup
+        when HIR::Return
+          inst.value ? [inst.value.not_nil!] : [] of HIR::ValueId
+        when HIR::Cast
+          [inst.value]
+        when HIR::ClassVarSet
+          [inst.value]
+        else
+          [] of HIR::ValueId
         end
       end
 

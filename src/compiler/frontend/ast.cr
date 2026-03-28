@@ -1,6 +1,13 @@
 require "./span"
 require "./string_pool"
 
+{% if flag?(:darwin) %}
+  lib LibMachVMAst
+    fun mach_task_self : UInt32
+    fun mach_vm_read_overwrite(target_task : UInt32, address : UInt64, size : UInt64, data : UInt64, outsize : Pointer(UInt64)) : Int32
+  end
+{% end %}
+
 module CrystalV2
   module Compiler
     module Frontend
@@ -595,9 +602,10 @@ module CrystalV2
 
         getter value : Slice(UInt8)
         getter kind : NumberKind
-        # V2 BOOTSTRAP: Pre-parsed numeric value to bypass Slice corruption in stage2.
+        # V2 BOOTSTRAP: Pre-parsed numeric values to bypass Slice corruption in stage2.
         # The Slice(UInt8) gets corrupted (heap-freed) between parse and HIR lowering.
         getter parsed_int : Int64
+        getter parsed_uint : UInt64
         getter parsed_float : Float64
 
         def initialize(@span : Span, @value : Slice(UInt8), @kind : NumberKind)
@@ -605,6 +613,7 @@ module CrystalV2
           if @kind.f32? || @kind.f64?
             @parsed_float = parse_float_literal_value(text)
             @parsed_int = 0_i64
+            @parsed_uint = 0_u64
           else
             raw = if text.starts_with?("0x") || text.starts_with?("0X")
                     text[2..].to_u64?(16) || 0_u64
@@ -615,9 +624,18 @@ module CrystalV2
                   else
                     text.to_u64? || text.to_i64?.try(&.to_u64!) || 0_u64
                   end
-            @parsed_int = raw.to_i64!
+            @parsed_uint = raw
+            @parsed_int = if unsigned_integer_kind?
+                            raw <= Int64::MAX.to_u64 ? raw.to_i64 : 0_i64
+                          else
+                            raw.to_i64!
+                          end
             @parsed_float = 0.0
           end
+        end
+
+        private def unsigned_integer_kind? : Bool
+          @kind.u8? || @kind.u16? || @kind.u32? || @kind.u64? || @kind.u128?
         end
 
         private def normalized_numeric_text(text : String) : String
@@ -671,6 +689,14 @@ module CrystalV2
 
         def initialize(@span : Span, @name : Slice(UInt8))
         end
+
+        def debug_name_ivar_state : String
+          Frontend.debug_slice_state(@name)
+        end
+
+        def debug_name_getter_state : String
+          Frontend.debug_slice_state(name)
+        end
       end
 
       class MacroVarNode < Node
@@ -720,10 +746,54 @@ module CrystalV2
 
         getter callee : ExprId
         getter args : Array(ExprId)
-        getter block : ExprId?
-        getter named_args : Array(NamedArgument)?
+        @block_index : Int32
+        @has_block : Bool
+        @named_args_storage : Array(NamedArgument)
+        @has_named_args : Bool
 
-        def initialize(@span : Span, @callee : ExprId, @args : Array(ExprId), @block : ExprId? = nil, @named_args : Array(NamedArgument)? = nil)
+        def initialize(@span : Span, @callee : ExprId, @args : Array(ExprId))
+          @block_index = -1
+          @has_block = false
+          @named_args_storage = [] of NamedArgument
+          @has_named_args = false
+        end
+
+        def initialize(@span : Span, @callee : ExprId, @args : Array(ExprId), block : Nil)
+          @block_index = -1
+          @has_block = false
+          @named_args_storage = [] of NamedArgument
+          @has_named_args = false
+        end
+
+        def initialize(@span : Span, @callee : ExprId, @args : Array(ExprId), block : ExprId)
+          @block_index = block.index
+          @has_block = true
+          @named_args_storage = [] of NamedArgument
+          @has_named_args = false
+        end
+
+        def initialize(@span : Span, @callee : ExprId, @args : Array(ExprId), block : Nil, named_args : Array(NamedArgument))
+          @block_index = -1
+          @has_block = false
+          @named_args_storage = named_args
+          @has_named_args = true
+        end
+
+        def initialize(@span : Span, @callee : ExprId, @args : Array(ExprId), block : ExprId, named_args : Array(NamedArgument))
+          @block_index = block.index
+          @has_block = true
+          @named_args_storage = named_args
+          @has_named_args = true
+        end
+
+        def block : ExprId?
+          return nil unless @has_block
+          ExprId.new(@block_index)
+        end
+
+        def named_args : Array(NamedArgument)?
+          return nil unless @has_named_args
+          @named_args_storage
         end
       end
 
@@ -1306,10 +1376,23 @@ module CrystalV2
           NodeKind::Block
         end
 
-        getter params : Array(Parameter)?
+        @params_storage : Array(Parameter)
+        @has_params : Bool
         getter body : Array(ExprId)
 
-        def initialize(@span : Span, @params : Array(Parameter)?, @body : Array(ExprId))
+        def initialize(@span : Span, params : Nil, @body : Array(ExprId))
+          @params_storage = [] of Parameter
+          @has_params = false
+        end
+
+        def initialize(@span : Span, params : Array(Parameter), @body : Array(ExprId))
+          @params_storage = params
+          @has_params = true
+        end
+
+        def params : Array(Parameter)?
+          return nil unless @has_params
+          @params_storage
         end
       end
 
@@ -1320,11 +1403,56 @@ module CrystalV2
           NodeKind::ProcLiteral
         end
 
-        getter params : Array(Parameter)?
-        getter return_type : Slice(UInt8)?
+        @params_storage : Array(Parameter)
+        @has_params : Bool
+        @return_type_storage : Slice(UInt8)
+        @has_return_type : Bool
         getter body : Array(ExprId)
 
-        def initialize(@span : Span, @params : Array(Parameter)?, @return_type : Slice(UInt8)?, @body : Array(ExprId))
+        def initialize(@span : Span, params : Nil, return_type : Nil, @body : Array(ExprId))
+          @params_storage = [] of Parameter
+          @has_params = false
+          @return_type_storage = Slice(UInt8).empty
+          @has_return_type = false
+        end
+
+        def initialize(@span : Span, params : Array(Parameter), return_type : Nil, @body : Array(ExprId))
+          @params_storage = params
+          @has_params = true
+          @return_type_storage = Slice(UInt8).empty
+          @has_return_type = false
+        end
+
+        def initialize(@span : Span, params : Nil, return_type : Slice(UInt8), @body : Array(ExprId))
+          @params_storage = [] of Parameter
+          @has_params = false
+          @return_type_storage = return_type
+          @has_return_type = true
+        end
+
+        def initialize(@span : Span, params : Array(Parameter), return_type : Slice(UInt8), @body : Array(ExprId))
+          @params_storage = params
+          @has_params = true
+          @return_type_storage = return_type
+          @has_return_type = true
+        end
+
+        def params : Array(Parameter)?
+          return nil unless @has_params
+          @params_storage
+        end
+
+        def has_params? : Bool
+          @has_params
+        end
+
+        def params_storage : Array(Parameter)
+          @params_storage
+        end
+
+        def return_type : Slice(UInt8)?
+          return nil unless @has_return_type
+          @return_type_storage
         end
       end
 
@@ -1364,17 +1492,89 @@ module CrystalV2
         end
 
         getter name : Slice(UInt8)
-        getter params : Array(Parameter)?
-        getter return_type : Slice(UInt8)?
-        getter body : Array(ExprId)?
+        @params_storage : Array(Parameter)
+        @has_params : Bool
+        @return_type_storage : Slice(UInt8)
+        @has_return_type : Bool
+        @body_storage : Array(ExprId)
+        @has_body : Bool
         getter is_abstract : Bool?
         getter visibility : Visibility?
-        getter receiver : Slice(UInt8)? # Phase PERCENT_LITERALS: self or object name for class/singleton methods
+        @receiver_storage : Slice(UInt8)
+        @has_receiver : Bool # Phase PERCENT_LITERALS: self or object name for class/singleton methods
 
         def initialize(@span : Span, @name : Slice(UInt8), @params : Array(Parameter)?,
                        @return_type : Slice(UInt8)?, @body : Array(ExprId)?,
                        @is_abstract : Bool? = nil, @visibility : Visibility? = nil,
                        @receiver : Slice(UInt8)? = nil)
+          if params = @params
+            @params_storage = params
+            @has_params = true
+          else
+            @params_storage = [] of Parameter
+            @has_params = false
+          end
+          if return_type = @return_type
+            @return_type_storage = return_type
+            @has_return_type = true
+          else
+            @return_type_storage = Slice(UInt8).empty
+            @has_return_type = false
+          end
+          if body = @body
+            @body_storage = body
+            @has_body = true
+          else
+            @body_storage = [] of ExprId
+            @has_body = false
+          end
+          if receiver = @receiver
+            @receiver_storage = receiver
+            @has_receiver = true
+          else
+            @receiver_storage = Slice(UInt8).empty
+            @has_receiver = false
+          end
+        end
+
+        def params : Array(Parameter)?
+          return nil unless @has_params
+          @params_storage
+        end
+
+        def return_type : Slice(UInt8)?
+          return nil unless @has_return_type
+          @return_type_storage
+        end
+
+        def body : Array(ExprId)?
+          return nil unless @has_body
+          @body_storage
+        end
+
+        def body_storage : Array(ExprId)
+          @body_storage
+        end
+
+        def receiver : Slice(UInt8)?
+          return nil unless @has_receiver
+          @receiver_storage
+        end
+
+        def has_receiver? : Bool
+          @has_receiver
+        end
+
+        def receiver_storage : Slice(UInt8)
+          @receiver_storage
+        end
+
+        def debug_name_ivar_state : String
+          Frontend.debug_slice_state(@name)
+        end
+
+        def debug_name_getter_state : String
+          Frontend.debug_slice_state(name)
         end
       end
 
@@ -2113,6 +2313,56 @@ module CrystalV2
 
       def self.node_kind(node : IdentifierNode) : NodeKind
         NodeKind::Identifier
+      end
+
+      # Diagnostic helper for V2 bootstrap bugs around Slice field transport.
+      # On self-hosted stage2, Slice(UInt8) is often pointer-backed; reading the
+      # first machine word is cheaper and safer than eagerly materializing String.
+      def self.debug_slice_word0(slice : Slice(UInt8)) : UInt64
+        pointerof(slice).as(UInt64*).value
+      end
+
+      def self.debug_readable_address?(addr : UInt64) : Bool
+        return false if addr == 0_u64 || addr < 4096_u64 || addr > 0x0000_7FFF_FFFF_FFFF_u64
+        {% if flag?(:darwin) %}
+          buf = uninitialized UInt8[16]
+          outsize = 0_u64
+          kr = LibMachVMAst.mach_vm_read_overwrite(
+            LibMachVMAst.mach_task_self,
+            addr,
+            16_u64,
+            buf.to_unsafe.address.to_u64,
+            pointerof(outsize)
+          )
+          kr == 0
+        {% else %}
+          true
+        {% end %}
+      end
+
+      def self.debug_slice_state(slice : Slice(UInt8)) : String
+        raw = debug_slice_word0(slice)
+        return "raw=0" if raw == 0_u64
+
+        if sizeof(Slice(UInt8)) <= 8
+          return "raw=#{raw} slice_obj=unreadable" unless debug_readable_address?(raw)
+        end
+
+        ptr_addr = 0_u64
+        size = -1
+        ptr_ok = false
+        begin
+          ptr_addr = slice.to_unsafe.address
+          size = slice.size
+          ptr_ok = ptr_addr >= 4096_u64 && ptr_addr <= 0x0000_7FFF_FFFF_FFFF_u64
+          if sizeof(Slice(UInt8)) <= 8 && ptr_ok
+            ptr_ok = debug_readable_address?(ptr_addr)
+          end
+        rescue
+          return "raw=#{raw} ptr=error size=error"
+        end
+
+        "raw=#{raw} ptr=#{ptr_addr} size=#{size} ptr_ok=#{ptr_ok ? 1 : 0}"
       end
 
       def self.node_kind(node : MacroVarNode) : NodeKind
@@ -3820,20 +4070,50 @@ module CrystalV2
       # Total: 75 fields × ~3 overloads = 225 methods (includes 67 original + 8 new)
       # ============================================================================
 
+      # Self-hosted stage2 has repeatedly corrupted subclass identity when
+      # storing AST nodes directly in `Array(TypedNode)`. Keep each node behind
+      # a concrete slot object so the growable container stores a stable class.
+      class NodeSlot
+        @raw : TypedNode
+
+        def initialize(node)
+          @raw = node
+        end
+
+        def node : TypedNode
+          @raw.as(TypedNode)
+        end
+
+        def raw_class_name : String
+          @raw.class.name
+        end
+
+        def raw_identifier_state : String?
+          ident = @raw.as?(IdentifierNode)
+          return nil unless ident
+          "class=#{ident.class.name} iv=#{ident.debug_name_ivar_state} getter=#{ident.debug_name_getter_state}"
+        end
+
+        def typed_identifier_state : String?
+          typed = node
+          return nil unless Frontend.node_kind(typed) == NodeKind::Identifier
+          ident = typed.unsafe_as(IdentifierNode)
+          "class=#{ident.class.name} iv=#{ident.debug_name_ivar_state} getter=#{ident.debug_name_getter_state}"
+        end
+      end
+
       class AstArena
-        getter nodes : Array(TypedNode)
         getter extra_sources : Array(String)
+        @node_slots : Array(NodeSlot)
 
         def initialize(capacity : Int32 = 0)
-          # Self-hosted release builds miscompile conditional ivar initialization
-          # for Array(TypedNode), which later corrupts `@nodes << node`.
-          @nodes = [] of TypedNode
+          @node_slots = [] of NodeSlot
           @extra_sources = [] of String
         end
 
         @[AlwaysInline]
         def add(node) : ExprId
-          id = ExprId.new(@nodes.size)
+          id = ExprId.new(@node_slots.size)
           debug_store = if filter = ENV["DEBUG_ARENA_ADD"]?
                           filter == "1" || node.class.name.includes?(filter)
                         else
@@ -3842,13 +4122,31 @@ module CrystalV2
           if debug_store
             STDERR.puts "[ARENA_ADD] phase=before id=#{id.index} arg=#{node.class.name}"
           end
-          @nodes << node
+          slot = NodeSlot.new(node)
           if debug_store
-            stored = @nodes[id.index]
+            staged = slot.node
+            staged_kind = Frontend.node_kind(staged)
+            staged_same_type = staged.is_a?(typeof(node))
+            STDERR.puts "[ARENA_ADD] phase=slot id=#{id.index} stored=#{staged.class.name} arg_kind=#{Frontend.node_kind(node)} stored_kind=#{staged_kind} typed_same_type=#{staged_same_type}"
+            if Frontend.node_kind(node) == NodeKind::Identifier
+              raw_ident = slot.raw_identifier_state || "nil"
+              typed_ident = slot.typed_identifier_state || "nil"
+              STDERR.puts "[ARENA_ADD_IDENT] phase=slot id=#{id.index} raw_class=#{slot.raw_class_name} raw=#{raw_ident} typed=#{typed_ident}"
+            end
+          end
+          @node_slots << slot
+          if debug_store
+            stored = @node_slots[id.index].node
             arg_kind = Frontend.node_kind(node)
             stored_kind = Frontend.node_kind(stored)
             typed_same_type = stored.is_a?(typeof(node))
             STDERR.puts "[ARENA_ADD] phase=after id=#{id.index} stored=#{stored.class.name} arg_kind=#{arg_kind} stored_kind=#{stored_kind} typed_same_type=#{typed_same_type}"
+            if arg_kind == NodeKind::Identifier
+              stored_slot = @node_slots[id.index]
+              raw_ident = stored_slot.raw_identifier_state || "nil"
+              typed_ident = stored_slot.typed_identifier_state || "nil"
+              STDERR.puts "[ARENA_ADD_IDENT] phase=after id=#{id.index} raw_class=#{stored_slot.raw_class_name} raw=#{raw_ident} typed=#{typed_ident}"
+            end
           end
           id
         end
@@ -3871,9 +4169,17 @@ module CrystalV2
           # V2 guard: ExprId is a struct stored as a pointer. If the pointer is
           # NULL, accessing .index crashes. Return a sentinel node for null ExprIds.
           if id.null_ptr?
-            return @nodes[0]  # Return first node as sentinel (caller should check)
+            return @node_slots[0].node # Return first node as sentinel (caller should check)
           end
-          @nodes[id.index]
+          slot = @node_slots[id.index]
+          if debug_fetch = ENV["DEBUG_ARENA_FETCH"]?
+            if debug_fetch == "1" || debug_fetch == id.index.to_s
+              raw_ident = slot.raw_identifier_state || "nil"
+              typed_ident = slot.typed_identifier_state || "nil"
+              STDERR.puts "[ARENA_FETCH] id=#{id.index} raw_class=#{slot.raw_class_name} raw=#{raw_ident} typed=#{typed_ident}"
+            end
+          end
+          slot.node
         end
 
         # Safe indexer: returns nil for null/invalid ExprId (V2 struct-as-pointer guard).
@@ -3881,8 +4187,8 @@ module CrystalV2
           return nil if id.null_ptr?
           return nil if id.invalid?
           idx = id.index
-          return nil if idx < 0 || idx >= @nodes.size
-          @nodes.unsafe_fetch(idx)
+          return nil if idx < 0 || idx >= @node_slots.size
+          @node_slots.unsafe_fetch(idx).node
         end
 
         # Compatibility helpers while callers migrate off legacy helper signatures
@@ -3893,11 +4199,17 @@ module CrystalV2
 
         @[AlwaysInline]
         def get_typed(id : ExprId) : TypedNode
-          @nodes[id.index]
+          @node_slots[id.index].node
+        end
+
+        def nodes : Array(TypedNode)
+          Array(TypedNode).new(@node_slots.size) do |i|
+            @node_slots.unsafe_fetch(i).node
+          end
         end
 
         def size
-          @nodes.size
+          @node_slots.size
         end
       end
 

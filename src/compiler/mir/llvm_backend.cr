@@ -16,6 +16,34 @@
 require "./mir"
 
 module Crystal::MIR
+  class ::Hash(K, V)
+    def crystal_v2_debug_structural_bytes : Int64
+      entry_bytes = entries_capacity.to_i64 * sizeof(Entry(K, V)).to_i64
+      index_bytes = if indices_size <= MAX_INDICES_SIZE_LINEAR_SCAN
+                      0_i64
+                    elsif indices_size <= MAX_INDICES_BYTESIZE_1
+                      indices_size.to_i64
+                    elsif indices_size <= MAX_INDICES_BYTESIZE_2
+                      indices_size.to_i64 * 2_i64
+                    else
+                      indices_size.to_i64 * 4_i64
+                    end
+      entry_bytes + index_bytes
+    end
+  end
+
+  struct ::Set(T)
+    def crystal_v2_debug_structural_bytes : Int64
+      @hash.crystal_v2_debug_structural_bytes
+    end
+  end
+
+  class ::Array(T)
+    def crystal_v2_debug_structural_bytes : Int64
+      @capacity.to_i64 * sizeof(T)
+    end
+  end
+
   # ═══════════════════════════════════════════════════════════════════════════
   # TYPE METADATA STRUCTURES (embedded in binary for debugger access)
   # ═══════════════════════════════════════════════════════════════════════════
@@ -114,6 +142,14 @@ module Crystal::MIR
   class LLVMTypeMapper
     @type_registry : TypeRegistry
     @type_ref_cache : Hash(TypeRef, String)
+    @mangle_calls : Int64 = 0_i64
+    @mangle_input_bytes : Int64 = 0_i64
+    @mangle_output_bytes : Int64 = 0_i64
+    @mangle_miss_calls : Int64 = 0_i64
+    @mangle_miss_output_bytes : Int64 = 0_i64
+    @llvm_type_calls : Int64 = 0_i64
+    @llvm_type_miss_calls : Int64 = 0_i64
+    @llvm_type_miss_output_bytes : Int64 = 0_i64
     # Union descriptors for detecting all-reference-type unions (stored as ptr, not struct)
     property union_descriptors : Hash(TypeRef, UnionDescriptor)?
 
@@ -142,7 +178,16 @@ module Crystal::MIR
     end
 
     def llvm_type(type_ref : TypeRef) : String
-      @type_ref_cache[type_ref] ||= compute_llvm_type(type_ref)
+      @llvm_type_calls += 1
+      if cached = @type_ref_cache[type_ref]?
+        cached
+      else
+        result = compute_llvm_type(type_ref)
+        @llvm_type_miss_calls += 1
+        @llvm_type_miss_output_bytes += result.bytesize
+        @type_ref_cache[type_ref] = result
+        result
+      end
     end
 
     def llvm_type(type : Type) : String
@@ -161,6 +206,25 @@ module Crystal::MIR
       else
         compute_llvm_type(type_ref)
       end
+    end
+
+    def debug_structural_bytes : {Int64, Int64}
+      {
+        @type_ref_cache.crystal_v2_debug_structural_bytes,
+        @mangle_cache.crystal_v2_debug_structural_bytes,
+      }
+    end
+
+    def debug_churn_bytes : {Int64, Int64, Int64, Int64, Int64, Int64, Int64}
+      {
+        @mangle_calls,
+        @mangle_input_bytes,
+        @mangle_output_bytes,
+        @mangle_miss_calls,
+        @mangle_miss_output_bytes,
+        @llvm_type_calls,
+        @llvm_type_miss_output_bytes,
+      }
     end
 
     private def compute_llvm_type(type_ref : TypeRef) : String
@@ -343,10 +407,16 @@ module Crystal::MIR
     end
 
     def mangle_name(name : String) : String
+      @mangle_calls += 1
+      @mangle_input_bytes += name.bytesize
       if cached = @mangle_cache[name]?
+        @mangle_output_bytes += cached.bytesize
         return cached
       end
       result = mangle_name_uncached(name)
+      @mangle_miss_calls += 1
+      @mangle_miss_output_bytes += result.bytesize
+      @mangle_output_bytes += result.bytesize
       @mangle_cache[name] = result
       result
     end
@@ -449,6 +519,59 @@ module Crystal::MIR
   ]
 
   class LLVMIRGenerator
+    private def bootstrap_trace_puts(value = "") : Nil
+      return if ::CrystalV2::Compiler::BootstrapEnv.get?("CRYSTAL_V2_TRACE_STDERR").nil?
+      Crystal::System.print_error "%s\n", value.to_s
+    end
+
+    private def bootstrap_env_enabled?(name : String) : Bool
+      !::CrystalV2::Compiler::BootstrapEnv.get?(name).nil?
+    end
+
+    private def bootstrap_env_enabled?(name1 : String, name2 : String) : Bool
+      return true unless ::CrystalV2::Compiler::BootstrapEnv.get?(name1).nil?
+      !::CrystalV2::Compiler::BootstrapEnv.get?(name2).nil?
+    end
+
+    private def llvm_entry_opt_guard_enabled? : Bool
+      raw = (::CrystalV2::Compiler::BootstrapEnv.get?("CRYSTAL_V2_LLVM_ENTRY_OPT_GUARD") || "").strip.downcase
+      return true if raw.empty?
+      !(raw == "0" || raw == "false" || raw == "off")
+    end
+
+    private def llvm_entry_guard_target_name?(mangled_name : String) : Bool
+      mangled_name == "__crystal_main" ||
+        mangled_name == "Crystal$Dmain$$Int32_Pointer$LPointer$LUInt8$R$R" ||
+        mangled_name == "Crystal$Dmain_user_code$$Int32_Pointer$LPointer$LUInt8$R$R"
+    end
+
+    private def emit_function_definition_header(return_type : String, mangled_name : String, param_types : Array(String)) : Nil
+      attrs = if llvm_entry_opt_guard_enabled? && llvm_entry_guard_target_name?(mangled_name)
+                " noinline optnone"
+              else
+                ""
+              end
+      emit_raw "define #{return_type} @#{mangled_name}(#{param_types.join(", ")})#{attrs} {\n"
+    end
+
+    private def write_output_bytes(bytes : Bytes) : Nil
+      if fd_output = @output.as?(IO::FileDescriptor)
+        fd = fd_output.fd
+        offset = 0
+        while offset < bytes.size
+          written = LibC.write(fd, bytes.to_unsafe + offset, bytes.size - offset)
+          raise "write failed on fd #{fd}" if written <= 0
+          offset += written.to_i
+        end
+      else
+        @output.write(bytes)
+      end
+    end
+
+    private def append_output(text : String) : Nil
+      write_output_bytes(text.to_slice)
+    end
+
     @module : Module
     @type_mapper : LLVMTypeMapper
     @output : IO
@@ -461,6 +584,7 @@ module Crystal::MIR
     @current_func_name : String = ""
     @current_func_params : Array(Parameter) = [] of Parameter
     @current_slab_frame : Bool = false
+    @emit_family_tag : Int32 = 0
     @tsan_needs_func_entry : Bool = false
     @constant_values : Hash(ValueId, String)  # For inlining constants
     @value_types : Hash(ValueId, TypeRef)     # For tracking operand types
@@ -493,6 +617,48 @@ module Crystal::MIR
     @pending_allocas : Array({String, String, Int32}) = [] of {String, String, Int32}  # name, type, align
     @string_counter : Int32 = 0
     @cond_counter : Int32 = 0  # For unique branch condition variable names
+    @emit_line_calls : Int64 = 0_i64
+    @emit_line_input_bytes : Int64 = 0_i64
+    @emit_line_output_bytes : Int64 = 0_i64
+    @emit_raw_calls : Int64 = 0_i64
+    @emit_raw_input_bytes : Int64 = 0_i64
+    @emit_raw_output_bytes : Int64 = 0_i64
+    @fixup_call_arg_calls : Int64 = 0_i64
+    @fixup_call_arg_input_bytes : Int64 = 0_i64
+    @fixup_call_arg_output_bytes : Int64 = 0_i64
+    @extern_call_arg_join_calls : Int64 = 0_i64
+    @extern_call_arg_join_items : Int64 = 0_i64
+    @extern_call_arg_join_bytes : Int64 = 0_i64
+    @intrinsic_call_arg_join_calls : Int64 = 0_i64
+    @intrinsic_call_arg_join_items : Int64 = 0_i64
+    @intrinsic_call_arg_join_bytes : Int64 = 0_i64
+    @value_ref_dynamic_calls : Int64 = 0_i64
+    @value_ref_dynamic_bytes : Int64 = 0_i64
+    @value_ref_emit_calls : Int64 = 0_i64
+    @value_ref_emit_input_bytes : Int64 = 0_i64
+    @inst_total_count : Int64 = 0_i64
+    @inst_constant_count : Int64 = 0_i64
+    @inst_load_count : Int64 = 0_i64
+    @inst_store_count : Int64 = 0_i64
+    @inst_gep_count : Int64 = 0_i64
+    @inst_binary_count : Int64 = 0_i64
+    @inst_phi_count : Int64 = 0_i64
+    @inst_call_count : Int64 = 0_i64
+    @inst_extern_call_count : Int64 = 0_i64
+    @inst_other_count : Int64 = 0_i64
+    @emit_family_const_bytes : Int64 = 0_i64
+    @emit_family_load_bytes : Int64 = 0_i64
+    @emit_family_store_bytes : Int64 = 0_i64
+    @emit_family_gep_bytes : Int64 = 0_i64
+    @emit_family_binary_bytes : Int64 = 0_i64
+    @emit_family_phi_bytes : Int64 = 0_i64
+    @emit_family_call_bytes : Int64 = 0_i64
+    @emit_family_extern_bytes : Int64 = 0_i64
+    @emit_family_other_bytes : Int64 = 0_i64
+    @sanitize_calls : Int64 = 0_i64
+    @sanitize_input_bytes : Int64 = 0_i64
+    @sanitize_output_bytes : Int64 = 0_i64
+    @sanitize_rebuild_calls : Int64 = 0_i64
 
     # V2 BOOTSTRAP: Use a method-based check instead of Set constant.
     # Set constants crash in V2 stage2 (null @hash during constant init).
@@ -646,6 +812,8 @@ module Crystal::MIR
     @union_variant_entries : Array(UnionVariantInfoEntry)
     @string_table : IO::Memory
     @string_offsets : Hash(String, UInt32)
+    @reuse_function_block_buffer : Bool
+    @function_block_output : IO::Memory
 
     property emit_debug_info : Bool = true
     property emit_type_metadata : Bool = true
@@ -672,12 +840,12 @@ module Crystal::MIR
                                       {% end %}
 
     def initialize(@module : Module)
-      STDERR.puts "[LLVM_INIT] start"; STDERR.flush
+      bootstrap_trace_puts "[LLVM_INIT] start"
       @type_mapper = LLVMTypeMapper.new(@module.type_registry)
-      STDERR.puts "[LLVM_INIT] type_mapper done"; STDERR.flush
+      bootstrap_trace_puts "[LLVM_INIT] type_mapper done"
       @type_mapper.union_descriptors = @module.union_descriptors
       @output = IO::Memory.new
-      STDERR.puts "[LLVM_INIT] output done"; STDERR.flush
+      bootstrap_trace_puts "[LLVM_INIT] output done"
       @indent = 0
       @value_names = {} of ValueId => String
       @block_names = {} of BlockId => String
@@ -688,15 +856,15 @@ module Crystal::MIR
       @string_constants = {} of String => String
       @module_singleton_globals = {} of TypeRef => String
       @emitted_value_types = {} of String => String
-      STDERR.puts "[LLVM_INIT] hashes done"; STDERR.flush
+      bootstrap_trace_puts "[LLVM_INIT] hashes done"
       @emitted_value_names = Set(String).new
-      STDERR.puts "[LLVM_INIT] set done"; STDERR.flush
+      bootstrap_trace_puts "[LLVM_INIT] set done"
       @func_by_name = {} of String => Function
       @func_by_suffix = {} of String => Function
       @func_by_id = {} of FunctionId => Function
-      STDERR.puts "[LLVM_INIT] func indexes about to build"; STDERR.flush
+      bootstrap_trace_puts "[LLVM_INIT] func indexes about to build"
       build_function_lookup_indexes
-      STDERR.puts "[LLVM_INIT] func indexes done"; STDERR.flush
+      bootstrap_trace_puts "[LLVM_INIT] func indexes done"
 
       # Type metadata
       @type_info_entries = [] of TypeInfoEntry
@@ -705,10 +873,14 @@ module Crystal::MIR
       @union_variant_entries = [] of UnionVariantInfoEntry
       @string_table = IO::Memory.new
       @string_offsets = {} of String => UInt32
+      @reuse_function_block_buffer = bootstrap_env_enabled?("CRYSTAL_V2_LLVM_REUSE_BLOCK_BUFFER", "CRYSTAL2_LLVM_REUSE_BLOCK_BUFFER")
+      @function_block_output = IO::Memory.new
     end
 
     @[AlwaysInline]
     private def sanitize_llvm_local_name(name : String) : String
+      @sanitize_calls += 1
+      @sanitize_input_bytes += name.bytesize
       return "arg" if name.empty?
 
       ptr = name.to_unsafe
@@ -734,9 +906,13 @@ module Crystal::MIR
         i += 1
       end
 
-      return name unless needs_sanitize
+      unless needs_sanitize
+        @sanitize_output_bytes += name.bytesize
+        return name
+      end
 
-      String.build(n) do |io|
+      @sanitize_rebuild_calls += 1
+      result = String.build(n) do |io|
         i = 0
         while i < n
           b = ptr[i]
@@ -754,6 +930,8 @@ module Crystal::MIR
           i += 1
         end
       end
+      @sanitize_output_bytes += result.bytesize
+      result
     end
 
     # Fast byte-level check for SSA alloca assignment lines.
@@ -861,34 +1039,34 @@ module Crystal::MIR
       generated_in_memory = output.nil?
       @emit_regex_runtime = regex_runtime_needed?(@module.functions)
 
-      STDERR.puts "  [LLVM] emit_header..." if @progress
+      bootstrap_trace_puts "  [LLVM] emit_header..." if @progress
       emit_header
-      STDERR.puts "  [LLVM] emit_type_definitions..." if @progress
+      bootstrap_trace_puts "  [LLVM] emit_type_definitions..." if @progress
       emit_type_definitions
-      STDERR.puts "  [LLVM] emit_runtime_declarations..." if @progress
+      bootstrap_trace_puts "  [LLVM] emit_runtime_declarations..." if @progress
       emit_runtime_declarations
-      STDERR.puts "  [LLVM] emit_union_debug_helpers..." if @progress
+      bootstrap_trace_puts "  [LLVM] emit_union_debug_helpers..." if @progress
       emit_union_debug_helpers
-      STDERR.puts "  [LLVM] emit_arc_destructors..." if @progress
+      bootstrap_trace_puts "  [LLVM] emit_arc_destructors..." if @progress
       emit_arc_destructors
-      STDERR.puts "  [LLVM] emit_global_variables..." if @progress
+      bootstrap_trace_puts "  [LLVM] emit_global_variables..." if @progress
       emit_global_variables
 
       if @emit_type_metadata
-        STDERR.puts "  [LLVM] collect_type_metadata..." if @progress
+        bootstrap_trace_puts "  [LLVM] collect_type_metadata..." if @progress
         collect_type_metadata
-        STDERR.puts "  [LLVM] collect_union_metadata..." if @progress
+        bootstrap_trace_puts "  [LLVM] collect_union_metadata..." if @progress
         collect_union_metadata
       end
 
       # Determine which functions to emit
-      STDERR.puts "  [LLVM] total MIR functions: #{@module.functions.size}"
+      bootstrap_trace_puts "  [LLVM] total MIR functions: #{@module.functions.size}"
       functions_to_emit = if @reachability
-                            STDERR.puts "  [LLVM] computing reachable functions..." if @progress
+                            bootstrap_trace_puts "  [LLVM] computing reachable functions..." if @progress
                             reachable_ids = compute_reachable_functions
                             rta_count = reachable_ids.size
                             result = @module.functions.select { |f| reachable_ids.includes?(f.id) }
-                            STDERR.puts "  [LLVM] RTA kept: #{rta_count} (pruned #{@module.functions.size - rta_count})"
+                            bootstrap_trace_puts "  [LLVM] RTA kept: #{rta_count} (pruned #{@module.functions.size - rta_count})"
                             result
                           else
                             @module.functions
@@ -1008,7 +1186,7 @@ module Crystal::MIR
       # Emit zero-filled struct globals for cross-block alloca initialization
       if @zero_struct_global_decls.pos > 0
         emit_raw "\n; Zero-filled struct sentinels for cross-block alloca slots\n"
-        emit_raw @zero_struct_global_decls.to_s
+        @output.write(@zero_struct_global_decls.to_slice)
       end
 
       # Pre-register symbol name strings so they get included in string constants
@@ -1064,30 +1242,44 @@ module Crystal::MIR
           (@union_variant_entries.size.to_i64 * 128_i64)
         io_memory_safety_limit = 2_000_000_000_i64
         estimated_total_metadata_bytes = estimated_type_metadata_bytes + estimated_union_metadata_bytes
+        metadata_trace = bootstrap_env_enabled?("CRYSTAL2_LLVM_METADATA_TRACE", "CRYSTAL_V2_LLVM_METADATA_TRACE")
+        if metadata_trace
+          bootstrap_trace_puts "  [LLVM_META] emit=#{@emit_type_metadata} types=#{@type_info_entries.size} fields=#{@field_info_entries.size} unions=#{@union_info_entries.size} strings_pos=#{@string_table.pos} current_pos=#{current_pos} est_total=#{estimated_total_metadata_bytes}"
+        end
 
         if current_pos + estimated_total_metadata_bytes >= io_memory_safety_limit
-          if @progress || ENV["CRYSTAL2_STAGE2_DEBUG"]?
-            STDERR.puts "  [LLVM] skip metadata: output=#{current_pos} est_meta=#{estimated_total_metadata_bytes} limit=#{io_memory_safety_limit}"
+          if @progress || bootstrap_env_enabled?("CRYSTAL2_STAGE2_DEBUG")
+            bootstrap_trace_puts "  [LLVM] skip metadata: output=#{current_pos} est_meta=#{estimated_total_metadata_bytes} limit=#{io_memory_safety_limit}"
           end
+          bootstrap_trace_puts "  [LLVM_META] skipped_by_limit" if metadata_trace
         else
           saved_output = @output
           metadata_output = IO::Memory.new
           metadata_ok = true
           @output = metadata_output
+          bootstrap_trace_puts "  [LLVM_META] temp_buffer_enter saved_pos=#{saved_output.pos}" if metadata_trace
           begin
-            STDERR.puts "  [LLVM] emit_type_metadata_globals..." if @progress
+            bootstrap_trace_puts "  [LLVM] emit_type_metadata_globals..." if @progress
             emit_type_metadata_globals
-            STDERR.puts "  [LLVM] emit_union_metadata_globals..." if @progress
+            bootstrap_trace_puts "  [LLVM_META] after_type pos=#{metadata_output.pos}" if metadata_trace
+            bootstrap_trace_puts "  [LLVM] emit_union_metadata_globals..." if @progress
             emit_union_metadata_globals
+            bootstrap_trace_puts "  [LLVM_META] after_union pos=#{metadata_output.pos}" if metadata_trace
           rescue ex : IO::EOFError
             metadata_ok = false
-            if @progress || ENV["CRYSTAL2_STAGE2_DEBUG"]?
-              STDERR.puts "  [LLVM] metadata emission skipped after EOF: #{ex.message}"
+            if @progress || bootstrap_env_enabled?("CRYSTAL2_STAGE2_DEBUG")
+              bootstrap_trace_puts "  [LLVM] metadata emission skipped after EOF: #{ex.message}"
             end
+            bootstrap_trace_puts "  [LLVM_META] eof=#{ex.message}" if metadata_trace
           ensure
             @output = saved_output
           end
-          emit_raw metadata_output.to_s if metadata_ok
+          bootstrap_trace_puts "  [LLVM_META] after_ensure ok=#{metadata_ok} meta_pos=#{metadata_output.pos} out_pos=#{@output.pos}" if metadata_trace
+          if metadata_ok
+            bootstrap_trace_puts "  [LLVM_META] append_start bytes=#{metadata_output.pos} out_pos=#{@output.pos}" if metadata_trace
+            @output.write(metadata_output.to_slice)
+            bootstrap_trace_puts "  [LLVM_META] append_done out_pos=#{@output.pos}" if metadata_trace
+          end
         end
       end
 
@@ -1478,11 +1670,28 @@ module Crystal::MIR
       add_runtime_declared_extern_names(already_declared)
       missing = @called_crystal_functions.reject { |name, _| @emitted_functions.includes?(name) || @undefined_externs.has_key?(name) || already_declared.includes?(name) }
       return if missing.empty?
+      debug_missing_filter = ENV["DEBUG_MISSING_CRYSTAL_FILTER"]?
       emit_raw "\n; Forward declarations for Crystal functions called but not defined\n"
       missing.each do |name, info|
         return_type = info[0]
         arg_count = info[1]
         arg_types = info[2]
+        if debug_missing_filter && name.includes?(debug_missing_filter)
+          suffix = if idx = name.index("$H")
+                     name.byte_slice(idx)
+                   else
+                     name
+                   end
+          near_emitted = [] of String
+          @emitted_functions.each do |emitted_name|
+            if emitted_name.includes?(suffix)
+              near_emitted << emitted_name
+              break if near_emitted.size >= 8
+            end
+          end
+          STDERR.puts "[MISSING_CRYSTAL] name=#{name} ret=#{return_type} argc=#{arg_count} args=#{arg_types.join(",")}"
+          STDERR.puts "[MISSING_CRYSTAL] suffix=#{suffix} near_emitted=#{near_emitted.join(" | ")}"
+        end
         # V2 maps Nil→Void in some generic contexts. If a Void method is missing
         # but the Nil variant exists, emit a forwarding alias.
         # Void→Nil forwarding is now handled inside emit_dead_code_stub
@@ -2068,6 +2277,9 @@ module Crystal::MIR
           end
         end
       end.join(", ")
+      @intrinsic_call_arg_join_calls += 1
+      @intrinsic_call_arg_join_items += inst.args.size
+      @intrinsic_call_arg_join_bytes += args.bytesize
 
       {args, return_type}
     end
@@ -2553,16 +2765,36 @@ module Crystal::MIR
     end
 
     private def emit(s : String)
+      @emit_line_calls += 1
+      @emit_line_input_bytes += s.bytesize
       if s.starts_with?('%')
         if eq = s.index(" = ")
           @emitted_value_names.add(s[0...eq])
         end
       end
-      @output << ("  " * @indent) << normalize_ptr_zero_line(s) << "\n"
+      normalized = normalize_ptr_zero_line(s)
+      output_bytes = (@indent.to_i64 * 2_i64) + normalized.bytesize + 1_i64
+      @emit_line_output_bytes += output_bytes
+      case @emit_family_tag
+      when 1 then @emit_family_const_bytes += output_bytes
+      when 2 then @emit_family_load_bytes += output_bytes
+      when 3 then @emit_family_store_bytes += output_bytes
+      when 4 then @emit_family_gep_bytes += output_bytes
+      when 5 then @emit_family_binary_bytes += output_bytes
+      when 6 then @emit_family_phi_bytes += output_bytes
+      when 7 then @emit_family_call_bytes += output_bytes
+      when 8 then @emit_family_extern_bytes += output_bytes
+      when 9 then @emit_family_other_bytes += output_bytes
+      end
+      append_output(("  " * @indent) + normalized + "\n")
     end
 
     private def emit_raw(s : String)
-      @output << normalize_ptr_zero_text(s)
+      @emit_raw_calls += 1
+      @emit_raw_input_bytes += s.bytesize
+      normalized = normalize_ptr_zero_text(s)
+      @emit_raw_output_bytes += normalized.bytesize
+      append_output(normalized)
     end
 
     # Emit text to the top-level output buffer. During block buffering,
@@ -2571,9 +2803,20 @@ module Crystal::MIR
     private def emit_toplevel(s : String)
       normalized = normalize_ptr_zero_text(s)
       if tl = @toplevel_output
-        tl << normalized
+        if fd_output = tl.as?(IO::FileDescriptor)
+          fd = fd_output.fd
+          offset = 0
+          bytes = normalized.to_slice
+          while offset < bytes.size
+            written = LibC.write(fd, bytes.to_unsafe + offset, bytes.size - offset)
+            raise "write failed on fd #{fd}" if written <= 0
+            offset += written.to_i
+          end
+        else
+          tl << normalized
+        end
       else
-        @output << normalized
+        append_output(normalized)
       end
     end
 
@@ -2605,6 +2848,8 @@ module Crystal::MIR
     # If VALUE is %name and @emitted_value_types says it's actually a different type,
     # insert a conversion instruction so the type annotation matches the actual value.
     private def fixup_call_arg_types(args : String) : String
+      @fixup_call_arg_calls += 1
+      @fixup_call_arg_input_bytes += args.bytesize
       return args if args.empty?
       parts = args.split(", ")
       fixed = parts.map do |part|
@@ -2673,7 +2918,9 @@ module Crystal::MIR
           part
         end
       end
-      fixed.join(", ")
+      result = fixed.join(", ")
+      @fixup_call_arg_output_bytes += result.bytesize
+      result
     end
 
     private def emit_header
@@ -2685,8 +2932,10 @@ module Crystal::MIR
     end
 
     private def emit_type_definitions
+      typedef_trace = bootstrap_env_enabled?("CRYSTAL2_LLVM_TYPEDEF_TRACE", "CRYSTAL_V2_LLVM_TYPEDEF_TRACE")
       # Emit proc type
       emit_raw "%__crystal_proc = type { ptr, ptr }\n"
+      bootstrap_trace_puts "  [LLVM_TYPEDEF] total_types=#{@module.type_registry.types.size}" if typedef_trace
 
       # Precompute union payload sizes by name to avoid redefinition conflicts.
       union_payload_sizes = {} of String => UInt64
@@ -2704,15 +2953,23 @@ module Crystal::MIR
       # Emit struct types from registry
       @module.type_registry.types.each do |type|
         type_name = @type_mapper.mangle_name(type.name)
+        trace_this_type = typedef_trace && (type.name == "String" || type.name == "Foo")
+        if trace_this_type
+          bootstrap_trace_puts "  [LLVM_TYPEDEF] visit name=#{type.name} mangled=#{type_name} struct=#{type.kind.struct?} ref=#{type.kind.reference?} prim=#{type.kind.primitive?} union=#{type.kind.union?} emitted=#{emitted_types.includes?(type_name)} size=#{type.size} fields=#{type.fields.try(&.size) || 0}"
+        end
         next if emitted_types.includes?(type_name)
 
         if (type.kind.struct? || type.kind.reference?) && !type.kind.primitive?
+          bootstrap_trace_puts "  [LLVM_TYPEDEF] emit_struct name=#{type.name} mangled=#{type_name}" if trace_this_type
           emit_struct_type(type)
           emitted_types << type_name
         elsif type.kind.union?
+          bootstrap_trace_puts "  [LLVM_TYPEDEF] emit_union name=#{type.name} mangled=#{type_name}" if trace_this_type
           emit_union_type(type, union_payload_sizes[type_name]?)
           emitted_types << type_name
           @emitted_union_type_names << "#{type_name}.union"
+        elsif trace_this_type
+          bootstrap_trace_puts "  [LLVM_TYPEDEF] skip name=#{type.name} mangled=#{type_name}" if trace_this_type
         end
       end
 
@@ -2806,8 +3063,8 @@ module Crystal::MIR
     end
 
     private def emit_runtime_declarations
-      runtime_decl_trace = ENV.has_key?("CRYSTAL_V2_RUNTIME_DECL_TRACE") || ENV.has_key?("CRYSTAL2_RUNTIME_DECL_TRACE")
-      STDERR.puts "  [RT_DECL] begin" if runtime_decl_trace
+      runtime_decl_trace = bootstrap_env_enabled?("CRYSTAL_V2_RUNTIME_DECL_TRACE", "CRYSTAL2_RUNTIME_DECL_TRACE")
+      bootstrap_trace_puts "  [RT_DECL] begin" if runtime_decl_trace
       # External C library functions
       emit_raw "declare ptr @malloc(i64)\n"
       emit_raw "declare ptr @calloc(i64, i64)\n"
@@ -2825,7 +3082,7 @@ module Crystal::MIR
       emit_raw "declare void @perror(ptr)\n"
       emit_raw "declare i32 @dprintf(i32, ptr, ...)\n"
       emit_raw "\n"
-      STDERR.puts "  [RT_DECL] after c decls" if runtime_decl_trace
+      bootstrap_trace_puts "  [RT_DECL] after c decls" if runtime_decl_trace
 
       if @emit_regex_runtime
         # PCRE2 library functions
@@ -2840,7 +3097,7 @@ module Crystal::MIR
         # in the built-in allowlist.
         emit_raw "\n"
       end
-      STDERR.puts "  [RT_DECL] after pcre2 decls" if runtime_decl_trace
+      bootstrap_trace_puts "  [RT_DECL] after pcre2 decls" if runtime_decl_trace
 
       # Format strings for printing
       emit_raw "@.int_fmt = private constant [4 x i8] c\"%d\\0A\\00\"\n"
@@ -2864,7 +3121,7 @@ module Crystal::MIR
         emit_raw "@.str.false = private unnamed_addr alias i8, getelementptr inbounds (i8, ptr @.str.false.data, i64 8)\n"
       end
       emit_raw "\n"
-      STDERR.puts "  [RT_DECL] after format constants" if runtime_decl_trace
+      bootstrap_trace_puts "  [RT_DECL] after format constants" if runtime_decl_trace
       open_w = 1 | posix_open_flag_creat | posix_open_flag_trunc
       open_w_plus = 2 | posix_open_flag_creat | posix_open_flag_trunc
       open_a = 1 | posix_open_flag_creat | posix_open_flag_append
@@ -2905,7 +3162,7 @@ module Crystal::MIR
       emit_raw "  %ptr = call ptr %fn(i64 %size)\n"
       emit_raw "  ret ptr %ptr\n"
       emit_raw "}\n\n"
-      STDERR.puts "  [RT_DECL] after alloc wrappers" if runtime_decl_trace
+      bootstrap_trace_puts "  [RT_DECL] after alloc wrappers" if runtime_decl_trace
 
       emit_raw "define ptr @__crystal_realloc64(ptr %ptr, i64 %size) noinline {\n"
       emit_raw "  %fn = load volatile ptr, ptr @__crystal_v2_realloc_fn\n"
@@ -3068,7 +3325,7 @@ module Crystal::MIR
       emit_raw "define void @__crystal_v2_slab_frame_pop() {\n"
       emit_raw "  ret void\n"
       emit_raw "}\n\n"
-      STDERR.puts "  [RT_DECL] after slab stubs" if runtime_decl_trace
+      bootstrap_trace_puts "  [RT_DECL] after slab stubs" if runtime_decl_trace
 
       # Convert Crystal file mode string to POSIX open flags.
       # Supports: "r", "w", "a" and their '+' variants.
@@ -3102,7 +3359,7 @@ module Crystal::MIR
       emit_raw "ret_rdonly:\n"
       emit_raw "  ret i32 0\n"
       emit_raw "}\n\n"
-      STDERR.puts "  [RT_DECL] after mode_to_open_flags" if runtime_decl_trace
+      bootstrap_trace_puts "  [RT_DECL] after mode_to_open_flags" if runtime_decl_trace
 
       # File.new(path, mode) helper — opens file via POSIX open(), returns ptr to {i32 fd, i1 blocking}
       # Takes plain ptr args (no union by-value) to avoid ARM64 ABI decomposition issues.
@@ -3124,7 +3381,7 @@ module Crystal::MIR
       emit_raw "  store i1 1, ptr %cof_ptr\n"
       emit_raw "  ret ptr %tup\n"
       emit_raw "}\n\n"
-      STDERR.puts "  [RT_DECL] after file_open helper" if runtime_decl_trace
+      bootstrap_trace_puts "  [RT_DECL] after file_open helper" if runtime_decl_trace
 
       # IO functions - use printf
       emit_raw "define void @__crystal_v2_puts(ptr %str) {\n"
@@ -3209,7 +3466,7 @@ module Crystal::MIR
       emit_raw "  call i64 @write(i32 1, ptr @.str_newline, i64 1)\n"
       emit_raw "  ret void\n"
       emit_raw "}\n\n"
-      STDERR.puts "  [RT_DECL] after int print helpers" if runtime_decl_trace
+      bootstrap_trace_puts "  [RT_DECL] after int print helpers" if runtime_decl_trace
 
       # Float print helper: finds shortest round-trip representation, handles -0.0
       # Uses write(2) syscall directly (like Crystal IO) to preserve output ordering.
@@ -3381,7 +3638,7 @@ module Crystal::MIR
       emit_raw "  call void @__crystal_v2_print_float_impl(double %ext, i1 1)\n"
       emit_raw "  ret void\n"
       emit_raw "}\n\n"
-      STDERR.puts "  [RT_DECL] after float print helpers" if runtime_decl_trace
+      bootstrap_trace_puts "  [RT_DECL] after float print helpers" if runtime_decl_trace
 
 
       # String functions - implemented using C library
@@ -3505,7 +3762,7 @@ module Crystal::MIR
       emit_raw "declare ptr @fopen(ptr, ptr)\n"
       emit_raw "declare i32 @fileno(ptr)\n"
       emit_raw "declare ptr @fdopen(i32, ptr)\n"
-      STDERR.puts "  [RT_DECL] after large libc decl block" if runtime_decl_trace
+      bootstrap_trace_puts "  [RT_DECL] after large libc decl block" if runtime_decl_trace
       emit_raw "declare i32 @getrlimit(i32, ptr)\n"
       emit_raw "declare i32 @setrlimit(i32, ptr)\n"
       # Keep declarations only. Duplicate suppression is handled by
@@ -5289,7 +5546,7 @@ module Crystal::MIR
       emit_raw "  store i8 0, ptr %next_dest\n"
       emit_raw "  ret ptr %result\n"
       emit_raw "}\n\n"
-      STDERR.puts "  [RT_DECL] after string_repeat helper" if runtime_decl_trace
+      bootstrap_trace_puts "  [RT_DECL] after string_repeat helper" if runtime_decl_trace
 
       # Thread Sanitizer (TSan) instrumentation
       if @emit_tsan
@@ -5336,7 +5593,7 @@ module Crystal::MIR
       emit_raw "define void @__crystal_v2_channel_close(ptr %chan) {\n"
       emit_raw "  ret void\n"
       emit_raw "}\n\n"
-      STDERR.puts "  [RT_DECL] end" if runtime_decl_trace
+      bootstrap_trace_puts "  [RT_DECL] end" if runtime_decl_trace
 
     end
 
@@ -7196,7 +7453,7 @@ module Crystal::MIR
       # ── Primitive integer/float binary operations ──
       # Crystal defines these via @[Primitive(:binary)] with empty bodies.
       # Our compiler compiles them to trivial stubs (ret 0). Override with correct ops.
-      if emit_primitive_binary_override(func, mangled)
+      if primitive_binary_override_candidate?(mangled) && emit_primitive_binary_override(func, mangled)
         return true
       end
 
@@ -7848,13 +8105,35 @@ module Crystal::MIR
       end
     end
 
+    private def primitive_binary_override_candidate?(mangled : String) : Bool
+      return false unless mangled.includes?("$H$") && mangled.includes?("$$")
+      mangled.starts_with?("Bool$H$") ||
+        mangled.starts_with?("Int8$H$") ||
+        mangled.starts_with?("Int16$H$") ||
+        mangled.starts_with?("Int32$H$") ||
+        mangled.starts_with?("Int64$H$") ||
+        mangled.starts_with?("Int128$H$") ||
+        mangled.starts_with?("UInt8$H$") ||
+        mangled.starts_with?("UInt16$H$") ||
+        mangled.starts_with?("UInt32$H$") ||
+        mangled.starts_with?("UInt64$H$") ||
+        mangled.starts_with?("UInt128$H$") ||
+        mangled.starts_with?("Symbol$H$")
+    end
+
     # Emit correct primitive binary operation for integer/float methods with
     # empty @[Primitive(:binary)] bodies from the Crystal stdlib.
     private def emit_primitive_binary_override(func : Function, mangled : String) : Bool
+      return false unless primitive_binary_override_candidate?(mangled)
+
       # Match: <Type>$H$<OP>$$<ArgType> patterns
       # Operator mangling: $GT = >, $LT = <, $GE = >=, $LE = <=, $EQ = ==,
       # $NE = !=, $ADD = +, $SUB = -, $MUL = *, $AND = &, $OR = |, $XOR = ^,
       # $SHL = <<, $SHR = >>
+      # Check if this is a trivial function (2 blocks or less, no meaningful operations)
+      is_trivial = func.blocks.size <= 3 && func.blocks.all? { |b| b.instructions.size <= 2 }
+      return false unless is_trivial
+
       int_types = {"Bool" => {"i1", false},
                    "Int8" => {"i8", true}, "Int16" => {"i16", true}, "Int32" => {"i32", true},
                    "Int64" => {"i64", true}, "Int128" => {"i128", true},
@@ -8308,7 +8587,7 @@ module Crystal::MIR
         return
       end
 
-      emit_raw "define #{return_type} @#{mangled_name}(#{param_types.join(", ")}) {\n"
+      emit_function_definition_header(return_type, mangled_name, param_types)
 
       # Emit entry block with hoisted allocas for dominance correctness
       # Use fn_entry to avoid conflict with parameter names like %entry
@@ -8345,7 +8624,13 @@ module Crystal::MIR
       # as dynamic stack allocations that grow the stack on every execution and are only
       # freed on function return. Inside loops this causes unbounded stack growth.
       saved_output = @output
-      @output = IO::Memory.new
+      block_output = if @reuse_function_block_buffer
+                       @function_block_output.clear
+                       @function_block_output
+                     else
+                       IO::Memory.new
+                     end
+      @output = block_output
       # Route top-level definitions (stubs, declarations) to the main output
       # during block emission. Without this, they'd end up nested inside the
       # current function which is invalid LLVM IR.
@@ -8355,7 +8640,7 @@ module Crystal::MIR
         emit_block(block, func)
       end
 
-      block_ir_output = @output.as(IO::Memory)
+      block_ir_output = block_output
       @output = saved_output
       @toplevel_output = nil
       block_copy_trace = ENV["CRYSTAL2_LLVM_BLOCK_COPY_TRACE"]? || ENV["CRYSTAL_V2_LLVM_BLOCK_COPY_TRACE"]?
@@ -9083,14 +9368,19 @@ module Crystal::MIR
 
           if const_inst = inst.as?(Constant)
             type = @type_mapper.llvm_type(const_inst.type)
-            value = case v = const_inst.value
-                    when Int64   then v.to_s
-                    when UInt64  then v.to_s
-                    when Float64 then v.to_s
-                    when Bool    then v ? "1" : "0"
-                    when Nil     then "null"
-                    when String  then nil  # String constants handled specially
-                    else              "0"
+            value = case const_inst.type
+                    when TypeRef::FLOAT32, TypeRef::FLOAT64
+                      const_inst.float_value.to_s
+                    when TypeRef::BOOL
+                      const_inst.bool_value ? "1" : "0"
+                    when TypeRef::STRING
+                      nil
+                    when TypeRef::NIL, TypeRef::VOID
+                      "null"
+                    when TypeRef::UINT8, TypeRef::UINT16, TypeRef::UINT32, TypeRef::UINT64, TypeRef::UINT128
+                      const_inst.uint_value.to_s
+                    else
+                      const_inst.int_value.to_s
                     end
             next unless value  # Skip string constants
             # For pointer types, use "null" instead of "0"
@@ -9752,7 +10042,7 @@ module Crystal::MIR
     private def reset_value_names(func : Function)
       @value_names.clear
       @block_names.clear
-      @constant_values.clear
+      @constant_values = {} of ValueId => String
       @value_types.clear
       @void_values.clear
       @array_info.clear
@@ -10117,9 +10407,9 @@ module Crystal::MIR
           end
         end
 
-        # Pass pointer to FULL union (preserving tag + payload).
-        # Previously extracted payload only (dropping tag), which caused
-        # union-typed fields to lose their type discriminator in constructors.
+        # Ptr phis expect the pointer payload, not the address of the union storage.
+        # Returning the alloca address here makes downstream users treat the union
+        # wrapper itself as the pointee, which corrupts Token-like structs at runtime.
         actual_union_type = if emitted_type && emitted_type.includes?(".union")
                               emitted_type
                             else
@@ -10127,7 +10417,8 @@ module Crystal::MIR
                             end
         emit "%#{extract_name}.alloca = alloca #{actual_union_type}, align 8"
         emit "store #{actual_union_type} #{normalize_union_value(val_ref_str, actual_union_type)}, ptr %#{extract_name}.alloca"
-        emit "%#{extract_name} = bitcast ptr %#{extract_name}.alloca to ptr"
+        emit "%#{extract_name}.payload_ptr = getelementptr #{actual_union_type}, ptr %#{extract_name}.alloca, i32 0, i32 1"
+        emit "%#{extract_name} = load ptr, ptr %#{extract_name}.payload_ptr, align 4"
       end
     end
 
@@ -10199,6 +10490,21 @@ module Crystal::MIR
 
     private def emit_instruction(inst : Value, func : Function)
       name = "%r#{inst.id}"
+      @inst_total_count += 1
+      previous_emit_family_tag = @emit_family_tag
+      @emit_family_tag = case inst
+                         when Constant          then 1
+                         when Load              then 2
+                         when Store             then 3
+                         when GetElementPtr,
+                              GetElementPtrDynamic then 4
+                         when BinaryOp          then 5
+                         when Phi               then 6
+                         when Call,
+                              IndirectCall      then 7
+                         when ExternCall        then 8
+                         else                        9
+                         end
 
       # Check if this instruction produces a value (has a result register)
       # Store, Free, RCIncrement, RCDecrement, GlobalStore, AtomicStore don't produce values
@@ -10232,8 +10538,10 @@ module Crystal::MIR
         end
       end
 
+      begin
       case inst
       when Undef
+        @inst_other_count += 1
         # MIR Undef: emit a safe default value so the SSA name is defined.
         undef_llvm_type = @type_mapper.llvm_type(inst.type)
         if undef_llvm_type == "ptr"
@@ -10259,8 +10567,10 @@ module Crystal::MIR
         end
         @value_types[inst.id] = inst.type
       when Constant
+        @inst_constant_count += 1
         emit_constant(inst, name)
       when Alloc
+        @inst_other_count += 1
         # Alloc always returns a pointer, regardless of alloc_type
         # Store POINTER type for the result (not the element type)
         @value_types[inst.id] = TypeRef::POINTER
@@ -10268,94 +10578,141 @@ module Crystal::MIR
         @alloc_element_types[inst.id] = inst.alloc_type
         emit_alloc(inst, name)
       when Free
+        @inst_other_count += 1
         emit_free(inst)
       when RCIncrement
+        @inst_other_count += 1
         emit_rc_inc(inst)
       when RCDecrement
+        @inst_other_count += 1
         emit_rc_dec(inst)
       when Load
+        @inst_load_count += 1
         emit_load(inst, name)
       when Store
+        @inst_store_count += 1
         emit_store(inst)
       when MemCopy
+        @inst_other_count += 1
         emit_memcopy(inst)
       when GetElementPtr
+        @inst_gep_count += 1
         emit_gep(inst, name)
       when GetElementPtrDynamic
+        @inst_gep_count += 1
         emit_gep_dynamic(inst, name)
       when BinaryOp
+        @inst_binary_count += 1
         emit_binary_op(inst, name)
       when UnaryOp
+        @inst_other_count += 1
         emit_unary_op(inst, name)
       when Cast
+        @inst_other_count += 1
         emit_cast(inst, name)
       when Phi
+        @inst_phi_count += 1
         emit_phi(inst, name)
       when Select
+        @inst_other_count += 1
         emit_select(inst, name)
       when Call
+        @inst_call_count += 1
         emit_call(inst, name, func)
       when IndirectCall
+        @inst_call_count += 1
         emit_indirect_call(inst, name)
       when ExternCall
+        @inst_extern_call_count += 1
         emit_extern_call(inst, name)
       when AddressOf
+        @inst_other_count += 1
         emit_address_of(inst, name)
       when GlobalLoad
+        @inst_other_count += 1
         emit_global_load(inst, name)
       when GlobalStore
+        @inst_other_count += 1
         emit_global_store(inst, name)
       when UnionWrap
+        @inst_other_count += 1
         emit_union_wrap(inst, name)
       when UnionUnwrap
+        @inst_other_count += 1
         emit_union_unwrap(inst, name)
       when UnionTypeIdGet
+        @inst_other_count += 1
         emit_union_type_id_get(inst, name)
       when UnionIs
+        @inst_other_count += 1
         emit_union_is(inst, name)
       when ArrayLiteral
+        @inst_other_count += 1
         emit_array_literal(inst, name)
       when ArraySize
+        @inst_other_count += 1
         emit_array_size(inst, name)
       when ArraySetSize
+        @inst_other_count += 1
         emit_array_set_size(inst, name)
       when ArrayNew
+        @inst_other_count += 1
         emit_array_new(inst, name)
       when ArrayGet
+        @inst_other_count += 1
         emit_array_get(inst, name)
       when ArraySet
+        @inst_other_count += 1
         emit_array_set(inst, name)
       when StringInterpolation
+        @inst_other_count += 1
         emit_string_interpolation(inst, name)
       # Synchronization primitives
       when AtomicLoad
+        @inst_other_count += 1
         emit_atomic_load(inst, name)
       when AtomicStore
+        @inst_other_count += 1
         emit_atomic_store(inst, name)
       when AtomicCAS
+        @inst_other_count += 1
         emit_atomic_cas(inst, name)
       when AtomicRMW
+        @inst_other_count += 1
         emit_atomic_rmw(inst, name)
       when Fence
+        @inst_other_count += 1
         emit_fence(inst, name)
       when MutexLock
+        @inst_other_count += 1
         emit_mutex_lock(inst, name)
       when MutexUnlock
+        @inst_other_count += 1
         emit_mutex_unlock(inst, name)
       when MutexTryLock
+        @inst_other_count += 1
         emit_mutex_trylock(inst, name)
       when ChannelSend
+        @inst_other_count += 1
         emit_channel_send(inst, name)
       when ChannelReceive
+        @inst_other_count += 1
         emit_channel_receive(inst, name)
       when ChannelClose
+        @inst_other_count += 1
         emit_channel_close(inst, name)
       when TryBegin
+        @inst_other_count += 1
         emit_try_begin(inst, name)
       when TryEnd
+        @inst_other_count += 1
         emit_try_end(inst, name)
       when FuncPointer
+        @inst_other_count += 1
         emit_func_pointer(inst, name)
+      end
+      ensure
+        @emit_family_tag = previous_emit_family_tag
       end
 
       # Store to cross-block slot if this value is used across blocks
@@ -10566,10 +10923,15 @@ module Crystal::MIR
     end
 
     private def emit_constant(inst : Constant, name : String)
+      if ENV["CRYSTAL2_TRACE_EMIT_CONSTANT"]?
+        STDERR.puts "[EMIT_CONST] start id=#{inst.id} type_id=#{inst.type.id}"
+      end
       type = @type_mapper.llvm_type(inst.type)
+      STDERR.puts "[EMIT_CONST] after llvm_type=#{type}" if ENV["CRYSTAL2_TRACE_EMIT_CONSTANT"]?
 
       # Handle string constants specially
-      if v = inst.value.as?(String)
+      if inst.type == TypeRef::STRING && (v = inst.string_value)
+        STDERR.puts "[EMIT_CONST] string constant" if ENV["CRYSTAL2_TRACE_EMIT_CONSTANT"]?
         global_name = get_or_create_string_global(v)
         # String constant is a pointer to the global
         @constant_values[inst.id] = global_name
@@ -10577,36 +10939,47 @@ module Crystal::MIR
         @value_types[inst.id] = TypeRef::POINTER
         return
       end
+      STDERR.puts "[EMIT_CONST] after string check" if ENV["CRYSTAL2_TRACE_EMIT_CONSTANT"]?
 
       # Module literal constants use stable singleton globals, not null pointers.
       # This keeps module-typed virtual dispatch safe (no null type_id load).
-      if inst.value.is_a?(Nil) && @module.module_type?(inst.type)
+      if @module.module_type?(inst.type) && inst.value.is_a?(Nil)
+        STDERR.puts "[EMIT_CONST] module singleton constant" if ENV["CRYSTAL2_TRACE_EMIT_CONSTANT"]?
         global_name = module_singleton_global_for(inst.type)
         @constant_values[inst.id] = global_name
         emit "#{name} = bitcast ptr #{global_name} to ptr"
         @value_types[inst.id] = TypeRef::POINTER
         return
       end
+      STDERR.puts "[EMIT_CONST] after module check" if ENV["CRYSTAL2_TRACE_EMIT_CONSTANT"]?
 
-      value = case v = inst.value
-              when Int64   then v.to_s
-              when UInt64  then v.to_s
-              when Float64 then v.to_s
-              when Bool    then v ? "1" : "0"
-              when Nil     then "null"
-              else              "0"
+      value = case inst.type
+              when TypeRef::FLOAT32, TypeRef::FLOAT64
+                inst.float_value.to_s
+              when TypeRef::BOOL
+                inst.bool_value ? "1" : "0"
+              when TypeRef::NIL, TypeRef::VOID
+                "null"
+              when TypeRef::UINT8, TypeRef::UINT16, TypeRef::UINT32, TypeRef::UINT64, TypeRef::UINT128
+                inst.uint_value.to_s
+              else
+                inst.int_value.to_s
               end
+      STDERR.puts "[EMIT_CONST] after value=#{value}" if ENV["CRYSTAL2_TRACE_EMIT_CONSTANT"]?
 
       # For pointer types, use "null" instead of "0"
       if type == "ptr" && value == "0"
         value = "null"
       end
+      STDERR.puts "[EMIT_CONST] after ptr-zero normalize value=#{value}" if ENV["CRYSTAL2_TRACE_EMIT_CONSTANT"]?
 
       # Store constant for inlining at use sites
       @constant_values[inst.id] = value
+      STDERR.puts "[EMIT_CONST] after constant_values store" if ENV["CRYSTAL2_TRACE_EMIT_CONSTANT"]?
       # Generate real instruction so phi nodes can reference it
       # Using add 0, X is a common LLVM idiom for materializing constants
       if type.includes?(".union")
+        STDERR.puts "[EMIT_CONST] branch union" if ENV["CRYSTAL2_TRACE_EMIT_CONSTANT"]?
         # Union types can't use add instruction - create zeroinit union
         base_name = name.lstrip('%')
         emit "%#{base_name}.ptr = alloca #{type}, align 8"
@@ -10614,9 +10987,11 @@ module Crystal::MIR
         emit "store #{type} zeroinitializer, ptr %#{base_name}.ptr"
         emit "#{name} = load #{type}, ptr %#{base_name}.ptr"
         @value_types[inst.id] = inst.type
+        STDERR.puts "[EMIT_CONST] after union materialize" if ENV["CRYSTAL2_TRACE_EMIT_CONSTANT"]?
       elsif (type == "void" || value == "null" || type == "ptr") &&
             (sa_type = @module.type_registry.get(inst.type)) &&
             sa_type.name.starts_with?("StaticArray(")
+        STDERR.puts "[EMIT_CONST] branch staticarray null" if ENV["CRYSTAL2_TRACE_EMIT_CONSTANT"]?
         # uninitialized StaticArray(T, N) — emit stack alloca.
         # Parse element type and count from name, look up element size from registry.
         total_bytes = sa_type.size
@@ -10634,22 +11009,30 @@ module Crystal::MIR
         # Override constant_values so call sites use the alloca ptr, not "null"
         @constant_values[inst.id] = name
         @value_types[inst.id] = TypeRef::POINTER
+        STDERR.puts "[EMIT_CONST] after staticarray materialize" if ENV["CRYSTAL2_TRACE_EMIT_CONSTANT"]?
       elsif type == "void" || value == "null" || type == "ptr"
+        STDERR.puts "[EMIT_CONST] branch ptr/null" if ENV["CRYSTAL2_TRACE_EMIT_CONSTANT"]?
         # void/null/ptr constants are treated as ptr type in LLVM
         # Must emit real instruction (not comment) so phi nodes can reference it
         emit "#{name} = inttoptr i64 0 to ptr"
         @value_types[inst.id] = TypeRef::POINTER
         @inttoptr_value_ids.add(inst.id)
+        STDERR.puts "[EMIT_CONST] after ptr/null materialize" if ENV["CRYSTAL2_TRACE_EMIT_CONSTANT"]?
       elsif type == "double" || type == "float"
+        STDERR.puts "[EMIT_CONST] branch float" if ENV["CRYSTAL2_TRACE_EMIT_CONSTANT"]?
         # Float/double constants use fadd - ensure value is proper float literal
         float_value = value == "0" ? "0.0" : value
         float_value = "#{float_value}.0" if float_value.matches?(/^\d+$/)  # Add .0 if just digits
         emit "#{name} = fadd #{type} 0.0, #{float_value}"
         @value_types[inst.id] = inst.type
+        STDERR.puts "[EMIT_CONST] after float materialize" if ENV["CRYSTAL2_TRACE_EMIT_CONSTANT"]?
       else
+        STDERR.puts "[EMIT_CONST] branch intlike" if ENV["CRYSTAL2_TRACE_EMIT_CONSTANT"]?
         emit "#{name} = add #{type} 0, #{value}"
+        STDERR.puts "[EMIT_CONST] after add emit" if ENV["CRYSTAL2_TRACE_EMIT_CONSTANT"]?
         # Track actual constant type
         @value_types[inst.id] = inst.type
+        STDERR.puts "[EMIT_CONST] after value_types store" if ENV["CRYSTAL2_TRACE_EMIT_CONSTANT"]?
       end
     end
 
@@ -10669,9 +11052,13 @@ module Crystal::MIR
 
     # Sequential function emission (original path)
     private def emit_functions_sequential(functions : Array(Function))
+      snapshot_every = ::CrystalV2::Compiler::BootstrapEnv.get?("CRYSTAL_V2_LLVM_MEM_SNAPSHOT_EVERY").try(&.to_i?)
       functions.each_with_index do |func, idx|
         if @progress && (idx % 100 == 0 || idx == functions.size - 1)
           STDERR.puts "    Emitting function #{idx + 1}/#{functions.size}: #{func.name}"
+        end
+        if snapshot_every && snapshot_every > 0 && idx > 0 && (idx % snapshot_every) == 0
+          emit_memory_snapshot(idx + 1, functions.size)
         end
         begin
           emit_function(func)
@@ -10679,6 +11066,326 @@ module Crystal::MIR
           raise "Index error in emit_function for: #{func.name}\n#{ex.message}"
         end
       end
+    end
+
+    private def emit_memory_snapshot(current_index : Int32, total_functions : Int32) : Nil
+      stats = GC.stats
+      prof = GC.prof_stats
+      detail = bootstrap_env_enabled?("CRYSTAL_V2_LLVM_MEM_DETAIL", "CRYSTAL2_LLVM_MEM_DETAIL")
+      structural = bootstrap_env_enabled?("CRYSTAL_V2_LLVM_HASH_STRUCT_DETAIL", "CRYSTAL2_LLVM_HASH_STRUCT_DETAIL")
+      func_structural = bootstrap_env_enabled?("CRYSTAL_V2_LLVM_FUNC_STATE_STRUCT", "CRYSTAL2_LLVM_FUNC_STATE_STRUCT")
+      module_structural = bootstrap_env_enabled?("CRYSTAL_V2_LLVM_MODULE_STRUCT", "CRYSTAL2_LLVM_MODULE_STRUCT")
+      emit_text_detail = bootstrap_env_enabled?("CRYSTAL_V2_LLVM_EMIT_TEXT_DETAIL", "CRYSTAL2_LLVM_EMIT_TEXT_DETAIL")
+      arg_string_detail = bootstrap_env_enabled?("CRYSTAL_V2_LLVM_ARG_STRING_DETAIL", "CRYSTAL2_LLVM_ARG_STRING_DETAIL")
+      value_ref_detail = bootstrap_env_enabled?("CRYSTAL_V2_LLVM_VALUE_REF_DETAIL", "CRYSTAL2_LLVM_VALUE_REF_DETAIL")
+      inst_mix_detail = bootstrap_env_enabled?("CRYSTAL_V2_LLVM_INST_MIX_DETAIL", "CRYSTAL2_LLVM_INST_MIX_DETAIL")
+      inst_text_detail = bootstrap_env_enabled?("CRYSTAL_V2_LLVM_INST_TEXT_DETAIL", "CRYSTAL2_LLVM_INST_TEXT_DETAIL")
+      name_churn_detail = bootstrap_env_enabled?("CRYSTAL_V2_LLVM_NAME_CHURN_DETAIL", "CRYSTAL2_LLVM_NAME_CHURN_DETAIL")
+      snapshot = String.build do |io|
+        io << "  [LLVM_MEM] idx=" << current_index << "/" << total_functions
+        io << " heap=" << stats.heap_size
+        io << " free=" << stats.free_bytes
+        io << " unmapped=" << stats.unmapped_bytes
+        io << " prof_heap=" << prof.heap_size
+        io << " prof_free=" << prof.free_bytes
+        io << " prof_unmapped=" << prof.unmapped_bytes
+        io << " since_gc=" << stats.bytes_since_gc
+        io << " total=" << stats.total_bytes
+        io << " non_gc=" << prof.non_gc_bytes
+        io << " bytes_before_gc=" << prof.bytes_before_gc
+        io << " obtained_os=" << prof.obtained_from_os_bytes
+        io << " emitted=" << @emitted_functions.size
+        io << " ret_types=" << @emitted_function_return_types.size
+        io << " called=" << @called_crystal_functions.size
+        io << " undef_ext=" << @undefined_externs.size
+        io << " str_consts=" << @string_constants.size
+        io << " str_aliases=" << @string_aliases.size
+        io << " global_types=" << @global_declared_types.size
+        io << " global_map=" << @global_name_mapping.size
+        io << " singletons=" << @module_singleton_globals.size
+        io << " zero_structs=" << @zero_struct_globals.size
+        io << " zero_struct_decl_bytes=" << @zero_struct_global_decls.pos
+        io << " type_meta=" << @type_info_entries.size
+        io << " field_meta=" << @field_info_entries.size
+        io << " union_meta=" << @union_info_entries.size
+        io << " union_vars=" << @union_variant_entries.size
+        io << " string_table_bytes=" << @string_table.pos
+        if detail
+          io << " emit_fn_bytes=" << emitted_function_name_bytes
+          io << " emit_ret_bytes=" << emitted_function_return_type_bytes
+          io << " called_bytes=" << called_crystal_function_bytes
+          io << " undef_bytes=" << undefined_extern_bytes
+          io << " func_idx_name_bytes=" << function_index_name_bytes(@func_by_name)
+          io << " func_idx_suffix_bytes=" << function_index_name_bytes(@func_by_suffix)
+          io << " global_type_bytes=" << global_declared_type_bytes
+          io << " str_const_bytes=" << string_constant_bytes
+        end
+        if structural
+          type_ref_struct, mangle_struct = @type_mapper.debug_structural_bytes
+          io << " emitted_struct=" << @emitted_functions.crystal_v2_debug_structural_bytes
+          io << " ret_struct=" << @emitted_function_return_types.crystal_v2_debug_structural_bytes
+          io << " called_struct=" << @called_crystal_functions.crystal_v2_debug_structural_bytes
+          io << " undef_struct=" << @undefined_externs.crystal_v2_debug_structural_bytes
+          io << " global_map_struct=" << @global_name_mapping.crystal_v2_debug_structural_bytes
+          io << " global_type_struct=" << @global_declared_types.crystal_v2_debug_structural_bytes
+          io << " func_name_struct=" << @func_by_name.crystal_v2_debug_structural_bytes
+          io << " func_suffix_struct=" << @func_by_suffix.crystal_v2_debug_structural_bytes
+          io << " func_id_struct=" << @func_by_id.crystal_v2_debug_structural_bytes
+          io << " alloc_elem_struct=" << @alloc_element_types.crystal_v2_debug_structural_bytes
+          io << " arr_info_struct=" << @array_info.crystal_v2_debug_structural_bytes
+          io << " str_const_struct=" << @string_constants.crystal_v2_debug_structural_bytes
+          io << " str_alias_struct=" << @string_aliases.crystal_v2_debug_structural_bytes
+          io << " singleton_struct=" << @module_singleton_globals.crystal_v2_debug_structural_bytes
+          io << " type_ref_struct=" << type_ref_struct
+          io << " mangle_struct=" << mangle_struct
+        end
+        if func_structural
+          local_state_struct, value_state_struct, addressable_struct, cross_block_struct, phi_struct, func_array_struct =
+            current_function_state_structural_bytes
+          io << " func_local_struct=" << local_state_struct
+          io << " func_value_struct=" << value_state_struct
+          io << " func_addressable_struct=" << addressable_struct
+          io << " func_cross_struct=" << cross_block_struct
+          io << " func_phi_struct=" << phi_struct
+          io << " func_array_struct=" << func_array_struct
+          io << " func_state_struct_total=" << (local_state_struct + value_state_struct + addressable_struct + cross_block_struct + phi_struct + func_array_struct)
+        end
+        if module_structural
+          module_struct, type_struct, function_struct, block_struct, instr_struct, predecessor_struct =
+            current_module_structural_bytes
+          io << " mir_module_struct=" << module_struct
+          io << " mir_type_struct=" << type_struct
+          io << " mir_function_struct=" << function_struct
+          io << " mir_block_struct=" << block_struct
+          io << " mir_instr_struct=" << instr_struct
+          io << " mir_pred_struct=" << predecessor_struct
+          io << " mir_struct_total=" << (module_struct + type_struct + function_struct + block_struct + instr_struct + predecessor_struct)
+        end
+        if emit_text_detail
+          io << " emit_line_calls=" << @emit_line_calls
+          io << " emit_line_in=" << @emit_line_input_bytes
+          io << " emit_line_out=" << @emit_line_output_bytes
+          io << " emit_raw_calls=" << @emit_raw_calls
+          io << " emit_raw_in=" << @emit_raw_input_bytes
+          io << " emit_raw_out=" << @emit_raw_output_bytes
+          io << " fixup_calls=" << @fixup_call_arg_calls
+          io << " fixup_in=" << @fixup_call_arg_input_bytes
+          io << " fixup_out=" << @fixup_call_arg_output_bytes
+        end
+        if arg_string_detail
+          io << " ext_arg_calls=" << @extern_call_arg_join_calls
+          io << " ext_arg_items=" << @extern_call_arg_join_items
+          io << " ext_arg_bytes=" << @extern_call_arg_join_bytes
+          io << " intrinsic_arg_calls=" << @intrinsic_call_arg_join_calls
+          io << " intrinsic_arg_items=" << @intrinsic_call_arg_join_items
+          io << " intrinsic_arg_bytes=" << @intrinsic_call_arg_join_bytes
+        end
+        if value_ref_detail
+          io << " value_ref_dyn_calls=" << @value_ref_dynamic_calls
+          io << " value_ref_dyn_bytes=" << @value_ref_dynamic_bytes
+          io << " value_ref_emit_calls=" << @value_ref_emit_calls
+          io << " value_ref_emit_in=" << @value_ref_emit_input_bytes
+        end
+        if inst_mix_detail
+          io << " inst_total=" << @inst_total_count
+          io << " inst_const=" << @inst_constant_count
+          io << " inst_load=" << @inst_load_count
+          io << " inst_store=" << @inst_store_count
+          io << " inst_gep=" << @inst_gep_count
+          io << " inst_binary=" << @inst_binary_count
+          io << " inst_phi=" << @inst_phi_count
+          io << " inst_call=" << @inst_call_count
+          io << " inst_extern=" << @inst_extern_call_count
+          io << " inst_other=" << @inst_other_count
+        end
+        if inst_text_detail
+          io << " inst_const_bytes=" << @emit_family_const_bytes
+          io << " inst_load_bytes=" << @emit_family_load_bytes
+          io << " inst_store_bytes=" << @emit_family_store_bytes
+          io << " inst_gep_bytes=" << @emit_family_gep_bytes
+          io << " inst_binary_bytes=" << @emit_family_binary_bytes
+          io << " inst_phi_bytes=" << @emit_family_phi_bytes
+          io << " inst_call_bytes=" << @emit_family_call_bytes
+          io << " inst_extern_bytes=" << @emit_family_extern_bytes
+          io << " inst_other_bytes=" << @emit_family_other_bytes
+        end
+        if name_churn_detail
+          mangle_calls, mangle_in, mangle_out, mangle_miss_calls, mangle_miss_out, llvm_type_calls, llvm_type_miss_out =
+            @type_mapper.debug_churn_bytes
+          io << " sanitize_calls=" << @sanitize_calls
+          io << " sanitize_in=" << @sanitize_input_bytes
+          io << " sanitize_out=" << @sanitize_output_bytes
+          io << " sanitize_rebuilds=" << @sanitize_rebuild_calls
+          io << " mangle_calls=" << mangle_calls
+          io << " mangle_in=" << mangle_in
+          io << " mangle_out=" << mangle_out
+          io << " mangle_miss_calls=" << mangle_miss_calls
+          io << " mangle_miss_out=" << mangle_miss_out
+          io << " llvm_type_calls=" << llvm_type_calls
+          io << " llvm_type_miss_out=" << llvm_type_miss_out
+        end
+      end
+      STDERR.puts snapshot
+    end
+
+    private def current_function_state_structural_bytes : {Int64, Int64, Int64, Int64, Int64, Int64}
+      local_state_struct =
+        @value_names.crystal_v2_debug_structural_bytes +
+        @block_names.crystal_v2_debug_structural_bytes +
+        @emitted_value_types.crystal_v2_debug_structural_bytes +
+        @emitted_value_names.crystal_v2_debug_structural_bytes
+
+      value_state_struct =
+        @constant_values.crystal_v2_debug_structural_bytes +
+        @value_types.crystal_v2_debug_structural_bytes +
+        @void_values.crystal_v2_debug_structural_bytes +
+        @array_info.crystal_v2_debug_structural_bytes +
+        @alloc_types.crystal_v2_debug_structural_bytes +
+        @alloc_element_types.crystal_v2_debug_structural_bytes +
+        @inttoptr_value_ids.crystal_v2_debug_structural_bytes +
+        @ptr_passthrough.crystal_v2_debug_structural_bytes +
+        @zext_value_names.crystal_v2_debug_structural_bytes
+
+      addressable_struct =
+        @emitted_allocas.crystal_v2_debug_structural_bytes +
+        @addressable_allocas.crystal_v2_debug_structural_bytes +
+        @addressable_alloca_initialized.crystal_v2_debug_structural_bytes +
+        @pending_allocas.crystal_v2_debug_structural_bytes
+
+      cross_block_struct =
+        @value_def_block.crystal_v2_debug_structural_bytes +
+        @cross_block_values.crystal_v2_debug_structural_bytes +
+        @cross_block_slots.crystal_v2_debug_structural_bytes +
+        @cross_block_slot_types.crystal_v2_debug_structural_bytes +
+        @cross_block_slot_type_refs.crystal_v2_debug_structural_bytes +
+        @current_func_blocks.crystal_v2_debug_structural_bytes
+
+      phi_struct =
+        @phi_slot_redirect.crystal_v2_debug_structural_bytes +
+        @phi_zext_conversions.crystal_v2_debug_structural_bytes +
+        @phi_predecessor_loads.crystal_v2_debug_structural_bytes +
+        @phi_predecessor_conversions.crystal_v2_debug_structural_bytes +
+        @phi_int_to_ptr.crystal_v2_debug_structural_bytes +
+        @phi_predecessor_union_wraps.crystal_v2_debug_structural_bytes +
+        @phi_union_to_ptr_extracts.crystal_v2_debug_structural_bytes +
+        @phi_union_to_union_converts.crystal_v2_debug_structural_bytes +
+        @phi_union_payload_extracts.crystal_v2_debug_structural_bytes +
+        @phi_nil_incoming_blocks.crystal_v2_debug_structural_bytes +
+        @deferred_phi_stores.crystal_v2_debug_structural_bytes +
+        @deferred_phi_store_ops.crystal_v2_debug_structural_bytes
+
+      @phi_union_to_union_converts.each_value do |arr|
+        phi_struct += arr.crystal_v2_debug_structural_bytes
+      end
+      @phi_nil_incoming_blocks.each_value do |set|
+        phi_struct += set.crystal_v2_debug_structural_bytes
+      end
+
+      func_array_struct = @current_func_params.crystal_v2_debug_structural_bytes
+
+      {local_state_struct, value_state_struct, addressable_struct, cross_block_struct, phi_struct, func_array_struct}
+    end
+
+    private def current_module_structural_bytes : {Int64, Int64, Int64, Int64, Int64, Int64}
+      module_struct =
+        @module.functions.crystal_v2_debug_structural_bytes +
+        @module.globals.crystal_v2_debug_structural_bytes +
+        @module.symbol_names.crystal_v2_debug_structural_bytes +
+        @module.extern_globals.crystal_v2_debug_structural_bytes +
+        @module.union_descriptors.crystal_v2_debug_structural_bytes +
+        @module.module_type_refs.crystal_v2_debug_structural_bytes
+
+      type_struct = @module.type_registry.types.crystal_v2_debug_structural_bytes
+      @module.type_registry.types.each do |type|
+        if fields = type.fields
+          type_struct += fields.crystal_v2_debug_structural_bytes
+        end
+        if variants = type.variants
+          type_struct += variants.crystal_v2_debug_structural_bytes
+        end
+        if element_types = type.element_types
+          type_struct += element_types.crystal_v2_debug_structural_bytes
+        end
+      end
+
+      function_struct = 0_i64
+      block_struct = 0_i64
+      instr_struct = 0_i64
+      predecessor_struct = 0_i64
+
+      @module.functions.each do |func|
+        function_struct += func.params.crystal_v2_debug_structural_bytes
+        function_struct += func.blocks.crystal_v2_debug_structural_bytes
+        function_struct += sizeof(Crystal::MIR::Function).to_i64
+
+        func.blocks.each do |block|
+          block_struct += sizeof(Crystal::MIR::BasicBlock).to_i64
+          instr_struct += block.instructions.crystal_v2_debug_structural_bytes
+          predecessor_struct += block.predecessors.crystal_v2_debug_structural_bytes
+        end
+      end
+
+      {module_struct, type_struct, function_struct, block_struct, instr_struct, predecessor_struct}
+    end
+
+    private def emitted_function_name_bytes : Int64
+      total = 0_i64
+      @emitted_functions.each do |name|
+        total += name.bytesize
+      end
+      total
+    end
+
+    private def emitted_function_return_type_bytes : Int64
+      total = 0_i64
+      @emitted_function_return_types.each do |name, ret_type|
+        total += name.bytesize + ret_type.bytesize
+      end
+      total
+    end
+
+    private def called_crystal_function_bytes : Int64
+      total = 0_i64
+      @called_crystal_functions.each do |name, info|
+        total += name.bytesize
+        total += info[0].bytesize
+        info[2].each do |arg_type|
+          total += arg_type.bytesize
+        end
+      end
+      total
+    end
+
+    private def undefined_extern_bytes : Int64
+      total = 0_i64
+      @undefined_externs.each do |name, ret_type|
+        total += name.bytesize + ret_type.bytesize
+      end
+      total
+    end
+
+    private def function_index_name_bytes(index : Hash(String, Function)) : Int64
+      total = 0_i64
+      index.each_key do |name|
+        total += name.bytesize
+      end
+      total
+    end
+
+    private def global_declared_type_bytes : Int64
+      total = 0_i64
+      @global_declared_types.each do |name, llvm_type|
+        total += name.bytesize + llvm_type.bytesize
+      end
+      total
+    end
+
+    private def string_constant_bytes : Int64
+      total = 0_i64
+      @string_constants.each do |str_val, global_name|
+        total += str_val.bytesize + global_name.bytesize
+      end
+      total
     end
 
     # Parallel function emission using Process.fork
@@ -10840,9 +11547,18 @@ module Crystal::MIR
             end
             # Zero-struct globals
             if @zero_struct_global_decls.pos > 0
-              @zero_struct_global_decls.rewind
-              while line = @zero_struct_global_decls.gets
-                f.puts "ZSG\t#{line}"
+              zsg_bytes = @zero_struct_global_decls.to_slice
+              zsg_line_start = 0
+              zsg_i = 0
+              while zsg_i < zsg_bytes.size
+                if zsg_bytes[zsg_i] == 10_u8
+                  f.puts "ZSG\t#{String.new(zsg_bytes[zsg_line_start, zsg_i - zsg_line_start])}"
+                  zsg_line_start = zsg_i + 1
+                end
+                zsg_i += 1
+              end
+              if zsg_line_start < zsg_bytes.size
+                f.puts "ZSG\t#{String.new(zsg_bytes[zsg_line_start, zsg_bytes.size - zsg_line_start])}"
               end
             end
             # Undefined externs
@@ -10940,30 +11656,13 @@ module Crystal::MIR
 
       # Append parent-emitted functions first
       if parent_output.pos > 0
-        parent_output.rewind
-        # V2: normalize "ptr 0" → "ptr null" in parent output
-        parent_ir = parent_output.to_s
-        if parent_ir.includes?("ptr 0") && !parent_ir.includes?("ptr 0x")
-          parent_ir = parent_ir.gsub("ptr 0,", "ptr null,")
-                               .gsub("ptr 0)", "ptr null)")
-                               .gsub("ptr 0\n", "ptr null\n")
-                               .gsub("ptr 0 ", "ptr null ")
-        end
-        @output << parent_ir
+        append_output(normalize_ptr_zero_text(parent_output.to_s))
       end
 
       workers.each do |_, ir_file, se_file|
         # Append function IR
         if File.exists?(ir_file)
-          # V2: normalize "ptr 0" → "ptr null" in worker output
-          worker_ir = File.read(ir_file)
-          if worker_ir.includes?("ptr 0") && !worker_ir.includes?("ptr 0x")
-            worker_ir = worker_ir.gsub("ptr 0,", "ptr null,")
-                                 .gsub("ptr 0)", "ptr null)")
-                                 .gsub("ptr 0\n", "ptr null\n")
-                                 .gsub("ptr 0 ", "ptr null ")
-          end
-          @output << worker_ir
+          append_output(normalize_ptr_zero_text(File.read(ir_file)))
         end
 
         # Merge side-effects
@@ -14260,6 +14959,11 @@ module Crystal::MIR
         (call_args.size...callee_func.params.size).each do |i|
           param = callee_func.params[i]
           param_llvm = @type_mapper.llvm_type(param.type)
+          if filter = ENV["DEBUG_LLVM_DEFAULT_ARGS"]?
+            if filter == "1" || callee_name.includes?(filter)
+              STDERR.puts "[LLVM_DEFAULT_ARGS] callee=#{callee_name} index=#{i} param=#{param.name} llvm=#{param_llvm} default=#{param.default_value || "nil"}"
+            end
+          end
           pad_val = if default_val = param.default_value
                       # Use the stored default literal value from the function definition.
                       # Guard against type mismatches (e.g., Bool default with ptr LLVM type).
@@ -15894,6 +16598,9 @@ module Crystal::MIR
       end
 
       args = arg_entries.map { |(t, v, _)| "#{t} #{v}" }.join(", ")
+      @extern_call_arg_join_calls += 1
+      @extern_call_arg_join_items += arg_entries.size
+      @extern_call_arg_join_bytes += args.bytesize
 
       if return_type == "void"
         emit "call void @#{mangled_extern_name}(#{args})"
@@ -18887,6 +19594,18 @@ module Crystal::MIR
       end
     end
 
+    private def track_value_ref_dynamic(result : String) : String
+      @value_ref_dynamic_calls += 1
+      @value_ref_dynamic_bytes += result.bytesize
+      result
+    end
+
+    private def emit_from_value_ref(line : String) : Nil
+      @value_ref_emit_calls += 1
+      @value_ref_emit_input_bytes += line.bytesize
+      emit line
+    end
+
     private def value_ref(id : ValueId) : String
       # Check if it's a constant (inline the value)
       if const_val = @constant_values[id]?
@@ -18900,8 +19619,8 @@ module Crystal::MIR
             if llvm_type != "void" && llvm_type != "ptr"
               temp = "%r#{id}.addrload.#{@cond_counter}"
               @cond_counter += 1
-              emit "#{temp} = load #{llvm_type}, ptr #{alloca_name}"
-              return temp
+              emit_from_value_ref "#{temp} = load #{llvm_type}, ptr #{alloca_name}"
+              return track_value_ref_dynamic(temp)
             end
           end
         end
@@ -18929,12 +19648,12 @@ module Crystal::MIR
         if @in_phi_mode
           # In phi mode, use the direct value if it was emitted
           if name = @value_names[id]?
-            return "%#{name}"
+            return track_value_ref_dynamic("%#{name}")
           end
           # Value not emitted yet (forward reference from loop back-edge)
           # For phi nodes, return the name that WILL be assigned to this value
           # LLVM phi nodes support forward references
-          return "%r#{id}"
+          return track_value_ref_dynamic("%r#{id}")
         end
         # Non-phi use: load from slot to handle dominance issues
         val_type = @value_types[id]?
@@ -18944,7 +19663,7 @@ module Crystal::MIR
         llvm_type = "i64" if llvm_type == "void"
         temp_name = "%r#{id}.fromslot.#{@cond_counter}"
         @cond_counter += 1
-        emit "#{temp_name} = load #{llvm_type}, ptr %#{slot_name}"
+        emit_from_value_ref "#{temp_name} = load #{llvm_type}, ptr %#{slot_name}"
         record_emitted_type(temp_name, llvm_type)
         # If the slot type differs from the expected value type, insert a cast.
         expected_type = val_type ? @type_mapper.llvm_type(val_type) : llvm_type
@@ -18956,62 +19675,62 @@ module Crystal::MIR
             dst_bits = expected_type[1..].to_i?
             if src_bits && dst_bits
               if dst_bits < src_bits
-                emit "#{cast_name} = trunc #{llvm_type} #{temp_name} to #{expected_type}"
+                emit_from_value_ref "#{cast_name} = trunc #{llvm_type} #{temp_name} to #{expected_type}"
               elsif dst_bits > src_bits
                 ext_op = (slot_type_ref && unsigned_type_ref?(slot_type_ref)) ? "zext" : "sext"
-                emit "#{cast_name} = #{ext_op} #{llvm_type} #{temp_name} to #{expected_type}"
+                emit_from_value_ref "#{cast_name} = #{ext_op} #{llvm_type} #{temp_name} to #{expected_type}"
               else
-                emit "#{cast_name} = add #{expected_type} #{temp_name}, 0"
+                emit_from_value_ref "#{cast_name} = add #{expected_type} #{temp_name}, 0"
               end
               record_emitted_type(cast_name, expected_type)
-              return cast_name
+              return track_value_ref_dynamic(cast_name)
             end
           elsif llvm_type.starts_with?('i') && (expected_type == "float" || expected_type == "double")
             op = (val_type && unsigned_type_ref?(val_type)) ? "uitofp" : "sitofp"
-            emit "#{cast_name} = #{op} #{llvm_type} #{temp_name} to #{expected_type}"
+            emit_from_value_ref "#{cast_name} = #{op} #{llvm_type} #{temp_name} to #{expected_type}"
             record_emitted_type(cast_name, expected_type)
-            return cast_name
+            return track_value_ref_dynamic(cast_name)
           elsif (llvm_type == "float" || llvm_type == "double") && expected_type.starts_with?('i')
             op = (val_type && unsigned_type_ref?(val_type)) ? "fptoui" : "fptosi"
-            emit "#{cast_name} = #{op} #{llvm_type} #{temp_name} to #{expected_type}"
+            emit_from_value_ref "#{cast_name} = #{op} #{llvm_type} #{temp_name} to #{expected_type}"
             record_emitted_type(cast_name, expected_type)
-            return cast_name
+            return track_value_ref_dynamic(cast_name)
           elsif llvm_type == "float" && expected_type == "double"
-            emit "#{cast_name} = fpext float #{temp_name} to double"
+            emit_from_value_ref "#{cast_name} = fpext float #{temp_name} to double"
             record_emitted_type(cast_name, expected_type)
-            return cast_name
+            return track_value_ref_dynamic(cast_name)
           elsif llvm_type == "double" && expected_type == "float"
-            emit "#{cast_name} = fptrunc double #{temp_name} to float"
+            emit_from_value_ref "#{cast_name} = fptrunc double #{temp_name} to float"
             record_emitted_type(cast_name, expected_type)
-            return cast_name
+            return track_value_ref_dynamic(cast_name)
           elsif expected_type == "ptr" && llvm_type.starts_with?('i')
-            emit "#{cast_name} = inttoptr #{llvm_type} #{temp_name} to ptr"
+            emit_from_value_ref "#{cast_name} = inttoptr #{llvm_type} #{temp_name} to ptr"
             record_emitted_type(cast_name, "ptr")
-            return cast_name
+            return track_value_ref_dynamic(cast_name)
           elsif llvm_type == "ptr" && expected_type.starts_with?('i')
-            emit "#{cast_name} = ptrtoint ptr #{temp_name} to #{expected_type}"
+            emit_from_value_ref "#{cast_name} = ptrtoint ptr #{temp_name} to #{expected_type}"
             record_emitted_type(cast_name, expected_type)
-            return cast_name
+            return track_value_ref_dynamic(cast_name)
           elsif expected_type == "ptr" && llvm_type.includes?(".union")
             # Extract pointer payload from union value.
             union_ptr = "%r#{id}.fromslot.union_ptr.#{@cond_counter}"
             @cond_counter += 1
-            emit "#{union_ptr} = alloca #{llvm_type}, align 8"
-            emit "store #{llvm_type} #{temp_name}, ptr #{union_ptr}"
-            emit "#{cast_name}.payload_ptr = getelementptr #{llvm_type}, ptr #{union_ptr}, i32 0, i32 1"
-            emit "#{cast_name} = load ptr, ptr #{cast_name}.payload_ptr, align 4"
+            emit_from_value_ref "#{union_ptr} = alloca #{llvm_type}, align 8"
+            emit_from_value_ref "store #{llvm_type} #{temp_name}, ptr #{union_ptr}"
+            emit_from_value_ref "#{cast_name}.payload_ptr = getelementptr #{llvm_type}, ptr #{union_ptr}, i32 0, i32 1"
+            emit_from_value_ref "#{cast_name} = load ptr, ptr #{cast_name}.payload_ptr, align 4"
             record_emitted_type(cast_name, "ptr")
-            return cast_name
+            return track_value_ref_dynamic(cast_name)
           elsif (expected_type == "double" || expected_type == "float" || (expected_type.starts_with?('i') && !expected_type.includes?('.'))) && llvm_type.includes?(".union")
             # Extract scalar payload from union value.
             union_ptr = "%r#{id}.fromslot.union_ptr.#{@cond_counter}"
             @cond_counter += 1
-            emit "#{union_ptr} = alloca #{llvm_type}, align 8"
-            emit "store #{llvm_type} #{temp_name}, ptr #{union_ptr}"
-            emit "#{cast_name}.payload_ptr = getelementptr #{llvm_type}, ptr #{union_ptr}, i32 0, i32 1"
-            emit "#{cast_name} = load #{expected_type}, ptr #{cast_name}.payload_ptr, align 4"
+            emit_from_value_ref "#{union_ptr} = alloca #{llvm_type}, align 8"
+            emit_from_value_ref "store #{llvm_type} #{temp_name}, ptr #{union_ptr}"
+            emit_from_value_ref "#{cast_name}.payload_ptr = getelementptr #{llvm_type}, ptr #{union_ptr}, i32 0, i32 1"
+            emit_from_value_ref "#{cast_name} = load #{expected_type}, ptr #{cast_name}.payload_ptr, align 4"
             record_emitted_type(cast_name, expected_type)
-            return cast_name
+            return track_value_ref_dynamic(cast_name)
           elsif llvm_type.includes?(".union") && expected_type.includes?(".union") && llvm_type != expected_type
             # Different union types with same layout - reinterpret through memory
             # (LLVM doesn't allow bitcast between aggregate types)
@@ -19020,14 +19739,14 @@ module Crystal::MIR
             # Allocate storage in the source union type, then reinterpret-load as expected type.
             # Storing a source-union value into an alloca typed as destination union emits
             # invalid IR when names differ (same layout, different nominal type).
-            emit "#{u2u_ptr} = alloca #{llvm_type}, align 8"
-            emit "store #{llvm_type} #{temp_name}, ptr #{u2u_ptr}"
-            emit "#{cast_name} = load #{expected_type}, ptr #{u2u_ptr}"
+            emit_from_value_ref "#{u2u_ptr} = alloca #{llvm_type}, align 8"
+            emit_from_value_ref "store #{llvm_type} #{temp_name}, ptr #{u2u_ptr}"
+            emit_from_value_ref "#{cast_name} = load #{expected_type}, ptr #{u2u_ptr}"
             record_emitted_type(cast_name, expected_type)
-            return cast_name
+            return track_value_ref_dynamic(cast_name)
           end
         end
-        return temp_name
+        return track_value_ref_dynamic(temp_name)
       end
         # Otherwise reference by name
         if name = @value_names[id]?
@@ -19062,7 +19781,7 @@ module Crystal::MIR
               end
             end
           end
-          ref_name
+          track_value_ref_dynamic(ref_name)
         else
           # Value was never emitted yet.
           # In phi mode: return forward reference (LLVM phi nodes support this for loop back-edges)
@@ -19070,7 +19789,7 @@ module Crystal::MIR
         if @in_phi_mode
           # Forward reference for phi node from loop back-edge
           # The value will be assigned to %r#{id} when its block is emitted
-          return "%r#{id}"
+          return track_value_ref_dynamic("%r#{id}")
         end
         # Not in phi mode - this is likely an unreachable instruction or
         # a call that was skipped. Check if we know the type and return appropriate default.
@@ -19683,7 +20402,7 @@ module Crystal::MIR
 
       # Emit Crystal String constants for each type name
       type_names.each do |tid, name|
-        escaped = name.gsub("\\", "\\\\").gsub("\"", "\\22")
+        escaped = llvm_c_string_escape(name)
         len = name.bytesize + 1 # +1 for null terminator
         bytesize = name.bytesize
         charsize = name.size

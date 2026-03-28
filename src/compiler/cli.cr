@@ -160,9 +160,277 @@ module CrystalV2
       def initialize(@args : Array(String))
       end
 
+      private def bootstrap_trace_puts(value = "") : Nil
+        return unless env_enabled?("CRYSTAL_V2_TRACE_STDERR")
+        Crystal::System.print_error "%s\n", value.to_s
+      end
+
       private def stage2_debug(msg : String, io : IO = STDERR) : Nil
         if env_enabled?("STAGE2_DEBUG") || env_enabled?("STAGE2_BOOTSTRAP_TRACE")
           io.puts msg
+        end
+      end
+
+      private def debug_cli_block_snapshot(
+        phase : String,
+        arena : Frontend::ArenaLike,
+        block_id : Frontend::ExprId
+      ) : Nil
+        node = arena[block_id]
+        return unless node.is_a?(Frontend::BlockNode)
+        body = node.body
+        STDERR << "[CLI_BLOCK] phase=" << phase
+        STDERR << " block=" << block_id.index
+        STDERR << " size=" << body.size
+        if body.empty?
+          STDERR << " storage=0"
+        else
+          STDERR << " first=" << body.unsafe_fetch(0).index
+          STDERR << " storage=" << body.to_unsafe.address
+        end
+        STDERR << '\n'
+      end
+
+      private def debug_cli_root_block_state_for_expr(
+        phase : String,
+        arena : Frontend::ArenaLike,
+        expr_id : Frontend::ExprId
+      ) : Nil
+        return if expr_id.index < 0 || expr_id.index >= arena.size
+        node = arena[expr_id]
+        bootstrap_trace_puts "[CLI_ROOT] phase=#{phase} expr=#{expr_id.index} kind=#{Frontend.node_kind(node)}"
+        case node
+        when Frontend::CallNode
+          block_id = node.block
+          debug_cli_block_snapshot("#{phase}_call", arena, block_id) if block_id
+        when Frontend::DefNode
+          if body = node.body
+            body.each do |body_expr|
+              next if body_expr.index < 0 || body_expr.index >= arena.size
+              body_node = arena[body_expr]
+              next unless body_node.is_a?(Frontend::CallNode)
+              block_id = body_node.block
+              debug_cli_block_snapshot("#{phase}_def_body", arena, block_id) if block_id
+            end
+          end
+        end
+      end
+
+      private def debug_cli_root_block_state(
+        phase : String,
+        arena : Frontend::ArenaLike,
+        exprs : Array(Frontend::ExprId)
+      ) : Nil
+        return unless env_enabled?("DEBUG_CLI_ROOT_BLOCK_STATE")
+        exprs.each do |expr_id|
+          debug_cli_root_block_state_for_expr(phase, arena, expr_id)
+        end
+      end
+
+      private def slice_equals_string?(slice : Slice(UInt8), text : String) : Bool
+        bytes = text.to_slice
+        return false unless slice.size == bytes.size
+        i = 0
+        while i < slice.size
+          return false unless slice.unsafe_fetch(i) == bytes.unsafe_fetch(i)
+          i += 1
+        end
+        true
+      end
+
+      private def slice_to_string(slice : Slice(UInt8)?) : String?
+        return nil unless slice
+        String.new(slice)
+      end
+
+      private def trace_parsed_class_line(
+        phase : String,
+        abs_path : String,
+        key : String,
+        a : Int32,
+        b : Int32? = nil,
+        c : Int32? = nil,
+      ) : Nil
+        return unless env_enabled?("CRYSTAL_V2_TRACE_STDERR")
+        Crystal::System.print_error "[PARSED_CLASS] phase=%s", phase
+        Crystal::System.print_error " file=%s", abs_path
+        Crystal::System.print_error " key=%s", key
+        Crystal::System.print_error " a=%d", a
+        if value = b
+          Crystal::System.print_error " b=%d", value
+        end
+        if value = c
+          Crystal::System.print_error " c=%d", value
+        end
+        Crystal::System.print_error "\n"
+      end
+
+      private def trace_parsed_class_state(
+        phase : String,
+        abs_path : String,
+        arena : Frontend::ArenaLike,
+        exprs : Array(Frontend::ExprId)
+      ) : Nil
+        filter = env_get("CRYSTAL_V2_TRACE_PARSED_CLASS")
+        return unless filter
+        i = 0
+        while i < exprs.size
+          trace_parsed_class_state_expr(phase, abs_path, arena, exprs.unsafe_fetch(i), filter)
+          i += 1
+        end
+      end
+
+      private def trace_single_class_state(
+        phase : String,
+        abs_path : String,
+        arena : Frontend::ArenaLike,
+        node : Frontend::ClassNode
+      ) : Nil
+        filter = env_get("CRYSTAL_V2_TRACE_PARSED_CLASS")
+        return unless filter
+        should_trace = filter == "*" || slice_equals_string?(node.name, filter)
+        return unless should_trace
+
+        body = node.body || [] of Frontend::ExprId
+        trace_parsed_class_line(phase, abs_path, "class_body", node.span.start_offset, body.size)
+        i = 0
+        while i < body.size
+          member_id = body.unsafe_fetch(i)
+          if member_id.index >= 0 && member_id.index < arena.size
+            member = arena[member_id]
+            trace_parsed_class_line(phase, abs_path, "member", i, member_id.index, Frontend.node_kind(member).value)
+            if env_enabled?("CRYSTAL_V2_TRACE_PARSED_CLASS_MEMBERS")
+              case member
+              when Frontend::DefNode
+                name = slice_to_string(member.name) || "(nil)"
+                  trace_parsed_class_line(
+                    phase,
+                    abs_path,
+                    "def",
+                    i,
+                    member.span.start_line,
+                    member.params ? 1 : 0
+                  )
+                Crystal::System.print_error "[PARSED_CLASS_MEMBER] phase=%s file=%s class=%s kind=def index=%d line=%d name=%s\n",
+                  phase, abs_path, filter, i, member.span.start_line, name
+              when Frontend::MacroDefNode
+                name = slice_to_string(member.name) || "(nil)"
+                Crystal::System.print_error "[PARSED_CLASS_MEMBER] phase=%s file=%s class=%s kind=macro index=%d line=%d name=%s\n",
+                  phase, abs_path, filter, i, member.span.start_line, name
+              end
+            end
+            if member.is_a?(Frontend::DefNode) && slice_equals_string?(member.name, "initialize")
+              if body_view = member.body
+                j = 0
+                while j < body_view.size
+                  body_expr = body_view.unsafe_fetch(j)
+                  body_kind = body_expr.index >= 0 && body_expr.index < arena.size ? Frontend.node_kind(arena[body_expr]).value : -1
+                  trace_parsed_class_line(phase, abs_path, "view", j, body_expr.index, body_kind)
+                  j += 1
+                end
+              else
+                trace_parsed_class_line(phase, abs_path, "view_nil", 1)
+              end
+              raw_body = member.body_storage
+              j = 0
+              while j < raw_body.size
+                body_expr = raw_body.unsafe_fetch(j)
+                body_kind = body_expr.index >= 0 && body_expr.index < arena.size ? Frontend.node_kind(arena[body_expr]).value : -1
+                trace_parsed_class_line(phase, abs_path, "raw", j, body_expr.index, body_kind)
+                j += 1
+              end
+            end
+          else
+            trace_parsed_class_line(phase, abs_path, "member_invalid", i, member_id.index)
+          end
+          i += 1
+        end
+      end
+
+      private def trace_parsed_class_state_expr(
+        phase : String,
+        abs_path : String,
+        arena : Frontend::ArenaLike,
+        expr_id : Frontend::ExprId,
+        filter : String
+      ) : Nil
+        return if expr_id.invalid? || expr_id.index < 0 || expr_id.index >= arena.size
+        node = arena[expr_id]
+        case node
+        when Frontend::ModuleNode
+          if body = node.body
+            i = 0
+            while i < body.size
+              trace_parsed_class_state_expr(phase, abs_path, arena, body.unsafe_fetch(i), filter)
+              i += 1
+            end
+          end
+        when Frontend::ClassNode
+          body = node.body || [] of Frontend::ExprId
+          should_trace = filter == "*" || slice_equals_string?(node.name, filter)
+          trace_parsed_class_line(phase, abs_path, "class_body", expr_id.index, body.size) if should_trace
+          if should_trace
+            i = 0
+            while i < body.size
+              member_id = body.unsafe_fetch(i)
+              if member_id.index >= 0 && member_id.index < arena.size
+                member = arena[member_id]
+                trace_parsed_class_line(phase, abs_path, "member", i, member_id.index, Frontend.node_kind(member).value)
+                if env_enabled?("CRYSTAL_V2_TRACE_PARSED_CLASS_MEMBERS")
+                  case member
+                  when Frontend::DefNode
+                    name = slice_to_string(member.name) || "(nil)"
+                    trace_parsed_class_line(
+                      phase,
+                      abs_path,
+                      "def",
+                      i,
+                      member.span.start_line,
+                      member.params ? 1 : 0
+                    )
+                    Crystal::System.print_error "[PARSED_CLASS_MEMBER] phase=%s file=%s class=%s kind=def index=%d line=%d name=%s\n",
+                      phase, abs_path, filter, i, member.span.start_line, name
+                  when Frontend::MacroDefNode
+                    name = slice_to_string(member.name) || "(nil)"
+                    Crystal::System.print_error "[PARSED_CLASS_MEMBER] phase=%s file=%s class=%s kind=macro index=%d line=%d name=%s\n",
+                      phase, abs_path, filter, i, member.span.start_line, name
+                  end
+                end
+                if member.is_a?(Frontend::DefNode) && slice_equals_string?(member.name, "initialize")
+                  if body_view = member.body
+                    j = 0
+                    while j < body_view.size
+                      body_expr = body_view.unsafe_fetch(j)
+                      body_kind = body_expr.index >= 0 && body_expr.index < arena.size ? Frontend.node_kind(arena[body_expr]).value : -1
+                      trace_parsed_class_line(phase, abs_path, "view", j, body_expr.index, body_kind)
+                      j += 1
+                    end
+                  else
+                    trace_parsed_class_line(phase, abs_path, "view_nil", 1)
+                  end
+                  raw_body = member.body_storage
+                  j = 0
+                  while j < raw_body.size
+                    body_expr = raw_body.unsafe_fetch(j)
+                    body_kind = body_expr.index >= 0 && body_expr.index < arena.size ? Frontend.node_kind(arena[body_expr]).value : -1
+                    trace_parsed_class_line(phase, abs_path, "raw", j, body_expr.index, body_kind)
+                    j += 1
+                  end
+                end
+              else
+                trace_parsed_class_line(phase, abs_path, "member_invalid", i, member_id.index)
+              end
+              i += 1
+            end
+          end
+
+          if body = node.body
+            i = 0
+            while i < body.size
+              trace_parsed_class_state_expr(phase, abs_path, arena, body.unsafe_fetch(i), filter)
+              i += 1
+            end
+          end
         end
       end
 
@@ -172,6 +440,24 @@ module CrystalV2
 
       private def env_enabled?(name : String) : Bool
         !env_get(name).nil?
+      end
+
+      private def write_all_fd(fd : IO::FileDescriptor::Handle, bytes : Bytes) : Nil
+        offset = 0
+        while offset < bytes.size
+          written = LibC.write(fd, bytes.to_unsafe + offset, bytes.size - offset)
+          raise "write failed on fd #{fd}" if written <= 0
+          offset += written.to_i
+        end
+      end
+
+      private def write_text(io : IO, text : String, newline : Bool = false) : Nil
+        if fd_io = io.as?(IO::FileDescriptor)
+          write_all_fd(fd_io.fd, text.to_slice)
+          write_all_fd(fd_io.fd, "\n".to_slice) if newline
+        else
+          newline ? io.puts(text) : (io << text)
+        end
       end
 
       private def debug_env_filter_match?(env_key : String, *texts : String) : Bool
@@ -485,12 +771,16 @@ module CrystalV2
       {% end %}
 
       def run(*, out_io : IO = STDOUT, err_io : IO = STDERR) : Int32
-        STDERR.puts "[S2_RUN] start args=#{@args.size}"; STDERR.flush
+        LibC.write(2, "[RUNPROBE] 0\n".to_unsafe, 13)
+        bootstrap_trace_puts "[S2_RUN] start args=#{@args.size}"; STDERR.flush
+        LibC.write(2, "[RUNPROBE] 1\n".to_unsafe, 13)
         @args.each_with_index do |arg, i|
-          STDERR.puts "[S2_RUN] arg[#{i}]=#{arg.bytesize}b '#{arg}'"; STDERR.flush
+          bootstrap_trace_puts "[S2_RUN] arg[#{i}]=#{arg.bytesize}b '#{arg}'"; STDERR.flush
         end
+        LibC.write(2, "[RUNPROBE] 2\n".to_unsafe, 13)
         options = Options.new
-        STDERR.puts "[S2_RUN] options created"; STDERR.flush
+        LibC.write(2, "[RUNPROBE] 3\n".to_unsafe, 13)
+        bootstrap_trace_puts "[S2_RUN] options created"; STDERR.flush
         stage2_debug("[STAGE2_DEBUG] raw args size=#{@args.size}", err_io)
         stage2_debug("[STAGE2_DEBUG] run start args_size=#{@args.size}", err_io)
         mm_stack_threshold_invalid = false
@@ -498,10 +788,12 @@ module CrystalV2
         parser : OptionParser | Nil = nil
         parser_text = parser_help
 
-        STDERR.puts "[S2_RUN] before parse_args_safe"; STDERR.flush
+        bootstrap_trace_puts "[S2_RUN] before parse_args_safe"; STDERR.flush
+        LibC.write(2, "[RUNPROBE] 4\n".to_unsafe, 13)
         if !env_enabled?("CRYSTAL2_USE_OPTION_PARSER") || env_enabled?("CRYSTAL2_SAFE_PARSER")
           status = parse_args_safe(pointerof(options), parser_help, err_io)
-          STDERR.puts "[S2_RUN] parse_args_safe done status=#{status}"; STDERR.flush
+          LibC.write(2, "[RUNPROBE] 5\n".to_unsafe, 13)
+          bootstrap_trace_puts "[S2_RUN] parse_args_safe done status=#{status}"; STDERR.flush
           return status if status != 0
         elsif (minimal_parser = env_get("CRYSTAL2_MINIMAL_PARSER"))
           if minimal_parser == "2"
@@ -612,7 +904,11 @@ module CrystalV2
           setup_debug_hooks
         {% end %}
 
-        if options.show_version
+        LibC.write(2, "[RUNPROBE] 6\n".to_unsafe, 13)
+        show_version = options.show_version
+        LibC.write(2, "[RUNPROBE] 6b\n".to_unsafe, 14)
+        if show_version
+          LibC.write(2, "[RUNPROBE] 7\n".to_unsafe, 13)
           stage2_debug("[STAGE2_DEBUG] options.show_version=true", err_io)
           out_io.puts "crystal_v2 #{VERSION}"
           return 0
@@ -681,11 +977,11 @@ module CrystalV2
         stage2_debug("[STAGE2_DEBUG] selected input is non-empty", err_io)
         stage2_debug("[STAGE2_DEBUG] selected input size=#{input_file.size}, output size=#{options.output.size}, check_only=#{options.check_only}", err_io)
 
-        STDERR.puts "[S2_RUN] input='#{input_file}' output='#{options.output}' no_prelude=#{options.no_prelude}"; STDERR.flush
+        bootstrap_trace_puts "[S2_RUN] input='#{input_file}' output='#{options.output}' no_prelude=#{options.no_prelude}"; STDERR.flush
         if options.check_only
           return run_check(input_file, options, out_io, err_io)
         else
-          STDERR.puts "[S2_RUN] calling compile"; STDERR.flush
+          bootstrap_trace_puts "[S2_RUN] calling compile"; STDERR.flush
           return compile(input_file, options, out_io, err_io)
         end
       end
@@ -715,7 +1011,7 @@ module CrystalV2
         property ast_cache : Bool = true
         {% end %}
         property llvm_opt : Bool = true
-        property llvm_cache : Bool = BootstrapEnv.get("CRYSTAL_V2_LLVM_CACHE", "1") != "0"
+        property llvm_cache : Bool = (BootstrapEnv.get?("CRYSTAL_V2_LLVM_CACHE") || "1") != "0"
         # V2 BOOTSTRAP: Disable pipeline cache — Dir.current/File.expand_path call
         # check_no_null_byte which is broken in stage2.
         property pipeline_cache : Bool = false
@@ -823,9 +1119,9 @@ module CrystalV2
         loaded_files = Set(String).new
         all_arenas = [] of ParsedUnit
 
-        STDERR.puts "[S2_COMPILE] before expand_path input='#{input_file}'"; STDERR.flush
+        bootstrap_trace_puts "[S2_COMPILE] before expand_path input='#{input_file}'"; STDERR.flush
         expanded = File.expand_path(input_file)
-        STDERR.puts "[S2_COMPILE] expanded='#{expanded}'"; STDERR.flush
+        bootstrap_trace_puts "[S2_COMPILE] expanded='#{expanded}'"; STDERR.flush
         input_base_dir = safe_dirname(expanded)
 
         # Load prelude first (unless --no-prelude)
@@ -850,14 +1146,14 @@ module CrystalV2
             end
           end
         end
-        STDERR.puts "[S2_COMPILE] prelude phase done"; STDERR.flush
+        bootstrap_trace_puts "[S2_COMPILE] prelude phase done"; STDERR.flush
 
         # Parse user's input file
         user_parse_start = Time.instant
-        STDERR.puts "[S2_COMPILE] parsing user file start"; STDERR.flush
+        bootstrap_trace_puts "[S2_COMPILE] parsing user file start"; STDERR.flush
         parse_file_recursive(input_file, all_arenas, loaded_files, input_file, input_base_dir, options, out_io)
         stage2_debug("[STAGE2_DEBUG] user file parsed", err_io)
-        STDERR.puts "[S2_COMPILE] parse done arenas=#{all_arenas.size}"; STDERR.flush
+        bootstrap_trace_puts "[S2_COMPILE] parse done arenas=#{all_arenas.size}"; STDERR.flush
         if options.stats
           timings["parse_user"] = (Time.instant - user_parse_start).total_milliseconds
           timings["parse_total"] = (Time.instant - parse_start).total_milliseconds
@@ -961,6 +1257,7 @@ module CrystalV2
         hir_start = Time.instant
 
         stage2_debug("[STAGE2_DEBUG] hir setup start", err_io)
+        bootstrap_trace_puts "[S2_HIR_SETUP] phase=enter arenas=#{all_arenas.size}"; STDERR.flush
         first_arena = all_arenas.unsafe_fetch(0).arena
         sources_by_arena = Hash(UInt64, String).new(initial_capacity: all_arenas.size)
         paths_by_arena = Hash(UInt64, String).new(initial_capacity: all_arenas.size)
@@ -982,31 +1279,36 @@ module CrystalV2
           sources_by_arena[map_key] = map_source
           arena_map_i += 1
         end
+        bootstrap_trace_puts "[S2_HIR_SETUP] phase=maps_ready main_arenas=#{main_arenas.size}"; STDERR.flush
         stage2_debug("[STAGE2_DEBUG] hir setup maps ready size=#{main_arenas.size}", err_io)
         hir_mod = HIR::Module.new(input_file)
         hir_mod.bootstrap_reinitialize_runtime_state
+        bootstrap_trace_puts "[S2_HIR_SETUP] phase=module_ready"; STDERR.flush
         # Self-hosted stage2 has repeatedly miscompiled the wide AstToHir
         # constructor path. Keep constructor arguments minimal, then rebind
         # the mutable bootstrap state through the narrower recovery helpers.
         hir_converter = HIR::AstToHir.new(first_arena, input_file)
+        bootstrap_trace_puts "[S2_HIR_SETUP] phase=converter_new"; STDERR.flush
         hir_converter.bootstrap_bind_core_state(first_arena, hir_mod)
         hir_converter.bootstrap_bind_source_maps(sources_by_arena, paths_by_arena)
         hir_converter.bootstrap_bind_main_arenas(main_arenas)
         hir_converter.bootstrap_bind_link_libraries(link_libs)
         hir_converter.bootstrap_reset_constructor_tail
+        bootstrap_trace_puts "[S2_HIR_SETUP] phase=converter_bound"; STDERR.flush
         stage2_debug("[STAGE2_DEBUG] hir converter created", err_io)
         const_map_trace = BootstrapEnv.enabled?("CRYSTAL_V2_CONST_MAP_TRACE")
         if const_map_trace
-          STDERR.puts "[CONST_MAP] phase=hir_converter_created literals=#{hir_converter.constant_literal_values.size} types=#{hir_converter.constant_types.size}"
-          STDERR.puts "[CONST_MAP] ids_a const_lit=#{hir_converter.debug_const_lit_object_id} const_types=#{hir_converter.debug_const_types_object_id} const_defs=#{hir_converter.debug_const_defs_object_id} nested=#{hir_converter.debug_nested_type_names_object_id}"
-          STDERR.puts "[CONST_MAP] ids_b sources=#{hir_converter.debug_sources_by_arena_object_id} main=#{hir_converter.debug_main_arenas_object_id} lines=#{hir_converter.debug_line_counts_by_arena_object_id} paths=#{hir_converter.debug_paths_by_arena_object_id}"
-          STDERR.puts "[CONST_MAP] ids_c extra=#{hir_converter.debug_extra_sources_by_arena_object_id} links=#{hir_converter.debug_link_libraries_object_id} type_literals=#{hir_converter.debug_type_literals_object_id}"
+          bootstrap_trace_puts "[CONST_MAP] phase=hir_converter_created literals=#{hir_converter.constant_literal_values.size} types=#{hir_converter.constant_types.size}"
+          bootstrap_trace_puts "[CONST_MAP] ids_a const_lit=#{hir_converter.debug_const_lit_object_id} const_types=#{hir_converter.debug_const_types_object_id} const_defs=#{hir_converter.debug_const_defs_object_id} nested=#{hir_converter.debug_nested_type_names_object_id}"
+          bootstrap_trace_puts "[CONST_MAP] ids_b sources=#{hir_converter.debug_sources_by_arena_object_id} main=#{hir_converter.debug_main_arenas_object_id} lines=#{hir_converter.debug_line_counts_by_arena_object_id} paths=#{hir_converter.debug_paths_by_arena_object_id}"
+          bootstrap_trace_puts "[CONST_MAP] ids_c extra=#{hir_converter.debug_extra_sources_by_arena_object_id} links=#{hir_converter.debug_link_libraries_object_id} type_literals=#{hir_converter.debug_type_literals_object_id}"
         end
         if @parse_trace
-          STDERR.puts "[DEBUG_STAGE1] hir_converter=#{hir_converter.object_id} module=#{hir_mod.object_id} link_libs=#{link_libs.size}"
+          bootstrap_trace_puts "[DEBUG_STAGE1] hir_converter=#{hir_converter.object_id} module=#{hir_mod.object_id} link_libs=#{link_libs.size}"
         end
         stage2_debug("[STAGE2_DEBUG] hir link libs attached", err_io)
         stage2_debug("[STAGE2_DEBUG] top-level collection init", err_io)
+        bootstrap_trace_puts "[S2_HIR_SETUP] phase=top_level_collect_init"; STDERR.flush
 
         # Collect nodes by type
         def_nodes = [] of Tuple(Frontend::DefNode, Frontend::ArenaLike)
@@ -1019,10 +1321,13 @@ module CrystalV2
         constant_exprs = [] of Tuple(Frontend::ExprId, Frontend::ArenaLike)
         main_exprs = [] of UInt64
         acyclic_types = Set(String).new
+        top_level_type_names = Set(String).new
+        top_level_class_kinds = {} of String => Bool
 
         flags = Runtime.target_flags
         hir_collect_start = Time.instant if debug_profile
         stage2_debug("[STAGE2_DEBUG] top-level collection walk start", err_io)
+        bootstrap_trace_puts "[S2_HIR_SETUP] phase=top_level_collect_walk"; STDERR.flush
         arena_i = 0
         while arena_i < all_arenas.size
           entry = all_arenas.unsafe_fetch(arena_i)
@@ -1030,6 +1335,8 @@ module CrystalV2
           exprs = entry.roots
           file_path = entry.path
           source = entry.source
+          bootstrap_trace_puts "[S2_HIR_SETUP] phase=collect_arena idx=#{arena_i} roots=#{exprs.size} path=#{file_path}"; STDERR.flush
+          debug_cli_root_block_state("top_level_collection_entry", arena, exprs)
           unless skip_file_directive?(source, flags)
             pending_annotations = [] of Frontend::AnnotationNode
             expr_i = 0
@@ -1050,6 +1357,8 @@ module CrystalV2
                 main_exprs,
                 pending_annotations,
                 acyclic_types,
+                top_level_type_names,
+                top_level_class_kinds,
                 flags,
                 sources_by_arena,
                 source
@@ -1057,11 +1366,13 @@ module CrystalV2
               expr_i += 1
             end
           end
+          bootstrap_trace_puts "[S2_HIR_SETUP] phase=collect_arena_done idx=#{arena_i} defs=#{def_nodes.size} classes=#{class_nodes.size} modules=#{module_nodes.size} enums=#{enum_nodes.size} aliases=#{alias_nodes.size} libs=#{lib_nodes.size} type_names=#{top_level_type_names.size}"; STDERR.flush
           arena_i += 1
         end
+        bootstrap_trace_puts "[S2_HIR_SETUP] phase=collect_done defs=#{def_nodes.size} classes=#{class_nodes.size} modules=#{module_nodes.size} enums=#{enum_nodes.size} aliases=#{alias_nodes.size} libs=#{lib_nodes.size} type_names=#{top_level_type_names.size}"; STDERR.flush
         stage2_debug("[STAGE2_DEBUG] top-level collection done defs=#{def_nodes.size} classes=#{class_nodes.size} modules=#{module_nodes.size} constants=#{constant_exprs.size} main=#{main_exprs.size}", err_io)
         if const_map_trace
-          STDERR.puts "[CONST_MAP] phase=top_level_collection_done literals=#{hir_converter.constant_literal_values.size} types=#{hir_converter.constant_types.size}"
+          bootstrap_trace_puts "[CONST_MAP] phase=top_level_collection_done literals=#{hir_converter.constant_literal_values.size} types=#{hir_converter.constant_types.size}"
         end
         if debug_profile
           timings["dbg_ms_hir_collect"] = (Time.instant - hir_collect_start.not_nil!).total_milliseconds
@@ -1079,51 +1390,18 @@ module CrystalV2
 
         hir_phase_start = Time.instant if debug_profile
         stage2_debug("[STAGE2_DEBUG] seed top-level names start", err_io)
-        top_level_type_names = Set(String).new
-        i = 0
-        while i < class_nodes.size
-          node, _ = class_nodes.unsafe_fetch(i)
-          top_level_type_names.add(String.new(node.name))
-          i += 1
-        end
-        i = 0
-        while i < module_nodes.size
-          node, _ = module_nodes.unsafe_fetch(i)
-          top_level_type_names.add(String.new(node.name))
-          i += 1
-        end
-        i = 0
-        while i < enum_nodes.size
-          node, _ = enum_nodes.unsafe_fetch(i)
-          top_level_type_names.add(String.new(node.name))
-          i += 1
-        end
-        i = 0
-        while i < alias_nodes.size
-          node, _ = alias_nodes.unsafe_fetch(i)
-          top_level_type_names.add(String.new(node.name))
-          i += 1
-        end
-        i = 0
-        while i < lib_nodes.size
-          entry = lib_nodes.unsafe_fetch(i)
-          top_level_type_names.add(String.new(entry.node.name))
-          i += 1
-        end
+        bootstrap_trace_puts "[S2_HIR_SETUP] phase=seed_names_enter type_names=#{top_level_type_names.size} class_kinds=#{top_level_class_kinds.size}"; STDERR.flush
         unless top_level_type_names.empty?
+          bootstrap_trace_puts "[S2_HIR_SETUP] phase=seed_type_names_before count=#{top_level_type_names.size}"; STDERR.flush
           hir_converter.seed_top_level_type_names(top_level_type_names)
-        end
-        top_level_class_kinds = {} of String => Bool
-        i = 0
-        while i < class_nodes.size
-          node, _ = class_nodes.unsafe_fetch(i)
-          name = String.new(node.name)
-          top_level_class_kinds[name] = node.is_struct == true
-          i += 1
+          bootstrap_trace_puts "[S2_HIR_SETUP] phase=seed_type_names_after count=#{top_level_type_names.size}"; STDERR.flush
         end
         unless top_level_class_kinds.empty?
+          bootstrap_trace_puts "[S2_HIR_SETUP] phase=seed_class_kinds_before count=#{top_level_class_kinds.size}"; STDERR.flush
           hir_converter.seed_top_level_class_kinds(top_level_class_kinds)
+          bootstrap_trace_puts "[S2_HIR_SETUP] phase=seed_class_kinds_after count=#{top_level_class_kinds.size}"; STDERR.flush
         end
+        bootstrap_trace_puts "[S2_HIR_SETUP] phase=seed_names_done"; STDERR.flush
         stage2_debug("[STAGE2_DEBUG] seed top-level names done", err_io)
         if debug_profile
           timings["dbg_ms_hir_seed_names"] = (Time.instant - hir_phase_start.not_nil!).total_milliseconds
@@ -1147,7 +1425,7 @@ module CrystalV2
               when Frontend::ConstantNode
                 if debug_filter && (debug_filter == "1" || String.new(expr_node.name) == debug_filter)
                   path = paths_by_arena[arena.object_id.to_u64]? || "(unknown)"
-                  STDERR.puts "[PRE_SCAN_CONST] owner=#{owner} name=#{String.new(expr_node.name)} file=#{path}"
+                  bootstrap_trace_puts "[PRE_SCAN_CONST] owner=#{owner} name=#{String.new(expr_node.name)} file=#{path}"
                 end
                 hir_converter.register_constant(expr_node, owner)
               when Frontend::AssignNode
@@ -1155,7 +1433,7 @@ module CrystalV2
                 if target.is_a?(Frontend::ConstantNode)
                   if debug_filter && (debug_filter == "1" || String.new(target.name) == debug_filter)
                     path = paths_by_arena[arena.object_id.to_u64]? || "(unknown)"
-                    STDERR.puts "[PRE_SCAN_CONST] owner=#{owner} name=#{String.new(target.name)} file=#{path}"
+                    bootstrap_trace_puts "[PRE_SCAN_CONST] owner=#{owner} name=#{String.new(target.name)} file=#{path}"
                   end
                   hir_converter.register_constant_value(String.new(target.name), expr_node.value, arena, owner)
                 end
@@ -1193,9 +1471,13 @@ module CrystalV2
         end
 
         stage2_debug("[STAGE2_DEBUG] pre-scan class/module loops start", err_io)
+        bootstrap_trace_puts "[S2_HIR_SETUP] phase=prescan_enter class_count=#{class_nodes.size} module_count=#{module_nodes.size}"; STDERR.flush
         i = 0
         while i < class_nodes.size
+          bootstrap_trace_puts "[S2_HIR_SETUP] phase=prescan_class_before_fetch idx=#{i}"; STDERR.flush
           class_node, arena = class_nodes.unsafe_fetch(i)
+          class_path = paths_by_arena[arena.object_id.to_u64]? || "(unknown)"
+          bootstrap_trace_puts "[S2_HIR_SETUP] phase=prescan_class_after_fetch idx=#{i} path=#{class_path}"; STDERR.flush
           if body = class_node.body
             if arena.is_a?(Frontend::AstArena)
               hir_converter.arena = arena
@@ -1208,12 +1490,26 @@ module CrystalV2
 
         i = 0
         while i < module_nodes.size
+          bootstrap_trace_puts "[S2_HIR_SETUP] phase=prescan_module_before_fetch idx=#{i}"; STDERR.flush
           module_node, arena = module_nodes.unsafe_fetch(i)
+          module_path = paths_by_arena[arena.object_id.to_u64]? || "(unknown)"
+          bootstrap_trace_puts "[S2_HIR_SETUP] phase=prescan_module_after_fetch idx=#{i} path=#{module_path}"; STDERR.flush
           if body = module_node.body
             if arena.is_a?(Frontend::AstArena)
               hir_converter.arena = arena
+              if module_path.ends_with?("/src/compiler/cli.cr")
+                bootstrap_trace_puts "[S2_HIR_SETUP] phase=prescan_module_body_ready idx=#{i} body_size=#{body.size}"; STDERR.flush
+                bootstrap_trace_puts "[S2_HIR_SETUP] phase=prescan_module_before_name idx=#{i}"; STDERR.flush
+              end
               module_name = String.new(module_node.name)
+              if module_path.ends_with?("/src/compiler/cli.cr")
+                bootstrap_trace_puts "[S2_HIR_SETUP] phase=prescan_module_after_name idx=#{i} name=#{module_name}"; STDERR.flush
+                bootstrap_trace_puts "[S2_HIR_SETUP] phase=prescan_module_before_scan idx=#{i}"; STDERR.flush
+              end
               scan_module_body.call(module_name, arena, body)
+              if module_path.ends_with?("/src/compiler/cli.cr")
+                bootstrap_trace_puts "[S2_HIR_SETUP] phase=prescan_module_after_scan idx=#{i}"; STDERR.flush
+              end
             end
           end
           i += 1
@@ -1224,58 +1520,81 @@ module CrystalV2
           hir_phase_start = Time.instant
         end
         if const_map_trace
-          STDERR.puts "[CONST_MAP] phase=pre_scan_done literals=#{hir_converter.constant_literal_values.size} types=#{hir_converter.constant_types.size}"
+          bootstrap_trace_puts "[CONST_MAP] phase=pre_scan_done literals=#{hir_converter.constant_literal_values.size} types=#{hir_converter.constant_types.size}"
         end
 
         # Pass 1: Register types
+        bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_enter"; STDERR.flush
         if false && BootstrapEnv.enabled?("DEBUG_NESTED_CLASS")
-          STDERR.puts "[DEBUG_CLI] class_nodes: #{class_nodes.size}, module_nodes: #{module_nodes.size}"
+          bootstrap_trace_puts "[DEBUG_CLI] class_nodes: #{class_nodes.size}, module_nodes: #{module_nodes.size}"
           module_nodes.each do |module_node, arena|
             name = String.new(module_node.name)
-            STDERR.puts "[DEBUG_CLI] Module: #{name}, body_size=#{module_node.body.try(&.size) || 0}"
+            bootstrap_trace_puts "[DEBUG_CLI] Module: #{name}, body_size=#{module_node.body.try(&.size) || 0}"
           end
           class_nodes.each do |class_node, arena|
             name = String.new(class_node.name)
             if name == "IO" || name.includes?("FileDescriptor")
-              STDERR.puts "[DEBUG_CLI] Class: #{name}"
+              bootstrap_trace_puts "[DEBUG_CLI] Class: #{name}"
             end
           end
         end
+        bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_before_log_types"; STDERR.flush
         log(options, out_io, "  Pass 1: Registering types...")
+        bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_after_log_types"; STDERR.flush
+        bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_before_log_libs libs=#{lib_nodes.size}"; STDERR.flush
         log(options, out_io, "    Libs: #{lib_nodes.size}")
+        bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_after_log_libs libs=#{lib_nodes.size}"; STDERR.flush
         lib_count = lib_nodes.size
+        bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_lib_count count=#{lib_count}"; STDERR.flush
         stage2_debug("[STAGE2_DEBUG] lib register start count=#{lib_count}", err_io)
-        lib_nodes.each_with_index do |entry, i|
+        bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_before_lib_loop"; STDERR.flush
+        i = 0
+        while i < lib_count
+          entry = lib_nodes.unsafe_fetch(i)
+          bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_lib_loop_idx idx=#{i}"; STDERR.flush
           lib_name = String.new(entry.node.name)
+          bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_lib_name idx=#{i} name=#{lib_name}"; STDERR.flush if i < 3
           if i < 3 || (i % 25 == 0) || i == lib_count - 1
             stage2_debug("[STAGE2_DEBUG] lib register idx=#{i + 1}/#{lib_count} name=#{lib_name}", err_io)
           end
           if debug_env_filter_match?("DEBUG_LIB_ARENA", lib_name)
             entry_arena = entry.arena
             arena_path = paths_by_arena[entry_arena.object_id.to_u64]? || "(unknown)"
-            STDERR.puts "[LIB_ARENA_CLI] idx=#{i + 1}/#{lib_count} lib=#{lib_name} arena=#{entry_arena.class.name.split("::").last}@#{entry_arena.object_id}:size=#{entry_arena.size} path=#{arena_path}"
+            bootstrap_trace_puts "[LIB_ARENA_CLI] idx=#{i + 1}/#{lib_count} lib=#{lib_name} arena=#{entry_arena.class.name.split("::").last}@#{entry_arena.object_id}:size=#{entry_arena.size} path=#{arena_path}"
           end
           hir_converter.arena = entry.arena
           hir_converter.register_lib(entry.node, entry.annotations)
+          bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_lib_registered idx=#{i}"; STDERR.flush
+          i += 1
         end
+        bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_after_lib_loop"; STDERR.flush
         stage2_debug("[STAGE2_DEBUG] lib register done", err_io)
         if debug_profile
           timings["dbg_ms_hir_reg_libs"] = (Time.instant - hir_phase_start.not_nil!).total_milliseconds
           hir_phase_start = Time.instant
         end
         if const_map_trace
-          STDERR.puts "[CONST_MAP] phase=lib_register_done literals=#{hir_converter.constant_literal_values.size} types=#{hir_converter.constant_types.size}"
+          bootstrap_trace_puts "[CONST_MAP] phase=lib_register_done literals=#{hir_converter.constant_literal_values.size} types=#{hir_converter.constant_types.size}"
         end
+        bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_before_log_enums enums=#{enum_nodes.size}"; STDERR.flush
         log(options, out_io, "    Enums: #{enum_nodes.size}")
+        bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_after_log_enums enums=#{enum_nodes.size}"; STDERR.flush
         enum_count = enum_nodes.size
+        bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_enum_count count=#{enum_count}"; STDERR.flush
         stage2_debug("[STAGE2_DEBUG] enum register start count=#{enum_count}", err_io)
-        enum_nodes.each_with_index do |(n, a), i|
+        i = 0
+        while i < enum_count
+          n, a = enum_nodes.unsafe_fetch(i)
+          bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_enum_loop_idx idx=#{i}"; STDERR.flush
           if i < 3 || (i % 50 == 0) || i == enum_count - 1
             stage2_debug("[STAGE2_DEBUG] enum register idx=#{i + 1}/#{enum_count} name=#{String.new(n.name)}", err_io)
           end
           hir_converter.arena = a
           hir_converter.register_enum(n)
+          bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_enum_registered idx=#{i}"; STDERR.flush
+          i += 1
         end
+        bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_after_enum_loop"; STDERR.flush
         stage2_debug("[STAGE2_DEBUG] enum register done", err_io)
         stage2_debug("[STAGE2_DEBUG] enum resolve guard count=#{enum_count}", err_io)
         if enum_count > 0
@@ -1297,28 +1616,38 @@ module CrystalV2
           timings["dbg_ms_hir_reg_enums"] = (Time.instant - hir_phase_start.not_nil!).total_milliseconds
           hir_phase_start = Time.instant
         end
+        bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_before_log_aliases aliases=#{alias_nodes.size}"; STDERR.flush
         log(options, out_io, "    Aliases: #{alias_nodes.size}")
+        bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_after_log_aliases aliases=#{alias_nodes.size}"; STDERR.flush
         alias_count = alias_nodes.size
         stage2_debug("[STAGE2_DEBUG] alias register start count=#{alias_count}", err_io)
-        alias_nodes.each_with_index do |(n, a), i|
+        i = 0
+        while i < alias_count
+          n, a = alias_nodes.unsafe_fetch(i)
           if i < 3 || i == alias_count - 1
             stage2_debug("[STAGE2_DEBUG] alias register idx=#{i + 1}/#{alias_count}", err_io)
           end
           hir_converter.arena = a
           hir_converter.register_alias(n)
+          i += 1
         end
+        bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_after_alias_loop"; STDERR.flush
         stage2_debug("[STAGE2_DEBUG] alias register done", err_io)
         if debug_profile
           timings["dbg_ms_hir_reg_aliases"] = (Time.instant - hir_phase_start.not_nil!).total_milliseconds
           hir_phase_start = Time.instant
         end
         if const_map_trace
-          STDERR.puts "[CONST_MAP] phase=alias_register_done literals=#{hir_converter.constant_literal_values.size} types=#{hir_converter.constant_types.size}"
+          bootstrap_trace_puts "[CONST_MAP] phase=alias_register_done literals=#{hir_converter.constant_literal_values.size} types=#{hir_converter.constant_types.size}"
         end
+        bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_before_log_macros macros=#{macro_nodes.size}"; STDERR.flush
         log(options, out_io, "    Macros: #{macro_nodes.size}")
+        bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_after_log_macros macros=#{macro_nodes.size}"; STDERR.flush
         macro_count = macro_nodes.size
         stage2_debug("[STAGE2_DEBUG] macro register start count=#{macro_count}", err_io)
-        macro_nodes.each_with_index do |entry, i|
+        i = 0
+        while i < macro_count
+          entry = macro_nodes.unsafe_fetch(i)
           if i < 3 || (i % 50 == 0) || i == macro_count - 1
             stage2_debug("[STAGE2_DEBUG] macro register idx=#{i + 1}/#{macro_count}", err_io)
           end
@@ -1327,77 +1656,105 @@ module CrystalV2
           STDERR.print "\r    Registered macro #{i+1}/#{macro_nodes.size}" if options.progress
           hir_converter.arena = a
           hir_converter.register_macro(n)
+          i += 1
         end
+        bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_after_macro_loop"; STDERR.flush
         stage2_debug("[STAGE2_DEBUG] macro register done", err_io)
         if debug_profile
           timings["dbg_ms_hir_reg_macros"] = (Time.instant - hir_phase_start.not_nil!).total_milliseconds
           hir_phase_start = Time.instant
         end
         if const_map_trace
-          STDERR.puts "[CONST_MAP] phase=macro_register_done literals=#{hir_converter.constant_literal_values.size} types=#{hir_converter.constant_types.size}"
+          bootstrap_trace_puts "[CONST_MAP] phase=macro_register_done literals=#{hir_converter.constant_literal_values.size} types=#{hir_converter.constant_types.size}"
         end
-        STDERR.puts if options.progress
+        bootstrap_trace_puts if options.progress
+        bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_before_log_modules modules=#{module_nodes.size}"; STDERR.flush
         log(options, out_io, "    Modules: #{module_nodes.size}")
+        bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_after_log_modules modules=#{module_nodes.size}"; STDERR.flush
         module_count = module_nodes.size
         stage2_debug("[STAGE2_DEBUG] module register start count=#{module_count}", err_io)
         reg_type_profile = BootstrapEnv.enabled?("CRYSTAL_V2_REG_TYPE_PROFILE")
-        module_nodes.each_with_index do |(n, a), i|
+        i = 0
+        while i < module_count
+          bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_module_before_fetch idx=#{i}"; STDERR.flush
+          n, a = module_nodes.unsafe_fetch(i)
+          module_path = paths_by_arena[a.object_id.to_u64]? || "(unknown)"
+          bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_module_after_fetch idx=#{i} path=#{module_path}"; STDERR.flush
           if i < 3 || (i % 50 == 0) || i == module_count - 1
             stage2_debug("[STAGE2_DEBUG] module register idx=#{i + 1}/#{module_count}", err_io)
           end
           hir_converter.arena = a
+          bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_module_before_name idx=#{i}"; STDERR.flush
+          module_name = String.new(n.name)
+          bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_module_after_name idx=#{i} name=#{module_name}"; STDERR.flush
           if options.progress && env_enabled?("CRYSTAL_V2_PROGRESS_MODULE_NAMES")
-            STDERR.puts "\n    Module #{i + 1}/#{module_nodes.size}: #{String.new(n.name)}"
+            bootstrap_trace_puts "\n    Module #{i + 1}/#{module_nodes.size}: #{module_name}"
           end
           reg_t0 = Time.instant if reg_type_profile
+          bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_module_before_register idx=#{i}"; STDERR.flush
           hir_converter.register_module(n)
+          bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_module_after_register idx=#{i}"; STDERR.flush
           if reg_type_profile
             ms = (Time.instant - reg_t0.not_nil!).total_milliseconds
-            STDERR.puts "[REG_TYPE] module #{String.new(n.name)} #{ms.round(1)}ms" if ms > 5.0
+            bootstrap_trace_puts "[REG_TYPE] module #{module_name} #{ms.round(1)}ms" if ms > 5.0
           end
           if options.progress && (i % 10 == 0 || i == module_nodes.size - 1)
             STDERR.print "\r    Registered module #{i + 1}/#{module_nodes.size}"
           end
+          i += 1
         end
+        bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_after_module_loop"; STDERR.flush
         stage2_debug("[STAGE2_DEBUG] module register done", err_io)
         if debug_profile
           timings["dbg_ms_hir_reg_modules"] = (Time.instant - hir_phase_start.not_nil!).total_milliseconds
           hir_phase_start = Time.instant
         end
         if const_map_trace
-          STDERR.puts "[CONST_MAP] phase=module_register_done literals=#{hir_converter.constant_literal_values.size} types=#{hir_converter.constant_types.size}"
+          bootstrap_trace_puts "[CONST_MAP] phase=module_register_done literals=#{hir_converter.constant_literal_values.size} types=#{hir_converter.constant_types.size}"
         end
-        STDERR.puts if options.progress
+        bootstrap_trace_puts if options.progress
+        bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_before_log_classes classes=#{class_nodes.size}"; STDERR.flush
         log(options, out_io, "    Classes: #{class_nodes.size}")
+        bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_after_log_classes classes=#{class_nodes.size}"; STDERR.flush
         class_count = class_nodes.size
         stage2_debug("[STAGE2_DEBUG] class register start count=#{class_count}", err_io)
-        class_nodes.each_with_index do |(n, a), i|
+        i = 0
+        while i < class_count
+          n, a = class_nodes.unsafe_fetch(i)
           if i < 3 || (i % 50 == 0) || i == class_count - 1
             stage2_debug("[STAGE2_DEBUG] class register idx=#{i + 1}/#{class_count}", err_io)
           end
+          class_path = paths_by_arena[a.object_id.to_u64]? || "(unknown)"
+          trace_single_class_state("pass1_class_before_register", class_path, a, n)
           hir_converter.arena = a
           reg_t0 = Time.instant if reg_type_profile
           hir_converter.register_class(n)
           if reg_type_profile
             ms = (Time.instant - reg_t0.not_nil!).total_milliseconds
-            STDERR.puts "[REG_TYPE] class #{String.new(n.name)} #{ms.round(1)}ms" if ms > 5.0
+            bootstrap_trace_puts "[REG_TYPE] class #{String.new(n.name)} #{ms.round(1)}ms" if ms > 5.0
           end
           STDERR.print "\r    Registered class #{i+1}/#{class_nodes.size}" if options.progress && (i % 10 == 0 || i == class_nodes.size - 1)
+          i += 1
         end
+        bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_after_class_loop"; STDERR.flush
         stage2_debug("[STAGE2_DEBUG] class register done", err_io)
         if debug_profile
           timings["dbg_ms_hir_reg_classes"] = (Time.instant - hir_phase_start.not_nil!).total_milliseconds
           hir_phase_start = Time.instant
         end
         if const_map_trace
-          STDERR.puts "[CONST_MAP] phase=class_register_done literals=#{hir_converter.constant_literal_values.size} types=#{hir_converter.constant_types.size}"
+          bootstrap_trace_puts "[CONST_MAP] phase=class_register_done literals=#{hir_converter.constant_literal_values.size} types=#{hir_converter.constant_types.size}"
         end
-        STDERR.puts if options.progress
+        bootstrap_trace_puts if options.progress
 
         constant_count = constant_exprs.size
         stage2_debug("[STAGE2_DEBUG] constant register start count=#{constant_count}", err_io)
+        bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_before_log_constants constants=#{constant_exprs.size}"; STDERR.flush
         log(options, out_io, "    Constants: #{constant_exprs.size}")
-        constant_exprs.each_with_index do |(expr_id, arena), i|
+        bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_after_log_constants constants=#{constant_exprs.size}"; STDERR.flush
+        i = 0
+        while i < constant_count
+          expr_id, arena = constant_exprs.unsafe_fetch(i)
           if i < 3 || i == constant_count - 1
             stage2_debug("[STAGE2_DEBUG] constant register idx=#{i + 1}/#{constant_count}", err_io)
           end
@@ -1412,14 +1769,16 @@ module CrystalV2
               hir_converter.register_constant_value(String.new(target.name), node.value, arena)
             end
           end
+          i += 1
         end
+        bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_after_constant_loop"; STDERR.flush
         stage2_debug("[STAGE2_DEBUG] constant register done", err_io)
         if debug_profile
           timings["dbg_ms_hir_reg_constants"] = (Time.instant - hir_phase_start.not_nil!).total_milliseconds
           hir_phase_start = Time.instant
         end
         if const_map_trace
-          STDERR.puts "[CONST_MAP] phase=constant_register_done literals=#{hir_converter.constant_literal_values.size} types=#{hir_converter.constant_types.size}"
+          bootstrap_trace_puts "[CONST_MAP] phase=constant_register_done literals=#{hir_converter.constant_literal_values.size} types=#{hir_converter.constant_types.size}"
         end
 
         # Flush pending monomorphizations now that all templates are registered
@@ -1453,6 +1812,17 @@ module CrystalV2
           if i < 3 || (i % 100 == 0) || i == def_count - 1
             stage2_debug("[STAGE2_DEBUG] pass2 register_functions idx=#{i + 1}/#{def_count}", err_io)
           end
+          if env_enabled?("DEBUG_CLI_PASS2_DEF_BLOCK_STATE")
+            if body = n.body
+              body.each do |body_expr|
+                next if body_expr.index < 0 || body_expr.index >= a.size
+                body_node = a[body_expr]
+                next unless body_node.is_a?(Frontend::CallNode)
+                block_id = body_node.block
+                debug_cli_block_snapshot("pass2_before_register_def", a, block_id) if block_id
+              end
+            end
+          end
           hir_converter.arena = a
           hir_converter.register_function(n)
           STDERR.print "\r    Registered function #{i+1}/#{def_nodes.size}" if options.progress && (i % 50 == 0 || i == def_nodes.size - 1)
@@ -1463,9 +1833,9 @@ module CrystalV2
           hir_phase_start = Time.instant
         end
         if const_map_trace
-          STDERR.puts "[CONST_MAP] phase=register_functions_done literals=#{hir_converter.constant_literal_values.size} types=#{hir_converter.constant_types.size}"
+          bootstrap_trace_puts "[CONST_MAP] phase=register_functions_done literals=#{hir_converter.constant_literal_values.size} types=#{hir_converter.constant_types.size}"
         end
-        STDERR.puts if options.progress
+        bootstrap_trace_puts if options.progress
 
         # Fix inherited ivars: ensure subclasses include parent ivars with correct offsets.
         # Must run before function lowering since GEP offsets are baked into HIR instructions.
@@ -1477,7 +1847,7 @@ module CrystalV2
           hir_phase_start = Time.instant
         end
         if const_map_trace
-          STDERR.puts "[CONST_MAP] phase=fixup_inherited_ivars_done literals=#{hir_converter.constant_literal_values.size} types=#{hir_converter.constant_types.size}"
+          bootstrap_trace_puts "[CONST_MAP] phase=fixup_inherited_ivars_done literals=#{hir_converter.constant_literal_values.size} types=#{hir_converter.constant_types.size}"
         end
 
         # Pass 3: Lower bodies (lazy)
@@ -1486,7 +1856,7 @@ module CrystalV2
         log(options, out_io, "  Pass 3: Lowering bodies (lazy)...")
 
         # Create main function from top-level expressions (or user-defined main)
-        STDERR.puts "  Creating main function..." if options.progress
+        bootstrap_trace_puts "  Creating main function..." if options.progress
         if main_exprs.size > 0
           hir_converter.lower_main(main_exprs)
         elsif main_def = def_nodes.find { |(n, _)| String.new(n.name) == "main" && !(n.receiver.try { |recv| String.new(recv) == HIR::AstToHir::FUN_DEF_RECEIVER } || false) }
@@ -1500,8 +1870,8 @@ module CrystalV2
         end
 
         after_lower_main = hir_mod.function_count
-        STDERR.puts "  lower_main done, #{after_lower_main} functions" if options.progress
-        STDERR.puts "[PHASE_STATS] After lower_main: #{after_lower_main} functions" if BootstrapEnv.enabled?("CRYSTAL_V2_PHASE_STATS")
+        bootstrap_trace_puts "  lower_main done, #{after_lower_main} functions" if options.progress
+        bootstrap_trace_puts "[PHASE_STATS] After lower_main: #{after_lower_main} functions" if BootstrapEnv.enabled?("CRYSTAL_V2_PHASE_STATS")
 
         # Pass 2.5: AST reachability pre-filter (experimental, opt-in)
         # AST reachability pre-filter: skip functions whose method name was never
@@ -1511,13 +1881,13 @@ module CrystalV2
           ast_result = hir_converter.compute_ast_reachable_functions(main_exprs)
           hir_converter.set_ast_reachable_filter(ast_result[:defs], ast_result[:method_names], ast_result[:owner_types], ast_result[:method_bases])
           if BootstrapEnv.enabled?("CRYSTAL_V2_PHASE_STATS")
-            STDERR.puts "[PHASE_STATS] AST filter: #{ast_result[:defs].size}/#{hir_converter.function_defs_count} defs reachable, #{ast_result[:method_names].size} method names in #{(Time.instant - ast_filter_start).total_milliseconds.round(1)}ms"
+            bootstrap_trace_puts "[PHASE_STATS] AST filter: #{ast_result[:defs].size}/#{hir_converter.function_defs_count} defs reachable, #{ast_result[:method_names].size} method names in #{(Time.instant - ast_filter_start).total_milliseconds.round(1)}ms"
           end
         elsif BootstrapEnv.enabled?("CRYSTAL_V2_PHASE_STATS")
           # Just compute for analysis, don't activate filter
           ast_filter_start = Time.instant
           ast_result = hir_converter.compute_ast_reachable_functions(main_exprs)
-          STDERR.puts "[PHASE_STATS] AST analysis: #{ast_result[:defs].size}/#{hir_converter.function_defs_count} defs reachable, #{ast_result[:method_names].size} method names (analysis-only, #{(Time.instant - ast_filter_start).total_milliseconds.round(1)}ms)"
+          bootstrap_trace_puts "[PHASE_STATS] AST analysis: #{ast_result[:defs].size}/#{hir_converter.function_defs_count} defs reachable, #{ast_result[:method_names].size} method names (analysis-only, #{(Time.instant - ast_filter_start).total_milliseconds.round(1)}ms)"
         end
 
         # Ensure top-level `fun main` is lowered as a real entrypoint (C ABI).
@@ -1529,9 +1899,9 @@ module CrystalV2
           hir_converter.flush_pending_functions
           did_flush = true
         end
-        STDERR.puts "  Flushing pending functions..." if options.progress
+        bootstrap_trace_puts "  Flushing pending functions..." if options.progress
         hir_converter.flush_pending_functions unless did_flush
-        STDERR.puts "  Main function created" if options.progress
+        bootstrap_trace_puts "  Main function created" if options.progress
 
         if debug_profile
           timings["dbg_ms_hir_lower_bodies"] = (Time.instant - hir_phase_start.not_nil!).total_milliseconds
@@ -1541,9 +1911,9 @@ module CrystalV2
         # Refresh generic type params that were captured as VOID after lowering.
         hir_converter.refresh_void_type_params
 
-        STDERR.puts "  Getting HIR module..." if options.progress
+        bootstrap_trace_puts "  Getting HIR module..." if options.progress
         hir_module = hir_mod
-        STDERR.puts "  Got HIR module with #{hir_module.functions.size} functions" if options.progress
+        bootstrap_trace_puts "  Got HIR module with #{hir_module.functions.size} functions" if options.progress
         timings["dbg_count_hir_funcs_before_rta"] = hir_module.functions.size.to_f if debug_profile
         options.link_libraries = link_libs.dup
         log(options, out_io, "  Functions: #{hir_module.functions.size}")
@@ -1577,16 +1947,16 @@ module CrystalV2
                 pruned_owners[base_owner] += 1
               end
             end
-            STDERR.puts "[RTA_PRUNED] #{total_before - reachable.size} functions pruned, top owners:"
+            bootstrap_trace_puts "[RTA_PRUNED] #{total_before - reachable.size} functions pruned, top owners:"
             pruned_owners.to_a.sort_by { |_, c| -c }.first(30).each do |name, count|
-              STDERR.puts "  #{name}: #{count}"
+              bootstrap_trace_puts "  #{name}: #{count}"
             end
           end
           hir_module.functions.select! { |func| reachable.includes?(func.name) }
           discarded = total_before - hir_module.functions.size
           rta_msg = "  Reachable functions: #{hir_module.functions.size}/#{total_before} (discarded #{discarded}, #{(discarded * 100.0 / total_before).round(1)}%)"
           log(options, out_io, rta_msg)
-          STDERR.puts "[PHASE_STATS] RTA: #{rta_msg.strip}" if BootstrapEnv.enabled?("CRYSTAL_V2_PHASE_STATS")
+          bootstrap_trace_puts "[PHASE_STATS] RTA: #{rta_msg.strip}" if BootstrapEnv.enabled?("CRYSTAL_V2_PHASE_STATS")
         end
         timings["hir_rta"] = (Time.instant - rta_start).total_milliseconds if options.stats
         timings["hir_reachable_funcs"] = hir_module.functions.size.to_f if options.stats
@@ -1643,7 +2013,7 @@ module CrystalV2
         if effective_ea
           hir_module.functions.each_with_index do |func, idx|
             if options.progress && (idx % 1000 == 0 || idx == total_funcs - 1)
-              STDERR.puts "  Escape analysis: #{idx + 1}/#{total_funcs}..."
+              bootstrap_trace_puts "  Escape analysis: #{idx + 1}/#{total_funcs}..."
             end
 
             # Fast-path: skip EA for functions with no allocation instructions
@@ -1722,19 +2092,19 @@ module CrystalV2
 
         # Step 4: Lower to MIR
         log(options, out_io, "\n[4/6] Lowering to MIR...")
-        STDERR.puts "[STAGE2_TRACE] step4: MIR lowering start"
+        bootstrap_trace_puts "[STAGE2_TRACE] step4: MIR lowering start"
         STDERR.flush
         mir_start = Time.instant
         mir_setup_trace = BootstrapEnv.enabled?("CRYSTAL_V2_MIR_SETUP_TRACE") || BootstrapEnv.enabled?("CRYSTAL2_MIR_SETUP_TRACE")
-        STDERR.puts "[STAGE2_TRACE] step4: before lowering.new"; STDERR.flush
+        bootstrap_trace_puts "[STAGE2_TRACE] step4: before lowering.new"; STDERR.flush
         mir_lowering = MIR::HIRToMIRLowering.new(hir_module, slab_frame: options.slab_frame)
-        STDERR.puts "[STAGE2_TRACE] step4: lowering initialized"; STDERR.flush
+        bootstrap_trace_puts "[STAGE2_TRACE] step4: lowering initialized"; STDERR.flush
 
         # Register globals from class variables
         globals = [] of Tuple(String, HIR::TypeRef, Int64?)
         if mir_setup_trace
-          STDERR.puts "[MIR_SETUP] class_info size=#{hir_converter.class_info.size}"
-          STDERR.puts "[MIR_SETUP] class_vars scan start"
+          bootstrap_trace_puts "[MIR_SETUP] class_info size=#{hir_converter.class_info.size}"
+          bootstrap_trace_puts "[MIR_SETUP] class_vars scan start"
         end
         hir_converter.class_info.each do |class_name, info|
           info.class_vars.each do |cvar|
@@ -1742,19 +2112,19 @@ module CrystalV2
             globals << {global_name, cvar.type, cvar.initial_value}
           end
         end
-        STDERR.puts "[MIR_SETUP] class_vars scan done globals=#{globals.size}" if mir_setup_trace
+        bootstrap_trace_puts "[MIR_SETUP] class_vars scan done globals=#{globals.size}" if mir_setup_trace
 
         # Register lib/module/class constants as globals with initial values
         # Without this, constants like LibC::EVFILT_USER are zero-initialized
-        STDERR.puts "[MIR_SETUP] globals.to_set start count=#{globals.size}" if mir_setup_trace
+        bootstrap_trace_puts "[MIR_SETUP] globals.to_set start count=#{globals.size}" if mir_setup_trace
         registered_globals = globals.map { |g| g[0] }.to_set
-        STDERR.puts "[MIR_SETUP] globals.to_set done count=#{registered_globals.size}" if mir_setup_trace
-        STDERR.puts "[MIR_SETUP] constant_literals size=#{hir_converter.constant_literal_values.size}" if mir_setup_trace
-        STDERR.puts "[MIR_SETUP] constant_literals scan start" if mir_setup_trace
+        bootstrap_trace_puts "[MIR_SETUP] globals.to_set done count=#{registered_globals.size}" if mir_setup_trace
+        bootstrap_trace_puts "[MIR_SETUP] constant_literals size=#{hir_converter.constant_literal_values.size}" if mir_setup_trace
+        bootstrap_trace_puts "[MIR_SETUP] constant_literals scan start" if mir_setup_trace
         const_literal_idx = 0
         hir_converter.constant_literal_values.each do |full_name, macro_value|
           if mir_setup_trace && const_literal_idx < 4
-            STDERR.puts "[MIR_SETUP] constant_literal idx=#{const_literal_idx} key_class=#{full_name.class.name} key_bytes=#{full_name.bytesize} value_class=#{macro_value.class.name} is_num=#{macro_value.is_a?(CrystalV2::Compiler::Semantic::MacroNumberValue) ? 1 : 0} is_bool=#{macro_value.is_a?(CrystalV2::Compiler::Semantic::MacroBoolValue) ? 1 : 0}"
+            bootstrap_trace_puts "[MIR_SETUP] constant_literal idx=#{const_literal_idx} key_class=#{full_name.class.name} key_bytes=#{full_name.bytesize} value_class=#{macro_value.class.name} is_num=#{macro_value.is_a?(CrystalV2::Compiler::Semantic::MacroNumberValue) ? 1 : 0} is_bool=#{macro_value.is_a?(CrystalV2::Compiler::Semantic::MacroBoolValue) ? 1 : 0}"
           end
           const_literal_idx += 1
           next unless macro_value.is_a?(CrystalV2::Compiler::Semantic::MacroNumberValue)
@@ -1773,35 +2143,35 @@ module CrystalV2
           globals << {global_name, const_type, macro_value.value.as(Int64)}
           registered_globals.add(global_name)
         end
-        STDERR.puts "[MIR_SETUP] constant_literals scan done globals=#{globals.size}" if mir_setup_trace
+        bootstrap_trace_puts "[MIR_SETUP] constant_literals scan done globals=#{globals.size}" if mir_setup_trace
 
-        STDERR.puts "[MIR_SETUP] register_globals count=#{globals.size}" if mir_setup_trace
+        bootstrap_trace_puts "[MIR_SETUP] register_globals count=#{globals.size}" if mir_setup_trace
         mir_lowering.register_globals(globals)
-        STDERR.puts "[MIR_SETUP] register_globals done" if mir_setup_trace
-        STDERR.puts "[MIR_SETUP] register_extern_globals count=#{hir_module.extern_globals.size}" if mir_setup_trace
+        bootstrap_trace_puts "[MIR_SETUP] register_globals done" if mir_setup_trace
+        bootstrap_trace_puts "[MIR_SETUP] register_extern_globals count=#{hir_module.extern_globals.size}" if mir_setup_trace
         mir_lowering.register_extern_globals(hir_module.extern_globals)
-        STDERR.puts "[MIR_SETUP] register_extern_globals done" if mir_setup_trace
-        STDERR.puts "[MIR_SETUP] register_union_types count=#{hir_converter.union_descriptors.size}" if mir_setup_trace
+        bootstrap_trace_puts "[MIR_SETUP] register_extern_globals done" if mir_setup_trace
+        bootstrap_trace_puts "[MIR_SETUP] register_union_types count=#{hir_converter.union_descriptors.size}" if mir_setup_trace
         mir_lowering.register_union_types(hir_converter.union_descriptors)
-        STDERR.puts "[MIR_SETUP] register_union_types done" if mir_setup_trace
-        STDERR.puts "[MIR_SETUP] register_union_type_aliases types=#{hir_module.types.size}" if mir_setup_trace
+        bootstrap_trace_puts "[MIR_SETUP] register_union_types done" if mir_setup_trace
+        bootstrap_trace_puts "[MIR_SETUP] register_union_type_aliases types=#{hir_module.types.size}" if mir_setup_trace
         mir_lowering.register_union_type_aliases(hir_module.types)
-        STDERR.puts "[MIR_SETUP] register_union_type_aliases done" if mir_setup_trace
-        STDERR.puts "[MIR_SETUP] register_class_types count=#{hir_converter.class_info.size}" if mir_setup_trace
+        bootstrap_trace_puts "[MIR_SETUP] register_union_type_aliases done" if mir_setup_trace
+        bootstrap_trace_puts "[MIR_SETUP] register_class_types count=#{hir_converter.class_info.size}" if mir_setup_trace
         mir_lowering.register_class_types(hir_converter.class_info)
-        STDERR.puts "[MIR_SETUP] register_class_types done" if mir_setup_trace
-        STDERR.puts "[MIR_SETUP] register_enum_types enum_names=#{hir_converter.enum_names.size}" if mir_setup_trace
+        bootstrap_trace_puts "[MIR_SETUP] register_class_types done" if mir_setup_trace
+        bootstrap_trace_puts "[MIR_SETUP] register_enum_types enum_names=#{hir_converter.enum_names.size}" if mir_setup_trace
         mir_lowering.register_enum_types(hir_converter.enum_names, hir_module.types)
-        STDERR.puts "[MIR_SETUP] register_enum_types done" if mir_setup_trace
-        STDERR.puts "[MIR_SETUP] register_module_types types=#{hir_module.types.size}" if mir_setup_trace
+        bootstrap_trace_puts "[MIR_SETUP] register_enum_types done" if mir_setup_trace
+        bootstrap_trace_puts "[MIR_SETUP] register_module_types types=#{hir_module.types.size}" if mir_setup_trace
         mir_lowering.register_module_types(hir_module.types)
-        STDERR.puts "[MIR_SETUP] register_module_types done" if mir_setup_trace
-        STDERR.puts "[MIR_SETUP] register_container_types types=#{hir_module.types.size}" if mir_setup_trace
+        bootstrap_trace_puts "[MIR_SETUP] register_module_types done" if mir_setup_trace
+        bootstrap_trace_puts "[MIR_SETUP] register_container_types types=#{hir_module.types.size}" if mir_setup_trace
         mir_lowering.register_container_types(hir_module.types)
-        STDERR.puts "[MIR_SETUP] register_container_types done" if mir_setup_trace
-        STDERR.puts "[MIR_SETUP] register_tuple_types types=#{hir_module.types.size}" if mir_setup_trace
+        bootstrap_trace_puts "[MIR_SETUP] register_container_types done" if mir_setup_trace
+        bootstrap_trace_puts "[MIR_SETUP] register_tuple_types types=#{hir_module.types.size}" if mir_setup_trace
         mir_lowering.register_tuple_types(hir_module.types)
-        STDERR.puts "[MIR_SETUP] register_tuple_types done" if mir_setup_trace
+        bootstrap_trace_puts "[MIR_SETUP] register_tuple_types done" if mir_setup_trace
 
         # Fused parallel mode: MIR lowering + optimization + LLVM emission in one parallel step.
         # Default off — fused mode has correctness issues with worker-side state (symbols,
@@ -1811,10 +2181,10 @@ module CrystalV2
 
         if fused_parallel && !options.emit_mir && !BootstrapEnv.enabled?("CRYSTAL_V2_STOP_AFTER_MIR")
           # Fused path: prepare stubs only, defer body lowering to parallel LLVM workers
-          STDERR.puts "  Preparing #{hir_module.functions.size} MIR function stubs..." if options.progress
-          STDERR.puts "[MIR_SETUP] prepare stubs count=#{hir_module.functions.size}" if mir_setup_trace
+          bootstrap_trace_puts "  Preparing #{hir_module.functions.size} MIR function stubs..." if options.progress
+          bootstrap_trace_puts "[MIR_SETUP] prepare stubs count=#{hir_module.functions.size}" if mir_setup_trace
           mir_module = mir_lowering.prepare(options.progress)
-          STDERR.puts "[MIR_SETUP] prepare done stubs=#{mir_module.functions.size}" if mir_setup_trace
+          bootstrap_trace_puts "[MIR_SETUP] prepare done stubs=#{mir_module.functions.size}" if mir_setup_trace
           timings["dbg_count_mir_funcs"] = mir_module.functions.size.to_f if debug_profile
           log(options, out_io, "  Functions: #{mir_module.functions.size} (stubs, fused parallel)")
           timings["mir"] = (Time.instant - mir_start).total_milliseconds if options.stats
@@ -1832,8 +2202,8 @@ module CrystalV2
           end
         else
           # Serial path: full MIR lowering + optimization
-          STDERR.puts "  Lowering #{hir_module.functions.size} functions to MIR..." if options.progress
-          STDERR.puts "[MIR_SETUP] lowering bodies count=#{hir_module.functions.size}" if mir_setup_trace
+          bootstrap_trace_puts "  Lowering #{hir_module.functions.size} functions to MIR..." if options.progress
+          bootstrap_trace_puts "[MIR_SETUP] lowering bodies count=#{hir_module.functions.size}" if mir_setup_trace
           mir_prepare_start = options.stats ? Time.instant : nil
           mir_module = mir_lowering.prepare(options.progress)
           mir_prepare_ms = if start = mir_prepare_start
@@ -1848,11 +2218,11 @@ module CrystalV2
                          else
                            0.0
                          end
-          STDERR.puts "[MIR_SETUP] lowering bodies done funcs=#{mir_module.functions.size}" if mir_setup_trace
+          bootstrap_trace_puts "[MIR_SETUP] lowering bodies done funcs=#{mir_module.functions.size}" if mir_setup_trace
           timings["mir_prepare"] = mir_prepare_ms if options.stats
           timings["mir_lower"] = mir_lower_ms if options.stats
           timings["dbg_count_mir_funcs"] = mir_module.functions.size.to_f if debug_profile
-          STDERR.puts "[STAGE2_TRACE] step4: MIR funcs=#{mir_module.functions.size}"; STDERR.flush
+          bootstrap_trace_puts "[STAGE2_TRACE] step4: MIR funcs=#{mir_module.functions.size}"; STDERR.flush
           log(options, out_io, "  Functions: #{mir_module.functions.size}")
           timings["mir"] = (Time.instant - mir_start).total_milliseconds if options.stats
           timings["mir_funcs"] = mir_module.functions.size.to_f if options.stats
@@ -1871,7 +2241,7 @@ module CrystalV2
             end
             mir_module.functions.each_with_index do |func, idx|
               begin
-                STDERR.puts "  Optimizing #{idx + 1}/#{mir_module.functions.size}: #{func.name}..." if options.progress
+                bootstrap_trace_puts "  Optimizing #{idx + 1}/#{mir_module.functions.size}: #{func.name}..." if options.progress
                 if func.blocks.all? { |block| block.instructions.empty? }
                   log(options, out_io, "    #{func.name} -> skipped (empty body)") if options.verbose
                   next
@@ -1924,32 +2294,32 @@ module CrystalV2
         end
 
         # Step 5: Generate LLVM IR
-        STDERR.puts "[STAGE2_TRACE] step5: LLVM IR generation start"; STDERR.flush
+        bootstrap_trace_puts "[STAGE2_TRACE] step5: LLVM IR generation start"; STDERR.flush
         log(options, out_io, "\n[5/6] Generating LLVM IR...")
         llvm_start = Time.instant
         llvm_setup_trace = BootstrapEnv.enabled?("CRYSTAL_V2_LLVM_SETUP_TRACE") || BootstrapEnv.enabled?("CRYSTAL2_LLVM_SETUP_TRACE")
-        STDERR.puts "[STAGE2_TRACE] step5: before generator.new"; STDERR.flush
+        bootstrap_trace_puts "[STAGE2_TRACE] step5: before generator.new"; STDERR.flush
         llvm_gen = MIR::LLVMIRGenerator.new(mir_module)
-        STDERR.puts "[STAGE2_TRACE] step5: generator.new done"; STDERR.flush
+        bootstrap_trace_puts "[STAGE2_TRACE] step5: generator.new done"; STDERR.flush
         llvm_gen.emit_type_metadata = options.emit_type_metadata
-        STDERR.puts "[STAGE2_TRACE] step5: flags1"; STDERR.flush
-        STDERR.puts "[STAGE2_TRACE] step5: flags2"; STDERR.flush
+        bootstrap_trace_puts "[STAGE2_TRACE] step5: flags1"; STDERR.flush
+        bootstrap_trace_puts "[STAGE2_TRACE] step5: flags2"; STDERR.flush
         llvm_gen.progress = options.progress
-        STDERR.puts "[STAGE2_TRACE] step5: flags3"; STDERR.flush
+        bootstrap_trace_puts "[STAGE2_TRACE] step5: flags3"; STDERR.flush
         llvm_gen.reachability = false  # DISABLED for debugging PC=0 crash
-        STDERR.puts "[STAGE2_TRACE] step5: flags4"; STDERR.flush
+        bootstrap_trace_puts "[STAGE2_TRACE] step5: flags4"; STDERR.flush
         llvm_gen.no_prelude = options.no_prelude
-        STDERR.puts "[STAGE2_TRACE] step5: flags5"; STDERR.flush
+        bootstrap_trace_puts "[STAGE2_TRACE] step5: flags5"; STDERR.flush
         if fused_parallel
           llvm_gen.fused_mir_lowering = mir_lowering
         end
         # Enable per-worker MIR optimization: workers optimize their function chunk
         # before LLVM emission, parallelizing MIR opt across fork workers.
         # This saves the serial MIR opt phase (skipped when workers do it).
-        STDERR.puts "[STAGE2_TRACE] step5: flags6"; STDERR.flush
+        bootstrap_trace_puts "[STAGE2_TRACE] step5: flags6"; STDERR.flush
         llvm_gen.worker_mir_opt = options.mir_opt
         llvm_gen.worker_ltp_opt = options.ltp_opt
-        STDERR.puts "[STAGE2_TRACE] step5: flags7"; STDERR.flush
+        bootstrap_trace_puts "[STAGE2_TRACE] step5: flags7"; STDERR.flush
 
         # Pass constant literal values for global initialization (e.g., Math::PI)
         const_init = {} of String => (Float64 | Int64)
@@ -1967,24 +2337,24 @@ module CrystalV2
             const_init[global_name] = value.value
           end
         end
-        STDERR.puts "[STAGE2_TRACE] step5: const_init done count=#{const_init.size}"; STDERR.flush
+        bootstrap_trace_puts "[STAGE2_TRACE] step5: const_init done count=#{const_init.size}"; STDERR.flush
         llvm_gen.constant_initial_values = const_init unless const_init.empty?
-        STDERR.puts "[STAGE2_TRACE] step5: const_init assigned"; STDERR.flush
+        bootstrap_trace_puts "[STAGE2_TRACE] step5: const_init assigned"; STDERR.flush
 
         ll_file = options.output + ".ll"
-        STDERR.puts "[STAGE2_TRACE] step5: ll_file=#{ll_file}"; STDERR.flush
+        bootstrap_trace_puts "[STAGE2_TRACE] step5: ll_file=#{ll_file}"; STDERR.flush
 
         llvm_ir = ""
         llvm_ir_bytes = 0_i64
         if options.emit_llvm
-          STDERR.puts "[LLVM_SETUP] generate(string) start" if llvm_setup_trace
+          bootstrap_trace_puts "[LLVM_SETUP] generate(string) start" if llvm_setup_trace
           llvm_ir = llvm_gen.generate
-          STDERR.puts "[LLVM_SETUP] generate(string) done bytes=#{llvm_ir.size}" if llvm_setup_trace
+          bootstrap_trace_puts "[LLVM_SETUP] generate(string) done bytes=#{llvm_ir.size}" if llvm_setup_trace
           llvm_ir_bytes = llvm_ir.size.to_i64
           log(options, out_io, "  LLVM IR size: #{llvm_ir_bytes} bytes")
           File.write(ll_file, llvm_ir)
         else
-          STDERR.puts "[STAGE2_TRACE] step5: File.open start"; STDERR.flush
+          bootstrap_trace_puts "[STAGE2_TRACE] step5: File.open start"; STDERR.flush
           # V2 BOOTSTRAP: File.open block crashes in stage2. Use lower-level LibC.
           LibC.unlink(ll_file.to_unsafe)
           fd = LibC.open(ll_file.to_unsafe, LibC::O_WRONLY | LibC::O_CREAT | LibC::O_TRUNC, 0o644)
@@ -1992,13 +2362,13 @@ module CrystalV2
             err_io.puts "Failed to open #{ll_file} for writing"
             return 1
           end
-          STDERR.puts "[STAGE2_TRACE] step5: fd opened = #{fd}"; STDERR.flush
+          bootstrap_trace_puts "[STAGE2_TRACE] step5: fd opened = #{fd}"; STDERR.flush
           ll_io = IO::FileDescriptor.new(fd)
-          STDERR.puts "[STAGE2_TRACE] step5: FileDescriptor created"; STDERR.flush
+          bootstrap_trace_puts "[STAGE2_TRACE] step5: FileDescriptor created"; STDERR.flush
           begin
-            STDERR.puts "[STAGE2_TRACE] step5: generate(io) start"; STDERR.flush
+            bootstrap_trace_puts "[STAGE2_TRACE] step5: generate(io) start"; STDERR.flush
             llvm_gen.generate(ll_io)
-            STDERR.puts "[STAGE2_TRACE] step5: generate done"; STDERR.flush
+            bootstrap_trace_puts "[STAGE2_TRACE] step5: generate done"; STDERR.flush
           ensure
             ll_io.flush
             LibC.close(fd)
@@ -2021,7 +2391,7 @@ module CrystalV2
 
         if options.emit_llvm
           emit_timings(options, out_io, timings, total_start)
-          out_io.puts llvm_ir
+          write_text(out_io, llvm_ir, newline: true)
           return 0
         end
 
@@ -2094,13 +2464,118 @@ module CrystalV2
       rescue ex
         if env_get("CRYSTAL2_STAGE2_DEBUG") == "1"
           err_io.puts "error: #{ex.class}: #{ex.message.inspect}"
-          err_io.puts ex.backtrace.join("\n")
+          emit_backtrace_lines(err_io, ex.backtrace)
         else
           err_io.puts "error: #{ex.message}"
         end
-        err_io.puts ex.backtrace.join("\n") if options.verbose
+        emit_backtrace_lines(err_io, ex.backtrace) if options.verbose
         emit_timings(options, out_io, timings, total_start)
         return 1
+      end
+
+      private def emit_backtrace_lines(io : IO, backtrace : Array(String)) : Nil
+        idx = 0
+        while idx < backtrace.size
+          io.puts backtrace.unsafe_fetch(idx)
+          idx += 1
+        end
+      end
+
+      private def replace_suffix_if_present(path : String, suffix : String, replacement : String) : String
+        return path + replacement unless path.ends_with?(suffix)
+
+        head = path.byte_slice(0, path.bytesize - suffix.bytesize)
+        head + replacement
+      end
+
+      private def temp_command_output_path(path : String) : String
+        "#{path}.cmdtmp"
+      end
+
+      private def command_args_display(command_args : Array(String)) : String
+        String.build do |io|
+          idx = 0
+          while idx < command_args.size
+            io << ' ' unless idx == 0
+            io << command_args.unsafe_fetch(idx)
+            idx += 1
+          end
+        end
+      end
+
+      private def command_output_ready?(path : String) : Bool
+        return false unless File.exists?(path)
+        File.info(path).size > 0
+      rescue
+        false
+      end
+
+      private def run_command_capture_output(command_args : Array(String), log_file : String) : {String, Bool}
+        File.delete(log_file) if File.exists?(log_file)
+        fd = LibC.open(log_file.to_unsafe, LibC::O_WRONLY | LibC::O_CREAT | LibC::O_TRUNC, 0o644)
+        return {"open log failed: #{log_file}", false} if fd < 0
+
+        pid = Crystal::System::Process.fork
+        if !pid
+          LibC.dup2(fd, 1)
+          LibC.dup2(fd, 2)
+          LibC.close(fd)
+
+          argv = [] of Pointer(UInt8)
+          idx = 0
+          while idx < command_args.size
+            argv << command_args.unsafe_fetch(idx).to_unsafe
+            idx += 1
+          end
+          argv << Pointer(UInt8).null
+
+          LibC.execvp(command_args.unsafe_fetch(0).to_unsafe, argv.to_unsafe)
+          LibC._exit(127)
+        end
+
+        LibC.close(fd)
+        ret = LibC.waitpid(pid, out status, 0)
+        output = File.exists?(log_file) ? File.read(log_file) : ""
+        File.delete(log_file) if File.exists?(log_file)
+        if ret == -1
+          return {"waitpid failed for #{command_args_display(command_args)}", false}
+        end
+
+        signal = status & 0x7F
+        exit_code = (status >> 8) & 0xFF
+        success = signal == 0 && exit_code == 0
+        if !success && output.empty?
+          output = "command failed: #{command_args_display(command_args)} (exit=#{exit_code} signal=#{signal})"
+        end
+        {output, success}
+      rescue ex
+        File.delete(log_file) if File.exists?(log_file)
+        {"[#{ex.class}] #{ex.message}", false}
+      end
+
+      private def run_command_to_temp_output(command_args : Array(String), temp_output : String, final_output : String) : {String, Bool}
+        File.delete(temp_output) if File.exists?(temp_output)
+        log_file = "#{temp_output}.log"
+        output, command_success = run_command_capture_output(command_args, log_file)
+        ready = command_success && command_output_ready?(temp_output)
+        if ready
+          File.delete(final_output) if File.exists?(final_output)
+          File.rename(temp_output, final_output)
+        else
+          File.delete(temp_output) if File.exists?(temp_output)
+        end
+        {output, ready}
+      rescue ex
+        File.delete(temp_output) if File.exists?(temp_output)
+        {"[#{ex.class}] #{ex.message}", false}
+      end
+
+      private def llvm_entry_guard_target_line?(line : String) : Bool
+        line.starts_with?("define void @__crystal_main(") ||
+          line.starts_with?("define void @Crystal$Dmain$$Int32_Pointer$LPointer$LUInt8$R$R(") ||
+          line.starts_with?("define void @\"Crystal$Dmain$$Int32_Pointer$LPointer$LUInt8$R$R\"(") ||
+          line.starts_with?("define void @Crystal$Dmain_user_code$$Int32_Pointer$LPointer$LUInt8$R$R(") ||
+          line.starts_with?("define void @\"Crystal$Dmain_user_code$$Int32_Pointer$LPointer$LUInt8$R$R\"(")
       end
 
       private def compile_llvm_ir(
@@ -2110,8 +2585,11 @@ module CrystalV2
         err_io : IO,
         timings : Hash(String, Float64)
       ) : Int32
-        apply_llvm_entry_opt_guard!(ll_file, options, out_io)
-        obj_file = ll_file.gsub(/\.ll$/, ".o")
+        trace_llvm_tail = env_enabled?("DEBUG_LLVM_TAIL")
+        bootstrap_trace_puts "[LLVM_TAIL] phase=enter ll=#{ll_file} output=#{options.output} link=#{options.link ? 1 : 0}" if trace_llvm_tail
+        bootstrap_trace_puts "[LLVM_TAIL] phase=after_guard ll=#{ll_file}" if trace_llvm_tail
+        obj_file = replace_suffix_if_present(ll_file, ".ll", ".o")
+        bootstrap_trace_puts "[LLVM_TAIL] phase=obj_file path=#{obj_file}" if trace_llvm_tail
 
         opt_flag = case options.optimize
                    when 0 then "-O0"
@@ -2145,8 +2623,10 @@ module CrystalV2
         opt_ll_file = ll_file
         # Skip opt at -O0 — it's essentially a no-op that wastes ~300ms
         effective_llvm_opt = options.llvm_opt && options.optimize > 0
+        bootstrap_trace_puts "[LLVM_TAIL] phase=opt_config enabled=#{effective_llvm_opt ? 1 : 0} flag=#{opt_flag}" if trace_llvm_tail
         if effective_llvm_opt
           opt_ll_file = "#{ll_file}.opt.bc"
+          bootstrap_trace_puts "[LLVM_TAIL] phase=opt_path path=#{opt_ll_file}" if trace_llvm_tail
           opt_start = Time.instant
           if options.llvm_cache && File.exists?(opt_cache_file)
             FileUtils.cp(opt_cache_file, opt_ll_file)
@@ -2154,10 +2634,18 @@ module CrystalV2
           else
             # Keep optimized IR in bitcode form to avoid expensive text print/parse
             # in large stage2 bootstrap modules.
-            opt_cmd = "opt #{opt_flag}#{opt_bisect_flag} -o #{opt_ll_file} #{ll_file} 2>&1"
+            opt_tmp_file = temp_command_output_path(opt_ll_file)
+            opt_args = ["opt", opt_flag] of String
+            opt_args << "-opt-bisect-limit=#{opt_bisect_limit}" unless opt_bisect_limit.empty?
+            opt_args << "-o"
+            opt_args << opt_tmp_file
+            opt_args << ll_file
+            opt_cmd = command_args_display(opt_args)
+            bootstrap_trace_puts "[LLVM_TAIL] phase=opt_cmd value=#{opt_cmd}" if trace_llvm_tail
             log(options, out_io, "  $ #{opt_cmd}")
-            opt_result = `#{opt_cmd}`
-            unless $?.success?
+            opt_result, opt_success = run_command_to_temp_output(opt_args, opt_tmp_file, opt_ll_file)
+            bootstrap_trace_puts "[LLVM_TAIL] phase=opt_result success=#{opt_success ? 1 : 0} bytes=#{opt_result.bytesize}" if trace_llvm_tail
+            unless opt_success
               err_io.puts "opt failed:"
               err_io.puts opt_result
               return 1
@@ -2178,6 +2666,7 @@ module CrystalV2
 
         llc_start = Time.instant
         unless use_clang_link
+          bootstrap_trace_puts "[LLVM_TAIL] phase=llc_enter opt_ll=#{opt_ll_file} obj=#{obj_file}" if trace_llvm_tail
           if options.llvm_cache && File.exists?(obj_cache_file)
             FileUtils.cp(obj_cache_file, obj_file)
             @llvm_cache_hits += 1
@@ -2185,19 +2674,35 @@ module CrystalV2
           else
             llc_used_fallback = false
             # Use --fast-isel at -O0 for faster code generation (~20% speedup)
-            fast_isel_flag = options.optimize == 0 ? " --fast-isel" : ""
-            llc_cmd = "llc #{opt_flag}#{fast_isel_flag} -filetype=obj -o #{obj_file} #{opt_ll_file} 2>&1"
+            obj_tmp_file = temp_command_output_path(obj_file)
+            llc_args = ["llc", opt_flag] of String
+            llc_args << "--fast-isel" if options.optimize == 0
+            llc_args << "-filetype=obj"
+            llc_args << "-o"
+            llc_args << obj_tmp_file
+            llc_args << opt_ll_file
+            llc_cmd = command_args_display(llc_args)
+            bootstrap_trace_puts "[LLVM_TAIL] phase=llc_cmd value=#{llc_cmd}" if trace_llvm_tail
             log(options, out_io, "  $ #{llc_cmd}")
-            llc_result = `#{llc_cmd}`
-            unless $?.success?
+            llc_result, llc_success = run_command_to_temp_output(llc_args, obj_tmp_file, obj_file)
+            bootstrap_trace_puts "[LLVM_TAIL] phase=llc_result success=#{llc_success ? 1 : 0} bytes=#{llc_result.bytesize}" if trace_llvm_tail
+            unless llc_success
               if effective_llvm_opt && opt_ll_file != ll_file
                 llc_used_fallback = true
                 err_io.puts "llc failed on optimized IR, retrying unoptimized IR..."
-                fallback_cmd = "llc #{opt_flag}#{fast_isel_flag} -filetype=obj -o #{obj_file} #{ll_file} 2>&1"
+                fallback_args = ["llc", opt_flag] of String
+                fallback_args << "--fast-isel" if options.optimize == 0
+                fallback_args << "-filetype=obj"
+                fallback_args << "-o"
+                fallback_args << obj_tmp_file
+                fallback_args << ll_file
+                fallback_cmd = command_args_display(fallback_args)
+                bootstrap_trace_puts "[LLVM_TAIL] phase=llc_fallback_cmd value=#{fallback_cmd}" if trace_llvm_tail
                 log(options, out_io, "  $ #{fallback_cmd}")
-                llc_result = `#{fallback_cmd}`
+                llc_result, llc_success = run_command_to_temp_output(fallback_args, obj_tmp_file, obj_file)
+                bootstrap_trace_puts "[LLVM_TAIL] phase=llc_fallback_result success=#{llc_success ? 1 : 0} bytes=#{llc_result.bytesize}" if trace_llvm_tail
               end
-              unless $?.success?
+              unless llc_success
                 err_io.puts "llc failed:"
                 err_io.puts llc_result
                 return 1
@@ -2217,12 +2722,20 @@ module CrystalV2
         # Find runtime stub
         runtime_dir = safe_dirname(safe_dirname(__FILE__))
         runtime_stub = path_join(runtime_dir, "..", "runtime_stub.o")
-        runtime_src = runtime_stub.gsub(/\.o$/, ".c")
+        runtime_src = replace_suffix_if_present(runtime_stub, ".o", ".c")
+        bootstrap_trace_puts "[LLVM_TAIL] phase=runtime_stub stub=#{runtime_stub} src=#{runtime_src}" if trace_llvm_tail
 
         # Compile runtime stub if needed
         if File.exists?(runtime_src) && (!File.exists?(runtime_stub) ||
            File.info(runtime_src).modification_time > File.info(runtime_stub).modification_time)
-          `cc -c #{runtime_src} -o #{runtime_stub} 2>&1`
+          runtime_tmp = temp_command_output_path(runtime_stub)
+          runtime_args = ["cc", "-c", runtime_src, "-o", runtime_tmp] of String
+          runtime_result, runtime_success = run_command_to_temp_output(runtime_args, runtime_tmp, runtime_stub)
+          unless runtime_success
+            err_io.puts "runtime stub compile failed:"
+            err_io.puts runtime_result
+            return 1
+          end
         end
 
         link_objs = [obj_file]
@@ -2231,7 +2744,7 @@ module CrystalV2
         if options.link
           link_start = Time.instant
           link_flags = build_link_flags(options, out_io)
-          link_flags_str = link_flags.join(" ")
+          link_tmp_output = temp_command_output_path(options.output)
           if use_clang_link
             pgo_flags = [] of String
             if options.pgo_generate
@@ -2240,39 +2753,43 @@ module CrystalV2
               pgo_flags << "-fprofile-instr-use=#{options.pgo_profile}"
             end
 
-            lto_flag = options.lto ? "-flto" : ""
-            clang_cmd = "clang #{opt_flag} #{lto_flag} #{pgo_flags.join(" ")} -o #{options.output} #{opt_ll_file}"
-            clang_cmd += " #{runtime_stub}" if File.exists?(runtime_stub)
-            clang_cmd += " #{link_flags_str}" unless link_flags_str.empty?
+            clang_args = ["clang", opt_flag] of String
+            clang_args << "-flto" if options.lto
+            pgo_flags.each { |flag| clang_args << flag }
+            clang_args << "-o"
+            clang_args << link_tmp_output
+            clang_args << opt_ll_file
+            clang_args << runtime_stub if File.exists?(runtime_stub)
+            link_flags.each { |flag| clang_args << flag }
             # On macOS, set 64MB main thread stack for deep recursive-descent parsing.
             {% if flag?(:darwin) %}
-              clang_cmd += " -Wl,-stack_size,0x4000000"
+              clang_args << "-Wl,-stack_size,0x4000000"
             {% end %}
             if extra = BootstrapEnv.get?("CRYSTAL_V2_EXTRA_LINK_FLAGS")
-              clang_cmd += " #{extra}"
+              extra.split.each { |flag| clang_args << flag }
             end
-            clang_cmd += " 2>&1"
-
+            clang_cmd = command_args_display(clang_args)
             log(options, out_io, "  $ #{clang_cmd}")
-            clang_result = `#{clang_cmd}`
-            unless $?.success?
+            clang_result, clang_success = run_command_to_temp_output(clang_args, link_tmp_output, options.output)
+            unless clang_success
               err_io.puts "clang failed:"
               err_io.puts clang_result
               return 1
             end
           else
-            link_cmd = "cc -o #{options.output} #{link_objs.join(" ")}"
-            link_cmd += " #{link_flags_str}" unless link_flags_str.empty?
+            link_args = ["cc", "-o", link_tmp_output] of String
+            link_objs.each { |obj| link_args << obj }
+            link_flags.each { |flag| link_args << flag }
             {% if flag?(:darwin) %}
-              link_cmd += " -Wl,-stack_size,0x4000000"
+              link_args << "-Wl,-stack_size,0x4000000"
             {% end %}
             if extra = BootstrapEnv.get?("CRYSTAL_V2_EXTRA_LINK_FLAGS")
-              link_cmd += " #{extra}"
+              extra.split.each { |flag| link_args << flag }
             end
-            link_cmd += " 2>&1"
+            link_cmd = command_args_display(link_args)
             log(options, out_io, "  $ #{link_cmd}")
-            link_result = `#{link_cmd}`
-            unless $?.success?
+            link_result, link_success = run_command_to_temp_output(link_args, link_tmp_output, options.output)
+            unless link_success
               err_io.puts "Linking failed:"
               err_io.puts link_result
               return 1
@@ -2300,42 +2817,8 @@ module CrystalV2
 
       private def apply_llvm_entry_opt_guard!(ll_file : String, options : Options, out_io : IO) : Nil
         return unless llvm_entry_opt_guard_enabled?
-        # At -O0 optnone is redundant — everything is unoptimized already.
-        # Skip reading/rewriting the entire 17MB .ll file.
-        return if options.optimize == 0
-        return unless File.exists?(ll_file)
-
-        targets = [
-          "define void @__crystal_main(",
-          "define void @Crystal$Dmain$$Int32_Pointer$LPointer$LUInt8$R$R(",
-          "define void @\"Crystal$Dmain$$Int32_Pointer$LPointer$LUInt8$R$R\"(",
-          "define void @Crystal$Dmain_user_code$$Int32_Pointer$LPointer$LUInt8$R$R(",
-          "define void @\"Crystal$Dmain_user_code$$Int32_Pointer$LPointer$LUInt8$R$R\"(",
-        ] of String
-
-        tmp = "#{ll_file}.entry_guard.tmp"
-        patched = 0
-
-        File.open(tmp, "w") do |io|
-          File.each_line(ll_file, chomp: false) do |line|
-            if targets.any? { |prefix| line.starts_with?(prefix) } && !line.includes?("optnone")
-              updated = line.sub(" {", " noinline optnone {")
-              if updated != line
-                line = updated
-                patched += 1
-              end
-            end
-            io << line
-          end
-        end
-
-        if patched > 0
-          File.delete(ll_file) if File.exists?(ll_file)
-          File.rename(tmp, ll_file)
-          log(options, out_io, "  [entry-opt-guard] patched=#{patched}") if options.verbose
-        else
-          File.delete(tmp) if File.exists?(tmp)
-        end
+        # Entry guard is now emitted directly in LLVMIRGenerator function headers.
+        # Keep this helper as a no-op for compatibility with existing call sites.
       end
 
       private def build_link_flags(options : Options, out_io : IO) : Array(String)
@@ -2346,9 +2829,10 @@ module CrystalV2
           case key
           when "pkg_config"
             next if value.empty?
-            cmd = "pkg-config --libs #{value} 2>/dev/null"
-            output = `#{cmd}`.strip
-            if $?.success? && !output.empty?
+            pkg_args = ["pkg-config", "--libs", value] of String
+            output, ok = run_command_capture_output(pkg_args, "/tmp/crystal_v2_pkg_config_#{digest_string(value)}.log")
+            output = output.strip
+            if ok && !output.empty?
               output.split.each do |flag|
                 next if seen.includes?(flag)
                 flags << flag
@@ -2378,7 +2862,9 @@ module CrystalV2
             # Execute backtick commands if present
             expanded = if value.starts_with?("`") && value.ends_with?("`")
                          cmd = value[1..-2]
-                         `sh -c #{cmd.inspect}`.strip
+                         shell_args = ["sh", "-c", cmd] of String
+                         shell_output, shell_ok = run_command_capture_output(shell_args, "/tmp/crystal_v2_ldflags_#{digest_string(cmd)}.log")
+                         shell_ok ? shell_output.strip : ""
                        else
                          value
                        end
@@ -2414,13 +2900,19 @@ module CrystalV2
       private def file_sha256(path : String) : String
         # V2 BOOTSTRAP: SHA256 depends on OpenSSL module methods that V2's RTA
         # doesn't discover (inherited Digest#update). Use FNV-1a hash instead.
+        # Stream the file instead of File.read(path): self-hosted stage2 can
+        # produce multi-gigabyte .ll files, and File.read overflows there.
         hash = 0xcbf29ce484222325_u64
-        File.open(path) do |io|
-          buffer = Bytes.new(64 * 1024)
-          while (read_bytes = io.read(buffer)) > 0
-            read_bytes.times do |i|
-              hash ^= buffer[i].to_u64
+        buffer = Bytes.new(64 * 1024)
+        File.open(path) do |file|
+          loop do
+            bytes_read = file.read(buffer)
+            break if bytes_read <= 0
+            idx = 0
+            while idx < bytes_read
+              hash ^= buffer.unsafe_fetch(idx).to_u64
               hash &*= 0x100000001b3_u64
+              idx += 1
             end
           end
         end
@@ -2450,18 +2942,18 @@ module CrystalV2
         if debug_parse && file_path.size > 0
           out_io.puts "[STAGE2_DEBUG] parse_file_recursive start file_path=#{file_path} size=#{file_path.size} first=#{file_path.byte_at(0)} last=#{file_path.byte_at(file_path.size - 1)}"
         end
-        STDERR.puts "[S2_PARSE] expand_path('#{file_path}')"; STDERR.flush
+        bootstrap_trace_puts "[S2_PARSE] expand_path('#{file_path}')"; STDERR.flush
         abs_path = File.expand_path(file_path)
-        STDERR.puts "[S2_PARSE] abs_path='#{abs_path}'"; STDERR.flush
+        bootstrap_trace_puts "[S2_PARSE] abs_path='#{abs_path}'"; STDERR.flush
         if debug_parse && abs_path.size > 0
           out_io.puts "[STAGE2_DEBUG] parse_file_recursive expanded=#{abs_path} size=#{abs_path.size} first=#{abs_path.byte_at(0)} last=#{abs_path.byte_at(abs_path.size - 1)}"
         end
         out_io.puts "[STAGE2_DEBUG] parse_file_recursive checking loaded" if debug_parse
-        STDERR.puts "[S2_PARSE] checking loaded.includes?"; STDERR.flush
+        bootstrap_trace_puts "[S2_PARSE] checking loaded.includes?"; STDERR.flush
         return if loaded.includes?(abs_path)
-        STDERR.puts "[S2_PARSE] adding to loaded"; STDERR.flush
+        bootstrap_trace_puts "[S2_PARSE] adding to loaded"; STDERR.flush
         loaded << abs_path
-        STDERR.puts "[S2_PARSE] checking File.exists?"; STDERR.flush
+        bootstrap_trace_puts "[S2_PARSE] checking File.exists?"; STDERR.flush
         log(options, out_io, "  Loading: #{abs_path}") if options.verbose
 
         # V2 BOOTSTRAP: File.exists? calls check_no_null_byte which is broken in
@@ -2470,7 +2962,7 @@ module CrystalV2
           log(options, out_io, "  Warning: File not found: #{abs_path}")
           return
         end
-        STDERR.puts "[S2_PARSE] file exists, reading"; STDERR.flush
+        bootstrap_trace_puts "[S2_PARSE] file exists, reading"; STDERR.flush
 
         # V2 BOOTSTRAP: File.read also calls check_no_null_byte. Use LibC directly.
         fd = LibC.open(abs_path.to_unsafe, LibC::O_RDONLY)
@@ -2490,7 +2982,7 @@ module CrystalV2
         # the raw read buffer. Copy once into a regular String before lexing so
         # parser slices all point at stable GC-managed storage.
         source = source.dup
-        STDERR.puts "[S2_PARSE] read done size=#{source.bytesize}"; STDERR.flush
+        bootstrap_trace_puts "[S2_PARSE] read done size=#{source.bytesize}"; STDERR.flush
         if debug_parse
           out_io.puts "[STAGE2_DEBUG] parse_file_recursive read done size=#{source.size}"
         end
@@ -2600,23 +3092,23 @@ module CrystalV2
         end
         {% end %}
 
-        STDERR.puts "[S2_PARSE] creating lexer"; STDERR.flush
+        bootstrap_trace_puts "[S2_PARSE] creating lexer"; STDERR.flush
         lexer = Frontend::Lexer.new(source)
-        STDERR.puts "[S2_PARSE] creating parser"; STDERR.flush
+        bootstrap_trace_puts "[S2_PARSE] creating parser"; STDERR.flush
         parser = Frontend::Parser.new(lexer)
-        STDERR.puts "[S2_PARSE] parser created"; STDERR.flush
+        bootstrap_trace_puts "[S2_PARSE] parser created"; STDERR.flush
         if debug_parse
           out_io.puts "[STAGE2_DEBUG] parse_file_recursive parse start abs_path=#{abs_path}"
         end
         if @parse_trace
-          STDERR.puts "[PARSE] #{abs_path}"
+          bootstrap_trace_puts "[PARSE] #{abs_path}"
         end
-        STDERR.puts "[S2_PARSE] parse_program_roots start"; STDERR.flush
+        bootstrap_trace_puts "[S2_PARSE] parse_program_roots start"; STDERR.flush
         exprs = begin
           res = parser.parse_program_roots
-          STDERR.puts "[S2_PARSE] parse_program_roots done"; STDERR.flush
+          bootstrap_trace_puts "[S2_PARSE] parse_program_roots done"; STDERR.flush
           if @parse_trace
-            STDERR.puts "[PARSE_OK] #{abs_path}"
+            bootstrap_trace_puts "[PARSE_OK] #{abs_path}"
           end
           res
         rescue ex : IndexError
@@ -2631,8 +3123,10 @@ module CrystalV2
         end
         arena = parser.arena.as(Frontend::AstArena)
         expr_count = exprs.size
+        debug_cli_root_block_state("parse_file_recursive_after_parse", arena, exprs)
+        trace_parsed_class_state("parse_file_recursive_after_parse", abs_path, arena, exprs)
         if @parse_trace
-          STDERR.puts "[REQSCAN] #{abs_path} exprs=#{expr_count}"
+          bootstrap_trace_puts "[REQSCAN] #{abs_path} exprs=#{expr_count}"
         end
         if env_enabled?("CRYSTAL_V2_PARSE_ROOTS_TRACE")
           expr_i = 0
@@ -2640,9 +3134,9 @@ module CrystalV2
             expr_id = exprs.unsafe_fetch(expr_i)
             if expr_id.index >= 0 && expr_id.index < arena.size
               node = arena[expr_id]
-              STDERR.puts "[PARSE_ROOT] file=#{abs_path} idx=#{expr_i} expr=#{expr_id.index} kind=#{Frontend.node_kind(node)} class=#{node.class}"
+              bootstrap_trace_puts "[PARSE_ROOT] file=#{abs_path} idx=#{expr_i} expr=#{expr_id.index} kind=#{Frontend.node_kind(node)} class=#{node.class}"
             else
-              STDERR.puts "[PARSE_ROOT] file=#{abs_path} idx=#{expr_i} expr=#{expr_id.index} kind=INVALID"
+              bootstrap_trace_puts "[PARSE_ROOT] file=#{abs_path} idx=#{expr_i} expr=#{expr_id.index} kind=INVALID"
             end
             expr_i += 1
           end
@@ -2653,7 +3147,7 @@ module CrystalV2
           log(options, out_io, "    arena.size=#{arena.size} exprs.size=#{exprs.size}")
         end
 
-        STDERR.puts "[S2_PARSE] processing requires"; STDERR.flush
+        bootstrap_trace_puts "[S2_PARSE] processing requires"; STDERR.flush
         # Process requires first
         base_dir = safe_dirname(abs_path)
         requires = [] of String
@@ -2673,11 +3167,11 @@ module CrystalV2
           i += 1
         end
         if @parse_trace
-          STDERR.puts "[REQSCAN_DONE] #{abs_path} reqs=#{requires.size}"
+          bootstrap_trace_puts "[REQSCAN_DONE] #{abs_path} reqs=#{requires.size}"
         end
-        STDERR.puts "[S2_PARSE] checking source_requires_fallback"; STDERR.flush
+        bootstrap_trace_puts "[S2_PARSE] checking source_requires_fallback"; STDERR.flush
         needs_source_fallback = source_requires_fallback?(source, requires, loaded)
-        STDERR.puts "[S2_PARSE] fallback check done=#{needs_source_fallback}"; STDERR.flush
+        bootstrap_trace_puts "[S2_PARSE] fallback check done=#{needs_source_fallback}"; STDERR.flush
         if needs_source_fallback
           if options.verbose && !requires.empty?
             missing = 0
@@ -2730,6 +3224,8 @@ module CrystalV2
         end
 
         results << ParsedUnit.new(arena, exprs, abs_path, source)
+        debug_cli_root_block_state("parse_file_recursive_after_append", arena, exprs)
+        trace_parsed_class_state("parse_file_recursive_after_append", abs_path, arena, exprs)
         if debug_parse
           out_io.puts "[STAGE2_DEBUG] parse_file_recursive appended abs_path=#{abs_path} results=#{results.size}"
         end
@@ -2845,7 +3341,7 @@ module CrystalV2
               span = path_node.span
               raw_size = raw_path.size
               first_byte = raw_size > 0 ? raw_path[0].to_i : -1
-              STDERR.puts "[REQ_PATH_SHAPE] expr=#{expr_id.index} path_expr=#{node.path.index} raw_size=#{raw_size} first=#{first_byte} span=#{span.start_offset}..#{span.end_offset} req=#{req_path.inspect}"
+              bootstrap_trace_puts "[REQ_PATH_SHAPE] expr=#{expr_id.index} path_expr=#{node.path.index} raw_size=#{raw_size} first=#{first_byte} span=#{span.start_offset}..#{span.end_offset} req=#{req_path.inspect}"
               STDERR.flush
             end
             if options.verbose
@@ -3072,10 +3568,11 @@ module CrystalV2
           entry = all_arenas.unsafe_fetch(idx)
           arena = entry.arena
           exprs = entry.roots
+          source = entry.source
           expr_i = 0
           while expr_i < exprs.size
             expr_id = exprs.unsafe_fetch(expr_i)
-            collect_link_libraries_from_expr(arena, expr_id, libraries, options, out_io)
+            collect_link_libraries_from_expr(arena, expr_id, source, libraries, options, out_io)
             expr_i += 1
           end
           idx += 1
@@ -3086,6 +3583,7 @@ module CrystalV2
       private def collect_link_libraries_from_expr(
         arena : Frontend::AstArena,
         expr_id : Frontend::ExprId,
+        source : String,
         libraries : Array(String),
         options : Options,
         out_io : IO
@@ -3102,19 +3600,24 @@ module CrystalV2
         when Frontend::MacroIfNode
           condition = evaluate_macro_condition(arena, node.condition, Runtime.target_flags)
           if condition == true
-            collect_link_libraries_from_expr(arena, node.then_body, libraries, options, out_io)
+            collect_link_libraries_from_expr(arena, node.then_body, source, libraries, options, out_io)
           elsif condition == false
             if else_body = node.else_body
-              collect_link_libraries_from_expr(arena, else_body, libraries, options, out_io)
+              collect_link_libraries_from_expr(arena, else_body, source, libraries, options, out_io)
             end
           else
-            collect_link_libraries_from_expr(arena, node.then_body, libraries, options, out_io)
+            collect_link_libraries_from_expr(arena, node.then_body, source, libraries, options, out_io)
             if else_body = node.else_body
-              collect_link_libraries_from_expr(arena, else_body, libraries, options, out_io)
+              collect_link_libraries_from_expr(arena, else_body, source, libraries, options, out_io)
             end
           end
         when Frontend::MacroLiteralNode
-          macro_literal_active_texts(arena, node, Runtime.target_flags).each do |text|
+          texts = if raw_text = extract_span_text(node.span, source)
+                    macro_literal_texts_from_raw(raw_text, Runtime.target_flags)
+                  else
+                    macro_literal_active_texts(arena, node, Runtime.target_flags)
+                  end
+          texts.each do |text|
             extract_link_libraries_from_text(text).each do |lib_name|
               libraries << lib_name
             end
@@ -3137,6 +3640,8 @@ module CrystalV2
         main_exprs : Array(UInt64),
         pending_annotations : Array(Frontend::AnnotationNode),
         acyclic_types : Set(String),
+        top_level_type_names : Set(String),
+        top_level_class_kinds : Hash(String, Bool),
         flags : Set(String),
         sources_by_arena : Hash(UInt64, String),
         source : String,
@@ -3146,7 +3651,7 @@ module CrystalV2
         return if depth > 4
         node = arena[expr_id]
         if env_enabled?("CRYSTAL2_COLLECT_TRACE")
-          STDERR.puts "[COLLECT] depth=#{depth} expr=#{expr_id.index} kind=#{Frontend.node_kind(node)} macrodef=#{node.is_a?(Frontend::MacroDefNode)} arena_size=#{arena.size}"
+          bootstrap_trace_puts "[COLLECT] depth=#{depth} expr=#{expr_id.index} kind=#{Frontend.node_kind(node)} macrodef=#{node.is_a?(Frontend::MacroDefNode)} arena_size=#{arena.size}"
         end
         # Stage2 has shown unstable case-dispatch on MacroDefNode in some builds.
         # Guard with direct is_a? so macro definitions never leak into main_exprs.
@@ -3160,17 +3665,21 @@ module CrystalV2
           def_nodes << {node, arena}
           pending_annotations.clear
         when Frontend::ClassNode
+          name = String.new(node.name)
           # Check for @[Acyclic] annotation to override cyclic type detection
           if pending_annotations.any? { |ann| annotation_name_from_expr(arena, ann.name) == "Acyclic" }
-            class_name = String.new(node.name)
-            acyclic_types << class_name
+            acyclic_types << name
           end
+          top_level_type_names.add(name)
+          top_level_class_kinds[name] = node.is_struct == true
           class_nodes << {node, arena}
           pending_annotations.clear
         when Frontend::ModuleNode
+          top_level_type_names.add(String.new(node.name))
           module_nodes << {node, arena}
           pending_annotations.clear
         when Frontend::EnumNode
+          top_level_type_names.add(String.new(node.name))
           enum_nodes << {node, arena}
           pending_annotations.clear
         when Frontend::ConstantNode
@@ -3181,9 +3690,11 @@ module CrystalV2
           end
           pending_annotations.clear
         when Frontend::AliasNode
+          top_level_type_names.add(String.new(node.name))
           alias_nodes << {node, arena}
           pending_annotations.clear
         when Frontend::LibNode
+          top_level_type_names.add(String.new(node.name))
           lib_nodes << LibEntry.new(node, arena, pending_annotations.dup)
           pending_annotations.clear
         when Frontend::AnnotationNode
@@ -3191,12 +3702,12 @@ module CrystalV2
         when Frontend::RequireNode
           # Skip - already processed
         when Frontend::MacroExpressionNode
-          collect_top_level_nodes(arena, arena_index, node.expression, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, flags, sources_by_arena, source, depth, collect_main_exprs)
+          collect_top_level_nodes(arena, arena_index, node.expression, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, depth, collect_main_exprs)
         when Frontend::VisibilityModifierNode
-          collect_top_level_nodes(arena, arena_index, node.expression, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, flags, sources_by_arena, source, depth, collect_main_exprs)
+          collect_top_level_nodes(arena, arena_index, node.expression, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, depth, collect_main_exprs)
         when Frontend::MacroIfNode
           if env_enabled?("DEBUG_MACRO_EXPAND")
-            STDERR.puts "[DEBUG_MACRO_EXPAND] MacroIfNode condition=#{evaluate_macro_condition(arena, node.condition, flags).inspect}"
+            bootstrap_trace_puts "[DEBUG_MACRO_EXPAND] MacroIfNode condition=#{evaluate_macro_condition(arena, node.condition, flags).inspect}"
           end
           if raw_text = macro_if_raw_text(node, source)
             # If the raw text contains {% for %} loops, don't use macro_literal_texts_from_raw
@@ -3206,9 +3717,9 @@ module CrystalV2
               parsed_any = false
               combined = macro_literal_texts_from_raw(raw_text, flags).join
               if env_enabled?("DEBUG_MACRO_EXPAND")
-                STDERR.puts "[DEBUG_MACRO_EXPAND] MacroIfNode combined empty=#{combined.strip.empty?} has_percent=#{combined.includes?("{%")} size=#{combined.size}"
+                bootstrap_trace_puts "[DEBUG_MACRO_EXPAND] MacroIfNode combined empty=#{combined.strip.empty?} has_percent=#{combined.includes?("{%")} size=#{combined.size}"
                 if combined.size < 200
-                  STDERR.puts "[DEBUG_MACRO_EXPAND] MacroIfNode combined content=#{combined.inspect}"
+                  bootstrap_trace_puts "[DEBUG_MACRO_EXPAND] MacroIfNode combined content=#{combined.inspect}"
                 end
               end
               unless combined.strip.empty? || combined.includes?("{%")
@@ -3217,57 +3728,57 @@ module CrystalV2
                   parsed_any = true
                   sources_by_arena[program.arena.object_id.to_u64] = sanitized
                   program.roots.each do |inner_id|
-                    collect_top_level_nodes(program.arena, arena_index, inner_id, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, flags, sources_by_arena, sanitized, depth + 1, false)
+                    collect_top_level_nodes(program.arena, arena_index, inner_id, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, sanitized, depth + 1, false)
                   end
                 end
               end
               if env_enabled?("DEBUG_MACRO_EXPAND") && parsed_any
-                STDERR.puts "[DEBUG_MACRO_EXPAND] MacroIfNode early return (parsed_any)"
+                bootstrap_trace_puts "[DEBUG_MACRO_EXPAND] MacroIfNode early return (parsed_any)"
               end
               return if parsed_any
             end
           end
           if env_enabled?("DEBUG_MACRO_EXPAND")
-            STDERR.puts "[DEBUG_MACRO_EXPAND] MacroIfNode continuing to condition check (raw_text exists=#{!raw_text.nil?})"
+            bootstrap_trace_puts "[DEBUG_MACRO_EXPAND] MacroIfNode continuing to condition check (raw_text exists=#{!raw_text.nil?})"
           end
           condition = evaluate_macro_condition(arena, node.condition, flags)
           if condition == true
             if env_enabled?("DEBUG_MACRO_EXPAND")
               then_node = arena[node.then_body]
-              STDERR.puts "[DEBUG_MACRO_EXPAND] MacroIfNode then_body type=#{then_node.class}"
+              bootstrap_trace_puts "[DEBUG_MACRO_EXPAND] MacroIfNode then_body type=#{then_node.class}"
             end
-            collect_top_level_nodes(arena, arena_index, node.then_body, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, flags, sources_by_arena, source, depth, collect_main_exprs)
+            collect_top_level_nodes(arena, arena_index, node.then_body, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, depth, collect_main_exprs)
           elsif condition == false
             if else_body = node.else_body
-              collect_top_level_nodes(arena, arena_index, else_body, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, flags, sources_by_arena, source, depth, collect_main_exprs)
+              collect_top_level_nodes(arena, arena_index, else_body, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, depth, collect_main_exprs)
             end
           else
-            collect_top_level_nodes(arena, arena_index, node.then_body, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, flags, sources_by_arena, source, depth, collect_main_exprs)
+            collect_top_level_nodes(arena, arena_index, node.then_body, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, depth, collect_main_exprs)
             if else_body = node.else_body
-              collect_top_level_nodes(arena, arena_index, else_body, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, flags, sources_by_arena, source, depth, collect_main_exprs)
+              collect_top_level_nodes(arena, arena_index, else_body, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, depth, collect_main_exprs)
             end
           end
         when Frontend::MacroLiteralNode
           # Check if this literal has macro control flow ({% for %}, {% begin %}, etc.)
           has_control_flow = node.pieces.any? { |p| p.kind.control_start? }
           if env_enabled?("DEBUG_MACRO_EXPAND")
-            STDERR.puts "[DEBUG_MACRO_EXPAND] MacroLiteralNode has_control_flow=#{has_control_flow} pieces=#{node.pieces.size}"
+            bootstrap_trace_puts "[DEBUG_MACRO_EXPAND] MacroLiteralNode has_control_flow=#{has_control_flow} pieces=#{node.pieces.size}"
             node.pieces.each_with_index do |p, i|
-              STDERR.puts "[DEBUG_MACRO_EXPAND]   piece[#{i}] kind=#{p.kind} keyword=#{p.control_keyword.inspect}"
+              bootstrap_trace_puts "[DEBUG_MACRO_EXPAND]   piece[#{i}] kind=#{p.kind} keyword=#{p.control_keyword.inspect}"
             end
           end
           if has_control_flow
             # Use MacroExpander for full expansion of {% for %} loops, variable assignments, etc.
             if expanded = expand_macro_literal_via_expander(expr_id, arena, source, flags)
               if env_enabled?("DEBUG_MACRO_EXPAND")
-                STDERR.puts "[DEBUG_MACRO_EXPAND] expanded=#{expanded[0, [expanded.size, 200].min].inspect}"
+                bootstrap_trace_puts "[DEBUG_MACRO_EXPAND] expanded=#{expanded[0, [expanded.size, 200].min].inspect}"
               end
               unless expanded.strip.empty?
                 if parsed = parse_top_level_macro_expansion(expanded)
                   program, exp_source = parsed
                   sources_by_arena[program.arena.object_id.to_u64] = exp_source
                   program.roots.each do |inner_id|
-                    collect_top_level_nodes(program.arena, arena_index, inner_id, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, flags, sources_by_arena, exp_source, depth + 1, false)
+                    collect_top_level_nodes(program.arena, arena_index, inner_id, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, exp_source, depth + 1, false)
                   end
                 end
               end
@@ -3281,13 +3792,13 @@ module CrystalV2
                 program, sanitized = parsed
                 sources_by_arena[program.arena.object_id.to_u64] = sanitized
                 program.roots.each do |inner_id|
-                  collect_top_level_nodes(program.arena, arena_index, inner_id, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, flags, sources_by_arena, sanitized, depth + 1, false)
+                  collect_top_level_nodes(program.arena, arena_index, inner_id, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, sanitized, depth + 1, false)
                 end
               end
             end
           end
         when Frontend::MacroForNode
-          expand_top_level_macro_for(node, arena, arena_index, source, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, flags, sources_by_arena, depth)
+          expand_top_level_macro_for(node, arena, arena_index, source, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, depth)
         when Frontend::AssignNode
           target = arena[node.target]
           if target.is_a?(Frontend::ConstantNode)
@@ -3338,6 +3849,8 @@ module CrystalV2
         main_exprs : Array(UInt64),
         pending_annotations : Array(Frontend::AnnotationNode),
         acyclic_types : Set(String),
+        top_level_type_names : Set(String),
+        top_level_class_kinds : Hash(String, Bool),
         flags : Set(String),
         sources_by_arena : Hash(UInt64, String),
         depth : Int32
@@ -3357,7 +3870,7 @@ module CrystalV2
         return unless values
 
         if env_enabled?("DEBUG_MACRO_FOR")
-          STDERR.puts "[DEBUG_MACRO_FOR] expand_top_level_macro_for: var=#{iter_vars.first} values=#{values.size} body_size=#{body_text.size}"
+          bootstrap_trace_puts "[DEBUG_MACRO_FOR] expand_top_level_macro_for: var=#{iter_vars.first} values=#{values.size} body_size=#{body_text.size}"
         end
 
         # Expand body for each value
@@ -3383,7 +3896,7 @@ module CrystalV2
           program, exp_source = parsed
           sources_by_arena[program.arena.object_id.to_u64] = exp_source
           program.roots.each do |inner_id|
-            collect_top_level_nodes(program.arena, arena_index, inner_id, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, flags, sources_by_arena, exp_source, depth + 1, false)
+            collect_top_level_nodes(program.arena, arena_index, inner_id, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, exp_source, depth + 1, false)
           end
         end
       end
@@ -3530,13 +4043,13 @@ module CrystalV2
           variables: {} of String => Semantic::MacroValue
         )
         if env_enabled?("DEBUG_MACRO_EXPAND")
-          STDERR.puts "[DEBUG_MACRO_EXPAND] expand_literal returned #{expanded.bytesize} bytes, empty=#{expanded.strip.empty?}"
+          bootstrap_trace_puts "[DEBUG_MACRO_EXPAND] expand_literal returned #{expanded.bytesize} bytes, empty=#{expanded.strip.empty?}"
           if expanded.bytesize > 0 && expanded.bytesize < 500
-            STDERR.puts "[DEBUG_MACRO_EXPAND] content=#{expanded.inspect}"
+            bootstrap_trace_puts "[DEBUG_MACRO_EXPAND] content=#{expanded.inspect}"
           end
           if expander.diagnostics.any?
             expander.diagnostics.each do |d|
-              STDERR.puts "[DEBUG_MACRO_EXPAND] diagnostic: #{d.message}"
+              bootstrap_trace_puts "[DEBUG_MACRO_EXPAND] diagnostic: #{d.message}"
             end
           end
         end
@@ -4124,7 +4637,7 @@ module CrystalV2
         segment_start = 0
         bytes = text.to_slice
         size = bytes.size
-        # STDERR.puts "[MACRO_RAW] size=#{size}"
+        # bootstrap_trace_puts "[MACRO_RAW] size=#{size}"
         in_line_comment = false
         in_string = false
         in_char = false

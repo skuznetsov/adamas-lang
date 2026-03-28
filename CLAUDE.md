@@ -1,5 +1,10 @@
 # Crystal V2 Compiler - Project Instructions
 
+## Language & documentation
+
+- **Repository (code comments, markdown docs, commit messages in this project):** write in **English**.
+- **Chat with the project owner:** prefer **Russian** unless they switch language.
+
 ## Safe Testing Protocol
 - **ALWAYS** run test binaries via `scripts/run_safe.sh <binary> <timeout> <max_mem_mb>`
 - NEVER run test binaries directly — they can exhaust FDs/memory and freeze the machine
@@ -19,13 +24,12 @@ scripts/run_safe.sh /tmp/test_hello 5 512                          # run safely
 - **NEVER modify stdlib files** — must be 100% compatible with original Crystal stdlib at `../crystal/src`
 - When in doubt, always check original Crystal compiler code at `../crystal/src`
 - Original Crystal compiler: `../crystal/src/compiler/crystal/codegen/`
-- помни что мы следуем zero-copy memory для уменьшения нагрузки на GC, контроля размера памяти и ускорения работы компилятора.
-- Следи за мусором (временные файлы в /tmp/, ./tmp/, ~/Projects/Crystal/.codex_artifacts/), и удаляй сразу те временные файлы, что уже не нужны. И помни коммитить рабочие фичи и фиксы сразу как они готовы.
-- Eсли нашел проблему, то для нее лучше делать регрессионный скрипт для воспроизводства. Так быстрее будет.
-- Для моментальной отладки и итераций лучше использовать оракулы собраные с --no-prelude: проще и быстрее отлаживать код и изучать .ll, .hir, и .mir файлы.
-- Помни что надо коммитить (гогда есть рабочие фичи и фиксы) и обновлять TODO.md.
-- Часто root cause в том что мы не правильно отслеживаем арены.
-
+- Prefer **zero-copy** memory patterns to reduce GC pressure, bound memory use, and speed up the compiler.
+- Clean up temporary artifacts (`/tmp/`, `./tmp/`, `~/Projects/Crystal/.codex_artifacts/`) when no longer needed; commit working features and fixes when ready.
+- When you find a bug, add a **regression script** to reproduce it — it pays off quickly.
+- For fast debug iterations, prefer **no-prelude** oracles: easier to inspect `.ll`, `.hir`, and `.mir`.
+- Keep **TODO.md** updated when shipping meaningful changes.
+- Many bugs trace back to **incorrect arena lifetime / tracking** — verify arenas first.
 
 ## Architecture
 - Pipeline: HIR (ast_to_hir.cr) → MIR (hir_to_mir.cr) → LLVM IR (llvm_backend.cr)

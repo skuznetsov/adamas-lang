@@ -1,7 +1,7 @@
 # Benchmark: Fibonacci(42) for original Crystal
 # ~500 million recursive calls
 
-def fib(n : Int32) : Int32
+def fib(n : Int32) : UInt32
   if n <= 1
     n
   else
