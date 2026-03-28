@@ -19,7 +19,7 @@ describe CrystalV2::Compiler::LSP::Server do
     end
   end
 
-  it "merges require dependencies into a VirtualArena" do
+  it "loads require dependencies into the symbol table" do
     base_dir = File.join(Dir.tempdir, "lsp_require_spec_#{Random::Secure.hex(6)}")
     Dir.mkdir(base_dir)
     begin
@@ -50,8 +50,6 @@ describe CrystalV2::Compiler::LSP::Server do
         server.spec_analyze_document(File.read(main_path), base_dir, main_path)
 
       requires.should eq([helper_path])
-      program.arena.should be_a(CrystalV2::Compiler::Frontend::VirtualArena)
-
       dep_symbol = symbol_table.try(&.lookup("Dep"))
       dep_symbol.should_not be_nil
       dep_symbol.should be_a(CrystalV2::Compiler::Semantic::ModuleSymbol)
