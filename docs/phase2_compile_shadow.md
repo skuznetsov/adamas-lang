@@ -113,6 +113,27 @@ On that carrier the provenance line now shows
 right signal: the method came from a collector-side macro expansion path, not
 from the original parse roots.
 
+The same collector-side parity now also covers the narrow same-file call-site
+corridor where the root is a real `CallNode` with positional arguments, for
+example:
+
+```crystal
+macro define_alpha(dummy)
+  def alpha
+  end
+end
+
+define_alpha(1)
+alpha()
+```
+
+On the current tree that carrier now reports
+`methods collector_total=1 collector_unique=1 semantic_total=1 semantic_unique=1 gaps=0`.
+The implementation is still intentionally scoped: argumentful call-site macro
+expansion on the collector side is only attempted when the invocation arena and
+macro definition arena are the same, because the shadow collector does not yet
+have a canonical cross-file id/remap contract for call-site argument exprs.
+
 The remaining caveat is file attribution for post-parse macro expansion:
 the shared aggregate node graph still reflects the original parse graph, but
 symbol ownership is now rebound through the semantic shadow file-path provider,
@@ -139,8 +160,9 @@ is visible without pretending that the aggregate parse graph itself changed.
 - `generated_nodes` is a semantic-side provenance counter, not a replacement
   for aggregate `nodes`; the two numbers intentionally describe different layers
 - the compile-side collector now materializes the narrow bare zero-arg
-  identifier-style macro invocation corridor, but broader macro-call shapes do
-  not yet have an explicit collector-side parity contract
+  identifier-style macro invocation corridor plus same-arena top-level
+  `CallNode` macro invocations with call-site args, but broader cross-file
+  macro-call shapes do not yet have an explicit collector-side parity contract
 - does not yet include macro-expansion parity with `AstToHir`
 - does not yet run normalized HIR comparison
 

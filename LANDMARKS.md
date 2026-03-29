@@ -68,6 +68,14 @@ Verified sequence:
       `methods collector_total=1 ... semantic_total=1 ... gaps=0`
     - provenance on that carrier now shows
       `collector_direct_total=0 collector_macro_expanded_total=1`
+  - live same-file macro-call-with-args smoke is now green on both collector
+    and semantic sides too:
+    - `CRYSTAL_V2_SEMANTIC_SHADOW=1 /tmp/crystal_v2_semantic_shadow /tmp/shadow_macro_call_unused_arg.cr --no-prelude --stats --verbose`
+    - output includes `semantic_diags=0 resolution_diags=0 type_diags=0`,
+      `generated_nodes=1`, and
+      `methods collector_total=1 ... semantic_total=1 ... gaps=0`
+    - provenance on that carrier also shows
+      `collector_direct_total=0 collector_macro_expanded_total=1`
 - reusable failure pattern:
   - the current `VirtualArena` only renumbers root ids; nested `ExprId`
     references inside nodes remain file-local, so it is not yet a sound
@@ -80,15 +88,16 @@ Verified sequence:
     the compile-side collector; collector provenance can distinguish `direct`
     vs `macro_expanded` declarations on that side, and the current shadow smoke
     now shows collector-vs-semantic parity for top-level macro-generated
-    methods plus bare zero-arg top-level macro calls
+    methods, bare zero-arg top-level macro calls, and same-arena top-level
+    macro `CallNode`s with call-site args
   - this is still not a full semantic-side macro-expanded parity gate or a
     lowering contract, because aggregate `nodes=` still describes the original
     parse graph while `generated_nodes=` separately describes semantic expansion provenance
 
 Practical consequence:
 - Phase 2 can progress without touching lowering or default compile behavior
-- the next honest work item is broader macro-call/declaration parity beyond the
-  current bare zero-arg top-level corridor, plus expanded-node ownership; not
+- the next honest work item is broader cross-file macro-call/declaration parity
+  beyond the current same-arena corridor, plus expanded-node ownership; not
   more identity-layer surgery
 {F/G/R: 0.92/0.72/0.95} [active]
 
