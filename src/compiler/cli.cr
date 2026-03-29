@@ -1920,6 +1920,11 @@ module CrystalV2
         timings["hir"] = (Time.instant - hir_start).total_milliseconds if options.stats
         timings["hir_funcs"] = hir_module.functions.size.to_f if options.stats
 
+        # Phase 0 metrics dump (demand-driven rewrite tracking)
+        if BootstrapEnv.enabled?("CRYSTAL_V2_PHASE0_METRICS")
+          hir_converter.dump_phase0_metrics(STDERR)
+        end
+
         # Final allocator flush: regenerate any .new functions invalidated during lowering
         hir_converter.flush_deferred_allocators
 

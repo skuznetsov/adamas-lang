@@ -1945,6 +1945,15 @@ module Crystal::HIR
     # 0 = current behavior (defer as soon as inside lowering).
     # V2 BOOTSTRAP: ENV access crashes V2-compiled binaries. Use 0 default.
     @lowering_depth_limit : Int32 = 0
+    # ── Phase 0 metrics (demand-driven rewrite) ──────────────────────────
+    # These counters measure legacy supply-driven behavior.
+    # Goal: all should reach 0 after Phase 4 (demand-driven body typing).
+    @phase0_forced_lower_count : Int32 = 0
+    @phase0_forced_lower_names : Set(String) = Set(String).new
+    @phase0_pending_queue_max : Int32 = 0
+    @phase0_safety_net_functions : Int32 = 0
+    @phase0_lower_name_counts : Hash(String, Int32) = Hash(String, Int32).new(0)
+
     # Tracks nesting depth of force_lower_function_for_return_type to prevent
     # unbounded recursion when inferring return types triggers more return type inferences.
     @force_lower_return_type_depth : Int32 = 0
@@ -39667,6 +39676,16 @@ module Crystal::HIR
       func
     end
 
+    # Phase 0 metrics dump — called from CLI after compilation
+    def dump_phase0_metrics(io : IO) : Nil
+      duplicates = @phase0_lower_name_counts.count { |_, c| c > 1 }
+      io.puts "[PHASE0] forced_lowers=#{@phase0_forced_lower_count} unique_forced=#{@phase0_forced_lower_names.size}"
+      io.puts "[PHASE0] pending_queue_max=#{@phase0_pending_queue_max}"
+      io.puts "[PHASE0] safety_net_functions=#{@phase0_safety_net_functions}"
+      io.puts "[PHASE0] duplicate_body_names=#{duplicates}"
+      io.puts "[PHASE0] total_hir_functions=#{@module.function_count}"
+    end
+
     # Public method to flush pending functions from external callers (e.g., CLI after lower_def)
     def flush_pending_functions
       phase_stats = env_has?("CRYSTAL_V2_PHASE_STATS")
@@ -40204,6 +40223,10 @@ module Crystal::HIR
         idx = 0
 
         while idx < @pending_function_queue.size
+          # Phase 0 metric: track peak queue size
+          qsize = @pending_function_queue.size
+          @phase0_pending_queue_max = qsize if qsize > @phase0_pending_queue_max
+
           name = @pending_function_queue[idx]
           idx += 1
 
@@ -52821,6 +52844,10 @@ module Crystal::HIR
       if env_has?("DEBUG_FORCE_LOWER_DEPTH") && @force_lower_return_type_depth > 5
         STDERR.puts "[FORCE_LOWER_CHAIN] depth=#{@force_lower_return_type_depth} name=#{name}"
       end
+
+      # Phase 0 metric: count forced lowers
+      @phase0_forced_lower_count += 1
+      @phase0_forced_lower_names << name
 
       # Clear pending state if set (we'll handle it now)
       if function_state(name).pending?
