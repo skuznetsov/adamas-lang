@@ -122,6 +122,12 @@ Verified sequence:
     - note location points at the caller unit, for example
       `--> /tmp/shadow_generated_resolution_main.cr:2:1-2:8`
       with snippet line `define_bad(:alpha)`
+  - live cross-file generated diagnostics now also append the macro definition
+    site itself:
+    - output includes `note: macro defined here`
+    - note location points at the defining file, for example
+      `--> /tmp/shadow_generated_macrodef_lib.cr:1:1-5:1`
+      with snippet line `macro define_bad(name)`
   - that origin note is now carried as first-class diagnostic metadata in the
     shadow path:
     - frontend diagnostics use `related_spans`
@@ -170,6 +176,9 @@ Verified sequence:
   - origin call-site notes are now available in verbose shadow formatting, but
     they are still shadow-only provenance and not yet a general compile-path
     source map contract
+  - macro-definition notes are now available for cross-file generated
+    diagnostics too, but they are still shadow-only provenance and not yet a
+    general compile-path expansion source map contract
   - this is still not a full semantic-side macro-expanded parity gate or a
     lowering contract, because aggregate `nodes=` still describes the original
     parse graph while `generated_nodes=` separately describes semantic expansion provenance

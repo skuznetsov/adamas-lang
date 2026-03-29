@@ -5735,6 +5735,22 @@ module CrystalV2
         Frontend::RelatedSpan.new(origin_span, "expanded from macro call here", origin_node_id, origin_path)
       end
 
+      private def shadow_generated_macro_definition_related_span(
+        node_id : Frontend::ExprId,
+        aggregate : Semantic::CompileShadowAggregate,
+        analyzer : Semantic::Analyzer
+      ) : Frontend::RelatedSpan?
+        return nil unless macro_def_node_id = analyzer.generated_macro_definition_for(node_id)
+        return nil unless macro_def_path = aggregate.path_for(macro_def_node_id)
+        if origin_node_id = analyzer.generated_origin_for(node_id)
+          if origin_path = aggregate.path_for(origin_node_id)
+            return nil if origin_path == macro_def_path
+          end
+        end
+        macro_def_span = aggregate.program.arena[macro_def_node_id].span
+        Frontend::RelatedSpan.new(macro_def_span, "macro defined here", macro_def_node_id, macro_def_path)
+      end
+
       private def format_shadow_semantic_diagnostic(
         diagnostic : Semantic::Diagnostic,
         aggregate : Semantic::CompileShadowAggregate,
@@ -5746,6 +5762,9 @@ module CrystalV2
             display_path = shadow_generated_display_path(aggregate.path_for(primary_node_id))
             secondary_spans = diagnostic.secondary_spans
             if related = shadow_generated_origin_related_span(primary_node_id, aggregate, analyzer)
+              secondary_spans = secondary_spans + [Semantic::SecondarySpan.new(related.span, related.label, related.node_id, related.file_path)]
+            end
+            if related = shadow_generated_macro_definition_related_span(primary_node_id, aggregate, analyzer)
               secondary_spans = secondary_spans + [Semantic::SecondarySpan.new(related.span, related.label, related.node_id, related.file_path)]
             end
             display_diagnostic = diagnostic.with_paths(display_path, secondary_spans)
@@ -5768,6 +5787,9 @@ module CrystalV2
             display_path = shadow_generated_display_path(aggregate.path_for(node_id))
             related_spans = diagnostic.related_spans
             if related = shadow_generated_origin_related_span(node_id, aggregate, analyzer)
+              related_spans = related_spans + [related]
+            end
+            if related = shadow_generated_macro_definition_related_span(node_id, aggregate, analyzer)
               related_spans = related_spans + [related]
             end
             display_diagnostic = diagnostic.with_file_path(display_path, related_spans)

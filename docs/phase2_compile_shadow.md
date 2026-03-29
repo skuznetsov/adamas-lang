@@ -213,11 +213,26 @@ note: expanded from macro call here
     | ^^^^^^^
 ```
 
+For cross-file macro expansions, verbose shadow formatting now also appends
+the macro definition site itself:
+
+```text
+note: macro defined here
+  --> /tmp/shadow_generated_macrodef_lib.cr:1:1-5:1
+  1 | macro define_bad(name)
+```
+
 That origin note is now carried as first-class diagnostic metadata in the
 shadow path rather than as ad-hoc CLI string glue:
 
 - frontend diagnostics use `related_spans`
 - semantic diagnostics reuse `secondary_spans`
+
+Cross-file generated diagnostics can therefore carry two distinct provenance
+notes in verbose shadow mode:
+
+- where the macro was invoked
+- where that macro was defined
 
 The summary telemetry now also separates generated-body diagnostics from
 parse-graph diagnostics. For the generated unresolved-name carrier above, the
@@ -284,6 +299,9 @@ It now also separates parse roots from actual traversal roots:
 - generated diagnostics now also show the originating macro call site as a
   shadow-only note, but the primary span is still the generated-body span, not
   a fully remapped compile-path source map
+- cross-file generated diagnostics now also show the macro definition site as a
+  shadow-only note, but this is still formatter-level provenance, not a
+  compile-authoritative expansion source map
 - frontend origin notes are now first-class metadata in shadow formatting, but
   that relation still exists only inside the shadow pipeline and is not yet a
   general compile-path diagnostic contract

@@ -18,6 +18,7 @@ module CrystalV2
         getter generated_root_sources : Hash(Int32, String)
         getter generated_root_by_node : Hash(Int32, Int32)
         getter generated_root_origins : Hash(Int32, Frontend::ExprId)
+        getter generated_root_macro_defs : Hash(Int32, Frontend::ExprId)
         @virtual_arena : Frontend::VirtualArena?
 
       def initialize(@program : Program, context : Context, @node_file_path_provider : Proc(Frontend::ExprId, String?)? = nil, @source_for_path_provider : Proc(String, String?)? = nil)
@@ -33,6 +34,7 @@ module CrystalV2
         @generated_root_sources = {} of Int32 => String
         @generated_root_by_node = {} of Int32 => Int32
         @generated_root_origins = {} of Int32 => Frontend::ExprId
+        @generated_root_macro_defs = {} of Int32 => Frontend::ExprId
         @macro_expander = MacroExpander.new(
           @program,
           @arena,
@@ -235,7 +237,7 @@ module CrystalV2
           symbol = current_table.lookup(name)
           return false unless symbol.is_a?(MacroSymbol)
 
-          expanded_id = track_generated_nodes(node_id) do
+          expanded_id = track_generated_nodes(node_id, symbol.node_id) do
             @macro_expander.expand(
               symbol,
               node.args,
@@ -255,7 +257,7 @@ module CrystalV2
           symbol = current_table.lookup(name)
           return false unless symbol.is_a?(MacroSymbol)
 
-          expanded_id = track_generated_nodes(node_id) do
+          expanded_id = track_generated_nodes(node_id, symbol.node_id) do
             @macro_expander.expand(symbol, [] of Frontend::ExprId, nil)
           end
           @macro_expander.diagnostics.each { |entry| @diagnostics << entry }
@@ -270,7 +272,7 @@ module CrystalV2
           @generated_top_level_roots << node_id
         end
 
-        private def track_generated_nodes(origin_node_id : Frontend::ExprId, &)
+        private def track_generated_nodes(origin_node_id : Frontend::ExprId, macro_def_node_id : Frontend::ExprId? = nil, &)
           generated_start = arena.size
           origin_path = file_path_for(origin_node_id)
           expanded_id = yield
@@ -289,6 +291,9 @@ module CrystalV2
               @generated_root_sources[expanded_id.index] = generated_output
             end
             @generated_root_origins[expanded_id.index] = origin_node_id
+            if macro_def_node_id
+              @generated_root_macro_defs[expanded_id.index] = macro_def_node_id.not_nil!
+            end
 
             generated_index = generated_start
             while generated_index < arena.size
@@ -763,7 +768,7 @@ module CrystalV2
             owner_type = @class_stack.empty? ? nil : @class_stack.last
 
             # Expand macro with optional owner_type
-            expanded_id = track_generated_nodes(node_id) do
+            expanded_id = track_generated_nodes(node_id, symbol.node_id) do
               @macro_expander.expand(
                 symbol,
                 args,
