@@ -124,6 +124,11 @@ assignment now retains generated origin metadata on the semantic symbol itself,
 and verbose shadow parity reports `semantic_macro_expanded_total=1` for those
 kinds rather than treating generated non-method declarations as direct.
 
+That same path also covers macro-generated top-level macro definitions. When a
+macro expands into another top-level `macro`, the generated `MacroSymbol`
+retains generated origin metadata and verbose shadow parity reports that extra
+macro under `macros provenance ... semantic_macro_expanded_total=1`.
+
 Generated declaration provenance and `generated_*_diags` counters now use the
 explicit generated-origin mapping carried by the semantic stack. In particular,
 generated method/class/module/etc. symbols now retain generated origin metadata

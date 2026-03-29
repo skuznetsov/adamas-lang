@@ -420,4 +420,51 @@ describe "compile shadow declaration inventory" do
     enum_line.not_nil!.should contain("semantic_macro_expanded_total=1")
     constant_line.not_nil!.should contain("semantic_macro_expanded_total=1")
   end
+
+  it "retains generated provenance for macro-expanded macro definitions" do
+    aggregate = Semantic::CompileShadowAggregate.build([
+      {
+        path: "decl_lib.cr",
+        source: <<-CR,
+          macro define_trace
+            macro generated_trace
+            end
+          end
+        CR
+      },
+      {
+        path: "decl_main.cr",
+        source: <<-CR,
+          require "./decl_lib"
+          define_trace
+        CR
+      },
+    ])
+    program = aggregate.program
+    shadow_sources = {} of String => String
+    aggregate.unit_summaries.each { |u| shadow_sources[u.path] = u.source }
+
+    analyzer = Semantic::Analyzer.new(program)
+    analyzer.collect_symbols(
+      node_file_path_provider: ->(expr_id : Frontend::ExprId) { aggregate.path_for(expr_id) },
+      source_for_path_provider: ->(path : String) { shadow_sources[path]? },
+    )
+
+    generated_trace_symbol = analyzer.global_context.symbol_table.lookup_local("generated_trace")
+    generated_trace_symbol.should be_a(Semantic::MacroSymbol)
+    generated_trace_symbol = generated_trace_symbol.as(Semantic::MacroSymbol)
+    generated_trace_symbol.generated?.should be_true
+    generated_trace_symbol.generated_origin_node_id.should_not be_nil
+    generated_trace_symbol.generated_macro_definition_node_id.should_not be_nil
+    generated_trace_symbol.file_path.should eq("decl_main.cr")
+
+    semantic_inventory = Semantic::CompileShadowDeclarationInventory.from_symbol_table(
+      analyzer.global_context.symbol_table
+    )
+    macro_line = semantic_inventory.provenance_lines("semantic").find { |line| line.starts_with?("macros provenance ") }
+
+    macro_line.should_not be_nil
+    macro_line.not_nil!.should contain("semantic_direct_total=1")
+    macro_line.not_nil!.should contain("semantic_macro_expanded_total=1")
+  end
 end
