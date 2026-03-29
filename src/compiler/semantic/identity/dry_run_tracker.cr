@@ -2,31 +2,95 @@
 #
 # Runs as a side-channel during legacy compile path. Does NOT change
 # any compilation behavior. Only observes and reports statistics about
-# potential DefInstanceKey cache hits.
+# potential cache hits for body inference.
+#
+# IMPORTANT: This tracker uses DryRunDefKey, a TEMPORARY surrogate
+# for def identity. It is NOT the canonical DefIdentity from Phase 1.
+# The canonical DefIdentity requires {arena_id, ExprId.index}, which
+# is not yet available at all infer_concrete_return_type_from_body
+# call sites. Once ExprId plumbing is added, the surrogate will be
+# replaced with real DefIdentity + DefInstanceKey.
 #
 # Enable with: CRYSTAL_V2_IDENTITY_DRY_RUN=1
 
 require "./semantic_type_id"
-require "./def_identity"
-require "./def_instance_key"
 
 module CrystalV2::Compiler::Semantic
+  # Temporary surrogate for def identity in the dry-run tracker.
+  # Uses node.object_id (heap address) as a stand-in for the canonical
+  # DefIdentity{arena_id, ExprId.index} which requires ExprId plumbing
+  # not yet available at all call sites.
+  #
+  # This is explicitly NOT DefIdentity — it is a surrogate that will
+  # be replaced once ExprId is threaded through to inference call sites.
+  struct DryRunDefKey
+    getter arena_id : UInt64
+    getter node_object_id : UInt64
+
+    def initialize(@arena_id : UInt64, @node_object_id : UInt64)
+    end
+
+    def ==(other : DryRunDefKey) : Bool
+      @arena_id == other.arena_id && @node_object_id == other.node_object_id
+    end
+
+    def hash(hasher)
+      hasher = @arena_id.hash(hasher)
+      hasher = @node_object_id.hash(hasher)
+      hasher
+    end
+  end
+
+  # Composite dry-run cache key: surrogate def key + semantic type context.
+  # Mirrors DefInstanceKey structure but uses DryRunDefKey instead of
+  # canonical DefIdentity.
+  struct DryRunInstanceKey
+    getter def_key : DryRunDefKey
+    getter receiver_type : SemanticTypeId?
+    getter arg_types : Array(SemanticTypeId)
+    getter block_type : SemanticTypeId?
+
+    def initialize(
+      @def_key : DryRunDefKey,
+      @receiver_type : SemanticTypeId? = nil,
+      arg_types : Array(SemanticTypeId) = [] of SemanticTypeId,
+      @block_type : SemanticTypeId? = nil
+    )
+      @arg_types = arg_types.dup
+    end
+
+    def ==(other : DryRunInstanceKey) : Bool
+      @def_key == other.def_key &&
+        @receiver_type == other.receiver_type &&
+        @arg_types == other.arg_types &&
+        @block_type == other.block_type
+    end
+
+    def hash(hasher)
+      hasher = @def_key.hash(hasher)
+      hasher = @receiver_type.hash(hasher)
+      hasher = @arg_types.hash(hasher)
+      hasher = @block_type.hash(hasher)
+      hasher
+    end
+  end
+
   class IdentityDryRunTracker
     getter type_intern : SemanticTypeInternTable
     getter total_lookups : Int32 = 0
     getter cache_hits : Int32 = 0
     getter cache_misses : Int32 = 0
 
-    @seen_keys : ::Hash(DefInstanceKey, Int32)
+    @seen_keys : ::Hash(DryRunInstanceKey, Int32)
 
     def initialize
       @type_intern = SemanticTypeInternTable.new
-      @seen_keys = {} of DefInstanceKey => Int32
+      @seen_keys = {} of DryRunInstanceKey => Int32
     end
 
     # Record a body inference attempt. Returns true if this is a cache hit
     # (same key seen before), false if first encounter.
-    def record_inference(key : DefInstanceKey) : Bool
+    def record_inference(key : DryRunInstanceKey) : Bool
       @total_lookups += 1
       count = @seen_keys[key]? || 0
       @seen_keys[key] = count + 1
@@ -37,12 +101,6 @@ module CrystalV2::Compiler::Semantic
         @cache_misses += 1
         false
       end
-    end
-
-    # Build a DefIdentity from arena + DefNode ExprId
-    def def_identity(arena : CrystalV2::Compiler::Frontend::ArenaLike,
-                     expr_id : CrystalV2::Compiler::Frontend::ExprId) : DefIdentity
-      DefIdentity.new(arena.object_id, expr_id.index)
     end
 
     # Intern a type name into a SemanticTypeId.
@@ -75,6 +133,7 @@ module CrystalV2::Compiler::Semantic
       hit_rate = @total_lookups > 0 ? (@cache_hits * 100.0 / @total_lookups).round(1) : 0.0
       io.puts "[IDENTITY_DRY_RUN] lookups=#{@total_lookups} hits=#{@cache_hits} misses=#{@cache_misses} hit_rate=#{hit_rate}%"
       io.puts "[IDENTITY_DRY_RUN] unique_keys=#{unique_keys} duplicate_keys=#{duplicate_keys} interned_types=#{@type_intern.size}"
+      io.puts "[IDENTITY_DRY_RUN] NOTE: uses DryRunDefKey (node.object_id surrogate), not canonical DefIdentity"
     end
   end
 end

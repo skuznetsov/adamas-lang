@@ -13859,17 +13859,13 @@ module Crystal::HIR
       # No arena/XOR needed: each DefNode is a distinct class instance.
       @phase0_body_infer_counts[node.object_id] = (@phase0_body_infer_counts[node.object_id]? || 0) + 1
 
-      # Phase 1: identity dry-run — build DefInstanceKey and track potential cache hits.
-      # Key uses node.object_id for def identity (injective per heap object) and
-      # interns parameter type annotations for arg_types separation.
+      # Phase 1: identity dry-run — track potential cache hits using a SURROGATE key.
+      # Uses DryRunDefKey (node.object_id), NOT canonical DefIdentity (arena + ExprId).
+      # ExprId is not yet available at this call site; will be plumbed in a later phase.
       if tracker = @identity_tracker
         resolved_arena_for_key = preferred_arena || resolve_arena_for_def(node, @arena)
-        # DefIdentity: arena object_id + node object_id (no ExprId reverse map exists yet)
-        # Use lower 31 bits of object_id — sufficient for collision avoidance
-        # within one compile. Full arena_id + node bits form unique pair.
-        node_id_bits = (node.object_id.to_u64 & 0x7FFFFFFF_u64).to_i32
-        def_id = CrystalV2::Compiler::Semantic::DefIdentity.new(
-          resolved_arena_for_key.object_id.to_u64, node_id_bits)
+        def_key = CrystalV2::Compiler::Semantic::DryRunDefKey.new(
+          resolved_arena_for_key.object_id.to_u64, node.object_id.to_u64)
         recv_type = self_type_name ? tracker.intern_type_name(self_type_name) : nil
 
         # Intern parameter type annotations for arg separation
@@ -13894,8 +13890,8 @@ module Crystal::HIR
           end
         end
 
-        key = CrystalV2::Compiler::Semantic::DefInstanceKey.new(
-          def_identity: def_id,
+        key = CrystalV2::Compiler::Semantic::DryRunInstanceKey.new(
+          def_key: def_key,
           receiver_type: recv_type,
           arg_types: arg_sem_types,
           block_type: block_sem_type,

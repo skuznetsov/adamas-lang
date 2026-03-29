@@ -98,8 +98,12 @@ any semantic cache key. The adapter's reverse lookup is for diagnostics only.
 
 ## 7. Dry-Run Results (hello world)
 
-**Key components used in dry-run:**
-- DefIdentity: `{resolved_arena.object_id, node.object_id}` (injective per heap)
+**Key components used in dry-run (SURROGATE, not canonical):**
+- `DryRunDefKey`: `{resolved_arena.object_id, node.object_id}` — a temporary
+  surrogate for def identity. This is NOT the canonical `DefIdentity{arena_id,
+  ExprId.index}` because ExprId is not yet available at inference call sites.
+  The surrogate is injective (each heap DefNode has a unique object_id) but
+  is explicitly separate from the Phase 1 identity contract.
 - Receiver: interned `self_type_name`
 - Args: interned parameter type annotations (UNKNOWN for unannotated params)
 - Block: interned block parameter type annotation (if present)
@@ -107,13 +111,20 @@ any semantic cache key. The adapter's reverse lookup is for diagnostics only.
   named argument types
 
 **Interpretation:** The hit rate measures repeated body inference for the same
-syntactic def + receiver + declared-param-type combination. It does NOT yet
+surrogate def key + receiver + declared-param-type combination. It does NOT yet
 capture call-site specialization (where the same def is analyzed with different
-inferred arg types). A real Phase 4 cache would key on inferred types at the
-call site, not declared annotations — so actual cache hit rates may differ.
+inferred arg types). A real Phase 4 cache would key on canonical DefIdentity +
+inferred types at the call site, not declared annotations — so actual cache hit
+rates will differ.
 
-The dry-run is a directional signal showing that many body walks are for
-the same def+receiver combination, not a precise prediction of Phase 4 savings.
+The dry-run is a directional signal showing that many body walks target the
+same def+receiver combination, not a precise prediction of Phase 4 savings.
+
+**Path to canonical keying:** Thread ExprId through to
+`infer_concrete_return_type_from_body` call sites (ExprId is available at the
+iteration level, e.g. `body_ids.each do |member_id|`, but is not currently
+passed through). Once plumbed, the surrogate will be replaced with real
+`DefIdentity` + `DefInstanceKey`.
 
 ```
 lookups=5561  hits=3147  misses=2414  hit_rate=56.6%

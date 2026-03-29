@@ -3,6 +3,7 @@ require "../../src/compiler/semantic/identity/semantic_type_id"
 require "../../src/compiler/semantic/identity/def_identity"
 require "../../src/compiler/semantic/identity/def_instance_key"
 require "../../src/compiler/semantic/identity/dry_run_tracker"
+require "../../src/compiler/semantic/identity/def_instance_key"
 
 module IdentitySpec
   include CrystalV2::Compiler::Semantic
@@ -242,13 +243,65 @@ module IdentitySpec
     end
   end
 
+  # ── DryRunDefKey ──
+
+  describe "DryRunDefKey" do
+    it "equality by arena_id and node_object_id" do
+      a = DryRunDefKey.new(100_u64, 200_u64)
+      b = DryRunDefKey.new(100_u64, 200_u64)
+      c = DryRunDefKey.new(100_u64, 300_u64)
+      (a == b).should be_true
+      (a == c).should be_false
+    end
+
+    it "hash stability" do
+      a = DryRunDefKey.new(100_u64, 200_u64)
+      b = DryRunDefKey.new(100_u64, 200_u64)
+      a.hash.should eq b.hash
+    end
+
+    it "uses full UInt64 — no truncation" do
+      large = DryRunDefKey.new(0xFFFF_FFFF_FFFF_u64, 0xAAAA_BBBB_CCCC_u64)
+      large.arena_id.should eq 0xFFFF_FFFF_FFFF_u64
+      large.node_object_id.should eq 0xAAAA_BBBB_CCCC_u64
+    end
+  end
+
+  # ── DryRunInstanceKey ──
+
+  describe "DryRunInstanceKey" do
+    it "equality with same components" do
+      dk = DryRunDefKey.new(1_u64, 2_u64)
+      recv = SemanticTypeId.new(10_u32)
+      k1 = DryRunInstanceKey.new(def_key: dk, receiver_type: recv)
+      k2 = DryRunInstanceKey.new(def_key: dk, receiver_type: recv)
+      (k1 == k2).should be_true
+      k1.hash.should eq k2.hash
+    end
+
+    it "different arg types = different key" do
+      dk = DryRunDefKey.new(1_u64, 2_u64)
+      k1 = DryRunInstanceKey.new(def_key: dk, arg_types: [SemanticTypeId.new(20_u32)])
+      k2 = DryRunInstanceKey.new(def_key: dk, arg_types: [SemanticTypeId.new(21_u32)])
+      (k1 == k2).should be_false
+    end
+
+    it "defensive copy — mutating original array does not affect key" do
+      dk = DryRunDefKey.new(1_u64, 2_u64)
+      args = [SemanticTypeId.new(20_u32)]
+      key = DryRunInstanceKey.new(def_key: dk, arg_types: args)
+      args << SemanticTypeId.new(99_u32)
+      key.arg_types.size.should eq 1
+    end
+  end
+
   # ── DryRunTracker ──
 
   describe "IdentityDryRunTracker" do
     it "first encounter is a miss, second is a hit" do
       tracker = IdentityDryRunTracker.new
-      def_id = DefIdentity.new(1_u64, 0)
-      key = DefInstanceKey.new(def_identity: def_id)
+      dk = DryRunDefKey.new(1_u64, 100_u64)
+      key = DryRunInstanceKey.new(def_key: dk)
       tracker.record_inference(key).should be_false # first = miss
       tracker.record_inference(key).should be_true  # second = hit
       tracker.total_lookups.should eq 2
@@ -258,8 +311,8 @@ module IdentitySpec
 
     it "different keys are separate misses" do
       tracker = IdentityDryRunTracker.new
-      k1 = DefInstanceKey.new(def_identity: DefIdentity.new(1_u64, 0))
-      k2 = DefInstanceKey.new(def_identity: DefIdentity.new(2_u64, 0))
+      k1 = DryRunInstanceKey.new(def_key: DryRunDefKey.new(1_u64, 100_u64))
+      k2 = DryRunInstanceKey.new(def_key: DryRunDefKey.new(2_u64, 200_u64))
       tracker.record_inference(k1).should be_false
       tracker.record_inference(k2).should be_false
       tracker.cache_hits.should eq 0
@@ -280,9 +333,9 @@ module IdentitySpec
       (a == b).should be_true
     end
 
-    it "dump produces expected format" do
+    it "dump produces expected format with surrogate note" do
       tracker = IdentityDryRunTracker.new
-      key = DefInstanceKey.new(def_identity: DefIdentity.new(1_u64, 0))
+      key = DryRunInstanceKey.new(def_key: DryRunDefKey.new(1_u64, 100_u64))
       tracker.record_inference(key)
       tracker.record_inference(key)
       io = IO::Memory.new
@@ -292,6 +345,7 @@ module IdentitySpec
       output.should contain("lookups=2")
       output.should contain("hits=1")
       output.should contain("misses=1")
+      output.should contain("DryRunDefKey")
     end
   end
 end
