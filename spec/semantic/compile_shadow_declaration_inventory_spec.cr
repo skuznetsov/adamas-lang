@@ -331,4 +331,78 @@ describe "compile shadow declaration inventory" do
     method_line.not_nil!.should contain("semantic_direct_total=1")
     method_line.not_nil!.should contain("semantic_macro_expanded_total=1")
   end
+
+  it "retains generated provenance for macro-expanded classes modules and constants" do
+    aggregate = Semantic::CompileShadowAggregate.build([
+      {
+        path: "decl_lib.cr",
+        source: <<-CR,
+          macro define_bundle
+            class Alpha
+            end
+
+            module Beta
+            end
+
+            GAMMA = 1
+          end
+        CR
+      },
+      {
+        path: "decl_main.cr",
+        source: <<-CR,
+          require "./decl_lib"
+          define_bundle
+        CR
+      },
+    ])
+    program = aggregate.program
+    shadow_sources = {} of String => String
+    aggregate.unit_summaries.each { |u| shadow_sources[u.path] = u.source }
+
+    analyzer = Semantic::Analyzer.new(program)
+    analyzer.collect_symbols(
+      node_file_path_provider: ->(expr_id : Frontend::ExprId) { aggregate.path_for(expr_id) },
+      source_for_path_provider: ->(path : String) { shadow_sources[path]? },
+    )
+
+    alpha_symbol = analyzer.global_context.symbol_table.lookup_local("Alpha")
+    alpha_symbol.should be_a(Semantic::ClassSymbol)
+    alpha_symbol = alpha_symbol.as(Semantic::ClassSymbol)
+    alpha_symbol.generated?.should be_true
+    alpha_symbol.generated_origin_node_id.should_not be_nil
+    alpha_symbol.generated_macro_definition_node_id.should_not be_nil
+    alpha_symbol.file_path.should eq("decl_main.cr")
+
+    beta_symbol = analyzer.global_context.symbol_table.lookup_local("Beta")
+    beta_symbol.should be_a(Semantic::ModuleSymbol)
+    beta_symbol = beta_symbol.as(Semantic::ModuleSymbol)
+    beta_symbol.generated?.should be_true
+    beta_symbol.generated_origin_node_id.should_not be_nil
+    beta_symbol.generated_macro_definition_node_id.should_not be_nil
+    beta_symbol.file_path.should eq("decl_main.cr")
+
+    gamma_symbol = analyzer.global_context.symbol_table.lookup_local("GAMMA")
+    gamma_symbol.should be_a(Semantic::ConstantSymbol)
+    gamma_symbol = gamma_symbol.as(Semantic::ConstantSymbol)
+    gamma_symbol.generated?.should be_true
+    gamma_symbol.generated_origin_node_id.should_not be_nil
+    gamma_symbol.generated_macro_definition_node_id.should_not be_nil
+    gamma_symbol.file_path.should eq("decl_main.cr")
+
+    semantic_inventory = Semantic::CompileShadowDeclarationInventory.from_symbol_table(
+      analyzer.global_context.symbol_table
+    )
+
+    class_line = semantic_inventory.provenance_lines("semantic").find { |line| line.starts_with?("classes provenance ") }
+    module_line = semantic_inventory.provenance_lines("semantic").find { |line| line.starts_with?("modules provenance ") }
+    constant_line = semantic_inventory.provenance_lines("semantic").find { |line| line.starts_with?("constants provenance ") }
+
+    class_line.should_not be_nil
+    module_line.should_not be_nil
+    constant_line.should_not be_nil
+    class_line.not_nil!.should contain("semantic_macro_expanded_total=1")
+    module_line.not_nil!.should contain("semantic_macro_expanded_total=1")
+    constant_line.not_nil!.should contain("semantic_macro_expanded_total=1")
+  end
 end
