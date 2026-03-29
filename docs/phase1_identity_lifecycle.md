@@ -96,13 +96,30 @@ HIR TypeRef lives in HIR Module, functions, instructions.
 **Never cross back:** HIR TypeRef must not appear in DefInstanceKey or
 any semantic cache key. The adapter's reverse lookup is for diagnostics only.
 
-## 7. Current Dry-Run Results (hello world)
+## 7. Dry-Run Results (hello world)
+
+**Key components used in dry-run:**
+- DefIdentity: `{resolved_arena.object_id, node.object_id}` (injective per heap)
+- Receiver: interned `self_type_name`
+- Args: interned parameter type annotations (UNKNOWN for unannotated params)
+- Block: interned block parameter type annotation (if present)
+- NOT yet included: generic type parameters, inferred call-site arg types,
+  named argument types
+
+**Interpretation:** The hit rate measures repeated body inference for the same
+syntactic def + receiver + declared-param-type combination. It does NOT yet
+capture call-site specialization (where the same def is analyzed with different
+inferred arg types). A real Phase 4 cache would key on inferred types at the
+call site, not declared annotations — so actual cache hit rates may differ.
+
+The dry-run is a directional signal showing that many body walks are for
+the same def+receiver combination, not a precise prediction of Phase 4 savings.
 
 ```
-lookups=5561  hits=5048  misses=513  hit_rate=90.8%
-unique_keys=513  duplicate_keys=391  interned_types=261
+lookups=5561  hits=3147  misses=2414  hit_rate=56.6%
+unique_keys=2414  duplicate_keys=573  interned_types=399
 ```
 
-This means 90.8% of body inferences are redundant — the same def with the
-same receiver type was already analyzed. A proper DefInstanceKey cache
-(Phase 4) would eliminate ~5048 redundant body walks.
+Compare with Phase 0's `body_infer_dupes=401` (keyed by DefNode.object_id only).
+The enriched key finds 3147 hits because the same syntactic def can be analyzed
+multiple times with the same receiver — a genuine cache opportunity.
