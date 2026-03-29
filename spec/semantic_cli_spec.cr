@@ -186,6 +186,7 @@ describe CrystalV2::Compiler::CLI do
       output.should contain("Semantic shadow declarations: methods provenance")
       output.should contain("semantic_direct_total=1")
       output.should contain("semantic_macro_expanded_total=1")
+      output.should contain("generated_symbols=1")
     end
   end
 

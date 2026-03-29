@@ -120,6 +120,7 @@
     - shadow now has a first declaration-parity signal against the compile-side top-level collector plus symmetric collector/semantic provenance for direct vs macro-expanded declarations, and semantic declaration provenance is now carried by generated symbol metadata instead of an analyzer-side classification callback
     - the current semantic global symbol table now materializes root-level macro-generated methods in this reducer
     - per-unit shadow summaries now attribute generated method symbols back to the originating file through the semantic-side file-path provider
+    - shadow summaries now also expose `generated_symbols`, so semantic ownership can distinguish generated declarations from direct declarations without guessing from `generated_nodes`
     - shadow now also reports `generated_nodes`, so expanded semantic ownership is visible without corrupting the meaning of aggregate `nodes=`
     - collector/semantic declaration parity is now green across the currently measured macro-call shapes: bare identifier, positional args, named args, default arg, and block-yield
     - aggregate ownership now has a generated-node overlay, so per-unit shadow summaries can print both original parse `nodes=` and expanded `owned_nodes=`

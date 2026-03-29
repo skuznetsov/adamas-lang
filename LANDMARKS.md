@@ -136,6 +136,10 @@ Verified sequence:
     - on a carrier with one direct method and one macro-expanded method,
       output includes
       `methods provenance semantic_direct_total=1 semantic_direct_unique=1 semantic_macro_expanded_total=1 semantic_macro_expanded_unique=1`
+  - live shadow summaries now also print generated semantic symbol counts:
+    - the same carrier now reports `generated_symbols=1` globally and on the
+      per-unit line, so semantic ownership can distinguish generated
+      declarations without inferring from `generated_nodes`
   - generated provenance classification no longer depends on generated snippet
     availability:
     - semantic declaration provenance and `generated_*_diags` counters now use

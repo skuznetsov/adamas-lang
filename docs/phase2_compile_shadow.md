@@ -52,6 +52,7 @@ the shared aggregate:
 - generated-root count in that unit
 - reachable node count in that unit
 - top-level symbol count attributed to that unit
+- generated top-level symbol count attributed to that unit
 - resolved identifier count attributed to that unit
 - semantic diagnostic count attributed to that unit
 - generated semantic diagnostic count attributed to that unit
@@ -101,6 +102,12 @@ Semantic shadow declarations: methods provenance semantic_direct_total=1 semanti
 
 This closes the old asymmetry where only the collector side could distinguish
 `direct` from `macro_expanded` declarations.
+
+Shadow summaries now also separate total semantic symbols from generated
+semantic symbols. On a carrier with one direct method and one macro-expanded
+method, the global and per-unit summaries now include `generated_symbols=1`,
+which makes semantic ownership more explicit than inferring generated coverage
+from `generated_nodes` alone.
 
 Generated declaration provenance and `generated_*_diags` counters now use the
 explicit generated-origin mapping carried by the semantic stack. In particular,
