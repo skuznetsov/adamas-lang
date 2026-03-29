@@ -2777,8 +2777,7 @@ module Crystal::MIR
           @emitted_value_names.add(s[0...eq])
         end
       end
-      normalized = normalize_ptr_zero_line(s)
-      output_bytes = (@indent.to_i64 * 2_i64) + normalized.bytesize + 1_i64
+      output_bytes = (@indent.to_i64 * 2_i64) + s.bytesize + 1_i64
       @emit_line_output_bytes += output_bytes
       case @emit_family_tag
       when 1 then @emit_family_const_bytes += output_bytes
@@ -2791,54 +2790,35 @@ module Crystal::MIR
       when 8 then @emit_family_extern_bytes += output_bytes
       when 9 then @emit_family_other_bytes += output_bytes
       end
-      append_output(("  " * @indent) + normalized + "\n")
+      append_output(("  " * @indent) + s + "\n")
     end
 
     private def emit_raw(s : String)
       @emit_raw_calls += 1
       @emit_raw_input_bytes += s.bytesize
-      normalized = normalize_ptr_zero_text(s)
-      @emit_raw_output_bytes += normalized.bytesize
-      append_output(normalized)
+      @emit_raw_output_bytes += s.bytesize
+      append_output(s)
     end
 
     # Emit text to the top-level output buffer. During block buffering,
     # this routes to the main output to avoid nesting definitions inside functions.
     # When not buffering, this is the same as emit_raw.
     private def emit_toplevel(s : String)
-      normalized = normalize_ptr_zero_text(s)
       if tl = @toplevel_output
         if fd_output = tl.as?(IO::FileDescriptor)
           fd = fd_output.fd
           offset = 0
-          bytes = normalized.to_slice
+          bytes = s.to_slice
           while offset < bytes.size
             written = LibC.write(fd, bytes.to_unsafe + offset, bytes.size - offset)
             raise "write failed on fd #{fd}" if written <= 0
             offset += written.to_i
           end
         else
-          tl << normalized
+          tl << s
         end
       else
-        append_output(normalized)
-      end
-    end
-
-    private def normalize_ptr_zero_line(line : String) : String
-      return line unless line.includes?("ptr 0")
-      # Do not rewrite LLVM string literal payloads like c"ptr 0,\00":
-      # changing the bytes without updating [N x i8] corrupts IR.
-      return line if line.includes?("c\"")
-      line.gsub(/ptr 0(?=[,\)\]\}\s]|$)/, "ptr null")
-    end
-
-    private def normalize_ptr_zero_text(text : String) : String
-      return text unless text.includes?("ptr 0")
-      String.build(text.bytesize + 16) do |io|
-        text.each_line(chomp: false) do |line|
-          io << normalize_ptr_zero_line(line)
-        end
+        append_output(s)
       end
     end
 
@@ -11696,13 +11676,13 @@ module Crystal::MIR
 
       # Append parent-emitted functions first
       if parent_output.pos > 0
-        append_output(normalize_ptr_zero_text(parent_output.to_s))
+        append_output(parent_output.to_s)
       end
 
       workers.each do |_, ir_file, se_file|
         # Append function IR
         if File.exists?(ir_file)
-          append_output(normalize_ptr_zero_text(File.read(ir_file)))
+          append_output(File.read(ir_file))
         end
 
         # Merge side-effects
