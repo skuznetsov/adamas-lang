@@ -1920,11 +1920,6 @@ module CrystalV2
         timings["hir"] = (Time.instant - hir_start).total_milliseconds if options.stats
         timings["hir_funcs"] = hir_module.functions.size.to_f if options.stats
 
-        # Phase 0 metrics dump (demand-driven rewrite tracking)
-        if BootstrapEnv.enabled?("CRYSTAL_V2_PHASE0_METRICS")
-          hir_converter.dump_phase0_metrics(STDERR)
-        end
-
         # Final allocator flush: regenerate any .new functions invalidated during lowering
         hir_converter.flush_deferred_allocators
 
@@ -1968,6 +1963,12 @@ module CrystalV2
         if debug_profile
           timings["dbg_count_hir_reachable_names"] = reachable.size.to_f
           timings["dbg_count_hir_funcs_after_rta"] = hir_module.functions.size.to_f
+        end
+
+        # Phase 0 metrics dump — AFTER allocator flush AND RTA pruning
+        # so total_hir_functions reflects final emitted shape.
+        if BootstrapEnv.enabled?("CRYSTAL_V2_PHASE0_METRICS")
+          hir_converter.dump_phase0_metrics(STDERR)
         end
         if options.stats
           hir_details = [] of String

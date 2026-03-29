@@ -110,64 +110,96 @@ end
 
 ### 3.2 Proposed design
 
+**SemanticTypeId** is a **table-backed interned ID**, not a raw hash.
+
 ```crystal
-# Canonical semantic type identity
+# Canonical semantic type identity — interned, collision-free.
+# Each unique semantic type gets a unique UInt32 ID from a central intern table.
+# Hashing is used ONLY as a lookup optimization, not as identity.
+
 struct SemanticTypeId
-  # For primitive types: use a fixed enum
-  # For user types: use qualified name hash + kind
-  # For generic instantiations: combine base + arg type ids
+  getter id : UInt32
 
-  getter value : UInt64
-
-  # Constructors for each category
-  def self.primitive(kind : PrimitiveKind) : self
-    new(kind.value.to_u64)
+  def initialize(@id : UInt32)
   end
 
-  def self.named(qualified_name : String, kind : TypeKind) : self
-    # Stable hash of qualified name + kind
-    h = qualified_name.hash.to_u64
-    h = h ^ (kind.value.to_u64 << 56)
-    new(h)
+  def ==(other : SemanticTypeId) : Bool
+    @id == other.id
   end
 
-  def self.generic(base : SemanticTypeId, args : Array(SemanticTypeId)) : self
-    h = base.value
-    args.each { |a| h = h ^ (a.value &* 0x9e3779b97f4a7c15_u64) }
-    new(h)
-  end
-
-  def self.union(variants : Array(SemanticTypeId)) : self
-    sorted = variants.map(&.value).sort
-    h = 0_u64
-    sorted.each { |v| h = h ^ (v &* 0x517cc1b727220a95_u64) }
-    new(h | (1_u64 << 63))  # high bit = union marker
+  def hash : UInt64
+    @id.to_u64
   end
 end
 
-# Adapter: SemanticTypeId → HIR TypeRef
+# The intern table that ensures canonical identity.
+# Structural key → unique SemanticTypeId.
+class SemanticTypeInternTable
+  # Structural key for interning (NOT the identity itself).
+  # Two types with the same structure get the same SemanticTypeId.
+  record StructuralKey,
+    kind : TypeKind,
+    name : String,                       # qualified name for named types
+    type_params : Array(SemanticTypeId)   # for generics/unions: component type ids
+
+  @table : Hash(StructuralKey, SemanticTypeId) = {}
+  @next_id : UInt32 = 0
+
+  def intern(key : StructuralKey) : SemanticTypeId
+    @table[key] ||= begin
+      id = SemanticTypeId.new(@next_id)
+      @next_id += 1
+      id
+    end
+  end
+
+  # Convenience: intern a primitive
+  def primitive(kind : PrimitiveKind) : SemanticTypeId
+    intern(StructuralKey.new(TypeKind::Primitive, kind.to_s, [] of SemanticTypeId))
+  end
+
+  # Convenience: intern a named type (class, struct, module, enum)
+  def named(qualified_name : String, kind : TypeKind) : SemanticTypeId
+    intern(StructuralKey.new(kind, qualified_name, [] of SemanticTypeId))
+  end
+
+  # Convenience: intern a generic instantiation
+  def generic(base_name : String, kind : TypeKind, args : Array(SemanticTypeId)) : SemanticTypeId
+    intern(StructuralKey.new(kind, base_name, args))
+  end
+
+  # Convenience: intern a union (order-independent via sorted components)
+  def union(variants : Array(SemanticTypeId)) : SemanticTypeId
+    sorted = variants.sort_by(&.id)
+    intern(StructuralKey.new(TypeKind::Union, "", sorted))
+  end
+end
+
+# Adapter: SemanticTypeId → HIR TypeRef (one-way, at emission boundary)
 class SemanticToHIRAdapter
   @mapping : Hash(SemanticTypeId, HIR::TypeRef) = {}
 
-  def resolve(semantic_id : SemanticTypeId) : HIR::TypeRef
-    @mapping[semantic_id]? || register(semantic_id)
-  end
-
-  private def register(semantic_id : SemanticTypeId) : HIR::TypeRef
-    # Allocate new HIR TypeRef and map
-    type_ref = @hir_module.next_type_ref
-    @mapping[semantic_id] = type_ref
-    type_ref
+  def resolve(semantic_id : SemanticTypeId, hir_module : HIR::Module) : HIR::TypeRef
+    @mapping[semantic_id] ||= hir_module.allocate_type_ref
   end
 end
 ```
+
+**Why table-backed, not hash-based?**
+- Hash collisions would silently alias unrelated types in caches
+- Table interning guarantees: same structure → same id, different structure → different id
+- UInt32 id is cheap to compare, copy, and use as hash key
+- The intern table is the single source of truth for type identity
 
 ### 3.3 DefInstanceKey design
 
 ```crystal
 record DefInstanceKey,
-  # Identity of the method definition (stable across compilations)
-  def_qualified_name : String,  # e.g., "Array(T)#map"
+  # Semantic identity of the untyped Def node.
+  # NOT a string name — must be stable object identity.
+  # In V2: (arena_object_id, expr_id) pair uniquely identifies a Def AST node.
+  # This matches original Crystal's use of def.object_id.
+  def_identity : UInt64,
   # Semantic types of arguments at this call site
   receiver_type : SemanticTypeId?,
   arg_types : Array(SemanticTypeId),
@@ -175,8 +207,15 @@ record DefInstanceKey,
   named_arg_types : Array({String, SemanticTypeId})?
 ```
 
-Note: `def_qualified_name` is the UNmangled method name (not arg-type-suffixed).
-The arg types are in `arg_types` as semantic ids. This avoids stringly-typed keys.
+**Why NOT qualified name?**
+- Reopened defs share the same name but are semantically different Def nodes
+- Overload families share prefix but need distinct cache entries per signature
+- Macro-generated defs may share names across contexts
+- Same-name methods in different semantic contexts (e.g., included modules)
+  must be distinguished
+
+**def_identity** is computed as: `arena.object_id ^ (expr_id.index.to_u64 << 32)`
+This is stable within one compilation and uniquely identifies the Def AST node.
 
 ## 4. Compile-Path Integration Design
 

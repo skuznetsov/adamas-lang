@@ -40008,6 +40008,9 @@ module Crystal::HIR
           end
         end
 
+        # Phase 0 metric: count safety net functions
+        @phase0_safety_net_functions += sigs_to_lower.size
+
         sigs_to_lower.each do |name|
           attempted.add(name)
           lower_function_if_needed(name)
@@ -52867,6 +52870,8 @@ module Crystal::HIR
 
     private def lower_function_if_needed_impl(name : String) : Nil
       return if name.empty?
+      # Phase 0 metric: track duplicate body analysis
+      @phase0_lower_name_counts[name] = (@phase0_lower_name_counts[name]? || 0) + 1
       is_math_min_debug = env_get("DEBUG_MATH_MIN") && name.includes?("Math") && (name.includes?("min") || name.includes?("max"))
       if is_math_min_debug
         base = strip_type_suffix(name)
