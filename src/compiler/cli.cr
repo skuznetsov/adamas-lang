@@ -5720,14 +5720,13 @@ module CrystalV2
       end
 
       private def build_shadow_collector_declaration_inventory(
-        units : Array(ParsedUnit)
+        aggregate : Semantic::CompileShadowAggregate
       ) : Semantic::CompileShadowDeclarationInventory
         saved_macro_text_vars = @macro_text_vars.dup
         @macro_text_vars.clear
         direct_arena_ids = Set(UInt64).new
-        units.each do |unit|
-          direct_arena_ids.add(unit.arena.object_id.to_u64)
-        end
+        aggregate_arena = aggregate.program.arena
+        direct_arena_ids.add(aggregate_arena.object_id.to_u64)
 
         def_nodes = [] of Tuple(Frontend::DefNode, Frontend::ArenaLike)
         class_nodes = [] of Tuple(Frontend::ClassNode, Frontend::ArenaLike)
@@ -5742,21 +5741,21 @@ module CrystalV2
         top_level_type_names = Set(String).new
         top_level_class_kinds = {} of String => Bool
         flags = Runtime.target_flags
-        sources_by_arena = Hash(UInt64, String).new(initial_capacity: units.size)
+        sources_by_arena = Hash(UInt64, String).new(initial_capacity: aggregate.unit_summaries.size)
+        sources_by_arena[aggregate_arena.object_id.to_u64] = ""
 
-        units.each_with_index do |unit, arena_index|
-          arena = unit.arena
-          source = unit.source
-          sources_by_arena[arena.object_id.to_u64] = source
+        aggregate.unit_summaries.each do |unit_summary|
+          arena = aggregate_arena
+          source = unit_summary.source
           next if skip_file_directive?(source, flags)
 
           pending_annotations = [] of Frontend::AnnotationNode
           expr_i = 0
-          while expr_i < unit.roots.size
-            root_id = unit.roots.unsafe_fetch(expr_i)
+          while expr_i < unit_summary.roots.size
+            root_id = unit_summary.roots.unsafe_fetch(expr_i)
             collect_top_level_nodes(
               arena,
-              arena_index.to_i32,
+              unit_summary.unit_index,
               root_id,
               def_nodes,
               class_nodes,
@@ -5782,7 +5781,8 @@ module CrystalV2
                 macro_entry,
                 root_node,
                 arena,
-                arena_index.to_i32,
+                unit_summary.unit_index,
+                aggregate,
                 source,
                 flags,
                 sources_by_arena,
@@ -5938,6 +5938,7 @@ module CrystalV2
         node : Frontend::TypedNode,
         arena : Frontend::ArenaLike,
         arena_index : Int32,
+        aggregate : Semantic::CompileShadowAggregate?,
         source : String,
         flags : Set(String),
         sources_by_arena : Hash(UInt64, String),
@@ -5980,13 +5981,22 @@ module CrystalV2
           return
         end
 
+        # Use the macro DEFINITION's source for span-based text extraction,
+        # not the call-site's source. Cross-file macros have body spans that
+        # reference offsets in the defining file.
+        macro_source = source
+        if agg = aggregate
+          if macro_unit = agg.unit_for(macro_entry.node_id)
+            macro_source = macro_unit.source
+          end
+        end
         dummy_program = Frontend::Program.new(expansion_arena, [] of Frontend::ExprId)
         expander = Semantic::MacroExpander.new(
           dummy_program,
           expansion_arena,
           flags,
           recovery_mode: true,
-          macro_source: source
+          macro_source: macro_source
         )
         macro_symbol = Semantic::MacroSymbol.new(
           String.new(macro_entry.node.name),
@@ -6045,7 +6055,7 @@ module CrystalV2
       ) : SemanticShadowSummary?
         aggregate = build_semantic_shadow_aggregate(units)
         program = aggregate.program
-        collector_inventory = build_shadow_collector_declaration_inventory(units)
+        collector_inventory = build_shadow_collector_declaration_inventory(aggregate)
         analyzer = Semantic::Analyzer.new(program)
         analyzer.collect_symbols(node_file_path_provider: ->(expr_id : Frontend::ExprId) { aggregate.path_for(expr_id) })
         resolve_result = analyzer.resolve_names
