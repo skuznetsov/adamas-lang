@@ -27535,7 +27535,10 @@ module Crystal::HIR
       receiver_type = ctx.type_of(receiver_id)
       receiver_is_type_literal = ctx.type_literal?(receiver_id)
       type_desc = @module.get_type_descriptor(receiver_type)
-      enum_type_name = @enum_value_types.try(&.[receiver_id]?)
+      # Guard enum-based receiver specialization against stale tags that no longer
+      # match the receiver's actual lowered type (for example, Array(UInt32)
+      # values briefly tagged as Crystal::HIR::Taint during HIR lowering).
+      enum_type_name = enum_value_name_for(ctx, receiver_id)
       cache_key : UInt64? = nil
       if @method_resolution_cache
         # V2 safety: use numeric scope hash — string interpolation and .hash crash in V2.
