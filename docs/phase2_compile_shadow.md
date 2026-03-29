@@ -112,6 +112,12 @@ That shadow-only metadata now also has a unified analyzer lookup:
 source text, macro call origin, and macro definition site into one provenance
 record for downstream telemetry/formatting code.
 
+CLI formatting now consumes that unified context through a shared helper, so
+frontend and semantic generated diagnostics no longer duplicate provenance
+assembly logic. Same-file expansions still omit the `macro defined here` note
+to avoid redundant output when the call site and definition live in the same
+file.
+
 On the current tree, that top-level macro gap is now closed for the semantic
 symbol table: a no-prelude carrier with a top-level `{% for %}` that generates
 two methods now reports `collector_total=3` and `semantic_total=3` for methods.
