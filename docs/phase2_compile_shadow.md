@@ -40,7 +40,7 @@ The shadow prepass currently reports:
 - top-level symbol count
 - resolved identifier count
 - semantic / name-resolution / type-inference diagnostic counts
-- aggregate-parse vs semantic top-level declaration gap count
+- compile-collector vs semantic top-level declaration gap count
 
 When `--verbose` is enabled, it also prints a **file-level unit summary** from
 the shared aggregate:
@@ -61,7 +61,7 @@ the right per-file source text inside the shared aggregate.
 When `--verbose` is enabled, the shadow path also prints a declaration parity
 inventory comparing:
 
-- top-level declarations seen directly in the shared aggregate roots
+- top-level declarations collected by the compile-side top-level collector
 - top-level declarations materialized in the semantic global symbol table
 
 This is intentionally limited to comparable kinds:
@@ -81,8 +81,9 @@ It is an **integration substrate**, not a correctness gate for compile output.
 - file-level ownership now exists for aggregate nodes and all current shadow
   diagnostic families can be file-aware, but the legacy lowering pipeline
   remains the source of truth
-- declaration parity is currently `aggregate parse -> semantic symbol table`,
-  not yet `compile collector -> semantic` and not yet macro-expanded parity
+- declaration parity is currently `compile collector -> semantic symbol table`
+  for comparable kinds; it is still not a full lowering contract and not yet a
+  dedicated macro-expanded parity gate
 - does not yet include macro-expansion parity with `AstToHir`
 - does not yet run normalized HIR comparison
 

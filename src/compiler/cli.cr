@@ -5684,6 +5684,116 @@ module CrystalV2
         sources
       end
 
+      private def build_shadow_collector_declaration_inventory(
+        units : Array(ParsedUnit)
+      ) : Semantic::CompileShadowDeclarationInventory
+        saved_macro_text_vars = @macro_text_vars.dup
+        @macro_text_vars.clear
+
+        def_nodes = [] of Tuple(Frontend::DefNode, Frontend::ArenaLike)
+        class_nodes = [] of Tuple(Frontend::ClassNode, Frontend::ArenaLike)
+        module_nodes = [] of Tuple(Frontend::ModuleNode, Frontend::ArenaLike)
+        enum_nodes = [] of Tuple(Frontend::EnumNode, Frontend::ArenaLike)
+        macro_nodes = [] of MacroEntry
+        alias_nodes = [] of Tuple(Frontend::AliasNode, Frontend::ArenaLike)
+        lib_nodes = [] of LibEntry
+        constant_exprs = [] of Tuple(Frontend::ExprId, Frontend::ArenaLike)
+        main_exprs = [] of UInt64
+        acyclic_types = Set(String).new
+        top_level_type_names = Set(String).new
+        top_level_class_kinds = {} of String => Bool
+        flags = Runtime.target_flags
+        sources_by_arena = Hash(UInt64, String).new(initial_capacity: units.size)
+
+        units.each_with_index do |unit, arena_index|
+          arena = unit.arena
+          source = unit.source
+          sources_by_arena[arena.object_id.to_u64] = source
+          next if skip_file_directive?(source, flags)
+
+          pending_annotations = [] of Frontend::AnnotationNode
+          expr_i = 0
+          while expr_i < unit.roots.size
+            collect_top_level_nodes(
+              arena,
+              arena_index.to_i32,
+              unit.roots.unsafe_fetch(expr_i),
+              def_nodes,
+              class_nodes,
+              module_nodes,
+              enum_nodes,
+              macro_nodes,
+              alias_nodes,
+              lib_nodes,
+              constant_exprs,
+              main_exprs,
+              pending_annotations,
+              acyclic_types,
+              top_level_type_names,
+              top_level_class_kinds,
+              flags,
+              sources_by_arena,
+              source
+            )
+            expr_i += 1
+          end
+        end
+
+        inventory = Semantic::CompileShadowDeclarationInventory.new
+
+        i = 0
+        while i < def_nodes.size
+          inventory.record(Semantic::CompileShadowDeclarationKind::Methods, String.new(def_nodes.unsafe_fetch(i)[0].name))
+          i += 1
+        end
+
+        i = 0
+        while i < class_nodes.size
+          inventory.record(Semantic::CompileShadowDeclarationKind::Classes, String.new(class_nodes.unsafe_fetch(i)[0].name))
+          i += 1
+        end
+
+        i = 0
+        while i < module_nodes.size
+          inventory.record(Semantic::CompileShadowDeclarationKind::Modules, String.new(module_nodes.unsafe_fetch(i)[0].name))
+          i += 1
+        end
+
+        i = 0
+        while i < enum_nodes.size
+          inventory.record(Semantic::CompileShadowDeclarationKind::Enums, String.new(enum_nodes.unsafe_fetch(i)[0].name))
+          i += 1
+        end
+
+        i = 0
+        while i < macro_nodes.size
+          inventory.record(Semantic::CompileShadowDeclarationKind::Macros, String.new(macro_nodes.unsafe_fetch(i).node.name))
+          i += 1
+        end
+
+        i = 0
+        while i < constant_exprs.size
+          entry = constant_exprs.unsafe_fetch(i)
+          expr_id = entry[0]
+          arena = entry[1]
+          node = arena[expr_id]
+          case node
+          when Frontend::ConstantNode
+            inventory.record(Semantic::CompileShadowDeclarationKind::Constants, String.new(node.name))
+          when Frontend::AssignNode
+            target = arena[node.target]
+            if target.is_a?(Frontend::ConstantNode)
+              inventory.record(Semantic::CompileShadowDeclarationKind::Constants, String.new(target.name))
+            end
+          end
+          i += 1
+        end
+
+        inventory
+      ensure
+        @macro_text_vars = saved_macro_text_vars.not_nil!
+      end
+
       private def run_semantic_compile_shadow(
         units : Array(ParsedUnit),
         options : Options,
@@ -5692,13 +5802,13 @@ module CrystalV2
       ) : SemanticShadowSummary?
         aggregate = build_semantic_shadow_aggregate(units)
         program = aggregate.program
-        parse_inventory = Semantic::CompileShadowDeclarationInventory.from_program(program)
+        collector_inventory = build_shadow_collector_declaration_inventory(units)
         analyzer = Semantic::Analyzer.new(program)
         analyzer.collect_symbols
         resolve_result = analyzer.resolve_names
         analyzer.infer_types(resolve_result.identifier_symbols)
         semantic_inventory = Semantic::CompileShadowDeclarationInventory.from_symbol_table(analyzer.global_context.symbol_table)
-        declaration_parity = Semantic::CompileShadowDeclarationParity.compare(parse_inventory, semantic_inventory)
+        declaration_parity = Semantic::CompileShadowDeclarationParity.compare(collector_inventory, semantic_inventory)
         semantic_diagnostics = analyzer.semantic_diagnostics.map { |diagnostic| enrich_shadow_semantic_diagnostic(diagnostic, aggregate) }
         resolution_diagnostics = resolve_result.diagnostics.map { |diagnostic| enrich_shadow_resolution_diagnostic(diagnostic, aggregate) }
         type_diagnostics = analyzer.type_inference_diagnostics.map { |diagnostic| enrich_shadow_semantic_diagnostic(diagnostic, aggregate) }
@@ -5736,7 +5846,7 @@ module CrystalV2
         SemanticShadowSummary.new(
           unit_summaries: unit_summaries,
           declaration_gap_count: declaration_parity.gap_count,
-          declaration_summary_lines: declaration_parity.summary_lines,
+          declaration_summary_lines: declaration_parity.summary_lines(5, "collector", "semantic"),
           files_count: units.size,
           roots_count: program.roots.size,
           arena_size: program.arena.size,

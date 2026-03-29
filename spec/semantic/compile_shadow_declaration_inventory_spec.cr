@@ -115,4 +115,20 @@ describe "compile shadow declaration inventory" do
     method_line.not_nil!.should contain("semantic_total=1")
     method_line.not_nil!.should contain("semantic_unique=1")
   end
+
+  it "supports custom labels for parity summaries" do
+    left = Semantic::CompileShadowDeclarationInventory.new
+    right = Semantic::CompileShadowDeclarationInventory.new
+    left.record(Semantic::CompileShadowDeclarationKind::Methods, "greet")
+    right.record(Semantic::CompileShadowDeclarationKind::Methods, "greet")
+
+    parity = Semantic::CompileShadowDeclarationParity.compare(left, right)
+    method_line = parity.summary_lines(5, "collector", "semantic").find { |line| line.starts_with?("methods ") }
+
+    method_line.should_not be_nil
+    method_line.not_nil!.should contain("collector_total=1")
+    method_line.not_nil!.should contain("collector_unique=1")
+    method_line.not_nil!.should contain("semantic_total=1")
+    method_line.not_nil!.should contain("semantic_unique=1")
+  end
 end

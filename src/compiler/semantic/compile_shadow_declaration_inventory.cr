@@ -166,7 +166,7 @@ module CrystalV2
           total
         end
 
-        def summary_lines(max_names : Int32 = 5) : Array(String)
+        def summary_lines(max_names : Int32 = 5, left_label : String = "parse", right_label : String = "semantic") : Array(String)
           lines = [] of String
           CompileShadowDeclarationInventory::KINDS.each do |kind|
             parse_total = @parse_inventory.total(kind)
@@ -178,10 +178,10 @@ module CrystalV2
 
             line = String.build do |io|
               io << kind.label
-              io << " parse_total=" << parse_total
-              io << " parse_unique=" << parse_unique
-              io << " semantic_total=" << semantic_total
-              io << " semantic_unique=" << semantic_unique
+              io << " " << left_label << "_total=" << parse_total
+              io << " " << left_label << "_unique=" << parse_unique
+              io << " " << right_label << "_total=" << semantic_total
+              io << " " << right_label << "_unique=" << semantic_unique
               io << " gaps=" << (missing.size + extra.size)
             end
             lines << line
