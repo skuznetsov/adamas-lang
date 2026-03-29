@@ -5777,29 +5777,29 @@ module CrystalV2
             )
 
             root_node = arena[root_id]
-            if root_node.is_a?(Frontend::IdentifierNode)
-              if macro_entry = shadow_collector_root_macro_entry(root_node, macro_nodes)
-                expand_shadow_collector_root_macro_call(
-                  macro_entry,
-                  arena_index.to_i32,
-                  source,
-                  flags,
-                  sources_by_arena,
-                  def_nodes,
-                  class_nodes,
-                  module_nodes,
-                  enum_nodes,
-                  macro_nodes,
-                  alias_nodes,
-                  lib_nodes,
-                  constant_exprs,
-                  main_exprs,
-                  pending_annotations,
-                  acyclic_types,
-                  top_level_type_names,
-                  top_level_class_kinds
-                )
-              end
+            if macro_entry = shadow_collector_root_macro_entry(root_node, arena, macro_nodes)
+              expand_shadow_collector_root_macro_invocation(
+                macro_entry,
+                root_node,
+                arena,
+                arena_index.to_i32,
+                source,
+                flags,
+                sources_by_arena,
+                def_nodes,
+                class_nodes,
+                module_nodes,
+                enum_nodes,
+                macro_nodes,
+                alias_nodes,
+                lib_nodes,
+                constant_exprs,
+                main_exprs,
+                pending_annotations,
+                acyclic_types,
+                top_level_type_names,
+                top_level_class_kinds
+              )
             end
             expr_i += 1
           end
@@ -5898,20 +5898,45 @@ module CrystalV2
       end
 
       private def shadow_collector_root_macro_entry(
-        node : Frontend::IdentifierNode,
+        node : Frontend::TypedNode,
+        arena : Frontend::ArenaLike,
         macro_nodes : Array(MacroEntry)
       ) : MacroEntry?
-        name = String.new(node.name)
+        name = shadow_collector_root_macro_name(node, arena)
+        return nil unless name
         macro_nodes.reverse_each do |entry|
           next unless String.new(entry.node.name) == name
-          next unless entry.node.params.empty?
           return entry
         end
         nil
       end
 
-      private def expand_shadow_collector_root_macro_call(
+      private def shadow_collector_root_macro_name(
+        node : Frontend::TypedNode,
+        arena : Frontend::ArenaLike
+      ) : String?
+        case node
+        when Frontend::IdentifierNode
+          String.new(node.name)
+        when Frontend::CallNode
+          callee_node = arena[node.callee]
+          case callee_node
+          when Frontend::IdentifierNode
+            String.new(callee_node.name)
+          when Frontend::MemberAccessNode
+            String.new(callee_node.member)
+          else
+            nil
+          end
+        else
+          nil
+        end
+      end
+
+      private def expand_shadow_collector_root_macro_invocation(
         macro_entry : MacroEntry,
+        node : Frontend::TypedNode,
+        arena : Frontend::ArenaLike,
         arena_index : Int32,
         source : String,
         flags : Set(String),
@@ -5930,10 +5955,35 @@ module CrystalV2
         top_level_type_names : Set(String),
         top_level_class_kinds : Hash(String, Bool),
       ) : Nil
-        dummy_program = Frontend::Program.new(macro_entry.arena, [] of Frontend::ExprId)
+        args = [] of Frontend::ExprId
+        named_args = nil.as(Array(Frontend::NamedArgument)?)
+        block_id = nil.as(Frontend::ExprId?)
+        expansion_arena = macro_entry.arena
+
+        case node
+        when Frontend::IdentifierNode
+          # Zero-arg root macro identifier can expand from the defining arena.
+        when Frontend::CallNode
+          args = node.args
+          named_args = node.named_args
+          block_id = node.block
+
+          # Collector-side shadow can only evaluate call-site expressions when
+          # the invocation and macro body share the same arena. Zero-arg calls
+          # remain safe across arenas because they do not depend on call-site ids.
+          has_callsite_bindings = !args.empty? || !named_args.nil? || !block_id.nil?
+          if has_callsite_bindings
+            return unless arena.object_id == macro_entry.arena.object_id
+            expansion_arena = arena
+          end
+        else
+          return
+        end
+
+        dummy_program = Frontend::Program.new(expansion_arena, [] of Frontend::ExprId)
         expander = Semantic::MacroExpander.new(
           dummy_program,
-          macro_entry.arena,
+          expansion_arena,
           flags,
           recovery_mode: true,
           macro_source: source
@@ -5945,7 +5995,13 @@ module CrystalV2
           macro_entry.node.params.map(&.name),
           macro_entry.node.params
         )
-        expanded_id = expander.expand(macro_symbol, [] of Frontend::ExprId, nil)
+        expanded_id = expander.expand(
+          macro_symbol,
+          args,
+          nil,
+          named_args: named_args,
+          block_id: block_id
+        )
         return if expanded_id.invalid?
         output = expander.last_output
         return if output.nil? || output.not_nil!.strip.empty?
