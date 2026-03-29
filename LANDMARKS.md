@@ -61,12 +61,13 @@ Verified sequence:
     - the same smoke now reports `generated_nodes=3` globally and
       `generated_nodes=3 symbols=3` in the per-unit summary, proving that
       generated method nodes/symbols are attributed back to the source file
-  - live bare macro-call smoke now isolates the next remaining parity hole:
+  - live bare macro-call smoke is now green on both collector and semantic sides:
     - `CRYSTAL_V2_SEMANTIC_SHADOW=1 /tmp/crystal_v2_semantic_shadow /tmp/shadow_macro_call_decl.cr --no-prelude --stats --verbose`
     - output includes `semantic_diags=0 resolution_diags=0 type_diags=0`,
       `generated_nodes=1`, and
-      `methods collector_total=0 ... semantic_total=1 ... gaps=1` with
-      `extra_in_semantic=alpha`
+      `methods collector_total=1 ... semantic_total=1 ... gaps=0`
+    - provenance on that carrier now shows
+      `collector_direct_total=0 collector_macro_expanded_total=1`
 - reusable failure pattern:
   - the current `VirtualArena` only renumbers root ids; nested `ExprId`
     references inside nodes remain file-local, so it is not yet a sound
@@ -78,16 +79,17 @@ Verified sequence:
   - declaration parity is currently limited to comparable top-level kinds from
     the compile-side collector; collector provenance can distinguish `direct`
     vs `macro_expanded` declarations on that side, and the current shadow smoke
-    now shows semantic parity for top-level macro-generated methods plus
-    semantic-side success for bare top-level macro calls
+    now shows collector-vs-semantic parity for top-level macro-generated
+    methods plus bare zero-arg top-level macro calls
   - this is still not a full semantic-side macro-expanded parity gate or a
     lowering contract, because aggregate `nodes=` still describes the original
     parse graph while `generated_nodes=` separately describes semantic expansion provenance
 
 Practical consequence:
 - Phase 2 can progress without touching lowering or default compile behavior
-- the next honest work item is compile-collector parity for declarations
-  introduced by top-level macro invocations, not more identity-layer surgery
+- the next honest work item is broader macro-call/declaration parity beyond the
+  current bare zero-arg top-level corridor, plus expanded-node ownership; not
+  more identity-layer surgery
 {F/G/R: 0.92/0.72/0.95} [active]
 
 [LM-343|verified]: current source can again complete a trustworthy

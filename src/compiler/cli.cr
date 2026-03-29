@@ -137,10 +137,12 @@ module CrystalV2
       end
 
       private class MacroEntry
+        getter node_id : Frontend::ExprId
         getter node : Frontend::MacroDefNode
         getter arena : Frontend::ArenaLike
 
         def initialize(
+          @node_id : Frontend::ExprId,
           @node : Frontend::MacroDefNode,
           @arena : Frontend::ArenaLike
         )
@@ -3779,7 +3781,7 @@ module CrystalV2
         # Stage2 has shown unstable case-dispatch on MacroDefNode in some builds.
         # Guard with direct is_a? so macro definitions never leak into main_exprs.
         if node.is_a?(Frontend::MacroDefNode)
-          macro_nodes << MacroEntry.new(node, arena)
+          macro_nodes << MacroEntry.new(expr_id, node, arena)
           pending_annotations.clear
           return
         end
@@ -5751,10 +5753,11 @@ module CrystalV2
           pending_annotations = [] of Frontend::AnnotationNode
           expr_i = 0
           while expr_i < unit.roots.size
+            root_id = unit.roots.unsafe_fetch(expr_i)
             collect_top_level_nodes(
               arena,
               arena_index.to_i32,
-              unit.roots.unsafe_fetch(expr_i),
+              root_id,
               def_nodes,
               class_nodes,
               module_nodes,
@@ -5772,6 +5775,32 @@ module CrystalV2
               sources_by_arena,
               source
             )
+
+            root_node = arena[root_id]
+            if root_node.is_a?(Frontend::IdentifierNode)
+              if macro_entry = shadow_collector_root_macro_entry(root_node, macro_nodes)
+                expand_shadow_collector_root_macro_call(
+                  macro_entry,
+                  arena_index.to_i32,
+                  source,
+                  flags,
+                  sources_by_arena,
+                  def_nodes,
+                  class_nodes,
+                  module_nodes,
+                  enum_nodes,
+                  macro_nodes,
+                  alias_nodes,
+                  lib_nodes,
+                  constant_exprs,
+                  main_exprs,
+                  pending_annotations,
+                  acyclic_types,
+                  top_level_type_names,
+                  top_level_class_kinds
+                )
+              end
+            end
             expr_i += 1
           end
         end
@@ -5865,6 +5894,90 @@ module CrystalV2
           Semantic::CompileShadowDeclarationOrigin::Direct
         else
           Semantic::CompileShadowDeclarationOrigin::MacroExpanded
+        end
+      end
+
+      private def shadow_collector_root_macro_entry(
+        node : Frontend::IdentifierNode,
+        macro_nodes : Array(MacroEntry)
+      ) : MacroEntry?
+        name = String.new(node.name)
+        macro_nodes.reverse_each do |entry|
+          next unless String.new(entry.node.name) == name
+          next unless entry.node.params.empty?
+          return entry
+        end
+        nil
+      end
+
+      private def expand_shadow_collector_root_macro_call(
+        macro_entry : MacroEntry,
+        arena_index : Int32,
+        source : String,
+        flags : Set(String),
+        sources_by_arena : Hash(UInt64, String),
+        def_nodes : Array(Tuple(Frontend::DefNode, Frontend::ArenaLike)),
+        class_nodes : Array(Tuple(Frontend::ClassNode, Frontend::ArenaLike)),
+        module_nodes : Array(Tuple(Frontend::ModuleNode, Frontend::ArenaLike)),
+        enum_nodes : Array(Tuple(Frontend::EnumNode, Frontend::ArenaLike)),
+        macro_nodes : Array(MacroEntry),
+        alias_nodes : Array(Tuple(Frontend::AliasNode, Frontend::ArenaLike)),
+        lib_nodes : Array(LibEntry),
+        constant_exprs : Array(Tuple(Frontend::ExprId, Frontend::ArenaLike)),
+        main_exprs : Array(UInt64),
+        pending_annotations : Array(Frontend::AnnotationNode),
+        acyclic_types : Set(String),
+        top_level_type_names : Set(String),
+        top_level_class_kinds : Hash(String, Bool),
+      ) : Nil
+        dummy_program = Frontend::Program.new(macro_entry.arena, [] of Frontend::ExprId)
+        expander = Semantic::MacroExpander.new(
+          dummy_program,
+          macro_entry.arena,
+          flags,
+          recovery_mode: true,
+          macro_source: source
+        )
+        macro_symbol = Semantic::MacroSymbol.new(
+          String.new(macro_entry.node.name),
+          macro_entry.node_id,
+          macro_entry.node.body,
+          macro_entry.node.params.map(&.name),
+          macro_entry.node.params
+        )
+        expanded_id = expander.expand(macro_symbol, [] of Frontend::ExprId, nil)
+        return if expanded_id.invalid?
+        output = expander.last_output
+        return if output.nil? || output.not_nil!.strip.empty?
+
+        if parsed = parse_top_level_macro_expansion(output.not_nil!)
+          program, exp_source = parsed
+          sources_by_arena[program.arena.object_id.to_u64] = exp_source
+          program.roots.each do |inner_id|
+            collect_top_level_nodes(
+              program.arena,
+              arena_index,
+              inner_id,
+              def_nodes,
+              class_nodes,
+              module_nodes,
+              enum_nodes,
+              macro_nodes,
+              alias_nodes,
+              lib_nodes,
+              constant_exprs,
+              main_exprs,
+              pending_annotations,
+              acyclic_types,
+              top_level_type_names,
+              top_level_class_kinds,
+              flags,
+              sources_by_arena,
+              exp_source,
+              1,
+              false
+            )
+          end
         end
       end
 

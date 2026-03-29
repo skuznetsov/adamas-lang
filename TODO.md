@@ -42,12 +42,12 @@
         - global summary now shows `generated_nodes=3`
         - per-unit summary now shows `generated_nodes=3 symbols=3`, i.e. generated method nodes/symbols are attributed back to the source file
         - final compile exit `0`
-    - live bare macro-call smoke is now clean on the semantic side and isolates the remaining parity gap to the compile collector:
+    - live bare macro-call smoke is now green on both collector and semantic sides:
       - `CRYSTAL_V2_SEMANTIC_SHADOW=1 /tmp/crystal_v2_semantic_shadow /tmp/shadow_macro_call_decl.cr --no-prelude --stats --verbose`
       - output includes:
         - `generated_nodes=1 symbols=2 identifiers=2 semantic_diags=0 resolution_diags=0 type_diags=0`
-        - `Semantic shadow declarations: methods collector_total=0 collector_unique=0 semantic_total=1 semantic_unique=1 gaps=1`
-        - `Semantic shadow declarations:   extra_in_semantic=alpha`
+        - `Semantic shadow declarations: methods collector_total=1 collector_unique=1 semantic_total=1 semantic_unique=1 gaps=0`
+        - `Semantic shadow declarations: methods provenance collector_direct_total=0 collector_direct_unique=0 collector_macro_expanded_total=1 collector_macro_expanded_unique=1`
         - final compile exit `0`
   - practical consequence:
     - there is now a safe, flag-gated compile semantic prepass substrate for Phase 2 work
@@ -58,7 +58,7 @@
     - the current semantic global symbol table now materializes root-level macro-generated methods in this reducer
     - per-unit shadow summaries now attribute generated method symbols back to the originating file through the semantic-side file-path provider
     - shadow now also reports `generated_nodes`, so expanded semantic ownership is visible without corrupting the meaning of aggregate `nodes=`
-    - bare top-level macro calls are now semantic-side green too; the next honest work item is compile-collector parity for declarations introduced by macro invocations
+    - bare top-level macro calls are now collector-side green too for zero-arg identifier-style root invocations; the next honest work item is broader macro-call parity and expanded-node ownership, not reopening semantic-side resolution
     - replacing reparse-based aggregation is still more honest follow-up than reopening Phase 1 identity questions
 - **Fresh stage3 split: trustworthy current-debug hosts can again build `stage2 --release` green, but resulting self-hosted stage2 runtime is still broken and now clearly splits into multiple families (2026-03-28, current session)**:
   - trustworthy setup:
