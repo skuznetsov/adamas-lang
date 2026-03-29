@@ -203,6 +203,99 @@ describe "compile semantic shadow aggregate" do
     result.identifier_symbols[callee_id].should be_a(Semantic::MethodSymbol)
   end
 
+  it "expands cross-file positional arg with {{name.id}}" do
+    aggregate = build_shared_shadow_aggregate([
+      <<-CR,
+        macro make_method(name)
+          def {{name.id}}
+            42
+          end
+        end
+      CR
+      <<-CR,
+        make_method(:greet)
+        greet()
+      CR
+    ])
+    program = aggregate.program
+    shadow_sources = {} of String => String
+    aggregate.unit_summaries.each { |u| shadow_sources[u.path] = u.source }
+
+    analyzer = Semantic::Analyzer.new(program)
+    analyzer.collect_symbols(
+      node_file_path_provider: ->(expr_id : Frontend::ExprId) { aggregate.path_for(expr_id) },
+      source_for_path_provider: ->(path : String) { shadow_sources[path]? },
+    )
+    result = analyzer.resolve_names
+
+    greet = analyzer.global_context.symbol_table.lookup("greet")
+    greet.should be_a(Semantic::MethodSymbol)
+    result.diagnostics.should be_empty
+    analyzer.type_inference_diagnostics.should be_empty
+  end
+
+  it "expands cross-file named arg with {{name.id}}" do
+    aggregate = build_shared_shadow_aggregate([
+      <<-CR,
+        macro make_method(name)
+          def {{name.id}}
+            42
+          end
+        end
+      CR
+      <<-CR,
+        make_method(name: :hello)
+        hello()
+      CR
+    ])
+    program = aggregate.program
+    shadow_sources = {} of String => String
+    aggregate.unit_summaries.each { |u| shadow_sources[u.path] = u.source }
+
+    analyzer = Semantic::Analyzer.new(program)
+    analyzer.collect_symbols(
+      node_file_path_provider: ->(expr_id : Frontend::ExprId) { aggregate.path_for(expr_id) },
+      source_for_path_provider: ->(path : String) { shadow_sources[path]? },
+    )
+    result = analyzer.resolve_names
+
+    hello = analyzer.global_context.symbol_table.lookup("hello")
+    hello.should be_a(Semantic::MethodSymbol)
+    result.diagnostics.should be_empty
+    analyzer.type_inference_diagnostics.should be_empty
+  end
+
+  it "expands cross-file default arg with {{name.id}}" do
+    aggregate = build_shared_shadow_aggregate([
+      <<-CR,
+        macro make_method(name = :fallback)
+          def {{name.id}}
+            42
+          end
+        end
+      CR
+      <<-CR,
+        make_method
+        fallback()
+      CR
+    ])
+    program = aggregate.program
+    shadow_sources = {} of String => String
+    aggregate.unit_summaries.each { |u| shadow_sources[u.path] = u.source }
+
+    analyzer = Semantic::Analyzer.new(program)
+    analyzer.collect_symbols(
+      node_file_path_provider: ->(expr_id : Frontend::ExprId) { aggregate.path_for(expr_id) },
+      source_for_path_provider: ->(path : String) { shadow_sources[path]? },
+    )
+    result = analyzer.resolve_names
+
+    fallback = analyzer.global_context.symbol_table.lookup("fallback")
+    fallback.should be_a(Semantic::MethodSymbol)
+    result.diagnostics.should be_empty
+    analyzer.type_inference_diagnostics.should be_empty
+  end
+
   it "resolves cross-file zero-arg macro call in aggregate" do
     aggregate = build_shared_shadow_aggregate([
       <<-CR,

@@ -282,7 +282,7 @@ module CrystalV2
             return
           end
 
-          symbol = MacroSymbol.new(name, node_id, body_id)
+          symbol = MacroSymbol.new(name, node_id, body_id, node.params.map(&.name), node.params)
           assign_symbol_file(symbol, node_id)
 
           table = current_table

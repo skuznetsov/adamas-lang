@@ -420,7 +420,9 @@ module CrystalV2
           when .string?
             MacroStringValue.new(Frontend.node_literal_string(node) || "")
           when .symbol?
-            MacroSymbolValue.new(Frontend.node_literal_string(node) || "")
+            # Strip leading colon: parser stores ":greet" but MacroSymbolValue expects "greet"
+            raw_sym = Frontend.node_literal_string(node) || ""
+            MacroSymbolValue.new(raw_sym.lchop(':'))
           when .char?
             literal = Frontend.node_literal_string(node) || ""
             MacroStringValue.new(literal) # Treat char as string for simplicity
@@ -483,7 +485,8 @@ module CrystalV2
           when .string?
             MacroStringValue.new(Frontend.node_literal_string(node) || "")
           when .symbol?
-            MacroSymbolValue.new(Frontend.node_literal_string(node) || "")
+            raw_sym = Frontend.node_literal_string(node) || ""
+            MacroSymbolValue.new(raw_sym.lchop(':'))
           when .char?
             MacroStringValue.new(Frontend.node_literal_string(node) || "")
           when .bool?
