@@ -136,4 +136,38 @@ describe "compile semantic shadow aggregate" do
     analyzer.generated_node_file_paths.values.uniq.should eq(["unit_0.cr"])
     analyzer.generated_node_file_paths.size.should be > 0
   end
+
+  it "resolves calls after top-level macro call expansion across aggregate files" do
+    aggregate = build_shared_shadow_aggregate([
+      <<-CR,
+        macro define_alpha
+          def alpha
+            41
+          end
+        end
+
+        define_alpha
+      CR
+      <<-CR,
+        alpha()
+      CR
+    ])
+    program = aggregate.program
+
+    analyzer = Semantic::Analyzer.new(program)
+    analyzer.collect_symbols(node_file_path_provider: ->(expr_id : Frontend::ExprId) { aggregate.path_for(expr_id) })
+    result = analyzer.resolve_names
+    engine = analyzer.infer_types(result.identifier_symbols)
+
+    result.diagnostics.should be_empty
+    analyzer.type_inference_diagnostics.should be_empty
+
+    call_root = program.roots.last
+    call_node = program.arena[call_root].as(Frontend::CallNode)
+    callee_id = call_node.callee.not_nil!
+    result.identifier_symbols[callee_id].should be_a(Semantic::MethodSymbol)
+    aggregate.path_for(callee_id).should eq("unit_1.cr")
+    analyzer.global_context.symbol_table.lookup("alpha").should be_a(Semantic::MethodSymbol)
+    engine.context.get_type(call_root).should be_a(Semantic::PrimitiveType)
+  end
 end

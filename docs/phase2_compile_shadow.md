@@ -91,6 +91,24 @@ two methods now reports `collector_total=3` and `semantic_total=3` for methods.
 The collector-side provenance lines remain useful because they still distinguish
 the one direct method from the two macro-expanded ones.
 
+Bare top-level macro calls are now also materialized on the semantic side.
+For a reducer like:
+
+```crystal
+macro define_alpha
+  def alpha
+  end
+end
+
+define_alpha
+alpha()
+```
+
+the shadow path no longer reports name-resolution or type-inference errors for
+the macro call. The remaining gap on that carrier is now isolated to the
+compile-side collector: it still sees only the macro definition, while the
+semantic symbol table also sees the generated method.
+
 The remaining caveat is file attribution for post-parse macro expansion:
 the shared aggregate node graph still reflects the original parse graph, but
 symbol ownership is now rebound through the semantic shadow file-path provider,
@@ -116,6 +134,9 @@ is visible without pretending that the aggregate parse graph itself changed.
   parse graph rather than an expanded semantic graph
 - `generated_nodes` is a semantic-side provenance counter, not a replacement
   for aggregate `nodes`; the two numbers intentionally describe different layers
+- the compile-side collector still does not materialize top-level declarations
+  introduced through bare macro invocations, so those currently appear as
+  `extra_in_semantic=...` on shadow declaration parity
 - does not yet include macro-expansion parity with `AstToHir`
 - does not yet run normalized HIR comparison
 

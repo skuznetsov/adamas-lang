@@ -3175,6 +3175,10 @@ module CrystalV2
           # NOTE: Block inference is deferred for methods that need special handling
           # (like `try` on union types) where the block parameter type depends on receiver
 
+          if macro_symbol = @identifier_symbols[node.callee]?
+            return @context.nil_type if macro_symbol.is_a?(MacroSymbol)
+          end
+
           callee_node = @arena[node.callee]
           has_block = call_has_block?(node)
 

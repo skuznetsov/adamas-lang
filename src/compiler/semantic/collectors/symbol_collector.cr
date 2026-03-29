@@ -48,6 +48,10 @@ module CrystalV2
             when Frontend::AnnotationNode
               # Root-level annotation to be attached to the next class/module.
               @pending_root_annotations << root_id
+            when Frontend::IdentifierNode
+              unless handle_root_macro_identifier(root_id, node)
+                visit(root_id)
+              end
             when Frontend::MacroLiteralNode, Frontend::MacroIfNode, Frontend::MacroForNode
               handle_root_macro_expansion(root_id)
             else
@@ -194,6 +198,19 @@ module CrystalV2
           end
           @macro_expander.diagnostics.each { |entry| @diagnostics << entry }
           visit(expanded_id) unless expanded_id.invalid?
+        end
+
+        private def handle_root_macro_identifier(node_id : Frontend::ExprId, node : Frontend::IdentifierNode) : Bool
+          name = intern_name(node.name)
+          symbol = current_table.lookup(name)
+          return false unless symbol.is_a?(MacroSymbol)
+
+          expanded_id = track_generated_nodes(node_id) do
+            @macro_expander.expand(symbol, [] of Frontend::ExprId, nil)
+          end
+          @macro_expander.diagnostics.each { |entry| @diagnostics << entry }
+          visit(expanded_id) unless expanded_id.invalid?
+          true
         end
 
         private def track_generated_nodes(origin_node_id : Frontend::ExprId, &)
@@ -659,11 +676,8 @@ module CrystalV2
         # If yes: expands the macro and visits the result.
         # If no: ignores (will be handled during type inference).
         private def handle_potential_macro_call(node_id : Frontend::ExprId, node : Frontend::TypedNode)
-          # Extract method name from call
-          callee_slice = Frontend.node_member(node)
-          return unless callee_slice
-
-          callee_name = intern_name(callee_slice)
+          callee_name = macro_call_name(node)
+          return unless callee_name
 
           # Look up in current scope
           table = current_table
@@ -696,6 +710,23 @@ module CrystalV2
           end
 
           # If not a macro, ignore - will be handled during type inference
+        end
+
+        private def macro_call_name(node : Frontend::TypedNode) : String?
+          if callee_slice = Frontend.node_member(node)
+            return intern_name(callee_slice)
+          end
+
+          return nil unless node.is_a?(Frontend::CallNode)
+          callee_node = arena[node.callee]
+          case callee_node
+          when Frontend::IdentifierNode
+            intern_name(callee_node.name)
+          when Frontend::MemberAccessNode
+            intern_name(callee_node.member)
+          else
+            nil
+          end
         end
 
         # Phase 5A: Scan class body for instance variable assignments

@@ -63,6 +63,9 @@ module CrystalV2
             visit(node.as(Frontend::MemberAccessNode).object)
           when Frontend::NodeKind::Call
             call = node.as(Frontend::CallNode)
+            if skip_macro_call?(call)
+              return
+            end
             if callee_id = call.callee
               visit(callee_id)
             end
@@ -122,6 +125,30 @@ module CrystalV2
           else
             # Other kinds currently unsupported; ignore
           end
+        end
+
+        private def skip_macro_call?(call : Frontend::CallNode) : Bool
+          callee_id = call.callee
+          callee_node = @arena[callee_id]
+
+          name = case callee_node
+                 when Frontend::IdentifierNode
+                   intern_name(callee_node.name)
+                 when Frontend::MemberAccessNode
+                   intern_name(callee_node.member)
+                 else
+                   nil
+                 end
+          return false unless name
+
+          if symbol = @current_table.lookup(name)
+            if symbol.is_a?(MacroSymbol)
+              @identifier_symbols[callee_id] = symbol
+              return true
+            end
+          end
+
+          false
         end
 
         private def resolve_identifier(node_id : ExprId, node : Frontend::IdentifierNode)

@@ -10,7 +10,8 @@ diagnostics in shadow mode, compile-collector declaration provenance, and a
 first compile-collector vs semantic declaration-parity signal. Root-level
 macro-generated methods now materialize on the semantic side for the shadow
 reducer, are attributed back to the originating file in per-unit symbol
-counts, and surface as `generated_nodes` in shadow summaries. The right
+counts, surface as `generated_nodes` in shadow summaries, and bare top-level
+macro calls no longer produce semantic shadow resolution/type errors. The right
 short-term substrate is still reparse into that aggregate, not deep traversal
 over the current `VirtualArena`.
 
@@ -60,6 +61,12 @@ Verified sequence:
     - the same smoke now reports `generated_nodes=3` globally and
       `generated_nodes=3 symbols=3` in the per-unit summary, proving that
       generated method nodes/symbols are attributed back to the source file
+  - live bare macro-call smoke now isolates the next remaining parity hole:
+    - `CRYSTAL_V2_SEMANTIC_SHADOW=1 /tmp/crystal_v2_semantic_shadow /tmp/shadow_macro_call_decl.cr --no-prelude --stats --verbose`
+    - output includes `semantic_diags=0 resolution_diags=0 type_diags=0`,
+      `generated_nodes=1`, and
+      `methods collector_total=0 ... semantic_total=1 ... gaps=1` with
+      `extra_in_semantic=alpha`
 - reusable failure pattern:
   - the current `VirtualArena` only renumbers root ids; nested `ExprId`
     references inside nodes remain file-local, so it is not yet a sound
@@ -71,15 +78,16 @@ Verified sequence:
   - declaration parity is currently limited to comparable top-level kinds from
     the compile-side collector; collector provenance can distinguish `direct`
     vs `macro_expanded` declarations on that side, and the current shadow smoke
-    now shows semantic parity for top-level macro-generated methods
+    now shows semantic parity for top-level macro-generated methods plus
+    semantic-side success for bare top-level macro calls
   - this is still not a full semantic-side macro-expanded parity gate or a
     lowering contract, because aggregate `nodes=` still describes the original
     parse graph while `generated_nodes=` separately describes semantic expansion provenance
 
 Practical consequence:
 - Phase 2 can progress without touching lowering or default compile behavior
-- the next honest work item is broader semantic-side macro parity beyond this
-  root-level reducer, not more identity-layer surgery
+- the next honest work item is compile-collector parity for declarations
+  introduced by top-level macro invocations, not more identity-layer surgery
 {F/G/R: 0.92/0.72/0.95} [active]
 
 [LM-343|verified]: current source can again complete a trustworthy
