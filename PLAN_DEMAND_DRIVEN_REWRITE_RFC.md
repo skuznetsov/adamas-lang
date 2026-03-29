@@ -163,15 +163,28 @@ Must produce:
 - typed-def identity model
 - canonical `DefInstanceKey`
 
-Required `DefInstanceKey` shape:
+Required shapes (implemented in `src/compiler/semantic/identity/`):
 
 ```crystal
-record DefInstanceKey,
-  def_id : UInt64,
-  receiver_type_id : SemanticTypeId?,
-  arg_type_ids : Array(SemanticTypeId),
-  block_type_id : SemanticTypeId?,
-  named_arg_types : Array({String, SemanticTypeId})?
+# Canonical semantic type identity — interned UInt32, NOT hash
+struct SemanticTypeId
+  getter id : UInt32
+end
+
+# Structured def identity — injective by construction
+struct DefIdentity
+  getter arena_id : UInt64
+  getter expr_index : Int32
+end
+
+# Semantic cache key — NO mangled names, NO HIR::TypeRef
+struct DefInstanceKey
+  getter def_identity : DefIdentity
+  getter receiver_type : SemanticTypeId?
+  getter arg_types : Array(SemanticTypeId)
+  getter block_type : SemanticTypeId?
+  getter named_arg_types : Array({String, SemanticTypeId})?
+end
 ```
 
 Rules:
