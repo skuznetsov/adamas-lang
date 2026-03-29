@@ -4779,6 +4779,14 @@ module Crystal::HIR
       node : CrystalV2::Compiler::Frontend::ModuleNode,
       source : String? = nil,
     ) : String?
+      type_params = node.type_params
+      append_type_params = ->(base_name : String) do
+        return base_name if base_name.empty? || !type_params || base_name.includes?('(')
+        params = type_params.not_nil!.map { |param| safe_slice_to_string(param) || "" }.reject(&.empty?)
+        return base_name if params.empty?
+        "#{base_name}(#{params.join(", ")})"
+      end
+
       # Path-based nested wrappers can reuse the full definition span, so
       # source-first recovery can return the outer header component for inner
       # wrapper nodes (e.g. CrystalV2 again instead of Compiler/Frontend in
@@ -4786,7 +4794,7 @@ module Crystal::HIR
       # present and only fall back to source recovery when the slice is empty
       # or corrupted.
       if name = safe_slice_to_string(node.name)
-        return name unless name.empty?
+        return append_type_params.call(name) unless name.empty?
       end
 
       source ||= source_text_for_arena_or_file(@arena)
@@ -4796,7 +4804,7 @@ module Crystal::HIR
         wrapper_prefixes = ["module ", "class ", "struct ", "union ", "enum "]
         if header = definition_header_text_from_source(node.span, source, wrapper_prefixes)
           if name = definition_name_from_header_text(header, wrapper_prefixes)
-            return name
+            return append_type_params.call(name)
           end
         end
       end
