@@ -237,17 +237,23 @@ describe "compile shadow declaration inventory" do
   it "records semantic provenance for direct and macro-expanded declarations" do
     aggregate = Semantic::CompileShadowAggregate.build([
       {
-        path: "decl_0.cr",
+        path: "decl_lib.cr",
         source: <<-CR,
+          macro define_alpha(name)
+            def {{name.id}}
+            end
+          end
+        CR
+      },
+      {
+        path: "decl_main.cr",
+        source: <<-CR,
+          require "./decl_lib"
+
           def direct_greet
           end
 
-          macro define_alpha
-            def alpha
-            end
-          end
-
-          define_alpha
+          define_alpha(:alpha)
         CR
       },
     ])
@@ -261,13 +267,17 @@ describe "compile shadow declaration inventory" do
       source_for_path_provider: ->(path : String) { shadow_sources[path]? },
     )
 
-    semantic_inventory = Semantic::CompileShadowDeclarationInventory.from_symbol_table(analyzer.global_context.symbol_table) do |node_id|
-      if analyzer.generated_node?(node_id)
-        Semantic::CompileShadowDeclarationOrigin::MacroExpanded
-      else
-        Semantic::CompileShadowDeclarationOrigin::Direct
-      end
-    end
+    alpha_symbol = analyzer.global_context.symbol_table.lookup_local("alpha")
+    alpha_symbol.should be_a(Semantic::MethodSymbol)
+    alpha_symbol = alpha_symbol.as(Semantic::MethodSymbol)
+    alpha_symbol.generated?.should be_true
+    alpha_symbol.generated_origin_node_id.should_not be_nil
+    alpha_symbol.generated_macro_definition_node_id.should_not be_nil
+    alpha_symbol.file_path.should eq("decl_main.cr")
+
+    semantic_inventory = Semantic::CompileShadowDeclarationInventory.from_symbol_table(
+      analyzer.global_context.symbol_table
+    )
 
     method_line = semantic_inventory.provenance_lines("semantic").find { |line| line.starts_with?("methods provenance ") }
 

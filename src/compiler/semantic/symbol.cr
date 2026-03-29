@@ -9,13 +9,29 @@ module CrystalV2
         getter name : String
         property node_id : ExprId
         getter file_path : String?
+        getter generated_origin_node_id : ExprId?
+        getter generated_macro_definition_node_id : ExprId?
 
         def initialize(@name : String, @node_id : ExprId, file_path : String? = nil)
           @file_path = file_path
+          @generated_origin_node_id = nil
+          @generated_macro_definition_node_id = nil
         end
 
         def file_path=(value : String?)
           @file_path = value
+        end
+
+        def generated_origin_node_id=(value : ExprId?)
+          @generated_origin_node_id = value
+        end
+
+        def generated_macro_definition_node_id=(value : ExprId?)
+          @generated_macro_definition_node_id = value
+        end
+
+        def generated? : Bool
+          !@generated_origin_node_id.nil?
         end
       end
 

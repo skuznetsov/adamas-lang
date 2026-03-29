@@ -139,8 +139,11 @@ Verified sequence:
   - generated provenance classification no longer depends on generated snippet
     availability:
     - semantic declaration provenance and `generated_*_diags` counters now use
-      the analyzer's explicit generated-origin mapping instead of
+      explicit generated-origin metadata instead of
       `generated_source_for(...)` as a proxy
+    - generated declaration provenance is now retained directly on semantic
+      symbols too, so declaration parity no longer depends on an
+      analyzer-side callback to classify generated declarations
   - generated provenance metadata now also has a unified analyzer lookup:
     - `generated_info_for(node_id)` bundles generated root, source, call-site
       origin, and macro-definition origin into one shadow-side record

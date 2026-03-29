@@ -103,9 +103,12 @@ This closes the old asymmetry where only the collector side could distinguish
 `direct` from `macro_expanded` declarations.
 
 Generated declaration provenance and `generated_*_diags` counters now use the
-explicit generated-origin mapping carried by the analyzer (`generated_origin_for`
-/ `generated_node?`). The generated source text map is still used only for
-formatting `... [generated]` snippets, not for provenance classification.
+explicit generated-origin mapping carried by the semantic stack. In particular,
+generated method/class/module/etc. symbols now retain generated origin metadata
+directly on the semantic symbol objects, so declaration parity no longer needs
+an analyzer-side callback to classify those symbols as `macro_expanded`. The
+generated source text map is still used only for formatting `... [generated]`
+snippets, not for provenance classification.
 
 That shadow-only metadata now also has a unified analyzer lookup:
 `generated_info_for(node_id)`, which bundles the generated root, generated

@@ -72,7 +72,7 @@ module CrystalV2
               inventory.record(
                 CompileShadowDeclarationKind::Methods,
                 name,
-                origin_for_node.call(symbol.node_id)
+                origin_for_symbol(symbol, origin_for_node)
               )
             when OverloadSetSymbol
               record_overload_set(inventory, name, symbol, origin_for_node)
@@ -80,31 +80,31 @@ module CrystalV2
               inventory.record(
                 CompileShadowDeclarationKind::Classes,
                 name,
-                origin_for_node.call(symbol.node_id)
+                origin_for_symbol(symbol, origin_for_node)
               )
             when ModuleSymbol
               inventory.record(
                 CompileShadowDeclarationKind::Modules,
                 name,
-                origin_for_node.call(symbol.node_id)
+                origin_for_symbol(symbol, origin_for_node)
               )
             when EnumSymbol
               inventory.record(
                 CompileShadowDeclarationKind::Enums,
                 name,
-                origin_for_node.call(symbol.node_id)
+                origin_for_symbol(symbol, origin_for_node)
               )
             when MacroSymbol
               inventory.record(
                 CompileShadowDeclarationKind::Macros,
                 name,
-                origin_for_node.call(symbol.node_id)
+                origin_for_symbol(symbol, origin_for_node)
               )
             when ConstantSymbol
               inventory.record(
                 CompileShadowDeclarationKind::Constants,
                 name,
-                origin_for_node.call(symbol.node_id)
+                origin_for_symbol(symbol, origin_for_node)
               )
             end
           end
@@ -112,7 +112,12 @@ module CrystalV2
         end
 
         def self.from_symbol_table(table : SymbolTable) : self
-          from_symbol_table(table) { CompileShadowDeclarationOrigin::Direct }
+          from_symbol_table(table) do |node_id|
+            # Preserve the public overload for callers that don't have analyzer-side
+            # generated maps. This fallback is only used for direct node lookups;
+            # symbol-aware provenance is resolved in the symbol dispatch below.
+            CompileShadowDeclarationOrigin::Direct
+          end
         end
 
         def initialize
@@ -239,7 +244,7 @@ module CrystalV2
         ) : Nil
           origins = Set(CompileShadowDeclarationOrigin).new
           symbol.overloads.each do |overload|
-            origins.add(origin_for_node.call(overload.node_id))
+            origins.add(origin_for_symbol(overload, origin_for_node))
           end
 
           if origins.empty?
@@ -249,6 +254,14 @@ module CrystalV2
               inventory.record(CompileShadowDeclarationKind::Methods, name, origin)
             end
           end
+        end
+
+        private def self.origin_for_symbol(
+          symbol : Symbol,
+          origin_for_node : Frontend::ExprId -> CompileShadowDeclarationOrigin
+        ) : CompileShadowDeclarationOrigin
+          return CompileShadowDeclarationOrigin::MacroExpanded if symbol.generated?
+          origin_for_node.call(symbol.node_id)
         end
       end
 

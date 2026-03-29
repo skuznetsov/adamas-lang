@@ -119,6 +119,32 @@ module CrystalV2
           if path = file_path_for(node_id)
             symbol.file_path = path
           end
+          if origin_node_id = generated_origin_for(node_id)
+            symbol.generated_origin_node_id = origin_node_id
+          end
+          if macro_def_node_id = generated_macro_definition_for(node_id)
+            symbol.generated_macro_definition_node_id = macro_def_node_id
+          end
+        end
+
+        private def generated_origin_for(node_id : Frontend::ExprId) : Frontend::ExprId?
+          return nil if node_id.invalid?
+          node_index = node_id.index
+          if origin = @generated_root_origins[node_index]?
+            return origin
+          end
+          return nil unless root_index = @generated_root_by_node[node_index]?
+          @generated_root_origins[root_index]?
+        end
+
+        private def generated_macro_definition_for(node_id : Frontend::ExprId) : Frontend::ExprId?
+          return nil if node_id.invalid?
+          node_index = node_id.index
+          if macro_def = @generated_root_macro_defs[node_index]?
+            return macro_def
+          end
+          return nil unless root_index = @generated_root_by_node[node_index]?
+          @generated_root_macro_defs[root_index]?
         end
 
         private def intern_name(slice : Slice(UInt8)) : String
