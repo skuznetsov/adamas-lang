@@ -46,6 +46,8 @@ module CrystalV2
             when Frontend::AnnotationNode
               # Root-level annotation to be attached to the next class/module.
               @pending_root_annotations << root_id
+            when Frontend::MacroLiteralNode, Frontend::MacroIfNode, Frontend::MacroForNode
+              handle_root_macro_expansion(root_id)
             else
               visit(root_id)
             end
@@ -136,14 +138,18 @@ module CrystalV2
           source.byte_slice(start, length)
         end
 
-      private def visit(node_id : Frontend::ExprId)
-        return if node_id.invalid?
+        private def visit(node_id : Frontend::ExprId)
+          return if node_id.invalid?
 
-        node = arena[node_id]
+          node = arena[node_id]
 
-        case node
-        when Frontend::MacroDefNode
-          handle_macro_def(node_id, node)
+          case node
+          when Frontend::AnnotationNode
+            @pending_root_annotations << node_id if @table_stack.size == 1 && @class_stack.empty?
+          when Frontend::BeginNode
+            node.body.each { |expr_id| visit(expr_id) }
+          when Frontend::MacroDefNode
+            handle_macro_def(node_id, node)
         when Frontend::DefNode
           handle_def(node_id, node)
         when Frontend::ClassNode
@@ -170,6 +176,12 @@ module CrystalV2
           # Phase 87B-2: Check if call is actually a macro invocation
             handle_potential_macro_call(node_id, node)
           end
+        end
+
+        private def handle_root_macro_expansion(node_id : Frontend::ExprId)
+          expanded_id = @macro_expander.expand_top_level(node_id)
+          @macro_expander.diagnostics.each { |entry| @diagnostics << entry }
+          visit(expanded_id) unless expanded_id.invalid?
         end
 
         private def handle_macro_def(node_id : Frontend::ExprId, node : Frontend::MacroDefNode)

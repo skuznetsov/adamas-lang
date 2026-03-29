@@ -85,11 +85,15 @@ This keeps the current signal honest: we can see when the collector side is
 already materializing declarations through top-level macro expansion, without
 pretending that this is full macro-expansion parity with lowering.
 
-On the current tree this already exposes a real gap: a no-prelude carrier with
-a top-level `{% for %}` that generates two methods reports those methods on the
-collector side, while the semantic symbol table still only materializes the
-direct method declaration. The verbose parity output now classifies those misses
-explicitly as `missing_macro_expanded_in_semantic`.
+On the current tree, that top-level macro gap is now closed for the semantic
+symbol table: a no-prelude carrier with a top-level `{% for %}` that generates
+two methods now reports `collector_total=3` and `semantic_total=3` for methods.
+The collector-side provenance lines remain useful because they still distinguish
+the one direct method from the two macro-expanded ones.
+
+The remaining caveat is file attribution for post-parse macro expansion:
+the global shadow summary sees the generated symbols, but the current per-unit
+ownership map still reflects only the original aggregate parse graph.
 
 ## Current limitations
 
@@ -103,6 +107,9 @@ explicitly as `missing_macro_expanded_in_semantic`.
 - collector provenance lines distinguish `direct` vs `macro_expanded`
   declarations only on the collector side; semantic inventory still has no
   matching expansion provenance contract
+- post-parse macro-generated nodes and symbols are not yet folded back into the
+  shared aggregate ownership map, so per-unit shadow counts can under-report
+  macro-expanded declarations even when global semantic parity is green
 - does not yet include macro-expansion parity with `AstToHir`
 - does not yet run normalized HIR comparison
 

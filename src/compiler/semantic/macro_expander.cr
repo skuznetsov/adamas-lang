@@ -212,6 +212,29 @@ module CrystalV2
           end
         end
 
+        # Expand a top-level macro control-flow node and reparse the result into AST.
+        # Supports MacroLiteralNode, MacroIfNode, and MacroForNode.
+        def expand_top_level(node_id : ExprId, *, variables : Hash(String, MacroValue) = {} of String => MacroValue, owner_type : ClassSymbol? = nil) : ExprId
+          @diagnostics.clear
+          @last_output = nil
+
+          if @depth >= MAX_DEPTH
+            emit_error("Macro recursion depth exceeded (#{MAX_DEPTH})", node_id)
+            return ExprId.new(-1)
+          end
+
+          @depth += 1
+          begin
+            context = Context.new(variables, {} of String => String, owner_type, @depth, @flags, nil)
+            output = expand_top_level_node(node_id, context)
+            @last_output = output
+            return ExprId.new(-1) if output.strip.empty?
+            reparse(output, node_id)
+          ensure
+            @depth -= 1
+          end
+        end
+
         private def build_context(
           macro_symbol : MacroSymbol,
           args : Array(ExprId),
@@ -275,6 +298,59 @@ module CrystalV2
           expr_id = reparse(source, location)
           return MACRO_NIL if expr_id.invalid?
           evaluate_to_macro_value(expr_id, context)
+        end
+
+        private def expand_top_level_node(node_id : ExprId, context : Context) : String
+          node = @arena[node_id]
+
+          case node
+          when Frontend::MacroLiteralNode
+            evaluate_macro_body(node_id, context)
+          when Frontend::MacroIfNode
+            condition_result, body_context = evaluate_condition(node.condition, context)
+            if condition_result
+              expand_top_level_node(node.then_body, body_context)
+            elsif else_body = node.else_body
+              expand_top_level_node(else_body, context)
+            else
+              ""
+            end
+          when Frontend::MacroForNode
+            iter_vars = node.iter_vars
+            value_var = iter_vars[0]?
+            index_var = iter_vars[1]?
+            unless value_var
+              emit_error("Missing loop variable in {% for %} block", node_id)
+              return ""
+            end
+
+            iterable_node = @arena[node.iterable]
+            pair_iteration = pair_iteration_iterable?(iterable_node, context)
+            elem_values = evaluate_iterable_to_macro_values(iterable_node, context)
+            return "" unless elem_values
+
+            value_var_name = intern_name(value_var)
+            index_var_name = index_var ? intern_name(index_var) : nil
+
+            String.build do |str|
+              elem_values.each_with_index do |elem_value, idx|
+                if pair_iteration && index_var_name && elem_value.is_a?(MacroTupleValue) && elem_value.elements.size >= 2
+                  loop_context = context.with_variable(value_var_name, elem_value.elements[0])
+                  loop_context = loop_context.with_variable(index_var_name, elem_value.elements[1])
+                elsif index_var_name
+                  loop_context = context.with_variable(value_var_name, elem_value)
+                  loop_context = loop_context.with_variable(index_var_name, MacroNumberValue.new(idx.to_i64))
+                else
+                  loop_context = context.with_variable(value_var_name, elem_value)
+                end
+
+                str << expand_top_level_node(node.body, loop_context)
+              end
+            end
+          else
+            emit_error("Unsupported top-level macro node: #{node.class}", node_id)
+            ""
+          end
         end
 
         # Convert expression to string representation (for legacy/simple use)

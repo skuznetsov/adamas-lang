@@ -7,9 +7,11 @@ Context: compiler/bootstrap/stage2-stability
 substrate under feature flag, with honest file-level ownership summaries on a
 shared-AstArena aggregate, file-aware collector/name-resolution/type
 diagnostics in shadow mode, compile-collector declaration provenance, and a
-first compile-collector vs semantic declaration-parity signal; the right
-short-term substrate is still reparse into that aggregate, not deep traversal
-over the current `VirtualArena`.
+first compile-collector vs semantic declaration-parity signal. Root-level
+macro-generated methods now materialize on the semantic side for the shadow
+reducer, but post-parse ownership for generated nodes still lags behind; the
+right short-term substrate is still reparse into that aggregate, not deep
+traversal over the current `VirtualArena`.
 
 Verified sequence:
 - implementation:
@@ -49,13 +51,14 @@ Verified sequence:
     - output includes `/tmp/shadow_name_error.cr:1:1-1:1 undefined local variable or method 'missing'`
       plus per-unit `resolution_diags=1`
   - live declaration-parity smoke now prints compile-collector provenance and
-    collector-vs-semantic parity lines on a top-level macro carrier:
+    green collector-vs-semantic parity lines on a top-level macro carrier:
     - `CRYSTAL_V2_SEMANTIC_SHADOW=1 /tmp/crystal_v2_semantic_shadow /tmp/shadow_decl_inventory_macro.cr --no-prelude --stats --verbose`
-    - output includes `declaration_gaps=2`, a method parity line with
-      `collector_total=3 ... semantic_total=1 ... gaps=2`,
-      `missing_in_semantic=alpha, beta`,
-      `missing_macro_expanded_in_semantic=alpha, beta`, and a provenance line with
+    - output includes `declaration_gaps=0`, a method parity line with
+      `collector_total=3 ... semantic_total=3 ... gaps=0`, and a provenance line with
       `collector_direct_total=1 collector_macro_expanded_total=2`
+    - the same smoke still reports only `symbols=1` in the per-unit summary,
+      showing that post-parse generated symbols are not yet attributed back into
+      the aggregate ownership map
 - reusable failure pattern:
   - the current `VirtualArena` only renumbers root ids; nested `ExprId`
     references inside nodes remain file-local, so it is not yet a sound
@@ -67,16 +70,16 @@ Verified sequence:
   - declaration parity is currently limited to comparable top-level kinds from
     the compile-side collector; collector provenance can distinguish `direct`
     vs `macro_expanded` declarations on that side, and the current shadow smoke
-    already shows semantic misses for macro-expanded top-level methods via
-    `missing_macro_expanded_in_semantic`
-  - this is still not a semantic-side macro-expanded parity gate or a lowering
-    contract
+    now shows semantic parity for top-level macro-generated methods
+  - this is still not a full semantic-side macro-expanded parity gate or a
+    lowering contract, because generated nodes/symbols are not yet folded into
+    per-unit ownership/provenance accounting
 
 Practical consequence:
 - Phase 2 can progress without touching lowering or default compile behavior
-- the next honest work item is semantic-side macro/declaration parity beyond
-  the current collector provenance signal, starting with top-level macro
-  expansion gaps like `alpha`/`beta`, not more identity-layer surgery
+- the next honest work item is ownership/provenance for post-parse generated
+  nodes and symbols on top of the current collector provenance signal, not more
+  identity-layer surgery
 {F/G/R: 0.92/0.72/0.95} [active]
 
 [LM-343|verified]: current source can again complete a trustworthy

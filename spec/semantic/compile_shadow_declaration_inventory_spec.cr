@@ -89,6 +89,28 @@ describe "compile shadow declaration inventory" do
     parity.gap_count.should eq(0)
   end
 
+  it "materializes top-level macro-generated methods in semantic inventory" do
+    program = build_declaration_shadow_program([
+      <<-CR,
+        def direct_greet
+        end
+
+        {% for name in %w(alpha beta) %}
+          def {{name.id}}
+          end
+        {% end %}
+      CR
+    ])
+
+    analyzer = Semantic::Analyzer.new(program)
+    analyzer.collect_symbols
+
+    semantic_inventory = Semantic::CompileShadowDeclarationInventory.from_symbol_table(analyzer.global_context.symbol_table)
+
+    semantic_inventory.total(Semantic::CompileShadowDeclarationKind::Methods).should eq(3)
+    semantic_inventory.unique_names(Semantic::CompileShadowDeclarationKind::Methods).should eq(["alpha", "beta", "direct_greet"])
+  end
+
   it "keeps zero name gaps while preserving total-count differences for overload families" do
     program = build_declaration_shadow_program([
       <<-CR,

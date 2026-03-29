@@ -103,4 +103,33 @@ describe "compile semantic shadow aggregate" do
     aggregate.path_for(call_expr).should eq("unit_1.cr")
     aggregate.path_for(callee_id).should eq("unit_1.cr")
   end
+
+  it "resolves calls to root-level macro-generated methods across aggregate files" do
+    aggregate = build_shared_shadow_aggregate([
+      <<-CR,
+        {% for name in %w(alpha beta) %}
+          def {{name.id}}
+            41
+          end
+        {% end %}
+      CR
+      <<-CR,
+        alpha()
+      CR
+    ])
+    program = aggregate.program
+
+    analyzer = Semantic::Analyzer.new(program)
+    analyzer.collect_symbols
+    result = analyzer.resolve_names
+
+    result.diagnostics.should be_empty
+
+    call_root = program.roots.last
+    call_node = program.arena[call_root].as(Frontend::CallNode)
+    callee_id = call_node.callee.not_nil!
+    result.identifier_symbols[callee_id].should be_a(Semantic::MethodSymbol)
+    aggregate.path_for(callee_id).should eq("unit_1.cr")
+    analyzer.global_context.symbol_table.lookup("alpha").should be_a(Semantic::MethodSymbol)
+  end
 end
