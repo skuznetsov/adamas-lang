@@ -136,7 +136,7 @@ module CrystalV2
           else
             # Report undefined identifiers in all scopes, not just top-level
             debug("[NameResolver] unresolved #{name}")
-            @diagnostics << Diagnostic.new("undefined local variable or method '#{name}'", node.span)
+            @diagnostics << Diagnostic.new("undefined local variable or method '#{name}'", node.span, node_id)
           end
         end
 
@@ -410,7 +410,7 @@ module CrystalV2
           if symbol
             @identifier_symbols[node_id] = symbol
           elsif top_level_scope?
-            @diagnostics << Diagnostic.new("uninitialized constant #{segments.join("::")}", node.span)
+            @diagnostics << Diagnostic.new("uninitialized constant #{segments.join("::")}", node.span, node_id)
           end
         end
 

@@ -32,4 +32,15 @@ describe DiagnosticFormatter do
     formatted = DiagnosticFormatter.format(nil, diagnostic)
     formatted.should eq("1:1-1:1 missing context")
   end
+
+  it "formats file-aware diagnostics from a source map" do
+    diagnostic = Diagnostic.new(
+      "undefined local variable or method 'missing'",
+      Span.new(0, 0, 1, 1, 1, 8),
+      file_path: "/tmp/main.cr"
+    )
+
+    formatted = DiagnosticFormatter.format({"/tmp/main.cr" => "missing\n"}, diagnostic)
+    formatted.should eq("/tmp/main.cr:1:1-1:8 undefined local variable or method 'missing'\n  1 | missing\n    | ^^^^^^^")
+  end
 end

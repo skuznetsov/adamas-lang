@@ -6,8 +6,20 @@ module CrystalV2
     module Frontend
       module DiagnosticFormatter
         def self.format(source : String?, diagnostic : Diagnostic) : String
+          format_with_sources(diagnostic) { |_path| source }
+        end
+
+        def self.format(sources : Hash(String, String), diagnostic : Diagnostic) : String
+          format_with_sources(diagnostic) do |path|
+            next nil unless path
+            sources[path]?
+          end
+        end
+
+        private def self.format_with_sources(diagnostic : Diagnostic, &source_lookup : String? -> String?) : String
           span = diagnostic.span
-          range = format_range(span)
+          source = yield diagnostic.file_path
+          range = format_range(span, diagnostic.file_path)
           base = String.build do |io|
             io << range << " " << diagnostic.message
           end
@@ -27,8 +39,9 @@ module CrystalV2
           end
         end
 
-        private def self.format_range(span : Span) : String
-          "#{span.start_line}:#{span.start_column}-#{span.end_line}:#{span.end_column}"
+        private def self.format_range(span : Span, file_path : String? = nil) : String
+          range = "#{span.start_line}:#{span.start_column}-#{span.end_line}:#{span.end_column}"
+          file_path ? "#{file_path}:#{range}" : range
         end
 
         private def self.extract_lines(source : String, span : Span) : Array(String)

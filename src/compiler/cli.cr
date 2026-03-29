@@ -178,6 +178,7 @@ module CrystalV2
         getter symbol_count : Int32
         getter identifier_count : Int32
         getter semantic_diagnostic_count : Int32
+        getter resolution_diagnostic_count : Int32
         getter type_diagnostic_count : Int32
 
         def initialize(
@@ -187,6 +188,7 @@ module CrystalV2
           @symbol_count : Int32,
           @identifier_count : Int32,
           @semantic_diagnostic_count : Int32,
+          @resolution_diagnostic_count : Int32,
           @type_diagnostic_count : Int32,
         )
         end
@@ -1284,6 +1286,7 @@ module CrystalV2
                 "symbols=#{unit_summary.symbol_count}",
                 "identifiers=#{unit_summary.identifier_count}",
                 "semantic_diags=#{unit_summary.semantic_diagnostic_count}",
+                "resolution_diags=#{unit_summary.resolution_diagnostic_count}",
                 "type_diags=#{unit_summary.type_diagnostic_count}",
               ].join(" ")
               end
@@ -5625,6 +5628,15 @@ module CrystalV2
         diagnostic.with_paths(primary_file_path, secondary_spans)
       end
 
+      private def enrich_shadow_resolution_diagnostic(
+        diagnostic : Frontend::Diagnostic,
+        aggregate : Semantic::CompileShadowAggregate
+      ) : Frontend::Diagnostic
+        return diagnostic if diagnostic.file_path
+        return diagnostic unless node_id = diagnostic.node_id
+        diagnostic.with_file_path(aggregate.path_for(node_id))
+      end
+
       private def count_shadow_diagnostics_by_unit(
         diagnostics : Array(Semantic::Diagnostic),
         aggregate : Semantic::CompileShadowAggregate
@@ -5633,6 +5645,21 @@ module CrystalV2
         diagnostics.each do |diagnostic|
           if primary_node_id = diagnostic.primary_node_id
             if unit_index = aggregate.unit_index_for(primary_node_id)
+              counts[unit_index] += 1
+            end
+          end
+        end
+        counts
+      end
+
+      private def count_shadow_resolution_diagnostics_by_unit(
+        diagnostics : Array(Frontend::Diagnostic),
+        aggregate : Semantic::CompileShadowAggregate
+      ) : Array(Int32)
+        counts = Array(Int32).new(aggregate.unit_summaries.size, 0)
+        diagnostics.each do |diagnostic|
+          if node_id = diagnostic.node_id
+            if unit_index = aggregate.unit_index_for(node_id)
               counts[unit_index] += 1
             end
           end
@@ -5661,10 +5688,12 @@ module CrystalV2
         resolve_result = analyzer.resolve_names
         analyzer.infer_types(resolve_result.identifier_symbols)
         semantic_diagnostics = analyzer.semantic_diagnostics.map { |diagnostic| enrich_shadow_semantic_diagnostic(diagnostic, aggregate) }
+        resolution_diagnostics = resolve_result.diagnostics.map { |diagnostic| enrich_shadow_resolution_diagnostic(diagnostic, aggregate) }
         type_diagnostics = analyzer.type_inference_diagnostics.map { |diagnostic| enrich_shadow_semantic_diagnostic(diagnostic, aggregate) }
         symbols_by_unit = count_shadow_symbols_by_unit(analyzer.global_context.symbol_table, aggregate)
         identifiers_by_unit = count_shadow_identifiers_by_unit(resolve_result.identifier_symbols, aggregate)
         semantic_diagnostics_by_unit = count_shadow_diagnostics_by_unit(semantic_diagnostics, aggregate)
+        resolution_diagnostics_by_unit = count_shadow_resolution_diagnostics_by_unit(resolution_diagnostics, aggregate)
         type_diagnostics_by_unit = count_shadow_diagnostics_by_unit(type_diagnostics, aggregate)
         unit_summaries = [] of SemanticShadowUnitSummary
         aggregate.unit_summaries.each_with_index do |unit_summary, unit_index|
@@ -5675,6 +5704,7 @@ module CrystalV2
             symbol_count: symbols_by_unit.unsafe_fetch(unit_index),
             identifier_count: identifiers_by_unit.unsafe_fetch(unit_index),
             semantic_diagnostic_count: semantic_diagnostics_by_unit.unsafe_fetch(unit_index),
+            resolution_diagnostic_count: resolution_diagnostics_by_unit.unsafe_fetch(unit_index),
             type_diagnostic_count: type_diagnostics_by_unit.unsafe_fetch(unit_index),
           )
         end
@@ -5682,6 +5712,9 @@ module CrystalV2
           sources_by_path = semantic_shadow_sources_by_path(aggregate)
           semantic_diagnostics.each do |diagnostic|
             err_io.puts Semantic::DiagnosticFormatter.format(sources_by_path, diagnostic)
+          end
+          resolution_diagnostics.each do |diagnostic|
+            err_io.puts Frontend::DiagnosticFormatter.format(sources_by_path, diagnostic)
           end
           type_diagnostics.each do |diagnostic|
             err_io.puts Semantic::DiagnosticFormatter.format(sources_by_path, diagnostic)
@@ -5696,7 +5729,7 @@ module CrystalV2
           symbol_count: count_local_symbols(analyzer.global_context.symbol_table),
           identifier_count: resolve_result.identifier_symbols.size,
           semantic_diagnostic_count: semantic_diagnostics.size,
-          resolution_diagnostic_count: resolve_result.diagnostics.size,
+          resolution_diagnostic_count: resolution_diagnostics.size,
           type_diagnostic_count: type_diagnostics.size,
         )
       rescue ex
