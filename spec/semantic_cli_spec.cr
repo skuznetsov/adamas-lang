@@ -269,6 +269,10 @@ describe CrystalV2::Compiler::CLI do
           module Beta
           end
 
+          enum Delta
+            One
+          end
+
           GAMMA = 1
         end
       CR
@@ -288,9 +292,10 @@ describe CrystalV2::Compiler::CLI do
       end
 
       output = out_io.to_s
-      output.should contain("generated_symbols=3")
+      output.should contain("generated_symbols=4")
       output.should contain("Semantic shadow declarations: classes provenance")
       output.should contain("Semantic shadow declarations: modules provenance")
+      output.should contain("Semantic shadow declarations: enums provenance")
       output.should contain("Semantic shadow declarations: constants provenance")
       output.should contain("semantic_macro_expanded_total=1")
     end

@@ -119,10 +119,10 @@ to the unit that contributed the generated overload, not blindly to the
 overload-set wrapper's original `node_id`.
 
 The same symbol-backed provenance path now covers non-method declaration kinds
-too. A macro-expanded top-level `class`, `module`, or constant assignment now
-retains generated origin metadata on the semantic symbol itself, and verbose
-shadow parity reports `semantic_macro_expanded_total=1` for those kinds rather
-than treating generated non-method declarations as direct.
+too. A macro-expanded top-level `class`, `module`, `enum`, or constant
+assignment now retains generated origin metadata on the semantic symbol itself,
+and verbose shadow parity reports `semantic_macro_expanded_total=1` for those
+kinds rather than treating generated non-method declarations as direct.
 
 Generated declaration provenance and `generated_*_diags` counters now use the
 explicit generated-origin mapping carried by the semantic stack. In particular,

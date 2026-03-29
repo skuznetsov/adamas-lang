@@ -148,10 +148,10 @@ Verified sequence:
       reports `generated_symbols=0` for `lib.cr` and `generated_symbols=1` for
       `main.cr`
   - symbol-backed generated provenance now covers non-method declarations too:
-    - macro-expanded top-level `class`, `module`, and constant declarations
+    - macro-expanded top-level `class`, `module`, `enum`, and constant declarations
       now retain generated metadata on their semantic symbols
     - verbose shadow parity now reports `semantic_macro_expanded_total=1` for
-      `classes`, `modules`, and `constants` on that carrier
+      `classes`, `modules`, `enums`, and `constants` on that carrier
   - generated provenance classification no longer depends on generated snippet
     availability:
     - semantic declaration provenance and `generated_*_diags` counters now use

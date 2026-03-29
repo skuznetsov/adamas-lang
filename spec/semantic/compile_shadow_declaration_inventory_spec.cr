@@ -332,7 +332,7 @@ describe "compile shadow declaration inventory" do
     method_line.not_nil!.should contain("semantic_macro_expanded_total=1")
   end
 
-  it "retains generated provenance for macro-expanded classes modules and constants" do
+  it "retains generated provenance for macro-expanded classes modules enums and constants" do
     aggregate = Semantic::CompileShadowAggregate.build([
       {
         path: "decl_lib.cr",
@@ -342,6 +342,10 @@ describe "compile shadow declaration inventory" do
             end
 
             module Beta
+            end
+
+            enum Delta
+              One
             end
 
             GAMMA = 1
@@ -382,6 +386,14 @@ describe "compile shadow declaration inventory" do
     beta_symbol.generated_macro_definition_node_id.should_not be_nil
     beta_symbol.file_path.should eq("decl_main.cr")
 
+    delta_symbol = analyzer.global_context.symbol_table.lookup_local("Delta")
+    delta_symbol.should be_a(Semantic::EnumSymbol)
+    delta_symbol = delta_symbol.as(Semantic::EnumSymbol)
+    delta_symbol.generated?.should be_true
+    delta_symbol.generated_origin_node_id.should_not be_nil
+    delta_symbol.generated_macro_definition_node_id.should_not be_nil
+    delta_symbol.file_path.should eq("decl_main.cr")
+
     gamma_symbol = analyzer.global_context.symbol_table.lookup_local("GAMMA")
     gamma_symbol.should be_a(Semantic::ConstantSymbol)
     gamma_symbol = gamma_symbol.as(Semantic::ConstantSymbol)
@@ -396,13 +408,16 @@ describe "compile shadow declaration inventory" do
 
     class_line = semantic_inventory.provenance_lines("semantic").find { |line| line.starts_with?("classes provenance ") }
     module_line = semantic_inventory.provenance_lines("semantic").find { |line| line.starts_with?("modules provenance ") }
+    enum_line = semantic_inventory.provenance_lines("semantic").find { |line| line.starts_with?("enums provenance ") }
     constant_line = semantic_inventory.provenance_lines("semantic").find { |line| line.starts_with?("constants provenance ") }
 
     class_line.should_not be_nil
     module_line.should_not be_nil
+    enum_line.should_not be_nil
     constant_line.should_not be_nil
     class_line.not_nil!.should contain("semantic_macro_expanded_total=1")
     module_line.not_nil!.should contain("semantic_macro_expanded_total=1")
+    enum_line.not_nil!.should contain("semantic_macro_expanded_total=1")
     constant_line.not_nil!.should contain("semantic_macro_expanded_total=1")
   end
 end
