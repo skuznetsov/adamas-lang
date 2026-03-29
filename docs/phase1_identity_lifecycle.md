@@ -98,39 +98,45 @@ any semantic cache key. The adapter's reverse lookup is for diagnostics only.
 
 ## 7. Dry-Run Results (hello world)
 
-**Key components used in dry-run (SURROGATE, not canonical):**
-- `DryRunDefKey`: `{resolved_arena.object_id, node.object_id}` — a temporary
-  surrogate for def identity. This is NOT the canonical `DefIdentity{arena_id,
-  ExprId.index}` because ExprId is not yet available at inference call sites.
-  The surrogate is injective (each heap DefNode has a unique object_id) but
-  is explicitly separate from the Phase 1 identity contract.
+**Dual-path keying:**
+
+The dry-run uses two identity paths:
+
+1. **Canonical** (34.8% of lookups): `DefIdentity{arena.object_id, ExprId.index}`
+   via `DefInstanceKey`. Used at 14 call sites where ExprId is available from
+   arena iteration loops (`body_ids.each do |member_id|` etc.).
+
+2. **Surrogate** (65.2% of lookups): `DryRunDefKey{arena.object_id, node.object_id}`
+   via `DryRunInstanceKey`. Used at ~10 call sites where DefNode arrives as a
+   function parameter without an associated ExprId.
+
+Both paths include:
 - Receiver: interned `self_type_name`
 - Args: interned parameter type annotations (UNKNOWN for unannotated params)
 - Block: interned block parameter type annotation (if present)
 - NOT yet included: generic type parameters, inferred call-site arg types,
   named argument types
 
-**Interpretation:** The hit rate measures repeated body inference for the same
-surrogate def key + receiver + declared-param-type combination. It does NOT yet
-capture call-site specialization (where the same def is analyzed with different
-inferred arg types). A real Phase 4 cache would key on canonical DefIdentity +
-inferred types at the call site, not declared annotations — so actual cache hit
-rates will differ.
+**Interpretation:** The hit rate is a directional signal. A real Phase 4 cache
+would key on inferred call-site types, not declared annotations. The canonical
+path satisfies the Phase 1 identity contract; the surrogate path is a temporary
+fallback that will shrink as more call sites get ExprId plumbing.
 
-The dry-run is a directional signal showing that many body walks target the
-same def+receiver combination, not a precise prediction of Phase 4 savings.
+**Remaining surrogate call sites** (10 of 24):
+- `register_module_method_from_def(member, ...)` — Pattern D
+- `registered_concrete_class_method_def(node, ...)` — Pattern H
+- `infer_return_type_from_callsite(node, ...)` — Pattern I
+- `infer_return_type_from_body_without_callsite(node, ...)` — Pattern J
+- `force_lower_function_for_return_type` — Pattern L
+- `register_type_method_from_def` effective_member — Pattern K
 
-**Path to canonical keying:** Thread ExprId through to
-`infer_concrete_return_type_from_body` call sites (ExprId is available at the
-iteration level, e.g. `body_ids.each do |member_id|`, but is not currently
-passed through). Once plumbed, the surrogate will be replaced with real
-`DefIdentity` + `DefInstanceKey`.
+These would require adding ExprId parameters to intermediate functions.
 
 ```
-lookups=5561  hits=3147  misses=2414  hit_rate=56.6%
-unique_keys=2414  duplicate_keys=573  interned_types=399
+lookups=5561  hits=3013  misses=2548  hit_rate=54.2%
+canonical=1934(34.8%)  surrogate=3627
+unique_keys=2548 (canonical=1608 surrogate=940)  interned_types=399
 ```
 
 Compare with Phase 0's `body_infer_dupes=401` (keyed by DefNode.object_id only).
-The enriched key finds 3147 hits because the same syntactic def can be analyzed
-multiple times with the same receiver — a genuine cache opportunity.
+The enriched key finds 3013 hits — a genuine cache opportunity.

@@ -4,25 +4,19 @@
 # any compilation behavior. Only observes and reports statistics about
 # potential cache hits for body inference.
 #
-# IMPORTANT: This tracker uses DryRunDefKey, a TEMPORARY surrogate
-# for def identity. It is NOT the canonical DefIdentity from Phase 1.
-# The canonical DefIdentity requires {arena_id, ExprId.index}, which
-# is not yet available at all infer_concrete_return_type_from_body
-# call sites. Once ExprId plumbing is added, the surrogate will be
-# replaced with real DefIdentity + DefInstanceKey.
+# Uses canonical DefInstanceKey (with real DefIdentity{arena_id, ExprId.index})
+# when ExprId is available at the call site. Falls back to DryRunInstanceKey
+# (with DryRunDefKey using node.object_id) when ExprId is not yet plumbed.
 #
 # Enable with: CRYSTAL_V2_IDENTITY_DRY_RUN=1
 
 require "./semantic_type_id"
+require "./def_identity"
+require "./def_instance_key"
 
 module CrystalV2::Compiler::Semantic
-  # Temporary surrogate for def identity in the dry-run tracker.
-  # Uses node.object_id (heap address) as a stand-in for the canonical
-  # DefIdentity{arena_id, ExprId.index} which requires ExprId plumbing
-  # not yet available at all call sites.
-  #
-  # This is explicitly NOT DefIdentity — it is a surrogate that will
-  # be replaced once ExprId is threaded through to inference call sites.
+  # Fallback surrogate for call sites where ExprId is not yet available.
+  # Will be removed once ExprId is plumbed to all call sites.
   struct DryRunDefKey
     getter arena_id : UInt64
     getter node_object_id : UInt64
@@ -41,9 +35,6 @@ module CrystalV2::Compiler::Semantic
     end
   end
 
-  # Composite dry-run cache key: surrogate def key + semantic type context.
-  # Mirrors DefInstanceKey structure but uses DryRunDefKey instead of
-  # canonical DefIdentity.
   struct DryRunInstanceKey
     getter def_key : DryRunDefKey
     getter receiver_type : SemanticTypeId?
@@ -80,20 +71,40 @@ module CrystalV2::Compiler::Semantic
     getter total_lookups : Int32 = 0
     getter cache_hits : Int32 = 0
     getter cache_misses : Int32 = 0
+    # Track how many lookups use canonical vs surrogate identity
+    getter canonical_lookups : Int32 = 0
+    getter surrogate_lookups : Int32 = 0
 
-    @seen_keys : ::Hash(DryRunInstanceKey, Int32)
+    @canonical_keys : ::Hash(DefInstanceKey, Int32)
+    @surrogate_keys : ::Hash(DryRunInstanceKey, Int32)
 
     def initialize
       @type_intern = SemanticTypeInternTable.new
-      @seen_keys = {} of DryRunInstanceKey => Int32
+      @canonical_keys = {} of DefInstanceKey => Int32
+      @surrogate_keys = {} of DryRunInstanceKey => Int32
     end
 
-    # Record a body inference attempt. Returns true if this is a cache hit
-    # (same key seen before), false if first encounter.
-    def record_inference(key : DryRunInstanceKey) : Bool
+    # Record using canonical DefInstanceKey (ExprId available).
+    def record_canonical(key : DefInstanceKey) : Bool
       @total_lookups += 1
-      count = @seen_keys[key]? || 0
-      @seen_keys[key] = count + 1
+      @canonical_lookups += 1
+      count = @canonical_keys[key]? || 0
+      @canonical_keys[key] = count + 1
+      if count > 0
+        @cache_hits += 1
+        true
+      else
+        @cache_misses += 1
+        false
+      end
+    end
+
+    # Record using surrogate key (ExprId not available).
+    def record_surrogate(key : DryRunInstanceKey) : Bool
+      @total_lookups += 1
+      @surrogate_lookups += 1
+      count = @surrogate_keys[key]? || 0
+      @surrogate_keys[key] = count + 1
       if count > 0
         @cache_hits += 1
         true
@@ -128,12 +139,16 @@ module CrystalV2::Compiler::Semantic
     end
 
     def dump(io : IO) : Nil
-      unique_keys = @seen_keys.size
-      duplicate_keys = @seen_keys.count { |_, c| c > 1 }
+      canonical_unique = @canonical_keys.size
+      surrogate_unique = @surrogate_keys.size
+      canonical_dupes = @canonical_keys.count { |_, c| c > 1 }
+      surrogate_dupes = @surrogate_keys.count { |_, c| c > 1 }
+      total_unique = canonical_unique + surrogate_unique
       hit_rate = @total_lookups > 0 ? (@cache_hits * 100.0 / @total_lookups).round(1) : 0.0
+      canonical_pct = @total_lookups > 0 ? (@canonical_lookups * 100.0 / @total_lookups).round(1) : 0.0
       io.puts "[IDENTITY_DRY_RUN] lookups=#{@total_lookups} hits=#{@cache_hits} misses=#{@cache_misses} hit_rate=#{hit_rate}%"
-      io.puts "[IDENTITY_DRY_RUN] unique_keys=#{unique_keys} duplicate_keys=#{duplicate_keys} interned_types=#{@type_intern.size}"
-      io.puts "[IDENTITY_DRY_RUN] NOTE: uses DryRunDefKey (node.object_id surrogate), not canonical DefIdentity"
+      io.puts "[IDENTITY_DRY_RUN] canonical=#{@canonical_lookups}(#{canonical_pct}%) surrogate=#{@surrogate_lookups}"
+      io.puts "[IDENTITY_DRY_RUN] unique_keys=#{total_unique} (canonical=#{canonical_unique} surrogate=#{surrogate_unique}) interned_types=#{@type_intern.size}"
     end
   end
 end

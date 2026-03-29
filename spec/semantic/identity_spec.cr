@@ -298,23 +298,48 @@ module IdentitySpec
   # ── DryRunTracker ──
 
   describe "IdentityDryRunTracker" do
-    it "first encounter is a miss, second is a hit" do
+    it "canonical: first encounter is miss, second is hit" do
       tracker = IdentityDryRunTracker.new
-      dk = DryRunDefKey.new(1_u64, 100_u64)
-      key = DryRunInstanceKey.new(def_key: dk)
-      tracker.record_inference(key).should be_false # first = miss
-      tracker.record_inference(key).should be_true  # second = hit
+      def_id = DefIdentity.new(1_u64, 10)
+      key = DefInstanceKey.new(def_identity: def_id)
+      tracker.record_canonical(key).should be_false
+      tracker.record_canonical(key).should be_true
       tracker.total_lookups.should eq 2
+      tracker.canonical_lookups.should eq 2
+      tracker.surrogate_lookups.should eq 0
       tracker.cache_hits.should eq 1
       tracker.cache_misses.should eq 1
     end
 
-    it "different keys are separate misses" do
+    it "surrogate: first encounter is miss, second is hit" do
       tracker = IdentityDryRunTracker.new
-      k1 = DryRunInstanceKey.new(def_key: DryRunDefKey.new(1_u64, 100_u64))
-      k2 = DryRunInstanceKey.new(def_key: DryRunDefKey.new(2_u64, 200_u64))
-      tracker.record_inference(k1).should be_false
-      tracker.record_inference(k2).should be_false
+      dk = DryRunDefKey.new(1_u64, 100_u64)
+      key = DryRunInstanceKey.new(def_key: dk)
+      tracker.record_surrogate(key).should be_false
+      tracker.record_surrogate(key).should be_true
+      tracker.total_lookups.should eq 2
+      tracker.surrogate_lookups.should eq 2
+      tracker.canonical_lookups.should eq 0
+      tracker.cache_hits.should eq 1
+    end
+
+    it "canonical and surrogate are separate namespaces" do
+      tracker = IdentityDryRunTracker.new
+      # Same "identity" values but different key types should not collide
+      ckey = DefInstanceKey.new(def_identity: DefIdentity.new(1_u64, 10))
+      skey = DryRunInstanceKey.new(def_key: DryRunDefKey.new(1_u64, 10_u64))
+      tracker.record_canonical(ckey).should be_false
+      tracker.record_surrogate(skey).should be_false
+      tracker.cache_hits.should eq 0
+      tracker.cache_misses.should eq 2
+    end
+
+    it "different canonical keys are separate misses" do
+      tracker = IdentityDryRunTracker.new
+      k1 = DefInstanceKey.new(def_identity: DefIdentity.new(1_u64, 0))
+      k2 = DefInstanceKey.new(def_identity: DefIdentity.new(2_u64, 0))
+      tracker.record_canonical(k1).should be_false
+      tracker.record_canonical(k2).should be_false
       tracker.cache_hits.should eq 0
       tracker.cache_misses.should eq 2
     end
@@ -333,19 +358,20 @@ module IdentitySpec
       (a == b).should be_true
     end
 
-    it "dump produces expected format with surrogate note" do
+    it "dump shows canonical vs surrogate split" do
       tracker = IdentityDryRunTracker.new
-      key = DryRunInstanceKey.new(def_key: DryRunDefKey.new(1_u64, 100_u64))
-      tracker.record_inference(key)
-      tracker.record_inference(key)
+      ckey = DefInstanceKey.new(def_identity: DefIdentity.new(1_u64, 0))
+      skey = DryRunInstanceKey.new(def_key: DryRunDefKey.new(2_u64, 200_u64))
+      tracker.record_canonical(ckey)
+      tracker.record_canonical(ckey)
+      tracker.record_surrogate(skey)
       io = IO::Memory.new
       tracker.dump(io)
       output = io.to_s
       output.should contain("[IDENTITY_DRY_RUN]")
-      output.should contain("lookups=2")
-      output.should contain("hits=1")
-      output.should contain("misses=1")
-      output.should contain("DryRunDefKey")
+      output.should contain("lookups=3")
+      output.should contain("canonical=2")
+      output.should contain("surrogate=1")
     end
   end
 end

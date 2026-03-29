@@ -12863,15 +12863,15 @@ module Crystal::HIR
                     defer = @defer_body_return_inference
                     return_type = if rt = member.return_type
                                     rt_name = (safe_slice_to_string(rt) || "")
-                                    inferred = !defer && module_like_type_name?(rt_name) ? infer_concrete_return_type_from_body(member, class_name, member_arena) : nil
+                                    inferred = !defer && module_like_type_name?(rt_name) ? infer_concrete_return_type_from_body(member, class_name, member_arena, node_expr_id: member_id) : nil
                                     inferred || type_ref_for_name(rt_name)
                                   elsif method_name.ends_with?('?')
                                     inferred = defer ? nil : infer_unannotated_query_return_type(method_name, type_ref_for_name(class_name))
-                                    inferred = infer_concrete_return_type_from_body(member, class_name, member_arena) if inferred.nil? && !defer
+                                    inferred = infer_concrete_return_type_from_body(member, class_name, member_arena, node_expr_id: member_id) if inferred.nil? && !defer
                                     inferred || TypeRef::BOOL
                                   else
                                     inferred = defer ? nil : infer_getter_return_type(member, ivars)
-                                    inferred = infer_concrete_return_type_from_body(member, class_name, member_arena) if inferred.nil? && !defer
+                                    inferred = infer_concrete_return_type_from_body(member, class_name, member_arena, node_expr_id: member_id) if inferred.nil? && !defer
                                     inferred = infer_unannotated_search_return_type(method_name, type_ref_for_name(class_name)) if inferred.nil? && !defer
                                     inferred || TypeRef::VOID
                                   end
@@ -13196,14 +13196,14 @@ module Crystal::HIR
                     type_literal_name = infer_type_literal_return_name_from_body(member, class_name)
                     return_type = if rt = member.return_type
                                     rt_name = (safe_slice_to_string(rt) || "")
-                                    inferred = module_like_type_name?(rt_name) ? infer_concrete_return_type_from_body(member, class_name, member_arena) : nil
+                                    inferred = module_like_type_name?(rt_name) ? infer_concrete_return_type_from_body(member, class_name, member_arena, node_expr_id: member_id) : nil
                                     inferred || type_ref_for_name(rt_name)
                                   elsif method_name.ends_with?('?')
                                     inferred = infer_unannotated_query_return_type(method_name, type_ref_for_name(class_name), count_non_block_params(member))
-                                    inferred ||= infer_concrete_return_type_from_body(member, class_name, member_arena)
+                                    inferred ||= infer_concrete_return_type_from_body(member, class_name, member_arena, node_expr_id: member_id)
                                     inferred || TypeRef::BOOL
                                   else
-                                    inferred = infer_concrete_return_type_from_body(member, class_name, member_arena)
+                                    inferred = infer_concrete_return_type_from_body(member, class_name, member_arena, node_expr_id: member_id)
                                     inferred ||= infer_unannotated_search_return_type(method_name, type_ref_for_name(class_name))
                                     inferred || TypeRef::VOID
                                   end
@@ -13841,6 +13841,7 @@ module Crystal::HIR
       self_type_name : String? = nil,
       preferred_arena : CrystalV2::Compiler::Frontend::ArenaLike? = nil,
       source_tag : Symbol = :unknown,
+      node_expr_id : CrystalV2::Compiler::Frontend::ExprId? = nil,
     ) : TypeRef?
       # Skip expensive body inference when we're inside ensure_monomorphized_type.
       # Return types will be inferred lazily when the method is actually called.
@@ -13859,13 +13860,10 @@ module Crystal::HIR
       # No arena/XOR needed: each DefNode is a distinct class instance.
       @phase0_body_infer_counts[node.object_id] = (@phase0_body_infer_counts[node.object_id]? || 0) + 1
 
-      # Phase 1: identity dry-run — track potential cache hits using a SURROGATE key.
-      # Uses DryRunDefKey (node.object_id), NOT canonical DefIdentity (arena + ExprId).
-      # ExprId is not yet available at this call site; will be plumbed in a later phase.
+      # Phase 1.5: identity dry-run — canonical DefIdentity when ExprId is available,
+      # DryRunDefKey fallback when not yet plumbed.
       if tracker = @identity_tracker
         resolved_arena_for_key = preferred_arena || resolve_arena_for_def(node, @arena)
-        def_key = CrystalV2::Compiler::Semantic::DryRunDefKey.new(
-          resolved_arena_for_key.object_id.to_u64, node.object_id.to_u64)
         recv_type = self_type_name ? tracker.intern_type_name(self_type_name) : nil
 
         # Intern parameter type annotations for arg separation
@@ -13883,20 +13881,35 @@ module Crystal::HIR
                 ann_str = safe_slice_to_string(ann)
                 arg_sem_types << tracker.intern_type_name(ann_str || "?")
               else
-                # Unannotated param — use placeholder to still distinguish arity
                 arg_sem_types << CrystalV2::Compiler::Semantic::SemanticTypeId::UNKNOWN
               end
             end
           end
         end
 
-        key = CrystalV2::Compiler::Semantic::DryRunInstanceKey.new(
-          def_key: def_key,
-          receiver_type: recv_type,
-          arg_types: arg_sem_types,
-          block_type: block_sem_type,
-        )
-        tracker.record_inference(key)
+        if eid = node_expr_id
+          # Canonical path: real DefIdentity{arena_id, ExprId.index}
+          def_id = CrystalV2::Compiler::Semantic::DefIdentity.new(
+            resolved_arena_for_key.object_id.to_u64, eid.index)
+          key = CrystalV2::Compiler::Semantic::DefInstanceKey.new(
+            def_identity: def_id,
+            receiver_type: recv_type,
+            arg_types: arg_sem_types,
+            block_type: block_sem_type,
+          )
+          tracker.record_canonical(key)
+        else
+          # Surrogate fallback: ExprId not available at this call site
+          def_key = CrystalV2::Compiler::Semantic::DryRunDefKey.new(
+            resolved_arena_for_key.object_id.to_u64, node.object_id.to_u64)
+          key = CrystalV2::Compiler::Semantic::DryRunInstanceKey.new(
+            def_key: def_key,
+            receiver_type: recv_type,
+            arg_types: arg_sem_types,
+            block_type: block_sem_type,
+          )
+          tracker.record_surrogate(key)
+        end
       end
 
       old_body_context = @infer_body_context
@@ -16681,12 +16694,12 @@ module Crystal::HIR
                 with_namespace_override(module_name) do
                   return_type = if rt = member.return_type
                                   rt_name = (safe_slice_to_string(rt) || "")
-                                  inferred = module_like_type_name?(rt_name) ? infer_concrete_return_type_from_body(member, nil, member_arena) : nil
+                                  inferred = module_like_type_name?(rt_name) ? infer_concrete_return_type_from_body(member, nil, member_arena, node_expr_id: expr_id) : nil
                                   inferred || type_ref_for_name(rt_name)
                                 elsif method_name.ends_with?('?')
                                   TypeRef::BOOL
                                 else
-                                  infer_concrete_return_type_from_body(member, nil, member_arena) || TypeRef::VOID
+                                  infer_concrete_return_type_from_body(member, nil, member_arena, node_expr_id: expr_id) || TypeRef::VOID
                                 end
                   if params = member.params
                     each_param(params) do |param|
@@ -19265,12 +19278,12 @@ module Crystal::HIR
               with_namespace_override(full_name) do
                 return_type = if explicit_return_type_name
                                 rt_name = qualify_unqualified_type_in_namespace(explicit_return_type_name, full_name)
-                                inferred = module_like_type_name?(rt_name) ? infer_concrete_return_type_from_body(effective_member, nil, member_arena) : nil
+                                inferred = module_like_type_name?(rt_name) ? infer_concrete_return_type_from_body(effective_member, nil, member_arena, node_expr_id: expr_id) : nil
                                 inferred || type_ref_for_name(rt_name)
                               elsif method_name.ends_with?('?')
                                 TypeRef::BOOL
                               else
-                                infer_concrete_return_type_from_body(effective_member, nil, member_arena) || TypeRef::VOID
+                                infer_concrete_return_type_from_body(effective_member, nil, member_arena, node_expr_id: expr_id) || TypeRef::VOID
                               end
                 if params = effective_member.params
                   each_param(params) do |param|
@@ -21087,7 +21100,7 @@ module Crystal::HIR
                               if env_get("DEBUG_ENUM_RETURN") && class_name == "File::Info" && method_name == "type"
                                 STDERR.puts "[DEBUG_ENUM_RETURN] class=#{class_name} rt=#{rt_name} resolved=#{resolved_rt_name} enum=#{enum_return_name || "(nil)"}"
                               end
-                              inferred = module_like_type_name?(rt_name) ? infer_concrete_return_type_from_body(member, class_name, member_arena) : nil
+                              inferred = module_like_type_name?(rt_name) ? infer_concrete_return_type_from_body(member, class_name, member_arena, node_expr_id: expr_id) : nil
                               resolved = inferred || type_ref_for_name(resolved_rt_name)
                               if resolved == TypeRef::VOID && method_name.ends_with?('?')
                                 self_type = type_ref
@@ -21099,7 +21112,7 @@ module Crystal::HIR
                               inferred = infer_unannotated_query_return_type(method_name, self_type)
                               STDERR.puts "[REG_METHOD_PHASE] class=#{class_name} method=#{method_name} phase=query_after_predicate inferred=#{inferred ? inferred.id : -1}" if trace_method_phase
                               STDERR.puts "[REG_METHOD_PHASE] class=#{class_name} method=#{method_name} phase=query_before_body_infer" if trace_method_phase && inferred.nil?
-                              inferred ||= infer_concrete_return_type_from_body(member, class_name, member_arena)
+                              inferred ||= infer_concrete_return_type_from_body(member, class_name, member_arena, node_expr_id: expr_id)
                               STDERR.puts "[REG_METHOD_PHASE] class=#{class_name} method=#{method_name} phase=query_after_body_infer inferred=#{inferred ? inferred.id : -1}" if trace_method_phase
                               inferred || fallback_query_return_type(method_name)
                             else
@@ -21108,7 +21121,7 @@ module Crystal::HIR
                               inferred = infer_getter_return_type(member, ivars)
                               STDERR.puts "[REG_METHOD_PHASE] class=#{class_name} method=#{method_name} phase=after_getter_infer inferred=#{inferred ? inferred.id : -1}" if trace_method_phase
                               STDERR.puts "[REG_METHOD_PHASE] class=#{class_name} method=#{method_name} phase=before_body_infer" if trace_method_phase && inferred.nil?
-                              inferred = infer_concrete_return_type_from_body(member, class_name, member_arena) if inferred.nil?
+                              inferred = infer_concrete_return_type_from_body(member, class_name, member_arena, node_expr_id: expr_id) if inferred.nil?
                               STDERR.puts "[REG_METHOD_PHASE] class=#{class_name} method=#{method_name} phase=after_body_infer inferred=#{inferred ? inferred.id : -1}" if trace_method_phase
                               inferred ||= infer_unannotated_search_return_type(method_name, type_ref)
                               STDERR.puts "[REG_METHOD_PHASE] class=#{class_name} method=#{method_name} phase=after_search_fallback inferred=#{inferred ? inferred.id : -1}" if trace_method_phase
@@ -22675,7 +22688,7 @@ module Crystal::HIR
             return_type = if rt = member.return_type
                             type_ref_for_name(substitute_type_params_in_type_name((safe_slice_to_string(rt) || "")))
                           else
-                            inferred = infer_concrete_return_type_from_body(member, specialized_name, member_arena)
+                            inferred = infer_concrete_return_type_from_body(member, specialized_name, member_arena, node_expr_id: expr_id)
                             inferred || TypeRef::VOID
                           end
 
