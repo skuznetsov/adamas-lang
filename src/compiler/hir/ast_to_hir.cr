@@ -13847,11 +13847,9 @@ module Crystal::HIR
       return nil unless body && !body.empty?
 
       # Phase 0 metric: count ACTUAL body inference walks (past body-presence guard).
-      # Keyed by def identity (arena + expr_id), not label, to avoid conflating
-      # overloads, reopened defs, and class-vs-instance methods.
-      arena_for_infer = preferred_arena || @arena
-      infer_def_key = arena_for_infer.object_id ^ (node.object_id.to_u64 << 16)
-      @phase0_body_infer_counts[infer_def_key] = (@phase0_body_infer_counts[infer_def_key]? || 0) + 1
+      # Keyed by DefNode object_id — unique per heap object, stable, injective.
+      # No arena/XOR needed: each DefNode is a distinct class instance.
+      @phase0_body_infer_counts[node.object_id] = (@phase0_body_infer_counts[node.object_id]? || 0) + 1
       old_body_context = @infer_body_context
       old_method = @current_method
       old_class = @current_class
