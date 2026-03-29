@@ -56,6 +56,16 @@
         - `Semantic shadow declarations: methods collector_total=1 collector_unique=1 semantic_total=1 semantic_unique=1 gaps=0`
         - `Semantic shadow declarations: methods provenance collector_direct_total=0 collector_direct_unique=0 collector_macro_expanded_total=1 collector_macro_expanded_unique=1`
         - final compile exit `0`
+    - live cross-file macro-call-with-args smoke still exposes the next honest boundary:
+      - `CRYSTAL_V2_SEMANTIC_SHADOW=1 /tmp/crystal_v2_semantic_shadow /tmp/shadow_macro_main.cr --no-prelude --stats --verbose`
+      - reducer:
+        - `/tmp/shadow_macro_lib.cr` defines `macro define_alpha(dummy) ... end`
+        - `/tmp/shadow_macro_main.cr` does `require "./shadow_macro_lib"; define_alpha(1); alpha()`
+      - output includes:
+        - `semantic_diags=0 resolution_diags=0 type_diags=0`
+        - `Semantic shadow declarations: methods collector_total=0 collector_unique=0 semantic_total=1 semantic_unique=1 gaps=1`
+        - `Semantic shadow declarations:   extra_in_semantic=alpha`
+        - final compile exit `0`
   - practical consequence:
     - there is now a safe, flag-gated compile semantic prepass substrate for Phase 2 work
     - the next honest step is not `VirtualArena` reuse for full semantic traversal; nested `ExprId` remapping still blocks a real shared compile graph
@@ -66,6 +76,7 @@
     - per-unit shadow summaries now attribute generated method symbols back to the originating file through the semantic-side file-path provider
     - shadow now also reports `generated_nodes`, so expanded semantic ownership is visible without corrupting the meaning of aggregate `nodes=`
     - collector-side shadow now covers zero-arg identifier-style root invocations and same-arena top-level `CallNode` macro invocations with call-site args
+    - cross-file macro-call parity with call-site args is still red because the compile collector has no canonical cross-arena ExprId remap/copy substrate for call-site argument nodes
     - the next honest work item is broader cross-file macro-call parity plus expanded-node ownership, not reopening semantic-side resolution
     - replacing reparse-based aggregation is still more honest follow-up than reopening Phase 1 identity questions
 - **Fresh stage3 split: trustworthy current-debug hosts can again build `stage2 --release` green, but resulting self-hosted stage2 runtime is still broken and now clearly splits into multiple families (2026-03-28, current session)**:

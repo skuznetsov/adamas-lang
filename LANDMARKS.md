@@ -76,6 +76,14 @@ Verified sequence:
       `methods collector_total=1 ... semantic_total=1 ... gaps=0`
     - provenance on that carrier also shows
       `collector_direct_total=0 collector_macro_expanded_total=1`
+  - live cross-file macro-call-with-args smoke now isolates the next boundary:
+    - `/tmp/shadow_macro_lib.cr` defines `macro define_alpha(dummy) ... end`
+    - `/tmp/shadow_macro_main.cr` requires that file, then calls
+      `define_alpha(1)` and `alpha()`
+    - `CRYSTAL_V2_SEMANTIC_SHADOW=1 /tmp/crystal_v2_semantic_shadow /tmp/shadow_macro_main.cr --no-prelude --stats --verbose`
+    - output keeps `semantic_diags=0 resolution_diags=0 type_diags=0`, but
+      still reports `methods collector_total=0 ... semantic_total=1 ... gaps=1`
+      with `extra_in_semantic=alpha`
 - reusable failure pattern:
   - the current `VirtualArena` only renumbers root ids; nested `ExprId`
     references inside nodes remain file-local, so it is not yet a sound
@@ -90,6 +98,9 @@ Verified sequence:
     now shows collector-vs-semantic parity for top-level macro-generated
     methods, bare zero-arg top-level macro calls, and same-arena top-level
     macro `CallNode`s with call-site args
+  - no existing AST clone/remap substrate was found for cross-arena call-site
+    argument ExprIds beyond the current `VirtualArena`, so cross-file macro
+    call parity remains a real boundary rather than a missed helper branch
   - this is still not a full semantic-side macro-expanded parity gate or a
     lowering contract, because aggregate `nodes=` still describes the original
     parse graph while `generated_nodes=` separately describes semantic expansion provenance
