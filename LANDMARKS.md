@@ -54,7 +54,7 @@ Verified sequence:
 
 Practical consequence:
 - Phase 2 can progress without touching lowering or default compile behavior
-- the next honest work item is diagnostic/macro parity on top of the shadow
+- the next honest work item is declaration/macro parity on top of the shadow
   substrate, not more identity-layer surgery
 {F/G/R: 0.92/0.72/0.95} [active]
 

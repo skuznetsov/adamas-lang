@@ -39,7 +39,7 @@
     - the next honest step is not `VirtualArena` reuse for full semantic traversal; nested `ExprId` remapping still blocks a real shared compile graph
     - file-level ownership is now good enough for shadow inventory and for current diagnostic attribution across collector, name-resolution, and type-inference passes
     - shadow diagnostics remain intentionally non-gating; they are visibility/provenance infrastructure, not compile-path authority yet
-    - follow-up work should focus on diagnostic/macro parity and replacing reparse-based aggregation, not on reopening Phase 1 identity questions
+    - follow-up work should focus on declaration/macro parity and replacing reparse-based aggregation, not on reopening Phase 1 identity questions
 - **Fresh stage3 split: trustworthy current-debug hosts can again build `stage2 --release` green, but resulting self-hosted stage2 runtime is still broken and now clearly splits into multiple families (2026-03-28, current session)**:
   - trustworthy setup:
     - current-source cheap runtime oracles stayed green on original-built current binaries:
