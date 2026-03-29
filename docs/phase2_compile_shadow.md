@@ -49,6 +49,13 @@ the shared aggregate:
 - reachable node count in that unit
 - top-level symbol count attributed to that unit
 - resolved identifier count attributed to that unit
+- semantic diagnostic count attributed to that unit
+- type diagnostic count attributed to that unit
+
+Collector and type-inference diagnostics now carry optional node/file metadata,
+so the shadow path can format them against the right per-file source text inside
+the shared aggregate. Name-resolution diagnostics still use the older frontend
+diagnostic shape and remain summary-only.
 
 It is an **integration substrate**, not a correctness gate for compile output.
 
@@ -56,8 +63,8 @@ It is an **integration substrate**, not a correctness gate for compile output.
 
 - reparses sources instead of reusing parsed compile arenas
 - file-level ownership now exists for aggregate nodes, but semantic diagnostics
-  still do not preserve compile-path provenance because they only carry spans,
-  not canonical `ExprId` identities
+  are only partially covered: collector/type diagnostics are file-aware in
+  shadow mode, while name-resolution diagnostics still carry only spans
 - does not yet include macro-expansion parity with `AstToHir`
 - does not yet run normalized HIR comparison
 

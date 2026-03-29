@@ -5,8 +5,9 @@ Context: compiler/bootstrap/stage2-stability
 
 [LM-344|verified]: Phase 2 now has a safe compile-side semantic shadow
 substrate under feature flag, with honest file-level ownership summaries on a
-shared-AstArena aggregate; the right short-term substrate is still reparse into
-that aggregate, not deep traversal over the current `VirtualArena`.
+shared-AstArena aggregate and file-aware collector/type diagnostics in shadow
+mode; the right short-term substrate is still reparse into that aggregate, not
+deep traversal over the current `VirtualArena`.
 
 Verified sequence:
 - implementation:
@@ -15,6 +16,9 @@ Verified sequence:
     `Frontend::AstArena`, then runs `Analyzer -> resolve -> infer`
   - `src/compiler/semantic/compile_shadow_aggregate.cr` now tracks per-unit
     root/node ownership inside that shared aggregate
+  - `Semantic::Diagnostic` now carries optional node/file metadata, allowing
+    collector/type diagnostics to be rebound to the right file inside shadow
+    mode
   - the design rationale is documented in `docs/phase2_compile_shadow.md`
 - decisive evidence:
   - targeted multi-file aggregate spec is green:
@@ -29,13 +33,19 @@ Verified sequence:
     - `CRYSTAL_V2_SEMANTIC_SHADOW=1 /tmp/crystal_v2_semantic_shadow /tmp/semantic_shadow_main.cr --no-prelude --stats --verbose`
     - output includes one `Semantic shadow unit:` line per compile unit with
       per-file `roots`, `nodes`, `symbols`, and `identifiers`
+  - live type-error smoke now prints file-aware shadow diagnostics:
+    - `CRYSTAL_V2_SEMANTIC_SHADOW=1 /tmp/crystal_v2_semantic_shadow /tmp/shadow_type_error.cr --no-prelude --stats --verbose`
+    - output includes `error[E3001]` with `--> /tmp/shadow_type_error.cr:1:1`
+      plus per-unit `type_diags=1`
 - reusable failure pattern:
   - the current `VirtualArena` only renumbers root ids; nested `ExprId`
     references inside nodes remain file-local, so it is not yet a sound
     substrate for deep multi-file semantic traversal
   - file-level ownership is now available for aggregate nodes, but full
-    semantic diagnostic provenance is still blocked because diagnostics only
-    carry `Span`, not canonical `ExprId` identities
+    diagnostic parity is still incomplete:
+    - collector/type diagnostics are file-aware in shadow mode
+    - name-resolution diagnostics still carry only `Span` and remain
+      summary-only
 
 Practical consequence:
 - Phase 2 can progress without touching lowering or default compile behavior

@@ -1025,7 +1025,9 @@ module CrystalV2
               "E2003",
               "class '#{name}' already defined with superclass '#{previous_super}'",
               span_for(new_symbol.node_id),
-              [SecondarySpan.new(span_for(existing.node_id), "previous superclass declared here")]
+              [SecondarySpan.new(span_for(existing.node_id), "previous superclass declared here", existing.node_id, file_path_for(existing.node_id))],
+              new_symbol.node_id,
+              file_path_for(new_symbol.node_id)
             )
           end
         end
@@ -1036,7 +1038,9 @@ module CrystalV2
             "E2001",
             "cannot redefine #{symbol_kind(existing)} '#{name}' as #{symbol_kind(new_symbol)}",
             span_for(new_symbol.node_id),
-            [SecondarySpan.new(span_for(existing.node_id), "previous #{symbol_kind(existing)} defined here")]
+            [SecondarySpan.new(span_for(existing.node_id), "previous #{symbol_kind(existing)} defined here", existing.node_id, file_path_for(existing.node_id))],
+            new_symbol.node_id,
+            file_path_for(new_symbol.node_id)
           )
         end
 
@@ -1046,7 +1050,9 @@ module CrystalV2
             "E2002",
             "variable '#{name}' is already defined in this scope",
             span_for(new_symbol.node_id),
-            [SecondarySpan.new(span_for(existing.node_id), "previous definition here")]
+            [SecondarySpan.new(span_for(existing.node_id), "previous definition here", existing.node_id, file_path_for(existing.node_id))],
+            new_symbol.node_id,
+            file_path_for(new_symbol.node_id)
           )
         end
 
@@ -1056,7 +1062,9 @@ module CrystalV2
             "W2001",
             "variable '#{name}' shadows outer scope variable",
             span_for(new_symbol.node_id),
-            [SecondarySpan.new(span_for(outer_symbol.node_id), "outer scope definition here")]
+            [SecondarySpan.new(span_for(outer_symbol.node_id), "outer scope definition here", outer_symbol.node_id, file_path_for(outer_symbol.node_id))],
+            new_symbol.node_id,
+            file_path_for(new_symbol.node_id)
           )
         end
 

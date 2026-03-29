@@ -7,6 +7,19 @@ module CrystalV2
       module DiagnosticFormatter
         # Format a semantic diagnostic with Rust-style multi-span output
         def self.format(source : String?, diagnostic : Diagnostic) : String
+          format_with_sources(diagnostic) { |_path| source }
+        end
+
+        def self.format(sources : Hash(String, String), diagnostic : Diagnostic) : String
+          format_with_sources(diagnostic) do |path|
+            next nil unless path
+            sources[path]?
+          end
+        end
+
+        private def self.format_with_sources(diagnostic : Diagnostic, &source_lookup : String? -> String?) : String
+          primary_source = yield diagnostic.primary_file_path
+
           String.build do |io|
             # Header: error[E2001]: message
             io << format_level(diagnostic.level)
@@ -14,18 +27,19 @@ module CrystalV2
             io << diagnostic.message << "\n"
 
             # Primary span with source snippet
-            if source
-              io << format_primary_span(source, diagnostic.primary_span)
+            if primary_source
+              io << format_primary_span(primary_source, diagnostic.primary_span, diagnostic.primary_file_path)
 
               # Secondary spans (notes)
               diagnostic.secondary_spans.each do |sec|
                 io << "\n"
                 io << "note: " << sec.label << "\n"
-                io << format_secondary_span(source, sec.span)
+                secondary_source = sec.file_path == diagnostic.primary_file_path ? primary_source : yield sec.file_path
+                io << format_secondary_span(secondary_source, sec.span, sec.file_path)
               end
             else
               # No source available, just show location
-              io << "  --> " << format_location(diagnostic.primary_span) << "\n"
+              io << "  --> " << format_location(diagnostic.primary_span, diagnostic.primary_file_path) << "\n"
             end
           end
         end
@@ -39,21 +53,24 @@ module CrystalV2
           end
         end
 
-        private def self.format_location(span : Frontend::Span) : String
-          "#{span.start_line}:#{span.start_column}"
+        private def self.format_location(span : Frontend::Span, file_path : String? = nil) : String
+          location = "#{span.start_line}:#{span.start_column}"
+          file_path ? "#{file_path}:#{location}" : location
         end
 
-        private def self.format_primary_span(source : String, span : Frontend::Span) : String
+        private def self.format_primary_span(source : String, span : Frontend::Span, file_path : String? = nil) : String
           String.build do |io|
-            io << "  --> " << format_location(span) << "\n"
+            io << "  --> " << format_location(span, file_path) << "\n"
             io << format_snippet(source, span)
           end
         end
 
-        private def self.format_secondary_span(source : String, span : Frontend::Span) : String
+        private def self.format_secondary_span(source : String?, span : Frontend::Span, file_path : String? = nil) : String
           String.build do |io|
-            io << "  --> " << format_location(span) << "\n"
-            io << format_snippet(source, span)
+            io << "  --> " << format_location(span, file_path) << "\n"
+            if source
+              io << format_snippet(source, span)
+            end
           end
         end
 

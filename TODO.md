@@ -1,7 +1,7 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-03-27)
 
 ## Current Status
-- **Fresh Phase 2 substrate result: compile-side semantic shadow now runs on a shared-AstArena aggregate under feature flag and already exposes honest file-level ownership summaries, while plain VirtualArena remains unsafe for deep semantic traversal (2026-03-29, current session)**:
+- **Fresh Phase 2 substrate result: compile-side semantic shadow now runs on a shared-AstArena aggregate under feature flag, exposes honest file-level ownership summaries, and now prints file-aware collector/type diagnostics in shadow mode; plain VirtualArena remains unsafe for deep semantic traversal (2026-03-29, current session)**:
   - trustworthy setup:
     - added `CRYSTAL_V2_SEMANTIC_SHADOW=1` compile-side shadow prepass in `src/compiler/cli.cr`
     - shadow aggregate is built by reparsing already-loaded compile units into one shared `Frontend::AstArena`
@@ -22,11 +22,19 @@
       - output includes:
         - `Semantic shadow unit: path=/tmp/semantic_shadow_lib.cr roots=1 nodes=2 symbols=1 identifiers=1`
         - `Semantic shadow unit: path=/tmp/semantic_shadow_main.cr roots=2 nodes=6 symbols=0 identifiers=1`
+    - live type-error smoke now shows file-aware shadow diagnostics:
+      - `CRYSTAL_V2_SEMANTIC_SHADOW=1 /tmp/crystal_v2_semantic_shadow /tmp/shadow_type_error.cr --no-prelude --stats --verbose`
+      - output includes:
+        - `error[E3001]: Operator '+' not defined for Int32 and String`
+        - `--> /tmp/shadow_type_error.cr:1:1`
+        - `Semantic shadow unit: path=/tmp/shadow_type_error.cr ... type_diags=1`
         - final compile exit `0`
   - practical consequence:
     - there is now a safe, flag-gated compile semantic prepass substrate for Phase 2 work
     - the next honest step is not `VirtualArena` reuse for full semantic traversal; nested `ExprId` remapping still blocks a real shared compile graph
-    - file-level ownership is now good enough for shadow inventory and symbol/identifier attribution, but not yet for true semantic diagnostic provenance because current diagnostics still carry only `Span`
+    - file-level ownership is now good enough for shadow inventory and for collector/type diagnostic attribution inside the shared aggregate
+    - name-resolution diagnostics are still summary-only because the frontend diagnostic shape still carries only `Span`
+    - shadow diagnostics remain intentionally non-gating; they are visibility/provenance infrastructure, not compile-path authority yet
     - follow-up work should focus on diagnostic/macro parity and replacing reparse-based aggregation, not on reopening Phase 1 identity questions
 - **Fresh stage3 split: trustworthy current-debug hosts can again build `stage2 --release` green, but resulting self-hosted stage2 runtime is still broken and now clearly splits into multiple families (2026-03-28, current session)**:
   - trustworthy setup:

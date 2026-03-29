@@ -5353,7 +5353,8 @@ module CrystalV2
             level: DiagnosticLevel::Error,
             code: "E3001", # Type error codes start at E3xxx
             message: message,
-            primary_span: span
+            primary_span: span,
+            primary_node_id: node_id
           )
           @diagnostics << diagnostic
         end

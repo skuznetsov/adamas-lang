@@ -177,6 +177,8 @@ module CrystalV2
         getter node_count : Int32
         getter symbol_count : Int32
         getter identifier_count : Int32
+        getter semantic_diagnostic_count : Int32
+        getter type_diagnostic_count : Int32
 
         def initialize(
           @path : String,
@@ -184,6 +186,8 @@ module CrystalV2
           @node_count : Int32,
           @symbol_count : Int32,
           @identifier_count : Int32,
+          @semantic_diagnostic_count : Int32,
+          @type_diagnostic_count : Int32,
         )
         end
       end
@@ -1275,11 +1279,13 @@ module CrystalV2
                 out_io.puts [
                   "  Semantic shadow unit:",
                   "path=#{unit_summary.path}",
-                  "roots=#{unit_summary.roots_count}",
-                  "nodes=#{unit_summary.node_count}",
-                  "symbols=#{unit_summary.symbol_count}",
-                  "identifiers=#{unit_summary.identifier_count}",
-                ].join(" ")
+                "roots=#{unit_summary.roots_count}",
+                "nodes=#{unit_summary.node_count}",
+                "symbols=#{unit_summary.symbol_count}",
+                "identifiers=#{unit_summary.identifier_count}",
+                "semantic_diags=#{unit_summary.semantic_diagnostic_count}",
+                "type_diags=#{unit_summary.type_diagnostic_count}",
+              ].join(" ")
               end
             end
           end
@@ -5599,6 +5605,49 @@ module CrystalV2
         counts
       end
 
+      private def enrich_shadow_semantic_diagnostic(
+        diagnostic : Semantic::Diagnostic,
+        aggregate : Semantic::CompileShadowAggregate
+      ) : Semantic::Diagnostic
+        primary_file_path = diagnostic.primary_file_path
+        if primary_file_path.nil?
+          if primary_node_id = diagnostic.primary_node_id
+            primary_file_path = aggregate.path_for(primary_node_id)
+          end
+        end
+
+        secondary_spans = diagnostic.secondary_spans.map do |secondary|
+          next secondary if secondary.file_path
+          next secondary unless secondary_node_id = secondary.node_id
+          secondary.with_file_path(aggregate.path_for(secondary_node_id))
+        end
+
+        diagnostic.with_paths(primary_file_path, secondary_spans)
+      end
+
+      private def count_shadow_diagnostics_by_unit(
+        diagnostics : Array(Semantic::Diagnostic),
+        aggregate : Semantic::CompileShadowAggregate
+      ) : Array(Int32)
+        counts = Array(Int32).new(aggregate.unit_summaries.size, 0)
+        diagnostics.each do |diagnostic|
+          if primary_node_id = diagnostic.primary_node_id
+            if unit_index = aggregate.unit_index_for(primary_node_id)
+              counts[unit_index] += 1
+            end
+          end
+        end
+        counts
+      end
+
+      private def semantic_shadow_sources_by_path(aggregate : Semantic::CompileShadowAggregate) : Hash(String, String)
+        sources = {} of String => String
+        aggregate.unit_summaries.each do |unit_summary|
+          sources[unit_summary.path] = unit_summary.source
+        end
+        sources
+      end
+
       private def run_semantic_compile_shadow(
         units : Array(ParsedUnit),
         options : Options,
@@ -5611,8 +5660,12 @@ module CrystalV2
         analyzer.collect_symbols
         resolve_result = analyzer.resolve_names
         analyzer.infer_types(resolve_result.identifier_symbols)
+        semantic_diagnostics = analyzer.semantic_diagnostics.map { |diagnostic| enrich_shadow_semantic_diagnostic(diagnostic, aggregate) }
+        type_diagnostics = analyzer.type_inference_diagnostics.map { |diagnostic| enrich_shadow_semantic_diagnostic(diagnostic, aggregate) }
         symbols_by_unit = count_shadow_symbols_by_unit(analyzer.global_context.symbol_table, aggregate)
         identifiers_by_unit = count_shadow_identifiers_by_unit(resolve_result.identifier_symbols, aggregate)
+        semantic_diagnostics_by_unit = count_shadow_diagnostics_by_unit(semantic_diagnostics, aggregate)
+        type_diagnostics_by_unit = count_shadow_diagnostics_by_unit(type_diagnostics, aggregate)
         unit_summaries = [] of SemanticShadowUnitSummary
         aggregate.unit_summaries.each_with_index do |unit_summary, unit_index|
           unit_summaries << SemanticShadowUnitSummary.new(
@@ -5621,7 +5674,18 @@ module CrystalV2
             node_count: unit_summary.node_count,
             symbol_count: symbols_by_unit.unsafe_fetch(unit_index),
             identifier_count: identifiers_by_unit.unsafe_fetch(unit_index),
+            semantic_diagnostic_count: semantic_diagnostics_by_unit.unsafe_fetch(unit_index),
+            type_diagnostic_count: type_diagnostics_by_unit.unsafe_fetch(unit_index),
           )
+        end
+        if options.verbose
+          sources_by_path = semantic_shadow_sources_by_path(aggregate)
+          semantic_diagnostics.each do |diagnostic|
+            err_io.puts Semantic::DiagnosticFormatter.format(sources_by_path, diagnostic)
+          end
+          type_diagnostics.each do |diagnostic|
+            err_io.puts Semantic::DiagnosticFormatter.format(sources_by_path, diagnostic)
+          end
         end
 
         SemanticShadowSummary.new(
@@ -5631,9 +5695,9 @@ module CrystalV2
           arena_size: program.arena.size,
           symbol_count: count_local_symbols(analyzer.global_context.symbol_table),
           identifier_count: resolve_result.identifier_symbols.size,
-          semantic_diagnostic_count: analyzer.semantic_diagnostics.size,
+          semantic_diagnostic_count: semantic_diagnostics.size,
           resolution_diagnostic_count: resolve_result.diagnostics.size,
-          type_diagnostic_count: analyzer.type_inference_diagnostics.size,
+          type_diagnostic_count: type_diagnostics.size,
         )
       rescue ex
         raise ex if semantic_shadow_strict?

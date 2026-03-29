@@ -1,4 +1,4 @@
-require "../frontend/span"
+require "../frontend/ast"
 
 module CrystalV2
   module Compiler
@@ -16,6 +16,8 @@ module CrystalV2
         getter code : String              # e.g., "E2001", "W2001"
         getter message : String
         getter primary_span : Frontend::Span
+        getter primary_node_id : Frontend::ExprId?
+        getter primary_file_path : String?
         getter secondary_spans : Array(SecondarySpan)
 
         def initialize(
@@ -23,8 +25,22 @@ module CrystalV2
           @code : String,
           @message : String,
           @primary_span : Frontend::Span,
-          @secondary_spans : Array(SecondarySpan) = [] of SecondarySpan
+          @secondary_spans : Array(SecondarySpan) = [] of SecondarySpan,
+          @primary_node_id : Frontend::ExprId? = nil,
+          @primary_file_path : String? = nil,
         )
+        end
+
+        def with_paths(primary_file_path : String?, secondary_spans : Array(SecondarySpan) = @secondary_spans) : self
+          Diagnostic.new(
+            @level,
+            @code,
+            @message,
+            @primary_span,
+            secondary_spans,
+            @primary_node_id,
+            primary_file_path,
+          )
         end
       end
 
@@ -32,8 +48,14 @@ module CrystalV2
       struct SecondarySpan
         getter span : Frontend::Span
         getter label : String  # "previous definition", "shadowed here", etc.
+        getter node_id : Frontend::ExprId?
+        getter file_path : String?
 
-        def initialize(@span : Frontend::Span, @label : String)
+        def initialize(@span : Frontend::Span, @label : String, @node_id : Frontend::ExprId? = nil, @file_path : String? = nil)
+        end
+
+        def with_file_path(file_path : String?) : self
+          SecondarySpan.new(@span, @label, @node_id, file_path)
         end
       end
     end

@@ -2419,7 +2419,8 @@ module CrystalV2
             DiagnosticLevel::Error,
             "E4001", # Macro error codes start at E4xxx
             message,
-            span
+            span,
+            primary_node_id: location
           )
         end
 
@@ -2626,7 +2627,8 @@ module CrystalV2
             DiagnosticLevel::Warning,
             "W4001", # Macro warning codes
             message,
-            span
+            span,
+            primary_node_id: location
           )
         end
 

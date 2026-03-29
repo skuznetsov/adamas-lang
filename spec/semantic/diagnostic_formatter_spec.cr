@@ -130,4 +130,33 @@ describe CrystalV2::Compiler::Semantic::DiagnosticFormatter do
       # Should have underlines on all 4 lines
       output.should contain("     | ^")
     end
+
+    it "formats file-aware diagnostics from a source map" do
+      sources = {
+        "/tmp/main.cr" => "Foo.new\n",
+        "/tmp/lib.cr"  => "class Foo\nend\n",
+      }
+
+      diagnostic = CrystalV2::Compiler::Semantic::Diagnostic.new(
+        CrystalV2::Compiler::Semantic::DiagnosticLevel::Error,
+        "E2001",
+        "cannot redefine class 'Foo' as method",
+        CrystalV2::Compiler::Frontend::Span.new(0, 3, 1, 1, 1, 4),
+        [
+          CrystalV2::Compiler::Semantic::SecondarySpan.new(
+            CrystalV2::Compiler::Frontend::Span.new(0, 5, 1, 1, 1, 6),
+            "previous class defined here",
+            file_path: "/tmp/lib.cr"
+          ),
+        ],
+        primary_file_path: "/tmp/main.cr"
+      )
+
+      output = CrystalV2::Compiler::Semantic::DiagnosticFormatter.format(sources, diagnostic)
+      output.should contain("  --> /tmp/main.cr:1:1")
+      output.should contain("   1 | Foo.new")
+      output.should contain("note: previous class defined here")
+      output.should contain("  --> /tmp/lib.cr:1:1")
+      output.should contain("   1 | class Foo")
+    end
 end
