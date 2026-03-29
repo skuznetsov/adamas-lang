@@ -3185,13 +3185,15 @@ module Crystal::MIR
       # old unsafe ptr-8 probe while letting true ARC objects reclaim memory again.
       {% if flag?(:darwin) %}
         # rc_inc (non-atomic): null-safe increment with raw-base validation.
-        # rc_inc: null-safe increment. No malloc_size — all RC ptrs have 8-byte header.
-        # Static objects (GC sentinel >= 0x4000000000000000) skip increment.
         emit_raw "define void @__crystal_v2_rc_inc(ptr %ptr) {\n"
         emit_raw "  %is_null = icmp eq ptr %ptr, null\n"
-        emit_raw "  br i1 %is_null, label %done, label %check\n"
-        emit_raw "check:\n"
+        emit_raw "  br i1 %is_null, label %done, label %guard\n"
+        emit_raw "guard:\n"
         emit_raw "  %raw = getelementptr i8, ptr %ptr, i64 -8\n"
+        emit_raw "  %raw_size = call i64 @malloc_size(ptr %raw)\n"
+        emit_raw "  %has_header = icmp ne i64 %raw_size, 0\n"
+        emit_raw "  br i1 %has_header, label %check, label %done\n"
+        emit_raw "check:\n"
         emit_raw "  %old = load i64, ptr %raw, align 8\n"
         emit_raw "  %is_static = icmp uge i64 %old, 4611686018427387904\n"
         emit_raw "  br i1 %is_static, label %done, label %inc\n"
@@ -3203,12 +3205,16 @@ module Crystal::MIR
         emit_raw "  ret void\n"
         emit_raw "}\n\n"
 
-        # rc_dec: null-safe decrement, free at 0. No malloc_size guard.
+        # rc_dec (non-atomic): null-safe decrement with raw-base validation, free at 0.
         emit_raw "define void @__crystal_v2_rc_dec(ptr %ptr, ptr %destructor) {\n"
         emit_raw "  %is_null = icmp eq ptr %ptr, null\n"
-        emit_raw "  br i1 %is_null, label %done, label %check\n"
-        emit_raw "check:\n"
+        emit_raw "  br i1 %is_null, label %done, label %guard\n"
+        emit_raw "guard:\n"
         emit_raw "  %raw = getelementptr i8, ptr %ptr, i64 -8\n"
+        emit_raw "  %raw_size = call i64 @malloc_size(ptr %raw)\n"
+        emit_raw "  %has_header = icmp ne i64 %raw_size, 0\n"
+        emit_raw "  br i1 %has_header, label %check, label %done\n"
+        emit_raw "check:\n"
         emit_raw "  %old = load i64, ptr %raw, align 8\n"
         emit_raw "  %is_static = icmp uge i64 %old, 4611686018427387904\n"
         emit_raw "  br i1 %is_static, label %done, label %dec\n"
@@ -3230,12 +3236,16 @@ module Crystal::MIR
         emit_raw "  ret void\n"
         emit_raw "}\n\n"
 
-        # rc_inc_atomic: null-safe atomic increment. No malloc_size guard.
+        # rc_inc_atomic: null-safe atomic increment with raw-base validation.
         emit_raw "define void @__crystal_v2_rc_inc_atomic(ptr %ptr) {\n"
         emit_raw "  %is_null = icmp eq ptr %ptr, null\n"
-        emit_raw "  br i1 %is_null, label %done, label %check\n"
-        emit_raw "check:\n"
+        emit_raw "  br i1 %is_null, label %done, label %guard\n"
+        emit_raw "guard:\n"
         emit_raw "  %raw = getelementptr i8, ptr %ptr, i64 -8\n"
+        emit_raw "  %raw_size = call i64 @malloc_size(ptr %raw)\n"
+        emit_raw "  %has_header = icmp ne i64 %raw_size, 0\n"
+        emit_raw "  br i1 %has_header, label %check, label %done\n"
+        emit_raw "check:\n"
         emit_raw "  %old = load i64, ptr %raw, align 8\n"
         emit_raw "  %is_static = icmp uge i64 %old, 4611686018427387904\n"
         emit_raw "  br i1 %is_static, label %done, label %inc\n"
@@ -3246,12 +3256,16 @@ module Crystal::MIR
         emit_raw "  ret void\n"
         emit_raw "}\n\n"
 
-        # rc_dec_atomic: null-safe atomic decrement, free at 0. No malloc_size guard.
+        # rc_dec_atomic: null-safe atomic decrement with raw-base validation, free at 0.
         emit_raw "define void @__crystal_v2_rc_dec_atomic(ptr %ptr, ptr %destructor) {\n"
         emit_raw "  %is_null = icmp eq ptr %ptr, null\n"
-        emit_raw "  br i1 %is_null, label %done, label %check\n"
-        emit_raw "check:\n"
+        emit_raw "  br i1 %is_null, label %done, label %guard\n"
+        emit_raw "guard:\n"
         emit_raw "  %raw = getelementptr i8, ptr %ptr, i64 -8\n"
+        emit_raw "  %raw_size = call i64 @malloc_size(ptr %raw)\n"
+        emit_raw "  %has_header = icmp ne i64 %raw_size, 0\n"
+        emit_raw "  br i1 %has_header, label %check, label %done\n"
+        emit_raw "check:\n"
         emit_raw "  %peek = load i64, ptr %raw, align 8\n"
         emit_raw "  %is_static = icmp uge i64 %peek, 4611686018427387904\n"
         emit_raw "  br i1 %is_static, label %done, label %dec\n"
