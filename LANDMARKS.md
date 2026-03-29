@@ -122,6 +122,9 @@ Verified sequence:
   - generated top-level defs now reach shadow `resolve_names` / `infer_types`
     through explicit generated-root propagation, but generated nodes are still
     not spliced back into the aggregate parse graph itself
+  - shadow summaries now distinguish parse roots from traversal roots via
+    `roots`, `generated_roots`, and `analysis_roots`, so the telemetry matches
+    the real generated-root traversal contract
   - this is still not a full semantic-side macro-expanded parity gate or a
     lowering contract, because aggregate `nodes=` still describes the original
     parse graph while `generated_nodes=` separately describes semantic expansion provenance

@@ -155,6 +155,8 @@ module CrystalV2
         getter declaration_summary_lines : Array(String)
         getter files_count : Int32
         getter roots_count : Int32
+        getter analysis_root_count : Int32
+        getter generated_root_count : Int32
         getter arena_size : Int32
         getter generated_node_count : Int32
         getter symbol_count : Int32
@@ -169,6 +171,8 @@ module CrystalV2
           @declaration_summary_lines : Array(String),
           @files_count : Int32,
           @roots_count : Int32,
+          @analysis_root_count : Int32,
+          @generated_root_count : Int32,
           @arena_size : Int32,
           @generated_node_count : Int32,
           @symbol_count : Int32,
@@ -183,6 +187,8 @@ module CrystalV2
       private class SemanticShadowUnitSummary
         getter path : String
         getter roots_count : Int32
+        getter analysis_root_count : Int32
+        getter generated_root_count : Int32
         getter node_count : Int32
         getter owned_node_count : Int32
         getter generated_node_count : Int32
@@ -195,6 +201,8 @@ module CrystalV2
         def initialize(
           @path : String,
           @roots_count : Int32,
+          @analysis_root_count : Int32,
+          @generated_root_count : Int32,
           @node_count : Int32,
           @owned_node_count : Int32,
           @generated_node_count : Int32,
@@ -1281,6 +1289,8 @@ module CrystalV2
                 "Semantic shadow:",
                 "files=#{shadow_summary.files_count}",
                 "roots=#{shadow_summary.roots_count}",
+                "analysis_roots=#{shadow_summary.analysis_root_count}",
+                "generated_roots=#{shadow_summary.generated_root_count}",
                 "nodes=#{shadow_summary.arena_size}",
                 "generated_nodes=#{shadow_summary.generated_node_count}",
                 "symbols=#{shadow_summary.symbol_count}",
@@ -1300,6 +1310,8 @@ module CrystalV2
                   "  Semantic shadow unit:",
                   "path=#{unit_summary.path}",
                   "roots=#{unit_summary.roots_count}",
+                  "analysis_roots=#{unit_summary.analysis_root_count}",
+                  "generated_roots=#{unit_summary.generated_root_count}",
                   "nodes=#{unit_summary.node_count}",
                   "owned_nodes=#{unit_summary.owned_node_count}",
                   "generated_nodes=#{unit_summary.generated_node_count}",
@@ -5636,6 +5648,19 @@ module CrystalV2
         counts
       end
 
+      private def count_shadow_generated_roots_by_unit(
+        generated_top_level_roots : Array(Frontend::ExprId),
+        aggregate : Semantic::CompileShadowAggregate
+      ) : Array(Int32)
+        counts = Array(Int32).new(aggregate.unit_summaries.size, 0)
+        generated_top_level_roots.each do |expr_id|
+          if unit_index = aggregate.unit_index_for(expr_id)
+            counts[unit_index] += 1
+          end
+        end
+        counts
+      end
+
       private def enrich_shadow_semantic_diagnostic(
         diagnostic : Semantic::Diagnostic,
         aggregate : Semantic::CompileShadowAggregate
@@ -6060,13 +6085,17 @@ module CrystalV2
         semantic_diagnostics_by_unit = count_shadow_diagnostics_by_unit(semantic_diagnostics, aggregate)
         resolution_diagnostics_by_unit = count_shadow_resolution_diagnostics_by_unit(resolution_diagnostics, aggregate)
         type_diagnostics_by_unit = count_shadow_diagnostics_by_unit(type_diagnostics, aggregate)
+        generated_roots_by_unit = count_shadow_generated_roots_by_unit(analyzer.generated_top_level_roots, aggregate)
         declaration_summary_lines = declaration_parity.summary_lines(5, "collector", "semantic")
         declaration_summary_lines.concat(collector_inventory.provenance_lines("collector"))
         unit_summaries = [] of SemanticShadowUnitSummary
         aggregate.unit_summaries.each_with_index do |unit_summary, unit_index|
+          generated_root_count = generated_roots_by_unit.unsafe_fetch(unit_index)
           unit_summaries << SemanticShadowUnitSummary.new(
             path: unit_summary.path,
             roots_count: unit_summary.roots.size,
+            analysis_root_count: unit_summary.roots.size + generated_root_count,
+            generated_root_count: generated_root_count,
             node_count: unit_summary.node_count,
             owned_node_count: aggregate.owned_node_count_for_unit(unit_index.to_i32),
             generated_node_count: aggregate.generated_node_count_for_unit(unit_index.to_i32),
@@ -6096,6 +6125,8 @@ module CrystalV2
           declaration_summary_lines: declaration_summary_lines,
           files_count: units.size,
           roots_count: program.roots.size,
+          analysis_root_count: program.roots.size + analyzer.generated_top_level_roots.size,
+          generated_root_count: analyzer.generated_top_level_roots.size,
           arena_size: program.arena.size,
           generated_node_count: analyzer.generated_node_file_paths.size,
           symbol_count: count_local_symbols(analyzer.global_context.symbol_table),

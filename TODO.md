@@ -97,6 +97,7 @@
     - collector/semantic declaration parity is now green across the currently measured macro-call shapes: bare identifier, positional args, named args, default arg, and block-yield
     - aggregate ownership now has a generated-node overlay, so per-unit shadow summaries can print both original parse `nodes=` and expanded `owned_nodes=`
     - generated top-level defs now participate in shadow `resolve_names` and `infer_types`, so the old gap “generated declarations exist but generated body diagnostics are invisible” is stale on the current tree
+    - shadow summaries now separate parse roots from traversal roots via `roots=`, `generated_roots=`, and `analysis_roots=`, so the telemetry no longer hides that generated top-level defs are visited outside the original parse graph
     - the next honest work item is no longer macro-call parity or top-level generated-body traversal; it is broader expanded-node ownership/provenance and how far aggregate-backed shadow can carry diagnostics/contracts without pretending to be lowering
     - replacing reparse-based aggregation is still more honest follow-up than reopening Phase 1 identity questions
 - **Fresh stage3 split: trustworthy current-debug hosts can again build `stage2 --release` green, but resulting self-hosted stage2 runtime is still broken and now clearly splits into multiple families (2026-03-28, current session)**:

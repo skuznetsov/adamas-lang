@@ -46,7 +46,9 @@ When `--verbose` is enabled, it also prints a **file-level unit summary** from
 the shared aggregate:
 
 - file path
-- root count in that unit
+- parse-root count in that unit
+- analysis-root count in that unit
+- generated-root count in that unit
 - reachable node count in that unit
 - top-level symbol count attributed to that unit
 - resolved identifier count attributed to that unit
@@ -184,6 +186,11 @@ macro-generated symbols back to the originating source file and report both:
 The shadow summary still reports `generated_nodes` separately, so expanded
 semantic ownership is visible without pretending that the aggregate parse graph
 itself changed.
+It now also separates parse roots from actual traversal roots:
+
+- `roots=`: original parse roots
+- `generated_roots=`: generated top-level roots injected into shadow traversal
+- `analysis_roots=`: parse roots plus generated roots
 
 ## Current limitations
 
