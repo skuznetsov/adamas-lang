@@ -262,7 +262,7 @@ describe "compile shadow declaration inventory" do
     )
 
     semantic_inventory = Semantic::CompileShadowDeclarationInventory.from_symbol_table(analyzer.global_context.symbol_table) do |node_id|
-      if analyzer.generated_source_for(node_id)
+      if analyzer.generated_node?(node_id)
         Semantic::CompileShadowDeclarationOrigin::MacroExpanded
       else
         Semantic::CompileShadowDeclarationOrigin::Direct

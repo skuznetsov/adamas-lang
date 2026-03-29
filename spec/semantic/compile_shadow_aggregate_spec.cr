@@ -405,6 +405,7 @@ describe "compile semantic shadow aggregate" do
     diagnostic.message.should contain("undefined local variable or method 'missing'")
     diagnostic.node_id.should_not be_nil
     aggregate.path_for(diagnostic.node_id.not_nil!).should eq("unit_1.cr")
+    analyzer.generated_node?(diagnostic.node_id.not_nil!).should be_true
     analyzer.generated_source_for(diagnostic.node_id.not_nil!).not_nil!.should contain("missing + 1")
   end
 
@@ -441,6 +442,7 @@ describe "compile semantic shadow aggregate" do
     diagnostic.message.should contain("Operator '+' not defined for Int32 and String")
     diagnostic.primary_node_id.should_not be_nil
     aggregate.path_for(diagnostic.primary_node_id.not_nil!).should eq("unit_1.cr")
+    analyzer.generated_node?(diagnostic.primary_node_id.not_nil!).should be_true
     analyzer.generated_source_for(diagnostic.primary_node_id.not_nil!).not_nil!.should contain("1 + \"x\"")
   end
 

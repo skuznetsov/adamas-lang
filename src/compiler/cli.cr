@@ -5817,7 +5817,7 @@ module CrystalV2
         counts = Array(Int32).new(aggregate.unit_summaries.size, 0)
         diagnostics.each do |diagnostic|
           next unless primary_node_id = diagnostic.primary_node_id
-          next unless analyzer.generated_source_for(primary_node_id)
+          next unless analyzer.generated_node?(primary_node_id)
           if unit_index = aggregate.unit_index_for(primary_node_id)
             counts[unit_index] += 1
           end
@@ -5833,7 +5833,7 @@ module CrystalV2
         counts = Array(Int32).new(aggregate.unit_summaries.size, 0)
         diagnostics.each do |diagnostic|
           next unless node_id = diagnostic.node_id
-          next unless analyzer.generated_source_for(node_id)
+          next unless analyzer.generated_node?(node_id)
           if unit_index = aggregate.unit_index_for(node_id)
             counts[unit_index] += 1
           end
@@ -6197,7 +6197,7 @@ module CrystalV2
         resolve_result = analyzer.resolve_names
         analyzer.infer_types(resolve_result.identifier_symbols)
         semantic_inventory = Semantic::CompileShadowDeclarationInventory.from_symbol_table(analyzer.global_context.symbol_table) do |node_id|
-          if analyzer.generated_source_for(node_id)
+          if analyzer.generated_node?(node_id)
             Semantic::CompileShadowDeclarationOrigin::MacroExpanded
           else
             Semantic::CompileShadowDeclarationOrigin::Direct

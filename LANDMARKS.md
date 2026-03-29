@@ -130,6 +130,11 @@ Verified sequence:
     - on a carrier with one direct method and one macro-expanded method,
       output includes
       `methods provenance semantic_direct_total=1 semantic_direct_unique=1 semantic_macro_expanded_total=1 semantic_macro_expanded_unique=1`
+  - generated provenance classification no longer depends on generated snippet
+    availability:
+    - semantic declaration provenance and `generated_*_diags` counters now use
+      the analyzer's explicit generated-origin mapping instead of
+      `generated_source_for(...)` as a proxy
 - reusable failure pattern:
   - the current `VirtualArena` only renumbers root ids; nested `ExprId`
     references inside nodes remain file-local, so it is not yet a sound
@@ -160,7 +165,7 @@ Verified sequence:
     still not a full compile-path source map contract
   - generated diagnostics are now counted separately from parse-graph
     diagnostics in both global and per-unit summaries, but those counters
-    still depend on shadow-only generated-source provenance rather than a
+    still depend on shadow-only generated-origin metadata rather than a
     compile-authoritative source map
   - origin call-site notes are now available in verbose shadow formatting, but
     they are still shadow-only provenance and not yet a general compile-path

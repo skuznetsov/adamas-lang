@@ -102,6 +102,11 @@ Semantic shadow declarations: methods provenance semantic_direct_total=1 semanti
 This closes the old asymmetry where only the collector side could distinguish
 `direct` from `macro_expanded` declarations.
 
+Generated declaration provenance and `generated_*_diags` counters now use the
+explicit generated-origin mapping carried by the analyzer (`generated_origin_for`
+/ `generated_node?`). The generated source text map is still used only for
+formatting `... [generated]` snippets, not for provenance classification.
+
 On the current tree, that top-level macro gap is now closed for the semantic
 symbol table: a no-prelude carrier with a top-level `{% for %}` that generates
 two methods now reports `collector_total=3` and `semantic_total=3` for methods.
@@ -262,7 +267,7 @@ It now also separates parse roots from actual traversal roots:
   dedicated macro-expanded parity gate
 - collector provenance lines distinguish `direct` vs `macro_expanded`
   declarations on both the collector and semantic sides, but the semantic
-  origin still comes from shadow-side generated-source detection rather than a
+  origin still comes from shadow-only generated-origin metadata rather than a
   compile-authoritative expansion provenance contract
 - post-parse macro-generated nodes are now folded back into an ownership
   overlay for the shared aggregate, but the original parse graph is still
@@ -275,7 +280,7 @@ It now also separates parse roots from actual traversal roots:
   presentation layer rather than a true compile-path source map contract
 - `generated_*_diags` now distinguishes generated-body diagnostics from
   parse-graph diagnostics in the summary, but it still relies on shadow-only
-  generated-source provenance rather than a compile-authoritative source map
+  generated-origin metadata rather than a compile-authoritative source map
 - generated diagnostics now also show the originating macro call site as a
   shadow-only note, but the primary span is still the generated-body span, not
   a fully remapped compile-path source map

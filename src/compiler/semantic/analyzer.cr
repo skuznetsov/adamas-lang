@@ -98,6 +98,10 @@ module CrystalV2
           return nil unless root_index = @generated_root_by_node[node_index]?
           @generated_root_origins[root_index]?
         end
+
+        def generated_node?(node_id : ExprId) : Bool
+          !generated_origin_for(node_id).nil?
+        end
       end
     end
   end
