@@ -1,6 +1,35 @@
 require "spec"
 require "../src/compiler/cli"
 
+private def with_temp_shadow_project(files : Hash(String, String), &)
+  dir = File.join(Dir.tempdir, "semantic_shadow_cli_#{Random::Secure.hex(6)}")
+  Dir.mkdir_p(dir)
+  files.each do |name, source|
+    File.write(File.join(dir, name), source)
+  end
+
+  begin
+    yield dir
+  ensure
+    FileUtils.rm_rf(dir) if Dir.exists?(dir)
+  end
+end
+
+private def with_semantic_shadow_env(&)
+  previous = ENV["CRYSTAL_V2_SEMANTIC_SHADOW"]?
+  ENV["CRYSTAL_V2_SEMANTIC_SHADOW"] = "1"
+
+  begin
+    yield
+  ensure
+    if previous
+      ENV["CRYSTAL_V2_SEMANTIC_SHADOW"] = previous
+    else
+      ENV.delete("CRYSTAL_V2_SEMANTIC_SHADOW")
+    end
+  end
+end
+
 describe CrystalV2::Compiler::CLI do
   it "reports semantic errors when --no-codegen is used" do
     file_path = File.join(__DIR__, "semantic/test_data/missing_method.cr")
@@ -61,5 +90,71 @@ describe CrystalV2::Compiler::CLI do
     diagnostics.should contain("error[E2003]")
     diagnostics.should contain("class 'Foo' already defined with superclass 'Bar'")
     diagnostics.should contain("previous superclass declared here")
+  end
+
+  it "reports generated resolution diagnostics separately in semantic shadow summaries" do
+    with_temp_shadow_project({
+      "lib.cr"  => <<-CR,
+        macro define_bad(name)
+          def {{name.id}}
+            missing + 1
+          end
+        end
+      CR
+      "main.cr" => <<-CR,
+        require "./lib"
+        define_bad(:alpha)
+        alpha()
+      CR
+    }) do |dir|
+      main_path = File.join(dir, "main.cr")
+      output_path = File.join(dir, "main")
+      out_io = IO::Memory.new
+      err_io = IO::Memory.new
+
+      with_semantic_shadow_env do
+        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli.run(out_io: out_io, err_io: err_io)
+      end
+
+      output = out_io.to_s
+      output.should contain("Semantic shadow:")
+      output.should contain("generated_resolution_diags=1")
+      output.should contain("generated_type_diags=1")
+      output.should contain("Semantic shadow unit: path=#{main_path}")
+    end
+  end
+
+  it "reports generated type diagnostics separately in semantic shadow summaries" do
+    with_temp_shadow_project({
+      "lib.cr"  => <<-CR,
+        macro define_bad(name)
+          def {{name.id}}
+            1 + "x"
+          end
+        end
+      CR
+      "main.cr" => <<-CR,
+        require "./lib"
+        define_bad(:alpha)
+        alpha()
+      CR
+    }) do |dir|
+      main_path = File.join(dir, "main.cr")
+      output_path = File.join(dir, "main")
+      out_io = IO::Memory.new
+      err_io = IO::Memory.new
+
+      with_semantic_shadow_env do
+        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli.run(out_io: out_io, err_io: err_io)
+      end
+
+      output = out_io.to_s
+      output.should contain("Semantic shadow:")
+      output.should contain("generated_resolution_diags=0")
+      output.should contain("generated_type_diags=1")
+      output.should contain("Semantic shadow unit: path=#{main_path}")
+    end
   end
 end

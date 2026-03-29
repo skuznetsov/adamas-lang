@@ -40,6 +40,7 @@ The shadow prepass currently reports:
 - top-level symbol count
 - resolved identifier count
 - semantic / name-resolution / type-inference diagnostic counts
+- generated semantic / name-resolution / type-inference diagnostic counts
 - compile-collector vs semantic top-level declaration gap count
 
 When `--verbose` is enabled, it also prints a **file-level unit summary** from
@@ -53,8 +54,11 @@ the shared aggregate:
 - top-level symbol count attributed to that unit
 - resolved identifier count attributed to that unit
 - semantic diagnostic count attributed to that unit
+- generated semantic diagnostic count attributed to that unit
 - name-resolution diagnostic count attributed to that unit
+- generated name-resolution diagnostic count attributed to that unit
 - type diagnostic count attributed to that unit
+- generated type diagnostic count attributed to that unit
 
 Collector, name-resolution, and type-inference diagnostics now carry optional
 node/file metadata in shadow mode, so the shadow path can format them against
@@ -199,6 +203,24 @@ shadow path rather than as ad-hoc CLI string glue:
 - frontend diagnostics use `related_spans`
 - semantic diagnostics reuse `secondary_spans`
 
+The summary telemetry now also separates generated-body diagnostics from
+parse-graph diagnostics. For the generated unresolved-name carrier above, the
+global summary reports:
+
+```text
+generated_resolution_diags=1 generated_type_diags=1
+```
+
+and the caller-unit summary reports the same generated counts for that file.
+For the generated type-error sibling carrier, the global summary reports:
+
+```text
+generated_resolution_diags=0 generated_type_diags=1
+```
+
+This keeps the shadow signal honest: generated-body failures are no longer
+hidden inside the aggregate `resolution_diags` / `type_diags` totals.
+
 The remaining caveat is file attribution for post-parse macro expansion:
 the shared aggregate node graph still reflects the original parse graph, but
 symbol ownership is now rebound through the semantic shadow file-path provider,
@@ -239,6 +261,9 @@ It now also separates parse roots from actual traversal roots:
 - generated diagnostics now format against generated source text with a
   synthetic `... [generated]` path, but this is still a shadow-only
   presentation layer rather than a true compile-path source map contract
+- `generated_*_diags` now distinguishes generated-body diagnostics from
+  parse-graph diagnostics in the summary, but it still relies on shadow-only
+  generated-source provenance rather than a compile-authoritative source map
 - generated diagnostics now also show the originating macro call site as a
   shadow-only note, but the primary span is still the generated-body span, not
   a fully remapped compile-path source map

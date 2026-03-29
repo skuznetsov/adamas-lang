@@ -85,6 +85,13 @@
           - `error[E3001]: Operator '+' not defined for Int32 and String`
           - `Semantic shadow: ... resolution_diags=0 type_diags=1 declaration_gaps=0`
           - `Semantic shadow unit: path=/tmp/shadow_generated_type_main.cr ... owned_nodes=11 generated_nodes=4 ... type_diags=1`
+    - generated-body diagnostics are now counted separately in shadow summaries too:
+      - unresolved-name carrier now reports:
+        - `Semantic shadow: ... generated_resolution_diags=1 generated_type_diags=1 ...`
+        - `Semantic shadow unit: path=/tmp/shadow_generated_resolution_counts_main.cr ... generated_resolution_diags=1 generated_type_diags=1`
+      - type-error carrier now reports:
+        - `Semantic shadow: ... generated_resolution_diags=0 generated_type_diags=1 ...`
+        - `Semantic shadow unit: path=/tmp/shadow_generated_type_counts_main.cr ... generated_resolution_diags=0 generated_type_diags=1`
     - verbose shadow diagnostics now format generated bodies against generated source text instead of caller-file snippets:
       - `CRYSTAL_V2_SEMANTIC_SHADOW=1 /tmp/crystal_v2_semantic_shadow_generated_fmt /tmp/shadow_generated_resolution_main.cr --no-prelude --stats --verbose`
       - output includes:
@@ -103,6 +110,7 @@
     - there is now a safe, flag-gated compile semantic prepass substrate for Phase 2 work
     - the next honest step is not `VirtualArena` reuse for full semantic traversal; nested `ExprId` remapping still blocks a real shared compile graph
     - file-level ownership is now good enough for shadow inventory and for current diagnostic attribution across collector, name-resolution, and type-inference passes
+    - generated-body diagnostics are now distinguishable from parse-graph diagnostics in both global and per-unit shadow telemetry; the remaining provenance gap is compile-authoritative source mapping, not visibility/counting
     - shadow diagnostics remain intentionally non-gating; they are visibility/provenance infrastructure, not compile-path authority yet
     - shadow now has a first declaration-parity signal against the compile-side top-level collector plus collector-side provenance for direct vs macro-expanded declarations
     - the current semantic global symbol table now materializes root-level macro-generated methods in this reducer

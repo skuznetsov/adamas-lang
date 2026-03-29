@@ -101,6 +101,13 @@ Verified sequence:
       `/tmp/shadow_generated_type_main.cr`
       now reports `type_diags=1` from inside the generated body while keeping
       `declaration_gaps=0`
+  - live shadow summaries now count generated-body diagnostics separately too:
+    - generated unresolved-name carrier reports
+      `generated_resolution_diags=1 generated_type_diags=1`
+      in the global summary and on the caller-unit line
+    - generated type-error carrier reports
+      `generated_resolution_diags=0 generated_type_diags=1`
+      in the global summary and on the caller-unit line
   - live verbose formatting now uses generated source text for generated-body
     diagnostics instead of the caller file snippet:
     - `CRYSTAL_V2_SEMANTIC_SHADOW=1 /tmp/crystal_v2_semantic_shadow_generated_fmt /tmp/shadow_generated_resolution_main.cr --no-prelude --stats --verbose`
@@ -146,6 +153,10 @@ Verified sequence:
   - generated diagnostics now use a synthetic `... [generated]` file path to
     format against expansion text; that improves shadow provenance, but it is
     still not a full compile-path source map contract
+  - generated diagnostics are now counted separately from parse-graph
+    diagnostics in both global and per-unit summaries, but those counters
+    still depend on shadow-only generated-source provenance rather than a
+    compile-authoritative source map
   - origin call-site notes are now available in verbose shadow formatting, but
     they are still shadow-only provenance and not yet a general compile-path
     source map contract
