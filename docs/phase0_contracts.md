@@ -62,41 +62,38 @@ These are passed separately through CLI orchestration:
 
 ## 2. Legacy Supply-Driven Metrics
 
-### 2.1 Metrics to instrument
+### 2.1 Implemented metrics (CRYSTAL_V2_PHASE0_METRICS=1)
 
-| Metric | Where | What to measure |
-|--------|-------|-----------------|
-| `forced_lower_count` | `force_lower_function_for_return_type` | How many times body is analyzed just to get return type |
-| `forced_lower_unique` | same | Unique function names force-lowered |
-| `pending_queue_max` | `process_pending_lower_functions` | Peak queue size during worklist processing |
-| `pending_queue_growth` | same | Queue size at each pass start |
-| `safety_net_passes` | `emit_all_tracked_signatures` | Number of safety-net signature emission rounds |
-| `safety_net_functions` | same | Functions emitted by safety net |
-| `duplicate_body_analysis` | `lower_function_if_needed_impl` | How many times same function name is lowered (>1 = duplicate) |
-| `total_functions_lowered` | worklist | Total functions processed across all passes |
-| `total_functions_emitted` | HIR module | Final function count in output |
-| `rta_deferred_total` | RTA | Functions deferred by lazy RTA |
+| Metric name in output | Counter variable | Where incremented | What it measures |
+|----------------------|-----------------|-------------------|-----------------|
+| `forced_lowers` | `@phase0_forced_lower_count` | `force_lower_function_for_return_type` (past guards) | Times body is force-lowered just to get return type |
+| `unique_forced` | `@phase0_forced_lower_names.size` | same | Distinct function names that were force-lowered |
+| `pending_queue_max` | `@phase0_pending_queue_max` | `process_pending_lower_functions` inner loop | Peak pending function queue size |
+| `safety_net_functions` | `@phase0_safety_net_functions` | `emit_all_tracked_signatures` per iteration | Functions emitted by safety-net signature emission |
+| `body_analysis_total` | `@phase0_lower_name_counts.values.sum` | `lower_function_if_needed_impl` (PAST all skip guards) | Total body analysis attempts that reached actual lowering |
+| `duplicate_bodies` | count of names with count>1 | same | Function names whose body was analyzed more than once |
+| `total_hir_functions` | `@module.function_count` | dumped AFTER allocator flush + RTA pruning | Final emitted HIR function count |
 
-### 2.2 Where to add instrumentation
+### 2.2 Future metrics (not yet instrumented)
 
-```crystal
-# In ast_to_hir.cr:
-@phase0_forced_lower_count = 0
-@phase0_forced_lower_names = Set(String).new
-@phase0_pending_queue_max = 0
-@phase0_duplicate_body_count = 0
-@phase0_safety_net_passes = 0
-@phase0_lower_name_counts = Hash(String, Int32).new(0)
+| Metric | Where | Purpose |
+|--------|-------|---------|
+| `pending_queue_growth_per_pass` | `process_pending_lower_functions` per pass | Queue size trajectory |
+| `safety_net_passes` | `emit_all_tracked_signatures` iteration count | Number of safety-net rounds |
+| `rta_deferred_total` | RTA deferred set | Functions deferred by lazy RTA |
 
-# At end of compilation, dump metrics:
-def dump_phase0_metrics(io : IO)
-  io.puts "[PHASE0] forced_lowers=#{@phase0_forced_lower_count} unique=#{@phase0_forced_lower_names.size}"
-  io.puts "[PHASE0] queue_max=#{@phase0_pending_queue_max}"
-  io.puts "[PHASE0] safety_net_passes=#{@phase0_safety_net_passes}"
-  io.puts "[PHASE0] duplicates=#{@phase0_duplicate_body_count}"
-  io.puts "[PHASE0] total_functions=#{@module.function_count}"
-end
+### 2.3 Actual output format
+
 ```
+[PHASE0] forced_lowers=N unique_forced=M
+[PHASE0] pending_queue_max=N
+[PHASE0] safety_net_functions=N
+[PHASE0] body_analysis_total=N duplicate_bodies=M
+[PHASE0] total_hir_functions=N
+```
+
+Dump is triggered by `CRYSTAL_V2_PHASE0_METRICS=1` and occurs AFTER
+allocator flush and RTA pruning (in cli.cr, post-RTA section).
 
 ## 3. SemanticTypeId Design
 
@@ -194,12 +191,15 @@ end
 ### 3.3 DefInstanceKey design
 
 ```crystal
+# Structured pair, NOT a hash/XOR — collision-free by construction.
+record DefIdentity,
+  arena_id : UInt64,   # arena.object_id — unique per parsed unit
+  expr_index : Int32   # ExprId.index within that arena
+
 record DefInstanceKey,
   # Semantic identity of the untyped Def node.
-  # NOT a string name — must be stable object identity.
-  # In V2: (arena_object_id, expr_id) pair uniquely identifies a Def AST node.
-  # This matches original Crystal's use of def.object_id.
-  def_identity : UInt64,
+  # Structured pair guarantees no collisions (unlike XOR encoding).
+  def_identity : DefIdentity,
   # Semantic types of arguments at this call site
   receiver_type : SemanticTypeId?,
   arg_types : Array(SemanticTypeId),
@@ -207,15 +207,18 @@ record DefInstanceKey,
   named_arg_types : Array({String, SemanticTypeId})?
 ```
 
+**Why structured pair, not XOR/hash?**
+- XOR of arena_id and expr_id is NOT injective — distinct defs can collide
+- Structured record is injective by construction (both fields compared)
+- Hash used only as implementation detail for Hash table lookup (auto from record)
+- Matches original Crystal's approach (def.object_id is unique object reference)
+
 **Why NOT qualified name?**
 - Reopened defs share the same name but are semantically different Def nodes
 - Overload families share prefix but need distinct cache entries per signature
 - Macro-generated defs may share names across contexts
 - Same-name methods in different semantic contexts (e.g., included modules)
   must be distinguished
-
-**def_identity** is computed as: `arena.object_id ^ (expr_id.index.to_u64 << 32)`
-This is stable within one compilation and uniquely identifies the Def AST node.
 
 ## 4. Compile-Path Integration Design
 

@@ -39678,11 +39678,12 @@ module Crystal::HIR
 
     # Phase 0 metrics dump — called from CLI after compilation
     def dump_phase0_metrics(io : IO) : Nil
-      duplicates = @phase0_lower_name_counts.count { |_, c| c > 1 }
+      duplicate_analyses = @phase0_lower_name_counts.count { |_, c| c > 1 }
+      total_analyses = @phase0_lower_name_counts.values.sum
       io.puts "[PHASE0] forced_lowers=#{@phase0_forced_lower_count} unique_forced=#{@phase0_forced_lower_names.size}"
       io.puts "[PHASE0] pending_queue_max=#{@phase0_pending_queue_max}"
       io.puts "[PHASE0] safety_net_functions=#{@phase0_safety_net_functions}"
-      io.puts "[PHASE0] duplicate_body_names=#{duplicates}"
+      io.puts "[PHASE0] body_analysis_total=#{total_analyses} duplicate_bodies=#{duplicate_analyses}"
       io.puts "[PHASE0] total_hir_functions=#{@module.function_count}"
     end
 
@@ -52870,8 +52871,6 @@ module Crystal::HIR
 
     private def lower_function_if_needed_impl(name : String) : Nil
       return if name.empty?
-      # Phase 0 metric: track duplicate body analysis
-      @phase0_lower_name_counts[name] = (@phase0_lower_name_counts[name]? || 0) + 1
       is_math_min_debug = env_get("DEBUG_MATH_MIN") && name.includes?("Math") && (name.includes?("min") || name.includes?("max"))
       if is_math_min_debug
         base = strip_type_suffix(name)
@@ -52997,6 +52996,10 @@ module Crystal::HIR
         end
         return
       end
+
+      # Phase 0 metric: count actual body analysis attempts (past all skip guards).
+      # If this name was analyzed before, it's a genuine duplicate body analysis.
+      @phase0_lower_name_counts[name] = (@phase0_lower_name_counts[name]? || 0) + 1
 
       target_name = name
       lookup_start_instant = Time.instant if env_has?("CRYSTAL_V2_PHASE_STATS")
