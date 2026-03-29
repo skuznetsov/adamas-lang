@@ -129,12 +129,8 @@ alpha()
 
 On the current tree that carrier now reports
 `methods collector_total=1 collector_unique=1 semantic_total=1 semantic_unique=1 gaps=0`.
-The implementation is still intentionally scoped: argumentful call-site macro
-expansion on the collector side is only attempted when the invocation arena and
-macro definition arena are the same, because the shadow collector does not yet
-have a canonical cross-file id/remap contract for call-site argument exprs.
 
-That same caveat is live, not theoretical. A cross-file carrier like:
+Cross-file argful macro calls are now green too. A carrier like:
 
 ```crystal
 # shadow_macro_lib.cr
@@ -149,19 +145,24 @@ define_alpha(1)
 alpha()
 ```
 
-still reports `methods collector_total=0 ... semantic_total=1 ... gaps=1` on
-the current tree, while `semantic_diags`, `resolution_diags`, and `type_diags`
-all stay at zero. This is the next honest boundary: cross-file argful macro
-invocations need a real call-site ExprId remap/copy substrate, not another
-collector-side name check.
+now reports `methods collector_total=1 ... semantic_total=1 ... gaps=0`, and
+the same aggregate-based shadow path is green across the currently measured
+macro-call shapes: bare identifier, positional args, named args, default arg,
+and block-yield.
 
 The remaining caveat is file attribution for post-parse macro expansion:
 the shared aggregate node graph still reflects the original parse graph, but
 symbol ownership is now rebound through the semantic shadow file-path provider,
-so per-unit shadow summaries can attribute root-level macro-generated symbols
-back to the originating source file. The shadow summary now also reports
-`generated_nodes`, both globally and per unit, so expanded semantic ownership
-is visible without pretending that the aggregate parse graph itself changed.
+and the aggregate now accepts a generated-node ownership overlay after semantic
+collection. That means per-unit shadow summaries can attribute root-level
+macro-generated symbols back to the originating source file and report both:
+
+- original parse ownership via `nodes=`
+- expanded semantic ownership via `owned_nodes=`
+
+The shadow summary still reports `generated_nodes` separately, so expanded
+semantic ownership is visible without pretending that the aggregate parse graph
+itself changed.
 
 ## Current limitations
 
@@ -175,15 +176,14 @@ is visible without pretending that the aggregate parse graph itself changed.
 - collector provenance lines distinguish `direct` vs `macro_expanded`
   declarations only on the collector side; semantic inventory still has no
   matching expansion provenance contract
-- post-parse macro-generated nodes are not yet folded back into the shared
-  aggregate ownership map, so node counts still describe the original aggregate
-  parse graph rather than an expanded semantic graph
+- post-parse macro-generated nodes are now folded back into an ownership
+  overlay for the shared aggregate, but the original parse graph is still
+  preserved as a separate layer
 - `generated_nodes` is a semantic-side provenance counter, not a replacement
-  for aggregate `nodes`; the two numbers intentionally describe different layers
-- the compile-side collector now materializes the narrow bare zero-arg
-  identifier-style macro invocation corridor plus same-arena top-level
-  `CallNode` macro invocations with call-site args, but broader cross-file
-  macro-call shapes do not yet have an explicit collector-side parity contract
+  for aggregate `nodes`; `owned_nodes` is the expanded ownership count, and
+  the three numbers intentionally describe different layers
+- the compile-side collector now materializes the currently measured macro-call
+  shapes in shadow parity, but this is still not a general lowering contract
 - does not yet include macro-expansion parity with `AstToHir`
 - does not yet run normalized HIR comparison
 

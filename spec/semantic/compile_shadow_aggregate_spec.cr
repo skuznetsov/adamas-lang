@@ -324,4 +324,44 @@ describe "compile semantic shadow aggregate" do
     callee_id = call_node.callee.not_nil!
     result.identifier_symbols[callee_id].should be_a(Semantic::MethodSymbol)
   end
+
+  it "attaches generated node ownership back into aggregate units" do
+    aggregate = build_shared_shadow_aggregate([
+      <<-CR,
+        macro define_alpha(dummy)
+          def alpha
+            42
+          end
+        end
+      CR
+      <<-CR,
+        define_alpha(1)
+        alpha()
+      CR
+    ])
+    program = aggregate.program
+    shadow_sources = {} of String => String
+    aggregate.unit_summaries.each { |u| shadow_sources[u.path] = u.source }
+
+    analyzer = Semantic::Analyzer.new(program)
+    analyzer.collect_symbols(
+      node_file_path_provider: ->(expr_id : Frontend::ExprId) { aggregate.path_for(expr_id) },
+      source_for_path_provider: ->(path : String) { shadow_sources[path]? },
+    )
+
+    generated_indices = analyzer.generated_node_file_paths.keys.sort
+    generated_indices.should_not be_empty
+    first_generated_id = Frontend::ExprId.new(generated_indices.first)
+
+    aggregate.path_for(first_generated_id).should be_nil
+
+    aggregate.attach_generated_node_paths(analyzer.generated_node_file_paths)
+
+    aggregate.path_for(first_generated_id).should eq("unit_1.cr")
+    aggregate.unit_index_for(first_generated_id).should eq(1)
+    aggregate.generated_node_count_for_unit(1).should eq(analyzer.generated_node_file_paths.size)
+    aggregate.owned_node_count_for_unit(1).should eq(
+      aggregate.unit_summaries[1].node_count + analyzer.generated_node_file_paths.size
+    )
+  end
 end

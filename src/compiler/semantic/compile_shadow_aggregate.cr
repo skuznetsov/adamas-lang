@@ -51,6 +51,11 @@ module CrystalV2
           @unit_summaries : Array(UnitSummary),
           @unit_index_by_node : Array(Int32),
         )
+          @unit_index_by_path = {} of String => Int32
+          @unit_summaries.each do |unit_summary|
+            @unit_index_by_path[unit_summary.path] = unit_summary.unit_index
+          end
+          @generated_node_count_by_unit = Array(Int32).new(@unit_summaries.size, 0)
         end
 
         def unit_index_for(expr_id : Frontend::ExprId) : Int32?
@@ -71,6 +76,38 @@ module CrystalV2
 
         def path_for(expr_id : Frontend::ExprId) : String?
           unit_for(expr_id).try(&.path)
+        end
+
+        def attach_generated_node_paths(generated_node_file_paths : Hash(Int32, String)) : Nil
+          generated_node_file_paths.each do |node_index, file_path|
+            next unless unit_index = @unit_index_by_path[file_path]?
+            while @unit_index_by_node.size < node_index + 1
+              @unit_index_by_node << -1
+            end
+
+            current = @unit_index_by_node.unsafe_fetch(node_index)
+            next if current == unit_index
+
+            if current >= 0
+              if current < @generated_node_count_by_unit.size && @generated_node_count_by_unit[current] > 0
+                @generated_node_count_by_unit[current] -= 1
+              end
+            end
+
+            @unit_index_by_node[node_index] = unit_index
+            @generated_node_count_by_unit[unit_index] += 1
+          end
+        end
+
+        def generated_node_count_for_unit(unit_index : Int32) : Int32
+          return 0 if unit_index < 0 || unit_index >= @generated_node_count_by_unit.size
+          @generated_node_count_by_unit.unsafe_fetch(unit_index)
+        end
+
+        def owned_node_count_for_unit(unit_index : Int32) : Int32
+          return 0 if unit_index < 0 || unit_index >= @unit_summaries.size
+          unit_summary = @unit_summaries.unsafe_fetch(unit_index)
+          unit_summary.node_count + generated_node_count_for_unit(unit_index)
         end
 
         private def self.grow_index_owner_map(unit_index_by_node : Array(Int32), arena_size : Int32) : Nil

@@ -184,6 +184,7 @@ module CrystalV2
         getter path : String
         getter roots_count : Int32
         getter node_count : Int32
+        getter owned_node_count : Int32
         getter generated_node_count : Int32
         getter symbol_count : Int32
         getter identifier_count : Int32
@@ -195,6 +196,7 @@ module CrystalV2
           @path : String,
           @roots_count : Int32,
           @node_count : Int32,
+          @owned_node_count : Int32,
           @generated_node_count : Int32,
           @symbol_count : Int32,
           @identifier_count : Int32,
@@ -1299,6 +1301,7 @@ module CrystalV2
                   "path=#{unit_summary.path}",
                   "roots=#{unit_summary.roots_count}",
                   "nodes=#{unit_summary.node_count}",
+                  "owned_nodes=#{unit_summary.owned_node_count}",
                   "generated_nodes=#{unit_summary.generated_node_count}",
                   "symbols=#{unit_summary.symbol_count}",
                   "identifiers=#{unit_summary.identifier_count}",
@@ -5633,25 +5636,6 @@ module CrystalV2
         counts
       end
 
-      private def count_shadow_generated_nodes_by_unit(
-        generated_node_file_paths : Hash(Int32, String),
-        aggregate : Semantic::CompileShadowAggregate
-      ) : Array(Int32)
-        counts = Array(Int32).new(aggregate.unit_summaries.size, 0)
-        unit_index_by_path = {} of String => Int32
-        aggregate.unit_summaries.each_with_index do |unit_summary, unit_index|
-          unit_index_by_path[unit_summary.path] = unit_index.to_i32
-        end
-
-        generated_node_file_paths.each_value do |file_path|
-          if unit_index = unit_index_by_path[file_path]?
-            counts[unit_index] += 1
-          end
-        end
-
-        counts
-      end
-
       private def enrich_shadow_semantic_diagnostic(
         diagnostic : Semantic::Diagnostic,
         aggregate : Semantic::CompileShadowAggregate
@@ -6063,6 +6047,7 @@ module CrystalV2
           node_file_path_provider: ->(expr_id : Frontend::ExprId) { aggregate.path_for(expr_id) },
           source_for_path_provider: ->(path : String) { shadow_sources_by_path[path]? },
         )
+        aggregate.attach_generated_node_paths(analyzer.generated_node_file_paths)
         resolve_result = analyzer.resolve_names
         analyzer.infer_types(resolve_result.identifier_symbols)
         semantic_inventory = Semantic::CompileShadowDeclarationInventory.from_symbol_table(analyzer.global_context.symbol_table)
@@ -6070,7 +6055,6 @@ module CrystalV2
         semantic_diagnostics = analyzer.semantic_diagnostics.map { |diagnostic| enrich_shadow_semantic_diagnostic(diagnostic, aggregate) }
         resolution_diagnostics = resolve_result.diagnostics.map { |diagnostic| enrich_shadow_resolution_diagnostic(diagnostic, aggregate) }
         type_diagnostics = analyzer.type_inference_diagnostics.map { |diagnostic| enrich_shadow_semantic_diagnostic(diagnostic, aggregate) }
-        generated_nodes_by_unit = count_shadow_generated_nodes_by_unit(analyzer.generated_node_file_paths, aggregate)
         symbols_by_unit = count_shadow_symbols_by_unit(analyzer.global_context.symbol_table, aggregate)
         identifiers_by_unit = count_shadow_identifiers_by_unit(resolve_result.identifier_symbols, aggregate)
         semantic_diagnostics_by_unit = count_shadow_diagnostics_by_unit(semantic_diagnostics, aggregate)
@@ -6084,7 +6068,8 @@ module CrystalV2
             path: unit_summary.path,
             roots_count: unit_summary.roots.size,
             node_count: unit_summary.node_count,
-            generated_node_count: generated_nodes_by_unit.unsafe_fetch(unit_index),
+            owned_node_count: aggregate.owned_node_count_for_unit(unit_index.to_i32),
+            generated_node_count: aggregate.generated_node_count_for_unit(unit_index.to_i32),
             symbol_count: symbols_by_unit.unsafe_fetch(unit_index),
             identifier_count: identifiers_by_unit.unsafe_fetch(unit_index),
             semantic_diagnostic_count: semantic_diagnostics_by_unit.unsafe_fetch(unit_index),

@@ -76,14 +76,16 @@ Verified sequence:
       `methods collector_total=1 ... semantic_total=1 ... gaps=0`
     - provenance on that carrier also shows
       `collector_direct_total=0 collector_macro_expanded_total=1`
-  - live cross-file macro-call-with-args smoke now isolates the next boundary:
+  - live cross-file macro-call-with-args smoke is now green too:
     - `/tmp/shadow_macro_lib.cr` defines `macro define_alpha(dummy) ... end`
     - `/tmp/shadow_macro_main.cr` requires that file, then calls
       `define_alpha(1)` and `alpha()`
     - `CRYSTAL_V2_SEMANTIC_SHADOW=1 /tmp/crystal_v2_semantic_shadow /tmp/shadow_macro_main.cr --no-prelude --stats --verbose`
-    - output keeps `semantic_diags=0 resolution_diags=0 type_diags=0`, but
-      still reports `methods collector_total=0 ... semantic_total=1 ... gaps=1`
-      with `extra_in_semantic=alpha`
+    - output keeps `semantic_diags=0 resolution_diags=0 type_diags=0` and now
+      reports `methods collector_total=1 ... semantic_total=1 ... gaps=0`
+    - the per-unit line for the caller file now separates original parse
+      ownership from expanded ownership:
+      `nodes=7 owned_nodes=8 generated_nodes=1`
 - reusable failure pattern:
   - the current `VirtualArena` only renumbers root ids; nested `ExprId`
     references inside nodes remain file-local, so it is not yet a sound
@@ -96,20 +98,20 @@ Verified sequence:
     the compile-side collector; collector provenance can distinguish `direct`
     vs `macro_expanded` declarations on that side, and the current shadow smoke
     now shows collector-vs-semantic parity for top-level macro-generated
-    methods, bare zero-arg top-level macro calls, and same-arena top-level
-    macro `CallNode`s with call-site args
-  - no existing AST clone/remap substrate was found for cross-arena call-site
-    argument ExprIds beyond the current `VirtualArena`, so cross-file macro
-    call parity remains a real boundary rather than a missed helper branch
+    methods plus the currently measured macro-call shapes: bare identifier,
+    positional args, named args, default arg, and block-yield
+  - aggregate ownership now has a generated-node overlay, so `path_for` and
+    `unit_index_for` can attribute generated semantic nodes after collection,
+    and per-unit summaries can print both original `nodes` and expanded
+    `owned_nodes`
   - this is still not a full semantic-side macro-expanded parity gate or a
     lowering contract, because aggregate `nodes=` still describes the original
     parse graph while `generated_nodes=` separately describes semantic expansion provenance
 
 Practical consequence:
 - Phase 2 can progress without touching lowering or default compile behavior
-- the next honest work item is broader cross-file macro-call/declaration parity
-  beyond the current same-arena corridor, plus expanded-node ownership; not
-  more identity-layer surgery
+- the next honest work item is expanded-node ownership/provenance beyond the
+  new overlay counts, not more identity-layer surgery
 {F/G/R: 0.92/0.72/0.95} [active]
 
 [LM-343|verified]: current source can again complete a trustworthy
