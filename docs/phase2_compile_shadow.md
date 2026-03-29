@@ -134,6 +134,27 @@ expansion on the collector side is only attempted when the invocation arena and
 macro definition arena are the same, because the shadow collector does not yet
 have a canonical cross-file id/remap contract for call-site argument exprs.
 
+That same caveat is live, not theoretical. A cross-file carrier like:
+
+```crystal
+# shadow_macro_lib.cr
+macro define_alpha(dummy)
+  def alpha
+  end
+end
+
+# shadow_macro_main.cr
+require "./shadow_macro_lib"
+define_alpha(1)
+alpha()
+```
+
+still reports `methods collector_total=0 ... semantic_total=1 ... gaps=1` on
+the current tree, while `semantic_diags`, `resolution_diags`, and `type_diags`
+all stay at zero. This is the next honest boundary: cross-file argful macro
+invocations need a real call-site ExprId remap/copy substrate, not another
+collector-side name check.
+
 The remaining caveat is file attribution for post-parse macro expansion:
 the shared aggregate node graph still reflects the original parse graph, but
 symbol ownership is now rebound through the semantic shadow file-path provider,
