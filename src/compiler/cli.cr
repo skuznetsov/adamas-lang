@@ -5690,6 +5690,47 @@ module CrystalV2
         diagnostic.with_file_path(aggregate.path_for(node_id))
       end
 
+      private def shadow_generated_display_path(file_path : String?) : String?
+        return nil unless file_path
+        "#{file_path} [generated]"
+      end
+
+      private def format_shadow_semantic_diagnostic(
+        diagnostic : Semantic::Diagnostic,
+        aggregate : Semantic::CompileShadowAggregate,
+        analyzer : Semantic::Analyzer,
+        sources_by_path : Hash(String, String)
+      ) : String
+        if primary_node_id = diagnostic.primary_node_id
+          if generated_source = analyzer.generated_source_for(primary_node_id)
+            display_path = shadow_generated_display_path(aggregate.path_for(primary_node_id))
+            display_diagnostic = diagnostic.with_paths(display_path)
+            generated_sources = sources_by_path.dup
+            generated_sources[display_path.not_nil!] = generated_source if display_path
+            return Semantic::DiagnosticFormatter.format(generated_sources, display_diagnostic)
+          end
+        end
+        Semantic::DiagnosticFormatter.format(sources_by_path, diagnostic)
+      end
+
+      private def format_shadow_resolution_diagnostic(
+        diagnostic : Frontend::Diagnostic,
+        aggregate : Semantic::CompileShadowAggregate,
+        analyzer : Semantic::Analyzer,
+        sources_by_path : Hash(String, String)
+      ) : String
+        if node_id = diagnostic.node_id
+          if generated_source = analyzer.generated_source_for(node_id)
+            display_path = shadow_generated_display_path(aggregate.path_for(node_id))
+            display_diagnostic = diagnostic.with_file_path(display_path)
+            generated_sources = sources_by_path.dup
+            generated_sources[display_path.not_nil!] = generated_source if display_path
+            return Frontend::DiagnosticFormatter.format(generated_sources, display_diagnostic)
+          end
+        end
+        Frontend::DiagnosticFormatter.format(sources_by_path, diagnostic)
+      end
+
       private def count_shadow_diagnostics_by_unit(
         diagnostics : Array(Semantic::Diagnostic),
         aggregate : Semantic::CompileShadowAggregate
@@ -6109,13 +6150,13 @@ module CrystalV2
         if options.verbose
           sources_by_path = semantic_shadow_sources_by_path(aggregate)
           semantic_diagnostics.each do |diagnostic|
-            err_io.puts Semantic::DiagnosticFormatter.format(sources_by_path, diagnostic)
+            err_io.puts format_shadow_semantic_diagnostic(diagnostic, aggregate, analyzer, sources_by_path)
           end
           resolution_diagnostics.each do |diagnostic|
-            err_io.puts Frontend::DiagnosticFormatter.format(sources_by_path, diagnostic)
+            err_io.puts format_shadow_resolution_diagnostic(diagnostic, aggregate, analyzer, sources_by_path)
           end
           type_diagnostics.each do |diagnostic|
-            err_io.puts Semantic::DiagnosticFormatter.format(sources_by_path, diagnostic)
+            err_io.puts format_shadow_semantic_diagnostic(diagnostic, aggregate, analyzer, sources_by_path)
           end
         end
 

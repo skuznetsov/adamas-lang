@@ -101,6 +101,15 @@ Verified sequence:
       `/tmp/shadow_generated_type_main.cr`
       now reports `type_diags=1` from inside the generated body while keeping
       `declaration_gaps=0`
+  - live verbose formatting now uses generated source text for generated-body
+    diagnostics instead of the caller file snippet:
+    - `CRYSTAL_V2_SEMANTIC_SHADOW=1 /tmp/crystal_v2_semantic_shadow_generated_fmt /tmp/shadow_generated_resolution_main.cr --no-prelude --stats --verbose`
+    - output now includes
+      `/tmp/shadow_generated_resolution_main.cr [generated]:2:5-2:5 undefined local variable or method 'missing'`
+      with snippet line `missing + 1`
+    - the type-error sibling carrier now includes
+      `--> /tmp/shadow_generated_type_main.cr [generated]:2:5`
+      with snippet line `1 + "x"`
 - reusable failure pattern:
   - the current `VirtualArena` only renumbers root ids; nested `ExprId`
     references inside nodes remain file-local, so it is not yet a sound
@@ -125,6 +134,9 @@ Verified sequence:
   - shadow summaries now distinguish parse roots from traversal roots via
     `roots`, `generated_roots`, and `analysis_roots`, so the telemetry matches
     the real generated-root traversal contract
+  - generated diagnostics now use a synthetic `... [generated]` file path to
+    format against expansion text; that improves shadow provenance, but it is
+    still not a full compile-path source map contract
   - this is still not a full semantic-side macro-expanded parity gate or a
     lowering contract, because aggregate `nodes=` still describes the original
     parse graph while `generated_nodes=` separately describes semantic expansion provenance

@@ -173,6 +173,16 @@ now reports `resolution_diags=1` and the generated-body diagnostic is
 attributed back to the caller unit. Likewise a generated body containing
 `1 + "x"` now surfaces `type_diags=1` in shadow mode.
 
+Verbose formatting now also uses the generated expansion text for generated
+nodes instead of reusing the caller file source snippet. In those cases the
+diagnostic path is rendered as `... [generated]`, for example:
+
+```text
+/tmp/shadow_generated_resolution_main.cr [generated]:2:5-2:5 undefined local variable or method 'missing'
+  2 |     missing + 1
+    |     ^
+```
+
 The remaining caveat is file attribution for post-parse macro expansion:
 the shared aggregate node graph still reflects the original parse graph, but
 symbol ownership is now rebound through the semantic shadow file-path provider,
@@ -210,6 +220,9 @@ It now also separates parse roots from actual traversal roots:
 - generated top-level defs are now walked by shadow name resolution and type
   inference via explicit `generated_top_level_roots`, but generated nodes are
   still not spliced back into the aggregate parse graph itself
+- generated diagnostics now format against generated source text with a
+  synthetic `... [generated]` path, but this is still a shadow-only
+  presentation layer rather than a true compile-path source map contract
 - `generated_nodes` is a semantic-side provenance counter, not a replacement
   for aggregate `nodes`; `owned_nodes` is the expanded ownership count, and
   the three numbers intentionally describe different layers

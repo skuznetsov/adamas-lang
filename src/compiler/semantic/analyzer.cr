@@ -20,6 +20,8 @@ module CrystalV2
         getter type_inference_diagnostics : Array(Diagnostic)
         getter generated_node_file_paths : Hash(Int32, String)
         getter generated_top_level_roots : Array(ExprId)
+        getter generated_root_sources : Hash(Int32, String)
+        getter generated_root_by_node : Hash(Int32, Int32)
 
         def initialize(@program : Program, context : Context? = nil)
           @global_context = context || Context.new(SymbolTable.new)
@@ -28,6 +30,8 @@ module CrystalV2
           @type_inference_diagnostics = [] of Diagnostic
           @generated_node_file_paths = {} of Int32 => String
           @generated_top_level_roots = [] of ExprId
+          @generated_root_sources = {} of Int32 => String
+          @generated_root_by_node = {} of Int32 => Int32
         end
 
         def collect_symbols(node_file_path_provider : Proc(ExprId, String?)? = nil, source_for_path_provider : Proc(String, String?)? = nil)
@@ -37,6 +41,8 @@ module CrystalV2
           @semantic_diagnostics = collector.diagnostics
           @generated_node_file_paths = collector.generated_file_paths.dup
           @generated_top_level_roots = collector.generated_top_level_roots.dup
+          @generated_root_sources = collector.generated_root_sources.dup
+          @generated_root_by_node = collector.generated_root_by_node.dup
           debug_hook("analyzer.symbols.finish", "diagnostics=#{@semantic_diagnostics.size}")
           self
         end
@@ -68,6 +74,16 @@ module CrystalV2
 
         private def analysis_root_count : Int32
           @program.roots.size + @generated_top_level_roots.size
+        end
+
+        def generated_source_for(node_id : ExprId) : String?
+          return nil if node_id.invalid?
+          node_index = node_id.index
+          if source = @generated_root_sources[node_index]?
+            return source
+          end
+          return nil unless root_index = @generated_root_by_node[node_index]?
+          @generated_root_sources[root_index]?
         end
       end
     end

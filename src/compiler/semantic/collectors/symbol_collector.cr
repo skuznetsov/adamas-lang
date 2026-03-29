@@ -15,6 +15,8 @@ module CrystalV2
         getter diagnostics : Array(Diagnostic)
         getter generated_file_paths : Hash(Int32, String)
         getter generated_top_level_roots : Array(Frontend::ExprId)
+        getter generated_root_sources : Hash(Int32, String)
+        getter generated_root_by_node : Hash(Int32, Int32)
         @virtual_arena : Frontend::VirtualArena?
 
       def initialize(@program : Program, context : Context, @node_file_path_provider : Proc(Frontend::ExprId, String?)? = nil, @source_for_path_provider : Proc(String, String?)? = nil)
@@ -27,6 +29,8 @@ module CrystalV2
         @source_cache = {} of String => String
         @generated_file_paths = {} of Int32 => String
         @generated_top_level_roots = [] of Frontend::ExprId
+        @generated_root_sources = {} of Int32 => String
+        @generated_root_by_node = {} of Int32 => Int32
         @macro_expander = MacroExpander.new(
           @program,
           @arena,
@@ -268,11 +272,24 @@ module CrystalV2
           generated_start = arena.size
           origin_path = file_path_for(origin_node_id)
           expanded_id = yield
+          generated_output = @macro_expander.last_output
 
           if origin_path
             generated_index = generated_start
             while generated_index < arena.size
               @generated_file_paths[generated_index] = origin_path
+              generated_index += 1
+            end
+          end
+
+          unless expanded_id.invalid?
+            if generated_output && !generated_output.empty?
+              @generated_root_sources[expanded_id.index] = generated_output
+            end
+
+            generated_index = generated_start
+            while generated_index < arena.size
+              @generated_root_by_node[generated_index] = expanded_id.index
               generated_index += 1
             end
           end
