@@ -91,7 +91,8 @@ two methods now reports `collector_total=3` and `semantic_total=3` for methods.
 The collector-side provenance lines remain useful because they still distinguish
 the one direct method from the two macro-expanded ones.
 
-Bare top-level macro calls are now also materialized on the semantic side.
+Bare top-level macro calls are now also materialized on both the semantic side
+and the collector-side declaration inventory.
 For a reducer like:
 
 ```crystal
@@ -105,9 +106,12 @@ alpha()
 ```
 
 the shadow path no longer reports name-resolution or type-inference errors for
-the macro call. The remaining gap on that carrier is now isolated to the
-compile-side collector: it still sees only the macro definition, while the
-semantic symbol table also sees the generated method.
+the macro call, and the collector-side declaration parity is now green too:
+`methods collector_total=1 collector_unique=1 semantic_total=1 semantic_unique=1 gaps=0`.
+On that carrier the provenance line now shows
+`collector_direct_total=0 collector_macro_expanded_total=1`, which is the
+right signal: the method came from a collector-side macro expansion path, not
+from the original parse roots.
 
 The remaining caveat is file attribution for post-parse macro expansion:
 the shared aggregate node graph still reflects the original parse graph, but
@@ -134,9 +138,9 @@ is visible without pretending that the aggregate parse graph itself changed.
   parse graph rather than an expanded semantic graph
 - `generated_nodes` is a semantic-side provenance counter, not a replacement
   for aggregate `nodes`; the two numbers intentionally describe different layers
-- the compile-side collector still does not materialize top-level declarations
-  introduced through bare macro invocations, so those currently appear as
-  `extra_in_semantic=...` on shadow declaration parity
+- the compile-side collector now materializes the narrow bare zero-arg
+  identifier-style macro invocation corridor, but broader macro-call shapes do
+  not yet have an explicit collector-side parity contract
 - does not yet include macro-expansion parity with `AstToHir`
 - does not yet run normalized HIR comparison
 
