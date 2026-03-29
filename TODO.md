@@ -114,6 +114,7 @@
     - shadow summaries now separate parse roots from traversal roots via `roots=`, `generated_roots=`, and `analysis_roots=`, so the telemetry no longer hides that generated top-level defs are visited outside the original parse graph
     - generated-body diagnostics now surface with generated snippets too, so the old gap “shadow sees the error but shows the wrong source text” is stale on the current tree
     - generated-body diagnostics now also point back to the originating macro call-site, so the old gap “shadow sees generated text but loses the origin call-site” is stale on the current tree
+    - origin notes now live in first-class diagnostic metadata (`related_spans` / `secondary_spans`) instead of ad-hoc CLI string concatenation, so the provenance contract is less fragile
     - the next honest work item is no longer macro-call parity, top-level generated-body traversal, generated snippet visibility, or macro-call origin notes; it is broader expanded-node ownership/provenance and how far aggregate-backed shadow can carry diagnostics/contracts without pretending to be lowering
     - replacing reparse-based aggregation is still more honest follow-up than reopening Phase 1 identity questions
 - **Fresh stage3 split: trustworthy current-debug hosts can again build `stage2 --release` green, but resulting self-hosted stage2 runtime is still broken and now clearly splits into multiple families (2026-03-28, current session)**:

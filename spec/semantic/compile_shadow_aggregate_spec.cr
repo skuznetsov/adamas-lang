@@ -556,22 +556,19 @@ describe "compile semantic shadow aggregate" do
     node_id = diagnostic.node_id.not_nil!
     generated_source = analyzer.generated_source_for(node_id).not_nil!
     display_path = "#{aggregate.path_for(node_id)} [generated]"
+    related_spans = [] of Frontend::RelatedSpan
+    if origin_node_id = analyzer.generated_origin_for(node_id)
+      origin_path = aggregate.path_for(origin_node_id).not_nil!
+      origin_span = program.arena[origin_node_id].span
+      related_spans << Frontend::RelatedSpan.new(origin_span, "expanded from macro call here", origin_node_id, origin_path)
+    end
     formatted = Frontend::DiagnosticFormatter.format(
-      {display_path => generated_source},
-      diagnostic.with_file_path(display_path)
-    )
-    origin_node_id = analyzer.generated_origin_for(node_id).not_nil!
-    origin_path = aggregate.path_for(origin_node_id).not_nil!
-    origin_source = shadow_sources[origin_path]
-    origin_span = program.arena[origin_node_id].span
-    origin_formatted = Frontend::DiagnosticFormatter.format(
-      {origin_path => origin_source},
-      Frontend::Diagnostic.new("expanded from macro call here", origin_span, origin_node_id, origin_path)
+      {display_path => generated_source, "unit_1.cr" => shadow_sources["unit_1.cr"]},
+      diagnostic.with_file_path(display_path, related_spans)
     )
 
-    origin_formatted.should contain("define_bad(:alpha)")
-    origin_formatted.should contain("expanded from macro call here")
-    formatted.should_not contain("define_bad(:alpha)")
+    formatted.should contain("note: expanded from macro call here")
+    formatted.should contain("define_bad(:alpha)")
   end
 
   it "adds origin note for generated type diagnostics" do
@@ -604,21 +601,18 @@ describe "compile semantic shadow aggregate" do
     node_id = diagnostic.primary_node_id.not_nil!
     generated_source = analyzer.generated_source_for(node_id).not_nil!
     display_path = "#{aggregate.path_for(node_id)} [generated]"
+    secondary_spans = [] of Semantic::SecondarySpan
+    if origin_node_id = analyzer.generated_origin_for(node_id)
+      origin_path = aggregate.path_for(origin_node_id).not_nil!
+      origin_span = program.arena[origin_node_id].span
+      secondary_spans << Semantic::SecondarySpan.new(origin_span, "expanded from macro call here", origin_node_id, origin_path)
+    end
     formatted = Semantic::DiagnosticFormatter.format(
-      {display_path => generated_source},
-      diagnostic.with_paths(display_path)
-    )
-    origin_node_id = analyzer.generated_origin_for(node_id).not_nil!
-    origin_path = aggregate.path_for(origin_node_id).not_nil!
-    origin_source = shadow_sources[origin_path]
-    origin_span = program.arena[origin_node_id].span
-    origin_formatted = Frontend::DiagnosticFormatter.format(
-      {origin_path => origin_source},
-      Frontend::Diagnostic.new("expanded from macro call here", origin_span, origin_node_id, origin_path)
+      {display_path => generated_source, "unit_1.cr" => shadow_sources["unit_1.cr"]},
+      diagnostic.with_paths(display_path, secondary_spans)
     )
 
-    origin_formatted.should contain("define_bad(:alpha)")
-    origin_formatted.should contain("expanded from macro call here")
-    formatted.should_not contain("define_bad(:alpha)")
+    formatted.should contain("note: expanded from macro call here")
+    formatted.should contain("define_bad(:alpha)")
   end
 end

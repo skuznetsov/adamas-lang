@@ -20,22 +20,33 @@ module CrystalV2
           span = diagnostic.span
           source = yield diagnostic.file_path
           range = format_range(span, diagnostic.file_path)
-          base = String.build do |io|
+          primary = String.build do |io|
             io << range << " " << diagnostic.message
           end
 
-          return base unless source && span
-
-          snippet_lines = extract_lines(source, span)
-          return base if snippet_lines.empty?
-
-          gutter_width = (span.end_line).to_s.size
-          underline_lines = build_underlines(snippet_lines, span)
-
-          snippet = build_snippet(snippet_lines, underline_lines, span, gutter_width)
           String.build do |io|
-            io << base << '\n'
-            io << snippet
+            io << primary
+            if source && span
+              snippet_lines = extract_lines(source, span)
+              unless snippet_lines.empty?
+                gutter_width = (span.end_line).to_s.size
+                underline_lines = build_underlines(snippet_lines, span)
+                snippet = build_snippet(snippet_lines, underline_lines, span, gutter_width)
+                io << '\n' << snippet
+              end
+            end
+
+            diagnostic.related_spans.each do |related|
+              io << '\n'
+              io << "note: " << related.label << '\n'
+              io << "  --> " << format_range(related.span, related.file_path) << '\n'
+              next unless related_source = yield related.file_path
+              snippet_lines = extract_lines(related_source, related.span)
+              next if snippet_lines.empty?
+              gutter_width = (related.span.end_line).to_s.size
+              underline_lines = build_underlines(snippet_lines, related.span)
+              io << build_snippet(snippet_lines, underline_lines, related.span, gutter_width)
+            end
           end
         end
 

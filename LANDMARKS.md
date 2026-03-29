@@ -115,6 +115,10 @@ Verified sequence:
     - note location points at the caller unit, for example
       `--> /tmp/shadow_generated_resolution_main.cr:2:1-2:8`
       with snippet line `define_bad(:alpha)`
+  - that origin note is now carried as first-class diagnostic metadata in the
+    shadow path:
+    - frontend diagnostics use `related_spans`
+    - semantic diagnostics reuse `secondary_spans`
 - reusable failure pattern:
   - the current `VirtualArena` only renumbers root ids; nested `ExprId`
     references inside nodes remain file-local, so it is not yet a sound
@@ -143,8 +147,8 @@ Verified sequence:
     format against expansion text; that improves shadow provenance, but it is
     still not a full compile-path source map contract
   - origin call-site notes are now available in verbose shadow formatting, but
-    they are still a shadow-only presentation layer and not a first-class
-    diagnostic relation in the frontend diagnostic type
+    they are still shadow-only provenance and not yet a general compile-path
+    source map contract
   - this is still not a full semantic-side macro-expanded parity gate or a
     lowering contract, because aggregate `nodes=` still describes the original
     parse graph while `generated_nodes=` separately describes semantic expansion provenance

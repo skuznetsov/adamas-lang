@@ -43,4 +43,32 @@ describe DiagnosticFormatter do
     formatted = DiagnosticFormatter.format({"/tmp/main.cr" => "missing\n"}, diagnostic)
     formatted.should eq("/tmp/main.cr:1:1-1:8 undefined local variable or method 'missing'\n  1 | missing\n    | ^^^^^^^")
   end
+
+  it "formats related spans as notes" do
+    diagnostic = Diagnostic.new(
+      "undefined local variable or method 'missing'",
+      Span.new(0, 0, 2, 5, 2, 12),
+      file_path: "/tmp/generated.cr",
+      related_spans: [
+        CrystalV2::Compiler::Frontend::RelatedSpan.new(
+          Span.new(0, 0, 1, 1, 1, 8),
+          "expanded from macro call here",
+          file_path: "/tmp/main.cr"
+        ),
+      ]
+    )
+
+    formatted = DiagnosticFormatter.format(
+      {
+        "/tmp/generated.cr" => "  missing + 1\n",
+        "/tmp/main.cr"      => "define_bad(:alpha)\n",
+      },
+      diagnostic
+    )
+
+    formatted.should contain("/tmp/generated.cr:2:5-2:12 undefined local variable or method 'missing'")
+    formatted.should contain("note: expanded from macro call here")
+    formatted.should contain("  --> /tmp/main.cr:1:1-1:8")
+    formatted.should contain("define_bad(:alpha)")
+  end
 end

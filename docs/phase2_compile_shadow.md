@@ -193,6 +193,12 @@ note: expanded from macro call here
     | ^^^^^^^
 ```
 
+That origin note is now carried as first-class diagnostic metadata in the
+shadow path rather than as ad-hoc CLI string glue:
+
+- frontend diagnostics use `related_spans`
+- semantic diagnostics reuse `secondary_spans`
+
 The remaining caveat is file attribution for post-parse macro expansion:
 the shared aggregate node graph still reflects the original parse graph, but
 symbol ownership is now rebound through the semantic shadow file-path provider,
@@ -236,6 +242,9 @@ It now also separates parse roots from actual traversal roots:
 - generated diagnostics now also show the originating macro call site as a
   shadow-only note, but the primary span is still the generated-body span, not
   a fully remapped compile-path source map
+- frontend origin notes are now first-class metadata in shadow formatting, but
+  that relation still exists only inside the shadow pipeline and is not yet a
+  general compile-path diagnostic contract
 - `generated_nodes` is a semantic-side provenance counter, not a replacement
   for aggregate `nodes`; `owned_nodes` is the expanded ownership count, and
   the three numbers intentionally describe different layers
