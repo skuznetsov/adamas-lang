@@ -52997,10 +52997,6 @@ module Crystal::HIR
         return
       end
 
-      # Phase 0 metric: count actual body analysis attempts (past all skip guards).
-      # If this name was analyzed before, it's a genuine duplicate body analysis.
-      @phase0_lower_name_counts[name] = (@phase0_lower_name_counts[name]? || 0) + 1
-
       target_name = name
       lookup_start_instant = Time.instant if env_has?("CRYSTAL_V2_PHASE_STATS")
       # Parse name once at the start - reuse for all lookups
@@ -54881,6 +54877,11 @@ module Crystal::HIR
             elsif name != canonical_name
               override_name = name
             end
+            # Phase 0 metric: count body analysis at the definitive lowering point.
+            # Key by canonical target_name (post-lookup resolution), not raw request name.
+            canonical_key = override_name || target_name
+            @phase0_lower_name_counts[canonical_key] = (@phase0_lower_name_counts[canonical_key]? || 0) + 1
+
             if extra_type_params && !extra_type_params.empty?
               with_isolated_type_param_map(extra_type_params) do
                 lower_def(func_def, call_arg_types, call_arg_literals, call_arg_enum_names, override_name)
