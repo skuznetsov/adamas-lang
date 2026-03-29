@@ -5,9 +5,10 @@ Context: compiler/bootstrap/stage2-stability
 
 [LM-344|verified]: Phase 2 now has a safe compile-side semantic shadow
 substrate under feature flag, with honest file-level ownership summaries on a
-shared-AstArena aggregate and file-aware collector/name-resolution/type
-diagnostics in shadow mode; the right short-term substrate is still reparse
-into that aggregate, not deep traversal over the current `VirtualArena`.
+shared-AstArena aggregate, file-aware collector/name-resolution/type
+diagnostics in shadow mode, and a first aggregate-parse vs semantic
+declaration-parity signal; the right short-term substrate is still reparse into
+that aggregate, not deep traversal over the current `VirtualArena`.
 
 Verified sequence:
 - implementation:
@@ -21,6 +22,9 @@ Verified sequence:
     mode
   - `Frontend::Diagnostic` now carries optional node/file metadata, allowing
     shadow name-resolution diagnostics to be rebound to the right file too
+  - `src/compiler/semantic/compile_shadow_declaration_inventory.cr` now compares
+    top-level aggregate-root declarations against the semantic global symbol
+    table for comparable kinds
   - the design rationale is documented in `docs/phase2_compile_shadow.md`
 - decisive evidence:
   - targeted multi-file aggregate spec is green:
@@ -43,6 +47,10 @@ Verified sequence:
     - `CRYSTAL_V2_SEMANTIC_SHADOW=1 /tmp/crystal_v2_semantic_shadow /tmp/shadow_name_error.cr --no-prelude --stats --verbose`
     - output includes `/tmp/shadow_name_error.cr:1:1-1:1 undefined local variable or method 'missing'`
       plus per-unit `resolution_diags=1`
+  - live declaration-parity smoke now prints aggregate-vs-semantic parity lines:
+    - `CRYSTAL_V2_SEMANTIC_SHADOW=1 /tmp/crystal_v2_semantic_shadow /tmp/shadow_decl_inventory.cr --no-prelude --stats --verbose`
+    - output includes `declaration_gaps=0` and per-kind lines for methods,
+      classes, macros, and constants
 - reusable failure pattern:
   - the current `VirtualArena` only renumbers root ids; nested `ExprId`
     references inside nodes remain file-local, so it is not yet a sound
@@ -51,11 +59,14 @@ Verified sequence:
     diagnostic parity is still incomplete:
     - current shadow diagnostics are file-aware
     - the shadow path is still observational only, not compile-authoritative
+  - declaration parity is currently limited to comparable top-level kinds on the
+    shared aggregate roots; it is not yet a macro-expanded or compile-collector
+    parity check
 
 Practical consequence:
 - Phase 2 can progress without touching lowering or default compile behavior
-- the next honest work item is declaration/macro parity on top of the shadow
-  substrate, not more identity-layer surgery
+- the next honest work item is macro/declaration parity beyond aggregate roots
+  on top of the shadow substrate, not more identity-layer surgery
 {F/G/R: 0.92/0.72/0.95} [active]
 
 [LM-343|verified]: current source can again complete a trustworthy

@@ -7,6 +7,7 @@ require "./frontend/parser"
 require "./frontend/dispatch"
 require "./semantic/analyzer"
 require "./semantic/compile_shadow_aggregate"
+require "./semantic/compile_shadow_declaration_inventory"
 require "./semantic/diagnostic_formatter"
 require "./hir/hir"
 require "./hir/ast_to_hir"
@@ -148,6 +149,8 @@ module CrystalV2
 
       private class SemanticShadowSummary
         getter unit_summaries : Array(SemanticShadowUnitSummary)
+        getter declaration_gap_count : Int32
+        getter declaration_summary_lines : Array(String)
         getter files_count : Int32
         getter roots_count : Int32
         getter arena_size : Int32
@@ -159,6 +162,8 @@ module CrystalV2
 
         def initialize(
           @unit_summaries : Array(SemanticShadowUnitSummary),
+          @declaration_gap_count : Int32,
+          @declaration_summary_lines : Array(String),
           @files_count : Int32,
           @roots_count : Int32,
           @arena_size : Int32,
@@ -1274,9 +1279,13 @@ module CrystalV2
                 "semantic_diags=#{shadow_summary.semantic_diagnostic_count}",
                 "resolution_diags=#{shadow_summary.resolution_diagnostic_count}",
                 "type_diags=#{shadow_summary.type_diagnostic_count}",
+                "declaration_gaps=#{shadow_summary.declaration_gap_count}",
               ].join(" ")
             end
             if options.verbose
+              shadow_summary.declaration_summary_lines.each do |line|
+                out_io.puts "  Semantic shadow declarations: #{line}"
+              end
               shadow_summary.unit_summaries.each do |unit_summary|
                 out_io.puts [
                   "  Semantic shadow unit:",
@@ -5683,10 +5692,13 @@ module CrystalV2
       ) : SemanticShadowSummary?
         aggregate = build_semantic_shadow_aggregate(units)
         program = aggregate.program
+        parse_inventory = Semantic::CompileShadowDeclarationInventory.from_program(program)
         analyzer = Semantic::Analyzer.new(program)
         analyzer.collect_symbols
         resolve_result = analyzer.resolve_names
         analyzer.infer_types(resolve_result.identifier_symbols)
+        semantic_inventory = Semantic::CompileShadowDeclarationInventory.from_symbol_table(analyzer.global_context.symbol_table)
+        declaration_parity = Semantic::CompileShadowDeclarationParity.compare(parse_inventory, semantic_inventory)
         semantic_diagnostics = analyzer.semantic_diagnostics.map { |diagnostic| enrich_shadow_semantic_diagnostic(diagnostic, aggregate) }
         resolution_diagnostics = resolve_result.diagnostics.map { |diagnostic| enrich_shadow_resolution_diagnostic(diagnostic, aggregate) }
         type_diagnostics = analyzer.type_inference_diagnostics.map { |diagnostic| enrich_shadow_semantic_diagnostic(diagnostic, aggregate) }
@@ -5723,6 +5735,8 @@ module CrystalV2
 
         SemanticShadowSummary.new(
           unit_summaries: unit_summaries,
+          declaration_gap_count: declaration_parity.gap_count,
+          declaration_summary_lines: declaration_parity.summary_lines,
           files_count: units.size,
           roots_count: program.roots.size,
           arena_size: program.arena.size,
