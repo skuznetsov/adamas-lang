@@ -13860,10 +13860,27 @@ module Crystal::HIR
       # No arena/XOR needed: each DefNode is a distinct class instance.
       @phase0_body_infer_counts[node.object_id] = (@phase0_body_infer_counts[node.object_id]? || 0) + 1
 
-      # Phase 1.5: identity dry-run — canonical DefIdentity when ExprId is available,
-      # DryRunDefKey fallback when not yet plumbed.
+      old_body_context = @infer_body_context
+      old_method = @current_method
+      old_class = @current_class
+      old_def = @current_def_node
+      resolved_arena = preferred_arena || resolve_arena_for_def(node, @arena)
+      if self_type_name
+        sep = if recv = node.receiver
+                (safe_slice_to_string(recv) || "") == "self" ? "." : "#"
+              else
+                "#"
+              end
+        full_name = "#{self_type_name}#{sep}#{method_name}"
+        if arena = @function_def_arenas[full_name]?
+          # Prefer the recorded arena when it matches this def.
+          resolved_arena = arena if arena_fits_def?(arena, node)
+        end
+      end
+
+      # Phase 1.5: identity dry-run — AFTER final arena resolution so the key
+      # uses the same arena that the actual body inference will use.
       if tracker = @identity_tracker
-        resolved_arena_for_key = preferred_arena || resolve_arena_for_def(node, @arena)
         recv_type = self_type_name ? tracker.intern_type_name(self_type_name) : nil
 
         # Intern parameter type annotations for arg separation
@@ -13890,7 +13907,7 @@ module Crystal::HIR
         if eid = node_expr_id
           # Canonical path: real DefIdentity{arena_id, ExprId.index}
           def_id = CrystalV2::Compiler::Semantic::DefIdentity.new(
-            resolved_arena_for_key.object_id.to_u64, eid.index)
+            resolved_arena.object_id.to_u64, eid.index)
           key = CrystalV2::Compiler::Semantic::DefInstanceKey.new(
             def_identity: def_id,
             receiver_type: recv_type,
@@ -13901,7 +13918,7 @@ module Crystal::HIR
         else
           # Surrogate fallback: ExprId not available at this call site
           def_key = CrystalV2::Compiler::Semantic::DryRunDefKey.new(
-            resolved_arena_for_key.object_id.to_u64, node.object_id.to_u64)
+            resolved_arena.object_id.to_u64, node.object_id.to_u64)
           key = CrystalV2::Compiler::Semantic::DryRunInstanceKey.new(
             def_key: def_key,
             receiver_type: recv_type,
@@ -13909,24 +13926,6 @@ module Crystal::HIR
             block_type: block_sem_type,
           )
           tracker.record_surrogate(key)
-        end
-      end
-
-      old_body_context = @infer_body_context
-      old_method = @current_method
-      old_class = @current_class
-      old_def = @current_def_node
-      resolved_arena = preferred_arena || resolve_arena_for_def(node, @arena)
-      if self_type_name
-        sep = if recv = node.receiver
-                (safe_slice_to_string(recv) || "") == "self" ? "." : "#"
-              else
-                "#"
-              end
-        full_name = "#{self_type_name}#{sep}#{method_name}"
-        if arena = @function_def_arenas[full_name]?
-          # Prefer the recorded arena when it matches this def.
-          resolved_arena = arena if arena_fits_def?(arena, node)
         end
       end
       extra_type_params = {} of String => String

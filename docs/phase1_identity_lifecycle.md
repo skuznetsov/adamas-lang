@@ -133,10 +133,14 @@ fallback that will shrink as more call sites get ExprId plumbing.
 These would require adding ExprId parameters to intermediate functions.
 
 ```
-lookups=5561  hits=3013  misses=2548  hit_rate=54.2%
+lookups=5561  hits=3019  misses=2542  hit_rate=54.3%
 canonical=1934(34.8%)  surrogate=3627
-unique_keys=2548 (canonical=1608 surrogate=940)  interned_types=399
+unique_keys=2542 (canonical=1608 surrogate=934)  interned_types=399
 ```
 
+The dry-run hook runs AFTER final arena resolution (including
+`@function_def_arenas` override), so the arena_id in DefIdentity matches
+the arena actually used for body inference.
+
 Compare with Phase 0's `body_infer_dupes=401` (keyed by DefNode.object_id only).
-The enriched key finds 3013 hits — a genuine cache opportunity.
+The enriched key finds 3019 hits — a genuine cache opportunity.
