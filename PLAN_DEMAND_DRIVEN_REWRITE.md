@@ -1,202 +1,238 @@
-# Plan: Demand-Driven Architecture Rewrite (Variant C)
+# Plan: Demand-Driven Architecture Rewrite (Variant C) — v2
 
-## Executive Summary
+> Revised after GPT review. All 6 P1/P2 comments incorporated.
 
-V2's current architecture merges type inference and codegen into a single
-supply-driven pass (`ast_to_hir.cr`, 77K lines). This causes:
-- **Worklist explosion**: 130 → 27,000+ pending functions
-- **No def_instances cache**: repeated body analysis for same method
-- **Stage3 blocker**: build hangs in process_pending_lower_functions
+## Why This Rewrite
 
-The fix: rewrite to match original Crystal's **demand-driven** architecture
-with separate semantic (type inference) and codegen passes.
+V2 compiles with a **supply-driven** architecture where `ast_to_hir.cr` (77K lines)
+merges type inference, method resolution, generic instantiation, and HIR emission
+into a single pass. This causes:
 
-## Current Architecture (V2 — broken)
+1. **Queue explosion** in stage2 builds (130 → 27,000+ functions)
+2. **No def_instances cache** — repeated body analysis for the same {method, arg_types}
+3. **23% regression** in test compile times (8.9s → 11.0s from accumulated fixes)
 
+The target: **demand-driven** architecture matching original Crystal, with
+separate semantic and codegen phases, def_instances caching, and type side tables.
+
+### Re-scoping (GPT P1 #1)
+
+Stage2 release builds can now finish (runtime correctness is the active frontier).
+This rewrite is a **strategic architecture track**, not an immediate stage3 unblocker.
+The motivation is:
+- Eliminating the supply-driven queue explosion pattern permanently
+- Reducing codebase from 77K merged lines to ~30K properly separated
+- Enabling proper def_instances caching (impossible with current architecture)
+- Fixing the +23% compile time regression structurally
+
+## Current V2 Inventory
+
+### Compile path (cli.cr:1287+)
 ```
-Parse → AstToHir (77K lines, merged semantic+codegen) → MIR → LLVM
-
-Problems:
-1. Supply-driven: register ALL methods, filter via RTA
-2. No def_instances cache
-3. force_lower_function_for_return_type re-analyzes bodies
-4. Generic instantiation explosion (130 → 27000+ queue)
-```
-
-## Target Architecture (Original Crystal — proven)
-
-```
-Parse → TopLevelVisitor → MainVisitor(semantic) → CodeGenVisitor → LLVM
-
-Key properties:
-1. Demand-driven: only type-check methods that are called
-2. def_instances cache: {def_id, arg_types, block_type} → typed_def
-3. Type bindings: AST nodes observe type changes, propagate
-4. CleanupTransformer: dead code elimination before codegen
+Parse → AstToHir (77K, merged everything) → HIR → MIR → LLVM
 ```
 
-## Original Crystal Architecture Deep Dive
+### Check path (cli.cr:1054+)
+```
+Parse → Analyzer → SymbolCollector → resolve_names → infer_types
+```
 
-### Phase 1: TopLevelVisitor (declarations only)
-- File: `semantic/top_level_visitor.cr` (1352 lines)
-- Registers: classes, modules, structs, enums, lib, macros, defs (signatures only)
-- Does NOT type-check method bodies
-- Does NOT instantiate generics
-- Result: `Program` with all types and untyped method signatures
+### Existing semantic stack (already in V2!)
+| File | Lines | Purpose |
+|------|-------|---------|
+| `semantic/analyzer.cr` | 65 | Entry point for check path |
+| `semantic/type_inference_engine.cr` | 5,363 | Type inference (check-only) |
+| `semantic/collectors/symbol_collector.cr` | ~1,300 | Symbol collection |
+| `semantic/types/type_context.cr` | ~130 | ExprId → Type side table |
+| `semantic/types/type_index.cr` | ~700 | Type lookup by name |
+| `semantic/types/*.cr` | ~2,500 | Type model (class, enum, union, etc.) |
+| `semantic/symbol_table.cr` | 95 | Symbol storage |
+| `semantic/macro_expander.cr` | 2,658 | Macro expansion |
 
-### Phase 2: MainVisitor (demand-driven type inference)
-- File: `semantic/main_visitor.cr` (3667 lines)
-- Entry: `node.accept(visitor)` on the full program AST
-- Visits top-level expressions → triggers call resolution
-- Call resolution (`semantic/call.cr`, 1272 lines):
-  1. `Call#recalculate` → `lookup_matches` → find matching `Def`
-  2. Check `def_instances` cache (key = {def.object_id, arg_types, block_type})
-  3. Cache HIT → return immediately (NO body analysis)
-  4. Cache MISS → instantiate typed_def, cache it, visit body recursively
-- Each method body is analyzed EXACTLY ONCE per unique {def, arg_types}
-- Type propagation via `bindings.cr`: nodes observe + propagate type changes
-- Union types widen naturally through binding mechanism
+### AstToHir responsibilities beyond type inference
+- Lib/enum/alias/macro registration (cli.cr:1310-1602)
+- Method effect summaries for EA/taint (ast_to_hir.cr:3657+)
+- C struct size computation and alignment (align_all_class_ivars)
+- Module includer tracking
+- Extern function/global tables
+- Class hierarchy data
+- Generic template registration
 
-### Phase 3: CleanupTransformer
-- File: `semantic/cleanup_transformer.cr` (1183 lines)
-- Removes dead code, simplifies type casts
-- Runs AFTER all types are inferred
+### Downstream contracts (HIR → MIR → LLVM)
+- `hir.cr:1383+` — MethodEffectSummary used by hir_to_mir
+- `hir_to_mir.cr:1841+` — escape analysis, lifetime tagging
+- `escape_analysis.cr:193+` — uses HIR metadata
 
-### Phase 4: CodeGenVisitor (LLVM IR generation)
-- File: `codegen/codegen.cr` (2629 lines) + `codegen/call.cr` (634 lines)
-- Visits TYPED AST (every node has `.type`)
-- `target_def_fun` cache: mangled_name → LLVM function
-- Method body codegen is also demand-driven and cached
-- Struct types computed by `LLVMTyper` (612 lines)
+## Design Decisions
 
-### def_instances: The Critical Cache
+### Types stay in side tables, NOT on AST nodes (GPT P1 #4)
+- AST is arena-backed union (`ast.cr:2299+`)
+- Types already live as `ExprId → Type` in `type_context.cr:20+`
+- Semantic state stays external to raw AST
+- HIR builder reads from type side tables at the boundary
+
+### def_instances keyed by semantic identity, NOT mangled names (GPT P2 #1)
 ```crystal
-# In types.cr:
-module DefInstanceContainer
-  getter(def_instances) { {} of DefInstanceKey => Def }
+# Correct — semantic identity:
+record DefInstanceKey,
+  def_id : UInt64,        # object identity of the Def AST node
+  arg_types : Array(TypeRef),
+  block_type : TypeRef?,
+  named_arg_types : Array({String, TypeRef})?
 
-  def add_def_instance(key, typed_def)
-    def_instances[key] = typed_def
-  end
-
-  def lookup_def_instance(key)
-    def_instances[key]?
-  end
-end
-
-# Key = {def_object_id, arg_types, block_type, named_args_types}
-# This prevents Array(Int32)#map from being re-analyzed 50 times
-# when called from 50 different places.
+# Wrong — stringly typed:
+# key = "Array(Int32)#map$$Block" ← collisions, fragmentation
 ```
 
-## Rewrite Plan
-
-### What to KEEP from V2
-- **Parser** (`frontend/parser.cr`, 16K lines): works perfectly, identical syntax
-- **Lexer** (`frontend/lexer.cr`): works perfectly
-- **AST nodes** (`frontend/ast.cr`): works
-- **MIR** (`mir/mir.cr`): instruction set, keep but adapt input
-- **HIR→MIR** (`mir/hir_to_mir.cr`, 5.7K lines): keep, adapt to new HIR format
-- **LLVM backend** (`mir/llvm_backend.cr`, 20K lines): keep, adapt to new MIR
-- **ARC/RC system**: keep, works correctly
-- **Regression tests**: keep all 87+20
-
-### What to REWRITE
-- **ast_to_hir.cr** (77K lines) → split into:
-  1. `semantic/type_walker.cr` — demand-driven type inference (~5-8K lines)
-  2. `semantic/call_resolver.cr` — method lookup + def_instances (~2-3K lines)
-  3. `semantic/type_registry.cr` — type declarations, class info (~3-5K lines)
-  4. `hir/hir_builder.cr` — HIR generation from typed AST (~10-15K lines)
-
-  Total: ~20-30K lines replacing 77K lines
-
-### What to ADAPT
-- **HIR** (`hir/hir.cr`): extend with type information from semantic pass
-- **CLI** (`cli.cr`): update pipeline to new phases
+### Grow existing semantic stack, don't start from scratch (GPT P1 #2)
+- Extend `Analyzer` + `TypeInferenceEngine` into compile path
+- Bridge: make AstToHir delegate to semantic stack for type queries
+- Eventually: AstToHir becomes pure HIR builder (no type inference)
 
 ## Phase Plan
 
-### Phase 1: Type Registry (foundation)
-- Port `TopLevelVisitor` logic from ast_to_hir's registration code
-- Class/module/struct/enum/lib declarations
-- Method signatures (without body analysis)
-- Generic type parameters
-- Result: `TypeRegistry` with all declared types
+### Phase 0: Inventory + Contracts + Migration Bridge
+**Goal**: Understand what AstToHir does, document contracts, create bridge.
 
-### Phase 2: Demand-Driven Type Walker
-- Implement visitor pattern on V2's AST nodes
-- Visit top-level expressions → trigger call resolution
-- Implement `def_instances` cache
-- Call resolution: lookup method → check cache → analyze body if needed
-- Type propagation: each AST node gets `.type` field
-- Key methods to port from original Crystal:
-  - `Call#recalculate` → `Call#lookup_matches` → `def_instances` lookup
-  - `MainVisitor#visit(Call)` → method instantiation
-  - Type widening (union creation) via binding mechanism
+Tasks:
+- [ ] Inventory ALL responsibilities of AstToHir (beyond type inference)
+- [ ] Document HIR output contracts: what metadata MIR/LLVM backend needs
+  - Method effect summaries, lifetimes, taints, class hierarchy
+  - Extern tables, lib structs, enum info
+  - Generic template data
+- [ ] Create feature flag: `CRYSTAL_V2_SEMANTIC_COMPILE=1`
+  - When off: current AstToHir pipeline (default)
+  - When on: new semantic → HIR builder pipeline
+- [ ] Bridge: make AstToHir queryable for type info from semantic stack
+  - Add `TypeContext` side table to AstToHir
+  - Gradually move type queries from inline to side table
 
-### Phase 3: HIR Builder
-- Walk typed AST → generate HIR instructions
-- Similar to current ast_to_hir but WITHOUT type inference logic
-- All types already resolved → just emit operations
-- Much simpler than current 77K lines
+Deliverable: Contract document + feature flag infrastructure
 
-### Phase 4: Adapt MIR + LLVM Backend
-- HIR format may change slightly (typed nodes)
-- HIR→MIR adapter for new HIR format
-- LLVM backend should need minimal changes
+### Phase 1: Full Declaration Fixed Point (GPT P1 #3)
+**Goal**: Complete top-level registration, not just classes/methods.
 
-### Phase 5: Integration + Testing
-- Wire new pipeline into CLI
-- Regression tests must pass
-- Stage2 + Stage3 bootstrap test
-- Performance benchmarks
+Extend existing `SymbolCollector` + `Analyzer` to handle ALL declarations:
+- [ ] Classes, modules, structs (already in SymbolCollector)
+- [ ] Enums with constant evaluation
+- [ ] Libs and C struct sizes
+- [ ] Aliases and type alias chains
+- [ ] Macros (already in macro_expander.cr)
+- [ ] Method signatures (params + return type annotations)
+- [ ] Module includers/extenders
+- [ ] Generic type parameters
+- [ ] Method effect annotations (@[NoEscape], @[Acyclic], etc.)
 
-## Key Metrics for Success
+Result: `TypeRegistry` with ALL declared types, equivalent to original Crystal's
+`TopLevelVisitor` output. Full fixed point — no ad hoc discovery later.
 
-| Metric | Current V2 | Target | Original Crystal |
-|--------|-----------|--------|-----------------|
-| Queue size (stage2 build) | 130→27000+ | 130→~3000 | N/A (demand-driven) |
-| Hello world functions | ~3130 | ~2300 | ~2300 |
-| Single test compile time | 11.0s (debug) | <5s (debug) | ~3s |
-| Stage2 build time | hangs | <60s | N/A |
-| Total codegen source lines | 77K+5.7K+20K=103K | ~30K+5.7K+20K=56K | 24K+11K=35K |
+### Phase 2: Demand-Driven Type Walker + DefInstanceKey
+**Goal**: Type-check method bodies on demand with caching.
 
-## Risks
+Implement in `semantic/type_walker.cr`:
+- [ ] Visitor pattern on V2's AST nodes (83 visit methods, like original MainVisitor)
+- [ ] Visit top-level expressions → trigger call resolution on demand
+- [ ] `CallResolver` with `DefInstanceKey` cache:
+  ```crystal
+  class CallResolver
+    @def_instances : Hash(DefInstanceKey, TypedDef) = {}
 
-1. **ARC integration**: New semantic pass must annotate lifetime/escape info for ARC
-2. **V2-specific features**: Some V2 additions (slab allocator, ARC, MIR optimizations)
-   need to be preserved in the new architecture
-3. **Block/closure/proc**: Original Crystal's block handling is complex
-4. **Macro expansion**: V2 has its own macro system; needs to work with new semantic
+    def resolve_call(call, scope, arg_types) : TypedDef
+      key = DefInstanceKey.new(call.target_def_id, arg_types, block_type)
+      if cached = @def_instances[key]?
+        return cached  # NO re-inference!
+      end
+      typed_def = instantiate_and_type_check(call, scope, arg_types)
+      @def_instances[key] = typed_def
+      typed_def
+    end
+  end
+  ```
+- [ ] Type propagation via side tables (`TypeContext`)
+- [ ] Union type widening through binding mechanism
+- [ ] Generic instantiation on demand (not pre-registered)
 
-## For GPT Review
+Types stored in `TypeContext` side table, NOT on AST nodes.
 
-Questions for GPT to verify:
-1. Is the Phase plan ordering correct? Any dependencies missed?
-2. Are there parts of ast_to_hir.cr that DON'T fit into either semantic or codegen?
-3. What's the right granularity for def_instances key in V2?
-   (V2 uses string-mangled names vs original Crystal's object_id)
-4. How should generic instantiation work with demand-driven?
-   Original Crystal instantiates on-demand. V2 currently pre-registers.
-5. What about the safety nets (emit_all_tracked_signatures)?
-   Should be unnecessary with demand-driven but may need transition period.
+### Phase 3: HIR Builder (compatible with existing contracts)
+**Goal**: Generate HIR from typed AST, preserving ALL downstream contracts.
+
+This is NOT "just a simpler emitter" (GPT P1 #5). Must produce:
+- [ ] HIR instructions (current format, compatible with hir_to_mir.cr)
+- [ ] Method effect summaries (for escape analysis)
+- [ ] Lifetime/taint annotations
+- [ ] Class hierarchy data
+- [ ] Module includer tables
+- [ ] Extern function/global tables
+- [ ] Generic template data for MIR
+
+Bridge: initially delegates to AstToHir for complex cases, gradually takes over.
+
+### Phase 4: Pipeline Switch + Rollout
+**Goal**: Replace AstToHir in compile path.
+
+- [ ] Shadow mode: run both pipelines, compare HIR output
+- [ ] Regression tests pass with new pipeline
+- [ ] Feature flag rollout: `CRYSTAL_V2_SEMANTIC_COMPILE=1` default
+- [ ] Remove AstToHir from compile path
+- [ ] Unify check + compile semantic paths
+
+### Phase 5: Cleanup + Performance
+- [ ] Remove dead code from AstToHir
+- [ ] Stage2 + Stage3 bootstrap verification
+- [ ] Performance benchmarks (compile time, memory, binary quality)
+- [ ] ARC ownership transfer (now possible with proper semantic info)
+
+## Success Metrics (behavior, not LOC)
+
+| Metric | Current | Target |
+|--------|---------|--------|
+| Forced lowers per stage2 build | thousands | 0 (demand-driven) |
+| Safety-net passes needed | 2+ | 0 |
+| Duplicate body analysis | rampant | 0 (def_instances) |
+| Queue growth (stage2) | 130→27000+ | N/A (no queue) |
+| Test compile time (debug) | 11.0s | <5s |
+| Stage2 build | hangs/slow | <60s |
+| Regression test score | 87/88 + 18/20 | same or better |
+
+## Risks + Mitigations
+
+1. **Two semantic systems during migration**
+   → Feature flag + shadow mode. Check path already uses semantic stack.
+
+2. **HIR contract breakage**
+   → Phase 3 explicitly preserves ALL downstream contracts. Shadow comparison.
+
+3. **Self-hosted bootstrap fragility**
+   → Never switch default until shadow mode shows identical HIR output.
+
+4. **ARC integration**
+   → Lifetime/escape annotations must flow from semantic → HIR → MIR.
+   Preserve existing effect summary mechanism.
+
+5. **Block/closure/proc complexity**
+   → Port incrementally. Original Crystal's block handling is well-understood.
 
 ## Reference Files
 
 ### Original Crystal (to study/port from)
-- `crystal/src/compiler/crystal/semantic/main_visitor.cr` (3667 lines) — core type inference
-- `crystal/src/compiler/crystal/semantic/call.cr` (1272 lines) — method resolution + def_instances
-- `crystal/src/compiler/crystal/semantic/bindings.cr` (958 lines) — type propagation
-- `crystal/src/compiler/crystal/semantic/method_lookup.cr` (551 lines) — method matching
-- `crystal/src/compiler/crystal/types.cr` (3601 lines) — type system + DefInstanceContainer
-- `crystal/src/compiler/crystal/codegen/codegen.cr` (2629 lines) — LLVM codegen visitor
-- `crystal/src/compiler/crystal/codegen/call.cr` (634 lines) — call codegen
-- `crystal/src/compiler/crystal/codegen/fun.cr` (658 lines) — function codegen + cache
+- `semantic/main_visitor.cr` (3667 lines) — demand-driven type inference
+- `semantic/call.cr` (1272 lines) — method resolution + def_instances
+- `semantic/bindings.cr` (958 lines) — type propagation
+- `semantic/method_lookup.cr` (551 lines) — method matching
+- `types.cr` (3601 lines) — type system + DefInstanceContainer
+- `codegen/codegen.cr` (2629 lines) — LLVM codegen visitor
 
-### V2 (to keep/adapt)
-- `crystal_v2_repo/src/compiler/frontend/parser.cr` — KEEP (16K, perfect)
-- `crystal_v2_repo/src/compiler/mir/hir_to_mir.cr` — ADAPT (5.7K)
-- `crystal_v2_repo/src/compiler/mir/llvm_backend.cr` — ADAPT (20K)
-- `crystal_v2_repo/src/compiler/hir/hir.cr` — EXTEND with types
-- `crystal_v2_repo/src/compiler/mir/mir.cr` — KEEP
-- `crystal_v2_repo/src/compiler/mir/optimizations.cr` — KEEP
+### V2 existing semantic stack (to extend)
+- `semantic/analyzer.cr` (65 lines) — entry point, extend for compile
+- `semantic/type_inference_engine.cr` (5363 lines) — type inference, extend
+- `semantic/collectors/symbol_collector.cr` (~1300 lines) — extend for full declarations
+- `semantic/types/type_context.cr` (130 lines) — ExprId → Type side table
+- `semantic/types/type_index.cr` (700 lines) — type lookup
+
+### V2 to keep/adapt
+- `frontend/parser.cr` (16K) — KEEP
+- `mir/hir_to_mir.cr` (5.7K) — ADAPT inputs
+- `mir/llvm_backend.cr` (20K) — ADAPT inputs
+- `hir/hir.cr` — EXTEND metadata
+- `mir/optimizations.cr` — KEEP
