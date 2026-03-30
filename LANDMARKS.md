@@ -181,6 +181,10 @@ Verified sequence:
   - `GeneratedOverlay` itself now exposes explicit `empty` and `dup` helpers,
     so analyzer, collector, and aggregate use one snapshot contract instead of
     manually reconstructing six collections at each boundary
+  - CLI regression coverage now locks generated diagnostic note behavior for
+    both resolution and type diagnostics across same-file vs cross-file macro
+    expansions, including `...[generated]` display paths and redundant
+    macro-definition note suppression
 - reusable failure pattern:
   - the current `VirtualArena` only renumbers root ids; nested `ExprId`
     references inside nodes remain file-local, so it is not yet a sound

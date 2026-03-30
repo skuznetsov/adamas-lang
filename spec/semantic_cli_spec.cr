@@ -473,6 +473,40 @@ describe CrystalV2::Compiler::CLI do
     end
   end
 
+  it "prints macro definition note for cross-file generated type diagnostics" do
+    with_temp_shadow_project({
+      "lib.cr"  => <<-CR,
+        macro define_bad(name)
+          def {{name.id}}
+            1 + "x"
+          end
+        end
+      CR
+      "main.cr" => <<-CR,
+        require "./lib"
+        define_bad(:alpha)
+        alpha()
+      CR
+    }) do |dir|
+      main_path = File.join(dir, "main.cr")
+      output_path = File.join(dir, "main")
+      out_io = IO::Memory.new
+      err_io = IO::Memory.new
+
+      with_semantic_shadow_env do
+        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli.run(out_io: out_io, err_io: err_io)
+      end
+
+      diagnostics = err_io.to_s
+      diagnostics.should contain("error[E3001]")
+      diagnostics.should contain("[generated]")
+      diagnostics.should contain("note: expanded from macro call here")
+      diagnostics.should contain("note: macro defined here")
+      diagnostics.should contain(File.join(dir, "lib.cr"))
+    end
+  end
+
   it "does not print redundant macro definition note for same-file generated diagnostics" do
     with_temp_shadow_project({
       "main.cr" => <<-CR,
@@ -497,6 +531,37 @@ describe CrystalV2::Compiler::CLI do
       end
 
       diagnostics = err_io.to_s
+      diagnostics.should contain("note: expanded from macro call here")
+      diagnostics.should_not contain("note: macro defined here")
+    end
+  end
+
+  it "does not print redundant macro definition note for same-file generated type diagnostics" do
+    with_temp_shadow_project({
+      "main.cr" => <<-CR,
+        macro define_bad(name)
+          def {{name.id}}
+            1 + "x"
+          end
+        end
+
+        define_bad(:alpha)
+        alpha()
+      CR
+    }) do |dir|
+      main_path = File.join(dir, "main.cr")
+      output_path = File.join(dir, "main")
+      out_io = IO::Memory.new
+      err_io = IO::Memory.new
+
+      with_semantic_shadow_env do
+        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli.run(out_io: out_io, err_io: err_io)
+      end
+
+      diagnostics = err_io.to_s
+      diagnostics.should contain("error[E3001]")
+      diagnostics.should contain("[generated]")
       diagnostics.should contain("note: expanded from macro call here")
       diagnostics.should_not contain("note: macro defined here")
     end
