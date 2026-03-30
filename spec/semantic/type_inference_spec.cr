@@ -1235,6 +1235,34 @@ describe Semantic::TypeInferenceEngine do
       engine.diagnostics.select(&.level.error?).should be_empty
     end
 
+    it "supports slice-like copy_to between Slice.new results" do
+      source = <<-CRYSTAL
+        def copy(src : Slice(UInt8), dst : Slice(UInt8))
+          src.copy_to(dst)
+        end
+      CRYSTAL
+
+      program, analyzer, engine = infer_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.select(&.level.error?).should be_empty
+    end
+
+    it "supports fill on slice-like to_slice results" do
+      source = <<-CRYSTAL
+        def zero(buf)
+          buf.to_slice.fill(48_u8)
+        end
+      CRYSTAL
+
+      program, analyzer, engine = infer_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.select(&.level.error?).should be_empty
+    end
+
     it "supports integer unsafe shifts in method bodies" do
       source = <<-CRYSTAL
         def shift(w : UInt64, bit_precision : Int32, lz : Int32)

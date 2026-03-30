@@ -6229,6 +6229,53 @@ module CrystalV2
               return_annotation: "Slice(#{element_type_name})",
               scope: dummy_scope
             )
+          when "copy_to"
+            same_target_param = Frontend::Parameter.new(name: "target".to_slice, type_annotation: "_".to_slice)
+            methods << MethodSymbol.new(
+              method_name,
+              dummy_node_id,
+              params: [same_target_param],
+              return_annotation: "Nil",
+              scope: dummy_scope
+            )
+
+            pointer_target_param = Frontend::Parameter.new(name: "target".to_slice, type_annotation: "Pointer(#{element_type_name})".to_slice)
+            count_param = Frontend::Parameter.new(name: "count".to_slice, type_annotation: "_".to_slice)
+            methods << MethodSymbol.new(
+              method_name,
+              dummy_node_id,
+              params: [pointer_target_param, count_param],
+              return_annotation: "Nil",
+              scope: dummy_scope
+            )
+          when "copy_from"
+            source_param = Frontend::Parameter.new(name: "source".to_slice, type_annotation: "_".to_slice)
+            methods << MethodSymbol.new(
+              method_name,
+              dummy_node_id,
+              params: [source_param],
+              return_annotation: "Nil",
+              scope: dummy_scope
+            )
+
+            pointer_source_param = Frontend::Parameter.new(name: "source".to_slice, type_annotation: "Pointer(#{element_type_name})".to_slice)
+            count_param = Frontend::Parameter.new(name: "count".to_slice, type_annotation: "_".to_slice)
+            methods << MethodSymbol.new(
+              method_name,
+              dummy_node_id,
+              params: [pointer_source_param, count_param],
+              return_annotation: "Nil",
+              scope: dummy_scope
+            )
+          when "fill"
+            value_param = Frontend::Parameter.new(name: "value".to_slice, type_annotation: "_".to_slice)
+            methods << MethodSymbol.new(
+              method_name,
+              dummy_node_id,
+              params: [value_param],
+              return_annotation: "Array(#{element_type_name})",
+              scope: dummy_scope
+            )
           when "empty?"
             # Array(T)#empty? : Bool
             methods << MethodSymbol.new(
