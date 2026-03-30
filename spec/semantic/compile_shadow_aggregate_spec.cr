@@ -481,6 +481,46 @@ describe "compile semantic shadow aggregate" do
     analyzer.generated_source_for(diagnostic.primary_node_id.not_nil!).not_nil!.should contain("1 + \"x\"")
   end
 
+  it "reports resolution diagnostics inside generated top-level class bodies" do
+    aggregate = build_shared_shadow_aggregate([
+      <<-CR,
+        macro define_bad_class
+          class BadBox
+            def self.call
+              missing + 1
+            end
+          end
+        end
+      CR
+      <<-CR,
+        define_bad_class
+        BadBox.call
+      CR
+    ])
+    program = aggregate.program
+    shadow_sources = build_shadow_sources(aggregate)
+
+    analyzer = Semantic::Analyzer.new(program)
+    analyzer.collect_symbols(
+      node_file_path_provider: ->(expr_id : Frontend::ExprId) { aggregate.path_for(expr_id) },
+      source_for_path_provider: ->(path : String) { shadow_sources[path]? },
+    )
+    analyzer.generated_top_level_roots.should_not be_empty
+    aggregate.attach_generated_node_paths(analyzer.generated_node_file_paths)
+
+    result = analyzer.resolve_names
+
+    result.diagnostics.size.should eq(1)
+    diagnostic = result.diagnostics.first
+    diagnostic.message.should contain("undefined local variable or method 'missing'")
+    diagnostic.node_id.should_not be_nil
+    aggregate.path_for(diagnostic.node_id.not_nil!).should eq("unit_1.cr")
+    analyzer.generated_node?(diagnostic.node_id.not_nil!).should be_true
+    generated_source = analyzer.generated_source_for(diagnostic.node_id.not_nil!).not_nil!
+    generated_source.should contain("class BadBox")
+    generated_source.should contain("missing + 1")
+  end
+
   it "formats generated resolution diagnostics against generated source text" do
     aggregate = build_shared_shadow_aggregate([
       <<-CR,

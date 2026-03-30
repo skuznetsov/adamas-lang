@@ -234,6 +234,11 @@ now reports `resolution_diags=1` and the generated-body diagnostic is
 attributed back to the caller unit. Likewise a generated body containing
 `1 + "x"` now surfaces `type_diags=1` in shadow mode.
 
+The same traversal now also covers diagnostics nested inside generated
+non-method roots. For example, a macro-expanded top-level `class` whose method
+body contains `missing + 1` now surfaces a generated resolution diagnostic
+with the generated class body snippet and the usual origin notes.
+
 Verbose formatting now also uses the generated expansion text for generated
 nodes instead of reusing the caller file source snippet. In those cases the
 diagnostic path is rendered as `... [generated]`, for example:

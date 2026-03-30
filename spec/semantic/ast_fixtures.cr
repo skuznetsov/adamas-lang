@@ -14,7 +14,13 @@ module AstFixtures
 
   # Helper: Create a def node
   # Example: make_def(arena, "greet", params: ["name"], body: [body_id])
-  def make_def(arena : AstArena, name : String, params : Array(String) = [] of String, body : Array(ExprId) = [] of ExprId) : ExprId
+  def make_def(
+    arena : AstArena,
+    name : String,
+    params : Array(String) = [] of String,
+    body : Array(ExprId) = [] of ExprId,
+    receiver : String? = nil
+  ) : ExprId
     param_objects = params.map { |param_name| Frontend::Parameter.new(param_name.to_slice, span: span, name_span: span) }
     param_list = param_objects.empty? ? nil : param_objects
     body_list = body.empty? ? nil : body
@@ -24,7 +30,8 @@ module AstFixtures
       name.to_slice,
       param_list,
       nil,
-      body_list
+      body_list,
+      receiver: receiver.try(&.to_slice)
     ))
   end
 
@@ -54,13 +61,7 @@ module AstFixtures
   # Example: make_call(arena, "greet", args: [arg1_id, arg2_id])
   def make_call(arena : AstArena, callee_name : String, args : Array(ExprId) = [] of ExprId) : ExprId
     callee_id = make_identifier(arena, callee_name)
-    arena.add(Frontend::CallNode.new(
-      span,
-      callee_id,
-      args,
-      nil,
-      nil
-    ))
+    arena.add(Frontend::CallNode.new(span, callee_id, args))
   end
 
   # Helper: Create a number literal node

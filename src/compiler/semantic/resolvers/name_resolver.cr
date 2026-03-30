@@ -246,11 +246,19 @@ module CrystalV2
         end
 
         private def visit_def(node_id : ExprId, node : Frontend::DefNode)
+          visit_def_in_lookup_scope(node_id, node, @current_table)
+        end
+
+        private def visit_def_in_lookup_scope(
+          node_id : ExprId,
+          node : Frontend::DefNode,
+          lookup_table : SymbolTable
+        )
           name_slice = node.name
           return unless name_slice
 
           name = intern_name(name_slice)
-          symbol = @current_table.lookup(name)
+          symbol = lookup_table.lookup(name)
 
           method_symbol = case symbol
           when MethodSymbol
@@ -290,7 +298,12 @@ module CrystalV2
           @current_table = class_scope
 
           (node.body || [] of ExprId).each do |expr_id|
-            visit(expr_id)
+            body_node = @arena[expr_id]
+            if body_node.is_a?(Frontend::DefNode) && def_receiver_self?(body_node)
+              visit_def_in_lookup_scope(expr_id, body_node, symbol.class_scope)
+            else
+              visit(expr_id)
+            end
           end
 
           @current_table = prev_table
@@ -499,6 +512,12 @@ module CrystalV2
           else
             nil
           end
+        end
+
+        private def def_receiver_self?(node : Frontend::DefNode) : Bool
+          receiver = node.receiver
+          return false unless receiver
+          intern_name(receiver) == "self"
         end
 
         private def top_level_scope? : Bool

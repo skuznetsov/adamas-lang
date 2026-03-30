@@ -158,6 +158,44 @@ describe CrystalV2::Compiler::CLI do
     end
   end
 
+  it "reports generated diagnostics inside macro-expanded class bodies" do
+    with_temp_shadow_project({
+      "lib.cr"  => <<-CR,
+        macro define_bad_class
+          class BadBox
+            def self.call
+              missing + 1
+            end
+          end
+        end
+      CR
+      "main.cr" => <<-CR,
+        require "./lib"
+        define_bad_class
+        BadBox.call
+      CR
+    }) do |dir|
+      main_path = File.join(dir, "main.cr")
+      output_path = File.join(dir, "main")
+      out_io = IO::Memory.new
+      err_io = IO::Memory.new
+
+      with_semantic_shadow_env do
+        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli.run(out_io: out_io, err_io: err_io)
+      end
+
+      output = out_io.to_s
+      diagnostics = err_io.to_s
+      output.should contain("generated_resolution_diags=1")
+      output.should contain("generated_type_diags=1")
+      output.should contain("Semantic shadow unit: path=#{main_path}")
+      diagnostics.should contain("BadBox")
+      diagnostics.should contain("missing + 1")
+      diagnostics.should contain("note: expanded from macro call here")
+    end
+  end
+
   it "reports semantic declaration provenance for macro-expanded methods" do
     with_temp_shadow_project({
       "main.cr" => <<-CR,

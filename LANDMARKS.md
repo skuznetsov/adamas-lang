@@ -192,6 +192,11 @@ Verified sequence:
   - generated top-level defs now reach shadow `resolve_names` / `infer_types`
     through explicit generated-root propagation, but generated nodes are still
     not spliced back into the aggregate parse graph itself
+  - that generated-root traversal now also covers diagnostics nested inside
+    generated non-method roots:
+    - a macro-expanded top-level class with `missing + 1` in a method body now
+      surfaces a generated resolution diagnostic attributed to the caller unit
+      with generated snippet plus origin note
   - shadow summaries now distinguish parse roots from traversal roots via
     `roots`, `generated_roots`, and `analysis_roots`, so the telemetry matches
     the real generated-root traversal contract

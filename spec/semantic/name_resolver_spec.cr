@@ -40,9 +40,7 @@ describe Semantic::NameResolver do
     call_id = arena.add(Frontend::CallNode.new(
       test_span,
       callee_id,
-      [] of Frontend::ExprId,
-      nil,
-      nil
+      [] of Frontend::ExprId
     ))
 
     program = Frontend::Program.new(arena, [macro_id, call_id])
@@ -65,9 +63,7 @@ describe Semantic::NameResolver do
     call_id = arena.add(Frontend::CallNode.new(
       test_span,
       callee_id,
-      [] of Frontend::ExprId,
-      nil,
-      nil
+      [] of Frontend::ExprId
     ))
 
     program = Frontend::Program.new(arena, [call_id])
@@ -105,6 +101,27 @@ describe Semantic::NameResolver do
     callee_id = call_node.as(Frontend::CallNode).callee
     say_hello = AstFixtures.make_def(arena, "say_hello", body: [call_id])
     class_id = AstFixtures.make_class(arena, "Greeter", body: [greet_method, say_hello])
+
+    program = Frontend::Program.new(arena, [class_id])
+    analyzer = Semantic::Analyzer.new(program)
+    analyzer.collect_symbols
+    result = analyzer.resolve_names
+
+    result.diagnostics.should be_empty
+    result.identifier_symbols[callee_id].should be_a(Semantic::MethodSymbol)
+  end
+
+  it "resolves class method bodies through class scope" do
+    arena = Frontend::AstArena.new
+
+    call_id = AstFixtures.make_call(arena, "greet")
+    call_node = arena[call_id]
+    call_node.should be_a(Frontend::CallNode)
+    callee_id = call_node.as(Frontend::CallNode).callee
+
+    class_greet = AstFixtures.make_def(arena, "greet", receiver: "self")
+    class_call = AstFixtures.make_def(arena, "call", body: [call_id], receiver: "self")
+    class_id = AstFixtures.make_class(arena, "Greeter", body: [class_greet, class_call])
 
     program = Frontend::Program.new(arena, [class_id])
     analyzer = Semantic::Analyzer.new(program)
