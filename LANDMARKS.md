@@ -187,6 +187,10 @@ Verified sequence:
   - `Analyzer#generated_overlay` and `CompileShadowAggregate#generated_overlay`
     now both return defensive snapshots, so callers cannot mutate internal
     generated provenance state through a leaked overlay reference
+  - `CompileShadowAggregate#generated_top_level_roots` and
+    `#generated_node_file_paths` now also return defensive snapshots, so the
+    aggregate ownership/provenance summary API no longer leaks mutable
+    collections directly
   - CLI regression coverage now locks generated diagnostic note behavior for
     both resolution and type diagnostics across same-file vs cross-file macro
     expansions, including `...[generated]` display paths and redundant

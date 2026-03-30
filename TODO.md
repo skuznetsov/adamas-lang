@@ -141,6 +141,7 @@
     - `GeneratedOverlay` now also has explicit `empty` / `dup` helpers, so analyzer, collector, and aggregate no longer open-code snapshot construction for the shadow generated-provenance contract
     - analyzer no longer leaks generated shadow internals through a dozen `generated_*` passthroughs; callers now consume the explicit `generated_overlay` snapshot contract instead
     - `Analyzer#generated_overlay` and `CompileShadowAggregate#generated_overlay` now both return defensive snapshots, so external callers can no longer mutate internal shadow provenance state through a leaked overlay object
+    - `CompileShadowAggregate#generated_top_level_roots` and `#generated_node_file_paths` now also return defensive snapshots, so aggregate ownership telemetry no longer leaks mutable collections directly
     - CLI regression coverage now locks both resolution and type generated-diagnostic note behavior for same-file vs cross-file expansions, including the `...[generated]` display path and macro-definition note suppression rules
     - the next honest work item is no longer macro-call parity, top-level generated-body traversal, generated snippet visibility, or macro-call origin notes; it is broader expanded-node ownership/provenance and how far aggregate-backed shadow can carry diagnostics/contracts without pretending to be lowering
     - replacing reparse-based aggregation is still more honest follow-up than reopening Phase 1 identity questions

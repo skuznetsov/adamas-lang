@@ -178,11 +178,11 @@ module CrystalV2
         end
 
         def generated_top_level_roots : Array(Frontend::ExprId)
-          @generated_overlay.top_level_roots
+          @generated_overlay.top_level_roots.dup
         end
 
         def generated_node_file_paths : Hash(Int32, String)
-          @generated_overlay.node_file_paths
+          @generated_overlay.node_file_paths.dup
         end
 
         private def detach_generated_overlay : Nil

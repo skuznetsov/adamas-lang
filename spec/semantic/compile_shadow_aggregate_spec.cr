@@ -480,6 +480,39 @@ describe "compile semantic shadow aggregate" do
     aggregate.generated_top_level_roots.should_not be_empty
   end
 
+  it "returns defensive generated root and path snapshots" do
+    aggregate = build_shared_shadow_aggregate([
+      <<-CR,
+        macro define_alpha(dummy)
+          def alpha
+            42
+          end
+        end
+      CR
+      <<-CR,
+        define_alpha(1)
+        alpha()
+      CR
+    ])
+    program = aggregate.program
+    shadow_sources = build_shadow_sources(aggregate)
+
+    analyzer = Semantic::Analyzer.new(program)
+    analyzer.collect_symbols(
+      node_file_path_provider: ->(expr_id : Frontend::ExprId) { aggregate.path_for(expr_id) },
+      source_for_path_provider: ->(path : String) { shadow_sources[path]? },
+    )
+    attach_generated_shadow_overlay(aggregate, analyzer)
+
+    roots = aggregate.generated_top_level_roots
+    paths = aggregate.generated_node_file_paths
+    roots.clear
+    paths.clear
+
+    aggregate.generated_top_level_roots.should_not be_empty
+    aggregate.generated_node_file_paths.should_not be_empty
+  end
+
   it "reports resolution diagnostics inside generated top-level def bodies" do
     aggregate = build_shared_shadow_aggregate([
       <<-CR,
