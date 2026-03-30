@@ -110,6 +110,8 @@ describe CrystalV2::Compiler::CLI do
       output.should contain("Semantic shadow:")
       output.should contain("compile_parse_diags=1")
       output.should contain("shadow_parse_diags=1")
+      output.should contain("parse_diag_gaps=0")
+      output.should contain("Semantic shadow parse diagnostics: compile_total=1 compile_unique=1 shadow_total=1 shadow_unique=1 gaps=0")
       output.should contain("Semantic shadow unit: path=#{main_path}")
     end
   end

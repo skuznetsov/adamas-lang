@@ -23,7 +23,8 @@ uses an explicit `GeneratedOverlay` contract instead of five loose maps.
 Shadow summaries now also separate original compile parse diagnostics from
 shared-aggregate reparse diagnostics, so parser-side drift between those two
 paths is visible even though the shadow parser telemetry is still
-non-authoritative.
+non-authoritative. That signal now also has an explicit parity layer:
+`parse_diag_gaps` plus verbose `Semantic shadow parse diagnostics: ...` lines.
 
 Verified sequence:
 - implementation:
@@ -59,6 +60,9 @@ Verified sequence:
     - malformed carrier `")"` now reports `compile_parse_diags=1` and
       `shadow_parse_diags=1` in the shadow summary without changing compile
       authority
+    - the same malformed carrier now also reports `parse_diag_gaps=0` and a
+      verbose parser-parity line
+      `Semantic shadow parse diagnostics: compile_total=1 compile_unique=1 shadow_total=1 shadow_unique=1 gaps=0`
   - live type-error smoke now prints file-aware shadow diagnostics:
     - `CRYSTAL_V2_SEMANTIC_SHADOW=1 /tmp/crystal_v2_semantic_shadow /tmp/shadow_type_error.cr --no-prelude --stats --verbose`
     - output includes `error[E3001]` with `--> /tmp/shadow_type_error.cr:1:1`
@@ -246,6 +250,9 @@ Verified sequence:
   - original compile parse diagnostics and aggregate reparse diagnostics are
     now counted separately too, but that is still telemetry rather than a
     unified compile-authoritative parser diagnostic contract
+  - parser-side drift is now summarized through a dedicated parity object, but
+    it still compares shadow telemetry rather than establishing compile-path
+    parser authority
   - origin call-site notes are now available in verbose shadow formatting, but
     they are still shadow-only provenance and not yet a general compile-path
     source map contract

@@ -8,6 +8,7 @@ require "./frontend/dispatch"
 require "./semantic/analyzer"
 require "./semantic/compile_shadow_aggregate"
 require "./semantic/compile_shadow_declaration_inventory"
+require "./semantic/compile_shadow_parse_diagnostic_parity"
 require "./semantic/diagnostic_formatter"
 require "./hir/hir"
 require "./hir/ast_to_hir"
@@ -155,6 +156,8 @@ module CrystalV2
         getter unit_summaries : Array(SemanticShadowUnitSummary)
         getter declaration_gap_count : Int32
         getter declaration_summary_lines : Array(String)
+        getter parse_diagnostic_gap_count : Int32
+        getter parse_diagnostic_summary_lines : Array(String)
         getter files_count : Int32
         getter roots_count : Int32
         getter analysis_root_count : Int32
@@ -177,6 +180,8 @@ module CrystalV2
           @unit_summaries : Array(SemanticShadowUnitSummary),
           @declaration_gap_count : Int32,
           @declaration_summary_lines : Array(String),
+          @parse_diagnostic_gap_count : Int32,
+          @parse_diagnostic_summary_lines : Array(String),
           @files_count : Int32,
           @roots_count : Int32,
           @analysis_root_count : Int32,
@@ -1324,6 +1329,7 @@ module CrystalV2
                 "identifiers=#{shadow_summary.identifier_count}",
                 "compile_parse_diags=#{shadow_summary.compile_parse_diagnostic_count}",
                 "shadow_parse_diags=#{shadow_summary.shadow_parse_diagnostic_count}",
+                "parse_diag_gaps=#{shadow_summary.parse_diagnostic_gap_count}",
                 "semantic_diags=#{shadow_summary.semantic_diagnostic_count}",
                 "generated_semantic_diags=#{shadow_summary.generated_semantic_diagnostic_count}",
                 "resolution_diags=#{shadow_summary.resolution_diagnostic_count}",
@@ -1336,6 +1342,9 @@ module CrystalV2
             if options.verbose
               shadow_summary.declaration_summary_lines.each do |line|
                 out_io.puts "  Semantic shadow declarations: #{line}"
+              end
+              shadow_summary.parse_diagnostic_summary_lines.each do |line|
+                out_io.puts "  Semantic shadow parse diagnostics: #{line}"
               end
               shadow_summary.unit_summaries.each do |unit_summary|
                 out_io.puts [
@@ -6176,6 +6185,12 @@ module CrystalV2
           analyzer.global_context.symbol_table
         )
         declaration_parity = Semantic::CompileShadowDeclarationParity.compare(collector_inventory, semantic_inventory)
+        compile_parse_diagnostics = units.flat_map(&.parse_diagnostics)
+        shadow_parse_diagnostics = aggregate.parse_diagnostics.map { |diagnostic| aggregate.enrich_shadow_diagnostic(diagnostic) }
+        parse_diagnostic_parity = Semantic::CompileShadowParseDiagnosticParity.compare(
+          compile_parse_diagnostics,
+          shadow_parse_diagnostics
+        )
         compile_parse_diagnostics_by_unit = units.map(&.parse_diagnostics.size)
         shadow_parse_diagnostics_by_unit = aggregate.unit_summaries.map(&.parse_diagnostic_count)
         semantic_diagnostics = analyzer.semantic_diagnostics.map { |diagnostic| aggregate.enrich_shadow_diagnostic(diagnostic) }
@@ -6193,6 +6208,7 @@ module CrystalV2
         declaration_summary_lines = declaration_parity.summary_lines(5, "collector", "semantic")
         declaration_summary_lines.concat(collector_inventory.provenance_lines("collector"))
         declaration_summary_lines.concat(semantic_inventory.provenance_lines("semantic"))
+        parse_diagnostic_summary_lines = parse_diagnostic_parity.summary_lines(5, "compile", "shadow")
         expected_unit_count = aggregate.unit_summaries.size
         ensure_shadow_unit_metric_size!(symbols_by_unit, expected_unit_count, "symbols_by_unit")
         ensure_shadow_unit_metric_size!(generated_symbols_by_unit, expected_unit_count, "generated_symbols_by_unit")
@@ -6247,6 +6263,8 @@ module CrystalV2
           unit_summaries: unit_summaries,
           declaration_gap_count: declaration_parity.gap_count,
           declaration_summary_lines: declaration_summary_lines,
+          parse_diagnostic_gap_count: parse_diagnostic_parity.gap_count,
+          parse_diagnostic_summary_lines: parse_diagnostic_summary_lines,
           files_count: units.size,
           roots_count: program.roots.size,
           analysis_root_count: program.roots.size + aggregate.generated_top_level_roots.size,
