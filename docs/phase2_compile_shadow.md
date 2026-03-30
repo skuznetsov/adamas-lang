@@ -151,7 +151,9 @@ code. The analyzer still computes that overlay, but it now crosses the
 collector/analyzer -> aggregate boundary as an explicit `GeneratedOverlay`
 contract instead of five ad-hoc hash maps, and the compile-shadow graph
 substrate owns the lookup used by CLI formatting and generated-diagnostic
-counting.
+counting. `GeneratedOverlay` now also exposes an explicit empty/dup API, so
+aggregate/analyzer/collector no longer have to hand-roll those snapshot
+copies at each boundary.
 
 CLI formatting now consumes aggregate-owned generated diagnostic contexts
 instead of rebuilding display paths, generated source text, and provenance

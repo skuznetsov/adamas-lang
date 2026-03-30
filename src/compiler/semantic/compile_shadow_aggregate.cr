@@ -65,14 +65,7 @@ module CrystalV2
           @unit_summaries.each do |unit_summary|
             @unit_index_by_path[unit_summary.path] = unit_summary.unit_index
           end
-          @generated_overlay = GeneratedOverlay.new(
-            {} of Int32 => String,
-            [] of Frontend::ExprId,
-            {} of Int32 => String,
-            {} of Int32 => Int32,
-            {} of Int32 => Frontend::ExprId,
-            {} of Int32 => Frontend::ExprId,
-          )
+          @generated_overlay = GeneratedOverlay.empty
           @generated_node_count_by_unit = Array(Int32).new(@unit_summaries.size, 0)
           @generated_root_count_by_unit = Array(Int32).new(@unit_summaries.size, 0)
         end
@@ -123,14 +116,7 @@ module CrystalV2
         ) : Nil
           detach_generated_overlay
           attach_generated_node_paths(overlay.node_file_paths)
-          @generated_overlay = GeneratedOverlay.new(
-            overlay.node_file_paths.dup,
-            overlay.top_level_roots.dup,
-            overlay.root_sources.dup,
-            overlay.root_by_node.dup,
-            overlay.root_origins.dup,
-            overlay.root_macro_defs.dup,
-          )
+          @generated_overlay = overlay.dup
           overlay.top_level_roots.each do |root_id|
             if unit_index = unit_index_for(root_id)
               @generated_root_count_by_unit[unit_index] += 1

@@ -412,14 +412,7 @@ describe "compile semantic shadow aggregate" do
     aggregate.path_for(first_generated_id).should eq("unit_1.cr")
     aggregate.generated_node_count_for_unit(1).should eq(aggregate.generated_node_file_paths.size)
 
-    empty_overlay = Semantic::GeneratedOverlay.new(
-      {} of Int32 => String,
-      [] of Frontend::ExprId,
-      {} of Int32 => String,
-      {} of Int32 => Int32,
-      {} of Int32 => Frontend::ExprId,
-      {} of Int32 => Frontend::ExprId,
-    )
+    empty_overlay = Semantic::GeneratedOverlay.empty
     aggregate.attach_generated_overlay(empty_overlay)
 
     aggregate.path_for(first_generated_id).should be_nil

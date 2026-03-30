@@ -26,14 +26,7 @@ module CrystalV2
           @semantic_diagnostics = [] of Diagnostic
           @name_resolver_diagnostics = [] of Frontend::Diagnostic
           @type_inference_diagnostics = [] of Diagnostic
-          @generated_overlay = GeneratedOverlay.new(
-            {} of Int32 => String,
-            [] of ExprId,
-            {} of Int32 => String,
-            {} of Int32 => Int32,
-            {} of Int32 => ExprId,
-            {} of Int32 => ExprId,
-          )
+          @generated_overlay = GeneratedOverlay.empty
         end
 
         def collect_symbols(node_file_path_provider : Proc(ExprId, String?)? = nil, source_for_path_provider : Proc(String, String?)? = nil)

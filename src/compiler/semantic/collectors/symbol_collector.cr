@@ -87,13 +87,13 @@ module CrystalV2
 
         def generated_overlay : GeneratedOverlay
           GeneratedOverlay.new(
-            @generated_file_paths.dup,
-            @generated_top_level_roots.dup,
-            @generated_root_sources.dup,
-            @generated_root_by_node.dup,
-            @generated_root_origins.dup,
-            @generated_root_macro_defs.dup,
-          )
+            @generated_file_paths,
+            @generated_top_level_roots,
+            @generated_root_sources,
+            @generated_root_by_node,
+            @generated_root_origins,
+            @generated_root_macro_defs,
+          ).dup
         end
 
         private def arena : Frontend::AstArena
