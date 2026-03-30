@@ -747,6 +747,46 @@ describe Semantic::TypeInferenceEngine do
       type.as(PrimitiveType).name.should eq("String")
     end
 
+    it "supports alias-based Slice.empty through generic metaclass builtins" do
+      source = <<-CRYSTAL
+        alias Bytes = Slice(UInt8)
+
+        bytes = Bytes.empty
+        bytes
+      CRYSTAL
+
+      program, analyzer, engine = infer_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.select(&.level.error?).should be_empty
+
+      type = engine.context.get_type(program.roots.last)
+      type.should be_a(ArrayType)
+      array_type = type.as(ArrayType)
+      array_type.element_type.should be_a(PrimitiveType)
+      array_type.element_type.as(PrimitiveType).name.should eq("UInt8")
+    end
+
+    it "supports Pointer(T).null through generic metaclass builtins" do
+      source = <<-CRYSTAL
+        ptr = Pointer(UInt8).null
+        ptr
+      CRYSTAL
+
+      program, analyzer, engine = infer_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.select(&.level.error?).should be_empty
+
+      type = engine.context.get_type(program.roots.last)
+      type.should be_a(PointerType)
+      pointer_type = type.as(PointerType)
+      pointer_type.element_type.should be_a(PrimitiveType)
+      pointer_type.element_type.as(PrimitiveType).name.should eq("UInt8")
+    end
+
     it "matches splat class methods on generic class receivers" do
       source = <<-CRYSTAL
         class Buffer(T)

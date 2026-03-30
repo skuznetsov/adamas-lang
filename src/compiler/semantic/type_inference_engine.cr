@@ -1278,6 +1278,23 @@ module CrystalV2
           instance_type_for(receiver_type.symbol, receiver_type.type_args)
         end
 
+        private def array_like_literal_receiver_type(type : Type) : Type?
+          case type
+          when ArrayType
+            type
+          when ClassType
+            base_name = normalize_class_receiver_name(type.symbol.name)
+            return instantiate_class_receiver(type) if {"Array", "StaticArray"}.includes?(base_name)
+            nil
+          when PrimitiveType
+            return nil unless primitive_metaclass?(type)
+            value_type = primitive_metaclass_value_type(type)
+            value_type.is_a?(ArrayType) ? value_type : nil
+          else
+            nil
+          end
+        end
+
         private def normalize_class_receiver_name(name : String) : String
           name.ends_with?(".class") ? name[0...-6] : name
         end
@@ -1295,6 +1312,8 @@ module CrystalV2
         end
 
         private def class_receiver_type_for_expression(type : Type) : Type
+          return type if primitive_metaclass?(type)
+
           case type
           when PrimitiveType, ArrayType, HashType, TupleType, PointerType, InstanceType
             class_type_reference_for(type)
@@ -1352,6 +1371,8 @@ module CrystalV2
             else
               false
             end
+          when Frontend::GenericNode
+            type_from_type_expr(expr_id) != nil
           else
             false
           end
@@ -3956,6 +3977,8 @@ module CrystalV2
             if prim = primitive_type_for(name)
               return prim
             end
+          when Frontend::GenericNode
+            return normalize_literal_type(infer_generic(node, expr_id))
           when Frontend::TypeofNode
             return normalize_type_argument(infer_typeof(node, expr_id))
           end
@@ -4569,10 +4592,10 @@ module CrystalV2
           end
 
           if method_name == "literal"
-            if receiver_type.is_a?(ArrayType)
+            if literal_type = array_like_literal_receiver_type(receiver_type)
               arg_ids = positional_call_arg_ids(node)
               arg_ids.each { |arg_id| infer_expression(arg_id) }
-              return receiver_type
+              return literal_type
             end
           end
 
@@ -5283,6 +5306,7 @@ module CrystalV2
           when ClassType
             class_name = normalize_class_receiver_name(receiver_type.symbol.name)
             get_builtin_class_methods(class_name, method_name).each { |entry| methods << entry }
+            get_specialized_builtin_class_methods(receiver_type, method_name).each { |entry| methods << entry }
 
             # Look in class_scope for class methods (def self.*)
             if symbol = receiver_type.symbol.class_scope.lookup(method_name)
@@ -5346,6 +5370,7 @@ module CrystalV2
             if primitive_metaclass?(receiver_type)
               class_name = normalize_class_receiver_name(receiver_type.name)
               get_builtin_class_methods(class_name, method_name).each { |entry| methods << entry }
+              get_specialized_builtin_class_methods(receiver_type, method_name).each { |entry| methods << entry }
 
               if methods.empty?
                 if primitive_class = lookup_runtime_class_symbol(class_name)
@@ -5506,6 +5531,71 @@ module CrystalV2
                 dummy_node_id,
                 params: [] of Frontend::Parameter,
                 return_annotation: type_name,
+                scope: dummy_scope,
+                is_class_method: true
+              )
+            end
+          end
+
+          methods
+        end
+
+        private def builtin_class_receiver_signature(receiver_type : Type) : {String, Array(Type)}?
+          case receiver_type
+          when ClassType
+            {normalize_class_receiver_name(receiver_type.symbol.name), receiver_type.type_args || [] of Type}
+          when PrimitiveType
+            return nil unless primitive_metaclass?(receiver_type)
+
+            receiver_name = normalize_class_receiver_name(receiver_type.name)
+            if receiver_name.includes?('(') && receiver_name.includes?(')')
+              paren_start = receiver_name.index('(').not_nil!
+              paren_end = receiver_name.rindex(')').not_nil!
+              base_name = receiver_name[0...paren_start]
+              arg_names = split_top_level_generic_args(receiver_name[(paren_start + 1)...paren_end])
+              type_args = Array(Type).new(arg_names.size)
+              arg_names.each do |arg_name|
+                type_args << parse_type_name(arg_name)
+              end
+              {base_name, type_args}
+            else
+              {receiver_name, [] of Type}
+            end
+          else
+            nil
+          end
+        end
+
+        private def get_specialized_builtin_class_methods(receiver_type : Type, method_name : String) : Array(MethodSymbol)
+          methods = [] of MethodSymbol
+          signature = builtin_class_receiver_signature(receiver_type)
+          return methods unless signature
+
+          base_name, type_args = signature
+          dummy_node_id = ExprId.new(0)
+          dummy_scope = SymbolTable.new(nil)
+
+          case base_name
+          when "Array", "Slice", "StaticArray"
+            element_type = type_args.first?
+            if method_name == "empty" && element_type
+              methods << MethodSymbol.new(
+                method_name,
+                dummy_node_id,
+                params: [] of Frontend::Parameter,
+                return_annotation: "Array(#{element_type})",
+                scope: dummy_scope,
+                is_class_method: true
+              )
+            end
+          when "Pointer"
+            element_type = type_args.first?
+            if method_name == "null" && element_type
+              methods << MethodSymbol.new(
+                method_name,
+                dummy_node_id,
+                params: [] of Frontend::Parameter,
+                return_annotation: "Pointer(#{element_type})",
                 scope: dummy_scope,
                 is_class_method: true
               )
