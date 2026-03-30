@@ -1,9 +1,11 @@
 require "../frontend/ast"
+require "../frontend/diagnostic_formatter"
 require "../frontend/parser/diagnostic"
 require "../frontend/lexer"
 require "../frontend/parser"
 require "../frontend/dispatch"
 require "./diagnostic"
+require "./diagnostic_formatter"
 require "./generated_overlay"
 
 module CrystalV2
@@ -207,6 +209,36 @@ module CrystalV2
             related_spans,
             generated_related_spans_to_secondary_spans(related_spans),
           )
+        end
+
+        def format_shadow_diagnostic(
+          diagnostic : Frontend::Diagnostic,
+          base_sources : Hash(String, String)
+        ) : String
+          if node_id = diagnostic.node_id
+            if context = generated_diagnostic_context_for(node_id)
+              return Frontend::DiagnosticFormatter.format(
+                context.sources_with_generated(base_sources),
+                context.apply(diagnostic)
+              )
+            end
+          end
+          Frontend::DiagnosticFormatter.format(base_sources, diagnostic)
+        end
+
+        def format_shadow_diagnostic(
+          diagnostic : Semantic::Diagnostic,
+          base_sources : Hash(String, String)
+        ) : String
+          if primary_node_id = diagnostic.primary_node_id
+            if context = generated_diagnostic_context_for(primary_node_id)
+              return Semantic::DiagnosticFormatter.format(
+                context.sources_with_generated(base_sources),
+                context.apply(diagnostic)
+              )
+            end
+          end
+          Semantic::DiagnosticFormatter.format(base_sources, diagnostic)
         end
 
         def generated_top_level_roots : Array(Frontend::ExprId)

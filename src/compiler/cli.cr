@@ -5790,38 +5790,6 @@ module CrystalV2
         diagnostic.with_file_path(primary_file_path, related_spans)
       end
 
-      private def format_shadow_semantic_diagnostic(
-        diagnostic : Semantic::Diagnostic,
-        aggregate : Semantic::CompileShadowAggregate,
-        sources_by_path : Hash(String, String)
-      ) : String
-        if primary_node_id = diagnostic.primary_node_id
-          if context = aggregate.generated_diagnostic_context_for(primary_node_id)
-            return Semantic::DiagnosticFormatter.format(
-              context.sources_with_generated(sources_by_path),
-              context.apply(diagnostic)
-            )
-          end
-        end
-        Semantic::DiagnosticFormatter.format(sources_by_path, diagnostic)
-      end
-
-      private def format_shadow_resolution_diagnostic(
-        diagnostic : Frontend::Diagnostic,
-        aggregate : Semantic::CompileShadowAggregate,
-        sources_by_path : Hash(String, String)
-      ) : String
-        if node_id = diagnostic.node_id
-          if context = aggregate.generated_diagnostic_context_for(node_id)
-            return Frontend::DiagnosticFormatter.format(
-              context.sources_with_generated(sources_by_path),
-              context.apply(diagnostic)
-            )
-          end
-        end
-        Frontend::DiagnosticFormatter.format(sources_by_path, diagnostic)
-      end
-
       private def count_shadow_diagnostics_by_unit(
         diagnostics : Array(Semantic::Diagnostic),
         aggregate : Semantic::CompileShadowAggregate
@@ -6282,13 +6250,13 @@ module CrystalV2
         if options.verbose
           sources_by_path = aggregate.sources_by_path
           semantic_diagnostics.each do |diagnostic|
-            err_io.puts format_shadow_semantic_diagnostic(diagnostic, aggregate, sources_by_path)
+            err_io.puts aggregate.format_shadow_diagnostic(diagnostic, sources_by_path)
           end
           resolution_diagnostics.each do |diagnostic|
-            err_io.puts format_shadow_resolution_diagnostic(diagnostic, aggregate, sources_by_path)
+            err_io.puts aggregate.format_shadow_diagnostic(diagnostic, sources_by_path)
           end
           type_diagnostics.each do |diagnostic|
-            err_io.puts format_shadow_semantic_diagnostic(diagnostic, aggregate, sources_by_path)
+            err_io.puts aggregate.format_shadow_diagnostic(diagnostic, sources_by_path)
           end
         end
 
