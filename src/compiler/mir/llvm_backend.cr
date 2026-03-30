@@ -825,6 +825,7 @@ module Crystal::MIR
 
     # Fused parallel pipeline: MIR lowering in fork workers (experimental, correctness issues).
     property fused_mir_lowering : HIRToMIRLowering? = nil
+    property hir_extern_functions : Hash(Tuple(String, String), Crystal::HIR::ExternFunction)? = nil
     # Per-worker MIR optimization: each fork worker optimizes its chunk before LLVM emission.
     # This parallelizes MIR opt across workers, saving serial MIR opt time.
     property worker_mir_opt : Bool = false
@@ -1711,6 +1712,12 @@ module Crystal::MIR
     # Emit a stub function body for methods called on Nil/Unknown/impossible receivers.
     # Returns the LLVM IR string for the stub, or nil if the name doesn't match.
     private def emit_dead_code_stub(name : String, return_type : String, arg_count : Int32 = 0, arg_types : Array(String) = [] of String) : String?
+      # Lib extern forwarding: V2-mangled lib function names (e.g. LibM$Dsqrt_f64$$Float64)
+      # should forward to the registered real extern name (e.g. llvm.sqrt.f64).
+      if (extern = try_resolve_extern_from_mangled(name))
+        return emit_extern_forwarding_stub(name, extern, return_type, arg_count, arg_types)
+      end
+
       # Methods on Nil (e.g. Nil$Hzero, Nil$Hto_i, Nil$Hadditive_identity)
       # Methods on Unknown (e.g. Unknown$Hto_i, Unknown$Hto_u32)
       # Union dispatch on Nil|X (e.g. Nil$_$OR_...#call)
@@ -2105,6 +2112,72 @@ module Crystal::MIR
         "  call void @abort()\n" \
         "  unreachable\n" \
         "}\n"
+      end
+    end
+
+    # Try to resolve a V2-mangled lib function name to its registered ExternFunction.
+    # E.g., "LibM$Dsqrt_f64$$Float64" → ExternFunction(name: "sqrt_f64", real_name: "llvm.sqrt.f64")
+    private def try_resolve_extern_from_mangled(name : String) : Crystal::HIR::ExternFunction?
+      # Extract lib name and fun name from V2 mangling: LibName$Dfun_name$$params
+      dollar_d = name.index("$D")
+      return nil unless dollar_d
+      lib_name = name[0...dollar_d]
+      rest = name[(dollar_d + 2)..]
+      # Strip param suffix: fun_name$$Float64 → fun_name
+      fun_name = if dollar_dollar = rest.index("$$")
+                   rest[0...dollar_dollar]
+                 else
+                   rest
+                 end
+      return nil if lib_name.empty? || fun_name.empty?
+      if externs = @hir_extern_functions
+        result = externs[{lib_name, fun_name}]?
+        return result
+      end
+      nil
+    end
+
+    # Emit a forwarding stub from V2-mangled name to the real extern name.
+    private def emit_extern_forwarding_stub(
+      mangled_name : String,
+      extern : Crystal::HIR::ExternFunction,
+      return_type : String,
+      arg_count : Int32,
+      arg_types : Array(String)
+    ) : String
+      real_name = extern.real_name
+      # Build parameter list
+      param_list = if !arg_types.empty?
+                     arg_types.map_with_index { |t, i| "#{t} %a#{i}" }.join(", ")
+                   else
+                     (0...arg_count).map { |i| "ptr %a#{i}" }.join(", ")
+                   end
+      arg_forward = if !arg_types.empty?
+                      arg_types.map_with_index { |t, i| "#{t} %a#{i}" }.join(", ")
+                    else
+                      (0...arg_count).map { |i| "ptr %a#{i}" }.join(", ")
+                    end
+
+      # Emit the real extern declaration
+      if real_name.starts_with?("llvm.")
+        decl = emit_llvm_intrinsic_declaration(real_name) || "declare #{return_type} @#{real_name}(#{arg_types.join(", ")})"
+        @undefined_externs[real_name] = return_type
+      else
+        decl = "declare #{return_type} @#{real_name}(#{arg_types.join(", ")})"
+      end
+
+      String.build do |io|
+        io << "; extern forwarding: " << mangled_name << " → " << real_name << "\n"
+        io << decl << "\n" unless @emitted_functions.includes?(real_name)
+        io << "define #{return_type} @#{mangled_name}(#{param_list}) {\n"
+        if return_type == "void"
+          io << "  call void @#{real_name}(#{arg_forward})\n"
+          io << "  ret void\n"
+        else
+          io << "  %r = call #{return_type} @#{real_name}(#{arg_forward})\n"
+          io << "  ret #{return_type} %r\n"
+        end
+        io << "}\n"
       end
     end
 

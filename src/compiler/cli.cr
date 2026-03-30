@@ -203,6 +203,43 @@ module CrystalV2
         end
       end
 
+      private class SemanticCompilePrepassSummary
+        getter files_count : Int32
+        getter roots_count : Int32
+        getter analysis_root_count : Int32
+        getter generated_root_count : Int32
+        getter arena_size : Int32
+        getter generated_node_count : Int32
+        getter symbol_count : Int32
+        getter generated_symbol_count : Int32
+        getter identifier_count : Int32
+        getter compile_parse_diagnostic_count : Int32
+        getter shadow_parse_diagnostic_count : Int32
+        getter parse_diagnostic_gap_count : Int32
+        getter semantic_diagnostic_count : Int32
+        getter resolution_diagnostic_count : Int32
+        getter type_diagnostic_count : Int32
+
+        def initialize(
+          @files_count : Int32,
+          @roots_count : Int32,
+          @analysis_root_count : Int32,
+          @generated_root_count : Int32,
+          @arena_size : Int32,
+          @generated_node_count : Int32,
+          @symbol_count : Int32,
+          @generated_symbol_count : Int32,
+          @identifier_count : Int32,
+          @compile_parse_diagnostic_count : Int32,
+          @shadow_parse_diagnostic_count : Int32,
+          @parse_diagnostic_gap_count : Int32,
+          @semantic_diagnostic_count : Int32,
+          @resolution_diagnostic_count : Int32,
+          @type_diagnostic_count : Int32,
+        )
+        end
+      end
+
       private class SemanticShadowUnitSummary
         getter path : String
         getter roots_count : Int32
@@ -264,6 +301,10 @@ module CrystalV2
 
       private def semantic_shadow_enabled? : Bool
         BootstrapEnv.enabled?("CRYSTAL_V2_SEMANTIC_SHADOW")
+      end
+
+      private def semantic_compile_enabled? : Bool
+        BootstrapEnv.enabled?("CRYSTAL_V2_SEMANTIC_COMPILE")
       end
 
       private def semantic_shadow_strict? : Bool
@@ -1308,6 +1349,16 @@ module CrystalV2
           log(options, out_io, "  Stop after parse (CRYSTAL_V2_STOP_AFTER_PARSE)")
           emit_timings(options, out_io, timings, total_start)
           return 0
+        end
+
+        if semantic_compile_enabled?
+          semantic_compile_start = Time.instant
+          if status = run_semantic_compile_prepass(all_arenas, options, out_io, err_io)
+            timings["semantic_compile_prepass"] = (Time.instant - semantic_compile_start).total_milliseconds if options.stats
+            emit_timings(options, out_io, timings, total_start)
+            return status
+          end
+          timings["semantic_compile_prepass"] = (Time.instant - semantic_compile_start).total_milliseconds if options.stats
         end
 
         if semantic_shadow_enabled?
@@ -2500,6 +2551,14 @@ module CrystalV2
         if fused_parallel
           llvm_gen.fused_mir_lowering = mir_lowering
         end
+        # Provide HIR extern function map for lib function forwarding stubs
+        extern_map = {} of Tuple(String, String) => Crystal::HIR::ExternFunction
+        hir_module.extern_functions.each do |ef|
+          if lib_name = ef.lib_name
+            extern_map[{lib_name, ef.name}] = ef
+          end
+        end
+        llvm_gen.hir_extern_functions = extern_map unless extern_map.empty?
         # Enable per-worker MIR optimization: workers optimize their function chunk
         # before LLVM emission, parallelizing MIR opt across fork workers.
         # This saves the serial MIR opt phase (skipped when workers do it).
@@ -5650,6 +5709,194 @@ module CrystalV2
           shadow_units << {path: unit.path, source: unit.source}
         end
         Semantic::CompileShadowAggregate.build(shadow_units)
+      end
+
+      private def emit_semantic_compile_prepass_summary(
+        summary : SemanticCompilePrepassSummary,
+        options : Options,
+        out_io : IO,
+      ) : Nil
+        return unless options.verbose || options.stats
+
+        out_io.puts [
+          "Semantic compile prepass:",
+          "files=#{summary.files_count}",
+          "roots=#{summary.roots_count}",
+          "analysis_roots=#{summary.analysis_root_count}",
+          "generated_roots=#{summary.generated_root_count}",
+          "nodes=#{summary.arena_size}",
+          "generated_nodes=#{summary.generated_node_count}",
+          "symbols=#{summary.symbol_count}",
+          "generated_symbols=#{summary.generated_symbol_count}",
+          "identifiers=#{summary.identifier_count}",
+          "compile_parse_diags=#{summary.compile_parse_diagnostic_count}",
+          "shadow_parse_diags=#{summary.shadow_parse_diagnostic_count}",
+          "parse_diag_gaps=#{summary.parse_diagnostic_gap_count}",
+          "semantic_diags=#{summary.semantic_diagnostic_count}",
+          "resolution_diags=#{summary.resolution_diagnostic_count}",
+          "type_diags=#{summary.type_diagnostic_count}",
+        ].join(" ")
+      end
+
+      private def semantic_compile_prepass_summary(
+        units : Array(ParsedUnit),
+        aggregate : Semantic::CompileShadowAggregate,
+        analyzer : Semantic::Analyzer,
+        identifier_count : Int32,
+        compile_parse_diagnostic_count : Int32,
+        shadow_parse_diagnostic_count : Int32,
+        parse_diagnostic_gap_count : Int32,
+        semantic_diagnostic_count : Int32,
+        resolution_diagnostic_count : Int32,
+        type_diagnostic_count : Int32,
+      ) : SemanticCompilePrepassSummary
+        SemanticCompilePrepassSummary.new(
+          files_count: units.size,
+          roots_count: aggregate.program.roots.size,
+          analysis_root_count: aggregate.program.roots.size + aggregate.generated_top_level_roots.size,
+          generated_root_count: aggregate.generated_top_level_roots.size,
+          arena_size: aggregate.program.arena.size,
+          generated_node_count: aggregate.generated_node_file_paths.size,
+          symbol_count: count_local_symbols(analyzer.global_context.symbol_table),
+          generated_symbol_count: count_local_generated_symbols(analyzer.global_context.symbol_table),
+          identifier_count: identifier_count,
+          compile_parse_diagnostic_count: compile_parse_diagnostic_count,
+          shadow_parse_diagnostic_count: shadow_parse_diagnostic_count,
+          parse_diagnostic_gap_count: parse_diagnostic_gap_count,
+          semantic_diagnostic_count: semantic_diagnostic_count,
+          resolution_diagnostic_count: resolution_diagnostic_count,
+          type_diagnostic_count: type_diagnostic_count,
+        )
+      end
+
+      private def run_semantic_compile_prepass(
+        units : Array(ParsedUnit),
+        options : Options,
+        out_io : IO,
+        err_io : IO,
+      ) : Int32?
+        aggregate = build_semantic_shadow_aggregate(units)
+        analyzer = Semantic::Analyzer.new(aggregate.program)
+        sources_by_path = aggregate.sources_by_path
+        compile_parse_diagnostics = units.flat_map(&.parse_diagnostics)
+        shadow_parse_diagnostics = aggregate.parse_diagnostics.map { |diagnostic| aggregate.enrich_shadow_diagnostic(diagnostic) }
+        parse_diagnostic_parity = Semantic::CompileShadowParseDiagnosticParity.compare(
+          compile_parse_diagnostics,
+          shadow_parse_diagnostics
+        )
+        if strict_message = parse_diagnostic_parity.strict_message("compile", "shadow")
+          compile_parse_diagnostics.each do |diagnostic|
+            err_io.puts Frontend::DiagnosticFormatter.format(sources_by_path, diagnostic)
+          end
+          shadow_parse_diagnostics.each do |diagnostic|
+            err_io.puts aggregate.format_shadow_diagnostic(diagnostic, sources_by_path)
+          end
+          emit_semantic_compile_prepass_summary(
+            semantic_compile_prepass_summary(
+              units,
+              aggregate,
+              analyzer,
+              0,
+              compile_parse_diagnostics.size,
+              shadow_parse_diagnostics.size,
+              parse_diagnostic_parity.gap_count,
+              0,
+              0,
+              0,
+            ),
+            options,
+            out_io
+          )
+          err_io.puts "\nerror: #{strict_message}"
+          return 1
+        end
+
+        analyzer.collect_symbols(
+          node_file_path_provider: ->(expr_id : Frontend::ExprId) { aggregate.path_for(expr_id) },
+          source_for_path_provider: ->(path : String) { aggregate.source_for_path(path) },
+        )
+        aggregate.attach_generated_overlay(analyzer.generated_overlay)
+
+        semantic_diagnostics = analyzer.semantic_diagnostics.map { |diagnostic| aggregate.enrich_shadow_diagnostic(diagnostic) }
+        semantic_diagnostics.each do |diagnostic|
+          err_io.puts aggregate.format_shadow_diagnostic(diagnostic, sources_by_path)
+        end
+        if analyzer.semantic_errors?
+          emit_semantic_compile_prepass_summary(
+            semantic_compile_prepass_summary(
+              units,
+              aggregate,
+              analyzer,
+              0,
+              compile_parse_diagnostics.size,
+              shadow_parse_diagnostics.size,
+              parse_diagnostic_parity.gap_count,
+              semantic_diagnostics.size,
+              0,
+              0,
+            ),
+            options,
+            out_io
+          )
+          err_io.puts "\nerror: compilation failed due to semantic compile prepass errors"
+          return 1
+        end
+
+        resolve_result = analyzer.resolve_names
+        resolution_diagnostics = resolve_result.diagnostics.map { |diagnostic| aggregate.enrich_shadow_diagnostic(diagnostic) }
+        resolution_diagnostics.each do |diagnostic|
+          err_io.puts aggregate.format_shadow_diagnostic(diagnostic, sources_by_path)
+        end
+        if resolution_diagnostics.any?
+          emit_semantic_compile_prepass_summary(
+            semantic_compile_prepass_summary(
+              units,
+              aggregate,
+              analyzer,
+              resolve_result.identifier_symbols.size,
+              compile_parse_diagnostics.size,
+              shadow_parse_diagnostics.size,
+              parse_diagnostic_parity.gap_count,
+              semantic_diagnostics.size,
+              resolution_diagnostics.size,
+              0,
+            ),
+            options,
+            out_io
+          )
+          err_io.puts "\nerror: compilation failed due to semantic compile prepass errors"
+          return 1
+        end
+
+        analyzer.infer_types(resolve_result.identifier_symbols)
+        type_diagnostics = analyzer.type_inference_diagnostics.map { |diagnostic| aggregate.enrich_shadow_diagnostic(diagnostic) }
+        type_diagnostics.each do |diagnostic|
+          err_io.puts aggregate.format_shadow_diagnostic(diagnostic, sources_by_path)
+        end
+
+        emit_semantic_compile_prepass_summary(
+          semantic_compile_prepass_summary(
+            units,
+            aggregate,
+            analyzer,
+            resolve_result.identifier_symbols.size,
+            compile_parse_diagnostics.size,
+            shadow_parse_diagnostics.size,
+            parse_diagnostic_parity.gap_count,
+            semantic_diagnostics.size,
+            resolution_diagnostics.size,
+            type_diagnostics.size,
+          ),
+          options,
+          out_io
+        )
+
+        if analyzer.type_inference_errors?
+          err_io.puts "\nerror: compilation failed due to semantic compile prepass errors"
+          return 1
+        end
+
+        nil
       end
 
       private def count_local_symbols(table : Semantic::SymbolTable) : Int32
