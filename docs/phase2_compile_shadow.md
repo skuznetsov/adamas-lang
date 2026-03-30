@@ -153,11 +153,11 @@ contract instead of five ad-hoc hash maps, and the compile-shadow graph
 substrate owns the lookup used by CLI formatting and generated-diagnostic
 counting.
 
-CLI formatting now consumes aggregate-owned generated note collections rather
-than assembling provenance labels itself, so frontend and semantic generated
-diagnostics no longer duplicate note-construction logic in the CLI layer.
-Same-file expansions still omit the `macro defined here` note to avoid
-redundant output when the call site and definition live in the same file.
+CLI formatting now consumes aggregate-owned generated diagnostic contexts
+instead of rebuilding display paths, generated source text, and provenance
+notes in the CLI layer. Same-file expansions still omit the
+`macro defined here` note to avoid redundant output when the call site and
+definition live in the same file.
 
 On the current tree, that top-level macro gap is now closed for the semantic
 symbol table: a no-prelude carrier with a top-level `{% for %}` that generates

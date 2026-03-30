@@ -231,11 +231,6 @@ module CrystalV2
         end
       end
 
-      private record ShadowGeneratedDiagnosticContext,
-        display_path : String?,
-        source : String,
-        related_spans : Array(Frontend::RelatedSpan)
-
       private class LibEntry
         getter node : Frontend::LibNode
         getter arena : Frontend::ArenaLike
@@ -5795,33 +5790,14 @@ module CrystalV2
         diagnostic.with_file_path(primary_file_path, related_spans)
       end
 
-      private def shadow_generated_display_path(file_path : String?) : String?
-        return nil unless file_path
-        "#{file_path} [generated]"
-      end
-
-      private def build_shadow_generated_diagnostic_context(
-        node_id : Frontend::ExprId,
-        aggregate : Semantic::CompileShadowAggregate,
-      ) : ShadowGeneratedDiagnosticContext?
-        return nil unless info = aggregate.generated_info_for(node_id)
-        return nil unless generated_source = info.source
-
-        ShadowGeneratedDiagnosticContext.new(
-          shadow_generated_display_path(aggregate.path_for(node_id)),
-          generated_source,
-          aggregate.generated_related_spans_for(node_id),
-        )
-      end
-
       private def format_shadow_semantic_diagnostic(
         diagnostic : Semantic::Diagnostic,
         aggregate : Semantic::CompileShadowAggregate,
         sources_by_path : Hash(String, String)
       ) : String
         if primary_node_id = diagnostic.primary_node_id
-          if context = build_shadow_generated_diagnostic_context(primary_node_id, aggregate)
-            secondary_spans = diagnostic.secondary_spans + aggregate.generated_secondary_spans_for(primary_node_id)
+          if context = aggregate.generated_diagnostic_context_for(primary_node_id)
+            secondary_spans = diagnostic.secondary_spans + context.secondary_spans
             display_diagnostic = diagnostic.with_paths(context.display_path, secondary_spans)
             generated_sources = sources_by_path.dup
             generated_sources[context.display_path.not_nil!] = context.source if context.display_path
@@ -5837,7 +5813,7 @@ module CrystalV2
         sources_by_path : Hash(String, String)
       ) : String
         if node_id = diagnostic.node_id
-          if context = build_shadow_generated_diagnostic_context(node_id, aggregate)
+          if context = aggregate.generated_diagnostic_context_for(node_id)
             display_diagnostic = diagnostic.with_file_path(context.display_path, diagnostic.related_spans + context.related_spans)
             generated_sources = sources_by_path.dup
             generated_sources[context.display_path.not_nil!] = context.source if context.display_path

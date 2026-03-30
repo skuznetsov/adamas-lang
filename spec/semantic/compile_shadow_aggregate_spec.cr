@@ -688,12 +688,10 @@ describe "compile semantic shadow aggregate" do
 
     diagnostic = result.diagnostics.first
     node_id = diagnostic.node_id.not_nil!
-    generated_source = aggregate.generated_source_for(node_id).not_nil!
-    display_path = "#{aggregate.path_for(node_id)} [generated]"
-    related_spans = aggregate.generated_related_spans_for(node_id)
+    context = aggregate.generated_diagnostic_context_for(node_id).not_nil!
     formatted = Frontend::DiagnosticFormatter.format(
-      {display_path => generated_source, "unit_1.cr" => shadow_sources["unit_1.cr"]},
-      diagnostic.with_file_path(display_path, related_spans)
+      {context.display_path.not_nil! => context.source, "unit_1.cr" => shadow_sources["unit_1.cr"]},
+      diagnostic.with_file_path(context.display_path, context.related_spans)
     )
 
     formatted.should contain("note: expanded from macro call here")
@@ -728,12 +726,10 @@ describe "compile semantic shadow aggregate" do
 
     diagnostic = analyzer.type_inference_diagnostics.first
     node_id = diagnostic.primary_node_id.not_nil!
-    generated_source = aggregate.generated_source_for(node_id).not_nil!
-    display_path = "#{aggregate.path_for(node_id)} [generated]"
-    secondary_spans = aggregate.generated_secondary_spans_for(node_id)
+    context = aggregate.generated_diagnostic_context_for(node_id).not_nil!
     formatted = Semantic::DiagnosticFormatter.format(
-      {display_path => generated_source, "unit_1.cr" => shadow_sources["unit_1.cr"]},
-      diagnostic.with_paths(display_path, secondary_spans)
+      {context.display_path.not_nil! => context.source, "unit_1.cr" => shadow_sources["unit_1.cr"]},
+      diagnostic.with_paths(context.display_path, context.secondary_spans)
     )
 
     formatted.should contain("note: expanded from macro call here")
@@ -767,12 +763,10 @@ describe "compile semantic shadow aggregate" do
 
     diagnostic = result.diagnostics.first
     node_id = diagnostic.node_id.not_nil!
-    generated_source = aggregate.generated_source_for(node_id).not_nil!
-    display_path = "#{aggregate.path_for(node_id)} [generated]"
-    related_spans = aggregate.generated_related_spans_for(node_id)
+    context = aggregate.generated_diagnostic_context_for(node_id).not_nil!
     formatted = Frontend::DiagnosticFormatter.format(
-      {display_path => generated_source, "unit_0.cr" => shadow_sources["unit_0.cr"], "unit_1.cr" => shadow_sources["unit_1.cr"]},
-      diagnostic.with_file_path(display_path, related_spans)
+      {context.display_path.not_nil! => context.source, "unit_0.cr" => shadow_sources["unit_0.cr"], "unit_1.cr" => shadow_sources["unit_1.cr"]},
+      diagnostic.with_file_path(context.display_path, context.related_spans)
     )
 
     formatted.should contain("note: macro defined here")
@@ -807,12 +801,10 @@ describe "compile semantic shadow aggregate" do
 
     diagnostic = analyzer.type_inference_diagnostics.first
     node_id = diagnostic.primary_node_id.not_nil!
-    generated_source = aggregate.generated_source_for(node_id).not_nil!
-    display_path = "#{aggregate.path_for(node_id)} [generated]"
-    secondary_spans = aggregate.generated_secondary_spans_for(node_id)
+    context = aggregate.generated_diagnostic_context_for(node_id).not_nil!
     formatted = Semantic::DiagnosticFormatter.format(
-      {display_path => generated_source, "unit_0.cr" => shadow_sources["unit_0.cr"], "unit_1.cr" => shadow_sources["unit_1.cr"]},
-      diagnostic.with_paths(display_path, secondary_spans)
+      {context.display_path.not_nil! => context.source, "unit_0.cr" => shadow_sources["unit_0.cr"], "unit_1.cr" => shadow_sources["unit_1.cr"]},
+      diagnostic.with_paths(context.display_path, context.secondary_spans)
     )
 
     formatted.should contain("note: macro defined here")

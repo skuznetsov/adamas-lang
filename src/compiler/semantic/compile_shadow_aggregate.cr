@@ -10,6 +10,12 @@ module CrystalV2
   module Compiler
     module Semantic
       class CompileShadowAggregate
+        record GeneratedDiagnosticContext,
+          display_path : String?,
+          source : String,
+          related_spans : Array(Frontend::RelatedSpan),
+          secondary_spans : Array(Semantic::SecondarySpan)
+
         record UnitSummary,
           unit_index : Int32,
           path : String,
@@ -169,6 +175,19 @@ module CrystalV2
           end
         end
 
+        def generated_diagnostic_context_for(expr_id : Frontend::ExprId) : GeneratedDiagnosticContext?
+          return nil unless info = generated_info_for(expr_id)
+          return nil unless generated_source = info.source
+
+          related_spans = generated_related_spans_for(expr_id)
+          GeneratedDiagnosticContext.new(
+            generated_display_path_for(expr_id),
+            generated_source,
+            related_spans,
+            generated_related_spans_to_secondary_spans(related_spans),
+          )
+        end
+
         def generated_top_level_roots : Array(Frontend::ExprId)
           @generated_overlay.top_level_roots
         end
@@ -229,6 +248,19 @@ module CrystalV2
           end
           macro_def_span = @program.arena[macro_def_node_id].span
           Frontend::RelatedSpan.new(macro_def_span, "macro defined here", macro_def_node_id, macro_def_path)
+        end
+
+        private def generated_display_path_for(expr_id : Frontend::ExprId) : String?
+          return nil unless file_path = path_for(expr_id)
+          "#{file_path} [generated]"
+        end
+
+        private def generated_related_spans_to_secondary_spans(
+          related_spans : Array(Frontend::RelatedSpan)
+        ) : Array(Semantic::SecondarySpan)
+          related_spans.map do |related|
+            Semantic::SecondarySpan.new(related.span, related.label, related.node_id, related.file_path)
+          end
         end
 
         private def self.grow_index_owner_map(unit_index_by_node : Array(Int32), arena_size : Int32) : Nil
