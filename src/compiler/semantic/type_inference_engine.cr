@@ -18,6 +18,7 @@ require "./types/virtual_type"
 require "../hir/debug_hooks"
 require "./analyzer"
 require "../frontend/ast"
+require "../../runtime"
 
 module CrystalV2
   module Compiler
@@ -72,6 +73,7 @@ module CrystalV2
         @instance_type_cache : Hash(ClassSymbol, InstanceType)
         @method_lookup_cache : Hash(MethodLookupKey, MethodSymbol?)
         @unknown_type : PrimitiveType
+        @flags : Set(String)
 
         private struct MethodCandidatesKey
           getter receiver_id : UInt64
@@ -120,6 +122,7 @@ module CrystalV2
           @global_table : SymbolTable? = nil,
           @context : TypeContext = TypeContext.new,
           @extra_roots : Array(ExprId) = [] of ExprId,
+          @flags : Set(String) = Runtime.target_flags,
         )
           # Self-hosted binaries have shown unstable reads through Program#arena.
           # Type inference only operates on parser-built AstArena programs here.
@@ -2555,6 +2558,10 @@ module CrystalV2
           condition_id = node.condition
           condition_type = infer_expression(condition_id)
 
+          if known_branch = known_if_branch_body(node)
+            return infer_block_result(known_branch)
+          end
+
           # Crystal allows any type as condition (truthy check: nil and false are falsy)
           # No need to require Bool type
 
@@ -2919,6 +2926,11 @@ module CrystalV2
           condition_id = node.condition
           condition_type = infer_expression(condition_id)
 
+          if known_condition = known_macro_condition_value(condition_id)
+            selected_body = known_condition ? (node.else_branch || [] of ExprId) : node.then_branch
+            return infer_block_result(selected_body)
+          end
+
           # Crystal allows any type as condition (truthy check)
           # No need to require Bool type
 
@@ -2941,6 +2953,22 @@ module CrystalV2
           end
 
           union_of([then_type, else_type])
+        end
+
+        private def known_if_branch_body(node : Frontend::IfNode) : Array(ExprId)?
+          known_condition = known_macro_condition_value(node.condition)
+          return nil if known_condition.nil?
+          return node.then_body if known_condition
+
+          if elsifs = node.elsifs
+            elsifs.each do |elsif_branch|
+              elsif_condition = known_macro_condition_value(elsif_branch.condition)
+              return nil if elsif_condition.nil?
+              return elsif_branch.body if elsif_condition
+            end
+          end
+
+          node.else_body || [] of ExprId
         end
 
         # Phase 25: Type inference for until loop (inverse of while)
@@ -4555,6 +4583,10 @@ module CrystalV2
               result
             }
 
+            if result = infer_macro_builtin_receiverless_call(method_name, node)
+              return infer_block_if_present.call(result)
+            end
+
             # If resolver already bound this identifier to a method (incl. self/class methods), use it
             if symbol = @identifier_symbols[node.callee]?
               debug("  identifier_symbols hit: #{symbol.class.name}") if @debug_enabled
@@ -5181,6 +5213,75 @@ module CrystalV2
               return infer_method_body_type(method, @context.nil_type, arg_types)
             end
           end
+        end
+
+        private def infer_macro_builtin_receiverless_call(method_name : String, node : Frontend::CallNode) : Type?
+          case method_name
+          when "flag?"
+            return @context.bool_type unless macro_flag_condition_value(node).nil?
+          end
+
+          nil
+        end
+
+        private def known_macro_condition_value(expr_id : ExprId) : Bool?
+          node = @arena[expr_id]
+
+          case node
+          when Frontend::BoolNode
+            node.value
+          when Frontend::NilNode
+            false
+          when Frontend::GroupingNode
+            known_macro_condition_value(node.expression)
+          when Frontend::MacroExpressionNode
+            known_macro_condition_value(node.expression)
+          when Frontend::UnaryNode
+            op = Frontend.node_operator_string(node) || ""
+            return nil unless op == "!"
+            value = known_macro_condition_value(node.operand)
+            value.nil? ? nil : !value
+          when Frontend::BinaryNode
+            left = known_macro_condition_value(node.left)
+            right = known_macro_condition_value(node.right)
+
+            case Frontend.node_operator_string(node) || ""
+            when "&&"
+              return false if left == false || right == false
+              return true if left == true && right == true
+              nil
+            when "||"
+              return true if left == true || right == true
+              return false if left == false && right == false
+              nil
+            else
+              nil
+            end
+          when Frontend::CallNode
+            macro_flag_condition_value(node)
+          else
+            nil
+          end
+        end
+
+        private def macro_flag_condition_value(node : Frontend::CallNode) : Bool?
+          callee = @arena[node.callee]
+          return nil unless callee.is_a?(Frontend::IdentifierNode)
+          return nil unless identifier_name_for(node.callee, callee) == "flag?"
+          return nil unless node.args.size == 1
+
+          arg = @arena[node.args[0]]
+          flag_name = case arg
+                      when Frontend::SymbolNode
+                        intern_name(arg.name).lchop(':')
+                      when Frontend::StringNode
+                        intern_name(arg.value)
+                      else
+                        nil
+                      end
+          return nil unless flag_name
+
+          @flags.includes?(flag_name)
         end
 
         # Week 1 Day 2: Infer type arguments for generic method from call arguments

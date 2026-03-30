@@ -1,6 +1,30 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-03-30)
 
 ## Current Status
+- **Fresh semantic prepass checkpoint: macro `flag?` conditions are now understood by the new inferer and dead platform branches stop polluting the stage3 prepass (2026-03-30, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/type_inference_engine.cr` now carries the active runtime flag set into semantic inference
+    - receiverless `flag?(...)` is treated as a known macro builtin instead of an unresolved top-level function
+    - `if` / `unless` nodes now short-circuit when their condition is a known macro-condition expression built from `flag?`, `!`, `&&`, `||`, grouping, and `nil`/bool literals
+    - focused regression coverage lives in `spec/semantic/type_inference_macro_condition_spec.cr`
+  - decisive evidence:
+    - focused spec is green:
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_macro_condition_spec.cr --error-trace`
+    - rebuilt probe compiler is green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+    - live no-prelude carrier is green now:
+      - `CRYSTAL_V2_SEMANTIC_COMPILE=1 /tmp/crystal_v2_semantic_stage3probe /tmp/semantic_flag_probe.cr --no-prelude --stats --verbose`
+      - now reports `type_diags=0`
+    - full semantic stage3 probe moved again:
+      - `bash /tmp/run_semantic_compile_stage3probe_log.sh`
+      - `type_diags=968 -> 958`
+      - `Function 'flag?' not found` no longer appears in `/tmp/stage3_semantic_probe.log`
+  - practical boundary:
+    - this closes the `flag?` / platform macro-condition family only
+    - it does **not** yet evaluate `has_constant?` / `has_method?` macro predicates, and it does not solve the still-dense downstream families:
+      - `Pointer(UInt8)#copy_to`
+      - Nil arithmetic cascades in fast-float / string formatting
+      - `to_u32!` / indexing on `Nil`
 - **Fresh semantic prepass checkpoint: `|| return nil` / guarded tuple destructuring now survives the new inferer without reintroducing the old `flag?` macro-condition regression (2026-03-30, current session)**:
   - trustworthy setup:
     - `src/compiler/semantic/type_inference_engine.cr` now treats `&&` / `||` with a control-flow-terminating RHS (`return`, `raise`, `break`, `next`) as a special logical corridor instead of blindly folding them to `Bool`

@@ -3,6 +3,21 @@
 Updated: 2026-03-30
 Context: compiler/bootstrap/stage2-stability
 
+[LM-347|verified]: The current semantic stage3 frontier is no longer blocked by
+the raw `flag?` macro-condition family. `TypeInferenceEngine` now receives the
+active runtime flag set, treats receiverless `flag?(...)` as a known macro
+builtin, and short-circuits `if` / `unless` when their condition is a known
+macro-condition expression built from `flag?`, `!`, `&&`, `||`, grouping, and
+bool/nil literals. Focused regression
+`spec/semantic/type_inference_macro_condition_spec.cr` is green, the live
+no-prelude carrier `/tmp/semantic_flag_probe.cr` now reports `type_diags=0`,
+and the full semantic stage3 probe moved from `type_diags=968` to
+`type_diags=958`. `Function 'flag?' not found` no longer appears in
+`/tmp/stage3_semantic_probe.log`. Boundary: this does not yet cover
+`has_constant?` / `has_method?`, and it does not solve the remaining dense
+families around `Pointer(UInt8)#copy_to`, Nil arithmetic, or `to_u32!` on Nil.
+{F/G/R: 0.95/0.64/0.95} [verified]
+
 [LM-346|verified]: The current semantic stage3 frontier is no longer blocked by
 the `parse_transition(...) || return nil` / guarded tuple-destructuring
 corridor that previously degraded locals to `Bool`. The durable fix was *not*

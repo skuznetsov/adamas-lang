@@ -52,7 +52,7 @@ module CrystalV2
 
         def infer_types(identifier_symbols : Hash(ExprId, Symbol))
           debug_hook("analyzer.infer.start", "symbols=#{identifier_symbols.size} roots=#{analysis_root_count}")
-          engine = TypeInferenceEngine.new(@program, identifier_symbols, @global_context.symbol_table, extra_roots: @generated_overlay.top_level_roots)
+          engine = TypeInferenceEngine.new(@program, identifier_symbols, @global_context.symbol_table, extra_roots: @generated_overlay.top_level_roots, flags: @global_context.flags)
           engine.infer_types
           @type_inference_diagnostics = engine.diagnostics
           debug_hook("analyzer.infer.finish", "diagnostics=#{@type_inference_diagnostics.size}")
