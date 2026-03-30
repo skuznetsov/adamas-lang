@@ -162,6 +162,7 @@
     - parser-side drift is now summarized explicitly too via `parse_diag_gaps` and `Semantic shadow parse diagnostics: ...`, so malformed carriers can be compared without dumping raw parser diagnostics into the compile driver
     - CLI regression coverage now locks both resolution and type generated-diagnostic note behavior for same-file vs cross-file expansions, including the `...[generated]` display path and macro-definition note suppression rules
     - the next honest work item is no longer macro-call parity, top-level generated-body traversal, generated snippet visibility, or macro-call origin notes; it is broader expanded-node ownership/provenance and how far aggregate-backed shadow can carry diagnostics/contracts without pretending to be lowering
+    - that next frontier is now scoped in `docs/phase2_provenance_contract.md`: first collapse shadow-only generated provenance, diagnostic-context assembly, and parser-parity identity into one explicit contract before attempting a compile-graph rewrite
     - replacing reparse-based aggregation is still more honest follow-up than reopening Phase 1 identity questions
 - **Fresh stage3 split: trustworthy current-debug hosts can again build `stage2 --release` green, but resulting self-hosted stage2 runtime is still broken and now clearly splits into multiple families (2026-03-28, current session)**:
   - trustworthy setup:

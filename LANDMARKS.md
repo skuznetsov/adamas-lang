@@ -290,6 +290,11 @@ Verified sequence:
   - original compile parse diagnostics and aggregate reparse diagnostics are
     now counted separately too, but that is still telemetry rather than a
     unified compile-authoritative parser diagnostic contract
+  - the next bounded move is no longer another macro parity tweak; it is to
+    collapse shadow-only generated provenance, diagnostic-context assembly,
+    and parser-parity identity into one explicit provenance contract before
+    attempting a compile-graph rewrite. That contract is now scoped in
+    `docs/phase2_provenance_contract.md`
   - parser-side drift is now summarized through a dedicated parity object, but
     it still compares shadow telemetry rather than establishing compile-path
     parser authority

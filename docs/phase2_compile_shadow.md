@@ -448,3 +448,9 @@ preserves:
 - prelude/require ordering
 - macro-expanded units
 - compile diagnostics parity
+
+The bounded preparation step for that frontier is now documented separately in
+`docs/phase2_provenance_contract.md`: before any compile-graph rewrite, the
+project should first collapse the current shadow-only generated provenance,
+diagnostic-context assembly, and parser-parity identity into one explicit
+provenance contract.
