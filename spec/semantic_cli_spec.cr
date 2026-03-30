@@ -30,6 +30,29 @@ private def with_semantic_shadow_env(&)
   end
 end
 
+private def with_semantic_shadow_strict_env(&)
+  previous_shadow = ENV["CRYSTAL_V2_SEMANTIC_SHADOW"]?
+  previous_strict = ENV["CRYSTAL_V2_SEMANTIC_SHADOW_STRICT"]?
+  ENV["CRYSTAL_V2_SEMANTIC_SHADOW"] = "1"
+  ENV["CRYSTAL_V2_SEMANTIC_SHADOW_STRICT"] = "1"
+
+  begin
+    yield
+  ensure
+    if previous_shadow
+      ENV["CRYSTAL_V2_SEMANTIC_SHADOW"] = previous_shadow
+    else
+      ENV.delete("CRYSTAL_V2_SEMANTIC_SHADOW")
+    end
+
+    if previous_strict
+      ENV["CRYSTAL_V2_SEMANTIC_SHADOW_STRICT"] = previous_strict
+    else
+      ENV.delete("CRYSTAL_V2_SEMANTIC_SHADOW_STRICT")
+    end
+  end
+end
+
 describe CrystalV2::Compiler::CLI do
   it "reports semantic errors when --no-codegen is used" do
     file_path = File.join(__DIR__, "semantic/test_data/missing_method.cr")
@@ -113,6 +136,28 @@ describe CrystalV2::Compiler::CLI do
       output.should contain("parse_diag_gaps=0")
       output.should contain("Semantic shadow parse diagnostics: compile_total=1 compile_unique=1 shadow_total=1 shadow_unique=1 gaps=0")
       output.should contain("Semantic shadow unit: path=#{main_path}")
+    end
+  end
+
+  it "keeps strict semantic shadow green when parse parity matches" do
+    with_temp_shadow_project({
+      "main.cr" => ")\n",
+    }) do |dir|
+      main_path = File.join(dir, "main.cr")
+      output_path = File.join(dir, "main")
+      out_io = IO::Memory.new
+      err_io = IO::Memory.new
+
+      with_semantic_shadow_strict_env do
+        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli.run(out_io: out_io, err_io: err_io)
+      end
+
+      output = out_io.to_s
+      diagnostics = err_io.to_s
+      output.should contain("parse_diag_gaps=0")
+      output.should contain("Semantic shadow parse diagnostics: compile_total=1 compile_unique=1 shadow_total=1 shadow_unique=1 gaps=0")
+      diagnostics.should_not contain("warning: semantic shadow failed:")
     end
   end
 
@@ -441,6 +486,49 @@ describe CrystalV2::Compiler::CLI do
       output.should contain("Semantic shadow declarations: enums provenance semantic_direct_total=0 semantic_direct_unique=0 semantic_macro_expanded_total=1 semantic_macro_expanded_unique=1")
       output.should contain("Semantic shadow declarations: constants provenance collector_direct_total=0 collector_direct_unique=0 collector_macro_expanded_total=1 collector_macro_expanded_unique=1")
       output.should contain("Semantic shadow declarations: constants provenance semantic_direct_total=0 semantic_direct_unique=0 semantic_macro_expanded_total=1 semantic_macro_expanded_unique=1")
+    end
+  end
+
+  it "keeps strict semantic shadow green when declaration parity matches" do
+    with_temp_shadow_project({
+      "lib.cr"  => <<-CR,
+        macro define_bundle(class_name, module_name, enum_name, const_name)
+          class {{class_name.id}}
+          end
+
+          module {{module_name.id}}
+          end
+
+          enum {{enum_name.id}}
+            One
+          end
+
+          {{const_name.id}} = 1
+        end
+      CR
+      "main.cr" => <<-CR,
+        require "./lib"
+        define_bundle(:Alpha, :Beta, :Mode, :FLAG)
+      CR
+    }) do |dir|
+      main_path = File.join(dir, "main.cr")
+      output_path = File.join(dir, "main")
+      out_io = IO::Memory.new
+      err_io = IO::Memory.new
+
+      with_semantic_shadow_strict_env do
+        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli.run(out_io: out_io, err_io: err_io)
+      end
+
+      output = out_io.to_s
+      diagnostics = err_io.to_s
+      output.should contain("declaration_gaps=0")
+      output.should contain("Semantic shadow declarations: classes collector_total=1 collector_unique=1 semantic_total=1 semantic_unique=1 gaps=0")
+      output.should contain("Semantic shadow declarations: modules collector_total=1 collector_unique=1 semantic_total=1 semantic_unique=1 gaps=0")
+      output.should contain("Semantic shadow declarations: enums collector_total=1 collector_unique=1 semantic_total=1 semantic_unique=1 gaps=0")
+      output.should contain("Semantic shadow declarations: constants collector_total=1 collector_unique=1 semantic_total=1 semantic_unique=1 gaps=0")
+      diagnostics.should_not contain("warning: semantic shadow failed:")
     end
   end
 

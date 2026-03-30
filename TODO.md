@@ -9,6 +9,9 @@
     - compile-side `ParsedUnit` now retains file-aware parse diagnostics, and shadow summaries now split `compile_parse_diags` from `shadow_parse_diags`
     - parser-side shadow telemetry now also reports `parse_diag_gaps` plus verbose parity lines comparing compile parse diagnostics to aggregate reparse diagnostics
     - `CRYSTAL_V2_SEMANTIC_SHADOW_STRICT=1` now treats both parser-diagnostic parity drift and declaration-parity drift as hard failures instead of only surfacing them as telemetry
+    - CLI regression coverage now also locks the green strict-mode success path for both invariants:
+      - malformed parser carrier succeeds under `CRYSTAL_V2_SEMANTIC_SHADOW_STRICT=1` when `parse_diag_gaps=0`
+      - declaration-parity carrier succeeds under `CRYSTAL_V2_SEMANTIC_SHADOW_STRICT=1` when `declaration_gaps=0`
     - documented in `docs/phase2_compile_shadow.md`
   - decisive evidence:
     - targeted multi-file semantic aggregate spec is green:

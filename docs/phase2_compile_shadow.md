@@ -16,6 +16,11 @@ hard failures:
 If either of those diverges, shadow strict mode raises instead of only printing
 telemetry.
 
+CLI regression coverage now also locks the green strict-mode success path for
+both parity families: a malformed parser carrier still succeeds when
+`parse_diag_gaps=0`, and a declaration-parity carrier still succeeds when
+`declaration_gaps=0` under `CRYSTAL_V2_SEMANTIC_SHADOW_STRICT=1`.
+
 It does **not** change compile output or lowering behavior.
 It only verifies that the existing semantic stack can analyze a compile-like
 aggregate program before any demand-driven rewrite work begins.

@@ -29,6 +29,10 @@ Under `CRYSTAL_V2_SEMANTIC_SHADOW_STRICT=1`, parser-parity drift is now also a
 hard failure instead of warning-only telemetry. The same strict gate now also
 applies to collector-vs-semantic declaration parity drift, so shadow strict
 mode treats both of those mismatch classes as invariants.
+CLI regression coverage now also locks the corresponding green success path:
+a malformed parser carrier still compiles when `parse_diag_gaps=0`, and a
+declaration-parity carrier still compiles when `declaration_gaps=0` under
+`CRYSTAL_V2_SEMANTIC_SHADOW_STRICT=1`.
 
 Verified sequence:
 - implementation:
