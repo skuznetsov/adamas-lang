@@ -109,6 +109,22 @@ module CrystalV2
           unit_for(expr_id).try(&.path)
         end
 
+        def source_for_path(path : String) : String?
+          if unit_index = @unit_index_by_path[path]?
+            @unit_summaries.unsafe_fetch(unit_index).source
+          else
+            nil
+          end
+        end
+
+        def sources_by_path : Hash(String, String)
+          sources = {} of String => String
+          @unit_summaries.each do |unit_summary|
+            sources[unit_summary.path] = unit_summary.source
+          end
+          sources
+        end
+
         private def attach_generated_node_paths(generated_node_file_paths : Hash(Int32, String)) : Nil
           generated_node_file_paths.each do |node_index, file_path|
             next unless unit_index = @unit_index_by_path[file_path]?

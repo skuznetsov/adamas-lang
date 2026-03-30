@@ -38,6 +38,24 @@ private def attach_generated_shadow_overlay(
 end
 
 describe "compile semantic shadow aggregate" do
+  it "exposes per-file source lookup and defensive source snapshots" do
+    aggregate = build_shared_shadow_aggregate([
+      "def alpha\n  41\nend\n",
+      "alpha()\n",
+    ])
+
+    aggregate.source_for_path("unit_0.cr").should eq("def alpha\n  41\nend\n")
+    aggregate.source_for_path("unit_1.cr").should eq("alpha()\n")
+    aggregate.source_for_path("missing.cr").should be_nil
+
+    sources = aggregate.sources_by_path
+    sources["unit_0.cr"] = "changed"
+    sources.delete("unit_1.cr")
+
+    aggregate.sources_by_path["unit_0.cr"].should eq("def alpha\n  41\nend\n")
+    aggregate.sources_by_path["unit_1.cr"].should eq("alpha()\n")
+  end
+
   it "resolves cross-file method calls in a shared AstArena aggregate" do
     aggregate = build_shared_shadow_aggregate([
       <<-CR,

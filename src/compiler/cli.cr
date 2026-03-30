@@ -5882,14 +5882,6 @@ module CrystalV2
         counts
       end
 
-      private def semantic_shadow_sources_by_path(aggregate : Semantic::CompileShadowAggregate) : Hash(String, String)
-        sources = {} of String => String
-        aggregate.unit_summaries.each do |unit_summary|
-          sources[unit_summary.path] = unit_summary.source
-        end
-        sources
-      end
-
       private def build_shadow_collector_declaration_inventory(
         aggregate : Semantic::CompileShadowAggregate
       ) : Semantic::CompileShadowDeclarationInventory
@@ -6228,11 +6220,9 @@ module CrystalV2
         program = aggregate.program
         collector_inventory = build_shadow_collector_declaration_inventory(aggregate)
         analyzer = Semantic::Analyzer.new(program)
-        shadow_sources_by_path = {} of String => String
-        aggregate.unit_summaries.each { |u| shadow_sources_by_path[u.path] = u.source }
         analyzer.collect_symbols(
           node_file_path_provider: ->(expr_id : Frontend::ExprId) { aggregate.path_for(expr_id) },
-          source_for_path_provider: ->(path : String) { shadow_sources_by_path[path]? },
+          source_for_path_provider: ->(path : String) { aggregate.source_for_path(path) },
         )
         aggregate.attach_generated_overlay(analyzer.generated_overlay)
         resolve_result = analyzer.resolve_names
@@ -6290,7 +6280,7 @@ module CrystalV2
           )
         end
         if options.verbose
-          sources_by_path = semantic_shadow_sources_by_path(aggregate)
+          sources_by_path = aggregate.sources_by_path
           semantic_diagnostics.each do |diagnostic|
             err_io.puts format_shadow_semantic_diagnostic(diagnostic, aggregate, sources_by_path)
           end
