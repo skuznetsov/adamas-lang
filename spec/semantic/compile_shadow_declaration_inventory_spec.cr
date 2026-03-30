@@ -133,6 +133,98 @@ describe "compile shadow declaration inventory" do
     semantic_inventory.total(Semantic::CompileShadowDeclarationKind::Macros).should eq(1)
   end
 
+  it "retains generated provenance for cross-file argful non-method macro-call bundles" do
+    aggregate = Semantic::CompileShadowAggregate.build([
+      {
+        path: "decl_lib.cr",
+        source: <<-CR,
+          macro define_bundle(class_name, module_name, enum_name, const_name)
+            class {{class_name.id}}
+            end
+
+            module {{module_name.id}}
+            end
+
+            enum {{enum_name.id}}
+              One
+            end
+
+            {{const_name.id}} = 1
+          end
+        CR
+      },
+      {
+        path: "decl_main.cr",
+        source: <<-CR,
+          require "./decl_lib"
+          define_bundle(:Alpha, :Beta, :Mode, :FLAG)
+        CR
+      },
+    ])
+    program = aggregate.program
+    shadow_sources = {} of String => String
+    aggregate.unit_summaries.each { |u| shadow_sources[u.path] = u.source }
+
+    analyzer = Semantic::Analyzer.new(program)
+    analyzer.collect_symbols(
+      node_file_path_provider: ->(expr_id : Frontend::ExprId) { aggregate.path_for(expr_id) },
+      source_for_path_provider: ->(path : String) { shadow_sources[path]? },
+    )
+
+    semantic_inventory = Semantic::CompileShadowDeclarationInventory.from_symbol_table(analyzer.global_context.symbol_table)
+
+    alpha_symbol = analyzer.global_context.symbol_table.lookup_local("Alpha")
+    alpha_symbol.should be_a(Semantic::ClassSymbol)
+    alpha_symbol = alpha_symbol.as(Semantic::ClassSymbol)
+    alpha_symbol.generated?.should be_true
+    alpha_symbol.generated_origin_node_id.should_not be_nil
+    alpha_symbol.generated_macro_definition_node_id.should_not be_nil
+    alpha_symbol.file_path.should eq("decl_main.cr")
+
+    beta_symbol = analyzer.global_context.symbol_table.lookup_local("Beta")
+    beta_symbol.should be_a(Semantic::ModuleSymbol)
+    beta_symbol = beta_symbol.as(Semantic::ModuleSymbol)
+    beta_symbol.generated?.should be_true
+    beta_symbol.generated_origin_node_id.should_not be_nil
+    beta_symbol.generated_macro_definition_node_id.should_not be_nil
+    beta_symbol.file_path.should eq("decl_main.cr")
+
+    mode_symbol = analyzer.global_context.symbol_table.lookup_local("Mode")
+    mode_symbol.should be_a(Semantic::EnumSymbol)
+    mode_symbol = mode_symbol.as(Semantic::EnumSymbol)
+    mode_symbol.generated?.should be_true
+    mode_symbol.generated_origin_node_id.should_not be_nil
+    mode_symbol.generated_macro_definition_node_id.should_not be_nil
+    mode_symbol.file_path.should eq("decl_main.cr")
+
+    flag_symbol = analyzer.global_context.symbol_table.lookup_local("FLAG")
+    flag_symbol.should be_a(Semantic::ConstantSymbol)
+    flag_symbol = flag_symbol.as(Semantic::ConstantSymbol)
+    flag_symbol.generated?.should be_true
+    flag_symbol.generated_origin_node_id.should_not be_nil
+    flag_symbol.generated_macro_definition_node_id.should_not be_nil
+    flag_symbol.file_path.should eq("decl_main.cr")
+
+    semantic_inventory.unique_names(Semantic::CompileShadowDeclarationKind::Classes).should eq(["Alpha"])
+    semantic_inventory.unique_names(Semantic::CompileShadowDeclarationKind::Modules).should eq(["Beta"])
+    semantic_inventory.unique_names(Semantic::CompileShadowDeclarationKind::Enums).should eq(["Mode"])
+    semantic_inventory.unique_names(Semantic::CompileShadowDeclarationKind::Constants).should eq(["FLAG"])
+
+    class_line = semantic_inventory.provenance_lines("semantic").find { |line| line.starts_with?("classes provenance ") }
+    module_line = semantic_inventory.provenance_lines("semantic").find { |line| line.starts_with?("modules provenance ") }
+    enum_line = semantic_inventory.provenance_lines("semantic").find { |line| line.starts_with?("enums provenance ") }
+    constant_line = semantic_inventory.provenance_lines("semantic").find { |line| line.starts_with?("constants provenance ") }
+
+    class_line.should_not be_nil
+    module_line.should_not be_nil
+    enum_line.should_not be_nil
+    constant_line.should_not be_nil
+    class_line.not_nil!.should contain("semantic_macro_expanded_total=1")
+    module_line.not_nil!.should contain("semantic_macro_expanded_total=1")
+    enum_line.not_nil!.should contain("semantic_macro_expanded_total=1")
+    constant_line.not_nil!.should contain("semantic_macro_expanded_total=1")
+  end
+
   it "keeps zero name gaps while preserving total-count differences for overload families" do
     program = build_declaration_shadow_program([
       <<-CR,

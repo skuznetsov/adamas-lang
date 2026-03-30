@@ -52,6 +52,10 @@
       - `spec/semantic_cli_spec.cr` now covers both same-file and cross-file bundle carriers that generate top-level `class`, `module`, `enum`, and constant declarations
       - both carriers assert `declaration_gaps=0` plus green collector-vs-semantic parity/provenance lines for those comparable kinds
       - the same CLI coverage now also locks argful bundle carriers using `{{name.id}}` macro arguments in both same-file and cross-file forms
+    - lower-level regression coverage now locks that same argful non-method corridor too:
+      - `spec/semantic/compile_shadow_aggregate_spec.cr` verifies cross-file argful bundle materialization/ownership inside the shared aggregate
+      - `spec/semantic/compile_shadow_declaration_inventory_spec.cr` verifies semantic-side materialization/provenance for the same corridor
+      - this keeps collector-vs-semantic parity as the CLI-level contract while pinning lower-level semantic materialization separately
     - live bare macro-call smoke is now green on both collector and semantic sides:
       - `CRYSTAL_V2_SEMANTIC_SHADOW=1 /tmp/crystal_v2_semantic_shadow /tmp/shadow_macro_call_decl.cr --no-prelude --stats --verbose`
       - output includes:

@@ -252,6 +252,18 @@ for both same-file and cross-file bundle carriers that generate top-level
 That coverage now also includes argful bundle carriers that materialize those
 same non-method declarations through `{{name.id}}`-style macro arguments in
 both same-file and cross-file forms.
+Lower-level regression coverage now also locks the same argful non-method
+corridor below the CLI layer:
+
+- `compile_shadow_aggregate_spec` verifies that a cross-file argful bundle
+  materializes the generated non-method declarations inside the shared
+  aggregate, resolves cleanly, and attaches ownership back to the caller unit
+- `compile_shadow_declaration_inventory_spec` verifies the matching
+  semantic-side materialization/provenance contract for that corridor
+
+This keeps the layering honest: collector-vs-semantic declaration parity is
+still the CLI-level contract, while the lower-level aggregate/inventory specs
+pin semantic materialization and provenance directly.
 
 Generated top-level roots now participate in shadow `resolve_names` and
 `infer_types`, not just in collector parity. For example, a carrier like:
