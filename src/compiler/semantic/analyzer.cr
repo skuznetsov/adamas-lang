@@ -19,7 +19,6 @@ module CrystalV2
         getter semantic_diagnostics : Array(Diagnostic)
         getter name_resolver_diagnostics : Array(Frontend::Diagnostic)
         getter type_inference_diagnostics : Array(Diagnostic)
-        getter generated_overlay : GeneratedOverlay
 
         def initialize(@program : Program, context : Context? = nil)
           @global_context = context || Context.new(SymbolTable.new)
@@ -37,6 +36,10 @@ module CrystalV2
           @generated_overlay = collector.generated_overlay
           debug_hook("analyzer.symbols.finish", "diagnostics=#{@semantic_diagnostics.size}")
           self
+        end
+
+        def generated_overlay : GeneratedOverlay
+          @generated_overlay.dup
         end
 
         def resolve_names

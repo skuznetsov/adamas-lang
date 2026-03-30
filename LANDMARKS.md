@@ -184,6 +184,9 @@ Verified sequence:
   - analyzer-side generated shadow internals are no longer re-exported through
     ad-hoc `generated_*` passthroughs; callers now depend on the explicit
     `generated_overlay` snapshot instead
+  - `Analyzer#generated_overlay` and `CompileShadowAggregate#generated_overlay`
+    now both return defensive snapshots, so callers cannot mutate internal
+    generated provenance state through a leaked overlay reference
   - CLI regression coverage now locks generated diagnostic note behavior for
     both resolution and type diagnostics across same-file vs cross-file macro
     expansions, including `...[generated]` display paths and redundant

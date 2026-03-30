@@ -381,6 +381,31 @@ describe "compile semantic shadow aggregate" do
     )
   end
 
+  it "returns a defensive analyzer generated overlay snapshot" do
+    aggregate = build_shared_shadow_aggregate([
+      <<-CR,
+        macro define_alpha
+          def alpha
+            42
+          end
+        end
+
+        define_alpha
+      CR
+    ])
+    program = aggregate.program
+
+    analyzer = Semantic::Analyzer.new(program)
+    analyzer.collect_symbols(node_file_path_provider: ->(expr_id : Frontend::ExprId) { aggregate.path_for(expr_id) })
+
+    overlay = analyzer.generated_overlay
+    overlay.node_file_paths.clear
+    overlay.top_level_roots.clear
+
+    analyzer.generated_overlay.node_file_paths.should_not be_empty
+    analyzer.generated_overlay.top_level_roots.should_not be_empty
+  end
+
   it "replaces previous generated overlay ownership on reattach" do
     aggregate = build_shared_shadow_aggregate([
       <<-CR,
@@ -421,6 +446,38 @@ describe "compile semantic shadow aggregate" do
     aggregate.generated_node_count_for_unit(1).should eq(0)
     aggregate.generated_top_level_roots.should be_empty
     aggregate.generated_node_file_paths.should be_empty
+  end
+
+  it "returns a defensive aggregate generated overlay snapshot" do
+    aggregate = build_shared_shadow_aggregate([
+      <<-CR,
+        macro define_alpha(dummy)
+          def alpha
+            42
+          end
+        end
+      CR
+      <<-CR,
+        define_alpha(1)
+        alpha()
+      CR
+    ])
+    program = aggregate.program
+    shadow_sources = build_shadow_sources(aggregate)
+
+    analyzer = Semantic::Analyzer.new(program)
+    analyzer.collect_symbols(
+      node_file_path_provider: ->(expr_id : Frontend::ExprId) { aggregate.path_for(expr_id) },
+      source_for_path_provider: ->(path : String) { shadow_sources[path]? },
+    )
+    attach_generated_shadow_overlay(aggregate, analyzer)
+
+    overlay = aggregate.generated_overlay
+    overlay.node_file_paths.clear
+    overlay.top_level_roots.clear
+
+    aggregate.generated_node_file_paths.should_not be_empty
+    aggregate.generated_top_level_roots.should_not be_empty
   end
 
   it "reports resolution diagnostics inside generated top-level def bodies" do

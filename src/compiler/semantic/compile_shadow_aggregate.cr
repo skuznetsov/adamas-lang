@@ -25,7 +25,6 @@ module CrystalV2
 
         getter program : Frontend::Program
         getter unit_summaries : Array(UnitSummary)
-        getter generated_overlay : GeneratedOverlay
 
         def self.build(units : Array(NamedTuple(path: String, source: String))) : self
           aggregate_arena = Frontend::AstArena.new
@@ -68,6 +67,10 @@ module CrystalV2
           @generated_overlay = GeneratedOverlay.empty
           @generated_node_count_by_unit = Array(Int32).new(@unit_summaries.size, 0)
           @generated_root_count_by_unit = Array(Int32).new(@unit_summaries.size, 0)
+        end
+
+        def generated_overlay : GeneratedOverlay
+          @generated_overlay.dup
         end
 
         def unit_index_for(expr_id : Frontend::ExprId) : Int32?
