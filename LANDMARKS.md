@@ -16,6 +16,9 @@ Generated top-level defs are now also traversed by shadow name resolution and
 type inference, so generated-body diagnostics surface in the caller unit too.
 The right short-term substrate is still reparse into that aggregate, not deep
 traversal over the current `VirtualArena`.
+The aggregate now also owns the unified generated-provenance lookup consumed by
+CLI formatting/counting, so analyzer-side hash maps are no longer the only
+place where shadow generated source/origin metadata lives.
 
 Verified sequence:
 - implementation:

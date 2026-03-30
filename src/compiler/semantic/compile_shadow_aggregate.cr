@@ -7,6 +7,12 @@ module CrystalV2
   module Compiler
     module Semantic
       class CompileShadowAggregate
+        record GeneratedNodeInfo,
+          root_id : Frontend::ExprId,
+          source : String?,
+          origin_node_id : Frontend::ExprId?,
+          macro_definition_node_id : Frontend::ExprId?
+
         record UnitSummary,
           unit_index : Int32,
           path : String,
@@ -56,6 +62,10 @@ module CrystalV2
             @unit_index_by_path[unit_summary.path] = unit_summary.unit_index
           end
           @generated_node_count_by_unit = Array(Int32).new(@unit_summaries.size, 0)
+          @generated_root_sources = {} of Int32 => String
+          @generated_root_by_node = {} of Int32 => Int32
+          @generated_root_origins = {} of Int32 => Frontend::ExprId
+          @generated_root_macro_defs = {} of Int32 => Frontend::ExprId
         end
 
         def unit_index_for(expr_id : Frontend::ExprId) : Int32?
@@ -97,6 +107,57 @@ module CrystalV2
             @unit_index_by_node[node_index] = unit_index
             @generated_node_count_by_unit[unit_index] += 1
           end
+        end
+
+        def attach_generated_overlay(
+          generated_node_file_paths : Hash(Int32, String),
+          generated_root_sources : Hash(Int32, String),
+          generated_root_by_node : Hash(Int32, Int32),
+          generated_root_origins : Hash(Int32, Frontend::ExprId),
+          generated_root_macro_defs : Hash(Int32, Frontend::ExprId)
+        ) : Nil
+          attach_generated_node_paths(generated_node_file_paths)
+          @generated_root_sources = generated_root_sources.dup
+          @generated_root_by_node = generated_root_by_node.dup
+          @generated_root_origins = generated_root_origins.dup
+          @generated_root_macro_defs = generated_root_macro_defs.dup
+        end
+
+        def generated_info_for(expr_id : Frontend::ExprId) : GeneratedNodeInfo?
+          return nil if expr_id.invalid?
+          node_index = expr_id.index
+
+          root_index = if @generated_root_sources.has_key?(node_index) ||
+                          @generated_root_origins.has_key?(node_index) ||
+                          @generated_root_macro_defs.has_key?(node_index)
+                         node_index
+                       else
+                         @generated_root_by_node[node_index]?
+                       end
+          return nil unless root_index
+
+          GeneratedNodeInfo.new(
+            Frontend::ExprId.new(root_index),
+            @generated_root_sources[root_index]?,
+            @generated_root_origins[root_index]?,
+            @generated_root_macro_defs[root_index]?,
+          )
+        end
+
+        def generated_source_for(expr_id : Frontend::ExprId) : String?
+          generated_info_for(expr_id).try(&.source)
+        end
+
+        def generated_origin_for(expr_id : Frontend::ExprId) : Frontend::ExprId?
+          generated_info_for(expr_id).try(&.origin_node_id)
+        end
+
+        def generated_node?(expr_id : Frontend::ExprId) : Bool
+          !generated_info_for(expr_id).nil?
+        end
+
+        def generated_macro_definition_for(expr_id : Frontend::ExprId) : Frontend::ExprId?
+          generated_info_for(expr_id).try(&.macro_definition_node_id)
         end
 
         def generated_node_count_for_unit(unit_index : Int32) : Int32

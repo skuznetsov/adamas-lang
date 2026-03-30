@@ -30,6 +30,19 @@ private def build_shadow_sources(aggregate : Semantic::CompileShadowAggregate) :
   sources
 end
 
+private def attach_generated_shadow_overlay(
+  aggregate : Semantic::CompileShadowAggregate,
+  analyzer : Semantic::Analyzer
+) : Nil
+  aggregate.attach_generated_overlay(
+    analyzer.generated_node_file_paths,
+    analyzer.generated_root_sources,
+    analyzer.generated_root_by_node,
+    analyzer.generated_root_origins,
+    analyzer.generated_root_macro_defs,
+  )
+end
+
 describe "compile semantic shadow aggregate" do
   it "resolves cross-file method calls in a shared AstArena aggregate" do
     aggregate = build_shared_shadow_aggregate([
@@ -363,7 +376,7 @@ describe "compile semantic shadow aggregate" do
 
     aggregate.path_for(first_generated_id).should be_nil
 
-    aggregate.attach_generated_node_paths(analyzer.generated_node_file_paths)
+    attach_generated_shadow_overlay(aggregate, analyzer)
 
     aggregate.path_for(first_generated_id).should eq("unit_1.cr")
     aggregate.unit_index_for(first_generated_id).should eq(1)
@@ -396,7 +409,7 @@ describe "compile semantic shadow aggregate" do
       source_for_path_provider: ->(path : String) { shadow_sources[path]? },
     )
     analyzer.generated_top_level_roots.should_not be_empty
-    aggregate.attach_generated_node_paths(analyzer.generated_node_file_paths)
+    attach_generated_shadow_overlay(aggregate, analyzer)
 
     result = analyzer.resolve_names
 
@@ -405,8 +418,8 @@ describe "compile semantic shadow aggregate" do
     diagnostic.message.should contain("undefined local variable or method 'missing'")
     diagnostic.node_id.should_not be_nil
     aggregate.path_for(diagnostic.node_id.not_nil!).should eq("unit_1.cr")
-    analyzer.generated_node?(diagnostic.node_id.not_nil!).should be_true
-    analyzer.generated_source_for(diagnostic.node_id.not_nil!).not_nil!.should contain("missing + 1")
+    aggregate.generated_node?(diagnostic.node_id.not_nil!).should be_true
+    aggregate.generated_source_for(diagnostic.node_id.not_nil!).not_nil!.should contain("missing + 1")
   end
 
   it "exposes generated node info as a unified provenance lookup" do
@@ -431,12 +444,12 @@ describe "compile semantic shadow aggregate" do
       node_file_path_provider: ->(expr_id : Frontend::ExprId) { aggregate.path_for(expr_id) },
       source_for_path_provider: ->(path : String) { shadow_sources[path]? },
     )
-    aggregate.attach_generated_node_paths(analyzer.generated_node_file_paths)
+    attach_generated_shadow_overlay(aggregate, analyzer)
     result = analyzer.resolve_names
 
     diagnostic = result.diagnostics.first
     node_id = diagnostic.node_id.not_nil!
-    info = analyzer.generated_info_for(node_id)
+    info = aggregate.generated_info_for(node_id)
 
     info.should_not be_nil
     info.not_nil!.source.not_nil!.should contain("missing + 1")
@@ -466,7 +479,7 @@ describe "compile semantic shadow aggregate" do
       node_file_path_provider: ->(expr_id : Frontend::ExprId) { aggregate.path_for(expr_id) },
       source_for_path_provider: ->(path : String) { shadow_sources[path]? },
     )
-    aggregate.attach_generated_node_paths(analyzer.generated_node_file_paths)
+    attach_generated_shadow_overlay(aggregate, analyzer)
 
     result = analyzer.resolve_names
     analyzer.infer_types(result.identifier_symbols)
@@ -477,8 +490,8 @@ describe "compile semantic shadow aggregate" do
     diagnostic.message.should contain("Operator '+' not defined for Int32 and String")
     diagnostic.primary_node_id.should_not be_nil
     aggregate.path_for(diagnostic.primary_node_id.not_nil!).should eq("unit_1.cr")
-    analyzer.generated_node?(diagnostic.primary_node_id.not_nil!).should be_true
-    analyzer.generated_source_for(diagnostic.primary_node_id.not_nil!).not_nil!.should contain("1 + \"x\"")
+    aggregate.generated_node?(diagnostic.primary_node_id.not_nil!).should be_true
+    aggregate.generated_source_for(diagnostic.primary_node_id.not_nil!).not_nil!.should contain("1 + \"x\"")
   end
 
   it "reports resolution diagnostics inside generated top-level class bodies" do
@@ -506,7 +519,7 @@ describe "compile semantic shadow aggregate" do
       source_for_path_provider: ->(path : String) { shadow_sources[path]? },
     )
     analyzer.generated_top_level_roots.should_not be_empty
-    aggregate.attach_generated_node_paths(analyzer.generated_node_file_paths)
+    attach_generated_shadow_overlay(aggregate, analyzer)
 
     result = analyzer.resolve_names
 
@@ -515,8 +528,8 @@ describe "compile semantic shadow aggregate" do
     diagnostic.message.should contain("undefined local variable or method 'missing'")
     diagnostic.node_id.should_not be_nil
     aggregate.path_for(diagnostic.node_id.not_nil!).should eq("unit_1.cr")
-    analyzer.generated_node?(diagnostic.node_id.not_nil!).should be_true
-    generated_source = analyzer.generated_source_for(diagnostic.node_id.not_nil!).not_nil!
+    aggregate.generated_node?(diagnostic.node_id.not_nil!).should be_true
+    generated_source = aggregate.generated_source_for(diagnostic.node_id.not_nil!).not_nil!
     generated_source.should contain("class BadBox")
     generated_source.should contain("missing + 1")
   end
@@ -543,12 +556,12 @@ describe "compile semantic shadow aggregate" do
       node_file_path_provider: ->(expr_id : Frontend::ExprId) { aggregate.path_for(expr_id) },
       source_for_path_provider: ->(path : String) { shadow_sources[path]? },
     )
-    aggregate.attach_generated_node_paths(analyzer.generated_node_file_paths)
+    attach_generated_shadow_overlay(aggregate, analyzer)
     result = analyzer.resolve_names
 
     diagnostic = result.diagnostics.first
     node_id = diagnostic.node_id.not_nil!
-    generated_source = analyzer.generated_source_for(node_id).not_nil!
+    generated_source = aggregate.generated_source_for(node_id).not_nil!
     display_path = "#{aggregate.path_for(node_id)} [generated]"
     formatted = Frontend::DiagnosticFormatter.format(
       {display_path => generated_source},
@@ -558,7 +571,7 @@ describe "compile semantic shadow aggregate" do
     formatted.should contain("unit_1.cr [generated]:2:")
     formatted.should contain("missing + 1")
     formatted.should_not contain("define_bad(:alpha)")
-    origin_node_id = analyzer.generated_origin_for(node_id).not_nil!
+    origin_node_id = aggregate.generated_origin_for(node_id).not_nil!
     aggregate.path_for(origin_node_id).should eq("unit_1.cr")
   end
 
@@ -584,13 +597,13 @@ describe "compile semantic shadow aggregate" do
       node_file_path_provider: ->(expr_id : Frontend::ExprId) { aggregate.path_for(expr_id) },
       source_for_path_provider: ->(path : String) { shadow_sources[path]? },
     )
-    aggregate.attach_generated_node_paths(analyzer.generated_node_file_paths)
+    attach_generated_shadow_overlay(aggregate, analyzer)
     result = analyzer.resolve_names
     analyzer.infer_types(result.identifier_symbols)
 
     diagnostic = analyzer.type_inference_diagnostics.first
     node_id = diagnostic.primary_node_id.not_nil!
-    generated_source = analyzer.generated_source_for(node_id).not_nil!
+    generated_source = aggregate.generated_source_for(node_id).not_nil!
     display_path = "#{aggregate.path_for(node_id)} [generated]"
     formatted = Semantic::DiagnosticFormatter.format(
       {display_path => generated_source},
@@ -600,7 +613,7 @@ describe "compile semantic shadow aggregate" do
     formatted.should contain("unit_1.cr [generated]:2:")
     formatted.should contain("1 + \"x\"")
     formatted.should_not contain("define_bad(:alpha)")
-    origin_node_id = analyzer.generated_origin_for(node_id).not_nil!
+    origin_node_id = aggregate.generated_origin_for(node_id).not_nil!
     aggregate.path_for(origin_node_id).should eq("unit_1.cr")
   end
 
@@ -626,15 +639,15 @@ describe "compile semantic shadow aggregate" do
       node_file_path_provider: ->(expr_id : Frontend::ExprId) { aggregate.path_for(expr_id) },
       source_for_path_provider: ->(path : String) { shadow_sources[path]? },
     )
-    aggregate.attach_generated_node_paths(analyzer.generated_node_file_paths)
+    attach_generated_shadow_overlay(aggregate, analyzer)
     result = analyzer.resolve_names
 
     diagnostic = result.diagnostics.first
     node_id = diagnostic.node_id.not_nil!
-    generated_source = analyzer.generated_source_for(node_id).not_nil!
+    generated_source = aggregate.generated_source_for(node_id).not_nil!
     display_path = "#{aggregate.path_for(node_id)} [generated]"
     related_spans = [] of Frontend::RelatedSpan
-    if origin_node_id = analyzer.generated_origin_for(node_id)
+    if origin_node_id = aggregate.generated_origin_for(node_id)
       origin_path = aggregate.path_for(origin_node_id).not_nil!
       origin_span = program.arena[origin_node_id].span
       related_spans << Frontend::RelatedSpan.new(origin_span, "expanded from macro call here", origin_node_id, origin_path)
@@ -670,16 +683,16 @@ describe "compile semantic shadow aggregate" do
       node_file_path_provider: ->(expr_id : Frontend::ExprId) { aggregate.path_for(expr_id) },
       source_for_path_provider: ->(path : String) { shadow_sources[path]? },
     )
-    aggregate.attach_generated_node_paths(analyzer.generated_node_file_paths)
+    attach_generated_shadow_overlay(aggregate, analyzer)
     result = analyzer.resolve_names
     analyzer.infer_types(result.identifier_symbols)
 
     diagnostic = analyzer.type_inference_diagnostics.first
     node_id = diagnostic.primary_node_id.not_nil!
-    generated_source = analyzer.generated_source_for(node_id).not_nil!
+    generated_source = aggregate.generated_source_for(node_id).not_nil!
     display_path = "#{aggregate.path_for(node_id)} [generated]"
     secondary_spans = [] of Semantic::SecondarySpan
-    if origin_node_id = analyzer.generated_origin_for(node_id)
+    if origin_node_id = aggregate.generated_origin_for(node_id)
       origin_path = aggregate.path_for(origin_node_id).not_nil!
       origin_span = program.arena[origin_node_id].span
       secondary_spans << Semantic::SecondarySpan.new(origin_span, "expanded from macro call here", origin_node_id, origin_path)
@@ -715,20 +728,20 @@ describe "compile semantic shadow aggregate" do
       node_file_path_provider: ->(expr_id : Frontend::ExprId) { aggregate.path_for(expr_id) },
       source_for_path_provider: ->(path : String) { shadow_sources[path]? },
     )
-    aggregate.attach_generated_node_paths(analyzer.generated_node_file_paths)
+    attach_generated_shadow_overlay(aggregate, analyzer)
     result = analyzer.resolve_names
 
     diagnostic = result.diagnostics.first
     node_id = diagnostic.node_id.not_nil!
-    generated_source = analyzer.generated_source_for(node_id).not_nil!
+    generated_source = aggregate.generated_source_for(node_id).not_nil!
     display_path = "#{aggregate.path_for(node_id)} [generated]"
     related_spans = [] of Frontend::RelatedSpan
-    if origin_node_id = analyzer.generated_origin_for(node_id)
+    if origin_node_id = aggregate.generated_origin_for(node_id)
       origin_path = aggregate.path_for(origin_node_id).not_nil!
       origin_span = program.arena[origin_node_id].span
       related_spans << Frontend::RelatedSpan.new(origin_span, "expanded from macro call here", origin_node_id, origin_path)
     end
-    if macro_def_node_id = analyzer.generated_macro_definition_for(node_id)
+    if macro_def_node_id = aggregate.generated_macro_definition_for(node_id)
       macro_def_path = aggregate.path_for(macro_def_node_id).not_nil!
       macro_def_span = program.arena[macro_def_node_id].span
       related_spans << Frontend::RelatedSpan.new(macro_def_span, "macro defined here", macro_def_node_id, macro_def_path)
@@ -764,21 +777,21 @@ describe "compile semantic shadow aggregate" do
       node_file_path_provider: ->(expr_id : Frontend::ExprId) { aggregate.path_for(expr_id) },
       source_for_path_provider: ->(path : String) { shadow_sources[path]? },
     )
-    aggregate.attach_generated_node_paths(analyzer.generated_node_file_paths)
+    attach_generated_shadow_overlay(aggregate, analyzer)
     result = analyzer.resolve_names
     analyzer.infer_types(result.identifier_symbols)
 
     diagnostic = analyzer.type_inference_diagnostics.first
     node_id = diagnostic.primary_node_id.not_nil!
-    generated_source = analyzer.generated_source_for(node_id).not_nil!
+    generated_source = aggregate.generated_source_for(node_id).not_nil!
     display_path = "#{aggregate.path_for(node_id)} [generated]"
     secondary_spans = [] of Semantic::SecondarySpan
-    if origin_node_id = analyzer.generated_origin_for(node_id)
+    if origin_node_id = aggregate.generated_origin_for(node_id)
       origin_path = aggregate.path_for(origin_node_id).not_nil!
       origin_span = program.arena[origin_node_id].span
       secondary_spans << Semantic::SecondarySpan.new(origin_span, "expanded from macro call here", origin_node_id, origin_path)
     end
-    if macro_def_node_id = analyzer.generated_macro_definition_for(node_id)
+    if macro_def_node_id = aggregate.generated_macro_definition_for(node_id)
       macro_def_path = aggregate.path_for(macro_def_node_id).not_nil!
       macro_def_span = program.arena[macro_def_node_id].span
       secondary_spans << Semantic::SecondarySpan.new(macro_def_span, "macro defined here", macro_def_node_id, macro_def_path)

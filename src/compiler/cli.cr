@@ -5816,9 +5816,8 @@ module CrystalV2
       private def shadow_generated_origin_related_span(
         node_id : Frontend::ExprId,
         aggregate : Semantic::CompileShadowAggregate,
-        analyzer : Semantic::Analyzer
       ) : Frontend::RelatedSpan?
-        return nil unless info = analyzer.generated_info_for(node_id)
+        return nil unless info = aggregate.generated_info_for(node_id)
         return nil unless origin_node_id = info.origin_node_id
         return nil unless origin_path = aggregate.path_for(origin_node_id)
         origin_span = aggregate.program.arena[origin_node_id].span
@@ -5828,9 +5827,8 @@ module CrystalV2
       private def shadow_generated_macro_definition_related_span(
         node_id : Frontend::ExprId,
         aggregate : Semantic::CompileShadowAggregate,
-        analyzer : Semantic::Analyzer
       ) : Frontend::RelatedSpan?
-        return nil unless info = analyzer.generated_info_for(node_id)
+        return nil unless info = aggregate.generated_info_for(node_id)
         return nil unless macro_def_node_id = info.macro_definition_node_id
         return nil unless macro_def_path = aggregate.path_for(macro_def_node_id)
         if origin_node_id = info.origin_node_id
@@ -5845,16 +5843,15 @@ module CrystalV2
       private def build_shadow_generated_diagnostic_context(
         node_id : Frontend::ExprId,
         aggregate : Semantic::CompileShadowAggregate,
-        analyzer : Semantic::Analyzer
       ) : ShadowGeneratedDiagnosticContext?
-        return nil unless info = analyzer.generated_info_for(node_id)
+        return nil unless info = aggregate.generated_info_for(node_id)
         return nil unless generated_source = info.source
 
         related_spans = [] of Frontend::RelatedSpan
-        if related = shadow_generated_origin_related_span(node_id, aggregate, analyzer)
+        if related = shadow_generated_origin_related_span(node_id, aggregate)
           related_spans << related
         end
-        if related = shadow_generated_macro_definition_related_span(node_id, aggregate, analyzer)
+        if related = shadow_generated_macro_definition_related_span(node_id, aggregate)
           related_spans << related
         end
 
@@ -5868,11 +5865,10 @@ module CrystalV2
       private def format_shadow_semantic_diagnostic(
         diagnostic : Semantic::Diagnostic,
         aggregate : Semantic::CompileShadowAggregate,
-        analyzer : Semantic::Analyzer,
         sources_by_path : Hash(String, String)
       ) : String
         if primary_node_id = diagnostic.primary_node_id
-          if context = build_shadow_generated_diagnostic_context(primary_node_id, aggregate, analyzer)
+          if context = build_shadow_generated_diagnostic_context(primary_node_id, aggregate)
             secondary_spans = diagnostic.secondary_spans + context.related_spans.map do |related|
               Semantic::SecondarySpan.new(related.span, related.label, related.node_id, related.file_path)
             end
@@ -5888,11 +5884,10 @@ module CrystalV2
       private def format_shadow_resolution_diagnostic(
         diagnostic : Frontend::Diagnostic,
         aggregate : Semantic::CompileShadowAggregate,
-        analyzer : Semantic::Analyzer,
         sources_by_path : Hash(String, String)
       ) : String
         if node_id = diagnostic.node_id
-          if context = build_shadow_generated_diagnostic_context(node_id, aggregate, analyzer)
+          if context = build_shadow_generated_diagnostic_context(node_id, aggregate)
             display_diagnostic = diagnostic.with_file_path(context.display_path, diagnostic.related_spans + context.related_spans)
             generated_sources = sources_by_path.dup
             generated_sources[context.display_path.not_nil!] = context.source if context.display_path
@@ -5935,12 +5930,11 @@ module CrystalV2
       private def count_shadow_generated_diagnostics_by_unit(
         diagnostics : Array(Semantic::Diagnostic),
         aggregate : Semantic::CompileShadowAggregate,
-        analyzer : Semantic::Analyzer
       ) : Array(Int32)
         counts = Array(Int32).new(aggregate.unit_summaries.size, 0)
         diagnostics.each do |diagnostic|
           next unless primary_node_id = diagnostic.primary_node_id
-          next unless analyzer.generated_node?(primary_node_id)
+          next unless aggregate.generated_node?(primary_node_id)
           if unit_index = aggregate.unit_index_for(primary_node_id)
             counts[unit_index] += 1
           end
@@ -5951,12 +5945,11 @@ module CrystalV2
       private def count_shadow_generated_resolution_diagnostics_by_unit(
         diagnostics : Array(Frontend::Diagnostic),
         aggregate : Semantic::CompileShadowAggregate,
-        analyzer : Semantic::Analyzer
       ) : Array(Int32)
         counts = Array(Int32).new(aggregate.unit_summaries.size, 0)
         diagnostics.each do |diagnostic|
           next unless node_id = diagnostic.node_id
-          next unless analyzer.generated_node?(node_id)
+          next unless aggregate.generated_node?(node_id)
           if unit_index = aggregate.unit_index_for(node_id)
             counts[unit_index] += 1
           end
@@ -6316,7 +6309,13 @@ module CrystalV2
           node_file_path_provider: ->(expr_id : Frontend::ExprId) { aggregate.path_for(expr_id) },
           source_for_path_provider: ->(path : String) { shadow_sources_by_path[path]? },
         )
-        aggregate.attach_generated_node_paths(analyzer.generated_node_file_paths)
+        aggregate.attach_generated_overlay(
+          analyzer.generated_node_file_paths,
+          analyzer.generated_root_sources,
+          analyzer.generated_root_by_node,
+          analyzer.generated_root_origins,
+          analyzer.generated_root_macro_defs,
+        )
         resolve_result = analyzer.resolve_names
         analyzer.infer_types(resolve_result.identifier_symbols)
         semantic_inventory = Semantic::CompileShadowDeclarationInventory.from_symbol_table(
@@ -6330,11 +6329,11 @@ module CrystalV2
         generated_symbols_by_unit = count_shadow_generated_symbols_by_unit(analyzer.global_context.symbol_table, aggregate)
         identifiers_by_unit = count_shadow_identifiers_by_unit(resolve_result.identifier_symbols, aggregate)
         semantic_diagnostics_by_unit = count_shadow_diagnostics_by_unit(semantic_diagnostics, aggregate)
-        generated_semantic_diagnostics_by_unit = count_shadow_generated_diagnostics_by_unit(semantic_diagnostics, aggregate, analyzer)
+        generated_semantic_diagnostics_by_unit = count_shadow_generated_diagnostics_by_unit(semantic_diagnostics, aggregate)
         resolution_diagnostics_by_unit = count_shadow_resolution_diagnostics_by_unit(resolution_diagnostics, aggregate)
-        generated_resolution_diagnostics_by_unit = count_shadow_generated_resolution_diagnostics_by_unit(resolution_diagnostics, aggregate, analyzer)
+        generated_resolution_diagnostics_by_unit = count_shadow_generated_resolution_diagnostics_by_unit(resolution_diagnostics, aggregate)
         type_diagnostics_by_unit = count_shadow_diagnostics_by_unit(type_diagnostics, aggregate)
-        generated_type_diagnostics_by_unit = count_shadow_generated_diagnostics_by_unit(type_diagnostics, aggregate, analyzer)
+        generated_type_diagnostics_by_unit = count_shadow_generated_diagnostics_by_unit(type_diagnostics, aggregate)
         generated_roots_by_unit = count_shadow_generated_roots_by_unit(analyzer.generated_top_level_roots, aggregate)
         declaration_summary_lines = declaration_parity.summary_lines(5, "collector", "semantic")
         declaration_summary_lines.concat(collector_inventory.provenance_lines("collector"))
@@ -6376,13 +6375,13 @@ module CrystalV2
         if options.verbose
           sources_by_path = semantic_shadow_sources_by_path(aggregate)
           semantic_diagnostics.each do |diagnostic|
-            err_io.puts format_shadow_semantic_diagnostic(diagnostic, aggregate, analyzer, sources_by_path)
+            err_io.puts format_shadow_semantic_diagnostic(diagnostic, aggregate, sources_by_path)
           end
           resolution_diagnostics.each do |diagnostic|
-            err_io.puts format_shadow_resolution_diagnostic(diagnostic, aggregate, analyzer, sources_by_path)
+            err_io.puts format_shadow_resolution_diagnostic(diagnostic, aggregate, sources_by_path)
           end
           type_diagnostics.each do |diagnostic|
-            err_io.puts format_shadow_semantic_diagnostic(diagnostic, aggregate, analyzer, sources_by_path)
+            err_io.puts format_shadow_semantic_diagnostic(diagnostic, aggregate, sources_by_path)
           end
         end
 
