@@ -88,7 +88,7 @@ module CrystalV2
           unit_for(expr_id).try(&.path)
         end
 
-        def attach_generated_node_paths(generated_node_file_paths : Hash(Int32, String)) : Nil
+        private def attach_generated_node_paths(generated_node_file_paths : Hash(Int32, String)) : Nil
           generated_node_file_paths.each do |node_index, file_path|
             next unless unit_index = @unit_index_by_path[file_path]?
             while @unit_index_by_node.size < node_index + 1
