@@ -1,7 +1,24 @@
 # LANDMARKS
 
-Updated: 2026-03-29
+Updated: 2026-03-30
 Context: compiler/bootstrap/stage2-stability
+
+[LM-345|verified]: The current semantic stage3 frontier is no longer blocked by
+the old `Pointer(UInt8)#memcmp` / `cmp.sign` corridor. `TypeInferenceEngine`
+now has builtins for `Pointer(T)#memcmp`, `String#includes?(Char)`, and numeric
+`#sign`, and method-body inference now preserves primitive receiver context so
+receiverless builtins like `to_unsafe` do not collapse to `Nil` when inferring
+methods on primitive receivers such as `String`. Focused regression
+`spec/semantic/type_inference_string_pointer_builtin_spec.cr` is green, both
+no-prelude live reducers
+`/tmp/semantic_pointer_memcmp_sign_probe.cr` and
+`/tmp/semantic_string_includes_char_probe.cr` now report `type_diags=0`, and
+the full semantic stage3 probe moved from `type_diags=999` to `type_diags=997`.
+Boundary: this does not clear the remaining `String#includes?` failures in full
+prelude; those now sit downstream of the still-red argument-type corridor
+around `reader_char` / `next_char`, not the String builtin table itself. The
+next dense blockers remain `Pointer(UInt8)#copy_to`, `Bool#next_char`, and the
+downstream Nil arithmetic cascades. {F/G/R: 0.95/0.58/0.95} [verified]
 
 [LM-344|verified]: Phase 2 now has a safe compile-side semantic shadow
 substrate under feature flag, with honest file-level ownership summaries on a

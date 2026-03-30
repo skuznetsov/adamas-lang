@@ -1351,6 +1351,13 @@ module CrystalV2
           name.ends_with?(".class") ? name[0...-6] : name
         end
 
+        private def primitive_instance_class_symbol(type : PrimitiveType) : ClassSymbol?
+          return nil if primitive_metaclass?(type)
+
+          symbol = lookup_type_symbol(type.name) || find_class_symbol_by_suffix(type.name)
+          symbol.as?(ClassSymbol)
+        end
+
         private def primitive_metaclass?(type : Type) : Bool
           type.is_a?(PrimitiveType) && type.name.ends_with?(".class")
         end
@@ -6253,6 +6260,14 @@ module CrystalV2
                 return_annotation: type_name,
                 scope: dummy_scope
               )
+            when "sign"
+              methods << MethodSymbol.new(
+                method_name,
+                dummy_node_id,
+                params: [] of Frontend::Parameter,
+                return_annotation: "Int32",
+                scope: dummy_scope
+              )
             else
               if cast_target = integer_bang_cast_target(method_name)
                 methods << MethodSymbol.new(
@@ -6283,6 +6298,14 @@ module CrystalV2
                 dummy_node_id,
                 params: [param],
                 return_annotation: "Bool",
+                scope: dummy_scope
+              )
+            when "sign"
+              methods << MethodSymbol.new(
+                method_name,
+                dummy_node_id,
+                params: [] of Frontend::Parameter,
+                return_annotation: "Int32",
                 scope: dummy_scope
               )
             end
@@ -6373,8 +6396,25 @@ module CrystalV2
                 return_annotation: "String",
                 scope: dummy_scope
               )
-            when "includes?", "starts_with?", "ends_with?"
-              # String#includes?(String) : Bool
+            when "includes?"
+              string_param = Frontend::Parameter.new(name: "str".to_slice, type_annotation: "String".to_slice)
+              methods << MethodSymbol.new(
+                method_name,
+                dummy_node_id,
+                params: [string_param],
+                return_annotation: "Bool",
+                scope: dummy_scope
+              )
+
+              char_param = Frontend::Parameter.new(name: "char".to_slice, type_annotation: "Char".to_slice)
+              methods << MethodSymbol.new(
+                method_name,
+                dummy_node_id,
+                params: [char_param],
+                return_annotation: "Bool",
+                scope: dummy_scope
+              )
+            when "starts_with?", "ends_with?"
               param = Frontend::Parameter.new(name: "str".to_slice, type_annotation: "String".to_slice)
               methods << MethodSymbol.new(
                 method_name,
@@ -6766,6 +6806,16 @@ module CrystalV2
               dummy_node_id,
               params: [target_param, count_param],
               return_annotation: "Nil",
+              scope: dummy_scope
+            )
+          when "memcmp"
+            other_param = Frontend::Parameter.new(name: "other".to_slice, type_annotation: "Pointer(#{element_type_name})".to_slice)
+            count_param = Frontend::Parameter.new(name: "count".to_slice, type_annotation: "_".to_slice)
+            methods << MethodSymbol.new(
+              method_name,
+              dummy_node_id,
+              params: [other_param, count_param],
+              return_annotation: "Int32",
               scope: dummy_scope
             )
           when "fill"
@@ -7764,6 +7814,9 @@ module CrystalV2
           elsif receiver_type.is_a?(ModuleType)
             @receiver_type_context = receiver_type
             @current_module = receiver_type.symbol
+          elsif receiver_type.is_a?(PrimitiveType)
+            @receiver_type_context = receiver_type
+            @current_class = primitive_instance_class_symbol(receiver_type)
           end
           if owner_module = method.scope.owner_module
             @current_module = owner_module

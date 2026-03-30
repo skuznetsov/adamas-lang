@@ -1,6 +1,34 @@
-# Crystal V2 Bootstrap — TODO (Updated 2026-03-27)
+# Crystal V2 Bootstrap — TODO (Updated 2026-03-30)
 
 ## Current Status
+- **Fresh semantic prepass checkpoint: pointer/string primitive builtin coverage is a little less red, but stage3 still fails later in fast-float/string arg-type corridors (2026-03-30, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/type_inference_engine.cr` now models:
+      - `Pointer(T)#memcmp(...) : Int32`
+      - `String#includes?(Char)` alongside the existing `String` overload
+      - numeric `#sign : Int32` builtins for integer and float primitives
+    - method-body inference now preserves primitive receiver context too, so receiverless builtins such as `to_unsafe` no longer collapse to `Nil` when a method is inferred from a primitive receiver like `String`
+    - focused regression coverage lives in `spec/semantic/type_inference_string_pointer_builtin_spec.cr`
+  - decisive evidence:
+    - focused reducer spec is green:
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_string_pointer_builtin_spec.cr --error-trace`
+    - compile safety gate stayed green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+    - live no-prelude reducers are green on the rebuilt semantic probe compiler:
+      - `CRYSTAL_V2_SEMANTIC_COMPILE=1 /tmp/crystal_v2_semantic_stage3probe /tmp/semantic_pointer_memcmp_sign_probe.cr --no-prelude --stats --verbose`
+      - `CRYSTAL_V2_SEMANTIC_COMPILE=1 /tmp/crystal_v2_semantic_stage3probe /tmp/semantic_string_includes_char_probe.cr --no-prelude --stats --verbose`
+      - both now report `type_diags=0`
+    - full semantic stage3 probe moved, but only slightly:
+      - `bash /tmp/run_semantic_compile_stage3probe_log.sh`
+      - `type_diags=999 -> 997`
+      - `Pointer(UInt8)#memcmp` no longer appears in `/tmp/stage3_semantic_probe.log`
+  - practical boundary:
+    - this closes the `memcmp/sign + primitive-receiver body context` family only
+    - the remaining `String#includes?` errors at `src/stdlib/string.cr:2168/2209` are no longer evidence of a missing String builtin table entry; they now sit downstream of the still-red argument-type corridor (`reader_char` / `next_char` / related flow)
+    - the densest remaining high-signal families are still:
+      - `Pointer(UInt8)#copy_to`
+      - `Bool#next_char`
+      - Nil arithmetic cascades in fast-float / string
 - **Fresh Phase 2 substrate result: compile-side semantic shadow now runs on a shared-AstArena aggregate under feature flag, exposes honest file-level ownership summaries, prints file-aware diagnostics for collector/name-resolution/type-inference, reports compile-collector declaration provenance plus collector-vs-semantic declaration parity, and now traverses generated top-level defs during shadow name resolution/type inference; root-level macro-generated methods and bare top-level macro calls materialize on the semantic side, are attributed back to the originating file, and surface separately as `generated_nodes` in shadow summaries (2026-03-29, current session)**:
   - trustworthy setup:
     - added `CRYSTAL_V2_SEMANTIC_SHADOW=1` compile-side shadow prepass in `src/compiler/cli.cr`
