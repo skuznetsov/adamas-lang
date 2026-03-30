@@ -66,6 +66,7 @@ module CrystalV2
             {} of Int32 => Frontend::ExprId,
           )
           @generated_node_count_by_unit = Array(Int32).new(@unit_summaries.size, 0)
+          @generated_root_count_by_unit = Array(Int32).new(@unit_summaries.size, 0)
         end
 
         def unit_index_for(expr_id : Frontend::ExprId) : Int32?
@@ -122,6 +123,11 @@ module CrystalV2
             overlay.root_origins.dup,
             overlay.root_macro_defs.dup,
           )
+          overlay.top_level_roots.each do |root_id|
+            if unit_index = unit_index_for(root_id)
+              @generated_root_count_by_unit[unit_index] += 1
+            end
+          end
         end
 
         def generated_info_for(expr_id : Frontend::ExprId) : GeneratedNodeInfo?
@@ -153,6 +159,7 @@ module CrystalV2
         end
 
         private def detach_generated_overlay : Nil
+          @generated_root_count_by_unit.fill(0)
           @generated_overlay.node_file_paths.each_key do |node_index|
             next if node_index < 0 || node_index >= @unit_index_by_node.size
 
@@ -167,6 +174,11 @@ module CrystalV2
         def generated_node_count_for_unit(unit_index : Int32) : Int32
           return 0 if unit_index < 0 || unit_index >= @generated_node_count_by_unit.size
           @generated_node_count_by_unit.unsafe_fetch(unit_index)
+        end
+
+        def generated_root_count_for_unit(unit_index : Int32) : Int32
+          return 0 if unit_index < 0 || unit_index >= @generated_root_count_by_unit.size
+          @generated_root_count_by_unit.unsafe_fetch(unit_index)
         end
 
         def owned_node_count_for_unit(unit_index : Int32) : Int32

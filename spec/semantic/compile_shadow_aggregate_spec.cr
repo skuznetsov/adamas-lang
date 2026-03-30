@@ -374,6 +374,7 @@ describe "compile semantic shadow aggregate" do
 
     aggregate.path_for(first_generated_id).should eq("unit_1.cr")
     aggregate.unit_index_for(first_generated_id).should eq(1)
+    aggregate.generated_root_count_for_unit(1).should eq(1)
     aggregate.generated_node_count_for_unit(1).should eq(aggregate.generated_node_file_paths.size)
     aggregate.owned_node_count_for_unit(1).should eq(
       aggregate.unit_summaries[1].node_count + aggregate.generated_node_file_paths.size
@@ -423,6 +424,7 @@ describe "compile semantic shadow aggregate" do
 
     aggregate.path_for(first_generated_id).should be_nil
     aggregate.unit_index_for(first_generated_id).should be_nil
+    aggregate.generated_root_count_for_unit(1).should eq(0)
     aggregate.generated_node_count_for_unit(1).should eq(0)
     aggregate.generated_top_level_roots.should be_empty
     aggregate.generated_node_file_paths.should be_empty

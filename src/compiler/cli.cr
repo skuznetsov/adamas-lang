@@ -5737,19 +5737,6 @@ module CrystalV2
         counts
       end
 
-      private def count_shadow_generated_roots_by_unit(
-        generated_top_level_roots : Array(Frontend::ExprId),
-        aggregate : Semantic::CompileShadowAggregate
-      ) : Array(Int32)
-        counts = Array(Int32).new(aggregate.unit_summaries.size, 0)
-        generated_top_level_roots.each do |expr_id|
-          if unit_index = aggregate.unit_index_for(expr_id)
-            counts[unit_index] += 1
-          end
-        end
-        counts
-      end
-
       private def ensure_shadow_unit_metric_size!(
         counts : Array(Int32),
         expected_size : Int32,
@@ -6328,12 +6315,10 @@ module CrystalV2
         generated_resolution_diagnostics_by_unit = count_shadow_generated_resolution_diagnostics_by_unit(resolution_diagnostics, aggregate)
         type_diagnostics_by_unit = count_shadow_diagnostics_by_unit(type_diagnostics, aggregate)
         generated_type_diagnostics_by_unit = count_shadow_generated_diagnostics_by_unit(type_diagnostics, aggregate)
-        generated_roots_by_unit = count_shadow_generated_roots_by_unit(aggregate.generated_top_level_roots, aggregate)
         declaration_summary_lines = declaration_parity.summary_lines(5, "collector", "semantic")
         declaration_summary_lines.concat(collector_inventory.provenance_lines("collector"))
         declaration_summary_lines.concat(semantic_inventory.provenance_lines("semantic"))
         expected_unit_count = aggregate.unit_summaries.size
-        ensure_shadow_unit_metric_size!(generated_roots_by_unit, expected_unit_count, "generated_roots_by_unit")
         ensure_shadow_unit_metric_size!(symbols_by_unit, expected_unit_count, "symbols_by_unit")
         ensure_shadow_unit_metric_size!(generated_symbols_by_unit, expected_unit_count, "generated_symbols_by_unit")
         ensure_shadow_unit_metric_size!(identifiers_by_unit, expected_unit_count, "identifiers_by_unit")
@@ -6346,7 +6331,7 @@ module CrystalV2
         unit_summaries = [] of SemanticShadowUnitSummary
         aggregate.unit_summaries.each_with_index do |unit_summary, unit_index|
           unit_index_i = unit_index.to_i32
-          generated_root_count = shadow_unit_metric!(generated_roots_by_unit, unit_index_i, "generated_roots_by_unit")
+          generated_root_count = aggregate.generated_root_count_for_unit(unit_index_i)
           unit_summaries << SemanticShadowUnitSummary.new(
             path: unit_summary.path,
             roots_count: unit_summary.roots.size,
