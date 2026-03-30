@@ -6210,6 +6210,9 @@ module CrystalV2
         declaration_summary_lines.concat(semantic_inventory.provenance_lines("semantic"))
         parse_diagnostic_summary_lines = parse_diagnostic_parity.summary_lines(5, "compile", "shadow")
         if semantic_shadow_strict?
+          if strict_message = declaration_parity.strict_message("collector", "semantic")
+            raise strict_message
+          end
           if strict_message = parse_diagnostic_parity.strict_message("compile", "shadow")
             raise strict_message
           end

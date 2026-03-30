@@ -352,6 +352,18 @@ module CrystalV2
           end
           lines
         end
+
+        def strict_message(left_label : String = "parse", right_label : String = "semantic") : String?
+          return nil if gap_count == 0
+
+          summary = summary_lines(3, left_label, right_label)
+          String.build do |io|
+            io << "semantic shadow strict declaration mismatch"
+            summary.each do |line|
+              io << '\n' << line
+            end
+          end
+        end
       end
     end
   end

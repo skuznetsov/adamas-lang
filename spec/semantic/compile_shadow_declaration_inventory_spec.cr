@@ -234,6 +234,30 @@ describe "compile shadow declaration inventory" do
     lines.none? { |line| line.includes?("missing_direct_in_semantic") }.should be_true
   end
 
+  it "builds a strict-mode message only when declaration gaps exist" do
+    collector = Semantic::CompileShadowDeclarationInventory.new
+    semantic = Semantic::CompileShadowDeclarationInventory.new
+
+    collector.record(
+      Semantic::CompileShadowDeclarationKind::Methods,
+      "generated_alpha",
+      Semantic::CompileShadowDeclarationOrigin::MacroExpanded
+    )
+
+    parity = Semantic::CompileShadowDeclarationParity.compare(collector, semantic)
+
+    strict_message = parity.strict_message("collector", "semantic")
+    strict_message.should_not be_nil
+    strict_message = strict_message.not_nil!
+    strict_message.should contain("semantic shadow strict declaration mismatch")
+    strict_message.should contain("collector_total=1")
+    strict_message.should contain("semantic_total=0")
+    strict_message.should contain("missing_in_semantic=generated_alpha")
+
+    matching = Semantic::CompileShadowDeclarationParity.compare(collector, collector)
+    matching.strict_message("collector", "semantic").should be_nil
+  end
+
   it "records semantic provenance for direct and macro-expanded declarations" do
     aggregate = Semantic::CompileShadowAggregate.build([
       {
