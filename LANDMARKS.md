@@ -3,6 +3,23 @@
 Updated: 2026-03-30
 Context: compiler/bootstrap/stage2-stability
 
+[LM-346|verified]: The current semantic stage3 frontier is no longer blocked by
+the `parse_transition(...) || return nil` / guarded tuple-destructuring
+corridor that previously degraded locals to `Bool`. The durable fix was *not*
+"remove logical operators from the fast path"; that broad attempt reintroduced
+macro-condition fallout (`flag?` resolution in prelude). The verified narrow
+fix is to treat only `&&` / `||` nodes whose RHS is a control-flow terminator
+(`return`, `raise`, `break`, `next`) as special value-semantics cases while
+leaving the ordinary logical fast path alone. Focused regression
+`spec/semantic/type_inference_logical_value_semantics_spec.cr` is green, the
+live reducer `/tmp/semantic_reader_guard_tuple_probe.cr` now reports
+`type_diags=0`, and the full semantic stage3 probe moved from `type_diags=997`
+to `type_diags=968`. The old `Bool#advance` / `Bool#next_char` family no
+longer appears in `/tmp/stage3_semantic_probe.log`. Boundary: this does not
+solve the remaining dense families around `Pointer(UInt8)#copy_to`, Nil
+arithmetic in fast-float, or downstream `reader_char` / `includes?` typing.
+{F/G/R: 0.95/0.61/0.95} [verified]
+
 [LM-345|verified]: The current semantic stage3 frontier is no longer blocked by
 the old `Pointer(UInt8)#memcmp` / `cmp.sign` corridor. `TypeInferenceEngine`
 now has builtins for `Pointer(T)#memcmp`, `String#includes?(Char)`, and numeric

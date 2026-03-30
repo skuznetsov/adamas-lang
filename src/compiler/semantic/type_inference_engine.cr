@@ -739,8 +739,30 @@ module CrystalV2
           when Frontend::BinaryNode
             op = Frontend.node_operator_string(node) || ""
             case op
-            when "==", "!=", "<", ">", "<=", ">=", "&&", "||"
+            when "==", "!=", "<", ">", "<=", ">="
               @context.bool_type
+            when "&&"
+              if control_flow_terminator?(node.right)
+                left_type = infer_expression(node.left)
+                if falsy = extract_falsy_component(left_type)
+                  falsy
+                else
+                  infer_expression(node.right)
+                end
+              else
+                @context.bool_type
+              end
+            when "||"
+              if control_flow_terminator?(node.right)
+                left_type = infer_expression(node.left)
+                if truthy = extract_truthy_component(left_type)
+                  truthy
+                else
+                  infer_expression(node.right)
+                end
+              else
+                @context.bool_type
+              end
             when "..", "..."
               # Range(begin,end): type ignores exclusivity for now
               l = infer_expression(node.left)
@@ -2279,9 +2301,25 @@ module CrystalV2
                             @context.int32_type
                           end
                         when "&&"
-                          infer_logical_and_type(left_type, right_type)
+                          if control_flow_terminator?(right_id)
+                            if falsy = extract_falsy_component(left_type)
+                              falsy
+                            else
+                              right_type
+                            end
+                          else
+                            infer_logical_and_type(left_type, right_type)
+                          end
                         when "||"
-                          infer_logical_or_type(left_type, right_type)
+                          if control_flow_terminator?(right_id)
+                            if truthy = extract_truthy_component(left_type)
+                              truthy
+                            else
+                              right_type
+                            end
+                          else
+                            infer_logical_or_type(left_type, right_type)
+                          end
                         when "??"
                           # Phase 81: Nil-coalescing operator
                           # value ?? default - returns value if not nil, otherwise default
@@ -2405,6 +2443,18 @@ module CrystalV2
             union_of([truthy, right_type])
           else
             right_type
+          end
+        end
+
+        private def control_flow_terminator?(expr_id : ExprId) : Bool
+          node = @arena[expr_id]
+          case node
+          when Frontend::GroupingNode
+            control_flow_terminator?(node.expression)
+          when Frontend::ReturnNode, Frontend::RaiseNode, Frontend::BreakNode, Frontend::NextNode
+            true
+          else
+            false
           end
         end
 
