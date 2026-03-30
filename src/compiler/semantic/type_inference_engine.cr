@@ -6103,6 +6103,14 @@ module CrystalV2
                 return_annotation: "Array(UInt8)",
                 scope: dummy_scope
               )
+            when "to_unsafe"
+              methods << MethodSymbol.new(
+                method_name,
+                dummy_node_id,
+                params: [] of Frontend::Parameter,
+                return_annotation: "Pointer(UInt8)",
+                scope: dummy_scope
+              )
             when "split"
               # String#split(String) : Array(String)
               param = Frontend::Parameter.new(name: "separator".to_slice, type_annotation: "String".to_slice)

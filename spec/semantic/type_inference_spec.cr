@@ -1174,6 +1174,19 @@ describe Semantic::TypeInferenceEngine do
       engine.diagnostics.select(&.level.error?).should be_empty
     end
 
+    it "supports String#to_unsafe in method bodies" do
+      source = <<-CRYSTAL
+        def walk(text : String)
+          ptr = text.to_unsafe
+          ptr[0]
+        end
+      CRYSTAL
+
+      program, analyzer, engine = infer_types(source)
+
+      engine.diagnostics.select(&.level.error?).should be_empty
+    end
+
     it "supports pointer copy_to in method bodies" do
       source = <<-CRYSTAL
         def copy_digits(src : Pointer(UInt8), dst : Pointer(UInt8))
