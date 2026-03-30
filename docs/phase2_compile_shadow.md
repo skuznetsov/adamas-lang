@@ -241,6 +241,10 @@ the same aggregate-based shadow path is green across the currently measured
 macro-call shapes: bare identifier, positional args, named args, default arg,
 and block-yield.
 
+CLI regression coverage now also locks non-method macro-call declaration parity
+for both same-file and cross-file bundle carriers that generate top-level
+`class`, `module`, `enum`, and constant declarations under the shadow path.
+
 Generated top-level roots now participate in shadow `resolve_names` and
 `infer_types`, not just in collector parity. For example, a carrier like:
 

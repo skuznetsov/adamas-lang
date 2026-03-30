@@ -92,6 +92,13 @@ Verified sequence:
     - the same smoke now reports `generated_nodes=3` globally and
       `generated_nodes=3 symbols=3` in the per-unit summary, proving that
       generated method nodes/symbols are attributed back to the source file
+  - CLI regression coverage now also locks non-method macro-call declaration
+    parity:
+    - `spec/semantic_cli_spec.cr` covers both same-file and cross-file bundle
+      carriers that generate top-level `class`, `module`, `enum`, and constant
+      declarations
+    - both carriers assert `declaration_gaps=0` plus green
+      collector-vs-semantic parity/provenance lines for those comparable kinds
   - live bare macro-call smoke is now green on both collector and semantic sides:
     - `CRYSTAL_V2_SEMANTIC_SHADOW=1 /tmp/crystal_v2_semantic_shadow /tmp/shadow_macro_call_decl.cr --no-prelude --stats --verbose`
     - output includes `semantic_diags=0 resolution_diags=0 type_diags=0`,
