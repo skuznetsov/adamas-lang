@@ -862,6 +862,33 @@ describe Semantic::TypeInferenceEngine do
       type.as(PrimitiveType).name.should eq("UInt64")
     end
 
+    it "matches generic module methods with pointer-bound forall parameters" do
+      source = <<-CRYSTAL
+        module FastFloat
+          def self.fastfloat_strncasecmp(input1 : UC*, input2 : UC*, length : Int) : Bool forall UC
+            true
+          end
+        end
+
+        def parse(first : UInt8*)
+          FastFloat.fastfloat_strncasecmp(first, "nan".to_unsafe, 3)
+        end
+
+        byte = 0_u8
+        parse(pointerof(byte))
+      CRYSTAL
+
+      program, analyzer, engine = infer_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.should be_empty
+
+      type = engine.context.get_type(program.roots.last)
+      type.should be_a(PrimitiveType)
+      type.as(PrimitiveType).name.should eq("Bool")
+    end
+
     it "tracks class variable assignments for later reads" do
       source = <<-CRYSTAL
         class SpinLock

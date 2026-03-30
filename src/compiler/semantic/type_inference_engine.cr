@@ -5105,30 +5105,7 @@ module CrystalV2
           arg_types.each_with_index do |arg_type, i|
             param = params[i]
             if type_ann = param.type_annotation
-              type_name = intern_name(type_ann)
-
-              # Case 1: Simple type parameter (e.g., x : T)
-              if type_params.includes?(type_name)
-                binding[type_name] = arg_type
-                # Case 2: Generic type with type parameter (e.g., box : Box(T))
-              elsif type_name.includes?('(') && type_name.includes?(')')
-                # Parse generic type: "Box(T)" → base="Box", param="T"
-                paren_start = type_name.index('(').not_nil!
-                paren_end = type_name.rindex(')').not_nil!
-                base_type = type_name[0...paren_start]
-                inner_type = type_name[(paren_start + 1)...paren_end]
-
-                # If inner type is a type parameter and arg is InstanceType
-                if type_params.includes?(inner_type) && arg_type.is_a?(InstanceType)
-                  # Match: Box(T) with Box(Int32) → T = Int32
-                  if arg_type.class_symbol.name == base_type && arg_type.type_args
-                    type_args = arg_type.type_args.not_nil!
-                    if type_args.size > 0
-                      binding[inner_type] = type_args[0]
-                    end
-                  end
-                end
-              end
+              infer_type_parameter_bindings_from_annotation(intern_name(type_ann), arg_type, type_params, binding)
             end
           end
 
@@ -5164,6 +5141,92 @@ module CrystalV2
 
           debug("method type bindings #{method.name}: #{binding.inspect}") if @debug_enabled
           binding
+        end
+
+        private def infer_type_parameter_bindings_from_annotation(
+          annotation_name : String,
+          arg_type : Type,
+          type_params : Array(String),
+          binding : Hash(String, Type)
+        ) : Nil
+          return if annotation_name.empty?
+
+          if type_params.includes?(annotation_name)
+            binding[annotation_name] = arg_type
+            return
+          end
+
+          if annotation_name.ends_with?("*") && annotation_name.size > 1
+            if arg_type.is_a?(PointerType)
+              infer_type_parameter_bindings_from_annotation(annotation_name[0...-1], arg_type.element_type, type_params, binding)
+            end
+            return
+          end
+
+          if annotation_name.ends_with?("?") && annotation_name.size > 1
+            if union = arg_type.as?(UnionType)
+              non_nil_members = union.types.reject { |member| member.is_a?(PrimitiveType) && member.name == "Nil" }
+              inner_arg_type =
+                if non_nil_members.size == 1
+                  non_nil_members.first
+                elsif non_nil_members.empty?
+                  @context.nil_type
+                else
+                  UnionType.new(non_nil_members)
+                end
+              infer_type_parameter_bindings_from_annotation(annotation_name[0...-1], inner_arg_type, type_params, binding)
+            end
+            return
+          end
+
+          if annotation_name.ends_with?(".class") && annotation_name.size > 6
+            case arg_type
+            when ClassType
+              infer_type_parameter_bindings_from_annotation(annotation_name[0...-6], instantiate_class_receiver(arg_type), type_params, binding)
+            when PrimitiveType
+              if primitive_metaclass?(arg_type)
+                if value_type = primitive_metaclass_value_type(arg_type)
+                  infer_type_parameter_bindings_from_annotation(annotation_name[0...-6], value_type, type_params, binding)
+                end
+              end
+            end
+            return
+          end
+
+          return unless annotation_name.includes?('(') && annotation_name.includes?(')')
+
+          paren_start = annotation_name.index('(').not_nil!
+          paren_end = annotation_name.rindex(')').not_nil!
+          base_type = annotation_name[0...paren_start]
+          inner_types = split_top_level_generic_args(annotation_name[(paren_start + 1)...paren_end])
+
+          actual_type_args =
+            case arg_type
+            when InstanceType
+              arg_type.class_symbol.name == base_type ? arg_type.type_args : nil
+            when ClassType
+              arg_type.symbol.name == base_type ? arg_type.type_args : nil
+            when ModuleType
+              arg_type.symbol.name == base_type ? arg_type.type_args : nil
+            when ArrayType
+              {"Array", "Slice", "StaticArray"}.includes?(base_type) ? [arg_type.element_type] : nil
+            when PointerType
+              base_type == "Pointer" ? [arg_type.element_type] : nil
+            when HashType
+              base_type == "Hash" ? [arg_type.key_type, arg_type.value_type] : nil
+            when TupleType
+              base_type == "Tuple" ? arg_type.element_types : nil
+            else
+              nil
+            end
+
+          return unless actual_type_args
+
+          inner_types.each_with_index do |inner_name, index|
+            if actual_type = actual_type_args[index]?
+              infer_type_parameter_bindings_from_annotation(inner_name, actual_type, type_params, binding)
+            end
+          end
         end
 
         private def method_block_signature(
@@ -5828,26 +5891,55 @@ module CrystalV2
           params = method.params.reject(&.is_block)
           required_count = count_required_params(params)
 
-          # Check argument count (allow fewer args if defaults exist)
-          return false if arg_types.size < required_count
-          splat_index = params.index { |param| param.is_splat }
-          return false if splat_index.nil? && arg_types.size > params.size
+          previous_method_bindings = {} of String => Type?
+          if type_params = method.type_parameters
+            bindings = infer_method_type_argument_bindings(method, receiver_type || @context.nil_type, arg_types)
+            type_params.each do |type_param_name|
+              previous_method_bindings[type_param_name] = @assignments[type_param_name]?
+              if bound_type = bindings[type_param_name]?
+                @assignments[type_param_name] = bound_type
+              end
+            end
+          end
 
-          if splat_at = splat_index
-            suffix_count = params.size - splat_at - 1
-            return false if arg_types.size < splat_at + suffix_count
+          begin
 
+            # Check argument count (allow fewer args if defaults exist)
+            return false if arg_types.size < required_count
+            splat_index = params.index { |param| param.is_splat }
+            return false if splat_index.nil? && arg_types.size > params.size
+
+            if splat_at = splat_index
+              suffix_count = params.size - splat_at - 1
+              return false if arg_types.size < splat_at + suffix_count
+
+              arg_types.each_with_index do |arg_type, i|
+                param =
+                  if i < splat_at
+                    params[i]
+                  elsif i >= arg_types.size - suffix_count
+                    suffix_index = params.size - (arg_types.size - i)
+                    params[suffix_index]
+                  else
+                    params[splat_at]
+                  end
+
+                type_ann = param.type_annotation
+                next unless type_ann # No annotation means any type matches
+
+                type_name = intern_name(type_ann)
+                next if type_name == "_"
+
+                param_type = resolve_method_annotation_type(type_name, receiver_type, method.scope)
+                return false unless type_matches?(arg_type, param_type)
+              end
+
+              return true
+            end
+
+            # Check each provided argument matches its parameter
             arg_types.each_with_index do |arg_type, i|
-              param =
-                if i < splat_at
-                  params[i]
-                elsif i >= arg_types.size - suffix_count
-                  suffix_index = params.size - (arg_types.size - i)
-                  params[suffix_index]
-                else
-                  params[splat_at]
-                end
-
+              param = params[i]
               type_ann = param.type_annotation
               next unless type_ann # No annotation means any type matches
 
@@ -5858,23 +5950,16 @@ module CrystalV2
               return false unless type_matches?(arg_type, param_type)
             end
 
-            return true
+            true
+          ensure
+            previous_method_bindings.each do |type_param_name, previous_type|
+              if previous_type
+                @assignments[type_param_name] = previous_type
+              else
+                @assignments.delete(type_param_name)
+              end
+            end
           end
-
-          # Check each provided argument matches its parameter
-          arg_types.each_with_index do |arg_type, i|
-            param = params[i]
-            type_ann = param.type_annotation
-            next unless type_ann # No annotation means any type matches
-
-            type_name = intern_name(type_ann)
-            next if type_name == "_"
-
-            param_type = resolve_method_annotation_type(type_name, receiver_type, method.scope)
-            return false unless type_matches?(arg_type, param_type)
-          end
-
-          true
         end
 
         # Check if actual_type is compatible with expected_type
