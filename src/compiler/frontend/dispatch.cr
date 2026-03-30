@@ -32,8 +32,14 @@ module CrystalV2
             [n.left, n.right]
 
           when NodeKind::Unary
-            n = node.as(UnaryNode)
-            [n.operand]
+            case node
+            when UnaryNode
+              [node.operand]
+            when SplatNode
+              [node.expr]
+            else
+              [] of ExprId
+            end
 
           when NodeKind::Ternary
             n = node.as(TernaryNode)
@@ -206,7 +212,15 @@ module CrystalV2
 
           when NodeKind::ArrayLiteral
             n = node.as(ArrayLiteralNode)
-            n.elements.to_a
+            children = [] of ExprId
+            if custom_name = n.custom_name
+              children << custom_name unless custom_name.invalid?
+            end
+            n.elements.each { |elem| children << elem }
+            if of_type = n.of_type
+              children << of_type unless of_type.invalid?
+            end
+            children
 
           when NodeKind::TupleLiteral
             n = node.as(TupleLiteralNode)
@@ -219,6 +233,9 @@ module CrystalV2
           when NodeKind::HashLiteral
             n = node.as(HashLiteralNode)
             children = [] of ExprId
+            if custom_name = n.custom_name
+              children << custom_name unless custom_name.invalid?
+            end
             n.entries.each do |entry|
               children << entry.key
               children << entry.value
@@ -282,6 +299,10 @@ module CrystalV2
             end
 
           when NodeKind::Class
+            n = node.as(ClassNode)
+            (n.body || [] of ExprId).to_a
+
+          when NodeKind::Struct
             n = node.as(ClassNode)
             (n.body || [] of ExprId).to_a
 

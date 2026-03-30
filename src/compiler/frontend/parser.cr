@@ -773,7 +773,7 @@ module CrystalV2
               # Prevent individual type declarations during target parsing
               # so that "x, y : Type" is parsed as multi-var, not "x, (y : Type)"
               @no_type_declaration += 1
-              target = parse_expression(0)
+              target = parse_multiple_assign_target
               @no_type_declaration -= 1
               return PREFIX_ERROR if target.invalid?
               targets << target
@@ -884,9 +884,9 @@ module CrystalV2
               targets,
               value
             ))
-          end
+        end
 
-          # Phase 66/77: Check for type declaration (Global variables only)
+        # Phase 66/77: Check for type declaration (Global variables only)
           # Phase 103: Identifier type declarations moved to parse_prefix
           # Note: @instance_var and @@class_var type declarations remain here
           if operator_token?(token, Token::Kind::Colon)
@@ -1726,10 +1726,22 @@ module CrystalV2
               stop_reason ||= "semicolon" if token.kind == Token::Kind::Semicolon
               stop_reason ||= "rbracket" if token.kind == Token::Kind::RBracket
               stop_reason ||= "rbrace" if token.kind == Token::Kind::RBrace
-              # Stop if we see a '{' after already consuming some type tokens (likely start of body)
+              # Stop if we see a '{' after already consuming some type tokens
+              # and the previous token does not require another type.
+              #
+              # Examples that must continue:
+              #   def foo : Int32 | {Nil, Nil}
+              #   def foo : Int32 -> {String, String}
+              #   Foo(x: {String, Int32})
               if token.kind == Token::Kind::LBrace
                 if prev_type_token = last_type_token
-                  unless prev_type_token.kind.in?(Token::Kind::LBrace, Token::Kind::Comma)
+                  unless prev_type_token.kind.in?(
+                           Token::Kind::LBrace,
+                           Token::Kind::Comma,
+                           Token::Kind::Pipe,
+                           Token::Kind::ThinArrow,
+                           Token::Kind::Colon
+                         )
                     stop_reason ||= "lbrace-after-type"
                   end
                 end
@@ -1986,15 +1998,15 @@ module CrystalV2
         # Phase 100: Added Macro to definition_start?
         private def definition_start?
           token = current_token
+          definition_start_token?(token)
+        end
 
+        private def definition_start_token?(token : Token) : Bool
           # Phase 103F: Distinguish 'def method' from 'def : Type' (identifier usage)
           # Method definition: def name, def self.name, def []
           # Identifier usage: def : Type (no name between def and :)
           if token.kind == Token::Kind::Def
-            # Check what comes after 'def' keyword
             next_tok = peek_next_non_trivia
-            # If directly followed by : (no identifier), it's identifier usage: getter def : Type
-            # Otherwise it's method definition: def foo : Type
             return false if next_tok.kind == Token::Kind::Colon
           end
 
@@ -2551,8 +2563,24 @@ module CrystalV2
             end
           end
 
+          header_end_token = previous_token || name_token
+
           # Allow separators after header
           skip_statement_end
+
+          if top_level_fun_declaration_boundary?
+            fun_span = fun_token.span.cover(header_end_token.span)
+            return @arena.add_typed(
+              FunNode.new(
+                fun_span,
+                name_token.slice,
+                nil,
+                params,
+                return_type,
+                _varargs
+              )
+            )
+          end
 
           body_ids_arr, rescue_clauses, else_body, ensure_body = parse_block_body_with_optional_rescue
 
@@ -2707,6 +2735,158 @@ module CrystalV2
               varargs
             )
           )
+        end
+
+        private def top_level_fun_declaration_boundary? : Bool
+          return true if current_token.kind == Token::Kind::EOF
+          return top_level_fun_declaration_boundary_after_macro_blocks? if macro_control_start?
+          definition_start?
+        end
+
+        private def top_level_fun_declaration_boundary_after_macro_blocks? : Bool
+          saved_index = @index
+          saved_previous = @previous_token
+          saved_diagnostic_count = @diagnostics.size
+
+          begin
+            while macro_control_start?
+              fast_forward_percent_block
+              skip_statement_end
+            end
+
+            return true if current_token.kind == Token::Kind::EOF
+            definition_start?
+          ensure
+            while @diagnostics.size > saved_diagnostic_count
+              @diagnostics.pop
+            end
+            @index = saved_index
+            @previous_token = saved_previous
+          end
+        end
+
+        private def skip_fun_header_trivia_index(idx : Int32) : Int32
+          while idx < @tokens.size
+            kind = @tokens[idx].kind
+            break unless kind.in?(Token::Kind::Whitespace, Token::Kind::Comment, Token::Kind::Newline, Token::Kind::Semicolon)
+            idx += 1
+          end
+          idx
+        end
+
+        private def macro_control_start_at?(idx : Int32) : Bool
+          return false if idx >= @tokens.size
+          token = @tokens[idx]
+          return true if token.kind == Token::Kind::LBracePercent
+          token.kind == Token::Kind::LBrace && idx + 1 < @tokens.size && @tokens[idx + 1].kind == Token::Kind::Percent
+        end
+
+        private def skip_macro_expression_index(idx : Int32) : Int32
+          return idx unless idx < @tokens.size && @tokens[idx].kind == Token::Kind::MacroExprStart
+
+          depth = 0
+          while idx < @tokens.size
+            token = @tokens[idx]
+            case token.kind
+            when Token::Kind::MacroExprStart
+              depth += 1
+            when Token::Kind::MacroExprEnd
+              depth -= 1
+              idx += 1
+              break if depth <= 0
+              next
+            end
+            idx += 1
+          end
+
+          idx
+        end
+
+        private def macro_fun_starts_block?(start_idx : Int32) : Bool
+          idx = skip_fun_header_trivia_index(start_idx + 1)
+          return false if idx >= @tokens.size
+
+          token = @tokens[idx]
+          if token.kind == Token::Kind::MacroExprStart
+            idx = skip_macro_expression_index(idx)
+          else
+            return false unless token.kind == Token::Kind::Identifier || is_keyword_identifier?(token)
+            idx += 1
+          end
+
+          loop do
+            idx = skip_fun_header_trivia_index(idx)
+            break unless idx < @tokens.size && @tokens[idx].kind == Token::Kind::ColonColon
+            idx += 1
+            idx = skip_fun_header_trivia_index(idx)
+            return false if idx >= @tokens.size
+            token = @tokens[idx]
+            return false unless token.kind == Token::Kind::Identifier || is_keyword_identifier?(token)
+            idx += 1
+          end
+
+          idx = skip_fun_header_trivia_index(idx)
+          if idx < @tokens.size && @tokens[idx].kind == Token::Kind::Eq
+            idx += 1
+            idx = skip_fun_header_trivia_index(idx)
+            return false if idx >= @tokens.size
+            token = @tokens[idx]
+            return false unless token.kind.in?(Token::Kind::Identifier, Token::Kind::String) || is_keyword_identifier?(token)
+            idx += 1
+          end
+
+          idx = skip_fun_header_trivia_index(idx)
+          return false unless idx < @tokens.size && @tokens[idx].kind == Token::Kind::LParen
+
+          paren_depth = 1
+          idx += 1
+          while idx < @tokens.size && paren_depth > 0
+            case @tokens[idx].kind
+            when Token::Kind::LParen
+              paren_depth += 1
+            when Token::Kind::RParen
+              paren_depth -= 1
+            end
+            idx += 1
+          end
+          return false if paren_depth > 0
+
+          idx = skip_fun_header_trivia_index(idx)
+          if idx < @tokens.size && @tokens[idx].kind == Token::Kind::Colon
+            idx += 1
+            paren_depth = 0
+            bracket_depth = 0
+            brace_depth = 0
+
+            while idx < @tokens.size
+              token = @tokens[idx]
+              case token.kind
+              when Token::Kind::LParen
+                paren_depth += 1
+              when Token::Kind::RParen
+                paren_depth -= 1 if paren_depth > 0
+              when Token::Kind::LBracket
+                bracket_depth += 1
+              when Token::Kind::RBracket
+                bracket_depth -= 1 if bracket_depth > 0
+              when Token::Kind::LBrace
+                brace_depth += 1
+              when Token::Kind::RBrace
+                brace_depth -= 1 if brace_depth > 0
+              when Token::Kind::Newline, Token::Kind::Semicolon
+                break if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0
+              end
+              idx += 1
+            end
+          end
+
+          idx = skip_fun_header_trivia_index(idx)
+          return false if idx >= @tokens.size
+          return false if macro_control_start_at?(idx)
+
+          token = @tokens[idx]
+          return false if token.kind.in?(Token::Kind::EOF, Token::Kind::End, Token::Kind::Rescue, Token::Kind::Ensure)
+          !definition_start_token?(token)
         end
 
         private def parse_method_params
@@ -4836,19 +5016,17 @@ module CrystalV2
                 amp_token = current_token
                 advance
                 skip_trivia
-                if current_token.kind.in?(Token::Kind::Identifier, Token::Kind::InstanceVar)
+                if current_token.kind.in?(Token::Kind::Identifier, Token::Kind::InstanceVar) && standalone_amp_capture_target?
                   ident_tok = current_token
                   ident_node = @arena.add_typed(IdentifierNode.new(ident_tok.span, ident_tok.slice))
                   advance
                   span = amp_token.span.cover(ident_tok.span)
                   args_b << @arena.add_typed(UnaryNode.new(span, amp_token.slice, ident_node))
                 else
-                  # Fallback to normal expression (e.g., super(& expr))
-                  @no_type_declaration += 1
-                  expr = parse_expression(0)
-                  @no_type_declaration -= 1
-                  return PREFIX_ERROR if expr.invalid?
-                  args_b << expr
+                  target_expr = parse_expression(UNARY_PRECEDENCE)
+                  return PREFIX_ERROR if target_expr.invalid?
+                  span = amp_token.span.cover(@arena[target_expr].span)
+                  args_b << @arena.add_typed(UnaryNode.new(span, amp_token.slice, target_expr))
                 end
               elsif current_token.kind == Token::Kind::AmpDot
                 amp_token = current_token
@@ -4938,18 +5116,17 @@ module CrystalV2
                   amp_token = current_token
                   advance
                   skip_trivia
-                  if current_token.kind.in?(Token::Kind::Identifier, Token::Kind::InstanceVar)
+                  if current_token.kind.in?(Token::Kind::Identifier, Token::Kind::InstanceVar) && standalone_amp_capture_target?
                     ident_tok = current_token
                     ident_node = @arena.add_typed(IdentifierNode.new(ident_tok.span, ident_tok.slice))
                     advance
                     span = amp_token.span.cover(ident_tok.span)
                     args_b << @arena.add_typed(UnaryNode.new(span, amp_token.slice, ident_node))
                   else
-                    @no_type_declaration += 1
-                    expr = parse_expression(0)
-                    @no_type_declaration -= 1
-                    break if expr.invalid?
-                    args_b << expr
+                    target_expr = parse_expression(UNARY_PRECEDENCE)
+                    break if target_expr.invalid?
+                    span = amp_token.span.cover(@arena[target_expr].span)
+                    args_b << @arena.add_typed(UnaryNode.new(span, amp_token.slice, target_expr))
                   end
                 elsif current_token.kind == Token::Kind::AmpDot
                   amp_token = current_token
@@ -6465,12 +6642,14 @@ module CrystalV2
         # Parse a constant name path (A::B::C) and return all segments as slices.
         # Returns array of slices for each segment, or nil on error.
         # Used for creating nested module/class structures.
-        private def parse_constant_name_segments : Array(Slice(UInt8))?
+        private def parse_constant_name_segments_with_absolute : {Array(Slice(UInt8)), Bool}?
           segments = [] of Slice(UInt8)
           token = current_token
+          leading_colon = false
 
           # Handle optional leading ::
           if token.kind == Token::Kind::ColonColon
+            leading_colon = true
             advance
             skip_trivia
             token = current_token
@@ -6498,7 +6677,12 @@ module CrystalV2
             advance
           end
 
-          segments
+          {segments, leading_colon}
+        end
+
+        private def parse_constant_name_segments : Array(Slice(UInt8))?
+          parsed = parse_constant_name_segments_with_absolute
+          parsed ? parsed[0] : nil
         end
 
         # Phase 32: Modified to support both class and struct
@@ -6510,8 +6694,10 @@ module CrystalV2
           skip_trivia
 
           # Parse all path segments (e.g., [A, B, C] for class A::B::C)
-          name_segments = parse_constant_name_segments
-          return PREFIX_ERROR unless name_segments
+          parsed_name = parse_constant_name_segments_with_absolute
+          return PREFIX_ERROR unless parsed_name
+          name_segments = parsed_name[0]
+          absolute_name = parsed_name[1]
           skip_trivia
 
           # Phase 61: Parse optional type parameters: (T, K, V)
@@ -6691,7 +6877,8 @@ module CrystalV2
               is_abstract,
               is_struct,
               is_union,
-              type_params
+              type_params,
+              absolute_name && innermost_idx == 0
             )
           )
 
@@ -6703,7 +6890,8 @@ module CrystalV2
                 class_span,
                 segment_name,
                 [result_id],
-                nil # Namespace modules don't have type params
+                nil, # Namespace modules don't have type params
+                absolute_name && i == 0
               )
             )
           end
@@ -7607,8 +7795,10 @@ module CrystalV2
           skip_trivia
 
           # Parse all path segments (e.g., [A, B, C] for module A::B::C)
-          name_segments = parse_constant_name_segments
-          return PREFIX_ERROR unless name_segments
+          parsed_name = parse_constant_name_segments_with_absolute
+          return PREFIX_ERROR unless parsed_name
+          name_segments = parsed_name[0]
+          absolute_name = parsed_name[1]
           trace_parse_module = ENV.has_key?("CRYSTAL_V2_TRACE_PARSE_MODULE") && name_segments.size > 1
           if trace_parse_module
             segment_names = name_segments.map { |segment| String.new(segment) }
@@ -7775,7 +7965,8 @@ module CrystalV2
               module_span,
               innermost_name,
               body,
-              type_params # Type params only on innermost
+              type_params, # Type params only on innermost
+              absolute_name && innermost_idx == 0
             )
           )
 
@@ -7787,7 +7978,8 @@ module CrystalV2
                 module_span,
                 segment_name,
                 [result_id],
-                nil # Outer modules don't have type params
+                nil, # Outer modules don't have type params
+                absolute_name && i == 0
               )
             )
           end
@@ -8470,6 +8662,10 @@ module CrystalV2
                 # begin/do always introduce a block that must be closed with end,
                 # even when used as expressions (e.g., x = begin ... end, foo do ... end).
                 block_depth[0] += 1
+              when Token::Kind::Fun
+                if starts_statement && macro_fun_starts_block?(@index)
+                  block_depth[0] += 1
+                end
               when Token::Kind::Def, Token::Kind::Class, Token::Kind::Module,
                    Token::Kind::Struct, Token::Kind::Enum,
                    Token::Kind::If, Token::Kind::Unless, Token::Kind::While,
@@ -8762,6 +8958,22 @@ module CrystalV2
           # parse_expression_suffix behavior.
           debug { "parse_op_assign: no assignment, returning expression" }
           left
+        end
+
+        private def parse_multiple_assign_target : ExprId
+          if current_token.kind == Token::Kind::Star || current_token.kind == Token::Kind::StarStar
+            splat_token = current_token
+            advance
+            skip_trivia
+
+            target_expr = parse_expression(0)
+            return PREFIX_ERROR if target_expr.invalid?
+
+            span = splat_token.span.cover(@arena[target_expr].span)
+            return @arena.add_typed(SplatNode.new(span, target_expr))
+          end
+
+          parse_expression(0)
         end
 
         # Phase CALLS_WITHOUT_PARENS: Parse call arguments without parentheses
@@ -9248,9 +9460,11 @@ module CrystalV2
                         # Last named arg
                         callee_span.cover(named_args.not_nil!.last.span)
                       elsif args.size > 0
-                        # Positional arguments were parsed successfully; keep conservative
-                        # span to avoid dereferencing unstable arg ids on broken codegen paths.
-                        callee_span
+                        # Positional arguments parsed successfully, so the call span
+                        # must cover the last argument as well. Macro block-yield
+                        # extraction depends on this span being complete for
+                        # call-without-parens bodies like `setter path_index`.
+                        callee_span.cover(@arena[args.last].span)
                       else
                         callee_span
                       end
@@ -9391,6 +9605,11 @@ module CrystalV2
               left = new_left
               next
             when Token::Kind::LBrace
+              if custom_literal_receiver?(left)
+                left = parse_custom_literal(left)
+                return PREFIX_ERROR if left.invalid?
+                next
+              end
               # Phase 10: Block with {} syntax
               # Only attach a block if 'left' can accept one (call-like). Otherwise,
               # treat '{' as start of a new statement (e.g., a tuple/hash literal).
@@ -9552,7 +9771,7 @@ module CrystalV2
             elsif token.kind == Token::Kind::Question
               # We have: left ? right (so far)
               # Now need: : false_branch
-              skip_trivia
+              consume_newlines
               unless current_token.kind == Token::Kind::Colon
                 # Error: expected ':' in ternary operator
                 left = PREFIX_ERROR
@@ -9581,7 +9800,7 @@ module CrystalV2
               )
             elsif token.kind == Token::Kind::Operator && slice_eq?(token.slice, "?")
               # Treat operator '?' same as Token::Kind::Question
-              skip_trivia
+              consume_newlines
               unless current_token.kind == Token::Kind::Colon
                 left = PREFIX_ERROR
                 break
@@ -11665,7 +11884,6 @@ module CrystalV2
               have_arg_expr = false
               pushed = false
               if current_token.kind == Token::Kind::Amp
-                # Save position in case this is not block shorthand
                 amp_token = current_token
                 advance
                 skip_whitespace_and_optional_newlines
@@ -11679,7 +11897,7 @@ module CrystalV2
                     emit_unexpected(current_token)
                     return PREFIX_ERROR
                   end
-                elsif current_token.kind == Token::Kind::Identifier || current_token.kind == Token::Kind::InstanceVar
+                elsif current_token.kind.in?(Token::Kind::Identifier, Token::Kind::InstanceVar) && standalone_amp_capture_target?
                   # Phase 103I: Block capture argument: foo(&block) or foo(&@block)
                   # This passes a block as an argument (not block shorthand)
                   identifier_token = current_token
@@ -11710,15 +11928,11 @@ module CrystalV2
                   arg_expr = @arena.add_typed(UnaryNode.new(arg_span, amp_token.slice, proc_pointer))
                   have_arg_expr = true
                 else
-                  # Not block shorthand or capture, rewind and parse normally
-                  # This handles cases like: foo(& other_expr)
-                  unadvance # Go back to Amp token
-                  # Disable type declarations to allow identifier: syntax for named args
-                  @no_type_declaration += 1
-                  arg_expr = with_pointer_suffix { parse_expression(0) }
+                  target_expr = with_pointer_suffix { parse_expression(UNARY_PRECEDENCE) }
+                  return PREFIX_ERROR if target_expr.invalid?
+                  arg_span = amp_token.span.cover(@arena[target_expr].span)
+                  arg_expr = @arena.add_typed(UnaryNode.new(arg_span, amp_token.slice, target_expr))
                   have_arg_expr = true
-                  @no_type_declaration -= 1
-                  return PREFIX_ERROR if arg_expr.invalid?
                 end
                 if have_arg_expr && !arg_expr.invalid? && !pushed
                   args_b << arg_expr
@@ -12950,6 +13164,42 @@ current_token.kind == Token::Kind::Identifier &&
           @arena.add_typed(GenericNode.new(span, base, args_b.to_a))
         end
 
+        private def custom_literal_receiver?(expr : ExprId) : Bool
+          return false if expr.invalid?
+
+          node = @arena[expr]
+          case node
+          when Frontend::IdentifierNode
+            name = node.name
+            return false if name.empty?
+            first = name[0]
+            first >= 'A'.ord.to_u8 && first <= 'Z'.ord.to_u8
+          when Frontend::PathNode
+            true
+          when Frontend::GenericNode
+            custom_literal_receiver?(node.base_type)
+          else
+            false
+          end
+        end
+
+        private def parse_custom_literal(receiver : ExprId) : ExprId
+          literal_id = parse_hash_or_tuple
+          return PREFIX_ERROR if literal_id.invalid?
+
+          literal_node = @arena[literal_id]
+          span = node_span(receiver).cover(node_span(literal_id))
+
+          case literal_node
+          when Frontend::TupleLiteralNode
+            @arena.add_typed(Frontend::ArrayLiteralNode.named(span, literal_node.elements, receiver))
+          when Frontend::HashLiteralNode
+            @arena.add_typed(Frontend::HashLiteralNode.named(span, literal_node.entries, receiver))
+          else
+            literal_id
+          end
+        end
+
         private def parse_as_like(receiver : ExprId, as_token : Token, safe : Bool) : ExprId
           advance # Skip 'as' keyword
           skip_trivia
@@ -13620,6 +13870,21 @@ current_token.kind == Token::Kind::Identifier &&
                                 token.kind == Token::Kind::Comment
             offset += 1
           end
+        end
+
+        private def standalone_amp_capture_target? : Bool
+          next_token = peek_next_non_trivia
+          next_token.kind.in?(
+            Token::Kind::Comma,
+            Token::Kind::RParen,
+            Token::Kind::RBracket,
+            Token::Kind::RBrace,
+            Token::Kind::EOF,
+            Token::Kind::Newline,
+            Token::Kind::Semicolon,
+            Token::Kind::Do,
+            Token::Kind::End
+          )
         end
 
         # Phase NAMED_ARGUMENTS: Check if token can be used as named argument name

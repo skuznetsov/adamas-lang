@@ -105,6 +105,50 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       String.new(CrystalV2::Compiler::Frontend.node_constant_name(constant_node).not_nil!).should eq("MAX_CONNECTIONS")
     end
 
+    it "parses top-level Set custom literals as named array literals" do
+      source = "FLAGS = Set{1, 2, 3}"
+      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      program = parser.parse_program
+
+      program.roots.size.should eq(1)
+      arena = program.arena
+      constant_node = arena[program.roots.first]
+      value_id = CrystalV2::Compiler::Frontend.node_constant_value(constant_node).not_nil!
+      value_node = arena[value_id]
+
+      value_node.should be_a(CrystalV2::Compiler::Frontend::ArrayLiteralNode)
+      array_node = value_node.as(CrystalV2::Compiler::Frontend::ArrayLiteralNode)
+      array_node.elements.size.should eq(3)
+
+      custom_name_id = array_node.custom_name
+      custom_name_id.should_not be_nil
+      custom_name = arena[custom_name_id.not_nil!].as(CrystalV2::Compiler::Frontend::IdentifierNode)
+      String.new(custom_name.name).should eq("Set")
+    end
+
+    it "parses class-body Set custom literals instead of swallowing them" do
+      source = <<-CRYSTAL
+      class Config
+        KNOWN = Set{"foo", "bar"}
+      end
+      CRYSTAL
+
+      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      program = parser.parse_program
+
+      program.roots.size.should eq(1)
+      arena = program.arena
+      class_node = arena[program.roots.first]
+      class_body = CrystalV2::Compiler::Frontend.node_class_body(class_node).not_nil!
+
+      class_body.size.should eq(1)
+      constant_node = arena[class_body.first]
+      value_id = CrystalV2::Compiler::Frontend.node_constant_value(constant_node).not_nil!
+      value_node = arena[value_id]
+      value_node.should be_a(CrystalV2::Compiler::Frontend::ArrayLiteralNode)
+      value_node.as(CrystalV2::Compiler::Frontend::ArrayLiteralNode).custom_name.should_not be_nil
+    end
+
     it "parses constant in module" do
       source = <<-CRYSTAL
       module HTTP

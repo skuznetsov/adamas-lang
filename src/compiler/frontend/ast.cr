@@ -951,20 +951,42 @@ module CrystalV2
         getter elements : Array(ExprId)
         @of_type_index : Int32
         @has_of_type : Bool
+        @custom_name_index : Int32
+        @has_custom_name : Bool
 
         def initialize(@span : Span, @elements : Array(ExprId))
           @of_type_index = -1
           @has_of_type = false
+          @custom_name_index = -1
+          @has_custom_name = false
         end
 
         def initialize(@span : Span, @elements : Array(ExprId), of_type : ExprId)
           @of_type_index = of_type.index
           @has_of_type = true
+          @custom_name_index = -1
+          @has_custom_name = false
+        end
+
+        def self.named(span : Span, elements : Array(ExprId), custom_name : ExprId)
+          node = new(span, elements)
+          node.set_custom_name(custom_name)
+          node
         end
 
         def of_type : ExprId?
           return nil unless @has_of_type
           ExprId.new(@of_type_index)
+        end
+
+        def custom_name : ExprId?
+          return nil unless @has_custom_name
+          ExprId.new(@custom_name_index)
+        end
+
+        protected def set_custom_name(custom_name : ExprId)
+          @custom_name_index = custom_name.index
+          @has_custom_name = true
         end
       end
 
@@ -981,6 +1003,8 @@ module CrystalV2
         getter entries : Array(HashEntry)
         getter of_key_type : Slice(UInt8)?
         getter of_value_type : Slice(UInt8)?
+        @custom_name_index : Int32
+        @has_custom_name : Bool
 
         def initialize(
           @span : Span,
@@ -988,6 +1012,24 @@ module CrystalV2
           @of_key_type : Slice(UInt8)? = nil,
           @of_value_type : Slice(UInt8)? = nil,
         )
+          @custom_name_index = -1
+          @has_custom_name = false
+        end
+
+        def self.named(span : Span, entries : Array(HashEntry), custom_name : ExprId)
+          node = new(span, entries)
+          node.set_custom_name(custom_name)
+          node
+        end
+
+        def custom_name : ExprId?
+          return nil unless @has_custom_name
+          ExprId.new(@custom_name_index)
+        end
+
+        protected def set_custom_name(custom_name : ExprId)
+          @custom_name_index = custom_name.index
+          @has_custom_name = true
         end
       end
 
@@ -1592,10 +1634,12 @@ module CrystalV2
         getter is_struct : Bool?
         getter is_union : Bool?
         getter type_params : Array(Slice(UInt8))?
+        getter absolute : Bool
 
         def initialize(@span : Span, @name : Slice(UInt8), @super_name : Slice(UInt8)?,
                        @body : Array(ExprId)?, @is_abstract : Bool? = nil, @is_struct : Bool? = nil,
-                       @is_union : Bool? = nil, @type_params : Array(Slice(UInt8))? = nil)
+                       @is_union : Bool? = nil, @type_params : Array(Slice(UInt8))? = nil,
+                       @absolute : Bool = false)
         end
 
         # Compatibility accessors (legacy ExpressionNode API)
@@ -1626,8 +1670,9 @@ module CrystalV2
         getter name : Slice(UInt8)
         getter body : Array(ExprId)?
         getter type_params : Array(Slice(UInt8))?
+        getter absolute : Bool
 
-        def initialize(@span : Span, @name : Slice(UInt8), @body : Array(ExprId)?, @type_params : Array(Slice(UInt8))?)
+        def initialize(@span : Span, @name : Slice(UInt8), @body : Array(ExprId)?, @type_params : Array(Slice(UInt8))?, @absolute : Bool = false)
         end
       end
 
@@ -2879,6 +2924,10 @@ module CrystalV2
         node.operand # UnaryNode uses 'operand' instead of 'right'
       end
 
+      def self.node_right(node : SplatNode) : ExprId
+        node.expr
+      end
+
       def self.node_right(node : TypedNode) : ExprId?
         nil
       end
@@ -2989,6 +3038,14 @@ module CrystalV2
 
       def self.node_hash_of_value_type(node : HashLiteralNode)
         node.of_value_type
+      end
+
+      def self.node_hash_custom_name(node : HashLiteralNode) : ExprId?
+        node.custom_name
+      end
+
+      def self.node_hash_custom_name(node : TypedNode) : ExprId?
+        nil
       end
 
       def self.node_case_value(node : CaseNode)
@@ -3131,6 +3188,10 @@ module CrystalV2
 
       def self.node_operand(node : UnaryNode) : ExprId
         node.operand
+      end
+
+      def self.node_operand(node : SplatNode) : ExprId
+        node.expr
       end
 
       def self.node_operand(node : TypedNode) : ExprId?
@@ -3983,6 +4044,14 @@ module CrystalV2
       end
 
       def self.node_array_of_type(node : TypedNode) : ExprId?
+        nil
+      end
+
+      def self.node_array_custom_name(node : ArrayLiteralNode) : ExprId?
+        node.custom_name
+      end
+
+      def self.node_array_custom_name(node : TypedNode) : ExprId?
         nil
       end
 
