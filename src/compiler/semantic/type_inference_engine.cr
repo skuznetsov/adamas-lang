@@ -1284,7 +1284,7 @@ module CrystalV2
             type
           when ClassType
             base_name = normalize_class_receiver_name(type.symbol.name)
-            return instantiate_class_receiver(type) if {"Array", "StaticArray"}.includes?(base_name)
+            return instantiate_class_receiver(type) if {"Array", "Slice", "StaticArray"}.includes?(base_name)
             nil
           when PrimitiveType
             return nil unless primitive_metaclass?(type)
