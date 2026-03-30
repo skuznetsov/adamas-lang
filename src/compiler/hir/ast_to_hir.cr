@@ -2642,6 +2642,7 @@ module Crystal::HIR
     @module_def_lookup_cache_version : Int32
     @module_def_lookup_cache : Hash(String, Tuple(CrystalV2::Compiler::Frontend::DefNode, CrystalV2::Compiler::Frontend::ArenaLike)?)
     @module_class_def_lookup_cache : Hash(String, Tuple(CrystalV2::Compiler::Frontend::DefNode, CrystalV2::Compiler::Frontend::ArenaLike)?)
+    @module_defs_stripped_lookup : Hash(String, String)
     @instance_method_names_cache : Hash(String, Array(String))
     @instance_method_names_cache_version : Int32
     @defined_instance_method_full_names_cache : Hash({String, UInt64, UInt64, Int32}, Set(String))
@@ -3052,6 +3053,7 @@ module Crystal::HIR
       @module_def_lookup_cache_version = 0
       @module_def_lookup_cache = {} of String => Tuple(CrystalV2::Compiler::Frontend::DefNode, CrystalV2::Compiler::Frontend::ArenaLike)?
       @module_class_def_lookup_cache = {} of String => Tuple(CrystalV2::Compiler::Frontend::DefNode, CrystalV2::Compiler::Frontend::ArenaLike)?
+      @module_defs_stripped_lookup = {} of String => String
       @instance_method_names_cache = {} of String => Array(String)
       @instance_method_names_cache_version = 0
       @defined_instance_method_full_names_cache = {} of {String, UInt64, UInt64, Int32} => Set(String)
@@ -28733,7 +28735,19 @@ module Crystal::HIR
       return if @module_def_lookup_cache_version == @module_defs_cache_version
       @module_def_lookup_cache.clear
       @module_class_def_lookup_cache.clear
+      @module_defs_stripped_lookup.clear
       @module_def_lookup_cache_version = @module_defs_cache_version
+    end
+
+    # Lazy reverse lookup: stripped module name → first generic key in @module_defs.
+    # Built on first access per cache generation.
+    private def ensure_module_defs_stripped_lookup
+      return unless @module_defs_stripped_lookup.empty? && !@module_defs.empty?
+      @module_defs.each_key do |key|
+        stripped = strip_generic_args(key)
+        next if stripped == key  # no generic args
+        @module_defs_stripped_lookup[stripped] ||= key
+      end
     end
 
     private def ensure_instance_method_names_cache
@@ -52536,6 +52550,7 @@ module Crystal::HIR
       expects_block : Bool? = nil,
     ) : Tuple(CrystalV2::Compiler::Frontend::DefNode, CrystalV2::Compiler::Frontend::ArenaLike)?
       ensure_module_def_lookup_cache
+      ensure_module_defs_stripped_lookup
       types_key = call_arg_types ? call_arg_types.map(&.id).join("_") : ""
       block_mode = if expects_block.nil?
                      "any"
@@ -52552,6 +52567,21 @@ module Crystal::HIR
       visited << module_name
 
       mod_defs = @module_defs[module_name]?
+      # Generic module fallback: include map stores stripped names like "Indexable::Mutable"
+      # but @module_defs keys may include type params like "Indexable::Mutable(T)".
+      # Also handle the case where both "Indexable" and "Indexable(T)" exist —
+      # the generic variant typically has the full body with all methods.
+      if generic_key = @module_defs_stripped_lookup[module_name]?
+        if generic_defs = @module_defs[generic_key]?
+          if mod_defs
+            # Merge: generic variant may have more reopenings/methods
+            mod_defs = mod_defs + generic_defs
+          else
+            mod_defs = generic_defs
+          end
+          module_name = generic_key
+        end
+      end
       # Resolve type aliases in module name path.
       # e.g., Engine::MatchData → PCRE2::MatchData → Regex::PCRE2::MatchData
       unless mod_defs
