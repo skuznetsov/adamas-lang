@@ -255,6 +255,8 @@ both same-file and cross-file forms.
 The same non-method CLI matrix now also locks:
 
 - same-file named-arg bundles
+- cross-file named-arg bundles
+- same-file default-arg bundles
 - cross-file default-arg bundles
 - same-file block-yield bundles
 - cross-file block-yield bundles
