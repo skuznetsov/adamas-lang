@@ -39,6 +39,8 @@ The shadow prepass currently reports:
 - aggregate node count
 - top-level symbol count
 - resolved identifier count
+- original compile-side parse diagnostic counts
+- shared-aggregate shadow reparse diagnostic counts
 - semantic / name-resolution / type-inference diagnostic counts
 - generated semantic / name-resolution / type-inference diagnostic counts
 - compile-collector vs semantic top-level declaration gap count
@@ -54,6 +56,8 @@ the shared aggregate:
 - top-level symbol count attributed to that unit
 - generated top-level symbol count attributed to that unit
 - resolved identifier count attributed to that unit
+- original compile-side parse diagnostic count attributed to that unit
+- shared-aggregate shadow reparse diagnostic count attributed to that unit
 - semantic diagnostic count attributed to that unit
 - generated semantic diagnostic count attributed to that unit
 - name-resolution diagnostic count attributed to that unit
@@ -354,6 +358,10 @@ It now also separates parse roots from actual traversal roots:
 - generated diagnostics now format against generated source text with a
   synthetic `... [generated]` path, but this is still a shadow-only
   presentation layer rather than a true compile-path source map contract
+- shadow summaries can now distinguish original compile parse diagnostics from
+  aggregate reparse diagnostics via `compile_parse_diags` and
+  `shadow_parse_diags`, but that is still telemetry rather than a unified
+  compile-authoritative parser diagnostic contract
 - `generated_*_diags` now distinguishes generated-body diagnostics from
   parse-graph diagnostics in the summary, but it still relies on shadow-only
   generated-origin metadata rather than a compile-authoritative source map

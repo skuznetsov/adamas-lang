@@ -39,7 +39,8 @@ module CrystalV2
           path : String,
           source : String,
           roots : Array(Frontend::ExprId),
-          node_count : Int32
+          node_count : Int32,
+          parse_diagnostic_count : Int32
 
         getter program : Frontend::Program
         getter unit_summaries : Array(UnitSummary)
@@ -49,11 +50,16 @@ module CrystalV2
           merged_roots = [] of Frontend::ExprId
           unit_summaries = [] of UnitSummary
           unit_index_by_node = [] of Int32
+          parse_diagnostics = [] of Frontend::Diagnostic
 
           units.each_with_index do |unit, unit_index|
             lexer = Frontend::Lexer.new(unit[:source])
             parser = Frontend::Parser.new(lexer, aggregate_arena)
             roots = parser.parse_program_roots
+            unit_parse_diagnostics = parser.diagnostics.map do |diagnostic|
+              diagnostic.with_file_path(unit[:path])
+            end
+            parse_diagnostics.concat(unit_parse_diagnostics)
             merged_roots.concat(roots)
             grow_index_owner_map(unit_index_by_node, aggregate_arena.size)
             node_count = assign_unit_nodes(aggregate_arena, roots, unit_index.to_i32, unit_index_by_node)
@@ -63,6 +69,7 @@ module CrystalV2
               source: unit[:source],
               roots: roots,
               node_count: node_count,
+              parse_diagnostic_count: unit_parse_diagnostics.size,
             )
           end
 
@@ -70,6 +77,7 @@ module CrystalV2
             Frontend::Program.new(aggregate_arena, merged_roots),
             unit_summaries,
             unit_index_by_node,
+            parse_diagnostics,
           )
         end
 
@@ -77,6 +85,7 @@ module CrystalV2
           @program : Frontend::Program,
           @unit_summaries : Array(UnitSummary),
           @unit_index_by_node : Array(Int32),
+          @parse_diagnostics : Array(Frontend::Diagnostic),
         )
           @unit_index_by_path = {} of String => Int32
           @unit_summaries.each do |unit_summary|
@@ -89,6 +98,10 @@ module CrystalV2
 
         def generated_overlay : GeneratedOverlay
           @generated_overlay.dup
+        end
+
+        def parse_diagnostics : Array(Frontend::Diagnostic)
+          @parse_diagnostics.dup
         end
 
         def unit_index_for(expr_id : Frontend::ExprId) : Int32?

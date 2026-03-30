@@ -92,6 +92,28 @@ describe CrystalV2::Compiler::CLI do
     diagnostics.should contain("previous superclass declared here")
   end
 
+  it "reports compile and shadow parse diagnostics separately in semantic shadow summaries" do
+    with_temp_shadow_project({
+      "main.cr" => ")\n",
+    }) do |dir|
+      main_path = File.join(dir, "main.cr")
+      output_path = File.join(dir, "main")
+      out_io = IO::Memory.new
+      err_io = IO::Memory.new
+
+      with_semantic_shadow_env do
+        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli.run(out_io: out_io, err_io: err_io)
+      end
+
+      output = out_io.to_s
+      output.should contain("Semantic shadow:")
+      output.should contain("compile_parse_diags=1")
+      output.should contain("shadow_parse_diags=1")
+      output.should contain("Semantic shadow unit: path=#{main_path}")
+    end
+  end
+
   it "reports generated resolution diagnostics separately in semantic shadow summaries" do
     with_temp_shadow_project({
       "lib.cr"  => <<-CR,

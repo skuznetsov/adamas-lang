@@ -6,6 +6,7 @@
     - added `CRYSTAL_V2_SEMANTIC_SHADOW=1` compile-side shadow prepass in `src/compiler/cli.cr`
     - shadow aggregate is built by reparsing already-loaded compile units into one shared `Frontend::AstArena`
     - aggregate ownership/provenance is now tracked per unit via `src/compiler/semantic/compile_shadow_aggregate.cr`
+    - compile-side `ParsedUnit` now retains file-aware parse diagnostics, and shadow summaries now split `compile_parse_diags` from `shadow_parse_diags`
     - documented in `docs/phase2_compile_shadow.md`
   - decisive evidence:
     - targeted multi-file semantic aggregate spec is green:
@@ -142,6 +143,7 @@
     - analyzer no longer leaks generated shadow internals through a dozen `generated_*` passthroughs; callers now consume the explicit `generated_overlay` snapshot contract instead
     - `Analyzer#generated_overlay` and `CompileShadowAggregate#generated_overlay` now both return defensive snapshots, so external callers can no longer mutate internal shadow provenance state through a leaked overlay object
     - `CompileShadowAggregate#generated_top_level_roots` and `#generated_node_file_paths` now also return defensive snapshots, so aggregate ownership telemetry no longer leaks mutable collections directly
+    - shadow summaries now also distinguish original compile parse diagnostics from aggregate reparse diagnostics, so parser-side drift between the two paths is at least observable before any compile-authoritative source-map work
     - CLI regression coverage now locks both resolution and type generated-diagnostic note behavior for same-file vs cross-file expansions, including the `...[generated]` display path and macro-definition note suppression rules
     - the next honest work item is no longer macro-call parity, top-level generated-body traversal, generated snippet visibility, or macro-call origin notes; it is broader expanded-node ownership/provenance and how far aggregate-backed shadow can carry diagnostics/contracts without pretending to be lowering
     - replacing reparse-based aggregation is still more honest follow-up than reopening Phase 1 identity questions

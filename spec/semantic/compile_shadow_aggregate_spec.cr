@@ -56,6 +56,19 @@ describe "compile semantic shadow aggregate" do
     aggregate.sources_by_path["unit_1.cr"].should eq("alpha()\n")
   end
 
+  it "tracks shadow reparse diagnostics per unit" do
+    aggregate = build_shared_shadow_aggregate([
+      ")\n",
+      "alpha()\n",
+    ])
+
+    aggregate.unit_summaries[0].parse_diagnostic_count.should eq(1)
+    aggregate.unit_summaries[1].parse_diagnostic_count.should eq(0)
+    aggregate.parse_diagnostics.size.should eq(1)
+    aggregate.parse_diagnostics.first.message.should eq("unexpected RParen")
+    aggregate.parse_diagnostics.first.file_path.should eq("unit_0.cr")
+  end
+
   it "resolves cross-file method calls in a shared AstArena aggregate" do
     aggregate = build_shared_shadow_aggregate([
       <<-CR,

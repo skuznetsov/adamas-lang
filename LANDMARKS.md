@@ -20,6 +20,10 @@ The aggregate now also owns the unified generated-provenance lookup consumed by
 CLI formatting/counting, so analyzer-side hash maps are no longer the only
 place where shadow generated source/origin metadata lives; that handoff now
 uses an explicit `GeneratedOverlay` contract instead of five loose maps.
+Shadow summaries now also separate original compile parse diagnostics from
+shared-aggregate reparse diagnostics, so parser-side drift between those two
+paths is visible even though the shadow parser telemetry is still
+non-authoritative.
 
 Verified sequence:
 - implementation:
@@ -50,6 +54,11 @@ Verified sequence:
     - `CRYSTAL_V2_SEMANTIC_SHADOW=1 /tmp/crystal_v2_semantic_shadow /tmp/semantic_shadow_main.cr --no-prelude --stats --verbose`
     - output includes one `Semantic shadow unit:` line per compile unit with
       per-file `roots`, `nodes`, `symbols`, and `identifiers`
+  - targeted parser-telemetry coverage is now locked too:
+    - `../crystal/bin/crystal spec spec/semantic/compile_shadow_aggregate_spec.cr spec/semantic_cli_spec.cr spec/semantic/generated_overlay_spec.cr`
+    - malformed carrier `")"` now reports `compile_parse_diags=1` and
+      `shadow_parse_diags=1` in the shadow summary without changing compile
+      authority
   - live type-error smoke now prints file-aware shadow diagnostics:
     - `CRYSTAL_V2_SEMANTIC_SHADOW=1 /tmp/crystal_v2_semantic_shadow /tmp/shadow_type_error.cr --no-prelude --stats --verbose`
     - output includes `error[E3001]` with `--> /tmp/shadow_type_error.cr:1:1`
@@ -234,6 +243,9 @@ Verified sequence:
     diagnostics in both global and per-unit summaries, but those counters
     still depend on shadow-only generated-origin metadata rather than a
     compile-authoritative source map
+  - original compile parse diagnostics and aggregate reparse diagnostics are
+    now counted separately too, but that is still telemetry rather than a
+    unified compile-authoritative parser diagnostic contract
   - origin call-site notes are now available in verbose shadow formatting, but
     they are still shadow-only provenance and not yet a general compile-path
     source map contract

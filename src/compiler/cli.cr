@@ -126,12 +126,14 @@ module CrystalV2
         getter roots : Array(Frontend::ExprId)
         getter path : String
         getter source : String
+        getter parse_diagnostics : Array(Frontend::Diagnostic)
 
         def initialize(
           @arena : Frontend::AstArena,
           @roots : Array(Frontend::ExprId),
           @path : String,
-          @source : String
+          @source : String,
+          @parse_diagnostics : Array(Frontend::Diagnostic) = [] of Frontend::Diagnostic
         )
         end
       end
@@ -162,6 +164,8 @@ module CrystalV2
         getter symbol_count : Int32
         getter generated_symbol_count : Int32
         getter identifier_count : Int32
+        getter compile_parse_diagnostic_count : Int32
+        getter shadow_parse_diagnostic_count : Int32
         getter semantic_diagnostic_count : Int32
         getter generated_semantic_diagnostic_count : Int32
         getter resolution_diagnostic_count : Int32
@@ -182,6 +186,8 @@ module CrystalV2
           @symbol_count : Int32,
           @generated_symbol_count : Int32,
           @identifier_count : Int32,
+          @compile_parse_diagnostic_count : Int32,
+          @shadow_parse_diagnostic_count : Int32,
           @semantic_diagnostic_count : Int32,
           @generated_semantic_diagnostic_count : Int32,
           @resolution_diagnostic_count : Int32,
@@ -203,6 +209,8 @@ module CrystalV2
         getter symbol_count : Int32
         getter generated_symbol_count : Int32
         getter identifier_count : Int32
+        getter compile_parse_diagnostic_count : Int32
+        getter shadow_parse_diagnostic_count : Int32
         getter semantic_diagnostic_count : Int32
         getter generated_semantic_diagnostic_count : Int32
         getter resolution_diagnostic_count : Int32
@@ -221,6 +229,8 @@ module CrystalV2
           @symbol_count : Int32,
           @generated_symbol_count : Int32,
           @identifier_count : Int32,
+          @compile_parse_diagnostic_count : Int32,
+          @shadow_parse_diagnostic_count : Int32,
           @semantic_diagnostic_count : Int32,
           @generated_semantic_diagnostic_count : Int32,
           @resolution_diagnostic_count : Int32,
@@ -1312,6 +1322,8 @@ module CrystalV2
                 "symbols=#{shadow_summary.symbol_count}",
                 "generated_symbols=#{shadow_summary.generated_symbol_count}",
                 "identifiers=#{shadow_summary.identifier_count}",
+                "compile_parse_diags=#{shadow_summary.compile_parse_diagnostic_count}",
+                "shadow_parse_diags=#{shadow_summary.shadow_parse_diagnostic_count}",
                 "semantic_diags=#{shadow_summary.semantic_diagnostic_count}",
                 "generated_semantic_diags=#{shadow_summary.generated_semantic_diagnostic_count}",
                 "resolution_diags=#{shadow_summary.resolution_diagnostic_count}",
@@ -1338,6 +1350,8 @@ module CrystalV2
                   "symbols=#{unit_summary.symbol_count}",
                   "generated_symbols=#{unit_summary.generated_symbol_count}",
                   "identifiers=#{unit_summary.identifier_count}",
+                  "compile_parse_diags=#{unit_summary.compile_parse_diagnostic_count}",
+                  "shadow_parse_diags=#{unit_summary.shadow_parse_diagnostic_count}",
                   "semantic_diags=#{unit_summary.semantic_diagnostic_count}",
                   "generated_semantic_diags=#{unit_summary.generated_semantic_diagnostic_count}",
                   "resolution_diags=#{unit_summary.resolution_diagnostic_count}",
@@ -3248,7 +3262,7 @@ module CrystalV2
               end
               save_require_cache(abs_path, requires)
             end
-            results << ParsedUnit.new(arena, exprs, abs_path, source)
+            results << ParsedUnit.new(arena, exprs, abs_path, source, [] of Frontend::Diagnostic)
             log(options, out_io, "  AST cache hit: #{abs_path}") if options.verbose
             return
           end
@@ -3281,6 +3295,9 @@ module CrystalV2
             raise "Parser index error while parsing #{abs_path}\n#{ex.message}\n#{bt}"
           end
           raise ex
+        end
+        parse_diagnostics = parser.diagnostics.map do |diagnostic|
+          diagnostic.with_file_path(abs_path)
         end
         if debug_parse
           out_io.puts "[STAGE2_DEBUG] parse_file_recursive parse ok abs_path=#{abs_path}"
@@ -3387,7 +3404,7 @@ module CrystalV2
           end
         end
 
-        results << ParsedUnit.new(arena, exprs, abs_path, source)
+        results << ParsedUnit.new(arena, exprs, abs_path, source, parse_diagnostics)
         debug_cli_root_block_state("parse_file_recursive_after_append", arena, exprs)
         trace_parsed_class_state("parse_file_recursive_after_append", abs_path, arena, exprs)
         if debug_parse
@@ -6159,6 +6176,8 @@ module CrystalV2
           analyzer.global_context.symbol_table
         )
         declaration_parity = Semantic::CompileShadowDeclarationParity.compare(collector_inventory, semantic_inventory)
+        compile_parse_diagnostics_by_unit = units.map(&.parse_diagnostics.size)
+        shadow_parse_diagnostics_by_unit = aggregate.unit_summaries.map(&.parse_diagnostic_count)
         semantic_diagnostics = analyzer.semantic_diagnostics.map { |diagnostic| aggregate.enrich_shadow_diagnostic(diagnostic) }
         resolution_diagnostics = resolve_result.diagnostics.map { |diagnostic| aggregate.enrich_shadow_diagnostic(diagnostic) }
         type_diagnostics = analyzer.type_inference_diagnostics.map { |diagnostic| aggregate.enrich_shadow_diagnostic(diagnostic) }
@@ -6178,6 +6197,8 @@ module CrystalV2
         ensure_shadow_unit_metric_size!(symbols_by_unit, expected_unit_count, "symbols_by_unit")
         ensure_shadow_unit_metric_size!(generated_symbols_by_unit, expected_unit_count, "generated_symbols_by_unit")
         ensure_shadow_unit_metric_size!(identifiers_by_unit, expected_unit_count, "identifiers_by_unit")
+        ensure_shadow_unit_metric_size!(compile_parse_diagnostics_by_unit, expected_unit_count, "compile_parse_diagnostics_by_unit")
+        ensure_shadow_unit_metric_size!(shadow_parse_diagnostics_by_unit, expected_unit_count, "shadow_parse_diagnostics_by_unit")
         ensure_shadow_unit_metric_size!(semantic_diagnostics_by_unit, expected_unit_count, "semantic_diagnostics_by_unit")
         ensure_shadow_unit_metric_size!(generated_semantic_diagnostics_by_unit, expected_unit_count, "generated_semantic_diagnostics_by_unit")
         ensure_shadow_unit_metric_size!(resolution_diagnostics_by_unit, expected_unit_count, "resolution_diagnostics_by_unit")
@@ -6199,6 +6220,8 @@ module CrystalV2
             symbol_count: shadow_unit_metric!(symbols_by_unit, unit_index_i, "symbols_by_unit"),
             generated_symbol_count: shadow_unit_metric!(generated_symbols_by_unit, unit_index_i, "generated_symbols_by_unit"),
             identifier_count: shadow_unit_metric!(identifiers_by_unit, unit_index_i, "identifiers_by_unit"),
+            compile_parse_diagnostic_count: shadow_unit_metric!(compile_parse_diagnostics_by_unit, unit_index_i, "compile_parse_diagnostics_by_unit"),
+            shadow_parse_diagnostic_count: shadow_unit_metric!(shadow_parse_diagnostics_by_unit, unit_index_i, "shadow_parse_diagnostics_by_unit"),
             semantic_diagnostic_count: shadow_unit_metric!(semantic_diagnostics_by_unit, unit_index_i, "semantic_diagnostics_by_unit"),
             generated_semantic_diagnostic_count: shadow_unit_metric!(generated_semantic_diagnostics_by_unit, unit_index_i, "generated_semantic_diagnostics_by_unit"),
             resolution_diagnostic_count: shadow_unit_metric!(resolution_diagnostics_by_unit, unit_index_i, "resolution_diagnostics_by_unit"),
@@ -6233,6 +6256,8 @@ module CrystalV2
           symbol_count: count_local_symbols(analyzer.global_context.symbol_table),
           generated_symbol_count: count_local_generated_symbols(analyzer.global_context.symbol_table),
           identifier_count: resolve_result.identifier_symbols.size,
+          compile_parse_diagnostic_count: compile_parse_diagnostics_by_unit.sum,
+          shadow_parse_diagnostic_count: shadow_parse_diagnostics_by_unit.sum,
           semantic_diagnostic_count: semantic_diagnostics.size,
           generated_semantic_diagnostic_count: generated_semantic_diagnostics_by_unit.sum,
           resolution_diagnostic_count: resolution_diagnostics.size,
