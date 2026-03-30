@@ -3,6 +3,25 @@
 Updated: 2026-03-30
 Context: compiler/bootstrap/stage2-stability
 
+[LM-351|verified]: `MacroExpander` now closes the `gc/boehm.cr` command-literal
+macro corridor under the new inferer. The durable fix was two-part:
+command-literal string nodes are recognized from original source text and
+executed through `sh -c`, and source lookup for those nodes now prefers the
+per-`ExprId` `macro_source_provider` before falling back to the active macro
+body source. `compare_versions(...)` also now normalizes quoted operands
+through the same unquote path as `.id`, so `VERSION = {{ \`...\`.chomp.stringify
+}}` no longer reaches semantic-version parsing as `"\"8.2.1\""`. Focused
+regression `spec/macro/macro_compare_versions_spec.cr` is green for both the
+same-file `VERSION` carrier and a provider-backed cross-source lookup carrier,
+the rebuild gate for `/tmp/crystal_v2_semantic_stage3probe` is green, and the
+full semantic stage3 probe moved from `semantic_diags=3 resolution_diags=0
+type_diags=0` to `semantic_diags=1 resolution_diags=0 type_diags=0`. Boundary:
+stage3 is still not green; the only remaining semantic blocker in the live log
+is `src/stdlib/math/libm.cr`, where a macro `elsif
+compare_versions(Crystal::LLVM_VERSION, "13.0.0") < 0` corridor still reparses
+to raw `{% if %} ... {% elsif %} ... {% else %}` text instead of collapsing to a
+single concrete branch. {F/G/R: 0.96/0.74/0.96} [verified]
+
 [LM-350|verified]: `MacroExpander` now treats `compare_versions(...)` as a real
 semantic macro builtin, and the full semantic stage3 prepass has moved from
 `semantic_diags=43 resolution_diags=0 type_diags=0` to

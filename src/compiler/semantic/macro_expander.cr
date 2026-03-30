@@ -557,7 +557,12 @@ module CrystalV2
             literal = Frontend.node_literal_string(node) || "0"
             macro_number_value_from_literal(literal)
           when .string?
-            MacroStringValue.new(Frontend.node_literal_string(node) || "")
+            if string_node = node.as?(Frontend::StringNode)
+              evaluate_command_literal_to_macro_value(expr_id, string_node, context) ||
+                MacroStringValue.new(Frontend.node_literal_string(node) || "")
+            else
+              MacroStringValue.new(Frontend.node_literal_string(node) || "")
+            end
           when .symbol?
             raw_sym = Frontend.node_literal_string(node) || ""
             MacroSymbolValue.new(raw_sym.lchop(':'))
@@ -579,7 +584,8 @@ module CrystalV2
             end
           else
             if node.is_a?(Frontend::StringInterpolationNode)
-              return MacroStringValue.new(evaluate_string_interpolation(node, context))
+              return evaluate_command_literal_to_macro_value(expr_id, node, context) ||
+                MacroStringValue.new(evaluate_string_interpolation(node, context))
             elsif node.is_a?(Frontend::ArrayLiteralNode)
               values = node.elements.map { |elem| evaluate_to_macro_value(elem, context) }
               return MacroArrayValue.new(values)
@@ -894,8 +900,8 @@ module CrystalV2
             return MACRO_NIL
           end
 
-          first = evaluate_to_macro_value(node.args[0], context).to_id
-          second = evaluate_to_macro_value(node.args[1], context).to_id
+          first = macro_id(evaluate_to_macro_value(node.args[0], context).to_id)
+          second = macro_id(evaluate_to_macro_value(node.args[1], context).to_id)
 
           begin
             first_version = SemanticVersion.parse(first)
@@ -1296,6 +1302,10 @@ module CrystalV2
         end
 
         private def source_for_span(span : Frontend::Span) : String?
+          if source = @macro_source
+            return source if span.end_offset <= source.bytesize
+          end
+
           sources = case @arena
                     when Frontend::AstArena
                       @arena.extra_sources
@@ -1309,6 +1319,74 @@ module CrystalV2
 
           return nil if sources.empty?
           sources.find { |source| span.end_offset <= source.bytesize } || sources.first?
+        end
+
+        private def source_for_node(node_id : ExprId, span : Frontend::Span) : String?
+          if provider = @macro_source_provider
+            if source = provider.call(node_id)
+              return source if span.end_offset <= source.bytesize
+            end
+          end
+
+          source_for_span(span)
+        end
+
+        private def source_text_for_node(node_id : ExprId, span : Frontend::Span) : String?
+          source = source_for_node(node_id, span)
+          return nil unless source
+
+          start = span.start_offset
+          finish = span.end_offset
+          return nil if start < 0 || finish <= start || start >= source.bytesize
+
+          length = finish - start
+          length = source.bytesize - start if start + length > source.bytesize
+          source.byte_slice(start, length)
+        end
+
+        private def command_literal?(node_id : ExprId, span : Frontend::Span) : Bool
+          text = source_text_for_node(node_id, span)
+          return false unless text
+          text.starts_with?('`') && text.ends_with?('`')
+        end
+
+        private def evaluate_command_literal_to_macro_value(
+          node_id : ExprId,
+          node : Frontend::StringNode | Frontend::StringInterpolationNode,
+          context : Context
+        ) : MacroValue?
+          return nil unless command_literal?(node_id, node.span)
+
+          command = if node.is_a?(Frontend::StringNode)
+                      Frontend.node_literal_string(node) || ""
+                    else
+                      evaluate_string_interpolation(node.as(Frontend::StringInterpolationNode), context)
+                    end
+
+          output = execute_macro_command(command)
+          return nil if output.nil?
+          MacroIdValue.new(output)
+        end
+
+        private def execute_macro_command(command : String) : String?
+          output = IO::Memory.new
+          error = IO::Memory.new
+
+          status = begin
+            Process.run("sh", ["-c", command], output: output, error: error)
+          rescue ex
+            emit_error("error executing command: #{command}: #{ex.message}")
+            return nil
+          end
+
+          unless status.success?
+            err = error.to_s.strip
+            detail = err.empty? ? "exit #{status.exit_code}" : err
+            emit_error("error executing command: #{command}: #{detail}")
+            return nil
+          end
+
+          output.to_s
         end
 
         private def reparse(output : String, location : ExprId) : ExprId

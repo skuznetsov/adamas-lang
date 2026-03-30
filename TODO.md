@@ -1,6 +1,31 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-03-30)
 
 ## Current Status
+- **Fresh semantic prepass checkpoint: command-literal macro values now survive cross-source lookup and the full stage3 prepass has moved from 3 semantic diagnostics down to 1 (2026-03-30, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/macro_expander.cr` now detects backtick command literals during macro evaluation, executes them through `sh -c`, and normalizes quoted `compare_versions(...)` operands through the existing `.id`-style unquote path
+    - the expander now consults `macro_source_provider` for the concrete `ExprId` source before falling back to the current macro body source, so constants referenced from outside the active macro body no longer degrade to raw command text
+    - focused regression coverage in `spec/macro/macro_compare_versions_spec.cr` now locks both the same-file `VERSION = {{ \`printf ...\`.chomp.stringify }}` corridor and the provider-backed cross-source lookup path
+  - decisive evidence:
+    - focused macro regressions are green:
+      - `../crystal/bin/crystal spec spec/macro/macro_compare_versions_spec.cr --error-trace`
+    - rebuild gate is green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+    - full semantic stage3 probe moved again:
+      - `bash /tmp/run_semantic_compile_stage3probe_log.sh`
+      - summary moved from:
+        - `semantic_diags=3`
+        - `resolution_diags=0`
+        - `type_diags=0`
+      - to:
+        - `semantic_diags=1`
+        - `resolution_diags=0`
+        - `type_diags=0`
+    - the old `gc/boehm.cr` `compare_versions(VERSION, "8.2.0")` failure disappeared from `/tmp/stage3_semantic_probe.log`
+  - practical boundary:
+    - stage3 with the new inferer is still **not** green
+    - the remaining blocker is now a single semantic macro-expansion diagnostic in `src/stdlib/math/libm.cr`
+    - the next honest frontier is the raw/scoped macro-`elsif compare_versions(Crystal::LLVM_VERSION, "13.0.0") < 0` corridor, not another command-literal or type-inference tweak
 - **Fresh semantic prepass checkpoint: macro `compare_versions(...)` is now a real semantic builtin and full stage3 prepass noise has collapsed from 43 semantic diagnostics to 3 (2026-03-30, current session)**:
   - trustworthy setup:
     - `src/compiler/semantic/macro_expander.cr` now evaluates top-level `compare_versions(v1, v2)` through `SemanticVersion.parse(... ) <=> ...`
