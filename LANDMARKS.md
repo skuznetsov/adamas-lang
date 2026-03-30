@@ -178,9 +178,10 @@ Verified sequence:
     diagnostic context consumed by CLI formatting, including display path,
     generated source, and note spans; same-file expansions still intentionally
     omit the redundant `macro defined here` note
-  - `GeneratedOverlay` itself now exposes explicit `empty` and `dup` helpers,
-    so analyzer, collector, and aggregate use one snapshot contract instead of
-    manually reconstructing six collections at each boundary
+  - `GeneratedOverlay` itself now exposes explicit `empty`, `dup`, and
+    `snapshot` helpers, so analyzer, collector, and aggregate use one
+    snapshot contract instead of manually reconstructing six collections at
+    each boundary
   - analyzer-side generated shadow internals are no longer re-exported through
     ad-hoc `generated_*` passthroughs; callers now depend on the explicit
     `generated_overlay` snapshot instead

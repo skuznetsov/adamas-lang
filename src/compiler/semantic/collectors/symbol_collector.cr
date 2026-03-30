@@ -86,14 +86,14 @@ module CrystalV2
         end
 
         def generated_overlay : GeneratedOverlay
-          GeneratedOverlay.new(
+          GeneratedOverlay.snapshot(
             @generated_file_paths,
             @generated_top_level_roots,
             @generated_root_sources,
             @generated_root_by_node,
             @generated_root_origins,
             @generated_root_macro_defs,
-          ).dup
+          )
         end
 
         private def arena : Frontend::AstArena

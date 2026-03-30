@@ -43,4 +43,36 @@ describe CrystalV2::Compiler::Semantic::GeneratedOverlay do
     overlay.root_origins[10].should eq(origin_id)
     overlay.root_macro_defs[10].should eq(macro_def_id)
   end
+
+  it "builds a defensive snapshot from mutable collections" do
+    node_file_paths = {10 => "/tmp/main.cr"}
+    top_level_roots = [CrystalV2::Compiler::Frontend::ExprId.new(10)]
+    root_sources = {10 => "def alpha\nend\n"}
+    root_by_node = {12 => 10}
+    root_origins = {10 => CrystalV2::Compiler::Frontend::ExprId.new(4)}
+    root_macro_defs = {10 => CrystalV2::Compiler::Frontend::ExprId.new(1)}
+
+    overlay = CrystalV2::Compiler::Semantic::GeneratedOverlay.snapshot(
+      node_file_paths,
+      top_level_roots,
+      root_sources,
+      root_by_node,
+      root_origins,
+      root_macro_defs,
+    )
+
+    node_file_paths.clear
+    top_level_roots.clear
+    root_sources.clear
+    root_by_node.clear
+    root_origins.clear
+    root_macro_defs.clear
+
+    overlay.node_file_paths[10].should eq("/tmp/main.cr")
+    overlay.top_level_roots.should eq([CrystalV2::Compiler::Frontend::ExprId.new(10)])
+    overlay.root_sources[10].should eq("def alpha\nend\n")
+    overlay.root_by_node[12].should eq(10)
+    overlay.root_origins[10].should eq(CrystalV2::Compiler::Frontend::ExprId.new(4))
+    overlay.root_macro_defs[10].should eq(CrystalV2::Compiler::Frontend::ExprId.new(1))
+  end
 end

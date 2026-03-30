@@ -38,6 +38,24 @@ module CrystalV2
           )
         end
 
+        def self.snapshot(
+          node_file_paths : Hash(Int32, String),
+          top_level_roots : Array(Frontend::ExprId),
+          root_sources : Hash(Int32, String),
+          root_by_node : Hash(Int32, Int32),
+          root_origins : Hash(Int32, Frontend::ExprId),
+          root_macro_defs : Hash(Int32, Frontend::ExprId)
+        ) : self
+          new(
+            node_file_paths.dup,
+            top_level_roots.dup,
+            root_sources.dup,
+            root_by_node.dup,
+            root_origins.dup,
+            root_macro_defs.dup,
+          )
+        end
+
         def generated_info_for(node_id : Frontend::ExprId) : GeneratedNodeInfo?
           return nil if node_id.invalid?
           node_index = node_id.index
