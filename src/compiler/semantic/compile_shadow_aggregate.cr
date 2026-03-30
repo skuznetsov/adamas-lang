@@ -1,7 +1,9 @@
 require "../frontend/ast"
+require "../frontend/parser/diagnostic"
 require "../frontend/lexer"
 require "../frontend/parser"
 require "../frontend/dispatch"
+require "./diagnostic"
 require "./generated_overlay"
 
 module CrystalV2
@@ -150,6 +152,23 @@ module CrystalV2
           @generated_overlay.generated_macro_definition_for(expr_id)
         end
 
+        def generated_related_spans_for(expr_id : Frontend::ExprId) : Array(Frontend::RelatedSpan)
+          related_spans = [] of Frontend::RelatedSpan
+          if related = generated_origin_related_span(expr_id)
+            related_spans << related
+          end
+          if related = generated_macro_definition_related_span(expr_id)
+            related_spans << related
+          end
+          related_spans
+        end
+
+        def generated_secondary_spans_for(expr_id : Frontend::ExprId) : Array(Semantic::SecondarySpan)
+          generated_related_spans_for(expr_id).map do |related|
+            Semantic::SecondarySpan.new(related.span, related.label, related.node_id, related.file_path)
+          end
+        end
+
         def generated_top_level_roots : Array(Frontend::ExprId)
           @generated_overlay.top_level_roots
         end
@@ -185,6 +204,31 @@ module CrystalV2
           return 0 if unit_index < 0 || unit_index >= @unit_summaries.size
           unit_summary = @unit_summaries.unsafe_fetch(unit_index)
           unit_summary.node_count + generated_node_count_for_unit(unit_index)
+        end
+
+        private def generated_origin_related_span(
+          expr_id : Frontend::ExprId
+        ) : Frontend::RelatedSpan?
+          return nil unless info = generated_info_for(expr_id)
+          return nil unless origin_node_id = info.origin_node_id
+          return nil unless origin_path = path_for(origin_node_id)
+          origin_span = @program.arena[origin_node_id].span
+          Frontend::RelatedSpan.new(origin_span, "expanded from macro call here", origin_node_id, origin_path)
+        end
+
+        private def generated_macro_definition_related_span(
+          expr_id : Frontend::ExprId
+        ) : Frontend::RelatedSpan?
+          return nil unless info = generated_info_for(expr_id)
+          return nil unless macro_def_node_id = info.macro_definition_node_id
+          return nil unless macro_def_path = path_for(macro_def_node_id)
+          if origin_node_id = info.origin_node_id
+            if origin_path = path_for(origin_node_id)
+              return nil if origin_path == macro_def_path
+            end
+          end
+          macro_def_span = @program.arena[macro_def_node_id].span
+          Frontend::RelatedSpan.new(macro_def_span, "macro defined here", macro_def_node_id, macro_def_path)
         end
 
         private def self.grow_index_owner_map(unit_index_by_node : Array(Int32), arena_size : Int32) : Nil

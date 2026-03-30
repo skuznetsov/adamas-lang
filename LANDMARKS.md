@@ -174,9 +174,9 @@ Verified sequence:
   - generated provenance metadata now also has a unified analyzer lookup:
     - `generated_info_for(node_id)` bundles generated root, source, call-site
       origin, and macro-definition origin into one shadow-side record
-  - CLI generated-diagnostic formatting now consumes one shared generated
-    context helper, and same-file expansions intentionally omit the redundant
-    `macro defined here` note
+  - aggregate-side generated provenance now also assembles the related and
+    secondary note spans consumed by CLI formatting, and same-file expansions
+    still intentionally omit the redundant `macro defined here` note
 - reusable failure pattern:
   - the current `VirtualArena` only renumbers root ids; nested `ExprId`
     references inside nodes remain file-local, so it is not yet a sound

@@ -5800,33 +5800,6 @@ module CrystalV2
         "#{file_path} [generated]"
       end
 
-      private def shadow_generated_origin_related_span(
-        node_id : Frontend::ExprId,
-        aggregate : Semantic::CompileShadowAggregate,
-      ) : Frontend::RelatedSpan?
-        return nil unless info = aggregate.generated_info_for(node_id)
-        return nil unless origin_node_id = info.origin_node_id
-        return nil unless origin_path = aggregate.path_for(origin_node_id)
-        origin_span = aggregate.program.arena[origin_node_id].span
-        Frontend::RelatedSpan.new(origin_span, "expanded from macro call here", origin_node_id, origin_path)
-      end
-
-      private def shadow_generated_macro_definition_related_span(
-        node_id : Frontend::ExprId,
-        aggregate : Semantic::CompileShadowAggregate,
-      ) : Frontend::RelatedSpan?
-        return nil unless info = aggregate.generated_info_for(node_id)
-        return nil unless macro_def_node_id = info.macro_definition_node_id
-        return nil unless macro_def_path = aggregate.path_for(macro_def_node_id)
-        if origin_node_id = info.origin_node_id
-          if origin_path = aggregate.path_for(origin_node_id)
-            return nil if origin_path == macro_def_path
-          end
-        end
-        macro_def_span = aggregate.program.arena[macro_def_node_id].span
-        Frontend::RelatedSpan.new(macro_def_span, "macro defined here", macro_def_node_id, macro_def_path)
-      end
-
       private def build_shadow_generated_diagnostic_context(
         node_id : Frontend::ExprId,
         aggregate : Semantic::CompileShadowAggregate,
@@ -5834,18 +5807,10 @@ module CrystalV2
         return nil unless info = aggregate.generated_info_for(node_id)
         return nil unless generated_source = info.source
 
-        related_spans = [] of Frontend::RelatedSpan
-        if related = shadow_generated_origin_related_span(node_id, aggregate)
-          related_spans << related
-        end
-        if related = shadow_generated_macro_definition_related_span(node_id, aggregate)
-          related_spans << related
-        end
-
         ShadowGeneratedDiagnosticContext.new(
           shadow_generated_display_path(aggregate.path_for(node_id)),
           generated_source,
-          related_spans,
+          aggregate.generated_related_spans_for(node_id),
         )
       end
 
@@ -5856,9 +5821,7 @@ module CrystalV2
       ) : String
         if primary_node_id = diagnostic.primary_node_id
           if context = build_shadow_generated_diagnostic_context(primary_node_id, aggregate)
-            secondary_spans = diagnostic.secondary_spans + context.related_spans.map do |related|
-              Semantic::SecondarySpan.new(related.span, related.label, related.node_id, related.file_path)
-            end
+            secondary_spans = diagnostic.secondary_spans + aggregate.generated_secondary_spans_for(primary_node_id)
             display_diagnostic = diagnostic.with_paths(context.display_path, secondary_spans)
             generated_sources = sources_by_path.dup
             generated_sources[context.display_path.not_nil!] = context.source if context.display_path

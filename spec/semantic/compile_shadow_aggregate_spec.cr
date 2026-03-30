@@ -690,12 +690,7 @@ describe "compile semantic shadow aggregate" do
     node_id = diagnostic.node_id.not_nil!
     generated_source = aggregate.generated_source_for(node_id).not_nil!
     display_path = "#{aggregate.path_for(node_id)} [generated]"
-    related_spans = [] of Frontend::RelatedSpan
-    if origin_node_id = aggregate.generated_origin_for(node_id)
-      origin_path = aggregate.path_for(origin_node_id).not_nil!
-      origin_span = program.arena[origin_node_id].span
-      related_spans << Frontend::RelatedSpan.new(origin_span, "expanded from macro call here", origin_node_id, origin_path)
-    end
+    related_spans = aggregate.generated_related_spans_for(node_id)
     formatted = Frontend::DiagnosticFormatter.format(
       {display_path => generated_source, "unit_1.cr" => shadow_sources["unit_1.cr"]},
       diagnostic.with_file_path(display_path, related_spans)
@@ -735,12 +730,7 @@ describe "compile semantic shadow aggregate" do
     node_id = diagnostic.primary_node_id.not_nil!
     generated_source = aggregate.generated_source_for(node_id).not_nil!
     display_path = "#{aggregate.path_for(node_id)} [generated]"
-    secondary_spans = [] of Semantic::SecondarySpan
-    if origin_node_id = aggregate.generated_origin_for(node_id)
-      origin_path = aggregate.path_for(origin_node_id).not_nil!
-      origin_span = program.arena[origin_node_id].span
-      secondary_spans << Semantic::SecondarySpan.new(origin_span, "expanded from macro call here", origin_node_id, origin_path)
-    end
+    secondary_spans = aggregate.generated_secondary_spans_for(node_id)
     formatted = Semantic::DiagnosticFormatter.format(
       {display_path => generated_source, "unit_1.cr" => shadow_sources["unit_1.cr"]},
       diagnostic.with_paths(display_path, secondary_spans)
@@ -779,17 +769,7 @@ describe "compile semantic shadow aggregate" do
     node_id = diagnostic.node_id.not_nil!
     generated_source = aggregate.generated_source_for(node_id).not_nil!
     display_path = "#{aggregate.path_for(node_id)} [generated]"
-    related_spans = [] of Frontend::RelatedSpan
-    if origin_node_id = aggregate.generated_origin_for(node_id)
-      origin_path = aggregate.path_for(origin_node_id).not_nil!
-      origin_span = program.arena[origin_node_id].span
-      related_spans << Frontend::RelatedSpan.new(origin_span, "expanded from macro call here", origin_node_id, origin_path)
-    end
-    if macro_def_node_id = aggregate.generated_macro_definition_for(node_id)
-      macro_def_path = aggregate.path_for(macro_def_node_id).not_nil!
-      macro_def_span = program.arena[macro_def_node_id].span
-      related_spans << Frontend::RelatedSpan.new(macro_def_span, "macro defined here", macro_def_node_id, macro_def_path)
-    end
+    related_spans = aggregate.generated_related_spans_for(node_id)
     formatted = Frontend::DiagnosticFormatter.format(
       {display_path => generated_source, "unit_0.cr" => shadow_sources["unit_0.cr"], "unit_1.cr" => shadow_sources["unit_1.cr"]},
       diagnostic.with_file_path(display_path, related_spans)
@@ -829,17 +809,7 @@ describe "compile semantic shadow aggregate" do
     node_id = diagnostic.primary_node_id.not_nil!
     generated_source = aggregate.generated_source_for(node_id).not_nil!
     display_path = "#{aggregate.path_for(node_id)} [generated]"
-    secondary_spans = [] of Semantic::SecondarySpan
-    if origin_node_id = aggregate.generated_origin_for(node_id)
-      origin_path = aggregate.path_for(origin_node_id).not_nil!
-      origin_span = program.arena[origin_node_id].span
-      secondary_spans << Semantic::SecondarySpan.new(origin_span, "expanded from macro call here", origin_node_id, origin_path)
-    end
-    if macro_def_node_id = aggregate.generated_macro_definition_for(node_id)
-      macro_def_path = aggregate.path_for(macro_def_node_id).not_nil!
-      macro_def_span = program.arena[macro_def_node_id].span
-      secondary_spans << Semantic::SecondarySpan.new(macro_def_span, "macro defined here", macro_def_node_id, macro_def_path)
-    end
+    secondary_spans = aggregate.generated_secondary_spans_for(node_id)
     formatted = Semantic::DiagnosticFormatter.format(
       {display_path => generated_source, "unit_0.cr" => shadow_sources["unit_0.cr"], "unit_1.cr" => shadow_sources["unit_1.cr"]},
       diagnostic.with_paths(display_path, secondary_spans)
