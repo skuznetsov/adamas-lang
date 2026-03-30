@@ -6787,26 +6787,99 @@ module CrystalV2
           return nil unless init_symbol.is_a?(MethodSymbol)
 
           # Simple binding: parameter count must match
-          params = init_symbol.params
-          return nil if params.size != arg_types.size
+          params = init_symbol.params.reject(&.is_block)
+          required = count_required_params(params)
+          has_splat = params.any? { |param| param.is_splat || param.is_double_splat }
+          max = has_splat ? Int32::MAX : params.size
+          return nil unless arg_types.size >= required && arg_types.size <= max
 
           # Build type parameter binding map
-          # For now: simple case where parameter type == type parameter name
-          # Example: @value : T  → T gets bound to arg_types[0]
           binding = {} of String => Type
 
-          params.zip(arg_types).each do |param, arg_type|
+          arg_types.each_with_index do |arg_type, index|
+            next unless param = params[index]?
             if type_ann = param.type_annotation
-              type_name = intern_name(type_ann)
-              # If parameter type is a type parameter (e.g., "T"), bind it
-              if type_params.includes?(type_name)
-                binding[type_name] = arg_type
-              end
+              bind_constructor_type_arguments(intern_name(type_ann), arg_type, binding, type_params)
             end
           end
 
           # Return type arguments in the same order as type_parameters
           type_params.map { |param_name| binding[param_name]? || @context.nil_type }
+        end
+
+        private def bind_constructor_type_arguments(
+          annotation_name : String,
+          actual_type : Type,
+          binding : Hash(String, Type),
+          type_params : Array(String)
+        ) : Nil
+          if type_params.includes?(annotation_name)
+            binding[annotation_name] = actual_type
+            return
+          end
+
+          if annotation_name.ends_with?("?") && annotation_name.bytesize > 1
+            base_name = annotation_name[0...-1]
+            if actual_type.is_a?(UnionType)
+              non_nil = actual_type.types.reject { |type| type == @context.nil_type }
+              if non_nil.size == 1
+                bind_constructor_type_arguments(base_name, non_nil.first, binding, type_params)
+                return
+              end
+            end
+
+            bind_constructor_type_arguments(base_name, actual_type, binding, type_params)
+            return
+          end
+
+          return unless annotation_name.includes?('(') && annotation_name.ends_with?(')')
+
+          paren_start = annotation_name.index('(')
+          return unless paren_start
+
+          base_name = annotation_name[0...paren_start]
+          arg_names = split_top_level_generic_args(annotation_name[(paren_start + 1)...-1])
+          return if arg_names.empty?
+
+          case actual_type
+          when PointerType
+            if base_name == "Pointer"
+              bind_constructor_type_arguments(arg_names.first, actual_type.element_type, binding, type_params)
+            end
+          when ArrayType
+            if {"Array", "Slice", "StaticArray"}.includes?(base_name)
+              bind_constructor_type_arguments(arg_names.first, actual_type.element_type, binding, type_params)
+            end
+          when HashType
+            if base_name == "Hash" && arg_names.size >= 2
+              bind_constructor_type_arguments(arg_names[0], actual_type.key_type, binding, type_params)
+              bind_constructor_type_arguments(arg_names[1], actual_type.value_type, binding, type_params)
+            end
+          when TupleType
+            if base_name == "Tuple"
+              arg_names.zip(actual_type.element_types) do |arg_name, element_type|
+                bind_constructor_type_arguments(arg_name, element_type, binding, type_params)
+              end
+            end
+          when InstanceType
+            if actual_type.class_symbol.name == base_name && (type_args = actual_type.type_args)
+              arg_names.zip(type_args) do |arg_name, type_arg|
+                bind_constructor_type_arguments(arg_name, type_arg, binding, type_params)
+              end
+            end
+          when ClassType
+            if actual_type.symbol.name == base_name && (type_args = actual_type.type_args)
+              arg_names.zip(type_args) do |arg_name, type_arg|
+                bind_constructor_type_arguments(arg_name, type_arg, binding, type_params)
+              end
+            end
+          when ModuleType
+            if actual_type.symbol.name == base_name && (type_args = actual_type.type_args)
+              arg_names.zip(type_args) do |arg_name, type_arg|
+                bind_constructor_type_arguments(arg_name, type_arg, binding, type_params)
+              end
+            end
+          end
         end
 
         # Substitute type parameters in a type annotation

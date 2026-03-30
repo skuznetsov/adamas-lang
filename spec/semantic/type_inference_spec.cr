@@ -988,6 +988,34 @@ describe Semantic::TypeInferenceEngine do
       engine.diagnostics.select(&.level.error?).should be_empty
     end
 
+    it "infers constructor type parameters from nested pointer annotations with defaulted params" do
+      source = <<-CRYSTAL
+        class Buffer(T)
+          def initialize(ptr : Pointer(T), size : Int32, read_only = false)
+          end
+        end
+
+        byte = 1_u8
+        ptr = pointerof(byte)
+        buffer = Buffer.new(ptr, 1)
+        buffer
+      CRYSTAL
+
+      program, analyzer, engine = infer_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.select(&.level.error?).should be_empty
+
+      type = engine.context.get_type(program.roots.last)
+      type.should be_a(InstanceType)
+      buffer_type = type.as(InstanceType)
+      buffer_type.class_symbol.name.should eq("Buffer")
+      type_arg = buffer_type.type_args.try(&.first?)
+      type_arg.should be_a(PrimitiveType)
+      type_arg.as(PrimitiveType).name.should eq("UInt8")
+    end
+
     it "supports pointer union arithmetic and dereference" do
       source = <<-CRYSTAL
         number = 1
