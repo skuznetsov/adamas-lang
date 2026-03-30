@@ -6328,7 +6328,7 @@ module CrystalV2
         generated_resolution_diagnostics_by_unit = count_shadow_generated_resolution_diagnostics_by_unit(resolution_diagnostics, aggregate)
         type_diagnostics_by_unit = count_shadow_diagnostics_by_unit(type_diagnostics, aggregate)
         generated_type_diagnostics_by_unit = count_shadow_generated_diagnostics_by_unit(type_diagnostics, aggregate)
-        generated_roots_by_unit = count_shadow_generated_roots_by_unit(analyzer.generated_top_level_roots, aggregate)
+        generated_roots_by_unit = count_shadow_generated_roots_by_unit(aggregate.generated_top_level_roots, aggregate)
         declaration_summary_lines = declaration_parity.summary_lines(5, "collector", "semantic")
         declaration_summary_lines.concat(collector_inventory.provenance_lines("collector"))
         declaration_summary_lines.concat(semantic_inventory.provenance_lines("semantic"))
@@ -6385,10 +6385,10 @@ module CrystalV2
           declaration_summary_lines: declaration_summary_lines,
           files_count: units.size,
           roots_count: program.roots.size,
-          analysis_root_count: program.roots.size + analyzer.generated_top_level_roots.size,
-          generated_root_count: analyzer.generated_top_level_roots.size,
+          analysis_root_count: program.roots.size + aggregate.generated_top_level_roots.size,
+          generated_root_count: aggregate.generated_top_level_roots.size,
           arena_size: program.arena.size,
-          generated_node_count: analyzer.generated_node_file_paths.size,
+          generated_node_count: aggregate.generated_node_file_paths.size,
           symbol_count: count_local_symbols(analyzer.global_context.symbol_table),
           generated_symbol_count: count_local_generated_symbols(analyzer.global_context.symbol_table),
           identifier_count: resolve_result.identifier_symbols.size,

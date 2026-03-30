@@ -374,9 +374,9 @@ describe "compile semantic shadow aggregate" do
 
     aggregate.path_for(first_generated_id).should eq("unit_1.cr")
     aggregate.unit_index_for(first_generated_id).should eq(1)
-    aggregate.generated_node_count_for_unit(1).should eq(analyzer.generated_node_file_paths.size)
+    aggregate.generated_node_count_for_unit(1).should eq(aggregate.generated_node_file_paths.size)
     aggregate.owned_node_count_for_unit(1).should eq(
-      aggregate.unit_summaries[1].node_count + analyzer.generated_node_file_paths.size
+      aggregate.unit_summaries[1].node_count + aggregate.generated_node_file_paths.size
     )
   end
 
@@ -402,8 +402,8 @@ describe "compile semantic shadow aggregate" do
       node_file_path_provider: ->(expr_id : Frontend::ExprId) { aggregate.path_for(expr_id) },
       source_for_path_provider: ->(path : String) { shadow_sources[path]? },
     )
-    analyzer.generated_top_level_roots.should_not be_empty
     attach_generated_shadow_overlay(aggregate, analyzer)
+    aggregate.generated_top_level_roots.should_not be_empty
 
     result = analyzer.resolve_names
 
@@ -512,8 +512,8 @@ describe "compile semantic shadow aggregate" do
       node_file_path_provider: ->(expr_id : Frontend::ExprId) { aggregate.path_for(expr_id) },
       source_for_path_provider: ->(path : String) { shadow_sources[path]? },
     )
-    analyzer.generated_top_level_roots.should_not be_empty
     attach_generated_shadow_overlay(aggregate, analyzer)
+    aggregate.generated_top_level_roots.should_not be_empty
 
     result = analyzer.resolve_names
 

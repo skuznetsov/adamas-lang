@@ -17,6 +17,7 @@ module CrystalV2
 
         getter program : Frontend::Program
         getter unit_summaries : Array(UnitSummary)
+        getter generated_overlay : GeneratedOverlay
 
         def self.build(units : Array(NamedTuple(path: String, source: String))) : self
           aggregate_arena = Frontend::AstArena.new
@@ -56,11 +57,15 @@ module CrystalV2
           @unit_summaries.each do |unit_summary|
             @unit_index_by_path[unit_summary.path] = unit_summary.unit_index
           end
+          @generated_overlay = GeneratedOverlay.new(
+            {} of Int32 => String,
+            [] of Frontend::ExprId,
+            {} of Int32 => String,
+            {} of Int32 => Int32,
+            {} of Int32 => Frontend::ExprId,
+            {} of Int32 => Frontend::ExprId,
+          )
           @generated_node_count_by_unit = Array(Int32).new(@unit_summaries.size, 0)
-          @generated_root_sources = {} of Int32 => String
-          @generated_root_by_node = {} of Int32 => Int32
-          @generated_root_origins = {} of Int32 => Frontend::ExprId
-          @generated_root_macro_defs = {} of Int32 => Frontend::ExprId
         end
 
         def unit_index_for(expr_id : Frontend::ExprId) : Int32?
@@ -108,30 +113,42 @@ module CrystalV2
           overlay : GeneratedOverlay
         ) : Nil
           attach_generated_node_paths(overlay.node_file_paths)
-          @generated_root_sources = overlay.root_sources.dup
-          @generated_root_by_node = overlay.root_by_node.dup
-          @generated_root_origins = overlay.root_origins.dup
-          @generated_root_macro_defs = overlay.root_macro_defs.dup
+          @generated_overlay = GeneratedOverlay.new(
+            overlay.node_file_paths.dup,
+            overlay.top_level_roots.dup,
+            overlay.root_sources.dup,
+            overlay.root_by_node.dup,
+            overlay.root_origins.dup,
+            overlay.root_macro_defs.dup,
+          )
         end
 
         def generated_info_for(expr_id : Frontend::ExprId) : GeneratedNodeInfo?
-          generated_overlay.generated_info_for(expr_id)
+          @generated_overlay.generated_info_for(expr_id)
         end
 
         def generated_source_for(expr_id : Frontend::ExprId) : String?
-          generated_overlay.generated_source_for(expr_id)
+          @generated_overlay.generated_source_for(expr_id)
         end
 
         def generated_origin_for(expr_id : Frontend::ExprId) : Frontend::ExprId?
-          generated_overlay.generated_origin_for(expr_id)
+          @generated_overlay.generated_origin_for(expr_id)
         end
 
         def generated_node?(expr_id : Frontend::ExprId) : Bool
-          generated_overlay.generated_node?(expr_id)
+          @generated_overlay.generated_node?(expr_id)
         end
 
         def generated_macro_definition_for(expr_id : Frontend::ExprId) : Frontend::ExprId?
-          generated_overlay.generated_macro_definition_for(expr_id)
+          @generated_overlay.generated_macro_definition_for(expr_id)
+        end
+
+        def generated_top_level_roots : Array(Frontend::ExprId)
+          @generated_overlay.top_level_roots
+        end
+
+        def generated_node_file_paths : Hash(Int32, String)
+          @generated_overlay.node_file_paths
         end
 
         def generated_node_count_for_unit(unit_index : Int32) : Int32
@@ -179,17 +196,6 @@ module CrystalV2
           end
 
           assigned
-        end
-
-        private def generated_overlay : GeneratedOverlay
-          GeneratedOverlay.new(
-            {} of Int32 => String,
-            [] of Frontend::ExprId,
-            @generated_root_sources,
-            @generated_root_by_node,
-            @generated_root_origins,
-            @generated_root_macro_defs,
-          )
         end
       end
     end
