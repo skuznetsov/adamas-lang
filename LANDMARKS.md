@@ -3,6 +3,24 @@
 Updated: 2026-03-30
 Context: compiler/bootstrap/stage2-stability
 
+[LM-354|verified]: On-demand body inference for primitive integer left shifts
+was still using an overly narrow builtin surface: `TypeInferenceEngine`
+required the RHS of primitive integer `<<` to have the receiver's exact width,
+so helpers like `value << 1` and `value << 32` degraded to false type errors
+once they were inferred from call sites instead of in isolation. The verified
+fix in `src/compiler/semantic/type_inference_engine.cr` widens primitive
+integer `<<` to accept an integer-count contract (`Int | UInt`) while keeping
+the result type at the receiver width. Focused regression coverage in
+`spec/semantic/type_inference_operator_method_body_spec.cr` is green, the exact
+on-demand reducer `/tmp/semantic_ondemand_shift_matrix_probe.cr` now reports
+`type_diags=0`, the rebuild gate for `/tmp/crystal_v2_semantic_stage3probe` is
+green, and the full semantic stage3 probe moved from
+`semantic_diags=0 resolution_diags=0 type_diags=926` to
+`semantic_diags=0 resolution_diags=0 type_diags=831`. Boundary: stage3 is
+still not green; the next live blockers are the denser `copy_to`/Nil-arithmetic
+families plus a smaller runtime API surface (`Errno`, `File`, `Location`,
+`LibPCRE2`, `LibUnwind`). {F/G/R: 0.95/0.74/0.96} [verified]
+
 [LM-353|verified]: `Pointer#appender` is now a first-class semantic builtin,
 which closes the exact helper surface used by `Crystal::System.print_error`
 and related pointer-buffer writers. The verified fix in

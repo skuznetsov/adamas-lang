@@ -48,5 +48,30 @@ describe Semantic::TypeInferenceEngine do
       engine.diagnostics.select(&.level.error?).should be_empty
       engine.context.get_type(program.roots.last).to_s.should eq("UInt32")
     end
+
+    it "supports integer left shifts during on-demand body inference" do
+      source = <<-CRYSTAL
+        module Probe
+          def self.shift32(value : UInt32)
+            value << 1
+          end
+
+          def self.shift64(value : UInt64)
+            value << 32
+          end
+        end
+
+        {Probe.shift32(1_u32), Probe.shift64(1_u64)}
+      CRYSTAL
+
+      program, analyzer, engine = infer_operator_method_body_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.select(&.level.error?).should be_empty
+
+      root_type = engine.context.get_type(program.roots.last)
+      root_type.to_s.should eq("Tuple(UInt32, UInt64)")
+    end
   end
 end

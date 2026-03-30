@@ -1,6 +1,35 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-03-30)
 
 ## Current Status
+- **Fresh semantic prepass checkpoint: on-demand integer left shifts no longer degrade to false Nil cascades in the new inferer (2026-03-30, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/type_inference_engine.cr` now models primitive integer `<<` with an integer-count contract (`Int | UInt`) instead of requiring the receiver's exact width on the RHS
+    - this specifically fixes on-demand method-body inference for helpers like `value << 1` and `value << 32`, where literal shift counts arrive as plain integer types
+    - focused regression coverage lives in `spec/semantic/type_inference_operator_method_body_spec.cr`
+  - decisive evidence:
+    - focused operator regressions are green:
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_operator_method_body_spec.cr --error-trace`
+    - rebuild gate is green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+    - exact on-demand reducer is green:
+      - `CRYSTAL_V2_SEMANTIC_COMPILE=1 /tmp/crystal_v2_semantic_stage3probe /tmp/semantic_ondemand_shift_matrix_probe.cr --no-prelude --stats --verbose`
+      - summary now reports `type_diags=0`
+    - full semantic stage3 probe moved again:
+      - `bash /tmp/run_semantic_compile_stage3probe_log.sh`
+      - summary moved from:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=926`
+      - to:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=831`
+  - practical boundary:
+    - stage3 with the new inferer is still **not** green
+    - the remaining frontier is still dense `ryu_printf` / runtime surface:
+      - `Method 'copy_to' not found on Pointer(UInt8)`
+      - Nil arithmetic / indexing cascades
+      - `Errno.new`, `File.open`, `Location.load`, `LibPCRE2.pattern_info`, `LibUnwind.get_language_specific_data`
 - **Fresh semantic prepass checkpoint: `Pointer#appender` now survives the new inferer and the live stage3 probe dropped another small but real type-family (2026-03-30, current session)**:
   - trustworthy setup:
     - `src/compiler/semantic/type_inference_engine.cr` now models `Pointer#appender` and the nested nominal helper type `Pointer::Appender(T)` as semantic builtins
