@@ -1,6 +1,44 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-03-31)
 
 ## Current Status
+- **Fresh semantic lib-surface checkpoint: C-fun integer ABI matching now accepts integer-family width differences, and `lib` globals are exposed through module member access (`LibC.environ`) in the semantic layer (2026-03-31, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/type_inference_engine.cr` now treats any integer-family pair as compatible inside `c_fun_type_matches?(...)`, which covers real stdlib lib calls like `LibC.getcwd(nil, 0)` where the source literal is `Int32` but the ABI parameter is `SizeT`
+    - the same file now resolves zero-arg module member reads to `GlobalVarSymbol`s in the owning module scope, so `LibC.environ` no longer depends on method lookup
+    - `src/compiler/semantic/collectors/symbol_collector.cr` now mirrors `lib` global declarations into the current lib/module scope under their bare member name while still preserving the root `$name` global
+    - focused regression coverage now lives in `spec/semantic/type_inference_lib_fun_call_spec.cr`
+  - decisive evidence:
+    - focused regressions are green:
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_lib_fun_call_spec.cr --error-trace`
+    - rebuild gates are green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+    - exact reducers under the safe wrapper moved as expected:
+      - `LibC.getcwd(nil, 0)` probe:
+        - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 90 2048 /tmp/semantic_libc_getcwd_probe.cr --stats --no-link -o /tmp/semantic_libc_getcwd_probe.out > /tmp/semantic_libc_getcwd_probe_after_fix.log 2>&1`
+        - no `Method 'getcwd' not found on LibC`
+      - `LibC.environ` probe:
+        - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 90 2048 /tmp/semantic_libc_environ_probe.cr --stats --no-link -o /tmp/semantic_libc_environ_probe.out > /tmp/semantic_libc_environ_probe_after_fix.log 2>&1`
+        - no `Method 'environ' not found on LibC`
+    - the full semantic stage3 probe under the safe wrapper moves materially again:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 240 4096 src/crystal_v2.cr --stats --no-link -o /tmp/stage3_semantic_probe.out > /tmp/stage3_semantic_probe_after_libc_patch.log 2>&1`
+      - branch-local summary moved from:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=247`
+      - to:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=235`
+      - removed/moved families from the live log:
+        - `Method 'getcwd' not found on LibC`
+        - `Method 'environ' not found on LibC`
+  - practical boundary:
+    - stage3 with the new inferer is still **not** green
+    - the next honest blockers are now later runtime/include surfaces:
+      - `FileDescriptor#print`
+      - `File.info?`
+      - later `ryu_printf` arithmetic/indexing families
 - **Fresh semantic Int128 shift checkpoint: integer builtin `>>` now accepts integer-width shift counts under on-demand body inference, which clears the `compiler_rt` `Int128`/`UInt128` head blocker from the live stage3 graph (2026-03-31, current session)**:
   - trustworthy setup:
     - `src/compiler/semantic/type_inference_engine.cr` now treats integer builtin `>>` like the already-fixed `<<` path: the shift-count parameter is `Int | UInt` instead of forcing the receiver's exact width

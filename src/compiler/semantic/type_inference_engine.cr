@@ -5489,31 +5489,47 @@ module CrystalV2
                             if ann = method.return_annotation
                               debug("  Method has return annotation: #{ann}")
                               resolve_method_annotation_type(ann, receiver_type, method.scope, class_method_context: method.is_class_method?)
-                          else
-                            debug("  No return annotation - inferring from method body")
-                            # Week 1: No return annotation - infer from method body
-                            # For generic methods, set receiver context for type parameter substitution
-                            body_type = infer_method_body_type(method, receiver_type)
-                            debug("  infer_method_body_type returned: #{body_type.class.name}: #{body_type}")
-                            body_type
-                          end
+                            else
+                              debug("  No return annotation - inferring from method body")
+                              # Week 1: No return annotation - infer from method body
+                              # For generic methods, set receiver context for type parameter substitution
+                              body_type = infer_method_body_type(method, receiver_type)
+                              debug("  infer_method_body_type returned: #{body_type.class.name}: #{body_type}")
+                              body_type
+                            end
+                        elsif lib_global_type = infer_module_global_member_type(receiver_type, method_name)
+                          lib_global_type
                         else
                           if field_type = infer_struct_field_access_type(receiver_type, method_name)
                             field_type
                           else
-                          emit_error("Method '#{method_name}' not found on #{receiver_type}", expr_id)
-                          # Heuristic: for arrays, some methods are no-ops on type
-                          if receiver_type.is_a?(ArrayType) && {"to_a", "each", "each_with_index", "map", "collect", "select", "reject", "filter"}.includes?(method_name)
-                            receiver_type
-                          else
-                            @context.nil_type
-                          end
+                            emit_error("Method '#{method_name}' not found on #{receiver_type}", expr_id)
+                            # Heuristic: for arrays, some methods are no-ops on type
+                            if receiver_type.is_a?(ArrayType) && {"to_a", "each", "each_with_index", "map", "collect", "select", "reject", "filter"}.includes?(method_name)
+                              receiver_type
+                            else
+                              @context.nil_type
+                            end
                           end
                         end
 
           @context.set_type(expr_id, result_type)
           debug("  infer_member_access returning: #{result_type.class.name}: #{result_type}")
           result_type
+        end
+
+        private def infer_module_global_member_type(receiver_type : Type, member_name : String) : Type?
+          module_type = receiver_type.as?(ModuleType)
+          return nil unless module_type
+
+          symbol = module_type.symbol.scope.lookup(member_name)
+          global = symbol.as?(GlobalVarSymbol)
+          return nil unless global
+
+          declared_type = global.declared_type
+          return nil unless declared_type
+
+          resolve_method_annotation_type(declared_type, receiver_type, module_type.symbol.scope)
         end
 
         private def infer_struct_field_access_type(receiver_type : Type, field_name : String) : Type?
@@ -7631,6 +7647,10 @@ module CrystalV2
 
           if actual.is_a?(UnionType)
             return actual.types.all? { |member| c_fun_type_matches?(member, expected) }
+          end
+
+          if integer_type?(actual) && integer_type?(expected)
+            return true
           end
 
           if actual == @context.nil_type

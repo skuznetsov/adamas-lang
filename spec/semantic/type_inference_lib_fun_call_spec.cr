@@ -147,5 +147,43 @@ describe Semantic::TypeInferenceEngine do
       engine.diagnostics.should be_empty
       engine.context.get_type(program.roots.last).to_s.should eq("Int32")
     end
+
+    it "accepts integer literals for size_t-style lib fun parameters" do
+      source = <<-CRYSTAL
+        lib LibC
+          alias Char = UInt8
+          alias SizeT = UInt64
+
+          fun getcwd(buf : Char*, size : SizeT) : Char*
+        end
+
+        LibC.getcwd(nil, 0)
+      CRYSTAL
+
+      program, analyzer, engine = infer_lib_fun_call_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.should be_empty
+      engine.context.get_type(program.roots.last).to_s.should eq("Pointer(UInt8)")
+    end
+
+    it "supports lib global members through module access" do
+      source = <<-CRYSTAL
+        lib LibC
+          alias Char = UInt8
+          $environ : Char**
+        end
+
+        LibC.environ
+      CRYSTAL
+
+      program, analyzer, engine = infer_lib_fun_call_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.should be_empty
+      engine.context.get_type(program.roots.last).to_s.should eq("Pointer(Pointer(UInt8))")
+    end
   end
 end

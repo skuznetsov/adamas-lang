@@ -2392,6 +2392,22 @@ module CrystalV2
               root.redefine(sym_name, sym)
             end
           end
+
+          if !current_table.same?(root)
+            member_name = sym_name.starts_with?("$") ? sym_name[1..] : sym_name
+            member_sym = GlobalVarSymbol.new(member_name, node_id, declared_type)
+            assign_symbol_file(member_sym, node_id)
+
+            if existing = current_table.lookup_local(member_name)
+              current_table.redefine(member_name, member_sym)
+            else
+              begin
+                current_table.define(member_name, member_sym)
+              rescue SymbolRedefinitionError
+                current_table.redefine(member_name, member_sym)
+              end
+            end
+          end
         end
 
         private def symbol_kind(symbol : Symbol) : String

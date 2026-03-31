@@ -3,6 +3,36 @@
 Updated: 2026-03-31
 Context: compiler/bootstrap/stage2-stability
 
+[LM-389|verified]: After [LM-388], the live head frontier moved out of
+`compiler_rt` and into early runtime/lib surfaces, starting with
+`Method 'getcwd' not found on LibC` and `Method 'environ' not found on LibC`.
+Exact reducers on required stdlib carriers split the problem cleanly. A
+`LibC.getcwd(nil, 0)` probe showed `lookup_method candidates method=getcwd
+count=1 receiver=LibC`, which falsified missing symbol registration and pinned
+that miss to C-fun parameter matching (`Nil, Int32` against `Char*, SizeT`).
+A parallel `LibC.environ` probe showed `lookup_method candidates method=environ
+count=0 receiver=LibC`, which falsified the same theory and exposed a separate
+gap: `lib` globals were only stored as root `$name` globals, not as member
+symbols reachable via `LibC.name`. The verified fix is therefore two-part and
+still narrow. First, `src/compiler/semantic/type_inference_engine.cr` now
+treats any integer-family pair as ABI-compatible inside `c_fun_type_matches?`,
+which matches real FFI usage like `size_t`/literal `0`. Second,
+`src/compiler/semantic/collectors/symbol_collector.cr` now mirrors `lib`
+global declarations into the current lib/module scope under their bare member
+name, and `infer_member_access(...)` now resolves those scoped
+`GlobalVarSymbol`s directly. Focused regression
+`spec/semantic/type_inference_lib_fun_call_spec.cr` is green; both rebuild
+gates for `src/crystal_v2.cr` and `/tmp/crystal_v2_semantic_stage3probe` are
+green; the exact `LibC.getcwd(nil, 0)` and `LibC.environ` reducers no longer
+report those method misses; and the full safe stage3 probe moves from
+`semantic_diags=0 resolution_diags=0 type_diags=247` to
+`semantic_diags=0 resolution_diags=0 type_diags=235`. The live log no longer
+contains `Method 'getcwd' not found on LibC` or `Method 'environ' not found on
+LibC`. Boundary: stage3 is still not green; the next head frontier is now
+later runtime/include surface (`FileDescriptor#print`, `File.info?`, then
+`ryu_printf`) rather than `LibC` ABI/member lookup. {F/G/R: 0.97/0.84/0.98}
+[verified]
+
 [LM-388|verified]: After [LM-387], the fresh live head blocker moved into
 `src/stdlib/crystal/compiler_rt/mul.cr` and `divmod128.cr`, starting with
 `Operator '>>' not defined for Int128 and Int32` and then cascading into
