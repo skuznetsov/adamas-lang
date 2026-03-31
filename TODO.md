@@ -1,6 +1,39 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-03-30)
 
 ## Current Status
+- **Fresh semantic prepass checkpoint: eager sibling defs no longer leak local assignment state into each other, which collapses a large Nil-cascade slice in the live stage3 graph (2026-03-30, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/type_inference_engine.cr` now snapshots and restores `@assignments` around eager `infer_def(...)` body walks
+    - before this fix, eager method-body inference reused local assignment names from earlier sibling defs inside the same owner scope
+    - the minimal falsifier was an unused sibling `def self.use(value : Int32); value + 1; end` following `def self.seed; value = 1 == 0 ? "x" : nil; end`, where the second method wrongly saw `value : Nil | String`
+    - focused regression coverage lives in `spec/semantic/type_inference_eager_assignment_scope_spec.cr`
+  - decisive evidence:
+    - focused eager-scope regression is green:
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_eager_assignment_scope_spec.cr --error-trace`
+    - nearby operator-body regression remains green:
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_operator_method_body_spec.cr --error-trace`
+    - rebuild gate is green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+    - exact no-prelude falsifier is now green:
+      - `CRYSTAL_V2_SEMANTIC_COMPILE=1 /tmp/crystal_v2_semantic_stage3probe /tmp/semantic_assignment_eager_plain.cr --no-prelude --stats --verbose --no-link -o /tmp/semantic_assignment_eager_plain.out`
+      - summary now reports `type_diags=0`
+    - full semantic stage3 probe moved again:
+      - `bash /tmp/run_semantic_compile_stage3probe_log.sh`
+      - summary moved from:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=697`
+      - to:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=530`
+  - practical boundary:
+    - stage3 with the new inferer is still **not** green
+    - the remaining frontier is now materially smaller but still led by:
+      - `src/stdlib/float/printer/ryu_printf.cr`
+      - residual `Pointer(UInt8)#copy_to`
+      - Nil arithmetic / indexing families
+      - `string`, `time/tz`, `io`, and `compiler_rt/divmod128` follow-on corridors
 - **Fresh semantic prepass checkpoint: eager method-body inference now binds the right owner scope inside class-owned module reopens, which revives `time/tz` stdlib record union aliases on the real compile path (2026-03-30, current session)**:
   - trustworthy setup:
     - `src/compiler/semantic/type_inference_engine.cr` no longer resolves `current_method_scope` by blindly preferring `current_class` over `current_module`

@@ -1528,6 +1528,7 @@ module CrystalV2
         private def infer_def(node : Frontend::DefNode, expr_id : ExprId) : Type
           guard_watchdog!
           previous_method_scope = @current_method_scope
+          previous_assignments = @assignments.dup
           method_symbol = current_method_symbol_for(node, expr_id)
           @current_method_scope = current_method_scope_for(node, expr_id)
           @current_method_is_class_method_stack << !!method_symbol.try(&.is_class_method?)
@@ -1586,6 +1587,7 @@ module CrystalV2
           # Method definitions don't have value types (they're statements)
           @context.nil_type
         ensure
+          @assignments = previous_assignments.not_nil!
           @current_method_is_class_method_stack.pop unless @current_method_is_class_method_stack.empty?
           @current_method_scope = previous_method_scope
         end
