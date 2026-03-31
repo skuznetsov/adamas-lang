@@ -41,6 +41,12 @@ module CrystalV2
             MacroIdValue.new(to_id)
           when "class_name"
             MacroStringValue.new(class_name)
+          when "is_a?"
+            if expected = args[0]?
+              MacroBoolValue.new(class_name == expected.to_id)
+            else
+              MacroBoolValue.new(false)
+            end
           else
             MacroNilValue.new # Unknown method returns nil
           end
@@ -370,6 +376,33 @@ module CrystalV2
               return MacroBoolValue.new(result)
             end
             MacroBoolValue.new(false)
+          when "downcase"
+            MacroIdValue.new(@value.downcase)
+          when "upcase"
+            MacroIdValue.new(@value.upcase)
+          when "capitalize"
+            MacroIdValue.new(@value.capitalize)
+          when "camelcase"
+            MacroIdValue.new(@value.camelcase)
+          when "underscore"
+            MacroIdValue.new(@value.underscore)
+          when "strip"
+            MacroIdValue.new(@value.strip)
+          when "chomp"
+            MacroIdValue.new(@value.chomp)
+          when "starts_with?"
+            arg = args[0]?
+            MacroBoolValue.new(arg ? @value.starts_with?(arg.to_id) : false)
+          when "ends_with?"
+            arg = args[0]?
+            MacroBoolValue.new(arg ? @value.ends_with?(arg.to_id) : false)
+          when "includes?"
+            arg = args[0]?
+            MacroBoolValue.new(arg ? @value.includes?(arg.to_id) : false)
+          when "split"
+            separator = args[0]?.try(&.to_id) || " "
+            parts = @value.split(separator).map { |part| MacroIdValue.new(part).as(MacroValue) }
+            MacroArrayValue.new(parts)
           when "symbolize"
             MacroSymbolValue.new(@value)
           else
@@ -522,6 +555,33 @@ module CrystalV2
           "#{intern_name(node.name)} : #{type_name}"
           when Frontend::PathNode
             node_identifier_name(node) || ""
+          when Frontend::MemberAccessNode
+            object = stringify_node(@arena[node.object])
+            member = intern_name(node.member)
+            object.empty? ? member : "#{object}.#{member}"
+          when Frontend::SafeNavigationNode
+            object = stringify_node(@arena[node.object])
+            member = intern_name(node.member)
+            object.empty? ? member : "#{object}&.#{member}"
+          when Frontend::CallNode
+            callee = stringify_node(@arena[node.callee])
+            args = node.args.map { |arg_id| stringify_node(@arena[arg_id]) }
+            if named_args = node.named_args
+              named_args.each do |entry|
+                args << "#{intern_name(entry.name)}: #{stringify_node(@arena[entry.value])}"
+              end
+            end
+            if args.empty?
+              callee
+            else
+              "#{callee}(#{args.join(", ")})"
+            end
+          when Frontend::AsNode
+            "#{stringify_node(@arena[node.expression])}.as(#{intern_name(node.target_type)})"
+          when Frontend::AsQuestionNode
+            "#{stringify_node(@arena[node.expression])}.as?(#{intern_name(node.target_type)})"
+          when Frontend::IsANode
+            "#{stringify_node(@arena[node.expression])}.is_a?(#{intern_name(node.target_type)})"
           when Frontend::AssignNode
             target = stringify_node(@arena[node.target])
             value = stringify_node(@arena[node.value])
@@ -608,6 +668,8 @@ module CrystalV2
           when "join"
             sep = args[0]?.try { |a| a.is_a?(MacroStringValue) ? a.value : ", " } || ""
             MacroStringValue.new(@elements.map(&.to_id).join(sep))
+          when "sort"
+            MacroArrayValue.new(@elements.sort_by(&.to_id))
           else
             super
           end
@@ -702,6 +764,72 @@ module CrystalV2
           else
             super
           end
+        end
+      end
+
+      # Hash value used by macro-local assignments such as:
+      #   {% values = {} of Nil => Nil %}
+      #   {% values[key] = expr %}
+      class MacroHashValue < MacroValue
+        getter entries : Array({MacroValue, MacroValue})
+
+        def initialize(@entries : Array({MacroValue, MacroValue}) = [] of {MacroValue, MacroValue})
+        end
+
+        def to_macro_output : String
+          pairs = @entries.map { |key, value| "#{key.to_macro_output} => #{value.to_macro_output}" }
+          "{#{pairs.join(", ")}}"
+        end
+
+        def class_name : String
+          "HashLiteral"
+        end
+
+        def assign(key : MacroValue, value : MacroValue) : MacroValue
+          signature = key_signature(key)
+          @entries.each_with_index do |(existing_key, _), idx|
+            if key_signature(existing_key) == signature
+              @entries[idx] = {key, value}
+              return value
+            end
+          end
+
+          @entries << {key, value}
+          value
+        end
+
+        def call_method(name : String, args : Array(MacroValue), named_args : Hash(String, MacroValue)?) : MacroValue
+          case name
+          when "size"
+            MacroNumberValue.new(@entries.size.to_i64)
+          when "empty?"
+            MacroBoolValue.new(@entries.empty?)
+          when "keys"
+            MacroArrayValue.new(@entries.map { |key, _| key })
+          when "values"
+            MacroArrayValue.new(@entries.map { |_, value| value })
+          when "[]"
+            if key = args[0]?
+              signature = key_signature(key)
+              @entries.each do |entry_key, entry_value|
+                return entry_value if key_signature(entry_key) == signature
+              end
+            end
+            MacroNilValue.new
+          when "[]="
+            if key = args[0]?
+              if value = args[1]?
+                return assign(key, value)
+              end
+            end
+            MacroNilValue.new
+          else
+            super
+          end
+        end
+
+        private def key_signature(key : MacroValue) : String
+          key.to_id
         end
       end
 
@@ -958,7 +1086,7 @@ module CrystalV2
             MacroSymbolValue.new(Frontend.node_literal_string(node) || "")
           when .bool?
             MacroBoolValue.new(Frontend.node_literal_string(node) == "true")
-          when .nil?
+          when Frontend::NodeKind::Nil
             MacroNilValue.new
           when .identifier?
             MacroIdValue.new(Frontend.node_literal_string(node) || "")

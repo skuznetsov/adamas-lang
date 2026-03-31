@@ -256,14 +256,8 @@ module CrystalV2
         end
 
         def generated_related_spans_for(expr_id : Frontend::ExprId) : Array(Frontend::RelatedSpan)
-          related_spans = [] of Frontend::RelatedSpan
-          if related = generated_origin_related_span(expr_id)
-            related_spans << related
-          end
-          if related = generated_macro_definition_related_span(expr_id)
-            related_spans << related
-          end
-          related_spans
+          return [] of Frontend::RelatedSpan unless info = provenance_for(expr_id)
+          provenance_related_spans_for(info)
         end
 
         def generated_secondary_spans_for(expr_id : Frontend::ExprId) : Array(Semantic::SecondarySpan)

@@ -1,4 +1,5 @@
 require "spec"
+require "file_utils"
 
 require "../../src/compiler/frontend/ast"
 require "../../src/compiler/frontend/lexer"
@@ -8,6 +9,7 @@ require "../../src/compiler/semantic/symbol"
 require "../../src/compiler/semantic/collectors/symbol_collector"
 require "../../src/compiler/semantic/resolvers/name_resolver"
 require "../../src/compiler/semantic/analyzer"
+require "../../src/compiler/semantic/compile_shadow_aggregate"
 require "../../src/compiler/semantic/types/type"
 require "../../src/compiler/semantic/types/primitive_type"
 require "../../src/compiler/semantic/types/class_type"
@@ -36,6 +38,23 @@ private def infer_types(source : String)
   name_result = analyzer.resolve_names
 
   # Run type inference with global symbol table for fallback lookup
+  engine = Semantic::TypeInferenceEngine.new(program, name_result.identifier_symbols, analyzer.global_context.symbol_table)
+  engine.infer_types
+
+  {program, analyzer, engine}
+end
+
+private def infer_types_from_units(units : Array(NamedTuple(path: String, source: String)))
+  aggregate = Semantic::CompileShadowAggregate.build(units)
+  program = aggregate.program
+
+  analyzer = Semantic::Analyzer.new(program)
+  analyzer.collect_symbols(
+    node_file_path_provider: ->(expr_id : Frontend::ExprId) { aggregate.path_for(expr_id) },
+    source_for_path_provider: ->(path : String) { aggregate.source_for_path(path) }
+  )
+  name_result = analyzer.resolve_names
+
   engine = Semantic::TypeInferenceEngine.new(program, name_result.identifier_symbols, analyzer.global_context.symbol_table)
   engine.infer_types
 
@@ -887,6 +906,250 @@ describe Semantic::TypeInferenceEngine do
       type = engine.context.get_type(program.roots.last)
       type.should be_a(PrimitiveType)
       type.as(PrimitiveType).name.should eq("Bool")
+    end
+
+    it "resolves module-body macro-generated constants inside outer class namespaces" do
+      source = <<-CRYSTAL
+        class Float
+          module FastFloat
+            module Powers
+              {% if true %}
+                TABLE = [1_u64, 2_u64]
+              {% end %}
+            end
+          end
+        end
+
+        ptr = Float::FastFloat::Powers::TABLE.to_unsafe
+        ptr[1]
+      CRYSTAL
+
+      program, analyzer, engine = infer_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.should be_empty
+
+      type = engine.context.get_type(program.roots.last)
+      type.should be_a(PrimitiveType)
+      type.as(PrimitiveType).name.should eq("UInt64")
+    end
+
+    it "resolves module-body macro-generated constants for path-style nested modules" do
+      source = <<-CRYSTAL
+        class Float
+        end
+
+        module Float::FastFloat
+          module Powers
+            {% if true %}
+              TABLE = [1_u64, 2_u64]
+            {% end %}
+          end
+        end
+
+        ptr = Float::FastFloat::Powers::TABLE.to_unsafe
+        ptr[1]
+      CRYSTAL
+
+      program, analyzer, engine = infer_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.should be_empty
+
+      type = engine.context.get_type(program.roots.last)
+      type.should be_a(PrimitiveType)
+      type.as(PrimitiveType).name.should eq("UInt64")
+    end
+
+    it "resolves path-style module macro-generated constants inside module self methods" do
+      source = <<-CRYSTAL
+        class Float
+        end
+
+        module Float::FastFloat
+          module Powers
+            {% if true %}
+              TABLE = [1_u64, 2_u64]
+            {% end %}
+          end
+
+          def self.probe(index : Int32)
+            ptr = Powers::TABLE.to_unsafe
+            ptr[index]
+          end
+        end
+      CRYSTAL
+
+      _program, analyzer, engine = infer_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.should be_empty
+    end
+
+    it "resolves reopened path-style module constants defined via Slice.literal" do
+      source = <<-CRYSTAL
+        class Float
+        end
+
+        module Float::FastFloat
+          module Powers
+          end
+        end
+
+        module Float::FastFloat
+          module Powers
+            TABLE = Slice(UInt64).literal(1_u64, 2_u64)
+          end
+
+          def self.probe(index : Int32)
+            ptr = Powers::TABLE.to_unsafe
+            ptr[index]
+          end
+        end
+      CRYSTAL
+
+      _program, analyzer, engine = infer_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.should be_empty
+    end
+
+    it "resolves cross-file reopened path-style module constants" do
+      units = [
+        {
+          path: "/tmp/semantic-ff-cross-file-a.cr",
+          source: <<-CRYSTAL
+            class Float
+            end
+
+            module Float::FastFloat
+              module Powers
+              end
+            end
+          CRYSTAL
+        },
+        {
+          path: "/tmp/semantic-ff-cross-file-b.cr",
+          source: <<-CRYSTAL
+            module Float::FastFloat
+              module Powers
+                TABLE = [1_u64, 2_u64]
+              end
+
+              def self.probe(index : Int32)
+                ptr = Powers::TABLE.to_unsafe
+                ptr[index]
+              end
+            end
+          CRYSTAL
+        },
+      ]
+
+      _program, analyzer, engine = infer_types_from_units(units)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.should be_empty
+    end
+
+    it "resolves constants across three reopened path-style module files" do
+      units = [
+        {
+          path: "/tmp/semantic-ff-three-file-a.cr",
+          source: <<-CRYSTAL
+            class Float
+            end
+
+            module Float::FastFloat
+              module Powers
+                SMALLEST = 0
+              end
+            end
+          CRYSTAL
+        },
+        {
+          path: "/tmp/semantic-ff-three-file-b.cr",
+          source: <<-CRYSTAL
+            module Float::FastFloat
+              module Powers
+                TABLE = [1_u64, 2_u64]
+              end
+            end
+          CRYSTAL
+        },
+        {
+          path: "/tmp/semantic-ff-three-file-c.cr",
+          source: <<-CRYSTAL
+            module Float::FastFloat
+              def self.probe
+                ptr = Powers::TABLE.to_unsafe
+                ptr[Powers::SMALLEST]
+              end
+            end
+          CRYSTAL
+        },
+      ]
+
+      _program, analyzer, engine = infer_types_from_units(units)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.should be_empty
+    end
+
+    it "resolves Slice.literal constants across three reopened path-style module files" do
+      units = [
+        {
+          path: "/tmp/semantic-ff-slice-literal-a.cr",
+          source: <<-CRYSTAL
+            struct Slice(T)
+              def self.literal(*elts : T)
+                elts
+              end
+            end
+
+            class Float
+            end
+
+            module Float::FastFloat
+              module Powers
+                SMALLEST = 0
+              end
+            end
+          CRYSTAL
+        },
+        {
+          path: "/tmp/semantic-ff-slice-literal-b.cr",
+          source: <<-CRYSTAL
+            module Float::FastFloat
+              module Powers
+                TABLE = Slice(UInt64).literal(1_u64, 2_u64)
+              end
+            end
+          CRYSTAL
+        },
+        {
+          path: "/tmp/semantic-ff-slice-literal-c.cr",
+          source: <<-CRYSTAL
+            module Float::FastFloat
+              def self.probe
+                ptr = Powers::TABLE.to_unsafe
+                ptr[Powers::SMALLEST]
+              end
+            end
+          CRYSTAL
+        },
+      ]
+
+      _program, analyzer, engine = infer_types_from_units(units)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.should be_empty
     end
 
     it "tracks class variable assignments for later reads" do

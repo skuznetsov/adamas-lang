@@ -198,6 +198,54 @@ describe "compile semantic shadow aggregate" do
     aggregate.path_for(callee_id).should eq("unit_1.cr")
   end
 
+  it "walks splat children while assigning aggregate ownership" do
+    aggregate = build_shared_shadow_aggregate([
+      <<-CR,
+        def consume(*items)
+        end
+      CR
+      <<-CR,
+        source = 1
+        consume(*source)
+      CR
+    ])
+    program = aggregate.program
+
+    call_root = program.roots.last
+    call_node = program.arena[call_root].as(Frontend::CallNode)
+    splat_id = call_node.args.first
+    splat_node = program.arena[splat_id].as(Frontend::SplatNode)
+
+    aggregate.path_for(call_root).should eq("unit_1.cr")
+    aggregate.path_for(splat_id).should eq("unit_1.cr")
+    aggregate.path_for(splat_node.expr).should eq("unit_1.cr")
+  end
+
+  it "walks struct bodies while assigning aggregate ownership" do
+    aggregate = build_shared_shadow_aggregate([
+      <<-CR,
+        struct Host
+          def answer
+            consume path_index
+          end
+        end
+      CR
+      "other_call(1)\n"
+    ])
+    program = aggregate.program
+
+    struct_node = program.arena[program.roots.first].as(Frontend::ClassNode)
+    def_id = struct_node.body.not_nil!.first
+    def_node = program.arena[def_id].as(Frontend::DefNode)
+    call_id = def_node.body.not_nil!.first
+    call_node = program.arena[call_id].as(Frontend::CallNode)
+    callee_id = call_node.callee.not_nil!
+
+    aggregate.path_for(def_id).should eq("unit_0.cr")
+    aggregate.path_for(call_id).should eq("unit_0.cr")
+    aggregate.path_for(callee_id).should eq("unit_0.cr")
+  end
+
   it "resolves calls to root-level macro-generated methods across aggregate files" do
     aggregate = build_shared_shadow_aggregate([
       <<-CR,
@@ -295,6 +343,78 @@ describe "compile semantic shadow aggregate" do
     call_node = program.arena[call_root].as(Frontend::CallNode)
     callee_id = call_node.callee.not_nil!
     result.identifier_symbols[callee_id].should be_a(Semantic::MethodSymbol)
+  end
+
+  it "preserves nested module namespace for module-body macro expansion" do
+    aggregate = build_shared_shadow_aggregate([
+      <<-CR,
+        class IO
+        end
+
+        class File
+          class Info
+            def self.readable?(path : String) : Bool
+              true
+            end
+          end
+
+          def self.file?(path : String) : Bool
+            true
+          end
+
+          def self.open(path : String)
+            yield IO.new
+          end
+        end
+
+        class Time
+          class Location
+            def self.read_zoneinfo(name : String, io : IO) : Location
+              new
+            end
+          end
+        end
+
+        module Crystal
+          module System
+            module Time
+              {% if flag?(:android) %}
+                def self.load_localtime
+                  nil
+                end
+              {% else %}
+                LOCALTIME = "/etc/localtime"
+
+                def self.load_localtime
+                  if ::File.file?(LOCALTIME) && ::File::Info.readable?(LOCALTIME)
+                    ::File.open(LOCALTIME) do |file|
+                      ::Time::Location.read_zoneinfo("Local", file)
+                    end
+                  end
+                end
+              {% end %}
+            end
+          end
+        end
+
+        Crystal::System::Time.load_localtime
+      CR
+    ])
+    program = aggregate.program
+
+    analyzer = Semantic::Analyzer.new(program)
+    analyzer.collect_symbols(
+      node_file_path_provider: ->(expr_id : Frontend::ExprId) { aggregate.path_for(expr_id) },
+      source_for_path_provider: ->(path : String) { aggregate.source_for_path(path) },
+    )
+    result = analyzer.resolve_names
+    engine = analyzer.infer_types(result.identifier_symbols)
+
+    result.diagnostics.should be_empty
+    analyzer.type_inference_diagnostics.should be_empty
+
+    root_type = engine.context.get_type(program.roots.last)
+    root_type.should_not be_nil
   end
 
   it "expands cross-file positional arg with {{name.id}}" do

@@ -660,7 +660,7 @@ describe "compile shadow declaration inventory" do
       source_for_path_provider: ->(path : String) { shadow_sources[path]? },
     )
 
-    generated_trace_symbol = analyzer.global_context.symbol_table.lookup_local("generated_trace")
+    generated_trace_symbol = analyzer.global_context.symbol_table.lookup_local_macro("generated_trace")
     generated_trace_symbol.should be_a(Semantic::MacroSymbol)
     generated_trace_symbol = generated_trace_symbol.as(Semantic::MacroSymbol)
     generated_trace_symbol.generated?.should be_true

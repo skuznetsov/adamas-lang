@@ -205,6 +205,78 @@ describe "Phase 95: Flow Typing (is_a? narrowing)" do
       # Check that x inside if has narrowed type (no Nil)
       engine.diagnostics.select(&.level.error?).should be_empty
     end
+
+    it "narrows assignment on rhs of && in then branch" do
+      source = <<-CRYSTAL
+        class File
+          def self.symlink?(path : String) : Bool
+            true
+          end
+
+          def self.readlink?(path : String) : String?
+            "/usr/share/zoneinfo/Europe/Berlin"
+          end
+        end
+
+        class String
+          def size : Int32
+            1
+          end
+        end
+
+        def test
+          if ::File.symlink?("/etc/localtime") && (realpath = ::File.readlink?("/etc/localtime"))
+            realpath.size
+          end
+        end
+      CRYSTAL
+
+      lexer = Frontend::Lexer.new(source)
+      parser = Frontend::Parser.new(lexer)
+      program = parser.parse_program
+
+      analyzer = Semantic::Analyzer.new(program)
+      analyzer.collect_symbols
+      name_result = analyzer.resolve_names
+
+      engine = Semantic::TypeInferenceEngine.new(program, name_result.identifier_symbols, analyzer.global_context.symbol_table)
+      engine.infer_types
+
+      engine.diagnostics.select { |d| d.level.error? && d.message.includes?("not found") }.should be_empty
+    end
+
+    it "narrows assignment condition result before arithmetic in then branch" do
+      source = <<-CRYSTAL
+        class String
+          def rindex(s : String) : Int32?
+            0
+          end
+
+          def size : Int32
+            1
+          end
+        end
+
+        def test(realpath : String)
+          if pos = realpath.rindex("zoneinfo/")
+            pos + "zoneinfo/".size
+          end
+        end
+      CRYSTAL
+
+      lexer = Frontend::Lexer.new(source)
+      parser = Frontend::Parser.new(lexer)
+      program = parser.parse_program
+
+      analyzer = Semantic::Analyzer.new(program)
+      analyzer.collect_symbols
+      name_result = analyzer.resolve_names
+
+      engine = Semantic::TypeInferenceEngine.new(program, name_result.identifier_symbols, analyzer.global_context.symbol_table)
+      engine.infer_types
+
+      engine.diagnostics.select(&.level.error?).should be_empty
+    end
   end
 
   # ==================================================================

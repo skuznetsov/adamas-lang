@@ -596,6 +596,7 @@ module CrystalV2
             io.write_byte(class_node.is_abstract ? 1_u8 : 0_u8)
             io.write_byte(class_node.is_struct ? 1_u8 : 0_u8)
             io.write_byte(class_node.is_union ? 1_u8 : 0_u8)
+            io.write_byte(class_node.absolute ? 1_u8 : 0_u8)
             return
           end
 
@@ -915,6 +916,7 @@ module CrystalV2
             write_string_ref(io, String.new(mod_node.name), string_table)
             write_optional_expr_id_array(io, mod_node.body)
             write_optional_string_array(io, mod_node.type_params.try { |tp| tp.map { |t| String.new(t) } }, string_table)
+            io.write_byte(mod_node.absolute ? 1_u8 : 0_u8)
 
           when Frontend::NodeKind::Enum
             enum_node = node.as(Frontend::EnumNode)
@@ -1786,14 +1788,16 @@ module CrystalV2
             is_abstract = io.read_byte.not_nil! == 1_u8
             is_struct = io.read_byte.not_nil! == 1_u8
             is_union = io.read_byte.not_nil! == 1_u8
-            Frontend::ClassNode.new(span, name, superclass, body, is_abstract, is_struct, is_union, type_params)
+            absolute = io.read_byte.not_nil! == 1_u8
+            Frontend::ClassNode.new(span, name, superclass, body, is_abstract, is_struct, is_union, type_params, absolute)
 
           when .module_node?
             span = read_span(io)
             name = pool.intern(strings[read_string_idx(io)].to_slice)
             body = read_optional_expr_id_array(io)
             type_params = read_optional_string_array(io, strings, pool)
-            Frontend::ModuleNode.new(span, name, body, type_params)
+            absolute = io.read_byte.not_nil! == 1_u8
+            Frontend::ModuleNode.new(span, name, body, type_params, absolute)
 
           when .enum_node?
             span = read_span(io)

@@ -82,6 +82,38 @@ describe "Phase 98: Method Overload Resolution" do
 
       engine.diagnostics.select(&.level.error?).should be_empty
     end
+
+    it "does not crash when overload ranking compares against default parameters" do
+      source = <<-CRYSTAL
+        class Formatter
+          def format(x : Int32)
+            x
+          end
+
+          def format(x : Int32, base : Int32 = 10)
+            x
+          end
+        end
+
+        def test
+          formatter = Formatter.new
+          formatter.format(5)
+        end
+        CRYSTAL
+
+      lexer = Frontend::Lexer.new(source)
+      parser = Frontend::Parser.new(lexer)
+      program = parser.parse_program
+
+      analyzer = Semantic::Analyzer.new(program)
+      analyzer.collect_symbols
+      name_result = analyzer.resolve_names
+
+      engine = Semantic::TypeInferenceEngine.new(program, name_result.identifier_symbols, analyzer.global_context.symbol_table)
+      engine.infer_types
+
+      engine.diagnostics.select(&.level.error?).should be_empty
+    end
   end
 
   # ==================================================================

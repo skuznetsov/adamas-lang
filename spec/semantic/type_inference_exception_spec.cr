@@ -38,6 +38,54 @@ end
 
 describe TypeInferenceEngine do
   describe "Phase 29: Exception handling" do
+    it "infers included-hook class macros and class methods on exception types" do
+      source = <<-CRYSTAL
+        module SystemError
+          macro included
+            extend ::SystemError::ClassMethods
+
+            macro from_errno(message, **opts)
+              ::{{ @type }}.from_os_error({{ message }}, 1, {{ opts.double_splat }})
+            end
+          end
+
+          module ClassMethods
+            def from_os_error(message : String?, os_error, **opts)
+              self.new(message)
+            end
+          end
+        end
+
+        class Exception
+          def initialize(@message : String?)
+          end
+        end
+
+        class MyError < Exception
+          include SystemError
+        end
+
+        MyError.from_os_error("boom", 1)
+        MyError.from_errno("boom")
+      CRYSTAL
+
+      lexer = Lexer.new(source)
+      parser = Parser.new(lexer)
+      program = parser.parse_program
+
+      analyzer = Analyzer.new(program)
+      analyzer.collect_symbols
+      name_result = analyzer.resolve_names
+      engine = analyzer.infer_types(name_result.identifier_symbols)
+
+      name_result.diagnostics.should be_empty
+      engine.diagnostics.should be_empty
+      analyzer.generated_overlay.top_level_roots.size.should eq(1)
+
+      engine.context.get_type(program.roots[-2]).to_s.should eq("MyError")
+      engine.context.get_type(analyzer.generated_overlay.top_level_roots.first).to_s.should eq("MyError")
+    end
+
     it "handles begin with rescue (union type)" do
       source = <<-CRYSTAL
         x = begin

@@ -130,6 +130,149 @@ describe Semantic::TypeInferenceEngine do
         second_type.should be_a(InstanceType)
         second_type.as(InstanceType).type_args.not_nil![0].as(PrimitiveType).name.should eq("String")
       end
+
+      it "infers namespaced generic constructors with typeof proc type arguments" do
+        source = <<-CRYSTAL
+          module Chunk
+            struct Accumulator(T, U)
+            end
+          end
+
+          def probe(block : Int32 -> String)
+            Chunk::Accumulator(Int32, typeof(block.call(1))).new
+          end
+        CRYSTAL
+
+        program, analyzer, engine = infer_types(source)
+
+        analyzer.semantic_diagnostics.should be_empty
+        engine.diagnostics.should be_empty
+
+        def_node = program.arena[program.roots.last].as(Frontend::DefNode)
+        call_id = def_node.body.not_nil!.first
+        type = engine.context.get_type(call_id)
+
+        type.should be_a(InstanceType)
+        instance_type = type.as(InstanceType)
+        instance_type.class_symbol.name.should eq("Accumulator")
+        instance_type.type_args.should_not be_nil
+        instance_type.type_args.not_nil!.size.should eq(2)
+        instance_type.type_args.not_nil![0].as(PrimitiveType).name.should eq("Int32")
+        instance_type.type_args.not_nil![1].as(PrimitiveType).name.should eq("String")
+      end
+
+      it "resolves lexical namespaced generic constructors inside generic modules" do
+        source = <<-CRYSTAL
+          module EnumerableLike(T)
+            module Chunk
+              struct Accumulator(A, B)
+              end
+            end
+
+            def probe : Chunk::Accumulator(T, Int32)
+              Chunk::Accumulator(T, Int32).new
+            end
+          end
+        CRYSTAL
+
+        program, analyzer, engine = infer_types(source)
+
+        analyzer.semantic_diagnostics.should be_empty
+        analyzer.name_resolver_diagnostics.should be_empty
+        engine.diagnostics.should be_empty
+      end
+
+      it "resolves explicit type application arguments from the current generic receiver context" do
+        source = <<-CRYSTAL
+          class Box(T)
+            class Accumulator(A, B)
+              @data : Array(A)
+
+              def initialize
+                @data = [] of A
+              end
+
+              def add(value : A)
+                @data << value
+              end
+            end
+
+            def probe(value : T)
+              acc = Accumulator(T, Int32).new
+              acc.add(value)
+            end
+          end
+
+          Box(String).new.probe("x")
+        CRYSTAL
+
+        program, analyzer, engine = infer_types(source)
+
+        analyzer.semantic_diagnostics.should be_empty
+        analyzer.name_resolver_diagnostics.should be_empty
+        engine.diagnostics.should be_empty
+      end
+
+      it "treats aliases to generic types as constructor receivers in expression position" do
+        source = <<-CRYSTAL
+          class Box(T)
+          end
+
+          alias IntBox = Box(Int32)
+
+          IntBox.new
+        CRYSTAL
+
+        program, analyzer, engine = infer_types(source)
+
+        analyzer.semantic_diagnostics.should be_empty
+        analyzer.name_resolver_diagnostics.should be_empty
+        engine.diagnostics.should be_empty
+
+        call_id = program.roots.last
+        type = engine.context.get_type(call_id)
+
+        type.should be_a(InstanceType)
+        instance_type = type.as(InstanceType)
+        instance_type.class_symbol.name.should eq("Box")
+        instance_type.type_args.should_not be_nil
+        instance_type.type_args.not_nil!.size.should eq(1)
+        instance_type.type_args.not_nil![0].should be_a(PrimitiveType)
+        instance_type.type_args.not_nil![0].as(PrimitiveType).name.should eq("Int32")
+      end
+
+      it "treats type parameters as primitive class receivers in expression position" do
+        source = <<-CRYSTAL
+          struct Wrap(T)
+            def build(value : T)
+              T.new!(value)
+            end
+
+            def zero
+              T.zero
+            end
+          end
+
+          Wrap(UInt64).new.build(1_u64)
+          Wrap(UInt64).new.zero
+        CRYSTAL
+
+        program, analyzer, engine = infer_types(source)
+
+        analyzer.semantic_diagnostics.should be_empty
+        analyzer.name_resolver_diagnostics.should be_empty
+        engine.diagnostics.should be_empty
+
+        build_call_id = program.roots[-2]
+        build_type = engine.context.get_type(build_call_id)
+        build_type.should be_a(PrimitiveType)
+        build_type.as(PrimitiveType).name.should eq("UInt64")
+
+        zero_call_id = program.roots[-1]
+        zero_type = engine.context.get_type(zero_call_id)
+        zero_type.should be_a(PrimitiveType)
+        zero_type.as(PrimitiveType).name.should eq("UInt64")
+      end
     end
 
     # ========================================
@@ -324,6 +467,20 @@ describe Semantic::TypeInferenceEngine do
     # ========================================
 
     describe "Generic method with single type parameter" do
+      it "does not emit arithmetic diagnostics for abstract generic bodies before instantiation" do
+        source = <<-CRYSTAL
+          def accumulateish(x : T, y : T) forall T
+            x + y
+          end
+        CRYSTAL
+
+        program, analyzer, engine = infer_types(source)
+
+        analyzer.semantic_diagnostics.should be_empty
+        analyzer.name_resolver_diagnostics.should be_empty
+        engine.diagnostics.should be_empty
+      end
+
       it "infers type parameter from argument" do
         source = <<-CRYSTAL
           def identity(x : T) : T
@@ -391,6 +548,713 @@ describe Semantic::TypeInferenceEngine do
 
         type.should be_a(PrimitiveType)
         type.as(PrimitiveType).name.should eq("Int32")
+      end
+
+      it "does not emit collection builder diagnostics for abstract generic bodies before instantiation" do
+        source = <<-CRYSTAL
+          class Array(T)
+          end
+
+          class Hash(K, V)
+          end
+
+          def groupish(value : T, & : T -> U) forall T, U
+            h = Hash(U, Array(T)).new
+            key = yield value
+            h.put_if_absent(key) { Array(T).new } << value
+          end
+        CRYSTAL
+
+        program, analyzer, engine = infer_types(source)
+
+        analyzer.semantic_diagnostics.should be_empty
+        analyzer.name_resolver_diagnostics.should be_empty
+        engine.diagnostics.should be_empty
+      end
+
+      it "resolves Reflect(T).type inside non-generic methods of generic owners" do
+        source = <<-CRYSTAL
+          class Wrapper(T)
+            struct Reflect(X)
+              def self.type
+                X
+              end
+            end
+
+            def productish
+              Reflect(T).type
+            end
+          end
+
+          Wrapper(Int32).new.productish
+        CRYSTAL
+
+        program, analyzer, engine = infer_types(source)
+
+        analyzer.semantic_diagnostics.should be_empty
+        analyzer.name_resolver_diagnostics.should be_empty
+        engine.diagnostics.should be_empty
+
+        call_id = program.roots.last
+        type = engine.context.get_type(call_id)
+        type.should be_a(PrimitiveType)
+        type.as(PrimitiveType).name.should eq("Int32")
+      end
+
+      it "resolves Reflect(T).type inside generic module self methods" do
+        source = <<-CRYSTAL
+          module Wrapper(T)
+            struct Reflect(X)
+              def self.type
+                X
+              end
+            end
+
+            def self.productish
+              Reflect(T).type
+            end
+          end
+
+          Wrapper(Int32).productish
+        CRYSTAL
+
+        program, analyzer, engine = infer_types(source)
+
+        analyzer.semantic_diagnostics.should be_empty
+        analyzer.name_resolver_diagnostics.should be_empty
+        engine.diagnostics.should be_empty
+
+        call_id = program.roots.last
+        type = engine.context.get_type(call_id)
+        type.should be_a(PrimitiveType)
+        type.as(PrimitiveType).name.should eq("Int32")
+      end
+
+      it "resolves typeof(yield Enumerable.element_type(self)) inside generic modules" do
+        source = <<-CRYSTAL
+          module Enumerable(T)
+            struct Reflect(X)
+              def self.type
+                X
+              end
+            end
+
+            abstract def each(& : T ->)
+
+            def productish(& : T -> _)
+              Reflect(typeof(yield Enumerable.element_type(self))).type
+            end
+          end
+
+          class Box
+            include Enumerable(Int32)
+
+            def each(& : Int32 ->)
+              yield 1
+            end
+          end
+
+          Box.new.productish { |x| x + 1 }
+        CRYSTAL
+
+        program, analyzer, engine = infer_types(source)
+
+        analyzer.semantic_diagnostics.should be_empty
+        analyzer.name_resolver_diagnostics.should be_empty
+        engine.diagnostics.should be_empty
+
+        call_id = program.roots.last
+        type = engine.context.get_type(call_id)
+        type.should be_a(PrimitiveType)
+        type.as(PrimitiveType).name.should eq("Int32")
+      end
+
+      it "resolves Reflect(T).type inside generic modules included into classes" do
+        source = <<-CRYSTAL
+          module Enumerable(T)
+            struct Reflect(X)
+              def self.type
+                X
+              end
+            end
+
+            def productish
+              Reflect(T).type
+            end
+          end
+
+          class Box
+            include Enumerable(Int32)
+          end
+
+          Box.new.productish
+        CRYSTAL
+
+        program, analyzer, engine = infer_types(source)
+
+        analyzer.semantic_diagnostics.should be_empty
+        analyzer.name_resolver_diagnostics.should be_empty
+        engine.diagnostics.should be_empty
+
+        call_id = program.roots.last
+        type = engine.context.get_type(call_id)
+        type.should be_a(PrimitiveType)
+        type.as(PrimitiveType).name.should eq("Int32")
+      end
+
+      it "resolves T.class annotations inside generic modules" do
+        source = <<-CRYSTAL
+          class Int32
+            def self.multiplicative_identity
+              1
+            end
+          end
+
+          module Reflect(T)
+            def self.type : T.class
+              T
+            end
+          end
+
+          module Enumerable(T)
+            abstract def each(& : T ->)
+
+            def self.element_type(value) : T
+              uninitialized T
+            end
+
+            def productish(& : T -> _)
+              Reflect(typeof(yield Enumerable.element_type(self))).type.multiplicative_identity
+            end
+          end
+
+          class Box
+            include Enumerable(Int32)
+
+            def each(& : Int32 ->)
+              yield 1
+            end
+          end
+
+          Box.new.productish { |x| x + 1 }
+        CRYSTAL
+
+        program, analyzer, engine = infer_types(source)
+
+        analyzer.semantic_diagnostics.should be_empty
+        analyzer.name_resolver_diagnostics.should be_empty
+        engine.diagnostics.should be_empty
+
+        call_id = program.roots.last
+        type = engine.context.get_type(call_id)
+        type.should be_a(PrimitiveType)
+        type.as(PrimitiveType).name.should eq("Int32")
+      end
+
+      it "preserves array element type through flat_map_type in generic modules" do
+        source = <<-CRYSTAL
+          class Array(T)
+            def first : T
+              uninitialized T
+            end
+          end
+
+          module Enumerable(T)
+            abstract def each(& : T ->)
+
+            def self.element_type(value) : T
+              uninitialized T
+            end
+
+            private def flat_map_type(elem)
+              case elem
+              when Array
+                elem.first
+              else
+                elem
+              end
+            end
+
+            def flat_mapish(& : T -> _)
+              [] of typeof(flat_map_type(yield Enumerable.element_type(self)))
+            end
+          end
+
+          class Box
+            include Enumerable(Int32)
+
+            def each(& : Int32 ->)
+              yield 1
+            end
+          end
+
+          Box.new.flat_mapish { |x| [x + 1] }
+        CRYSTAL
+
+        program, analyzer, engine = infer_types(source)
+
+        analyzer.semantic_diagnostics.should be_empty
+        analyzer.name_resolver_diagnostics.should be_empty
+        engine.diagnostics.should be_empty
+
+        call_id = program.roots.last
+        type = engine.context.get_type(call_id)
+        type.should be_a(ArrayType)
+      end
+
+      it "handles flat_map_type branches with Array and Iterator in generic modules" do
+        source = <<-CRYSTAL
+          module Iterator(T)
+            abstract def first : T
+          end
+
+          class Array(T)
+            include Iterator(T)
+
+            def first : T
+              uninitialized T
+            end
+          end
+
+          module Enumerable(T)
+            abstract def each(& : T ->)
+
+            def self.element_type(value) : T
+              uninitialized T
+            end
+
+            private def flat_map_type(elem)
+              case elem
+              when Array, Iterator
+                elem.first
+              else
+                elem
+              end
+            end
+
+            def flat_mapish(& : T -> _)
+              [] of typeof(flat_map_type(yield Enumerable.element_type(self)))
+            end
+          end
+
+          class Box
+            include Enumerable(Int32)
+
+            def each(& : Int32 ->)
+              yield 1
+            end
+          end
+
+          Box.new.flat_mapish { |x| [x + 1] }
+        CRYSTAL
+
+        program, analyzer, engine = infer_types(source)
+
+        analyzer.semantic_diagnostics.should be_empty
+        analyzer.name_resolver_diagnostics.should be_empty
+        engine.diagnostics.should be_empty
+
+        call_id = program.roots.last
+        type = engine.context.get_type(call_id)
+        type.should be_a(ArrayType)
+      end
+
+      it "resolves indexed Enumerable.element_type(self) inside generic modules" do
+        source = <<-CRYSTAL
+          class Hash(K, V)
+            def initialize
+            end
+          end
+
+          module Enumerable(T)
+            abstract def each(& : T ->)
+
+            def self.element_type(value) : T
+              uninitialized T
+            end
+
+            def to_hish
+              Hash(typeof(Enumerable.element_type(self)[0]), typeof(Enumerable.element_type(self)[1])).new
+            end
+          end
+
+          class Pairs
+            include Enumerable(Tuple(Int32, String))
+
+            def each(& : Tuple(Int32, String) ->)
+              yield {1, "x"}
+            end
+          end
+
+          Pairs.new.to_hish
+        CRYSTAL
+
+        program, analyzer, engine = infer_types(source)
+
+        analyzer.semantic_diagnostics.should be_empty
+        analyzer.name_resolver_diagnostics.should be_empty
+        engine.diagnostics.should be_empty
+
+        call_id = program.roots.last
+        type = engine.context.get_type(call_id)
+        type.should be_a(HashType)
+        hash_type = type.as(HashType)
+        hash_type.key_type.should be_a(PrimitiveType)
+        hash_type.key_type.as(PrimitiveType).name.should eq("Int32")
+        hash_type.value_type.should be_a(PrimitiveType)
+        hash_type.value_type.as(PrimitiveType).name.should eq("String")
+      end
+
+      it "propagates reduce accumulator types through included generic modules" do
+        source = <<-CRYSTAL
+          module Enumerable(T)
+            abstract def each(& : T ->)
+
+            def reduce(initial : U, & : U, T -> U) : U forall U
+              memo = initial
+              each do |e|
+                memo = yield memo, e
+              end
+              memo
+            end
+
+            def sumish(initial : Number, & : T ->)
+              reduce(initial) { |memo, e| memo + (yield e) }
+            end
+          end
+
+          class Number
+          end
+
+          class Int32 < Number
+          end
+
+          class Box
+            include Enumerable(Int32)
+
+            def each(& : Int32 ->)
+              yield 1
+            end
+          end
+
+          Box.new.sumish(0) { |x| x + 1 }
+        CRYSTAL
+
+        program, analyzer, engine = infer_types(source)
+
+        analyzer.semantic_diagnostics.should be_empty
+        analyzer.name_resolver_diagnostics.should be_empty
+        engine.diagnostics.should be_empty
+
+        call_id = program.roots.last
+        type = engine.context.get_type(call_id)
+        type.should be_a(PrimitiveType)
+        type.as(PrimitiveType).name.should eq("Int32")
+      end
+
+      it "propagates untyped reduce block params through included generic modules" do
+        source = <<-CRYSTAL
+          module Enumerable(T)
+            abstract def each(& : T ->)
+
+            def reduce(initial, &)
+              memo = initial
+              each do |e|
+                memo = yield memo, e
+              end
+              memo
+            end
+
+            def sumish(initial : Number, & : T ->)
+              reduce(initial) { |memo, e| memo + (yield e) }
+            end
+          end
+
+          class Number
+          end
+
+          class Int32 < Number
+          end
+
+          class Box
+            include Enumerable(Int32)
+
+            def each(& : Int32 ->)
+              yield 1
+            end
+          end
+
+          Box.new.sumish(0) { |x| x + 1 }
+        CRYSTAL
+
+        program, analyzer, engine = infer_types(source)
+
+        analyzer.semantic_diagnostics.should be_empty
+        analyzer.name_resolver_diagnostics.should be_empty
+        engine.diagnostics.should be_empty
+
+        call_id = program.roots.last
+        type = engine.context.get_type(call_id)
+        type.should be_a(PrimitiveType)
+        type.as(PrimitiveType).name.should eq("Int32")
+      end
+
+      it "propagates untyped each_with_object block params through included generic modules" do
+        source = <<-CRYSTAL
+          class Hash(K, V)
+            def initialize
+            end
+
+            def []=(key : K, value : V) : V
+              value
+            end
+          end
+
+          module Enumerable(T)
+            abstract def each(& : T ->)
+
+            def self.element_type(value) : T
+              uninitialized T
+            end
+
+            def each_with_object(obj, &)
+              each do |elem|
+                yield elem, obj
+              end
+              obj
+            end
+
+            def to_hish
+              each_with_object(Hash(typeof(Enumerable.element_type(self)[0]), typeof(Enumerable.element_type(self)[1])).new) do |item, hash|
+                hash[item[0]] = item[1]
+              end
+            end
+          end
+
+          class Pairs
+            include Enumerable(Tuple(Int32, String))
+
+            def each(& : Tuple(Int32, String) ->)
+              yield {1, "x"}
+            end
+          end
+
+          Pairs.new.to_hish
+        CRYSTAL
+
+        program, analyzer, engine = infer_types(source)
+
+        analyzer.semantic_diagnostics.should be_empty
+        analyzer.name_resolver_diagnostics.should be_empty
+        engine.diagnostics.should be_empty
+
+        call_id = program.roots.last
+        type = engine.context.get_type(call_id)
+        type.should be_a(HashType)
+        hash_type = type.as(HashType)
+        hash_type.key_type.should be_a(PrimitiveType)
+        hash_type.key_type.as(PrimitiveType).name.should eq("Int32")
+        hash_type.value_type.should be_a(PrimitiveType)
+        hash_type.value_type.as(PrimitiveType).name.should eq("String")
+      end
+
+      it "propagates transitive included-module type args through untyped reduce blocks" do
+        source = <<-CRYSTAL
+          class String
+            def +(other : String) : String
+              self
+            end
+          end
+
+          module Enumerable(T)
+            abstract def each(& : T ->)
+
+            def reduce(initial, &)
+              memo = initial
+              each do |elem|
+                memo = yield memo, elem
+              end
+              memo
+            end
+
+            def sum(initial)
+              sum initial, &.itself
+            end
+
+            def sum(initial, & : T ->)
+              reduce(initial) { |memo, e| memo + (yield e) }
+            end
+          end
+
+          module Indexable(T)
+            include Enumerable(T)
+          end
+
+          class Names
+            include Indexable(String)
+
+            def each(& : String ->)
+              yield "x"
+            end
+          end
+
+          Names.new.sum("")
+        CRYSTAL
+
+        program, analyzer, engine = infer_types(source)
+
+        analyzer.semantic_diagnostics.should be_empty
+        analyzer.name_resolver_diagnostics.should be_empty
+        engine.diagnostics.should be_empty
+
+        call_id = program.roots.last
+        type = engine.context.get_type(call_id)
+        type.should be_a(PrimitiveType)
+        type.as(PrimitiveType).name.should eq("String")
+      end
+
+      it "propagates transitive included-module type args through untyped each_with_object blocks" do
+        source = <<-CRYSTAL
+          class Hash(K, V)
+            def initialize
+            end
+
+            def fetch(key : K)
+              yield
+            end
+
+            def [](key : K) : V
+              uninitialized V
+            end
+
+            def []=(key : K, value : V) : V
+              value
+            end
+          end
+
+          class Int32
+            def +(other : Int32) : Int32
+              self
+            end
+
+            def self.zero : Int32
+              0
+            end
+          end
+
+          class String
+            def downcase : String
+              self
+            end
+          end
+
+          module Enumerable(T)
+            abstract def each(& : T ->)
+
+            def each_with_object(obj, &)
+              each do |elem|
+                yield elem, obj
+              end
+              obj
+            end
+
+            def tally_by(hash, &)
+              each_with_object(hash) do |item, hash|
+                value = yield item
+                count = hash.fetch(value) { typeof(hash[value]).zero }
+                hash[value] = count + 1
+              end
+            end
+          end
+
+          module Indexable(T)
+            include Enumerable(T)
+          end
+
+          class Names
+            include Indexable(String)
+
+            def each(& : String ->)
+              yield "x"
+            end
+          end
+
+          Names.new.tally_by(Hash(String, Int32).new, &.downcase)
+        CRYSTAL
+
+        program, analyzer, engine = infer_types(source)
+
+        analyzer.semantic_diagnostics.should be_empty
+        analyzer.name_resolver_diagnostics.should be_empty
+        engine.diagnostics.should be_empty
+
+        call_id = program.roots.last
+        type = engine.context.get_type(call_id)
+        type.should be_a(HashType)
+        hash_type = type.as(HashType)
+        hash_type.key_type.should be_a(PrimitiveType)
+        hash_type.key_type.as(PrimitiveType).name.should eq("String")
+        hash_type.value_type.should be_a(PrimitiveType)
+        hash_type.value_type.as(PrimitiveType).name.should eq("Int32")
+      end
+
+      it "expands record macros with generic names inside modules" do
+        source = <<-CRYSTAL
+          macro record(__name name, *properties, **kwargs)
+            struct {{name.id}}
+            end
+          end
+
+          module FastFloat
+            record FromCharsResultT(UC), ptr : UC*, ec : Int32
+          end
+
+          FastFloat::FromCharsResultT(UInt8).new
+        CRYSTAL
+
+        program, analyzer, engine = infer_types(source)
+
+        analyzer.semantic_diagnostics.should be_empty
+        analyzer.name_resolver_diagnostics.should be_empty
+        engine.diagnostics.should be_empty
+
+        call_id = program.roots.last
+        type = engine.context.get_type(call_id)
+        type.should be_a(InstanceType)
+        instance_type = type.as(InstanceType)
+        instance_type.class_symbol.name.should eq("FromCharsResultT")
+        instance_type.type_args.should_not be_nil
+        instance_type.type_args.not_nil!.first.should be_a(PrimitiveType)
+        instance_type.type_args.not_nil!.first.as(PrimitiveType).name.should eq("UInt8")
+      end
+
+      it "expands record macros inside class-owned module reopens" do
+        source = <<-CRYSTAL
+          macro record(__name name, *properties, **kwargs)
+            struct {{name.id}}
+            end
+          end
+
+          struct Float
+          end
+
+          module Float::FastFloat
+            record Point, x : Int32
+          end
+
+          Float::FastFloat::Point.new
+        CRYSTAL
+
+        program, analyzer, engine = infer_types(source)
+
+        analyzer.semantic_diagnostics.should be_empty
+        analyzer.name_resolver_diagnostics.should be_empty
+        engine.diagnostics.should be_empty
+
+        call_id = program.roots.last
+        type = engine.context.get_type(call_id)
+        type.should be_a(InstanceType)
+        type.as(InstanceType).class_symbol.name.should eq("Point")
       end
     end
 

@@ -99,8 +99,9 @@ module CrystalV2
         getter? is_struct : Bool
         # True if this class is abstract (cannot be instantiated directly)
         getter? is_abstract : Bool
+        getter? explicit_superclass : Bool
 
-        def initialize(name : String, node_id : ExprId, *, scope : SymbolTable, class_scope : SymbolTable, superclass_name : String? = nil, type_parameters : Array(String)? = nil, is_struct : Bool = false, is_abstract : Bool = false)
+        def initialize(name : String, node_id : ExprId, *, scope : SymbolTable, class_scope : SymbolTable, superclass_name : String? = nil, type_parameters : Array(String)? = nil, is_struct : Bool = false, is_abstract : Bool = false, explicit_superclass : Bool = false)
           super(name, node_id)
           @scope = scope
           @class_scope = class_scope
@@ -111,6 +112,7 @@ module CrystalV2
           @ivar_annotations = {} of String => Array(AnnotationInfo)
           @is_struct = is_struct
           @is_abstract = is_abstract
+          @explicit_superclass = explicit_superclass
         end
 
         # Phase 5A: Track instance variable declarations with full metadata
@@ -169,10 +171,20 @@ module CrystalV2
 
       class ModuleSymbol < Symbol
         getter scope : SymbolTable
+        getter instance_includers : Array(Symbol)
+        property type_parameters : Array(String)?
 
-        def initialize(name : String, node_id : ExprId, *, scope : SymbolTable)
+        def initialize(name : String, node_id : ExprId, *, scope : SymbolTable, type_parameters : Array(String)? = nil)
           super(name, node_id)
           @scope = scope
+          @instance_includers = [] of Symbol
+          @type_parameters = type_parameters
+        end
+
+        def register_instance_includer(symbol : Symbol) : Nil
+          unless @instance_includers.includes?(symbol)
+            @instance_includers << symbol
+          end
         end
       end
 
@@ -206,6 +218,14 @@ module CrystalV2
         getter value : ExprId
 
         def initialize(name : String, node_id : ExprId, @value : ExprId)
+          super(name, node_id)
+        end
+      end
+
+      class AliasSymbol < Symbol
+        getter target : String
+
+        def initialize(name : String, node_id : ExprId, @target : String)
           super(name, node_id)
         end
       end
