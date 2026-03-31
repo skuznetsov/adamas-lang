@@ -6211,7 +6211,15 @@ module CrystalV2
                           end
             methods << MethodSymbol.new(method_name, dummy_node_id, params: [] of Frontend::Parameter, return_annotation: return_type, scope: dummy_scope)
           when "to_s"
+            io_param = Frontend::Parameter.new(name: "io".to_slice, type_annotation: "IO".to_slice)
             methods << MethodSymbol.new(method_name, dummy_node_id, params: [] of Frontend::Parameter, return_annotation: "String", scope: dummy_scope)
+            methods << MethodSymbol.new(method_name, dummy_node_id, params: [io_param], return_annotation: "Nil", scope: dummy_scope)
+          when "to_io"
+            if receiver_type.is_a?(PrimitiveType) && receiver_type.name == "_"
+              io_param = Frontend::Parameter.new(name: "io".to_slice, type_annotation: "IO".to_slice)
+              format_param = Frontend::Parameter.new(name: "format".to_slice, type_annotation: "IO::ByteFormat".to_slice)
+              methods << MethodSymbol.new(method_name, dummy_node_id, params: [io_param, format_param], return_annotation: "Nil", scope: dummy_scope)
+            end
           when "itself"
             methods << MethodSymbol.new(method_name, dummy_node_id, params: [] of Frontend::Parameter, return_annotation: receiver_type.to_s, scope: dummy_scope)
           when "tap"
@@ -6933,6 +6941,7 @@ module CrystalV2
               )
             when "to_s"
               base_param = Frontend::Parameter.new(name: "base".to_slice, type_annotation: "Int | UInt".to_slice)
+              io_param = Frontend::Parameter.new(name: "io".to_slice, type_annotation: "IO".to_slice)
               methods << MethodSymbol.new(
                 method_name,
                 dummy_node_id,
@@ -6945,6 +6954,30 @@ module CrystalV2
                 dummy_node_id,
                 params: [base_param],
                 return_annotation: "String",
+                scope: dummy_scope
+              )
+              methods << MethodSymbol.new(
+                method_name,
+                dummy_node_id,
+                params: [io_param],
+                return_annotation: "Nil",
+                scope: dummy_scope
+              )
+              methods << MethodSymbol.new(
+                method_name,
+                dummy_node_id,
+                params: [io_param, base_param],
+                return_annotation: "Nil",
+                scope: dummy_scope
+              )
+            when "to_io"
+              io_param = Frontend::Parameter.new(name: "io".to_slice, type_annotation: "IO".to_slice)
+              format_param = Frontend::Parameter.new(name: "format".to_slice, type_annotation: "IO::ByteFormat".to_slice)
+              methods << MethodSymbol.new(
+                method_name,
+                dummy_node_id,
+                params: [io_param, format_param],
+                return_annotation: "Nil",
                 scope: dummy_scope
               )
             else
@@ -6987,6 +7020,25 @@ module CrystalV2
                 return_annotation: "Int32",
                 scope: dummy_scope
               )
+            when "to_s"
+              io_param = Frontend::Parameter.new(name: "io".to_slice, type_annotation: "IO".to_slice)
+              methods << MethodSymbol.new(
+                method_name,
+                dummy_node_id,
+                params: [io_param],
+                return_annotation: "Nil",
+                scope: dummy_scope
+              )
+            when "to_io"
+              io_param = Frontend::Parameter.new(name: "io".to_slice, type_annotation: "IO".to_slice)
+              format_param = Frontend::Parameter.new(name: "format".to_slice, type_annotation: "IO::ByteFormat".to_slice)
+              methods << MethodSymbol.new(
+                method_name,
+                dummy_node_id,
+                params: [io_param, format_param],
+                return_annotation: "Nil",
+                scope: dummy_scope
+              )
             end
           else
             case type_name
@@ -7019,6 +7071,16 @@ module CrystalV2
                 return_annotation: "String",
                 scope: dummy_scope
               )
+              if method_name == "to_s"
+                io_param = Frontend::Parameter.new(name: "io".to_slice, type_annotation: "IO".to_slice)
+                methods << MethodSymbol.new(
+                  method_name,
+                  dummy_node_id,
+                  params: [io_param],
+                  return_annotation: "Nil",
+                  scope: dummy_scope
+                )
+              end
             when "chars"
               # String#chars : Array(Char)
               methods << MethodSymbol.new(
@@ -7131,7 +7193,9 @@ module CrystalV2
                 scope: dummy_scope
               )
             when "to_s"
+              io_param = Frontend::Parameter.new(name: "io".to_slice, type_annotation: "IO".to_slice)
               methods << MethodSymbol.new(method_name, dummy_node_id, params: [] of Frontend::Parameter, return_annotation: "String", scope: dummy_scope)
+              methods << MethodSymbol.new(method_name, dummy_node_id, params: [io_param], return_annotation: "Nil", scope: dummy_scope)
             end
           when "Bool"
             case method_name

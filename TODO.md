@@ -1,6 +1,41 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-03-30)
 
 ## Current Status
+- **Fresh semantic IO-protocol checkpoint: object formatting and numeric IO writers are now modeled tightly enough to remove the early `obj.to_s(io)` / `to_io` noise from stage3 (2026-03-30, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/type_inference_engine.cr` now exposes:
+      - universal `to_s(io : IO) : Nil`
+      - wildcard-only `to_io(io : IO, format : IO::ByteFormat) : Nil` for untyped `_` protocol bodies
+      - numeric primitive `to_io(io : IO, format : IO::ByteFormat) : Nil`
+      - numeric primitive `to_s(io : IO) : Nil`
+      - numeric primitive `to_s(io : IO, base : Int | UInt) : Nil`
+    - explicit `String#to_s(io)` / `Nil#to_s(io)` builtin overloads are also present so existing primitive/string builtin candidates no longer shadow the universal IO form
+    - focused regression coverage lives in `spec/semantic/type_inference_io_protocol_spec.cr`
+  - decisive evidence:
+    - focused regressions are green:
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_io_protocol_spec.cr --error-trace`
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_numeric_to_s_spec.cr --error-trace`
+    - rebuild gates are green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+    - the full semantic stage3 probe under the safe wrapper moves again:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 240 4096 src/crystal_v2.cr --stats --no-link -o /tmp/stage3_semantic_probe.out > /tmp/stage3_semantic_probe.log 2>&1`
+      - summary moved from:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=452`
+      - to:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=446`
+    - `Method 'to_s' not found on _`, `Method 'to_s' not found on UInt8`, `Method 'to_io' not found on _`, and `Method 'to_s' not found on UInt64` no longer appear in `/tmp/stage3_semantic_probe.log`
+  - practical boundary:
+    - stage3 with the new inferer is still **not** green
+    - the next honest frontier has moved to later runtime/type surface:
+      - `LibC.fcntl` / `LibC.lseek`
+      - `Cannot index type UInt8`
+      - `Grapheme.codepoints` degrading to `Bool`
+    - that means the next move is not more IO formatting protocol work, but the next concrete runtime/builtin corridor from the new top of the log
 - **Fresh semantic numeric-formatting checkpoint: integer `to_s(base)` is now modeled as a builtin, which removes the early `UInt8/UInt32#to_s(16)` noise from stage3 (2026-03-30, current session)**:
   - trustworthy setup:
     - `src/compiler/semantic/type_inference_engine.cr` now exposes integer `to_s` overloads for:

@@ -3,6 +3,36 @@
 Updated: 2026-03-30
 Context: compiler/bootstrap/stage2-stability
 
+[LM-363|verified]: The next live `io.cr` blocker after [LM-362] was not more
+numeric formatting and not another `IO#peek_or_read_utf8` flow-typing miss. The
+real early noise came from protocol-style formatting/writer calls:
+`obj.to_s(io)`, `object.to_io(io, format)`, and `object_id.to_s(io, 16)`.
+`TypeInferenceEngine` already had zero-arg `to_s` on universal/numeric
+surfaces, but those candidates were insufficient in two different ways: first,
+untyped `_` helper bodies such as `IO#<<(obj : _)` / `IO#write_bytes(object :
+_)` needed explicit protocol modeling for body inference; second, primitive
+receivers like `UInt8` / `UInt64` never reached the universal `Object#to_s(io)`
+contract because existing primitive-specific `to_s` candidates shadowed it.
+The verified fix in `src/compiler/semantic/type_inference_engine.cr` is narrow:
+add universal `to_s(io : IO) : Nil`, wildcard-only `_#to_io(io,
+IO::ByteFormat) : Nil`, primitive numeric `to_io(io, format) : Nil`, and
+primitive numeric `to_s(io)` / `to_s(io, base)` plus explicit `String`/`Nil`
+`to_s(io)` overloads where primitive/string builtin tables would otherwise hide
+the universal form. Focused regression
+`spec/semantic/type_inference_io_protocol_spec.cr` is green, the neighboring
+`spec/semantic/type_inference_numeric_to_s_spec.cr` regression stays green,
+both rebuild gates for `src/crystal_v2.cr` and
+`/tmp/crystal_v2_semantic_stage3probe` are green, and the full safe stage3
+probe moved from `semantic_diags=0 resolution_diags=0 type_diags=452` to
+`semantic_diags=0 resolution_diags=0 type_diags=446`. The old
+`Method 'to_s' not found on _`, `Method 'to_s' not found on UInt8`,
+`Method 'to_io' not found on _`, and `Method 'to_s' not found on UInt64`
+families no longer appear in `/tmp/stage3_semantic_probe.log`. Boundary:
+stage3 is still not green; the next live frontier is later runtime/type
+surface (`LibC.fcntl` / `LibC.lseek`, `Cannot index type UInt8`,
+`Grapheme.codepoints` collapsing to `Bool`) rather than more IO formatting
+protocol work. {F/G/R: 0.96/0.64/0.96} [verified]
+
 [LM-362|verified]: Integer `to_s(base)` is now modeled as a builtin, which
 removes the early `UInt8/UInt32#to_s(16)` noise from the full safe stage3
 prepass and moves it from `type_diags=457` to `type_diags=452`. The verified
