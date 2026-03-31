@@ -3,6 +3,33 @@
 Updated: 2026-03-31
 Context: compiler/bootstrap/stage2-stability
 
+[LM-379|verified]: The next head `fiber.cr` blocker after [LM-378] was only
+partly explained by missing constructor ivar metadata. A tiny host-side
+reducer with `def initialize(&@proc : ->); end; def run; @proc.call; end`
+showed that constructor ivar params were indeed invisible to semantic lookup:
+parser metadata already marked the parameter with `is_instance_var = true`, but
+`Analyzer.collect_symbols` still left both `get_instance_var_type("proc")` and
+`get_instance_var_type("name")` nil because
+`src/compiler/semantic/collectors/symbol_collector.cr` only learned ivars from
+assignments and explicit ivar declarations. The verified fix is narrow:
+`scan_for_instance_vars(...)` now calls a dedicated
+`scan_initialize_param_instance_vars(...)` helper for `initialize`, which
+registers parameters flagged with `Parameter#is_instance_var` as class ivar
+metadata and defines their ivar symbols while preserving any existing default
+metadata. Focused regression
+`spec/semantic/type_inference_constructor_ivar_param_spec.cr` is green, nearby
+`spec/semantic/type_inference_named_args_spec.cr` stays green, both rebuild
+gates for `src/crystal_v2.cr` and `/tmp/crystal_v2_semantic_stage3probe` are
+green, and the full safe stage3 probe moves from
+`semantic_diags=0 resolution_diags=0 type_diags=304` to
+`semantic_diags=0 resolution_diags=0 type_diags=298`. The live log no longer
+contains `Method 'unchecked?' not found on Nil`, `Method 'reentrant?' not
+found on Nil`, or `Method 'flush' not found on Nil`. Important boundary: the
+original tiny `@proc.call` reducer is now green, but the full stage3 head
+`Fiber#@proc.call` miss remains, so this checkpoint fixes a real local metadata
+hole without yet solving the richer `fiber`/runtime context bug above it.
+{F/G/R: 0.95/0.61/0.97} [verified]
+
 [LM-378|verified]: The next apparent `Crystal.print_buffered(...)` blocker after
 [LM-377] was partly a real matcher gap but not the full live stage3 root cause.
 An exact synthetic reducer with the real call shape from `fiber.cr`

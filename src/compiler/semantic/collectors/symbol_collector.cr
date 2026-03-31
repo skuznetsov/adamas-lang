@@ -1636,6 +1636,7 @@ module CrystalV2
               define_instance_var_symbol(class_symbol, var_name, nil, target_id)
             end
           when Frontend::DefNode
+            scan_initialize_param_instance_vars(class_symbol, node, expr_id)
             # Scan method body for instance variable assignments, passing method context
             (node.body || [] of Frontend::ExprId).each do |body_expr_id|
               scan_for_instance_vars(class_symbol, body_expr_id, node)
@@ -1650,6 +1651,29 @@ module CrystalV2
             (node.else_body || [] of Frontend::ExprId).each { |e| scan_for_instance_vars(class_symbol, e, current_method) }
           when Frontend::WhileNode
             node.body.each { |e| scan_for_instance_vars(class_symbol, e, current_method) }
+          end
+        end
+
+        private def scan_initialize_param_instance_vars(
+          class_symbol : ClassSymbol,
+          node : Frontend::DefNode,
+          node_id : Frontend::ExprId
+        ) : Nil
+          return unless def_name = node.name
+          return unless intern_name(def_name) == "initialize"
+
+          node.params.try &.each do |param|
+            next unless param.is_instance_var
+            next unless param_name_slice = param.name
+
+            var_name = intern_name(param_name_slice)
+            existing = class_symbol.get_instance_var_info(var_name)
+            type_annotation = param.type_annotation.try { |slice| intern_name(slice) } || existing.try(&.type_annotation)
+            default_value = existing.try(&.default_value)
+            has_default = existing.try(&.has_default?) || false
+
+            class_symbol.add_instance_var(var_name, type_annotation, default_value, has_default)
+            define_instance_var_symbol(class_symbol, var_name, type_annotation, node_id)
           end
         end
 

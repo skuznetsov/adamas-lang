@@ -1,6 +1,40 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-03-31)
 
 ## Current Status
+- **Fresh semantic constructor-ivar checkpoint: `initialize(@x : T)` / `initialize(&@proc : ->)` params now register ivar metadata during symbol collection, which clears several later Nil receiver families but does not yet solve the head `Fiber#@proc.call` blocker (2026-03-31, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/collectors/symbol_collector.cr` now scans `initialize` parameters marked with `Parameter#is_instance_var` and registers them as class ivar metadata, instead of only learning ivars from explicit `@x = ...` assignments or `@x : T` declarations
+    - this path preserves any already-known default metadata and also defines the corresponding ivar symbol for semantic lookup
+    - focused regression coverage now lives in `spec/semantic/type_inference_constructor_ivar_param_spec.cr`
+  - decisive evidence:
+    - focused regressions are green:
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_constructor_ivar_param_spec.cr --error-trace`
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_named_args_spec.cr --error-trace`
+    - rebuild gates are green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+    - the full semantic stage3 probe under the safe wrapper moves again:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 240 4096 src/crystal_v2.cr --stats --no-link -o /tmp/stage3_semantic_probe.out > /tmp/stage3_semantic_probe_after_ctor_ivar_param_fix.log 2>&1`
+      - branch-local summary moved from:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=304`
+      - to:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=298`
+    - removed/moved families from the live log:
+      - `Method 'unchecked?' not found on Nil`
+      - `Method 'reentrant?' not found on Nil`
+      - `Method 'flush' not found on Nil`
+  - practical boundary:
+    - stage3 with the new inferer is still **not** green
+    - the original exact reducer for `@proc.call` is now green, but the full stage3 head `Fiber#@proc.call` miss still remains in the live log, so a richer `fiber`/runtime context bug still sits above this local metadata hole
+    - the next honest frontier remains the earlier runtime quartet:
+      - `@proc.call`
+      - `LibGC.pthread_create(...)`
+      - `Errno.new(ret)`
+      - `Fiber.new(...)`
 - **Fresh semantic nested-subtype checkpoint: nested class receivers now participate in subtype checks, which clears the live `Crystal.print_buffered(..., to: STDERR)` family (2026-03-31, current session)**:
   - trustworthy setup:
     - `src/compiler/semantic/type_inference_engine.cr` now performs subtype walks via concrete `ClassSymbol` owners when available, instead of relying only on bare-name lookups in the global table
