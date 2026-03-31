@@ -3,6 +3,23 @@
 Updated: 2026-03-30
 Context: compiler/bootstrap/stage2-stability
 
+[LM-362|verified]: Integer `to_s(base)` is now modeled as a builtin, which
+removes the early `UInt8/UInt32#to_s(16)` noise from the full safe stage3
+prepass and moves it from `type_diags=457` to `type_diags=452`. The verified
+fix in `src/compiler/semantic/type_inference_engine.cr` adds integer `to_s`
+overloads for both zero args and one explicit base arg (`Int | UInt`), which
+matches the `src/stdlib/io.cr` error-formatting corridor. Focused regression
+`spec/semantic/type_inference_numeric_to_s_spec.cr` is green, the neighboring
+ternary reducer remains green, and both rebuild gates for `src/crystal_v2.cr`
+and `/tmp/crystal_v2_semantic_stage3probe` are green. The old
+`Method 'to_s' not found on UInt32` / `Method 'to_s' not found on UInt8`
+families no longer appear in `/tmp/stage3_semantic_probe.log`. Boundary:
+stage3 is still not green; the early `io.cr` frontier now sits on object
+formatting protocols (`obj.to_s(io)`, `to_io`) plus a later
+`Cannot index type UInt8` corridor, so the next blocker is protocol/builtin
+surface for IO formatting rather than more numeric formatting work.
+{F/G/R: 0.96/0.61/0.96} [verified]
+
 [LM-361|verified]: Truthy ternary branches now inherit the same positive flow
 narrowings as `if`, which removes the live `IO#read_char` tuple-index blocker
 and moves the full safe stage3 prepass from `type_diags=465` to

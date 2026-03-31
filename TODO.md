@@ -1,6 +1,35 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-03-30)
 
 ## Current Status
+- **Fresh semantic numeric-formatting checkpoint: integer `to_s(base)` is now modeled as a builtin, which removes the early `UInt8/UInt32#to_s(16)` noise from stage3 (2026-03-30, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/type_inference_engine.cr` now exposes integer `to_s` overloads for:
+      - zero args
+      - one explicit base arg (`Int | UInt`)
+    - this specifically covers `UInt8#to_s(16)` / `UInt32#to_s(16)` in `src/stdlib/io.cr`
+    - focused regression coverage lives in `spec/semantic/type_inference_numeric_to_s_spec.cr`
+  - decisive evidence:
+    - focused regressions are green:
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_numeric_to_s_spec.cr --error-trace`
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_ternary_narrowing_spec.cr --error-trace`
+    - rebuild gates are green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+    - the full semantic stage3 probe under the safe wrapper moves again:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 240 4096 src/crystal_v2.cr --stats --no-link -o /tmp/stage3_semantic_probe.out > /tmp/stage3_semantic_probe.log 2>&1`
+      - summary moved from:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=457`
+      - to:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=452`
+    - `Method 'to_s' not found on UInt32` / `Method 'to_s' not found on UInt8` no longer appear in `/tmp/stage3_semantic_probe.log`
+  - practical boundary:
+    - stage3 with the new inferer is still **not** green
+    - the early `io.cr` frontier has moved again, now to object formatting protocols (`obj.to_s(io)`, `to_io`) and a later `Cannot index type UInt8` corridor
+    - the next honest move is protocol/builtin surface for IO formatting, not more numeric formatting work
 - **Fresh semantic ternary checkpoint: truthy ternary branches now inherit the same positive narrowings as `if`, which removes the live `IO#read_char` tuple-index blocker from stage3 (2026-03-30, current session)**:
   - trustworthy setup:
     - `src/compiler/semantic/type_inference_engine.cr` now routes narrowing-sensitive ternary nodes through recursive inference instead of the iterative union fast-path

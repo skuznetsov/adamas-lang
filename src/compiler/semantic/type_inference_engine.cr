@@ -6931,6 +6931,22 @@ module CrystalV2
                 return_annotation: "Int32",
                 scope: dummy_scope
               )
+            when "to_s"
+              base_param = Frontend::Parameter.new(name: "base".to_slice, type_annotation: "Int | UInt".to_slice)
+              methods << MethodSymbol.new(
+                method_name,
+                dummy_node_id,
+                params: [] of Frontend::Parameter,
+                return_annotation: "String",
+                scope: dummy_scope
+              )
+              methods << MethodSymbol.new(
+                method_name,
+                dummy_node_id,
+                params: [base_param],
+                return_annotation: "String",
+                scope: dummy_scope
+              )
             else
               if cast_target = integer_bang_cast_target(method_name) || integer_cast_target(method_name)
                 methods << MethodSymbol.new(
