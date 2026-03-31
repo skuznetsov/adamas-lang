@@ -1,13 +1,14 @@
 #!/bin/bash
 # Safe runner for Crystal V2 test binaries
 # Prevents FD leaks and memory exhaustion from freezing the machine
-# Usage: scripts/run_safe.sh <binary> [timeout_sec] [max_mem_mb]
+# Usage: scripts/run_safe.sh <binary> [timeout_sec] [max_mem_mb] [args...]
 BINARY="$1"
 TIMEOUT="${2:-5}"
 MAX_MEM="${3:-512}"
+shift $(( $# >= 3 ? 3 : $# ))
 
 if [ -z "$BINARY" ]; then
-  echo "Usage: $0 <binary> [timeout_sec=5] [max_mem_mb=512]"
+  echo "Usage: $0 <binary> [timeout_sec=5] [max_mem_mb=512] [args...]"
   exit 1
 fi
 
@@ -16,7 +17,7 @@ STDERR_TMP=$(mktemp /tmp/run_safe_stderr.XXXXXX)
 trap "rm -f $STDOUT_TMP $STDERR_TMP" EXIT
 
 # Run in background, capture output
-"$BINARY" > "$STDOUT_TMP" 2> "$STDERR_TMP" &
+"$BINARY" "$@" > "$STDOUT_TMP" 2> "$STDERR_TMP" &
 PID=$!
 
 # Monitor loop (0.5s granularity)
