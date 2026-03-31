@@ -3,6 +3,33 @@
 Updated: 2026-03-31
 Context: compiler/bootstrap/stage2-stability
 
+[LM-371|verified]: The next live stage3 blocker after [LM-370] was not another
+`io.cr` indexing issue. The head of `/tmp/stage3_semantic_probe.log` moved into
+`String.interpolation(*values : String)`, where `values.sum(&.bytesize)`,
+`values.all?(&.size_known?)`, and `values.sum(&.size)` all failed. The exact
+class-method carriers showed a two-part semantic defect: typed splat params
+were being surfaced into method-body scope as raw element type `T` instead of a
+collected array-like receiver, and short-block collection helpers such as
+`&.bytesize` / `&.size_known?` did not have a bounded collection-block path for
+`sum` / `all?`. The verified fix is likewise two-part: `src/compiler/semantic/collectors/symbol_collector.cr`
+now records typed splat params as `Array(T)` locals for semantic method-body
+lookup, and `src/compiler/semantic/type_inference_engine.cr` now has bounded
+array heuristics plus short-block dispatch helpers for interpolation-style
+`sum/all?` flows. Focused regression
+`spec/semantic/type_inference_spec.cr --example 'treats typed splat params as array-like enumerable collections'`
+is green, the rebuild gate for `src/crystal_v2.cr --no-codegen` is green, and
+both exact no-prelude carriers
+`/tmp/semantic_string_interpolation_splat_probe.cr` and
+`/tmp/semantic_string_interpolation_full_probe.cr` are fully green under
+`scripts/run_safe.sh` with `semantic_diags=0 resolution_diags=0 type_diags=0`.
+The full safe stage3 probe moved from `semantic_diags=0 resolution_diags=0
+type_diags=285` to `semantic_diags=0 resolution_diags=0 type_diags=282`, and
+the old `String#sum` / `String#all?` family disappeared from the head of the
+log. Boundary: stage3 is still not green; the next live frontier is
+`pthread_mutex_*` on `LibC`, `Errno.new(ret)`, and later `Fiber` / `Thread` /
+`Signal` runtime surfaces rather than more typed-splat collection work.
+{F/G/R: 0.96/0.69/0.97} [verified]
+
 [LM-370|verified]: The next live stage3 blocker after [LM-369] was not more
 `termios` alias arithmetic and not another `io.cr` slice builtin gap. The exact
 no-prelude carrier showed that `uninitialized UInt8[DEFAULT_BUFFER_SIZE]`

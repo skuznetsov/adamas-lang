@@ -1,6 +1,41 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-03-31)
 
 ## Current Status
+- **Fresh semantic typed-splat collection checkpoint: class-method `*values : T` bodies now stay array-like enough for interpolation-style `sum/all?/each` flows, and the early `String.interpolation` family is gone from the live stage3 log (2026-03-31, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/collectors/symbol_collector.cr` now records typed splat params as collected array-like locals (`Array(T)`) instead of raw element type `T` when those params are surfaced into semantic method-body scope
+    - `src/compiler/semantic/type_inference_engine.cr` now has a bounded collection-block helper for short-block forms such as `&.bytesize` / `&.size_known?`
+    - the same array heuristic layer now covers the exact interpolation surface:
+      - `values.sum(&.bytesize)` returns the block result type
+      - `values.all?(&.size_known?)` returns `Bool` while still inferring the short block
+      - `values.sum(&.size)` follows the same path
+    - focused regression coverage in `spec/semantic/type_inference_spec.cr` now includes a class-method carrier mirroring `String.interpolation(*values : String)`
+  - decisive evidence:
+    - focused regression is green:
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_spec.cr --example 'treats typed splat params as array-like enumerable collections' --error-trace`
+    - rebuild gate is green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+    - exact no-prelude class-method carriers are green under the safe wrapper:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 60 2048 /tmp/semantic_string_interpolation_splat_probe.cr --no-prelude --stats --verbose --no-link -o /tmp/semantic_string_interpolation_splat_probe.out`
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 60 2048 /tmp/semantic_string_interpolation_full_probe.cr --no-prelude --stats --verbose --no-link -o /tmp/semantic_string_interpolation_full_probe.out`
+      - both summarize with `semantic_diags=0 resolution_diags=0 type_diags=0`
+    - the full semantic stage3 probe under the safe wrapper moves again:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 240 4096 src/crystal_v2.cr --stats --no-link -o /tmp/stage3_semantic_probe.out > /tmp/stage3_semantic_probe.log 2>&1`
+      - summary moved from:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=285`
+      - to:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=282`
+  - practical boundary:
+    - stage3 with the new inferer is still **not** green
+    - the old `String#sum` / `String#all?` head family from `String.interpolation(*values : String)` is gone from `/tmp/stage3_semantic_probe.log`
+    - the next honest frontier is now:
+      - `pthread_mutex_*` on `LibC`
+      - `Errno.new(ret)`
+      - later `Fiber` / `Thread` / `Signal` runtime surfaces
 - **Fresh semantic static-array-shorthand checkpoint: `uninitialized UInt8[CONST]` now resolves as slice-like storage instead of degrading into an index on `UInt8`, and the early `IO.copy` indexing family is gone from the live stage3 log (2026-03-31, current session)**:
   - trustworthy setup:
     - `src/compiler/semantic/type_inference_engine.cr` now accepts integer-valued size expressions in `infer_static_array_type_expression(...)` instead of requiring a literal `NumberNode`

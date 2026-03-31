@@ -5293,6 +5293,14 @@ module CrystalV2
           if receiver_type.is_a?(ArrayType)
             elem_type = receiver_type.element_type
             case method_name
+            when "sum"
+              if block_result = infer_collection_block_result(node, elem_type)
+                return block_result
+              end
+              return elem_type
+            when "any?", "all?", "none?"
+              infer_collection_block_result(node, elem_type) if has_block
+              return @context.bool_type
             when "<<", "push"
               pushed_type = arg_types.first? || elem_type
               if collection_builder_element_type?(elem_type)
@@ -5644,6 +5652,53 @@ module CrystalV2
             clear_cached_type_tree(body_id)
           end
           infer_block_result(block_node.body)
+        end
+
+        private def infer_short_block_zero_arg_result(block_node : Frontend::BlockNode, receiver_type : Type) : Type?
+          body_id = block_node.body.first?
+          return nil unless body_id
+
+          case body_node = @arena[body_id]
+          when Frontend::MemberAccessNode
+            infer_zero_arg_member_result(receiver_type, member_name_for(body_id, body_node))
+          when Frontend::CallNode
+            return nil unless body_node.args.empty?
+            return nil if body_node.named_args
+            return nil if body_node.block
+
+            callee_node = @arena[body_node.callee]
+            return nil unless callee_node.is_a?(Frontend::MemberAccessNode)
+
+            infer_zero_arg_member_result(receiver_type, member_name_for(body_node.callee, callee_node))
+          else
+            nil
+          end
+        end
+
+        private def infer_zero_arg_member_result(receiver_type : Type, method_name : String) : Type?
+          method = lookup_method(receiver_type, method_name, [] of Type, false)
+          return nil unless method
+
+          if ann = method.return_annotation
+            resolve_method_annotation_type(ann, receiver_type, method.scope, class_method_context: method.is_class_method?)
+          else
+            infer_method_body_type(method, receiver_type)
+          end
+        end
+
+        private def infer_collection_block_result(node : Frontend::CallNode, element_type : Type) : Type?
+          block_node = explicit_call_block_node(node)
+          return nil unless block_node
+
+          if params = block_node.params
+            if first_param = params.first?
+              if first_param.name
+                return infer_call_block_with_first_param_type(node, element_type)
+              end
+            end
+          end
+
+          infer_short_block_zero_arg_result(block_node, element_type)
         end
 
         private def infer_receiverless_iteration_block(node : Frontend::CallNode, method_name : String, receiver_type : Type, method : MethodSymbol) : Bool

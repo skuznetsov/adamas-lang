@@ -447,11 +447,7 @@ module CrystalV2
 
             # TIER 2.1: Convert Slice(UInt8) to String for symbol table
             param_name_str = intern_name(param_name)
-            param_type_str = if type_ann = param.type_annotation
-              intern_name(type_ann)
-            else
-              nil
-            end
+            param_type_str = parameter_variable_declared_type(param)
 
             param_symbol = VariableSymbol.new(param_name_str, node_id, declared_type: param_type_str)
 
@@ -511,12 +507,27 @@ module CrystalV2
             next unless param_name = param.name
 
             param_name_str = intern_name(param_name)
-            param_type_str = param.type_annotation.try { |type_ann| intern_name(type_ann) }
+            param_type_str = parameter_variable_declared_type(param)
             param_symbol = VariableSymbol.new(param_name_str, node_id, declared_type: param_type_str)
 
             unless method_scope.lookup_local(param_name_str)
               method_scope.define(param_name_str, param_symbol)
             end
+          end
+        end
+
+        private def parameter_variable_declared_type(param : Frontend::Parameter) : String?
+          type_ann = param.type_annotation
+          return nil unless type_ann
+
+          type_name = intern_name(type_ann)
+
+          if param.is_splat
+            "Array(#{type_name})"
+          elsif param.is_double_splat
+            "Hash(Symbol, #{type_name})"
+          else
+            type_name
           end
         end
 

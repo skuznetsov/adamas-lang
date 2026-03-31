@@ -1974,6 +1974,48 @@ describe Semantic::TypeInferenceEngine do
       type.as(PrimitiveType).name.should eq("UInt8")
     end
 
+    it "treats typed splat params as array-like enumerable collections" do
+      source = <<-CRYSTAL
+        class Item
+          def bytesize : Int32
+            1
+          end
+
+          def size_known? : Bool
+            true
+          end
+
+          def size : Int32
+            2
+          end
+        end
+
+        class Builder
+          def self.summarize(*values : Item) : Int32
+            bytesize = values.sum(&.bytesize)
+            size = if values.all?(&.size_known?)
+                     values.sum(&.size)
+                   else
+                     0
+                   end
+            bytesize + size
+          end
+        end
+
+        Builder.summarize(Item.new, Item.new)
+      CRYSTAL
+
+      program, analyzer, engine = infer_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.select(&.level.error?).should be_empty
+
+      type = engine.context.get_type(program.roots.last)
+      type.should be_a(PrimitiveType)
+      type.as(PrimitiveType).name.should eq("Int32")
+    end
+
     it "binds deferred default arguments from receiver context" do
       source = <<-CRYSTAL
         module Container(T)
