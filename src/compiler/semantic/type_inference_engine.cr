@@ -621,18 +621,14 @@ module CrystalV2
           when Frontend::IndexNode
             children << node.object; node.indexes.each { |e| children << e }
           when Frontend::MemberAccessNode
-            children << node.object
+            # Member access always falls back to recursive inference. Pre-typing
+            # the receiver here can cache stale child types before recursive
+            # lookup establishes the right receiver and local bindings.
           when Frontend::SafeNavigationNode
             children << node.object
           when Frontend::CallNode
-            children << node.callee
-            node.args.each { |e| children << e }
-            if blk = node.block
-              children << blk
-            end
-            if named = node.named_args
-              named.each { |na| children << na.value }
-            end
+            # Calls also always use recursive inference. Walking the callee,
+            # args, or block eagerly can seed incorrect cached child types.
           when Frontend::IfNode
             children << node.condition
             node.then_body.each { |e| children << e }
@@ -807,7 +803,7 @@ module CrystalV2
             when "==", "!=", "<", ">", "<=", ">="
               @context.bool_type
             when "&&"
-              if truthy_condition_narrowings(node.left).empty?
+              if !condition_has_structural_truthy_narrowing?(node.left) && truthy_condition_narrowings(node.left).empty?
                 if control_flow_terminator?(node.right)
                   left_type = infer_expression(node.left)
                   if falsy = extract_falsy_component(left_type)
@@ -885,7 +881,7 @@ module CrystalV2
             # Parenthesized expressions have the type of their inner expression
             infer_expression(node.expression)
           when Frontend::TernaryNode
-            if truthy_condition_narrowings(node.condition).empty?
+            if !condition_has_structural_truthy_narrowing?(node.condition) && truthy_condition_narrowings(node.condition).empty?
               # condition ? then : else - union of then and else branches
               then_type = infer_expression(node.true_branch)
               else_type = infer_expression(node.false_branch)
@@ -953,6 +949,27 @@ module CrystalV2
           else
             # Unknown/complex node - return nil to trigger recursive fallback
             nil
+          end
+        end
+
+        private def condition_has_structural_truthy_narrowing?(condition_id : ExprId) : Bool
+          return false if condition_id.invalid?
+
+          condition_node = @arena[condition_id]
+          case condition_node
+          when Frontend::GroupingNode
+            condition_has_structural_truthy_narrowing?(condition_node.expression)
+          when Frontend::BinaryNode
+            if Frontend.node_operator_string(condition_node) == "&&"
+              condition_has_structural_truthy_narrowing?(condition_node.left) ||
+                condition_has_structural_truthy_narrowing?(condition_node.right)
+            else
+              false
+            end
+          when Frontend::IdentifierNode, Frontend::AssignNode
+            true
+          else
+            false
           end
         end
 
@@ -1130,8 +1147,18 @@ module CrystalV2
             aliased_type = parse_type_name(symbol.target)
             aliased_type.is_a?(EnumType) ? aliased_type : class_type_reference_for(aliased_type)
           when MethodSymbol
+            if prefer_current_context_method_reference_fallback?(symbol)
+              if result = infer_receiverless_current_context_reference(identifier_name)
+                return result
+              end
+            end
             infer_receiverless_method_reference(symbol)
           when OverloadSetSymbol
+            if prefer_current_context_method_reference_fallback?(symbol)
+              if result = infer_receiverless_current_context_reference(identifier_name)
+                return result
+              end
+            end
             if method = resolve_zero_arg_overload(symbol)
               infer_receiverless_method_reference(method)
             else
@@ -1159,6 +1186,16 @@ module CrystalV2
           end
 
           @context.nil_type
+        end
+
+        private def prefer_current_context_method_reference_fallback?(symbol : MethodSymbol) : Bool
+          return false if @current_method_is_class_method_stack.last?
+          symbol.is_class_method?
+        end
+
+        private def prefer_current_context_method_reference_fallback?(symbol : OverloadSetSymbol) : Bool
+          return false if @current_method_is_class_method_stack.last?
+          symbol.overloads.all?(&.is_class_method?)
         end
 
         private def infer_receiverless_method_call(
@@ -1190,7 +1227,7 @@ module CrystalV2
               elsif current_module = @current_module
                 module_type_for(current_module)
               else
-                nil
+                @receiver_type_context
               end
             elsif @current_method_scope.nil?
               if current_class = @current_class
@@ -1198,18 +1235,30 @@ module CrystalV2
               elsif current_module = @current_module
                 module_type_for(current_module)
               else
-                nil
+                @receiver_type_context
               end
             else
               @receiver_type_context || @current_class.try { |klass| instance_type_for(klass) } || @current_module.try { |mod| module_type_for(mod) }
             end
 
           return nil unless receiver_type
+          if {"new", "new!"}.includes?(method_name) && receiver_type.is_a?(EnumType)
+            return receiver_type if enum_constructor_arguments_match?(receiver_type, arg_types)
+          end
+
           arg_expr_ids = call_node ? positional_call_arg_ids(call_node).map { |arg_id| arg_id.as(ExprId?) } : nil
           method = lookup_method(receiver_type, method_name, arg_types, has_block, arg_expr_ids)
-          return nil unless method
+          if method
+            return infer_method_call_result(method, receiver_type, arg_types, call_node)
+          end
 
-          infer_method_call_result(method, receiver_type, arg_types, call_node)
+          if call_node && {"new", "new!"}.includes?(method_name) && receiver_type.is_a?(EnumType)
+            if return_type = infer_union_argument_overload_call_result(receiver_type, method_name, arg_types, has_block, call_node)
+              return return_type
+            end
+          end
+
+          nil
         end
 
         private def infer_receiverless_current_context_reference(method_name : String) : Type?
@@ -1718,15 +1767,21 @@ module CrystalV2
           guard_watchdog!
           previous_method_scope = @current_method_scope
           previous_assignments = @assignments.dup
+          previous_receiver_context = @receiver_type_context
           previous_class = @current_class
           previous_module = @current_module
           method_symbol = current_method_symbol_for(node, expr_id)
           @current_method_scope = current_method_scope_for(node, expr_id)
           @current_method_is_class_method_stack << !!method_symbol.try(&.is_class_method?)
+          @current_class = nil
+          @current_module = nil
+          @receiver_type_context = nil
 
           if method_symbol
             if owner_class = class_symbol_for_scope(method_symbol.scope.parent)
               @current_class = owner_class
+            elsif owner_enum = enum_symbol_for_scope(method_symbol.scope.parent)
+              @receiver_type_context = EnumType.new(owner_enum)
             end
 
             if owner_module = method_symbol.scope.owner_module
@@ -1799,6 +1854,7 @@ module CrystalV2
           @assignments = previous_assignments.not_nil!
           @current_method_is_class_method_stack.pop unless @current_method_is_class_method_stack.empty?
           @current_method_scope = previous_method_scope
+          @receiver_type_context = previous_receiver_context
           @current_class = previous_class
           @current_module = previous_module
         end
@@ -1844,6 +1900,19 @@ module CrystalV2
           find_class_symbol_for_scope(global_table, target_scope, Set(SymbolTable).new)
         end
 
+        private def enum_symbol_for_scope(target_scope : SymbolTable?) : EnumSymbol?
+          return nil unless target_scope
+
+          if receiver_type = @receiver_type_context
+            if enum_type = receiver_type.as?(EnumType)
+              return enum_type.symbol if enum_type.symbol.scope.same?(target_scope)
+            end
+          end
+
+          return nil unless global_table = @global_table
+          find_enum_symbol_for_scope(global_table, target_scope, Set(SymbolTable).new)
+        end
+
         private def find_class_symbol_for_scope(search_scope : SymbolTable, target_scope : SymbolTable, visited : Set(SymbolTable)) : ClassSymbol?
           return nil if visited.includes?(search_scope)
           visited << search_scope
@@ -1866,6 +1935,36 @@ module CrystalV2
               end
             when EnumSymbol
               if nested = find_class_symbol_for_scope(symbol.scope, target_scope, visited)
+                return nested
+              end
+            end
+          end
+
+          nil
+        end
+
+        private def find_enum_symbol_for_scope(search_scope : SymbolTable, target_scope : SymbolTable, visited : Set(SymbolTable)) : EnumSymbol?
+          return nil if visited.includes?(search_scope)
+          visited << search_scope
+
+          search_scope.each_local_symbol do |_, symbol|
+            case symbol
+            when ClassSymbol
+              if nested = find_enum_symbol_for_scope(symbol.scope, target_scope, visited)
+                return nested
+              end
+
+              if nested = find_enum_symbol_for_scope(symbol.class_scope, target_scope, visited)
+                return nested
+              end
+            when ModuleSymbol
+              if nested = find_enum_symbol_for_scope(symbol.scope, target_scope, visited)
+                return nested
+              end
+            when EnumSymbol
+              return symbol if symbol.scope.same?(target_scope)
+
+              if nested = find_enum_symbol_for_scope(symbol.scope, target_scope, visited)
                 return nested
               end
             end
@@ -2442,6 +2541,10 @@ module CrystalV2
             return cached
           end
 
+          if prim = primitive_type_for(name)
+            return @parse_type_cache[name] = prim
+          end
+
           if proc_type = parse_proc_type_name(name)
             return @parse_type_cache[name] = proc_type
           end
@@ -2497,51 +2600,38 @@ module CrystalV2
             return @parse_type_cache[name] = @context.nil_type
           end
 
-          # Handle primitive types
-          case name
-          when "Int"     then return @parse_type_cache[name] = PrimitiveType.new("Int")
-          when "UInt"    then return @parse_type_cache[name] = PrimitiveType.new("UInt")
-          when "Int32"   then return @parse_type_cache[name] = @context.int32_type
-          when "Int64"   then return @parse_type_cache[name] = @context.int64_type
-          when "Float64" then return @parse_type_cache[name] = @context.float64_type
-          when "String"  then return @parse_type_cache[name] = @context.string_type
-          when "Bool"    then return @parse_type_cache[name] = @context.bool_type
-          when "Nil"     then return @parse_type_cache[name] = @context.nil_type
-          when "Char"    then return @parse_type_cache[name] = @context.char_type
-          else
-            # Try resolving scoped names (Time::Span) by full path
-            if symbol = lookup_type_symbol(name)
-              case symbol
-              when ClassSymbol
-                return @parse_type_cache[name] = instance_type_for(symbol)
-              when ModuleSymbol
-                return @parse_type_cache[name] = module_type_for(symbol)
-              when EnumSymbol
-                return @parse_type_cache[name] = EnumType.new(symbol)
-              when AliasSymbol
-                return @parse_type_cache[name] = parse_type_name(symbol.target)
-              end
-            end
-            # Try finding class by last segment anywhere in global table
-            if symbol = find_class_symbol_by_suffix(name)
+          # Try resolving scoped names (Time::Span) by full path
+          if symbol = lookup_type_symbol(name)
+            case symbol
+            when ClassSymbol
               return @parse_type_cache[name] = instance_type_for(symbol)
+            when ModuleSymbol
+              return @parse_type_cache[name] = module_type_for(symbol)
+            when EnumSymbol
+              return @parse_type_cache[name] = EnumType.new(symbol)
+            when AliasSymbol
+              return @parse_type_cache[name] = parse_type_name(symbol.target)
             end
-
-            base_name = last_path_segment(name)
-
-            if prim = primitive_type_for(base_name)
-              return @parse_type_cache[name] = prim
-            end
-
-            if symbol = lookup_type_symbol(base_name)
-              if type = type_from_symbol(symbol)
-                return @parse_type_cache[name] = normalize_literal_type(type)
-              end
-            end
-
-            # As a fallback, create a nominal primitive type to avoid Nil/Unknown
-            @parse_type_cache[name] = PrimitiveType.new(name)
           end
+          # Try finding class by last segment anywhere in global table
+          if symbol = find_class_symbol_by_suffix(name)
+            return @parse_type_cache[name] = instance_type_for(symbol)
+          end
+
+          base_name = last_path_segment(name)
+
+          if prim = primitive_type_for(base_name)
+            return @parse_type_cache[name] = prim
+          end
+
+          if symbol = lookup_type_symbol(base_name)
+            if type = type_from_symbol(symbol)
+              return @parse_type_cache[name] = normalize_literal_type(type)
+            end
+          end
+
+          # As a fallback, create a nominal primitive type to avoid Nil/Unknown
+          @parse_type_cache[name] = PrimitiveType.new(name)
         end
 
         private def lookup_type_symbol(name : String) : Symbol?
@@ -2698,15 +2788,12 @@ module CrystalV2
           right_id = node.right
           op = String.new(node.operator)
 
+          if op == "&&"
+            return infer_logical_and_expression(node, expr_id)
+          end
+
           left_type = infer_expression(left_id)
-          right_type =
-            if op == "&&"
-              infer_expression_with_truthy_condition_narrowings(left_id) do
-                infer_expression(right_id)
-              end
-            else
-              infer_expression(right_id)
-            end
+          right_type = infer_expression(right_id)
 
           debug("infer_binary: op=#{op}, left_type=#{left_type}, right_type=#{right_type}")
 
@@ -2811,16 +2898,6 @@ module CrystalV2
                             # Fallback: spaceship operator → Int32
                             @context.int32_type
                           end
-                        when "&&"
-                          if control_flow_terminator?(right_id)
-                            if falsy = extract_falsy_component(left_type)
-                              falsy
-                            else
-                              right_type
-                            end
-                          else
-                            infer_logical_and_type(left_type, right_type)
-                          end
                         when "||"
                           if control_flow_terminator?(right_id)
                             if truthy = extract_truthy_component(left_type)
@@ -2845,6 +2922,38 @@ module CrystalV2
 
           # Type will be set by infer_expression
           result_type
+        end
+
+        private def infer_logical_and_expression(node : Frontend::BinaryNode, expr_id : ExprId) : Type
+          left_type = infer_logical_and_operand(node.left)
+          right_type = infer_expression_with_truthy_condition_narrowings(node.left) do
+            infer_logical_and_operand(node.right)
+          end
+
+          debug("infer_logical_and_expression: left_type=#{left_type}, right_type=#{right_type}")
+
+          if unknownish_type?(left_type) || unknownish_type?(right_type)
+            return unknown_type
+          end
+
+          if control_flow_terminator?(node.right)
+            if falsy = extract_falsy_component(left_type)
+              falsy
+            else
+              right_type
+            end
+          else
+            infer_logical_and_type(left_type, right_type)
+          end
+        end
+
+        private def infer_logical_and_operand(expr_id : ExprId) : Type
+          node = @arena[expr_id]
+          if node.is_a?(Frontend::BinaryNode) && String.new(node.operator) == "&&"
+            infer_logical_and_expression(node, expr_id)
+          else
+            infer_expression(expr_id)
+          end
         end
 
         # Phase 17: Unary operator type inference
@@ -3600,13 +3709,13 @@ module CrystalV2
         end
 
         private def condition_type_for_truthy_narrowing(condition_id : ExprId, fallback : Type? = nil) : Type?
-          if type = @context.get_type(condition_id)
-            return type
-          end
-
           condition_node = @arena[condition_id]
           case condition_node
           when Frontend::AssignNode
+            if type = assignment_value_type_for_truthy_narrowing(condition_node)
+              return type
+            end
+
             if type = @context.get_type(condition_node.value)
               return type
             end
@@ -3616,7 +3725,37 @@ module CrystalV2
             end
           end
 
+          if type = @context.get_type(condition_id)
+            return type
+          end
+
           fallback || infer_expression(condition_id)
+        end
+
+        private def assignment_value_type_for_truthy_narrowing(node : Frontend::AssignNode) : Type?
+          value_id = node.value
+          value_node = @arena[value_id]
+
+          case value_node
+          when Frontend::IdentifierNode
+            value_name = identifier_name_for(value_id, value_node)
+            if original_type = lookup_variable_type(value_name)
+              narrowed = remove_nil_from_type(original_type)
+              return original_type unless narrowed == original_type
+            end
+
+            if assigned_type = @assignments[value_name]?
+              narrowed = remove_nil_from_type(assigned_type)
+              return assigned_type unless narrowed == assigned_type
+            end
+          when Frontend::GroupingNode
+            if type = condition_type_for_truthy_narrowing(value_node.expression)
+              narrowed = remove_nil_from_type(type)
+              return type unless narrowed == type
+            end
+          end
+
+          nil
         end
 
         private def add_truthy_narrowing(
@@ -3704,7 +3843,11 @@ module CrystalV2
             case symbol
             when VariableSymbol
               if symbol.name == var_name
-                # Try to get inferred type from the type context
+                if declared_type = symbol.declared_type
+                  return parse_type_name(declared_type)
+                end
+
+                # Fall back to inferred type only when there is no declaration.
                 if type = @context.get_type(expr_id)
                   return type
                 end
@@ -4534,19 +4677,8 @@ module CrystalV2
           end
 
           if type.is_a?(ClassType)
-            # If it's a reference to a primitive class, convert to PrimitiveType
-            result = case type.symbol.name
-                     when "Int32"   then @context.int32_type
-                     when "Int64"   then @context.int64_type
-                     when "Float64" then @context.float64_type
-                     when "String"  then @context.string_type
-                     when "Bool"    then @context.bool_type
-                     when "Nil"     then @context.nil_type
-                     when "Char"    then @context.char_type
-                     else
-                       # User-defined class - keep as ClassType
-                       type
-                     end
+            # If it's a reference to a primitive class, convert to PrimitiveType.
+            result = primitive_type_for(type.symbol.name) || type
 
             if ENV["DEBUG"]?
               puts "  → normalized to: #{result.class} = #{result.inspect}"
@@ -4743,7 +4875,7 @@ module CrystalV2
             # If we found an enum and suffix is a single member name
             if enum_symbol && suffix.size == 1
               member_name = suffix[0]
-              if enum_symbol.members.has_key?(member_name)
+              if enum_symbol.members.has_key?(member_name) || enum_symbol.scope.lookup_local(member_name).is_a?(ConstantSymbol)
                 # Return the EnumType (value is an instance of the enum)
                 return EnumType.new(enum_symbol)
               end
@@ -5787,11 +5919,40 @@ module CrystalV2
                 return value_type
               end
             elsif receiver_is_type_reference && receiver_type.is_a?(EnumType)
-              arg_types = Array(Type).new(node.args.size)
-              node.args.each { |arg_id| arg_types << infer_expression(arg_id) }
+              arg_ids = positional_call_arg_ids(node)
+              arg_types = Array(Type).new(arg_ids.size)
+              arg_ids.each { |arg_id| arg_types << infer_expression(arg_id) }
 
               if enum_constructor_arguments_match?(receiver_type, arg_types)
                 return receiver_type
+              end
+
+              if node.named_args
+                named_arg_types = infer_named_argument_types(node)
+                named_arg_expr_ids = infer_named_argument_expr_ids(node)
+                if named_arg_types && named_arg_expr_ids
+                  if result = infer_named_argument_method_call(
+                       receiver_type,
+                       method_name,
+                       arg_ids,
+                       arg_types,
+                       named_arg_types,
+                       named_arg_expr_ids,
+                       has_block,
+                       node
+                     )
+                    return result
+                  end
+                end
+              else
+                arg_expr_ids = arg_ids.map { |arg_id| arg_id.as(ExprId?) }
+                if method = lookup_method(receiver_type, method_name, arg_types, has_block, arg_expr_ids)
+                  return infer_method_call_result(method, receiver_type, arg_types, node)
+                end
+
+                if return_type = infer_union_argument_overload_call_result(receiver_type, method_name, arg_types, has_block, node)
+                  return return_type
+                end
               end
 
               emit_error("No overload matches '#{receiver_type}.#{method_name}'", expr_id)
@@ -6032,6 +6193,8 @@ module CrystalV2
               debug("  No return annotation - inferring from method body")
               infer_method_body_type(method, receiver_type, arg_types, node)
             end
+          elsif return_type = infer_union_argument_overload_call_result(receiver_type, method_name, arg_types, has_block, node)
+            return_type
           else
             if arg_types.empty? && !has_block && !node.named_args
               if field_type = infer_struct_field_access_type(receiver_type, method_name)
@@ -6049,6 +6212,82 @@ module CrystalV2
             end
             @context.nil_type
           end
+        end
+
+        private def infer_union_argument_overload_call_result(
+          receiver_type : Type,
+          method_name : String,
+          arg_types : Array(Type),
+          has_block : Bool,
+          node : Frontend::CallNode
+        ) : Type?
+          return nil if node.named_args
+          return nil unless arg_types.any? { |type| type.is_a?(UnionType) }
+
+          candidates = method_candidates_for(receiver_type, method_name)
+          return nil if candidates.empty?
+
+          actual_count = arg_types.size
+          matching_count = candidates.select do |method|
+            required = count_required_params(method.params)
+            has_splat = method.params.any? { |param| param.is_splat || param.is_double_splat }
+            max = has_splat ? Int32::MAX : method.params.count { |param| !param.is_block && !param.is_double_splat }
+            next false unless actual_count >= required && actual_count <= max
+
+            method.params.any?(&.is_block) == has_block
+          end
+          return nil if matching_count.empty?
+
+          arg_expr_ids = positional_call_arg_ids(node).map { |arg_id| arg_id.as(ExprId?) }
+          combinations = expand_union_argument_type_combinations(arg_types)
+          return nil unless combinations
+          return nil if combinations.size <= 1
+
+          return_types = Array(Type).new(combinations.size)
+          combinations.each do |combo_arg_types|
+            matches = matching_count.select do |method|
+              parameters_match?(method, combo_arg_types, receiver_type, arg_expr_ids)
+            end
+            return nil if matches.empty?
+
+            selected =
+              if matches.size == 1
+                matches.first
+              else
+                matches.max_by { |method| specificity_score(method, combo_arg_types) }
+              end
+
+            return_types << infer_method_call_result(selected, receiver_type, combo_arg_types, node)
+          end
+
+          union_of(return_types)
+        end
+
+        private def expand_union_argument_type_combinations(arg_types : Array(Type), limit : Int32 = 32) : Array(Array(Type))?
+          combinations = [([] of Type)] of Array(Type)
+
+          arg_types.each do |arg_type|
+            members = if union = arg_type.as?(UnionType)
+                        union.types
+                      else
+                        [arg_type]
+                      end
+
+            next_combinations = [] of Array(Type)
+            combinations.each do |combination|
+              members.each do |member|
+                return nil if next_combinations.size >= limit
+
+                next_combination = combination.dup
+                next_combination << member
+                next_combinations << next_combination
+              end
+            end
+
+            combinations = next_combinations
+          end
+
+          combinations
         end
 
         private def infer_tuple_builtin_method_return_type(
@@ -6321,17 +6560,18 @@ module CrystalV2
           block_node = explicit_call_block_node(node)
           return nil unless block_node
 
+          binding_param_types = expanded_block_param_types(block_node, param_types)
           assigned_names = [] of String
           old_assignments = {} of String => Type?
 
           if params = block_node.params
             params.each_with_index do |param, index|
-              break if index >= param_types.size
+              break if index >= binding_param_types.size
               next unless name_slice = param.name
 
               param_name = intern_name(name_slice)
               old_assignments[param_name] = @assignments[param_name]?
-              @assignments[param_name] = param_types[index]
+              @assignments[param_name] = binding_param_types[index]
               assigned_names << param_name
             end
 
@@ -6359,6 +6599,53 @@ module CrystalV2
             clear_cached_type_tree(body_id)
           end
           infer_block_result(block_node.body)
+        end
+
+        private def expanded_block_param_types(block_node : Frontend::BlockNode, param_types : Array(Type)) : Array(Type)
+          params = block_node.params
+          return copy_type_array(param_types) unless params
+          return copy_type_array(param_types) unless params.size > param_types.size
+
+          expanded = [] of Type
+          yielded_index = 0
+          param_index = 0
+
+          while yielded_index < param_types.size && param_index < params.size
+            yielded_type = param_types[yielded_index]
+            remaining_block_params = params.size - param_index
+            remaining_yielded_values = param_types.size - yielded_index
+
+            if yielded_type.is_a?(TupleType) && remaining_block_params > remaining_yielded_values
+              destructure_count = remaining_block_params - (remaining_yielded_values - 1)
+              if destructure_count > 1 && destructure_count <= yielded_type.element_types.size
+                yielded_type.element_types[0, destructure_count].each do |element_type|
+                  expanded << element_type
+                end
+                param_index += destructure_count
+                yielded_index += 1
+                next
+              end
+            end
+
+            expanded << yielded_type
+            param_index += 1
+            yielded_index += 1
+          end
+
+          while yielded_index < param_types.size
+            expanded << param_types[yielded_index]
+            yielded_index += 1
+          end
+
+          expanded
+        end
+
+        private def copy_type_array(types : Array(Type)) : Array(Type)
+          copied = Array(Type).new(types.size)
+          types.each do |type|
+            copied << type
+          end
+          copied
         end
 
         private def infer_short_block_zero_arg_result(block_node : Frontend::BlockNode, receiver_type : Type) : Type?
@@ -6990,15 +7277,8 @@ module CrystalV2
             get_specialized_builtin_class_methods(receiver_type, method_name).each { |entry| methods << entry }
 
             # Look in class_scope for class methods (def self.*)
-            if symbol = receiver_type.symbol.class_scope.lookup(method_name)
-              case symbol
-              when MethodSymbol
-                # Single method
-                methods << symbol
-              when OverloadSetSymbol
-                # Phase 4B.2: Multiple overloads
-                symbol.overloads.each { |entry| methods << entry }
-              end
+            if symbol = lookup_method_symbol_in_scope(receiver_type.symbol.class_scope, method_name)
+              append_method_candidates(methods, symbol)
             end
 
             # Phase 4B.2: Inheritance search - look in superclass class_scope
@@ -7008,38 +7288,23 @@ module CrystalV2
           when ModuleType
             # Phase 102: Look for module methods (def self.* inside module)
             # Module methods are stored in the module's scope
-            if symbol = receiver_type.symbol.scope.lookup(method_name)
-              case symbol
-              when MethodSymbol
-                methods << symbol
-              when OverloadSetSymbol
-                symbol.overloads.each { |entry| methods << entry }
-              end
+            if symbol = lookup_method_symbol_in_scope(receiver_type.symbol.scope, method_name)
+              append_method_candidates(methods, symbol)
             end
           when InstanceType
             get_builtin_methods(receiver_type.class_symbol.name, method_name).each { |entry| methods << entry }
 
             # Phase 4B.2: Look for instance methods in class scope
-            if symbol = receiver_type.class_symbol.scope.lookup(method_name)
-              case symbol
-              when MethodSymbol
-                methods << symbol
-              when OverloadSetSymbol
-                symbol.overloads.each { |entry| methods << entry }
-              end
+            if symbol = lookup_method_symbol_in_scope(receiver_type.class_symbol.scope, method_name)
+              append_method_candidates(methods, symbol, class_methods: false)
             end
 
             # If class scope is empty (symbols not loaded), try global table using class name
             if methods.empty? && (table = @global_table)
               if global_sym = table.lookup(receiver_type.class_symbol.name)
                 if global_sym.is_a?(ClassSymbol)
-                  if sym = global_sym.scope.lookup(method_name)
-                    case sym
-                    when MethodSymbol
-                      methods << sym
-                    when OverloadSetSymbol
-                      sym.overloads.each { |entry| methods << entry }
-                    end
+                  if sym = lookup_method_symbol_in_scope(global_sym.scope, method_name)
+                    append_method_candidates(methods, sym, class_methods: false)
                   end
                 end
               end
@@ -7057,13 +7322,8 @@ module CrystalV2
 
               if methods.empty?
                 if primitive_class = lookup_runtime_class_symbol(class_name)
-                  if symbol = primitive_class.class_scope.lookup(method_name)
-                    case symbol
-                    when MethodSymbol
-                      methods << symbol
-                    when OverloadSetSymbol
-                      symbol.overloads.each { |entry| methods << entry }
-                    end
+                  if symbol = lookup_method_symbol_in_scope(primitive_class.class_scope, method_name)
+                    append_method_candidates(methods, symbol)
                   end
 
                   if methods.empty?
@@ -7075,13 +7335,8 @@ module CrystalV2
               # Phase 4B.3: Built-in methods for primitive types
               get_builtin_methods(receiver_type.name, method_name).each { |entry| methods << entry }
               if primitive_class = lookup_runtime_class_symbol(receiver_type.name)
-                if symbol = primitive_class.scope.lookup(method_name)
-                  case symbol
-                  when MethodSymbol
-                    methods << symbol
-                  when OverloadSetSymbol
-                    symbol.overloads.each { |entry| methods << entry }
-                  end
+                if symbol = lookup_method_symbol_in_scope(primitive_class.scope, method_name)
+                  append_method_candidates(methods, symbol, class_methods: false)
                 end
 
                 if methods.empty?
@@ -7092,6 +7347,16 @@ module CrystalV2
           when ArrayType
             # Phase 9: Built-in methods for arrays
             get_array_builtin_methods(receiver_type, method_name).each { |entry| methods << entry }
+          when TupleType
+            if tuple_class = lookup_runtime_class_symbol("Tuple")
+              if symbol = lookup_method_symbol_in_scope(tuple_class.scope, method_name)
+                append_method_candidates(methods, symbol, class_methods: false)
+              end
+
+              if methods.empty?
+                find_in_superclass(tuple_class, method_name).each { |entry| methods << entry }
+              end
+            end
           when PointerType
             get_pointer_builtin_methods(receiver_type, method_name).each { |entry| methods << entry }
           when HashType
@@ -7109,13 +7374,8 @@ module CrystalV2
             # Phase 101: Built-in methods for procs
             get_proc_builtin_methods(receiver_type, method_name).each { |entry| methods << entry }
           when EnumType
-            if symbol = receiver_type.symbol.scope.lookup(method_name)
-              case symbol
-              when MethodSymbol
-                methods << symbol
-              when OverloadSetSymbol
-                symbol.overloads.each { |entry| methods << entry }
-              end
+            if symbol = lookup_method_symbol_in_scope(receiver_type.symbol.scope, method_name)
+              append_method_candidates(methods, symbol)
             end
             get_enum_builtin_methods(receiver_type, method_name).each { |entry| methods << entry }
           end
@@ -7126,6 +7386,46 @@ module CrystalV2
           end
 
           methods
+        end
+
+        private def append_method_candidates(methods : Array(MethodSymbol), symbol : Symbol?, *, class_methods : Bool? = nil) : Nil
+          return unless symbol
+
+          case symbol
+          when MethodSymbol
+            return if !class_methods.nil? && symbol.is_class_method? != class_methods
+            methods << symbol
+          when OverloadSetSymbol
+            symbol.overloads.each do |entry|
+              next if !class_methods.nil? && entry.is_class_method? != class_methods
+              methods << entry
+            end
+          end
+        end
+
+        private def lookup_method_symbol_in_scope(scope : SymbolTable, method_name : String) : Symbol?
+          if symbol = scope.lookup_local(method_name)
+            return symbol
+          end
+
+          lookup_method_symbol_in_included_modules(scope, method_name, Set(SymbolTable).new)
+        end
+
+        private def lookup_method_symbol_in_included_modules(scope : SymbolTable, method_name : String, visited : Set(SymbolTable)) : Symbol?
+          return nil unless visited.add?(scope)
+
+          scope.included_modules.each do |ref|
+            included_scope = ref.scope
+            if symbol = included_scope.lookup_local(method_name)
+              return symbol
+            end
+
+            if symbol = lookup_method_symbol_in_included_modules(included_scope, method_name, visited)
+              return symbol
+            end
+          end
+
+          nil
         end
 
         private def lookup_runtime_class_symbol(name : String) : ClassSymbol?
@@ -7185,6 +7485,11 @@ module CrystalV2
             io_param = Frontend::Parameter.new(name: "io".to_slice, type_annotation: "IO".to_slice)
             methods << MethodSymbol.new(method_name, dummy_node_id, params: [] of Frontend::Parameter, return_annotation: "String", scope: dummy_scope)
             methods << MethodSymbol.new(method_name, dummy_node_id, params: [io_param], return_annotation: "Nil", scope: dummy_scope)
+          when "in?"
+            collection_param = Frontend::Parameter.new(name: "collection".to_slice, type_annotation: "_".to_slice)
+            values_param = Frontend::Parameter.new(name: "values".to_slice, type_annotation: "_".to_slice, is_splat: true)
+            methods << MethodSymbol.new(method_name, dummy_node_id, params: [collection_param], return_annotation: "Bool", scope: dummy_scope)
+            methods << MethodSymbol.new(method_name, dummy_node_id, params: [values_param], return_annotation: "Bool", scope: dummy_scope)
           when "to_io"
             if receiver_type.is_a?(PrimitiveType) && receiver_type.name == "_"
               io_param = Frontend::Parameter.new(name: "io".to_slice, type_annotation: "IO".to_slice)
@@ -7312,15 +7617,8 @@ module CrystalV2
 
           # First, search in included modules (MRO: included modules come before superclass)
           target_scope = class_methods ? class_symbol.class_scope : class_symbol.scope
-          target_scope.included_modules.each do |mod_symbol|
-            if symbol = mod_symbol.scope.lookup_local(method_name)
-              case symbol
-              when MethodSymbol
-                methods << symbol
-              when OverloadSetSymbol
-                symbol.overloads.each { |entry| methods << entry }
-              end
-            end
+          if symbol = lookup_method_symbol_in_included_modules(target_scope, method_name, Set(SymbolTable).new)
+            append_method_candidates(methods, symbol, class_methods: class_methods ? nil : false)
           end
 
           # If found in modules, return early
@@ -7330,19 +7628,14 @@ module CrystalV2
           superclass_name = class_symbol.superclass_name
           return methods unless superclass_name
 
-          # Lookup superclass in global symbol table
-          superclass_symbol = @global_table.try(&.lookup(superclass_name))
+          # Scoped superclass names like IO::FileDescriptor need path-aware resolution.
+          superclass_symbol = resolve_class_symbol_from_scope(class_symbol.scope, superclass_name)
           return methods unless superclass_symbol.is_a?(ClassSymbol)
 
           # Look for method in superclass scope (class_scope for class methods, scope for instance methods)
           super_target_scope = class_methods ? superclass_symbol.class_scope : superclass_symbol.scope
-          if symbol = super_target_scope.lookup(method_name)
-            case symbol
-            when MethodSymbol
-              methods << symbol
-            when OverloadSetSymbol
-              symbol.overloads.each { |entry| methods << entry }
-            end
+          if symbol = lookup_method_symbol_in_scope(super_target_scope, method_name)
+            append_method_candidates(methods, symbol, class_methods: class_methods ? nil : false)
           end
 
           # Recursively search in superclass's superclass (and its included modules)
@@ -7436,13 +7729,8 @@ module CrystalV2
           base_class = virtual_type.base_class
 
           # Find method in base class
-          if symbol = base_class.scope.lookup(method_name)
-            case symbol
-            when MethodSymbol
-              methods << symbol
-            when OverloadSetSymbol
-              symbol.overloads.each { |entry| methods << entry }
-            end
+          if symbol = lookup_method_symbol_in_scope(base_class.scope, method_name)
+            append_method_candidates(methods, symbol)
           end
 
           # If not found in base, search superclass chain
@@ -7480,13 +7768,8 @@ module CrystalV2
             # Check if this is a subclass of base_class
             if is_subclass_of?(sym, base_class.name, table, visited)
               # Look for method override
-              if method_sym = sym.scope.lookup(method_name)
-                case method_sym
-                when MethodSymbol
-                  overrides << method_sym
-                when OverloadSetSymbol
-                  method_sym.overloads.each { |entry| overrides << entry }
-                end
+              if method_sym = lookup_method_symbol_in_scope(sym.scope, method_name)
+                append_method_candidates(overrides, method_sym)
               end
             end
           end
@@ -7564,7 +7847,7 @@ module CrystalV2
                 type_name = intern_name(type_ann)
                 next if type_name == "_"
 
-                param_type = resolve_method_annotation_type(type_name, receiver_type, method.scope)
+                param_type = resolve_method_annotation_type(type_name, receiver_type, method.scope, class_method_context: method.is_class_method?)
                 next if unresolved_method_type_parameter_type?(arg_type, method_type_params) ||
                         unresolved_method_type_parameter_type?(param_type, method_type_params)
                 arg_expr_id = arg_expr_ids.try(&.[i]?)
@@ -7583,7 +7866,7 @@ module CrystalV2
               type_name = intern_name(type_ann)
               next if type_name == "_"
 
-              param_type = resolve_method_annotation_type(type_name, receiver_type, method.scope)
+              param_type = resolve_method_annotation_type(type_name, receiver_type, method.scope, class_method_context: method.is_class_method?)
               next if unresolved_method_type_parameter_type?(arg_type, method_type_params) ||
                       unresolved_method_type_parameter_type?(param_type, method_type_params)
               arg_expr_id = arg_expr_ids.try(&.[i]?)
@@ -7641,12 +7924,12 @@ module CrystalV2
         private def c_fun_type_matches?(actual : Type, expected : Type) : Bool
           return true if type_matches?(actual, expected)
 
-          if expected.is_a?(UnionType)
-            return expected.types.any? { |member| c_fun_type_matches?(actual, member) }
-          end
-
           if actual.is_a?(UnionType)
             return actual.types.all? { |member| c_fun_type_matches?(member, expected) }
+          end
+
+          if expected.is_a?(UnionType)
+            return expected.types.any? { |member| c_fun_type_matches?(actual, member) }
           end
 
           if integer_type?(actual) && integer_type?(expected)
@@ -7731,14 +8014,14 @@ module CrystalV2
             return type_matches?(parse_type_name(actual.symbol.base_type), expected)
           end
 
-          # If expected is a union, actual must match at least one member
-          if expected.is_a?(UnionType)
-            return expected.types.any? { |t| type_matches?(actual, t) }
-          end
-
           # If actual is a union, all members must match expected
           if actual.is_a?(UnionType)
             return actual.types.all? { |t| type_matches?(t, expected) }
+          end
+
+          # If expected is a union, actual must match at least one member
+          if expected.is_a?(UnionType)
+            return expected.types.any? { |t| type_matches?(actual, t) }
           end
 
           # Subtype check: actual is subtype of expected
@@ -8764,6 +9047,46 @@ module CrystalV2
               return_annotation: "Int32 | Nil",
               scope: dummy_scope
             )
+            offset_param = Frontend::Parameter.new(name: "offset".to_slice, type_annotation: "Int32".to_slice)
+            methods << MethodSymbol.new(
+              method_name,
+              dummy_node_id,
+              params: [param, offset_param],
+              return_annotation: "Int32 | Nil",
+              scope: dummy_scope
+            )
+          when "fast_index"
+            # Slice(T) is currently modeled as ArrayType(T). Support the byte-slice
+            # specialized helper used by stdlib call sites like Slice.new(...).
+            if element_type_name == "UInt8"
+              param = Frontend::Parameter.new(name: "value".to_slice, type_annotation: "UInt8".to_slice)
+              offset_param = Frontend::Parameter.new(name: "offset".to_slice, type_annotation: "Int32".to_slice)
+              methods << MethodSymbol.new(
+                method_name,
+                dummy_node_id,
+                params: [param, offset_param],
+                return_annotation: "Int32 | Nil",
+                scope: dummy_scope
+              )
+            end
+          when "index!"
+            # Array(T)#index!(T) : Int32
+            param = Frontend::Parameter.new(name: "value".to_slice, type_annotation: element_type_name.to_slice)
+            methods << MethodSymbol.new(
+              method_name,
+              dummy_node_id,
+              params: [param],
+              return_annotation: "Int32",
+              scope: dummy_scope
+            )
+            offset_param = Frontend::Parameter.new(name: "offset".to_slice, type_annotation: "Int32".to_slice)
+            methods << MethodSymbol.new(
+              method_name,
+              dummy_node_id,
+              params: [param, offset_param],
+              return_annotation: "Int32",
+              scope: dummy_scope
+            )
           end
 
           methods
@@ -8792,6 +9115,16 @@ module CrystalV2
               dummy_node_id,
               params: [target_param, count_param],
               return_annotation: "Nil",
+              scope: dummy_scope
+            )
+          when "move_to", "move_from"
+            target_param = Frontend::Parameter.new(name: "target".to_slice, type_annotation: "Pointer(#{element_type_name})".to_slice)
+            count_param = Frontend::Parameter.new(name: "count".to_slice, type_annotation: "_".to_slice)
+            methods << MethodSymbol.new(
+              method_name,
+              dummy_node_id,
+              params: [target_param, count_param],
+              return_annotation: "Pointer(#{element_type_name})",
               scope: dummy_scope
             )
           when "memcmp"
@@ -9264,6 +9597,14 @@ module CrystalV2
                   return instantiate_class_receiver(receiver_type)
                 when ModuleType
                   return receiver_type
+                when EnumType
+                  return receiver_type
+                end
+              end
+
+              if receiver_context = @receiver_type_context
+                if enum_type = receiver_context.as?(EnumType)
+                  return enum_type
                 end
               end
 
@@ -9404,6 +9745,21 @@ module CrystalV2
                 return EnumType.new(symbol)
               when ModuleSymbol
                 return module_type_for(symbol, resolved_args.empty? ? nil : resolved_args)
+              end
+            end
+          end
+
+          if type_name.includes?("::")
+            if scoped_symbol = lookup_type_symbol(type_name)
+              case scoped_symbol
+              when AliasSymbol
+                return resolve_annotation_type_in_scope(scoped_symbol.target, scope)
+              when ClassSymbol
+                return instance_type_for(scoped_symbol)
+              when EnumSymbol
+                return EnumType.new(scoped_symbol)
+              when ModuleSymbol
+                return module_type_for(scoped_symbol)
               end
             end
           end
@@ -9618,6 +9974,10 @@ module CrystalV2
 
         # Week 1: Recursive substitution for receiver/class type parameters.
         private def substitute_type_parameters(type_name : String, type_args : Array(Type), type_params : Array(String)) : Type
+          if builtin_type = primitive_type_for(type_name)
+            return builtin_type
+          end
+
           if idx = type_params.index(type_name)
             return type_args[idx] if idx < type_args.size
           end
@@ -9906,6 +10266,9 @@ module CrystalV2
           @current_method_is_class_method_stack << method.is_class_method?
           @method_return_stack << [] of Type
           pushed_return_frame = true
+          @current_class = nil
+          @current_module = nil
+          @receiver_type_context = nil
 
           # Set receiver context for type parameter substitution
           if receiver_type.is_a?(InstanceType)
@@ -9917,6 +10280,8 @@ module CrystalV2
           elsif receiver_type.is_a?(ClassType)
             @receiver_type_context = receiver_type
             @current_class = receiver_type.symbol
+          elsif receiver_type.is_a?(EnumType)
+            @receiver_type_context = receiver_type
           elsif receiver_type.is_a?(ModuleType)
             @receiver_type_context = receiver_type
             @current_module = receiver_type.symbol
@@ -9942,6 +10307,8 @@ module CrystalV2
                   next
                 end
               end
+
+              arg_type = normalize_bound_argument_type(arg_type, param, receiver_type, method)
 
               param_name = intern_name(param_name_slice)
               previous_param_assignments[param_name] = @assignments[param_name]?
@@ -10031,6 +10398,36 @@ module CrystalV2
           types = explicit_return_types.dup
           types << implicit_return_type
           union_of(types)
+        end
+
+        private def normalize_bound_argument_type(
+          arg_type : Type,
+          param : Frontend::Parameter,
+          receiver_type : Type,
+          method : MethodSymbol
+        ) : Type
+          type_annotation = param.type_annotation
+          return arg_type unless type_annotation
+
+          declared_type = resolve_method_annotation_type(
+            intern_name(type_annotation),
+            receiver_type,
+            method.scope,
+            class_method_context: method.is_class_method?
+          )
+
+          return arg_type unless declared_type.is_a?(PrimitiveType)
+
+          case arg_type
+          when UnionType
+            if arg_type.types.all? { |member| member.to_s == declared_type.to_s }
+              declared_type
+            else
+              arg_type
+            end
+          else
+            arg_type.to_s == declared_type.to_s ? declared_type : arg_type
+          end
         end
 
         # ============================================================

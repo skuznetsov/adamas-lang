@@ -65,6 +65,89 @@ describe Semantic::TypeInferenceEngine do
       engine.context.get_type(program.roots.last).to_s.should eq("Int32")
     end
 
+    it "carries assignment truthy narrowings across chained && calls" do
+      source = <<-CRYSTAL
+        def takes_string(value : String) : Bool
+          value.starts_with?("a")
+        end
+
+        def probe(value : String?)
+          if (current = value) && current.starts_with?("a") && takes_string(current)
+            current.bytesize
+          else
+            0
+          end
+        end
+
+        probe("abc")
+      CRYSTAL
+
+      program, analyzer, engine = infer_logical_rhs_narrowing_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.should be_empty
+      engine.context.get_type(program.roots.last).to_s.should eq("Int32")
+    end
+
+    it "preserves assignment truthy narrowings for named class-method call conjuncts" do
+      source = <<-CRYSTAL
+        class File
+          def self.info?(path : String, follow_symlinks = true) : Int32?
+            1
+          end
+        end
+
+        def probe(value : String?)
+          if (pwd = value) && pwd.starts_with?("/") && (pwd_info = File.info?(pwd, follow_symlinks: true)) && pwd_info > 0
+            pwd.bytesize
+          else
+            0
+          end
+        end
+
+        probe("/tmp")
+      CRYSTAL
+
+      program, analyzer, engine = infer_logical_rhs_narrowing_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.should be_empty
+      engine.context.get_type(program.roots.last).to_s.should eq("Int32")
+    end
+
+    it "preserves assignment truthy narrowings when the seed comes from a receiverless call" do
+      source = <<-CRYSTAL
+        module SystemFile
+          def self.info?(path : String, follow_symlinks = true) : Int32?
+            1
+          end
+        end
+
+        def maybe_value : String?
+          "/tmp"
+        end
+
+        def probe
+          if (pwd = maybe_value) && pwd.starts_with?("/") && (pwd_info = SystemFile.info?(pwd, follow_symlinks: true)) && pwd_info > 0
+            pwd.bytesize
+          else
+            0
+          end
+        end
+
+        probe()
+      CRYSTAL
+
+      program, analyzer, engine = infer_logical_rhs_narrowing_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.should be_empty
+      engine.context.get_type(program.roots.last).to_s.should eq("Int32")
+    end
+
     it "applies responds_to? narrowing while inferring rhs calls" do
       source = <<-CRYSTAL
         abstract class Device

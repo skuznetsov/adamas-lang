@@ -223,5 +223,96 @@ describe TypeInferenceEngine do
       analyzer.name_resolver_diagnostics.should be_empty
       engine.diagnostics.should be_empty
     end
+
+    it "keeps if-branch local assignments visible to later statements in the same branch" do
+      source = <<-CRYSTAL
+        module Printer
+          private def self.length_for_index(idx : UInt32)
+            idx &+ 1
+          end
+
+          def self.probe(flag : Bool, idx : UInt32)
+            if flag
+              len = length_for_index(idx).to_i32!
+              len - 1
+            else
+              0
+            end
+          end
+        end
+
+        Printer.probe(true, 1_u32)
+      CRYSTAL
+
+      program, analyzer, engine = infer_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.should be_empty
+      engine.context.get_type(program.roots.last).to_s.should eq("Int32")
+    end
+
+    it "does not mix primitive and runtime UInt32 in helper unions" do
+      source = <<-CRYSTAL
+        struct UInt32
+          def //(other : Int32)
+            self
+          end
+        end
+
+        module Printer
+          private def self.index_for_exponent(e : UInt32)
+            (e &+ 15) // 16
+          end
+
+          def self.probe(flag : Bool)
+            idx = flag ? 0_u32 : index_for_exponent(1_u32)
+            idx.to_i32!
+          end
+        end
+
+        Printer.probe(false)
+      CRYSTAL
+
+      program, analyzer, engine = infer_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.should be_empty
+      engine.context.get_type(program.roots.last).to_s.should eq("Int32")
+    end
+
+    it "keeps primitive helper return types primitive inside module class-method chains" do
+      source = <<-CRYSTAL
+        module Printer
+          private def self.log10_pow2(e : Int32) : UInt32
+            (e.to_u32! &* 78913) >> 18
+          end
+
+          private def self.index_for_exponent(e : UInt32)
+            (e &+ 15) // 16
+          end
+
+          private def self.length_for_index(idx : UInt32)
+            (log10_pow2(16 &* idx.to_i32!) &+ 25) // 9
+          end
+
+          def self.probe(e2 : Int32)
+            idx = e2 < 0 ? 0_u32 : index_for_exponent(e2.to_u32!)
+            len = length_for_index(idx).to_i32!
+            len - 1
+          end
+        end
+
+        Printer.probe(1)
+      CRYSTAL
+
+      program, analyzer, engine = infer_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.should be_empty
+      engine.context.get_type(program.roots.last).to_s.should eq("Int32")
+    end
   end
 end

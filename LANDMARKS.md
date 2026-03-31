@@ -3,6 +3,49 @@
 Updated: 2026-03-31
 Context: compiler/bootstrap/stage2-stability
 
+[LM-390|verified]: After [LM-389], the exact stdlib carrier frontier through
+`/tmp/semantic_pwd_and_info_probe.cr` moved again. The first blocker
+`Method 'info?' not found on File` was already cleared by the in-tree
+truthy-narrowing work in `src/compiler/semantic/type_inference_engine.cr`.
+The next live miss `Method 'same_file?' not found on Info` was not a missing
+symbol either: trace on the exact carrier showed
+`lookup_method candidates method=same_file? count=1 receiver=Info`, which
+falsified symbol collection loss and pinned the failure to matcher context.
+The decisive detail was that `Info#same_file?(other : self)` was being checked
+while the caller lived in a class-method body (`Dir.current`), so
+`parameters_match?(...)` resolved `self` against the ambient caller context
+instead of the callee method kind. The verified narrow fix is to pass
+`class_method_context: method.is_class_method?` when resolving parameter
+annotations during matching, just like the return-type path already did.
+
+That exposed the next head `Method 'print' not found on FileDescriptor`.
+Trace again falsified "missing method": `lookup_method candidates method=print
+count=1 receiver=FileDescriptor`. A temporary arity probe showed the single
+candidate was actually `Crystal::System.print(handle, bytes)`, not `IO#print`.
+This isolated the real bug to lexical-parent leakage in receiver lookup:
+direct method lookup used `scope.lookup(method_name)`, which walks included
+modules *and their parent scopes*. For `IO::FileDescriptor`, that let the
+included module `Crystal::System::FileDescriptor` climb to its parent module
+`Crystal::System` and incorrectly surface `def self.print(handle, bytes)`,
+shadowing the real superclass `IO#print` overloads. The verified fix in
+`src/compiler/semantic/type_inference_engine.cr` is structural and still
+narrow: receiver method discovery now uses a local-plus-included-modules-only
+helper that never climbs lexical parents, and superclass/virtual/override
+searches reuse the same helper. Focused regressions are green in
+`spec/semantic/type_inference_logical_rhs_narrowing_spec.cr`,
+`spec/semantic/type_inference_class_method_self_spec.cr`, and the new
+`spec/semantic/type_inference_current_class_shadow_spec.cr` coverage for
+included-module lexical parent leakage. Rebuild gates for
+`src/crystal_v2.cr` and `/tmp/crystal_v2_semantic_stage3probe` are green. The
+exact carrier moves from `semantic_diags=0 resolution_diags=0 type_diags=216`
+to `semantic_diags=0 resolution_diags=0 type_diags=213`, and the live log no
+longer contains `Method 'same_file?' not found on Info` or
+`Method 'print' not found on FileDescriptor`. Boundary: the last honest full
+safe stage3 gate is still `type_diags=235` because a fresh whole-program probe
+was not rerun in this pass; the next exact-carrier head is now
+`Method 'includes?' not found on Tuple(String, String)` in `src/stdlib/dir.cr`.
+{F/G/R: 0.97/0.86/0.98} [verified]
+
 [LM-389|verified]: After [LM-388], the live head frontier moved out of
 `compiler_rt` and into early runtime/lib surfaces, starting with
 `Method 'getcwd' not found on LibC` and `Method 'environ' not found on LibC`.

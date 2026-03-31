@@ -51,5 +51,67 @@ describe Semantic::TypeInferenceEngine do
       engine.diagnostics.should be_empty
       engine.context.get_type(program.roots.last).to_s.should eq("Signal")
     end
+
+    it "resolves macro-generated enum members through absolute paths inside shadowing modules" do
+      source = <<-CRYSTAL
+        module Crystal::System::File
+          def self.shadowed
+            nil
+          end
+        end
+
+        enum Errno
+          {% for value in %w(ENOENT ENOTDIR) %}
+            {{value.id}} = 1
+          {% end %}
+        end
+
+        module Crystal::System::Threading
+          def self.probe
+            ::Errno::ENOENT
+          end
+        end
+
+        Crystal::System::Threading.probe
+      CRYSTAL
+
+      program, analyzer, engine = infer_absolute_path_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.should be_empty
+      engine.context.get_type(program.roots.last).to_s.should eq("Errno")
+    end
+
+    it "supports in? on enum receivers with macro-generated absolute-path members" do
+      source = <<-CRYSTAL
+        module Crystal::System::File
+          def self.shadowed
+            nil
+          end
+        end
+
+        enum Errno
+          {% for value in %w(ENOENT ENOTDIR) %}
+            {{value.id}} = 1
+          {% end %}
+        end
+
+        module Crystal::System::Threading
+          def self.probe
+            ::Errno::ENOENT.in?(::Errno::ENOENT, ::Errno::ENOTDIR)
+          end
+        end
+
+        Crystal::System::Threading.probe
+      CRYSTAL
+
+      program, analyzer, engine = infer_absolute_path_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.should be_empty
+      engine.context.get_type(program.roots.last).to_s.should eq("Bool")
+    end
   end
 end

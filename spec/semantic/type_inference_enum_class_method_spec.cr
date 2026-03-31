@@ -1,0 +1,130 @@
+require "spec"
+
+require "../../src/compiler/frontend/ast"
+require "../../src/compiler/frontend/lexer"
+require "../../src/compiler/frontend/parser"
+require "../../src/compiler/semantic/analyzer"
+require "../../src/compiler/semantic/type_inference_engine"
+
+alias Frontend = CrystalV2::Compiler::Frontend
+alias Semantic = CrystalV2::Compiler::Semantic
+
+private def infer_enum_class_method_types(source : String)
+  parser = Frontend::Parser.new(Frontend::Lexer.new(source))
+  program = parser.parse_program
+
+  analyzer = Semantic::Analyzer.new(program)
+  analyzer.collect_symbols
+  name_result = analyzer.resolve_names
+  engine = analyzer.infer_types(name_result.identifier_symbols)
+
+  {program, analyzer, engine}
+end
+
+describe Semantic::TypeInferenceEngine do
+  describe "enum class methods" do
+    it "resolves enum self.new overloads for integer literals" do
+      source = <<-CRYSTAL
+        enum Permissions : Int16
+          Read = 0
+
+          def self.new(int : Int)
+            new(int.to_i16)
+          end
+        end
+
+        Permissions.new(0o644)
+      CRYSTAL
+
+      program, analyzer, engine = infer_enum_class_method_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.select(&.level.error?).should be_empty
+      engine.context.get_type(program.roots.last).to_s.should eq("Permissions")
+    end
+
+    it "resolves absolute enum paths inside a shadowing module" do
+      source = <<-CRYSTAL
+        class File
+          enum Permissions : Int16
+            Read = 0
+
+            def self.new(int : Int)
+              new(int.to_i16)
+            end
+          end
+        end
+
+        module Crystal::System::File
+          def self.probe
+            ::File::Permissions.new(0o644)
+          end
+        end
+
+        Crystal::System::File.probe
+      CRYSTAL
+
+      program, analyzer, engine = infer_enum_class_method_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.select(&.level.error?).should be_empty
+      engine.context.get_type(program.roots.last).to_s.should eq("Permissions")
+    end
+
+    it "supports enum helper constructors that delegate to the base-type constructor" do
+      source = <<-CRYSTAL
+        enum Permissions : Int16
+          Read = 0
+
+          def self.new(int : Int)
+            new(int.to_i16)
+          end
+        end
+
+        Permissions.new(0o644)
+      CRYSTAL
+
+      program, analyzer, engine = infer_enum_class_method_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.select(&.level.error?).should be_empty
+      engine.context.get_type(program.roots.last).to_s.should eq("Permissions")
+    end
+
+    it "resolves enum class-method self return types inside shadowing modules" do
+      source = <<-CRYSTAL
+        module Crystal::System::File
+          def self.shadowed
+            nil
+          end
+        end
+
+        enum Errno
+          NONE = 0
+
+          def self.value : self
+            new(0)
+          end
+        end
+
+        module Crystal::System::Threading
+          def self.probe
+            ::Errno.value
+          end
+        end
+
+        Crystal::System::Threading.probe
+      CRYSTAL
+
+      program, analyzer, engine = infer_enum_class_method_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.select(&.level.error?).should be_empty
+      engine.context.get_type(program.roots.last).to_s.should eq("Errno")
+    end
+  end
+end

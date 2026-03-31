@@ -71,5 +71,27 @@ describe Semantic::TypeInferenceEngine do
       engine.diagnostics.should be_empty
       engine.context.get_type(program.roots.last).to_s.should eq("Pointer(UInt8)")
     end
+
+    it "resolves pointer move_to for byte buffers" do
+      source = <<-CRYSTAL
+        module Probe
+          def self.shift
+            bytes = uninitialized UInt8[8]
+            source = bytes.to_unsafe
+            target = source + 1
+            source.move_to(target, 3)
+          end
+        end
+
+        Probe.shift
+      CRYSTAL
+
+      program, analyzer, engine = infer_types_for_pointer_appender(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.should be_empty
+      engine.context.get_type(program.roots.last).to_s.should eq("Pointer(UInt8)")
+    end
   end
 end

@@ -9,7 +9,7 @@ require "../../src/compiler/semantic/type_inference_engine"
 alias Frontend = CrystalV2::Compiler::Frontend
 alias Semantic = CrystalV2::Compiler::Semantic
 
-private def infer_tuple_builtin_types(source : String)
+private def infer_array_builtin_types(source : String)
   parser = Frontend::Parser.new(Frontend::Lexer.new(source))
   program = parser.parse_program
 
@@ -22,19 +22,20 @@ private def infer_tuple_builtin_types(source : String)
 end
 
 describe Semantic::TypeInferenceEngine do
-  describe "tuple builtins" do
-    it "supports Tuple#min in method bodies" do
+  describe "array builtins" do
+    it "supports Array#index! for byte arrays" do
       source = <<-CRYSTAL
-        module TupleMinProbe
-          def self.probe(precision : UInt32)
-            {precision, 10_u32}.min.to_i32! &+ 5
+        module ArrayIndexBangProbe
+          def self.probe
+            key_value = [0x66_u8, 0x3d_u8, 0x6f_u8]
+            key_value.index!(0x3d_u8)
           end
         end
 
-        TupleMinProbe.probe(3_u32)
+        ArrayIndexBangProbe.probe
       CRYSTAL
 
-      program, analyzer, engine = infer_tuple_builtin_types(source)
+      program, analyzer, engine = infer_array_builtin_types(source)
 
       analyzer.semantic_diagnostics.should be_empty
       analyzer.name_resolver_diagnostics.should be_empty
@@ -42,34 +43,24 @@ describe Semantic::TypeInferenceEngine do
       engine.context.get_type(program.roots.last).to_s.should eq("Int32")
     end
 
-    it "resolves Tuple#includes? through Indexable and Enumerable mixins" do
+    it "supports byte-slice fast_index through the array model" do
       source = <<-CRYSTAL
-        module Enumerable(T)
-          def includes?(obj) : Bool
-            true
+        module SliceFastIndexProbe
+          def self.probe
+            bytes = uninitialized UInt8[4]
+            bytes.to_unsafe.to_slice(4).fast_index(0x00_u8, 0).not_nil!
           end
         end
 
-        struct Tuple(T, U)
-          include Enumerable(T | U)
-        end
-
-        module TupleIncludesProbe
-          def self.probe(entry : String?) : Bool
-            excluded = {".", ".."}
-            excluded.includes?(entry)
-          end
-        end
-
-        TupleIncludesProbe.probe(".")
+        SliceFastIndexProbe.probe
       CRYSTAL
 
-      program, analyzer, engine = infer_tuple_builtin_types(source)
+      program, analyzer, engine = infer_array_builtin_types(source)
 
       analyzer.semantic_diagnostics.should be_empty
       analyzer.name_resolver_diagnostics.should be_empty
       engine.diagnostics.select(&.level.error?).should be_empty
-      engine.context.get_type(program.roots.last).to_s.should eq("Bool")
+      engine.context.get_type(program.roots.last).to_s.should eq("Int32")
     end
   end
 end

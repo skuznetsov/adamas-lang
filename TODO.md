@@ -1,6 +1,45 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-03-31)
 
 ## Current Status
+- **Fresh exact-carrier runtime lookup checkpoint: `Info#same_file?` and `FileDescriptor#print` are both cleared on the stdlib carrier, but the last honest full-stage3 gate is still `type_diags=235` until a fresh whole-program probe is rerun (2026-03-31, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/type_inference_engine.cr` now passes `class_method_context: method.is_class_method?` while resolving parameter annotations inside `parameters_match?(...)`, which fixes `other : self` instance-method parameters when the call site lives inside a class-method body
+    - the same file now performs receiver method discovery through a local-plus-included-modules-only helper instead of raw `scope.lookup(method_name)`, so method lookup no longer climbs lexical parents of included modules and accidentally pulls in unrelated outer module methods
+    - focused regression coverage now also lives in:
+      - `spec/semantic/type_inference_class_method_self_spec.cr`
+      - `spec/semantic/type_inference_current_class_shadow_spec.cr`
+      - the previously-added `spec/semantic/type_inference_logical_rhs_narrowing_spec.cr` remains green
+  - decisive evidence:
+    - focused regressions are green:
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_logical_rhs_narrowing_spec.cr --error-trace`
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_class_method_self_spec.cr --error-trace`
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_current_class_shadow_spec.cr --error-trace`
+    - rebuild gates are green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+    - exact carrier evidence:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 120 2048 /tmp/semantic_pwd_and_info_probe.cr --stats --no-link -o tmp/semantic_live_head_20260331.out > tmp/semantic_live_head_20260331.log 2>&1`
+      - carrier-local summary moved from:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=216`
+      - to:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=213`
+      - removed/moved families from the live log:
+        - `Method 'same_file?' not found on Info`
+        - `Method 'print' not found on FileDescriptor`
+      - new head of the same carrier:
+        - `Method 'includes?' not found on Tuple(String, String)` at `src/stdlib/dir.cr:114`
+  - practical boundary:
+    - the exact stdlib carrier is materially healthier, but this is **not yet** a new honest whole-program stage3 gate
+    - the last verified full-stage3 probe remains:
+      - `semantic_diags=0`
+      - `resolution_diags=0`
+      - `type_diags=235`
+    - the next reasonable move is either:
+      - rerun the full safe stage3 probe to refresh the global live head
+      - or continue locally from the new exact-carrier blocker `Tuple(String, String)#includes?`
 - **Fresh semantic lib-surface checkpoint: C-fun integer ABI matching now accepts integer-family width differences, and `lib` globals are exposed through module member access (`LibC.environ`) in the semantic layer (2026-03-31, current session)**:
   - trustworthy setup:
     - `src/compiler/semantic/type_inference_engine.cr` now treats any integer-family pair as compatible inside `c_fun_type_matches?(...)`, which covers real stdlib lib calls like `LibC.getcwd(nil, 0)` where the source literal is `Int32` but the ABI parameter is `SizeT`

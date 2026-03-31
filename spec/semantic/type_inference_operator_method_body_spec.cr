@@ -99,4 +99,31 @@ describe Semantic::TypeInferenceEngine do
       root_type.to_s.should eq("Tuple(Int128, UInt128)")
     end
   end
+
+  describe "primitive annotations with runtime primitive classes" do
+    it "keeps unsigned primitive annotations primitive for top-level helper calls" do
+      source = <<-CRYSTAL
+        struct UInt32
+        end
+
+        def helper : UInt32
+          1_u32
+        end
+
+        def probe(flag : Bool)
+          idx = flag ? 0_u32 : helper
+          idx.to_i32!
+        end
+
+        probe(false)
+      CRYSTAL
+
+      program, analyzer, engine = infer_operator_method_body_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.select(&.level.error?).should be_empty
+      engine.context.get_type(program.roots.last).to_s.should eq("Int32")
+    end
+  end
 end

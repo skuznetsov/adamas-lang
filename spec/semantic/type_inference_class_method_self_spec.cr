@@ -56,4 +56,33 @@ describe TypeInferenceEngine do
       engine.diagnostics.should be_empty
     end
   end
+
+  describe "instance methods annotated with self" do
+    it "resolves self parameters when called from a class method body" do
+      source = <<-CRYSTAL
+        class File
+          struct Info
+            def initialize
+            end
+
+            def same_file?(other : self) : Bool
+              true
+            end
+          end
+
+          def self.current
+            pwd_info = Info.new
+            dot_info = Info.new
+            pwd_info.same_file?(dot_info)
+          end
+        end
+
+        File.current
+      CRYSTAL
+
+      _program, _analyzer, engine = infer_types(source)
+
+      engine.diagnostics.should be_empty
+    end
+  end
 end

@@ -92,4 +92,174 @@ describe Semantic::TypeInferenceEngine do
       engine.context.get_type(program.roots.last).to_s.should eq("Proc(Pointer(Void), Pointer(Void))")
     end
   end
+
+  describe "included module lexical parent lookup" do
+    it "does not pull parent module methods into instance method lookup" do
+      source = <<-CRYSTAL
+        module System
+          def self.print(handle : Int32, bytes : String) : Nil
+          end
+
+          module FileDescriptor
+          end
+        end
+
+        abstract class IO
+          def print(obj : _) : Nil
+          end
+
+          def print(*objects : _) : Nil
+          end
+        end
+
+        class IO::FileDescriptor < IO
+          include System::FileDescriptor
+
+          def initialize
+          end
+        end
+
+        STDERR = IO::FileDescriptor.new
+
+        module Crystal
+          def self.exit
+            STDERR.print "Unhandled exception: "
+          end
+        end
+
+        Crystal.exit
+      CRYSTAL
+
+      program, analyzer, engine = infer_current_class_shadow_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.should be_empty
+      engine.context.get_type(program.roots.last).to_s.should eq("Nil")
+    end
+
+    it "prefers inherited instance methods over colliding class-method references" do
+      source = <<-CRYSTAL
+        class Base
+          struct Info
+            def initialize
+            end
+
+            def size : Int32
+              42
+            end
+          end
+
+          def info : Base::Info
+            Base::Info.new
+          end
+        end
+
+        class File < Base
+          def self.info(path : String) : Base::Info
+            Base::Info.new
+          end
+
+          def size : Int32
+            info.size
+          end
+        end
+
+        File.new.size
+      CRYSTAL
+
+      program, analyzer, engine = infer_current_class_shadow_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.should be_empty
+      engine.context.get_type(program.roots.last).to_s.should eq("Int32")
+    end
+
+    it "resolves inherited nested return annotations for bare receiver chains" do
+      source = <<-CRYSTAL
+        class Container
+          struct Info
+            def initialize
+            end
+
+            def size : Int32
+              42
+            end
+          end
+        end
+
+        class Base
+          def info : Container::Info
+            Container::Info.new
+          end
+        end
+
+        class Container < Base
+          def self.info(path : String) : Container::Info
+            Container::Info.new
+          end
+
+          def size : Int32
+            info.size
+          end
+        end
+
+        Container.new.size
+      CRYSTAL
+
+      program, analyzer, engine = infer_current_class_shadow_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.should be_empty
+      engine.context.get_type(program.roots.last).to_s.should eq("Int32")
+    end
+
+    it "keeps bare info receiver chains working in the live File naming corridor" do
+      source = <<-CRYSTAL
+        module Crystal::System::File
+          def self.shadowed
+            nil
+          end
+        end
+
+        class IO
+          class FileDescriptor
+            def info : File::Info
+              File::Info.new
+            end
+          end
+        end
+
+        class File < IO::FileDescriptor
+          struct Info
+            def initialize
+            end
+
+            def size : Int32
+              42
+            end
+          end
+
+          def self.info(path : String) : File::Info
+            File::Info.new
+          end
+
+          def size : Int32
+            info.size
+          end
+        end
+
+        File.new.size
+      CRYSTAL
+
+      program, analyzer, engine = infer_current_class_shadow_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.should be_empty
+      engine.context.get_type(program.roots.last).to_s.should eq("Int32")
+    end
+  end
 end

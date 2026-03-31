@@ -778,7 +778,7 @@ module CrystalV2
 
           push_table(enum_scope)
           @enum_stack << enum_symbol
-          (node.body || [] of Frontend::ExprId).each { |expr_id| visit(expr_id) }
+          collect_scoped_body(node.body || [] of Frontend::ExprId)
           @enum_stack.pop
           pop_table
         end
@@ -1318,6 +1318,26 @@ module CrystalV2
           end
         end
 
+        private def record_accessor_instance_var_types(class_symbol : ClassSymbol, node : Frontend::TypedNode, node_id : Frontend::ExprId) : Nil
+          specs = Frontend.node_accessor_specs(node)
+          return unless specs
+
+          specs.each do |spec|
+            type_ann = spec.type_annotation
+            default_value = spec.default_value
+            next unless type_ann || default_value
+
+            ivar_name = intern_name(spec.name)
+            existing = class_symbol.get_instance_var_info(ivar_name)
+            type_annotation = existing.try(&.type_annotation) || type_ann.try { |slice| intern_name(slice) }
+            effective_default = existing.try(&.default_value) || default_value
+            has_default = existing.try(&.has_default?) || !default_value.nil?
+
+            class_symbol.add_instance_var(ivar_name, type_annotation, effective_default, has_default)
+            define_instance_var_symbol(class_symbol, ivar_name, type_annotation, node_id)
+          end
+        end
+
         # Convert an AnnotationNode into AnnotationInfo, extracting the
         # fully-qualified name and argument expressions.
         private def build_annotation_info(node : Frontend::AnnotationNode) : AnnotationInfo?
@@ -1410,6 +1430,7 @@ module CrystalV2
             when Frontend::GetterNode, Frontend::SetterNode, Frontend::PropertyNode
               if owner
                 attach_accessor_annotations(owner, node, pending_annotations)
+                record_accessor_instance_var_types(owner, node, expr_id)
               end
               pending_annotations.clear
               # Reuse existing accessor macro expansion logic

@@ -160,5 +160,31 @@ describe Semantic::TypeInferenceEngine do
       fiber_symbol.get_instance_var_type("stack").should eq("Stack")
       engine.diagnostics.should be_empty
     end
+
+    it "backfills untyped ivar params from typed accessors" do
+      source = <<-CRYSTAL
+        class Worker
+          def initialize(@name)
+          end
+
+          getter name : String
+
+          def bytesize
+            @name.bytesize
+          end
+        end
+
+        Worker.new("sergey").bytesize
+      CRYSTAL
+
+      program, analyzer, engine = infer_constructor_ivar_param_types(source)
+      worker_symbol = analyzer.global_context.symbol_table.lookup("Worker").as(Semantic::ClassSymbol)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      worker_symbol.get_instance_var_type("name").should eq("String")
+      engine.diagnostics.should be_empty
+      engine.context.get_type(program.roots.last).to_s.should eq("Int32")
+    end
   end
 end

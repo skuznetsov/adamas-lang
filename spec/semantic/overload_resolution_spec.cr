@@ -296,6 +296,79 @@ describe "Phase 98: Method Overload Resolution" do
 
       engine.diagnostics.select(&.level.error?).should be_empty
     end
+
+    it "matches a nilable argument to the same nilable parameter type" do
+      source = <<-CRYSTAL
+        class Optional
+          def maybe(x : Bool?)
+            x
+          end
+        end
+
+        def maybe_flag : Bool?
+          true
+        end
+
+        def test
+          opt = Optional.new
+          opt.maybe(maybe_flag)
+        end
+
+        test()
+      CRYSTAL
+
+      lexer = Frontend::Lexer.new(source)
+      parser = Frontend::Parser.new(lexer)
+      program = parser.parse_program
+
+      analyzer = Semantic::Analyzer.new(program)
+      analyzer.collect_symbols
+      name_result = analyzer.resolve_names
+
+      engine = Semantic::TypeInferenceEngine.new(program, name_result.identifier_symbols, analyzer.global_context.symbol_table)
+      engine.infer_types
+
+      engine.diagnostics.select(&.level.error?).should be_empty
+      engine.context.get_type(program.roots.last).to_s.should eq("Nil | Bool")
+    end
+
+    it "accepts a union argument when explicit receiver overloads cover each branch" do
+      source = <<-CRYSTAL
+        module EnvLike
+          def self.set(key : String, value : String) : Int32
+            1
+          end
+
+          def self.set(key : String, value : Nil) : Bool
+            true
+          end
+        end
+
+        def maybe_value : String?
+          "home"
+        end
+
+        def test
+          EnvLike.set("HOME", maybe_value)
+        end
+
+        test()
+      CRYSTAL
+
+      lexer = Frontend::Lexer.new(source)
+      parser = Frontend::Parser.new(lexer)
+      program = parser.parse_program
+
+      analyzer = Semantic::Analyzer.new(program)
+      analyzer.collect_symbols
+      name_result = analyzer.resolve_names
+
+      engine = Semantic::TypeInferenceEngine.new(program, name_result.identifier_symbols, analyzer.global_context.symbol_table)
+      engine.infer_types
+
+      engine.diagnostics.select(&.level.error?).should be_empty
+      engine.context.get_type(program.roots.last).to_s.should eq("Bool | Int32")
+    end
   end
 
   # ==================================================================
