@@ -2246,7 +2246,7 @@ module CrystalV2
         end
 
         def left
-          raise NoMethodError.new("MacroLiteralNode does not have left")
+          raise RuntimeError.new("MacroLiteralNode does not have left")
         end
       end
 

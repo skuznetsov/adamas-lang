@@ -11809,7 +11809,15 @@ module CrystalV2
         # - Expression(name_expr_id)
         # - Text("!")
         private def parse_string_interpolation(token : Token) : ExprId
-          content = String.new(token.slice)
+          # Scan the raw token bytes directly so interpolation parsing stays O(n).
+          # Indexing a String by Int32 walks chars from the start each time.
+          content = token.slice
+          hash_byte = '#'.ord.to_u8
+          lbrace_byte = '{'.ord.to_u8
+          rbrace_byte = '}'.ord.to_u8
+          dquote_byte = '"'.ord.to_u8
+          squote_byte = '\''.ord.to_u8
+          backslash_byte = '\\'.ord.to_u8
           pieces_b = SmallVec(StringPiece, 8).new
           i = 0
           saw_expression = false
@@ -11822,12 +11830,12 @@ module CrystalV2
             interpolation_kind = nil.as(Symbol?)
             while i < content.size
               Watchdog.check!
-              if i + 1 < content.size && content[i] == '#' && content[i + 1] == '{'
+              if i + 1 < content.size && content[i] == hash_byte && content[i + 1] == lbrace_byte
                 interpolation_start = i
                 interpolation_kind = :crystal
                 break
               end
-              if macro_context? && i + 1 < content.size && content[i] == '{' && content[i + 1] == '{'
+              if macro_context? && i + 1 < content.size && content[i] == lbrace_byte && content[i + 1] == lbrace_byte
                 interpolation_start = i
                 interpolation_kind = :macro
                 break
@@ -11837,9 +11845,9 @@ module CrystalV2
 
             # Add text piece if any
             if interpolation_start && interpolation_start > text_start
-              pieces_b << StringPiece.text(content[text_start...i])
+              pieces_b << StringPiece.text(String.new(content[text_start, i - text_start]))
             elsif interpolation_start.nil? && i > text_start
-              pieces_b << StringPiece.text(content[text_start...i])
+              pieces_b << StringPiece.text(String.new(content[text_start, i - text_start]))
             end
 
             break unless interpolation_start
@@ -11850,15 +11858,15 @@ module CrystalV2
               brace_depth = 1
               while i < content.size && brace_depth > 0
                 Watchdog.check!
-                if content[i] == '{'
+                if content[i] == lbrace_byte
                   brace_depth += 1
-                elsif content[i] == '}'
+                elsif content[i] == rbrace_byte
                   brace_depth -= 1
                 end
                 i += 1 if brace_depth > 0
               end
 
-              expr_text = content[expr_start...i]
+              expr_text = String.new(content[expr_start, i - expr_start])
               expr_id = parse_interpolation_expression(expr_text)
               pieces_b << StringPiece.expression(expr_id)
               saw_expression = true
@@ -11871,12 +11879,12 @@ module CrystalV2
               macro_depth = 1
               while i < content.size && macro_depth > 0
                 Watchdog.check!
-                if content[i] == '"' || content[i] == '\''
+                if content[i] == dquote_byte || content[i] == squote_byte
                   quote = content[i]
                   i += 1
                   while i < content.size
                     ch = content[i]
-                    if ch == '\\' && i + 1 < content.size
+                    if ch == backslash_byte && i + 1 < content.size
                       i += 2
                       next
                     end
@@ -11886,13 +11894,13 @@ module CrystalV2
                   next
                 end
 
-                if i + 1 < content.size && content[i] == '{' && content[i + 1] == '{'
+                if i + 1 < content.size && content[i] == lbrace_byte && content[i + 1] == lbrace_byte
                   macro_depth += 1
                   i += 2
                   next
                 end
 
-                if i + 1 < content.size && content[i] == '}' && content[i + 1] == '}'
+                if i + 1 < content.size && content[i] == rbrace_byte && content[i + 1] == rbrace_byte
                   macro_depth -= 1
                   break if macro_depth == 0
                   i += 2
@@ -11902,7 +11910,7 @@ module CrystalV2
                 i += 1
               end
 
-              expr_text = content[expr_start...i]
+              expr_text = String.new(content[expr_start, i - expr_start])
               expr_id = parse_interpolation_expression(expr_text)
               pieces_b << StringPiece.expression(expr_id)
               saw_expression = true

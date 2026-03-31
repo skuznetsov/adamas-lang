@@ -179,6 +179,29 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       CrystalV2::Compiler::Frontend.node_kind(path).should eq(CrystalV2::Compiler::Frontend::NodeKind::StringInterpolation)
     end
 
+    it "preserves UTF-8 text pieces in require string interpolation" do
+      source = "require \"префикс_\#{version}_хвост\""
+
+      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      program = parser.parse_program
+
+      program.roots.size.should eq(1)
+      arena = program.arena
+
+      require_node = arena[program.roots[0]]
+      path = arena[CrystalV2::Compiler::Frontend.node_require_path(require_node).not_nil!]
+      CrystalV2::Compiler::Frontend.node_kind(path).should eq(CrystalV2::Compiler::Frontend::NodeKind::StringInterpolation)
+
+      pieces = CrystalV2::Compiler::Frontend.node_string_pieces(path).not_nil!
+      pieces.size.should eq(3)
+      pieces[0].kind.should eq(CrystalV2::Compiler::Frontend::StringPiece::Kind::Text)
+      pieces[0].text.should eq("префикс_")
+      pieces[1].kind.should eq(CrystalV2::Compiler::Frontend::StringPiece::Kind::Expression)
+      pieces[1].expr.should_not be_nil
+      pieces[2].kind.should eq(CrystalV2::Compiler::Frontend::StringPiece::Kind::Text)
+      pieces[2].text.should eq("_хвост")
+    end
+
     it "parses require at top-level typical usage" do
       source = <<-CRYSTAL
       require "spec"

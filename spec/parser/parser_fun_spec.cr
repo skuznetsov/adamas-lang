@@ -29,6 +29,62 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       nil # FunNode has no body field.should be_nil  # No body for fun
     end
 
+    it "parses top-level bare fun declarations without consuming following defs" do
+      source = <<-CRYSTAL
+      fun __crystal_raise(unwind_ex : Void*) : NoReturn
+
+      def raise_without_backtrace(exception)
+        __crystal_raise(exception.as(Void*))
+      end
+      CRYSTAL
+
+      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      program = parser.parse_program
+
+      program.roots.size.should eq(2)
+      arena = program.arena
+
+      fun_node = arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::FunNode)
+      String.new(fun_node.name).should eq("__crystal_raise")
+
+      def_node = arena[program.roots[1]].as(CrystalV2::Compiler::Frontend::DefNode)
+      String.new(def_node.name).should eq("raise_without_backtrace")
+    end
+
+    it "parses top-level fun bodies that start with macro control" do
+      source = <<-CRYSTAL
+      fun __crystal_malloc64(size : UInt64) : Void*
+        {% if flag?(:bits32) %}
+          if size > UInt32::MAX
+            raise ArgumentError.new("Given size is bigger than UInt32::MAX")
+          end
+        {% end %}
+
+        GC.malloc(LibC::SizeT.new(size))
+      end
+      CRYSTAL
+
+      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      program = parser.parse_program
+
+      program.roots.size.should eq(1)
+      arena = program.arena
+
+      def_node = arena[program.roots[0]]
+      CrystalV2::Compiler::Frontend.node_kind(def_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Def)
+
+      fun_def = def_node.as(CrystalV2::Compiler::Frontend::DefNode)
+      String.new(fun_def.name.not_nil!).should eq("__crystal_malloc64")
+      String.new(fun_def.receiver.not_nil!).should eq("__fun__")
+      fun_def.body.not_nil!.size.should eq(2)
+
+      first_stmt = arena[fun_def.body.not_nil![0]]
+      CrystalV2::Compiler::Frontend.node_kind(first_stmt).should eq(CrystalV2::Compiler::Frontend::NodeKind::MacroIf)
+
+      second_stmt = arena[fun_def.body.not_nil![1]]
+      CrystalV2::Compiler::Frontend.node_kind(second_stmt).should eq(CrystalV2::Compiler::Frontend::NodeKind::Call)
+    end
+
     it "parses fun with parameters" do
       source = <<-CRYSTAL
       lib LibC

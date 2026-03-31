@@ -110,6 +110,80 @@ bar")
     call.block.should_not be_nil
   end
 
+  it "covers no-parens positional call spans through the last argument" do
+    source = "setter path_index"
+    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    program = parser.parse_program
+
+    program.roots.size.should eq(1)
+    arena = program.arena
+    root = arena[program.roots.first]
+    root.should be_a(CrystalV2::Compiler::Frontend::CallNode)
+
+    call = root.as(CrystalV2::Compiler::Frontend::CallNode)
+    call.span.start_offset.should eq(0)
+    call.span.end_offset.should eq(source.bytesize)
+  end
+
+  it "parses while-body assignments with multiline ternary false branches" do
+    source = <<-CR
+      while from < to
+        mid = cond ? left
+            : right
+        foo
+      end
+    CR
+
+    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    program = parser.parse_program
+
+    program.roots.size.should eq(1)
+    arena = program.arena
+    while_node = arena[program.roots.first].as(CrystalV2::Compiler::Frontend::WhileNode)
+    while_node.body.size.should eq(2)
+
+    assign = arena[while_node.body[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+    target = arena[assign.target].as(CrystalV2::Compiler::Frontend::IdentifierNode)
+    String.new(target.name).should eq("mid")
+
+    value = arena[assign.value]
+    CrystalV2::Compiler::Frontend.node_kind(value).should eq(CrystalV2::Compiler::Frontend::NodeKind::Ternary)
+
+    trailing_expr = arena[while_node.body[1]].as(CrystalV2::Compiler::Frontend::IdentifierNode)
+    String.new(trailing_expr.name).should eq("foo")
+  end
+
+  it "preserves absolute reopen flags on class and module definitions" do
+    source = <<-CR
+      module Outer
+        class ::RootTarget
+        end
+
+        module ::RootSpace::Inner
+        end
+      end
+    CR
+
+    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    program = parser.parse_program
+    arena = program.arena
+
+    outer = arena[program.roots.first].as(CrystalV2::Compiler::Frontend::ModuleNode)
+    outer.absolute.should be_false
+
+    absolute_class = arena[outer.body.not_nil!.first].as(CrystalV2::Compiler::Frontend::ClassNode)
+    absolute_class.absolute.should be_true
+    String.new(absolute_class.name).should eq("RootTarget")
+
+    absolute_module = arena[outer.body.not_nil![1]].as(CrystalV2::Compiler::Frontend::ModuleNode)
+    absolute_module.absolute.should be_true
+    String.new(absolute_module.name).should eq("RootSpace")
+
+    nested_module = arena[absolute_module.body.not_nil!.first].as(CrystalV2::Compiler::Frontend::ModuleNode)
+    nested_module.absolute.should be_false
+    String.new(nested_module.name).should eq("Inner")
+  end
+
   it "parses macro definitions with expression pieces" do
     source = <<-CR
       macro my_macro
@@ -238,6 +312,56 @@ bar")
 
     pieces.any? { |piece| piece.kind.text? && piece.text.try(&.includes?("{{ foo }}")) }.should be_true
     pieces.count { |piece| piece.kind.expression? }.should eq(1)
+  end
+
+  it "does not swallow following macro defs after macro expressions inside string literals" do
+    source = <<-'CR'
+      class Object
+        macro getter!(*names)
+          {% for name in names %}
+            {% if name.is_a?(TypeDeclaration) %}
+              {% var_name = name.var.id %}
+              {% type = name.type %}
+              @{{name}}?
+            {% else %}
+              {% var_name = name.id %}
+              {% type = nil %}
+            {% end %}
+
+            def {{var_name}}? {% if type %} : {{type}}? {% end %}
+              @{{var_name}}
+            end
+
+            def {{var_name}} {% if type %} : {{type}} {% end %}
+              if (%value = @{{var_name}}).nil?
+                ::raise ::NilAssertionError.new("{{@type.id}}{{"#".id}}{{var_name}} cannot be nil")
+              else
+                %value
+              end
+            end
+          {% end %}
+        end
+
+        macro setter(*names)
+        end
+      end
+    CR
+
+    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source), recovery_mode: true)
+    program = parser.parse_program
+
+    parser.diagnostics.should be_empty
+    program.roots.size.should eq(1)
+
+    arena = program.arena
+    object_class = arena[program.roots.first].as(CrystalV2::Compiler::Frontend::ClassNode)
+    body = object_class.body.not_nil!
+    body.size.should eq(2)
+
+    getter_macro = arena[body[0]].as(CrystalV2::Compiler::Frontend::MacroDefNode)
+    setter_macro = arena[body[1]].as(CrystalV2::Compiler::Frontend::MacroDefNode)
+    String.new(getter_macro.name).should eq("getter!")
+    String.new(setter_macro.name).should eq("setter")
   end
 
   # ECR feature, not Crystal macros
@@ -797,5 +921,24 @@ bar")
     text_pieces.each do |piece|
       piece.span.should_not be_nil
     end
+  end
+
+  it "parses block-pass expressions inside parenthesized call arguments" do
+    source = <<-CR
+      def sample(flag : Bool*, initializer : Void*)
+        Once.exec(flag, &Proc(Nil).new(initializer, Pointer(Void).null))
+      end
+    CR
+
+    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    program = parser.parse_program
+
+    program.roots.size.should eq(1)
+    arena = program.arena
+    def_node = arena[program.roots.first].as(CrystalV2::Compiler::Frontend::DefNode)
+    def_node.body.not_nil!.size.should eq(1)
+
+    call_node = arena[def_node.body.not_nil!.first]
+    CrystalV2::Compiler::Frontend.node_kind(call_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Call)
   end
 end

@@ -1222,25 +1222,36 @@ module CrystalV2
           has_escapes = false
 
           # Phase 54: Check if string contains escapes or interpolation.
-          # Track interpolation brace depth so embedded quotes inside #{...} don't terminate scanning.
+          # Track interpolation depth so embedded quotes inside #{...} or
+          # macro-style {{...}} don't terminate scanning.
           scan_offset = @offset
-          brace_depth = 0
+          interpolation_mode = 0_i8 # 0=none, 1=#{...}, 2={{...}}
+          interpolation_depth = 0
           heredoc_inside_interpolation = false
           while scan_offset < @rope.size
             byte = @rope.bytes[scan_offset]
 
-            if brace_depth == 0 && byte == DOUBLE_QUOTE
+            if interpolation_mode == 0 && byte == DOUBLE_QUOTE
               break
             end
 
-            if byte == HASH && scan_offset + 1 < @rope.size && @rope.bytes[scan_offset + 1] == LEFT_BRACE && brace_depth == 0
+            if interpolation_mode == 0 && byte == HASH && scan_offset + 1 < @rope.size && @rope.bytes[scan_offset + 1] == LEFT_BRACE
               has_interpolation = true
-              brace_depth = 1
+              interpolation_mode = 1
+              interpolation_depth = 1
               scan_offset += 2
               next
             end
 
-            if brace_depth > 0
+            if interpolation_mode == 0 && byte == LEFT_BRACE && scan_offset + 1 < @rope.size && @rope.bytes[scan_offset + 1] == LEFT_BRACE
+              has_interpolation = true
+              interpolation_mode = 2
+              interpolation_depth = 1
+              scan_offset += 2
+              next
+            end
+
+            if interpolation_mode != 0
               if byte == DOUBLE_QUOTE || byte == SINGLE_QUOTE
                 quote = byte
                 scan_offset += 1
@@ -1259,10 +1270,26 @@ module CrystalV2
               if byte == '<'.ord.to_u8 && scan_offset + 2 < @rope.size && @rope.bytes[scan_offset + 1] == '<'.ord.to_u8 && @rope.bytes[scan_offset + 2] == '-'.ord.to_u8
                 heredoc_inside_interpolation = true
               end
-              if byte == LEFT_BRACE
-                brace_depth += 1
-              elsif byte == RIGHT_BRACE
-                brace_depth -= 1
+              if interpolation_mode == 1
+                if byte == LEFT_BRACE
+                  interpolation_depth += 1
+                elsif byte == RIGHT_BRACE
+                  interpolation_depth -= 1
+                  interpolation_mode = 0 if interpolation_depth == 0
+                end
+                scan_offset += 1
+                next
+              else
+                if byte == LEFT_BRACE && scan_offset + 1 < @rope.size && @rope.bytes[scan_offset + 1] == LEFT_BRACE
+                  interpolation_depth += 1
+                  scan_offset += 2
+                  next
+                elsif byte == RIGHT_BRACE && scan_offset + 1 < @rope.size && @rope.bytes[scan_offset + 1] == RIGHT_BRACE
+                  interpolation_depth -= 1
+                  scan_offset += 2
+                  interpolation_mode = 0 if interpolation_depth == 0
+                  next
+                end
               end
               scan_offset += 1
               next
@@ -1283,20 +1310,27 @@ module CrystalV2
 
           # If no escapes, use original fast path
           if !has_escapes
-            brace_depth_fast = 0
+            interpolation_mode_fast = 0_i8
+            interpolation_depth_fast = 0
             while @offset < @rope.size
-              if brace_depth_fast == 0 && current_byte == DOUBLE_QUOTE
+              if interpolation_mode_fast == 0 && current_byte == DOUBLE_QUOTE
                 break
               end
 
-              if brace_depth_fast == 0 && current_byte == HASH && @offset + 1 < @rope.size && @rope.bytes[@offset + 1] == LEFT_BRACE
+              if interpolation_mode_fast == 0 && current_byte == HASH && @offset + 1 < @rope.size && @rope.bytes[@offset + 1] == LEFT_BRACE
                 if @offset + 4 < @rope.size && @rope.bytes[@offset + 2] == '<'.ord.to_u8 && @rope.bytes[@offset + 3] == '<'.ord.to_u8 && @rope.bytes[@offset + 4] == '-'.ord.to_u8
                   heredoc_inside_interpolation = true
                 end
-                brace_depth_fast = 1
+                interpolation_mode_fast = 1
+                interpolation_depth_fast = 1
                 advance(2)
                 next
-              elsif brace_depth_fast > 0
+              elsif interpolation_mode_fast == 0 && current_byte == LEFT_BRACE && @offset + 1 < @rope.size && @rope.bytes[@offset + 1] == LEFT_BRACE
+                interpolation_mode_fast = 2
+                interpolation_depth_fast = 1
+                advance(2)
+                next
+              elsif interpolation_mode_fast != 0
                 if current_byte == DOUBLE_QUOTE || current_byte == SINGLE_QUOTE
                   quote = current_byte
                   advance
@@ -1314,8 +1348,26 @@ module CrystalV2
                 if current_byte == '<'.ord.to_u8 && @offset + 2 < @rope.size && @rope.bytes[@offset + 1] == '<'.ord.to_u8 && @rope.bytes[@offset + 2] == '-'.ord.to_u8
                   heredoc_inside_interpolation = true
                 end
-                brace_depth_fast += 1 if current_byte == LEFT_BRACE
-                brace_depth_fast -= 1 if current_byte == RIGHT_BRACE
+                if interpolation_mode_fast == 1
+                  interpolation_depth_fast += 1 if current_byte == LEFT_BRACE
+                  if current_byte == RIGHT_BRACE
+                    interpolation_depth_fast -= 1
+                    interpolation_mode_fast = 0 if interpolation_depth_fast == 0
+                  end
+                  advance
+                  next
+                else
+                  if current_byte == LEFT_BRACE && @offset + 1 < @rope.size && @rope.bytes[@offset + 1] == LEFT_BRACE
+                    interpolation_depth_fast += 1
+                    advance(2)
+                    next
+                  elsif current_byte == RIGHT_BRACE && @offset + 1 < @rope.size && @rope.bytes[@offset + 1] == RIGHT_BRACE
+                    interpolation_depth_fast -= 1
+                    advance(2)
+                    interpolation_mode_fast = 0 if interpolation_depth_fast == 0
+                    next
+                  end
+                end
               end
 
               advance
@@ -1336,19 +1388,29 @@ module CrystalV2
           # Phase 54: Process escape sequences
           processed = Bytes.new(scan_offset - from) # Allocate with estimated size
           buffer = IO::Memory.new
-          brace_depth_processed = 0
+          interpolation_mode_processed = 0_i8
+          interpolation_depth_processed = 0
 
           while @offset < @rope.size
-            break if brace_depth_processed == 0 && current_byte == DOUBLE_QUOTE
+            break if interpolation_mode_processed == 0 && current_byte == DOUBLE_QUOTE
 
-            if brace_depth_processed == 0 && current_byte == HASH && @offset + 1 < @rope.size && @rope.bytes[@offset + 1] == LEFT_BRACE
+            if interpolation_mode_processed == 0 && current_byte == HASH && @offset + 1 < @rope.size && @rope.bytes[@offset + 1] == LEFT_BRACE
               buffer.write_byte(current_byte)
               advance
               buffer.write_byte(current_byte)
               advance
-              brace_depth_processed += 1
+              interpolation_mode_processed = 1
+              interpolation_depth_processed = 1
               next
-            elsif brace_depth_processed > 0
+            elsif interpolation_mode_processed == 0 && current_byte == LEFT_BRACE && @offset + 1 < @rope.size && @rope.bytes[@offset + 1] == LEFT_BRACE
+              buffer.write_byte(current_byte)
+              advance
+              buffer.write_byte(current_byte)
+              advance
+              interpolation_mode_processed = 2
+              interpolation_depth_processed = 1
+              next
+            elsif interpolation_mode_processed != 0
               if current_byte == DOUBLE_QUOTE || current_byte == SINGLE_QUOTE
                 quote = current_byte
                 buffer.write_byte(current_byte)
@@ -1370,10 +1432,33 @@ module CrystalV2
               if current_byte == '<'.ord.to_u8 && @offset + 2 < @rope.size && @rope.bytes[@offset + 1] == '<'.ord.to_u8 && @rope.bytes[@offset + 2] == '-'.ord.to_u8
                 heredoc_inside_interpolation = true
               end
-              if current_byte == LEFT_BRACE
-                brace_depth_processed += 1
-              elsif current_byte == RIGHT_BRACE
-                brace_depth_processed -= 1
+              if interpolation_mode_processed == 1
+                if current_byte == LEFT_BRACE
+                  interpolation_depth_processed += 1
+                elsif current_byte == RIGHT_BRACE
+                  interpolation_depth_processed -= 1
+                  interpolation_mode_processed = 0 if interpolation_depth_processed == 0
+                end
+                buffer.write_byte(current_byte)
+                advance
+                next
+              else
+                if current_byte == LEFT_BRACE && @offset + 1 < @rope.size && @rope.bytes[@offset + 1] == LEFT_BRACE
+                  interpolation_depth_processed += 1
+                  buffer.write_byte(current_byte)
+                  advance
+                  buffer.write_byte(current_byte)
+                  advance
+                  next
+                elsif current_byte == RIGHT_BRACE && @offset + 1 < @rope.size && @rope.bytes[@offset + 1] == RIGHT_BRACE
+                  interpolation_depth_processed -= 1
+                  buffer.write_byte(current_byte)
+                  advance
+                  buffer.write_byte(current_byte)
+                  advance
+                  interpolation_mode_processed = 0 if interpolation_depth_processed == 0
+                  next
+                end
               end
               buffer.write_byte(current_byte)
               advance

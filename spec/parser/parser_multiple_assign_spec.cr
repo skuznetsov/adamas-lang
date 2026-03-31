@@ -223,5 +223,31 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       targets = multi_assign.as(CrystalV2::Compiler::Frontend::MultipleAssignNode).targets
       targets.size.should eq(5)
     end
+
+    it "parses splatted targets in multiple assignment" do
+      source = "first, *rest = segments"
+
+      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      program = parser.parse_program
+
+      program.roots.size.should eq(1)
+      arena = program.arena
+
+      multi_assign = arena[program.roots[0]]
+      CrystalV2::Compiler::Frontend.node_kind(multi_assign).should eq(CrystalV2::Compiler::Frontend::NodeKind::MultipleAssign)
+
+      targets = multi_assign.as(CrystalV2::Compiler::Frontend::MultipleAssignNode).targets
+      targets.size.should eq(2)
+
+      first_target = arena[targets[0]]
+      CrystalV2::Compiler::Frontend.node_kind(first_target).should eq(CrystalV2::Compiler::Frontend::NodeKind::Identifier)
+      String.new(first_target.as(CrystalV2::Compiler::Frontend::IdentifierNode).name).should eq("first")
+
+      rest_target = arena[targets[1]]
+      rest_target.should be_a(CrystalV2::Compiler::Frontend::SplatNode)
+      inner = arena[rest_target.as(CrystalV2::Compiler::Frontend::SplatNode).expr]
+      inner.should be_a(CrystalV2::Compiler::Frontend::IdentifierNode)
+      String.new(inner.as(CrystalV2::Compiler::Frontend::IdentifierNode).name).should eq("rest")
+    end
   end
 end

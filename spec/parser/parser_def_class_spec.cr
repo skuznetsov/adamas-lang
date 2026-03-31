@@ -160,4 +160,29 @@ describe CrystalV2::Compiler::Frontend::Parser do
     return_type.should_not be_nil
     String.new(return_type.not_nil!).should eq("Int32")
   end
+
+  it "parses tuple-union return types without leaking the rhs into the body" do
+    source = <<-CR
+      def minmax_by?(& : T -> U) : {T, T} | {Nil, Nil} forall U
+        found ? value : {nil, nil}
+      end
+    CR
+
+    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    program = parser.parse_program
+
+    program.roots.size.should eq(1)
+    def_node = program.arena[program.roots.first].as(CrystalV2::Compiler::Frontend::DefNode)
+
+    return_type = def_node.return_type
+    return_type.should_not be_nil
+    String.new(return_type.not_nil!).should eq("{T, T}|{Nil, Nil}")
+
+    body = def_node.body
+    body.should_not be_nil
+    body.not_nil!.size.should eq(1)
+
+    body_node = program.arena[body.not_nil!.first]
+    CrystalV2::Compiler::Frontend.node_kind(body_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Ternary)
+  end
 end

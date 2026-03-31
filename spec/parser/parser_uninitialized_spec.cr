@@ -109,6 +109,46 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       CrystalV2::Compiler::Frontend.node_kind(value).should eq(CrystalV2::Compiler::Frontend::NodeKind::Uninitialized)
     end
 
+    it "parses bare uninitialized expression inside method bodies" do
+      source = <<-CRYSTAL
+      class Slice(T)
+        def self.literal(*elts : T)
+          uninitialized Slice(T)
+        end
+      end
+      CRYSTAL
+
+      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      program = parser.parse_program
+
+      method_def = program.arena[
+        program.arena[program.roots.first].as(CrystalV2::Compiler::Frontend::ClassNode).body.not_nil!.first
+      ].as(CrystalV2::Compiler::Frontend::DefNode)
+
+      body_exprs = method_def.body.not_nil!
+      body_exprs.size.should eq(1)
+
+      value = program.arena[body_exprs.first]
+      CrystalV2::Compiler::Frontend.node_kind(value).should eq(CrystalV2::Compiler::Frontend::NodeKind::Uninitialized)
+
+      type_expr = program.arena[CrystalV2::Compiler::Frontend.node_uninitialized_type(value).not_nil!]
+      CrystalV2::Compiler::Frontend.node_kind(type_expr).should eq(CrystalV2::Compiler::Frontend::NodeKind::Generic)
+    end
+
+    it "parses bare uninitialized as a call argument" do
+      source = "consume(uninitialized UInt8[4])"
+
+      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      program = parser.parse_program
+
+      call = program.arena[program.roots.first]
+      CrystalV2::Compiler::Frontend.node_kind(call).should eq(CrystalV2::Compiler::Frontend::NodeKind::Call)
+
+      arg_id = CrystalV2::Compiler::Frontend.node_args(call).not_nil!.first
+      arg = program.arena[arg_id]
+      CrystalV2::Compiler::Frontend.node_kind(arg).should eq(CrystalV2::Compiler::Frontend::NodeKind::Uninitialized)
+    end
+
     it "parses multiple uninitialized statements" do
       source = <<-CRYSTAL
       x = uninitialized(Int32)
