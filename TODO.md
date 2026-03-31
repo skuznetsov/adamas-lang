@@ -1,6 +1,49 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-03-31)
 
 ## Current Status
+- **Fresh semantic time-span/top-level-overload checkpoint: numeric `seconds`-style unit helpers now exist in the builtin surface, and receiverless overloaded functions like `sleep(...)` now dispatch through the semantic overload matcher instead of falling through as missing globals (2026-03-31, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/type_inference_engine.cr` now treats receiverless `OverloadSetSymbol`s as real top-level calls via `infer_top_level_overload_call(...)` instead of rejecting every overloaded global as missing
+    - the same file now models numeric `Time::Span` unit helpers for both integer and float-like receivers, covering `week(s)`, `day(s)`, `hour(s)`, `minute(s)`, `second(s)`, `millisecond(s)`, `microsecond(s)`, and `nanosecond(s)`
+    - focused regression coverage now lives in `spec/semantic/type_inference_time_span_builtin_spec.cr`
+  - decisive evidence:
+    - focused regression is green:
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_time_span_builtin_spec.cr --error-trace`
+    - rebuild gates are green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+    - the cheap real-prelude carrier moves again:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 180 3072 /tmp/semantic_fiber_user_probe.cr --stats --no-link -o /tmp/semantic_fiber_user_probe.out > /tmp/semantic_fiber_user_probe_after_sleep_span_fix.log 2>&1`
+      - branch-local summary moved from:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=271`
+      - to:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=269`
+      - removed/moved families from the cheap carrier log:
+        - `Method 'seconds' not found on Number`
+        - `Function 'sleep' not found`
+    - the full semantic stage3 probe under the safe wrapper moves too:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 240 4096 src/crystal_v2.cr --stats --no-link -o /tmp/stage3_semantic_probe.out > /tmp/stage3_semantic_probe_after_sleep_span_fix.log 2>&1`
+      - branch-local summary moved from:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=290`
+      - to:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=288`
+      - removed/moved families from the live log:
+        - `Method 'seconds' not found on Number`
+        - `Function 'sleep' not found`
+  - practical boundary:
+    - stage3 with the new inferer is still **not** green
+    - the next honest blockers are now:
+      - `Method 'delete' not found on Event`
+      - `Unknown generic type ''`
+      - later `Int#new`, compiler_rt integer families, and `File.open(...)` / `Location.read_zoneinfo(...)`
 - **Fresh semantic universal-inspect checkpoint: the inferer now models `Object#inspect` / `Object#inspect(io)` as universal methods, which clears the live `Pointer(Void)#inspect io` miss (2026-03-31, current session)**:
   - trustworthy setup:
     - `src/compiler/semantic/type_inference_engine.cr` now includes `inspect` in the universal method surface alongside `to_s`, with both overloads that stdlib `Object` guarantees:

@@ -6257,8 +6257,18 @@ module CrystalV2
         # Handles calls like: identity(42), pair(1, "hi")
         private def infer_top_level_function_call(method_name : String, arg_types : Array(Type), expr_id : ExprId) : Type
           # Lookup method in global symbol table
-          method = @global_table.try(&.lookup(method_name))
-          unless method.is_a?(MethodSymbol)
+          symbol = @global_table.try(&.lookup(method_name))
+
+          case symbol
+          when OverloadSetSymbol
+            if result = infer_top_level_overload_call(symbol, arg_types)
+              return result
+            end
+            emit_error("Function '#{method_name}' not found", expr_id)
+            return @context.nil_type
+          when MethodSymbol
+            method = symbol
+          else
             emit_error("Function '#{method_name}' not found", expr_id)
             return @context.nil_type
           end
@@ -6295,6 +6305,39 @@ module CrystalV2
             else
               return infer_method_body_type(method, @context.nil_type, arg_types)
             end
+          end
+        end
+
+        private def infer_top_level_overload_call(symbol : OverloadSetSymbol, arg_types : Array(Type)) : Type?
+          matches = symbol.overloads.select do |method|
+            required = count_required_params(method.params)
+            has_splat = method.params.any? { |param| param.is_splat || param.is_double_splat }
+            max = has_splat ? Int32::MAX : method.params.count { |param| !param.is_block }
+            next false unless arg_types.size >= required && arg_types.size <= max
+            next false if method.params.any?(&.is_block)
+
+            parameters_match?(method, arg_types, @context.nil_type)
+          end
+
+          return nil if matches.empty?
+
+          selected = if matches.size == 1
+                       matches.first
+                     else
+                       matches.max_by { |method| specificity_score(method, arg_types) }
+                     end
+
+          if type_params = selected.type_parameters
+            type_args = infer_method_type_arguments(selected, @context.nil_type, arg_types)
+            if ret_ann = selected.return_annotation
+              substitute_type_parameters(ret_ann, type_args, type_params)
+            else
+              infer_method_body_type(selected, @context.nil_type, arg_types)
+            end
+          elsif ret_ann = selected.return_annotation
+            parse_type_name(ret_ann)
+          else
+            infer_method_body_type(selected, @context.nil_type, arg_types)
           end
         end
 
@@ -7726,6 +7769,17 @@ module CrystalV2
             return methods unless methods.empty?
           end
 
+          if time_span_numeric_method_name?(method_name) && time_span_numeric_receiver_name?(type_name)
+            methods << MethodSymbol.new(
+              method_name,
+              dummy_node_id,
+              params: [] of Frontend::Parameter,
+              return_annotation: "Time::Span",
+              scope: dummy_scope
+            )
+            return methods
+          end
+
           if integer_primitive_name?(type_name)
             # Integer arithmetic and bitwise operators
             case method_name
@@ -8068,6 +8122,24 @@ module CrystalV2
           end
 
           methods
+        end
+
+        private def time_span_numeric_method_name?(method_name : String) : Bool
+          case method_name
+          when "weeks", "week", "days", "day", "hours", "hour", "minutes", "minute",
+               "seconds", "second", "milliseconds", "millisecond",
+               "microseconds", "microsecond", "nanoseconds", "nanosecond"
+            true
+          else
+            false
+          end
+        end
+
+        private def time_span_numeric_receiver_name?(type_name : String) : Bool
+          return true if integer_primitive_name?(type_name)
+          return true if {"Float32", "Float64", "Number", "Int", "UInt"}.includes?(type_name)
+
+          false
         end
 
         # Phase 9: Built-in methods for Array(T)

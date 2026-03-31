@@ -3,6 +3,34 @@
 Updated: 2026-03-31
 Context: compiler/bootstrap/stage2-stability
 
+[LM-384|verified]: Once [LM-383] removed the universal `inspect` miss, the next
+head blocker was a paired `Number#seconds` / `Function 'sleep' not found`
+corridor in the real prelude carrier. The split reproducer in
+`spec/semantic/type_inference_time_span_builtin_spec.cr` falsified a simpler
+"just add `Number#seconds`" theory: after the numeric time-unit builtin landed,
+the synthetic case still failed because receiverless overloaded top-level calls
+were being rejected wholesale. The verified fix in
+`src/compiler/semantic/type_inference_engine.cr` is therefore two-part: it now
+models numeric `Time::Span` unit helpers (`week(s)`, `day(s)`, `hour(s)`,
+`minute(s)`, `second(s)`, `millisecond(s)`, `microsecond(s)`,
+`nanosecond(s)`) for integer/float-like receivers, and it adds a dedicated
+`infer_top_level_overload_call(...)` path so `OverloadSetSymbol`s like
+`sleep(seconds : Number)` / `sleep(time : Time::Span)` are matched instead of
+falling through as missing globals. Focused regression
+`spec/semantic/type_inference_time_span_builtin_spec.cr` is green; both rebuild
+gates for `src/crystal_v2.cr` and `/tmp/crystal_v2_semantic_stage3probe` are
+green; the cheap real-prelude carrier moves from
+`semantic_diags=0 resolution_diags=0 type_diags=271` to
+`semantic_diags=0 resolution_diags=0 type_diags=269`; and the full safe stage3
+probe moves from `semantic_diags=0 resolution_diags=0 type_diags=290` to
+`semantic_diags=0 resolution_diags=0 type_diags=288`. The live logs no longer
+contain `Method 'seconds' not found on Number` or `Function 'sleep' not found`.
+Boundary: stage3 is still not green; the next head frontier is now
+`Event#delete`, `Unknown generic type ''`, and then later `Int#new` /
+compiler_rt / `File.open(...)` / `Location.read_zoneinfo(...)` surfaces rather
+than numeric time-span helpers or top-level overload dispatch.
+{F/G/R: 0.96/0.84/0.98} [verified]
+
 [LM-383|verified]: The next early blocker after [LM-382] was not another
 pointer-specific surface gap. Once the `pthread_create` ambiguity was gone, the
 new head log exposed `Method 'inspect' not found on Pointer(Void)` from
