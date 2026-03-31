@@ -1,6 +1,50 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-03-31)
 
 ## Current Status
+- **Fresh semantic Fiber-reopen checkpoint: class reopens now preserve ivar metadata, and begin-wrapped class-body `initialize(@x : T, &@proc : ->)` definitions contribute that metadata without eager macro-expansion regressions (2026-03-31, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/collectors/symbol_collector.cr` no longer eagerly macro-expands every `{% begin %}` it sees while scanning ivars; it only reparses raw class-body macro text for top-level begin wrappers (`current_method.nil?`), which keeps constructor ivar params from begin-wrapped `initialize` visible without executing nested macro DSL from ordinary method bodies
+    - `src/compiler/semantic/collectors/symbol_collector.cr` also now preserves semantic class metadata when a class is reopened: `handle_class_redefinition(...)` merges the existing `ClassSymbol`'s `instance_var_infos`, class annotations, and ivar annotations into the replacement symbol instead of silently dropping them
+    - `src/compiler/semantic/symbol.cr` now exposes `ClassSymbol#merge_semantic_metadata_from(...)` so reopen paths can preserve ivar metadata and annotations consistently
+    - focused regression coverage now lives in `spec/semantic/type_inference_constructor_ivar_param_spec.cr`
+  - decisive evidence:
+    - focused regression pack is green:
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_constructor_ivar_param_spec.cr --error-trace`
+    - rebuild gates are green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+    - the cheap real-prelude carrier moves and the old Fiber trio disappears:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 180 3072 /tmp/semantic_fiber_user_probe.cr --stats --no-link -o /tmp/semantic_fiber_user_probe_after_reopen_merge_fix.out > /tmp/semantic_fiber_user_probe_after_reopen_merge_fix.log 2>&1`
+      - branch-local summary moved from:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=276`
+      - to:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=274`
+      - removed/moved families from the cheap carrier log:
+        - `Method 'call' not found on Nil`
+        - `Method 'stack_top' not found on Nil`
+        - `Method 'bottom' not found on Nil`
+    - the full semantic stage3 probe under the safe wrapper moves too:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 240 4096 src/crystal_v2.cr --stats --no-link -o /tmp/stage3_semantic_probe.out > /tmp/stage3_semantic_probe_after_fiber_reopen_merge_fix.log 2>&1`
+      - branch-local summary moved from:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=295`
+      - to:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=293`
+  - practical boundary:
+    - stage3 with the new inferer is still **not** green
+    - the old Fiber head blocker is gone; the next honest frontier is now later runtime surface:
+      - `LibGC.pthread_create(...)`
+      - `Errno.new(ret)`
+      - `sleep(...)`
+      - `File.open(...)`
+      - later `file.close` / `Location.read_zoneinfo(...)`
 - **Fresh semantic root-constant checkpoint: constant-like bare identifiers now prefer lexical/root constants over included-module namespace siblings, which clears the live `Thread -> Fiber.new/Fiber.inactive` family (2026-03-31, current session)**:
   - trustworthy setup:
     - `src/compiler/semantic/resolvers/name_resolver.cr` now gives constant-like identifiers (`Fiber`, `Signal`, etc.) a stricter lookup priority: lexical owner scopes and root constants are checked before the broad `@current_table.lookup(...)` chain that walks included modules and their parent namespaces

@@ -151,6 +151,36 @@ module CrystalV2
           list << annotation_info
         end
 
+        def merge_semantic_metadata_from(other : ClassSymbol) : Nil
+          other.instance_var_infos.each_value do |info|
+            existing = @instance_var_infos[info.name]?
+            next if existing && !prefer_merged_instance_var_info?(existing, info)
+
+            @instance_var_infos[info.name] = info
+          end
+
+          other.annotations.each do |entry|
+            @annotations << entry unless @annotations.includes?(entry)
+          end
+
+          other.ivar_annotations.each do |name, entries|
+            list = @ivar_annotations[name]?
+            unless list
+              list = [] of AnnotationInfo
+              @ivar_annotations[name] = list
+            end
+            entries.each do |entry|
+              list << entry unless list.includes?(entry)
+            end
+          end
+        end
+
+        private def prefer_merged_instance_var_info?(existing : InstanceVarInfo, candidate : InstanceVarInfo) : Bool
+          return true if existing.type_annotation.nil? && !candidate.type_annotation.nil?
+          return true if !existing.has_default? && candidate.has_default?
+          false
+        end
+
         # Phase 87B-4B: Get all method names defined in this class (for @type.methods)
         def methods : Array(String)
           result = [] of String

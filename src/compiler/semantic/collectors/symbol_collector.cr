@@ -1651,7 +1651,70 @@ module CrystalV2
             (node.else_body || [] of Frontend::ExprId).each { |e| scan_for_instance_vars(class_symbol, e, current_method) }
           when Frontend::WhileNode
             node.body.each { |e| scan_for_instance_vars(class_symbol, e, current_method) }
+          when Frontend::MacroIfNode
+            if current_method.nil? && begin_style_class_body_macro?(node)
+              scan_instance_vars_in_begin_class_body_macro(class_symbol, node.then_body, expr_id, current_method)
+            end
           end
+        end
+
+        private def begin_style_class_body_macro?(node : Frontend::MacroIfNode) : Bool
+          return false unless node.else_body.nil?
+
+          condition = arena[node.condition]
+          return false unless condition.is_a?(Frontend::BoolNode)
+          return false unless condition.value
+
+          arena[node.then_body].is_a?(Frontend::MacroLiteralNode)
+        end
+
+        private def scan_instance_vars_in_begin_class_body_macro(
+          class_symbol : ClassSymbol,
+          macro_body_id : Frontend::ExprId,
+          origin_node_id : Frontend::ExprId,
+          current_method : Frontend::DefNode? = nil
+        ) : Nil
+          macro_body = arena[macro_body_id]
+          return unless macro_body.is_a?(Frontend::MacroLiteralNode)
+          return unless output = raw_macro_literal_body_source(macro_body_id, macro_body)
+
+          expanded_id = track_generated_nodes(origin_node_id) do
+            @macro_expander.diagnostics.clear
+            if output.strip.empty?
+              Frontend::ExprId.new(-1)
+            else
+              @macro_expander.reparse_output(wrap_class_body_macro_output(output), origin_node_id)
+            end
+          end
+          @macro_expander.diagnostics.each { |entry| @diagnostics << entry }
+          return if expanded_id.invalid?
+
+          expanded_node = arena[expanded_id]
+          if expanded_node.is_a?(Frontend::ClassNode)
+            (expanded_node.body || [] of Frontend::ExprId).each do |expanded_expr_id|
+              scan_for_instance_vars(class_symbol, expanded_expr_id, current_method)
+            end
+          else
+            scan_for_instance_vars(class_symbol, expanded_id, current_method)
+          end
+        end
+
+        private def raw_macro_literal_body_source(
+          node_id : Frontend::ExprId,
+          node : Frontend::MacroLiteralNode
+        ) : String?
+          source = macro_source_for(node_id)
+          return nil unless source
+
+          span = node.span
+          start = span.start_offset
+          finish = span.end_offset
+          return "" if finish <= start
+          return nil if start < 0 || start >= source.bytesize
+
+          length = finish - start
+          length = source.bytesize - start if start + length > source.bytesize
+          source.byte_slice(start, length)
         end
 
         private def scan_initialize_param_instance_vars(
@@ -1775,6 +1838,7 @@ module CrystalV2
               is_abstract: new_symbol.is_abstract? || existing.is_abstract?,
               explicit_superclass: new_symbol.explicit_superclass? || existing.explicit_superclass?
             )
+            new_symbol.merge_semantic_metadata_from(existing)
             assign_symbol_file(new_symbol, new_symbol.node_id)
             new_symbol.merge_declaration_origins_from(existing)
             table.redefine(name, new_symbol)

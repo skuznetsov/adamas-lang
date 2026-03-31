@@ -44,6 +44,47 @@ describe Semantic::TypeInferenceEngine do
       engine.diagnostics.should be_empty
     end
 
+    it "registers typed block ivar params when initialize is wrapped in a macro body" do
+      source = <<-CRYSTAL
+        class Context
+          def stack_top
+            1
+          end
+        end
+
+        class Stack
+          def bottom
+            1
+          end
+        end
+
+        class Fiber
+          @context : Context
+          @stack : Stack
+
+          {% begin %}
+            def initialize(@name : String?, @stack : Stack, &@proc : ->)
+              @context = Context.new
+            end
+          {% end %}
+
+          def run
+            @proc.call
+          end
+        end
+      CRYSTAL
+
+      _, analyzer, engine = infer_constructor_ivar_param_types(source)
+      fiber_symbol = analyzer.global_context.symbol_table.lookup("Fiber").as(Semantic::ClassSymbol)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      fiber_symbol.get_instance_var_type("proc").should eq("->")
+      fiber_symbol.get_instance_var_type("context").should eq("Context")
+      fiber_symbol.get_instance_var_type("stack").should eq("Stack")
+      engine.diagnostics.should be_empty
+    end
+
     it "registers typed ivar params for nilable flow use" do
       source = <<-CRYSTAL
         class Worker
@@ -68,6 +109,56 @@ describe Semantic::TypeInferenceEngine do
       analyzer.name_resolver_diagnostics.should be_empty
       engine.diagnostics.should be_empty
       engine.context.get_type(program.roots.last).to_s.should eq("String")
+    end
+
+    it "preserves ivar metadata across class reopens" do
+      source = <<-CRYSTAL
+        class Context
+          def stack_top
+            1
+          end
+        end
+
+        class Stack
+          def bottom
+            1
+          end
+        end
+
+        class Fiber
+          @context : Context
+          @stack : Stack
+
+          {% begin %}
+            def initialize(@name : String?, @stack : Stack, &@proc : ->)
+              @context = Context.new
+            end
+          {% end %}
+        end
+
+        class Fiber
+          def run
+            @proc.call
+          end
+
+          def push_gc_roots
+            @context.stack_top
+            @stack.bottom
+          end
+        end
+
+        Fiber.new(nil, Stack.new) { nil }.run
+      CRYSTAL
+
+      _, analyzer, engine = infer_constructor_ivar_param_types(source)
+      fiber_symbol = analyzer.global_context.symbol_table.lookup("Fiber").as(Semantic::ClassSymbol)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      fiber_symbol.get_instance_var_type("proc").should eq("->")
+      fiber_symbol.get_instance_var_type("context").should eq("Context")
+      fiber_symbol.get_instance_var_type("stack").should eq("Stack")
+      engine.diagnostics.should be_empty
     end
   end
 end

@@ -3,6 +3,43 @@
 Updated: 2026-03-31
 Context: compiler/bootstrap/stage2-stability
 
+[LM-381|verified]: The next apparent `Fiber#@proc.call` / `@context.stack_top`
+/ `@stack.bottom` head blocker after [LM-380] was not another
+method-body-inference-only context bug. Two falsifiers split it cleanly. First,
+an isolated host-side probe over the real [fiber.cr] shape with a `{% begin %}`
+wrapper around both `self.new` and `initialize(@name, @stack, &@proc : ->)`
+became green once `src/compiler/semantic/collectors/symbol_collector.cr`
+stopped eagerly expanding begin-wrapped class-body macros and instead reparsed
+their raw class-body text only at top level (`current_method.nil?`), which
+proved there was a real local collector hole for begin-wrapped constructor ivar
+params but also that this hole alone did not explain the live prelude miss.
+Second, a one-file collector probe over the actual `src/stdlib/fiber.cr` showed
+that `ClassSymbol("Fiber")` already had `proc => "->"`, `context => "Context"`,
+and `stack => "Stack"` when the file was analyzed in isolation, while the full
+prelude carrier still inferred those ivars as `Nil`. That contradiction pointed
+directly at class reopen handling. The verified root cause was in
+`handle_class_redefinition(...)`: every `class Fiber` reopen created a fresh
+`ClassSymbol` and reused scopes, but dropped semantic metadata such as
+`instance_var_infos`, class annotations, and ivar annotations. The verified fix
+is two-part: `ClassSymbol#merge_semantic_metadata_from(...)` in
+`src/compiler/semantic/symbol.cr` now preserves those metadata buckets across
+reopens, and `handle_class_redefinition(...)` in
+`src/compiler/semantic/collectors/symbol_collector.cr` applies that merge
+before redefining the symbol. Focused regression
+`spec/semantic/type_inference_constructor_ivar_param_spec.cr` is green with a
+split `class Fiber` reproducer, both rebuild gates for `src/crystal_v2.cr` and
+`/tmp/crystal_v2_semantic_stage3probe` are green, the cheap real-prelude
+carrier moves from `semantic_diags=0 resolution_diags=0 type_diags=276` to
+`semantic_diags=0 resolution_diags=0 type_diags=274`, and the full safe stage3
+probe moves from `semantic_diags=0 resolution_diags=0 type_diags=295` to
+`semantic_diags=0 resolution_diags=0 type_diags=293`. The old head trio
+`Method 'call' not found on Nil`, `Method 'stack_top' not found on Nil`, and
+`Method 'bottom' not found on Nil` disappears from the live logs. Boundary:
+stage3 is still not green; the next live frontier is now later runtime surface
+(`LibGC.pthread_create(...)`, `Errno.new(ret)`, `sleep(...)`, `File.open(...)`,
+and later `file.close` / `Location.read_zoneinfo(...)`) rather than more Fiber
+ivar metadata loss. {F/G/R: 0.96/0.76/0.98} [verified]
+
 [LM-380|verified]: The next `Thread -> Fiber.new/Fiber.inactive` frontier after
 [LM-379] was not another inferer-side receiver-context bug. A cheap real-prelude
 carrier (`/tmp/semantic_fiber_user_probe.cr` with just `Fiber.new { nil }`)
