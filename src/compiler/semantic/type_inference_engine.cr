@@ -7433,6 +7433,24 @@ module CrystalV2
             end
           end
 
+          if child_symbol = class_symbol_for_subtype_check(child)
+            if parent_symbol = class_symbol_for_subtype_check(parent)
+              current_symbol : ClassSymbol? = child_symbol
+              visited = Set(ClassSymbol).new
+
+              while current_symbol && !visited.includes?(current_symbol)
+                return true if current_symbol == parent_symbol
+                visited << current_symbol
+
+                superclass_name = current_symbol.superclass_name
+                break unless superclass_name
+                current_symbol = resolve_class_symbol_from_scope(current_symbol.scope, superclass_name)
+              end
+
+              return false
+            end
+          end
+
           child_name = case child
                        when InstanceType  then child.class_symbol.name
                        when ClassType     then child.symbol.name
@@ -7470,6 +7488,35 @@ module CrystalV2
           end
 
           false
+        end
+
+        private def class_symbol_for_subtype_check(type : Type) : ClassSymbol?
+          case type
+          when InstanceType
+            type.class_symbol
+          when ClassType
+            type.symbol
+          when VirtualType
+            type.base_class
+          else
+            nil
+          end
+        end
+
+        private def resolve_class_symbol_from_scope(scope : SymbolTable, name : String) : ClassSymbol?
+          if name.includes?("::")
+            return resolve_scoped_symbol(name).as?(ClassSymbol)
+          end
+
+          table : SymbolTable? = scope
+          while table
+            if symbol = table.lookup(name)
+              return symbol.as?(ClassSymbol)
+            end
+            table = table.parent
+          end
+
+          nil
         end
 
         private def signed_integer_type_name?(name : String) : Bool

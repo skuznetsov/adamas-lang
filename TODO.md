@@ -1,6 +1,39 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-03-31)
 
 ## Current Status
+- **Fresh semantic nested-subtype checkpoint: nested class receivers now participate in subtype checks, which clears the live `Crystal.print_buffered(..., to: STDERR)` family (2026-03-31, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/type_inference_engine.cr` now performs subtype walks via concrete `ClassSymbol` owners when available, instead of relying only on bare-name lookups in the global table
+    - that same subtype walk now resolves superclass names relative to the current class scope/parent tables, so nested definitions like `IO::FileDescriptor < IO` are recognized as `IO` subtypes during semantic call matching
+    - focused regression coverage now lives in `spec/semantic/type_inference_named_args_spec.cr`
+  - decisive evidence:
+    - focused regressions are green:
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_named_args_spec.cr --error-trace`
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_pthread_mutex_spec.cr --error-trace`
+    - rebuild gates are green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+    - the full semantic stage3 probe under the safe wrapper moves again:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 240 4096 src/crystal_v2.cr --stats --no-link -o /tmp/stage3_semantic_probe.out > /tmp/stage3_semantic_probe_after_nested_subtype_fix.log 2>&1`
+      - branch-local summary moved from:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=306`
+      - to:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=304`
+    - removed/moved families from the live log:
+      - the old `Crystal.print_buffered(...)` family is absent from the full probe
+      - the next live frontier is now narrower and later:
+        - `@proc.call`
+        - `LibGC.pthread_create(...)`
+        - `Errno.new(ret)`
+        - `Fiber.new(...)`
+        - later `file.close` / Nil cascades
+  - practical boundary:
+    - stage3 with the new inferer is still **not** green
+    - the next honest frontier is no longer `STDERR` / nested subtype matching; it is the remaining runtime/fiber quartet above
 - **Fresh semantic trace-enum checkpoint: relative scoped annotations now resolve in local module scope, enum symbol literals are matched call-site-sensitively, and named-arg reordering no longer rejects `**metadata` tails (2026-03-31, current session)**:
   - trustworthy setup:
     - `src/compiler/semantic/type_inference_engine.cr` now resolves scoped annotation names like `Tracing::Section` by walking parent symbol tables from the current method scope before falling back to global `parse_type_name(...)`

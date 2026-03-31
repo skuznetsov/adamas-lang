@@ -85,6 +85,49 @@ describe Semantic::TypeInferenceEngine do
       engine.context.get_type(program.roots.last).to_s.should eq("Nil")
     end
 
+    it "matches nested subtype constants against parent annotations in named calls" do
+      units = [
+        {
+          path: "/stdlib/io.cr",
+          source: <<-CRYSTAL,
+            abstract class IO
+            end
+
+            class IO::FileDescriptor < IO
+              def self.from_stdio(fd : Int32) : self
+                new
+              end
+            end
+
+            STDERR = IO::FileDescriptor.from_stdio(2)
+          CRYSTAL
+        },
+        {
+          path: "/stdlib/print_buffered.cr",
+          source: <<-CRYSTAL,
+            class Exception
+            end
+
+            module Crystal
+              def self.print_buffered(message : String, *args, to io : IO, exception = nil, backtrace = nil) : Nil
+                nil
+              end
+            end
+
+            ex = Exception.new
+            Crystal.print_buffered("Unhandled exception in spawn", exception: ex, to: STDERR)
+          CRYSTAL
+        },
+      ]
+
+      program, analyzer, engine = infer_named_arg_types(units)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.should be_empty
+      engine.context.get_type(program.roots.last).to_s.should eq("Nil")
+    end
+
     it "matches enum symbol literals for methods with double splat metadata tails" do
       units = [
         {
