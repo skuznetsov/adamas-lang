@@ -788,13 +788,27 @@ module CrystalV2
           segments = collect_path_segments(node)
           return if segments.empty?
 
-          symbol = resolve_path_in_tables(@current_table, segments) || resolve_path_in_tables(@root_table, segments)
+          symbol =
+            if absolute_path?(node)
+              resolve_path_in_tables(@root_table, segments)
+            else
+              resolve_path_in_tables(@current_table, segments) || resolve_path_in_tables(@root_table, segments)
+            end
           if symbol
             @identifier_symbols[node_id] = symbol
           elsif top_level_scope?
             @diagnostics << Diagnostic.new("uninitialized constant #{segments.join("::")}", node.span, node_id)
           end
         end
+
+      private def absolute_path?(node : Frontend::PathNode) : Bool
+        if left_id = node.left
+          left = @arena[left_id]
+          left.is_a?(Frontend::PathNode) && absolute_path?(left)
+        else
+          true
+        end
+      end
 
       private def collect_path_segments(node : Frontend::PathNode) : Array(String)
         result = [] of String

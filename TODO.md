@@ -1,6 +1,48 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-03-31)
 
 ## Current Status
+- **Fresh semantic absolute-root-path checkpoint: `::Signal`/`::File` now stay rooted at top level instead of collapsing into enclosing modules, and the live stage3 gate moved again (2026-03-31, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/resolvers/name_resolver.cr` now distinguishes absolute `PathNode`s from relative ones and resolves `::Foo::Bar` against the root symbol table only
+    - `src/compiler/semantic/type_inference_engine.cr` now preserves the same absolute-path semantics in `resolve_path_symbol(...)` instead of first trying enclosing namespaces/current lookup tables
+    - the fix is bounded to rooted path semantics; it does not widen builtin surface or add new constructor heuristics
+    - focused regression coverage now lives in `spec/semantic/type_inference_absolute_path_spec.cr`
+  - decisive evidence:
+    - focused regressions are green:
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_absolute_path_spec.cr --error-trace`
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_typeof_receiver_spec.cr --error-trace`
+    - rebuild gates are green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+    - the representative tiny default-prelude carrier moves under the safe wrapper:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 120 2048 /tmp/semantic_thread_mutex_default_probe.cr --stats --no-link -o /tmp/semantic_thread_mutex_default_probe.out > /tmp/semantic_thread_mutex_default_probe_post.log 2>&1`
+      - summary moved from:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=243`
+      - to:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=235`
+      - `Method 'new' not found on Signal` disappears from that carrier
+    - the full semantic stage3 probe under the safe wrapper moves again:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 240 4096 src/crystal_v2.cr --stats --no-link -o /tmp/stage3_semantic_probe.out > /tmp/stage3_semantic_probe_current.log 2>&1`
+      - summary moved from:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=276`
+      - to:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=268`
+    - the old `Method 'new' not found on Signal` family is absent from `/tmp/stage3_semantic_probe_current.log`
+  - practical boundary:
+    - stage3 with the new inferer is still **not** green
+    - the next honest frontier is now denser runtime/body-inference surface:
+      - `pthread_mutex_*` / `Errno.new(ret)`
+      - `Sigaction.@sa_mask` / `LibC.sigemptyset` / `LibC.sigaction`
+      - `Thread.threads`
+      - later `Nil` arithmetic / `Int128` compiler_rt families
 - **Fresh semantic `typeof(...).new(...)` checkpoint: `typeof` receivers now stay type-valued for class-method lookup, and the real `Int64.new` family is gone from the live stage3 log (2026-03-31, current session)**:
   - trustworthy setup:
     - `src/compiler/semantic/type_inference_engine.cr` now treats `Frontend::TypeofNode` as a type-receiver expression in `type_receiver_expression?(...)`

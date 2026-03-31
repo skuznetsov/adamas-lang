@@ -4327,6 +4327,10 @@ module CrystalV2
           debug("  segments=#{segments.inspect}") if @debug_enabled
           return nil if segments.empty?
 
+          if absolute_path?(node)
+            return resolve_path_symbol_in_table(@global_table.not_nil!, segments)
+          end
+
           if symbol = resolve_enclosing_namespace_path(segments)
             return symbol
           end
@@ -4338,6 +4342,15 @@ module CrystalV2
           end
 
           nil
+        end
+
+        private def absolute_path?(node : Frontend::PathNode) : Bool
+          if left_id = node.left
+            left = @arena[left_id]
+            left.is_a?(Frontend::PathNode) && absolute_path?(left)
+          else
+            true
+          end
         end
 
         private def resolve_enclosing_namespace_path(segments : Array(String)) : Symbol?

@@ -3,6 +3,37 @@
 Updated: 2026-03-31
 Context: compiler/bootstrap/stage2-stability
 
+[LM-373|verified]: The next live stage3 blocker after [LM-372] was not another
+primitive constructor miss. A richer diagnostic pass over the real 272-file
+default-prelude carrier showed that symbol collection already had the needed
+surface (`LibC.pthread_mutex_lock`, `LibC.sigemptyset`, `LibC.sigaction`,
+`GC.pthread_create`, and the root `Signal` enum were all present), but the
+actual failing call site `::Signal.new(...)` inside
+`src/stdlib/crystal/system/unix/pthread.cr` still resolved its receiver as the
+shadowing module `Crystal::System::Signal`, not the root enum `::Signal`. The
+shared root cause was that both `NameResolver` and `TypeInferenceEngine`
+flattened `PathNode` segments without preserving whether the original path was
+absolute (`::Foo::Bar`), so rooted paths still walked current/enclosing scopes
+before root lookup. The verified fix is bounded and cross-layer:
+`src/compiler/semantic/resolvers/name_resolver.cr` now resolves absolute paths
+against the root table only, and
+`src/compiler/semantic/type_inference_engine.cr` now does the same in
+`resolve_path_symbol(...)`. Focused regression
+`spec/semantic/type_inference_absolute_path_spec.cr` is green, neighboring
+`spec/semantic/type_inference_typeof_receiver_spec.cr` stays green, both
+rebuild gates for `src/crystal_v2.cr` and `/tmp/crystal_v2_semantic_stage3probe`
+are green, the representative tiny default-prelude carrier moves from
+`semantic_diags=0 resolution_diags=0 type_diags=243` to
+`semantic_diags=0 resolution_diags=0 type_diags=235`, and the full safe stage3
+probe moves from `semantic_diags=0 resolution_diags=0 type_diags=276` to
+`semantic_diags=0 resolution_diags=0 type_diags=268`. The old
+`Method 'new' not found on Signal` family disappears from the live logs.
+Boundary: stage3 is still not green; the next live frontier is the denser
+runtime/body-inference surface around `pthread_mutex_*`, `Errno.new(ret)`,
+`Sigaction.@sa_mask`, `LibC.sigemptyset` / `LibC.sigaction`, `Thread.threads`,
+and later `Nil` arithmetic / `Int128` compiler_rt families rather than more
+absolute-path resolution. {F/G/R: 0.96/0.74/0.97} [verified]
+
 [LM-372|verified]: The next live stage3 blocker after [LM-371] was not another
 missing primitive numeric builtin table entry. A cheap exact falsifier showed
 that `typeof(x).new(2)` still failed with `Method 'new' not found on Int64`,
