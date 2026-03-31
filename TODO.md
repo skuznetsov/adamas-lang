@@ -1,6 +1,33 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-03-30)
 
 ## Current Status
+- **Fresh semantic prepass checkpoint: `responds_to?` guards now narrow `self` and simple receivers to concrete implementors, which removes the live `IO#unbuffered_pos` blocker from full stage3 (2026-03-30, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/type_inference_engine.cr` now extracts branch-local narrowing from `responds_to?` conditions
+    - the new narrowing handles `self`, plain identifiers, and assignment-introduced receivers
+    - for base-class receivers it narrows to the concrete descendant instance types that actually implement the guarded method name, including nested classes such as `IO::FileDescriptor`
+    - `infer_self` now honors the branch-local `self` narrowing key inside guarded branches
+    - focused regression coverage lives in `spec/semantic/type_inference_responds_to_narrowing_spec.cr`
+  - decisive evidence:
+    - focused regressions are green:
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_responds_to_narrowing_spec.cr --error-trace`
+    - rebuild gates are green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+    - full semantic stage3 probe moved again under the safe wrapper:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 180 4096 src/crystal_v2.cr --stats --no-link -o /tmp/stage3_semantic_probe.out > /tmp/stage3_semantic_probe.log 2>&1`
+      - summary moved from:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=492`
+      - to:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=490`
+    - `Method 'unbuffered_pos' not found on IO` no longer appears in `/tmp/stage3_semantic_probe.log`
+  - practical boundary:
+    - stage3 with the new inferer is still **not** green
+    - the remaining frontier is now the denser runtime/API surface after `io/buffered`, not `responds_to?` on `self`
 - **Fresh semantic prepass checkpoint: `Tuple#min`/`max` now type-check on zero-arg tuple receivers, which cuts another large `ryu_printf` branch out of the live stage3 graph (2026-03-30, current session)**:
   - trustworthy setup:
     - `src/compiler/semantic/type_inference_engine.cr` now models zero-arg tuple builtins `min` and `max`

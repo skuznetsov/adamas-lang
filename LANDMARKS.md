@@ -3,6 +3,24 @@
 Updated: 2026-03-30
 Context: compiler/bootstrap/stage2-stability
 
+[LM-356|verified]: Branch-local `responds_to?` guards now narrow both `self`
+and simple receivers to concrete implementors, which closes the live
+`IO#unbuffered_pos` blocker in `src/stdlib/io/buffered.cr`. The verified fix
+in `src/compiler/semantic/type_inference_engine.cr` extracts narrowing from
+`RespondsToNode` conditions, supports `self`, identifiers, and assignment
+receivers, recursively scans nested class/module scopes to find descendant
+implementors such as `IO::FileDescriptor`, and teaches `infer_self` to honor a
+special branch-local `self` narrowing key. Focused regression
+`spec/semantic/type_inference_responds_to_narrowing_spec.cr` is green, both
+rebuild gates for `src/crystal_v2.cr` and `/tmp/crystal_v2_semantic_stage3probe`
+are green, and the full semantic stage3 probe under `scripts/run_safe.sh`
+moved from `semantic_diags=0 resolution_diags=0 type_diags=492` to
+`semantic_diags=0 resolution_diags=0 type_diags=490`. The old
+`Method 'unbuffered_pos' not found on IO` family no longer appears in
+`/tmp/stage3_semantic_probe.log`. Boundary: stage3 is still not green; the
+remaining work is now in denser runtime/API surfaces beyond this `responds_to?`
+contract. {F/G/R: 0.95/0.67/0.96} [verified]
+
 [LM-355|verified]: The new inferer was still missing a precise enum-helper
 contract: enum type receivers such as `Errno.new(code)` and nested flags enums
 such as `Regex::MatchOptions.new(0).none?` were degrading to “method not

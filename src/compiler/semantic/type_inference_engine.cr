@@ -68,6 +68,7 @@ module CrystalV2
         @member_name_cache : Array(String?)
         @node_kind_cache : Array(Frontend::NodeKind?)
         @method_candidates_cache : Hash(MethodCandidatesKey, Array(MethodSymbol))
+        @responds_to_narrowing_cache : Hash(RespondsToNarrowingKey, Type?)
         @parse_type_cache : Hash(String, Type)
         @class_type_cache : Hash(ClassSymbol, ClassType)
         @module_type_cache : Hash(ModuleSymbol, ModuleType)
@@ -75,6 +76,8 @@ module CrystalV2
         @method_lookup_cache : Hash(MethodLookupKey, MethodSymbol?)
         @unknown_type : PrimitiveType
         @flags : Set(String)
+
+        SELF_FLOW_NARROWING_KEY = "<self>"
 
         private struct MethodCandidatesKey
           getter receiver_id : UInt64
@@ -117,6 +120,23 @@ module CrystalV2
           end
         end
 
+        private struct RespondsToNarrowingKey
+          getter receiver_id : UInt64
+          getter name : String
+
+          def initialize(receiver : Type, @name : String)
+            @receiver_id = receiver.object_id
+          end
+
+          def hash : UInt64
+            receiver_id.hash ^ name.hash
+          end
+
+          def ==(other : RespondsToNarrowingKey) : Bool
+            receiver_id == other.receiver_id && name == other.name
+          end
+        end
+
         def initialize(
           @program : Frontend::Program,
           @identifier_symbols : Hash(ExprId, Symbol),
@@ -139,6 +159,7 @@ module CrystalV2
           @member_name_cache = Array(String?).new(@arena.size)
           @node_kind_cache = Array(Frontend::NodeKind?).new(@arena.size)
           @method_candidates_cache = {} of MethodCandidatesKey => Array(MethodSymbol)
+          @responds_to_narrowing_cache = {} of RespondsToNarrowingKey => Type?
           @parse_type_cache = {} of String => Type
           @class_type_cache = {} of ClassSymbol => ClassType
           @module_type_cache = {} of ModuleSymbol => ModuleType
@@ -2594,6 +2615,7 @@ module CrystalV2
 
           # Phase 95: Extract flow narrowing from is_a? condition
           narrowing = extract_is_a_narrowing(condition_id)
+          responds_to_narrowing = extract_responds_to_narrowing(condition_id)
 
           # Phase 96: Extract truthy narrowings from nilable conditions.
           # This includes simple identifiers/assignments and the right-hand side
@@ -2610,6 +2632,9 @@ module CrystalV2
               @flow_narrowings[var_name] = narrowed_type
             end
           end
+          if responds_to_narrowing
+            @flow_narrowings[responds_to_narrowing[0]] = responds_to_narrowing[1]
+          end
 
           then_type = infer_block_result(node.then_body)
 
@@ -2621,6 +2646,9 @@ module CrystalV2
               @flow_narrowings.delete(var_name)
             end
           end
+          if responds_to_narrowing
+            @flow_narrowings.delete(responds_to_narrowing[0])
+          end
 
           elsif_types = [] of Type
           if elsifs = node.elsifs
@@ -2630,6 +2658,7 @@ module CrystalV2
 
               # Phase 95: Extract flow narrowing for elsif branch
               elsif_narrowing = extract_is_a_narrowing(branch_condition)
+              elsif_responds_to_narrowing = extract_responds_to_narrowing(branch_condition)
               elsif_truthy_narrowings = [] of {String, Type}
               if elsif_narrowing
                 @flow_narrowings[elsif_narrowing[0]] = elsif_narrowing[1]
@@ -2638,6 +2667,9 @@ module CrystalV2
                 elsif_truthy_narrowings.each do |var_name, narrowed_type|
                   @flow_narrowings[var_name] = narrowed_type
                 end
+              end
+              if elsif_responds_to_narrowing
+                @flow_narrowings[elsif_responds_to_narrowing[0]] = elsif_responds_to_narrowing[1]
               end
 
               elsif_types << infer_block_result(elsif_branch.body)
@@ -2648,6 +2680,9 @@ module CrystalV2
                 elsif_truthy_narrowings.each do |var_name, _|
                   @flow_narrowings.delete(var_name)
                 end
+              end
+              if elsif_responds_to_narrowing
+                @flow_narrowings.delete(elsif_responds_to_narrowing[0])
               end
             end
           end
@@ -2760,6 +2795,162 @@ module CrystalV2
           return nil if narrowed == effective_condition_type  # No nil to remove
 
           {var_name, narrowed}
+        end
+
+        private def extract_responds_to_narrowing(condition_id : ExprId) : {String, Type}?
+          condition_node = @arena[condition_id]
+
+          case condition_node
+          when Frontend::GroupingNode
+            return extract_responds_to_narrowing(condition_node.expression)
+          when Frontend::MacroExpressionNode
+            return extract_responds_to_narrowing(condition_node.expression)
+          end
+
+          return nil unless condition_node.is_a?(Frontend::RespondsToNode)
+
+          method_name = responds_to_method_name(condition_node)
+          return nil unless method_name
+
+          binding = responds_to_narrowing_subject(condition_node.expression)
+          return nil unless binding
+          flow_key = binding[0]
+          original_type = binding[1]
+          return nil unless narrowed_type = narrow_type_by_responds_to(original_type, method_name)
+          return nil if narrowed_type == original_type || narrowed_type.to_s == original_type.to_s
+
+          {flow_key, narrowed_type}
+        end
+
+        private def responds_to_method_name(node : Frontend::RespondsToNode) : String?
+          method_node = @arena[node.method_name]
+          case method_node
+          when Frontend::SymbolNode
+            intern_name(method_node.name).lchop(':')
+          when Frontend::StringNode
+            intern_name(method_node.value)
+          else
+            nil
+          end
+        end
+
+        private def responds_to_narrowing_subject(expr_id : ExprId) : {String, Type}?
+          node = @arena[expr_id]
+
+          case node
+          when Frontend::GroupingNode
+            responds_to_narrowing_subject(node.expression)
+          when Frontend::SelfNode
+            {SELF_FLOW_NARROWING_KEY, infer_expression(expr_id)}
+          when Frontend::IdentifierNode
+            if original_type = condition_type_for_truthy_narrowing(expr_id)
+              {identifier_name_for(expr_id, node), original_type}
+            end
+          when Frontend::AssignNode
+            target_node = @arena[node.target]
+            return nil unless target_node.is_a?(Frontend::IdentifierNode)
+            return nil unless original_type = condition_type_for_truthy_narrowing(expr_id)
+            {identifier_name_for(node.target, target_node), original_type}
+          else
+            nil
+          end
+        end
+
+        private def narrow_type_by_responds_to(receiver_type : Type, method_name : String) : Type?
+          key = RespondsToNarrowingKey.new(receiver_type, method_name)
+          if @responds_to_narrowing_cache.has_key?(key)
+            return @responds_to_narrowing_cache[key]
+          end
+
+          matches = [] of Type
+          seen = Set(String).new
+          collect_responds_to_narrowing_matches(receiver_type, method_name, matches, seen)
+          result = matches.empty? ? nil : union_of(matches)
+          @responds_to_narrowing_cache[key] = result
+          result
+        end
+
+        private def collect_responds_to_narrowing_matches(
+          receiver_type : Type,
+          method_name : String,
+          matches : Array(Type),
+          seen : Set(String)
+        ) : Nil
+          case receiver_type
+          when UnionType
+            receiver_type.types.each do |member|
+              collect_responds_to_narrowing_matches(member, method_name, matches, seen)
+            end
+          else
+            if responds_to_method_available?(receiver_type, method_name)
+              add_responds_to_match(receiver_type, matches, seen)
+              return
+            end
+
+            case receiver_type
+            when InstanceType
+              collect_descendant_responds_to_matches(receiver_type.class_symbol, method_name, matches, seen)
+            when VirtualType
+              collect_descendant_responds_to_matches(receiver_type.base_class, method_name, matches, seen)
+            end
+          end
+        end
+
+        private def add_responds_to_match(type : Type, matches : Array(Type), seen : Set(String)) : Nil
+          key = type.to_s
+          return if seen.includes?(key)
+
+          seen << key
+          matches << type
+        end
+
+        private def responds_to_method_available?(receiver_type : Type, method_name : String) : Bool
+          !method_candidates_for(receiver_type, method_name).empty?
+        end
+
+        private def collect_descendant_responds_to_matches(
+          base_class : ClassSymbol,
+          method_name : String,
+          matches : Array(Type),
+          seen : Set(String)
+        ) : Nil
+          return unless table = @global_table
+
+          queue = [table] of SymbolTable
+          visited_tables = Set(SymbolTable).new
+          visited_classes = Set(String).new
+
+          while current = queue.shift?
+            next if visited_tables.includes?(current)
+            visited_tables << current
+
+            current.each_local_symbol do |_name, symbol|
+              case symbol
+              when ClassSymbol
+                unless visited_classes.includes?(symbol.name)
+                  visited_classes << symbol.name
+
+                  if is_subclass_of?(symbol, base_class.name, table, Set(String).new)
+                    instance_type = instance_type_for(symbol)
+                    if responds_to_method_available?(instance_type, method_name)
+                      add_responds_to_match(instance_type, matches, seen)
+                    end
+                  end
+                end
+
+                queue << symbol.scope
+                queue << symbol.class_scope
+              when ModuleSymbol
+                queue << symbol.scope
+              when EnumSymbol
+                queue << symbol.scope
+              end
+            end
+
+            current.included_modules.each do |mod_ref|
+              queue << mod_ref.scope
+            end
+          end
         end
 
         private def extract_truthy_narrowings(condition_id : ExprId) : Array({String, Type})
@@ -2962,6 +3153,7 @@ module CrystalV2
           # No need to require Bool type
 
           nil_check_narrowing = extract_nil_check_then_narrowing(condition_id)
+          responds_to_narrowing = extract_responds_to_narrowing(condition_id)
           if nil_check_narrowing
             @flow_narrowings[nil_check_narrowing[0]] = nil_check_narrowing[1]
           end
@@ -2972,11 +3164,17 @@ module CrystalV2
             @flow_narrowings.delete(nil_check_narrowing[0])
             @flow_narrowings[nil_check_narrowing[0]] = @context.nil_type
           end
+          if responds_to_narrowing
+            @flow_narrowings[responds_to_narrowing[0]] = responds_to_narrowing[1]
+          end
 
           else_type = node.else_branch ? infer_block_result(node.else_branch.not_nil!) : @context.nil_type
 
           if nil_check_narrowing
             @flow_narrowings.delete(nil_check_narrowing[0])
+          end
+          if responds_to_narrowing
+            @flow_narrowings.delete(responds_to_narrowing[0])
           end
 
           union_of([then_type, else_type])
@@ -3293,6 +3491,10 @@ module CrystalV2
         # ============================================================
 
         private def infer_self(node, expr_id : ExprId) : Type
+          if narrowed_self = @flow_narrowings[SELF_FLOW_NARROWING_KEY]?
+            return narrowed_self
+          end
+
           if receiver_type = @receiver_type_context
             case receiver_type
             when ClassType, ModuleType
