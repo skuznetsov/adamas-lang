@@ -45483,6 +45483,8 @@ module Crystal::HIR
         class_info = @class_info[class_base]?
       end
       parent_name = class_info.try(&.parent_name)
+      # Also check @module.class_parents for types without ClassInfo (e.g. enums)
+      parent_name ||= @module.class_parents[class_name]?
 
       # Lower arguments first to get their types
       args = if node_args = node.args
@@ -45641,6 +45643,24 @@ module Crystal::HIR
           elsif base_def = @function_defs[base_method_name]?
             candidate_name = base_method_name
             candidate_def = base_def
+          end
+        end
+
+        # Also search included modules of this ancestor for the method.
+        # This handles cases where super resolution walks past Array → Reference
+        # but the method (e.g. join) lives in Enumerable, included by Array.
+        unless candidate_def
+          owner_included = @class_included_modules[owner]? || @class_included_modules[owner_base]?
+          if owner_included
+            owner_included.each do |mod_name|
+              mod_base = strip_generic_args(resolve_module_alias_for_include(mod_name))
+              visited_mods = Set(String).new
+              if found = find_module_def_recursive(mod_base, method_name, args.size, visited_mods)
+                candidate_def = found[0]
+                candidate_name = base_method_name
+                break
+              end
+            end
           end
         end
 
