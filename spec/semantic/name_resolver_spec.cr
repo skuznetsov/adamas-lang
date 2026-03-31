@@ -646,6 +646,46 @@ describe Semantic::NameResolver do
     result.identifier_symbols[identifier_id].as(Semantic::MethodSymbol).name.should eq("new")
   end
 
+  it "prefers root class constants over included module namespace siblings in method bodies" do
+    source = <<-CR
+      module Crystal::System::Fiber
+      end
+
+      module Crystal::System::Thread
+      end
+
+      class Fiber
+        def self.inactive(fiber : Fiber)
+        end
+      end
+
+      class Thread
+        include Crystal::System::Thread
+
+        def finish(fiber : Fiber)
+          Fiber.inactive(fiber)
+        end
+      end
+    CR
+
+    parser = Frontend::Parser.new(Frontend::Lexer.new(source))
+    program = parser.parse_program
+    analyzer = Semantic::Analyzer.new(program)
+    analyzer.collect_symbols
+    result = analyzer.resolve_names
+
+    result.diagnostics.should be_empty
+
+    thread_node = program.arena[program.roots.last].as(Frontend::ClassNode)
+    finish_node = program.arena[thread_node.body.not_nil!.last].as(Frontend::DefNode)
+    call_node = program.arena[finish_node.body.not_nil!.first].as(Frontend::CallNode)
+    callee = program.arena[call_node.callee].as(Frontend::MemberAccessNode)
+    fiber_ref = callee.object
+
+    result.identifier_symbols[fiber_ref].should be_a(Semantic::ClassSymbol)
+    result.identifier_symbols[fiber_ref].as(Semantic::ClassSymbol).name.should eq("Fiber")
+  end
+
   it "ignores source macro expressions during name resolution" do
     source = <<-CR
       {% skip_file unless flag?(:wasi) %}

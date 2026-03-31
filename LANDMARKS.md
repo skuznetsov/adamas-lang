@@ -3,6 +3,39 @@
 Updated: 2026-03-31
 Context: compiler/bootstrap/stage2-stability
 
+[LM-380|verified]: The next `Thread -> Fiber.new/Fiber.inactive` frontier after
+[LM-379] was not another inferer-side receiver-context bug. A cheap real-prelude
+carrier (`/tmp/semantic_fiber_user_probe.cr` with just `Fiber.new { nil }`)
+reproduced the same quartet as full stage3 and, with
+`DEBUG_TYPE_TRACE_NAMES=Fiber`, showed that the failing `Fiber` identifiers in
+`src/stdlib/crystal/system/thread.cr` already arrived in the inferer as
+`ModuleSymbol`s while `current_class=Thread` and `current_module=` were empty.
+That falsified the theory that the miss was caused by inferer fallback order:
+the corruption was earlier, in name resolution. The exact root cause was that
+`NameResolver#resolve_identifier` first used `@current_table.lookup(name)`, and
+`SymbolTable#lookup` walks included modules plus their parent namespaces. Inside
+`class Thread; include Crystal::System::Thread; ... end`, that broad lookup let
+bare `Fiber` resolve to the sibling module `Crystal::System::Fiber` before the
+root class `::Fiber`. The verified fix in
+`src/compiler/semantic/resolvers/name_resolver.cr` is narrow: constant-like
+identifiers now prefer lexical/root constant lookup before the broad current
+table chain, and `lookup_lexical_constant(...)` itself now uses strict
+`lookup_local(...)` on owner scopes/class scopes so included-module ancestors do
+not leak sibling constants/modules into lexical lookup. Focused regression
+`spec/semantic/name_resolver_spec.cr` is green, neighboring
+`spec/semantic/type_inference_current_class_shadow_spec.cr` stays green, both
+rebuild gates for `src/crystal_v2.cr` and `/tmp/crystal_v2_semantic_stage3probe`
+are green, the cheap real-prelude carrier moves from
+`semantic_diags=0 resolution_diags=0 type_diags=279` to
+`semantic_diags=0 resolution_diags=0 type_diags=276`, and the full safe stage3
+probe moves from `semantic_diags=0 resolution_diags=0 type_diags=298` to
+`semantic_diags=0 resolution_diags=0 type_diags=295`. The live logs no longer
+contain `Method 'new' not found on Fiber` or `Method 'inactive' not found on
+Fiber`. Boundary: stage3 is still not green, and the remaining head frontier is
+now `@proc.call`, `LibGC.pthread_create(...)`, `Errno.new(ret)`, `sleep(...)`,
+and later `file.close` / Nil cascades rather than more bare root-constant
+shadowing. {F/G/R: 0.96/0.67/0.97} [verified]
+
 [LM-379|verified]: The next head `fiber.cr` blocker after [LM-378] was only
 partly explained by missing constructor ivar metadata. A tiny host-side
 reducer with `def initialize(&@proc : ->); end; def run; @proc.call; end`

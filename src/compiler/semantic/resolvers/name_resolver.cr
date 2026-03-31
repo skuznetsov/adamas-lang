@@ -286,7 +286,10 @@ module CrystalV2
           end
 
           debug("[NameResolver] resolve #{name} in table=#{@current_table.object_id}")
-          if symbol = @current_table.lookup(name)
+          if constant_like_name?(name) && (symbol = lookup_constant_like_identifier(name))
+            debug("[NameResolver] matched constant-like #{name} -> #{symbol.class}")
+            @identifier_symbols[node_id] = symbol
+          elsif symbol = @current_table.lookup(name)
             debug("[NameResolver] matched #{name} -> #{symbol.class}")
             @identifier_symbols[node_id] = symbol
           elsif constant_like_name?(name) && (symbol = lookup_lexical_constant(name))
@@ -329,6 +332,11 @@ module CrystalV2
               @diagnostics << Diagnostic.new("undefined local variable or method '#{name}'", node.span, node_id)
             end
           end
+        end
+
+        private def lookup_constant_like_identifier(name : String) : Symbol?
+          return nil if name.starts_with?("__")
+          lookup_lexical_constant(name) || @root_table.lookup(name)
         end
 
         private def visit_generic(node : Frontend::GenericNode)
@@ -928,18 +936,18 @@ module CrystalV2
           @namespace_stack.reverse_each do |symbol|
             case symbol
             when ClassSymbol
-              if resolved = symbol.scope.lookup(name)
+              if resolved = symbol.scope.lookup_local(name)
                 return resolved
               end
-              if resolved = symbol.class_scope.lookup(name)
+              if resolved = symbol.class_scope.lookup_local(name)
                 return resolved
               end
             when ModuleSymbol
-              if resolved = symbol.scope.lookup(name)
+              if resolved = symbol.scope.lookup_local(name)
                 return resolved
               end
             when EnumSymbol
-              if resolved = symbol.scope.lookup(name)
+              if resolved = symbol.scope.lookup_local(name)
                 return resolved
               end
             end

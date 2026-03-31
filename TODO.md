@@ -1,6 +1,49 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-03-31)
 
 ## Current Status
+- **Fresh semantic root-constant checkpoint: constant-like bare identifiers now prefer lexical/root constants over included-module namespace siblings, which clears the live `Thread -> Fiber.new/Fiber.inactive` family (2026-03-31, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/resolvers/name_resolver.cr` now gives constant-like identifiers (`Fiber`, `Signal`, etc.) a stricter lookup priority: lexical owner scopes and root constants are checked before the broad `@current_table.lookup(...)` chain that walks included modules and their parent namespaces
+    - the same file now keeps lexical constant lookup strict by using `lookup_local(...)` on owner scopes/class scopes instead of `lookup(...)`, so included-module ancestors no longer leak sibling constants/modules into lexical constant resolution
+    - focused regression coverage now lives in `spec/semantic/name_resolver_spec.cr`
+  - decisive evidence:
+    - focused resolver regressions are green:
+      - `../crystal/bin/crystal spec spec/semantic/name_resolver_spec.cr --error-trace`
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_current_class_shadow_spec.cr --error-trace`
+    - rebuild gates are green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+    - the cheap real-prelude carrier moves:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 180 3072 /tmp/semantic_fiber_user_probe.cr --stats --no-link -o /tmp/semantic_fiber_user_probe_after_root_constant_fix.out > /tmp/semantic_fiber_user_probe_after_root_constant_fix.log 2>&1`
+      - summary moved from:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=279`
+      - to:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=276`
+    - the full semantic stage3 probe under the safe wrapper moves again:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 240 4096 src/crystal_v2.cr --stats --no-link -o /tmp/stage3_semantic_probe.out > /tmp/stage3_semantic_probe_after_root_constant_fix.log 2>&1`
+      - branch-local summary moved from:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=298`
+      - to:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=295`
+    - removed/moved families from the live logs:
+      - `Method 'new' not found on Fiber`
+      - `Method 'inactive' not found on Fiber`
+  - practical boundary:
+    - stage3 with the new inferer is still **not** green
+    - the next honest frontier is now smaller and earlier:
+      - `@proc.call`
+      - `LibGC.pthread_create(...)`
+      - `Errno.new(ret)`
+      - `sleep(...)`
+      - later `file.close` / Nil cascades
 - **Fresh semantic constructor-ivar checkpoint: `initialize(@x : T)` / `initialize(&@proc : ->)` params now register ivar metadata during symbol collection, which clears several later Nil receiver families but does not yet solve the head `Fiber#@proc.call` blocker (2026-03-31, current session)**:
   - trustworthy setup:
     - `src/compiler/semantic/collectors/symbol_collector.cr` now scans `initialize` parameters marked with `Parameter#is_instance_var` and registers them as class ivar metadata, instead of only learning ivars from explicit `@x = ...` assignments or `@x : T` declarations
