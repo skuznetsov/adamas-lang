@@ -1,6 +1,34 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-03-30)
 
 ## Current Status
+- **Fresh semantic prepass checkpoint: `: self` on nested class methods now instantiates the receiver instead of leaking the metaclass, which unblocks `DiyFP.frac/exp` in the live stage3 graph (2026-03-30, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/type_inference_engine.cr` now resolves method-annotation `: self` against the callee method's class-method context, not against the ambient caller context
+    - for class methods on nominal receivers this now instantiates the class receiver instead of leaking the raw `ClassType`
+    - this specifically fixes nested nominal shapes like `Float::Printer::DiyFP.from_f(...): self`, including the real `Float::Printer::IEEE` `extend self` corridor where the caller itself is not a class method
+    - focused regression coverage lives in `spec/semantic/type_inference_class_method_self_spec.cr`
+  - decisive evidence:
+    - focused regression is green:
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_class_method_self_spec.cr --error-trace`
+    - rebuild gate is green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+    - exact real-shape reducer is green:
+      - `CRYSTAL_V2_SEMANTIC_COMPILE=1 /tmp/crystal_v2_semantic_stage3probe /tmp/semantic_diyfp_ieee_exact_probe.cr --no-prelude --stats --verbose`
+      - summary now reports `type_diags=0`
+    - full semantic stage3 probe moved again:
+      - `bash /tmp/run_semantic_compile_stage3probe_log.sh`
+      - summary moved from:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=827`
+      - to:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=792`
+    - the old `Method 'frac' not found on DiyFP` / `Method 'exp' not found on DiyFP` family no longer appears in `/tmp/stage3_semantic_probe.log`
+  - practical boundary:
+    - stage3 with the new inferer is still **not** green
+    - the remaining frontier stays concentrated in denser runtime/API families such as `copy_to`, Nil arithmetic, `time/tz`, `File`, `LibPCRE2`, and `LibUnwind`
 - **Fresh semantic prepass checkpoint: enum constructor/value helpers and flags-only `none?` now survive the new inferer (2026-03-30, current session)**:
   - trustworthy setup:
     - `src/compiler/semantic/type_inference_engine.cr` now recognizes enum type receivers more precisely, so `EnumName.new(...)` no longer falls through the generic “method missing on enum instance” path

@@ -1068,7 +1068,7 @@ module CrystalV2
 
           if ann = method.return_annotation
             receiver_type = implicit_receiver_type_for(method)
-            return resolve_method_annotation_type(ann, receiver_type, method.scope)
+            return resolve_method_annotation_type(ann, receiver_type, method.scope, class_method_context: method.is_class_method?)
           end
 
           if receiver_type = implicit_receiver_type_for(method)
@@ -1226,7 +1226,7 @@ module CrystalV2
               return substitute_type_parameters(ret_ann, type_args, type_params)
             end
           elsif ann = method.return_annotation
-            return resolve_method_annotation_type(ann, receiver_type, method.scope)
+            return resolve_method_annotation_type(ann, receiver_type, method.scope, class_method_context: method.is_class_method?)
           end
 
           infer_method_body_type(method, receiver_type, arg_types, call_node)
@@ -2257,7 +2257,7 @@ module CrystalV2
                           elsif method = lookup_method(left_type, op, [right_type], false)
                             debug("  lookup_method found: #{method.name}, return_annotation=#{method.return_annotation.inspect}")
                             if ann = method.return_annotation
-                              result = resolve_method_annotation_type(ann, left_type, method.scope)
+                              result = resolve_method_annotation_type(ann, left_type, method.scope, class_method_context: method.is_class_method?)
                               debug("  parse_type_name(#{ann}) => #{result}")
                               result
                             else
@@ -2282,7 +2282,7 @@ module CrystalV2
                           # Phase 80: =~ (regex match), !~ (regex not match) return Bool
                           if method = lookup_method(left_type, op, [right_type], false)
                             if ann = method.return_annotation
-                              resolve_method_annotation_type(ann, left_type, method.scope)
+                              resolve_method_annotation_type(ann, left_type, method.scope, class_method_context: method.is_class_method?)
                             else
                               @context.bool_type
                             end
@@ -2296,7 +2296,7 @@ module CrystalV2
                           # Try method lookup first
                           if method = lookup_method(left_type, op, [right_type], false)
                             if ann = method.return_annotation
-                              resolve_method_annotation_type(ann, left_type, method.scope)
+                              resolve_method_annotation_type(ann, left_type, method.scope, class_method_context: method.is_class_method?)
                             else
                               @context.int32_type
                             end
@@ -4371,7 +4371,7 @@ module CrystalV2
               macro_result
             elsif method = lookup_method(target_type, "[]", index_types, false)
               if ann = method.return_annotation
-                resolve_method_annotation_type(ann, target_type, method.scope)
+                resolve_method_annotation_type(ann, target_type, method.scope, class_method_context: method.is_class_method?)
               else
                 infer_method_body_type(method, target_type)
               end
@@ -4507,7 +4507,7 @@ module CrystalV2
           result_type = if method
                             if ann = method.return_annotation
                               debug("  Method has return annotation: #{ann}")
-                              resolve_method_annotation_type(ann, receiver_type, method.scope)
+                              resolve_method_annotation_type(ann, receiver_type, method.scope, class_method_context: method.is_class_method?)
                           else
                             debug("  No return annotation - inferring from method body")
                             # Week 1: No return annotation - infer from method body
@@ -4916,7 +4916,7 @@ module CrystalV2
                       member_name = intern_name(body_node.member)
                       if method = lookup_method(non_nil_type, member_name, [] of Type, false)
                         if ann = method.return_annotation
-                          block_result = resolve_method_annotation_type(ann, non_nil_type, method.scope)
+                          block_result = resolve_method_annotation_type(ann, non_nil_type, method.scope, class_method_context: method.is_class_method?)
                         end
                       end
                     end
@@ -4949,7 +4949,7 @@ module CrystalV2
 
           if method = lookup_method(receiver_type, method_name, arg_types, has_block)
             if ann = method.return_annotation
-              resolve_method_annotation_type(ann, receiver_type, method.scope)
+              resolve_method_annotation_type(ann, receiver_type, method.scope, class_method_context: method.is_class_method?)
             else
               debug("  No return annotation - inferring from method body")
               infer_method_body_type(method, receiver_type, arg_types, node)
@@ -6010,7 +6010,7 @@ module CrystalV2
             # Find and resolve method for this specific type
             if method = lookup_method(member_type, method_name, arg_types, false)
               if ann = method.return_annotation
-                return_types << resolve_method_annotation_type(ann, member_type, method.scope)
+                return_types << resolve_method_annotation_type(ann, member_type, method.scope, class_method_context: method.is_class_method?)
               else
                 return_types << @context.nil_type
               end
@@ -7537,13 +7537,20 @@ module CrystalV2
           params.count { |p| p.default_value.nil? && !p.is_splat && !p.is_double_splat && !p.is_block }
         end
 
-        private def resolve_method_annotation_type(type_name : String, receiver_type : Type?, scope : SymbolTable? = nil) : Type
+        private def resolve_method_annotation_type(type_name : String, receiver_type : Type?, scope : SymbolTable? = nil, *, class_method_context : Bool? = nil) : Type
           if type_name == "self"
-            if receiver_type
-              return receiver_type
-            end
+            method_is_class_method = class_method_context.nil? ? @current_method_is_class_method_stack.last? : class_method_context
 
-            if @current_method_is_class_method_stack.last?
+            if method_is_class_method
+              if receiver_type
+                case receiver_type
+                when ClassType
+                  return instantiate_class_receiver(receiver_type)
+                when ModuleType
+                  return receiver_type
+                end
+              end
+
               if current_class = @current_class
                 return class_type_for(current_class)
               end
@@ -7551,6 +7558,10 @@ module CrystalV2
               if current_module = @current_module
                 return module_type_for(current_module)
               end
+            end
+
+            if receiver_type
+              return receiver_type
             end
 
             if current_class = @current_class
