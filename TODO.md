@@ -1,6 +1,49 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-03-31)
 
 ## Current Status
+- **Fresh semantic `Thread` namespace/proc-pointer checkpoint: the inferer now keeps module-self `Thread` references inside `Crystal::System::Thread` while still falling back to the current class for proc-pointer receivers when the module has no matching class method (2026-03-31, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/type_inference_engine.cr` no longer blindly rewrites every `ModuleSymbol` named like the current class into that class; it now preserves module-self references when the current namespace already points at the same `ModuleSymbol`
+    - the same file now gives `infer_proc_pointer_type(...)` a narrow class fallback for ambiguous `Thread`-style namespace collisions: if the proc-pointer receiver resolves to the current module and has no matching method there, it retries against the current class with the same leaf constant name
+    - focused regression coverage now lives in `spec/semantic/type_inference_current_class_shadow_spec.cr`
+  - decisive evidence:
+    - focused regressions are green:
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_current_class_shadow_spec.cr --error-trace`
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_named_args_spec.cr --error-trace`
+    - rebuild gates are green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+    - the cheap real-prelude carrier moves again:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 180 3072 /tmp/semantic_fiber_user_probe.cr --stats --no-link -o /tmp/semantic_fiber_user_probe.out > /tmp/semantic_fiber_user_probe_after_thread_proc_namespace_fix_clean.log 2>&1`
+      - branch-local summary moved from:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=274`
+      - to:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=272`
+    - the full semantic stage3 probe under the safe wrapper moves too:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 240 4096 src/crystal_v2.cr --stats --no-link -o /tmp/stage3_semantic_probe.out > /tmp/stage3_semantic_probe_after_thread_proc_namespace_fix_clean.log 2>&1`
+      - branch-local summary moved from:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=293`
+      - to:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=291`
+      - removed/moved families from the live log:
+        - `Method 'pthread_create' not found on LibGC`
+        - `No overload matches 'Errno.new'`
+  - practical boundary:
+    - stage3 with the new inferer is still **not** green
+    - the `pthread_create` / `Errno.new(ret)` runtime pair is gone from the head frontier
+    - the next honest blockers are now:
+      - `@timeout_event.try &.delete`
+      - `Pointer(Void)#inspect`
+      - `Number#seconds` / top-level `sleep`
+      - later `File.open(...)` / `Location.read_zoneinfo(...)`
 - **Fresh semantic Fiber-reopen checkpoint: class reopens now preserve ivar metadata, and begin-wrapped class-body `initialize(@x : T, &@proc : ->)` definitions contribute that metadata without eager macro-expansion regressions (2026-03-31, current session)**:
   - trustworthy setup:
     - `src/compiler/semantic/collectors/symbol_collector.cr` no longer eagerly macro-expands every `{% begin %}` it sees while scanning ivars; it only reparses raw class-body macro text for top-level begin wrappers (`current_method.nil?`), which keeps constructor ivar params from begin-wrapped `initialize` visible without executing nested macro DSL from ordinary method bodies

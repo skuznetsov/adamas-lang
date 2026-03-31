@@ -3,6 +3,40 @@
 Updated: 2026-03-31
 Context: compiler/bootstrap/stage2-stability
 
+[LM-382|verified]: The next apparent `LibGC.pthread_create(...)` /
+`Errno.new(ret)` frontier after [LM-381] was not a remaining lib-fun surface
+hole. Two traces separated the root cause cleanly. First, a cheap real-prelude
+carrier over `/tmp/semantic_fiber_user_probe.cr` showed that the failing
+`GC.pthread_create(..., start: ->Thread.thread_proc(Void*), ...)` path already
+reached the correct `LibGC.pthread_create` overload candidate, but the `start`
+argument had degraded from `Proc(Pointer(Void), Pointer(Void))` to plain
+`Proc`. Second, targeted `DEBUG_TYPE_TRACE_NAMES=Thread,thread_proc,pthread_create`
+proved that this degradation happened one step earlier inside
+`infer_proc_pointer_type(...)`: in the real stdlib context of
+`src/stdlib/crystal/system/unix/pthread.cr`, bare `Thread` inside
+`module Crystal::System::Thread` was being rebound to the current class and
+therefore looked up as `ClassType(Thread)` with zero `thread_proc` candidates.
+The verified fix in `src/compiler/semantic/type_inference_engine.cr` is narrow
+and two-part: `infer_identifier(...)` now preserves module-self references when
+the current namespace already points at the same `ModuleSymbol`, and
+`infer_proc_pointer_type(...)` adds a bounded fallback to the current class
+only if the proc-pointer receiver resolves to that current module and no method
+is found there. Focused regressions
+`spec/semantic/type_inference_current_class_shadow_spec.cr` and
+`spec/semantic/type_inference_named_args_spec.cr` are green; both rebuild gates
+for `src/crystal_v2.cr` and `/tmp/crystal_v2_semantic_stage3probe` are green;
+the cheap real-prelude carrier moves from
+`semantic_diags=0 resolution_diags=0 type_diags=274` to
+`semantic_diags=0 resolution_diags=0 type_diags=272`; and the full safe stage3
+probe moves from `semantic_diags=0 resolution_diags=0 type_diags=293` to
+`semantic_diags=0 resolution_diags=0 type_diags=291`. The live log no longer
+contains `Method 'pthread_create' not found on LibGC` or `No overload matches
+'Errno.new'`. Boundary: stage3 is still not green; the next head frontier is
+now `@timeout_event.try &.delete`, `Pointer(Void)#inspect`, `Number#seconds` /
+top-level `sleep`, and later `File.open(...)` / `Location.read_zoneinfo(...)`
+rather than more pthread proc-pointer ambiguity. {F/G/R: 0.96/0.71/0.98}
+[verified]
+
 [LM-381|verified]: The next apparent `Fiber#@proc.call` / `@context.stack_top`
 / `@stack.bottom` head blocker after [LM-380] was not another
 method-body-inference-only context bug. Two falsifiers split it cleanly. First,

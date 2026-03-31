@@ -1061,10 +1061,12 @@ module CrystalV2
           end
 
           if symbol.is_a?(ModuleSymbol)
-            if current_class = @current_class
-              current_class_name = current_class.name
-              if current_class_name == identifier_name || current_class_name.ends_with?("::#{identifier_name}")
-                symbol = current_class
+            unless current_namespace_refers_to_module?(symbol)
+              if current_class = @current_class
+                current_class_name = current_class.name
+                if current_class_name == identifier_name || current_class_name.ends_with?("::#{identifier_name}")
+                  symbol = current_class
+                end
               end
             end
           end
@@ -1329,13 +1331,22 @@ module CrystalV2
             receiver_type = infer_expression(callee_node.object)
             receiver_type = class_receiver_type_for_expression(receiver_type) if type_receiver_expression?(callee_node.object)
             method_name = member_name_for(operand_node.callee, callee_node)
+            resolved_receiver_type = receiver_type
             method = lookup_method(receiver_type, method_name, arg_types, false)
+            if method.nil?
+              if fallback_receiver_type = current_class_receiver_fallback_for(receiver_type)
+                if fallback_method = lookup_method(fallback_receiver_type, method_name, arg_types, false)
+                  method = fallback_method
+                  resolved_receiver_type = fallback_receiver_type
+                end
+              end
+            end
             return nil unless method
 
             return_type = if ann = method.return_annotation
-                            resolve_method_annotation_type(ann, receiver_type, method.scope, class_method_context: method.is_class_method?)
+                            resolve_method_annotation_type(ann, resolved_receiver_type, method.scope, class_method_context: method.is_class_method?)
                           else
-                            infer_method_body_type(method, receiver_type, arg_types)
+                            infer_method_body_type(method, resolved_receiver_type, arg_types)
                           end
 
             ProcType.new(arg_types, return_type)
@@ -1540,6 +1551,38 @@ module CrystalV2
           end
 
           nil
+        end
+
+        private def current_namespace_refers_to_module?(symbol : ModuleSymbol) : Bool
+          current_module = @current_module
+          while current_module
+            return true if current_module.same?(symbol)
+            current_module = enclosing_module_for(current_module.scope)
+          end
+
+          false
+        end
+
+        private def current_class_receiver_fallback_for(receiver_type : Type) : Type?
+          module_type = receiver_type.as?(ModuleType)
+          return nil unless module_type
+          return nil unless current_class = @current_class
+          return nil unless current_module = @current_module
+          return nil unless current_namespace_refers_to_module?(module_type.symbol)
+
+          current_class_name = current_class.name
+          current_module_name = current_module.name
+          return nil unless same_leaf_constant_name?(current_class_name, current_module_name)
+
+          class_type_for(current_class)
+        end
+
+        private def same_leaf_constant_name?(left : String, right : String) : Bool
+          leaf_constant_name(left) == leaf_constant_name(right)
+        end
+
+        private def leaf_constant_name(name : String) : String
+          name.rpartition("::")[2]
         end
 
         private def type_receiver_expression?(expr_id : ExprId) : Bool
