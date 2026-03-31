@@ -1,6 +1,38 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-03-30)
 
 ## Current Status
+- **Fresh semantic prepass checkpoint: eager method-body inference now binds the right owner scope inside class-owned module reopens, which revives `time/tz` stdlib record union aliases on the real compile path (2026-03-30, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/type_inference_engine.cr` no longer resolves `current_method_scope` by blindly preferring `current_class` over `current_module`
+    - `current_method_symbol_for(...)` now searches candidate owner scopes by `expr_id`, so `def self.*` inside nested modules reopened under nominal outer owners binds to the actual module method symbol instead of an unrelated outer class scope
+    - this specifically fixes the real `struct Time; module Time::TZ; ... alias POSIXTransition = Julian1 | Julian0 | MonthWeekDay; def self.probe(t : POSIXTransition) ... end` corridor when the member structs come from the stdlib `record` macro
+    - focused regression coverage lives in `spec/semantic_cli_time_tz_record_alias_spec.cr`
+  - decisive evidence:
+    - focused CLI regression is green:
+      - `../crystal/bin/crystal spec spec/semantic_cli_time_tz_record_alias_spec.cr --error-trace`
+    - rebuild gate is green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+    - exact real-shape reducer is green:
+      - `CRYSTAL_V2_SEMANTIC_COMPILE=1 /tmp/crystal_v2_semantic_stage3probe /tmp/semantic_tz_stdlib_record_min_probe.cr --no-prelude --stats --verbose`
+      - summary now reports `type_diags=0`
+    - full semantic stage3 probe moved again:
+      - `bash /tmp/run_semantic_compile_stage3probe_log.sh`
+      - summary moved from:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=792`
+      - to:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=697`
+    - the old `Method 'unix_date_in_year' not found on Julian1|Julian0|MonthWeekDay` / `Method 'time' not found on Julian1|Julian0|MonthWeekDay` eager-pass family no longer blocks the live `Time::TZ` reducer
+  - practical boundary:
+    - stage3 with the new inferer is still **not** green
+    - the remaining frontier is now even more concentrated in dense runtime/API families, led by:
+      - `src/stdlib/float/printer/ryu_printf.cr`
+      - `Pointer(UInt8)#copy_to`
+      - Nil arithmetic / indexing cascades
+      - `math`, `string`, and residual `time/tz` follow-on corridors
 - **Fresh semantic prepass checkpoint: `: self` on nested class methods now instantiates the receiver instead of leaking the metaclass, which unblocks `DiyFP.frac/exp` in the live stage3 graph (2026-03-30, current session)**:
   - trustworthy setup:
     - `src/compiler/semantic/type_inference_engine.cr` now resolves method-annotation `: self` against the callee method's class-method context, not against the ambient caller context

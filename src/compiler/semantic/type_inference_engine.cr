@@ -1664,23 +1664,47 @@ module CrystalV2
 
         private def current_method_symbol_for(node : Frontend::DefNode, expr_id : ExprId) : MethodSymbol?
           name = intern_name(node.name)
+          candidate_scopes = [] of SymbolTable
 
-          target_scope =
-            if receiver = node.receiver
-              if intern_name(receiver) == "self"
-                @current_class.try(&.class_scope) || @current_module.try(&.scope)
-              else
-                nil
-              end
-            else
-              @current_class.try(&.scope) || @current_module.try(&.scope) || @global_table
+          if receiver = node.receiver
+            return nil unless intern_name(receiver) == "self"
+
+            if current_module = @current_module
+              candidate_scopes << current_module.scope
             end
 
-          return nil unless scope = target_scope
+            if current_class = @current_class
+              class_scope = current_class.class_scope
+              candidate_scopes << class_scope unless candidate_scopes.any? { |scope| scope.same?(class_scope) }
+            end
+          else
+            if current_class = @current_class
+              candidate_scopes << current_class.scope
+            end
 
+            if current_module = @current_module
+              module_scope = current_module.scope
+              candidate_scopes << module_scope unless candidate_scopes.any? { |scope| scope.same?(module_scope) }
+            end
+
+            if global_table = @global_table
+              candidate_scopes << global_table unless candidate_scopes.any? { |scope| scope.same?(global_table) }
+            end
+          end
+
+          candidate_scopes.each do |scope|
+            if method = current_method_symbol_in_scope(scope, name, expr_id)
+              return method
+            end
+          end
+
+          nil
+        end
+
+        private def current_method_symbol_in_scope(scope : SymbolTable, name : String, expr_id : ExprId) : MethodSymbol?
           case symbol = scope.lookup(name)
           when MethodSymbol
-            symbol
+            symbol.node_id == expr_id ? symbol : nil
           when OverloadSetSymbol
             symbol.overloads.find { |entry| entry.node_id == expr_id }
           else
