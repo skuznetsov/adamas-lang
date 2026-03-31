@@ -713,7 +713,9 @@ module CrystalV2
             # (similar issue to ProcLiteralNode - see lines 577-583)
             # No children for DefNode
           when Frontend::ClassNode
-            (node.body || [] of ExprId).each { |e| children << e }
+            unless node.is_struct
+              (node.body || [] of ExprId).each { |e| children << e }
+            end
           when Frontend::ModuleNode
             (node.body || [] of ExprId).each { |e| children << e }
           when Frontend::UnionNode
@@ -1190,6 +1192,14 @@ module CrystalV2
               else
                 nil
               end
+            elsif @current_method_scope.nil?
+              if current_class = @current_class
+                class_type_for(current_class)
+              elsif current_module = @current_module
+                module_type_for(current_module)
+              else
+                nil
+              end
             else
               @receiver_type_context || @current_class.try { |klass| instance_type_for(klass) } || @current_module.try { |mod| module_type_for(mod) }
             end
@@ -1205,6 +1215,14 @@ module CrystalV2
         private def infer_receiverless_current_context_reference(method_name : String) : Type?
           receiver_type =
             if @current_method_is_class_method_stack.last?
+              if current_class = @current_class
+                class_type_for(current_class)
+              elsif current_module = @current_module
+                module_type_for(current_module)
+              else
+                nil
+              end
+            elsif @current_method_scope.nil?
               if current_class = @current_class
                 class_type_for(current_class)
               elsif current_module = @current_module
@@ -2108,7 +2126,19 @@ module CrystalV2
           infer_expression(expanded_id)
         end
 
-        private def infer_constant_value_expression(expr_id : ExprId) : Type
+        private def infer_constant_value_expression(expr_id : ExprId, owner_class : ClassSymbol? = nil, owner_module : ModuleSymbol? = nil) : Type
+          previous_class = @current_class
+          previous_module = @current_module
+          previous_method_scope = @current_method_scope
+          previous_receiver_context = @receiver_type_context
+
+          if owner_class || owner_module
+            @current_class = owner_class
+            @current_module = owner_module
+            @current_method_scope = nil
+            @receiver_type_context = nil
+          end
+
           node = @arena[expr_id]
 
           case node
@@ -2120,6 +2150,11 @@ module CrystalV2
           else
             infer_expression(expr_id)
           end
+        ensure
+          @current_class = previous_class
+          @current_module = previous_module
+          @current_method_scope = previous_method_scope
+          @receiver_type_context = previous_receiver_context
         end
 
         private def expanded_macro_expression(expr_id : ExprId) : ExprId
@@ -4604,7 +4639,10 @@ module CrystalV2
           if left_expr = node.left
             infer_expression(left_expr)
           end
-          infer_expression(node.right)
+          right_node = @arena[node.right]
+          unless right_node.is_a?(Frontend::ConstantNode)
+            infer_expression(node.right)
+          end
 
           # Phase 102: Check for enum member access (Color::Red)
           if enum_type = resolve_enum_member_access(node)
@@ -4614,7 +4652,8 @@ module CrystalV2
           if symbol = resolve_path_symbol(node)
             debug("  resolved symbol: #{symbol.class.name}")
             if symbol.is_a?(ConstantSymbol)
-              return infer_constant_value_expression(symbol.value)
+              owner_class, owner_module = constant_owner_scope(node.left)
+              return infer_constant_value_expression(symbol.value, owner_class: owner_class, owner_module: owner_module)
             end
             if type = type_from_symbol(symbol)
               debug("  resolved type: #{type.class.name}")
@@ -4624,6 +4663,43 @@ module CrystalV2
 
           debug("  resolve_path_symbol failed") if @debug_enabled
           @context.nil_type
+        end
+
+        private def constant_owner_scope(expr_id : ExprId?) : Tuple(ClassSymbol?, ModuleSymbol?)
+          return {nil, nil} unless expr_id
+
+          if type = type_from_type_expr(expr_id)
+            case type
+            when ClassType
+              return {type.symbol, nil}
+            when ModuleType
+              return {nil, type.symbol}
+            when PrimitiveType
+              if class_symbol = @global_table.try(&.lookup(normalize_class_receiver_name(type.name))).as?(ClassSymbol)
+                return {class_symbol, nil}
+              end
+            end
+          end
+
+          node = @arena[expr_id]
+          symbol =
+            case node
+            when Frontend::IdentifierNode
+              resolve_scoped_symbol(identifier_name_for(expr_id, node))
+            when Frontend::PathNode
+              resolve_path_symbol(node)
+            else
+              nil
+            end
+
+          case symbol
+          when ClassSymbol
+            {symbol, nil}
+          when ModuleSymbol
+            {nil, symbol}
+          else
+            {nil, nil}
+          end
         end
 
         # Phase 102: Resolve enum member access like Color::Red → EnumType(Color)
@@ -5579,7 +5655,7 @@ module CrystalV2
             end
             # Try current class/module scope for class methods (implicit self)
             if current_class = @current_class
-              if sym = current_class.scope.lookup(method_name)
+              if sym = current_class.scope.lookup(method_name) || current_class.class_scope.lookup(method_name)
                 case sym
                 when MethodSymbol
                   if result = infer_receiverless_method_call(sym, arg_types, has_block, node)

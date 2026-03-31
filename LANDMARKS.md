@@ -3,6 +3,40 @@
 Updated: 2026-03-31
 Context: compiler/bootstrap/stage2-stability
 
+[LM-387|verified]: After [LM-386], the live head blocker was the paired
+`Function 'new' not found` / `Operator '<<' not defined for Nil and Int32`
+corridor at `src/stdlib/int.cr:1642` and `:2590`. A broad first pivot that
+routed all `.struct?` nodes through `infer_class(...)` looked plausible but
+immediately falsified itself on the full safe probe: it blew `type_diags` up to
+455 and exposed a flood of false eager-inference misses in unrelated struct
+surfaces. The decisive reducer sequence then separated the real cause into two
+owner-loss points. First, right-hand constant path legs such as `Int128::MIN`
+were being evaluated as standalone `ConstantNode`s with no ambient owner before
+path resolution had established that the constant belonged to `Int128`. Second,
+root `struct` nodes were still prewalking their body children even though
+`.struct?` was not dispatched through `infer_class(...)`, which seeded the same
+ownerless `new(...)` miss before the later path-based constant evaluation could
+fix it. The verified narrow fix in
+`src/compiler/semantic/type_inference_engine.cr` is therefore four-part:
+receiverless current-context calls/references now use `class_type_for(...)` /
+`module_type_for(...)` when `@current_method_scope.nil?`; implicit-self class
+method lookup now searches `current_class.class_scope`; `infer_path(...)` skips
+eager inference for a right-hand `ConstantNode` and re-evaluates its
+`ConstantSymbol` through `infer_constant_value_expression(..., owner_class:
+..., owner_module: ...)`; and `children_of(ClassNode)` no longer eagerly walks
+body children for `struct` roots. Focused regression
+`spec/semantic/type_inference_type_body_receiverless_call_spec.cr` is green,
+including the stdlib-near `Int128::MIN = new(1) << 127` shape; both rebuild
+gates for `src/crystal_v2.cr` and `/tmp/crystal_v2_semantic_stage3probe` are
+green; and the full safe stage3 probe moves from
+`semantic_diags=0 resolution_diags=0 type_diags=286` to
+`semantic_diags=0 resolution_diags=0 type_diags=278`. The live log no longer
+contains the `src/stdlib/int.cr` `Function 'new' not found` family. Boundary:
+stage3 is still not green; the next head frontier stays in downstream
+arithmetic/runtime families (`dragonbox`, `time/tz`, `divmod128`, `file.close`
+/ `Location.read_zoneinfo(...)`) rather than struct-constant owner loss.
+{F/G/R: 0.97/0.83/0.98} [verified]
+
 [LM-386|verified]: After [LM-385], the new head blocker was `Unknown generic type ''`
 with no source file. An env-guarded trace on the empty-generic path showed the
 exact offending string: `"(Int, SiginfoT*, Void*)"` under `current_module=Thread`,

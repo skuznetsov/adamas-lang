@@ -1,6 +1,48 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-03-31)
 
 ## Current Status
+- **Fresh semantic struct-constant checkpoint: owner-scoped constant evaluation now keeps `Int128::MIN` / `UInt128::MIN`-style bodies in the defining struct context, without the broad false-positive flood from eager `.struct?` body inference (2026-03-31, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/type_inference_engine.cr` now treats receiverless calls in type-body constant evaluation as implicit class/module receivers whenever `@current_method_scope.nil?`
+    - the same file now looks in `current_class.class_scope` for implicit-self class methods before falling back to global lookup
+    - `infer_path(...)` now resolves right-hand `ConstantSymbol`s through a new owner-scoped constant corridor instead of evaluating struct constants like `Int128::MIN` with no ambient owner
+    - the path prewalk is narrowed so a right-hand `ConstantNode` is not eagerly inferred before that owner-scoped constant corridor gets a chance to run
+    - struct roots no longer prewalk their body children eagerly, which avoids poisoning later `Int128::MIN` path resolution with an ownerless `new(...)` diagnostic
+    - focused regression coverage now lives in `spec/semantic/type_inference_type_body_receiverless_call_spec.cr`
+  - decisive evidence:
+    - focused regressions are green:
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_type_body_receiverless_call_spec.cr --error-trace`
+    - rebuild gates are green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+    - the exact stdlib-near reproducer is green:
+      - `struct Int128; MIN = new(1) << 127; ...; Int128::MIN`
+      - summary:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=0`
+        - root type = `Int128`
+    - the full semantic stage3 probe under the safe wrapper moves again:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 240 4096 src/crystal_v2.cr --stats --no-link -o /tmp/stage3_semantic_probe.out > /tmp/stage3_semantic_probe_after_struct_constant_owner_fix.log 2>&1`
+      - branch-local summary moved from:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=286`
+      - to:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=278`
+      - removed/moved families from the live log:
+        - `Function 'new' not found` at `src/stdlib/int.cr:1642`
+        - `Function 'new' not found` at `src/stdlib/int.cr:2590`
+        - the paired `Operator '<<' not defined for Nil and Int32` seeded from `Int128::MIN`
+  - practical boundary:
+    - stage3 with the new inferer is still **not** green
+    - the next honest blockers remain downstream arithmetic/runtime families such as:
+      - `dragonbox`
+      - `time/tz`
+      - `compiler_rt/divmod128`
+      - `file.close` / `Location.read_zoneinfo(...)`
 - **Fresh semantic proc-type checkpoint: wrapped-parameter proc annotations now strip their outer `(...)` list before param splitting, and canonical `Proc(...)` alias targets round-trip through type parsing instead of falling back to the generic parser (2026-03-31, current session)**:
   - trustworthy setup:
     - `src/compiler/semantic/type_inference_engine.cr` now unwraps one outer parenthesized parameter list in all three proc-annotation corridors:
