@@ -168,6 +168,7 @@ module CrystalV2
           @instance_type_cache = {} of ClassSymbol => InstanceType
           @method_lookup_cache = {} of MethodLookupKey => MethodSymbol?
           @macro_expression_cache = {} of Int32 => ExprId
+          @instance_var_seed_in_progress = Set(String).new
           @current_class = nil
           @current_module = nil
           @current_method_scope = nil
@@ -2196,6 +2197,7 @@ module CrystalV2
               if ENV["DEBUG"]?
                 puts "  type_annotation: #{type_annotation}"
               end
+              annotated_type : Type
               # Week 1: If we have receiver type context (generic instance), substitute type parameters
               if receiver = @receiver_type_context
                 if ENV["DEBUG"]?
@@ -2207,16 +2209,34 @@ module CrystalV2
                     puts "  receiver.class_symbol.type_parameters: #{receiver.class_symbol.type_parameters.inspect}"
                   end
                   if (type_args = receiver.type_args) && (type_params = receiver.class_symbol.type_parameters)
-                    result = substitute_type_parameters(type_annotation, type_args, type_params)
-                    debug_hook("infer.instance_var.substitute", "name=#{clean_name} result=#{result}")
+                    annotated_type = substitute_type_parameters(type_annotation, type_args, type_params)
+                    debug_hook("infer.instance_var.substitute", "name=#{clean_name} result=#{annotated_type}")
                     if ENV["DEBUG"]?
-                      puts "  substituted result: #{result.class} = #{result.inspect}"
+                      puts "  substituted result: #{annotated_type.class} = #{annotated_type.inspect}"
                     end
-                    return result
+                  else
+                    annotated_type = parse_type_name(type_annotation)
                   end
+                else
+                  annotated_type = parse_type_name(type_annotation)
+                end
+              else
+                annotated_type = parse_type_name(type_annotation)
+              end
+
+              if inferred_type = @instance_var_types[clean_name]?
+                if prefer_inferred_instance_var_type?(inferred_type, annotated_type)
+                  debug_hook("infer.instance_var.refined", "name=#{clean_name} inferred=#{inferred_type} annotated=#{annotated_type}")
+                  return inferred_type
                 end
               end
-              return parse_type_name(type_annotation)
+
+              if seeded_type = seed_instance_var_type_from_zero_arg_methods(current_class, clean_name, annotated_type)
+                debug_hook("infer.instance_var.seeded", "name=#{clean_name} inferred=#{seeded_type} annotated=#{annotated_type}")
+                return seeded_type
+              end
+
+              return annotated_type
             else
               if ENV["DEBUG"]?
                 puts "  type_annotation: nil (not found in class)"
@@ -2236,6 +2256,92 @@ module CrystalV2
           end
           debug_hook("infer.instance_var.nil", "name=#{clean_name}")
           @context.nil_type
+        end
+
+        private def prefer_inferred_instance_var_type?(inferred_type : Type, annotated_type : Type) : Bool
+          return false if inferred_type == @context.nil_type
+          return false if unknownish_type?(inferred_type)
+
+          type_matches?(inferred_type, annotated_type)
+        end
+
+        private def seed_instance_var_type_from_zero_arg_methods(current_class : ClassSymbol, clean_name : String, annotated_type : Type) : Type?
+          seed_key = "#{current_class.name}##{clean_name}"
+          return nil unless @instance_var_seed_in_progress.add?(seed_key)
+
+          begin
+            receiver_type = if receiver = @receiver_type_context
+                              if receiver.is_a?(InstanceType) && receiver.class_symbol == current_class
+                                receiver
+                              else
+                                instance_type_for(current_class)
+                              end
+                            else
+                              instance_type_for(current_class)
+                            end
+
+            current_class.scope.each_local_symbol do |_name, symbol|
+              case symbol
+              when MethodSymbol
+                if seeded = seed_instance_var_type_from_method(symbol, receiver_type, clean_name, annotated_type)
+                  return seeded
+                end
+              when OverloadSetSymbol
+                symbol.overloads.each do |method|
+                  if seeded = seed_instance_var_type_from_method(method, receiver_type, clean_name, annotated_type)
+                    return seeded
+                  end
+                end
+              end
+            end
+          ensure
+            @instance_var_seed_in_progress.delete(seed_key)
+          end
+
+          nil
+        end
+
+        private def seed_instance_var_type_from_method(method : MethodSymbol, receiver_type : Type, clean_name : String, annotated_type : Type) : Type?
+          return nil if method.is_class_method?
+          return nil unless count_required_params(method.params) == 0
+          return nil unless method_assigns_instance_var?(method, clean_name)
+
+          previous_type = @instance_var_types[clean_name]?
+          infer_method_body_type(method, receiver_type)
+          candidate = @instance_var_types[clean_name]?
+          return candidate if candidate && prefer_inferred_instance_var_type?(candidate, annotated_type)
+
+          if previous_type
+            @instance_var_types[clean_name] = previous_type
+          else
+            @instance_var_types.delete(clean_name)
+          end
+
+          nil
+        end
+
+        private def method_assigns_instance_var?(method : MethodSymbol, clean_name : String) : Bool
+          def_node = @arena[method.node_id]
+          return false unless def_node.is_a?(Frontend::DefNode)
+          body = def_node.body
+          return false unless body
+
+          body.any? { |expr_id| expression_assigns_instance_var?(expr_id, clean_name) }
+        end
+
+        private def expression_assigns_instance_var?(expr_id : ExprId, clean_name : String) : Bool
+          node = @arena[expr_id]
+
+          if node.is_a?(Frontend::AssignNode)
+            target_node = @arena[node.target]
+            if target_node.is_a?(Frontend::InstanceVarNode)
+              target_name = intern_name(target_node.name)
+              normalized_target = target_name.starts_with?("@") ? target_name[1..-1] : target_name
+              return true if normalized_target == clean_name
+            end
+          end
+
+          children_of(expr_id, node).any? { |child_id| expression_assigns_instance_var?(child_id, clean_name) }
         end
 
         # Phase 76: Infer type of class variable
@@ -3877,8 +3983,10 @@ module CrystalV2
 
           pretype_assignment_target(target_id, target_node)
 
-          # Infer value type
-          value_type = infer_expression(value_id)
+          # The parser rewrites ||= into `target = target || rhs`.
+          # For ivar/local seeding we want the post-assignment carrier,
+          # not the pre-assignment upper bound leaked through the LHS.
+          value_type = infer_rewritten_or_assign_value_type(target_id, target_node, value_id) || infer_expression(value_id)
 
           # Get target identifier name
           # Phase 5A: Check if target is instance variable
@@ -3908,6 +4016,34 @@ module CrystalV2
           # Assignments return the value type in Crystal
           # Type will be set by infer_expression
           value_type
+        end
+
+        private def infer_rewritten_or_assign_value_type(target_id : ExprId, target_node, value_id : ExprId) : Type?
+          value_node = @arena[value_id]
+          return nil unless value_node.is_a?(Frontend::BinaryNode)
+          op = Frontend.node_operator_string(value_node) || ""
+          return nil unless op == "||"
+          return nil unless assignment_targets_match?(target_id, value_node.left)
+
+          infer_expression(value_node.right)
+        end
+
+        private def assignment_targets_match?(target_id : ExprId, candidate_id : ExprId) : Bool
+          target_node = @arena[target_id]
+          candidate_node = @arena[candidate_id]
+
+          case {target_node, candidate_node}
+          when {Frontend::IdentifierNode, Frontend::IdentifierNode}
+            intern_name(target_node.name) == intern_name(candidate_node.name)
+          when {Frontend::InstanceVarNode, Frontend::InstanceVarNode}
+            intern_name(target_node.name) == intern_name(candidate_node.name)
+          when {Frontend::ClassVarNode, Frontend::ClassVarNode}
+            intern_name(target_node.name) == intern_name(candidate_node.name)
+          when {Frontend::GlobalNode, Frontend::GlobalNode}
+            intern_name(target_node.name) == intern_name(candidate_node.name)
+          else
+            false
+          end
         end
 
         private def pretype_assignment_target(target_id : ExprId, target_node : Frontend::Node) : Nil
@@ -7515,11 +7651,21 @@ module CrystalV2
 
         # Check if child_type is a subtype of parent_type (class inheritance)
         private def is_subtype?(child : Type, parent : Type) : Bool
+          if child.is_a?(ModuleType) && parent.is_a?(ModuleType)
+            return module_includes_module?(child.symbol, parent.symbol)
+          end
+
           if child.is_a?(PrimitiveType) && parent.is_a?(PrimitiveType)
             if parent.name == "Int"
               return signed_integer_type_name?(child.name)
             elsif parent.name == "UInt"
               return unsigned_integer_type_name?(child.name)
+            end
+          end
+
+          if child_symbol = class_symbol_for_subtype_check(child)
+            if parent.is_a?(ModuleType)
+              return symbol_includes_module?(child_symbol, parent.symbol)
             end
           end
 
@@ -7590,6 +7736,51 @@ module CrystalV2
             type.base_class
           else
             nil
+          end
+        end
+
+        private def symbol_includes_module?(symbol : Symbol, target_module : ModuleSymbol) : Bool
+          visited_classes = Set(ClassSymbol).new
+          visited_modules = Set(ModuleSymbol).new
+          symbol_includes_module?(symbol, target_module, visited_classes, visited_modules)
+        end
+
+        private def symbol_includes_module?(symbol : Symbol, target_module : ModuleSymbol, visited_classes : Set(ClassSymbol), visited_modules : Set(ModuleSymbol)) : Bool
+          case symbol
+          when ClassSymbol
+            return false unless visited_classes.add?(symbol)
+            return true if scope_includes_module?(symbol.scope, target_module, visited_modules)
+
+            if superclass_name = symbol.superclass_name
+              if superclass_symbol = resolve_class_symbol_from_scope(symbol.scope, superclass_name)
+                return true if symbol_includes_module?(superclass_symbol, target_module, visited_classes, visited_modules)
+              elsif global_superclass = @global_table.try(&.lookup(superclass_name))
+                if global_superclass.is_a?(ClassSymbol)
+                  return true if symbol_includes_module?(global_superclass, target_module, visited_classes, visited_modules)
+                end
+              end
+            end
+
+            false
+          when ModuleSymbol
+            return false unless visited_modules.add?(symbol)
+            return true if symbol == target_module
+            scope_includes_module?(symbol.scope, target_module, visited_modules)
+          else
+            false
+          end
+        end
+
+        private def module_includes_module?(child_module : ModuleSymbol, target_module : ModuleSymbol) : Bool
+          visited_modules = Set(ModuleSymbol).new
+          symbol_includes_module?(child_module, target_module, Set(ClassSymbol).new, visited_modules)
+        end
+
+        private def scope_includes_module?(scope : SymbolTable, target_module : ModuleSymbol, visited_modules : Set(ModuleSymbol)) : Bool
+          scope.included_modules.any? do |mod_ref|
+            mod_symbol = mod_ref.symbol
+            next false unless visited_modules.add?(mod_symbol)
+            mod_symbol == target_module || scope_includes_module?(mod_symbol.scope, target_module, visited_modules)
           end
         end
 

@@ -1,6 +1,43 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-03-31)
 
 ## Current Status
+- **Fresh semantic ivar-or-assign checkpoint: module-typed ivars now retain concrete zero-arg assignment carriers across methods, and parser-rewritten `||=` assignments no longer leak the pre-assignment upper bound into the stored ivar type (2026-03-31, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/type_inference_engine.cr` now seeds typed ivars from zero-arg methods of the current class that syntactically assign that ivar, instead of relying only on whichever method body happened to be inferred first
+    - the same file now recognizes parser-rewritten `target ||= rhs` assignments (`target = target || rhs`) and stores the post-assignment carrier from `rhs` instead of the old left-hand upper bound
+    - module inclusion now participates in subtype checks, so a concrete includer like `FiberEvent` can satisfy a declared module upper bound like `Event`
+    - focused regression coverage now lives in `spec/semantic/type_inference_instance_var_refinement_spec.cr`
+  - decisive evidence:
+    - focused regressions are green:
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_instance_var_refinement_spec.cr --error-trace`
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_time_span_builtin_spec.cr --error-trace`
+    - rebuild gates are green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+    - the exact no-prelude reproducer is green under the safe wrapper:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 120 1024 /tmp/semantic_event_delete_probe.cr --no-prelude --stats --no-link -o /tmp/semantic_event_delete_probe.out > /tmp/semantic_event_delete_probe_after_or_assign_fix.log 2>&1`
+      - summary:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=0`
+    - the full semantic stage3 probe under the safe wrapper moves too:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 240 4096 src/crystal_v2.cr --stats --no-link -o /tmp/stage3_semantic_probe.out > /tmp/stage3_semantic_probe_after_event_delete_fix.log 2>&1`
+      - branch-local summary moved from:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=288`
+      - to:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=287`
+      - removed/moved families from the live log:
+        - `Method 'delete' not found on Event`
+  - practical boundary:
+    - stage3 with the new inferer is still **not** green
+    - the next honest blockers are now:
+      - `Unknown generic type ''`
+      - `Int128.new(...)` / `new 0` in `src/stdlib/int.cr`
+      - downstream compiler_rt integer operator cascades
 - **Fresh semantic time-span/top-level-overload checkpoint: numeric `seconds`-style unit helpers now exist in the builtin surface, and receiverless overloaded functions like `sleep(...)` now dispatch through the semantic overload matcher instead of falling through as missing globals (2026-03-31, current session)**:
   - trustworthy setup:
     - `src/compiler/semantic/type_inference_engine.cr` now treats receiverless `OverloadSetSymbol`s as real top-level calls via `infer_top_level_overload_call(...)` instead of rejecting every overloaded global as missing

@@ -3,6 +3,36 @@
 Updated: 2026-03-31
 Context: compiler/bootstrap/stage2-stability
 
+[LM-385|verified]: After [LM-384], the next head blocker was no longer about
+time spans or top-level overload dispatch. A no-prelude carrier distilled it to
+an annotated ivar case: `@timeout_event : Event?`, a zero-arg method assigning
+`@timeout_event ||= FiberEvent.new`, and a later read calling `delete` after a
+nil-guard. That reproducer first showed `Method 'delete' not found on Event`,
+then, after a first partial fix, `Method 'delete' not found on Event | FiberEvent`.
+Those two falsifiers separated the root cause into two linked pieces inside
+`src/compiler/semantic/type_inference_engine.cr`: typed ivars were not being
+seeded from cross-method zero-arg assignment bodies, and parser-rewritten
+`target ||= rhs` assignments were storing the pre-assignment upper bound from
+`target || rhs` instead of the post-assignment carrier from `rhs`. The verified
+fix is therefore three-part and still narrow: `infer_instance_var(...)` now
+lazy-seeds typed ivars from zero-arg methods in the current class that
+syntactically assign that ivar; `infer_assign(...)` now recognizes rewritten
+`||=` and stores the RHS carrier instead of the leaked LHS upper bound; and
+module inclusion now participates in subtype checks so concrete includers such
+as `FiberEvent` satisfy declared module upper bounds such as `Event`. Focused
+regressions `spec/semantic/type_inference_instance_var_refinement_spec.cr` and
+`spec/semantic/type_inference_time_span_builtin_spec.cr` are green; both
+rebuild gates for `src/crystal_v2.cr` and `/tmp/crystal_v2_semantic_stage3probe`
+are green; the exact no-prelude reproducer under `scripts/run_safe.sh` is green
+with `semantic_diags=0 resolution_diags=0 type_diags=0`; and the full safe
+stage3 probe moves from `semantic_diags=0 resolution_diags=0 type_diags=288` to
+`semantic_diags=0 resolution_diags=0 type_diags=287`. The live log no longer
+contains `Method 'delete' not found on Event`. Boundary: stage3 is still not
+green; the next head frontier is now `Unknown generic type ''`,
+`Int128.new(...)` / `new 0` in `src/stdlib/int.cr`, and the downstream
+compiler_rt integer operator cascades rather than more `Event#delete`/`||=`
+ivar loss. {F/G/R: 0.96/0.78/0.98} [verified]
+
 [LM-384|verified]: Once [LM-383] removed the universal `inspect` miss, the next
 head blocker was a paired `Number#seconds` / `Function 'sleep' not found`
 corridor in the real prelude carrier. The split reproducer in
