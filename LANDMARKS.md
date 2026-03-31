@@ -3,6 +3,33 @@
 Updated: 2026-03-31
 Context: compiler/bootstrap/stage2-stability
 
+[LM-374|verified]: The next live stage3 blocker after [LM-373] was not more
+absolute-path shadowing. Once `::Signal` stayed rooted correctly, the remaining
+runtime noise clustered around explicit receiver ivars such as
+`action.@sa_mask` and `threads.@mutex`. The key observation was that the
+existing field-access fallback in
+`src/compiler/semantic/type_inference_engine.cr` only consulted scope-local
+`VariableSymbol`s, but many of these fields are represented solely in
+`ClassSymbol` ivar metadata (`get_instance_var_type(...)`) rather than as
+ordinary symbols. The verified fix is bounded: the fallback now normalizes
+`@field` to `field` and, when no scope-local variable symbol exists, consults
+the owning class/struct ivar metadata with generic type-parameter substitution.
+Focused regression
+`spec/semantic/type_inference_explicit_ivar_receiver_spec.cr` is green,
+neighboring `spec/semantic/type_inference_absolute_path_spec.cr` stays green,
+both rebuild gates for `src/crystal_v2.cr` and `/tmp/crystal_v2_semantic_stage3probe`
+are green, the representative tiny default-prelude carrier moves from
+`semantic_diags=0 resolution_diags=0 type_diags=235` to
+`semantic_diags=0 resolution_diags=0 type_diags=229`, and the full safe stage3
+probe moves from `semantic_diags=0 resolution_diags=0 type_diags=268` to
+`semantic_diags=0 resolution_diags=0 type_diags=262`. The old
+`Method '@sa_mask' not found on Sigaction` and `Method 'sigemptyset' not found
+on LibC` families disappear from the live logs. Boundary: stage3 is still not
+green; the next live frontier is now `pthread_mutex_*` / `Errno.new(ret)`, the
+remaining `sigaction` lib-fun call, `Thread.threads` / `threads.@mutex`, and
+later `Nil` arithmetic / `Int128` compiler_rt families rather than more
+explicit-ivar field metadata. {F/G/R: 0.96/0.73/0.97} [verified]
+
 [LM-373|verified]: The next live stage3 blocker after [LM-372] was not another
 primitive constructor miss. A richer diagnostic pass over the real 272-file
 default-prelude carrier showed that symbol collection already had the needed

@@ -5035,14 +5035,29 @@ module CrystalV2
           return nil unless instance_type
 
           class_symbol = instance_type.class_symbol
+          normalized_field_name = if field_name.starts_with?("@") && field_name.size > 1
+                                    field_name[1..-1]
+                                  else
+                                    field_name
+                                  end
 
-          symbol = class_symbol.scope.lookup_local(field_name)
-          return nil unless symbol.is_a?(VariableSymbol)
+          symbol = class_symbol.scope.lookup_local(normalized_field_name)
+          if symbol.is_a?(VariableSymbol)
+            declared_type = symbol.declared_type
+            return nil unless declared_type
 
-          declared_type = symbol.declared_type
-          return nil unless declared_type
+            return resolve_method_annotation_type(declared_type, receiver_type, class_symbol.scope)
+          end
 
-          resolve_method_annotation_type(declared_type, receiver_type, class_symbol.scope)
+          if type_annotation = class_symbol.get_instance_var_type(normalized_field_name)
+            if (type_args = instance_type.type_args) && (type_params = class_symbol.type_parameters)
+              return substitute_type_parameters(type_annotation, type_args, type_params)
+            end
+
+            return parse_type_name(type_annotation)
+          end
+
+          nil
         end
 
         private def infer_call(node : Frontend::CallNode, expr_id : ExprId) : Type
