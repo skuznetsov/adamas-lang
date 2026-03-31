@@ -1441,6 +1441,24 @@ describe Semantic::TypeInferenceEngine do
       type.as(ArrayType).element_type.to_s.should eq("UInt8")
     end
 
+    it "accepts constant-sized uninitialized static array shorthand" do
+      source = <<-CRYSTAL
+        DEFAULT_BUFFER_SIZE = 16
+
+        buffer = uninitialized UInt8[DEFAULT_BUFFER_SIZE]
+        buffer.to_slice
+      CRYSTAL
+
+      program, analyzer, engine = infer_types(source)
+
+      engine.diagnostics.select(&.level.error?).should be_empty
+
+      call_id = program.roots.last
+      type = engine.context.get_type(call_id)
+      type.should be_a(ArrayType)
+      type.as(ArrayType).element_type.to_s.should eq("UInt8")
+    end
+
     it "treats underscore parameter annotations as wildcard matches" do
       source = <<-CRYSTAL
         def wrap(value : _) : Int32

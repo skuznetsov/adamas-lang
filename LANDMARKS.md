@@ -3,6 +3,32 @@
 Updated: 2026-03-31
 Context: compiler/bootstrap/stage2-stability
 
+[LM-370|verified]: The next live stage3 blocker after [LM-369] was not more
+`termios` alias arithmetic and not another `io.cr` slice builtin gap. The exact
+no-prelude carrier showed that `uninitialized UInt8[DEFAULT_BUFFER_SIZE]`
+itself was still degrading before `to_slice`: `infer_static_array_type_expression(...)`
+only accepted a literal `NumberNode`, so constant-sized static-array shorthand
+fell back to ordinary `IndexNode` inference and emitted `Cannot index type
+UInt8`, which then cascaded into `buffer.to_slice -> Nil`. The verified fix in
+`src/compiler/semantic/type_inference_engine.cr` is bounded: the static-array
+shorthand path now accepts any integer-valued size expression instead of only a
+numeric literal, while still reusing the existing slice-like `ArrayType`
+approximation for `StaticArray`/`Slice` surface compatibility. Focused
+regression
+`spec/semantic/type_inference_spec.cr --example 'accepts constant-sized uninitialized static array shorthand'`
+is green, both rebuild gates for `src/crystal_v2.cr` and
+`/tmp/crystal_v2_semantic_stage3probe` are green, and the exact
+`/tmp/semantic_uninitialized_static_array_probe.cr` oracle is fully green under
+`scripts/run_safe.sh` with `semantic_diags=0 resolution_diags=0 type_diags=0`.
+The full safe stage3 probe moved from `semantic_diags=0 resolution_diags=0
+type_diags=288` to `semantic_diags=0 resolution_diags=0 type_diags=285`, and
+the old `IO.copy` top-family (`Cannot index type UInt8`, `buffer.to_slice ->
+Nil`) disappeared from the head of `/tmp/stage3_semantic_probe.log`. Boundary:
+stage3 is still not green; the new live frontier is `String.interpolation`
+(`values.sum` / `values.all?`), `pthread_mutex_*` / `Errno.new`, and later
+`Fiber` / `Thread` / `Signal` runtime surfaces rather than more static-array
+shorthand work. {F/G/R: 0.96/0.67/0.97} [verified]
+
 [LM-369|verified]: The next exact `termios` blocker after [LM-368] was no
 longer field lookup or module-instance receiver timing. The real no-prelude
 carrier showed that once `c_lflag` field access survived, the remaining exact

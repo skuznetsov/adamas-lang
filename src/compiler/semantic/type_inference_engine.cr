@@ -2516,6 +2516,12 @@ module CrystalV2
           integer_primitive_name?(canonical_name) || canonical_name == "Float32" || canonical_name == "Float64"
         end
 
+        private def integer_type?(type : Type) : Bool
+          return false unless type.is_a?(PrimitiveType)
+
+          integer_primitive_name?(canonical_numeric_primitive_name(type.name))
+        end
+
         private def integer_primitive_name?(name : String) : Bool
           case name
           when "Int8", "Int16", "Int32", "Int64", "Int128",
@@ -3859,8 +3865,8 @@ module CrystalV2
           return nil unless type_node.is_a?(Frontend::IndexNode)
           return nil unless type_node.indexes.size == 1
 
-          index_node = @arena[type_node.indexes.first]
-          return nil unless index_node.is_a?(Frontend::NumberNode)
+          size_type = infer_expression(type_node.indexes.first)
+          return nil unless integer_type?(size_type)
 
           element_type = case object_node = @arena[type_node.object]
                          when Frontend::IdentifierNode

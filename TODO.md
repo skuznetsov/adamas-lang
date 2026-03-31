@@ -1,6 +1,40 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-03-31)
 
 ## Current Status
+- **Fresh semantic static-array-shorthand checkpoint: `uninitialized UInt8[CONST]` now resolves as slice-like storage instead of degrading into an index on `UInt8`, and the early `IO.copy` indexing family is gone from the live stage3 log (2026-03-31, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/type_inference_engine.cr` now accepts integer-valued size expressions in `infer_static_array_type_expression(...)` instead of requiring a literal `NumberNode`
+    - the same static-array shorthand path still reuses the existing slice-like `ArrayType` approximation, so `buffer.to_slice` and downstream slice indexing stay on the already-supported builtin surface
+    - focused regression coverage in `spec/semantic/type_inference_spec.cr` now includes constant-sized uninitialized shorthand via:
+      - `DEFAULT_BUFFER_SIZE = 16`
+      - `buffer = uninitialized UInt8[DEFAULT_BUFFER_SIZE]`
+      - `buffer.to_slice`
+  - decisive evidence:
+    - focused regression is green:
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_spec.cr --example 'accepts constant-sized uninitialized static array shorthand' --error-trace`
+    - rebuild gates are green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+    - the exact no-prelude carrier is green under the safe wrapper:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 60 2048 /tmp/semantic_uninitialized_static_array_probe.cr --no-prelude --stats --verbose --no-link -o /tmp/semantic_uninitialized_static_array_probe.out`
+      - summary: `semantic_diags=0 resolution_diags=0 type_diags=0`
+    - the full semantic stage3 probe under the safe wrapper moves again:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 240 4096 src/crystal_v2.cr --stats --no-link -o /tmp/stage3_semantic_probe.out > /tmp/stage3_semantic_probe.log 2>&1`
+      - summary moved from:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=288`
+      - to:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=285`
+  - practical boundary:
+    - stage3 with the new inferer is still **not** green
+    - the old top `IO.copy` family (`Cannot index type UInt8`, `buffer.to_slice -> Nil`) is gone from `/tmp/stage3_semantic_probe.log`
+    - the next honest frontier is now:
+      - `String.interpolation(*values : String)` degrading `values.sum` / `values.all?`
+      - `pthread_mutex_*` / `Errno.new`
+      - later `Fiber` / `Thread` / `Signal` runtime surfaces
 - **Fresh semantic libc-integer-alias checkpoint: numeric fallback now treats concrete C integer aliases as numeric operands, and the exact `termios` carrier is green end-to-end (2026-03-31, current session)**:
   - trustworthy setup:
     - `src/compiler/semantic/type_inference_engine.cr` now canonicalizes concrete libc-style numeric aliases (`Long`, `ULong`, `LongLong`, `ULongLong`, `Short`, `UShort`, etc.) when deciding whether a primitive is numeric and when computing numeric-promotion widths
