@@ -3,6 +3,39 @@
 Updated: 2026-03-31
 Context: compiler/bootstrap/stage2-stability
 
+[LM-377|verified]: The next real pthread/runtime frontier after [LM-376] was no
+longer the outer `GC.pthread_create(...)` call in isolation. Two exact
+falsifiers split the remaining corridor more precisely: a focused aggregate on
+`threads.@mutex.lock` still showed that explicit receiver ivars with only a
+default-value initializer (`@mutex = Thread::Mutex.new`) were invisible to the
+existing metadata-only fallback, and a direct proc-pointer reducer showed that
+`->Thread.thread_proc(Void*)` no longer typed as generic `Proc` but still
+collapsed its parameter to plain `Void`, which then made the deeper
+`LibGC.pthread_create(thread, attr, start, arg)` call fail parameter matching
+even after named-argument lookup reached the real `GC.pthread_create` body. The
+verified fix in `src/compiler/semantic/type_inference_engine.cr` is therefore
+three-part but still narrow: explicit receiver ivar lookup now falls back to
+`InstanceVarInfo.default_value` under the concrete receiver context when no
+explicit ivar annotation exists; ordinary call inference now orders named
+arguments against method parameters before overload/type matching; and
+`type_from_type_expr(...)` now understands unary pointer type expressions, so
+proc-pointer target inference preserves `Void*` as `Pointer(Void)` instead of
+degrading it to `Void`. Focused regressions
+`spec/semantic/type_inference_explicit_ivar_receiver_spec.cr`,
+`spec/semantic/type_inference_named_args_spec.cr`, and
+`spec/semantic/type_inference_pthread_mutex_spec.cr` are green; both rebuild
+gates for `src/crystal_v2.cr` and `/tmp/crystal_v2_semantic_stage3probe` are
+green; and the full safe stage3 probe moves from
+`semantic_diags=0 resolution_diags=0 type_diags=328` to
+`semantic_diags=0 resolution_diags=0 type_diags=323`. The old
+`threads.@mutex` miss disappears from the live log, and the outer
+`GC.pthread_create(...)` miss is replaced by the deeper `LibGC.pthread_create`
+call plus `Errno.new(ret)`, `Crystal.print_buffered(...)`, `LibC.sigaction(...)`,
+and later Nil / file-close cascades. Boundary: stage3 is still not green, and
+this checkpoint does not claim pthread/runtime ABI work is finished; it only
+pushes the live frontier deeper into the real runtime surface. {F/G/R:
+0.95/0.66/0.97} [verified]
+
 [LM-376|verified]: The next real pthread frontier after [LM-375] was split, not
 singular. A richer host-side dump over the real aggregate showed two distinct
 issues: eager semantic body inference for nested `Thread::Mutex` methods was

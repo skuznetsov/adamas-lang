@@ -1,6 +1,45 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-03-31)
 
 ## Current Status
+- **Fresh semantic pthread-create/default-ivar checkpoint: explicit receiver ivars can now fall back to default-value metadata, named-argument module calls match their real parameters, and proc-pointer target signatures preserve pointer type expressions through `->...` lowering (2026-03-31, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/type_inference_engine.cr` now extends the explicit-receiver ivar fallback beyond `get_instance_var_type(...)`: when an ivar has no explicit annotation but does have `InstanceVarInfo.default_value`, semantic inference re-enters that default-value expression under the concrete receiver context instead of dropping the field to `Nil`
+    - the same file now supports named-argument method matching for ordinary semantic call lookup by ordering named arguments against `MethodSymbol` parameters, filling defaults where needed, and then reusing the existing overload/type-match machinery
+    - the same file now treats unary pointer type expressions as real type expressions (`Void*`, `LibC::Foo*`, etc.), so proc-pointer target inference for `->Thread.thread_proc(Void*)` keeps `Pointer(Void)` instead of collapsing the parameter to plain `Void`
+    - focused regression coverage now lives in:
+      - `spec/semantic/type_inference_explicit_ivar_receiver_spec.cr`
+      - `spec/semantic/type_inference_named_args_spec.cr`
+      - `spec/semantic/type_inference_pthread_mutex_spec.cr`
+  - decisive evidence:
+    - focused regressions are green:
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_explicit_ivar_receiver_spec.cr --error-trace`
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_named_args_spec.cr --error-trace`
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_pthread_mutex_spec.cr --error-trace`
+    - rebuild gates are green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+    - the full semantic stage3 probe under the safe wrapper moves again:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 240 4096 src/crystal_v2.cr --stats --no-link -o /tmp/stage3_semantic_probe.out > /tmp/stage3_semantic_probe_after_proc_pointer_fix.log 2>&1`
+      - branch-local summary moved from:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=328`
+      - to:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=323`
+    - removed/moved families from the live log:
+      - the old `threads.@mutex` explicit-ivar miss is absent
+      - the old outer `GC.pthread_create(...)` miss is absent; the live frontier now lands later on `LibGC.pthread_create(...)`
+  - practical boundary:
+    - stage3 with the new inferer is still **not** green
+    - this checkpoint is a combined branch-local move, not a claim that pthread/runtime surface is solved
+    - the next honest frontier is now:
+      - `LibGC.pthread_create(...)`
+      - `Errno.new(ret)`
+      - `Crystal.print_buffered(...)`
+      - `LibC.sigaction(...)`
+      - later Nil / file-close cascades
 - **Fresh semantic pthread checkpoint: nested `Thread::Mutex` bodies now keep the right owner/class context during eager inference, lib-fun pointer calls accept implicit `to_unsafe`, and macro-defined pthread signal constants no longer collapse to `Nil` inside semantic inference (2026-03-31, current session)**:
   - trustworthy setup:
     - `src/compiler/semantic/type_inference_engine.cr` now preserves/restores `@current_class` and `@current_module` across `infer_def(...)`, rebinds them from the resolved `MethodSymbol` owner scope for eager body inference, and falls back to a whole-graph `node_id` search when the scoped method lookup misses the real body symbol

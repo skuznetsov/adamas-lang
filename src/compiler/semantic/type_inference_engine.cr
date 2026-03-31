@@ -793,7 +793,7 @@ module CrystalV2
             if op == "!"
               @context.bool_type
             elsif op == "->"
-              @context.proc_type
+              nil
             else
               # +x, -x, ~x: return operand's type
               infer_expression(node.operand)
@@ -1308,6 +1308,51 @@ module CrystalV2
           end
 
           infer_method_body_type(method, receiver_type, arg_types, call_node)
+        end
+
+        private def infer_proc_pointer_type(operand_id : ExprId) : ProcType?
+          operand_node = @arena[operand_id]
+          return nil unless operand_node.is_a?(Frontend::CallNode)
+          return nil if operand_node.named_args || operand_node.block
+
+          arg_types = Array(Type).new(operand_node.args.size)
+          operand_node.args.each do |arg_id|
+            arg_types << (type_from_type_expr(arg_id) || infer_expression(arg_id))
+          end
+
+          callee_node = @arena[operand_node.callee]
+
+          case callee_node
+          when Frontend::MemberAccessNode
+            receiver_type = infer_expression(callee_node.object)
+            receiver_type = class_receiver_type_for_expression(receiver_type) if type_receiver_expression?(callee_node.object)
+            method_name = member_name_for(operand_node.callee, callee_node)
+            method = lookup_method(receiver_type, method_name, arg_types, false)
+            return nil unless method
+
+            return_type = if ann = method.return_annotation
+                            resolve_method_annotation_type(ann, receiver_type, method.scope, class_method_context: method.is_class_method?)
+                          else
+                            infer_method_body_type(method, receiver_type, arg_types)
+                          end
+
+            ProcType.new(arg_types, return_type)
+          when Frontend::IdentifierNode
+            method_name = identifier_name_for(operand_node.callee, callee_node)
+            method = find_method_in_scope(@global_table, method_name)
+            return nil unless method
+            return nil unless parameters_match?(method, arg_types, @context.nil_type)
+
+            return_type = if ann = method.return_annotation
+                            resolve_method_annotation_type(ann, @context.nil_type, method.scope, class_method_context: method.is_class_method?)
+                          else
+                            infer_method_body_type(method, @context.nil_type, arg_types)
+                          end
+
+            ProcType.new(arg_types, return_type)
+          else
+            nil
+          end
         end
 
         private def resolve_zero_arg_overload(symbol : OverloadSetSymbol) : MethodSymbol?
@@ -2624,11 +2669,7 @@ module CrystalV2
 
           result_type = case op
                         when "->"
-                          # Proc pointer targets carry type-position syntax in
-                          # their operand (for example Void*). Treat the whole
-                          # expression as a proc value during semantic prepass
-                          # without recursing into the target signature.
-                          @context.proc_type
+                          infer_proc_pointer_type(operand_id) || @context.proc_type
                         when "*"
                           PointerType.new(infer_expression(operand_id))
                         when "!"
@@ -4752,6 +4793,14 @@ module CrystalV2
           node = @arena[expr_id]
 
           case node
+          when Frontend::UnaryNode
+            op = Frontend.node_operator_string(node) || ""
+            case op
+            when "*"
+              if element_type = type_from_type_expr(node.operand) || infer_expression(node.operand)
+                return PointerType.new(normalize_literal_type(element_type))
+              end
+            end
           when Frontend::PathNode
             if symbol = resolve_path_symbol(node)
               if type = type_from_symbol(symbol)
@@ -5237,6 +5286,28 @@ module CrystalV2
             return parse_type_name(type_annotation)
           end
 
+          if ivar_info = class_symbol.get_instance_var_info(normalized_field_name)
+            if default_value = ivar_info.default_value
+              previous_receiver_context = @receiver_type_context
+              previous_class = @current_class
+              previous_module = @current_module
+
+              @receiver_type_context = instance_type
+              @current_class = class_symbol
+              if owner_module = class_symbol.scope.owner_module
+                @current_module = owner_module
+              end
+
+              begin
+                return infer_expression(default_value)
+              ensure
+                @receiver_type_context = previous_receiver_context
+                @current_class = previous_class
+                @current_module = previous_module
+              end
+            end
+          end
+
           nil
         end
 
@@ -5487,11 +5558,15 @@ module CrystalV2
             end
           end
 
-          if named_args = node.named_args
-            named_args.each { |named_arg| infer_expression(named_arg.value) }
-          end
+          named_arg_types = infer_named_argument_types(node)
 
           infer_pointer_linked_list_block(node, receiver_type, method_name)
+
+          if named_arg_types && !named_arg_types.empty?
+            if result = infer_named_argument_method_call(receiver_type, method_name, arg_types, named_arg_types, has_block, node)
+              return result
+            end
+          end
 
           if method_name == "unsafe_as"
             if target_type = unsafe_as_target_type(arg_types.first?)
@@ -5759,6 +5834,88 @@ module CrystalV2
             args << arg_id
           end
           args
+        end
+
+        private def infer_named_argument_types(node : Frontend::CallNode) : Hash(String, Type)?
+          named_args = node.named_args
+          return nil unless named_args
+
+          types = {} of String => Type
+          named_args.each do |named_arg|
+            types[intern_name(named_arg.name)] = infer_expression(named_arg.value)
+          end
+          types
+        end
+
+        private def infer_named_argument_method_call(
+          receiver_type : Type,
+          method_name : String,
+          positional_arg_types : Array(Type),
+          named_arg_types : Hash(String, Type),
+          has_block : Bool,
+          call_node : Frontend::CallNode
+        ) : Type?
+          matches = [] of {MethodSymbol, Array(Type)}
+
+          method_candidates_for(receiver_type, method_name).each do |method|
+            method_has_block = method.params.any?(&.is_block)
+            next unless method_has_block == has_block
+
+            ordered_arg_types = ordered_call_argument_types(method, positional_arg_types, named_arg_types)
+            next unless ordered_arg_types
+            next unless parameters_match?(method, ordered_arg_types, receiver_type)
+
+            matches << {method, ordered_arg_types}
+          end
+
+          return nil if matches.empty?
+
+          selected = if matches.size == 1
+                       matches.first
+                     else
+                       matches.max_by { |entry| specificity_score(entry[0], entry[1]) }
+                     end
+
+          infer_method_call_result(selected[0], receiver_type, selected[1], call_node)
+        end
+
+        private def ordered_call_argument_types(
+          method : MethodSymbol,
+          positional_arg_types : Array(Type),
+          named_arg_types : Hash(String, Type)
+        ) : Array(Type)?
+          params = method.params.reject(&.is_block)
+          return nil if params.any? { |param| param.is_splat || param.is_double_splat }
+
+          ordered = [] of Type
+          used_named = Set(String).new
+          positional_index = 0
+
+          params.each do |param|
+            if positional_index < positional_arg_types.size
+              ordered << positional_arg_types[positional_index]
+              positional_index += 1
+              next
+            end
+
+            param_name_slice = param.name
+            return nil unless param_name_slice
+            param_name = intern_name(param_name_slice)
+
+            if arg_type = named_arg_types[param_name]?
+              ordered << arg_type
+              used_named << param_name
+            elsif default_value = param.default_value
+              ordered << infer_expression(default_value)
+            else
+              return nil
+            end
+          end
+
+          return nil unless positional_index == positional_arg_types.size
+          return nil unless named_arg_types.each_key.all? { |name| used_named.includes?(name) }
+
+          ordered
         end
 
         private def block_pass_arg?(arg_id : ExprId) : Bool
