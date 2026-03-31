@@ -109,5 +109,43 @@ describe Semantic::TypeInferenceEngine do
       engine.diagnostics.should be_empty
       engine.context.get_type(program.roots.last).to_s.should eq("Int")
     end
+
+    it "accepts implicit to_unsafe objects for lib fun pointer parameters" do
+      source = <<-CRYSTAL
+        lib LibC
+          alias Int = Int32
+
+          struct PthreadMutexT
+            value : Int32
+          end
+
+          fun pthread_mutex_lock(x0 : PthreadMutexT*) : Int
+        end
+
+        class Mutex
+        end
+
+        class Thread
+          class Mutex
+            def lock
+              LibC.pthread_mutex_lock(self)
+            end
+
+            def to_unsafe
+              pointerof(@mutex)
+            end
+          end
+        end
+
+        Thread::Mutex.new.lock
+      CRYSTAL
+
+      program, analyzer, engine = infer_lib_fun_call_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.should be_empty
+      engine.context.get_type(program.roots.last).to_s.should eq("Int32")
+    end
   end
 end

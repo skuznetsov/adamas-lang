@@ -18,6 +18,7 @@ require "./types/enum_type"
 require "./types/virtual_type"
 require "../hir/debug_hooks"
 require "./analyzer"
+require "./macro_expander"
 require "../frontend/ast"
 require "../../runtime"
 
@@ -74,6 +75,7 @@ module CrystalV2
         @module_type_cache : Hash(ModuleSymbol, ModuleType)
         @instance_type_cache : Hash(ClassSymbol, InstanceType)
         @method_lookup_cache : Hash(MethodLookupKey, MethodSymbol?)
+        @macro_expression_cache : Hash(Int32, ExprId)
         @unknown_type : PrimitiveType
         @flags : Set(String)
 
@@ -165,6 +167,7 @@ module CrystalV2
           @module_type_cache = {} of ModuleSymbol => ModuleType
           @instance_type_cache = {} of ClassSymbol => InstanceType
           @method_lookup_cache = {} of MethodLookupKey => MethodSymbol?
+          @macro_expression_cache = {} of Int32 => ExprId
           @current_class = nil
           @current_module = nil
           @current_method_scope = nil
@@ -934,12 +937,13 @@ module CrystalV2
                Frontend::AnnotationNode,
                Frontend::AnnotationDefNode,
                Frontend::UnionNode,
-               Frontend::MacroLiteralNode,
-               Frontend::GlobalVarDeclNode,
+               Frontend::GlobalVarDeclNode
+            # Pure statements that don't need body processing
+            @context.nil_type
+          when Frontend::MacroLiteralNode,
                Frontend::MacroIfNode,
                Frontend::MacroForNode,
                Frontend::MacroExpressionNode
-            # Pure statements that don't need body processing
             @context.nil_type
           # Note: DefNode, ClassNode, ModuleNode need recursive path
           # because they have special body processing (infer_def, infer_class, etc.)
@@ -1116,7 +1120,7 @@ module CrystalV2
             # Reference to enum → EnumType
             EnumType.new(symbol)
           when ConstantSymbol
-            infer_expression(symbol.value)
+            infer_constant_value_expression(symbol.value)
           when AliasSymbol
             aliased_type = parse_type_name(symbol.target)
             aliased_type.is_a?(EnumType) ? aliased_type : class_type_reference_for(aliased_type)
@@ -1605,9 +1609,21 @@ module CrystalV2
           guard_watchdog!
           previous_method_scope = @current_method_scope
           previous_assignments = @assignments.dup
+          previous_class = @current_class
+          previous_module = @current_module
           method_symbol = current_method_symbol_for(node, expr_id)
           @current_method_scope = current_method_scope_for(node, expr_id)
           @current_method_is_class_method_stack << !!method_symbol.try(&.is_class_method?)
+
+          if method_symbol
+            if owner_class = class_symbol_for_scope(method_symbol.scope.parent)
+              @current_class = owner_class
+            end
+
+            if owner_module = method_symbol.scope.owner_module
+              @current_module = owner_module
+            end
+          end
 
           generic_owner = false
           if current_class = @current_class
@@ -1674,6 +1690,8 @@ module CrystalV2
           @assignments = previous_assignments.not_nil!
           @current_method_is_class_method_stack.pop unless @current_method_is_class_method_stack.empty?
           @current_method_scope = previous_method_scope
+          @current_class = previous_class
+          @current_module = previous_module
         end
 
         private def module_owned_instance_method_requires_concrete_receiver?(method : MethodSymbol) : Bool
@@ -1687,7 +1705,6 @@ module CrystalV2
 
           # Look up the ClassSymbol from the symbol table
           class_name = intern_name(node.name)
-
           class_symbol = @global_table.try(&.lookup(class_name))
           return @context.nil_type unless class_symbol.is_a?(ClassSymbol)
 
@@ -1705,6 +1722,47 @@ module CrystalV2
 
           # Class definitions don't have value types
           @context.nil_type
+        end
+
+        private def class_symbol_for_scope(target_scope : SymbolTable?) : ClassSymbol?
+          return nil unless target_scope
+
+          if current_class = @current_class
+            return current_class if current_class.scope.same?(target_scope) || current_class.class_scope.same?(target_scope)
+          end
+
+          return nil unless global_table = @global_table
+          find_class_symbol_for_scope(global_table, target_scope, Set(SymbolTable).new)
+        end
+
+        private def find_class_symbol_for_scope(search_scope : SymbolTable, target_scope : SymbolTable, visited : Set(SymbolTable)) : ClassSymbol?
+          return nil if visited.includes?(search_scope)
+          visited << search_scope
+
+          search_scope.each_local_symbol do |_, symbol|
+            case symbol
+            when ClassSymbol
+              return symbol if symbol.scope.same?(target_scope) || symbol.class_scope.same?(target_scope)
+
+              if nested = find_class_symbol_for_scope(symbol.scope, target_scope, visited)
+                return nested
+              end
+
+              if nested = find_class_symbol_for_scope(symbol.class_scope, target_scope, visited)
+                return nested
+              end
+            when ModuleSymbol
+              if nested = find_class_symbol_for_scope(symbol.scope, target_scope, visited)
+                return nested
+              end
+            when EnumSymbol
+              if nested = find_class_symbol_for_scope(symbol.scope, target_scope, visited)
+                return nested
+              end
+            end
+          end
+
+          nil
         end
 
         private def infer_union(node : Frontend::UnionNode, expr_id : ExprId) : Type
@@ -1789,6 +1847,12 @@ module CrystalV2
             end
           end
 
+          if global_table = @global_table
+            if method = find_method_symbol_by_node_id(global_table, name, expr_id, Set(SymbolTable).new)
+              return method
+            end
+          end
+
           nil
         end
 
@@ -1801,6 +1865,38 @@ module CrystalV2
           else
             nil
           end
+        end
+
+        private def find_method_symbol_by_node_id(search_scope : SymbolTable, name : String, expr_id : ExprId, visited : Set(SymbolTable)) : MethodSymbol?
+          return nil if visited.includes?(search_scope)
+          visited << search_scope
+
+          if method = current_method_symbol_in_scope(search_scope, name, expr_id)
+            return method
+          end
+
+          search_scope.each_local_symbol do |_, symbol|
+            case symbol
+            when ClassSymbol
+              if nested = find_method_symbol_by_node_id(symbol.scope, name, expr_id, visited)
+                return nested
+              end
+
+              if nested = find_method_symbol_by_node_id(symbol.class_scope, name, expr_id, visited)
+                return nested
+              end
+            when ModuleSymbol
+              if nested = find_method_symbol_by_node_id(symbol.scope, name, expr_id, visited)
+                return nested
+              end
+            when EnumSymbol
+              if nested = find_method_symbol_by_node_id(symbol.scope, name, expr_id, visited)
+                return nested
+              end
+            end
+          end
+
+          nil
         end
 
         # Phase 31: Type inference for include statement
@@ -1892,13 +1988,13 @@ module CrystalV2
           # Phase 35: Constant declaration
           # Infer type from the assigned value expression
           if value_expr = node.value
-            infer_expression(value_expr)
+            infer_constant_value_expression(value_expr)
           else
             name = intern_name(node.name)
             if symbol = resolve_scoped_symbol(name)
               case symbol
               when ConstantSymbol
-                infer_expression(symbol.value)
+                infer_constant_value_expression(symbol.value)
               when EnumSymbol
                 EnumType.new(symbol)
               else
@@ -1912,6 +2008,81 @@ module CrystalV2
               @context.nil_type
             end
           end
+        end
+
+        private def infer_macro_expression_value(expr_id : ExprId) : Type
+          expanded_id = expanded_macro_expression(expr_id)
+          return @context.nil_type if expanded_id.invalid?
+
+          infer_expression(expanded_id)
+        end
+
+        private def infer_constant_value_expression(expr_id : ExprId) : Type
+          node = @arena[expr_id]
+
+          case node
+          when Frontend::MacroLiteralNode,
+               Frontend::MacroIfNode,
+               Frontend::MacroForNode,
+               Frontend::MacroExpressionNode
+            infer_macro_expression_value(expr_id)
+          else
+            infer_expression(expr_id)
+          end
+        end
+
+        private def expanded_macro_expression(expr_id : ExprId) : ExprId
+          if cached = @macro_expression_cache[expr_id.index]?
+            return cached
+          end
+
+          expander = MacroExpander.new(
+            @program,
+            @arena,
+            @flags,
+            symbol_table: @global_table
+          )
+
+          output = expanded_macro_expression_text(expander, expr_id)
+          expander.diagnostics.each { |entry| @diagnostics << entry }
+
+          expanded_id =
+            if output.strip.empty?
+              ExprId.new(-1)
+            else
+              expander.reparse_output(output, expr_id)
+            end
+
+          @macro_expression_cache[expr_id.index] = expanded_id
+          expanded_id
+        end
+
+        private def expanded_macro_expression_text(expander : MacroExpander, expr_id : ExprId) : String
+          node = @arena[expr_id]
+
+          case node
+          when Frontend::MacroLiteralNode, Frontend::MacroIfNode, Frontend::MacroForNode
+            expander.expand_top_level_text(
+              expr_id,
+              owner_type: @current_class,
+              scope: current_macro_expansion_scope
+            )
+          when Frontend::MacroExpressionNode
+            expander.expand_expression(
+              expr_id,
+              variables: {} of String => MacroValue,
+              owner_type: @current_class
+            )
+          else
+            ""
+          end
+        end
+
+        private def current_macro_expansion_scope : SymbolTable?
+          @current_method_scope ||
+            @current_class.try(&.scope) ||
+            @current_module.try(&.scope) ||
+            @global_table
         end
 
         private def infer_instance_var(node : Frontend::InstanceVarNode, expr_id : ExprId) : Type
@@ -4221,7 +4392,7 @@ module CrystalV2
           if symbol = resolve_path_symbol(node)
             debug("  resolved symbol: #{symbol.class.name}")
             if symbol.is_a?(ConstantSymbol)
-              return infer_expression(symbol.value)
+              return infer_constant_value_expression(symbol.value)
             end
             if type = type_from_symbol(symbol)
               debug("  resolved type: #{type.class.name}")
@@ -6902,6 +7073,14 @@ module CrystalV2
             return true if expected.is_a?(PointerType)
           end
 
+          if expected.is_a?(PointerType)
+            if actual_pointer = actual.as?(PointerType)
+              return true if nil_pointer_element_type?(actual_pointer.element_type)
+            elsif coerced_pointer = c_fun_pointer_coercion(actual)
+              return c_fun_type_matches?(coerced_pointer, expected)
+            end
+          end
+
           if actual.is_a?(PrimitiveType)
             if symbol = lookup_type_symbol(actual.name)
               if symbol.is_a?(EnumSymbol)
@@ -6920,6 +7099,21 @@ module CrystalV2
           end
 
           false
+        end
+
+        private def c_fun_pointer_coercion(actual : Type) : Type?
+          method = lookup_method(actual, "to_unsafe", [] of Type, false)
+          return nil unless method
+
+          if ann = method.return_annotation
+            resolve_method_annotation_type(ann, actual, method.scope, class_method_context: method.is_class_method?)
+          else
+            infer_method_body_type(method, actual)
+          end
+        end
+
+        private def nil_pointer_element_type?(type : Type) : Bool
+          type == @context.nil_type || (type.is_a?(PrimitiveType) && type.name == "Nil")
         end
 
         # Check if actual_type is compatible with expected_type

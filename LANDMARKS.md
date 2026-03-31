@@ -3,6 +3,44 @@
 Updated: 2026-03-31
 Context: compiler/bootstrap/stage2-stability
 
+[LM-376|verified]: The next real pthread frontier after [LM-375] was split, not
+singular. A richer host-side dump over the real aggregate showed two distinct
+issues: eager semantic body inference for nested `Thread::Mutex` methods was
+still binding `self` to the wrong `Mutex` owner symbol in competing/reopened
+scopes, and the later `SIG_SUSPEND` / `SIG_RESUME` constants in
+`src/stdlib/crystal/system/unix/pthread.cr` existed as `ConstantSymbol`s but
+their values still collapsed to `Nil` because `infer_identifier`,
+`infer_constant`, and `infer_path` eventually treated the underlying
+`MacroIfNode` as a pure statement. The verified fix in
+`src/compiler/semantic/type_inference_engine.cr` is correspondingly narrow and
+two-part: `infer_def(...)` now preserves/restores `@current_class` and
+`@current_module`, rebinds them from the resolved `MethodSymbol` owner scope,
+and falls back to a whole-graph `node_id` search when scoped body lookup misses
+the real method; and constant-value inference now expands macro control flow
+*only* for constant values (bare constant lookup, `infer_constant`, and
+`infer_path`) instead of globally for all macro expression nodes. Useful
+negative result: a broader expression-context macro-expansion attempt was
+synthetically green but worsened the full safe probe to `type_diags=523`, so it
+was explicitly narrowed back before shipping. Focused regressions
+`spec/semantic/type_inference_lib_fun_call_spec.cr`,
+`spec/semantic/type_inference_pthread_mutex_spec.cr`, and
+`spec/semantic/type_inference_macro_constant_spec.cr` are green; both rebuild
+gates for `src/crystal_v2.cr` and `/tmp/crystal_v2_semantic_stage3probe` are
+green; the exact macro-constant aggregate with
+`private SIG_SUSPEND = {% if LibC.has_constant?(:SIGRTMIN) %} ... {% end %}`
+and `LibC.sigaction(SIG_SUSPEND, ...)` is fully green with `type: 0`; and the
+full safe stage3 probe on top of the current pthread-owner branch moves from
+`semantic_diags=0 resolution_diags=0 type_diags=332` to
+`semantic_diags=0 resolution_diags=0 type_diags=328`. The old
+`LibC.sigaction(SIG_SUSPEND, ...)`, `LibC.sigaction(SIG_RESUME, ...)`, and
+`Signal.new(SIG_SUSPEND/SIG_RESUME)` families disappear from the live log, and
+`LibC.pthread_mutex_lock/unlock/destroy(...)` remains absent. Boundary: stage3
+is still not green; the next live frontier is now `GC.pthread_create`,
+`Errno.new(ret)`, `threads.@mutex`, and later `Crystal.trace` /
+`print_buffered`, `signal.cr` `LibC.sigaction`, and Nil/file-close cascades
+rather than more pthread signal-constant work. {F/G/R: 0.95/0.64/0.97}
+[verified]
+
 [LM-375|verified]: The next live stage3 blocker after [LM-374] was not more
 absolute-path or explicit-ivar metadata work. A richer host-side AST dump over
 the real thread subset showed that the failing `Thread.threads` calls in

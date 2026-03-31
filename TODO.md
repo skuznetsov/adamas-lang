@@ -1,6 +1,50 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-03-31)
 
 ## Current Status
+- **Fresh semantic pthread checkpoint: nested `Thread::Mutex` bodies now keep the right owner/class context during eager inference, lib-fun pointer calls accept implicit `to_unsafe`, and macro-defined pthread signal constants no longer collapse to `Nil` inside semantic inference (2026-03-31, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/type_inference_engine.cr` now preserves/restores `@current_class` and `@current_module` across `infer_def(...)`, rebinds them from the resolved `MethodSymbol` owner scope for eager body inference, and falls back to a whole-graph `node_id` search when the scoped method lookup misses the real body symbol
+    - the same file now accepts implicit `to_unsafe` coercions (plus `Pointer(Nil)` compatibility) when matching lib-fun pointer parameters, which keeps `LibC.pthread_mutex_*` calls valid for `Thread::Mutex#to_unsafe`
+    - the same file now expands macro control-flow only for constant values (`infer_constant`, `infer_path`, and bare `ConstantSymbol` lookup), so constants like `SIG_SUSPEND` / `SIG_RESUME` infer from their selected macro branch without re-enabling the earlier broad macro-expression regression
+    - focused regression coverage now lives in:
+      - `spec/semantic/type_inference_lib_fun_call_spec.cr`
+      - `spec/semantic/type_inference_pthread_mutex_spec.cr`
+      - `spec/semantic/type_inference_macro_constant_spec.cr`
+  - decisive evidence:
+    - focused regressions are green:
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_lib_fun_call_spec.cr --error-trace`
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_pthread_mutex_spec.cr --error-trace`
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_macro_constant_spec.cr --error-trace`
+    - rebuild gates are green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+    - the exact macro-constant aggregate is green:
+      - host eval over a two-file aggregate with `private SIG_SUSPEND = {% if LibC.has_constant?(:SIGRTMIN) %} ... {% end %}` and `LibC.sigaction(SIG_SUSPEND, ...)`
+      - summary: `semantic: 0, resolve: 0, type: 0, root: "Int32"`
+    - the full semantic stage3 probe under the safe wrapper moves again on top of the current pthread-owner branch:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 240 4096 src/crystal_v2.cr --stats --no-link -o /tmp/stage3_semantic_probe.out > /tmp/stage3_semantic_probe_after_macro_constant_narrow.log 2>&1`
+      - branch-local summary moved from:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=332`
+      - to:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=328`
+    - removed families from the live log:
+      - `LibC.sigaction(SIG_SUSPEND, ...)`
+      - `LibC.sigaction(SIG_RESUME, ...)`
+      - `Signal.new(SIG_SUSPEND)`
+      - `Signal.new(SIG_RESUME)`
+      - `LibC.pthread_mutex_lock/unlock/destroy(...)`
+  - practical boundary:
+    - stage3 with the new inferer is still **not** green
+    - this is a branch-local checkpoint on top of the pthread-owner work, not a direct replacement for the earlier `type_diags=259` checkpoint
+    - the next honest frontier is now:
+      - `GC.pthread_create`
+      - `Errno.new(ret)`
+      - `threads.@mutex`
+      - later `Crystal.trace` / `print_buffered`, `LibC.sigaction` in `signal.cr`, and Nil arithmetic / file-close cascades
 - **Fresh semantic current-class self-reference checkpoint: bare `Thread` inside `class Thread` instance methods now stays bound to the current class even when an included `Crystal::System::Thread` module shadows the same leaf name, and the live stage3 gate moved again (2026-03-31, current session)**:
   - trustworthy setup:
     - `src/compiler/semantic/type_inference_engine.cr` now overrides a resolved `ModuleSymbol` with `@current_class` when the identifier text matches the current class name (or its leaf name for nested classes)
