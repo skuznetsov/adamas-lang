@@ -4475,6 +4475,13 @@ module CrystalV2
             return @context.bool_type
           end
 
+          if receiver_type.is_a?(TupleType)
+            if result = infer_tuple_builtin_method_return_type(receiver_type, method_name, 0, false, false)
+              @context.set_type(expr_id, result)
+              return result
+            end
+          end
+
           # Phase 4B.5 + Week 1: Special case for constructor - ClassName.new → InstanceType
           # Week 1: Zero-argument constructor
           # Box(Int32).new or Box.new (no args)
@@ -4782,6 +4789,18 @@ module CrystalV2
             end
           end
 
+          if receiver_type.is_a?(TupleType)
+            if result = infer_tuple_builtin_method_return_type(
+                 receiver_type,
+                 method_name,
+                 positional_call_arg_ids(node).size,
+                 !!node.named_args,
+                 !!node.block
+               )
+              return result
+            end
+          end
+
           arg_ids = positional_call_arg_ids(node)
           arg_types = Array(Type).new(arg_ids.size)
           arg_ids.each_with_index do |arg_id, index|
@@ -4991,6 +5010,26 @@ module CrystalV2
               infer_expression(block_id)
             end
             @context.nil_type
+          end
+        end
+
+        private def infer_tuple_builtin_method_return_type(
+          receiver_type : TupleType,
+          method_name : String,
+          arg_count : Int32,
+          has_named_args : Bool,
+          has_block : Bool
+        ) : Type?
+          return nil unless arg_count == 0
+          return nil if has_named_args
+          return nil if has_block
+
+          case method_name
+          when "min", "max"
+            return @context.nil_type if receiver_type.element_types.empty?
+            return union_of(receiver_type.element_types)
+          else
+            nil
           end
         end
 

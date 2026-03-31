@@ -1,6 +1,41 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-03-30)
 
 ## Current Status
+- **Fresh semantic prepass checkpoint: `Tuple#min`/`max` now type-check on zero-arg tuple receivers, which cuts another large `ryu_printf` branch out of the live stage3 graph (2026-03-30, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/type_inference_engine.cr` now models zero-arg tuple builtins `min` and `max`
+    - the builtin hook is wired for both explicit zero-arg calls and member-access sugar, so `tuple.min` no longer falls through method lookup as an unknown tuple method
+    - this specifically fixes the real `Float::Printer::RyuPrintf` corridor around `{precision, MAX_ORDINARY_P}.min` and `{effective_precision, max_precision}.min`
+    - focused regression coverage lives in `spec/semantic/type_inference_tuple_builtin_spec.cr`
+  - decisive evidence:
+    - focused tuple builtin regression is green:
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_tuple_builtin_spec.cr --error-trace`
+    - nearby operator-body regression remains green:
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_operator_method_body_spec.cr --error-trace`
+    - rebuild gate is green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+    - exact no-prelude reducer is green:
+      - `CRYSTAL_V2_SEMANTIC_COMPILE=1 /tmp/crystal_v2_semantic_stage3probe /tmp/semantic_tuple_min_probe.cr --no-prelude --stats --verbose --no-link -o /tmp/semantic_tuple_min_probe.out`
+      - summary now reports `type_diags=0`
+    - full semantic stage3 probe moved again:
+      - `bash /tmp/run_semantic_compile_stage3probe_log.sh`
+      - summary moved from:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=530`
+      - to:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=451`
+    - `src/stdlib/float/printer/ryu_printf.cr` is no longer in the top surviving file-count bucket of `/tmp/stage3_semantic_probe.log`
+  - practical boundary:
+    - stage3 with the new inferer is still **not** green
+    - the live frontier is now led more by:
+      - `string`
+      - `time/tz`
+      - `io`
+      - `compiler_rt/divmod128`
+      - residual Nil arithmetic / indexing and `Errno.new`
 - **Fresh semantic prepass checkpoint: eager sibling defs no longer leak local assignment state into each other, which collapses a large Nil-cascade slice in the live stage3 graph (2026-03-30, current session)**:
   - trustworthy setup:
     - `src/compiler/semantic/type_inference_engine.cr` now snapshots and restores `@assignments` around eager `infer_def(...)` body walks
