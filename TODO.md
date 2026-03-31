@@ -1,6 +1,37 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-03-31)
 
 ## Current Status
+- **Fresh semantic `typeof(...).new(...)` checkpoint: `typeof` receivers now stay type-valued for class-method lookup, and the real `Int64.new` family is gone from the live stage3 log (2026-03-31, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/type_inference_engine.cr` now treats `Frontend::TypeofNode` as a type-receiver expression in `type_receiver_expression?(...)`
+    - that means member calls like `typeof(x).new(...)` now flow through the existing class-receiver conversion path instead of looking up `new` on the plain runtime value type (`Int64`)
+    - the existing constructor fast path for primitive metaclasses (`primitive_metaclass?`) is therefore reused unchanged; this step is a receiver-classification fix, not a new constructor builtin
+    - focused regression coverage now lives in `spec/semantic/type_inference_typeof_receiver_spec.cr`
+  - decisive evidence:
+    - focused regression is green:
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_typeof_receiver_spec.cr --error-trace`
+    - rebuild gates are green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+    - the full semantic stage3 probe under the safe wrapper moves again:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 240 4096 src/crystal_v2.cr --stats --no-link -o /tmp/stage3_semantic_probe.out > /tmp/stage3_semantic_probe_current.log 2>&1`
+      - summary moved from:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=282`
+      - to:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=276`
+    - the old `Method 'new' not found on Int64` family is absent from `/tmp/stage3_semantic_probe_current.log`
+  - practical boundary:
+    - stage3 with the new inferer is still **not** green
+    - the next honest frontier remains later runtime/type surface, now led by:
+      - `pthread_mutex_*` on `LibC`
+      - `Errno.new(ret)`
+      - `Signal.new`
+      - `Sigaction.@sa_mask` / `LibC.sigemptyset` / `LibC.sigaction`
+    - that means the next move is not more primitive constructor work, but a richer reducer around the remaining pthread/signal runtime corridor
 - **Fresh semantic typed-splat collection checkpoint: class-method `*values : T` bodies now stay array-like enough for interpolation-style `sum/all?/each` flows, and the early `String.interpolation` family is gone from the live stage3 log (2026-03-31, current session)**:
   - trustworthy setup:
     - `src/compiler/semantic/collectors/symbol_collector.cr` now records typed splat params as collected array-like locals (`Array(T)`) instead of raw element type `T` when those params are surfaced into semantic method-body scope

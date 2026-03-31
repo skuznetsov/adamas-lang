@@ -3,6 +3,28 @@
 Updated: 2026-03-31
 Context: compiler/bootstrap/stage2-stability
 
+[LM-372|verified]: The next live stage3 blocker after [LM-371] was not another
+missing primitive numeric builtin table entry. A cheap exact falsifier showed
+that `typeof(x).new(2)` still failed with `Method 'new' not found on Int64`,
+even though the constructor fast path for primitive metaclasses already existed.
+The real defect was one layer earlier: `src/compiler/semantic/type_inference_engine.cr`
+did not treat `Frontend::TypeofNode` as a type-receiver expression, so
+`typeof(...)` member calls bypassed `class_receiver_type_for_expression(...)`
+and looked up `new` on the plain runtime value type. The verified fix is
+bounded: `type_receiver_expression?(...)` now returns true for `TypeofNode`,
+which routes `typeof(...).new(...)` through the existing primitive-metaclass
+constructor path without widening builtin surface. Focused regression
+`spec/semantic/type_inference_typeof_receiver_spec.cr` is green, both rebuild
+gates for `src/crystal_v2.cr` and `/tmp/crystal_v2_semantic_stage3probe` are
+green, and the full safe stage3 probe moved from `semantic_diags=0
+resolution_diags=0 type_diags=282` to `semantic_diags=0 resolution_diags=0
+type_diags=276`. The old `Method 'new' not found on Int64` family disappears
+from `/tmp/stage3_semantic_probe_current.log`. Boundary: stage3 is still not
+green; the next live frontier is later runtime/type surface led by
+`pthread_mutex_*` on `LibC`, `Errno.new(ret)`, `Signal.new`, and
+`Sigaction.@sa_mask` / `LibC.sigemptyset` / `LibC.sigaction` rather than more
+primitive constructor work. {F/G/R: 0.96/0.66/0.97} [verified]
+
 [LM-371|verified]: The next live stage3 blocker after [LM-370] was not another
 `io.cr` indexing issue. The head of `/tmp/stage3_semantic_probe.log` moved into
 `String.interpolation(*values : String)`, where `values.sum(&.bytesize)`,

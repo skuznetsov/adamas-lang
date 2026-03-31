@@ -1521,6 +1521,8 @@ module CrystalV2
             else
               false
             end
+          when Frontend::TypeofNode
+            true
           when Frontend::GenericNode
             type_from_type_expr(expr_id) != nil
           else
