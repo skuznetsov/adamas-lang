@@ -2546,11 +2546,51 @@ module CrystalV2
           guard_watchdog!
           return @context.nil_type if expressions.empty?
 
-          result_type = @context.nil_type
-          expressions.each do |expr_id|
-            result_type = infer_expression(expr_id)
+          previous_flow_narrowings = @flow_narrowings.dup
+
+          begin
+            result_type = @context.nil_type
+            expressions.each do |expr_id|
+              result_type = infer_expression(expr_id)
+              apply_post_guard_narrowings(expr_id)
+            end
+            result_type
+          ensure
+            @flow_narrowings = previous_flow_narrowings
           end
-          result_type
+        end
+
+        private def apply_post_guard_narrowings(expr_id : ExprId) : Nil
+          return if expr_id.invalid?
+
+          node = @arena[expr_id]
+          case node
+          when Frontend::UnlessNode
+            apply_post_unless_guard_narrowings(node)
+          end
+        end
+
+        private def apply_post_unless_guard_narrowings(node : Frontend::UnlessNode) : Nil
+          return unless block_terminates?(node.then_branch)
+
+          condition_id = node.condition
+          if narrowing = extract_is_a_narrowing(condition_id)
+            @flow_narrowings[narrowing[0]] = narrowing[1]
+          else
+            extract_truthy_narrowings(condition_id).each do |var_name, narrowed_type|
+              @flow_narrowings[var_name] = narrowed_type
+            end
+          end
+
+          if responds_to_narrowing = extract_responds_to_narrowing(condition_id)
+            @flow_narrowings[responds_to_narrowing[0]] = responds_to_narrowing[1]
+          end
+        end
+
+        private def block_terminates?(expressions : Array(ExprId)) : Bool
+          return false if expressions.empty?
+
+          control_flow_terminator?(expressions.last)
         end
 
         # Promote two numeric types to their widest common type
@@ -3204,17 +3244,26 @@ module CrystalV2
           # Crystal allows any type as condition (truthy check)
           # No need to require Bool type
 
-          nil_check_narrowing = extract_nil_check_then_narrowing(condition_id)
+          narrowing = extract_is_a_narrowing(condition_id)
+          truthy_narrowings = narrowing.nil? ? extract_truthy_narrowings(condition_id) : [] of {String, Type}
+          simple_nil_narrowing = narrowing.nil? ? extract_nil_narrowing(condition_id, condition_type) : nil
+          then_narrowing = extract_nil_check_then_narrowing(condition_id) || compute_else_narrowing(narrowing, simple_nil_narrowing, condition_type)
           responds_to_narrowing = extract_responds_to_narrowing(condition_id)
-          if nil_check_narrowing
-            @flow_narrowings[nil_check_narrowing[0]] = nil_check_narrowing[1]
+          if then_narrowing
+            @flow_narrowings[then_narrowing[0]] = then_narrowing[1]
           end
 
           then_type = infer_block_result(node.then_branch)
 
-          if nil_check_narrowing
-            @flow_narrowings.delete(nil_check_narrowing[0])
-            @flow_narrowings[nil_check_narrowing[0]] = @context.nil_type
+          if then_narrowing
+            @flow_narrowings.delete(then_narrowing[0])
+          end
+          if narrowing
+            @flow_narrowings[narrowing[0]] = narrowing[1]
+          else
+            truthy_narrowings.each do |var_name, narrowed_type|
+              @flow_narrowings[var_name] = narrowed_type
+            end
           end
           if responds_to_narrowing
             @flow_narrowings[responds_to_narrowing[0]] = responds_to_narrowing[1]
@@ -3222,8 +3271,12 @@ module CrystalV2
 
           else_type = node.else_branch ? infer_block_result(node.else_branch.not_nil!) : @context.nil_type
 
-          if nil_check_narrowing
-            @flow_narrowings.delete(nil_check_narrowing[0])
+          if narrowing
+            @flow_narrowings.delete(narrowing[0])
+          else
+            truthy_narrowings.each do |var_name, _|
+              @flow_narrowings.delete(var_name)
+            end
           end
           if responds_to_narrowing
             @flow_narrowings.delete(responds_to_narrowing[0])
@@ -3471,7 +3524,11 @@ module CrystalV2
             @global_var_types[global_var_key(intern_name(target_node.name))] = value_type
             @context.set_type(target_id, value_type)
           when Frontend::IdentifierNode
-            @assignments[intern_name(target_node.name)] = value_type
+            target_name = intern_name(target_node.name)
+            @assignments[target_name] = value_type
+            if @flow_narrowings.has_key?(target_name)
+              @flow_narrowings[target_name] = value_type
+            end
             @context.set_type(target_id, value_type)
           end
           # Phase 14B: Index assignment (h["key"] = value) - no tracking needed,
@@ -3508,7 +3565,11 @@ module CrystalV2
                                # Fallback to the whole type if not destructurable
                                value_type
                              end
-              @assignments[intern_name(target_node.name)] = element_type
+              target_name = intern_name(target_node.name)
+              @assignments[target_name] = element_type
+              if @flow_narrowings.has_key?(target_name)
+                @flow_narrowings[target_name] = element_type
+              end
               @context.set_type(target_id, element_type)
             end
           end

@@ -3,6 +3,27 @@
 Updated: 2026-03-30
 Context: compiler/bootstrap/stage2-stability
 
+[LM-360|verified]: Terminating `unless` guard clauses now preserve the
+continuing truthy path for the rest of the current block, which removes the
+live `IO#read_char_with_bytesize` `to_u32` family and moves the full safe
+stage3 prepass from `type_diags=477` to `type_diags=465`. The verified fix in
+`src/compiler/semantic/type_inference_engine.cr` snapshots `@flow_narrowings`
+per `infer_block_result(...)`, applies post-`unless` continuation narrowings
+only when the `then` branch terminates, and refreshes existing flow entries on
+assignment/multiple-assignment so persisted narrowings cannot stay stale after
+rebinds. Focused regressions in
+`spec/semantic/type_inference_logical_rhs_narrowing_spec.cr` are green,
+including the exact outer `read_char -> read_char_with_bytesize ->
+peek_or_read_utf8` carrier, the nearby `responds_to?` regression remains green,
+and both rebuild gates for `src/crystal_v2.cr` and
+`/tmp/crystal_v2_semantic_stage3probe` are green. The old
+`Method 'to_u32' not found on Nil | UInt8` family no longer appears in
+`/tmp/stage3_semantic_probe.log`. Boundary: stage3 is still not green; the
+same `io.cr` corridor now fails later at `Cannot index type Nil | Tuple(Char,
+Int32)` in `info ? info[0] : nil`, so the next blocker is tuple/indexing
+narrowing on truthy containers rather than more `unless`-specific flow work.
+{F/G/R: 0.96/0.68/0.96} [verified]
+
 [LM-359|verified]: The live `IO#peek_or_read_utf8` query-lookup blocker is now
 closed by a bounded semantic fix, and the full safe stage3 prepass moves from
 `type_diags=481` to `type_diags=477`. The verified change in

@@ -159,5 +159,59 @@ describe Semantic::TypeInferenceEngine do
       engine.diagnostics.should be_empty
       {"UInt32 | Nil", "Nil | UInt32"}.should contain(engine.context.get_type(program.roots.last).to_s)
     end
+
+    it "preserves truthy narrowing after unless guards in outer reader call chains" do
+      source = <<-CRYSTAL
+        alias Bytes = Slice(UInt8)
+
+        class Reader
+          def decoder
+            nil
+          end
+
+          def peek : Bytes?
+            Bytes.empty
+          end
+
+          def skip(n)
+            n
+          end
+
+          def read_utf8_byte : UInt8?
+            1_u8
+          end
+
+          def read_char
+            peek = self.peek unless decoder
+            read_char_with_bytesize(peek)
+          end
+
+          def read_char_with_bytesize(peek = nil)
+            first = peek_or_read_utf8(peek, 0)
+            return nil unless first
+            first = first.to_u32
+            first
+          end
+
+          private def peek_or_read_utf8(peek, index)
+            if peek && (byte = peek[index]?)
+              skip(1)
+              byte
+            else
+              read_utf8_byte
+            end
+          end
+        end
+
+        Reader.new.read_char
+      CRYSTAL
+
+      program, analyzer, engine = infer_logical_rhs_narrowing_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.should be_empty
+      {"UInt32 | Nil", "Nil | UInt32"}.should contain(engine.context.get_type(program.roots.last).to_s)
+    end
   end
 end

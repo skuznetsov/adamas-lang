@@ -1,6 +1,36 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-03-30)
 
 ## Current Status
+- **Fresh semantic guard-clause checkpoint: terminating `unless` statements now preserve the continuing truthy path for the rest of the block, which removes the live `IO#read_char_with_bytesize` `to_u32` family from stage3 (2026-03-30, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/type_inference_engine.cr` now snapshots `@flow_narrowings` per block and lets later statements inherit guard-clause narrowings introduced by terminating `unless` nodes
+    - block-local guard propagation is intentionally narrow:
+      - only post-`unless` continuation paths
+      - only after the `then` branch is a control-flow terminator
+      - assignment and multiple-assignment now refresh existing flow entries so persisted narrowings do not go stale after reassignment
+    - focused regression coverage in `spec/semantic/type_inference_logical_rhs_narrowing_spec.cr` now locks the outer `read_char -> read_char_with_bytesize -> peek_or_read_utf8` call chain shape
+  - decisive evidence:
+    - focused regressions are green:
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_logical_rhs_narrowing_spec.cr --error-trace`
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_responds_to_narrowing_spec.cr --error-trace`
+    - rebuild gates are green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+    - the full semantic stage3 probe under the safe wrapper moves again:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 240 4096 src/crystal_v2.cr --stats --no-link -o /tmp/stage3_semantic_probe.out > /tmp/stage3_semantic_probe.log 2>&1`
+      - summary moved from:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=477`
+      - to:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=465`
+    - `Method 'to_u32' not found on Nil | UInt8` no longer appears in `/tmp/stage3_semantic_probe.log`
+  - practical boundary:
+    - stage3 with the new inferer is still **not** green
+    - the same `io.cr` family now stops later on `Cannot index type Nil | Tuple(Char, Int32)` at `info ? info[0] : nil`
+    - the next honest move is tuple/indexing narrowing on truthy containers, not more `unless`-specific flow work
 - **Fresh semantic indexable-flow checkpoint: slice-like `[]?` plus narrowing-sensitive `&&` inference now close the live `IO#peek_or_read_utf8` query lookup family, and full stage3 moves again under the safe wrapper (2026-03-30, current session)**:
   - trustworthy setup:
     - `src/compiler/semantic/type_inference_engine.cr` now exposes `[]?` on array/slice-like builtin receivers and recognizes non-bang integer casts such as `to_u32`
