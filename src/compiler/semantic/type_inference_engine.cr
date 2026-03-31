@@ -5885,22 +5885,35 @@ module CrystalV2
           named_arg_types : Hash(String, Type)
         ) : Array(Type)?
           params = method.params.reject(&.is_block)
-          return nil if params.any? { |param| param.is_splat || param.is_double_splat }
+          return nil if params.any?(&.is_double_splat)
 
           ordered = [] of Type
           used_named = Set(String).new
           positional_index = 0
 
-          params.each do |param|
+          params.each_with_index do |param, index|
+            if param.is_splat
+              suffix_params = params[(index + 1)..]
+              suffix_positionals = required_suffix_positional_count(suffix_params, named_arg_types)
+              remaining_positionals = positional_arg_types.size - positional_index
+              return nil if remaining_positionals < suffix_positionals
+
+              splat_count = remaining_positionals - suffix_positionals
+              splat_count.times do
+                ordered << positional_arg_types[positional_index]
+                positional_index += 1
+              end
+              next
+            end
+
             if positional_index < positional_arg_types.size
               ordered << positional_arg_types[positional_index]
               positional_index += 1
               next
             end
 
-            param_name_slice = param.name
-            return nil unless param_name_slice
-            param_name = intern_name(param_name_slice)
+            param_name = named_argument_lookup_name(param)
+            return nil unless param_name
 
             if arg_type = named_arg_types[param_name]?
               ordered << arg_type
@@ -5916,6 +5929,33 @@ module CrystalV2
           return nil unless named_arg_types.each_key.all? { |name| used_named.includes?(name) }
 
           ordered
+        end
+
+        private def named_argument_lookup_name(param : Frontend::Parameter) : String?
+          if external_name = param.external_name
+            return intern_name(external_name)
+          end
+
+          if param_name = param.name
+            return intern_name(param_name)
+          end
+
+          nil
+        end
+
+        private def required_suffix_positional_count(
+          params : Array(Frontend::Parameter),
+          named_arg_types : Hash(String, Type)
+        ) : Int32
+          params.count do |param|
+            next false if param.is_splat || param.is_double_splat
+
+            if param_name = named_argument_lookup_name(param)
+              next false if named_arg_types.has_key?(param_name)
+            end
+
+            param.default_value.nil?
+          end
         end
 
         private def block_pass_arg?(arg_id : ExprId) : Bool

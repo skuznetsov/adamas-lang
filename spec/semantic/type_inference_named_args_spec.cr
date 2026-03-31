@@ -54,6 +54,37 @@ describe Semantic::TypeInferenceEngine do
       proc_type.return_type.to_s.should eq("Pointer(Void)")
     end
 
+    it "matches methods with external named args after splat params" do
+      units = [
+        {
+          path: "/stdlib/print_buffered.cr",
+          source: <<-CRYSTAL,
+            abstract class IO
+            end
+
+            module Crystal
+              def self.print_buffered(message : String, *args, to io : IO, exception = nil, backtrace = nil) : Nil
+                nil
+              end
+            end
+
+            class FakeIO < IO
+            end
+
+            io = FakeIO.new
+            Crystal.print_buffered("Unhandled exception in spawn(name: %s)", "worker", exception: nil, to: io)
+          CRYSTAL
+        },
+      ]
+
+      program, analyzer, engine = infer_named_arg_types(units)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.should be_empty
+      engine.context.get_type(program.roots.last).to_s.should eq("Nil")
+    end
+
     it "matches module methods called with named arguments" do
       units = [
         {

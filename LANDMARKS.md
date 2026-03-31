@@ -3,6 +3,34 @@
 Updated: 2026-03-31
 Context: compiler/bootstrap/stage2-stability
 
+[LM-378|verified]: The next apparent `Crystal.print_buffered(...)` blocker after
+[LM-377] was partly a real matcher gap but not the full live stage3 root cause.
+An exact synthetic reducer with the real call shape from `fiber.cr`
+(`Crystal.print_buffered(message, "worker", exception: ex, to: io)`) showed
+that semantic named-argument matching still ignored `Parameter#external_name`
+(`to io`) and rejected any method containing a `*args` splat before a keyword
+tail, so the exact call missed even when the receiver module and body context
+were otherwise trivial. The verified fix in
+`src/compiler/semantic/type_inference_engine.cr` is bounded: named-argument
+ordering now matches against `external_name` when present, and it supports a
+single `*args` splat before fixed keyword/default tail parameters by assigning
+the remaining positional arguments to the splat and preserving suffix order for
+the existing `parameters_match?` splat logic. Focused regression
+`spec/semantic/type_inference_named_args_spec.cr` is green with the new
+`Crystal.print_buffered` shape, neighboring
+`spec/semantic/type_inference_pthread_mutex_spec.cr` stays green, and both
+rebuild gates for `src/crystal_v2.cr` and `/tmp/crystal_v2_semantic_stage3probe`
+are green. Useful negative result: the full safe stage3 probe remains at
+`semantic_diags=0 resolution_diags=0 type_diags=323`, and the live
+`Crystal.print_buffered(...)` / `Crystal.trace(...)` misses remain in
+`/tmp/stage3_semantic_probe_after_print_buffered_named_args.log`. This falsifies
+the simpler theory that the head `fiber.cr` failures were caused solely by the
+basic named-arg matcher; a richer runtime/module-context defect still sits
+behind them. Boundary: this is a real localized bugfix worth keeping, but it
+does not move the current full stage3 frontier, which still includes
+`LibGC.pthread_create(...)`, `Errno.new(ret)`, and the richer `Crystal`
+module-method context. {F/G/R: 0.95/0.58/0.97} [verified]
+
 [LM-377|verified]: The next real pthread/runtime frontier after [LM-376] was no
 longer the outer `GC.pthread_create(...)` call in isolation. Two exact
 falsifiers split the remaining corridor more precisely: a focused aggregate on

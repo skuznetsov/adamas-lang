@@ -1,6 +1,34 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-03-31)
 
 ## Current Status
+- **Fresh semantic named-arg matcher checkpoint: external keyword names and splat-before-keyword tails now match in semantic call inference, but the full stage3 head blocker is elsewhere (2026-03-31, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/type_inference_engine.cr` now matches named arguments against `Parameter#external_name` when present (for signatures like `to io : IO`) instead of only the internal parameter name
+    - the same named-argument ordering path now supports methods with a single `*args` splat before fixed keyword/default tail parameters; it computes how many positional arguments belong to the splat and preserves the suffix parameter order for the existing `parameters_match?` splat logic
+    - support for `**kwargs` remains intentionally out of scope for this step
+    - focused regression coverage now lives in `spec/semantic/type_inference_named_args_spec.cr`
+  - decisive evidence:
+    - focused regressions are green:
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_named_args_spec.cr --error-trace`
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_pthread_mutex_spec.cr --error-trace`
+    - rebuild gates are green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+    - the exact synthetic reducer for `Crystal.print_buffered(message, "worker", exception: ex, to: io)` is green under host eval, including the `if name ... else ...` shape from `fiber.cr`
+    - the full semantic stage3 probe under the safe wrapper does **not** move:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 240 4096 src/crystal_v2.cr --stats --no-link -o /tmp/stage3_semantic_probe.out > /tmp/stage3_semantic_probe_after_print_buffered_named_args.log 2>&1`
+      - summary remains:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=323`
+  - practical boundary:
+    - stage3 with the new inferer is still **not** green
+    - `Crystal.print_buffered(...)` and `Crystal.trace(...)` still fail in the full stdlib graph, so the remaining issue is not this basic named-arg matcher hole
+    - the next honest frontier remains richer runtime/module context around:
+      - `LibGC.pthread_create(...)`
+      - `Errno.new(ret)`
+      - `Crystal.print_buffered(...)` / `Crystal.trace(...)`
+      - later Nil / file-close cascades
 - **Fresh semantic pthread-create/default-ivar checkpoint: explicit receiver ivars can now fall back to default-value metadata, named-argument module calls match their real parameters, and proc-pointer target signatures preserve pointer type expressions through `->...` lowering (2026-03-31, current session)**:
   - trustworthy setup:
     - `src/compiler/semantic/type_inference_engine.cr` now extends the explicit-receiver ivar fallback beyond `get_instance_var_type(...)`: when an ivar has no explicit annotation but does have `InstanceVarInfo.default_value`, semantic inference re-enters that default-value expression under the concrete receiver context instead of dropping the field to `Nil`
