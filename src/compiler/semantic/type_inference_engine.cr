@@ -1786,7 +1786,7 @@ module CrystalV2
         private def instantiate_class_receiver(receiver_type : ClassType) : Type
           base_name = normalize_class_receiver_name(receiver_type.symbol.name)
 
-          if primitive = primitive_type_for(base_name)
+          if primitive = primitive_type_for_class_symbol(receiver_type.symbol)
             return primitive
           end
 
@@ -1845,6 +1845,19 @@ module CrystalV2
 
         private def normalize_class_receiver_name(name : String) : String
           name.ends_with?(".class") ? name[0...-6] : name
+        end
+
+        private def primitive_type_for_class_symbol(symbol : ClassSymbol) : Type?
+          primitive = primitive_type_for(symbol.name)
+          return nil unless primitive
+
+          table = symbol.scope.parent
+          while table
+            return nil if table.owner_module
+            table = table.parent
+          end
+
+          primitive
         end
 
         private def primitive_instance_class_symbol(type : PrimitiveType) : ClassSymbol?
@@ -5198,7 +5211,7 @@ module CrystalV2
           # Phase 103C: Resolve target type from type name
           infer_expression(node.expression)
           target_type_name = intern_name(node.target_type)
-          parse_type_name(target_type_name)
+          resolve_method_annotation_type(target_type_name, @receiver_type_context, @current_method_scope)
         end
 
         # Phase 45: as? keyword (safe cast - nilable)
@@ -5209,7 +5222,7 @@ module CrystalV2
           # Phase 103C: Resolve target type and make nilable
           infer_expression(node.expression)
           target_type_name = intern_name(node.target_type)
-          target_type = parse_type_name(target_type_name)
+          target_type = resolve_method_annotation_type(target_type_name, @receiver_type_context, @current_method_scope)
 
           # Return nilable version (target_type | Nil)
           @context.union_of([target_type, @context.nil_type])
@@ -5322,8 +5335,8 @@ module CrystalV2
           end
 
           if type.is_a?(ClassType)
-            # If it's a reference to a primitive class, convert to PrimitiveType.
-            result = primitive_type_for(type.symbol.name) || type
+            # Keep shadowing/nested classes like M::Symbol as class references.
+            result = primitive_type_for_class_symbol(type.symbol) || type
 
             if ENV["DEBUG"]?
               puts "  → normalized to: #{result.class} = #{result.inspect}"
@@ -11188,9 +11201,6 @@ module CrystalV2
             when AliasSymbol
               return resolve_annotation_type_in_scope(scoped_symbol.target, scope)
             when ClassSymbol
-              if builtin_type = lookup_type_by_name(type_name)
-                return builtin_type
-              end
               return instance_type_for(scoped_symbol)
             when EnumSymbol
               return EnumType.new(scoped_symbol)

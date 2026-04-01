@@ -106,5 +106,47 @@ describe Semantic::TypeInferenceEngine do
       analyzer.name_resolver_diagnostics.should be_empty
       engine.diagnostics.should be_empty
     end
+
+    it "resolves generic cast targets inside typed finalizer proc literals" do
+      source = <<-CRYSTAL
+        lib LibGC
+          alias LocalFinalizer = Void*, Void* ->
+          fun register_finalizer_ignore_self(obj : Void*, fn : LocalFinalizer, cd : Void*, ofn : LocalFinalizer*, ocd : Void**)
+        end
+
+        class Foo
+          def finalize
+            nil
+          end
+        end
+
+        module GC
+          module Boehm
+            def self.add_finalizer(object : Reference) : Nil
+              add_finalizer_impl(object)
+            end
+
+            def self.add_finalizer(object)
+            end
+
+            private def self.add_finalizer_impl(object : T) forall T
+              LibGC.register_finalizer_ignore_self(object.as(Void*),
+                ->(obj, data) { obj.as(T).finalize },
+                nil, nil, nil)
+              nil
+            end
+          end
+        end
+
+        GC::Boehm.add_finalizer(Foo.new)
+      CRYSTAL
+
+      program, analyzer, engine = infer_proc_type_annotation_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.should be_empty
+      engine.context.get_type(program.roots.last).to_s.should eq("Nil")
+    end
   end
 end

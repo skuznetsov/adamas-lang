@@ -6398,3 +6398,50 @@ Immediate next steps:
    `GC` finalizer generics, `process/signal`, formatter integer-union
    arithmetic, `Location.read_zoneinfo`, and nilable `close` / `value`
    corridors.
+
+## Checkpoint — 2026-04-01 (generic cast targets inside proc literals)
+
+Verified this turn:
+- The next `GC` falsifier was not a missing generic binding stack around
+  `infer_method_body_type(...)` anymore. After the current tree changes,
+  the decisive exact carrier was a typed finalizer callback:
+  `->(obj, data) { obj.as(T).finalize }` inside
+  `add_finalizer_impl(object : T) forall T`.
+- The root cause was narrower and local to cast inference:
+  `src/compiler/semantic/type_inference_engine.cr`
+  still resolved `as(...)` / `as?(...)` targets through raw
+  `parse_type_name(...)`, which ignores current method scope and receiver
+  type-parameter context. Inside proc literals that meant `obj.as(T)` could not
+  reuse the same scoped annotation path already used for method params and
+  return annotations.
+- The verified fix is bounded:
+  - resolve cast targets in `infer_as(...)` and `infer_as_question(...)`
+    through `resolve_method_annotation_type(...)` with the current
+    receiver/scope context instead of plain `parse_type_name(...)`;
+  - add a focused regression in
+    `spec/semantic/type_inference_proc_type_annotation_spec.cr` covering a
+    typed `LibGC.register_finalizer_ignore_self(...)` callback with
+    `obj.as(T).finalize`.
+
+Focused verification:
+- `../crystal/bin/crystal spec spec/semantic/type_inference_proc_type_annotation_spec.cr --error-trace`
+- `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+- `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+- `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 60 2048 /tmp/semantic_boehm_finalize_reference_probe.cr --no-prelude --stats --verbose`
+- `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 60 2048 /tmp/semantic_boehm_finalize_reference_param_probe.cr --no-prelude --stats --verbose`
+
+Adversary / negative result:
+- The exact carriers are green under semantic prepass after the fix, but the
+  full semantic stage3 probe under `scripts/run_safe.sh` stays at
+  `semantic_diags=0 resolution_diags=0 type_diags=26`.
+- The live `boehm` error changes shape from raw generic-parameter failure to
+  `Method 'finalize' not found on Reference`, which means the cast-target bug
+  is closed but the remaining whole-program `GC` branch still depends on richer
+  prelude/runtime context and should not be mistaken for a fully closed
+  `boehm` family.
+
+Immediate next steps:
+1. Treat method-scope-aware cast target resolution as closed.
+2. Continue from the unchanged live head at `type_diags=26`, starting with the
+   richer-context `GC` / `process` / `signal` runtime branches rather than
+   reopening generic cast-target handling.
