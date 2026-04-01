@@ -67,5 +67,44 @@ describe Semantic::TypeInferenceEngine do
       engine.diagnostics.should be_empty
       engine.context.get_type(program.roots.last).to_s.should eq("Nil")
     end
+
+    it "keeps typed nested block params through specialized Slice.new overloads" do
+      source = <<-CRYSTAL
+        struct Pointer(T)
+        end
+
+        class Array(T)
+          def to_unsafe : Pointer(T)
+            Pointer(T).new
+          end
+
+          def size : Int32
+            0
+          end
+        end
+
+        struct Slice(T)
+          def self.new(ptr : Pointer(T), size : Int32) : self
+          end
+        end
+
+        module Unicode
+          def self.canonical_compose!(codepoints : Array(Int32), & : Char ->)
+            canonical_compose!(Slice.new(codepoints.to_unsafe, codepoints.size)) { |x| yield x.unsafe_chr }
+          end
+
+          private def self.canonical_compose!(codepoints : Slice(Int32), & : Int32 ->)
+          end
+        end
+
+        Unicode.canonical_compose!(Array(Int32).new) { |ch| ch }
+      CRYSTAL
+
+      program, analyzer, engine = infer_proc_type_annotation_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.should be_empty
+    end
   end
 end

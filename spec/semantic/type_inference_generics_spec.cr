@@ -77,6 +77,40 @@ describe Semantic::TypeInferenceEngine do
         instance_type.type_args.not_nil![0].as(PrimitiveType).name.should eq("Int32")
       end
 
+      it "infers generic self.new receivers from class method parameter annotations" do
+        source = <<-CRYSTAL
+          struct Pointer(T)
+          end
+
+          class Array(T)
+            def to_unsafe : Pointer(T)
+              Pointer(T).new
+            end
+
+            def size : Int32
+              0
+            end
+          end
+
+          struct Slice(T)
+            def self.new(ptr : Pointer(T), size : Int32) : self
+            end
+          end
+
+          Slice.new(Array(Int32).new.to_unsafe, Array(Int32).new.size)
+        CRYSTAL
+
+        program, analyzer, engine = infer_types(source)
+
+        analyzer.semantic_diagnostics.should be_empty
+        analyzer.name_resolver_diagnostics.should be_empty
+        engine.diagnostics.should be_empty
+
+        type = engine.context.get_type(program.roots.last)
+        type.should be_a(ArrayType)
+        type.as(ArrayType).element_type.should eq(engine.context.int32_type)
+      end
+
       it "infers type parameter from constructor argument (type inference)" do
         source = <<-CRYSTAL
           class Box(T)

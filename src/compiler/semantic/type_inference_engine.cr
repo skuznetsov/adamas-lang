@@ -1459,6 +1459,7 @@ module CrystalV2
             end
           end
 
+          arg_expr_ids = call_node ? positional_call_arg_ids(call_node).map { |arg_id| arg_id.as(ExprId?) } : nil
           matches = symbol.overloads.select do |method|
             receiver_type = implicit_receiver_type_for(method)
             next false unless receiver_type
@@ -1471,7 +1472,6 @@ module CrystalV2
             method_has_block = method.params.any?(&.is_block)
             next false unless method_has_block == has_block
 
-            arg_expr_ids = call_node ? positional_call_arg_ids(call_node).map { |arg_id| arg_id.as(ExprId?) } : nil
             parameters_match?(method, arg_types, receiver_type, arg_expr_ids)
           end
 
@@ -1482,7 +1482,7 @@ module CrystalV2
           selected = if matches.size == 1
                        matches.first
                      else
-                       matches.max_by { |method| specificity_score(method, arg_types) }
+                       matches.max_by { |method| specificity_score(method, arg_types, arg_expr_ids) }
                      end
           receiver_type = implicit_receiver_type_for(selected)
           return nil unless receiver_type
@@ -1525,7 +1525,7 @@ module CrystalV2
             selected = if matches.size == 1
                          matches.first
                        else
-                         matches.max_by { |method| specificity_score(method, combo_arg_types) }
+                         matches.max_by { |method| specificity_score(method, combo_arg_types, arg_expr_ids) }
                        end
             receiver_type = implicit_receiver_type_for(selected)
             return nil unless receiver_type
@@ -9183,7 +9183,7 @@ module CrystalV2
         # - Exact type match: 2 points per parameter
         # - Subtype match: 1 point per parameter
         # - Union/generic match: 0 points per parameter
-        private def specificity_score(method : MethodSymbol, arg_types : Array(Type)) : Int32
+        private def specificity_score(method : MethodSymbol, arg_types : Array(Type), arg_expr_ids : Array(ExprId?)? = nil) : Int32
           score = 0
           arg_types.each_with_index do |arg_type, i|
             param = method.params[i]?
@@ -9203,9 +9203,58 @@ module CrystalV2
               # Subtype match: medium score
               score += 1
             end
+
+            if arg_expr_ids
+              if arg_expr_id = arg_expr_ids[i]?
+                if constructor_base = constructor_receiver_type_base_name(arg_expr_id)
+                  if annotation_base = annotation_type_base_name(type_name)
+                    score += 1 if constructor_base == annotation_base
+                  end
+                end
+              end
+            end
             # Union/generic: 0 points
           end
           score
+        end
+
+        private def annotation_type_base_name(type_name : String) : String?
+          if paren_start = type_name.index('(')
+            type_name[0...paren_start]
+          else
+            nil
+          end
+        end
+
+        private def constructor_receiver_type_base_name(expr_id : ExprId) : String?
+          node = @arena[expr_id]
+          return nil unless node.is_a?(Frontend::CallNode)
+
+          callee_id = node.callee
+          callee_node = @arena[callee_id]
+          return nil unless callee_node.is_a?(Frontend::MemberAccessNode)
+
+          method_name = member_name_for(callee_id, callee_node)
+          return nil unless {"new", "new!"}.includes?(method_name)
+
+          type_expression_base_name(callee_node.object)
+        end
+
+        private def type_expression_base_name(expr_id : ExprId) : String?
+          node = @arena[expr_id]
+
+          case node
+          when Frontend::IdentifierNode
+            identifier_name_for(expr_id, node)
+          when Frontend::PathNode
+            segments = [] of String
+            collect_path_segments(node, segments)
+            segments.last?
+          when Frontend::GenericNode
+            type_expression_base_name(node.base_type)
+          else
+            nil
+          end
         end
 
         # ============================================================
@@ -10706,28 +10755,78 @@ module CrystalV2
           type_params = class_symbol.type_parameters
           return nil unless type_params && !type_params.empty?
 
-          # Find constructor (initialize method)
-          init_symbol = class_symbol.scope.lookup_local("initialize")
-          return nil unless init_symbol.is_a?(MethodSymbol)
+          best_binding = infer_type_arguments_from_constructor_symbol(class_symbol.scope.lookup_local("initialize"), arg_types, type_params)
+          new_binding = infer_type_arguments_from_constructor_symbol(class_symbol.class_scope.lookup_local("new"), arg_types, type_params)
 
-          # Simple binding: parameter count must match
-          params = init_symbol.params.reject { |param| param.is_block || param.is_double_splat || named_only_separator?(param) }
-          required = count_required_params(params)
-          max = max_positional_arg_count(params)
+          if preferred_binding = prefer_constructor_type_binding(best_binding, new_binding)
+            return preferred_binding
+          end
+
+          nil
+        end
+
+        private def infer_type_arguments_from_constructor_symbol(
+          symbol : Symbol?,
+          arg_types : Array(Type),
+          type_params : Array(String)
+        ) : Array(Type)?
+          case symbol
+          when MethodSymbol
+            infer_type_arguments_from_constructor_params(symbol.params, arg_types, type_params)
+          when OverloadSetSymbol
+            best_binding = nil.as(Array(Type)?)
+            best_score = Int32::MIN
+
+            symbol.overloads.each do |method|
+              next unless binding = infer_type_arguments_from_constructor_params(method.params, arg_types, type_params)
+              score = constructor_type_binding_score(binding)
+              next unless score > best_score
+              best_binding = binding
+              best_score = score
+            end
+
+            best_binding
+          else
+            nil
+          end
+        end
+
+        private def infer_type_arguments_from_constructor_params(
+          params : Array(Frontend::Parameter),
+          arg_types : Array(Type),
+          type_params : Array(String)
+        ) : Array(Type)?
+          filtered_params = params.reject { |param| param.is_block || param.is_double_splat || named_only_separator?(param) }
+          required = count_required_params(filtered_params)
+          max = max_positional_arg_count(filtered_params)
           return nil unless arg_types.size >= required && arg_types.size <= max
 
-          # Build type parameter binding map
           binding = {} of String => Type
 
           arg_types.each_with_index do |arg_type, index|
-            next unless param = params[index]?
+            next unless param = filtered_params[index]?
             if type_ann = param.type_annotation
               bind_constructor_type_arguments(intern_name(type_ann), arg_type, binding, type_params)
             end
           end
 
-          # Return type arguments in the same order as type_parameters
-          type_params.map { |param_name| binding[param_name]? || @context.nil_type }
+          inferred = type_params.map { |param_name| binding[param_name]? || @context.nil_type }
+          return nil if inferred.all? { |type| type == @context.nil_type }
+
+          inferred
+        end
+
+        private def prefer_constructor_type_binding(primary : Array(Type)?, fallback : Array(Type)?) : Array(Type)?
+          return fallback unless primary
+          return primary unless fallback
+
+          primary_score = constructor_type_binding_score(primary)
+          fallback_score = constructor_type_binding_score(fallback)
+          fallback_score > primary_score ? fallback : primary
+        end
+
+        private def constructor_type_binding_score(type_args : Array(Type)) : Int32
+          type_args.count { |type| type != @context.nil_type }
         end
 
         private def bind_constructor_type_arguments(

@@ -6348,3 +6348,53 @@ Immediate next steps:
    `GC` finalizer generics, `process/signal`, `unicode` (`unsafe_chr` now on
    `Char`, not `Nil`), `Location.read_zoneinfo`, and nilable `close`/`value`
    corridors.
+
+## Checkpoint — 2026-04-01 (Slice.new specialization and receiverless overload tie-breaks)
+
+Verified this turn:
+- The remaining `unicode` exact falsifier was not another nested-block
+  resolution bug. The decisive no-prelude carrier
+  `/tmp/semantic_unicode_slice_overload_probe.cr` showed a different failure:
+  `canonical_compose!(Slice.new(...)) { |x| yield x.unsafe_chr }` bound
+  `x : Char`, not `x : Int32`.
+- The first root cause was generic constructor inference in
+  `src/compiler/semantic/type_inference_engine.cr`: `infer_type_arguments(...)`
+  only looked at instance-side `initialize`, so `Slice.new(ptr : Pointer(T),
+  size : Int32) : self` never specialized `T` from class-method parameter
+  annotations.
+- The second root cause was overload tie-breaking after our intentional
+  `Slice(T) -> ArrayType(T)` internal normalization. Once `Slice.new(...)`
+  specialized to `ArrayType(Int32)`, both overloads
+  `canonical_compose!(Array(Int32), & : Char ->)` and
+  `canonical_compose!(Slice(Int32), & : Int32 ->)` matched equally well.
+  Receiverless overload selection then kept the earlier overload and rebound
+  the nested block param to `Char`.
+- The verified fix is bounded and local:
+  - extend generic constructor inference to consider `self.new` overloads in
+    class scope, not only `initialize`;
+  - add a receiverless overload specificity tie-break that prefers the raw
+    annotation base (`Slice`, `Array`, etc.) matching the actual constructor
+    receiver in the argument expression (`Slice.new(...)`, `Array.new(...)`).
+
+Focused verification:
+- `../crystal/bin/crystal spec spec/semantic/type_inference_generics_spec.cr --example 'infers generic self.new receivers from class method parameter annotations' --error-trace`
+- `../crystal/bin/crystal spec spec/semantic/type_inference_proc_type_annotation_spec.cr --error-trace`
+- `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+- `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+- `scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 60 2048 /tmp/semantic_unicode_slice_overload_probe.cr --no-prelude --stats --verbose`
+- `scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 60 2048 /tmp/semantic_nested_block_unsafe_chr_probe.cr --no-prelude --stats --verbose`
+
+Whole-program effect:
+- The full semantic stage3 probe under `scripts/run_safe.sh` moved from
+  `semantic_diags=0 resolution_diags=0 type_diags=27` to
+  `semantic_diags=0 resolution_diags=0 type_diags=26`.
+- The old live head
+  `src/stdlib/unicode/unicode.cr:505 Method 'unsafe_chr' not found on Char`
+  disappeared from `/tmp/stage3_semantic_probe_after_slice_overload_fix.log`.
+
+Immediate next steps:
+1. Treat the `unicode` `Slice.new` overload corridor as closed.
+2. Continue from the new live head at `type_diags=26`:
+   `GC` finalizer generics, `process/signal`, formatter integer-union
+   arithmetic, `Location.read_zoneinfo`, and nilable `close` / `value`
+   corridors.
