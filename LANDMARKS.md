@@ -3,6 +3,39 @@
 Updated: 2026-04-01
 Context: compiler/bootstrap/stage2-stability
 
+[LM-407|verified]: After [LM-406], the next `process/signal`-side runtime head
+was not another class-var/hash-default bug. The decisive exact falsifier was a
+tiny no-prelude carrier `/tmp/semantic_eventloop_after_fork_probe2.cr`, which
+declared `abstract class Crystal::EventLoop`, `def self.current : self`,
+defined `after_fork_before_exec` only on a concrete subclass, and then called
+`Crystal::EventLoop.current.after_fork_before_exec`. Before the fix it failed
+first as `Method 'after_fork_before_exec' not found on EventLoop`, and after
+the first narrow patch it failed as `Method 'after_fork_before_exec' not found
+on EventLoop+`. That two-step falsifier chain proved the blind spot was split:
+`self` on abstract class methods really was collapsing to a plain base-class
+instance, but virtual dispatch also could not surface subclass-only methods.
+The verified fix stays narrow and lives entirely in
+`src/compiler/semantic/type_inference_engine.cr`. First, `: self` on
+non-generic abstract class methods now resolves to `VirtualType` instead of a
+plain instantiated base receiver. Second, `find_methods_in_virtual(...)` now
+returns subclass candidates when the base class does not declare the method.
+Third, subclass discovery for virtual dispatch and `responds_to?` narrowing now
+uses identity-based subtype checks through `is_subtype?` instead of brittle
+string-name comparison, which was failing for nested bases like
+`Crystal::EventLoop` because the base symbol name was `EventLoop` while the
+subclass stored `superclass_name = "Crystal::EventLoop"`. Focused regression
+`spec/semantic/type_inference_class_method_self_spec.cr` is green; rebuild
+gates for `src/crystal_v2.cr --no-codegen` and
+`/tmp/crystal_v2_semantic_stage3probe` are green; the exact safe no-prelude
+carrier is green and its type trace now shows `receiver=EventLoop+` with
+`lookup_method candidates ... count=1`; and the full safe stage3 probe moves
+from `semantic_diags=0 resolution_diags=0 type_diags=47` to
+`semantic_diags=0 resolution_diags=0 type_diags=46`. Boundary: stage3 is still
+not green; the next early `EventLoop+` miss is now `open(...)`, which means
+the virtual receiver path is alive and the remaining bug has shifted from
+subclass dispatch to argument matching / richer runtime context.
+{F/G/R: 0.98/0.73/0.98} [verified]
+
 [LM-406|verified]: After [LM-405], the remaining `signal` corridor split again.
 The decisive falsifier was a tiny no-prelude carrier
 `/tmp/semantic_classvar_pending_probe.cr`, not the full stdlib file. It

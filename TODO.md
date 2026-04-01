@@ -1,6 +1,51 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-01)
 
 ## Current Status
+- **Fresh semantic abstract-`self` virtual dispatch checkpoint: abstract class methods annotated with `: self` now resolve to a virtual receiver, and virtual lookup now lifts subclass-only instance methods through nested/global scopes, which closes the exact `EventLoop.current.after_fork_before_exec` falsifier and moves the honest whole-program stage3 gate from `type_diags=47` to `type_diags=46` (2026-04-01, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/type_inference_engine.cr` now resolves `: self` on non-generic abstract class methods to `VirtualType`, instead of eagerly collapsing to a plain base-class instance
+    - the same file now lets `find_methods_in_virtual(...)` return subclass candidates when the base class does not declare the method itself
+    - subclass discovery in virtual dispatch and `responds_to?` narrowing now uses identity-based subtype checks (`is_subtype?`) instead of brittle string-name comparison, so nested bases like `Crystal::EventLoop` no longer miss subclasses whose `superclass_name` is fully qualified
+    - focused regression coverage lives in `spec/semantic/type_inference_class_method_self_spec.cr`
+  - decisive evidence:
+    - focused regression is green:
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_class_method_self_spec.cr --error-trace`
+    - rebuild gates are green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+    - the exact no-prelude falsifier is now green under the safe wrapper:
+      - `/tmp/semantic_eventloop_after_fork_probe2.cr`
+      - before: `Method 'after_fork_before_exec' not found on EventLoop`
+      - after:
+        - `env DEBUG_TYPE_TRACE_NAMES=after_fork_before_exec CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 60 1536 /tmp/semantic_eventloop_after_fork_probe2.cr --no-prelude --stats --verbose`
+        - trace shows:
+          - `receiver=EventLoop+`
+          - `lookup_method candidates method=after_fork_before_exec count=1`
+        - compile prepass summary:
+          - `semantic_diags=0`
+          - `resolution_diags=0`
+          - `type_diags=0`
+    - the full semantic stage3 probe under the safe wrapper improves again:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 300 4096 src/crystal_v2.cr --stats --no-link -o /tmp/stage3_semantic_probe_after_eventloop_virtual_fix.out > /tmp/stage3_semantic_probe_after_eventloop_virtual_fix.log 2>&1`
+      - summary moved from:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=47`
+      - to:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=46`
+      - the old `after_fork_before_exec` exact falsifier is gone; the new early `EventLoop+` head is `open(...)`, which indicates the virtual receiver is now alive and the remaining miss has moved to argument matching rather than subclass dispatch
+  - practical boundary:
+    - this is a real virtual-dispatch fix for abstract class-method `self`
+    - stage3 is still not green; the next honest runtime head is now:
+      - `src/stdlib/crystal/system/unix/process.cr` (`4`)
+      - `src/compiler/hir/hir.cr` (`3`)
+      - `src/stdlib/raise.cr` (`3`)
+      - `src/stdlib/crystal/system/unix/process.cr [generated]` (`2`)
+      - `src/stdlib/process.cr` (`2`)
+      - `src/stdlib/regex.cr` (`2`)
+      - `src/stdlib/crystal/system/unix/signal.cr` (`2`)
 - **Fresh semantic class-var default + empty-hash annotation checkpoint: class-body class vars now preserve default-expression metadata, and empty hash literals now honor `of K => V` annotations during semantic re-inference, which fixes the exact `@@pending.delete(pid)` signal-child corridor and moves the honest whole-program stage3 gate from `type_diags=49` to `type_diags=47` (2026-04-01, current session)**:
   - trustworthy setup:
     - `src/compiler/semantic/symbol.cr` now lets `ClassVarSymbol` carry `default_value` / `has_default` metadata, mirroring the earlier instance-var default path

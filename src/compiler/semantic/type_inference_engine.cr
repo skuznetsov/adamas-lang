@@ -1709,6 +1709,14 @@ module CrystalV2
           instance_type_for(receiver_type.symbol, receiver_type.type_args)
         end
 
+        private def resolved_self_type_for_class_method_receiver(receiver_type : ClassType) : Type
+          if receiver_type.symbol.is_abstract? && !receiver_type.type_args
+            return VirtualType.new(receiver_type.symbol)
+          end
+
+          instantiate_class_receiver(receiver_type)
+        end
+
         private def infer_constructor_initialize_side_effects(
           instance_receiver : Type,
           arg_types : Array(Type),
@@ -4091,7 +4099,7 @@ module CrystalV2
                 unless visited_classes.includes?(symbol.name)
                   visited_classes << symbol.name
 
-                  if is_subclass_of?(symbol, base_class.name, table, Set(String).new)
+                  if symbol != base_class && is_subtype?(instance_type_for(symbol), instance_type_for(base_class))
                     instance_type = instance_type_for(symbol)
                     if responds_to_method_available?(instance_type, method_name)
                       add_responds_to_match(instance_type, matches, seen)
@@ -8424,10 +8432,11 @@ module CrystalV2
           # to ensure the method exists and compute union return type
           # The subclass methods are collected but not returned separately
           # (caller computes union of return types from all overrides)
-          if (table = @global_table) && !methods.empty?
+          if table = @global_table
             subclass_methods = find_method_overrides_in_subclasses(base_class, method_name, table)
-            # We don't add subclass methods to candidates (same signature as base)
-            # but we could track them for return type union computation
+            if methods.empty?
+              subclass_methods.each { |entry| methods << entry }
+            end
           end
 
           methods
@@ -8438,21 +8447,38 @@ module CrystalV2
         # Used for virtual type return type computation
         private def find_method_overrides_in_subclasses(base_class : ClassSymbol, method_name : String, table : SymbolTable) : Array(MethodSymbol)
           overrides = [] of MethodSymbol
-          visited = Set(String).new
-          visited << base_class.name
+          queue = [table] of SymbolTable
+          visited_tables = Set(SymbolTable).new
+          visited_classes = Set(String).new
 
-          # Scan all symbols in global table to find subclasses
-          # (This is O(n) but cached; could be optimized with subclass index)
-          table.each_local_symbol do |name, sym|
-            next if visited.includes?(name)
-            next unless sym.is_a?(ClassSymbol)
+          while current = queue.shift?
+            next if visited_tables.includes?(current)
+            visited_tables << current
 
-            # Check if this is a subclass of base_class
-            if is_subclass_of?(sym, base_class.name, table, visited)
-              # Look for method override
-              if method_sym = lookup_method_symbol_in_scope(sym.scope, method_name)
-                append_method_candidates(overrides, method_sym)
+            current.each_local_symbol do |_name, symbol|
+              case symbol
+              when ClassSymbol
+                unless visited_classes.includes?(symbol.name)
+                  visited_classes << symbol.name
+
+                  if symbol != base_class && is_subtype?(instance_type_for(symbol), instance_type_for(base_class))
+                    if method_sym = lookup_method_symbol_in_scope(symbol.scope, method_name)
+                      append_method_candidates(overrides, method_sym)
+                    end
+                  end
+                end
+
+                queue << symbol.scope
+                queue << symbol.class_scope
+              when ModuleSymbol
+                queue << symbol.scope
+              when EnumSymbol
+                queue << symbol.scope
               end
+            end
+
+            current.included_modules.each do |mod_ref|
+              queue << mod_ref.scope
             end
           end
 
@@ -10563,7 +10589,7 @@ module CrystalV2
               if receiver_type
                 case receiver_type
                 when ClassType
-                  return instantiate_class_receiver(receiver_type)
+                  return resolved_self_type_for_class_method_receiver(receiver_type)
                 when ModuleType
                   return receiver_type
                 when EnumType

@@ -55,6 +55,27 @@ describe TypeInferenceEngine do
 
       engine.diagnostics.should be_empty
     end
+
+    it "treats abstract class-method self as a virtual instance receiver" do
+      source = <<-CRYSTAL
+        abstract class Crystal::EventLoop
+          def self.current : self
+            LoopImpl.new
+          end
+        end
+
+        class LoopImpl < Crystal::EventLoop
+          def after_fork_before_exec : Nil
+          end
+        end
+
+        Crystal::EventLoop.current.after_fork_before_exec
+      CRYSTAL
+
+      _program, _analyzer, engine = infer_types(source)
+
+      engine.diagnostics.should be_empty
+    end
   end
 
   describe "instance methods annotated with self" do
