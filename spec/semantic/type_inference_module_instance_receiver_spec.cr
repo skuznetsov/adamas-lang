@@ -314,5 +314,31 @@ describe TypeInferenceEngine do
       engine.diagnostics.should be_empty
       engine.context.get_type(program.roots.last).to_s.should eq("Int32")
     end
+
+    it "treats runtime numeric wrapper instances as primitive numeric operands in helper arithmetic" do
+      source = <<-CRYSTAL
+        struct UInt32
+        end
+
+        module Probe
+          def self.wrap(digits : UInt32)
+            c = digits &- 10000 &* (digits // 10000)
+            c0 = (c % 100) << 1
+            digits //= 100
+            c1 = digits << 1
+            {c0, c1}
+          end
+        end
+
+        Probe.wrap(12345_u32)
+      CRYSTAL
+
+      program, analyzer, engine = infer_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.should be_empty
+      engine.context.get_type(program.roots.last).to_s.should eq("Tuple(UInt32, UInt32)")
+    end
   end
 end

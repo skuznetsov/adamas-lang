@@ -3643,16 +3643,31 @@ module CrystalV2
         end
 
         private def numeric_type?(type : Type) : Bool
-          return false unless type.is_a?(PrimitiveType)
-
-          canonical_name = canonical_numeric_primitive_name(type.name)
-          integer_primitive_name?(canonical_name) || canonical_name == "Float32" || canonical_name == "Float64"
+          !!numeric_primitive_equivalent(type)
         end
 
         private def integer_type?(type : Type) : Bool
-          return false unless type.is_a?(PrimitiveType)
+          if primitive = numeric_primitive_equivalent(type)
+            integer_primitive_name?(canonical_numeric_primitive_name(primitive.name))
+          else
+            false
+          end
+        end
 
-          integer_primitive_name?(canonical_numeric_primitive_name(type.name))
+        private def numeric_primitive_equivalent(type : Type) : PrimitiveType?
+          name = case type
+                 when PrimitiveType
+                   type.name
+                 when InstanceType
+                   type.class_symbol.name
+                 else
+                   return nil
+                 end
+
+          canonical_name = canonical_numeric_primitive_name(name)
+          return nil unless integer_primitive_name?(canonical_name) || canonical_name == "Float32" || canonical_name == "Float64"
+
+          primitive_type_for(canonical_name).as?(PrimitiveType)
         end
 
         private def integer_primitive_name?(name : String) : Bool
@@ -3817,17 +3832,19 @@ module CrystalV2
         #
         # TODO Phase 4: Replace with method overload lookup when available
         private def promote_numeric_types(left : Type, right : Type) : Type
-          return @context.nil_type unless left.is_a?(PrimitiveType) && right.is_a?(PrimitiveType)
+          left_primitive = numeric_primitive_equivalent(left)
+          right_primitive = numeric_primitive_equivalent(right)
+          return @context.nil_type unless left_primitive && right_primitive
 
           # Type width values for ordering
-          left_width = numeric_type_width(left.name)
-          right_width = numeric_type_width(right.name)
+          left_width = numeric_type_width(left_primitive.name)
+          right_width = numeric_type_width(right_primitive.name)
 
           # Return widest type
           if left_width >= right_width
-            left
+            left_primitive
           else
-            right
+            right_primitive
           end
         end
 
@@ -11171,6 +11188,10 @@ module CrystalV2
             return absolute_resolved
           end
 
+          if builtin_abstract_integer = builtin_abstract_integer_annotation_type(type_name)
+            return builtin_abstract_integer
+          end
+
           return parse_type_name(type_name) unless scope
 
           if proc_type = resolve_proc_type_name_in_scope(type_name, scope)
@@ -11411,6 +11432,15 @@ module CrystalV2
           return nil unless parts
 
           union_of(parts.map { |part| resolve_annotation_type_in_scope(part, scope) })
+        end
+
+        private def builtin_abstract_integer_annotation_type(type_name : String) : Type?
+          case type_name
+          when "Int", "UInt"
+            lookup_type_by_name(type_name)
+          else
+            nil
+          end
         end
 
         private def parse_proc_type_name(type_name : String) : Type?

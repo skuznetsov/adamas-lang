@@ -3,6 +3,37 @@
 Updated: 2026-04-01
 Context: compiler/bootstrap/stage2-stability
 
+[LM-412|verified]: After compaction, the trustworthy clean stage3 baseline on
+the current tree was no longer the old `type_diags=26/27` frontier but a much
+regressed `semantic_diags=0 resolution_diags=0 type_diags=178`. Fresh traces
+on the dense `ryu_printf` corridor showed why the old "missing integer builtin"
+story was incomplete: `lookup_method("//", receiver=UInt32, args=Int32)` still
+found candidates, but in full-prelude contexts operands like `digits` arrived
+as runtime `InstanceType(UInt32)` rather than `PrimitiveType(UInt32)`, so
+numeric fallback never engaged and `digits // 10000` poisoned the rest of the
+method body into `Nil`. The decisive exact falsifier was the tiny no-prelude
+carrier `/tmp/semantic_runtime_uint32_mixed_ops_probe.cr`, which stayed red on
+the compacted tree only when a local `struct UInt32` forced the same
+instance-like path seen in the full program; a paired carrier
+`/tmp/semantic_runtime_int_annotation_probe.cr` then showed the necessary guard
+rail that `Int` annotations must still stay primitive even when a runtime
+`struct Int` is present. The verified fix remains bounded to
+`src/compiler/semantic/type_inference_engine.cr`: numeric operand detection and
+promotion now normalize numeric `InstanceType`s back to their primitive
+equivalents, while annotation short-circuiting is kept narrow to abstract
+`Int`/`UInt` names only. Focused regressions
+`spec/semantic/type_inference_module_instance_receiver_spec.cr` and
+`spec/semantic/type_inference_operator_method_body_spec.cr` are green; rebuild
+gates for `src/crystal_v2.cr --no-codegen` and
+`/tmp/crystal_v2_semantic_stage3probe` are green; both exact safe carriers are
+green; and the clean full safe stage3 probe moves from
+`semantic_diags=0 resolution_diags=0 type_diags=178` to
+`semantic_diags=0 resolution_diags=0 type_diags=47`. Boundary: this collapses
+the old `ryu_printf` mixed-integer/Nil cascade, but stage3 is still not green;
+the new honest head is now smaller and runtime-oriented, led by
+`option_parser`, `pthread_mutex` (`Errno.new`), `compiler/cli`, `hir`, and
+`raise`. {F/G/R: 0.98/0.82/0.99} [verified]
+
 [LM-411|verified]: After [LM-410], the next cheap whole-program mover was not a
 richer runtime-context corridor but a plain builtin-surface hole. The live
 stage3 log still showed `Method 'put' not found on Hash(Tuple(UInt64, Symbol),

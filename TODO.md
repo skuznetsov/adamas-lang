@@ -1,6 +1,41 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-01)
 
 ## Current Status
+- **Fresh numeric-runtime fallback checkpoint: semantic operator fallback now normalizes runtime numeric wrapper instances back into primitive numeric operands, while abstract `Int`/`UInt` annotations still stay primitive under local shadowing; this closes the exact mixed-integer runtime-wrapper falsifier and moves the honest clean whole-program stage3 gate from `type_diags=178` to `type_diags=47` on the current compacted tree (2026-04-01, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/type_inference_engine.cr` now treats numeric `InstanceType`s (for example a local shadow `struct UInt32`) as numeric operands for `numeric_type?`, `integer_type?`, and `promote_numeric_types(...)`, instead of reserving numeric fallback for `PrimitiveType` only
+    - the same file keeps the earlier `Int`/`UInt` invariant by short-circuiting only abstract integer annotation names through builtin primitive lookup before scope-local class lookup; concrete names such as `UInt32` still follow the regular scope path
+    - focused regression coverage lives in `spec/semantic/type_inference_module_instance_receiver_spec.cr`
+  - decisive evidence:
+    - focused and adjacent semantic packs are green:
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_module_instance_receiver_spec.cr --error-trace`
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_operator_method_body_spec.cr --error-trace`
+    - rebuild gates are green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+    - the exact no-prelude runtime-wrapper falsifiers are green under the safe wrapper:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 60 2048 /tmp/semantic_runtime_uint32_mixed_ops_probe.cr --no-prelude --stats --verbose`
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 60 2048 /tmp/semantic_runtime_int_annotation_probe.cr --no-prelude --stats --verbose`
+      - both now report `semantic_diags=0`, `resolution_diags=0`, `type_diags=0`
+    - the clean full semantic stage3 probe under the safe wrapper improves materially on the current tree:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 300 4096 src/crystal_v2.cr --stats --no-link -o /tmp/stage3_semantic_probe_after_numeric_runtime_fix_v2.out > /tmp/stage3_semantic_probe_after_numeric_runtime_fix_v2.log 2>&1`
+      - summary moved from:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=178`
+      - to:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=47`
+      - the old dense `ryu_printf` / mixed-integer `Nil` cascade is no longer the live head
+  - practical boundary:
+    - this is a real semantic compatibility fix for runtime-wrapper numeric operators plus abstract integer annotations, not a local probe artifact
+    - stage3 is still not green; the new honest frontier is now much smaller and headed by:
+      - `src/stdlib/option_parser.cr` (`10`)
+      - `src/stdlib/crystal/system/unix/pthread_mutex.cr` (`5`, `Errno.new`)
+      - `src/compiler/cli.cr` (`4`)
+      - `src/compiler/hir/hir.cr` (`3`)
+      - `src/stdlib/raise.cr` (`3`)
 - **Fresh hash-put builtin checkpoint: semantic Hash builtins now cover `Hash#put(key, value, &)` as well as `put_if_absent`, which closes the exact `Reference#exec_recursive` falsifier and moves the honest whole-program stage3 gate from `type_diags=28` to `type_diags=27` (2026-04-01, current session)**:
   - trustworthy setup:
     - `src/compiler/semantic/type_inference_engine.cr` now models `Hash#put` with `(key : K, value : V, &)` on the same builtin surface that already handled `delete`, `clone`, `put_if_absent`, and other collection helpers
