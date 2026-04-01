@@ -186,5 +186,36 @@ describe Semantic::TypeInferenceEngine do
       engine.diagnostics.should be_empty
       engine.context.get_type(program.roots.last).to_s.should eq("Int32")
     end
+
+    it "records default values for untyped ivar params" do
+      source = <<-CRYSTAL
+        class PrettyCtor
+          def initialize(@output : Int32, @maxwidth = 79, @newline = "\n", @indent = 0)
+            @output_width = @indent
+          end
+
+          def nest(indent = 1)
+            @indent += indent
+            begin
+              @output_width
+            ensure
+              @indent -= indent
+            end
+          end
+        end
+
+        PrettyCtor.new(1).nest
+      CRYSTAL
+
+      program, analyzer, engine = infer_constructor_ivar_param_types(source)
+      pretty_ctor = analyzer.global_context.symbol_table.lookup("PrettyCtor").as(Semantic::ClassSymbol)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      pretty_ctor.get_instance_var_info("indent").not_nil!.has_default?.should be_true
+      pretty_ctor.get_instance_var_info("indent").not_nil!.default_value.should_not be_nil
+      engine.diagnostics.should be_empty
+      engine.context.get_type(program.roots.last).to_s.should eq("Int32")
+    end
   end
 end

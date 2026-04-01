@@ -5628,3 +5628,45 @@ Immediate next steps:
    corridor next; do not reopen `dragonbox` unless a new exact reducer says so.
 2. After `pretty_print`, move to the `process/signal/file/raise` runtime tail
    that is now exposed by the lower live gate.
+
+## Fresh Frontier — 2026-04-01 (constructor ivar-param defaults)
+
+Verified this turn on semantic stage3 probes built from the current workspace:
+
+1. The remaining `pretty_print` arithmetic/state tail was not a nested `Text`
+   / `Breakable` ivar bug by itself.
+   - A new no-prelude oracle in `tmp/semantic_pretty_print_constructor_probe.cr`
+     reproduced the real shape without stdlib noise:
+     `initialize(@output : Int32, @maxwidth = 79, @newline = "\n", @indent = 0)`
+     followed by `@indent += indent` / `@indent -= indent` still typed
+     `@indent` as `Nil`.
+   - This proved the live corridor was constructor ivar-param metadata, not a
+     later block/body inference issue.
+
+2. The verified fix is in semantic symbol collection.
+   - `scan_initialize_param_instance_vars(...)` now preserves
+     `param.default_value` for untyped ivar params.
+   - `scan_for_instance_vars(...)` no longer clobbers existing default metadata
+     when later non-initialize instance-var assignments are seen in ordinary
+     methods.
+   - Focused regression lives in
+     `spec/semantic/type_inference_constructor_ivar_param_spec.cr` and checks
+     both metadata (`has_default?`, `default_value`) and runtime semantic use of
+     `@indent` / `@output_width`.
+
+3. Measured impact:
+   - Focused regression pack is green.
+   - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+     and rebuild of `/tmp/crystal_v2_semantic_stage3probe` are green.
+   - The exact no-prelude oracle is green under `scripts/run_safe.sh`.
+   - Full semantic stage3 probe via `scripts/run_safe.sh` moved from
+     `semantic_diags=0 resolution_diags=0 type_diags=56` to
+     `semantic_diags=0 resolution_diags=0 type_diags=54`.
+   - `pretty_print` disappeared from the live top-file frontier entirely; the
+     new head is `process (5)`, `signal (4)`, and `thread (4)`.
+
+Immediate next steps:
+1. Shift off `pretty_print` completely and take the newly exposed runtime
+   frontier starting with `process` / `signal` / `thread`.
+2. Keep using exact no-prelude carriers first; the next fixes are likely in
+   semantic/runtime API modeling rather than flow or ivar-state again.

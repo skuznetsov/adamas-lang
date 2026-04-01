@@ -1646,12 +1646,13 @@ module CrystalV2
             if target_node.is_a?(Frontend::InstanceVarNode)
               var_name = intern_name(target_node.name)
               var_name = var_name[1..-1] if var_name.starts_with?("@")
-              unless class_symbol.get_instance_var_type(var_name)
+              existing = class_symbol.get_instance_var_info(var_name)
+              unless existing.try(&.type_annotation)
                 # Week 1: Try to infer type from RHS if it's a parameter reference
                 type_annotation = infer_ivar_type_from_assignment(node.value, current_method)
-                # Assignment in initialize is a form of default value
-                default_value = node.value
-                has_default = current_method.try { |m| intern_name(m.name.not_nil!) == "initialize" } || false
+                in_initialize = current_method.try { |m| intern_name(m.name.not_nil!) == "initialize" } || false
+                default_value = existing.try(&.default_value) || (in_initialize ? node.value : nil)
+                has_default = existing.try(&.has_default?) || in_initialize
                 class_symbol.add_instance_var(var_name, type_annotation, default_value, has_default)
               end
               define_instance_var_symbol(class_symbol, var_name, nil, target_id)
@@ -1753,8 +1754,8 @@ module CrystalV2
             var_name = intern_name(param_name_slice)
             existing = class_symbol.get_instance_var_info(var_name)
             type_annotation = param.type_annotation.try { |slice| intern_name(slice) } || existing.try(&.type_annotation)
-            default_value = existing.try(&.default_value)
-            has_default = existing.try(&.has_default?) || false
+            default_value = param.default_value || existing.try(&.default_value)
+            has_default = existing.try(&.has_default?) || !param.default_value.nil?
 
             class_symbol.add_instance_var(var_name, type_annotation, default_value, has_default)
             define_instance_var_symbol(class_symbol, var_name, type_annotation, node_id)
