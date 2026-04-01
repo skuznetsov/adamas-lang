@@ -3,6 +3,25 @@
 Updated: 2026-04-01
 Context: compiler/bootstrap/stage2-stability
 
+[LM-393|verified]: After [LM-392], the residual `process/shell` frontier was
+down to two identical `Method 'matches?' not found on String` errors. A cheap
+exact reducer (`class Regex; end; class String; end; "abc".matches?(Regex.new)`)
+confirmed that this was a missing builtin surface, not another overload or
+lookup problem. The verified fix in
+`src/compiler/semantic/type_inference_engine.cr` adds
+`String#matches?(Regex) : Bool` to the semantic builtin table. Focused
+regression `spec/semantic/type_inference_string_pointer_builtin_spec.cr` is
+green; rebuild gates for `src/crystal_v2.cr --no-codegen` and
+`/tmp/crystal_v2_semantic_stage3probe` are green; the exact reducer is green;
+and the full safe stage3 probe moves from
+`semantic_diags=0 resolution_diags=0 type_diags=184` to
+`semantic_diags=0 resolution_diags=0 type_diags=182`. The file-local count for
+`src/stdlib/process/shell.cr` drops from `2` to `0`, and the full log no
+longer contains `Method 'matches?' not found on String`. Boundary: stage3 is
+still not green; the remaining live head is concentrated in `dragonbox`,
+`time/tz`, `pretty_print`, and later runtime/lib surfaces (`LibC`, `Process`,
+`Regex`, `LibPCRE2`). {F/G/R: 0.97/0.78/0.98} [verified]
+
 [LM-392|verified]: After [LM-391], the next cheap exact reducer moved out of
 `pretty_print` and into `src/stdlib/process/shell.cr`. A minimal overload chain
 reproducer showed that `Process.quote(arg : String)` delegating to

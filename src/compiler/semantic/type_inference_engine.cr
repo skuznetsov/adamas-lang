@@ -8696,6 +8696,15 @@ module CrystalV2
                 return_annotation: "Bool",
                 scope: dummy_scope
               )
+            when "matches?"
+              regex_param = Frontend::Parameter.new(name: "pattern".to_slice, type_annotation: "Regex".to_slice)
+              methods << MethodSymbol.new(
+                method_name,
+                dummy_node_id,
+                params: [regex_param],
+                return_annotation: "Bool",
+                scope: dummy_scope
+              )
             when "starts_with?", "ends_with?"
               param = Frontend::Parameter.new(name: "str".to_slice, type_annotation: "String".to_slice)
               methods << MethodSymbol.new(

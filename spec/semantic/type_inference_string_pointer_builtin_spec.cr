@@ -71,4 +71,22 @@ describe CrystalV2::Compiler::Semantic::TypeInferenceEngine do
     analyzer.name_resolver_diagnostics.should be_empty
     engine.diagnostics.should be_empty
   end
+
+  it "resolves String#matches? for Regex receivers" do
+    source = <<-CRYSTAL
+      class Regex
+      end
+
+      class String
+      end
+
+      "abc".matches?(Regex.new)
+    CRYSTAL
+
+    analyzer, engine = infer_types_for_string_pointer_builtin(source)
+
+    analyzer.semantic_diagnostics.should be_empty
+    analyzer.name_resolver_diagnostics.should be_empty
+    engine.diagnostics.should be_empty
+  end
 end

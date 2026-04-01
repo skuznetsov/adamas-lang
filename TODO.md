@@ -1,6 +1,40 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-03-31)
 
 ## Current Status
+- **Fresh semantic String-regex checkpoint: `String#matches?(Regex)` is now modeled in the semantic builtin table, which clears the remaining `process/shell` frontier and moves the honest full-stage3 gate from `type_diags=184` to `type_diags=182` (2026-04-01, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/type_inference_engine.cr` now exposes `String#matches?(Regex) : Bool` in the builtin String surface
+    - focused regression coverage now lives in `spec/semantic/type_inference_string_pointer_builtin_spec.cr`
+  - decisive evidence:
+    - focused regression is green:
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_string_pointer_builtin_spec.cr --error-trace`
+    - rebuild gates are green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+    - the exact reducer is green:
+      - `class Regex; end; class String; end; "abc".matches?(Regex.new)`
+      - before: `Method 'matches?' not found on String`
+      - after: no semantic type errors
+    - the full semantic stage3 probe under the safe wrapper moves again:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 300 4096 src/crystal_v2.cr --stats --no-link -o /tmp/stage3_semantic_probe_after_string_matches.out > /tmp/stage3_semantic_probe_after_string_matches.log 2>&1`
+      - summary moved from:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=184`
+      - to:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=182`
+      - `src/stdlib/process/shell.cr` moved from `2` errors to `0`
+      - removed family:
+        - `Method 'matches?' not found on String`
+  - practical boundary:
+    - stage3 with the new inferer is still **not** green
+    - the current top frontier is now concentrated in:
+      - `src/stdlib/float/printer/dragonbox.cr`
+      - `src/stdlib/time/tz.cr`
+      - `src/stdlib/pretty_print.cr`
+      - runtime/lib surfaces such as `LibC`, `Process`, `Regex`, `LibPCRE2`
 - **Fresh semantic structural-collection checkpoint: `Tuple`/`Array`/`Hash` receivers now satisfy generic traversal module parameters by element contract, which clears the `Process.quote*` overload misses and moves the honest full-stage3 gate from `type_diags=187` to `type_diags=184` (2026-04-01, current session)**:
   - trustworthy setup:
     - `src/compiler/semantic/type_inference_engine.cr` now lets structural collection carriers match generic module parameters in `type_matches?(...)` through a narrow helper:
