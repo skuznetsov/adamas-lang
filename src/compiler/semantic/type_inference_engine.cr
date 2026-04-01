@@ -6238,28 +6238,32 @@ module CrystalV2
           case target_type
           when InstanceType
             type_args = target_type.type_args || [] of Type
-            case target_type.class_symbol.name
-            when "Array", "Slice"
-              ArrayType.new(type_args.first? || @context.nil_type)
-            when "Hash"
-              HashType.new(type_args.first? || @context.nil_type, type_args[1]? || @context.nil_type)
-            when "Pointer"
-              PointerType.new(type_args.first? || @context.nil_type)
-            else
-              target_type
-            end
-          when ClassType
-            type_args = target_type.type_args || [] of Type
-            case target_type.symbol.name
-            when "Array", "Slice"
-              ArrayType.new(type_args.first? || @context.nil_type)
-            when "Hash"
-              HashType.new(type_args.first? || @context.nil_type, type_args[1]? || @context.nil_type)
-            when "Pointer"
-              PointerType.new(type_args.first? || @context.nil_type)
-            else
-              target_type
-            end
+          case target_type.class_symbol.name
+          when "Array", "Slice"
+            ArrayType.new(type_args.first? || @context.nil_type)
+          when "Hash"
+            HashType.new(type_args.first? || @context.nil_type, type_args[1]? || @context.nil_type)
+          when "Pointer"
+            PointerType.new(type_args.first? || @context.nil_type)
+          when "String"
+            @context.string_type
+          else
+            target_type
+          end
+        when ClassType
+          type_args = target_type.type_args || [] of Type
+          case target_type.symbol.name
+          when "Array", "Slice"
+            ArrayType.new(type_args.first? || @context.nil_type)
+          when "Hash"
+            HashType.new(type_args.first? || @context.nil_type, type_args[1]? || @context.nil_type)
+          when "Pointer"
+            PointerType.new(type_args.first? || @context.nil_type)
+          when "String"
+            @context.string_type
+          else
+            target_type
+          end
           else
             target_type
           end

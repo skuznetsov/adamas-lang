@@ -1,6 +1,38 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-01)
 
 ## Current Status
+- **Fresh runtime-String indexing checkpoint: semantic index-target normalization now folds runtime `String` wrapper instances back into canonical string indexing, which closes the exact `mode[0]` falsifier and moves the honest clean whole-program stage3 gate from `type_diags=47` to `type_diags=35` on the current compacted tree (2026-04-01, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/type_inference_engine.cr` now normalizes `InstanceType(String)` and `ClassType(String)` through `normalize_index_target_type(...)`, matching the existing normalization already used for `Array`, `Slice`, `Hash`, and `Pointer`
+    - the same file therefore lets `infer_index(...)` reuse the existing primitive `String[Int] -> Char` and `String[Range] -> String` logic instead of falling through to `Cannot index type String`
+    - focused regression coverage lives in `spec/semantic/type_inference_module_instance_receiver_spec.cr`
+  - decisive evidence:
+    - focused semantic pack is green:
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_module_instance_receiver_spec.cr --error-trace`
+    - rebuild gates are green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+    - the exact no-prelude runtime-wrapper falsifier is green under the safe wrapper:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 60 2048 /tmp/semantic_runtime_string_index_probe.cr --no-prelude --stats --verbose`
+      - it now reports `semantic_diags=0`, `resolution_diags=0`, `type_diags=0`
+    - the clean full semantic stage3 probe under the safe wrapper improves materially again:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 300 4096 src/crystal_v2.cr --stats --no-link -o /tmp/stage3_semantic_probe_after_string_index.out > /tmp/stage3_semantic_probe_after_string_index.log 2>&1`
+      - summary moved from:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=47`
+      - to:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=35`
+      - the old dense `Cannot index type String` family is gone from the live log
+  - practical boundary:
+    - this is a real semantic compatibility fix for runtime-wrapper string indexing, not a probe-only workaround
+    - stage3 is still not green; the new honest frontier is now headed by:
+      - `src/stdlib/crystal/system/unix/pthread_mutex.cr` (`5`, `Errno.new`)
+      - `src/compiler/hir/hir.cr` (`3`, `Function 'new' not found`)
+      - `src/stdlib/raise.cr` (`3`)
+      - `src/compiler/frontend/diagnostic_formatter.cr` / `src/compiler/semantic/diagnostic_formatter.cr` (`2`, `Cannot index type Nil`)
 - **Fresh numeric-runtime fallback checkpoint: semantic operator fallback now normalizes runtime numeric wrapper instances back into primitive numeric operands, while abstract `Int`/`UInt` annotations still stay primitive under local shadowing; this closes the exact mixed-integer runtime-wrapper falsifier and moves the honest clean whole-program stage3 gate from `type_diags=178` to `type_diags=47` on the current compacted tree (2026-04-01, current session)**:
   - trustworthy setup:
     - `src/compiler/semantic/type_inference_engine.cr` now treats numeric `InstanceType`s (for example a local shadow `struct UInt32`) as numeric operands for `numeric_type?`, `integer_type?`, and `promote_numeric_types(...)`, instead of reserving numeric fallback for `PrimitiveType` only

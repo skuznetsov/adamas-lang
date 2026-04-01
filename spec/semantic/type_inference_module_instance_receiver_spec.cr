@@ -340,5 +340,32 @@ describe TypeInferenceEngine do
       engine.diagnostics.should be_empty
       engine.context.get_type(program.roots.last).to_s.should eq("Tuple(UInt32, UInt32)")
     end
+
+    it "normalizes runtime String wrappers before string indexing" do
+      source = <<-CRYSTAL
+        struct String
+        end
+
+        module Probe
+          def self.open_flag(mode : String)
+            case mode[0]
+            when 'r'
+              1
+            else
+              0
+            end
+          end
+        end
+
+        Probe.open_flag("rb")
+      CRYSTAL
+
+      program, analyzer, engine = infer_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.should be_empty
+      engine.context.get_type(program.roots.last).to_s.should eq("Int32")
+    end
   end
 end
