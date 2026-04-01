@@ -3860,11 +3860,11 @@ module CrystalV2
       # type_decl_var (for TypeDeclarationNode only)
 
       def self.node_type_decl_var(node : TypeDeclarationNode)
-        node.var
+        node.name
       end
 
       def self.node_type_decl_var(node : TypedNode)
-        ExprId::INVALID
+        nil
       end
 
       # type_decl_declared_type (for TypeDeclarationNode only)

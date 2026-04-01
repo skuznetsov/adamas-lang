@@ -17,6 +17,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       CrystalV2::Compiler::Frontend.node_kind(type_decl).should eq(CrystalV2::Compiler::Frontend::NodeKind::TypeDeclaration)
 
       String.new(CrystalV2::Compiler::Frontend.node_type_decl_name(type_decl).not_nil!).should eq("x")
+      String.new(CrystalV2::Compiler::Frontend.node_type_decl_var(type_decl).not_nil!).should eq("x")
       String.new(CrystalV2::Compiler::Frontend.node_type_decl_type(type_decl).not_nil!).should eq("Int32")
     end
 

@@ -3,6 +3,27 @@
 Updated: 2026-04-01
 Context: compiler/bootstrap/stage2-stability
 
+[LM-410|verified]: After [LM-409], one of the remaining compiler-side heads was
+not a subtle semantic receiver issue at all. The live stage3 log still showed
+`Method 'var' not found on TypeDeclarationNode` in
+`src/compiler/frontend/ast.cr:3863`, and direct source inspection verified the
+problem literally: `TypeDeclarationNode` only exposes `name`, `declared_type`,
+and `value`, but `Frontend.node_type_decl_var(...)` was still calling
+`node.var`. This made the next move cheaper than any new reducer branch. The
+verified fix is source-local and compatibility-oriented:
+`src/compiler/frontend/ast.cr` now returns `node.name` from
+`node_type_decl_var(TypeDeclarationNode)` and returns `nil` for the `TypedNode`
+fallback instead of the incompatible `ExprId::INVALID`. Focused parser
+regression `spec/parser/parser_type_declaration_spec.cr` is green; rebuild
+gates for `src/crystal_v2.cr --no-codegen` and
+`/tmp/crystal_v2_semantic_stage3probe` are green; and the full safe stage3
+probe moves from `semantic_diags=0 resolution_diags=0 type_diags=29` to
+`semantic_diags=0 resolution_diags=0 type_diags=28`, with the old
+`TypeDeclarationNode#var` line disappearing from the live log. Boundary: this
+is a real self-hosting compatibility fix, but it does not address the richer
+remaining runtime/compiler tails (`HIR::TypeRef.new`, `Char#unsafe_chr`,
+`Hash#put`, `process/signal`, `Nil.close`). {F/G/R: 0.99/0.70/0.98} [verified]
+
 [LM-409|verified]: After [LM-408] and the later non-positional/kwargs-carrier
 checkpoints, the remaining `File::Error.from_os_error` head was not another
 keyword-rest bug. The decisive branch needed an adversary correction first: the

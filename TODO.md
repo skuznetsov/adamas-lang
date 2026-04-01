@@ -1,6 +1,35 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-01)
 
 ## Current Status
+- **Fresh AST helper compatibility checkpoint: `Frontend.node_type_decl_var(...)` now returns the declared variable name instead of calling a non-existent `TypeDeclarationNode#var`, which removes the compiler self-hosting `ast.cr` miss and moves the honest whole-program stage3 gate from `type_diags=29` to `type_diags=28` (2026-04-01, current session)**:
+  - trustworthy setup:
+    - `src/compiler/frontend/ast.cr` now maps `node_type_decl_var(TypeDeclarationNode)` to `node.name`, which matches the actual `TypeDeclarationNode` API
+    - the same helper now returns `nil` for `TypedNode`, aligning it with the other optional `node_type_decl_*` accessors instead of the old incompatible `ExprId::INVALID`
+    - focused regression coverage lives in `spec/parser/parser_type_declaration_spec.cr`
+  - decisive evidence:
+    - focused parser regression pack is green:
+      - `../crystal/bin/crystal spec spec/parser/parser_type_declaration_spec.cr --error-trace`
+    - rebuild gates are green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+    - the full semantic stage3 probe under the safe wrapper improves again:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 300 4096 src/crystal_v2.cr --stats --no-link -o /tmp/stage3_semantic_probe_after_type_decl_var_fix.out > /tmp/stage3_semantic_probe_after_type_decl_var_fix.log 2>&1`
+      - summary moved from:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=29`
+      - to:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=28`
+      - the old `Method 'var' not found on TypeDeclarationNode` line is gone from the live log
+  - practical boundary:
+    - this is a literal AST API compatibility fix, not a semantic-inference theory change
+    - stage3 is still not green; the next honest live head stays in later runtime/compiler helpers:
+      - `src/compiler/hir/hir.cr` (`Function 'new' not found`)
+      - `src/stdlib/unicode/unicode.cr` (`Char#unsafe_chr`)
+      - `src/stdlib/reference.cr` (`Hash#put`)
+      - `src/stdlib/crystal/system/unix/process.cr` / `signal.cr`
 - **Fresh semantic case-assignment narrowing checkpoint: `infer_case` now binds assignment subjects like `case result = ...`, and `extract_when_narrowing(...)` now understands generic type conditions like `when Tuple(Int32, Bool)`, which closes the exact `File::Error.from_os_error(..., result, file: ...)` union-carrier falsifier and moves the honest whole-program stage3 gate from `type_diags=30` to `type_diags=29` (2026-04-01, current session)**:
   - trustworthy setup:
     - `src/compiler/semantic/type_inference_engine.cr` now extracts a flow-binding name from both plain identifiers and `AssignNode` targets, so `case result = ...` reuses the same narrowing key as `if result = ...`
