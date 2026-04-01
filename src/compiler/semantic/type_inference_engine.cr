@@ -1415,7 +1415,7 @@ module CrystalV2
             return infer_method_call_result(method, receiver_type, arg_types, call_node)
           end
 
-          if call_node && {"new", "new!"}.includes?(method_name) && receiver_type.is_a?(EnumType)
+          if call_node
             if return_type = infer_union_argument_overload_call_result(receiver_type, method_name, arg_types, has_block, call_node)
               return return_type
             end
@@ -1475,7 +1475,9 @@ module CrystalV2
             parameters_match?(method, arg_types, receiver_type, arg_expr_ids)
           end
 
-          return nil if matches.empty?
+          if matches.empty?
+            return infer_receiverless_union_overload_call_result(symbol, arg_types, has_block, call_node)
+          end
 
           selected = if matches.size == 1
                        matches.first
@@ -1486,6 +1488,52 @@ module CrystalV2
           return nil unless receiver_type
 
           infer_method_call_result(selected, receiver_type, arg_types, call_node)
+        end
+
+        private def infer_receiverless_union_overload_call_result(
+          symbol : OverloadSetSymbol,
+          arg_types : Array(Type),
+          has_block : Bool,
+          call_node : Frontend::CallNode?
+        ) : Type?
+          return nil unless call_node
+          return nil unless arg_types.any? { |type| type.is_a?(UnionType) }
+
+          combinations = expand_union_argument_type_combinations(arg_types)
+          return nil unless combinations
+          return nil if combinations.size <= 1
+
+          arg_expr_ids = positional_call_arg_ids(call_node).map { |arg_id| arg_id.as(ExprId?) }
+          return_types = Array(Type).new(combinations.size)
+
+          combinations.each do |combo_arg_types|
+            matches = symbol.overloads.select do |method|
+              receiver_type = implicit_receiver_type_for(method)
+              next false unless receiver_type
+
+              required = count_required_params(method.params)
+              has_splat = method.params.any? { |param| param.is_splat || param.is_double_splat }
+              max = has_splat ? Int32::MAX : method.params.count { |param| !param.is_block }
+              next false unless combo_arg_types.size >= required && combo_arg_types.size <= max
+
+              next false unless method.params.any?(&.is_block) == has_block
+
+              parameters_match?(method, combo_arg_types, receiver_type, arg_expr_ids)
+            end
+            return nil if matches.empty?
+
+            selected = if matches.size == 1
+                         matches.first
+                       else
+                         matches.max_by { |method| specificity_score(method, combo_arg_types) }
+                       end
+            receiver_type = implicit_receiver_type_for(selected)
+            return nil unless receiver_type
+
+            return_types << infer_method_call_result(selected, receiver_type, combo_arg_types, call_node)
+          end
+
+          union_of(return_types)
         end
 
         private def unresolved_generic_module_receiver?(method : MethodSymbol) : Bool

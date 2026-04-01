@@ -6099,3 +6099,34 @@ Immediate next steps:
 2. Take the remaining earlier head in order:
    `LibPCRE2#jit_stack_assign`, bare `union_part`, `File.expand_path`,
    `Location.read_zoneinfo`, and `file.close` on a nilable path.
+
+## Checkpoint — 2026-04-01 (receiverless implicit-self overloads over union arguments)
+
+Verified this turn:
+- The next `Regex` tail was not a missing symbol or a generic block-context
+  failure. The decisive reduced carrier showed that receiverless implicit-self
+  dispatch inside `patterns.map { |pattern| union_part pattern }` failed only
+  when overload selection had to split a union-typed argument across multiple
+  overloads.
+- `TypeInferenceEngine` already had union-argument expansion for explicit
+  receiver calls, but the receiverless implicit-self path still returned no
+  match as soon as the raw `Regex | String` argument could not satisfy either
+  overload directly.
+- The verified fix is to reuse union-argument expansion for both current-context
+  receiverless calls and `OverloadSetSymbol` receiverless fallback matching, so
+  each concrete `Regex` / `String` branch selects the right overload and the
+  call result unions back to `String`.
+- Focused regression in
+  `spec/semantic/type_inference_current_class_shadow_spec.cr` is green,
+  `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+  is green, rebuild of `/tmp/crystal_v2_semantic_stage3probe` is green, and the
+  full semantic stage3 probe under `scripts/run_safe.sh` moved from
+  `semantic_diags=0 resolution_diags=0 type_diags=35` to
+  `semantic_diags=0 resolution_diags=0 type_diags=34`.
+
+Immediate next steps:
+1. Do not reopen the old bare-`union_part` theory; that branch is now closed.
+2. Take the new earlier runtime/file head in order:
+   `LibPCRE2#jit_stack_assign`, `EventLoop.remove`, `File.expand_path`,
+   `Location.read_zoneinfo`, and the remaining nilable close / channel
+   corridors.

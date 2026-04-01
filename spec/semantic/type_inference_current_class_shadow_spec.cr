@@ -156,6 +156,56 @@ describe Semantic::TypeInferenceEngine do
       engine.diagnostics.should be_empty
       engine.context.get_type(program.roots.last).to_s.should eq("Location")
     end
+
+    it "keeps receiverless overloaded class methods callable inside blocks with union-typed params" do
+      source = <<-CRYSTAL
+        module Enumerable(T)
+          abstract def map(& : T -> U) forall U
+        end
+
+        class Array(T)
+          include Enumerable(T)
+
+          def map(& : T -> U) forall U
+            Array(U).new
+          end
+
+          def join(sep : Char) : String
+            ""
+          end
+        end
+
+        class IO
+        end
+
+        class Regex
+          def self.union(patterns : Enumerable(Regex | String)) : Regex
+            patterns.map { |pattern| union_part pattern }.join('|')
+            Regex.new
+          end
+
+          private def self.union_part(pattern : Regex) : String
+            pattern.to_s
+          end
+
+          private def self.union_part(pattern : String) : String
+            pattern
+          end
+
+          def to_s(io : IO) : Nil
+          end
+        end
+
+        Regex.union([Regex.new, "x"])
+      CRYSTAL
+
+      program, analyzer, engine = infer_current_class_shadow_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.should be_empty
+      engine.context.get_type(program.roots.last).to_s.should eq("Regex")
+    end
   end
 
   describe "included module lexical parent lookup" do
