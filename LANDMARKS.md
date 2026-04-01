@@ -3,6 +3,27 @@
 Updated: 2026-04-01
 Context: compiler/bootstrap/stage2-stability
 
+[LM-399|verified]: After [LM-398], the last `option_parser` miss was no longer
+about enum paths or tuple carriers. A tiny reducer
+`class IO; end; flags = ["a", "b"]; io = uninitialized IO; flags.join io, '\n'`
+reproduced the remaining failure directly as `Method 'join' not found on
+Array(String)`, which falsified any residual `OptionParser`-specific control
+flow theory. The verified fix in
+`src/compiler/semantic/type_inference_engine.cr` is a bounded expansion of the
+array builtin surface: `Array(T)#join` now models the `Enumerable` IO-writing
+forms alongside the existing string-returning form, with separator typed as
+`String | Char | Number`. Focused regression
+`spec/semantic/type_inference_collection_builtin_spec.cr` is green; rebuild
+gates for `src/crystal_v2.cr --no-codegen` and `/tmp/crystal_v2_semantic_stage3probe`
+are green; the exact reducer now returns `Nil` with no semantic diagnostics;
+and the full safe stage3 probe moves from
+`semantic_diags=0 resolution_diags=0 type_diags=64` to
+`semantic_diags=0 resolution_diags=0 type_diags=61`. `src/stdlib/option_parser.cr`
+disappears entirely from the live head. Boundary: stage3 is still not green;
+the cheapest remaining heads are now `unicode` (`3`) and the `pretty_print`
+collection surface (`5`), while `dragonbox` remains the densest file-local
+cluster (`7`). {F/G/R: 0.97/0.84/0.98} [verified]
+
 [LM-398|verified]: After [LM-397], the next cheap whole-program frontier was
 not a broad tuple-destructuring regression and not another missing builtin in
 `OptionParser`. A two-step exact split isolated the real bug. First, a minimal

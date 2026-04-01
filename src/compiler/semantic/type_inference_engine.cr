@@ -9350,13 +9350,34 @@ module CrystalV2
               scope: dummy_scope
             )
           when "join"
-            # Array(T)#join(String) : String
-            param = Frontend::Parameter.new(name: "separator".to_slice, type_annotation: "String".to_slice)
+            separator_param = Frontend::Parameter.new(name: "separator".to_slice, type_annotation: "String | Char | Number".to_slice)
+            io_param = Frontend::Parameter.new(name: "io".to_slice, type_annotation: "IO".to_slice)
             methods << MethodSymbol.new(
               method_name,
               dummy_node_id,
-              params: [param],
+              params: [separator_param],
               return_annotation: "String",
+              scope: dummy_scope
+            )
+            methods << MethodSymbol.new(
+              method_name,
+              dummy_node_id,
+              params: [io_param],
+              return_annotation: "Nil",
+              scope: dummy_scope
+            )
+            methods << MethodSymbol.new(
+              method_name,
+              dummy_node_id,
+              params: [io_param, separator_param],
+              return_annotation: "Nil",
+              scope: dummy_scope
+            )
+            methods << MethodSymbol.new(
+              method_name,
+              dummy_node_id,
+              params: [separator_param, io_param],
+              return_annotation: "Nil",
               scope: dummy_scope
             )
           when "reverse", "sort", "uniq", "shuffle"

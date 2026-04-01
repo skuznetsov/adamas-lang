@@ -1,6 +1,45 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-01)
 
 ## Current Status
+- **Fresh semantic array-join-IO checkpoint: array builtins now cover the `join(io, separator)` protocol and non-String separators, which clears the remaining `OptionParser#to_s(io)` corridor and moves the honest full-stage3 gate from `type_diags=64` to `type_diags=61` (2026-04-01, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/type_inference_engine.cr` now models four `Array(T)#join` forms:
+      - `join(separator : String | Char | Number) : String`
+      - `join(io : IO) : Nil`
+      - `join(io : IO, separator : String | Char | Number) : Nil`
+      - `join(separator : String | Char | Number, io : IO) : Nil`
+    - focused regression coverage lives in `spec/semantic/type_inference_collection_builtin_spec.cr`
+  - decisive evidence:
+    - focused regression pack is green:
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_collection_builtin_spec.cr --error-trace`
+    - rebuild gates are green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+    - the exact reducer is green:
+      - `class IO; end; flags = ["a", "b"]; io = uninitialized IO; flags.join io, '\n'`
+      - before: `Method 'join' not found on Array(String)`
+      - after: root type `Nil` with no semantic diagnostics
+    - the full semantic stage3 probe under the safe wrapper improves again:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 300 4096 src/crystal_v2.cr --stats --no-link -o /tmp/stage3_semantic_probe_after_array_join.out > /tmp/stage3_semantic_probe_after_array_join.log 2>&1`
+      - summary moved from:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=64`
+      - to:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=61`
+      - `src/stdlib/option_parser.cr` disappears completely from the live head
+  - practical boundary:
+    - stage3 with the new inferer is still **not** green
+    - the new live head is:
+      - `src/stdlib/float/printer/dragonbox.cr` (`7`)
+      - `src/stdlib/pretty_print.cr` (`5`)
+      - `src/stdlib/crystal/system/unix/process.cr` (`5`)
+      - `src/stdlib/crystal/system/unix/signal.cr` (`4`)
+      - `src/stdlib/raise.cr` (`4`)
+      - `src/stdlib/unicode/unicode.cr` (`3`)
+    - the cheapest next surfaces now look like `unicode`'s residual nil/char corridor or the remaining `pretty_print` collection surface
 - **Fresh semantic nested-enum-member checkpoint: scoped enum member paths now resolve relative to the current class/module context during semantic path inference, which clears the `OptionParser::FlagValue::*` corridor and moves the honest full-stage3 gate from `type_diags=68` to `type_diags=64` (2026-04-01, current session)**:
   - trustworthy setup:
     - `src/compiler/semantic/type_inference_engine.cr` now resolves enum-member prefixes through relative lookup tables and enclosing namespaces, not only through the global table

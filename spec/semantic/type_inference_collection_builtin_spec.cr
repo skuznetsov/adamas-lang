@@ -81,5 +81,23 @@ describe Semantic::TypeInferenceEngine do
       engine.diagnostics.should be_empty
       engine.context.get_type(program.roots.last).to_s.should eq("Int32")
     end
+
+    it "supports array join with io and char separator" do
+      source = <<-'CRYSTAL'
+        class IO
+        end
+
+        flags = ["alpha", "beta"]
+        io = uninitialized IO
+        flags.join io, '\n'
+      CRYSTAL
+
+      program, analyzer, engine = infer_collection_builtin_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.should be_empty
+      engine.context.get_type(program.roots.last).to_s.should eq("Nil")
+    end
   end
 end
