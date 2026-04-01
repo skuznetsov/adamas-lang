@@ -11261,6 +11261,8 @@ module CrystalV2
           previous_class = @current_class
           previous_module = @current_module
           previous_method_scope = @current_method_scope
+          previous_assignments = @assignments.dup
+          previous_flow_narrowings = @flow_narrowings.dup
           @current_method_is_class_method_stack << method.is_class_method?
           @method_return_stack << [] of Type
           pushed_return_frame = true
@@ -11370,20 +11372,17 @@ module CrystalV2
           @current_class = previous_class
           @current_module = previous_module
           @current_method_scope = previous_method_scope
-          bound_param_names.each do |param_name|
-            if previous_param_assignments.has_key?(param_name)
-              if previous_type = previous_param_assignments[param_name]
-                @assignments[param_name] = previous_type
-              else
-                @assignments.delete(param_name)
-              end
-            else
-              @assignments.delete(param_name)
-            end
-          end
+          @assignments = previous_assignments
+          @flow_narrowings = previous_flow_narrowings
 
           result_type
         ensure
+          if previous_assignments
+            @assignments = previous_assignments
+          end
+          if previous_flow_narrowings
+            @flow_narrowings = previous_flow_narrowings
+          end
           @current_method_is_class_method_stack.pop unless @current_method_is_class_method_stack.empty?
           @yield_call_stack.pop if pushed_yield_call_frame && !@yield_call_stack.empty?
           @yield_return_stack.pop if pushed_yield_return_frame && !@yield_return_stack.empty?

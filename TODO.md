@@ -5584,3 +5584,47 @@ Immediate next steps:
 1. Stay on `pretty_print`: the remaining file-local tail is now arithmetic/state
    (`@indent -= indent`, `output_width + @width`), not `group.breakables`.
 2. After that, `dragonbox` remains the densest top file-local frontier at `7`.
+
+## Fresh Frontier — 2026-04-01 (nested method-body assignment scope)
+
+Verified this turn on semantic stage3 probes built from the current workspace:
+
+1. The live `dragonbox` head was not a broken `ImplInfo` module-method lookup
+   and not a `to_u32!` builtin-surface miss.
+   - A rebuilt exact carrier based on
+     `tmp/semantic_dragonbox_compute_mul_probe.cr` proved the decisive shape:
+     `compute_nearest_normal` assigned `r = (...).to_u32!`, but after a nested
+     call to `compute_mul_parity(...)`, the later `dist = r - ...` path could
+     still see stale `r : UInt64`, which then made
+     `ImplInfo.check_divisibility_and_divide_by_pow10(dist)` fail on `UInt64`.
+   - The structural reason is that `infer_method_body_type(...)` restored only
+     parameter/type-parameter bindings, not ordinary locals or flow narrowings,
+     so nested body inference could leak helper locals back into the caller.
+
+2. The verified fix is to snapshot and restore caller-local semantic state
+   around nested method body inference.
+   - `infer_method_body_type(...)` in `type_inference_engine.cr` now snapshots
+     and restores both `@assignments` and `@flow_narrowings`.
+   - Focused regression lives in
+     `spec/semantic/type_inference_eager_assignment_scope_spec.cr` and asserts
+     that a caller-local `r : UInt32` survives a nested helper body that also
+     uses `r`, instead of being overwritten by the helper's `UInt64` carrier.
+
+3. Measured impact:
+   - Focused regression pack is green.
+   - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+     and rebuild of `/tmp/crystal_v2_semantic_stage3probe` are green.
+   - Rebuilt exact carrier now reports `type_diags=0` and, under trace, shows
+     `check_divisibility_and_divide_by_pow10` receiving `UInt32` instead of
+     `UInt64`.
+   - Full semantic stage3 probe via `scripts/run_safe.sh` moved from
+     `semantic_diags=0 resolution_diags=0 type_diags=64` to
+     `semantic_diags=0 resolution_diags=0 type_diags=56`.
+   - `dragonbox` disappeared from the live top-file frontier entirely; the new
+     live head is `pretty_print (6)`, then `process (5)` and `signal (4)`.
+
+Immediate next steps:
+1. Stay on the new head and take the remaining `pretty_print` arithmetic/state
+   corridor next; do not reopen `dragonbox` unless a new exact reducer says so.
+2. After `pretty_print`, move to the `process/signal/file/raise` runtime tail
+   that is now exposed by the lower live gate.
