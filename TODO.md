@@ -1,6 +1,37 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-01)
 
 ## Current Status
+- **Fresh hash-put builtin checkpoint: semantic Hash builtins now cover `Hash#put(key, value, &)` as well as `put_if_absent`, which closes the exact `Reference#exec_recursive` falsifier and moves the honest whole-program stage3 gate from `type_diags=28` to `type_diags=27` (2026-04-01, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/type_inference_engine.cr` now models `Hash#put` with `(key : K, value : V, &)` on the same builtin surface that already handled `delete`, `clone`, `put_if_absent`, and other collection helpers
+    - focused regression coverage lives in `spec/semantic/type_inference_collection_builtin_spec.cr`
+  - decisive evidence:
+    - focused collection-builtin pack is green:
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_collection_builtin_spec.cr --error-trace`
+    - rebuild gates are green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+    - the exact no-prelude carrier is green under the safe wrapper:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 60 2048 /tmp/semantic_hash_put_probe.cr --no-prelude --stats --verbose`
+      - `semantic_diags=0`, `resolution_diags=0`, `type_diags=0`
+    - the full semantic stage3 probe under the safe wrapper improves again:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 300 4096 src/crystal_v2.cr --stats --no-link -o /tmp/stage3_semantic_probe_after_hash_put_fix.out > /tmp/stage3_semantic_probe_after_hash_put_fix.log 2>&1`
+      - summary moved from:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=28`
+      - to:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=27`
+      - the old `Method 'put' not found on Hash(Tuple(UInt64, Symbol), Nil)` line is gone from the live log
+  - practical boundary:
+    - this is a real collection-builtin compatibility fix, but not the remaining runtime/context tail
+    - stage3 is still not green; the next honest head is now concentrated in:
+      - `src/stdlib/unicode/unicode.cr` (`Char#unsafe_chr`)
+      - `src/compiler/hir/hir.cr` (`Function 'new' not found`)
+      - `src/stdlib/crystal/system/unix/process.cr` / `signal.cr`
+      - `src/stdlib/file.cr` / `src/stdlib/time/location.cr`
 - **Fresh AST helper compatibility checkpoint: `Frontend.node_type_decl_var(...)` now returns the declared variable name instead of calling a non-existent `TypeDeclarationNode#var`, which removes the compiler self-hosting `ast.cr` miss and moves the honest whole-program stage3 gate from `type_diags=29` to `type_diags=28` (2026-04-01, current session)**:
   - trustworthy setup:
     - `src/compiler/frontend/ast.cr` now maps `node_type_decl_var(TypeDeclarationNode)` to `node.name`, which matches the actual `TypeDeclarationNode` API

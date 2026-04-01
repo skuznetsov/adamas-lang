@@ -100,6 +100,28 @@ describe Semantic::TypeInferenceEngine do
       engine.context.get_type(program.roots.last).to_s.should eq("Nil")
     end
 
+    it "supports hash put with a block" do
+      source = <<-'CRYSTAL'
+        class Hash(K, V)
+        end
+
+        hash = Hash(Tuple(UInt64, Symbol), Nil).new
+        key = {1_u64, :x}
+
+        hash.put(key, nil) do
+          true
+        ensure
+          hash.delete(key)
+        end
+      CRYSTAL
+
+      program, analyzer, engine = infer_collection_builtin_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.should be_empty
+    end
+
     it "supports deque queue operations and each blocks" do
       source = <<-'CRYSTAL'
         class Text

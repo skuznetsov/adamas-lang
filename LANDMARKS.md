@@ -3,6 +3,28 @@
 Updated: 2026-04-01
 Context: compiler/bootstrap/stage2-stability
 
+[LM-411|verified]: After [LM-410], the next cheap whole-program mover was not a
+richer runtime-context corridor but a plain builtin-surface hole. The live
+stage3 log still showed `Method 'put' not found on Hash(Tuple(UInt64, Symbol),
+Nil)` at `src/stdlib/reference.cr:183`, and a tiny no-prelude carrier
+`/tmp/semantic_hash_put_probe.cr` reproduced it exactly with
+`hash.put(key, nil) do ... ensure hash.delete(key) end`. Source inspection in
+the original Crystal stdlib confirmed the real signature in
+`../crystal/src/hash.cr:1089`: `def put(key : K, value : V, &)`. The verified
+fix stays bounded to `src/compiler/semantic/type_inference_engine.cr`:
+`get_hash_builtin_methods(...)` now models `Hash#put` with two positional args
+plus a block, alongside the existing `delete` / `put_if_absent` surface.
+Focused regression `spec/semantic/type_inference_collection_builtin_spec.cr` is
+green; rebuild gates for `src/crystal_v2.cr --no-codegen` and
+`/tmp/crystal_v2_semantic_stage3probe` are green; the exact safe carrier is
+green under `scripts/run_safe.sh`; and the full safe stage3 probe moves from
+`semantic_diags=0 resolution_diags=0 type_diags=28` to
+`semantic_diags=0 resolution_diags=0 type_diags=27`, with the old `Hash#put`
+line disappearing from the live log. Boundary: this closes the
+`Reference#exec_recursive` collection-builtin branch, but the remaining head is
+still runtime/compiler-heavy (`Char#unsafe_chr`, `HIR::TypeRef.new`,
+`process/signal`, `Location.read_zoneinfo`, `Nil.close`). {F/G/R: 0.98/0.78/0.98} [verified]
+
 [LM-410|verified]: After [LM-409], one of the remaining compiler-side heads was
 not a subtle semantic receiver issue at all. The live stage3 log still showed
 `Method 'var' not found on TypeDeclarationNode` in

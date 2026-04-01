@@ -10443,6 +10443,11 @@ module CrystalV2
             key_param = Frontend::Parameter.new(name: "key".to_slice, type_annotation: key_type_name.to_slice)
             block_param = Frontend::Parameter.new(name: "block".to_slice, is_block: true)
             methods << MethodSymbol.new(method_name, dummy_node_id, params: [key_param, block_param], return_annotation: value_type_name, scope: dummy_scope)
+          when "put"
+            key_param = Frontend::Parameter.new(name: "key".to_slice, type_annotation: key_type_name.to_slice)
+            value_param = Frontend::Parameter.new(name: "value".to_slice, type_annotation: value_type_name.to_slice)
+            block_param = Frontend::Parameter.new(name: "block".to_slice, is_block: true)
+            methods << MethodSymbol.new(method_name, dummy_node_id, params: [key_param, value_param, block_param], return_annotation: value_type_name, scope: dummy_scope)
           when "to_a"
             methods << MethodSymbol.new(method_name, dummy_node_id, params: [] of Frontend::Parameter, return_annotation: "Array(Tuple(#{key_type_name}, #{value_type_name}))", scope: dummy_scope)
           when "clone"
