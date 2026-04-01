@@ -6130,3 +6130,41 @@ Immediate next steps:
    `LibPCRE2#jit_stack_assign`, `EventLoop.remove`, `File.expand_path`,
    `Location.read_zoneinfo`, and the remaining nilable close / channel
    corridors.
+
+## Checkpoint — 2026-04-01 (non-positional parameter carriers in semantic matching)
+
+Verified this turn:
+- The next `cli/file` blocker was not a `Path | String` type issue. The real
+  bug was that semantic arity/matching still treated the anonymous bare `*`
+  parameter in signatures like `def self.expand_path(path, dir = nil, *, home = false)`
+  as a real splat bucket instead of the named-only separator that HIR already
+  understands.
+- After that barrier moved, the newly exposed `SystemError` family showed a
+  second variant of the same broader matcher problem: forwarded `**opts` inside
+  class-method helpers reached semantic matching as an extra non-positional
+  carrier (`Hash(...)` for macro-expanded kwargs, `Nil` for empty forwarded
+  kwargs), so `self.build_message(message, **opts)` and
+  `self.new_from_os_error(message, os_error, **opts)` falsely missed even with
+  candidates present.
+- The verified fix is combined and bounded inside
+  `src/compiler/semantic/type_inference_engine.cr`:
+  - anonymous bare `*` params are ignored by semantic positional arity/matching
+    just like HIR's `named_only_separator?`;
+  - methods with `**opts` strip a trailing kwargs carrier (`Hash` or `Nil`)
+    before positional arity/type matching.
+- Focused regressions are green in:
+  - `spec/semantic/type_inference_named_args_spec.cr`
+  - `spec/semantic/type_inference_exception_spec.cr`
+- `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+  is green, rebuild of `/tmp/crystal_v2_semantic_stage3probe` is green, and the
+  full semantic stage3 probe under `scripts/run_safe.sh` moved from
+  `semantic_diags=0 resolution_diags=0 type_diags=34` to
+  `semantic_diags=0 resolution_diags=0 type_diags=30`.
+
+Immediate next steps:
+1. Do not reopen the old `File.expand_path` / `RuntimeError.build_message`
+   theories; those matcher branches are now closed.
+2. Take the new live head in order:
+   `File::Error.from_os_error`, `GC` finalizer generics, `process/signal`,
+   `unicode`, `Location.read_zoneinfo`, and the remaining nilable close / value
+   corridors.

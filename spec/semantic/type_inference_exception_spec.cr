@@ -86,6 +86,49 @@ describe TypeInferenceEngine do
       engine.context.get_type(analyzer.generated_overlay.top_level_roots.first).to_s.should eq("MyError")
     end
 
+    it "forwards empty double splats through included class-method helpers" do
+      source = <<-CRYSTAL
+        module SystemError
+          macro included
+            extend ::SystemError::ClassMethods
+          end
+
+          module ClassMethods
+            def from_os_error(message : String?, os_error, **opts)
+              message = self.build_message(message, **opts)
+              self.new_from_os_error(message, os_error, **opts)
+            end
+
+            protected def build_message(message : String?, **opts) : String?
+              message
+            end
+
+            protected def new_from_os_error(message : String?, os_error, **opts)
+              self.new(message)
+            end
+          end
+        end
+
+        class Exception
+          def initialize(@message : String? = nil)
+          end
+        end
+
+        class RuntimeError < Exception
+          include SystemError
+        end
+
+        RuntimeError.from_os_error("boom", 1)
+      CRYSTAL
+
+      program, analyzer, engine = infer_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.should be_empty
+      engine.context.get_type(program.roots.last).to_s.should eq("RuntimeError")
+    end
+
     it "handles begin with rescue (union type)" do
       source = <<-CRYSTAL
         x = begin

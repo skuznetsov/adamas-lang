@@ -85,6 +85,33 @@ describe Semantic::TypeInferenceEngine do
       engine.context.get_type(program.roots.last).to_s.should eq("Nil")
     end
 
+    it "matches methods with anonymous splat separators and keyword-only defaults" do
+      units = [
+        {
+          path: "/stdlib/probe.cr",
+          source: <<-CRYSTAL,
+            class Probe
+              def self.f(path : String, dir = nil, *, home = false) : String
+                path
+              end
+            end
+
+            Probe.f("x")
+            Probe.f("x", ".")
+            Probe.f("x", home: true)
+            Probe.f("x", ".", home: true)
+          CRYSTAL
+        },
+      ]
+
+      program, analyzer, engine = infer_named_arg_types(units)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.should be_empty
+      engine.context.get_type(program.roots.last).to_s.should eq("String")
+    end
+
     it "matches nested subtype constants against parent annotations in named calls" do
       units = [
         {
