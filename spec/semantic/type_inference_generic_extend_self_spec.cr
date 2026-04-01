@@ -233,5 +233,115 @@ describe TypeInferenceEngine do
       root_type.should_not be_nil
       root_type.not_nil!.to_s.should eq("Tuple(UInt32, Bool)")
     end
+
+    it "keeps zero-arg generic module body caches specialization-aware" do
+      source = <<-CRYSTAL
+        module Probe
+          module Methods(D)
+            def value
+              D::VALUE
+            end
+          end
+
+          module Info32
+            VALUE = 1_u32
+            extend Methods(self)
+          end
+
+          module Info64
+            VALUE = "dragon"
+            extend Methods(self)
+          end
+
+          module Host(F, ImplInfo)
+            def self.run
+              ImplInfo.value
+            end
+          end
+
+          def self.accept_string(x : String)
+            x
+          end
+
+          def self.accept_u32(x : UInt32)
+            x
+          end
+
+          def self.float64_first
+            accept_string(Host(Float64, Info64).run)
+          end
+
+          def self.float32_second
+            accept_u32(Host(Float32, Info32).run)
+          end
+        end
+
+        Probe.float32_second
+      CRYSTAL
+
+      program, _analyzer, engine = infer_types(source)
+
+      engine.diagnostics.should be_empty
+
+      root_type = engine.context.get_type(program.roots.last)
+      root_type.should_not be_nil
+      root_type.not_nil!.to_s.should eq("UInt32")
+    end
+
+    it "re-infers nested generic module call trees per specialization" do
+      source = <<-CRYSTAL
+        module Probe
+          module Methods(D)
+            def value(n : D::ArgType)
+              D::VALUE
+            end
+          end
+
+          module Info32
+            alias ArgType = UInt32
+            VALUE = 1_u32
+            extend Methods(self)
+          end
+
+          module Info64
+            alias ArgType = UInt64
+            VALUE = "dragon"
+            extend Methods(self)
+          end
+
+          module Host(F, ImplInfo)
+            def self.run(n)
+              ImplInfo.value(n)
+            end
+          end
+
+          def self.accept_string(x : String)
+            x
+          end
+
+          def self.accept_u32(x : UInt32)
+            x
+          end
+
+          def self.float64_first
+            accept_string(Host(Float64, Info64).run(1_u64))
+          end
+
+          def self.float32_second
+            accept_u32(Host(Float32, Info32).run(1_u32))
+          end
+        end
+
+        Probe.float32_second
+      CRYSTAL
+
+      program, _analyzer, engine = infer_types(source)
+
+      engine.diagnostics.should be_empty
+
+      root_type = engine.context.get_type(program.roots.last)
+      root_type.should_not be_nil
+      root_type.not_nil!.to_s.should eq("UInt32")
+    end
   end
 end

@@ -55,9 +55,11 @@ module CrystalV2
 
         @debug_enabled : Bool
 
-        # Cache method body return types to avoid repeated/recursive inference loops
-        @method_body_cache : Hash(MethodSymbol, Type) = {} of MethodSymbol => Type
-        @method_body_in_progress : Set(MethodSymbol) = Set(MethodSymbol).new
+        # Cache method body return types to avoid repeated/recursive inference loops.
+        # Receiver specialization matters for generic/module bodies, so cache
+        # entries must distinguish the concrete receiver context too.
+        @method_body_cache : Hash(MethodBodyCacheKey, Type) = {} of MethodBodyCacheKey => Type
+        @method_body_in_progress : Set(MethodBodyCacheKey) = Set(MethodBodyCacheKey).new
         @method_return_stack : Array(Array(Type))
         @current_method_is_class_method_stack : Array(Bool)
         @yield_return_stack : Array(Type?)
@@ -119,6 +121,24 @@ module CrystalV2
 
           def ==(other : MethodLookupKey) : Bool
             receiver_id == other.receiver_id && name == other.name && arg_sig == other.arg_sig && has_block == other.has_block
+          end
+        end
+
+        private struct MethodBodyCacheKey
+          getter method_id : UInt64
+          getter receiver_id : UInt64
+
+          def initialize(method : MethodSymbol, receiver : Type)
+            @method_id = method.object_id
+            @receiver_id = receiver.object_id
+          end
+
+          def hash : UInt64
+            method_id.hash ^ receiver_id.hash
+          end
+
+          def ==(other : MethodBodyCacheKey) : Bool
+            method_id == other.method_id && receiver_id == other.receiver_id
           end
         end
 
@@ -764,7 +784,7 @@ module CrystalV2
           end
         end
 
-        private def clear_cached_type_tree(expr_id : ExprId, seen : Set(Int32)? = nil) : Nil
+        private def clear_cached_type_tree(expr_id : ExprId, seen : Set(Int32)? = nil, *, deep_calls : Bool = false) : Nil
           return if expr_id.invalid?
 
           visited = seen || Set(Int32).new
@@ -772,10 +792,139 @@ module CrystalV2
           visited << expr_id.index
 
           @context.expression_types.delete(expr_id)
+
           node = @arena[expr_id]
-          children_of(expr_id, node).each do |child_id|
-            clear_cached_type_tree(child_id, visited)
+          child_ids =
+            if deep_calls
+              cached_type_children_of(node)
+            else
+              children_of(expr_id, node)
+            end
+
+          child_ids.each do |child_id|
+            clear_cached_type_tree(child_id, visited, deep_calls: deep_calls)
           end
+        end
+
+        private def cached_type_children_of(node) : Array(ExprId)
+          children = [] of ExprId
+
+          case node
+          when Frontend::GroupingNode
+            children << node.expression
+          when Frontend::UnaryNode
+            op = Frontend.node_operator_string(node) || ""
+            children << node.operand unless op == "->"
+          when Frontend::BinaryNode
+            children << node.left
+            children << node.right
+          when Frontend::AssignNode
+            append_assignment_target_children(children, node.target)
+            children << node.value
+          when Frontend::IndexNode
+            children << node.object
+            node.indexes.each { |index| children << index }
+          when Frontend::MemberAccessNode
+            children << node.object
+          when Frontend::SafeNavigationNode
+            children << node.object
+          when Frontend::CallNode
+            children << node.callee
+            node.args.each { |arg| children << arg }
+            if named_args = node.named_args
+              named_args.each { |named_arg| children << named_arg.value }
+            end
+          when Frontend::IfNode
+            children << node.condition
+            node.then_body.each { |expr| children << expr }
+            node.elsifs.try &.each do |branch|
+              children << branch.condition
+              branch.body.each { |expr| children << expr }
+            end
+            node.else_body.try &.each { |expr| children << expr }
+          when Frontend::UnlessNode
+            children << node.condition
+            node.then_branch.each { |expr| children << expr }
+            node.else_branch.try &.each { |expr| children << expr }
+          when Frontend::WhileNode
+            children << node.condition
+            node.body.each { |expr| children << expr }
+          when Frontend::UntilNode
+            children << node.condition
+            node.body.each { |expr| children << expr }
+          when Frontend::LoopNode
+            node.body.each { |expr| children << expr }
+          when Frontend::CaseNode
+            if value = node.value
+              children << value
+            end
+            node.when_branches.each do |branch|
+              branch.conditions.each { |condition| children << condition }
+              branch.body.each { |expr| children << expr }
+            end
+            node.else_branch.try &.each { |expr| children << expr }
+          when Frontend::SelectNode
+            node.branches.each do |branch|
+              children << branch.condition
+              branch.body.each { |expr| children << expr }
+            end
+            node.else_branch.try &.each { |expr| children << expr }
+          when Frontend::BeginNode
+            node.body.each { |expr| children << expr }
+            node.rescue_clauses.try &.each { |clause| clause.body.each { |expr| children << expr } }
+            node.ensure_body.try &.each { |expr| children << expr }
+          when Frontend::RaiseNode
+            if value = node.value
+              children << value
+            end
+          when Frontend::WithNode
+            node.body.each { |expr| children << expr }
+          when Frontend::TupleLiteralNode
+            node.elements.each { |expr| children << expr }
+          when Frontend::ArrayLiteralNode
+            node.elements.try &.each { |expr| children << expr }
+          when Frontend::HashLiteralNode
+            node.entries.each do |entry|
+              children << entry.key
+              children << entry.value
+            end
+          when Frontend::ConstantNode
+            children << node.value
+          when Frontend::TernaryNode
+            children << node.condition
+            children << node.true_branch
+            children << node.false_branch
+          when Frontend::RangeNode
+            children << node.begin_expr
+            children << node.end_expr
+          when Frontend::StringInterpolationNode
+            node.pieces.each do |piece|
+              if expr = piece.expr
+                children << expr
+              end
+            end
+          end
+
+          children
+        end
+
+        private def specialization_sensitive_method_body?(method : MethodSymbol, receiver_type : Type) : Bool
+          case receiver_type
+          when ClassType
+            if type_args = receiver_type.type_args
+              return true unless type_args.empty?
+            end
+          when ModuleType
+            if type_args = receiver_type.type_args
+              return true unless type_args.empty?
+            end
+          when InstanceType
+            if type_args = receiver_type.type_args
+              return true unless type_args.empty?
+            end
+          end
+
+          !!included_module_type_parameter_context(method.scope, receiver_type)
         end
 
         # Compute node type using already computed children (no recursion)
@@ -1354,10 +1503,21 @@ module CrystalV2
               return substitute_type_parameters(ret_ann, type_args, type_params)
             end
           elsif ann = method.return_annotation
+            ensure_annotated_method_block_inferred(method, receiver_type, call_node)
             return resolve_method_annotation_type(ann, receiver_type, method.scope, class_method_context: method.is_class_method?)
           end
 
           infer_method_body_type(method, receiver_type, arg_types, call_node)
+        end
+
+        private def ensure_annotated_method_block_inferred(
+          method : MethodSymbol,
+          receiver_type : Type,
+          call_node : Frontend::CallNode?
+        ) : Nil
+          return unless call_node
+          return unless call_has_block?(call_node)
+          infer_method_block_result_type(method, receiver_type, call_node)
         end
 
         private def infer_proc_pointer_type(operand_id : ExprId) : ProcType?
@@ -8950,6 +9110,32 @@ module CrystalV2
                 return_annotation: "Array(UInt8)",
                 scope: dummy_scope
               )
+            when "each_char"
+              block_param = Frontend::Parameter.new(name: "block".to_slice, type_annotation: "Char ->".to_slice, is_block: true)
+              methods << MethodSymbol.new(
+                method_name,
+                dummy_node_id,
+                params: [block_param],
+                return_annotation: "Nil",
+                scope: dummy_scope
+              )
+            when "each_char_with_index"
+              offset_param = Frontend::Parameter.new(name: "offset".to_slice, type_annotation: "Int32".to_slice)
+              block_param = Frontend::Parameter.new(name: "block".to_slice, type_annotation: "Char, Int32 ->".to_slice, is_block: true)
+              methods << MethodSymbol.new(
+                method_name,
+                dummy_node_id,
+                params: [block_param],
+                return_annotation: "Nil",
+                scope: dummy_scope
+              )
+              methods << MethodSymbol.new(
+                method_name,
+                dummy_node_id,
+                params: [offset_param, block_param],
+                return_annotation: "Nil",
+                scope: dummy_scope
+              )
             when "to_unsafe"
               methods << MethodSymbol.new(
                 method_name,
@@ -10722,20 +10908,21 @@ module CrystalV2
           bound_param_names = [] of String
           previous_param_assignments = {} of String => Type?
           cacheable = arg_types.nil? || arg_types.empty?
+          body_cache_key = MethodBodyCacheKey.new(method, receiver_type)
 
           # If we've already inferred this method body, reuse it to prevent cycles
-          if cacheable && (cached = @method_body_cache[method]?)
+          if cacheable && (cached = @method_body_cache[body_cache_key]?)
             debug_hook("infer.method_body.cache", "method=#{method.name} receiver=#{receiver_type}")
             return cached
           end
 
           # Break recursive inference cycles gracefully
-          if @method_body_in_progress.includes?(method)
+          if @method_body_in_progress.includes?(body_cache_key)
             debug_hook("infer.method_body.cycle", "method=#{method.name} receiver=#{receiver_type}")
             return @context.nil_type
           end
 
-          @method_body_in_progress << method
+          @method_body_in_progress << body_cache_key
           debug_hook("infer.method_body.start", "method=#{method.name} receiver=#{receiver_type}")
 
           if ENV["DEBUG"]?
@@ -10852,8 +11039,9 @@ module CrystalV2
           # of reusing eager pass results, because those earlier caches were
           # computed without explicit-return collection and may lack the right
           # receiver context.
+          deep_cache_invalidation = specialization_sensitive_method_body?(method, receiver_type)
           body.each do |expr_id|
-            clear_cached_type_tree(expr_id)
+            clear_cached_type_tree(expr_id, deep_calls: deep_cache_invalidation)
           end
 
           implicit_return_type = infer_block_result(body)
@@ -10861,7 +11049,7 @@ module CrystalV2
           result_type = combine_method_return_types(implicit_return_type, explicit_return_types)
 
           # Cache the result to avoid re-inferring on subsequent calls
-          @method_body_cache[method] = result_type if cacheable
+          @method_body_cache[body_cache_key] = result_type if cacheable
 
           if ENV["DEBUG"]?
             puts "  result_type: #{result_type.class} = #{result_type.inspect}"
@@ -10891,7 +11079,7 @@ module CrystalV2
           @yield_call_stack.pop if pushed_yield_call_frame && !@yield_call_stack.empty?
           @yield_return_stack.pop if pushed_yield_return_frame && !@yield_return_stack.empty?
           @method_return_stack.pop if pushed_return_frame && !@method_return_stack.empty?
-          @method_body_in_progress.delete(method)
+          @method_body_in_progress.delete(body_cache_key)
         end
 
         private def combine_method_return_types(implicit_return_type : Type, explicit_return_types : Array(Type)) : Type

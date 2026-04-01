@@ -89,4 +89,36 @@ describe CrystalV2::Compiler::Semantic::TypeInferenceEngine do
     analyzer.name_resolver_diagnostics.should be_empty
     engine.diagnostics.should be_empty
   end
+
+  it "binds String#each_char block params as Char" do
+    source = <<-CRYSTAL
+      value = 0
+      "ab".each_char do |char|
+        value = char.ord
+      end
+      value
+    CRYSTAL
+
+    analyzer, engine = infer_types_for_string_pointer_builtin(source)
+
+    analyzer.semantic_diagnostics.should be_empty
+    analyzer.name_resolver_diagnostics.should be_empty
+    engine.diagnostics.should be_empty
+  end
+
+  it "binds String#each_char_with_index block params as Char and Int32" do
+    source = <<-CRYSTAL
+      total = 0
+      "ab".each_char_with_index do |char, index|
+        total = total + char.ord + index
+      end
+      total
+    CRYSTAL
+
+    analyzer, engine = infer_types_for_string_pointer_builtin(source)
+
+    analyzer.semantic_diagnostics.should be_empty
+    analyzer.name_resolver_diagnostics.should be_empty
+    engine.diagnostics.should be_empty
+  end
 end

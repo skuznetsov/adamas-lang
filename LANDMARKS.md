@@ -3,6 +3,37 @@
 Updated: 2026-04-01
 Context: compiler/bootstrap/stage2-stability
 
+[LM-402|verified]: After [LM-401], the next `dragonbox`-adjacent branch was not
+another macro-path tweak. The decisive exact reducers were two generic-mixin
+specialization poison cases:
+`Probe::Host(Float64, Info64).run` followed by `Probe::Host(Float32, Info32).run`
+for both zero-arg and argful module methods. Before the fix, traces showed the
+second call still resolving `value`/`check` against `Info64`, which falsified
+the simpler `argful methods are already safe because they are not cached`
+theory. The verified root cause is twofold in
+`src/compiler/semantic/type_inference_engine.cr`: zero-arg body caching keyed
+only by `MethodSymbol` poisoned later specializations, and call/member
+subexpressions inside specialization-sensitive method bodies could retain stale
+receiver-context types between reinferences. The narrow fix now keys
+`@method_body_cache` and `@method_body_in_progress` by
+`MethodBodyCacheKey(method, receiver)`, and only specialization-sensitive
+method bodies get deeper cache invalidation for cached call/member subtrees.
+That deeper invalidation exposed a pre-existing `String#each_char` gap, so the
+same checkpoint also adds annotated block inference for already-resolved
+methods and a String builtin surface for `each_char` / `each_char_with_index`.
+Focused regressions in
+`spec/semantic/type_inference_generic_extend_self_spec.cr` and
+`spec/semantic/type_inference_string_pointer_builtin_spec.cr` are green;
+rebuild gates for `src/crystal_v2.cr --no-codegen` and
+`/tmp/crystal_v2_semantic_stage3probe` are green; the isolated
+`"ab".each_char { |char| char.ord }` reducer is green; and the full safe stage3
+probe returns to `semantic_diags=0 resolution_diags=0 type_diags=61`. An
+adversary diff against `/tmp/stage3_semantic_probe_after_macro_ctx.log` shows
+an identical error multiset, so this is a real flat checkpoint rather than a
+failure-family swap. Boundary: stage3 is still not green and the remaining live
+frontier is unchanged (`dragonbox`, `pretty_print`, `process`, `signal`,
+`raise`, `unicode`). {F/G/R: 0.97/0.66/0.98} [verified]
+
 [LM-401|verified]: After [LM-400], the remaining `dragonbox` branch split again.
 The important exact reducer was not the whole actual file, but the smaller
 `tmp/semantic_dragonbox_compute_mul_probe.cr`, which previously failed with

@@ -1,6 +1,44 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-01)
 
 ## Current Status
+- **Fresh semantic specialization-cache checkpoint: generic/module method body caches are now specialization-aware, and annotated block methods now re-type their block params before returning annotated results, which fixes the exact generic-mixin cache poison reducers while keeping the honest whole-program stage3 gate flat at `type_diags=61` (2026-04-01, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/type_inference_engine.cr` now keys `@method_body_cache` / `@method_body_in_progress` by `{method, concrete receiver}` instead of `MethodSymbol` alone
+    - the same file now uses deeper cache invalidation only for specialization-sensitive method bodies, instead of broad call-tree invalidation everywhere
+    - annotated method calls now force block inference through `infer_method_block_result_type(...)` before returning the declared result type
+    - the String builtin surface now includes block forms for `each_char` and `each_char_with_index`
+    - focused regression coverage lives in:
+      - `spec/semantic/type_inference_generic_extend_self_spec.cr`
+      - `spec/semantic/type_inference_string_pointer_builtin_spec.cr`
+  - decisive evidence:
+    - focused regression packs are green:
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_generic_extend_self_spec.cr --error-trace`
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_string_pointer_builtin_spec.cr --error-trace`
+    - rebuild gates are green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+    - the exact zero-arg specialization poison reducer is green:
+      - `Probe::Host(Float32, Info32).run` after earlier `Probe.float64_first`
+      - before: `Host(Float32, Info32).run` reused the `Info64` cached body
+      - after: root type is `UInt32` with no semantic diagnostics
+    - the exact nested argful specialization poison reducer is green:
+      - `Probe::Host(Float32, Info32).run(1_u32)` after earlier `Probe.float64_first`
+      - before: nested `ImplInfo.value(...)` reused `Info64`
+      - after: root type is `UInt32` with no semantic diagnostics
+    - the exact annotated block reducer is green:
+      - `value = 0; "ab".each_char { |char| value = char.ord }; value`
+      - before: `Method 'each_char' not found on String`
+      - after: root type `Int32` with no semantic diagnostics
+    - the full semantic stage3 probe under the safe wrapper is non-regressing:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 300 4096 src/crystal_v2.cr --stats --no-link -o /tmp/stage3_semantic_probe_after_specialization_cache_each_char.out > /tmp/stage3_semantic_probe_after_specialization_cache_each_char.log 2>&1`
+      - summary remains:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=61`
+      - adversary check against `/tmp/stage3_semantic_probe_after_macro_ctx.log` shows an identical error multiset, so the branch is flat rather than trading one failure family for another
+  - practical boundary:
+    - this is a real local semantic fix and a verified refutation of the broad `@method_body_cache alone is enough` theory
+    - the remaining live head is unchanged: `dragonbox`, `pretty_print`, `process`, `signal`, `raise`, `unicode`
 - **Fresh semantic macro-path-head checkpoint: macro expansion now resolves scoped paths whose head is a macro-bound type/module variable (for example `D::KAPPA` when `D` comes from `extend M(self)` bindings), which fixes the exact nested `dragonbox`-shaped no-prelude reducers but does not yet move the honest whole-program stage3 gate beyond `type_diags=61` (2026-04-01, current session)**:
   - trustworthy setup:
     - `src/compiler/semantic/macro_expander.cr` now substitutes leading macro-variable path heads before scoped macro lookup, so `D::KAPPA` can resolve through a bound macro variable like `D = ProbeDragonbox::ImplInfo_Float32`
