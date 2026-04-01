@@ -8131,9 +8131,16 @@ module CrystalV2
             get_enum_builtin_methods(receiver_type, method_name).each { |entry| methods << entry }
           end
 
+          universal_methods = get_universal_methods(receiver_type, method_name)
+
           # Phase 103C: Universal methods available on all types
           if methods.empty?
-            get_universal_methods(receiver_type, method_name).each { |entry| methods << entry }
+            universal_methods.each { |entry| methods << entry }
+          elsif method_name == "to_s" || method_name == "inspect"
+            universal_methods.each do |entry|
+              next if methods.any? { |existing| existing.params.size == entry.params.size }
+              methods << entry
+            end
           end
 
           methods

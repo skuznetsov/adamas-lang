@@ -6075,3 +6075,27 @@ Immediate next steps:
 2. Take the new runtime/file tail with exact carriers first:
    `Regex#to_s`, `File.expand_path`, `Location.read_zoneinfo`, and the
    remaining `Nil.close` corridor in `file.cr`.
+
+## Checkpoint — 2026-04-01 (universal zero-arg stringification over io-only overloads)
+
+Verified this turn:
+- The next `Regex` tail was not a regex-specific receiver bug. The actual gap
+  was overload composition: when a type defined only `to_s(io : IO)` or
+  `inspect(io : IO)`, semantic lookup suppressed the universal zero-arg
+  `to_s`/`inspect` candidates because any explicit method with the same name
+  blocked the universal fallback entirely.
+- `TypeInferenceEngine#find_all_methods(...)` now appends the missing universal
+  `to_s`/`inspect` overloads by arity when explicit same-name methods exist but
+  only cover a subset of the protocol surface.
+- Focused regression in `spec/semantic/type_inference_io_protocol_spec.cr` is
+  green, `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+  is green, rebuild of `/tmp/crystal_v2_semantic_stage3probe` is green, and the
+  full semantic stage3 probe under `scripts/run_safe.sh` moved from
+  `semantic_diags=0 resolution_diags=0 type_diags=36` to
+  `semantic_diags=0 resolution_diags=0 type_diags=35`.
+
+Immediate next steps:
+1. Stay off the old `Regex#to_s` theory; that branch is now closed.
+2. Take the remaining earlier head in order:
+   `LibPCRE2#jit_stack_assign`, bare `union_part`, `File.expand_path`,
+   `Location.read_zoneinfo`, and `file.close` on a nilable path.

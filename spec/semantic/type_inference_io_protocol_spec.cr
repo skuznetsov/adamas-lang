@@ -83,5 +83,33 @@ describe Semantic::TypeInferenceEngine do
       engine.diagnostics.should be_empty
       engine.context.get_type(program.roots.last).to_s.should eq("String")
     end
+
+    it "keeps zero-arg stringification available when a type only defines io overloads" do
+      source = <<-CRYSTAL
+        class IO
+        end
+
+        class Regex
+          def to_s(io : IO) : Nil
+          end
+
+          def inspect(io : IO) : Nil
+          end
+        end
+
+        def probe(re : Regex)
+          {re.to_s, re.inspect}
+        end
+
+        probe(Regex.new)
+      CRYSTAL
+
+      program, analyzer, engine = infer_io_protocol_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.should be_empty
+      engine.context.get_type(program.roots.last).to_s.should eq("Tuple(String, String)")
+    end
   end
 end
