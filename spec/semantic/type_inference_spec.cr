@@ -3740,6 +3740,40 @@ describe Semantic::TypeInferenceEngine do
       value_type.as(PrimitiveType).name.should eq("String")
     end
 
+    it "parses brace tuple annotations with namespaced element types" do
+      source = <<-CRYSTAL
+        class IO
+          class FileDescriptor
+          end
+        end
+
+        class SignalPipe
+          @@pipe : {IO::FileDescriptor, IO::FileDescriptor} = begin
+            reader = uninitialized IO::FileDescriptor
+            writer = uninitialized IO::FileDescriptor
+            {reader, writer}
+          end
+
+          def self.reader
+            @@pipe[0]
+          end
+        end
+
+        value = SignalPipe.reader
+      CRYSTAL
+
+      program, analyzer, engine = infer_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.should be_empty
+
+      value_assign = program.arena[program.roots.last].as(CrystalV2::Compiler::Frontend::AssignNode)
+      value_type = engine.context.get_type(value_assign.value.not_nil!)
+      value_type.should be_a(InstanceType)
+      value_type.as(InstanceType).class_symbol.name.should eq("FileDescriptor")
+    end
+
     it "binds untyped method params from call-site arguments during body inference" do
       source = <<-CRYSTAL
         class Accumulator(T)

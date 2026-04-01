@@ -1,6 +1,43 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-01)
 
 ## Current Status
+- **Fresh semantic brace-tuple namespace checkpoint: namespaced brace-tuple annotations now stay tuples instead of being misparsed as named tuples, which fixes the exact `@@pipe[0]` signal carrier and moves the honest whole-program stage3 gate from `type_diags=50` to `type_diags=49` (2026-04-01, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/type_inference_engine.cr` now ignores namespace separators `::` while detecting top-level named-tuple `:` separators inside brace annotations
+    - this keeps `{IO::FileDescriptor, IO::FileDescriptor}` on the tuple path while preserving `{left: Int32, right: String}` as a named tuple
+    - focused regression coverage lives in `spec/semantic/type_inference_spec.cr`
+  - decisive evidence:
+    - focused regression is green:
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_spec.cr --example 'parses brace tuple annotations with namespaced element types' --error-trace`
+    - rebuild gates are green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+    - the exact no-prelude carrier is green under the safe wrapper:
+      - `/tmp/semantic_signal_pipe_probe.cr`
+      - before: four copies of `NamedTuple indexing requires symbol or string key` on `@@pipe[0]` / `@@pipe[1]`
+      - after:
+        - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 30 1024 /tmp/semantic_signal_pipe_probe.cr --no-prelude --stats --verbose`
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=0`
+    - the full semantic stage3 probe under the safe wrapper improves again:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 300 4096 src/crystal_v2.cr --stats --no-link -o /tmp/stage3_semantic_probe_after_brace_tuple_fix.out > /tmp/stage3_semantic_probe_after_brace_tuple_fix.log 2>&1`
+      - summary moved from:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=50`
+      - to:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=49`
+      - `src/stdlib/crystal/system/unix/signal.cr` drops from `4` errors to `3`
+  - practical boundary:
+    - this is a real parser/semantic type-annotation fix, but not the whole remaining `signal` corridor
+    - the live head is still runtime-heavy:
+      - `src/stdlib/crystal/system/unix/process.cr` (`5`)
+      - `src/stdlib/crystal/system/unix/signal.cr` (`3`)
+      - `src/compiler/hir/hir.cr` (`3`)
+      - `src/stdlib/raise.cr` (`3`)
 - **Fresh semantic class-body ivar-default checkpoint: class-body instance-var assignments now preserve default-value metadata during symbol collection, which fixes the explicit-receiver `threads.@mutex.lock` corridor and moves the honest whole-program stage3 gate from `type_diags=54` to `type_diags=50` (2026-04-01, current session)**:
   - trustworthy setup:
     - `src/compiler/semantic/collectors/symbol_collector.cr` now treats class-body `@ivar = ...` assignments as default-value seeds, not just `initialize` assignments and constructor shorthand

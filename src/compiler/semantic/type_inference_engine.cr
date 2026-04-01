@@ -11189,7 +11189,11 @@ module CrystalV2
             when 93_u8
               bracket_depth -= 1 if bracket_depth > 0
             when 58_u8
-              return i if paren_depth == 0 && brace_depth == 0 && bracket_depth == 0
+              if paren_depth == 0 && brace_depth == 0 && bracket_depth == 0
+                prev_is_colon = i > 0 && part.byte_at(i - 1) == 58_u8
+                next_is_colon = i + 1 < part.bytesize && part.byte_at(i + 1) == 58_u8
+                return i unless prev_is_colon || next_is_colon
+              end
             end
             i += 1
           end

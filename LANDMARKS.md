@@ -3,6 +3,30 @@
 Updated: 2026-04-01
 Context: compiler/bootstrap/stage2-stability
 
+[LM-405|verified]: After [LM-404], the next `signal`-side frontier was not a
+class-var storage bug in general; the decisive exact reducer was the tiny
+no-prelude carrier `/tmp/semantic_signal_pipe_probe.cr`, which declared
+`@@pipe : {IO::FileDescriptor, IO::FileDescriptor}` and then indexed it via
+`@@pipe[0]` / `@@pipe[1]`. Before the fix it emitted four copies of
+`NamedTuple indexing requires symbol or string key`, which falsified tuple
+indexing itself and isolated the real bug to brace-annotation parsing for
+namespaced element types. The root cause was the named-tuple separator
+detector in `src/compiler/semantic/type_inference_engine.cr`: it treated any
+top-level `:` inside `{...}` as a named-tuple key separator, so namespace
+qualifiers like `IO::FileDescriptor` made `{A::B, A::B}` look like a
+`NamedTuple` instead of a positional tuple. The verified narrow fix makes
+`top_level_named_tuple_separator(...)` ignore `::` namespace separators while
+still recognizing single-colon named tuple entries. Focused regression
+`spec/semantic/type_inference_spec.cr` is green; rebuild gates for
+`src/crystal_v2.cr --no-codegen` and `/tmp/crystal_v2_semantic_stage3probe`
+are green; the exact safe no-prelude carrier is green; and the full safe stage3
+probe moves from `semantic_diags=0 resolution_diags=0 type_diags=50` to
+`semantic_diags=0 resolution_diags=0 type_diags=49`, with
+`src/stdlib/crystal/system/unix/signal.cr` dropping from `4` errors to `3`.
+Boundary: stage3 is still not green; the new runtime head is still
+`process` (`5`), then `signal`/`hir`/`raise` (`3` each). {F/G/R: 0.97/0.78/0.98}
+[verified]
+
 [LM-404|verified]: After [LM-403], the newly exposed runtime head was not a
 generic nested-owner lookup problem in `Thread::LinkedList(T)`. The decisive
 exact reducer was the existing explicit-receiver ivar carrier
