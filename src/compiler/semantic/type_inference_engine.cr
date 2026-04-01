@@ -2312,16 +2312,31 @@ module CrystalV2
           receiver_type = @receiver_type_context
           return variables unless receiver_type
 
-          type_params, type_args = case receiver_type
-                                  when ClassType
-                                    {receiver_type.symbol.type_parameters, receiver_type.type_args}
-                                  when ModuleType
-                                    {receiver_type.symbol.type_parameters, receiver_type.type_args}
-                                  when InstanceType
-                                    {receiver_type.class_symbol.type_parameters, receiver_type.type_args}
-                                  else
-                                    return variables
-                                  end
+          type_params : Array(String)? = nil
+          type_args : Array(Type)? = nil
+
+          case receiver_type
+          when ClassType
+            type_params = receiver_type.symbol.type_parameters
+            type_args = receiver_type.type_args
+          when ModuleType
+            type_params = receiver_type.symbol.type_parameters
+            type_args = receiver_type.type_args
+          when InstanceType
+            type_params = receiver_type.class_symbol.type_parameters
+            type_args = receiver_type.type_args
+          else
+            return variables
+          end
+
+          if (!type_params || !type_args || type_params.size != type_args.size || type_params.empty?) &&
+             (included_context = included_module_type_parameter_context(@current_method_scope, receiver_type))
+            included_type_args, included_type_params = included_context
+            if included_type_params.size == included_type_args.size && !included_type_params.empty?
+              type_params = included_type_params
+              type_args = included_type_args
+            end
+          end
 
           return variables unless type_params && type_args
           return variables unless type_params.size == type_args.size

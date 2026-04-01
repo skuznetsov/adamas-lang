@@ -3,6 +3,36 @@
 Updated: 2026-04-01
 Context: compiler/bootstrap/stage2-stability
 
+[LM-401|verified]: After [LM-400], the remaining `dragonbox` branch split again.
+The important exact reducer was not the whole actual file, but the smaller
+`tmp/semantic_dragonbox_compute_mul_probe.cr`, which previously failed with
+`Operator '+' not defined for UInt32 and Nil` at `significand + dist`. A
+separate direct-call reducer for the same generic mixin method was green, which
+falsified generic-module lookup itself. The decisive debug evidence came from
+`DEBUG=1` on the compute-mul probe: `compute_mul` returned
+`Tuple(UInt32, Bool)`, but the nested generic mixin method
+`check_divisibility_and_divide_by_pow10` itself still returned `Nil`. The root
+cause was not body inference in general but macro path resolution: in
+`src/compiler/semantic/macro_expander.cr`, scoped paths like `D::KAPPA` inside
+generic mixin macro branches were looked up as literal paths, without first
+substituting the macro-bound head `D` with its concrete type/module id. The
+verified narrow fix is two-part: `src/compiler/semantic/type_inference_engine.cr`
+supplies included-module type-parameter bindings to macro expansion variables,
+and `src/compiler/semantic/macro_expander.cr` now substitutes leading
+macro-variable path heads before scoped lookup. Focused regression
+`spec/semantic/type_inference_generic_extend_self_spec.cr` is green; rebuild
+gates for `src/crystal_v2.cr --no-codegen` and
+`/tmp/crystal_v2_semantic_stage3probe` are green; the exact reducer
+`tmp/semantic_generic_module_tuple_return_probe.cr` is green; and the more
+realistic `tmp/semantic_dragonbox_compute_mul_probe.cr` is also green. Boundary:
+the actual-file dragonbox carrier remains flat at
+`semantic_diags=0 resolution_diags=0 type_diags=47`, and its trace still shows
+`ImplInfo.check_divisibility_and_divide_by_pow10(dist)` being called with
+`UInt64`; the full safe stage3 gate also remains flat at
+`semantic_diags=0 resolution_diags=0 type_diags=61`. So this is a real local
+fix and a verified refutation of the macro-path-head branch, but not yet the
+whole-program `dragonbox` win. {F/G/R: 0.96/0.60/0.98} [verified]
+
 [LM-400|verified]: After [LM-399], the next cheap `dragonbox` branch was not
 another macro-binding tweak and not a whole-program `stage3` mover. A tiny
 exact reducer isolated a real local semantic bug:

@@ -2944,6 +2944,12 @@ module CrystalV2
         private def resolve_scoped_macro_value(name : String, context : Context) : MacroValue?
           return nil if name.empty?
 
+          if substituted = substitute_macro_path_head(name, context)
+            if value = resolve_scoped_macro_value(substituted, context)
+              return value
+            end
+          end
+
           if scope = context.scope
             if value = resolve_path_macro_value_in_table(scope, name, context)
               return value
@@ -2967,6 +2973,24 @@ module CrystalV2
           end
 
           builtin_scoped_macro_value(name)
+        end
+
+        private def substitute_macro_path_head(name : String, context : Context) : String?
+          normalized = name.starts_with?("::") ? name[2..] : name
+          return nil unless normalized.includes?("::")
+
+          segments = normalized.split("::").reject(&.empty?)
+          return nil if segments.size < 2
+
+          head = segments.first
+          macro_head = context.variables[head]?
+          return nil unless macro_head
+
+          substituted_head = macro_head.to_macro_output
+          return nil if substituted_head.empty? || substituted_head == head
+
+          replaced = ([substituted_head] + segments[1..]).join("::")
+          name.starts_with?("::") ? "::#{replaced}" : replaced
         end
 
         private def builtin_scoped_macro_value(name : String) : MacroValue?

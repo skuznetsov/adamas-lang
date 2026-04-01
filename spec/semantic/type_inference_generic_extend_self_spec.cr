@@ -161,5 +161,77 @@ describe TypeInferenceEngine do
       root_type.should_not be_nil
       root_type.not_nil!.to_s.should eq("Int32")
     end
+
+    it "expands macro-guarded tuple returns inside extended generic module methods" do
+      source = <<-CRYSTAL
+        module TupleMethods(D)
+          def pair(n : UInt32)
+            {% if D::KAPPA == 1 %}
+              {n, true}
+            {% else %}
+              {n, false}
+            {% end %}
+          end
+        end
+
+        module TupleInfo
+          KAPPA = 1
+          extend TupleMethods(self)
+        end
+
+        value, flag = TupleInfo.pair(1_u32)
+        {value + 1_u32, flag}
+      CRYSTAL
+
+      program, _analyzer, engine = infer_types(source)
+
+      engine.diagnostics.should be_empty
+
+      root_type = engine.context.get_type(program.roots.last)
+      root_type.should_not be_nil
+      root_type.not_nil!.to_s.should eq("Tuple(UInt32, Bool)")
+    end
+
+    it "resolves macro variable heads inside scoped paths for extended generic module methods" do
+      source = <<-CRYSTAL
+        module Div
+          def self.k1(n : UInt32)
+            {n, true}
+          end
+        end
+
+        module TupleMethods(D)
+          def pair(n : UInt32)
+            {% if D::KAPPA == 1 %}
+              Div.k1(n)
+            {% else %}
+              {% raise "Expected kappa == 1" %}
+            {% end %}
+          end
+        end
+
+        module TupleInfo
+          KAPPA = 1
+          extend TupleMethods(self)
+        end
+
+        module Host(F, ImplInfo)
+          def self.run(seed : UInt32)
+            value, flag = ImplInfo.pair(seed)
+            {value + 1_u32, flag}
+          end
+        end
+
+        Host(Float32, TupleInfo).run(1_u32)
+      CRYSTAL
+
+      program, _analyzer, engine = infer_types(source)
+
+      engine.diagnostics.should be_empty
+
+      root_type = engine.context.get_type(program.roots.last)
+      root_type.should_not be_nil
+      root_type.not_nil!.to_s.should eq("Tuple(UInt32, Bool)")
+    end
   end
 end

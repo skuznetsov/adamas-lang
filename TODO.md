@@ -1,6 +1,38 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-01)
 
 ## Current Status
+- **Fresh semantic macro-path-head checkpoint: macro expansion now resolves scoped paths whose head is a macro-bound type/module variable (for example `D::KAPPA` when `D` comes from `extend M(self)` bindings), which fixes the exact nested `dragonbox`-shaped no-prelude reducers but does not yet move the honest whole-program stage3 gate beyond `type_diags=61` (2026-04-01, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/macro_expander.cr` now substitutes leading macro-variable path heads before scoped macro lookup, so `D::KAPPA` can resolve through a bound macro variable like `D = ProbeDragonbox::ImplInfo_Float32`
+    - `src/compiler/semantic/type_inference_engine.cr` still supplies included-module type-parameter bindings into macro expansion variables for `extend M(self)` bodies
+    - focused regression coverage lives in `spec/semantic/type_inference_generic_extend_self_spec.cr`
+  - decisive evidence:
+    - focused regression pack is green:
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_generic_extend_self_spec.cr --error-trace`
+    - rebuild gates are green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+    - the exact reducer that used to collapse to `Nil` now passes:
+      - `tmp/semantic_generic_module_tuple_return_probe.cr`
+      - before: `Operator '+' not defined for Nil and UInt32`
+      - after: `semantic_diags=0 resolution_diags=0 type_diags=0`
+    - the more realistic delegated + arithmetic reducer also now passes:
+      - `tmp/semantic_dragonbox_compute_mul_probe.cr`
+      - before: `Operator '+' not defined for UInt32 and Nil`
+      - after: `semantic_diags=0 resolution_diags=0 type_diags=0`
+    - the actual-file dragonbox carrier remains flat:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 120 2048 /tmp/semantic_dragonbox_get_cache_probe.cr --stats --no-link -o /tmp/semantic_dragonbox_get_cache_probe_after_macrohead.out > /tmp/semantic_dragonbox_get_cache_probe_after_macrohead.log 2>&1`
+      - summary stays at `semantic_diags=0 resolution_diags=0 type_diags=47`
+      - trace still shows `lookup_method start method=check_divisibility_and_divide_by_pow10 ... args=UInt64`
+    - the full semantic stage3 probe under the safe wrapper is still flat:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 300 4096 src/crystal_v2.cr --stats --no-link -o /tmp/stage3_semantic_probe_after_macro_ctx.out > /tmp/stage3_semantic_probe_after_macro_ctx.log 2>&1`
+      - summary remains:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=61`
+  - practical boundary:
+    - this is a real local semantic/macro fix and removes one refuted branch
+    - the remaining live `dragonbox` blocker is now narrower: upstream widening still feeds `UInt64` into `ImplInfo.check_divisibility_and_divide_by_pow10(...)` in the actual file
 - **Fresh semantic primitive-`.class` checkpoint: primitive instance `.class` now stays concrete through op-assign flows, while ordinary `self.class.name` still resolves through the generic `Class` surface; this fixes the exact reducer and removes the broad-regression path, but it does not move the honest whole-program stage3 gate beyond `type_diags=61` (2026-04-01, current session)**:
   - trustworthy setup:
     - `src/compiler/semantic/type_inference_engine.cr` now special-cases zero-arg `#class` only for primitive instance receivers, routing them through `class_receiver_type_for_expression(...)`
