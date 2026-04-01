@@ -292,6 +292,7 @@ module CrystalV2
           end
         when Frontend::GetterNode, Frontend::SetterNode, Frontend::PropertyNode
           # Phase 87B-1: Expand accessor macros to method definitions
+          record_accessor_storage_types(node, node_id)
           expand_accessor_macro(node_id, node)
         when Frontend::CallNode
           # Phase 87B-2: Check if call is actually a macro invocation
@@ -993,25 +994,26 @@ module CrystalV2
         private def expand_accessor_macro(node_id : Frontend::ExprId, node : Frontend::TypedNode)
           specs = Frontend.node_accessor_specs(node)
           return unless specs
+          class_accessor = accessor_is_class?(node)
 
           specs.each do |spec|
             case node
             when Frontend::GetterNode
               # Generate: def name : Type; @name; end
-              def_node = build_getter_def(spec, node.span)
+              def_node = build_getter_def(spec, node.span, class_accessor: class_accessor)
               def_id = arena.add_typed(def_node)
               visit(def_id)  # Immediately register as MethodSymbol
 
             when Frontend::SetterNode
               # Generate: def name=(value : Type); @name = value; end
-              def_node = build_setter_def(spec, node.span)
+              def_node = build_setter_def(spec, node.span, class_accessor: class_accessor)
               def_id = arena.add_typed(def_node)
               visit(def_id)
 
             when Frontend::PropertyNode
               # Generate both getter and setter
-              getter_node = build_getter_def(spec, node.span)
-              setter_node = build_setter_def(spec, node.span)
+              getter_node = build_getter_def(spec, node.span, class_accessor: class_accessor)
+              setter_node = build_setter_def(spec, node.span, class_accessor: class_accessor)
               visit(arena.add_typed(getter_node))
               visit(arena.add_typed(setter_node))
             end
@@ -1024,19 +1026,19 @@ module CrystalV2
         # Output: def name : String
         #           @name
         #         end
-        private def build_getter_def(spec : Frontend::AccessorSpec, base_span : Frontend::Span) : Frontend::DefNode
+        private def build_getter_def(spec : Frontend::AccessorSpec, base_span : Frontend::Span, *, class_accessor : Bool = false) : Frontend::DefNode
           # TIER 2.2: spec.name is already Slice(UInt8), spec.type_annotation is Slice(UInt8)?
-          # Create instance variable access node: @name
+          # Create storage access node: @name / @@name
           spec_name_str = intern_name(spec.name)  # Convert for interpolation
-          ivar_name = "@#{spec_name_str}"
-          ivar_bytes = ivar_name.to_slice
-          ivar_node = Frontend::InstanceVarNode.new(
-            spec.name_span,
-            ivar_bytes
-          )
-          ivar_id = arena.add_typed(ivar_node)
+          storage_name = class_accessor ? "@@#{spec_name_str}" : "@#{spec_name_str}"
+          storage_bytes = storage_name.to_slice
+          storage_id = if class_accessor
+                         arena.add_typed(Frontend::ClassVarNode.new(spec.name_span, storage_bytes))
+                       else
+                         arena.add_typed(Frontend::InstanceVarNode.new(spec.name_span, storage_bytes))
+                       end
 
-          # Create def node with instance variable as body
+          # Create def node with storage read as body
           method_name_bytes = if spec.predicate
                                 "#{spec_name_str}?".to_slice
                               else
@@ -1049,7 +1051,10 @@ module CrystalV2
             method_name_bytes,
             nil,
             return_type_bytes,
-            [ivar_id]
+            [storage_id],
+            nil,
+            nil,
+            class_accessor ? "self".to_slice : nil
           )
         end
 
@@ -1059,7 +1064,7 @@ module CrystalV2
         # Output: def name=(value : String)
         #           @name = value
         #         end
-        private def build_setter_def(spec : Frontend::AccessorSpec, base_span : Frontend::Span) : Frontend::DefNode
+        private def build_setter_def(spec : Frontend::AccessorSpec, base_span : Frontend::Span, *, class_accessor : Bool = false) : Frontend::DefNode
           # Create parameter: value : Type
           # TIER 2.2: spec.name and spec.type_annotation are already Slice(UInt8)
           param_name_slice = "value".to_slice
@@ -1074,15 +1079,15 @@ module CrystalV2
             spec.name_span    # name_span
           )
 
-          # Create instance variable node: @name
+          # Create storage node: @name / @@name
           spec_name_str = intern_name(spec.name)  # Convert for interpolation
-          ivar_name = "@#{spec_name_str}"
-          ivar_bytes = ivar_name.to_slice
-          ivar_node = Frontend::InstanceVarNode.new(
-            spec.name_span,
-            ivar_bytes
-          )
-          ivar_id = arena.add_typed(ivar_node)
+          storage_name = class_accessor ? "@@#{spec_name_str}" : "@#{spec_name_str}"
+          storage_bytes = storage_name.to_slice
+          storage_id = if class_accessor
+                         arena.add_typed(Frontend::ClassVarNode.new(spec.name_span, storage_bytes))
+                       else
+                         arena.add_typed(Frontend::InstanceVarNode.new(spec.name_span, storage_bytes))
+                       end
 
           # Create identifier node: value
           value_bytes = "value".to_slice
@@ -1095,7 +1100,7 @@ module CrystalV2
           # Create assignment: @name = value
           assign_node = Frontend::AssignNode.new(
             base_span,
-            ivar_id,
+            storage_id,
             value_id
           )
           assign_id = arena.add_typed(assign_node)
@@ -1110,8 +1115,56 @@ module CrystalV2
             setter_name_bytes,
             [param],
             param_type_slice,  # FIXED: Was param_type_bytes
-            [assign_id]
+            [assign_id],
+            nil,
+            nil,
+            class_accessor ? "self".to_slice : nil
           )
+        end
+
+        private def accessor_is_class?(node : Frontend::TypedNode) : Bool
+          case node
+          when Frontend::GetterNode
+            node.is_class?
+          when Frontend::SetterNode
+            node.is_class?
+          when Frontend::PropertyNode
+            node.is_class?
+          else
+            false
+          end
+        end
+
+        private def record_accessor_storage_types(node : Frontend::TypedNode, node_id : Frontend::ExprId) : Nil
+          specs = Frontend.node_accessor_specs(node)
+          return unless specs
+
+          if accessor_is_class?(node)
+            specs.each do |spec|
+              type_annotation = spec.type_annotation.try { |slice| intern_name(slice) }
+              default_value = spec.default_value
+              define_scoped_class_var_symbol(intern_name(spec.name), type_annotation, node_id, default_value, !default_value.nil?)
+            end
+            return
+          end
+
+          owner = @class_stack.last?
+          return unless owner
+
+          specs.each do |spec|
+            type_ann = spec.type_annotation
+            default_value = spec.default_value
+            next unless type_ann || default_value
+
+            ivar_name = intern_name(spec.name)
+            existing = owner.get_instance_var_info(ivar_name)
+            type_annotation = existing.try(&.type_annotation) || type_ann.try { |slice| intern_name(slice) }
+            effective_default = existing.try(&.default_value) || default_value
+            has_default = existing.try(&.has_default?) || !default_value.nil?
+
+            owner.add_instance_var(ivar_name, type_annotation, effective_default, has_default)
+            define_instance_var_symbol(owner, ivar_name, type_annotation, node_id)
+          end
         end
 
         # Phase 87B-2: Handle potential macro calls
@@ -1318,26 +1371,6 @@ module CrystalV2
           end
         end
 
-        private def record_accessor_instance_var_types(class_symbol : ClassSymbol, node : Frontend::TypedNode, node_id : Frontend::ExprId) : Nil
-          specs = Frontend.node_accessor_specs(node)
-          return unless specs
-
-          specs.each do |spec|
-            type_ann = spec.type_annotation
-            default_value = spec.default_value
-            next unless type_ann || default_value
-
-            ivar_name = intern_name(spec.name)
-            existing = class_symbol.get_instance_var_info(ivar_name)
-            type_annotation = existing.try(&.type_annotation) || type_ann.try { |slice| intern_name(slice) }
-            effective_default = existing.try(&.default_value) || default_value
-            has_default = existing.try(&.has_default?) || !default_value.nil?
-
-            class_symbol.add_instance_var(ivar_name, type_annotation, effective_default, has_default)
-            define_instance_var_symbol(class_symbol, ivar_name, type_annotation, node_id)
-          end
-        end
-
         # Convert an AnnotationNode into AnnotationInfo, extracting the
         # fully-qualified name and argument expressions.
         private def build_annotation_info(node : Frontend::AnnotationNode) : AnnotationInfo?
@@ -1429,9 +1462,9 @@ module CrystalV2
 
             when Frontend::GetterNode, Frontend::SetterNode, Frontend::PropertyNode
               if owner
-                attach_accessor_annotations(owner, node, pending_annotations)
-                record_accessor_instance_var_types(owner, node, expr_id)
+                attach_accessor_annotations(owner, node, pending_annotations) unless accessor_is_class?(node)
               end
+              record_accessor_storage_types(node, expr_id)
               pending_annotations.clear
               # Reuse existing accessor macro expansion logic
               expand_accessor_macro(expr_id, node)

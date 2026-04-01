@@ -6026,3 +6026,52 @@ Immediate next steps:
 2. Take the new runtime tail exposed by the lower gate:
    `Regex.version`, `File.expand_path`, `Time::Location.read_zoneinfo`, and the
    remaining `raise.cr` union/Nil corridor.
+
+## Fresh Frontier — 2026-04-01 (class accessor semantic context preservation)
+
+Verified this turn on semantic stage3 probes built from the current workspace:
+
+1. The `Regex::PCRE2.version_number` corridor was not a generic nested-module
+   lookup failure; it was a semantic class-accessor split-brain bug.
+   - Parser intercepts `class_getter` / `class_property` into builtin accessor
+     nodes with `is_class=true`, even when the source also defines a macro with
+     the same name.
+   - Semantic collector expanded those accessor nodes into synthetic methods but
+     dropped the class-ness: generated defs had no `self` receiver and used
+     instance storage, so collected `MethodSymbol`s became `is_class_method=false`.
+   - Separately, `infer_accessor(...)` evaluated accessor default blocks without
+     a class-method lexical scope, so `self.version` inside nested module
+     accessors still resolved through outer `Regex`/class context.
+
+2. The verified fix is to preserve class accessor semantics in both collector
+   and type inference.
+   - `SymbolCollector` now records class accessor storage as `@@var`, defines
+     corresponding `ClassVarSymbol`s from accessor specs, and synthesizes
+     `def self.foo` / `def self.foo=` instead of instance-style defs.
+   - `TypeInferenceEngine#infer_accessor(...)` now temporarily pushes
+     class-method lexical context for class accessors and uses the current
+     module/class scope as method scope while inferring accessor default blocks.
+   - Focused regressions live in
+     `spec/semantic/type_inference_current_class_shadow_spec.cr` and cover both
+     nested-module `class_getter ... do self.version end` and builtin
+     `class_property ... do self end`.
+
+3. Measured impact:
+   - `../crystal/bin/crystal spec spec/semantic/type_inference_current_class_shadow_spec.cr --error-trace`
+     is green.
+   - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+     and rebuild of `/tmp/crystal_v2_semantic_stage3probe` are green.
+   - Full semantic stage3 probe via `scripts/run_safe.sh` moved from
+     `semantic_diags=0 resolution_diags=0 type_diags=41` to
+     `semantic_diags=0 resolution_diags=0 type_diags=36`.
+   - The old `Method 'version' not found on Regex` family disappeared from the
+     live head. The newly exposed frontier is
+     `Regex#to_s`, `File.expand_path`, `Time::Location.read_zoneinfo`, and
+     `file.close` on a nilable path.
+
+Immediate next steps:
+1. Do not reopen the old nested-module/class-getter ownership theory; exact
+   falsifier is closed.
+2. Take the new runtime/file tail with exact carriers first:
+   `Regex#to_s`, `File.expand_path`, `Location.read_zoneinfo`, and the
+   remaining `Nil.close` corridor in `file.cr`.

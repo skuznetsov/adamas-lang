@@ -1651,6 +1651,10 @@ module CrystalV2
             return receiver_type
           end
 
+          if owner_module = @current_method_scope.try(&.owner_module)
+            return module_type_for(owner_module)
+          end
+
           if current_class = @current_class
             return class_type_for(current_class)
           end
@@ -4613,6 +4617,14 @@ module CrystalV2
         # For now, we parse and type-check the structure only
         private def infer_accessor(node : Frontend::GetterNode | Frontend::SetterNode | Frontend::PropertyNode) : Type
           guard_watchdog!
+          previous_method_scope = @current_method_scope
+          pushed_class_method_flag = false
+
+          if accessor_is_class?(node)
+            @current_method_scope = accessor_class_method_scope
+            @current_method_is_class_method_stack << true
+            pushed_class_method_flag = true
+          end
 
           node.specs.each do |spec|
             if default_value = spec.default_value
@@ -4621,6 +4633,34 @@ module CrystalV2
           end
 
           @context.nil_type
+        ensure
+          @current_method_scope = previous_method_scope
+          @current_method_is_class_method_stack.pop if pushed_class_method_flag && !@current_method_is_class_method_stack.empty?
+        end
+
+        private def accessor_is_class?(node : Frontend::GetterNode | Frontend::SetterNode | Frontend::PropertyNode) : Bool
+          case node
+          when Frontend::GetterNode
+            node.is_class?
+          when Frontend::SetterNode
+            node.is_class?
+          when Frontend::PropertyNode
+            node.is_class?
+          else
+            false
+          end
+        end
+
+        private def accessor_class_method_scope : SymbolTable?
+          if current_module = @current_module
+            return current_module.scope
+          end
+
+          if current_class = @current_class
+            return current_class.class_scope
+          end
+
+          @current_method_scope
         end
 
         private def infer_while(node : Frontend::WhileNode) : Type
@@ -4872,6 +4912,10 @@ module CrystalV2
           end
 
           if @current_method_is_class_method_stack.last?
+            if owner_module = @current_method_scope.try(&.owner_module)
+              return module_type_for(owner_module)
+            end
+
             if current_class = @current_class
               return class_type_for(current_class)
             end

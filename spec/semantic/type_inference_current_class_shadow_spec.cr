@@ -91,6 +91,71 @@ describe Semantic::TypeInferenceEngine do
       engine.diagnostics.should be_empty
       engine.context.get_type(program.roots.last).to_s.should eq("Proc(Pointer(Void), Pointer(Void))")
     end
+
+    it "prefers nested module class-method receivers over outer colliding classes in macro-generated defs" do
+      source = <<-CRYSTAL
+        macro class_getter(name, &block)
+          @@{{name.id}} : String?
+
+          def self.{{name.id}} : String
+            if (value = @@{{name.id}}).nil?
+              @@{{name.id}} = {{yield}}
+            else
+              value
+            end
+          end
+        end
+
+        class Regex
+        end
+
+        module Regex::PCRE2
+          def self.version : String
+            "10.0"
+          end
+
+          class_getter version_number do
+            self.version
+          end
+        end
+
+        Regex::PCRE2.version_number
+      CRYSTAL
+
+      program, analyzer, engine = infer_current_class_shadow_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.should be_empty
+      engine.context.get_type(program.roots.last).to_s.should eq("String")
+    end
+
+    it "keeps built-in class_property blocks in class-method context" do
+      source = <<-CRYSTAL
+        class Object
+        end
+
+        class Reference < Object
+        end
+
+        class Time
+          class Location < Reference
+            class_property local : Location do
+              self
+            end
+          end
+        end
+
+        Time::Location.local
+      CRYSTAL
+
+      program, analyzer, engine = infer_current_class_shadow_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.should be_empty
+      engine.context.get_type(program.roots.last).to_s.should eq("Location")
+    end
   end
 
   describe "included module lexical parent lookup" do
