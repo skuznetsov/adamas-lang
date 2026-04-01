@@ -1,6 +1,53 @@
-# Crystal V2 Bootstrap — TODO (Updated 2026-03-31)
+# Crystal V2 Bootstrap — TODO (Updated 2026-04-01)
 
 ## Current Status
+- **Fresh semantic generic-extend/path checkpoint: bound generic module self-mixins now carry canonical `self` type args into both annotation substitution and method-body path lookup, and primitive numeric constants like `UInt32::MAX` are typed as value paths, which clears the first `dragonbox` corridor and moves the honest full-stage3 gate from `type_diags=182` to `type_diags=158` (2026-04-01, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/collectors/symbol_collector.cr` now canonicalizes `SelfNode` in generic include/extend type-arg lists to the current owner name instead of storing an AST dump string
+    - `src/compiler/semantic/type_inference_engine.cr` now:
+      - substitutes scoped type-parameter forms like `T::CarrierUInt`
+      - resolves bound type-parameter path heads inside method bodies (`D::EXPONENT_BITS`, `ImplInfo::KAPPA`, `D::CACHE`, etc.)
+      - treats primitive numeric constant paths like `UInt32::MAX` and `Float32::MANT_DIGITS` as builtin value-typed paths
+    - focused regression coverage now lives in `spec/semantic/type_inference_generic_extend_self_spec.cr`
+  - decisive evidence:
+    - focused regression pack is green:
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_generic_extend_self_spec.cr --error-trace`
+    - rebuild gates are green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+    - exact reducers are green:
+      - `module M(T); def foo(x : T::CarrierUInt) : T::CarrierUInt; x; end; end; module X; alias CarrierUInt = UInt32; extend M(self); end; X.foo(1_u32)`
+      - `module InfoMethods(D); def extract(u : D::CarrierUInt); mask = ~(UInt32::MAX << D::EXPONENT_BITS); ((u >> D::SIGNIFICAND_BITS) & mask).to_u32!; end; end; module HostInfo; alias CarrierUInt = UInt32; EXPONENT_BITS = 8; SIGNIFICAND_BITS = 23; extend InfoMethods(self); end; HostInfo.extract(1_u32)`
+      - `UInt32::MAX << 8`
+      - before: `Method 'foo' not found on X`, then `Operator '<<' not defined for Nil and Int32`
+      - after: no semantic type errors; root type `UInt32`
+    - the full semantic stage3 probe under the safe wrapper moves materially:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 300 4096 src/crystal_v2.cr --stats --no-link -o /tmp/stage3_semantic_probe_after_dragonbox_path.out > /tmp/stage3_semantic_probe_after_dragonbox_path.log 2>&1`
+      - summary moved from:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=182`
+      - to:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=158`
+      - `src/stdlib/float/printer/dragonbox.cr` dropped from `77` errors to `54`
+      - `src/stdlib/float/printer/dragonbox.cr [generated]` dropped from `4` to `0`
+      - removed or reduced families include:
+        - `Method 'extract_exponent_bits' not found on ImplInfo_Float32`
+        - `Method 'remove_exponent_bits' not found on ImplInfo_Float32`
+        - `Method 'extract_exponent_bits' not found on ImplInfo_Float64`
+        - `Method 'remove_exponent_bits' not found on ImplInfo_Float64`
+        - multiple downstream `Nil` arithmetic sites in `dragonbox`
+  - practical boundary:
+    - stage3 with the new inferer is still **not** green
+    - the remaining live head is now headed by:
+      - `src/stdlib/float/printer/dragonbox.cr` (`54`)
+      - `src/stdlib/time/tz.cr` (`29`)
+      - `src/stdlib/pretty_print.cr` (`9`)
+      - `src/stdlib/option_parser.cr` (`9`)
+      - `src/stdlib/unicode/unicode.cr` (`8`)
+    - the densest remaining message family is still later `Nil` arithmetic plus `ImplInfo.get_cache` and newer runtime/API misses (`Function 'new' not found`)
 - **Fresh semantic String-regex checkpoint: `String#matches?(Regex)` is now modeled in the semantic builtin table, which clears the remaining `process/shell` frontier and moves the honest full-stage3 gate from `type_diags=184` to `type_diags=182` (2026-04-01, current session)**:
   - trustworthy setup:
     - `src/compiler/semantic/type_inference_engine.cr` now exposes `String#matches?(Regex) : Bool` in the builtin String surface

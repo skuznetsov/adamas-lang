@@ -3,6 +3,40 @@
 Updated: 2026-04-01
 Context: compiler/bootstrap/stage2-stability
 
+[LM-394|verified]: After [LM-393], the next honest live head was no longer
+`process/shell`; it was the first dense `dragonbox` corridor. The decisive
+split was a pair of exact reducers around generic `extend M(self)` mixins. The
+first reducer proved that collector-side generic self-mixins were still storing
+`self` as an AST dump string instead of a canonical owner name:
+`module M(T); def foo(x : T::CarrierUInt) : T::CarrierUInt; x; end; end;
+module X; alias CarrierUInt = UInt32; extend M(self); end; X.foo(1_u32)`.
+The second reducer then showed that even after that, method bodies still needed
+bound type-parameter path support:
+`module InfoMethods(D); def extract(u : D::CarrierUInt); mask = ~(UInt32::MAX
+<< D::EXPONENT_BITS); ((u >> D::SIGNIFICAND_BITS) & mask).to_u32!; end; end;
+module HostInfo; alias CarrierUInt = UInt32; EXPONENT_BITS = 8;
+SIGNIFICAND_BITS = 23; extend InfoMethods(self); end; HostInfo.extract(1_u32)`.
+The verified fix is a combined narrow semantic path: in
+`src/compiler/semantic/collectors/symbol_collector.cr`, `SelfNode` in generic
+include/extend type-arg lists now canonicalizes to the current owner name; in
+`src/compiler/semantic/type_inference_engine.cr`, scoped type-parameter forms
+like `T::CarrierUInt` now substitute correctly, bound type-parameter heads in
+path expressions now resolve through the bound type's scope, and primitive
+numeric constant paths like `UInt32::MAX` / `Float32::MANT_DIGITS` are modeled
+as builtin value-typed paths. Focused regression
+`spec/semantic/type_inference_generic_extend_self_spec.cr` is green; rebuild
+gates for `src/crystal_v2.cr --no-codegen` and
+`/tmp/crystal_v2_semantic_stage3probe` are green; the exact reducers are
+green; and the full safe stage3 probe moves from
+`semantic_diags=0 resolution_diags=0 type_diags=182` to
+`semantic_diags=0 resolution_diags=0 type_diags=158`. The file-local count for
+`src/stdlib/float/printer/dragonbox.cr` drops from `77` to `54`, and the
+generated `dragonbox` wrapper drops from `4` errors to `0`. Boundary: stage3
+is still not green; the live head remains `dragonbox`, `time/tz`,
+`pretty_print`, `option_parser`, and `unicode`, with residual `ImplInfo.get_cache`
+and later runtime/API misses like `Function 'new' not found`. {F/G/R:
+0.97/0.81/0.98} [verified]
+
 [LM-393|verified]: After [LM-392], the residual `process/shell` frontier was
 down to two identical `Method 'matches?' not found on String` errors. A cheap
 exact reducer (`class Regex; end; class String; end; "abc".matches?(Regex.new)`)

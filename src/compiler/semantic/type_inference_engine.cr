@@ -4795,6 +4795,10 @@ module CrystalV2
             return enum_type
           end
 
+          if builtin_type = infer_builtin_path_type(node)
+            return builtin_type
+          end
+
           if symbol = resolve_path_symbol(node)
             debug("  resolved symbol: #{symbol.class.name}")
             if symbol.is_a?(ConstantSymbol)
@@ -4809,6 +4813,31 @@ module CrystalV2
 
           debug("  resolve_path_symbol failed") if @debug_enabled
           @context.nil_type
+        end
+
+        private def infer_builtin_path_type(node : Frontend::PathNode) : Type?
+          segments = [] of String
+          collect_path_segments(node, segments)
+          return nil unless segments.size == 2
+
+          base_name = segments[0]
+          member_name = segments[1]
+          return nil unless base_type = primitive_type_for(base_name)
+
+          builtin_primitive_constant_type(base_type, member_name)
+        end
+
+        private def builtin_primitive_constant_type(base_type : PrimitiveType, member_name : String) : Type?
+          case member_name
+          when "MIN", "MAX"
+            base_type
+          when "NAN", "INFINITY"
+            base_type.name.starts_with?("Float") ? base_type : nil
+          when "BITS", "BYTES", "DIGITS", "MANT_DIGITS", "EXPONENT_BITS", "MAX_EXP", "MIN_EXP", "RADIX"
+            @context.int32_type
+          else
+            nil
+          end
         end
 
         private def constant_owner_scope(expr_id : ExprId?) : Tuple(ClassSymbol?, ModuleSymbol?)
@@ -4951,6 +4980,10 @@ module CrystalV2
           debug("  segments=#{segments.inspect}") if @debug_enabled
           return nil if segments.empty?
 
+          if symbol = resolve_type_parameter_path_symbol(segments)
+            return symbol
+          end
+
           if absolute_path?(node)
             return resolve_path_symbol_in_table(@global_table.not_nil!, segments)
           end
@@ -4966,6 +4999,41 @@ module CrystalV2
           end
 
           nil
+        end
+
+        private def resolve_type_parameter_path_symbol(segments : Array(String)) : Symbol?
+          return nil if segments.size < 2
+
+          head_type = resolve_method_annotation_type(segments.first, @receiver_type_context, @current_method_scope)
+          return nil if unknownish_type?(head_type)
+
+          resolve_symbol_from_type_scope(head_type, segments[1..-1])
+        end
+
+        private def resolve_symbol_from_type_scope(base_type : Type, segments : Array(String)) : Symbol?
+          return nil if segments.empty?
+
+          scope = case base_type
+                  when InstanceType
+                    base_type.class_symbol.scope
+                  when ClassType
+                    base_type.symbol.scope
+                  when ModuleType
+                    base_type.symbol.scope
+                  when EnumType
+                    base_type.symbol.scope
+                  when PrimitiveType
+                    if primitive_metaclass?(base_type)
+                      lookup_runtime_class_symbol(normalize_class_receiver_name(base_type.name)).try(&.scope)
+                    else
+                      lookup_runtime_class_symbol(base_type.name).try(&.scope)
+                    end
+                  else
+                    nil
+                  end
+          return nil unless scope
+
+          resolve_path_symbol_in_table(scope, segments)
         end
 
         private def absolute_path?(node : Frontend::PathNode) : Bool
@@ -10041,6 +10109,10 @@ module CrystalV2
             return type_args[idx] if idx < type_args.size
           end
 
+          if scoped_type = substitute_scoped_type_parameter(type_name, type_args, type_params)
+            return scoped_type
+          end
+
           if type_name.ends_with?("?") && type_name.size > 1
             base_name = type_name[0...-1]
             return union_of([substitute_type_parameters(base_name, type_args, type_params), @context.nil_type])
@@ -10083,6 +10155,53 @@ module CrystalV2
           end
 
           parse_type_name(type_name)
+        end
+
+        private def substitute_scoped_type_parameter(type_name : String, type_args : Array(Type), type_params : Array(String)) : Type?
+          return nil unless type_name.includes?("::")
+
+          segments = type_name.split("::")
+          return nil if segments.size < 2
+
+          head = segments.first
+          idx = type_params.index(head)
+          return nil unless idx && idx < type_args.size
+
+          resolve_type_member_path(type_args[idx], segments[1..-1])
+        end
+
+        private def resolve_type_member_path(base_type : Type, segments : Array(String)) : Type?
+          return base_type if segments.empty?
+
+          scope = case base_type
+                  when InstanceType
+                    base_type.class_symbol.scope
+                  when ClassType
+                    base_type.symbol.scope
+                  when ModuleType
+                    base_type.symbol.scope
+                  when EnumType
+                    base_type.symbol.scope
+                  else
+                    nil
+                  end
+          return nil unless scope
+
+          symbol = resolve_path_symbol_in_table(scope, segments)
+          return nil unless symbol
+
+          case symbol
+          when AliasSymbol
+            resolve_annotation_type_in_scope(symbol.target, scope)
+          when ClassSymbol
+            instance_type_for(symbol)
+          when ModuleSymbol
+            module_type_for(symbol)
+          when EnumSymbol
+            EnumType.new(symbol)
+          else
+            nil
+          end
         end
 
         private def resolve_generic_type_application(base_type : String, resolved_args : Array(Type)) : Type?

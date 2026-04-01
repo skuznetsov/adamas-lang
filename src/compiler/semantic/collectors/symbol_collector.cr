@@ -2255,6 +2255,8 @@ module CrystalV2
         private def type_expr_name_from_expr(expr_id : Frontend::ExprId) : String
           node = arena[expr_id]
           case node
+          when Frontend::SelfNode
+            current_module_qualified_name || "self"
           when Frontend::IdentifierNode
             intern_name(node.name)
           when Frontend::PathNode
