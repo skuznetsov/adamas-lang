@@ -6307,3 +6307,44 @@ Immediate next steps:
    `File::Error.from_os_error`, `GC` finalizer generics, `process/signal`,
    `unicode`, `Location.read_zoneinfo`, and the remaining nilable close / value
    corridors.
+
+## Checkpoint — 2026-04-01 (yield-argument name resolution in nested typed blocks)
+
+Verified this turn:
+- The `unicode`-style exact falsifier
+  `/tmp/semantic_nested_block_unsafe_chr_probe.cr` was not primarily a block
+  type-propagation bug inside `TypeInferenceEngine`. The decisive split was:
+  - `inner { |x| x + 1 }` stayed green;
+  - `inner { |x| yield x.unsafe_chr }` failed with
+    `Method 'unsafe_chr' not found on Nil`.
+- The root cause sits in `src/compiler/semantic/resolvers/name_resolver.cr`:
+  `NameResolver#visit(...)` skipped `Frontend::NodeKind::Yield`, so
+  identifiers nested inside `yield ...` arguments were never visited and never
+  entered `identifier_symbols`. That made the downstream inferer fall back to
+  `Nil` for `x` in `yield x.unsafe_chr`.
+- The verified fix is local and minimal:
+  - add `Frontend::NodeKind::Yield` handling in `NameResolver#visit(...)`;
+  - traverse `YieldNode.args` in a dedicated `visit_yield(...)` helper.
+- Focused regressions are green in:
+  - `spec/semantic/name_resolver_spec.cr`
+- `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+  is green, rebuild of `/tmp/crystal_v2_semantic_stage3probe` is green, and
+  the exact no-prelude carrier is green under `scripts/run_safe.sh`.
+
+Adversary / negative result:
+- The full semantic stage3 probe under `scripts/run_safe.sh` stays at
+  `semantic_diags=0 resolution_diags=0 type_diags=27`, so this closes a real
+  exact bug but does not move the current whole-program gate.
+- Attempting to lift the same reducer into the in-memory proc-annotation spec
+  exposed a separate branch: overloaded receiverless same-name calls can still
+  bind the outer block signature too early (`Char` vs `Int32` in the existing
+  `Slice.new` specialization falsifier). That follow-up was intentionally not
+  shipped in this checkpoint.
+
+Immediate next steps:
+1. Treat the `yield`-argument resolver gap as closed; do not reopen the old
+   fallback-order theory for this exact reducer.
+2. Continue from the unchanged live head at `type_diags=27`:
+   `GC` finalizer generics, `process/signal`, `unicode` (`unsafe_chr` now on
+   `Char`, not `Nil`), `Location.read_zoneinfo`, and nilable `close`/`value`
+   corridors.

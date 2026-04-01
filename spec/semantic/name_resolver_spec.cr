@@ -292,6 +292,41 @@ describe Semantic::NameResolver do
     result.diagnostics.should be_empty
   end
 
+  it "resolves block params referenced inside yield arguments" do
+    source = <<-CR
+      module U
+        def self.outer(& : Char ->)
+          inner { |x| yield x.unsafe_chr }
+        end
+
+        private def self.inner(& : Int32 ->)
+        end
+      end
+    CR
+
+    parser = Frontend::Parser.new(Frontend::Lexer.new(source))
+    program = parser.parse_program
+    analyzer = Semantic::Analyzer.new(program)
+    analyzer.collect_symbols
+    result = analyzer.resolve_names
+
+    result.diagnostics.should be_empty
+
+    mod = program.arena[program.roots.first].as(Frontend::ModuleNode)
+    outer = program.arena[mod.body.not_nil!.first].as(Frontend::DefNode)
+    inner_call = program.arena[outer.body.not_nil!.first].as(Frontend::CallNode)
+    block_id = inner_call.block || inner_call.args.find { |arg_id| program.arena[arg_id].is_a?(Frontend::BlockNode) }
+    block_id.should_not be_nil
+
+    block = program.arena[block_id.not_nil!].as(Frontend::BlockNode)
+    yield_node = program.arena[block.body.first].as(Frontend::YieldNode)
+    member_access = program.arena[yield_node.args.not_nil!.first].as(Frontend::MemberAccessNode)
+    x_ref = member_access.object
+
+    result.identifier_symbols[x_ref].should be_a(Semantic::VariableSymbol)
+    result.identifier_symbols[x_ref].name.should eq("x")
+  end
+
   it "resolves absolute class reopens against the root scope" do
     source = <<-CR
       class RootTarget

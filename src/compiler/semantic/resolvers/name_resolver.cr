@@ -190,6 +190,8 @@ module CrystalV2
             visit_block(node.as(Frontend::BlockNode))
           when Frontend::NodeKind::ProcLiteral
             visit_proc_literal(node.as(Frontend::ProcLiteralNode))
+          when Frontend::NodeKind::Yield
+            visit_yield(node.as(Frontend::YieldNode))
           when Frontend::NodeKind::IsA
             visit_is_a(node.as(Frontend::IsANode))
           when Frontend::NodeKind::RespondsTo
@@ -727,6 +729,10 @@ module CrystalV2
           if value = node.value
             visit(value)
           end
+        end
+
+        private def visit_yield(node : Frontend::YieldNode)
+          node.args.try &.each { |arg_id| visit(arg_id) }
         end
 
         private def visit_is_a(node : Frontend::IsANode)
