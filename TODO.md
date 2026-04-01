@@ -1,6 +1,35 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-01)
 
 ## Current Status
+- **Fresh semantic primitive-`.class` checkpoint: primitive instance `.class` now stays concrete through op-assign flows, while ordinary `self.class.name` still resolves through the generic `Class` surface; this fixes the exact reducer and removes the broad-regression path, but it does not move the honest whole-program stage3 gate beyond `type_diags=61` (2026-04-01, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/type_inference_engine.cr` now special-cases zero-arg `#class` only for primitive instance receivers, routing them through `class_receiver_type_for_expression(...)`
+    - the same file now models `Class#name : String` in the builtin instance-method surface, which keeps ordinary `self.class.name` on the generic `Class` path instead of regressing to `Method 'name' not found on Class`
+    - focused regression coverage lives in `spec/semantic/type_inference_spec.cr`
+  - decisive evidence:
+    - focused regressions are green:
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_spec.cr --example 'keeps primitive instance .class receivers concrete through op-assign flows' --error-trace`
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_spec.cr --example 'keeps non-primitive instance .class.name on the generic Class surface' --error-trace`
+    - rebuild gates are green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+    - the exact reproducer is green:
+      - `def accept_uint32(x : UInt32); x; end; def probe(two_fc : UInt32); two_fc |= two_fc.class.new(1) << 24; accept_uint32(two_fc); end; probe(1_u32)`
+      - before the checkpoint branch: `Method 'new' not found on Class`, then `Operator '<<' not defined for Nil and Int32`, then `Operator '|' not defined for UInt32 and Nil`
+      - after the checkpoint: no semantic diagnostics, root type `UInt32`
+    - the richer dragonbox carrier is still materially better than the original red reducer shape:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 120 2048 /tmp/semantic_dragonbox_get_cache_probe.cr --stats --no-link -o /tmp/semantic_dragonbox_get_cache_probe_after_class_narrowed.out > /tmp/semantic_dragonbox_checkdiv_after_class_narrowed.log 2>&1`
+      - current carrier summary is `semantic_diags=0 resolution_diags=0 type_diags=47`
+      - the residual miss is still `Method 'check_divisibility_and_divide_by_pow10' not found on ImplInfo_Float32`, followed later by `Method 'close' not found on Nil`
+    - the full semantic stage3 probe under the safe wrapper is non-regressing but flat:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 300 4096 src/crystal_v2.cr --stats --no-link -o /tmp/stage3_semantic_probe_after_primitive_class_narrowed.out > /tmp/stage3_semantic_probe_after_primitive_class_narrowed.log 2>&1`
+      - summary remains:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=61`
+  - practical boundary:
+    - this is a real local semantic fix, but not a whole-program stage3 win yet
+    - it refutes the broad `#class` rewrite branch and leaves the next honest frontier in the remaining `dragonbox`, `pretty_print`, `process`, `signal`, and `unicode` families
 - **Fresh semantic array-join-IO checkpoint: array builtins now cover the `join(io, separator)` protocol and non-String separators, which clears the remaining `OptionParser#to_s(io)` corridor and moves the honest full-stage3 gate from `type_diags=64` to `type_diags=61` (2026-04-01, current session)**:
   - trustworthy setup:
     - `src/compiler/semantic/type_inference_engine.cr` now models four `Array(T)#join` forms:

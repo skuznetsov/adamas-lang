@@ -806,6 +806,53 @@ describe Semantic::TypeInferenceEngine do
       pointer_type.element_type.as(PrimitiveType).name.should eq("UInt8")
     end
 
+    it "keeps primitive instance .class receivers concrete through op-assign flows" do
+      source = <<-CRYSTAL
+        def accept_uint32(x : UInt32)
+          x
+        end
+
+        def probe(two_fc : UInt32)
+          two_fc |= two_fc.class.new(1) << 24
+          accept_uint32(two_fc)
+        end
+
+        probe(1_u32)
+      CRYSTAL
+
+      program, analyzer, engine = infer_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.select(&.level.error?).should be_empty
+
+      type = engine.context.get_type(program.roots.last)
+      type.should be_a(PrimitiveType)
+      type.as(PrimitiveType).name.should eq("UInt32")
+    end
+
+    it "keeps non-primitive instance .class.name on the generic Class surface" do
+      source = <<-CRYSTAL
+        class Box
+          def label
+            self.class.name
+          end
+        end
+
+        Box.new.label
+      CRYSTAL
+
+      program, analyzer, engine = infer_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.select(&.level.error?).should be_empty
+
+      type = engine.context.get_type(program.roots.last)
+      type.should be_a(PrimitiveType)
+      type.as(PrimitiveType).name.should eq("String")
+    end
+
     it "matches splat class methods on generic class receivers" do
       source = <<-CRYSTAL
         class Buffer(T)

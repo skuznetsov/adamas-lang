@@ -3,6 +3,34 @@
 Updated: 2026-04-01
 Context: compiler/bootstrap/stage2-stability
 
+[LM-400|verified]: After [LM-399], the next cheap `dragonbox` branch was not
+another macro-binding tweak and not a whole-program `stage3` mover. A tiny
+exact reducer isolated a real local semantic bug:
+`def accept_uint32(x : UInt32); x; end; def probe(two_fc : UInt32); two_fc |=
+two_fc.class.new(1) << 24; accept_uint32(two_fc); end; probe(1_u32)`. Before
+the fix it failed in the expected poison sequence:
+`Method 'new' not found on Class` -> `Operator '<<' not defined for Nil and
+Int32` -> `Operator '|' not defined for UInt32 and Nil`. The first broad patch
+(`MemberAccess#class` always returning `class_receiver_type_for_expression`)
+was explicitly refuted by whole-program evidence: the safe stage3 gate regressed
+from `type_diags=61` to `type_diags=64`, with new `self.class.name` misses on
+`Fiber`, `Thread`, and `Reference`. The verified final checkpoint is narrow and
+two-part in `src/compiler/semantic/type_inference_engine.cr`: zero-arg `#class`
+now becomes concrete only for primitive instance receivers, and the generic
+builtin surface now includes `Class#name : String`. Focused regressions in
+`spec/semantic/type_inference_spec.cr` are green for both the primitive
+op-assign reducer and ordinary `self.class.name`; rebuild gates for
+`src/crystal_v2.cr --no-codegen` and `/tmp/crystal_v2_semantic_stage3probe`
+are green; the actual-file `dragonbox` carrier
+`/tmp/semantic_dragonbox_get_cache_probe.cr` currently runs at
+`semantic_diags=0 resolution_diags=0 type_diags=47`; and the full safe stage3
+probe returns to a non-regressing but flat
+`semantic_diags=0 resolution_diags=0 type_diags=61`. Boundary: this is a real
+local semantic fix and a verified refutation of the broad `.class` branch, but
+it does not yet move the whole-program frontier; the next honest targets remain
+the residual `dragonbox`, `pretty_print`, `process`, `signal`, and `unicode`
+families. {F/G/R: 0.96/0.58/0.98} [verified]
+
 [LM-399|verified]: After [LM-398], the last `option_parser` miss was no longer
 about enum paths or tuple carriers. A tiny reducer
 `class IO; end; flags = ["a", "b"]; io = uninitialized IO; flags.join io, '\n'`

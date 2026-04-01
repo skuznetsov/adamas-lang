@@ -5875,6 +5875,12 @@ module CrystalV2
             end
           end
 
+          if method_name == "class" && receiver_type.is_a?(PrimitiveType) && !primitive_metaclass?(receiver_type)
+            result_type = class_receiver_type_for_expression(receiver_type)
+            @context.set_type(expr_id, result_type)
+            return result_type
+          end
+
           # Lookup method with overload resolution
           method = lookup_method(receiver_type, method_name, arg_types, false)
           debug("  lookup_method returned: #{method ? "MethodSymbol(#{method.name})" : "nil"}")
@@ -8645,6 +8651,21 @@ module CrystalV2
               scope: dummy_scope
             )
             return methods
+          end
+
+          if type_name == "Class"
+            case method_name
+            when "name"
+              methods << MethodSymbol.new(
+                method_name,
+                dummy_node_id,
+                params: [] of Frontend::Parameter,
+                return_annotation: "String",
+                scope: dummy_scope
+              )
+            end
+
+            return methods unless methods.empty?
           end
 
           canonical_integer_name = canonical_numeric_primitive_name(type_name)
