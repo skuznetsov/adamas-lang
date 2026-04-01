@@ -5505,3 +5505,45 @@ Immediate next steps:
    `unsafe_chr` receiver mismatch remain.
 3. `dragonbox` is now the densest top file-local frontier and should be the
    next branch unless `option_parser` gets a tiny exact reducer faster.
+
+## Fresh Frontier — 2026-04-01 (owner-scoped ivars)
+
+Verified this turn on semantic stage3 probes built from the current workspace:
+
+1. The live `pretty_print` `Pointer(Breakable)` corridor was a semantic ivar
+   ownership leak, not a remaining `Deque` builtin gap.
+   - A focused regression in
+     `spec/semantic/type_inference_collection_builtin_spec.cr` now reproduces
+     the exact shape:
+     `Deque(Breakable).new.storage` seeds `Deque#@buffer`, then `Box#@buffer`
+     must still remain `Deque(Text | Breakable)` instead of collapsing to the
+     inner `Pointer(T)` carrier.
+   - The no-prelude oracle is the same pattern and now reports `type_diags=0`
+     under `scripts/run_safe.sh`.
+
+2. The verified fix is to scope semantic ivar inference by owner.
+   - `@instance_var_types` in `type_inference_engine.cr` is now keyed by an
+     owner-qualified ivar key instead of the bare ivar name.
+   - Reads, writes, and temporary restore/delete paths for ivar seeding now use
+     the scoped key.
+   - This removes the false `PrettyPrint#@buffer -> Pointer(Breakable)` path
+     and lets the engine fall through to the correct `Deque(...)` carrier.
+
+3. Measured impact:
+   - Focused regression pack is green.
+   - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+     and rebuild of `/tmp/crystal_v2_semantic_stage3probe` are green.
+   - Full semantic stage3 probe via `scripts/run_safe.sh` stayed at
+     `semantic_diags=0 resolution_diags=0 type_diags=66`, but the diagnostic
+     mix improved:
+     - removed `Method 'shift' not found on Pointer(Breakable)` x2
+     - removed `Method 'clear' not found on Pointer(Breakable)` x1
+     - removed `Method 'width' not found on Nil` x1
+     - exposed deeper follow-on `Nil` carriers in `pretty_print`
+       (`shift? on Nil`, `Nil + Int32`, `Nil | Int32 + Int32`)
+
+Immediate next steps:
+1. Stay on the same live head family and take the deeper `pretty_print` Nil
+   corridor next, not the old `Pointer(Breakable)` theory.
+2. Then revisit the remaining `signal/file/time` runtime head only after the
+   `pretty_print` file-local blockers shrink again.
