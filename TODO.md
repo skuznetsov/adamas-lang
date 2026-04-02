@@ -1,6 +1,38 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-01)
 
 ## Current Status
+- **Fresh string-interpolation resolver checkpoint: name resolution now traverses interpolation expression pieces, which keeps rescue-bound locals visible inside interpolated strings and moves the honest stage3 semantic gate from `type_diags=6` to `type_diags=5` on the current verified tree (2026-04-01, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/resolvers/name_resolver.cr` now visits `StringInterpolationNode` expression pieces instead of skipping them entirely
+    - focused regression coverage now lives in:
+      - `spec/semantic/type_inference_string_interpolation_scope_spec.cr`
+  - decisive evidence:
+    - focused regression pack is green:
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_string_interpolation_scope_spec.cr --error-trace`
+    - rebuild gates are green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+    - the richer top-level rescue/interpolation carrier improves materially:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 DEBUG_TYPE_TRACE_NAMES=ex,message,backtrace scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 60 2048 /tmp/semantic_main_trace_probe.cr --stats --verbose --no-link -o /tmp/semantic_main_trace_probe.out > /tmp/semantic_main_trace_probe_after_string_interp_fix.log 2>&1`
+      - fresh summary there is:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=5`
+      - the old `Method 'message' not found on Nil` disappears from that carrier entirely
+    - the clean full semantic stage3 probe under the safe wrapper improves reproducibly again:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 300 4096 src/crystal_v2.cr --stats --no-link -o /tmp/stage3_semantic_probe_after_string_interp_fix.out > /tmp/stage3_semantic_probe_after_string_interp_fix.log 2>&1`
+      - fresh summary on the current tree is:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=5`
+      - `src/crystal_v2.cr` drops out of the live head
+  - practical boundary:
+    - this is a real resolver traversal fix, not a rescue-binding or exception builtin patch
+    - the decisive falsifier from the previous branch still stands: plain `rescue ex; ex.message` was already green, so the bug specifically lived in interpolation children
+    - stage3 is still not green; the next honest frontier is now:
+      - `src/stdlib/crystal/system/unix/time.cr [generated]` (`1`)
+      - `src/stdlib/file.cr` (`1`)
+      - plus the earlier `LibPCRE2.jit_stack_assign` / `Cannot index type Nil` tail
 - **Fresh top-level fun-body scope checkpoint: semantic eager body inference now recovers parser-lowered `fun ... end` method scopes instead of dropping parameter bindings for internal `__fun__` receivers, which closes the live generated `raise` `unwind_ex.value.exception_object` corridor and moves the honest stage3 semantic gate from `type_diags=8` to `type_diags=6` on the current verified tree (2026-04-01, current session)**:
   - trustworthy setup:
     - `src/compiler/semantic/type_inference_engine.cr` no longer treats every non-`self` receiver on `DefNode` as an immediate scope-recovery failure; the parser-internal `__fun__` marker is now allowed to fall through to the normal lexical/global `MethodSymbol` lookup path

@@ -3,6 +3,35 @@
 Updated: 2026-04-01
 Context: compiler/bootstrap/stage2-stability
 
+[LM-424|verified]: After [LM-423], the next honest mover was not a general
+rescue-variable binding patch and not another exception builtin tweak, but a
+name-resolution gap for interpolation expression children. The decisive exact
+falsifier was `/tmp/semantic_main_trace_probe.cr`, which reproduced the live
+`src/crystal_v2.cr` shape `if trace_bootstrap; "...#{ex.class} #{ex.message.inspect}"`.
+The negative control `/tmp/semantic_rescue_ex_message_probe.cr` was already
+green, so plain `rescue ex; ex.message` was not the root cause. Trace output
+for the richer carrier then made the narrower hole explicit: the unresolved
+`ex` identifiers were the ones inside the interpolated string, while other
+`ex` references in the same rescue clause still resolved to a
+`VariableSymbol`. Source inspection confirmed the local cause in
+`src/compiler/semantic/resolvers/name_resolver.cr`: `visit(...)` had no
+`StringInterpolationNode` branch, so interpolation pieces were skipped during
+name resolution even though semantic inference later recursed into them. The
+verified fix stays narrow: name resolution now visits interpolation expression
+pieces. Focused regression
+`spec/semantic/type_inference_string_interpolation_scope_spec.cr` is green;
+rebuild gates for `src/crystal_v2.cr --no-codegen` and
+`/tmp/crystal_v2_semantic_stage3probe` are green; the richer top-level rescue
+carrier drops from `semantic_diags=0 resolution_diags=0 type_diags=6` to
+`semantic_diags=0 resolution_diags=0 type_diags=5` with the old
+`Method 'message' not found on Nil` gone; and the full safe stage3 probe moves
+from `semantic_diags=0 resolution_diags=0 type_diags=6` to
+`semantic_diags=0 resolution_diags=0 type_diags=5`, removing `src/crystal_v2.cr`
+from the live head. Boundary: this is a resolver traversal fix, but stage3 is
+still not green; the next honest frontier is generated `time`, `file.close`,
+and the earlier `LibPCRE2.jit_stack_assign` / `Cannot index type Nil` tail.
+{F/G/R: 0.99/0.80/0.99} [verified]
+
 [LM-423|verified]: After [LM-422], the next honest mover was not another
 pointer builtin patch and not a broad generated-body workaround, but the
 parser-lowered `fun ... end` scope recovery path. The decisive falsifier was

@@ -162,6 +162,8 @@ module CrystalV2
             visit_begin(node.as(Frontend::BeginNode))
           when Frontend::NodeKind::Raise
             visit_raise(node.as(Frontend::RaiseNode))
+          when Frontend::NodeKind::StringInterpolation
+            visit_string_interpolation(node.as(Frontend::StringInterpolationNode))
           when Frontend::NodeKind::Def
             visit_def(node_id, node.as(Frontend::DefNode))
           when Frontend::NodeKind::Class,
@@ -723,6 +725,15 @@ module CrystalV2
 
           node.else_body.try &.each { |expr_id| visit(expr_id) }
           node.ensure_body.try &.each { |expr_id| visit(expr_id) }
+        end
+
+        private def visit_string_interpolation(node : Frontend::StringInterpolationNode)
+          node.pieces.each do |piece|
+            next unless piece.kind == Frontend::StringPiece::Kind::Expression
+            next unless expr = piece.expr
+
+            visit(expr)
+          end
         end
 
         private def visit_raise(node : Frontend::RaiseNode)
