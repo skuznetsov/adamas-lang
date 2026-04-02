@@ -4,10 +4,39 @@ require "../../src/compiler/frontend/ast"
 require "../../src/compiler/frontend/lexer"
 require "../../src/compiler/frontend/parser"
 require "../../src/compiler/semantic/context"
+require "../../src/compiler/semantic/macro_expander"
 require "../../src/compiler/semantic/symbol_table"
 require "../../src/compiler/semantic/collectors/symbol_collector"
 
 include CrystalV2::Compiler
+
+private def expand_first_top_level_macro_text(source : String) : {String, Array(CrystalV2::Compiler::Semantic::Diagnostic)}
+  lexer = Frontend::Lexer.new(source)
+  parser = Frontend::Parser.new(lexer)
+  program = parser.parse_program
+
+  context = Semantic::Context.new(Semantic::SymbolTable.new)
+  collector = Semantic::SymbolCollector.new(program, context)
+  collector.collect
+
+  expander = Semantic::MacroExpander.new(
+    program,
+    program.arena,
+    context.flags,
+    symbol_table: context.symbol_table
+  )
+
+  target_id = program.roots.find do |id|
+    node = program.arena[id]
+    node.is_a?(Frontend::MacroLiteralNode) ||
+      node.is_a?(Frontend::MacroIfNode) ||
+      node.is_a?(Frontend::MacroForNode)
+  end
+
+  target_id.should_not be_nil
+  output = expander.expand_top_level_text(target_id.not_nil!, scope: context.symbol_table)
+  {output.strip, expander.diagnostics.dup}
+end
 
 describe "Phase 87B-6: Macro Methods (.stringify, .id, .class_name)" do
   # ==================================================================
@@ -144,6 +173,41 @@ describe "Phase 87B-6: Macro Methods (.stringify, .id, .class_name)" do
       collector.collect
 
       collector.diagnostics.select(&.level.error?).should be_empty
+    end
+
+    it "emits chained .id.stringify as a plain string literal" do
+      source = <<-CRYSTAL
+        {% begin %}
+          {% name = :foo %}
+          {{ name.id.stringify }}
+        {% end %}
+      CRYSTAL
+
+      output, diagnostics = expand_first_top_level_macro_text(source)
+      diagnostics.should be_empty
+      output.should eq(%("foo"))
+    end
+
+    it "round-trips stored id.stringify values back to identifiers after indexing" do
+      source = <<-CRYSTAL
+        {% begin %}
+          {% properties = {} of Nil => Nil %}
+          {% properties["Foo".id] = {key: "Bar".id.stringify} %}
+          {% for name, value in properties %}
+            class {{name.id}}
+            end
+
+            class {{value[:key].id}}
+            end
+          {% end %}
+        {% end %}
+      CRYSTAL
+
+      output, diagnostics = expand_first_top_level_macro_text(source)
+      diagnostics.should be_empty
+      output.should contain("class Foo")
+      output.should contain("class Bar")
+      output.should_not contain(%(class "Bar"))
     end
   end
 

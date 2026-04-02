@@ -24,7 +24,7 @@ module CrystalV2
 
         # Get string representation for .stringify
         def stringify : String
-          to_macro_output.inspect
+          to_macro_output
         end
 
         # Get identifier representation for .id
@@ -243,7 +243,7 @@ module CrystalV2
         end
 
         def stringify : String
-          @value.inspect
+          @value
         end
 
         def to_id : String
@@ -356,7 +356,7 @@ module CrystalV2
         end
 
         def stringify : String
-          @value.inspect
+          @value
         end
 
         def to_id : String
