@@ -3,6 +3,33 @@
 Updated: 2026-04-01
 Context: compiler/bootstrap/stage2-stability
 
+[LM-419|verified]: After [LM-418], the cheapest honest mover was not another
+runtime-only nil guard and not a blind `signal` patch, but the compiler-side
+`HIR::TypeRef::VOID = new(...)` replay corridor. The decisive focused
+regressions were `spec/semantic/type_inference_constant_owner_scope_spec.cr`
+and `spec/semantic/type_inference_hir_typeref_spec.cr`, which showed that
+semantic constant replay still lost the defining namespace for receiverless
+constant values and then failed on `Function 'new' not found` in nested
+`Crystal::HIR::TypeRef`-style structs. Source inspection made the local split
+explicit: `ConstantSymbol` in `src/compiler/semantic/symbol.cr` carried only
+`value`, so `src/compiler/semantic/type_inference_engine.cr` replayed constant
+values without the owning class/module unless the path form itself re-derived
+it; direct constant declarations and identifier replays therefore lost the
+class/module context needed for receiverless `new`. The verified fix stays
+bounded: `ConstantSymbol` now stores `owner_class` / `owner_module`,
+`src/compiler/semantic/collectors/symbol_collector.cr` records that metadata
+at declaration time, and `src/compiler/semantic/type_inference_engine.cr`
+threads the stored owner scope through identifier constant replay, constant
+declarations, and path fallback. Focused regressions are green; rebuild gates
+for `src/crystal_v2.cr --no-codegen` and `/tmp/crystal_v2_semantic_stage3probe`
+are green; and the full safe stage3 probe moves from
+`semantic_diags=0 resolution_diags=0 type_diags=17` to
+`semantic_diags=0 resolution_diags=0 type_diags=14`, removing
+`src/compiler/hir/hir.cr` from the live head completely. Boundary: this is a
+real constant-owner replay fix, but stage3 is still not green; the new honest
+head is now `gc/boehm`, `signal`, generated `raise`, generated `process`, and
+`file`. {F/G/R: 0.99/0.83/0.99} [verified]
+
 [LM-418|verified]: After [LM-417], the cheapest honest mover was not another
 bootstrap-only `new(...)` mystery but a control-flow typing leak hidden behind
 the public `Process#wait` error. The decisive exact falsifier was the tiny

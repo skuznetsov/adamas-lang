@@ -1,6 +1,36 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-01)
 
 ## Current Status
+- **Fresh constant-owner replay checkpoint: semantic constants now retain their defining class/module owner during replay, which closes the live `HIR::TypeRef::VOID = new(...)` receiverless `new` corridor and moves the honest stage3 semantic gate from `type_diags=17` to `type_diags=14` on the current verified tree (2026-04-01, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/symbol.cr` now stores `owner_class` / `owner_module` on `ConstantSymbol`
+    - `src/compiler/semantic/collectors/symbol_collector.cr` records that owner metadata at declaration time for both direct constant declarations and constant-like assignments
+    - `src/compiler/semantic/type_inference_engine.cr` now replays constant values through `infer_constant_value_expression(...)` with the stored owner scope in identifier lookup, constant declarations, and path fallback
+    - focused regression coverage now lives in:
+      - `spec/semantic/type_inference_constant_owner_scope_spec.cr`
+      - `spec/semantic/type_inference_hir_typeref_spec.cr`
+  - decisive evidence:
+    - focused regression pack is green:
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_constant_owner_scope_spec.cr --error-trace`
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_hir_typeref_spec.cr --error-trace`
+    - rebuild gates are green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+    - the clean full semantic stage3 probe under the safe wrapper improves again:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 300 4096 src/crystal_v2.cr --stats --no-link -o /tmp/stage3_semantic_probe_after_constant_owner_fix.out > /tmp/stage3_semantic_probe_after_constant_owner_fix.log 2>&1`
+      - fresh summary on the current tree is:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=14`
+      - `src/compiler/hir/hir.cr` disappears from the live head entirely
+  - practical boundary:
+    - this is a real owner-scope replay fix, not a `HIR`-specific patch
+    - stage3 is still not green; the next honest frontier is now led by:
+      - `src/stdlib/gc/boehm.cr` (`3`)
+      - `src/stdlib/crystal/system/unix/signal.cr` (`3`)
+      - `src/stdlib/raise.cr [generated]` (`3`)
+      - `src/stdlib/crystal/system/unix/process.cr [generated]` (`2`)
+      - `src/stdlib/file.cr` (`2`)
 - **Fresh if-terminator checkpoint: regular `if` expressions now drop branches whose last expression is a control-flow terminator, which closes the live `Process#channel.receive` nil-union corridor and moves the honest stage3 semantic gate from `type_diags=18` to `type_diags=17` on the current verified tree (2026-04-01, current session)**:
   - trustworthy setup:
     - `src/compiler/semantic/type_inference_engine.cr` now tracks whether `then` / `elsif` / `else` bodies terminate via control-flow, and `infer_if(...)` unions only the non-terminating branch result types

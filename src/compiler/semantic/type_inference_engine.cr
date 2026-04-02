@@ -1313,7 +1313,7 @@ module CrystalV2
             # Reference to enum → EnumType
             EnumType.new(symbol)
           when ConstantSymbol
-            infer_constant_value_expression(symbol.value)
+            infer_constant_value_expression(symbol.value, owner_class: symbol.owner_class, owner_module: symbol.owner_module)
           when AliasSymbol
             aliased_type = parse_type_name(symbol.target)
             aliased_type.is_a?(EnumType) ? aliased_type : class_type_reference_for(aliased_type)
@@ -2475,13 +2475,19 @@ module CrystalV2
           # Phase 35: Constant declaration
           # Infer type from the assigned value expression
           if value_expr = node.value
-            infer_constant_value_expression(value_expr)
+            name = intern_name(node.name)
+            symbol = resolve_scoped_symbol(name)
+            if symbol.is_a?(ConstantSymbol)
+              infer_constant_value_expression(value_expr, owner_class: symbol.owner_class, owner_module: symbol.owner_module)
+            else
+              infer_constant_value_expression(value_expr)
+            end
           else
             name = intern_name(node.name)
             if symbol = resolve_scoped_symbol(name)
               case symbol
               when ConstantSymbol
-                infer_constant_value_expression(symbol.value)
+                infer_constant_value_expression(symbol.value, owner_class: symbol.owner_class, owner_module: symbol.owner_module)
               when EnumSymbol
                 EnumType.new(symbol)
               else
@@ -5541,6 +5547,8 @@ module CrystalV2
             debug("  resolved symbol: #{symbol.class.name}")
             if symbol.is_a?(ConstantSymbol)
               owner_class, owner_module = constant_owner_scope(node.left)
+              owner_class ||= symbol.owner_class
+              owner_module ||= symbol.owner_module
               return infer_constant_value_expression(symbol.value, owner_class: owner_class, owner_module: owner_module)
             end
             if type = type_from_symbol(symbol)

@@ -108,6 +108,18 @@ module CrystalV2
           @class_stack.last? || @module_stack.last?
         end
 
+        private def current_constant_owner : {ClassSymbol?, ModuleSymbol?}
+          if owner_module = current_table.owner_module
+            return {nil, owner_module}
+          end
+
+          if owner_class = @class_stack.last?
+            return {owner_class, nil}
+          end
+
+          {nil, @module_stack.last?}
+        end
+
         private def push_table(table : SymbolTable)
           @table_stack << table
         end
@@ -831,8 +843,9 @@ module CrystalV2
 
           name = intern_name(name_slice)
           value_id = node.value
+          owner_class, owner_module = current_constant_owner
 
-          const_symbol = ConstantSymbol.new(name, node_id, value_id)
+          const_symbol = ConstantSymbol.new(name, node_id, value_id, owner_class, owner_module)
           assign_symbol_file(const_symbol, node_id)
 
           table = current_table
@@ -869,8 +882,9 @@ module CrystalV2
 
           name = intern_name(target_node.name)
           return false unless constant_like_name?(name)
+          owner_class, owner_module = current_constant_owner
 
-          const_symbol = ConstantSymbol.new(name, node_id, node.value)
+          const_symbol = ConstantSymbol.new(name, node_id, node.value, owner_class, owner_module)
           assign_symbol_file(const_symbol, node_id)
 
           table = current_table

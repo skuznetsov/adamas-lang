@@ -246,8 +246,16 @@ module CrystalV2
 
       class ConstantSymbol < Symbol
         getter value : ExprId
+        getter owner_class : ClassSymbol?
+        getter owner_module : ModuleSymbol?
 
-        def initialize(name : String, node_id : ExprId, @value : ExprId)
+        def initialize(
+          name : String,
+          node_id : ExprId,
+          @value : ExprId,
+          @owner_class : ClassSymbol? = nil,
+          @owner_module : ModuleSymbol? = nil
+        )
           super(name, node_id)
         end
       end
