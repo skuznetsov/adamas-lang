@@ -3,6 +3,34 @@
 Updated: 2026-04-01
 Context: compiler/bootstrap/stage2-stability
 
+[LM-416|verified]: After [LM-415], the next cheap compiler-side mover was not
+the bootstrap-only `HIR::TypeRef.new` head but a numeric inference gap that
+showed up cleanly in the formatter arithmetic tail. The decisive exact
+falsifier was `spec/semantic/type_inference_diagnostic_formatter_spec.cr`,
+which reproduced the `underline_segment(...)` shape and showed
+`lookup_method candidates method=clamp count=0 receiver=Int32` before the later
+`Nil` subtraction cascade. That made the next move cheaper than another richer
+bootstrap carrier: the real gap was that primitive integer builtins still
+lacked `clamp(min, max)`, and that arithmetic inference still treated
+`Int32 | UInt32` operands monolithically instead of distributing over their
+members. The verified fix stays bounded to
+`src/compiler/semantic/type_inference_engine.cr` plus focused numeric
+regressions. Primitive integers now expose builtin `clamp(min, max)` and
+arithmetic operators route through `infer_arithmetic_binary_result(...)`, which
+can distribute over union members and reassemble the result when every pair is
+valid. Focused regressions in
+`spec/semantic/type_inference_diagnostic_formatter_spec.cr`,
+`spec/semantic/type_inference_collection_builtin_spec.cr`, and
+`spec/semantic/type_inference_operator_method_body_spec.cr` are green; rebuild
+gates for `src/crystal_v2.cr --no-codegen` and
+`/tmp/crystal_v2_semantic_stage3probe` are green; and the full safe stage3
+probe moves from `semantic_diags=0 resolution_diags=0 type_diags=24` to
+`semantic_diags=0 resolution_diags=0 type_diags=19`, removing the live
+formatter arithmetic head entirely. Boundary: this is a real numeric
+compatibility fix, but stage3 is still not green; the new honest head is now
+`src/compiler/hir/hir.cr`, followed by generated `process` / `signal`,
+generated `raise`, and later `time/tz`. {F/G/R: 0.99/0.84/0.99} [verified]
+
 [LM-415|verified]: After [LM-414], the next live mover was not another enum or
 runtime receiver bug but a binder-level gap in multiple assignment. The
 decisive real carrier was `/tmp/semantic_option_parser_require_probe.cr` under

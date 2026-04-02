@@ -3425,61 +3425,9 @@ module CrystalV2
 
           result_type = case op
                         when "+", "-", "*", "/", "//", "%", "**", "<<", ">>", "&", "|", "^", "&+", "&-", "&*", "&**"
-                          if pointer_members = pointer_union_members(left_type)
-                            if {"+", "&+"}.includes?(op) && numeric_type?(right_type)
-                              union_of(pointer_members)
-                            elsif {"-", "&-"}.includes?(op)
-                              if right_type.is_a?(PointerType) || pointer_union_members(right_type)
-                                @context.int64_type
-                              elsif numeric_type?(right_type)
-                                union_of(pointer_members)
-                              else
-                                debug("  NO method found, emitting error")
-                                emit_error("Operator '#{op}' not defined for #{left_type} and #{right_type}", expr_id)
-                                @context.nil_type
-                              end
-                            else
-                              debug("  NO method found, emitting error")
-                              emit_error("Operator '#{op}' not defined for #{left_type} and #{right_type}", expr_id)
-                              @context.nil_type
-                            end
-                          elsif left_type.is_a?(PointerType)
-                            if {"+", "&+"}.includes?(op) && numeric_type?(right_type)
-                              left_type
-                            elsif {"-", "&-"}.includes?(op)
-                              if right_type.is_a?(PointerType)
-                                @context.int64_type
-                              elsif numeric_type?(right_type)
-                                left_type
-                              else
-                                debug("  NO method found, emitting error")
-                                emit_error("Operator '#{op}' not defined for #{left_type} and #{right_type}", expr_id)
-                                @context.nil_type
-                              end
-                            else
-                              debug("  NO method found, emitting error")
-                              emit_error("Operator '#{op}' not defined for #{left_type} and #{right_type}", expr_id)
-                              @context.nil_type
-                            end
-                          # Phase 4B.3/4B.5/18/19/21/22/78/89: Try method lookup first for built-in methods
-                          # Phase 89: Wrapping arithmetic operators (&+, &-, &*, &**)
-                          elsif method = lookup_method(left_type, op, [right_type], false)
-                            debug("  lookup_method found: #{method.name}, return_annotation=#{method.return_annotation.inspect}")
-                            if ann = method.return_annotation
-                              result = resolve_method_annotation_type(ann, left_type, method.scope, class_method_context: method.is_class_method?)
-                              debug("  parse_type_name(#{ann}) => #{result}")
-                              result
-                            else
-                              debug("  NO return_annotation, inferring operator method body")
-                              infer_method_call_result(method, left_type, [right_type], nil)
-                            end
-                            # Fallback: numeric promotion for untyped numeric operators
-                            # Exclude << (array push operator) as it has specific semantics
-                          elsif op != "<<" && (promoted = promote_numeric_operands(left_type, right_type))
-                            debug("  fallback: numeric promotion")
-                            promoted
+                          if result = infer_arithmetic_binary_result(op, left_type, right_type, expr_id)
+                            result
                           else
-                            # No method found and not numeric types
                             debug("  NO method found, emitting error")
                             emit_error("Operator '#{op}' not defined for #{left_type} and #{right_type}", expr_id)
                             @context.nil_type
@@ -3873,6 +3821,102 @@ module CrystalV2
           end
 
           nil
+        end
+
+        private def infer_arithmetic_binary_result(
+          op : String,
+          left_type : Type,
+          right_type : Type,
+          expr_id : ExprId,
+          *,
+          allow_union_expansion : Bool = true
+        ) : Type?
+          if allow_union_expansion
+            if union_result = infer_union_arithmetic_binary_result(op, left_type, right_type, expr_id)
+              return union_result
+            end
+          end
+
+          if pointer_members = pointer_union_members(left_type)
+            if {"+", "&+"}.includes?(op) && numeric_type?(right_type)
+              return union_of(pointer_members)
+            elsif {"-", "&-"}.includes?(op)
+              if right_type.is_a?(PointerType) || pointer_union_members(right_type)
+                return @context.int64_type
+              elsif numeric_type?(right_type)
+                return union_of(pointer_members)
+              end
+            end
+
+            return nil
+          end
+
+          if left_type.is_a?(PointerType)
+            if {"+", "&+"}.includes?(op) && numeric_type?(right_type)
+              return left_type
+            elsif {"-", "&-"}.includes?(op)
+              if right_type.is_a?(PointerType)
+                return @context.int64_type
+              elsif numeric_type?(right_type)
+                return left_type
+              end
+            end
+
+            return nil
+          end
+
+          # Phase 4B.3/4B.5/18/19/21/22/78/89: Try method lookup first for built-in methods
+          # Phase 89: Wrapping arithmetic operators (&+, &-, &*, &**)
+          if method = lookup_method(left_type, op, [right_type], false)
+            debug("  lookup_method found: #{method.name}, return_annotation=#{method.return_annotation.inspect}")
+            if ann = method.return_annotation
+              result = resolve_method_annotation_type(ann, left_type, method.scope, class_method_context: method.is_class_method?)
+              debug("  parse_type_name(#{ann}) => #{result}")
+              return result
+            end
+
+            debug("  NO return_annotation, inferring operator method body")
+            return infer_method_call_result(method, left_type, [right_type], nil)
+          end
+
+          # Fallback: numeric promotion for untyped numeric operators
+          # Exclude << (array push operator) as it has specific semantics
+          if op != "<<" && (promoted = promote_numeric_operands(left_type, right_type))
+            debug("  fallback: numeric promotion")
+            return promoted
+          end
+
+          nil
+        end
+
+        private def infer_union_arithmetic_binary_result(
+          op : String,
+          left_type : Type,
+          right_type : Type,
+          expr_id : ExprId
+        ) : Type?
+          return nil unless left_type.is_a?(UnionType) || right_type.is_a?(UnionType)
+
+          left_members = left_type.is_a?(UnionType) ? left_type.types : [left_type] of Type
+          right_members = right_type.is_a?(UnionType) ? right_type.types : [right_type] of Type
+          return nil if left_members.size == 1 && right_members.size == 1
+
+          results = [] of Type
+          left_members.each do |left_member|
+            right_members.each do |right_member|
+              result = infer_arithmetic_binary_result(
+                op,
+                left_member,
+                right_member,
+                expr_id,
+                allow_union_expansion: false
+              )
+              return nil unless result
+              results << result
+            end
+          end
+
+          union_of(results)
         end
 
         # Get numeric type width for promotion
@@ -8116,11 +8160,19 @@ module CrystalV2
             return matches.first
           end
 
+          if method_name == "clamp" && ENV["DEBUG_CLAMP_SELECTION"]? == "1"
+            matches.each do |entry|
+              score = specificity_score(entry, arg_types, arg_expr_ids)
+              param_sigs = entry.params.map { |param| param.type_annotation || "_" }.join(",")
+              STDERR.puts "[CLAMP_SELECT] receiver=#{receiver_type} score=#{score} ann=#{entry.return_annotation || "-"} node_valid=#{!entry.node_id.invalid?} params=#{param_sigs}"
+            end
+          end
+
           # Phase 98: Specificity ranking - prefer more specific overload
           #
           # Sort by specificity score (highest first) and return best match
           # Ties are resolved by order of definition (first defined wins)
-          selected = matches.max_by { |m| specificity_score(m, arg_types) }
+          selected = matches.max_by { |m| specificity_score(m, arg_types, arg_expr_ids) }
           debug_hook("infer.lookup.hit", "method=#{method_name} receiver=#{receiver_type} selected=#{selected.name} overloads=#{matches.size}")
           @method_lookup_cache[lookup_key] = selected if cacheable
           selected
@@ -9515,6 +9567,16 @@ module CrystalV2
                 dummy_node_id,
                 params: [limit_param, block_param],
                 return_annotation: "Nil",
+                scope: dummy_scope
+              )
+            when "clamp"
+              min_param = Frontend::Parameter.new(name: "min".to_slice, type_annotation: "#{type_name} | Nil".to_slice)
+              max_param = Frontend::Parameter.new(name: "max".to_slice, type_annotation: "#{type_name} | Nil".to_slice)
+              methods << MethodSymbol.new(
+                method_name,
+                dummy_node_id,
+                params: [min_param, max_param],
+                return_annotation: type_name,
                 scope: dummy_scope
               )
             when "to_s"

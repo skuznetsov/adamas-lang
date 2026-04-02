@@ -122,6 +122,29 @@ describe Semantic::TypeInferenceEngine do
       root_type.to_s.should eq("Int64")
     end
 
+    it "supports mixed Int32 and UInt32 arithmetic through union operands" do
+      source = <<-CRYSTAL
+        def probe(flag : Bool)
+          left = flag ? 10 : 10_u32
+          right = flag ? 3 : 3_u32
+          both = left - right
+          mixed = 10 - right
+          {both, mixed}
+        end
+
+        probe(true)
+      CRYSTAL
+
+      program, analyzer, engine = infer_operator_method_body_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.select(&.level.error?).should be_empty
+
+      root_type = engine.context.get_type(program.roots.last).to_s
+      {"Tuple(Int32 | UInt32, Int32)", "Tuple(UInt32 | Int32, Int32)"}.should contain(root_type)
+    end
+
     it "supports plain integer to_i in macro-shaped generic helper bodies" do
       source = <<-CRYSTAL
         module WUInt

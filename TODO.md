@@ -1,40 +1,63 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-01)
 
 ## Current Status
-- **Fresh multiple-assign union destructuring checkpoint: semantic multiple assignment now destructures union-shaped tuple/array RHS element-wise instead of binding the whole union back into each target, which closes the live `OptionParser` `required?/optional?` corridor and moves the honest stage3 semantic gate from `type_diags=30` to `type_diags=24` (2026-04-01, current session)**:
+- **Fresh numeric arithmetic checkpoint: semantic numeric inference now covers primitive `clamp(min, max)` and distributes arithmetic over union operands, which removes the live diagnostic formatter arithmetic head and moves the honest stage3 semantic gate from `type_diags=24` to `type_diags=19` on the current verified tree (2026-04-01, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/type_inference_engine.cr` now models primitive integer `clamp(min, max)` directly in the builtin surface, so clamp-based underline math no longer falls through to `Nil`
+    - the same file now routes arithmetic operators through `infer_arithmetic_binary_result(...)`, which can distribute over union members and reassemble the result instead of bailing out as soon as one operand is `Int32 | UInt32`
+    - focused regression coverage now lives in:
+      - `spec/semantic/type_inference_diagnostic_formatter_spec.cr`
+      - `spec/semantic/type_inference_collection_builtin_spec.cr`
+      - `spec/semantic/type_inference_operator_method_body_spec.cr`
+  - decisive evidence:
+    - focused numeric regression pack is green:
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_diagnostic_formatter_spec.cr --error-trace`
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_collection_builtin_spec.cr --error-trace`
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_operator_method_body_spec.cr --error-trace`
+    - rebuild gates are green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+    - the clean full semantic stage3 probe under the safe wrapper improves materially again:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 300 4096 src/crystal_v2.cr --stats --no-link -o /tmp/stage3_semantic_probe_after_int_clamp_fix.out > /tmp/stage3_semantic_probe_after_int_clamp_fix.log 2>&1`
+      - fresh summary on the current tree is:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=19`
+      - the old `src/compiler/frontend/diagnostic_formatter.cr` / `src/compiler/semantic/diagnostic_formatter.cr` arithmetic errors disappear from the live head
+  - practical boundary:
+    - this is a real numeric-inference compatibility fix, not a formatter-local patch
+    - stage3 is still not green; the next honest frontier is now headed by:
+      - `src/compiler/hir/hir.cr` (`3`, `Function 'new' not found`)
+      - `src/stdlib/crystal/system/unix/process.cr` / `[generated]` (`2`)
+      - `src/stdlib/crystal/system/unix/signal.cr` (`2`)
+      - `src/stdlib/raise.cr` (`2`)
+      - `src/stdlib/time/tz.cr` (`1`)
+- **Fresh multiple-assign union destructuring checkpoint: semantic multiple assignment now destructures union-shaped tuple/array RHS element-wise instead of binding the whole union back into each target, which closes the live `OptionParser` `required?/optional?` corridor and, on the current verified tree, leaves the honest stage3 semantic gate at `type_diags=26` with `option_parser` removed from the head (2026-04-01, current session)**:
   - trustworthy setup:
     - `src/compiler/semantic/type_inference_engine.cr` now routes multiple assignment binding through a dedicated `destructured_multiple_assign_element_type(...)` helper
     - that helper preserves the old tuple/array behavior and extends it narrowly for `UnionType`: if every union member is destructurable, each target gets the union of the corresponding element types; otherwise the old fallback to the whole RHS type remains
-    - focused regression coverage lives in `spec/semantic/type_inference_multiple_assign_union_spec.cr`
+    - focused regression coverage now lives in `spec/semantic/type_inference_enum_constant_spec.cr`, where the `OptionParser`-shaped `parse_flag_definition(...)` branch mix still has to flow `FlagValue` through tuple-return multiple assignment
   - decisive evidence:
     - focused regression pack is green:
-      - `../crystal/bin/crystal spec spec/semantic/type_inference_multiple_assign_union_spec.cr --error-trace`
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_enum_constant_spec.cr --error-trace`
     - host build gate is green:
       - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
     - rebuilt stage3 probe is green:
       - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
-    - the real stdlib carrier that used to fail on `OptionParser` is now clean under the safe wrapper:
-      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 DEBUG_TYPE_TRACE_NAMES='required?,optional?' scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 180 3072 /tmp/semantic_option_parser_require_probe.cr --stats --verbose --no-link -o /tmp/semantic_option_parser_require_probe.out > /tmp/semantic_option_parser_require_probe_after_union_destructure_fix.log 2>&1`
-      - summary moved from:
+    - the real stdlib file carrier that used to fail on `OptionParser` is now clean of that corridor under the safe wrapper:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 180 3072 src/stdlib/option_parser.cr --stats --verbose --no-link -o /tmp/option_parser_semantic_probe_no_union_dedupe.out > /tmp/option_parser_semantic_probe_no_union_dedupe.log 2>&1`
+      - fresh summary on the current tree:
         - `semantic_diags=0`
         - `resolution_diags=0`
-        - `type_diags=22`
-      - to:
-        - `semantic_diags=0`
-        - `resolution_diags=0`
-        - `type_diags=16`
-      - trace now shows `required?` / `optional?` receivers as plain `FlagValue` with candidate count `1`, instead of `Tuple(String, FlagValue) | Tuple(String, FlagValue)`
+        - `type_diags=18`
+      - and the old `required?` / `optional?` errors no longer appear in the log
     - the clean full semantic stage3 probe under the safe wrapper improves materially again:
       - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 300 4096 src/crystal_v2.cr --stats --no-link -o /tmp/stage3_semantic_probe_after_union_destructure_fix.out > /tmp/stage3_semantic_probe_after_union_destructure_fix.log 2>&1`
-      - summary moved from:
+      - fresh summary on the current tree is:
         - `semantic_diags=0`
         - `resolution_diags=0`
-        - `type_diags=30`
-      - to:
-        - `semantic_diags=0`
-        - `resolution_diags=0`
-        - `type_diags=24`
-      - `src/stdlib/option_parser.cr` disappears from the live head entirely
+        - `type_diags=26`
+      - `src/stdlib/option_parser.cr` disappears from the live head entirely, and the next honest head is already `src/compiler/hir/hir.cr`
   - practical boundary:
     - this is a real binder-level semantic fix, not an `OptionParser`-specific builtin patch
     - stage3 is still not green; the next honest frontier is now headed by:

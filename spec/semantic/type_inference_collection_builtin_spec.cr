@@ -39,6 +39,21 @@ describe Semantic::TypeInferenceEngine do
       engine.context.get_type(program.roots.last).to_s.should eq("Char")
     end
 
+    it "keeps same-width integer clamp results concrete" do
+      source = <<-'CRYSTAL'
+        start_index = (3 - 1).clamp(0, 5)
+        end_index = (4 - 1).clamp(start_index, 5)
+        {start_index, end_index - start_index}
+      CRYSTAL
+
+      program, analyzer, engine = infer_collection_builtin_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.should be_empty
+      engine.context.get_type(program.roots.last).to_s.should eq("Tuple(Int32, Int32)")
+    end
+
     it "supports array sort! and bsearch with blocks" do
       source = <<-'CRYSTAL'
         cccs = [{3, 2_u8}, {1, 1_u8}, {2, 3_u8}]
