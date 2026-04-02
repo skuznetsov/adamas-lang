@@ -1,6 +1,48 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-01)
 
 ## Current Status
+- **Fresh tuple block-signature checkpoint: semantic inference now substitutes tuple receiver type parameters into splatted generic block annotations like `Union(*T)`, which closes the live `Signal.after_fork` `@@pipe.each` corridor and moves the honest stage3 semantic gate from `type_diags=10` to `type_diags=8` on the current verified tree (2026-04-01, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/type_inference_engine.cr` now exposes `TupleType` through `receiver_type_parameter_context(...)`, so tuple receiver methods can substitute receiver-side type parameters into annotation text instead of falling back to unresolved literal forms
+    - the same file now expands splatted generic type arguments during substitution, so annotations like `Union(*T)` and `Tuple(*T)` materialize concrete member types before generic application resolution
+    - focused regression coverage now lives in:
+      - `spec/semantic/type_inference_tuple_builtin_spec.cr`
+  - decisive evidence:
+    - focused regression pack is green:
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_tuple_builtin_spec.cr --error-trace`
+    - rebuild gates are green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+    - the exact no-prelude semantic falsifier for `Tuple#each(& : Union(*T) ->)` now clears the semantic prepass:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 DEBUG_TYPE_TRACE_NAMES=remove,file_descriptor_close,each scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 60 2048 /tmp/semantic_tuple_union_splat_noprelude_probe.cr --no-prelude --stats --verbose -o /tmp/semantic_tuple_union_splat_noprelude_probe.out > /tmp/semantic_tuple_union_splat_noprelude_probe_after_rebuild.log 2>&1`
+      - fresh semantic summary there is:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=0`
+      - and the trace now shows `remove` arg type `FD` plus `file_descriptor_close` receiver type `FD`
+    - the richer `Signal.after_fork` carrier improves materially:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 DEBUG_TYPE_TRACE_NAMES=remove,file_descriptor_close,each scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 120 3072 /tmp/semantic_signal_after_fork_probe.cr --stats --verbose --no-link -o /tmp/semantic_signal_after_fork_probe.out > /tmp/semantic_signal_after_fork_probe_after_rebuild.log 2>&1`
+      - fresh summary there is:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=7`
+      - `Method 'remove' not found on EventLoop` and `Method 'file_descriptor_close' not found on Union(*T)` disappear from that carrier
+    - the clean full semantic stage3 probe under the safe wrapper improves reproducibly again:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 300 4096 src/crystal_v2.cr --stats --no-link -o /tmp/stage3_semantic_probe_after_tuple_union_fix.out > /tmp/stage3_semantic_probe_after_tuple_union_fix.log 2>&1`
+      - fresh summary on the current tree is:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=8`
+      - the old live `signal.cr` head disappears entirely
+  - practical boundary:
+    - this is a real generic-annotation substitution fix, not a `Signal`-local patch
+    - the exact synthetic falsifier still trips a later HIR generic-arity mismatch because it defines `Tuple(T)` instead of the real variadic runtime shape, but its semantic prepass is now clean, which is the targeted proof for this branch
+    - stage3 is still not green; the next honest frontier is now:
+      - `src/stdlib/raise.cr [generated]` (`2`)
+      - `src/crystal_v2.cr` (`1`)
+      - `src/stdlib/crystal/system/unix/time.cr [generated]` (`1`)
+      - `src/stdlib/file.cr` (`1`)
+      - plus the earlier `LibPCRE2.jit_stack_assign` / `Cannot index type Nil` tail
 - **Fresh annotated-wrapper/proc-literal checkpoint: annotated wrapper methods now re-infer their bodies when narrower call-site arguments would otherwise hide a specialized inner call, and untyped proc literals can match expected callback signatures from lib fun parameters, which moves the honest stage3 semantic gate from `type_diags=12` to `type_diags=10` on the current verified tree (2026-04-01, current session)**:
   - trustworthy setup:
     - `src/compiler/semantic/type_inference_engine.cr` now triggers `infer_method_body_type(...)` for annotated methods when the concrete call-site argument is a strict subtype of the declared parameter type, instead of blindly trusting the annotation-only fast path

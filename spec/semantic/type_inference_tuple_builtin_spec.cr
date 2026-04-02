@@ -71,5 +71,46 @@ describe Semantic::TypeInferenceEngine do
       engine.diagnostics.select(&.level.error?).should be_empty
       engine.context.get_type(program.roots.last).to_s.should eq("Bool")
     end
+
+    it "binds tuple each block params through Union(*T) signatures" do
+      source = <<-CRYSTAL
+        class FD
+          def file_descriptor_close(&) : Nil
+          end
+        end
+
+        abstract class EventLoop
+          def self.remove(fd : FD) : Nil
+          end
+        end
+
+        struct Tuple(T)
+          def each(& : Union(*T) ->) : Nil
+            yield self[0]
+            yield self[1]
+          end
+        end
+
+        module TupleEachProbe
+          @@pipe : {FD, FD} = {FD.new, FD.new}
+
+          def self.run : Nil
+            @@pipe.each do |pipe_io|
+              EventLoop.remove(pipe_io)
+              pipe_io.file_descriptor_close { }
+            end
+          end
+        end
+
+        TupleEachProbe.run
+      CRYSTAL
+
+      program, analyzer, engine = infer_tuple_builtin_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.select(&.level.error?).should be_empty
+      engine.context.get_type(program.roots.last).to_s.should eq("Nil")
+    end
   end
 end

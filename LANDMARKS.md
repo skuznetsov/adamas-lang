@@ -3,6 +3,42 @@
 Updated: 2026-04-01
 Context: compiler/bootstrap/stage2-stability
 
+[LM-422|verified]: After [LM-421], the next honest mover was not another
+runtime-local `signal` patch and not a broad block-inference rewrite, but a
+generic annotation substitution gap around tuple receivers. The decisive exact
+falsifiers were the richer `Signal.after_fork` carrier
+`/tmp/semantic_signal_after_fork_probe.cr` and the tiny no-prelude synthetic
+`/tmp/semantic_tuple_union_splat_noprelude_probe.cr`, both of which showed
+the same shape before the fix: `Tuple(... )#each` was found, but the block
+parameter still degraded to unresolved `Union(*T)`, so downstream calls saw
+`remove` arguments and `file_descriptor_close` receivers as `Union(*T)`/`Nil`
+instead of the concrete tuple member type. Source inspection made the local
+split explicit in `src/compiler/semantic/type_inference_engine.cr`: tuple
+receivers were absent from `receiver_type_parameter_context(...)`, so
+`resolve_method_annotation_type(...)` never substituted receiver-side generic
+arguments into annotations like `& : Union(*T) ->`; and even when substitution
+did run elsewhere, splatted generic argument lists like `Union(*T)` /
+`Tuple(*T)` were not expanded before generic application resolution. The
+verified fix stays narrow: `TupleType` now participates in
+`receiver_type_parameter_context(...)`, and generic substitution now expands
+splatted type-parameter arguments before resolving generic applications, with
+`Union` added as a first-class generic application target. Focused regression
+`spec/semantic/type_inference_tuple_builtin_spec.cr` is green; rebuild gates
+for `src/crystal_v2.cr --no-codegen` and `/tmp/crystal_v2_semantic_stage3probe`
+are green; the exact no-prelude synthetic now clears semantic prepass with
+`type_diags=0` and traces `remove` arg type `FD`; the richer signal carrier
+drops from `type_diags=11` to `type_diags=7` with the old `EventLoop.remove`
+/ `Union(*T).file_descriptor_close` misses gone; and the full safe stage3
+probe moves from `semantic_diags=0 resolution_diags=0 type_diags=10` to
+`semantic_diags=0 resolution_diags=0 type_diags=8`, removing `signal.cr` from
+the live head entirely. Boundary: the synthetic carrier still trips a later
+HIR generic-arity mismatch because it defines `Tuple(T)` rather than the real
+variadic runtime shape, but that does not affect the semantic prepass proof
+for this branch. The new honest head is now generated `raise`,
+`src/crystal_v2.cr`, generated `time`, `file.close`, and the earlier
+`LibPCRE2.jit_stack_assign` / `Cannot index type Nil` tail.
+{F/G/R: 0.98/0.79/0.99} [verified]
+
 [LM-419|verified]: After [LM-418], the cheapest honest mover was not another
 runtime-only nil guard and not a blind `signal` patch, but the compiler-side
 `HIR::TypeRef::VOID = new(...)` replay corridor. The decisive focused

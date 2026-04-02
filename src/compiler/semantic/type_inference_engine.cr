@@ -11757,6 +11757,11 @@ module CrystalV2
             if type_args && type_params && !type_args.empty? && !type_params.empty?
               return {type_args, type_params}
             end
+          when TupleType
+            element_types = receiver_type.element_types
+            unless element_types.empty?
+              return {copy_type_array(element_types), ["T"]}
+            end
           end
 
           nil
@@ -11881,9 +11886,7 @@ module CrystalV2
 
             base_type = type_name[0...paren_start]
             arg_list = type_name[(paren_start + 1)...paren_end]
-            resolved_args = split_top_level_generic_args(arg_list).map do |arg_name|
-              substitute_type_parameters(arg_name, type_args, type_params)
-            end
+            resolved_args = substitute_generic_type_arguments(arg_list, type_args, type_params)
 
             if resolved = resolve_generic_type_application(base_type, resolved_args)
               return resolved
@@ -11898,6 +11901,58 @@ module CrystalV2
           end
 
           parse_type_name(type_name)
+        end
+
+        private def substitute_generic_type_arguments(
+          arg_list : String,
+          type_args : Array(Type),
+          type_params : Array(String)
+        ) : Array(Type)
+          resolved_args = [] of Type
+
+          split_top_level_generic_args(arg_list).each do |arg_name|
+            if expanded = expand_splatted_type_parameter_argument(arg_name, type_args, type_params)
+              expanded.each do |expanded_type|
+                resolved_args << expanded_type
+              end
+            else
+              resolved_args << substitute_type_parameters(arg_name, type_args, type_params)
+            end
+          end
+
+          resolved_args
+        end
+
+        private def expand_splatted_type_parameter_argument(
+          arg_name : String,
+          type_args : Array(Type),
+          type_params : Array(String)
+        ) : Array(Type)?
+          stripped = arg_name.strip
+          return nil unless stripped.starts_with?('*') && stripped.bytesize > 1
+
+          inner_name = stripped[1..]
+          return nil unless idx = type_params.index(inner_name)
+
+          if type_params.size == 1
+            return copy_type_array(type_args)
+          end
+
+          if idx == type_params.size - 1 && idx < type_args.size
+            expanded = [] of Type
+            i = idx
+            while i < type_args.size
+              expanded << type_args[i]
+              i += 1
+            end
+            return expanded
+          end
+
+          if expanded_type = type_args[idx]?
+            return [expanded_type] of Type
+          end
+
+          nil
         end
 
         private def substitute_scoped_type_parameter(type_name : String, type_args : Array(Type), type_params : Array(String)) : Type?
@@ -11951,6 +12006,8 @@ module CrystalV2
           case base_type
           when "Array", "Slice"
             ArrayType.new(resolved_args.first? || @context.nil_type)
+          when "Union"
+            union_of(resolved_args)
           when "Pointer"
             PointerType.new(resolved_args.first? || @context.nil_type)
           when "Pointer::Appender"
