@@ -179,6 +179,39 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       CrystalV2::Compiler::Frontend.node_kind(type_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Generic)
     end
 
+    it "parses array of generic type with typeof argument" do
+      source = <<-CRYSTAL
+      [] of Tuple(typeof(Chunk.key_type(self, block)), Array(T))
+      CRYSTAL
+
+      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      program = parser.parse_program
+
+      program.roots.size.should eq(1)
+      arena = program.arena
+
+      array_node = arena[program.roots[0]]
+      CrystalV2::Compiler::Frontend.node_kind(array_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::ArrayLiteral)
+
+      of_type = CrystalV2::Compiler::Frontend.node_array_of_type(array_node).not_nil!
+      generic_node = arena[of_type]
+      CrystalV2::Compiler::Frontend.node_kind(generic_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Generic)
+
+      generic_name = arena[CrystalV2::Compiler::Frontend.node_generic_name(generic_node).not_nil!]
+      String.new(CrystalV2::Compiler::Frontend.node_literal(generic_name).not_nil!).should eq("Tuple")
+
+      type_args = CrystalV2::Compiler::Frontend.node_generic_type_args(generic_node).not_nil!
+      type_args.size.should eq(2)
+
+      first_arg = arena[type_args[0]]
+      CrystalV2::Compiler::Frontend.node_kind(first_arg).should eq(CrystalV2::Compiler::Frontend::NodeKind::Identifier)
+      String.new(CrystalV2::Compiler::Frontend.node_literal(first_arg).not_nil!).should eq("typeof(Chunk.key_type(self, block))")
+
+      second_arg = arena[type_args[1]]
+      CrystalV2::Compiler::Frontend.node_kind(second_arg).should eq(CrystalV2::Compiler::Frontend::NodeKind::Identifier)
+      String.new(CrystalV2::Compiler::Frontend.node_literal(second_arg).not_nil!).should eq("Array(T)")
+    end
+
     it "parses array without 'of' clause" do
       source = <<-CRYSTAL
       [1, 2, 3]

@@ -3,6 +3,38 @@
 Updated: 2026-04-02
 Context: compiler/bootstrap/stage2-stability
 
+[LM-443|verified]: After [LM-442], the earliest trustworthy self-hosted
+`stage2` red on current `HEAD` was no longer a vague “later stage slowdown” but
+an exact parser/string transport failure in generic type arguments. The
+decisive falsifier chain started with a full ladder re-check: `stage1_build`
+and `stage1_hello_compile` were green, `stage2_build` was green, but
+`stage2_hello_compile` already died immediately, proving the user was right
+that skipping `stage1/2` hid accumulated errors. The cleaner file-local oracle
+was then `src/stdlib/enumerable.cr --no-prelude`, and a traced self-hosted run
+with `CRYSTAL_V2_TRACE_GENERIC_TYPE_ARG=1` showed the live bad branch exactly:
+for `[] of Tuple(typeof(Chunk.key_type(self, block)), Array(T))` at
+`src/stdlib/enumerable.cr:143`, `Parser#parse_generic_type_argument_expr`
+logged `bytes=-30622617565` for the `typeof(...)` slice before failing. Source
+inspection in `src/compiler/frontend/parser.cr` matched that signal: the
+`typeof(...)` fast path in generic type arguments and the sibling annotation
+path both rebuilt multi-token text via `previous_token` plus raw
+`Slice.new(start_ptr, end_ptr - start_ptr)`, bypassing the parser's stable
+retained-slice helpers. The verified fix is bounded and root-cause-level:
+track the actual matched closing token explicitly while balancing parentheses,
+and materialize `typeof(...)` text through `retained_token_span_slice(...)`
+instead of raw pointer arithmetic in both paths. Focused regressions in
+`spec/parser/parser_of_keyword_spec.cr` and
+`spec/parser/parser_type_declaration_spec.cr` are green; the host build gate
+stays green; the rebuilt self-hosted `/tmp/stage2_typeof_fix` is green after
+`~194s`; and the exact no-prelude parser carrier now moves past parsing to a
+later stub frontier (`LibMachVM.mach_task_self`), while the tiny reduced
+generic carrier moves to a later `Array#empty?` stub. Boundary: this closes one
+real stage2 parser/string corridor and falsifies the “current earliest stage
+red is mainly RC/perf drift” theory, but it does not yet make stage2 user
+programs green; the next honest heads are later runtime/helper corridors and
+the current `stage2` prelude `hello` segfault. {F/G/R: 0.99/0.79/0.99}
+[verified]
+
 [LM-442|verified]: After [LM-441] and [LM-440], the next self-hosted
 no-prelude perf/debug work still did not justify a “general default-arg fix”
 claim. The decisive evidence split into two levels. First, a bounded

@@ -214,6 +214,21 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       String.new(CrystalV2::Compiler::Frontend.node_type_decl_type(type_decl).not_nil!).should eq("{Int32, String}")
     end
 
+    it "parses type declaration with typeof annotation" do
+      source = "value : typeof(foo.bar)"
+
+      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      program = parser.parse_program
+
+      program.roots.size.should eq(1)
+      arena = program.arena
+
+      type_decl = arena[program.roots[0]]
+      CrystalV2::Compiler::Frontend.node_kind(type_decl).should eq(CrystalV2::Compiler::Frontend::NodeKind::TypeDeclaration)
+      String.new(CrystalV2::Compiler::Frontend.node_type_decl_name(type_decl).not_nil!).should eq("value")
+      String.new(CrystalV2::Compiler::Frontend.node_type_decl_type(type_decl).not_nil!).should eq("typeof(foo.bar)")
+    end
+
     it "parses method with tuple return type annotation" do
       source = <<-CRYSTAL
       def pair(x, y) : {Int32, String}

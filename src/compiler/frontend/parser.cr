@@ -2270,8 +2270,8 @@ module CrystalV2
         # Phase 37: Modified to support visibility modifier
         private def parse_def(is_abstract : Bool = false, visibility : Visibility? = nil) : ExprId
           def_token = current_token
-          trace_abstract_char("parse_def.enter", def_token, "abstract=#{is_abstract ? 1 : 0}")
-          if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_DEF_STATE")
+          trace_abstract_char("parse_def.enter", def_token) { "abstract=#{is_abstract ? 1 : 0}" }
+          if false && ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_DEF_STATE")
             STDERR.puts "[DEF_STATE] phase=enter line=#{def_token.span.start_line + 1} token=#{def_token.kind} paren=#{@paren_depth} no_type=#{@no_type_declaration} call_args=#{@parsing_call_args} macro_mode=#{@macro_mode}"
           end
           advance
@@ -2395,12 +2395,12 @@ module CrystalV2
             end
           end
 
-          if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_DEF_STATE")
+          if false && ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_DEF_STATE")
             STDERR.puts "[DEF_STATE] phase=name line=#{def_token.span.start_line + 1} name=#{String.new(method_name_slice)} paren=#{@paren_depth} no_type=#{@no_type_declaration} call_args=#{@parsing_call_args} macro_mode=#{@macro_mode}"
           end
           params = parse_method_params
           return PREFIX_ERROR if params.is_a?(ExprId) # Phase 71: Handle error from default value parsing
-          if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_DEF_STATE")
+          if false && ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_DEF_STATE")
             STDERR.puts "[DEF_STATE] phase=params line=#{def_token.span.start_line + 1} name=#{String.new(method_name_slice)} paren=#{@paren_depth} no_type=#{@no_type_declaration} call_args=#{@parsing_call_args} macro_mode=#{@macro_mode}"
           end
 
@@ -2453,7 +2453,9 @@ module CrystalV2
 
           # Allow separators after header (supports one-liners like `struct X; end`)
           skip_statement_end
-          trace_abstract_char("parse_def.body_start", current_token, "abstract=#{is_abstract ? 1 : 0} name_size=#{method_name_slice.size}")
+          trace_abstract_char("parse_def.body_start", current_token) do
+            "abstract=#{is_abstract ? 1 : 0} name_size=#{method_name_slice.size}"
+          end
           trace_abstract_char_window("parse_def.body_start")
 
           # Phase 36: Abstract methods have no body
@@ -3284,6 +3286,7 @@ module CrystalV2
         private def retained_token_span_slice(start_token : Token, end_token : Token) : Slice(UInt8)
           start_ptr = start_token.slice.to_unsafe
           end_ptr = end_token.slice.to_unsafe + end_token.slice.size
+          return stable_identifier_slice(start_token.slice) if end_ptr <= start_ptr
           retain_text_slice(String.new(Slice.new(start_ptr, end_ptr - start_ptr)))
         end
 
@@ -3361,6 +3364,16 @@ module CrystalV2
 
         private def trace_abstract_char(event : String, token : Token? = nil, extra : String? = nil) : Nil
           return unless trace_abstract_char_enabled?
+          trace_abstract_char_impl(event, token, extra)
+        end
+
+        private def trace_abstract_char(event : String, token : Token? = nil, & : -> String) : Nil
+          return unless trace_abstract_char_enabled?
+          trace_abstract_char_impl(event, token, yield)
+        end
+
+        private def trace_abstract_char_impl(event : String, token : Token?, extra : String?) : Nil
+          return unless trace_abstract_char_enabled?
 
           tok = token || current_token
           prev = @previous_token
@@ -3412,7 +3425,7 @@ module CrystalV2
         private def stable_identifier_token_slice(token : Token) : Slice(UInt8)
           trace_abstract_char("stable_identifier.enter", token)
           if span_slice = source_span_slice(token.span)
-            trace_abstract_char("stable_identifier.source", token, "source_size=#{span_slice.size}")
+            trace_abstract_char("stable_identifier.source", token) { "source_size=#{span_slice.size}" }
             trace_stable_identifier_path(token.span, token, "source", span_slice)
             unless span_slice.empty?
               if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_STABLE_IDENTIFIER_SOURCE_DIRECT")
@@ -13860,6 +13873,7 @@ current_token.kind == Token::Kind::Identifier &&
           # Special-case typeof(...) so we consume the full parenthesized payload (including yields)
           if current_token.kind == Token::Kind::Typeof
             start_token = current_token
+            end_token = start_token
             advance
             skip_trivia
 
@@ -13868,22 +13882,21 @@ current_token.kind == Token::Kind::Identifier &&
               depth = 1
               advance
               while depth > 0 && current_token.kind != Token::Kind::EOF
-                case current_token.kind
+                token = current_token
+                case token.kind
                 when Token::Kind::LParen
                   depth += 1
                 when Token::Kind::RParen
                   depth -= 1
                 end
+                end_token = token
                 advance
               end
               skip_trivia
             end
 
-            end_tok = previous_token || start_token
-            span = start_token.span.cover(end_tok.span)
-            start_ptr = start_token.slice.to_unsafe
-            end_ptr = end_tok.slice.to_unsafe + end_tok.slice.size
-            slice = Slice.new(start_ptr, end_ptr - start_ptr)
+            span = start_token.span.cover(end_token.span)
+            slice = retained_token_span_slice(start_token, end_token)
 
             return @arena.add_typed(
               IdentifierNode.new(
@@ -16323,7 +16336,7 @@ current_token.kind == Token::Kind::Identifier &&
             break
           end
 
-          if args_after.any?
+          if args_after.size > 0
             call_span = @arena[call_expr].span.cover(@arena[args_after.last].span)
             call_expr = @arena.add_typed(CallNode.new(call_span, call_expr, args_after, nil))
           end
@@ -17073,20 +17086,20 @@ current_token.kind == Token::Kind::Identifier &&
 
             advance # consume (
             paren_depth = 1
+            end_token = start_token
             while paren_depth > 0 && current_token.kind != Token::Kind::EOF
-              if current_token.kind == Token::Kind::LParen
+              token = current_token
+              if token.kind == Token::Kind::LParen
                 paren_depth += 1
-              elsif current_token.kind == Token::Kind::RParen
+              elsif token.kind == Token::Kind::RParen
                 paren_depth -= 1
               end
+              end_token = token
               advance
             end
             skip_trivia
 
-            end_token = previous_token.not_nil!
-            start_ptr = start_token.slice.to_unsafe
-            end_ptr = end_token.slice.to_unsafe + end_token.slice.size
-            return Slice.new(start_ptr, end_ptr - start_ptr)
+            return retained_token_span_slice(start_token, end_token)
           when Token::Kind::Identifier
             # Type name, possibly with :: path and generics
             had_generic_args = false

@@ -1,6 +1,33 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-02)
 
 ## Current Status
+- **Fresh stage2 parser `typeof(...)` stabilization checkpoint: the earliest trustworthy self-hosted `stage2` parser crash is no longer in `parse_generic_type_argument_expr -> StringPool#intern`; exact no-prelude carriers now get past parsing and stop later in runtime/compiler stubs (2026-04-02, current session)**:
+  - trustworthy setup:
+    - `src/compiler/frontend/parser.cr` now stops materializing `typeof(...)` type text through `previous_token` plus raw pointer arithmetic in both generic type-arg parsing and annotation parsing
+    - those two paths now track the matched closing token explicitly and materialize the text through `retained_token_span_slice(...)`, matching the parser's existing stable-slice discipline for other multi-token type text
+    - focused regressions lock both surfaces in:
+      - `spec/parser/parser_of_keyword_spec.cr`
+      - `spec/parser/parser_type_declaration_spec.cr`
+  - decisive evidence:
+    - focused parser pack is green:
+      - `../crystal/bin/crystal spec spec/parser/parser_of_keyword_spec.cr spec/parser/parser_type_declaration_spec.cr --error-trace`
+    - host build gate is green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+    - traced self-hosted falsifier before the fix proved the raw `typeof(...)` span was corrupt:
+      - `env CRYSTAL_V2_TRACE_GENERIC_TYPE_ARG=1 STAGE2_DEBUG=1 CRYSTAL_V2_PARSER_INIT_TRACE=1 scripts/run_safe.sh /tmp/stage2_generictrace 60 8192 src/stdlib/enumerable.cr --no-prelude -o /tmp/stage2_enumerable_generictrace_probe > /tmp/stage2_enumerable_generictrace_probe.log 2>&1`
+      - the live trace there showed `bytes=-30622617565` for `typeof(Chunk.key_type(self, block))` in `src/stdlib/enumerable.cr:143`
+    - after rebuilding from the fix:
+      - `scripts/run_safe.sh /tmp/stage1_typeof_fix 900 12288 src/crystal_v2.cr -o /tmp/stage2_typeof_fix > /tmp/stage2_typeof_fix_build.log 2>&1`
+      - that self-hosted stage2 rebuild is green with `[EXIT: 0] after ~194s`
+      - the same exact parser carrier now moves later:
+        - `scripts/run_safe.sh /tmp/stage2_typeof_fix 60 8192 src/stdlib/enumerable.cr --no-prelude -o /tmp/stage2_enumerable_probe_typeof_fix > /tmp/stage2_enumerable_probe_typeof_fix.log 2>&1`
+        - new head is `STUB CALLED: LibMachVM$Dmach_task_self`, not parser/StringPool
+      - the reduced generic carrier also no longer dies in parser:
+        - `scripts/run_safe.sh /tmp/stage2_typeof_fix 60 8192 /tmp/semantic_generic_typeof_tuple_probe.cr --no-prelude -o /tmp/semantic_generic_typeof_tuple_probe_typeof_fix_bin > /tmp/semantic_generic_typeof_tuple_probe_typeof_fix.log 2>&1`
+        - new head there is later `STUB CALLED: Array$Hempty$Q`
+  - practical boundary:
+    - this closes one real stage2 self-hosted parser/root-cause corridor and refutes the idea that the current earliest red was still “just generic RC/perf drift”
+    - it does not yet make stage2 user-compilation green; the next honest heads are later runtime/helper corridors (`LibMachVM.mach_task_self`, `Array#empty?`, and the current prelude `hello` segfault)
 - **Fresh self-hosted no-prelude hot-loop checkpoint: the generated stage4 compiler no longer dies first in the old lexer/string runaway or the early `CLI#compile` `Enumerable(...NotFoundError)#upto` corridor; after removing block/default-arg-sensitive hot paths from `lex_string`, `AstToHir#emit_self`, and the `def_nodes` registration/main-entry loops in `CLI#compile`, both `hello` and string-only no-prelude reducers now converge on a later MIR frontier `HIRToMIRLowering#register_enum_types -> Set(String)#includes?` (2026-04-02, current session)**:
   - trustworthy setup:
     - `src/compiler/frontend/lexer.cr` now keeps the no-escape string fast path on explicit cursor movement and also avoids omitted-arg `advance` call sites in several identifier/sigil token corridors
