@@ -6331,8 +6331,7 @@ module CrystalV2
         counts = Array(Int32).new(aggregate.unit_summaries.size, 0)
         diagnostics.each do |diagnostic|
           next unless primary_node_id = diagnostic.primary_node_id
-          next unless provenance = aggregate.provenance_for(primary_node_id)
-          next unless provenance.generated?
+          next unless aggregate.generated_shadow_diagnostic?(diagnostic)
           if unit_index = aggregate.unit_index_for(primary_node_id)
             counts[unit_index] += 1
           end
@@ -6347,8 +6346,7 @@ module CrystalV2
         counts = Array(Int32).new(aggregate.unit_summaries.size, 0)
         diagnostics.each do |diagnostic|
           next unless node_id = diagnostic.node_id
-          next unless provenance = aggregate.provenance_for(node_id)
-          next unless provenance.generated?
+          next unless aggregate.generated_shadow_diagnostic?(diagnostic)
           if unit_index = aggregate.unit_index_for(node_id)
             counts[unit_index] += 1
           end

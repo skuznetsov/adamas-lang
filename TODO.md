@@ -1,6 +1,24 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-02)
 
 ## Current Status
+- **Fresh Phase 2.1 provenance boundary-freeze checkpoint: compile-shadow provenance is now diagnostic-facing at the aggregate boundary, so `cli.cr` no longer reaches into raw `provenance_for(node_id)` just to classify generated diagnostics (2026-04-02, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/compile_shadow_aggregate.cr` now exposes diagnostic-facing overloads of `diagnostic_provenance_context_for(...)` for both frontend and semantic diagnostics
+    - the same aggregate now exposes `generated_shadow_diagnostic?(...)`, so generated-diagnostic classification stays inside the compile-shadow provenance layer instead of being reassembled in `cli.cr`
+    - the redundant `generated_diagnostic_context_for(...)` alias is gone, and `format_shadow_diagnostic(...)` now routes through the diagnostic-facing provenance seam instead of rebuilding node-id lookups inline
+  - decisive evidence:
+    - focused aggregate boundary coverage is green:
+      - `../crystal/bin/crystal spec spec/semantic/compile_shadow_aggregate_spec.cr --error-trace --example 'exposes parsed provenance without generated metadata'`
+      - `../crystal/bin/crystal spec spec/semantic/compile_shadow_aggregate_spec.cr --error-trace --example 'adds origin note for generated type diagnostics'`
+      - `../crystal/bin/crystal spec spec/semantic/compile_shadow_aggregate_spec.cr --error-trace --example 'adds macro definition note for cross-file generated type diagnostics'`
+    - focused CLI generated-diagnostic output remains green after the seam move:
+      - `../crystal/bin/crystal spec spec/semantic_cli_spec.cr --error-trace --example 'reports generated diagnostics inside macro-expanded class bodies'`
+    - build gate stays green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+  - practical boundary:
+    - this is a real Step A boundary freeze for compile-shadow provenance, not a behavior change in semantic analysis or formatting semantics
+    - the full `spec/semantic/compile_shadow_aggregate_spec.cr` pack still has pre-existing generated-resolution red cases that fail before this new seam is exercised, so the honest DoD here is the focused boundary coverage above, not the whole file
+    - the next honest provenance follow-up is to continue shrinking overlapping helper surface and move more shadow-only provenance glue out of `cli.cr`
 - **Fresh phase0 body-infer review-hardening checkpoint: the open `ast_to_hir` identity-key review finding is refuted on the current tree, and regression coverage now proves caller arenas normalize into one canonical `DefIdentity` instead of splitting counts (2026-04-02, current session)**:
   - trustworthy setup:
     - `src/compiler/hir/ast_to_hir.cr` already builds `body_infer` metric keys through `canonical_def_identity_for_body_infer(...)`, which resolves a canonical arena first and then returns a structured `CrystalV2::Compiler::Semantic::DefIdentity{arena_id, expr_index}`

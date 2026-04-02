@@ -280,8 +280,24 @@ module CrystalV2
           )
         end
 
-        def generated_diagnostic_context_for(expr_id : Frontend::ExprId) : DiagnosticProvenanceContext?
-          diagnostic_provenance_context_for(expr_id)
+        def diagnostic_provenance_context_for(diagnostic : Frontend::Diagnostic) : DiagnosticProvenanceContext?
+          return nil unless node_id = diagnostic.node_id
+          diagnostic_provenance_context_for(node_id)
+        end
+
+        def diagnostic_provenance_context_for(diagnostic : Semantic::Diagnostic) : DiagnosticProvenanceContext?
+          return nil unless primary_node_id = diagnostic.primary_node_id
+          diagnostic_provenance_context_for(primary_node_id)
+        end
+
+        def generated_shadow_diagnostic?(diagnostic : Frontend::Diagnostic) : Bool
+          return false unless node_id = diagnostic.node_id
+          generated_shadow_node?(node_id)
+        end
+
+        def generated_shadow_diagnostic?(diagnostic : Semantic::Diagnostic) : Bool
+          return false unless primary_node_id = diagnostic.primary_node_id
+          generated_shadow_node?(primary_node_id)
         end
 
         def enrich_shadow_diagnostic(diagnostic : Frontend::Diagnostic) : Frontend::Diagnostic
@@ -322,13 +338,11 @@ module CrystalV2
           diagnostic : Frontend::Diagnostic,
           base_sources : Hash(String, String)
         ) : String
-          if node_id = diagnostic.node_id
-            if context = diagnostic_provenance_context_for(node_id)
-              return Frontend::DiagnosticFormatter.format(
-                context.sources_with_generated(base_sources),
-                context.apply(diagnostic)
-              )
-            end
+          if context = diagnostic_provenance_context_for(diagnostic)
+            return Frontend::DiagnosticFormatter.format(
+              context.sources_with_generated(base_sources),
+              context.apply(diagnostic)
+            )
           end
           Frontend::DiagnosticFormatter.format(base_sources, diagnostic)
         end
@@ -337,13 +351,11 @@ module CrystalV2
           diagnostic : Semantic::Diagnostic,
           base_sources : Hash(String, String)
         ) : String
-          if primary_node_id = diagnostic.primary_node_id
-            if context = diagnostic_provenance_context_for(primary_node_id)
-              return Semantic::DiagnosticFormatter.format(
-                context.sources_with_generated(base_sources),
-                context.apply(diagnostic)
-              )
-            end
+          if context = diagnostic_provenance_context_for(diagnostic)
+            return Semantic::DiagnosticFormatter.format(
+              context.sources_with_generated(base_sources),
+              context.apply(diagnostic)
+            )
           end
           Semantic::DiagnosticFormatter.format(base_sources, diagnostic)
         end
@@ -377,6 +389,11 @@ module CrystalV2
         def generated_root_count_for_unit(unit_index : Int32) : Int32
           return 0 if unit_index < 0 || unit_index >= @generated_root_count_by_unit.size
           @generated_root_count_by_unit.unsafe_fetch(unit_index)
+        end
+
+        private def generated_shadow_node?(expr_id : Frontend::ExprId) : Bool
+          return false unless provenance = provenance_for(expr_id)
+          provenance.generated?
         end
 
         def owned_node_count_for_unit(unit_index : Int32) : Int32

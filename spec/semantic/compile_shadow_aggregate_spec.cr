@@ -921,6 +921,14 @@ describe "compile semantic shadow aggregate" do
     info.generated_source.should be_nil
     info.origin_call_path.should be_nil
     info.origin_macro_def_path.should be_nil
+
+    diagnostic = Frontend::Diagnostic.new(
+      "test",
+      program.arena[callee_id].span,
+      node_id: callee_id,
+    )
+    aggregate.generated_shadow_diagnostic?(diagnostic).should be_false
+    aggregate.diagnostic_provenance_context_for(diagnostic).should be_nil
   end
 
   it "reports type diagnostics inside generated top-level def bodies" do
@@ -1109,8 +1117,8 @@ describe "compile semantic shadow aggregate" do
     result = analyzer.resolve_names
 
     diagnostic = result.diagnostics.first
-    node_id = diagnostic.node_id.not_nil!
-    context = aggregate.diagnostic_provenance_context_for(node_id).not_nil!
+    aggregate.generated_shadow_diagnostic?(diagnostic).should be_true
+    context = aggregate.diagnostic_provenance_context_for(diagnostic).not_nil!
     formatted = aggregate.format_shadow_diagnostic(diagnostic, {"unit_1.cr" => shadow_sources["unit_1.cr"]})
 
     formatted.should contain("note: expanded from macro call here")
@@ -1143,8 +1151,7 @@ describe "compile semantic shadow aggregate" do
     result = analyzer.resolve_names
 
     diagnostic = result.diagnostics.first
-    node_id = diagnostic.node_id.not_nil!
-    context = aggregate.diagnostic_provenance_context_for(node_id).not_nil!
+    context = aggregate.diagnostic_provenance_context_for(diagnostic).not_nil!
     source_map = context.sources_with_generated({"unit_1.cr" => shadow_sources["unit_1.cr"]})
 
     source_map["unit_1.cr"].should eq(shadow_sources["unit_1.cr"])
@@ -1178,8 +1185,8 @@ describe "compile semantic shadow aggregate" do
     analyzer.infer_types(result.identifier_symbols)
 
     diagnostic = analyzer.type_inference_diagnostics.first
-    node_id = diagnostic.primary_node_id.not_nil!
-    context = aggregate.diagnostic_provenance_context_for(node_id).not_nil!
+    aggregate.generated_shadow_diagnostic?(diagnostic).should be_true
+    context = aggregate.diagnostic_provenance_context_for(diagnostic).not_nil!
     formatted = aggregate.format_shadow_diagnostic(diagnostic, {"unit_1.cr" => shadow_sources["unit_1.cr"]})
 
     formatted.should contain("note: expanded from macro call here")
@@ -1212,8 +1219,7 @@ describe "compile semantic shadow aggregate" do
     result = analyzer.resolve_names
 
     diagnostic = result.diagnostics.first
-    node_id = diagnostic.node_id.not_nil!
-    context = aggregate.diagnostic_provenance_context_for(node_id).not_nil!
+    context = aggregate.diagnostic_provenance_context_for(diagnostic).not_nil!
     formatted = aggregate.format_shadow_diagnostic(
       diagnostic,
       {"unit_0.cr" => shadow_sources["unit_0.cr"], "unit_1.cr" => shadow_sources["unit_1.cr"]}
@@ -1250,8 +1256,7 @@ describe "compile semantic shadow aggregate" do
     analyzer.infer_types(result.identifier_symbols)
 
     diagnostic = analyzer.type_inference_diagnostics.first
-    node_id = diagnostic.primary_node_id.not_nil!
-    context = aggregate.diagnostic_provenance_context_for(node_id).not_nil!
+    context = aggregate.diagnostic_provenance_context_for(diagnostic).not_nil!
     formatted = aggregate.format_shadow_diagnostic(
       diagnostic,
       {"unit_0.cr" => shadow_sources["unit_0.cr"], "unit_1.cr" => shadow_sources["unit_1.cr"]}
