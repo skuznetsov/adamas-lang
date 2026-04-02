@@ -3,6 +3,32 @@
 Updated: 2026-04-01
 Context: compiler/bootstrap/stage2-stability
 
+[LM-418|verified]: After [LM-417], the cheapest honest mover was not another
+bootstrap-only `new(...)` mystery but a control-flow typing leak hidden behind
+the public `Process#wait` error. The decisive exact falsifier was the tiny
+no-prelude carrier `/tmp/semantic_process_channel_probe.cr`, which reproduced
+the shape `if channel = @channel; channel; else raise "BUG"; end` and showed
+`member_access method=receive receiver=Nil | Ch`. Source inspection then made
+the local defect explicit: `infer_if(...)` in
+`src/compiler/semantic/type_inference_engine.cr` always unioned `then` /
+`elsif` / `else` result types even when a branch ended in `raise`/`return` and
+could not contribute a value. The verified fix stays bounded: `infer_if(...)`
+now tracks whether each branch body terminates via control flow and unions only
+the non-terminating branch results, while preserving the implicit `Nil` branch
+when an `if` has no `else`. Focused regression
+`spec/semantic/type_inference_if_terminator_spec.cr` is green; rebuild gates
+for `src/crystal_v2.cr --no-codegen` and
+`/tmp/crystal_v2_semantic_stage3probe` are green; the exact no-prelude
+falsifier is green under `scripts/run_safe.sh`; the real stdlib carrier
+`src/stdlib/process.cr` no longer emits the old `channel.receive` line and now
+traces `receiver=Channel(Int32)` with candidate count `1`; and the full safe
+stage3 probe moves from `semantic_diags=0 resolution_diags=0 type_diags=18`
+to `semantic_diags=0 resolution_diags=0 type_diags=17`, removing
+`src/stdlib/process.cr` from the live head. Boundary: this is a reusable
+control-flow typing fix, but stage3 is still not green; the new honest head is
+now led by `src/compiler/hir/hir.cr`, `signal.cr`, generated `raise`,
+`boehm`, and generated `process`. {F/G/R: 0.99/0.86/0.99} [verified]
+
 [LM-417|verified]: After [LM-416], the next cheap honest mover was not
 bootstrap-only `HIR::TypeRef.new` and not another numeric builtin. The clean
 exact falsifier was `spec/semantic/type_inference_while_assignment_narrowing_spec.cr`,

@@ -1,6 +1,42 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-01)
 
 ## Current Status
+- **Fresh if-terminator checkpoint: regular `if` expressions now drop branches whose last expression is a control-flow terminator, which closes the live `Process#channel.receive` nil-union corridor and moves the honest stage3 semantic gate from `type_diags=18` to `type_diags=17` on the current verified tree (2026-04-01, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/type_inference_engine.cr` now tracks whether `then` / `elsif` / `else` bodies terminate via control-flow, and `infer_if(...)` unions only the non-terminating branch result types
+    - this stays narrow: explicit `raise` / `return` / `break` / `next` tails are filtered out of the expression type, but implicit no-else `Nil` is preserved
+    - focused regression coverage now lives in `spec/semantic/type_inference_if_terminator_spec.cr`, which reproduces the exact `if channel = @channel; channel; else raise "BUG"; end` shape without stdlib noise
+  - decisive evidence:
+    - focused regression pack is green:
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_if_terminator_spec.cr --error-trace`
+    - rebuild gates are green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+    - the exact no-prelude falsifier is now green under the safe wrapper:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 60 2048 /tmp/semantic_process_channel_probe.cr --no-prelude --stats --verbose > /tmp/semantic_process_channel_probe_after_fix.log 2>&1`
+      - fresh summary on the current tree:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=0`
+      - trace now shows `member_access method=receive receiver=Ch` instead of `Nil | Ch`
+    - the real stdlib file carrier is now clean of that corridor under the safe wrapper:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 DEBUG_TYPE_TRACE_NAMES='receive' scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 120 3072 src/stdlib/process.cr --stats --verbose --no-link -o /tmp/semantic_process_actual_probe.out > /tmp/semantic_process_actual_probe.log 2>&1`
+      - the old `src/stdlib/process.cr:376` `channel.receive` error no longer appears, and the trace shows `receiver=Channel(Int32)` with candidate count `1`
+    - the clean full semantic stage3 probe under the safe wrapper improves again:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 300 4096 src/crystal_v2.cr --stats --no-link -o /tmp/stage3_semantic_probe_after_if_terminator_fix.out > /tmp/stage3_semantic_probe_after_if_terminator_fix.log 2>&1`
+      - fresh summary on the current tree is:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=17`
+      - `src/stdlib/process.cr` disappears from the live head entirely
+  - practical boundary:
+    - this is a real control-flow typing fix, not a `Process`-specific patch
+    - stage3 is still not green; the next honest frontier is now headed by:
+      - `src/compiler/hir/hir.cr` (`3`, `Function 'new' not found`)
+      - `src/stdlib/crystal/system/unix/signal.cr` (`3`)
+      - `src/stdlib/raise.cr [generated]` (`3`)
+      - `src/stdlib/gc/boehm.cr` (`2`)
+      - `src/stdlib/crystal/system/unix/process.cr [generated]` (`2`)
 - **Fresh while-assignment narrowing checkpoint: semantic `while` bodies now inherit truthy narrowings from their own condition, which closes the live `Time::TZ.parse_int` `digit : Nil | Int32` corridor and moves the honest stage3 semantic gate from `type_diags=19` to `type_diags=18` on the current verified tree (2026-04-01, current session)**:
   - trustworthy setup:
     - `src/compiler/semantic/type_inference_engine.cr` now runs `infer_block_result(node.body)` for `while` inside `infer_expression_with_truthy_condition_narrowings(condition_id)`, instead of discarding the condition’s own nil-stripping information before entering the loop body

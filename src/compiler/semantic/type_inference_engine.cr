@@ -3975,6 +3975,7 @@ module CrystalV2
             @flow_narrowings[responds_to_narrowing[0]] = responds_to_narrowing[1]
           end
 
+          then_terminates = block_control_flow_terminates?(node.then_body)
           then_type = infer_block_result(node.then_body)
 
           # Remove narrowing after then-branch
@@ -3990,6 +3991,7 @@ module CrystalV2
           end
 
           elsif_types = [] of Type
+          elsif_terminates = [] of Bool
           if elsifs = node.elsifs
             elsifs.each do |elsif_branch|
               branch_condition = elsif_branch.condition
@@ -4011,6 +4013,7 @@ module CrystalV2
                 @flow_narrowings[elsif_responds_to_narrowing[0]] = elsif_responds_to_narrowing[1]
               end
 
+              elsif_terminates << block_control_flow_terminates?(elsif_branch.body)
               elsif_types << infer_block_result(elsif_branch.body)
 
               if elsif_narrowing
@@ -4033,14 +4036,34 @@ module CrystalV2
             @flow_narrowings[var_name] = narrowed_type
           end
 
-          else_type = node.else_body ? infer_block_result(node.else_body.not_nil!) : @context.nil_type
+          else_body = node.else_body
+          else_terminates = else_body ? block_control_flow_terminates?(else_body.not_nil!) : false
+          else_type = else_body ? infer_block_result(else_body.not_nil!) : @context.nil_type
 
           # Remove else narrowing
           if else_narrowing
             @flow_narrowings.delete(else_narrowing[0])
           end
 
-          union_of([then_type] + elsif_types + [else_type])
+          branch_types = [] of Type
+          branch_types << then_type unless then_terminates
+          elsif_types.each_with_index do |branch_type, index|
+            branch_types << branch_type unless elsif_terminates[index]
+          end
+
+          if else_body
+            branch_types << else_type unless else_terminates
+          else
+            branch_types << else_type
+          end
+
+          branch_types.empty? ? @context.nil_type : union_of(branch_types)
+        end
+
+        private def block_control_flow_terminates?(body : Array(ExprId)) : Bool
+          return false if body.empty?
+
+          control_flow_terminator?(body.last)
         end
 
         # Phase 95: Extract variable name and narrowed type from is_a? condition
