@@ -318,7 +318,8 @@ module CrystalV2
         end
 
         private def advance(count : Int32 = 1)
-          count.times do
+          i = 0
+          while i < count
             Watchdog.check!
             byte = current_byte
             @offset += 1
@@ -328,6 +329,7 @@ module CrystalV2
             else
               @column += 1
             end
+            i += 1
           end
         end
 
@@ -1984,24 +1986,34 @@ module CrystalV2
         private def lex_comment
           start_offset, start_line, start_column = capture_position
           from = @offset
-          while @offset < @byte_size && current_byte != NEWLINE
+          scan = @offset
+          next_watchdog = scan + 1024
+          while scan < @byte_size
+            byte = @bytes_ptr[scan]
+            break if byte == NEWLINE
             # Stop before {% or {{ sequences that follow } (end of interpolation)
             # so macro body parser sees the closing {% end %}.
             # Do NOT stop for {%/{{ that appear after space, letters etc.
             # as those are genuinely inside comments (e.g., `# {%`).
-            if current_byte == '{'.ord.to_u8 && @offset + 1 < @byte_size
-              next_b = @bytes_ptr[@offset + 1]
+            if byte == '{'.ord.to_u8 && scan + 1 < @byte_size
+              next_b = @bytes_ptr[scan + 1]
               if next_b == '%'.ord.to_u8 || next_b == '{'.ord.to_u8
                 # Only break if preceded by } (typical pattern: #{close}{% end %})
-                prev_b = @offset > from ? @bytes_ptr[@offset - 1] : 0_u8
+                prev_b = scan > from ? @bytes_ptr[scan - 1] : 0_u8
                 break if prev_b == '}'.ord.to_u8
               end
             end
-            advance
+            scan += 1
+            if scan >= next_watchdog
+              Watchdog.check!
+              next_watchdog += 1024
+            end
           end
+          @column += scan - @offset
+          @offset = scan
           Token.new(
             Token::Kind::Comment,
-            bytes_range(from, @offset),
+            bytes_range(from, scan),
             build_span(start_offset, start_line, start_column)
           )
         end

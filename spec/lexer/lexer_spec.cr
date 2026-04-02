@@ -32,4 +32,29 @@ describe CrystalV2::Compiler::Frontend::Lexer do
     tokens.none? { |token| token.kind == CrystalV2::Compiler::Frontend::Token::Kind::StringInterpolation }.should be_true
     tokens.any? { |token| token.kind == CrystalV2::Compiler::Frontend::Token::Kind::Identifier && String.new(token.slice) == "after_call" }.should be_true
   end
+
+  it "keeps macro control markers inside plain comments" do
+    source = "# {%\n"
+    lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
+    tokens = [] of CrystalV2::Compiler::Frontend::Token
+    lexer.each_token(skip_trivia: false) { |token| tokens << token }
+
+    comments = tokens.select { |token| token.kind == CrystalV2::Compiler::Frontend::Token::Kind::Comment }
+    comments.size.should eq(1)
+    String.new(comments.first.slice).should eq("# {%")
+    tokens.any? { |token| token.kind == CrystalV2::Compiler::Frontend::Token::Kind::LBracePercent }.should be_false
+  end
+
+  it "breaks comment lexing before macro control after interpolation close" do
+    source = "# }{% end %}\n"
+    lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
+    tokens = [] of CrystalV2::Compiler::Frontend::Token
+    lexer.each_token(skip_trivia: false) { |token| tokens << token }
+
+    comments = tokens.select { |token| token.kind == CrystalV2::Compiler::Frontend::Token::Kind::Comment }
+    comments.size.should eq(1)
+    String.new(comments.first.slice).should eq("# }")
+    tokens.any? { |token| token.kind == CrystalV2::Compiler::Frontend::Token::Kind::LBracePercent && String.new(token.slice) == "{%" }.should be_true
+    tokens.any? { |token| token.kind == CrystalV2::Compiler::Frontend::Token::Kind::PercentRBrace && String.new(token.slice) == "%}" }.should be_true
+  end
 end
