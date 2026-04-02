@@ -71,6 +71,22 @@ describe "compile semantic shadow aggregate" do
     aggregate.generated_diagnostic_counts_by_unit(aggregate.parse_diagnostics).should eq([0, 0])
   end
 
+  it "counts parse diagnostics without node ids by file path" do
+    aggregate = build_shared_shadow_aggregate([
+      "alpha()\n",
+      "beta()\n",
+    ])
+
+    diagnostic = Frontend::Diagnostic.new(
+      "synthetic parse diag",
+      Frontend::Span.new(0, 0, 1, 1, 1, 1),
+      file_path: "unit_1.cr",
+    )
+
+    aggregate.diagnostic_counts_by_unit([diagnostic]).should eq([0, 1])
+    aggregate.generated_diagnostic_counts_by_unit([diagnostic]).should eq([0, 0])
+  end
+
   it "builds per-unit summary rows from aggregate-owned and raw metric counts" do
     aggregate = build_shared_shadow_aggregate([
       "def alpha\n  41\nend\n",
@@ -968,6 +984,39 @@ describe "compile semantic shadow aggregate" do
     aggregate.path_for(diagnostic.node_id.not_nil!).should eq("unit_1.cr")
     aggregate.generated_node?(diagnostic.node_id.not_nil!).should be_true
     aggregate.generated_source_for(diagnostic.node_id.not_nil!).not_nil!.should contain("missing + 1")
+  end
+
+  it "keeps generated bare receiverless sends strict when resolver deferral is enabled" do
+    aggregate = build_shared_shadow_aggregate([
+      <<-CR,
+        macro define_bad(name)
+          def {{name.id}}
+            missing
+          end
+        end
+      CR
+      <<-CR,
+        define_bad(:alpha)
+        alpha()
+      CR
+    ])
+    program = aggregate.program
+    shadow_sources = build_shadow_sources(aggregate)
+
+    analyzer = Semantic::Analyzer.new(program)
+    analyzer.collect_symbols(
+      node_file_path_provider: ->(expr_id : Frontend::ExprId) { aggregate.path_for(expr_id) },
+      source_for_path_provider: ->(path : String) { shadow_sources[path]? },
+    )
+    attach_generated_shadow_overlay(aggregate, analyzer)
+
+    result = analyzer.resolve_names(defer_method_body_receiverless_candidates: true)
+
+    result.diagnostics.size.should eq(1)
+    diagnostic = result.diagnostics.first
+    diagnostic.message.should contain("undefined local variable or method 'missing'")
+    diagnostic.node_id.should_not be_nil
+    aggregate.generated_node?(diagnostic.node_id.not_nil!).should be_true
   end
 
   it "exposes generated provenance as a unified aggregate lookup" do

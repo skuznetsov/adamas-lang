@@ -323,9 +323,14 @@ module CrystalV2
         def diagnostic_counts_by_unit(diagnostics : Array(Frontend::Diagnostic)) : Array(Int32)
           counts = Array(Int32).new(@unit_summaries.size, 0)
           diagnostics.each do |diagnostic|
-            next unless node_id = diagnostic.node_id
-            if unit_index = unit_index_for(node_id)
-              counts[unit_index] += 1
+            if node_id = diagnostic.node_id
+              if unit_index = unit_index_for(node_id)
+                counts[unit_index] += 1
+              end
+            elsif file_path = diagnostic.file_path
+              if unit_index = @unit_index_by_path[file_path]?
+                counts[unit_index] += 1
+              end
             end
           end
           counts

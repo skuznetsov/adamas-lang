@@ -3,6 +3,59 @@
 Updated: 2026-04-02
 Context: compiler/bootstrap/stage2-stability
 
+[LM-439|verified]: After the compacted resolver/macro/parser branch went dirty
+again, the decisive adversarial frontier was the full safe semantic bootstrap:
+`env CRYSTAL2_STAGE2_DEBUG=1 CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_hir_stage3probe 240 12288 src/crystal_v2.cr --stats -o /tmp/stage3_link_probe_after_unary_fix_debug.out > /tmp/stage3_link_probe_after_unary_fix_debug.log 2>&1`.
+The first red run falsified the earlier “simple rollback is enough” theory by
+showing `resolution_diags=74` with a mixed family of original-source
+receiverless identifiers (`value`, `size`, `to_f`, `kind`, etc.) plus generated
+numeric pseudo-identifiers (`'1'`, `'2'`, `'4'`, `'8'`, `'16'`) in
+`io/byte_format`. Source inspection and focused specs then isolated the real
+shape: normal `--no-codegen` resolution must stay strict (`say_hello` should
+still diagnose), but semantic shadow/stage3 needs explicit deferral for
+original-source method-body identifiers while keeping generated overlay nodes
+strict; separately, `type_expression_identifier_name?` needed to recognize
+parser-stored numeric type/count tokens alongside `typeof(...)`. The verified
+fix set is: `Analyzer#resolve_names` accepts an explicit
+`defer_method_body_receiverless_candidates` flag, `cli.cr` enables it only in
+semantic shadow / semantic compile prepass paths, `NameResolver` skips that
+deferral on generated overlay nodes and whitelists numeric type-expression
+identifiers, and `CompileShadowAggregate#diagnostic_counts_by_unit(...)` now
+falls back to `diagnostic.file_path` for parse-only frontend diagnostics with no
+`node_id`. Focused specs
+`spec/semantic/name_resolver_spec.cr`,
+`spec/semantic/compile_shadow_aggregate_spec.cr`, and
+`spec/semantic_cli_spec.cr` are green; both build gates are green; and the
+decisive safe bootstrap is green again with
+`semantic_diags=0 resolution_diags=0 type_diags=0`, `Stage 6/6 compile
+7938.3ms`, and `[EXIT: 0] after ~217s`. Boundary: this restores the stage3
+semantic-shadow/bootstrap baseline, but it does not itself finish the remaining
+Phase 2.1 summary/provenance cleanup in `cli.cr`. {F/G/R: 0.99/0.89/0.99}
+[verified]
+
+[LM-438|verified]: The compacted parser/macro regressions were real and both
+were narrower than they first looked. The accessor macro issue was not a class
+scope/type-inference bug but a parser ambiguity in
+`parse_parenthesized_call_body(...)`: `class_property(local : Location) { self }`
+was being treated as a named argument because the parenthesized path lacked the
+typed-macro/accessor special-case already used by the no-parens path. The
+verified parser fix is local to `src/compiler/frontend/parser.cr`: detect typed
+macro/accessor callees, parse `name : Type [= value]` inside parens into
+positional `TypeDeclarationNode`s, and avoid re-entering the generic arg parser
+after that branch. In parallel, the macro failure was not about hash mutation
+itself but about `.stringify` over-inspecting macro ids/plain strings: stored
+`"Bar".id.stringify` later came back as `"\"Bar\""` so `value[:key].id`
+expanded to `class "Bar"`. The verified macro fix is local to
+`src/compiler/semantic/macro_value.cr`: `.stringify` for base/plain string and
+`MacroIdValue` now returns plain macro output instead of `.inspect`. Focused
+regressions in `spec/parser/parser_spec.cr` and
+`spec/semantic/macro_methods_spec.cr` are green, `spec/semantic_cli_spec.cr` is
+green on top, and the later full safe stage3 bootstrap remained green after both
+changes. Boundary: these fixes close the exact parenthesized accessor-macro and
+hash-backed `id.stringify` round-trip corridors only; they are not broad parser
+recovery or macro-expansion ownership rewrites. {F/G/R: 0.98/0.83/0.99}
+[verified]
+
 [LM-437|verified]: After [LM-436], the next `ast_to_hir_spec` cluster was again
 representation drift, but now specifically around the current proc model rather
 than generic literals/control flow. The decisive failures all assumed the older

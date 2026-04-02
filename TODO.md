@@ -1,6 +1,49 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-02)
 
 ## Current Status
+- **Fresh semantic shadow/stage3 restoration checkpoint: stage3 is green again because shadow-time name resolution now defers original receiverless method-body identifiers without swallowing generated resolution diagnostics, parse-only shadow diagnostics count by file path, and parser-stored numeric type-expression identifiers no longer misfire as unresolved names (2026-04-02, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/resolvers/name_resolver.cr` now accepts an explicit shadow-only defer mode plus generated-overlay awareness:
+      - original-source unresolved lowercase identifiers inside method bodies are deferred only when the caller opts in
+      - generated overlay nodes stay strict, so macro-expanded `missing` still reports as a real generated resolution diagnostic
+      - type-expression identifiers now whitelist parser-stored `typeof(...)` and numeric generic/count tokens like `4`, `8`, `16`
+    - `src/compiler/semantic/analyzer.cr` and `src/compiler/cli.cr` only enable that deferral in semantic shadow / semantic compile prepass paths; normal `--no-codegen` resolution stays strict
+    - `src/compiler/semantic/compile_shadow_aggregate.cr` now counts parse-only frontend diagnostics by `file_path` when no `node_id` exists
+  - decisive evidence:
+    - focused resolver coverage is green:
+      - `../crystal/bin/crystal spec spec/semantic/name_resolver_spec.cr --error-trace`
+    - focused aggregate/generated coverage is green:
+      - `../crystal/bin/crystal spec spec/semantic/compile_shadow_aggregate_spec.cr --error-trace`
+    - CLI regression pack is green:
+      - `../crystal/bin/crystal spec spec/semantic_cli_spec.cr --error-trace`
+    - build gates are green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_hir_stage3probe --error-trace`
+    - decisive adversary full bootstrap is green again under the safe wrapper:
+      - `env CRYSTAL2_STAGE2_DEBUG=1 CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_hir_stage3probe 240 12288 src/crystal_v2.cr --stats -o /tmp/stage3_link_probe_after_unary_fix_debug.out > /tmp/stage3_link_probe_after_unary_fix_debug.log 2>&1`
+      - fresh summary there is:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=0`
+        - `Stage 6/6 compile 7938.3ms`
+        - `[EXIT: 0] after ~217s`
+  - practical boundary:
+    - this restores the previously red semantic-shadow/stage3 bootstrap frontier, but it does not by itself finish the remaining Phase 2.1 cleanup in `cli.cr`
+    - the next honest seam is again provenance/summary ownership rather than bootstrap survival
+- **Fresh parser+macro checkpoint: parenthesized accessor-macro typed args and hash-backed `id.stringify` round-trips now match live stdlib usage again (2026-04-02, current session)**:
+  - trustworthy setup:
+    - `src/compiler/frontend/parser.cr` now recognizes typed macro/accessor args inside parenthesized calls like `class_property(local : Location) { ... }` and keeps them as positional `TypeDeclarationNode`s instead of mis-parsing them as named args
+    - `src/compiler/semantic/macro_value.cr` now keeps `.stringify` on macro ids/plain strings as plain macro text instead of double-inspecting them, so stored `id.stringify` values can round-trip back through `.id`
+  - decisive evidence:
+    - focused parser coverage is green:
+      - `../crystal/bin/crystal spec spec/parser/parser_spec.cr --error-trace`
+    - focused macro coverage is green:
+      - `../crystal/bin/crystal spec spec/semantic/macro_methods_spec.cr --error-trace`
+    - the same full `semantic_cli` regression pack stays green on top of both fixes:
+      - `../crystal/bin/crystal spec spec/semantic_cli_spec.cr --error-trace`
+  - practical boundary:
+    - this closes the concrete `class_property(local : Location)` and hash-backed `value[:key].id` regressions that were red before compaction
+    - it does not change broader parser recovery or macro expansion ownership beyond those exact corridors
 - **Fresh Phase 2.1 generated-resolution checkpoint: method-body unresolved suppression is now narrow enough to preserve bare implicit-call candidates without swallowing nested generated resolution diagnostics (2026-04-02, current session)**:
   - trustworthy setup:
     - `src/compiler/semantic/resolvers/name_resolver.cr` no longer suppresses every lowercase unresolved identifier inside method bodies

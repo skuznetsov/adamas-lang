@@ -42,9 +42,15 @@ module CrystalV2
           @generated_overlay.dup
         end
 
-        def resolve_names
+        def resolve_names(*, defer_method_body_receiverless_candidates : Bool = false)
           debug_hook("analyzer.resolve.start", "roots=#{analysis_root_count}")
-          result = NameResolver.new(@program, @global_context.symbol_table, extra_roots: @generated_overlay.top_level_roots).resolve
+          result = NameResolver.new(
+            @program,
+            @global_context.symbol_table,
+            extra_roots: @generated_overlay.top_level_roots,
+            generated_overlay: @generated_overlay,
+            defer_method_body_receiverless_candidates: defer_method_body_receiverless_candidates,
+          ).resolve
           @name_resolver_diagnostics = result.diagnostics
           debug_hook("analyzer.resolve.finish", "diagnostics=#{@name_resolver_diagnostics.size}")
           result

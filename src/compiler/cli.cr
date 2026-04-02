@@ -6113,7 +6113,7 @@ module CrystalV2
           return 1
         end
 
-        resolve_result = analyzer.resolve_names
+        resolve_result = analyzer.resolve_names(defer_method_body_receiverless_candidates: true)
         resolution_diagnostics = resolve_result.diagnostics.dup
         resolution_diagnostics.each do |diagnostic|
           err_io.puts aggregate.format_shadow_diagnostic(diagnostic, sources_by_path)
@@ -6652,7 +6652,7 @@ module CrystalV2
           source_for_path_provider: ->(path : String) { aggregate.source_for_path(path) },
         )
         aggregate.attach_generated_overlay(analyzer.generated_overlay)
-        resolve_result = analyzer.resolve_names
+        resolve_result = analyzer.resolve_names(defer_method_body_receiverless_candidates: true)
         analyzer.infer_types(resolve_result.identifier_symbols)
         semantic_inventory = Semantic::CompileShadowDeclarationInventory.from_symbol_table(
           analyzer.global_context.symbol_table

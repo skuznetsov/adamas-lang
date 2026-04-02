@@ -141,7 +141,7 @@ describe Semantic::NameResolver do
     result.diagnostics.first.message.should eq("undefined local variable or method 'missing'")
   end
 
-  it "defers unresolved bare callee candidates inside method bodies" do
+  it "emits diagnostics for unresolved bare receiverless sends inside method bodies" do
     source = <<-CR
       class Box
         def run
@@ -157,6 +157,47 @@ describe Semantic::NameResolver do
     analyzer = Semantic::Analyzer.new(program)
     analyzer.collect_symbols
     result = analyzer.resolve_names
+
+    result.diagnostics.size.should eq(1)
+    result.diagnostics.first.message.should eq("undefined local variable or method 'missing'")
+  end
+
+  it "defers unresolved bare receiverless sends inside method bodies when explicitly enabled" do
+    source = <<-CR
+      class Box
+        def run
+          missing
+        end
+      end
+    CR
+
+    lexer = Frontend::Lexer.new(source)
+    parser = Frontend::Parser.new(lexer)
+    program = parser.parse_program
+
+    analyzer = Semantic::Analyzer.new(program)
+    analyzer.collect_symbols
+    result = analyzer.resolve_names(defer_method_body_receiverless_candidates: true)
+
+    result.diagnostics.should be_empty
+  end
+
+  it "defers unresolved receiverless identifiers nested inside method-body expressions when explicitly enabled" do
+    source = <<-CR
+      class Box
+        def run
+          missing + 1
+        end
+      end
+    CR
+
+    lexer = Frontend::Lexer.new(source)
+    parser = Frontend::Parser.new(lexer)
+    program = parser.parse_program
+
+    analyzer = Semantic::Analyzer.new(program)
+    analyzer.collect_symbols
+    result = analyzer.resolve_names(defer_method_body_receiverless_candidates: true)
 
     result.diagnostics.should be_empty
   end
@@ -180,6 +221,76 @@ describe Semantic::NameResolver do
 
     result.diagnostics.size.should eq(1)
     result.diagnostics.first.message.should eq("undefined local variable or method 'missing'")
+  end
+
+  it "ignores numeric identifiers inside type-expression generic args" do
+    source = <<-CR
+      class Box
+        def run
+          uninitialized UInt8[4]
+        end
+      end
+    CR
+
+    parser = Frontend::Parser.new(Frontend::Lexer.new(source))
+    program = parser.parse_program
+    analyzer = Semantic::Analyzer.new(program)
+    analyzer.collect_symbols
+    result = analyzer.resolve_names
+
+    result.diagnostics.should be_empty
+  end
+
+  it "ignores parser-stored typeof identifiers inside generic type arguments" do
+    source = <<-CR
+      class Hash(K, V)
+        def initialize
+        end
+
+        def []=(key : K, value : V) : V
+          value
+        end
+      end
+
+      module Enumerable(T)
+        abstract def each(& : T ->)
+
+        def self.element_type(value) : T
+          uninitialized T
+        end
+
+        def each_with_object(obj, &)
+          each do |elem|
+            yield elem, obj
+          end
+          obj
+        end
+
+        def to_hish
+          each_with_object(Hash(typeof(Enumerable.element_type(self)[0]), typeof(Enumerable.element_type(self)[1])).new) do |item, hash|
+            hash[item[0]] = item[1]
+          end
+        end
+      end
+
+      class Pairs
+        include Enumerable(Tuple(Int32, String))
+
+        def each(& : Tuple(Int32, String) ->)
+          yield {1, "x"}
+        end
+      end
+
+      Pairs.new.to_hish
+    CR
+
+    parser = Frontend::Parser.new(Frontend::Lexer.new(source))
+    program = parser.parse_program
+    analyzer = Semantic::Analyzer.new(program)
+    analyzer.collect_symbols
+    result = analyzer.resolve_names
+
+    result.diagnostics.should be_empty
   end
 
   it "resolves method parameters within method scope" do

@@ -2,6 +2,7 @@ require "../../frontend/ast"
 require "../../frontend/parser/diagnostic"
 require "../symbol_table"
 require "../symbol"
+require "../generated_overlay"
 
 module CrystalV2
   module Compiler
@@ -29,7 +30,13 @@ module CrystalV2
           end
         end
 
-        def initialize(@program : Program, root_table : SymbolTable, @extra_roots : Array(ExprId) = [] of ExprId)
+        def initialize(
+          @program : Program,
+          root_table : SymbolTable,
+          @extra_roots : Array(ExprId) = [] of ExprId,
+          @generated_overlay : GeneratedOverlay = GeneratedOverlay.empty,
+          @defer_method_body_receiverless_candidates : Bool = false,
+        )
           @arena = @program.ast_arena
           @string_pool = @program.string_pool
           @root_table = root_table
@@ -372,6 +379,8 @@ module CrystalV2
         private def type_expression_identifier_name?(name : String) : Bool
           return true if constant_like_name?(name)
           return true if brace_type_expression_identifier_name?(name)
+          return true if name.starts_with?("typeof(") && name.ends_with?(')')
+          return true if numeric_type_expression_identifier_name?(name)
 
           stripped = if name.starts_with?("**")
                        name[2..]
@@ -386,6 +395,12 @@ module CrystalV2
 
         private def brace_type_expression_identifier_name?(name : String) : Bool
           name.starts_with?('{') && name.ends_with?('}')
+        end
+
+        private def numeric_type_expression_identifier_name?(name : String) : Bool
+          return false if name.empty?
+
+          name.each_byte.all? { |byte| byte >= '0'.ord && byte <= '9'.ord }
         end
 
         private def type_application_call?(call : Frontend::CallNode) : Bool
@@ -1042,9 +1057,10 @@ module CrystalV2
         private def suppress_unresolved_callee_diagnostic?(name : String, node_id : ExprId) : Bool
           return false unless in_method_body?
           return false if name.empty? || constant_like_name?(name)
-          return true if @call_callee_depth > 0
+          return false unless @defer_method_body_receiverless_candidates
+          return false if @generated_overlay.generated_node?(node_id)
 
-          @bare_statement_candidate_stack.includes?(node_id)
+          true
         end
 
         private def visit_expression_list(expressions : Array(ExprId)) : Nil
