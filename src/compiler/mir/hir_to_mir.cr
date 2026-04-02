@@ -240,6 +240,13 @@ module Crystal
               slow_funcs.not_nil! << {hir_func.name, ms} if ms > 1.0
             end
           rescue ex : IndexError
+            if ENV.has_key?("DEBUG_MIR_INDEX_ERROR")
+              STDERR.puts "[MIR_INDEX_ERROR] idx=#{idx + 1}/#{total} func=#{hir_func.name}"
+              STDERR.puts "[MIR_INDEX_ERROR] message=#{ex.message}"
+              ex.backtrace.first(10).each do |line|
+                STDERR.puts "[MIR_INDEX_ERROR] bt=#{line}"
+              end
+            end
             raise "Index out of bounds in function #{idx + 1}/#{total}: #{hir_func.name}\n#{ex.message}\n#{ex.backtrace.first(10).join("\n")}"
           rescue ex : KeyError
             raise "Missing hash key in function #{idx + 1}/#{total}: #{hir_func.name}\n#{ex.message}\n#{ex.backtrace.first(10).join("\n")}"
