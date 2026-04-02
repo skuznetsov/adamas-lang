@@ -4797,7 +4797,9 @@ module CrystalV2
           # Crystal allows any type as condition (truthy check)
           # No need to require Bool type
 
-          infer_block_result(node.body)
+          infer_expression_with_truthy_condition_narrowings(condition_id) do
+            infer_block_result(node.body)
+          end
 
           @context.nil_type
         end
