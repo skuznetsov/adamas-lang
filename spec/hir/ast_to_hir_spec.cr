@@ -186,6 +186,125 @@ describe Crystal::HIR::AstToHir do
     end
   end
 
+  describe "absolute generic paths" do
+    it "keeps ::Set(String) rooted at the top level inside nested modules" do
+      converter = lower_program(<<-CRYSTAL)
+        class Set(T)
+          def self.new
+            uninitialized self
+          end
+
+          def includes?(value : T)
+            true
+          end
+        end
+
+        module Crystal::MIR
+          def self.probe
+            seen = ::Set(String).new
+            seen.includes?("x")
+          end
+        end
+      CRYSTAL
+
+      func = converter.module.functions.find { |f| f.name == "Crystal::MIR.probe$arity0" }
+      func.should_not be_nil
+
+      text = hir_text(func.not_nil!)
+      text.should contain("call ::Set(String).new()")
+      text.should_not contain("__crystal_v2_string_includes_string")
+
+      new_call = func.not_nil!.blocks[0].instructions.find do |inst|
+        inst.is_a?(Crystal::HIR::Call) && inst.as(Crystal::HIR::Call).method_name.ends_with?(".new")
+      end
+      new_call.should_not be_nil
+      desc = converter.module.get_type_descriptor(new_call.not_nil!.as(Crystal::HIR::Call).type)
+      desc.should_not be_nil
+      desc.not_nil!.name.should contain("Set(String)")
+    end
+
+    it "keeps ::Set(String) rooted at the top level inside nested classes" do
+      converter = lower_program(<<-CRYSTAL)
+        class Set(T)
+          def self.new
+            uninitialized self
+          end
+
+          def includes?(value : T)
+            true
+          end
+        end
+
+        module Crystal::MIR
+          class HIRToMIRLowering
+            def prepare
+              seen_names = ::Set(String).new
+              seen_names.includes?("x")
+            end
+          end
+        end
+      CRYSTAL
+
+      func = converter.module.functions.find { |f| f.name == "Crystal::MIR::HIRToMIRLowering#prepare$arity0" }
+      func.should_not be_nil
+
+      text = hir_text(func.not_nil!)
+      text.should contain("call ::Set(String).new()")
+      text.should_not contain("__crystal_v2_string_includes_string")
+    end
+
+    it "does not drift ::Set(String).new receivers into nested Set types" do
+      converter = lower_program(<<-CRYSTAL)
+        class Set(T)
+          def self.new
+            uninitialized self
+          end
+
+          def includes?(value : T)
+            true
+          end
+        end
+
+        module Crystal::MIR
+          class Set(T)
+            def self.new
+              uninitialized self
+            end
+
+            def includes?(value : T)
+              false
+            end
+          end
+
+          class HIRToMIRLowering
+            def prepare
+              seen_names = ::Set(String).new
+              seen_names.includes?("x")
+            end
+          end
+        end
+      CRYSTAL
+
+      func = converter.module.functions.find { |f| f.name == "Crystal::MIR::HIRToMIRLowering#prepare$arity0" }
+      func.should_not be_nil
+
+      new_call = func.not_nil!.blocks[0].instructions.find do |inst|
+        inst.is_a?(Crystal::HIR::Call) && inst.as(Crystal::HIR::Call).method_name.ends_with?(".new")
+      end
+      new_call.should_not be_nil
+
+      new_desc = converter.module.get_type_descriptor(new_call.not_nil!.as(Crystal::HIR::Call).type)
+      new_desc.should_not be_nil
+      new_desc.not_nil!.name.should eq("Set(String)")
+
+      includes_call = func.not_nil!.blocks[0].instructions.find do |inst|
+        inst.is_a?(Crystal::HIR::Call) && inst.as(Crystal::HIR::Call).method_name.includes?("includes?")
+      end
+      includes_call.should_not be_nil
+      includes_call.not_nil!.as(Crystal::HIR::Call).method_name.should eq("Set(String)#includes?$String")
+    end
+  end
+
   # ═══════════════════════════════════════════════════════════════════════════
   # POSITIVE TESTS: LITERALS
   # ═══════════════════════════════════════════════════════════════════════════
@@ -694,6 +813,73 @@ describe Crystal::HIR::AstToHir do
         .find { |inst| inst.is_a?(Crystal::HIR::Call) && inst.as(Crystal::HIR::Call).method_name.includes?("Foo#bar") }
       call.should_not be_nil
       call.not_nil!.as(Crystal::HIR::Call).args.size.should eq(2)
+    end
+
+    it "binds default params before inline yield lowering" do
+      code = <<-CRYSTAL
+        def each_with_index_like(offset = 0)
+          while offset < 3
+            yield offset
+            offset += 1
+          end
+        end
+
+        def probe
+          each_with_index_like do |i|
+            i + 10
+          end
+        end
+      CRYSTAL
+
+      converter = lower_program(code)
+      func = converter.module.functions.find { |f| f.name.split("$").first == "probe" }
+      func.should_not be_nil
+
+      text = hir_text(func.not_nil!)
+      text.should contain("literal 0 : Int32")
+      text.should_not contain("local \"offset\" : 0")
+    end
+
+    it "synthesizes zero-arg allocators for generic structs before MIR lowering" do
+      code = <<-CRYSTAL
+        struct SmallVec(T, N)
+          @arr : Array(T)
+
+          def initialize
+            @arr = Array(T).new(N)
+          end
+
+          def size : Int32
+            @arr.size
+          end
+        end
+
+        def probe
+          vec = SmallVec(Int32, 64).new
+          vec.size
+        end
+      CRYSTAL
+
+      converter = lower_program(code)
+      func = converter.module.functions.find { |f| f.name.split("$").first == "probe" }
+      func.should_not be_nil
+
+      text = hir_text(func.not_nil!)
+      text.should contain("call SmallVec(Int32, 64).new()")
+
+      new_func = converter.module.functions.find { |f| f.name == "SmallVec(Int32, 64).new" }
+      new_func.should_not be_nil
+
+      new_text = hir_text(new_func.not_nil!)
+      new_text.should contain("SmallVec(Int32, 64)#initialize()")
+    end
+
+    it "preserves typed default literals in lowered function params" do
+      func = lower_function("def foo(x : Int32 = 1)\n  x\nend")
+
+      func.params.size.should eq(1)
+      func.params[0].name.should eq("x")
+      func.params[0].default_literal.should eq("1")
     end
 
     it "prefers non-block overload when no block is passed" do

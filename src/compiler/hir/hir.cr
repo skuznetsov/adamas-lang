@@ -1309,6 +1309,11 @@ module Crystal::HIR
       param
     end
 
+    def set_param_default_literal(index : Int32, default_literal : String?) : Nil
+      return if index < 0 || index >= @param_default_literals.size
+      @param_default_literals[index] = default_literal
+    end
+
     def record_value_location(value_id : ValueId, location : SourceLocation) : Nil
       @value_locations[value_id] = location
     end

@@ -8105,11 +8105,8 @@ module Crystal::HIR
       when CrystalV2::Compiler::Frontend::ConstantNode
         (safe_slice_to_string(node.name) || "")
       when CrystalV2::Compiler::Frontend::PathNode
-        left = node.left
-        left_name = left ? resolve_path_like_name(left.not_nil!) : nil
-        right_name = resolve_path_like_name(node.right)
-        return nil unless right_name
-        left_name ? "#{left_name}::#{right_name}" : right_name
+        path = collect_path_string(node)
+        path.empty? ? nil : path
       when CrystalV2::Compiler::Frontend::GenericNode
         resolve_path_like_name(node.base_type)
       else
@@ -46253,11 +46250,25 @@ module Crystal::HIR
 
     # Lower a generic type reference like Array(Int32), Hash(String, Int32)
     # This is used when calling static methods like Array(Int32).new
+    private def resolve_generic_base_names(base_name : String) : {String, String}
+      absolute_base = base_name.starts_with?("::")
+      resolved_base_name = resolve_type_name_in_context(base_name)
+      if absolute_base
+        resolved_base_name = strip_absolute_name_prefix(resolved_base_name) if resolved_base_name.starts_with?("::")
+        resolved_base_name = resolve_type_alias_chain_no_context(resolved_base_name)
+        resolved_base_name = "::#{resolved_base_name}" unless resolved_base_name.starts_with?("::")
+      else
+        resolved_base_name = resolve_type_alias_chain(resolved_base_name)
+      end
+
+      lookup_base_name = strip_absolute_name_prefix(resolved_base_name)
+      {resolved_base_name, lookup_base_name}
+    end
+
     private def lower_generic_type_ref(ctx : LoweringContext, node : CrystalV2::Compiler::Frontend::GenericNode) : ValueId
       # Extract base type name
       base_name = resolve_path_like_name(node.base_type) || "Unknown"
-      base_name = resolve_type_name_in_context(base_name)
-      base_name = resolve_type_alias_chain(base_name)
+      base_name, lookup_base_name = resolve_generic_base_names(base_name)
 
       # Extract type arguments, substituting any type parameters
       normalize_typeof_name = ->(type_name : String) : String {
@@ -46340,7 +46351,7 @@ module Crystal::HIR
 
       # Monomorphize if needed
       if !@monomorphized.includes?(class_name)
-        monomorphize_generic_class(base_name, type_args, class_name)
+        monomorphize_generic_class(lookup_base_name, type_args, class_name)
       end
 
       # Return a type reference literal (for use as receiver in static calls)
@@ -46363,14 +46374,14 @@ module Crystal::HIR
       type_name = resolve_type_name_in_context(type_name)
       type_name = substitute_type_params_in_type_name(type_name)
       if info = split_generic_base_and_args(type_name)
-        base_name = resolve_type_alias_chain(info.base)
+        base_name, lookup_base_name = resolve_generic_base_names(info.base)
         type_args = split_generic_type_args(info.args).map do |arg|
           arg = substitute_type_params_in_type_name(arg)
           normalize_tuple_literal_type_name(arg)
         end
         type_name = "#{base_name}(#{type_args.join(", ")})"
-        if base_name != "Proc" && !@monomorphized.includes?(type_name)
-          monomorphize_generic_class(base_name, type_args, type_name)
+        if lookup_base_name != "Proc" && !@monomorphized.includes?(type_name)
+          monomorphize_generic_class(lookup_base_name, type_args, type_name)
         end
       else
         type_name = resolve_type_alias_chain(type_name)
@@ -54416,6 +54427,41 @@ module Crystal::HIR
         end
       end
 
+      unless func_def
+        if name_parts.is_class && name_parts.method == "new" && name_parts.suffix.nil?
+          allocator_owner = name_parts.owner
+          if info = generic_owner_info(allocator_owner)
+            allocator_owner = info.owner
+            if !@class_info.has_key?(allocator_owner) &&
+               !@monomorphized.includes?(allocator_owner) &&
+               concrete_type_args?(info.args) &&
+               !@suppress_monomorphization
+              monomorphize_generic_class(info.base, info.args, allocator_owner)
+            end
+          end
+
+          allocator_resolved_owner = normalize_method_owner_name(resolve_type_name_in_context(allocator_owner))
+          if !@class_info.has_key?(allocator_resolved_owner)
+            if resolved_short = resolve_short_type_in_namespace_chain(allocator_resolved_owner)
+              allocator_resolved_owner = resolved_short
+            end
+          end
+
+          if class_info = @class_info[allocator_resolved_owner]?
+            if class_info.is_struct
+              allocator_name = allocator_new_name_for(allocator_resolved_owner)
+              unless @module.has_function?(allocator_name)
+                generate_allocator(allocator_resolved_owner, class_info)
+              end
+              if @module.has_function?(allocator_name)
+                debug_hook("function.lookup.generated", "name=#{name} kind=zero_arg_struct_allocator owner=#{allocator_resolved_owner}")
+                return
+              end
+            end
+          end
+        end
+      end
+
       # Track lookup branch stats
       if env_has?("CRYSTAL_V2_PHASE_STATS")
         branch_key = lookup_branch || (func_def ? "unknown" : "miss")
@@ -56708,8 +56754,7 @@ module Crystal::HIR
           # Generic type like Box(Int32).new()
           base_name = resolve_path_like_name(obj_node.base_type)
           if base_name
-            base_name = resolve_type_name_in_context(base_name)
-            base_name = resolve_type_alias_chain(base_name)
+            base_name, lookup_base_name = resolve_generic_base_names(base_name)
             normalize_typeof_name = ->(type_name : String) : String {
               # Keep unions in generic args (e.g. `Slice(Int32 | Pointer(UInt8))`)
               # so we don't degrade specialization to `Pointer(Void)`.
@@ -56740,17 +56785,17 @@ module Crystal::HIR
             class_name_str = "#{base_name}(#{type_args.join(", ")})"
             class_name_str = substitute_type_params_in_type_name(class_name_str)
 
-            if base_name == "Proc"
+            if lookup_base_name == "Proc"
               proc_return_type_name = class_name_str
               class_name_str = "Proc"
             else
               # Monomorphize generic class if not already done
               if !@monomorphized.includes?(class_name_str)
-                monomorphize_generic_class(base_name, type_args, class_name_str)
+                monomorphize_generic_class(lookup_base_name, type_args, class_name_str)
               end
               # If not a class, try as a generic module
-              if !@monomorphized.includes?(class_name_str) && @module_defs.has_key?(base_name)
-                monomorphize_generic_module(base_name, type_args, class_name_str)
+              if !@monomorphized.includes?(class_name_str) && @module_defs.has_key?(lookup_base_name)
+                monomorphize_generic_module(lookup_base_name, type_args, class_name_str)
               end
             end
           end
@@ -56764,23 +56809,21 @@ module Crystal::HIR
               type_name = substitute_type_params_in_type_name(type_name)
               if type_name[0]?.try(&.uppercase?) || type_name.includes?("::")
                 if info = split_generic_base_and_args(type_name)
-                  base_name = info.base
-                  base_name = resolve_type_name_in_context(base_name) unless base_name.includes?("::")
-                  base_name = resolve_type_alias_chain(base_name)
+                  base_name, lookup_base_name = resolve_generic_base_names(info.base)
                   type_args = split_generic_type_args(info.args).map do |arg|
                     arg = substitute_type_params_in_type_name(arg)
                     normalize_tuple_literal_type_name(arg)
                   end
                   class_name_str = "#{base_name}(#{type_args.join(", ")})"
-                  if base_name == "Proc"
+                  if lookup_base_name == "Proc"
                     proc_return_type_name = class_name_str
                     class_name_str = "Proc"
                   else
                     if !@monomorphized.includes?(class_name_str)
-                      monomorphize_generic_class(base_name, type_args, class_name_str)
+                      monomorphize_generic_class(lookup_base_name, type_args, class_name_str)
                     end
-                    if !@monomorphized.includes?(class_name_str) && @module_defs.has_key?(base_name)
-                      monomorphize_generic_module(base_name, type_args, class_name_str)
+                    if !@monomorphized.includes?(class_name_str) && @module_defs.has_key?(lookup_base_name)
+                      monomorphize_generic_module(lookup_base_name, type_args, class_name_str)
                     end
                   end
                 else
@@ -56899,18 +56942,18 @@ module Crystal::HIR
             type_name = substitute_type_params_in_type_name(type_name)
             if type_name[0]?.try(&.uppercase?) || type_name.includes?("::")
               if info = split_generic_base_and_args(type_name)
-                base_name = resolve_type_alias_chain(info.base)
+                base_name, lookup_base_name = resolve_generic_base_names(info.base)
                 type_args = split_generic_type_args(info.args).map do |arg|
                   arg = substitute_type_params_in_type_name(arg)
                   normalize_tuple_literal_type_name(arg)
                 end
                 class_name_str = "#{base_name}(#{type_args.join(", ")})"
-                if base_name == "Proc"
+                if lookup_base_name == "Proc"
                   proc_return_type_name = class_name_str
                   class_name_str = "Proc"
                 else
                   if !@monomorphized.includes?(class_name_str)
-                    monomorphize_generic_class(base_name, type_args, class_name_str)
+                    monomorphize_generic_class(lookup_base_name, type_args, class_name_str)
                   end
                 end
               else
@@ -68710,6 +68753,7 @@ module Crystal::HIR
 
           # Bind function parameters to call arguments
           if params = func_def.params
+            inline_func_context = function_context_from_name(inline_key)
             each_param_with_index(params) do |param, idx|
               if pname = param.name
                 param_name = (safe_slice_to_string(pname) || "")
@@ -68732,6 +68776,24 @@ module Crystal::HIR
                   ctx.register_local(param_name, arg_id)
                   # Also register the type so it's available when the parameter is accessed
                   ctx.register_type(arg_id, ctx.type_of(arg_id))
+                elsif default_expr = param.default_value
+                  default_id = with_arena(callee_arena) do
+                    if ta = param.type_annotation
+                      type_name = normalize_declared_type_name((safe_slice_to_string(ta) || ""), inline_func_context)
+                      type_ref = type_ref_for_name(type_name)
+                      lower_arg_with_expected_type(ctx, default_expr, type_ref, type_name, inline_func_context)
+                    else
+                      lower_expr(ctx, default_expr)
+                    end
+                  end
+                  ctx.register_local(param_name, default_id)
+                  if ta = param.type_annotation
+                    type_name = normalize_declared_type_name((safe_slice_to_string(ta) || ""), inline_func_context)
+                    type_ref = type_ref_for_name(type_name)
+                    ctx.register_type(default_id, type_ref) unless type_ref == TypeRef::VOID
+                  else
+                    ctx.register_type(default_id, ctx.type_of(default_id))
+                  end
                 end
               end
             end
@@ -69476,8 +69538,7 @@ module Crystal::HIR
         when CrystalV2::Compiler::Frontend::GenericNode
           base_name = resolve_path_like_name(obj_node.base_type)
           if base_name
-            base_name = resolve_type_name_in_context(base_name)
-            base_name = resolve_type_alias_chain(base_name)
+            base_name, lookup_base_name = resolve_generic_base_names(base_name)
             normalize_typeof_name = ->(type_name : String) : String {
               if type_name == "Void" || type_name == "Unknown"
                 "Pointer(Void)"
@@ -69495,7 +69556,7 @@ module Crystal::HIR
             static_owner_name = "#{base_name}(#{type_args.join(", ")})"
             static_owner_name = substitute_type_params_in_type_name(static_owner_name)
             if !@monomorphized.includes?(static_owner_name)
-              monomorphize_generic_class(base_name, type_args, static_owner_name)
+              monomorphize_generic_class(lookup_base_name, type_args, static_owner_name)
             end
           end
         when CrystalV2::Compiler::Frontend::PathNode
@@ -70589,8 +70650,7 @@ module Crystal::HIR
         # Generic type like Hash(Int32, Int32).new
         base_name = resolve_path_like_name(obj_node.base_type)
         if base_name
-          base_name = resolve_type_name_in_context(base_name)
-          base_name = resolve_type_alias_chain(base_name)
+          base_name, lookup_base_name = resolve_generic_base_names(base_name)
           normalize_typeof_name = ->(type_name : String) : String {
             # Keep unions in generic args (e.g. `Slice(Int32 | Pointer(UInt8))`)
             # so we don't degrade specialization to `Pointer(Void)`.
@@ -70613,7 +70673,37 @@ module Crystal::HIR
           class_name_str = substitute_type_params_in_type_name(class_name_str)
           # Monomorphize generic class if not already done
           if !@monomorphized.includes?(class_name_str)
-            monomorphize_generic_class(base_name, type_args, class_name_str)
+            monomorphize_generic_class(lookup_base_name, type_args, class_name_str)
+          end
+        end
+      elsif obj_node.is_a?(CrystalV2::Compiler::Frontend::CallNode)
+        # Type-like call receiver such as ::Set(String).new parsed without parens.
+        if type_like_call_expr?(obj_node)
+          if type_name = stringify_type_expr(node.object)
+            type_name = substitute_type_params_in_type_name(type_name)
+            if type_name[0]?.try(&.uppercase?) || type_name.includes?("::")
+              if info = split_generic_base_and_args(type_name)
+                base_name, lookup_base_name = resolve_generic_base_names(info.base)
+                type_args = split_generic_type_args(info.args).map do |arg|
+                  arg = substitute_type_params_in_type_name(arg)
+                  normalize_tuple_literal_type_name(arg)
+                end
+                class_name_str = "#{base_name}(#{type_args.join(", ")})"
+                if lookup_base_name == "Proc"
+                  proc_return_type_name = class_name_str
+                  class_name_str = "Proc"
+                else
+                  if !@monomorphized.includes?(class_name_str)
+                    monomorphize_generic_class(lookup_base_name, type_args, class_name_str)
+                  end
+                  if !@monomorphized.includes?(class_name_str) && @module_defs.has_key?(lookup_base_name)
+                    monomorphize_generic_module(lookup_base_name, type_args, class_name_str)
+                  end
+                end
+              else
+                class_name_str = resolve_type_alias_chain(type_name)
+              end
+            end
           end
         end
       elsif obj_node.is_a?(CrystalV2::Compiler::Frontend::PathNode)
@@ -72846,6 +72936,7 @@ module Crystal::HIR
       class_name_str : String,
       member_name : String,
     ) : ValueId
+      lookup_class_name = class_name_str.starts_with?("::") ? strip_absolute_name_prefix(class_name_str) : class_name_str
       if extern_global = @module.get_extern_global(class_name_str, member_name)
         class_var_get = ClassVarGet.new(ctx.next_id, extern_global.type, class_name_str, member_name)
         ctx.emit(class_var_get)
@@ -72862,7 +72953,7 @@ module Crystal::HIR
                            resolve_class_method_with_inheritance(class_name_str, member_name) || "#{class_name_str}.#{member_name}"
                          end
       if member_name == "new"
-        if class_info = @class_info[class_name_str]?
+        if class_info = @class_info[class_name_str]? || @class_info[lookup_class_name]?
           generate_allocator(class_name_str, class_info, force: true)
         end
       end
@@ -72877,7 +72968,7 @@ module Crystal::HIR
         return cast.id
       end
 
-      enum_name = resolve_enum_name(class_name_str)
+      enum_name = resolve_enum_name(class_name_str) || resolve_enum_name(lookup_class_name)
 
       args, _ = apply_default_args(ctx, [] of ValueId, member_name, full_method_name, false, false)
       if enum_name && member_name == "new"
@@ -72927,10 +73018,14 @@ module Crystal::HIR
       if member_name == "new" && return_type == TypeRef::VOID
         if enum_name
           return_type = enum_base_type(enum_name)
-        elsif class_info = @class_info[class_name_str]?
+        elsif class_info = @class_info[class_name_str]? || @class_info[lookup_class_name]?
           return_type = class_info.type_ref
         else
-          return_type = TypeRef::POINTER
+          direct_type = type_ref_for_name(class_name_str)
+          if direct_type == TypeRef::VOID && lookup_class_name != class_name_str
+            direct_type = type_ref_for_name(lookup_class_name)
+          end
+          return_type = direct_type == TypeRef::VOID ? TypeRef::POINTER : direct_type
         end
       end
 

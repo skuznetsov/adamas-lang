@@ -23,25 +23,33 @@ module Crystal
       getter hir_module : HIR::Module
       getter mir_module : Crystal::MIR::Module
 
+      private alias VDispatchCandidate = NamedTuple(
+        type_id: Int32,
+        func: Crystal::MIR::Function?,
+        type_ref: TypeRef?,     # for Union unwrap
+        variant_id: Int32?,     # for Union unwrap
+        dispatch_class: String? # for nested class dispatch
+      )
+
       # Mapping from HIR ValueId to MIR ValueId per function
-      @value_map : Hash(HIR::ValueId, ValueId)
+      @value_map : ::Hash(HIR::ValueId, ValueId)
 
       # Mapping from HIR ValueId to HIR TypeRef per function
       # (needed to lower HIR::Cast into correct MIR::CastKind)
-      @hir_value_types : Hash(HIR::ValueId, HIR::TypeRef)
+      @hir_value_types : ::Hash(HIR::ValueId, HIR::TypeRef)
 
       # HIR values that are compile-time constants (Literal, GlobalRef) — no rc_inc/rc_dec needed
-      @hir_constant_values : Set(HIR::ValueId)
+      @hir_constant_values : ::Set(HIR::ValueId)
 
       # Mapping from HIR BlockId to MIR BlockId
-      @block_map : Array(BlockId?)
+      @block_map : ::Array(BlockId?)
 
       # Pending phi nodes that need incoming resolution after all blocks are lowered
-      @pending_phis : Array(Tuple(Phi, HIR::Phi))
+      @pending_phis : ::Array(Tuple(Phi, HIR::Phi))
 
       # Stack slots (mutable locals / block params) that require loads on reads
-      @stack_slot_values : Set(ValueId)
-      @stack_slot_types : Hash(ValueId, TypeRef)
+      @stack_slot_values : ::Set(ValueId)
+      @stack_slot_types : ::Hash(ValueId, TypeRef)
 
       # Current function being lowered
       @current_hir_func : HIR::Function?
@@ -51,60 +59,60 @@ module Crystal
       @slab_frame_enabled : Bool
       @current_slab_frame : Bool = false
       @current_block_param_id : HIR::ValueId?
-      @class_children : Hash(String, Array(String))
+      @class_children : ::Hash(String, ::Array(String))
 
       # Index: base_name (before "$") → first matching MIR function.
       # Eliminates O(N) linear scans during fuzzy call resolution.
-      @function_by_base_name : Hash(String, Crystal::MIR::Function) = {} of String => Crystal::MIR::Function
-      @functions_by_base_name_all : Hash(String, Array(Crystal::MIR::Function)) = {} of String => Array(Crystal::MIR::Function)
+      @function_by_base_name : ::Hash(String, Crystal::MIR::Function) = {} of String => Crystal::MIR::Function
+      @functions_by_base_name_all : ::Hash(String, ::Array(Crystal::MIR::Function)) = {} of String => ::Array(Crystal::MIR::Function)
 
       # Index: class_name → Array of functions belonging to that class.
       # Eliminates O(N) full-scan of all functions during virtual dispatch.
-      @functions_by_class : Hash(String, Array(Crystal::MIR::Function)) = {} of String => Array(Crystal::MIR::Function)
+      @functions_by_class : ::Hash(String, ::Array(Crystal::MIR::Function)) = {} of String => ::Array(Crystal::MIR::Function)
 
       # Caches for virtual dispatch (avoid repeated hierarchy traversals)
-      @subclass_cache : Hash(String, Array(String)) = {} of String => Array(String)
-      @module_includers_cache : Hash(String, Array(String)) = {} of String => Array(String)
-      @resolve_virtual_cache : Hash({String, String, Int32?, Bool}, Crystal::MIR::Function?) = {} of {String, String, Int32?, Bool} => Crystal::MIR::Function?
+      @subclass_cache : ::Hash(String, ::Array(String)) = {} of String => ::Array(String)
+      @module_includers_cache : ::Hash(String, ::Array(String)) = {} of String => ::Array(String)
+      @resolve_virtual_cache : ::Hash({String, String, Int32?, Bool}, Crystal::MIR::Function?) = {} of {String, String, Int32?, Bool} => Crystal::MIR::Function?
 
       # Reusable buffer for virtual dispatch candidates to avoid repeated array
       # allocations that cause heavy GC pressure in the Boehm collector.
-      @vdispatch_candidates_buf = Array(NamedTuple(type_id: Int32, type_ref: TypeRef, variant_id: Int32, func: Crystal::MIR::Function?, dispatch_class: String?)).new(initial_capacity: 16)
+      @vdispatch_candidates_buf = ::Array(VDispatchCandidate).new(initial_capacity: 16)
 
       # Memory strategy (note: we use inline selection, not global assigner)
 
       # Track HIR values that point to inline struct data (from Pointer(Struct).value).
       # These need special FieldGet handling: GEP without load for struct-typed fields.
-      @inline_struct_ptrs : Set(HIR::ValueId) = Set(HIR::ValueId).new
+      @inline_struct_ptrs : ::Set(HIR::ValueId) = ::Set(HIR::ValueId).new
 
       # ARC cleanup: track stack slots holding ARC-allocated pointers per function
       # so we can emit rc_dec at return points. Each slot is initialized to null
       # at function entry and stores the ARC pointer after allocation.
       # Tuple: (MIR slot ValueId, atomic?)
-      @arc_cleanup_slots : Array({ValueId, Bool}) = [] of {ValueId, Bool}
+      @arc_cleanup_slots : ::Array({ValueId, Bool}) = [] of {ValueId, Bool}
 
       # Maps HIR Allocate ValueId → MIR cleanup slot ValueId
       # Used to store ARC pointers into their cleanup slots after allocation
-      @arc_slot_map : Hash(HIR::ValueId, ValueId) = {} of HIR::ValueId => ValueId
+      @arc_slot_map : ::Hash(HIR::ValueId, ValueId) = {} of HIR::ValueId => ValueId
 
       # Per-block ARC cleanup: reference-typed Call results that need rc_dec at block end.
       # Each entry is (HIR value ID, MIR value ID) for a Call result with reference type.
-      @block_arc_temps : Array({HIR::ValueId, ValueId}) = [] of {HIR::ValueId, ValueId}
+      @block_arc_temps : ::Array({HIR::ValueId, ValueId}) = [] of {HIR::ValueId, ValueId}
 
       # Ownership transfer: values whose ownership was moved to a field/constructor.
       # These skip both rc_inc (at FieldSet) and rc_dec (at block end).
-      @moved_values : Set(HIR::ValueId) = Set(HIR::ValueId).new
+      @moved_values : ::Set(HIR::ValueId) = ::Set(HIR::ValueId).new
 
       # Remaining uses of each value in the current block (for last-use detection).
-      @remaining_uses : Hash(HIR::ValueId, Int32) = Hash(HIR::ValueId, Int32).new(0)
+      @remaining_uses : ::Hash(HIR::ValueId, Int32) = ::Hash(HIR::ValueId, Int32).new(0)
 
       # Values that are used outside their defining block — must NOT be rc_dec'd at block end.
-      @cross_block_values : Set(HIR::ValueId) = Set(HIR::ValueId).new
+      @cross_block_values : ::Set(HIR::ValueId) = ::Set(HIR::ValueId).new
 
       # Functions whose return value is a freshly allocated ARC object (+1 ownership).
       # Call results from these functions can be safely rc_dec'd at the caller's scope exit.
       # Built by interprocedural analysis tracing return values back to Allocate instructions.
-      @owned_return_funcs : Set(String) = Set(String).new
+      @owned_return_funcs : ::Set(String) = ::Set(String).new
 
       @[AlwaysInline]
       private def mir_setup_trace? : Bool
@@ -115,7 +123,7 @@ module Crystal
       getter stats : LoweringStats = LoweringStats.new
 
       # Mapping from MIR function index to HIR function index (built during prepare())
-      getter mir_to_hir_indices : Array(Int32) = [] of Int32
+      getter mir_to_hir_indices : ::Array(Int32) = [] of Int32
 
       def initialize(@hir_module : HIR::Module, *, slab_frame : Bool = false)
         trace = mir_setup_trace?
@@ -125,19 +133,19 @@ module Crystal
         @value_map = {} of HIR::ValueId => ValueId
         STDERR.puts "[MIR_INIT] value_map" if trace
         @hir_value_types = {} of HIR::ValueId => HIR::TypeRef
-        @hir_constant_values = Set(HIR::ValueId).new
+        @hir_constant_values = ::Set(HIR::ValueId).new
         STDERR.puts "[MIR_INIT] hir_value_types" if trace
         @block_map = [] of BlockId?
         STDERR.puts "[MIR_INIT] block_map" if trace
         @pending_phis = [] of Tuple(Phi, HIR::Phi)
         STDERR.puts "[MIR_INIT] pending_phis" if trace
-        @stack_slot_values = Set(ValueId).new
+        @stack_slot_values = ::Set(ValueId).new
         STDERR.puts "[MIR_INIT] stack_slot_values" if trace
         @stack_slot_types = {} of ValueId => TypeRef
         STDERR.puts "[MIR_INIT] stack_slot_types" if trace
         @slab_frame_enabled = slab_frame
         @current_block_param_id = nil
-        @class_children = {} of String => Array(String)
+        @class_children = {} of String => ::Array(String)
         STDERR.puts "[MIR_INIT] class_children" if trace
         @hir_module.class_parents.each do |name, parent|
           next unless parent
@@ -162,7 +170,7 @@ module Crystal
 
         total = @hir_module.functions.size
         STDERR.puts "    Pass 1: Creating #{total} function stubs..." if progress
-        seen_names = Set(String).new
+        seen_names = ::Set(String).new
         @mir_to_hir_indices.clear
         @hir_module.functions.each_with_index do |hir_func, idx|
           if progress && (idx % 5000 == 0 || idx == total - 1)
@@ -223,7 +231,7 @@ module Crystal
         total = @hir_module.functions.size
         STDERR.puts "    Pass 2: Lowering #{total} function bodies..." if progress
         profile_mir = ENV.has_key?("CRYSTAL_V2_MIR_PROFILE")
-        processed = Set(String).new
+        processed = ::Set(String).new
         slow_funcs = [] of Tuple(String, Float64) if profile_mir
         @hir_module.functions.each_with_index do |hir_func, idx|
           if progress && (idx % 5000 == 0 || idx == total - 1)
@@ -263,7 +271,7 @@ module Crystal
       # Lower function bodies for a range of HIR functions (for parallel workers).
       # Call prepare() first. Worker gets its own copy via fork.
       def lower_bodies_range(start_idx : Int32, end_idx : Int32) : Nil
-        processed = Set(String).new
+        processed = ::Set(String).new
         start_idx.upto(end_idx - 1) do |idx|
           next if idx >= @hir_module.functions.size
           hir_func = @hir_module.functions[idx]
@@ -286,14 +294,14 @@ module Crystal
 
       # Register class variables as globals
       # Takes array of (global_name, hir_type, initial_value?)
-      def register_globals(globals : Array(Tuple(String, HIR::TypeRef, Int64?)))
+      def register_globals(globals : ::Array(Tuple(String, HIR::TypeRef, Int64?)))
         globals.each do |global_name, hir_type, initial_value|
           mir_type = convert_type(hir_type)
           @mir_module.add_global(global_name, mir_type, initial_value)
         end
       end
 
-      def register_extern_globals(globals : Array(HIR::ExternGlobal))
+      def register_extern_globals(globals : ::Array(HIR::ExternGlobal))
         globals.each do |glob|
           mir_type = convert_type(glob.type)
           @mir_module.add_extern_global(glob.real_name, mir_type)
@@ -306,7 +314,7 @@ module Crystal
 
       # Register union types from AstToHir
       # Creates union types in MIR TypeRegistry and stores descriptors for debug info
-      def register_union_types(union_descriptors : Hash(MIR::TypeRef, UnionDescriptor))
+      def register_union_types(union_descriptors : ::Hash(MIR::TypeRef, UnionDescriptor))
         union_descriptors.each do |mir_type_ref, descriptor|
           # Register descriptor in MIR module (for debug info / LLVM metadata)
           @mir_module.register_union(mir_type_ref, descriptor)
@@ -362,47 +370,45 @@ module Crystal
       # in different contexts (e.g., .new vs initialize).  Only one is registered
       # via register_union_types; this method ensures ALL union TypeRefs in the
       # HIR type descriptor table resolve correctly in the MIR type registry.
-      def register_union_type_aliases(type_descriptors : Array(Crystal::HIR::TypeDescriptor))
+      def register_union_type_aliases(type_descriptors : ::Array(Crystal::HIR::TypeDescriptor))
         registered_count = 0
-        type_descriptors.each_with_index do |desc, idx|
-          next unless desc.kind == HIR::TypeKind::Union
+        idx = 0
+        while idx < type_descriptors.size
+          desc = type_descriptors.unsafe_fetch(idx)
+          if desc.kind == HIR::TypeKind::Union
+            hir_ref = Crystal::HIR::TypeRef.new(Crystal::HIR::TypeRef::FIRST_USER_TYPE + idx.to_u32)
+            mir_ref = convert_type(hir_ref)
 
-          hir_ref = Crystal::HIR::TypeRef.new(Crystal::HIR::TypeRef::FIRST_USER_TYPE + idx.to_u32)
-          mir_ref = convert_type(hir_ref)
+            unless @mir_module.type_registry.get(mir_ref)
+              canonical = @mir_module.type_registry.get_by_name(desc.name)
+              if canonical && canonical.kind.union?
+                alias_type = @mir_module.type_registry.create_type_with_id(
+                  mir_ref.id,
+                  TypeKind::Union,
+                  desc.name,
+                  canonical.size,
+                  canonical.alignment
+                )
 
-          # Skip if already registered
-          next if @mir_module.type_registry.get(mir_ref)
+                if variants = canonical.variants
+                  variants.each { |v| alias_type.add_variant(v) }
+                end
 
-          # Look up the canonical union type by name
-          canonical = @mir_module.type_registry.get_by_name(desc.name)
-          next unless canonical && canonical.kind.union?
-
-          # Register this MIR TypeRef as the same union type
-          alias_type = @mir_module.type_registry.create_type_with_id(
-            mir_ref.id,
-            TypeKind::Union,
-            desc.name,
-            canonical.size,
-            canonical.alignment
-          )
-
-          # Copy variants from the canonical union
-          if variants = canonical.variants
-            variants.each { |v| alias_type.add_variant(v) }
+                if canonical_descriptor = @mir_module.get_union_descriptor(TypeRef.new(canonical.id))
+                  @mir_module.register_union(mir_ref, canonical_descriptor)
+                end
+                registered_count += 1
+              end
+            end
           end
-
-          # Also register the union descriptor under this TypeRef
-          if canonical_descriptor = @mir_module.get_union_descriptor(TypeRef.new(canonical.id))
-            @mir_module.register_union(mir_ref, canonical_descriptor)
-          end
-          registered_count += 1
+          idx += 1
         end
         STDERR.puts "[UNION_ALIAS] Registered #{registered_count} union type aliases" if registered_count > 0
       end
 
       # Register class/struct types with their fields
       # This allows LLVM backend to generate proper struct types
-      def register_class_types(class_infos : Hash(String, Crystal::HIR::ClassInfo))
+      def register_class_types(class_infos : ::Hash(String, Crystal::HIR::ClassInfo))
         class_infos.each do |class_name, info|
           # Skip primitive types - they should not be registered as struct types
           # (their LLVM types are handled by the TypeRef case statement)
@@ -457,44 +463,50 @@ module Crystal
 
       # Register enum types so the LLVM backend maps them to i32 instead of ptr.
       # Enums in Crystal are integer types (i32 by default).
-      def register_enum_types(enum_names : Set(String), type_descriptors : Array(Crystal::HIR::TypeDescriptor))
-        type_descriptors.each_with_index do |desc, idx|
-          next unless enum_names.includes?(desc.name)
-
-          hir_ref = Crystal::HIR::TypeRef.new(Crystal::HIR::TypeRef::FIRST_USER_TYPE + idx.to_u32)
-          mir_ref = convert_type(hir_ref)
-          next if @mir_module.type_registry.get(mir_ref)
-
-          @mir_module.type_registry.create_type_with_id(
-            mir_ref.id,
-            TypeKind::Enum,
-            desc.name,
-            4_u64, # i32 size
-            4_u32  # i32 alignment
-          )
+      def register_enum_types(enum_names : ::Set(String), type_descriptors : ::Array(Crystal::HIR::TypeDescriptor))
+        idx = 0
+        while idx < type_descriptors.size
+          desc = type_descriptors.unsafe_fetch(idx)
+          if enum_names.includes?(desc.name)
+            hir_ref = Crystal::HIR::TypeRef.new(Crystal::HIR::TypeRef::FIRST_USER_TYPE + idx.to_u32)
+            mir_ref = convert_type(hir_ref)
+            unless @mir_module.type_registry.get(mir_ref)
+              @mir_module.type_registry.create_type_with_id(
+                mir_ref.id,
+                TypeKind::Enum,
+                desc.name,
+                4_u64, # i32 size
+                4_u32  # i32 alignment
+              )
+            end
+          end
+          idx += 1
         end
       end
 
       # Register module types so module literals can be represented as runtime singletons.
       # This prevents lowering module values as null pointers (which breaks vdispatch).
-      def register_module_types(type_descriptors : Array(Crystal::HIR::TypeDescriptor))
-        type_descriptors.each_with_index do |desc, idx|
-          next unless desc.kind == Crystal::HIR::TypeKind::Module
+      def register_module_types(type_descriptors : ::Array(Crystal::HIR::TypeDescriptor))
+        idx = 0
+        while idx < type_descriptors.size
+          desc = type_descriptors.unsafe_fetch(idx)
+          if desc.kind == Crystal::HIR::TypeKind::Module
+            hir_ref = Crystal::HIR::TypeRef.new(Crystal::HIR::TypeRef::FIRST_USER_TYPE + idx.to_u32)
+            mir_ref = convert_type(hir_ref)
 
-          hir_ref = Crystal::HIR::TypeRef.new(Crystal::HIR::TypeRef::FIRST_USER_TYPE + idx.to_u32)
-          mir_ref = convert_type(hir_ref)
+            unless @mir_module.type_registry.get(mir_ref)
+              @mir_module.type_registry.create_type_with_id(
+                mir_ref.id,
+                TypeKind::Reference,
+                desc.name,
+                pointer_word_bytes_u64,
+                pointer_word_align_u32
+              )
+            end
 
-          unless @mir_module.type_registry.get(mir_ref)
-            @mir_module.type_registry.create_type_with_id(
-              mir_ref.id,
-              TypeKind::Reference,
-              desc.name,
-              pointer_word_bytes_u64,
-              pointer_word_align_u32
-            )
+            @mir_module.register_module_type(mir_ref)
           end
-
-          @mir_module.register_module_type(mir_ref)
+          idx += 1
         end
       end
 
@@ -502,49 +514,47 @@ module Crystal
       # Without this, codegen can't recover runtime type ids for Array(T)/Pointer(T)
       # specializations and falls back to 0, which breaks dynamic dispatch on values
       # returned from unions/calls (for example Hash#[] -> Array(Tuple(...))#size).
-      def register_container_types(type_descriptors : Array(Crystal::HIR::TypeDescriptor))
-        type_descriptors.each_with_index do |desc, idx|
-          mir_kind = canonical_container_kind_for_descriptor(desc)
-          next unless mir_kind
+      def register_container_types(type_descriptors : ::Array(Crystal::HIR::TypeDescriptor))
+        idx = 0
+        while idx < type_descriptors.size
+          desc = type_descriptors.unsafe_fetch(idx)
+          if mir_kind = canonical_container_kind_for_descriptor(desc)
+            hir_ref = Crystal::HIR::TypeRef.new(Crystal::HIR::TypeRef::FIRST_USER_TYPE + idx.to_u32)
+            mir_ref = convert_type(hir_ref)
+            existing_mir_type = @mir_module.type_registry.get(mir_ref)
+            if ENV["DEBUG_CONTAINER_REGISTER"]? && (desc.name.includes?("Array(") || desc.name.includes?("Pointer("))
+              existing = existing_mir_type ? "#{existing_mir_type.name}:#{existing_mir_type.kind}" : "nil"
+              STDERR.puts "[CONTAINER_REG] kind=#{desc.kind} name=#{desc.name} hir=#{hir_ref.id} mir=#{mir_ref.id} existing=#{existing} params=#{desc.type_params.map(&.id).join(",")}"
+            end
 
-          hir_ref = Crystal::HIR::TypeRef.new(Crystal::HIR::TypeRef::FIRST_USER_TYPE + idx.to_u32)
-          mir_ref = convert_type(hir_ref)
-          existing_mir_type = @mir_module.type_registry.get(mir_ref)
-          if ENV["DEBUG_CONTAINER_REGISTER"]? && (desc.name.includes?("Array(") || desc.name.includes?("Pointer("))
-            existing = existing_mir_type ? "#{existing_mir_type.name}:#{existing_mir_type.kind}" : "nil"
-            STDERR.puts "[CONTAINER_REG] kind=#{desc.kind} name=#{desc.name} hir=#{hir_ref.id} mir=#{mir_ref.id} existing=#{existing} params=#{desc.type_params.map(&.id).join(",")}"
-          end
+            size, align = container_layout_for_descriptor(desc)
 
-          size, align = container_layout_for_descriptor(desc)
+            mir_type = if existing_mir_type
+                         existing_mir_type.kind = mir_kind
+                         existing_mir_type.name = desc.name
+                         existing_mir_type.size = size
+                         existing_mir_type.alignment = align
+                         existing_mir_type
+                       else
+                         @mir_module.type_registry.create_type_with_id(
+                           mir_ref.id,
+                           mir_kind,
+                           desc.name,
+                           size,
+                           align
+                         )
+                       end
 
-          mir_type = if existing_mir_type
-                       # Earlier passes can reserve this TypeRef with an alias-shaped
-                       # name/kind (for example Array(Tuple(Int32, ArenaLike)):Reference).
-                       # Canonicalize the slot here so later Array(T) runtime type-id
-                       # lookups and vdispatch agree on the same metadata.
-                       existing_mir_type.kind = mir_kind
-                       existing_mir_type.name = desc.name
-                       existing_mir_type.size = size
-                       existing_mir_type.alignment = align
-                       existing_mir_type
-                     else
-                       @mir_module.type_registry.create_type_with_id(
-                         mir_ref.id,
-                         mir_kind,
-                         desc.name,
-                         size,
-                         align
-                       )
-                     end
-
-          if elem_hir_ref = desc.type_params.first?
-            elem_mir_ref = convert_type(elem_hir_ref)
-            elem_type = @mir_module.type_registry.get(elem_mir_ref) || @mir_module.type_registry.get(TypeRef::POINTER)
-            mir_type.set_element_type(elem_type) if elem_type
-            if ENV["DEBUG_CONTAINER_REGISTER"]? && desc.name.includes?("Array(")
-              STDERR.puts "[CONTAINER_REG] element name=#{desc.name} elem_hir=#{elem_hir_ref.id} elem_mir=#{elem_mir_ref.id} elem_type=#{elem_type.try(&.name) || "nil"}"
+            if elem_hir_ref = desc.type_params.first?
+              elem_mir_ref = convert_type(elem_hir_ref)
+              elem_type = @mir_module.type_registry.get(elem_mir_ref) || @mir_module.type_registry.get(TypeRef::POINTER)
+              mir_type.set_element_type(elem_type) if elem_type
+              if ENV["DEBUG_CONTAINER_REGISTER"]? && desc.name.includes?("Array(")
+                STDERR.puts "[CONTAINER_REG] element name=#{desc.name} elem_hir=#{elem_hir_ref.id} elem_mir=#{elem_mir_ref.id} elem_type=#{elem_type.try(&.name) || "nil"}"
+              end
             end
           end
+          idx += 1
         end
       end
 
@@ -565,70 +575,67 @@ module Crystal
 
       # Register tuple/named tuple types from HIR descriptors.
       # This enables tuple element access to lower as struct GEPs instead of array layout.
-      def register_tuple_types(type_descriptors : Array(Crystal::HIR::TypeDescriptor))
-        type_descriptors.each_with_index do |desc, idx|
-          next unless desc.kind == Crystal::HIR::TypeKind::Tuple || desc.kind == Crystal::HIR::TypeKind::NamedTuple
+      def register_tuple_types(type_descriptors : ::Array(Crystal::HIR::TypeDescriptor))
+        idx = 0
+        while idx < type_descriptors.size
+          desc = type_descriptors.unsafe_fetch(idx)
+          if desc.kind == Crystal::HIR::TypeKind::Tuple || desc.kind == Crystal::HIR::TypeKind::NamedTuple
+            hir_ref = Crystal::HIR::TypeRef.new(Crystal::HIR::TypeRef::FIRST_USER_TYPE + idx.to_u32)
+            mir_ref = convert_type(hir_ref)
+            existing_mir_type = @mir_module.type_registry.get(mir_ref)
 
-          hir_ref = Crystal::HIR::TypeRef.new(Crystal::HIR::TypeRef::FIRST_USER_TYPE + idx.to_u32)
-          mir_ref = convert_type(hir_ref)
-          existing_mir_type = @mir_module.type_registry.get(mir_ref)
+            element_refs = desc.type_params.map { |t| convert_type(t) }
 
-          element_refs = desc.type_params.map { |t| convert_type(t) }
-
-          size = 0_u64
-          align = 1_u32
-          element_refs.each do |elem_ref|
-            elem_type = @mir_module.type_registry.get(elem_ref)
-            # For reference types (classes, structs) our compiler heap-allocates them,
-            # so in a Tuple they occupy pointer size (8 bytes), not their full struct size.
-            # Only primitives and enums are stored inline with their actual size.
-            elem_kind = elem_type.try(&.kind)
-            is_inline = elem_kind && (elem_kind.primitive? || elem_kind.enum?)
-            elem_size = if is_inline && elem_type && elem_type.size > 0
-                          elem_type.size
-                        elsif elem_kind && elem_kind.union? && elem_type && elem_type.size > 8
-                          elem_type.size # Union discriminated repr needs more than a pointer
-                        else
-                          pointer_word_bytes_u64
-                        end
-            elem_align = if is_inline && elem_type && elem_type.alignment > 0
-                           elem_type.alignment
-                         else
-                           pointer_word_align_u32
-                         end
-            size = align_u64(size, elem_align)
-            size += elem_size
-            align = elem_align if elem_align > align
-          end
-          size = align_u64(size, align)
-
-          # If the type was pre-registered with default pointer size, update it
-          # with the correct computed size and element info.
-          if existing_mir_type
-            if size > existing_mir_type.size
-              existing_mir_type.size = size
-              existing_mir_type.alignment = align
+            size = 0_u64
+            align = 1_u32
+            element_refs.each do |elem_ref|
+              elem_type = @mir_module.type_registry.get(elem_ref)
+              elem_kind = elem_type.try(&.kind)
+              is_inline = elem_kind && (elem_kind.primitive? || elem_kind.enum?)
+              elem_size = if is_inline && elem_type && elem_type.size > 0
+                            elem_type.size
+                          elsif elem_kind && elem_kind.union? && elem_type && elem_type.size > 8
+                            elem_type.size
+                          else
+                            pointer_word_bytes_u64
+                          end
+              elem_align = if is_inline && elem_type && elem_type.alignment > 0
+                             elem_type.alignment
+                           else
+                             pointer_word_align_u32
+                           end
+              size = align_u64(size, elem_align)
+              size += elem_size
+              align = elem_align if elem_align > align
             end
-            # Add element types if not already populated
-            if existing_mir_type.element_types.nil? || existing_mir_type.element_types.try(&.empty?)
+            size = align_u64(size, align)
+
+            if existing_mir_type
+              if size > existing_mir_type.size
+                existing_mir_type.size = size
+                existing_mir_type.alignment = align
+              end
+              if existing_mir_type.element_types.nil? || existing_mir_type.element_types.try(&.empty?)
+                element_refs.each do |elem_ref|
+                  elem_type = @mir_module.type_registry.get(elem_ref) || @mir_module.type_registry.get(TypeRef::POINTER)
+                  existing_mir_type.add_element_type(elem_type) if elem_type
+                end
+              end
+            else
+              mir_type = @mir_module.type_registry.create_type_with_id(
+                mir_ref.id,
+                TypeKind::Tuple,
+                desc.name,
+                size,
+                align
+              )
               element_refs.each do |elem_ref|
                 elem_type = @mir_module.type_registry.get(elem_ref) || @mir_module.type_registry.get(TypeRef::POINTER)
-                existing_mir_type.add_element_type(elem_type) if elem_type
+                mir_type.add_element_type(elem_type) if elem_type
               end
             end
-          else
-            mir_type = @mir_module.type_registry.create_type_with_id(
-              mir_ref.id,
-              TypeKind::Tuple,
-              desc.name,
-              size,
-              align
-            )
-            element_refs.each do |elem_ref|
-              elem_type = @mir_module.type_registry.get(elem_ref) || @mir_module.type_registry.get(TypeRef::POINTER)
-              mir_type.add_element_type(elem_type) if elem_type
-            end
           end
+          idx += 1
         end
       end
 
@@ -896,16 +903,16 @@ module Crystal
         # Reinitialize per-function lowering maps instead of mutating in place.
         @value_map = {} of HIR::ValueId => ValueId
         @hir_value_types = {} of HIR::ValueId => HIR::TypeRef
-        @hir_constant_values = Set(HIR::ValueId).new
+        @hir_constant_values = ::Set(HIR::ValueId).new
         @block_map = [] of BlockId?
         @pending_phis = [] of Tuple(Phi, HIR::Phi)
-        @stack_slot_values = Set(ValueId).new
+        @stack_slot_values = ::Set(ValueId).new
         @stack_slot_types = {} of ValueId => TypeRef
-        @inline_struct_ptrs = Set(HIR::ValueId).new
+        @inline_struct_ptrs = ::Set(HIR::ValueId).new
         @arc_cleanup_slots = [] of {ValueId, Bool}
         @arc_slot_map = {} of HIR::ValueId => ValueId
         @block_arc_temps = [] of {HIR::ValueId, ValueId}
-        @cross_block_values = Set(HIR::ValueId).new
+        @cross_block_values = ::Set(HIR::ValueId).new
         STDERR.puts "[MIR_LOWER] caches reinitialized" if mir_lower_trace?
         @builder = Builder.new(mir_func)
         # In MIR::Function, entry block is created first and is always 0.
@@ -963,7 +970,7 @@ module Crystal
         builder.current_block = 0_u32
 
         # Build set of HIR values that escape the function
-        escaping_values = Set(HIR::ValueId).new
+        escaping_values = ::Set(HIR::ValueId).new
         hir_func.blocks.each do |hir_block|
           # Returned values
           if ret = hir_block.terminator.as?(HIR::Return)
@@ -1014,7 +1021,7 @@ module Crystal
             value_def_block[inst.id] = hir_block.id
           end
         end
-        @cross_block_values = Set(HIR::ValueId).new
+        @cross_block_values = ::Set(HIR::ValueId).new
         hir_func.blocks.each do |hir_block|
           hir_block.instructions.each do |inst|
             hir_instruction_used_values(inst).each do |used_val|
@@ -1150,16 +1157,16 @@ module Crystal
         builder.current_block = original_block
       end
 
-      private def order_blocks_for(hir_func : HIR::Function) : Array(HIR::Block)
+      private def order_blocks_for(hir_func : HIR::Function) : ::Array(HIR::Block)
         # Inlined block returns and later HIR cleanup can leave successor ids that
         # no longer have a concrete block in `hir_func.blocks`. MIR lowering
         # already knows how to synthesize unreachable targets for such dangling
         # edges, so block ordering must traverse by id instead of assuming
         # `block.id == @blocks[index]`.
-        by_id = Hash(HIR::BlockId, HIR::Block).new(initial_capacity: hir_func.blocks.size)
+        by_id = ::Hash(HIR::BlockId, HIR::Block).new(initial_capacity: hir_func.blocks.size)
         hir_func.blocks.each { |block| by_id[block.id] = block }
 
-        visited = Set(HIR::BlockId).new(initial_capacity: hir_func.blocks.size)
+        visited = ::Set(HIR::BlockId).new(initial_capacity: hir_func.blocks.size)
         ordered = [] of HIR::Block
         stack = [] of HIR::BlockId
         stack << hir_func.entry_block
@@ -1203,7 +1210,7 @@ module Crystal
         ordered
       end
 
-      private def block_successors(block : HIR::Block) : Array(HIR::BlockId)
+      private def block_successors(block : HIR::Block) : ::Array(HIR::BlockId)
         case term = block.terminator
         when HIR::Branch
           [term.then_block, term.else_block]
@@ -1573,7 +1580,7 @@ module Crystal
           end
 
           # Pre-compute byte offsets for tuple element types (instead of using field index)
-          tuple_byte_offsets : Array(UInt32)? = nil
+          tuple_byte_offsets : ::Array(UInt32)? = nil
           if mir_type = @mir_module.type_registry.get(mir_type_ref)
             if mir_type.kind.tuple? && (elements = mir_type.element_types)
               offsets = [] of UInt32
@@ -1656,7 +1663,7 @@ module Crystal
       end
 
       # Extract all ValueIds referenced by an HIR instruction (for cross-block analysis).
-      private def hir_instruction_used_values(inst : HIR::Value) : Array(HIR::ValueId)
+      private def hir_instruction_used_values(inst : HIR::Value) : ::Array(HIR::ValueId)
         case inst
         when HIR::Call
           result = inst.args.dup
@@ -1699,7 +1706,7 @@ module Crystal
       end
 
       # Extract ValueIds referenced by an HIR terminator.
-      private def hir_terminator_used_values(term : HIR::Terminator) : Array(HIR::ValueId)
+      private def hir_terminator_used_values(term : HIR::Terminator) : ::Array(HIR::ValueId)
         case term
         when HIR::Return then term.value ? [term.value.not_nil!] : [] of HIR::ValueId
         when HIR::Branch then [term.condition]
@@ -1712,10 +1719,10 @@ module Crystal
       # These functions return +1 ownership — callers can safely rc_dec the result.
       # Uses interprocedural fixed-point analysis tracing return values back to origins.
       private def build_owned_return_set
-        @owned_return_funcs = Set(String).new
+        @owned_return_funcs = ::Set(String).new
 
         # Build instruction map per function for fast lookup
-        func_inst_map = {} of String => Hash(HIR::ValueId, HIR::Value)
+        func_inst_map = {} of String => ::Hash(HIR::ValueId, HIR::Value)
         @hir_module.functions.each do |func|
           inst_map = {} of HIR::ValueId => HIR::Value
           func.blocks.each do |block|
@@ -1750,7 +1757,7 @@ module Crystal
       # Check if a function returns a direct Allocate (with ARC strategy) result.
       # Exclude functions where the return value is also stored via ClassVarSet/PointerStore/IndexSet
       # (these consume ownership without rc_inc, so the return is borrowed).
-      private def returns_allocated_value?(func : HIR::Function, inst_map : Hash(HIR::ValueId, HIR::Value)) : Bool
+      private def returns_allocated_value?(func : HIR::Function, inst_map : ::Hash(HIR::ValueId, HIR::Value)) : Bool
         func.blocks.each do |block|
           if ret = block.terminator.as?(HIR::Return)
             if val_id = ret.value
@@ -1768,7 +1775,7 @@ module Crystal
 
       # Check if a function returns a Call result from a function in @owned_return_funcs.
       # Uses exact name matching only — fuzzy matching causes false positives.
-      private def returns_owned_call_result?(func : HIR::Function, inst_map : Hash(HIR::ValueId, HIR::Value)) : Bool
+      private def returns_owned_call_result?(func : HIR::Function, inst_map : ::Hash(HIR::ValueId, HIR::Value)) : Bool
         func.blocks.each do |block|
           if ret = block.terminator.as?(HIR::Return)
             if val_id = ret.value
@@ -1786,9 +1793,9 @@ module Crystal
       # Check if a value (or any Copy/Cast alias of it) is stored via ClassVarSet,
       # PointerStore, or IndexSet in the function. These stores consume ownership
       # without rc_inc, so a return of the same value is borrowed, not owned.
-      private def value_ownership_consumed?(val_id : HIR::ValueId, func : HIR::Function, inst_map : Hash(HIR::ValueId, HIR::Value)) : Bool
+      private def value_ownership_consumed?(val_id : HIR::ValueId, func : HIR::Function, inst_map : ::Hash(HIR::ValueId, HIR::Value)) : Bool
         # Collect all aliases of val_id (the value and all Copy/Cast/Phi chains)
-        aliases = Set(HIR::ValueId).new
+        aliases = ::Set(HIR::ValueId).new
         queue = Deque(HIR::ValueId).new
         queue << val_id
         # Also trace backward to find the original value
@@ -1828,8 +1835,8 @@ module Crystal
       end
 
       # Trace a value backward through Copy/Cast/Phi to find origin instructions.
-      private def trace_value_origins(value_id : HIR::ValueId, inst_map : Hash(HIR::ValueId, HIR::Value)) : Array(HIR::Value)
-        visited = Set(HIR::ValueId).new
+      private def trace_value_origins(value_id : HIR::ValueId, inst_map : ::Hash(HIR::ValueId, HIR::Value)) : ::Array(HIR::Value)
+        visited = ::Set(HIR::ValueId).new
         queue = Deque(HIR::ValueId).new
         queue << value_id
         origins = [] of HIR::Value
@@ -2255,7 +2262,7 @@ module Crystal
 
       # Extract value operands from an HIR instruction for use-counting.
       # Returns the HIR ValueIds that this instruction reads/uses.
-      private def hir_value_operands(inst : HIR::Value) : Array(HIR::ValueId)
+      private def hir_value_operands(inst : HIR::Value) : ::Array(HIR::ValueId)
         case inst
         when HIR::FieldSet
           [inst.value, inst.object]
@@ -3129,22 +3136,13 @@ module Crystal
         Class # receiver is a class pointer - use gep header + load type_id
       end
 
-      # Unified candidate structure for vdispatch
-      private alias VDispatchCandidate = NamedTuple(
-        type_id: Int32,
-        func: Crystal::MIR::Function?,
-        type_ref: TypeRef?,     # for Union unwrap
-        variant_id: Int32?,     # for Union unwrap
-        dispatch_class: String? # for nested class dispatch
-)
-
       # Unified vdispatch body generator - handles both Union and Class dispatch
       # Returns the phi node if return type is non-void, nil otherwise
       private def generate_vdispatch_body(
         dispatch_func : Crystal::MIR::Function,
         dispatch_builder : Builder,
-        param_values : Array(ValueId),
-        candidates : Array(VDispatchCandidate),
+        param_values : ::Array(ValueId),
+        candidates : ::Array(VDispatchCandidate),
         kind : VDispatchKind,
         method_suffix : String?,
         hir_call : HIR::Call?,
@@ -3319,7 +3317,7 @@ module Crystal
         phi
       end
 
-      private def lower_virtual_dispatch(call : HIR::Call, args : Array(ValueId)) : ValueId?
+      private def lower_virtual_dispatch(call : HIR::Call, args : ::Array(ValueId)) : ValueId?
         recv_id = call.receiver
         return nil unless recv_id
 
@@ -3362,8 +3360,12 @@ module Crystal
         # with an incomplete union descriptor candidate set. Augment candidates
         # directly from HIR union variants so virtual dispatch remains complete.
         if recv_desc.kind == HIR::TypeKind::Union
-          existing_variant_ids = Set(Int32).new
-          old_candidates.each { |c| existing_variant_ids.add(c[:variant_id]) }
+          existing_variant_ids = ::Set(Int32).new
+          old_candidates.each do |c|
+            if variant_id = c[:variant_id]
+              existing_variant_ids.add(variant_id)
+            end
+          end
 
           variant_names = [] of String
           recv_desc.type_params.each do |variant_hir_ref|
@@ -3541,7 +3543,7 @@ module Crystal
         nil
       end
 
-      private def split_union_type_name_loose(type_name : String) : Array(String)
+      private def split_union_type_name_loose(type_name : String) : ::Array(String)
         normalized = if type_name.includes?('|')
                        type_name
                      elsif type_name.includes?("$_$OR$_")
@@ -3581,12 +3583,12 @@ module Crystal
         parts
       end
 
-      private def subclasses_for(base : String) : Array(String)
+      private def subclasses_for(base : String) : ::Array(String)
         if cached = @subclass_cache[base]?
           return cached
         end
         result = [] of String
-        seen = Set(String).new
+        seen = ::Set(String).new
         queue = @class_children[base]?.dup || [] of String
         until queue.empty?
           name = queue.shift
@@ -3601,7 +3603,7 @@ module Crystal
         result
       end
 
-      private def module_includers_for(module_name : String) : Array(String)
+      private def module_includers_for(module_name : String) : ::Array(String)
         if cached = @module_includers_cache[module_name]?
           return cached
         end
@@ -3717,7 +3719,7 @@ module Crystal
         recv_type : HIR::TypeRef,
         method_suffix : String,
         arg_count : Int32,
-      ) : Array(NamedTuple(type_id: Int32, type_ref: TypeRef, variant_id: Int32, func: Crystal::MIR::Function?, dispatch_class: String?))
+      ) : ::Array(VDispatchCandidate)
         candidates = @vdispatch_candidates_buf
         candidates.clear
 
@@ -3798,17 +3800,19 @@ module Crystal
           # default). We walk up the class hierarchy checking siblings.
           unless missing_classes.empty?
             # Build a set of class names that already have candidates
-            have_candidate = Set(String).new
+            have_candidate = ::Set(String).new
             candidates.each do |c|
-              if mt = @mir_module.type_registry.get(c[:type_ref])
-                have_candidate.add(mt.name)
+              if type_ref = c[:type_ref]
+                if mt = @mir_module.type_registry.get(type_ref)
+                  have_candidate.add(mt.name)
+                end
               end
             end
             missing_classes.each do |class_name, mir_type|
               fallback_func = nil.as(Crystal::MIR::Function?)
               # Walk up the class hierarchy from the missing class
               current = class_name
-              walked = Set(String).new
+              walked = ::Set(String).new
               while !current.empty? && !walked.includes?(current)
                 walked.add(current)
                 # Check if any sibling (subclass of current's parent) has a candidate
@@ -3837,7 +3841,7 @@ module Crystal
             end
           end
         elsif recv_desc.kind == HIR::TypeKind::Module || recv_desc.kind == HIR::TypeKind::Generic
-          seen = Set(String).new
+          seen = ::Set(String).new
           module_name = recv_desc.name
           if recv_desc.kind == HIR::TypeKind::Generic
             # Keep the full generic name (e.g., "Enumerable(Fiber)") so that
@@ -4029,7 +4033,7 @@ module Crystal
                       end
 
         current = class_name
-        seen = Set(String).new
+        seen = ::Set(String).new
         while !current.empty? && !seen.includes?(current)
           seen.add(current)
 
@@ -4147,7 +4151,7 @@ module Crystal
         parent_class : String,
         method_suffix : String,
         arg_count : Int32,
-        have_candidate : Set(String),
+        have_candidate : ::Set(String),
       ) : Crystal::MIR::Function?
         # Check parent itself first
         parent_func_name = "#{parent_class}##{method_suffix}"
@@ -4238,9 +4242,9 @@ module Crystal
       private def should_drop_dispatch_receiver?(
         receiver : HIR::ValueId?,
         method_name : String,
-        mir_args : Array(ValueId),
+        mir_args : ::Array(ValueId),
         callee_func : MIR::Function,
-        hir_args_with_receiver : Array(HIR::ValueId),
+        hir_args_with_receiver : ::Array(HIR::ValueId),
       ) : Bool
         callee_param_count = callee_func.params.size
         return false unless receiver
@@ -4300,10 +4304,10 @@ module Crystal
       # This handles concrete type -> union type coercion (e.g., Int32 -> Int32 | Nil)
       private def coerce_call_args(
         builder : MIR::Builder,
-        mir_args : Array(ValueId),
-        hir_args : Array(HIR::ValueId),
+        mir_args : ::Array(ValueId),
+        hir_args : ::Array(HIR::ValueId),
         func : MIR::Function,
-      ) : Array(ValueId)
+      ) : ::Array(ValueId)
         params = func.params
         result = [] of ValueId
 
@@ -4738,7 +4742,7 @@ module Crystal
           if is_concrete
             # Concrete leaf type — resolve statically
             # Collect matching type_ids (check_type + subclasses)
-            matching_type_ids = Set(UInt32).new
+            matching_type_ids = ::Set(UInt32).new
             matching_type_ids << mir_check_type.id
             if check_mir_type = @mir_module.type_registry.get(mir_check_type)
               subclasses_for(check_mir_type.name).each do |sub_name|
@@ -5330,7 +5334,7 @@ module Crystal
           builder.extern_call("__crystal_v2_raise_msg", [msg_val], TypeRef::VOID)
         else
           # Re-raise current exception
-          empty_args = Array(ValueId).new
+          empty_args = ::Array(ValueId).new
           builder.extern_call("__crystal_v2_reraise", empty_args, TypeRef::VOID)
         end
       end
@@ -5339,7 +5343,7 @@ module Crystal
         builder = @builder.not_nil!
 
         # Get current exception from runtime
-        empty_args = Array(ValueId).new
+        empty_args = ::Array(ValueId).new
         builder.extern_call("__crystal_v2_get_exception", empty_args, TypeRef::POINTER)
       end
 
