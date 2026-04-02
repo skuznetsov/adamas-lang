@@ -1,7 +1,33 @@
 # LANDMARKS
 
-Updated: 2026-04-01
+Updated: 2026-04-02
 Context: compiler/bootstrap/stage2-stability
+
+[LM-434|verified]: After [LM-433], the remaining isolated HIR frontier was not
+another missing require edge and not a taint-propagation gap, but a direct
+policy drift inside `src/compiler/hir/memory_strategy.cr`. The decisive
+evidence chain had three parts. First, the live focused spec
+`spec/hir/memory_strategy_spec.cr` stayed red in exactly two places, both
+expecting FFI-exposed allocations to land on `GC` while the implementation
+returned `Stack`. Second, the architecture contract in
+`docs/codegen_architecture.md` already spelled out the intended rule:
+`Cyclic` or `FFIExposed` should immediately choose `GC`. Third, the weakest
+assumption was falsified directly with a tiny host eval carrier: running
+`TaintAnalyzer` over `Allocate -> Call(receiver: alloc, "to_unsafe")` printed
+`FFIExposed | Mutable`, proving the taint itself was present and the mismatch
+lived only in the decision tree. The verified fix is narrow and local:
+balanced and aggressive strategy selection now treat `taints.ffi_exposed?` the
+same way as `taints.cyclic?`, and the spec file now also locks the aggressive
+mode case explicitly. The focused spec
+`../crystal/bin/crystal spec spec/hir/memory_strategy_spec.cr --error-trace`
+is green, `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen
+--error-trace` stays green, and the stronger adversarial full bootstrap with
+the rebuilt compiler still completes cleanly under `scripts/run_safe.sh` with
+`semantic_diags=0 resolution_diags=0 type_diags=0`, `Stage 6/6 compile
+7110.8ms`, and `[EXIT: 0] after ~204s`. Boundary: this closes the
+`FFIExposed -> Stack` policy drift only; the broader stale
+`spec/hir/ast_to_hir_spec.cr` behavior frontier remains separate.
+{F/G/R: 0.99/0.86/0.99} [verified]
 
 [LM-433|verified]: After [LM-432], a broader HIR adversary sweep exposed a
 different kind of failure: isolated HIR spec entry points were not even

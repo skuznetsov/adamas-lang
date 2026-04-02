@@ -226,6 +226,23 @@ describe Crystal::HIR::MemoryStrategyAssigner do
       result[large_alloc.id].should eq(Crystal::HIR::MemoryStrategy::GC)
     end
 
+    it "aggressive mode still uses GC for FFI-exposed allocations" do
+      mod, func = create_function
+
+      entry = func.get_block(func.entry_block)
+
+      data = Crystal::HIR::Allocate.new(func.next_value_id, Crystal::HIR::TypeRef.new(100_u32))
+      entry.add(data)
+
+      ffi_call = Crystal::HIR::Call.new(func.next_value_id, Crystal::HIR::TypeRef::VOID, data.id, "to_unsafe", [] of Crystal::HIR::ValueId)
+      entry.add(ffi_call)
+
+      entry.terminator = Crystal::HIR::Return.new(nil)
+
+      result = func.assign_memory_strategies(Crystal::HIR::MemoryConfig.aggressive)
+      result[data.id].should eq(Crystal::HIR::MemoryStrategy::GC)
+    end
+
     it "aggressive mode prefers ARC" do
       mod, func = create_function
 

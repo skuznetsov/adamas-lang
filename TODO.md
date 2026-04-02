@@ -1,6 +1,31 @@
-# Crystal V2 Bootstrap — TODO (Updated 2026-04-01)
+# Crystal V2 Bootstrap — TODO (Updated 2026-04-02)
 
 ## Current Status
+- **Fresh HIR memory-strategy checkpoint: FFI-exposed allocations now stay on `GC` across balanced and aggressive modes instead of incorrectly falling through to `Stack` (2026-04-02, current session)**:
+  - trustworthy setup:
+    - `src/compiler/hir/memory_strategy.cr` now treats `Taint::FFIExposed` as the same hard safety barrier as `Taint::Cyclic` in the balanced and aggressive decision trees
+    - this matches the architecture contract in `docs/codegen_architecture.md`, which already specifies `Cyclic` or `FFIExposed` as a direct `GC` decision
+    - focused regression coverage now also locks the aggressive-mode variant in:
+      - `spec/hir/memory_strategy_spec.cr`
+  - decisive evidence:
+    - the focused HIR spec file is green again:
+      - `../crystal/bin/crystal spec spec/hir/memory_strategy_spec.cr --error-trace`
+    - the taint contract that feeds this policy stayed green:
+      - `../crystal/bin/crystal spec spec/hir/taint_analysis_spec.cr --error-trace`
+    - both compiler build gates remain green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_memory_strategy_probe --error-trace`
+    - the stronger full-bootstrap adversary is still green with the rebuilt compiler under the safe wrapper:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_memory_strategy_probe 600 8192 src/crystal_v2.cr --stats -o /tmp/stage3_link_probe_after_memory_strategy.out > /tmp/stage3_link_probe_after_memory_strategy.log 2>&1`
+      - fresh summary there is:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=0`
+        - `Stage 6/6 compile 7524.0ms`
+        - `[EXIT: 0] after ~200s`
+  - practical boundary:
+    - this is a real policy-restoration fix, not a spec-only adjustment
+    - it closes the `spec/hir/memory_strategy_spec.cr` FFI/GC frontier that remained after the isolated-require checkpoint; broader stale expectations in `spec/hir/ast_to_hir_spec.cr` are still separate work
 - **Fresh HIR isolated-require checkpoint: `ast_to_hir.cr` now explicitly requires the memory-strategy definitions it references, so isolated HIR spec entry points no longer fail at compile time on `HIR::MemoryStrategy::ARC` (2026-04-02, current session)**:
   - trustworthy setup:
     - `src/compiler/hir/ast_to_hir.cr` now explicitly `require "./memory_strategy"` alongside its other direct HIR dependencies
