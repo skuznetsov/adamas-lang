@@ -3,6 +3,35 @@
 Updated: 2026-04-01
 Context: compiler/bootstrap/stage2-stability
 
+[LM-431|verified]: After [LM-430], the next honest HIR frontier was no longer
+the broad stage3 bootstrap gate, but three small exact reducers that all hung
+under the older `/tmp/crystal_v2_stage3_linkprobe_scopefix` binary:
+`spec/hir/test_data/until_loop_backedge.cr`,
+`spec/hir/test_data/inline_yield_while_return_backedge.cr`, and a new enum/hash
+carrier `spec/hir/test_data/enum_hash_precedence_exit.cr`. The decisive
+pattern was not one symptom but one class of stale lowering context: loop
+backedge patching still read locals after `pop_scope`, nested proc lowering
+still reused parent inline-yield substitution stacks, and proc-lowered block
+bodies still inherited outer `@enum_value_types` even though `ValueId`s are
+function-local. Source inspection in `src/compiler/hir/ast_to_hir.cr` made the
+local fixes explicit: loop exits now snapshot updated locals before scope
+teardown; `lower_block_to_proc(...)` now clears/restores inline-yield stacks
+and outer enum metadata; and hash entry iteration gets an explicit
+`Hash::Entry(K, V)` fallback for `each_entry(_with_index)` block params. The
+current dirty rebuild `/tmp/crystal_v2_hir_dirtycheck` compiles and runs all
+three reducers cleanly under `scripts/run_safe.sh`, while the older
+`/tmp/crystal_v2_stage3_linkprobe_scopefix` binary still times out on all
+three. The strongest adversarial signal comes from the enum/hash carrier:
+`nm` on the old binary shows bogus
+`Hash$LKind$C$_Int32$R$Hget_entry$$Kind` and
+`Hash$CCEntry$LKind$C$_Int32$R$Dnew$$UInt32_Kind_Kind`, while the rebuilt dirty
+binary only emits `get_entry$$Int32` and `new$$UInt32_Kind_Int32`, proving the
+previous wrong specialization drift is gone. Boundary: this checkpoint closes
+the earlier HIR context leak, but not the later downstream runtime null-deref
+in the larger `enum_hash_large_exit_probe`; that remaining crash now lives
+after correct specialization in `entry_matches?`. {F/G/R: 0.98/0.77/0.99}
+[verified]
+
 [LM-430|verified]: After [LM-429], the next honest frontier was no longer parse
 or semantic at all, but the full link/runtime bootstrap gate. The decisive
 safe full-link probe with the generated compiler initially died in `llc` on

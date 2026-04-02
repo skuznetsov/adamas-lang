@@ -36993,6 +36993,10 @@ module Crystal::HIR
         end
       end
 
+      if hash_entry_types = hash_entry_block_param_types(resolved_base, receiver_type)
+        return hash_entry_types
+      end
+
       # String#each_char yields a Char; each_char_with_index yields (Char, Int32)
       if resolved_base == "String#each_char" || resolved_base.ends_with?("String#each_char")
         return [TypeRef::CHAR]
@@ -37335,6 +37339,38 @@ module Crystal::HIR
         STDERR.puts "[TRACE_EWI] merged_types=#{merged_dbg}"
       end
       merged_types
+    end
+
+    private def hash_entry_block_param_types(
+      base_method_name : String,
+      receiver_type : TypeRef?,
+    ) : Array(TypeRef)?
+      return nil unless receiver_type && receiver_type != TypeRef::VOID
+
+      method = if hash = base_method_name.rindex('#')
+                 base_method_name[(hash + 1)..]
+               elsif dot = base_method_name.rindex('.')
+                 base_method_name[(dot + 1)..]
+               else
+                 base_method_name
+               end
+      return nil unless method == "each_entry" || method == "each_entry_with_index"
+
+      recv_name = @module.get_type_descriptor(receiver_type).try(&.name) || get_type_name_from_ref(receiver_type)
+      info = split_generic_base_and_args(recv_name)
+      return nil unless info && info.base == "Hash"
+
+      args = split_generic_type_args(info.args).map(&.strip)
+      return nil unless args.size >= 2
+
+      entry_ref = type_ref_for_name("Hash::Entry(#{args[0]}, #{args[1]})")
+      return nil if entry_ref == TypeRef::VOID
+
+      if method == "each_entry_with_index"
+        [entry_ref, TypeRef::INT32]
+      else
+        [entry_ref]
+      end
     end
 
     private def fallback_block_param_types(
@@ -49039,12 +49075,13 @@ module Crystal::HIR
       break_inline_locals = @loop_break_inline_locals_stack.pop
       break_values = @loop_break_value_stack.pop
       body_exit_block = ctx.current_block
+      updated_loop_values = snapshot_loop_updated_values(ctx, assigned_vars, inline_vars)
       ctx.pop_scope
 
       # After body execution, get updated values and patch phi nodes
       assigned_vars.each do |var_name|
         if phi = phi_nodes[var_name]?
-          updated_val = ctx.lookup_local(var_name)
+          updated_val = updated_loop_values[var_name]?
           # For inline vars (outer-scope variables modified in inlined block bodies),
           # ctx.lookup_local may return the PHI itself because inline_block_body's
           # inline_loop_vars revert restored the stack entry to the PHI value.
@@ -49329,12 +49366,13 @@ module Crystal::HIR
       end
       break_info_loop = @loop_break_info_stack.pop
       body_exit_block = ctx.current_block
+      updated_loop_values = snapshot_loop_updated_values(ctx, assigned_vars, inline_vars)
       ctx.pop_scope
 
       # After body execution, update phi nodes for next iteration
       assigned_vars.each do |var_name|
         if phi = phi_nodes[var_name]?
-          updated_val = ctx.lookup_local(var_name)
+          updated_val = updated_loop_values[var_name]?
           if inline_vars.includes?(var_name)
             if saved = @inline_loop_var_backedge_values[var_name]?
               updated_val = saved
@@ -49629,6 +49667,20 @@ module Crystal::HIR
         end
       end
       ctx.lookup_local(var_name)
+    end
+
+    private def snapshot_loop_updated_values(
+      ctx : LoweringContext,
+      assigned_vars : Array(String),
+      inline_vars : Set(String),
+    ) : Hash(String, ValueId)
+      updated_values = {} of String => ValueId
+      assigned_vars.each do |var_name|
+        if updated_val = resolve_loop_updated_value(ctx, var_name, inline_vars)
+          updated_values[var_name] = updated_val
+        end
+      end
+      updated_values
     end
 
     private def snapshot_inline_caller_locals_for_return(caller_locals : Hash(String, ValueId)) : Hash(String, ValueId)
@@ -49948,12 +50000,13 @@ module Crystal::HIR
       break_info = @loop_break_info_stack.pop
       break_values = @loop_break_value_stack.pop
       body_exit_block = ctx.current_block
+      updated_loop_values = snapshot_loop_updated_values(ctx, assigned_vars, inline_vars)
       ctx.pop_scope
 
       # Patch phi nodes with back-edge values
       assigned_vars.each do |var_name|
         if phi = phi_nodes[var_name]?
-          if updated_val = resolve_loop_updated_value(ctx, var_name, inline_vars)
+          if updated_val = updated_loop_values[var_name]?
             incoming_val = updated_val
             phi_type = ctx.type_of(phi.id)
             if phi_type != ctx.type_of(updated_val)
@@ -74381,6 +74434,8 @@ module Crystal::HIR
       # Create standalone function for the block body
       proc_func = @module.create_function(proc_func_name, proc_return_type)
       proc_ctx = LoweringContext.new(proc_func, @module, block_arena)
+      saved_enum_value_types = @enum_value_types
+      @enum_value_types = nil
 
       # Keep owner context up to date for this block id. The same block AST can be
       # lowered multiple times (different callsites/instantiations), so proc lowering
@@ -74680,12 +74735,28 @@ module Crystal::HIR
       @current_typeof_locals = saved_typeof_locals ? saved_typeof_locals.dup : nil
       @current_typeof_local_names = saved_typeof_local_names ? saved_typeof_local_names.dup : nil
 
-      # Save and isolate inline-yield state — proc body is a separate function context
+      # Save and isolate inline-yield state — proc body is a separate function context.
+      # Keep explicit_yield_target capture, but don't let nested `yield` inside the proc
+      # see the parent inline substitution stacks. Otherwise the proc can recurse into
+      # the currently inlined block body instead of dispatching through the captured
+      # yield target, producing bogus self-inline call shapes like get_entry(entry).
+      saved_yield_block_stack = @inline_yield_block_stack
+      saved_yield_arena_stack = @inline_yield_block_arena_stack
+      saved_yield_param_stack = @inline_yield_block_param_types_stack
+      saved_yield_block_return_stack = @inline_yield_block_return_stack
+      saved_yield_name_stack = @inline_yield_name_stack
       saved_return_stack = @inline_yield_return_stack
       saved_override_stack = @inline_yield_return_override_stack
+      saved_return_caller_locals_stack = @inline_yield_return_caller_locals_stack
       saved_block_body_depth = @inline_yield_block_body_depth
+      @inline_yield_block_stack = [] of CrystalV2::Compiler::Frontend::BlockNode
+      @inline_yield_block_arena_stack = [] of CrystalV2::Compiler::Frontend::ArenaLike
+      @inline_yield_block_param_types_stack = [] of Array(TypeRef)?
+      @inline_yield_block_return_stack = [] of String?
+      @inline_yield_name_stack = [] of String
       @inline_yield_return_stack = [] of InlineReturnContext
       @inline_yield_return_override_stack = [] of InlineReturnOverride
+      @inline_yield_return_caller_locals_stack = [] of Array({BlockId, Hash(String, ValueId)})
       @inline_yield_block_body_depth = 0
 
       # Save and isolate loop stacks — proc body cannot break/next to parent loops
@@ -74729,14 +74800,21 @@ module Crystal::HIR
         @explicit_yield_target_stack.pop? if pushed_explicit_yield_target
         @inline_yield_proc_depth -= 1
         @arena = saved_arena_outer
+        @inline_yield_block_stack = saved_yield_block_stack
+        @inline_yield_block_arena_stack = saved_yield_arena_stack
+        @inline_yield_block_param_types_stack = saved_yield_param_stack
+        @inline_yield_block_return_stack = saved_yield_block_return_stack
+        @inline_yield_name_stack = saved_yield_name_stack
         @inline_yield_return_stack = saved_return_stack
         @inline_yield_return_override_stack = saved_override_stack
+        @inline_yield_return_caller_locals_stack = saved_return_caller_locals_stack
         @inline_yield_block_body_depth = saved_block_body_depth
         @loop_exit_stack = saved_loop_exit_stack
         @loop_cond_stack = saved_loop_cond_stack
         @loop_phi_stack = saved_loop_phi_stack
         @loop_break_info_stack = saved_loop_break_info_stack
         @loop_break_value_stack = saved_loop_break_value_stack
+        @enum_value_types = saved_enum_value_types
       end
 
       # Terminate the proc function

@@ -1,6 +1,33 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-01)
 
 ## Current Status
+- **Fresh HIR block/proc context checkpoint: the generated compiler now clears three exact reducers that the older `scopefix` bootstrap binary still hangs on, because HIR lowering no longer leaks stale loop backedge values, parent inline-yield stacks, or outer enum metadata into nested proc-lowered blocks (2026-04-01, current session)**:
+  - trustworthy setup:
+    - `src/compiler/hir/ast_to_hir.cr` now snapshots updated loop values before `pop_scope`, so loop-phi backedges do not read reverted locals after scope teardown
+    - the same file now isolates proc-lowered block bodies from parent inline-yield substitution stacks and from outer `@enum_value_types`, which were previously shared even though nested proc `ValueId`s are function-local
+    - `Hash#each_entry(_with_index)` block-param fallback typing is now explicit, so entry-shaped blocks inside hash internals do not degrade to wrong receiver/arg shapes
+    - repo-side regression carriers now live in:
+      - `spec/hir/test_data/until_loop_backedge.cr`
+      - `spec/hir/test_data/inline_yield_while_return_backedge.cr`
+      - `spec/hir/test_data/enum_hash_precedence_exit.cr`
+  - decisive evidence:
+    - rebuild gates are green on the current dirty tree:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_hir_dirtycheck --error-trace`
+    - all three exact reducers now build and run cleanly under the safe wrapper with the rebuilt compiler:
+      - `scripts/run_safe.sh /tmp/crystal_v2_hir_dirtycheck 120 4096 spec/hir/test_data/until_loop_backedge.cr -o /tmp/until_loop_backedge_check.out && scripts/run_safe.sh /tmp/until_loop_backedge_check.out 10 512`
+      - `scripts/run_safe.sh /tmp/crystal_v2_hir_dirtycheck 120 4096 spec/hir/test_data/inline_yield_while_return_backedge.cr -o /tmp/inline_yield_while_return_backedge_check.out && scripts/run_safe.sh /tmp/inline_yield_while_return_backedge_check.out 10 512`
+      - `scripts/run_safe.sh /tmp/crystal_v2_hir_dirtycheck 120 4096 spec/hir/test_data/enum_hash_precedence_exit.cr -o /tmp/enum_hash_precedence_exit_probe_check.out && scripts/run_safe.sh /tmp/enum_hash_precedence_exit_probe_check.out 10 512`
+    - adversarial negative control on the older bootstrap binary still fails on the same carriers:
+      - `scripts/run_safe.sh /tmp/crystal_v2_stage3_linkprobe_scopefix 120 4096 spec/hir/test_data/until_loop_backedge.cr ...` -> runtime timeout after 10s
+      - `scripts/run_safe.sh /tmp/crystal_v2_stage3_linkprobe_scopefix 120 4096 spec/hir/test_data/inline_yield_while_return_backedge.cr ...` -> runtime timeout after 10s
+      - `scripts/run_safe.sh /tmp/crystal_v2_stage3_linkprobe_scopefix 120 4096 spec/hir/test_data/enum_hash_precedence_exit.cr ...` -> runtime timeout after 10s
+    - the enum/hash carrier also shows a compile-shape delta, not just a timing delta:
+      - old binary emits bogus `Hash(Kind, Int32)#get_entry$$Kind` / `Hash::Entry(...).new$$UInt32_Kind_Kind`
+      - current dirty binary only emits `get_entry$$Int32` / `new$$UInt32_Kind_Int32`
+  - practical boundary:
+    - this is a real HIR state-isolation checkpoint, not a runtime hash workaround
+    - the larger `enum_hash_large_exit_probe.cr` still crashes later in `entry_matches?`, so this commit only closes the earlier block/proc lowering drift and leaves the downstream null-deref frontier explicit
 - **Fresh full-link bootstrap checkpoint: the safe stage3 bootstrap now completes end-to-end with real `llc + link`, not just `--no-link`, because HIR lowering no longer lets block-scoped locals leak across `pop_scope` and poison later closure cells (2026-04-01, current session)**:
   - trustworthy setup:
     - `src/compiler/hir/ast_to_hir.cr` `LoweringContext` now snapshots `@locals` on `push_scope(...)` and restores them on `pop_scope`
