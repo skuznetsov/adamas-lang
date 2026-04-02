@@ -429,7 +429,7 @@ describe Crystal::HIR::AstToHir do
     end
 
     it "lowers logical and" do
-      func = lower_function("def foo(x : Bool); x && false; end")
+      func = lower_function("def foo(x : Bool, y : Bool); x && y; end")
       text = hir_text(func)
 
       text.should contain("branch")
@@ -437,7 +437,7 @@ describe Crystal::HIR::AstToHir do
     end
 
     it "lowers logical or" do
-      func = lower_function("def foo(x : Bool); x || false; end")
+      func = lower_function("def foo(x : Bool, y : Bool); x || y; end")
       text = hir_text(func)
 
       text.should contain("branch")
@@ -656,7 +656,7 @@ describe Crystal::HIR::AstToHir do
       call = func.not_nil!.blocks.flat_map(&.instructions)
         .find { |inst| inst.is_a?(Crystal::HIR::Call) }
       call.should_not be_nil
-      call.not_nil!.as(Crystal::HIR::Call).method_name.should contain("Signal#reset")
+      call.not_nil!.as(Crystal::HIR::Call).method_name.should eq("Signal::CHLD.reset")
     end
 
     it "applies default args for member access calls" do
