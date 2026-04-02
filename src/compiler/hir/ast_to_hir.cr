@@ -9576,11 +9576,17 @@ module Crystal::HIR
       return nil if addr == 0_u64
       return nil if addr < 4096_u64 # likely corrupted/null-page pointer
       return nil if addr > 0x0000_7FFF_FFFF_FFFF_u64
-      return nil unless trust_slice_addr || readable_address?(addr)
       sz = slice.size
       return nil if sz < 0 || sz > 10_000_000 # sanity check
       if sizeof(Slice(UInt8)) <= 8
+        return nil unless trust_slice_addr || readable_address?(addr)
         return nil unless trust_slice_addr || readable_address?(raw)
+      else
+        # Host-side inline slices for compiler-owned strings regularly live at
+        # valid but non-Mach-readable addresses during bootstrap. Keep the
+        # crash guard structural here and only reject obviously bogus low
+        # pointers (for example ASCII-looking 32-bit junk like 0x6e6f6974).
+        return nil if addr < 0x1_0000_0000_u64
       end
       return "" if sz == 0
       String.new(slice)
@@ -48019,19 +48025,17 @@ module Crystal::HIR
     private def unary_operator_text(node : CrystalV2::Compiler::Frontend::UnaryNode) : String
       source = source_for_arena(@arena) || source_text_for_arena_or_file(@arena)
       if source
-        operand_span = @arena[node.operand].span
-        start = node.span.start_offset
-        finish = operand_span.start_offset
-        if start >= 0 && finish > start && finish <= source.bytesize
-          prefix = source.byte_slice(start, finish - start).strip
-          return prefix unless prefix.empty?
+        if operand_arena = arena_for_expr?(node.operand)
+          operand_span = with_arena(operand_arena) { @arena[node.operand].span }
+          start = node.span.start_offset
+          finish = operand_span.start_offset
+          if start >= 0 && finish > start && finish <= source.bytesize
+            prefix = source.byte_slice(start, finish - start).strip
+            return prefix unless prefix.empty?
+          end
         end
       end
 
-      if env_has?("DEBUG_SAFE_SLICE_UNARY")
-        STDERR.puts "[LOWER_UNARY_TRACE] class=#{@current_class || "(nil)"} method=#{@current_method || "(nil)"}"
-        debug_safe_slice_eval("lower_unary.operator", node.operator)
-      end
       safe_slice_to_string(node.operator) || ""
     end
 
