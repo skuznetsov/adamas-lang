@@ -1,6 +1,39 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-01)
 
 ## Current Status
+- **Fresh top-level fun-body scope checkpoint: semantic eager body inference now recovers parser-lowered `fun ... end` method scopes instead of dropping parameter bindings for internal `__fun__` receivers, which closes the live generated `raise` `unwind_ex.value.exception_object` corridor and moves the honest stage3 semantic gate from `type_diags=8` to `type_diags=6` on the current verified tree (2026-04-01, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/type_inference_engine.cr` no longer treats every non-`self` receiver on `DefNode` as an immediate scope-recovery failure; the parser-internal `__fun__` marker is now allowed to fall through to the normal lexical/global `MethodSymbol` lookup path
+    - focused regression coverage now lives in:
+      - `spec/semantic/type_inference_fun_def_scope_spec.cr`
+  - decisive evidence:
+    - focused regression pack is green:
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_fun_def_scope_spec.cr --error-trace`
+    - rebuild gates are green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+    - the actual stdlib-context `raise` carrier materially improves:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 DEBUG_TYPE_TRACE_NAMES=unwind_ex,value,exception_object scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 120 3072 /tmp/semantic_raise_unwind_actual_probe.cr --stats --verbose --no-link -o /tmp/semantic_raise_unwind_actual_probe.out > /tmp/semantic_raise_unwind_actual_probe_after_fun_scope_fix.log 2>&1`
+      - fresh summary there is:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=5`
+      - the old generated `Method 'value' not found on Nil` / `Method 'exception_object' not found on Nil` failures disappear from that carrier entirely
+    - the clean full semantic stage3 probe under the safe wrapper improves reproducibly again:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 300 4096 src/crystal_v2.cr --stats --no-link -o /tmp/stage3_semantic_probe_after_fun_scope_fix.out > /tmp/stage3_semantic_probe_after_fun_scope_fix.log 2>&1`
+      - fresh summary on the current tree is:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=6`
+      - generated `raise.cr` drops out of the live head
+  - practical boundary:
+    - this is a real method-scope recovery fix, not a pointer/`LibUnwind` builtin patch
+    - the decisive refutation from the previous branch still stands: cheap pointer carriers were already green; the failure only lived in the richer `fun ... end` eager body path
+    - stage3 is still not green; the next honest frontier is now:
+      - `src/crystal_v2.cr` (`1`)
+      - `src/stdlib/crystal/system/unix/time.cr [generated]` (`1`)
+      - `src/stdlib/file.cr` (`1`)
+      - plus the earlier `LibPCRE2.jit_stack_assign` / `Cannot index type Nil` tail
 - **Fresh tuple block-signature checkpoint: semantic inference now substitutes tuple receiver type parameters into splatted generic block annotations like `Union(*T)`, which closes the live `Signal.after_fork` `@@pipe.each` corridor and moves the honest stage3 semantic gate from `type_diags=10` to `type_diags=8` on the current verified tree (2026-04-01, current session)**:
   - trustworthy setup:
     - `src/compiler/semantic/type_inference_engine.cr` now exposes `TupleType` through `receiver_type_parameter_context(...)`, so tuple receiver methods can substitute receiver-side type parameters into annotation text instead of falling back to unresolved literal forms

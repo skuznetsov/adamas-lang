@@ -2348,15 +2348,22 @@ module CrystalV2
           candidate_scopes = [] of SymbolTable
 
           if receiver = node.receiver
-            return nil unless intern_name(receiver) == "self"
+            case intern_name(receiver)
+            when "self"
+              if current_module = @current_module
+                candidate_scopes << current_module.scope
+              end
 
-            if current_module = @current_module
-              candidate_scopes << current_module.scope
-            end
-
-            if current_class = @current_class
-              class_scope = current_class.class_scope
-              candidate_scopes << class_scope unless candidate_scopes.any? { |scope| scope.same?(class_scope) }
+              if current_class = @current_class
+                class_scope = current_class.class_scope
+                candidate_scopes << class_scope unless candidate_scopes.any? { |scope| scope.same?(class_scope) }
+              end
+            when "__fun__"
+              # Parser lowers `fun ... end` bodies as DefNode with an internal
+              # receiver marker. They still need regular lexical/global method
+              # symbol recovery so eager body inference can see parameter scope.
+            else
+              return nil
             end
           else
             if current_class = @current_class

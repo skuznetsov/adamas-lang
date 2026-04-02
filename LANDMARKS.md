@@ -3,6 +3,36 @@
 Updated: 2026-04-01
 Context: compiler/bootstrap/stage2-stability
 
+[LM-423|verified]: After [LM-422], the next honest mover was not another
+pointer builtin patch and not a broad generated-body workaround, but the
+parser-lowered `fun ... end` scope recovery path. The decisive falsifier was
+the richer stdlib-context carrier `/tmp/semantic_raise_unwind_actual_probe.cr`,
+whose traces showed the same `unwind_ex` parameter flipping between a real
+`VariableSymbol` and `symbol=nil` within one semantic run: some passes saw
+`Pointer(Exception)`, while others degraded the same `unwind_ex.value` chain
+to `Nil`. Source inspection in `src/compiler/frontend/parser.cr` and
+`src/compiler/semantic/type_inference_engine.cr` made the root cause explicit:
+`parse_fun_def` lowers `fun ... end` as `DefNode` with an internal receiver
+marker `"__fun__"`, but `current_method_symbol_for(...)` treated every
+non-`self` receiver as an immediate failure and therefore dropped method-scope
+recovery during eager `infer_def(...)`. The verified fix stays narrow:
+`"__fun__"` now falls through to the normal lexical/global method lookup
+path, so eager body inference reuses the collected `MethodSymbol` scope and
+keeps typed parameters visible. Focused regression
+`spec/semantic/type_inference_fun_def_scope_spec.cr` is green; rebuild gates
+for `src/crystal_v2.cr --no-codegen` and `/tmp/crystal_v2_semantic_stage3probe`
+are green; the actual `raise` carrier drops from
+`semantic_diags=0 resolution_diags=0 type_diags=9` to
+`semantic_diags=0 resolution_diags=0 type_diags=5` with the old generated
+`unwind_ex.value.exception_object` misses gone; and the full safe stage3 probe
+moves from `semantic_diags=0 resolution_diags=0 type_diags=8` to
+`semantic_diags=0 resolution_diags=0 type_diags=6`, removing generated
+`raise.cr` from the live head. Boundary: this is a real method-scope recovery
+fix, but stage3 is still not green; the next honest frontier is now
+`src/crystal_v2.cr`, generated `time`, `file.close`, and the earlier
+`LibPCRE2.jit_stack_assign` / `Cannot index type Nil` tail.
+{F/G/R: 0.99/0.81/0.99} [verified]
+
 [LM-422|verified]: After [LM-421], the next honest mover was not another
 runtime-local `signal` patch and not a broad block-inference rewrite, but a
 generic annotation substitution gap around tuple receivers. The decisive exact
