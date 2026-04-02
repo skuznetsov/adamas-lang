@@ -107,6 +107,9 @@ Notes:
   different generic/receiver inference contexts for that def. A future
   semantic-level metric keyed by `DefInstanceKey` would give the exact count
   of redundant semantic work that `def_instances` cache would eliminate.
+- caller / preferred arenas are normalized away before counting, so the same
+  def reached from different lookup contexts still increments the same
+  canonical `DefIdentity`
 - `lower_def_calls`: keyed by canonical target_name (post-lookup resolution)
 
 ## 3. SemanticTypeId Design

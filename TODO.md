@@ -1,6 +1,24 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-02)
 
 ## Current Status
+- **Fresh phase0 body-infer review-hardening checkpoint: the open `ast_to_hir` identity-key review finding is refuted on the current tree, and regression coverage now proves caller arenas normalize into one canonical `DefIdentity` instead of splitting counts (2026-04-02, current session)**:
+  - trustworthy setup:
+    - `src/compiler/hir/ast_to_hir.cr` already builds `body_infer` metric keys through `canonical_def_identity_for_body_infer(...)`, which resolves a canonical arena first and then returns a structured `CrystalV2::Compiler::Semantic::DefIdentity{arena_id, expr_index}`
+    - `docs/phase0_contracts.md` already names the live metrics as `lower_def_calls`, `lower_def_dupes`, `body_infer_walks`, `unique_defs`, and `body_infer_dupes`; it no longer describes the older `body_analysis_total` / `duplicate_bodies` names
+  - decisive evidence:
+    - focused regression is green:
+      - `../crystal/bin/crystal spec spec/hir/phase0_body_infer_metrics_spec.cr --error-trace`
+      - it now includes an explicit three-arena falsifier showing the same parsed `def` increments one counter even when reached with a wrong caller arena
+    - production build gate stays green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+    - exact code anchors on the current tree are:
+      - `src/compiler/hir/ast_to_hir.cr:10141` `canonical_def_identity_for_body_infer(...)`
+      - `src/compiler/hir/ast_to_hir.cr:14012` final `resolved_arena` selection before `record_phase0_body_infer_walk(...)`
+      - `docs/phase0_contracts.md:73` live metric table
+      - `docs/phase0_contracts.md:104` canonical `DefIdentity` note
+  - practical boundary:
+    - this is a review-hardening/spec-documentation checkpoint, not a production behavior change
+    - the remaining post-stage3 frontier is therefore no longer the old phase0 identity-key complaint itself, but later compiler/review work outside the now-green `stage3` bootstrap path
 - **Fresh HIR proc-shape spec refresh: `ast_to_hir_spec` now matches the current non-capturing proc model and the live stale surface drops from 9 failures to 4 (2026-04-02, current session)**:
   - trustworthy setup:
     - `spec/hir/ast_to_hir_spec.cr` now reflects the current lowering contract for plain proc literals:
