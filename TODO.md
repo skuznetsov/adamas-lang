@@ -1,6 +1,32 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-01)
 
 ## Current Status
+- **Fresh while-assignment narrowing checkpoint: semantic `while` bodies now inherit truthy narrowings from their own condition, which closes the live `Time::TZ.parse_int` `digit : Nil | Int32` corridor and moves the honest stage3 semantic gate from `type_diags=19` to `type_diags=18` on the current verified tree (2026-04-01, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/type_inference_engine.cr` now runs `infer_block_result(node.body)` for `while` inside `infer_expression_with_truthy_condition_narrowings(condition_id)`, instead of discarding the condition’s own nil-stripping information before entering the loop body
+    - focused regression coverage now lives in `spec/semantic/type_inference_while_assignment_narrowing_spec.cr`, which reproduces the exact `while digit = reader.next_digit` shape without stdlib noise
+  - decisive evidence:
+    - focused loop regression pack is green:
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_while_assignment_narrowing_spec.cr --error-trace`
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_spec.cr --example 'handles return in while loop (postfix if)' --error-trace`
+    - rebuild gates are green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+    - the clean full semantic stage3 probe under the safe wrapper improves again:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 300 4096 src/crystal_v2.cr --stats --no-link -o /tmp/stage3_semantic_probe_after_while_assignment_fix.out > /tmp/stage3_semantic_probe_after_while_assignment_fix.log 2>&1`
+      - fresh summary on the current tree is:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=18`
+      - the old `src/stdlib/time/tz.cr:338` `value = value * 10 + digit` error disappears from the live head
+  - practical boundary:
+    - this is a real loop-flow-narrowing fix, not a `Time::TZ`-specific builtin patch
+    - stage3 is still not green; the next honest frontier is now headed by:
+      - `src/compiler/hir/hir.cr` (`3`, `Function 'new' not found`)
+      - `src/stdlib/crystal/system/unix/process.cr` / `[generated]` (`2`)
+      - `src/stdlib/crystal/system/unix/signal.cr` (`2`)
+      - `src/stdlib/raise.cr` / `[generated]` (`2`)
+      - `src/stdlib/crystal/system/unix/time.cr` / `src/stdlib/file.cr` (`1`)
 - **Fresh numeric arithmetic checkpoint: semantic numeric inference now covers primitive `clamp(min, max)` and distributes arithmetic over union operands, which removes the live diagnostic formatter arithmetic head and moves the honest stage3 semantic gate from `type_diags=24` to `type_diags=19` on the current verified tree (2026-04-01, current session)**:
   - trustworthy setup:
     - `src/compiler/semantic/type_inference_engine.cr` now models primitive integer `clamp(min, max)` directly in the builtin surface, so clamp-based underline math no longer falls through to `Nil`

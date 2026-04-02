@@ -3,6 +3,31 @@
 Updated: 2026-04-01
 Context: compiler/bootstrap/stage2-stability
 
+[LM-417|verified]: After [LM-416], the next cheap honest mover was not
+bootstrap-only `HIR::TypeRef.new` and not another numeric builtin. The clean
+exact falsifier was `spec/semantic/type_inference_while_assignment_narrowing_spec.cr`,
+which reproduced the `Time::TZ.parse_int` shape as `while digit = reader.next_digit`
+and failed on `Operator '+' not defined for Int32 and Nil | Int32`. Source
+inspection then made the local defect explicit: `infer_while(...)` in
+`src/compiler/semantic/type_inference_engine.cr` still inferred the condition
+expression but entered the loop body without applying the condition's own
+truthy narrowings, unlike `if` branches. The verified fix stays bounded:
+`infer_while(...)` now evaluates the body through
+`infer_expression_with_truthy_condition_narrowings(condition_id)`. Focused
+regression `spec/semantic/type_inference_while_assignment_narrowing_spec.cr`
+is green; the nearby adversary check
+`spec/semantic/type_inference_spec.cr --example 'handles return in while loop (postfix if)'`
+is green; rebuild gates for `src/crystal_v2.cr --no-codegen` and
+`/tmp/crystal_v2_semantic_stage3probe` are green; and the full safe stage3
+probe moves from `semantic_diags=0 resolution_diags=0 type_diags=19` to
+`semantic_diags=0 resolution_diags=0 type_diags=18`, removing the live
+`src/stdlib/time/tz.cr:338` `value = value * 10 + digit` line from the head.
+Boundary: this is a real loop-flow fix, but stage3 is still not green; the new
+honest head is still compiler/runtime-heavy, led by `src/compiler/hir/hir.cr`,
+generated `process` / `signal`, generated `raise`, and the later
+`Time::Location.read_zoneinfo` / `Nil.close` tail. {F/G/R: 0.99/0.82/0.99}
+[verified]
+
 [LM-416|verified]: After [LM-415], the next cheap compiler-side mover was not
 the bootstrap-only `HIR::TypeRef.new` head but a numeric inference gap that
 showed up cleanly in the formatter arithmetic tail. The decisive exact
