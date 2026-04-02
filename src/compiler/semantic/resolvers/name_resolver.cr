@@ -17,6 +17,7 @@ module CrystalV2
         @namespace_stack : Array(Symbol)
         @class_body_meta_lookup_stack : Array(SymbolTable)
         @current_method_is_class_method_stack : Array(Bool)
+        @bare_statement_candidate_stack : Array(ExprId)
         @call_callee_depth : Int32
         @type_expression_depth : Int32
 
@@ -38,6 +39,7 @@ module CrystalV2
           @namespace_stack = [] of Symbol
           @class_body_meta_lookup_stack = [] of SymbolTable
           @current_method_is_class_method_stack = [] of Bool
+          @bare_statement_candidate_stack = [] of ExprId
           @call_callee_depth = 0
           @type_expression_depth = 0
         end
@@ -316,7 +318,7 @@ module CrystalV2
               if special_symbol = resolve_special_identifier(node_id, name)
                 @identifier_symbols[node_id] = special_symbol
               else
-                return if suppress_unresolved_callee_diagnostic?(name)
+                return if suppress_unresolved_callee_diagnostic?(name, node_id)
                 trace_resolution_miss(name, node_id)
                 debug("[NameResolver] unresolved #{name}")
                 @diagnostics << Diagnostic.new("undefined local variable or method '#{name}'", node.span, node_id)
@@ -330,7 +332,7 @@ module CrystalV2
             if special_symbol = resolve_special_identifier(node_id, name)
               @identifier_symbols[node_id] = special_symbol
             else
-              return if suppress_unresolved_callee_diagnostic?(name)
+              return if suppress_unresolved_callee_diagnostic?(name, node_id)
               trace_resolution_miss(name, node_id)
               debug("[NameResolver] unresolved #{name}")
               @diagnostics << Diagnostic.new("undefined local variable or method '#{name}'", node.span, node_id)
@@ -548,9 +550,7 @@ module CrystalV2
           @current_method_is_class_method_stack << method_symbol.is_class_method?
           @current_table = method_scope
 
-          (node.body || [] of ExprId).each do |expr_id|
-            visit(expr_id)
-          end
+          visit_expression_list(node.body || [] of ExprId)
 
           @current_method_is_class_method_stack.pop
           @current_table = prev_table
@@ -650,15 +650,15 @@ module CrystalV2
 
           node.when_branches.each do |branch|
             branch.conditions.each { |expr_id| visit(expr_id) }
-            branch.body.each { |expr_id| visit(expr_id) }
+            visit_expression_list(branch.body)
           end
 
           node.in_branches.try &.each do |branch|
             branch.conditions.each { |expr_id| visit(expr_id) }
-            branch.body.each { |expr_id| visit(expr_id) }
+            visit_expression_list(branch.body)
           end
 
-          node.else_branch.try &.each { |expr_id| visit(expr_id) }
+          node.else_branch.try { |body| visit_expression_list(body) }
         end
 
         private def visit_if(node : Frontend::IfNode)
@@ -667,14 +667,14 @@ module CrystalV2
           # Visit condition
           visit(node.condition)
           # Visit then body
-          node.then_body.each { |expr_id| visit(expr_id) }
+          visit_expression_list(node.then_body)
           # Visit elsif branches
           node.elsifs.try &.each do |elsif_branch|
             visit(elsif_branch.condition)
-            elsif_branch.body.each { |expr_id| visit(expr_id) }
+            visit_expression_list(elsif_branch.body)
           end
           # Visit else body
-          node.else_body.try &.each { |expr_id| visit(expr_id) }
+          node.else_body.try { |body| visit_expression_list(body) }
         end
 
         private def visit_unless(node : Frontend::UnlessNode)
@@ -683,31 +683,31 @@ module CrystalV2
           # Visit condition
           visit(node.condition)
           # Visit then branch
-          node.then_branch.each { |expr_id| visit(expr_id) }
+          visit_expression_list(node.then_branch)
           # Visit else branch
-          node.else_branch.try &.each { |expr_id| visit(expr_id) }
+          node.else_branch.try { |body| visit_expression_list(body) }
         end
 
         private def visit_while(node : Frontend::WhileNode)
           # Visit condition
           visit(node.condition)
           # Visit body
-          node.body.each { |expr_id| visit(expr_id) }
+          visit_expression_list(node.body)
         end
 
         private def visit_until(node : Frontend::UntilNode)
           # Visit condition
           visit(node.condition)
           # Visit body
-          node.body.each { |expr_id| visit(expr_id) }
+          visit_expression_list(node.body)
         end
 
         private def visit_loop(node : Frontend::LoopNode)
-          node.body.each { |expr_id| visit(expr_id) }
+          visit_expression_list(node.body)
         end
 
         private def visit_begin(node : Frontend::BeginNode)
-          node.body.each { |expr_id| visit(expr_id) }
+          visit_expression_list(node.body)
 
           node.rescue_clauses.try &.each do |clause|
             prev_table = @current_table
@@ -719,12 +719,12 @@ module CrystalV2
               rescue_scope.define(name, VariableSymbol.new(name, BLOCK_SYMBOL_NODE_ID)) unless rescue_scope.lookup_local(name)
             end
 
-            clause.body.each { |expr_id| visit(expr_id) }
+            visit_expression_list(clause.body)
             @current_table = prev_table
           end
 
-          node.else_body.try &.each { |expr_id| visit(expr_id) }
-          node.ensure_body.try &.each { |expr_id| visit(expr_id) }
+          node.else_body.try { |body| visit_expression_list(body) }
+          node.ensure_body.try { |body| visit_expression_list(body) }
         end
 
         private def visit_string_interpolation(node : Frontend::StringInterpolationNode)
@@ -777,7 +777,7 @@ module CrystalV2
             end
           end
 
-          node.body.each { |expr_id| visit(expr_id) }
+          visit_expression_list(node.body)
 
           @current_table = prev_table
         end
@@ -1039,10 +1039,40 @@ module CrystalV2
           !@current_method_is_class_method_stack.empty?
         end
 
-        private def suppress_unresolved_callee_diagnostic?(name : String) : Bool
+        private def suppress_unresolved_callee_diagnostic?(name : String, node_id : ExprId) : Bool
           return false unless in_method_body?
           return false if name.empty? || constant_like_name?(name)
-          true
+          return true if @call_callee_depth > 0
+
+          @bare_statement_candidate_stack.includes?(node_id)
+        end
+
+        private def visit_expression_list(expressions : Array(ExprId)) : Nil
+          expressions.each do |expr_id|
+            visit_expression_statement(expr_id)
+          end
+        end
+
+        private def visit_expression_statement(expr_id : ExprId) : Nil
+          push_bare_statement_candidate(expr_id)
+          visit(expr_id)
+        ensure
+          pop_bare_statement_candidate(expr_id)
+        end
+
+        private def push_bare_statement_candidate(expr_id : ExprId) : Nil
+          return unless in_method_body?
+          return if expr_id.invalid?
+          return unless @arena[expr_id].is_a?(Frontend::IdentifierNode)
+
+          @bare_statement_candidate_stack << expr_id
+        end
+
+        private def pop_bare_statement_candidate(expr_id : ExprId) : Nil
+          return if @bare_statement_candidate_stack.empty?
+          return unless @bare_statement_candidate_stack.last? == expr_id
+
+          @bare_statement_candidate_stack.pop
         end
 
         private def lookup_implicit_self_symbol(name : String) : Symbol?

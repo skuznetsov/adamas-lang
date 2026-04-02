@@ -161,6 +161,27 @@ describe Semantic::NameResolver do
     result.diagnostics.should be_empty
   end
 
+  it "emits diagnostics for unresolved identifiers nested inside method-body expressions" do
+    source = <<-CR
+      class Box
+        def run
+          missing + 1
+        end
+      end
+    CR
+
+    lexer = Frontend::Lexer.new(source)
+    parser = Frontend::Parser.new(lexer)
+    program = parser.parse_program
+
+    analyzer = Semantic::Analyzer.new(program)
+    analyzer.collect_symbols
+    result = analyzer.resolve_names
+
+    result.diagnostics.size.should eq(1)
+    result.diagnostics.first.message.should eq("undefined local variable or method 'missing'")
+  end
+
   it "resolves method parameters within method scope" do
     arena = Frontend::AstArena.new
 

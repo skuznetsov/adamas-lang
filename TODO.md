@@ -1,6 +1,31 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-02)
 
 ## Current Status
+- **Fresh Phase 2.1 generated-resolution checkpoint: method-body unresolved suppression is now narrow enough to preserve bare implicit-call candidates without swallowing nested generated resolution diagnostics (2026-04-02, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/resolvers/name_resolver.cr` no longer suppresses every lowercase unresolved identifier inside method bodies
+    - suppression now stays limited to real deferred callee candidates:
+      - explicit unresolved callees while `@call_callee_depth > 0`
+      - bare statement-root identifiers visited as standalone method-body expressions
+    - nested unresolved identifiers inside larger expressions like `missing + 1` now emit real resolution diagnostics again, including generated macro-expanded method/class bodies
+  - decisive evidence:
+    - focused resolver coverage is green:
+      - `../crystal/bin/crystal spec spec/semantic/name_resolver_spec.cr --error-trace --example 'defers unresolved bare callee candidates inside method bodies'`
+      - `../crystal/bin/crystal spec spec/semantic/name_resolver_spec.cr --error-trace --example 'emits diagnostics for unresolved identifiers nested inside method-body expressions'`
+      - `../crystal/bin/crystal spec spec/semantic/name_resolver_spec.cr --error-trace`
+    - previously red generated-resolution aggregate coverage is now green:
+      - `../crystal/bin/crystal spec spec/semantic/compile_shadow_aggregate_spec.cr --error-trace --example 'reports resolution diagnostics inside generated top-level def bodies'`
+      - `../crystal/bin/crystal spec spec/semantic/compile_shadow_aggregate_spec.cr --error-trace --example 'reports resolution diagnostics inside generated top-level class bodies'`
+      - `../crystal/bin/crystal spec spec/semantic/compile_shadow_aggregate_spec.cr --error-trace --example 'adds macro definition note for cross-file generated resolution diagnostics'`
+    - previously red CLI shadow coverage is now green:
+      - `../crystal/bin/crystal spec spec/semantic_cli_spec.cr --error-trace --example 'reports generated resolution diagnostics separately in semantic shadow summaries'`
+      - `../crystal/bin/crystal spec spec/semantic_cli_spec.cr --error-trace --example 'reports generated diagnostics inside macro-expanded class bodies'`
+      - `../crystal/bin/crystal spec spec/semantic_cli_spec.cr --error-trace --example 'prints macro definition note for cross-file generated diagnostics'`
+    - build gate stays green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+  - practical boundary:
+    - this closes the explicit generated-resolution frontier in semantic shadow summaries, but it does not yet remove the remaining top-level summary object construction glue from `cli.cr`
+    - the next honest Phase 2.1 seam is back to summary assembly/render ownership, now that the red generated-resolution branch is no longer masking it
 - **Fresh Phase 2.1 per-unit summary-row checkpoint: the compile-shadow aggregate now owns unit-row assembly and metric-size guards, so `cli.cr` no longer hand-zips per-unit counters into `SemanticShadowUnitSummary` (2026-04-02, current session)**:
   - trustworthy setup:
     - `src/compiler/semantic/compile_shadow_aggregate.cr` now exposes `summary_unit_metrics(...)`, which validates every metric array against aggregate unit count and assembles per-unit summary rows from aggregate-owned node/root facts plus raw counter arrays
