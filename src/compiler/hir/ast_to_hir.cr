@@ -47,6 +47,7 @@ module Crystal::HIR
 
     # Scope stack for nested scopes
     @scope_stack : Array(ScopeId)
+    @locals_snapshots : Array(Hash(String, ValueId))
 
     # Type cache
     @type_cache : Hash(String, TypeRef)
@@ -65,6 +66,7 @@ module Crystal::HIR
       @locals = {} of String => ValueId
       @self_id = nil
       @scope_stack = [@function.scopes[0].id] # Function scope
+      @locals_snapshots = [] of Hash(String, ValueId)
       @type_cache = {} of String => TypeRef
       @value_types = {} of ValueId => TypeRef
       @values = {} of ValueId => Value
@@ -88,6 +90,7 @@ module Crystal::HIR
 
     # Push new scope
     def push_scope(kind : ScopeKind) : ScopeId
+      @locals_snapshots << @locals.dup
       scope_id = @function.create_scope(kind, current_scope)
       @scope_stack << scope_id
       scope_id
@@ -95,7 +98,11 @@ module Crystal::HIR
 
     # Pop scope
     def pop_scope : ScopeId
-      @scope_stack.pop
+      scope_id = @scope_stack.pop
+      if snapshot = @locals_snapshots.pop?
+        restore_locals(snapshot)
+      end
+      scope_id
     end
 
     # Create new block in current scope

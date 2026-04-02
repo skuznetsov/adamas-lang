@@ -3,6 +3,33 @@
 Updated: 2026-04-01
 Context: compiler/bootstrap/stage2-stability
 
+[LM-430|verified]: After [LM-429], the next honest frontier was no longer parse
+or semantic at all, but the full link/runtime bootstrap gate. The decisive
+safe full-link probe with the generated compiler initially died in `llc` on
+`/tmp/stage3_link_probe.out.ll:1034509`, where the emitted IR tried to execute
+`store i32 %r11, ptr @__closure__classvar____closure_cell_375` even though
+`%r11` had type `%Nil$_$OR$_Int32.union`. Reading backward from that site
+showed the failure lived inside `CLI#count_shadow_symbols_by_unit` and reused a
+closure cell for two different `unit_index` lifetimes: one plain `Int32`, then
+one nilable `Int32?`. Source inspection made the local smell explicit in
+`src/compiler/hir/ast_to_hir.cr`: `LoweringContext#push_scope` only updated
+`@scope_stack`, and `pop_scope` only popped it back, but neither method ever
+snapshotted or restored `@locals`. That let block-scoped locals and shadows
+survive past scope exit, so later block/proc lowering could treat dead locals
+as live parent bindings and route unrelated assignments through stale closure
+cells. The verified fix stays minimal and lexical: `LoweringContext` now
+snapshots `@locals` on `push_scope(...)` and restores them on `pop_scope`,
+letting explicit post-block merge sites keep only the locals they re-register
+on purpose. Focused regression `spec/hir/lowering_context_scope_spec.cr` is
+green; rebuild gates for `src/crystal_v2.cr --no-codegen` and
+`/tmp/crystal_v2_stage3_linkprobe_scopefix` are green; and the decisive full
+safe link bootstrap under `scripts/run_safe.sh` now completes with
+`semantic_diags=0 resolution_diags=0 type_diags=0`, `llc=6747.8`, `link=119.2`,
+`Stage 6/6 compile 7449.6ms`, and `[EXIT: 0] after ~199s`. Boundary: this is a
+HIR lexical-scope checkpoint, not an LLVM codegen workaround; the old `llc`
+barrier disappeared because the stale block-local binding no longer exists.
+{F/G/R: 0.99/0.86/0.99} [verified]
+
 [LM-429|verified]: After the stage3 no-link bootstrap turned green again, a new
 parser/CLI regression appeared that initially looked like another self-hosted
 runtime divergence: the real `src/compiler/cli.cr` class body silently stopped

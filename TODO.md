@@ -1,6 +1,37 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-01)
 
 ## Current Status
+- **Fresh full-link bootstrap checkpoint: the safe stage3 bootstrap now completes end-to-end with real `llc + link`, not just `--no-link`, because HIR lowering no longer lets block-scoped locals leak across `pop_scope` and poison later closure cells (2026-04-01, current session)**:
+  - trustworthy setup:
+    - `src/compiler/hir/ast_to_hir.cr` `LoweringContext` now snapshots `@locals` on `push_scope(...)` and restores them on `pop_scope`
+    - this keeps lexical block params and block-local shadows from leaking into later lowering paths while preserving explicit post-block re-registration sites (`phi`s, merged locals, etc.)
+    - focused regression coverage now lives in:
+      - `spec/hir/lowering_context_scope_spec.cr`
+  - decisive evidence:
+    - focused regression is green:
+      - `../crystal/bin/crystal spec spec/hir/lowering_context_scope_spec.cr --error-trace`
+    - rebuild gates are green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_stage3_linkprobe_scopefix --error-trace`
+    - the old full-link blocker is gone under the safe wrapper:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_stage3_linkprobe_scopefix 600 6144 src/crystal_v2.cr --stats -o /tmp/stage3_link_probe_scopefix.out > /tmp/stage3_link_probe_scopefix.log 2>&1`
+      - fresh summary on the current tree is:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=0`
+        - `Stage 6/6 compile 7449.6ms`
+        - `llc=6747.8`
+        - `link=119.2`
+        - `[EXIT: 0] after ~199s`
+    - the old concrete failure site is falsified:
+      - previous full-link log died in `llc` on `/tmp/stage3_link_probe.out.ll:1034509`
+      - concrete bad store was:
+        - `store i32 %r11, ptr @__closure__classvar____closure_cell_375`
+      - there `%r11` had type `%Nil$_$OR$_Int32.union`, proving stale block/local state had reused an `i32` closure cell for a later nilable `unit_index`
+  - practical boundary:
+    - this is a real HIR lexical-scope fix, not an LLVM workaround
+    - the decisive source-level smell was that `LoweringContext#pop_scope` only popped `@scope_stack` and never restored `@locals`, so later block/proc lowering could see dead block locals as live parent bindings
+    - current verified frontier is no longer bootstrap completion; the safe full-link compile gate for `src/crystal_v2.cr` is green on the current tree
 - **Fresh lexer macro-string context checkpoint: regular runtime strings containing plain `{{` no longer swallow the rest of the file, while macro-body strings still preserve quote-safe `{{...}}` parsing (2026-04-01, current session)**:
   - trustworthy setup:
     - `src/compiler/frontend/lexer.cr` now tracks whether the current string lives inside a `macro` body via a lightweight block stack plus `@macro_body_depth`
