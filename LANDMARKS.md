@@ -3,6 +3,27 @@
 Updated: 2026-04-02
 Context: compiler/bootstrap/stage2-stability
 
+[LM-435|verified]: After [LM-434], the next isolated HIR frontier in
+`spec/hir/ast_to_hir_spec.cr` was not an early production regression but a stale
+test-helper/API mismatch. The decisive compile error showed
+`lower_program_with_main` still passing `Array(Tuple(ExprId, ArenaLike))` into
+`AstToHir#lower_main`, while the production API has long since moved to packed
+`Array(UInt64)` main-expression refs; the same helper family still built
+`sources_by_arena` as `{arena => source}` even though `AstToHir.new` now expects
+`Hash(UInt64, String)`. The verified fix is test-only: update the spec helpers
+to pack main exprs as `expr_id.index.to_u64` for the single-arena carriers used
+by this suite and key `sources_by_arena` by `arena.object_id.to_u64`. After
+that realignment, `../crystal/bin/crystal spec spec/hir/ast_to_hir_spec.cr
+--error-trace` no longer aborts during helper instantiation; it now reaches the
+actual behavioral surface (`120 examples`, `16 failures`, `0 errors`,
+`2 pending`), and the production build gate
+`../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+stays green. Boundary: this closes only the stale harness/API barrier; the live
+behavioral head now sits in explicit expectation drift families such as char
+literal formatting, logical short-circuit lowering, proc/closure shape,
+declaration-node lowering, module-body macro registration, and enum literal
+`to_i` handling. {F/G/R: 0.97/0.88/0.98} [verified]
+
 [LM-434|verified]: After [LM-433], the remaining isolated HIR frontier was not
 another missing require edge and not a taint-propagation gap, but a direct
 policy drift inside `src/compiler/hir/memory_strategy.cr`. The decisive

@@ -1,6 +1,17 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-02)
 
 ## Current Status
+- **Fresh HIR `ast_to_hir_spec` helper checkpoint: the suite no longer dies at compile time on a stale `lower_main`/`sources_by_arena` test API and now reaches the real behavioral frontier (2026-04-02, current session)**:
+  - trustworthy setup:
+    - `spec/hir/ast_to_hir_spec.cr` now packs top-level main expressions as `UInt64` refs, matching production `AstToHir#lower_main(main_exprs : Array(UInt64))`
+    - the same spec now keys `sources_by_arena` by `arena.object_id.to_u64`, matching the current `AstToHir.new(..., sources_by_arena: Hash(UInt64, String))` contract
+  - decisive evidence:
+    - `../crystal/bin/crystal spec spec/hir/ast_to_hir_spec.cr --error-trace` no longer aborts during helper instantiation; it now runs `120 examples` and reports `16 failures, 0 errors, 2 pending`
+    - the production compiler build gate stays green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+  - practical boundary:
+    - this is a real test-harness/API realignment, not a production lowering fix
+    - it removes the stale compile barrier and exposes the next honest behavior clusters: char literal formatting, logical short-circuit lowering, proc/closure shape, enum call expectations, declaration-node lowering, module-body macro registration, and enum literal `to_i` handling
 - **Fresh HIR memory-strategy checkpoint: FFI-exposed allocations now stay on `GC` across balanced and aggressive modes instead of incorrectly falling through to `Stack` (2026-04-02, current session)**:
   - trustworthy setup:
     - `src/compiler/hir/memory_strategy.cr` now treats `Taint::FFIExposed` as the same hard safety barrier as `Taint::Cyclic` in the balanced and aggressive decision trees

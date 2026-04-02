@@ -93,7 +93,7 @@ private def lower_program_with_main(code : String) : Crystal::HIR::AstToHir
   module_nodes = [] of CrystalV2::Compiler::Frontend::ModuleNode
   class_nodes = [] of CrystalV2::Compiler::Frontend::ClassNode
   def_nodes = [] of CrystalV2::Compiler::Frontend::DefNode
-  main_exprs = [] of Tuple(CrystalV2::Compiler::Frontend::ExprId, CrystalV2::Compiler::Frontend::ArenaLike)
+  main_exprs = [] of UInt64
 
   exprs.each do |expr_id|
     node = arena[expr_id]
@@ -107,7 +107,7 @@ private def lower_program_with_main(code : String) : Crystal::HIR::AstToHir
     when CrystalV2::Compiler::Frontend::DefNode
       def_nodes << node
     when CrystalV2::Compiler::Frontend::CallNode
-      main_exprs << {expr_id, arena}
+      main_exprs << expr_id.index.to_u64
     end
   end
 
@@ -127,7 +127,7 @@ end
 
 private def lower_program_with_sources(code : String) : Crystal::HIR::AstToHir
   arena, exprs = parse(code)
-  sources_by_arena = {arena => code}
+  sources_by_arena = {arena.object_id.to_u64 => code}
   converter = Crystal::HIR::AstToHir.new(arena, sources_by_arena: sources_by_arena)
   converter.arena = arena
 
@@ -135,7 +135,7 @@ private def lower_program_with_sources(code : String) : Crystal::HIR::AstToHir
   class_nodes = [] of CrystalV2::Compiler::Frontend::ClassNode
   def_nodes = [] of CrystalV2::Compiler::Frontend::DefNode
   macro_nodes = [] of CrystalV2::Compiler::Frontend::MacroDefNode
-  main_exprs = [] of Tuple(CrystalV2::Compiler::Frontend::ExprId, CrystalV2::Compiler::Frontend::ArenaLike)
+  main_exprs = [] of UInt64
 
   exprs.each do |expr_id|
     node = arena[expr_id]
@@ -149,7 +149,7 @@ private def lower_program_with_sources(code : String) : Crystal::HIR::AstToHir
     when CrystalV2::Compiler::Frontend::MacroDefNode
       macro_nodes << node
     when CrystalV2::Compiler::Frontend::CallNode
-      main_exprs << {expr_id, arena}
+      main_exprs << expr_id.index.to_u64
     end
   end
 
