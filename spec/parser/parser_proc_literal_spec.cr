@@ -218,6 +218,42 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       parser.diagnostics.size.should eq(0)
     end
 
+    it "keeps typed proc arrays inside method bodies as assignments" do
+      source = <<-CRYSTAL
+      module Crystal::AtExitHandlers
+        def self.add(handler)
+          handlers = [] of Int32, ::Exception? ->
+          handlers << handler
+        end
+      end
+      CRYSTAL
+
+      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      program = parser.parse_program
+
+      parser.diagnostics.should be_empty
+      program.roots.size.should eq(1)
+
+      arena = program.arena
+      root = arena[program.roots[0]]
+      outer_body = CrystalV2::Compiler::Frontend.node_module_body(root).not_nil!
+      inner_module = arena[outer_body[0]]
+      inner_body = CrystalV2::Compiler::Frontend.node_module_body(inner_module).not_nil!
+      def_node = arena[inner_body[0]]
+      def_body = CrystalV2::Compiler::Frontend.node_def_body(def_node).not_nil!
+
+      def_body.size.should eq(2)
+
+      assign = arena[def_body[0]]
+      CrystalV2::Compiler::Frontend.node_kind(assign).should eq(CrystalV2::Compiler::Frontend::NodeKind::Assign)
+
+      value = arena[CrystalV2::Compiler::Frontend.node_assign_value(assign).not_nil!]
+      CrystalV2::Compiler::Frontend.node_kind(value).should eq(CrystalV2::Compiler::Frontend::NodeKind::ArrayLiteral)
+
+      of_type = arena[CrystalV2::Compiler::Frontend.node_array_of_type(value).not_nil!]
+      CrystalV2::Compiler::Frontend.node_kind(of_type).should eq(CrystalV2::Compiler::Frontend::NodeKind::Identifier)
+    end
+
     it "parses proc assigned to variable" do
       source = "p = ->(x) { x }"
 

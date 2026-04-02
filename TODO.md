@@ -6749,3 +6749,52 @@ Immediate next steps:
 2. Continue from the unchanged live head at `type_diags=26`, starting with the
    richer-context `GC` / `process` / `signal` runtime branches rather than
    reopening generic cast-target handling.
+
+## Checkpoint — 2026-04-01 (typed proc-array `of` tails keep statement shape)
+
+Verified this turn:
+- The current `at_exit_handlers` live head was not an operator-table bug. The
+  decisive no-prelude carrier `/tmp/semantic_empty_proc_array_probe.cr` failed
+  on `handlers = [] of Int32, ::Exception? ->; handlers << handler` with
+  `Operator '<<' not defined for Proc ...`, which suggested that the collection
+  wrapper was already lost before semantic method lookup.
+- The strongest falsifier was parser-side: an exact AST inspection of the same
+  source inside a method body showed the first statement was no longer an
+  `AssignNode` at all, but a `BinaryNode`. That means the `[] of ... ->` tail
+  was swallowing the following statement instead of staying inside the array
+  element-type annotation.
+- The bounded root cause is in `src/compiler/frontend/parser.cr`:
+  `parse_of_type_expression(...)` tried `parse_expression(0)` first and
+  accepted partial successes even when a proc-signature tail (`->`, or `,` with
+  a later arrow) remained outside the parsed expression. In that shape the
+  parser never rewound into `parse_bare_proc_type(...)`.
+- The verified fix is local:
+  - teach both `parse_of_type_expression(...)` helpers to rewind and reparse as
+    a bare proc type when expression parsing leaves a proc-like tail;
+  - add a parser regression in `spec/parser/parser_proc_literal_spec.cr`
+    asserting that `handlers = [] of Int32, ::Exception? ->` remains an
+    `AssignNode` with an `ArrayLiteralNode` value inside a method body;
+  - add a semantic regression in
+    `spec/semantic/type_inference_proc_type_annotation_spec.cr` asserting that
+    the same pattern stays collection-shaped and infers as `ArrayType`.
+
+Focused verification:
+- `../crystal/bin/crystal spec spec/parser/parser_proc_literal_spec.cr --error-trace`
+- `../crystal/bin/crystal spec spec/semantic/type_inference_proc_type_annotation_spec.cr --error-trace`
+- `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+- `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+- `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 60 2048 /tmp/semantic_empty_proc_array_probe.cr --no-prelude --stats --verbose`
+- `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 300 4096 src/crystal_v2.cr --stats --no-link -o /tmp/stage3_semantic_probe_after_proc_array_fix.out > /tmp/stage3_semantic_probe_after_proc_array_fix.log 2>&1`
+
+Whole-program effect:
+- The full semantic stage3 probe under `scripts/run_safe.sh` moved from
+  `semantic_diags=0 resolution_diags=0 type_diags=18` to
+  `semantic_diags=0 resolution_diags=0 type_diags=14`.
+- The old live `at_exit_handlers` proc-array failure disappeared, and so did
+  the prior `src/compiler/hir/hir.cr` `Function 'new' not found` family on the
+  current tree.
+
+Immediate next steps:
+1. Treat typed proc-array `of` tails as closed at the parser boundary.
+2. Continue from the new live head at `type_diags=14`: `process/signal`,
+   `boehm`, `raise`, `Location.read_zoneinfo`, and `file.close`.

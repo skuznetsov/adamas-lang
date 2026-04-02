@@ -10662,8 +10662,36 @@ module CrystalV2
         end
 
         # Parse type expression after "of" keyword (e.g., `[] of Int32`, `[] of Int32 | String`)
-        private def parse_of_type_expression : ExprId
-          parse_expression(0)
+        private def parse_of_type_expression : ExprId?
+          save_idx = @index
+          save_prev = @previous_token
+          save_diag_count = @diagnostics.size
+
+          # Try expression parsing first (handles union types, generics).
+          # If a proc-signature tail remains outside the parsed expression,
+          # rewind and reparse as a bare proc type so the array literal keeps
+          # statement boundaries intact (e.g. [] of Int32, Exception? ->).
+          of_type_expr = parse_expression(0)
+          if !of_type_expr.invalid?
+            unless current_token.kind == Token::Kind::ThinArrow ||
+                   (current_token.kind == Token::Kind::Comma && lookahead_for_arrow?)
+              return of_type_expr
+            end
+          end
+
+          @index = save_idx
+          @previous_token = save_prev
+          while @diagnostics.size > save_diag_count
+            @diagnostics.pop
+          end
+
+          type_start = current_token
+          type_slice = parse_bare_proc_type
+          return nil if type_slice.nil?
+
+          type_end = previous_token || type_start
+          type_span = type_start.span.cover(type_end.span)
+          @arena.add_typed(IdentifierNode.new(type_span, type_slice.not_nil!))
         end
 
         private def percent_literal_token?(token : Token) : Bool
@@ -16485,7 +16513,10 @@ current_token.kind == Token::Kind::Identifier &&
           # Try expression parsing first (handles union types, generics)
           of_type_expr = parse_expression(0)
           if !of_type_expr.invalid?
-            return of_type_expr
+            unless current_token.kind == Token::Kind::ThinArrow ||
+                   (current_token.kind == Token::Kind::Comma && lookahead_for_arrow?)
+              return of_type_expr
+            end
           end
 
           # Restore state and fall back to raw text parsing

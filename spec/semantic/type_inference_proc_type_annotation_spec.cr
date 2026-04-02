@@ -148,5 +148,29 @@ describe Semantic::TypeInferenceEngine do
       engine.diagnostics.should be_empty
       engine.context.get_type(program.roots.last).to_s.should eq("Nil")
     end
+
+    it "keeps typed empty proc arrays collection-shaped" do
+      source = <<-CRYSTAL
+        class Exception
+        end
+
+        module Crystal::AtExitHandlers
+          def self.add(handler)
+            handlers = [] of Int32, ::Exception? ->
+            handlers << handler
+            handlers
+          end
+        end
+
+        Crystal::AtExitHandlers.add(->(status : Int32, ex : ::Exception?) { nil })
+      CRYSTAL
+
+      program, analyzer, engine = infer_proc_type_annotation_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.should be_empty
+      engine.context.get_type(program.roots.last).should be_a(Semantic::ArrayType)
+    end
   end
 end
