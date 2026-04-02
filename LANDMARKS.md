@@ -30,6 +30,56 @@ real constant-owner replay fix, but stage3 is still not green; the new honest
 head is now `gc/boehm`, `signal`, generated `raise`, generated `process`, and
 `file`. {F/G/R: 0.99/0.83/0.99} [verified]
 
+[LM-421|verified]: After [LM-420], the next honest mover was not another
+runtime-only callback toy and not a fresh `signal` blind patch, but a mixed
+specialization branch in semantic inference. The decisive focused regressions
+were `spec/semantic/type_inference_proc_type_annotation_spec.cr` and
+`spec/semantic/type_inference_annotated_method_body_specialization_spec.cr`,
+which proved two narrow facts on the current tree: untyped proc literals can
+need the expected callback signature in order to type-check, and methods with
+explicit return annotations can still require call-site-specialized body
+inference when a narrower subtype flows into a generic inner call. The
+verified implementation stays bounded to
+`src/compiler/semantic/type_inference_engine.cr`: annotated methods now
+trigger `infer_method_body_type(...)` when concrete argument types are strict
+subtypes of the declared parameter annotations, and proc literals can be
+checked against expected `ProcType` callback signatures by inferring their
+params and body under that expected type context. Focused regressions are
+green; rebuild gates for `src/crystal_v2.cr --no-codegen` and
+`/tmp/crystal_v2_semantic_stage3probe` are green; and the full safe stage3
+probe moves reproducibly from `semantic_diags=0 resolution_diags=0 type_diags=12`
+to `semantic_diags=0 resolution_diags=0 type_diags=10`, removing
+`Method 'finalize' not found on Reference` and `Operator '>>' not defined for Nil and Int32`
+from the live head. Boundary: this is a real mover but only a partial
+explanation of the remaining callback frontier, because
+`Method 'jit_stack_assign' not found on LibPCRE2` still survives in the live
+head. {F/G/R: 0.97/0.73/0.98} [verified]
+
+[LM-420|verified]: After [LM-419], the cheapest honest mover was not another
+type-engine tweak but a collector bug in macro-expanded class bodies. The
+decisive exact falsifier was a tiny `{% if false %} ... {% else %} @@rwlock =
+Crystal::RWLock.new ... {% end %}` carrier, which reproduced
+`Method 'write_lock' not found on Nil` and `Method 'write_unlock' not found on Nil`
+inside a generated class method even though the non-generated shape was
+already green. Symbol inspection then made the root cause explicit:
+`src/compiler/semantic/collectors/symbol_collector.cr` sent expanded
+class-body macro output straight through `visit(...)`, so generated
+`ClassVarDeclNode` / `@@var = ...` assignments never reached
+`collect_class_body(...)` and were never materialized as `ClassVarSymbol`s.
+The verified fix stays bounded to the collector: expanded class-body macro
+output now re-enters `collect_class_body(...)`, and that path explicitly
+handles generated class variable declarations and assignments. Focused
+regressions `spec/semantic/symbol_collector_spec.cr` and
+`spec/semantic/type_inference_spec.cr` are green; rebuild gates for
+`src/crystal_v2.cr --no-codegen` and `/tmp/crystal_v2_semantic_stage3probe`
+are green; and the full safe stage3 probe moves reproducibly from
+`semantic_diags=0 resolution_diags=0 type_diags=14` to
+`semantic_diags=0 resolution_diags=0 type_diags=12`, removing the generated
+`Process` `write_lock` / `write_unlock` failures from the live head.
+Boundary: this is a real collector fix, but stage3 is still not green and the
+next honest frontier shifts to `boehm`, `signal`, generated `raise`,
+generated `time`, and `file`. {F/G/R: 0.98/0.77/0.99} [verified]
+
 [LM-418|verified]: After [LM-417], the cheapest honest mover was not another
 bootstrap-only `new(...)` mystery but a control-flow typing leak hidden behind
 the public `Process#wait` error. The decisive exact falsifier was the tiny

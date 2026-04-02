@@ -1,6 +1,61 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-01)
 
 ## Current Status
+- **Fresh annotated-wrapper/proc-literal checkpoint: annotated wrapper methods now re-infer their bodies when narrower call-site arguments would otherwise hide a specialized inner call, and untyped proc literals can match expected callback signatures from lib fun parameters, which moves the honest stage3 semantic gate from `type_diags=12` to `type_diags=10` on the current verified tree (2026-04-01, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/type_inference_engine.cr` now triggers `infer_method_body_type(...)` for annotated methods when the concrete call-site argument is a strict subtype of the declared parameter type, instead of blindly trusting the annotation-only fast path
+    - the same file now checks untyped proc literals against expected `ProcType` callback signatures by binding proc params to the expected callback types and inferring the proc body/return under that context
+    - focused regression coverage now lives in:
+      - `spec/semantic/type_inference_proc_type_annotation_spec.cr`
+      - `spec/semantic/type_inference_annotated_method_body_specialization_spec.cr`
+  - decisive evidence:
+    - focused regression pack is green:
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_proc_type_annotation_spec.cr --example 'matches untyped proc literals against lib fun callback signatures' --error-trace`
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_annotated_method_body_specialization_spec.cr --error-trace`
+    - rebuild gates are green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+    - the clean full semantic stage3 probe under the safe wrapper improves reproducibly:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 300 4096 src/crystal_v2.cr --stats --no-link -o /tmp/stage3_semantic_probe_after_generated_classvar_and_proc_fix.out > /tmp/stage3_semantic_probe_after_generated_classvar_and_proc_fix.log 2>&1`
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 300 4096 src/crystal_v2.cr --stats --no-link -o /tmp/stage3_semantic_probe_after_generated_classvar_and_proc_fix_rerun.out > /tmp/stage3_semantic_probe_after_generated_classvar_and_proc_fix_rerun.log 2>&1`
+      - fresh summary on the current tree is:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=10`
+      - `Method 'finalize' not found on Reference` and `Operator '>>' not defined for Nil and Int32` disappear from the live head
+  - practical boundary:
+    - this is a real mover, but it is a mixed checkpoint rather than a total explanation of the remaining callback/runtime frontier
+    - `Method 'jit_stack_assign' not found on LibPCRE2` is still live in the current head, so the proc-literal callback branch is only partially explanatory
+    - the next honest frontier is now led by:
+      - `src/stdlib/crystal/system/unix/signal.cr` (`3`)
+      - `src/stdlib/raise.cr [generated]` (`2`)
+      - `src/crystal_v2.cr` (`1`)
+      - `src/stdlib/crystal/system/unix/time.cr [generated]` (`1`)
+      - `src/stdlib/file.cr` (`1`)
+- **Fresh macro-generated classvar checkpoint: semantic collection now preserves class vars defined inside expanded class-body macro branches, which closes the generated `Process.lock_write` `@@rwlock` corridor and moves the honest stage3 semantic gate from `type_diags=14` to `type_diags=12` on the current verified tree (2026-04-01, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/collectors/symbol_collector.cr` now routes expanded class-body macro output back through `collect_class_body(...)` and lets that path register `ClassVarDeclNode` plus `@@var = ...` assignments
+    - focused regression coverage now lives in:
+      - `spec/semantic/symbol_collector_spec.cr`
+      - `spec/semantic/type_inference_spec.cr`
+  - decisive evidence:
+    - focused regression pack is green:
+      - `../crystal/bin/crystal spec spec/semantic/symbol_collector_spec.cr --example 'collects class-body macro-generated class vars from expanded branches' --error-trace`
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_spec.cr --example 'keeps macro-generated class vars concrete inside generated class methods' --error-trace`
+    - rebuild gates are green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+    - the clean full semantic stage3 probe under the safe wrapper improves reproducibly:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 300 4096 src/crystal_v2.cr --stats --no-link -o /tmp/stage3_semantic_probe_after_macro_classvar_fix.out > /tmp/stage3_semantic_probe_after_macro_classvar_fix.log 2>&1`
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 300 4096 src/crystal_v2.cr --stats --no-link -o /tmp/stage3_semantic_probe_after_macro_classvar_fix_rerun.out > /tmp/stage3_semantic_probe_after_macro_classvar_fix_rerun.log 2>&1`
+      - fresh summary on the current tree is:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=12`
+      - generated `write_lock` / `write_unlock` failures disappear from the live head
+  - practical boundary:
+    - this is a real collector fix, not a `Process`-specific hack
+    - stage3 is still not green; the next honest frontier after this checkpoint was `boehm`, `signal`, generated `raise`, generated `time`, and `file`
 - **Fresh constant-owner replay checkpoint: semantic constants now retain their defining class/module owner during replay, which closes the live `HIR::TypeRef::VOID = new(...)` receiverless `new` corridor and moves the honest stage3 semantic gate from `type_diags=17` to `type_diags=14` on the current verified tree (2026-04-01, current session)**:
   - trustworthy setup:
     - `src/compiler/semantic/symbol.cr` now stores `owner_class` / `owner_module` on `ConstantSymbol`

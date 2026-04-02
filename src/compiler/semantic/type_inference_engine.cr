@@ -1596,6 +1596,9 @@ module CrystalV2
             end
           elsif ann = method.return_annotation
             ensure_annotated_method_block_inferred(method, receiver_type, call_node)
+            if annotated_method_requires_specialized_body_inference?(method, receiver_type, arg_types)
+              infer_method_body_type(method, receiver_type, arg_types, call_node, lexical_block_context: lexical_block_context)
+            end
             return resolve_method_annotation_type(ann, receiver_type, method.scope, class_method_context: method.is_class_method?)
           end
 
@@ -1610,6 +1613,38 @@ module CrystalV2
           return unless call_node
           return unless call_has_block?(call_node)
           infer_method_block_result_type(method, receiver_type, call_node)
+        end
+
+        private def annotated_method_requires_specialized_body_inference?(
+          method : MethodSymbol,
+          receiver_type : Type,
+          arg_types : Array(Type)
+        ) : Bool
+          return false if arg_types.empty?
+
+          params = method.params.reject { |param| param.is_block || param.is_double_splat || named_only_separator?(param) }
+          return false if params.empty?
+
+          arg_types.each_with_index do |arg_type, index|
+            param = params[index]?
+            break unless param
+
+            type_annotation = param.type_annotation
+            next unless type_annotation
+
+            declared_type = resolve_method_annotation_type(
+              intern_name(type_annotation),
+              receiver_type,
+              method.scope,
+              class_method_context: method.is_class_method?
+            )
+
+            next if unknownish_type?(declared_type) || unknownish_type?(arg_type)
+            next unless is_subtype?(arg_type, declared_type)
+            return true unless arg_type.to_s == declared_type.to_s
+          end
+
+          false
         end
 
         private def infer_proc_pointer_type(operand_id : ExprId) : ProcType?
@@ -2086,11 +2121,21 @@ module CrystalV2
           end
 
           has_untyped_params = false
+          has_non_block_params = false
           if params = node.params
-            has_untyped_params = params.any? { |param| !param.is_block && param.type_annotation.nil? }
+            params.each do |param|
+              next if param.is_block
+              has_non_block_params = true
+              if param.type_annotation.nil?
+                has_untyped_params = true
+              end
+            end
           end
 
           defer_body_inference = generic_owner || method_is_generic || has_untyped_params
+          if method_symbol && method_symbol.return_annotation && has_non_block_params
+            defer_body_inference = true
+          end
 
           # Instance methods declared in modules don't have a concrete receiver
           # during eager body walks. Inferring them against the module object
@@ -8926,9 +8971,71 @@ module CrystalV2
         end
 
         private def parameter_type_matches?(actual : Type, expected : Type, c_fun_compat : Bool, arg_expr_id : ExprId? = nil) : Bool
+          if expected.is_a?(ProcType) && arg_expr_id
+            if proc_literal = @arena[arg_expr_id].as?(Frontend::ProcLiteralNode)
+              return proc_literal_matches_expected?(proc_literal, arg_expr_id, expected, c_fun_compat)
+            end
+          end
+
           return true if literal_symbol_matches_expected_type?(arg_expr_id, expected)
           return type_matches?(actual, expected) unless c_fun_compat
           c_fun_type_matches?(actual, expected)
+        end
+
+        private def proc_literal_matches_expected?(node : Frontend::ProcLiteralNode, expr_id : ExprId, expected : ProcType, c_fun_compat : Bool) : Bool
+          params = node.params || [] of Frontend::Parameter
+          return false unless params.size == expected.param_types.size
+
+          previous_bindings = {} of String => Type?
+          param_types = Array(Type).new(params.size)
+          receiver_context = @receiver_type_context
+          method_scope = @current_method_scope
+          class_method_context = @current_method_is_class_method_stack.last?
+
+          begin
+            params.each_with_index do |param, index|
+              expected_param_type = expected.param_types[index]
+              param_type =
+                if type_ann = param.type_annotation
+                  resolve_method_annotation_type(intern_name(type_ann), receiver_context, method_scope, class_method_context: class_method_context)
+                else
+                  expected_param_type
+                end
+
+              matches = c_fun_compat ? c_fun_type_matches?(param_type, expected_param_type) : type_matches?(param_type, expected_param_type)
+              return false unless matches
+
+              if param_name = param.name
+                name = intern_name(param_name)
+                previous_bindings[name] = @assignments[name]?
+                @assignments[name] = param_type
+              end
+
+              param_types << param_type
+            end
+
+            body_type = infer_block_result(node.body || [] of ExprId)
+            return_type =
+              if explicit_return = node.return_type
+                resolve_method_annotation_type(intern_name(explicit_return), receiver_context, method_scope, class_method_context: class_method_context)
+              else
+                body_type
+              end
+
+            matches = c_fun_compat ? c_fun_type_matches?(return_type, expected.return_type) : type_matches?(return_type, expected.return_type)
+            return false unless matches
+
+            @context.set_type(expr_id, ProcType.new(param_types, return_type))
+            true
+          ensure
+            previous_bindings.each do |name, previous_type|
+              if previous_type
+                @assignments[name] = previous_type
+              else
+                @assignments.delete(name)
+              end
+            end
+          end
         end
 
         private def literal_symbol_matches_expected_type?(arg_expr_id : ExprId?, expected : Type) : Bool

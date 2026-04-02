@@ -172,5 +172,37 @@ describe Semantic::TypeInferenceEngine do
       engine.diagnostics.should be_empty
       engine.context.get_type(program.roots.last).should be_a(Semantic::ArrayType)
     end
+
+    it "matches untyped proc literals against lib fun callback signatures" do
+      source = <<-CRYSTAL
+        lib LibPCRE2
+          type MatchContext = Void*
+          type JITStack = Void
+          fun jit_stack_assign(mcontext : MatchContext*, callable_function : Void* -> JITStack*, callable_data : Void*) : Void
+        end
+
+        module Regex
+          module PCRE2
+            def self.jit_stack : LibPCRE2::JITStack*
+              Pointer(Void).null.as(LibPCRE2::JITStack*)
+            end
+
+            def self.assign(match_context : LibPCRE2::MatchContext*) : Nil
+              LibPCRE2.jit_stack_assign(match_context, ->(_data) { Regex::PCRE2.jit_stack }, nil)
+              nil
+            end
+          end
+        end
+
+        Regex::PCRE2.assign(Pointer(Void*).null)
+      CRYSTAL
+
+      program, analyzer, engine = infer_proc_type_annotation_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.should be_empty
+      engine.context.get_type(program.roots.last).to_s.should eq("Nil")
+    end
   end
 end
