@@ -7,6 +7,7 @@
 
 require "./hir"
 require "./debug_hooks"
+require "./memory_strategy"
 require "../frontend/ast"
 require "../semantic/identity/dry_run_tracker"
 require "../mir/mir"

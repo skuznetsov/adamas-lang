@@ -3,6 +3,29 @@
 Updated: 2026-04-01
 Context: compiler/bootstrap/stage2-stability
 
+[LM-433|verified]: After [LM-432], a broader HIR adversary sweep exposed a
+different kind of failure: isolated HIR spec entry points were not even
+compiling because `src/compiler/hir/ast_to_hir.cr` referenced
+`HIR::MemoryStrategy::ARC` while relying on the wider build graph to have
+already loaded `src/compiler/hir/memory_strategy.cr`. The decisive signal was
+the red isolated spec `spec/hir/inline_yield_spec.cr`, which failed during
+instantiation of `AstToHir#lower_out_arg` with `undefined constant
+HIR::MemoryStrategy::ARC`, even though the real compiler build remained green.
+Source inspection made the dependency hole explicit: `ast_to_hir.cr` wrote
+`alloc.memory_strategy = HIR::MemoryStrategy::ARC` in lib-`out` lowering paths
+but its require list only loaded `hir`, `debug_hooks`, frontend/semantic files,
+and `mir`, not `memory_strategy`. The verified fix is a single production
+require edge: `require "./memory_strategy"` at the top of `ast_to_hir.cr`.
+After that change, both isolated HIR guards
+`spec/hir/inline_yield_spec.cr` and `spec/hir/lowering_context_scope_spec.cr`
+are green again, and `../crystal/bin/crystal build src/crystal_v2.cr
+--no-codegen --error-trace` stays green. Boundary: this closes a require-graph
+harness hole only. The broader `spec/hir/ast_to_hir_spec.cr` still contains
+many stale behavior expectations unrelated to the missing constant, and
+`spec/hir/memory_strategy_spec.cr` still exposes a separate behavioral frontier
+around FFI-exposed allocations preferring `Stack` over expected `GC`.
+{F/G/R: 0.98/0.74/0.99} [verified]
+
 [LM-432|verified]: After [LM-431], the remaining enum/hash runtime crash was no
 longer best explained by wrong specialization drift and not by missing
 caller-local merge inside inline yield lowering. The decisive adversarial

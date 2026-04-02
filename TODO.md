@@ -1,6 +1,19 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-01)
 
 ## Current Status
+- **Fresh HIR isolated-require checkpoint: `ast_to_hir.cr` now explicitly requires the memory-strategy definitions it references, so isolated HIR spec entry points no longer fail at compile time on `HIR::MemoryStrategy::ARC` (2026-04-02, current session)**:
+  - trustworthy setup:
+    - `src/compiler/hir/ast_to_hir.cr` now explicitly `require "./memory_strategy"` alongside its other direct HIR dependencies
+    - this matches the actual production dependency: `ast_to_hir.cr` writes `alloc.memory_strategy = HIR::MemoryStrategy::ARC` in lib-`out` lowering paths, so the enum/class extension must be loaded when the file is required in isolation
+  - decisive evidence:
+    - isolated HIR specs that were red on the missing-constant path are now green:
+      - `../crystal/bin/crystal spec spec/hir/inline_yield_spec.cr --error-trace`
+      - `../crystal/bin/crystal spec spec/hir/lowering_context_scope_spec.cr --error-trace`
+    - rebuild gate is green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+  - practical boundary:
+    - this is a real production require-graph fix, not a spec-only workaround
+    - broader `spec/hir/ast_to_hir_spec.cr` still has many stale behavioral expectations unrelated to this missing-constant hole, and `spec/hir/memory_strategy_spec.cr` still exposes a separate FFI/GC strategy frontier
 - **Fresh HIR inline-yield caller-restore checkpoint: the runtime hash compaction carriers now stay green because merged caller locals survive inline scope teardown instead of being reverted to the pre-inline snapshot (2026-04-01, current session)**:
   - trustworthy setup:
     - `src/compiler/hir/ast_to_hir.cr` still refreshes live caller locals at the yield site for inlined block bodies and filters out callee-shadowed names when taking that snapshot
