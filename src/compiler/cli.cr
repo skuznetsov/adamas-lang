@@ -6050,7 +6050,7 @@ module CrystalV2
         analyzer = Semantic::Analyzer.new(aggregate.program)
         sources_by_path = aggregate.sources_by_path
         compile_parse_diagnostics = active_units.flat_map(&.parse_diagnostics)
-        shadow_parse_diagnostics = aggregate.parse_diagnostics.map { |diagnostic| aggregate.enrich_shadow_diagnostic(diagnostic) }
+        shadow_parse_diagnostics = aggregate.parse_diagnostics
         parse_diagnostic_parity = Semantic::CompileShadowParseDiagnosticParity.compare(
           compile_parse_diagnostics,
           shadow_parse_diagnostics
@@ -6088,7 +6088,7 @@ module CrystalV2
         )
         aggregate.attach_generated_overlay(analyzer.generated_overlay)
 
-        semantic_diagnostics = analyzer.semantic_diagnostics.map { |diagnostic| aggregate.enrich_shadow_diagnostic(diagnostic) }
+        semantic_diagnostics = analyzer.semantic_diagnostics.dup
         semantic_diagnostics.each do |diagnostic|
           err_io.puts aggregate.format_shadow_diagnostic(diagnostic, sources_by_path)
         end
@@ -6114,7 +6114,7 @@ module CrystalV2
         end
 
         resolve_result = analyzer.resolve_names
-        resolution_diagnostics = resolve_result.diagnostics.map { |diagnostic| aggregate.enrich_shadow_diagnostic(diagnostic) }
+        resolution_diagnostics = resolve_result.diagnostics.dup
         resolution_diagnostics.each do |diagnostic|
           err_io.puts aggregate.format_shadow_diagnostic(diagnostic, sources_by_path)
         end
@@ -6140,7 +6140,7 @@ module CrystalV2
         end
 
         analyzer.infer_types(resolve_result.identifier_symbols)
-        type_diagnostics = analyzer.type_inference_diagnostics.map { |diagnostic| aggregate.enrich_shadow_diagnostic(diagnostic) }
+        type_diagnostics = analyzer.type_inference_diagnostics.dup
         type_diagnostics.each do |diagnostic|
           err_io.puts aggregate.format_shadow_diagnostic(diagnostic, sources_by_path)
         end
@@ -6737,16 +6737,16 @@ module CrystalV2
         )
         declaration_parity = Semantic::CompileShadowDeclarationParity.compare(collector_inventory, semantic_inventory)
         compile_parse_diagnostics = active_units.flat_map(&.parse_diagnostics)
-        shadow_parse_diagnostics = aggregate.parse_diagnostics.map { |diagnostic| aggregate.enrich_shadow_diagnostic(diagnostic) }
+        shadow_parse_diagnostics = aggregate.parse_diagnostics
         parse_diagnostic_parity = Semantic::CompileShadowParseDiagnosticParity.compare(
           compile_parse_diagnostics,
           shadow_parse_diagnostics
         )
         compile_parse_diagnostics_by_unit = active_units.map(&.parse_diagnostics.size)
         shadow_parse_diagnostics_by_unit = aggregate.unit_summaries.map(&.parse_diagnostic_count)
-        semantic_diagnostics = analyzer.semantic_diagnostics.map { |diagnostic| aggregate.enrich_shadow_diagnostic(diagnostic) }
-        resolution_diagnostics = resolve_result.diagnostics.map { |diagnostic| aggregate.enrich_shadow_diagnostic(diagnostic) }
-        type_diagnostics = analyzer.type_inference_diagnostics.map { |diagnostic| aggregate.enrich_shadow_diagnostic(diagnostic) }
+        semantic_diagnostics = analyzer.semantic_diagnostics.dup
+        resolution_diagnostics = resolve_result.diagnostics.dup
+        type_diagnostics = analyzer.type_inference_diagnostics.dup
         symbols_by_unit = count_shadow_symbols_by_unit(analyzer.global_context.symbol_table, aggregate)
         generated_symbols_by_unit = count_shadow_generated_symbols_by_unit(analyzer.global_context.symbol_table, aggregate)
         identifiers_by_unit = count_shadow_identifiers_by_unit(resolve_result.identifier_symbols, aggregate)
