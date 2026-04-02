@@ -4930,18 +4930,7 @@ module CrystalV2
           targets.each_with_index do |target_id, idx|
             target_node = @arena[target_id]
             if target_node.is_a?(Frontend::IdentifierNode)
-              # Extract type for this position
-              element_type = case value_type
-                             when TupleType
-                               # Get type at this index from tuple
-                               value_type.element_types[idx]? || @context.nil_type
-                             when ArrayType
-                               # All elements have same type
-                               value_type.element_type
-                             else
-                               # Fallback to the whole type if not destructurable
-                               value_type
-                             end
+              element_type = destructured_multiple_assign_element_type(value_type, idx) || value_type
               target_name = intern_name(target_node.name)
               @assignments[target_name] = element_type
               if @flow_narrowings.has_key?(target_name)
@@ -4953,6 +4942,28 @@ module CrystalV2
 
           # Multiple assignment returns the value type
           value_type
+        end
+
+        private def destructured_multiple_assign_element_type(value_type : Type, idx : Int32) : Type?
+          case value_type
+          when TupleType
+            value_type.element_types[idx]? || @context.nil_type
+          when ArrayType
+            value_type.element_type
+          when UnionType
+            member_types = [] of Type
+            value_type.types.each do |member|
+              member_type = destructured_multiple_assign_element_type(member, idx)
+              if ENV["DEBUG_MULTIPLE_ASSIGN"]? && idx == 1
+                STDERR.puts "[MULTI_ASSIGN_TRACE] idx=#{idx} union_member=#{member} member_class=#{member.class.name} extracted=#{member_type ? member_type.to_s : "nil"}"
+              end
+              return nil unless member_type
+              member_types << member_type
+            end
+            union_of(member_types)
+          else
+            nil
+          end
         end
 
         # ============================================================

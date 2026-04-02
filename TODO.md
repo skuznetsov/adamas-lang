@@ -1,6 +1,48 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-01)
 
 ## Current Status
+- **Fresh multiple-assign union destructuring checkpoint: semantic multiple assignment now destructures union-shaped tuple/array RHS element-wise instead of binding the whole union back into each target, which closes the live `OptionParser` `required?/optional?` corridor and moves the honest stage3 semantic gate from `type_diags=30` to `type_diags=24` (2026-04-01, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/type_inference_engine.cr` now routes multiple assignment binding through a dedicated `destructured_multiple_assign_element_type(...)` helper
+    - that helper preserves the old tuple/array behavior and extends it narrowly for `UnionType`: if every union member is destructurable, each target gets the union of the corresponding element types; otherwise the old fallback to the whole RHS type remains
+    - focused regression coverage lives in `spec/semantic/type_inference_multiple_assign_union_spec.cr`
+  - decisive evidence:
+    - focused regression pack is green:
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_multiple_assign_union_spec.cr --error-trace`
+    - host build gate is green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+    - rebuilt stage3 probe is green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+    - the real stdlib carrier that used to fail on `OptionParser` is now clean under the safe wrapper:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 DEBUG_TYPE_TRACE_NAMES='required?,optional?' scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 180 3072 /tmp/semantic_option_parser_require_probe.cr --stats --verbose --no-link -o /tmp/semantic_option_parser_require_probe.out > /tmp/semantic_option_parser_require_probe_after_union_destructure_fix.log 2>&1`
+      - summary moved from:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=22`
+      - to:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=16`
+      - trace now shows `required?` / `optional?` receivers as plain `FlagValue` with candidate count `1`, instead of `Tuple(String, FlagValue) | Tuple(String, FlagValue)`
+    - the clean full semantic stage3 probe under the safe wrapper improves materially again:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 300 4096 src/crystal_v2.cr --stats --no-link -o /tmp/stage3_semantic_probe_after_union_destructure_fix.out > /tmp/stage3_semantic_probe_after_union_destructure_fix.log 2>&1`
+      - summary moved from:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=30`
+      - to:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=24`
+      - `src/stdlib/option_parser.cr` disappears from the live head entirely
+  - practical boundary:
+    - this is a real binder-level semantic fix, not an `OptionParser`-specific builtin patch
+    - stage3 is still not green; the next honest frontier is now headed by:
+      - `src/compiler/hir/hir.cr` (`3`, `Function 'new' not found`)
+      - `src/stdlib/crystal/system/unix/process.cr [generated]` (`2`)
+      - `src/stdlib/crystal/system/unix/signal.cr` (`2`)
+      - `src/compiler/frontend/diagnostic_formatter.cr` (`2`)
+      - `src/compiler/semantic/diagnostic_formatter.cr` (`2`)
 - **Fresh enum-ABI constructor checkpoint: default enum constructor matching now accepts abstract C ABI integers (`Int`/`UInt`) when they target the enum's signedness, which closes the live `Errno.new(ret)` pthread/runtime corridor and moves the honest stage3 semantic gate from `type_diags=35` to `type_diags=30` (2026-04-01, current session)**:
   - trustworthy setup:
     - `src/compiler/semantic/type_inference_engine.cr` now keeps the existing exact enum-constructor fast path, but extends it narrowly for abstract ABI integers: `Enum(Int32).new(Int)` and `Enum(UInt32).new(UInt)` match by signedness without widening the rest of overload resolution

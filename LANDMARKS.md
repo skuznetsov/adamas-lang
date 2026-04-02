@@ -3,6 +3,38 @@
 Updated: 2026-04-01
 Context: compiler/bootstrap/stage2-stability
 
+[LM-415|verified]: After [LM-414], the next live mover was not another enum or
+runtime receiver bug but a binder-level gap in multiple assignment. The
+decisive real carrier was `/tmp/semantic_option_parser_require_probe.cr` under
+`scripts/run_safe.sh`, which reproduced the current `OptionParser` head
+without the full program and showed the critical trace:
+`member_access method=required? receiver=Tuple(String, FlagValue) |
+Tuple(String, FlagValue)` and the same for `optional?`. Source inspection then
+made the local defect explicit: `infer_multiple_assign(...)` in
+`src/compiler/semantic/type_inference_engine.cr` destructured only plain
+`TupleType` and `ArrayType`, but fell back to the entire RHS for any
+`UnionType`, so a union-shaped tuple return bound the whole tuple-union back
+into every assignment target. The verified fix stays narrow: multiple
+assignment now delegates to `destructured_multiple_assign_element_type(...)`,
+which preserves the old tuple/array behavior and extends it to union members
+only when every member is destructurable; otherwise the original whole-RHS
+fallback remains. Focused helper regression
+`spec/semantic/type_inference_multiple_assign_union_spec.cr` is green; the
+host `src/crystal_v2.cr --no-codegen` build is green; rebuilt
+`/tmp/crystal_v2_semantic_stage3probe` is green; the real stdlib
+`require "option_parser"` carrier improves from
+`semantic_diags=0 resolution_diags=0 type_diags=22` to
+`semantic_diags=0 resolution_diags=0 type_diags=16`, with traces now showing
+plain `FlagValue` receivers and candidate count `1` for `required?` /
+`optional?`; and the full safe stage3 probe moves from
+`semantic_diags=0 resolution_diags=0 type_diags=30` to
+`semantic_diags=0 resolution_diags=0 type_diags=24`, removing
+`src/stdlib/option_parser.cr` from the live head completely. Boundary: this is
+a reusable binder fix, but stage3 is still not green; the new honest head is
+now compiler/runtime-heavy again, led by `src/compiler/hir/hir.cr`,
+generated `process`/`signal`, diagnostic formatter arithmetic unions, and the
+remaining `Reference`/`File` tails. {F/G/R: 0.99/0.86/0.99} [verified]
+
 [LM-414|verified]: The live `pthread_mutex` / `pthread_create` head after
 [LM-413] was not another receiver-loss bug in `LibC`/`GC`. The decisive richer
 carrier `/tmp/semantic_pthread_mutex_richer_probe.cr` reproduced the real
