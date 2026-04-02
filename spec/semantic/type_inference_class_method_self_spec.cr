@@ -76,6 +76,46 @@ describe TypeInferenceEngine do
 
       engine.diagnostics.should be_empty
     end
+
+    it "treats receiverless new inside class-method helpers as a constructor call" do
+      source = <<-CRYSTAL
+        class Gadget
+          private def initialize(@path : String, @fd : Int32, @mode = "", @flag = nil, @encoding = nil, @invalid = nil)
+          end
+
+          def touch : Int32
+            @fd
+          end
+
+          def self.new(path : String, mode = "r", perm = 0, encoding = nil, invalid = nil, flag = nil)
+            build_internal(path, mode, perm, encoding, invalid, flag)
+          end
+
+          protected def self.build_internal(path, mode = "r", perm = 0, encoding = nil, invalid = nil, flag = nil, &)
+            value = new(path, 1, mode, flag, encoding, invalid)
+            begin
+              yield value
+            ensure
+              value.touch
+            end
+          end
+
+          def self.wrap(path : String, &)
+            build_internal(path) do |value|
+              yield value
+            end
+          end
+        end
+
+        Gadget.wrap("x") do |value|
+          value.touch
+        end
+      CRYSTAL
+
+      _program, _analyzer, engine = infer_types(source)
+
+      engine.diagnostics.should be_empty
+    end
   end
 
   describe "instance methods annotated with self" do

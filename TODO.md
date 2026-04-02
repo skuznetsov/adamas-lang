@@ -6960,3 +6960,59 @@ Immediate next steps:
 1. Treat typed proc-array `of` tails as closed at the parser boundary.
 2. Continue from the new live head at `type_diags=14`: `process/signal`,
    `boehm`, `raise`, `Location.read_zoneinfo`, and `file.close`.
+
+## Checkpoint — 2026-04-01 (receiverless constructor calls in class-method helpers)
+
+Verified this turn:
+- The remaining `Location.read_zoneinfo` / `file.close` head at
+  `type_diags=5` was not a missing `Time::Location` symbol and not a generic
+  block-parameter propagation failure. The decisive richer falsifier was
+  `/tmp/semantic_receiverless_constructor_shadow_probe.cr`, which reproduced the
+  real stdlib shape with an explicit `def self.new(...)` wrapper, a private
+  `initialize(...)`, and a helper method that calls receiverless `new(...)`
+  before yielding the local into a block. On the current tree it failed with
+  `Method 'touch' not found on Nil`, and trace showed `assignment_hit name=value
+  type=Nil`.
+- That split the branch cleanly from the earlier green `Widget` probe that had
+  no explicit `self.new` wrapper. The meaningful difference is symbol
+  collection: `ensure_implicit_constructor(...)` only synthesizes a zero-arg
+  `new` when no class-scope `new` exists, so a class like `File` exposes only
+  its explicit wrapper `def self.new(filename, mode = ..., ...)` to semantic
+  receiverless lookup. Inside `File.new_internal`, the receiverless
+  `new(filename, fd, mode, blocking, encoding, invalid)` was therefore routed
+  through the wrong overload family instead of the constructor path used by
+  explicit `File.new(...)`.
+- The verified fix is bounded and compiler-side:
+  - add a dedicated receiverless constructor fast path in
+    `src/compiler/semantic/type_inference_engine.cr` for `new/new!` in class
+    method context;
+  - route it through the same constructor instantiation logic already used for
+    explicit `Type.new(...)`, including generic type-arg inference and
+    `infer_constructor_initialize_side_effects(...)`;
+  - add a focused regression in
+    `spec/semantic/type_inference_class_method_self_spec.cr` covering the exact
+    explicit-`self.new` + private-`initialize` shadowing shape.
+
+Focused verification:
+- `../crystal/bin/crystal spec spec/semantic/type_inference_class_method_self_spec.cr --error-trace`
+- `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+- `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+- `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 60 2048 /tmp/semantic_receiverless_constructor_shadow_probe.cr --stats --verbose --no-link -o /tmp/semantic_receiverless_constructor_shadow_probe_after_fix.out > /tmp/semantic_receiverless_constructor_shadow_probe_after_fix.log 2>&1`
+- `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 120 3072 /tmp/semantic_time_read_zoneinfo_exact_probe.cr --stats --verbose --no-link -o /tmp/semantic_time_read_zoneinfo_exact_probe_after_fix.out > /tmp/semantic_time_read_zoneinfo_exact_probe_after_fix.log 2>&1`
+- `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 300 4096 src/crystal_v2.cr --stats --no-link -o /tmp/stage3_semantic_probe_after_receiverless_ctor_fix.out > /tmp/stage3_semantic_probe_after_receiverless_ctor_fix.log 2>&1`
+
+Whole-program effect:
+- The shadow falsifier now binds `value : Gadget` instead of `Nil`.
+- The real `time/file` carrier now binds `file : File`, and trace shows
+  `read_zoneinfo` being checked with `args=String,File`; both
+  `Method 'read_zoneinfo' not found on Location` and `Method 'close' not found
+  on Nil` disappear from the exact carrier.
+- The full semantic stage3 probe under `scripts/run_safe.sh` moves from
+  `semantic_diags=0 resolution_diags=0 type_diags=5` to
+  `semantic_diags=0 resolution_diags=0 type_diags=3`.
+
+Immediate next steps:
+1. Treat receiverless constructor calls in class-method helper bodies as
+   closed.
+2. Continue from the new live head at `type_diags=3`: the two remaining
+   `Cannot index type Nil` diagnostics and `LibPCRE2.jit_stack_assign`.

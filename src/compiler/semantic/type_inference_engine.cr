@@ -1424,6 +1424,41 @@ module CrystalV2
           nil
         end
 
+        private def infer_receiverless_constructor_call(
+          method_name : String,
+          arg_types : Array(Type),
+          has_block : Bool,
+          call_node : Frontend::CallNode
+        ) : Type?
+          return nil unless {"new", "new!"}.includes?(method_name)
+          return nil unless @current_method_is_class_method_stack.last?
+
+          receiver_type = current_class_method_receiver_type
+          return nil unless receiver_type
+
+          case receiver_type
+          when ClassType
+            instance_receiver =
+              if receiver_type.type_args
+                instantiate_class_receiver(receiver_type)
+              elsif type_args = infer_type_arguments(receiver_type.symbol, arg_types)
+                instantiate_class_receiver(ClassType.new(receiver_type.symbol, type_args))
+              else
+                instantiate_class_receiver(receiver_type)
+              end
+
+            infer_constructor_initialize_side_effects(instance_receiver, arg_types, has_block, call_node)
+            instance_receiver
+          when PrimitiveType
+            return primitive_metaclass_value_type(receiver_type) if primitive_metaclass?(receiver_type)
+            nil
+          when EnumType
+            enum_constructor_arguments_match?(receiver_type, arg_types) ? receiver_type : nil
+          else
+            nil
+          end
+        end
+
         private def infer_receiverless_current_context_reference(method_name : String) : Type?
           receiver_type =
             if @current_method_is_class_method_stack.last?
@@ -6694,6 +6729,10 @@ module CrystalV2
             }
 
             if result = infer_macro_builtin_receiverless_call(method_name, node)
+              return infer_block_if_present.call(result)
+            end
+
+            if result = infer_receiverless_constructor_call(method_name, arg_types, has_block, node)
               return infer_block_if_present.call(result)
             end
 
