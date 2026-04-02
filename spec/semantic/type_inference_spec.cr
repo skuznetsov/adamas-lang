@@ -1036,6 +1036,46 @@ describe Semantic::TypeInferenceEngine do
       engine.diagnostics.should be_empty
     end
 
+    it "keeps macro-generated class vars concrete inside generated class methods" do
+      source = <<-CRYSTAL
+        struct Crystal::RWLock
+          def write_lock : Nil
+          end
+
+          def write_unlock : Nil
+          end
+        end
+
+        struct ProcessLike
+          {% if false %}
+            def self.lock_write(&)
+              yield
+            end
+          {% else %}
+            @@rwlock = Crystal::RWLock.new
+
+            def self.lock_write(&)
+              @@rwlock.write_lock
+              begin
+                yield
+              ensure
+                @@rwlock.write_unlock
+              end
+            end
+          {% end %}
+        end
+
+        ProcessLike.lock_write { 1 }
+      CRYSTAL
+
+      program, analyzer, engine = infer_types(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.should be_empty
+      engine.context.get_type(program.roots.last).to_s.should eq("Int32")
+    end
+
     it "resolves reopened path-style module constants defined via Slice.literal" do
       source = <<-CRYSTAL
         class Float

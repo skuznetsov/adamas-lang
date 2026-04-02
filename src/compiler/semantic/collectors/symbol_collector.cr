@@ -1513,9 +1513,15 @@ module CrystalV2
               pending_annotations.clear
               handle_constant(expr_id, node)
 
+            when Frontend::ClassVarDeclNode
+              pending_annotations.clear
+              handle_scoped_class_var_decl(expr_id, node)
+
             when Frontend::AssignNode
               pending_annotations.clear
-              handle_constant_assignment(expr_id, node)
+              unless handle_scoped_class_var_assignment(node_id: expr_id, node: node)
+                handle_constant_assignment(expr_id, node)
+              end
 
             when Frontend::CallNode
               pending_annotations.clear
@@ -1572,9 +1578,9 @@ module CrystalV2
 
           expanded_node = arena[expanded_id]
           if owner_type && expanded_node.is_a?(Frontend::ClassNode)
-            (expanded_node.body || [] of Frontend::ExprId).each do |expr_id|
-              visit(expr_id)
-            end
+            collect_class_body(owner_type, expanded_node.body || [] of Frontend::ExprId)
+          elsif owner_type
+            collect_class_body(owner_type, [expanded_id])
           else
             visit(expanded_id)
           end

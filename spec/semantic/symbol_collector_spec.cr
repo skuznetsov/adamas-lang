@@ -780,4 +780,32 @@ describe Semantic::SymbolCollector do
     pending.has_default?.should be_true
     pending.default_value.should_not be_nil
   end
+
+  it "collects class-body macro-generated class vars from expanded branches" do
+    source = <<-CR
+      struct Crystal::RWLock
+      end
+
+      struct ProcessLike
+        {% if false %}
+          def self.lock_write(&)
+            yield
+          end
+        {% else %}
+          @@rwlock = Crystal::RWLock.new
+        {% end %}
+      end
+    CR
+
+    parser = Frontend::Parser.new(Frontend::Lexer.new(source))
+    program = parser.parse_program
+    context = Semantic::Context.new(Semantic::SymbolTable.new)
+    collector = Semantic::SymbolCollector.new(program, context)
+    collector.collect
+
+    collector.diagnostics.should be_empty
+
+    process_like = context.symbol_table.lookup("ProcessLike").should be_a(Semantic::ClassSymbol)
+    process_like.as(Semantic::ClassSymbol).class_scope.lookup("@@rwlock").should be_a(Semantic::ClassVarSymbol)
+  end
 end
