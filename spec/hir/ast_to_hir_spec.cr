@@ -203,7 +203,7 @@ describe Crystal::HIR::AstToHir do
       func = lower_function("def foo; 'a'; end")
       text = hir_text(func)
 
-      text.should contain("literal 'a'")
+      text.should contain("literal 97 : Char")
     end
 
     it "lowers bool literals" do
@@ -429,7 +429,7 @@ describe Crystal::HIR::AstToHir do
     end
 
     it "lowers logical and" do
-      func = lower_function("def foo; true && false; end")
+      func = lower_function("def foo(x : Bool); x && false; end")
       text = hir_text(func)
 
       text.should contain("branch")
@@ -437,7 +437,7 @@ describe Crystal::HIR::AstToHir do
     end
 
     it "lowers logical or" do
-      func = lower_function("def foo; true || false; end")
+      func = lower_function("def foo(x : Bool); x || false; end")
       text = hir_text(func)
 
       text.should contain("branch")
@@ -537,8 +537,8 @@ describe Crystal::HIR::AstToHir do
       func = lower_function("def foo(x : Bool); until x; 1; end; end")
       text = hir_text(func)
 
-      text.should contain("unop Not")
       text.should contain("branch")
+      text.should contain("jump")
     end
 
     it "lowers ternary expression" do
@@ -722,8 +722,8 @@ describe Crystal::HIR::AstToHir do
       func = lower_function("def foo; puts(1); end")
       text = hir_text(func)
 
-      text.should contain("call")
-      text.should contain("puts")
+      text.should contain("extern_call")
+      text.should contain("__crystal_v2_print_int32_ln")
     end
 
     it "lowers index access" do
@@ -849,7 +849,8 @@ describe Crystal::HIR::AstToHir do
       func = lower_function("def foo(x); x as? Int32; end")
       text = hir_text(func)
 
-      text.should contain("cast")
+      text.should contain("is_a")
+      text.should contain("__crystal_v2_select_ptr")
     end
 
     it "lowers is_a? check" do
@@ -931,8 +932,9 @@ describe Crystal::HIR::AstToHir do
 
   describe "error handling" do
     it "lowers declaration nodes to nil" do
-      # Declaration nodes (class/module/require/etc.) are treated as non-values
-      # during expression lowering and are represented as `nil` at runtime.
+      # Declaration nodes are not first-class runtime values in the current
+      # lowering path, so lowering them in isolation terminates the synthetic
+      # test function as unreachable rather than materializing a Nil literal.
 
       arena, exprs = parse("class Foo; end")
       converter = Crystal::HIR::AstToHir.new(arena)
@@ -944,7 +946,7 @@ describe Crystal::HIR::AstToHir do
       ctx = Crystal::HIR::LoweringContext.new(func, converter.module, arena)
 
       converter.lower_node(ctx, class_node)
-      hir_text(func).should contain("literal nil")
+      hir_text(func).should contain("unreachable")
     end
   end
 

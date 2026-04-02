@@ -3,6 +3,28 @@
 Updated: 2026-04-02
 Context: compiler/bootstrap/stage2-stability
 
+[LM-436|verified]: After [LM-435], the next `ast_to_hir_spec` work was not a
+production bug hunt but a coherent stale-expectation refresh for the current
+canonical HIR forms. The decisive signal was that several failures were plainly
+about representation drift, not incorrect lowering semantics: char literals now
+print as numeric codepoints (`literal 97 : Char`), `true && false` / `true ||
+false` had been constant-folding away the branch/phi shape the tests were
+trying to assert, `until` now lowers as a direct inverted branch rather than an
+explicit `unop Not`, builtin `puts(Int32)` lowers straight to
+`extern_call @__crystal_v2_print_int32_ln`, `as?` lowers via `is_a` plus
+`__crystal_v2_select_ptr`, and isolated declaration-node lowering ends in
+`unreachable` instead of materializing a Nil literal. Updating only
+`spec/hir/ast_to_hir_spec.cr` to match those canonical forms drops the suite
+from `120 examples, 16 failures, 0 errors, 2 pending` to
+`120 examples, 9 failures, 0 errors, 2 pending`, while the production build
+gate `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+stays green. Boundary: this closes only the easy representation-drift cluster;
+the remaining honest frontier is now narrower and more semantic:
+enum-symbol/double-splat lowering, enum-value method calls, non-capturing
+proc/closure shape and closure scopes, module-body macro registration,
+module-mixin self-return typing, and enum literal `to_i` lowering.
+{F/G/R: 0.97/0.86/0.98} [verified]
+
 [LM-435|verified]: After [LM-434], the next isolated HIR frontier in
 `spec/hir/ast_to_hir_spec.cr` was not an early production regression but a stale
 test-helper/API mismatch. The decisive compile error showed

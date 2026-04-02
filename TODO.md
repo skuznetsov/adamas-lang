@@ -1,6 +1,22 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-02)
 
 ## Current Status
+- **Fresh HIR canonical-lowering spec refresh: `ast_to_hir_spec` now matches the current literal/control-flow/cast/print/declaration forms and the live stale surface drops from 16 failures to 9 (2026-04-02, current session)**:
+  - trustworthy setup:
+    - `spec/hir/ast_to_hir_spec.cr` now expects the current canonical HIR surface for:
+      - char literals (`literal 97 : Char`)
+      - short-circuit tests that avoid constant-folding artifacts
+      - direct branch lowering for `until`
+      - builtin `puts(Int32)` lowering to `extern_call @__crystal_v2_print_int32_ln`
+      - `as?` lowering via `is_a` + `__crystal_v2_select_ptr`
+      - isolated declaration-node lowering ending in `unreachable`
+  - decisive evidence:
+    - `../crystal/bin/crystal spec spec/hir/ast_to_hir_spec.cr --error-trace` now reports `120 examples, 9 failures, 0 errors, 2 pending`, down from `16 failures`
+    - the production compiler build gate remains green on the same tree:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+  - practical boundary:
+    - this is still spec realignment, not a production lowering fix
+    - the remaining honest frontier is narrower and more meaningful: enum-symbol/double-splat lowering, enum-value method calls, non-capturing proc/closure shape, closure scopes, module-body macro registration, module-mixin self-return typing, and enum literal `to_i` lowering
 - **Fresh HIR `ast_to_hir_spec` helper checkpoint: the suite no longer dies at compile time on a stale `lower_main`/`sources_by_arena` test API and now reaches the real behavioral frontier (2026-04-02, current session)**:
   - trustworthy setup:
     - `spec/hir/ast_to_hir_spec.cr` now packs top-level main expressions as `UInt64` refs, matching production `AstToHir#lower_main(main_exprs : Array(UInt64))`
