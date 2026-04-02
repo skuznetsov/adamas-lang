@@ -20354,6 +20354,7 @@ module Crystal::HIR
         hir_param = func.add_param(param_name, param_type)
         if default_lit = param_default_literals[idx]?
           hir_param.default_literal = default_lit
+          func.set_param_default_literal(hir_param.index, default_lit)
         end
         ctx.register_local(param_name, hir_param.id)
         ctx.register_type(hir_param.id, param_type)
@@ -23494,6 +23495,7 @@ module Crystal::HIR
             break if param_idx >= func.params.size
             if default_lit = extract_param_default_literal(ast_param)
               func.params[param_idx].default_literal = default_lit
+              func.set_param_default_literal(param_idx, default_lit)
             end
             param_idx += 1
           end
@@ -23938,6 +23940,7 @@ module Crystal::HIR
             break if param_idx >= func.params.size
             if default_lit = extract_param_default_literal(ast_param)
               func.params[param_idx].default_literal = default_lit
+              func.set_param_default_literal(param_idx, default_lit)
             end
             param_idx += 1
           end
@@ -25406,6 +25409,7 @@ module Crystal::HIR
         hir_param = func.add_param(param_name, param_type)
         if default_lit = param_default_literals[idx]?
           hir_param.default_literal = default_lit
+          func.set_param_default_literal(hir_param.index, default_lit)
         end
         ctx.register_local(param_name, hir_param.id)
         ctx.register_type(hir_param.id, param_type)
@@ -39439,6 +39443,7 @@ module Crystal::HIR
         hir_param = func.add_param(param_name, param_type)
         if default_lit = param_default_literals[idx]?
           hir_param.default_literal = default_lit
+          func.set_param_default_literal(hir_param.index, default_lit)
         end
         ctx.register_local(param_name, hir_param.id)
         ctx.register_type(hir_param.id, param_type) # Track param type for inference
@@ -46195,9 +46200,20 @@ module Crystal::HIR
       if self_id = ctx.lookup_local("self")
         return self_id
       end
-      param = ctx.function.params.find { |p| p.name == "self" }
-      if param.nil? && ctx.function.name.includes?('#')
-        param = ctx.function.params.first?
+
+      params = ctx.function.params
+      param : Crystal::HIR::Parameter? = nil
+      i = 0
+      while i < params.size
+        candidate = params.unsafe_fetch(i)
+        if candidate.name == "self"
+          param = candidate
+          break
+        end
+        i += 1
+      end
+      if param.nil? && ctx.function.name.includes?('#') && params.size > 0
+        param = params.unsafe_fetch(0)
       end
       if param
         ctx.register_local("self", param.id)

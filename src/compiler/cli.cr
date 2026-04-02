@@ -2032,7 +2032,9 @@ module CrystalV2
         def_count = def_nodes.size
         stage2_debug("[STAGE2_DEBUG] pass2 register_functions start count=#{def_count}", err_io)
         log(options, out_io, "  Pass 2: Registering #{def_nodes.size} function signatures...")
-        def_nodes.each_with_index do |(n, a), i|
+        i = 0
+        while i < def_count
+          n, a = def_nodes.unsafe_fetch(i)
           if i < 3 || (i % 100 == 0) || i == def_count - 1
             stage2_debug("[STAGE2_DEBUG] pass2 register_functions idx=#{i + 1}/#{def_count}", err_io)
           end
@@ -2050,6 +2052,7 @@ module CrystalV2
           hir_converter.arena = a
           hir_converter.register_function(n)
           STDERR.print "\r    Registered function #{i+1}/#{def_nodes.size}" if options.progress && (i % 50 == 0 || i == def_nodes.size - 1)
+          i += 1
         end
         stage2_debug("[STAGE2_DEBUG] pass2 register_functions done", err_io)
         if debug_profile
@@ -2083,14 +2086,28 @@ module CrystalV2
         bootstrap_trace_puts "  Creating main function..." if options.progress
         if main_exprs.size > 0
           hir_converter.lower_main(main_exprs)
-        elsif main_def = def_nodes.find { |(n, _)| String.new(n.name) == "main" && !(n.receiver.try { |recv| String.new(recv) == HIR::AstToHir::FUN_DEF_RECEIVER } || false) }
+        else
+          main_def : Tuple(Frontend::DefNode, Frontend::ArenaLike)? = nil
+          i = 0
+          while i < def_nodes.size
+            candidate = def_nodes.unsafe_fetch(i)
+            n = candidate[0]
+            is_fun_receiver = n.receiver.try { |recv| String.new(recv) == HIR::AstToHir::FUN_DEF_RECEIVER } || false
+            if String.new(n.name) == "main" && !is_fun_receiver
+              main_def = candidate
+              break
+            end
+            i += 1
+          end
+          if main_def
           hir_converter.arena = main_def[1]
           hir_converter.lower_main_from_def(main_def[0])
-        else
-          # Keep runtime contract stable: Crystal.main_user_code always expects
-          # __crystal_main(argc, argv), even when user code has no top-level
-          # expressions and no explicit main definition.
-          hir_converter.lower_main(main_exprs)
+          else
+            # Keep runtime contract stable: Crystal.main_user_code always expects
+            # __crystal_main(argc, argv), even when user code has no top-level
+            # expressions and no explicit main definition.
+            hir_converter.lower_main(main_exprs)
+          end
         end
 
         after_lower_main = hir_mod.function_count
@@ -2116,7 +2133,19 @@ module CrystalV2
 
         # Ensure top-level `fun main` is lowered as a real entrypoint (C ABI).
         did_flush = false
-        if fun_main = def_nodes.find { |(n, _)| n.receiver.try { |recv| String.new(recv) == HIR::AstToHir::FUN_DEF_RECEIVER } && String.new(n.name) == "main" }
+        fun_main : Tuple(Frontend::DefNode, Frontend::ArenaLike)? = nil
+        i = 0
+        while i < def_nodes.size
+          candidate = def_nodes.unsafe_fetch(i)
+          n = candidate[0]
+          is_fun_receiver = n.receiver.try { |recv| String.new(recv) == HIR::AstToHir::FUN_DEF_RECEIVER } || false
+          if is_fun_receiver && String.new(n.name) == "main"
+            fun_main = candidate
+            break
+          end
+          i += 1
+        end
+        if fun_main
           hir_converter.arena = fun_main[1]
           hir_converter.lower_def(fun_main[0])
           # Process any pending functions from fun main lowering (e.g., Crystal.init_runtime)

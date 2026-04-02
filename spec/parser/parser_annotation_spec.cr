@@ -4,6 +4,27 @@ require "../../src/compiler/frontend/parser"
 
 describe "CrystalV2::Compiler::Frontend::Parser" do
   describe "Phase 92: annotation keyword (user-defined annotation declarations)" do
+    it "parses annotation arguments containing macro expressions" do
+      source = <<-CRYSTAL
+      @[Link({{ flag?(:static) ? "libucrt" : "ucrt" }})]
+      lib ProbeLib
+      end
+      CRYSTAL
+
+      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      program = parser.parse_program
+
+      parser.diagnostics.should be_empty
+      program.roots.size.should eq(2)
+
+      arena = program.arena
+      annotation_node = arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AnnotationNode)
+      annotation_node.args.size.should eq(1)
+
+      macro_expr = arena[annotation_node.args[0]].as(CrystalV2::Compiler::Frontend::MacroExpressionNode)
+      CrystalV2::Compiler::Frontend.node_macro_expr(macro_expr).should_not be_nil
+    end
+
     it "parses simple annotation definition" do
       source = <<-CRYSTAL
       annotation MyAnnotation

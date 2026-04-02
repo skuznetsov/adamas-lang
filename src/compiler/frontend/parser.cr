@@ -15895,8 +15895,11 @@ current_token.kind == Token::Kind::Identifier &&
 
           skip_trivia
 
-          # Expect }} sequence
-          end_span = nil
+          # Avoid nilable Span carriers here: stage4 self-hosted builds have
+          # shown corrupted nilable struct locals on the {{ ... }} close path.
+          # Keep the closer span concrete and only overwrite it on successful
+          # closer parsing.
+          end_span = start_span
           case current_token.kind
           when Token::Kind::MacroExprEnd
             end_span = current_token.span
