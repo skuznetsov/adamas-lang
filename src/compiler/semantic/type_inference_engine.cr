@@ -10645,7 +10645,17 @@ module CrystalV2
           return true if type_matches?(arg_type, enum_type)
 
           base_type = parse_type_name(enum_type.symbol.base_type)
-          type_matches?(arg_type, base_type)
+          return true if type_matches?(arg_type, base_type)
+
+          if arg_type.is_a?(PrimitiveType) && base_type.is_a?(PrimitiveType)
+            if arg_type.name == "Int"
+              return signed_integer_type_name?(base_type.name)
+            elsif arg_type.name == "UInt"
+              return unsigned_integer_type_name?(base_type.name)
+            end
+          end
+
+          false
         end
 
         # ============================================================

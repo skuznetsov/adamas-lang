@@ -3,6 +3,39 @@
 Updated: 2026-04-01
 Context: compiler/bootstrap/stage2-stability
 
+[LM-414|verified]: The live `pthread_mutex` / `pthread_create` head after
+[LM-413] was not another receiver-loss bug in `LibC`/`GC`. The decisive richer
+carrier `/tmp/semantic_pthread_mutex_richer_probe.cr` reproduced the real
+failure under `scripts/run_safe.sh` and showed the crucial trace:
+`lookup_method start method=new receiver=Errno receiver_class=EnumType
+args=Int`, while the surrounding runtime calls already had candidates
+(`pthread_mutex_lock`, `pthread_mutex_unlock`, `pthread_mutex_destroy`,
+`pthread_create`). Source inspection then confirmed the concrete split:
+`src/stdlib/crystal/system/unix/pthread_mutex.cr` and
+`src/stdlib/crystal/system/unix/pthread.cr` feed `Errno.new(ret)` from real
+`LibC`/`GC` pthread returns declared as abstract `Int`, but the semantic enum
+collector still defaults enum base types like `Errno` to concrete `Int32`
+(`src/compiler/semantic/collectors/symbol_collector.cr`), and
+`enum_constructor_arguments_match?` in
+`src/compiler/semantic/type_inference_engine.cr` previously required a plain
+`type_matches?` hit between those two. The verified fix stays narrow:
+default enum constructors now accept abstract `Int` or `UInt` only when the
+enum base type has the same signedness, leaving the rest of overload matching
+unchanged. Focused regression
+`spec/semantic/type_inference_enum_builtin_spec.cr` is green for
+`Errno.new(code : Int).value`; `spec/semantic/type_inference_pthread_mutex_spec.cr`
+remains green; the richer safe runtime carrier drops the old `Errno.new` head
+and now reports `type_diags=18`; rebuild gates for `src/crystal_v2.cr
+--no-codegen` and `/tmp/crystal_v2_semantic_stage3probe` are green; and the
+full safe stage3 probe moves from
+`semantic_diags=0 resolution_diags=0 type_diags=35` to
+`semantic_diags=0 resolution_diags=0 type_diags=30`, removing the live
+`pthread_mutex` / `pthread_create` `Errno.new` family from the head. Boundary:
+this is a real enum/ABI compatibility fix, but stage3 is still not green; the
+next honest frontier is now headed by `option_parser`, `HIR::TypeRef.new`,
+generated `raise`, `ryu_printf`, and generated `process`. {F/G/R:
+0.98/0.84/0.99} [verified]
+
 [LM-413|verified]: The current review finding on
 `src/compiler/hir/ast_to_hir.cr` was correct in substance even after the old
 XOR key disappeared. Fresh source inspection showed that the actual Phase0

@@ -61,6 +61,27 @@ describe Semantic::TypeInferenceEngine do
       engine.context.get_type(program.roots.last).to_s.should eq("Bool")
     end
 
+    it "accepts abstract Int ABI values for default signed enum constructors" do
+      source = <<-CRYSTAL
+        enum Errno
+          NONE = 0
+        end
+
+        def code : Int
+          0
+        end
+
+        Errno.new(code).value
+      CRYSTAL
+
+      program, analyzer, engine = infer_types_for_enum_builtins(source)
+
+      analyzer.semantic_diagnostics.should be_empty
+      analyzer.name_resolver_diagnostics.should be_empty
+      engine.diagnostics.should be_empty
+      engine.context.get_type(program.roots.last).to_s.should eq("Int32")
+    end
+
     it "does not invent none? for regular enums" do
       source = <<-CRYSTAL
         enum Color

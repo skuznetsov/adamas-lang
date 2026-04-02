@@ -1,6 +1,44 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-01)
 
 ## Current Status
+- **Fresh enum-ABI constructor checkpoint: default enum constructor matching now accepts abstract C ABI integers (`Int`/`UInt`) when they target the enum's signedness, which closes the live `Errno.new(ret)` pthread/runtime corridor and moves the honest stage3 semantic gate from `type_diags=35` to `type_diags=30` (2026-04-01, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/type_inference_engine.cr` now keeps the existing exact enum-constructor fast path, but extends it narrowly for abstract ABI integers: `Enum(Int32).new(Int)` and `Enum(UInt32).new(UInt)` match by signedness without widening the rest of overload resolution
+    - focused regression coverage in `spec/semantic/type_inference_enum_builtin_spec.cr` now proves `Errno.new(code : Int).value` stays well-typed for the default signed enum base type
+    - the branch was chosen only after the richer safe carrier `/tmp/semantic_pthread_mutex_richer_probe.cr` reproduced the real failure and showed `[TYPE_TRACE] lookup_method start method=new receiver=Errno receiver_class=CrystalV2::Compiler::Semantic::EnumType args=Int`, while `LibC.pthread_mutex_*` and `LibGC.pthread_create` already had method candidates
+  - decisive evidence:
+    - focused enum and pthread semantic packs are green:
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_enum_builtin_spec.cr --error-trace`
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_pthread_mutex_spec.cr --error-trace`
+    - rebuild gates are green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_semantic_stage3probe --error-trace`
+    - the richer runtime carrier now clears the old `Errno.new` head under the safe wrapper:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 180 3072 /tmp/semantic_pthread_mutex_richer_probe.cr --stats --verbose --no-link -o /tmp/semantic_pthread_mutex_richer_probe.out > /tmp/semantic_pthread_mutex_richer_probe_after_int_abi_fix.log 2>&1`
+      - summary is now:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=18`
+      - and the old `No overload matches 'Errno.new'` lines are gone
+    - the clean full semantic stage3 probe under the safe wrapper improves materially again:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 300 4096 src/crystal_v2.cr --stats --no-link -o /tmp/stage3_semantic_probe_after_errno_int_fix.out > /tmp/stage3_semantic_probe_after_errno_int_fix.log 2>&1`
+      - summary moved from:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=35`
+      - to:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=30`
+      - the old `pthread_mutex` / `pthread_create` `Errno.new` family disappears from the live head
+  - practical boundary:
+    - this is a real semantic compatibility fix for enum constructors fed by abstract C ABI integer returns, not a local `pthread` artifact
+    - stage3 is still not green; the next honest frontier is now concentrated in:
+      - `src/stdlib/option_parser.cr` (`4`)
+      - `src/compiler/hir/hir.cr` (`3`, `Function 'new' not found`)
+      - `src/stdlib/raise.cr [generated]` (`2`)
+      - `src/stdlib/float/printer/ryu_printf.cr` (`2`)
+      - `src/stdlib/crystal/system/unix/process.cr [generated]` (`2`)
 - **Fresh phase0 body-infer identity checkpoint: Phase0 return-type body-walk metrics now collapse reparsed copies by canonical `DefIdentity` instead of raw `DefNode.object_id`, which closes the current review finding around unstable/non-canonical body-infer accounting without changing the honest stage3 semantic gate (2026-04-01, current session)**:
   - trustworthy setup:
     - `src/compiler/hir/ast_to_hir.cr` now records `@phase0_body_infer_counts` by canonical `CrystalV2::Compiler::Semantic::DefIdentity{arena_id, expr_index}` after canonical arena resolution, rather than by heap-local `DefNode.object_id`
