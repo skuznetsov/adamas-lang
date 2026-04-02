@@ -1,6 +1,32 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-02)
 
 ## Current Status
+- **Fresh self-hosted no-prelude hot-loop checkpoint: the generated stage4 compiler no longer dies first in the old lexer/string runaway or the early `CLI#compile` `Enumerable(...NotFoundError)#upto` corridor; after removing block/default-arg-sensitive hot paths from `lex_string`, `AstToHir#emit_self`, and the `def_nodes` registration/main-entry loops in `CLI#compile`, both `hello` and string-only no-prelude reducers now converge on a later MIR frontier `HIRToMIRLowering#register_enum_types -> Set(String)#includes?` (2026-04-02, current session)**:
+  - trustworthy setup:
+    - `src/compiler/frontend/lexer.cr` now keeps the no-escape string fast path on explicit cursor movement and also avoids omitted-arg `advance` call sites in several identifier/sigil token corridors
+    - `src/compiler/hir/ast_to_hir.cr` `emit_self` no longer depends on `params.find`/`first?` in self-hosted lowering
+    - `src/compiler/cli.cr` no longer uses block-based `def_nodes.each_with_index` or `def_nodes.find` in the early pass-2 / main-entry setup corridor
+  - decisive evidence:
+    - host guard rails stay green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+      - `../crystal/bin/crystal spec spec/lexer/lexer_spec.cr --error-trace`
+    - successive self-hosted rebuilds from `/tmp/crystal_v2_hir_stage3probe` remain green under the safe wrapper, ending at:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_hir_stage3probe 900 16384 src/crystal_v2.cr --stats -o /tmp/crystal_v2_stage4_from_stage3_hotloops5 > /tmp/stage4_from_stage3_hotloops5.log 2>&1`
+      - observed one-run wall clock on this machine moved from the earlier `total=254731.8ms` baseline to `total=241190.6ms`
+    - exact no-prelude string reducer is no longer a token-preload runaway:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 CRYSTAL_V2_PARSER_INIT_TRACE=1 CRYSTAL_V2_TRACE_TOKEN_PRELOAD=1 scripts/run_safe.sh /tmp/crystal_v2_stage4_from_stage3_stringfix 8 1024 /tmp/lexer_string.cr --no-prelude --stats -o /tmp/lexer_string_stage4_stringfix > /tmp/lexer_string_stage4_stringfix.log 2>&1`
+      - trace now shows the expected three tokens instead of millions
+    - on the latest generated artifact, both `hello` and string-only no-prelude reducers hit the same later blocker under LLDB:
+      - `env CRYSTAL_V2_TRUST_SLICE_ADDR=1 lldb --batch -o 'run /tmp/stage_hello_noprelude.cr --no-prelude -o /tmp/stage_hello_noprelude_hotloops5_trust_lldb' -k 'bt 80' -k 'quit' /tmp/crystal_v2_stage4_from_stage3_hotloops5`
+      - `env CRYSTAL_V2_TRUST_SLICE_ADDR=1 lldb --batch -o 'run /tmp/lexer_string.cr --no-prelude -o /tmp/lexer_string_hotloops5_trust_lldb' -k 'bt 40' -k 'quit' /tmp/crystal_v2_stage4_from_stage3_hotloops5`
+      - both now stop in:
+        - `Crystal::MIR::HIRToMIRLowering#register_enum_types`
+        - `Crystal::MIR::Set(String)#includes?`
+  - practical boundary:
+    - this is a real compiler-hot-path checkpoint, not a claim that stage4 no-prelude is green
+    - `run_safe.sh` still reports a generic `Array#empty?` abort for these reducers, but LLDB shows the live frontier has moved later to MIR enum registration
+    - the separate Darwin `readable_address?` / `LibMachVM.mach_task_self` seam still exists without `CRYSTAL_V2_TRUST_SLICE_ADDR=1`, and the broader default-arg metadata issue remains a separate latent branch
+    - adversary exact reducers on `/tmp/lexer_symbol.cr`, `/tmp/lexer_colons.cr`, and `/tmp/lexer_label.cr` still drive `token_preload_capacity` into millions on `/tmp/crystal_v2_stage4_from_stage3_hotloops5`, so this branch should be read as partial containment for the old string/comment + early CLI fronts, not as a compiler-wide fix for omitted-default-arg / cursor-progress bugs
 - **Fresh stage4 self-hosted string-progress checkpoint: generated stage4 no longer re-emits zero-length runtime string tokens forever in `token_preload_capacity`, because the no-escape fast path in `Frontend::Lexer#lex_string` now advances the cursor explicitly instead of relying on the miscompiled `advance(count = 1)` call shape (2026-04-02, current session)**:
   - trustworthy setup:
     - `src/compiler/frontend/lexer.cr` now keeps the no-escape `lex_string` fast path on explicit `@offset/@line/@column` updates for opening quote, interpolation delimiters, nested quoted segments, ordinary bytes, and the closing quote
@@ -7676,3 +7702,69 @@ Whole-spec / integration effect:
 Immediate next steps:
 1. Treat the HIR enum/macro/module-return/unary package as closed.
 2. Return to the remaining post-stage3 frontier outside this HIR checkpoint.
+
+## Checkpoint — 2026-04-02 (stage4 self-hosted lexer perf/runaway split, adversary-hardened)
+
+Verified this turn:
+- The red `stage4 -> stage5` / `stage4 hello` perf branch was not one general
+  RC-elision issue. Deep exact reducers split it into distinct self-hosted
+  parser-preload corridors:
+  - string-family runaway on tiny `"a"` / `"\\n"` sources
+  - colon/symbol-family runaway on `:foo`, `A::B`, and `a : Int32`
+  - separate bounded post-parse/runtime crashes once those runaways were gone
+- The decisive root cause for the first two families is still the latent
+  omitted-default-argument bug, but only in concrete lexer hot paths. The
+  verified bounded fix is not a broad default-arg rewrite; it is to remove
+  reliance on omitted `advance(count = 1)` inside the active self-hosted
+  corridors:
+  - `src/compiler/frontend/lexer.cr`: `lex_string` fast path now uses direct
+    cursor movement; processed/interpolation subpaths use explicit
+    `advance(1)`
+  - `src/compiler/frontend/lexer.cr`: `lex_symbol_or_colon` and
+    `try_lex_operator_symbol(...)` now use explicit `advance(1)` throughout
+- The prelude `hello` perf head was also polluted by our own debug hook:
+  `src/compiler/frontend/parser.cr` called
+  `BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_TOKEN_PRELOAD")` through
+  `trace_token_preload_enabled?` on every token inside
+  `token_preload_capacity(...)`, even when tracing was disabled. The bounded
+  fix is to cache `@trace_token_preload_enabled` once during parser
+  initialization and keep `getenv` out of the hot loop.
+
+Focused verification:
+- `../crystal/bin/crystal spec spec/lexer/lexer_spec.cr --error-trace`
+- `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+- `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_hir_stage3probe 900 16384 src/crystal_v2.cr --stats -o /tmp/crystal_v2_stage4_from_stage3_perf2 > /tmp/stage4_from_stage3_perf2.log 2>&1`
+- exact self-hosted reducers through `/tmp/crystal_v2_stage4_from_stage3_perf2`:
+  - `/tmp/lexer_string.cr --no-prelude`
+  - `/tmp/lexer_string_escape.cr --no-prelude`
+  - `/tmp/lexer_symbol_only.cr --no-prelude`
+  - `/tmp/lexer_colon_colon.cr --no-prelude`
+  - `/tmp/lexer_type_decl.cr --no-prelude`
+- adversary memdiag:
+  - `scripts/timeout_sample_lldb.sh -t 20 -m 4096 --memory-prewarn-pct 75 --memory-prewarn-sample-secs 2 --memory-prewarn-lldb-timeout 8 -o /tmp/stage4_hello_perf1_memdiag -- /tmp/crystal_v2_stage4_from_stage3_perf1 /tmp/test_hello.cr -o /tmp/stage_hello_stage4_perf1_memdiag`
+
+Whole-program / behavioral effect:
+- The self-hosted string runaway is closed: `/tmp/lexer_string.cr` and
+  `/tmp/lexer_string_escape.cr` now preload `3` tokens and move on to bounded
+  downstream crashes instead of emitting endless zero-length string tokens.
+- The self-hosted colon/symbol runaway is closed:
+  `/tmp/lexer_symbol_only.cr`, `/tmp/lexer_colon_colon.cr`, and
+  `/tmp/lexer_type_decl.cr` now preload the expected finite token shapes
+  instead of growing into multi-million zero-length colon/symbol loops.
+- The parser debug-hook `getenv` noise is closed. The prelude `hello` memdiag
+  no longer shows `getenv`; after rebuilding from the cached-flag parser, the
+  prelude `hello` failure moved from `>4GB` runaway allocation inside
+  `token_preload_capacity -> lex_symbol_or_colon` to an immediate, bounded
+  parser crash in `Parser#slice_eq(...)`.
+- Rebuild timings stayed bounded and roughly flat:
+  - pre-branch stage4 rebuild baseline: `total=254731.8ms`
+  - after string-fix branch: `total=242585.3ms`
+  - after parser cache + colon fix: `total=242385.4ms`
+
+Immediate next steps:
+1. Treat self-hosted lexer string/colon runaway families and parser getenv
+   hot-loop noise as closed.
+2. Continue from the new bounded frontiers:
+   - prelude crash: `Parser#slice_eq(...)` from `parse_identifier_like`
+   - no-prelude/runtime heads: `Array#empty?`, `Time::Span#to_i`,
+     `LibMachVM.mach_task_self` / `safe_slice_to_string`

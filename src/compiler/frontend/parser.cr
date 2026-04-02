@@ -49,6 +49,7 @@ module CrystalV2
         @allow_inline_rescue : Bool?
         @parser_init_trace_enabled : Bool
         @trace_abstract_char_enabled : Bool
+        @trace_token_preload_enabled : Bool
         # When true, newlines inside braces are skipped as trivia (legacy behavior).
         # Default false so that newlines inside hashes/blocks act as statement separators,
         # preventing constructs like `{ expr\n other }` from being glued into a single expression.
@@ -69,13 +70,12 @@ module CrystalV2
           STDERR.flush
         end
 
-        private def trace_token_preload_enabled?(source : String) : Bool
-          return false unless ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_TOKEN_PRELOAD")
-          source.bytesize <= 128
+        private def trace_token_preload_enabled? : Bool
+          @trace_token_preload_enabled
         end
 
-        private def trace_token_preload_fill(source : String, idx : Int32, token : Token) : Nil
-          return unless trace_token_preload_enabled?(source)
+        private def trace_token_preload_fill(idx : Int32, token : Token) : Nil
+          return unless trace_token_preload_enabled?
           return if idx >= 24
 
           span = token.span
@@ -116,7 +116,7 @@ module CrystalV2
           parser_init_trace("token_preload_capacity start bytes=#{source.bytesize} keep_trivia=#{keep_trivia}")
           count = 0
           Lexer.new(source).each_token(skip_trivia: !keep_trivia) do |token|
-            trace_token_preload_fill(source, count, token)
+            trace_token_preload_fill(count, token)
             count += 1
             if parser_init_trace_enabled? && (count % 100_000 == 0)
               STDERR.puts "[PARSER_INIT] token_preload_capacity count=#{count}"
@@ -131,6 +131,7 @@ module CrystalV2
           @source = lexer.source
           @parser_init_trace_enabled = ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_PARSER_INIT_TRACE")
           @trace_abstract_char_enabled = ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_ABSTRACT_CHAR")
+          @trace_token_preload_enabled = ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_TOKEN_PRELOAD") && @source.bytesize <= 128
           keep_trivia = ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_PARSER_KEEP_TRIVIA")
           parser_init_trace("ctor1 start bytes=#{@source.bytesize}")
           preload_capacity = if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_DISABLE_PARSER_PRELOAD")
@@ -290,6 +291,7 @@ module CrystalV2
           @source = lexer.source
           @parser_init_trace_enabled = ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_PARSER_INIT_TRACE")
           @trace_abstract_char_enabled = ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_ABSTRACT_CHAR")
+          @trace_token_preload_enabled = ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_TOKEN_PRELOAD") && @source.bytesize <= 128
           keep_trivia = ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_PARSER_KEEP_TRIVIA")
           parser_init_trace("ctor2 start bytes=#{@source.bytesize}")
           preload_capacity = if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_DISABLE_PARSER_PRELOAD")

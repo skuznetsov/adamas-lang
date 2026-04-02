@@ -503,7 +503,7 @@ module CrystalV2
           from = @offset
 
           # Consume @
-          advance
+          advance(1)
 
           # Phase 76: Check for class variable (@@var)
           if @offset < @rope.size && current_byte == AT_SIGN
@@ -524,12 +524,12 @@ module CrystalV2
 
           # Read identifier part
           while @offset < @rope.size && identifier_char?(current_byte)
-            advance
+            advance(1)
           end
 
           # Instance variables can have suffix (?, !)
           if @offset < @rope.size && identifier_suffix?(current_byte)
-            advance
+            advance(1)
           end
 
           Token.new(
@@ -554,12 +554,12 @@ module CrystalV2
 
           # Read identifier part
           while @offset < @rope.size && identifier_char?(current_byte)
-            advance
+            advance(1)
           end
 
           # Class variables can have suffix (?, !)
           if @offset < @rope.size && identifier_suffix?(current_byte)
-            advance
+            advance(1)
           end
 
           Token.new(
@@ -576,11 +576,11 @@ module CrystalV2
           from = @offset
 
           # Consume $
-          advance
+          advance(1)
 
           # Special-case: allow regex globals and status: $?, $!, $1, $2, ..., $~ (with optional '?')
           if @offset < @rope.size && (current_byte == QUESTION || current_byte == EXCLAMATION)
-            advance
+            advance(1)
             return Token.new(
               Token::Kind::GlobalVar,
               @string_pool.intern(bytes_range(from, @offset)),
@@ -607,7 +607,7 @@ module CrystalV2
 
           # Regex match data: $~ (optional '?')
           if @offset < @rope.size && current_byte == '~'.ord.to_u8
-            advance
+            advance(1)
             if @offset < @rope.size && current_byte == QUESTION
               advance
             end
@@ -630,12 +630,12 @@ module CrystalV2
 
           # Read identifier part
           while @offset < @rope.size && identifier_char?(current_byte)
-            advance
+            advance(1)
           end
 
           # Global variables can have suffix (?, !)
           if @offset < @rope.size && identifier_suffix?(current_byte)
-            advance
+            advance(1)
           end
 
           Token.new(
@@ -653,11 +653,11 @@ module CrystalV2
           from = @offset
 
           # Consume first :
-          advance
+          advance(1)
 
           # Phase 63: Check if :: (path expression)
           if @offset < @rope.size && current_byte == ':'.ord.to_u8
-            advance
+            advance(1)
             return Token.new(
               Token::Kind::ColonColon,
               bytes_range(from, @offset),
@@ -681,17 +681,17 @@ module CrystalV2
 
           # Read identifier part
           while @offset < @rope.size && identifier_char?(current_byte)
-            advance
+            advance(1)
           end
 
           # Symbols can have suffix (?, !)
           if @offset < @rope.size && identifier_suffix?(current_byte)
-            advance
+            advance(1)
           end
 
           # Setter-style symbols can end with '=' (e.g., :foo=)
           if @offset < @rope.size && current_byte == '='.ord.to_u8
-            advance
+            advance(1)
           end
 
           Token.new(
@@ -710,40 +710,40 @@ module CrystalV2
           case ch
           when '<'.ord.to_u8
             # :< :<<  :<=
-            advance
+            advance(1)
             if @offset < @rope.size
               if current_byte == '<'.ord.to_u8
-                advance # :<<
+                advance(1) # :<<
               elsif current_byte == '='.ord.to_u8
-                advance # :<=
+                advance(1) # :<=
               end
               # else just :<
             end
           when '>'.ord.to_u8
             # :> :>>  :>=
-            advance
+            advance(1)
             if @offset < @rope.size
               if current_byte == '>'.ord.to_u8
-                advance # :>>
+                advance(1) # :>>
               elsif current_byte == '='.ord.to_u8
-                advance # :>=
+                advance(1) # :>=
               end
               # else just :>
             end
           when '='.ord.to_u8
             # :=== :=~
-            advance
+            advance(1)
             if @offset < @rope.size
               if current_byte == '='.ord.to_u8
-                advance
+                advance(1)
                 if @offset < @rope.size && current_byte == '='.ord.to_u8
-                  advance # :===
+                  advance(1) # :===
                 else
                   @offset -= 1 # Not valid, rewind
                   return nil
                 end
               elsif current_byte == '~'.ord.to_u8
-                advance # :=~
+                advance(1) # :=~
               else
                 @offset -= 1 # Not valid, rewind
                 return nil
@@ -754,23 +754,23 @@ module CrystalV2
             end
           when '!'.ord.to_u8
             # :!~
-            advance
+            advance(1)
             if @offset < @rope.size && current_byte == '~'.ord.to_u8
-              advance # :!~
+              advance(1) # :!~
             else
               @offset -= 1 # Not valid, rewind
               return nil
             end
           when '^'.ord.to_u8
             # :^
-            advance
+            advance(1)
           when '&'.ord.to_u8
             # :&**
-            advance
+            advance(1)
             if @offset < @rope.size && current_byte == '*'.ord.to_u8
-              advance
+              advance(1)
               if @offset < @rope.size && current_byte == '*'.ord.to_u8
-                advance # :&**
+                advance(1) # :&**
               else
                 @offset -= 2 # Not valid, rewind
                 return nil
