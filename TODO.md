@@ -1,6 +1,38 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-02)
 
 ## Current Status
+- **Fresh stage4 lexer perf checkpoint: generated stage4 no longer spends its exact no-prelude comment reducer inside `lex_comment/current_byte/advance`, because comment scanning now bulk-walks bytes instead of calling `advance` + `Watchdog.check!` per byte; the honest next heads are a separate no-prelude `CLI#compile` abort corridor plus HIR-to-MIR lowering, not RC elision or comment lexing anymore (2026-04-02, current session)**:
+  - trustworthy setup:
+    - `src/compiler/frontend/lexer.cr` now scans comment bodies with a local `scan` index and commits `@offset/@column` once, matching the existing bulk-scan shape already used by `lex_whitespace`
+    - the same loop still preserves the interpolation-close escape hatch: it breaks before `{%` / `{{` only when the sequence is immediately preceded by `}`, so plain `# {%` comments stay intact
+    - watchdog coverage remains, but only every 1024 bytes instead of once per consumed byte
+    - focused lexer regressions lock both semantic edges in:
+      - `spec/lexer/lexer_spec.cr`
+  - decisive evidence:
+    - focused lexer coverage is green:
+      - `../crystal/bin/crystal spec spec/lexer/lexer_spec.cr --error-trace`
+    - compiler build gates stay green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_hir_stage3probe_lexerfix --error-trace`
+    - before the fix, the exact generated-stage4 no-prelude reducer timed out in the lexer hot loop:
+      - `scripts/timeout_sample_lldb.sh -t 20 -s 5 -l 10 --no-series --out /tmp/stage4_comment_noprelude_timeout_diag -- /tmp/crystal_v2_stage4_from_stage3 /tmp/perf_comment.cr --no-prelude -o /tmp/perf_comment_stage4_noprelude_sampled`
+      - hotspot summary there was:
+        - `Lexer#lex_comment`
+        - `Lexer#current_byte`
+        - `Lexer#advance`
+        - under `Parser#token_preload_capacity`
+    - after rebuilding stage4 from the fixed stage3 compiler, that exact reducer no longer hangs in the lexer:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_stage4_from_stage3_lexerfix 20 2048 /tmp/perf_comment.cr --no-prelude -o /tmp/perf_comment_stage4_lexerfix > /tmp/perf_comment_stage4_lexerfix.log 2>&1`
+      - it now aborts immediately in a separate pre-existing branch:
+        - `STUB CALLED: Enumerable$LT$R$CCNotFoundError$Hupto$$Int32_block`
+        - LLDB backtrace points to `CLI#compile`, not the lexer
+    - the full stage3->stage4 rebuild with the fixed generated compiler is still green under the safe wrapper:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_hir_stage3probe_lexerfix 900 16384 src/crystal_v2.cr --stats -o /tmp/crystal_v2_stage4_from_stage3_lexerfix > /tmp/stage4_from_stage3_lexerfix.log 2>&1`
+      - a live `sample` of that build shows the hot head has moved to `Crystal::MIR::HIRToMIRLowering#lower_*`, not `Lexer#lex_comment`
+  - practical boundary:
+    - this is a real root-corridor perf fix for comment scanning in generated compilers, not a global bootstrap speedup claim
+    - one full stage3->stage4 wall-clock run on this machine was still slower overall (`total=574487.7ms` vs the earlier `~254731.8ms` baseline), so the honest next perf frontier is HIR-to-MIR lowering
+    - separate no-prelude tiny-input failures (`Enumerable(...NotFoundError)#upto` abort and `puts` memory blow-up) remain independent branches and should not be conflated with the fixed lexer hot loop
 - **Fresh semantic shadow/stage3 restoration checkpoint: stage3 is green again because shadow-time name resolution now defers original receiverless method-body identifiers without swallowing generated resolution diagnostics, parse-only shadow diagnostics count by file path, and parser-stored numeric type-expression identifiers no longer misfire as unresolved names (2026-04-02, current session)**:
   - trustworthy setup:
     - `src/compiler/semantic/resolvers/name_resolver.cr` now accepts an explicit shadow-only defer mode plus generated-overlay awareness:

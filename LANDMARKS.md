@@ -3,6 +3,37 @@
 Updated: 2026-04-02
 Context: compiler/bootstrap/stage2-stability
 
+[LM-440|verified]: The current stage4 perf head was not best explained by RC
+elision gaps. The decisive no-prelude matrix split the problem into three
+independent families for the generated `/tmp/crystal_v2_stage4_from_stage3`
+compiler: empty/literal inputs aborted immediately in
+`Enumerable(NotFoundError)#upto` from `CLI#compile`; `puts "hello"` hit a
+separate early memory blow-up; and the pure comment carrier
+`/tmp/perf_comment.cr` (`# comment\n`) hung for 20 seconds at low RSS. The
+strong exact reducer was the last one: a dedicated
+`scripts/timeout_sample_lldb.sh` run on that comment-only no-prelude input
+showed the hot symbols were `Lexer#lex_comment`, `Lexer#current_byte`, and
+`Lexer#advance`, with the stack rooted under `Parser#token_preload_capacity`.
+Source inspection in `src/compiler/frontend/lexer.cr` then exposed the local
+cause: `lex_comment` still advanced one byte at a time through `advance`, and
+`advance` called `Watchdog.check!` on every consumed byte. The verified fix is
+bounded and local to the lexer: bulk-scan comment bytes with a local index,
+preserve the existing `}`-before-`{%`/`{{` break rule, and keep watchdog checks
+only every 1024 bytes. Focused regression coverage in
+`spec/lexer/lexer_spec.cr` is green, both build gates are green, and after
+rebuilding stage4 from the fixed stage3 compiler the same exact no-prelude
+comment carrier no longer hangs in the lexer; instead it aborts immediately in
+the already-separate `Enumerable(NotFoundError)#upto` / `CLI#compile` branch.
+Adversary / boundary: this is a real root-corridor perf fix because it removes
+the previously sampled lexer hot head from both the exact reducer and the live
+full-build sample, but it is not yet an end-to-end speed win. One full
+stage3->stage4 rebuild on this machine still completed slower overall
+(`total=574487.7ms`), and a live `sample` of that run shows the new hot head in
+`Crystal::MIR::HIRToMIRLowering#lower_*`, not in lexing. The next honest perf
+frontier is therefore HIR-to-MIR lowering plus the separate no-prelude
+`CLI#compile` abort, not RC elision or comment lexing anymore.
+{F/G/R: 0.97/0.74/0.98} [verified]
+
 [LM-439|verified]: After the compacted resolver/macro/parser branch went dirty
 again, the decisive adversarial frontier was the full safe semantic bootstrap:
 `env CRYSTAL2_STAGE2_DEBUG=1 CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_hir_stage3probe 240 12288 src/crystal_v2.cr --stats -o /tmp/stage3_link_probe_after_unary_fix_debug.out > /tmp/stage3_link_probe_after_unary_fix_debug.log 2>&1`.
