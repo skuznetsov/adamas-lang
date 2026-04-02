@@ -69,6 +69,24 @@ module CrystalV2
           STDERR.flush
         end
 
+        private def trace_token_preload_enabled?(source : String) : Bool
+          return false unless ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_TOKEN_PRELOAD")
+          source.bytesize <= 128
+        end
+
+        private def trace_token_preload_fill(source : String, idx : Int32, token : Token) : Nil
+          return unless trace_token_preload_enabled?(source)
+          return if idx >= 24
+
+          span = token.span
+          io = IO::Memory.new
+          io << "[TOKEN_PRELOAD] idx=" << idx
+          io << " kind=" << token.kind.value
+          io << " size=" << token.slice.size
+          io << " offs=" << span.start_offset << ".." << span.end_offset
+          parser_raw_trace_puts(String.new(io.to_slice))
+        end
+
         private def trace_abstract_char_token_buffer(stage : String) : Nil
           return unless @trace_abstract_char_enabled
           return unless @source.bytesize <= 128
@@ -97,7 +115,8 @@ module CrystalV2
         private def token_preload_capacity(source : String, keep_trivia : Bool) : Int32
           parser_init_trace("token_preload_capacity start bytes=#{source.bytesize} keep_trivia=#{keep_trivia}")
           count = 0
-          Lexer.new(source).each_token(skip_trivia: !keep_trivia) do |_token|
+          Lexer.new(source).each_token(skip_trivia: !keep_trivia) do |token|
+            trace_token_preload_fill(source, count, token)
             count += 1
             if parser_init_trace_enabled? && (count % 100_000 == 0)
               STDERR.puts "[PARSER_INIT] token_preload_capacity count=#{count}"
