@@ -1,6 +1,36 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-01)
 
 ## Current Status
+- **Fresh HIR inline-yield caller-restore checkpoint: the runtime hash compaction carriers now stay green because merged caller locals survive inline scope teardown instead of being reverted to the pre-inline snapshot (2026-04-01, current session)**:
+  - trustworthy setup:
+    - `src/compiler/hir/ast_to_hir.cr` still refreshes live caller locals at the yield site for inlined block bodies and filters out callee-shadowed names when taking that snapshot
+    - the same file now restores merged caller locals only *after* `inline_yield_function` leaves its temporary block scope
+    - repo-side regression carrier now lives in:
+      - `spec/hir/test_data/hash_do_compaction_block_state_exit.cr`
+  - decisive evidence:
+    - rebuild gates are green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/crystal_v2_hir_hashfix --error-trace`
+    - the exact repo-side hash compaction carrier now compiles and exits cleanly under the safe wrapper:
+      - `scripts/run_safe.sh /tmp/crystal_v2_hir_hashfix 120 4096 spec/hir/test_data/hash_do_compaction_block_state_exit.cr -o /tmp/hash_do_compaction_block_state_exit.out`
+      - `scripts/run_safe.sh /tmp/hash_do_compaction_block_state_exit.out 10 512`
+    - the smaller first-index-transition adversary also compiles and exits cleanly:
+      - `scripts/run_safe.sh /tmp/crystal_v2_hir_hashfix 120 4096 /tmp/hash_first_index_transition_exit.cr -o /tmp/hash_first_index_transition_exit.out`
+      - `scripts/run_safe.sh /tmp/hash_first_index_transition_exit.out 10 512`
+    - emitted HIR now proves the continuation sees the merged phi instead of the stale pre-inline local:
+      - `scripts/run_safe.sh /tmp/crystal_v2_hir_hashfix 120 4096 spec/hir/test_data/hash_do_compaction_block_state_exit.cr --emit hir --no-link -o /tmp/hash_do_compaction_block_state_exit`
+      - fresh `Hash(Kind, Int32)#do_compaction` tail contains:
+        - `%285 = phi [block.21: %19], [block.41: %244] : 4`
+        - `%297 = copy %285 : 4`
+      - the stale shape is gone:
+        - `%297 = copy %19 : 4`
+    - debug falsifier confirms the merge already happened before scope teardown:
+      - `env DEBUG_INLINE_LOCALS=1 DEBUG_INLINE_LOCALS_NAMES=new_entry_index scripts/run_safe.sh /tmp/crystal_v2_hir_hashfix 120 4096 spec/hir/test_data/hash_do_compaction_block_state_exit.cr --emit hir --no-link -o /tmp/hash_do_compaction_block_state_exit > /tmp/hash_do_compaction_inline_locals.log 2>&1`
+      - fresh log includes:
+        - `inline_return:merged ... new_entry_index=%285:4`
+  - practical boundary:
+    - this is a real HIR inline-scope restore fix, not a runtime hash workaround
+    - the decisive root cause was ordering: `inline_yield_function` restored merged caller locals before `ctx.pop_scope`, but `LoweringContext#pop_scope` then immediately reinstated the stale pre-inline snapshot
 - **Fresh HIR block/proc context checkpoint: the generated compiler now clears three exact reducers that the older `scopefix` bootstrap binary still hangs on, because HIR lowering no longer leaks stale loop backedge values, parent inline-yield stacks, or outer enum metadata into nested proc-lowered blocks (2026-04-01, current session)**:
   - trustworthy setup:
     - `src/compiler/hir/ast_to_hir.cr` now snapshots updated loop values before `pop_scope`, so loop-phi backedges do not read reverted locals after scope teardown

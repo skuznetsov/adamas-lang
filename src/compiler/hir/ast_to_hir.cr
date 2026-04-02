@@ -49704,8 +49704,10 @@ module Crystal::HIR
 
       snapshot = caller_locals.dup
       current_locals = ctx.save_locals
+      callee_locals = @inline_callee_local_names_stack.last?
       caller_locals.each_key do |name|
         next if name == "self"
+        next if callee_locals && callee_locals.includes?(name)
         if updated = current_locals[name]?
           snapshot[name] = updated
         end
@@ -68782,16 +68784,19 @@ module Crystal::HIR
         @inline_yield_return_stack.pop?
         @inline_yield_return_caller_locals_stack.pop?
         @inline_yield_return_override_stack.pop? if pushed_override
-        # Restore caller locals (including any mutations made inside the inlined block body).
-        if restored = @inline_caller_locals_stack.pop?
-          ctx.restore_locals(restored)
-        end
+        restored_caller_locals = @inline_caller_locals_stack.pop?
         @inline_caller_function_id_stack.pop?
         @inline_callee_local_names_stack.pop?
         @arena = caller_arena
         @inline_arenas = old_inline_arenas
         @inline_yield_function_depth -= 1
         ctx.pop_scope
+        # `pop_scope` restores the stale pre-inline snapshot for the caller block scope.
+        # Re-apply the merged caller locals after leaving the inline scope so the
+        # continuation sees values produced by the inlined yield body/return merge.
+        if restored_caller_locals
+          ctx.restore_locals(restored_caller_locals)
+        end
       end
     end
 
@@ -69004,6 +69009,14 @@ module Crystal::HIR
                    use_stack_caller_locals = !cross_function_owner
                    if cross_function_owner
                      caller_locals = ctx.save_locals
+                   elsif refreshed = snapshot_active_inline_caller_locals(ctx, caller_locals_index)
+                     # Block bodies belong to the caller lexical scope, but caller locals can
+                     # keep evolving while the callee itself is being inlined (for example
+                     # inside each_entry_with_index/upto loops). Refresh the caller snapshot
+                     # at the yield site so the block sees the live caller locals instead of
+                     # the frozen pre-inline snapshot.
+                     caller_locals = refreshed
+                     @inline_caller_locals_stack[caller_locals_index] = refreshed
                    end
                    if owner_self_id = @block_owner_self_ids[block.object_id]?
                      unless caller_locals.has_key?("self")

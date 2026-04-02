@@ -3,6 +3,35 @@
 Updated: 2026-04-01
 Context: compiler/bootstrap/stage2-stability
 
+[LM-432|verified]: After [LM-431], the remaining enum/hash runtime crash was no
+longer best explained by wrong specialization drift and not by missing
+caller-local merge inside inline yield lowering. The decisive adversarial
+evidence came from the exact repo-side runtime carrier
+`spec/hir/test_data/hash_do_compaction_block_state_exit.cr`: the rebuilt
+compiler still emitted a live phi for `new_entry_index` in
+`Hash(Kind, Int32)#do_compaction` (`%285 = phi [block.21: %19], [block.41:
+%244] : 4`), but the continuation immediately read the stale pre-inline local
+`%19` when computing `entries_to_clear`. Debug tracing with
+`DEBUG_INLINE_LOCALS=1 DEBUG_INLINE_LOCALS_NAMES=new_entry_index` then falsified
+the earlier "merge never happened" theory: the same compile logged
+`inline_return:merged ... new_entry_index=%285:4`, proving the merged caller
+snapshot already existed before teardown. Source inspection in
+`src/compiler/hir/ast_to_hir.cr` and `LoweringContext` exposed the actual
+ordering bug: `inline_yield_function` restored merged caller locals *before*
+calling `ctx.pop_scope`, while `LoweringContext#pop_scope` always reinstates the
+saved pre-inline locals snapshot. The verified fix is purely local to HIR
+scope teardown: keep the yield-site caller-local refresh/filtering, but move
+the final `ctx.restore_locals(restored_caller_locals)` after `ctx.pop_scope`.
+Fresh rebuild gates for `src/crystal_v2.cr --no-codegen` and
+`/tmp/crystal_v2_hir_hashfix` are green; the repo-side carrier now compiles and
+its binary exits `0` under `scripts/run_safe.sh`; the smaller adversarial
+first-index-transition carrier `/tmp/hash_first_index_transition_exit.cr` also
+compiles and exits `0`; and emitted HIR now shows `%297 = copy %285 : 4` in the
+same `do_compaction` tail instead of `%297 = copy %19 : 4`. Boundary: this is a
+real HIR inline-scope restore fix, not a runtime hash workaround; it closes the
+observed `do_compaction` null-entry frontier but does not by itself prove every
+other hash/runtime family is solved. {F/G/R: 0.99/0.78/0.99} [verified]
+
 [LM-431|verified]: After [LM-430], the next honest HIR frontier was no longer
 the broad stage3 bootstrap gate, but three small exact reducers that all hung
 under the older `/tmp/crystal_v2_stage3_linkprobe_scopefix` binary:
