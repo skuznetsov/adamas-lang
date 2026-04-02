@@ -3,6 +3,46 @@
 Updated: 2026-04-02
 Context: compiler/bootstrap/stage2-stability
 
+[LM-446|verified]: After [LM-445], the remaining self-hosted `stage2` HIR red
+on `src/stdlib/prelude.cr --no-prelude` still looked like one broad top-level
+macro collector family, but the next exact falsifier proved at least one
+sub-corridor was narrower and real. The decisive contradiction ledger matters.
+First, exact parser-root probes on `src/stdlib/concurrent.cr` were already
+green, so the old parser split was closed. Second, the direct `STOP_AFTER_HIR`
+sentinel on `src/stdlib/concurrent.cr --no-prelude` was still red with
+`error: End of file reached`, and a `CRYSTAL2_COLLECT_TRACE` run pinned that
+failure to the second top-level `{% begin %}` wrapper (`expr=49 kind=34`) and
+its selected `MacroLiteral` body (`expr=47 kind=32`). Third, an exact helper
+probe against that same begin-wrapper branch refuted the “bad source text” and
+“bad expander output” theories: on the host, both
+`macro_literal_texts_from_raw(raw_text, flags).join` and
+`expand_macro_literal_via_expander(...)` produced one valid top-level `def
+spawn`, but on the stage1-built probe the exact same `raw_text` survived while
+`macro_literal_texts_from_raw(...).join` collapsed to empty. That localized the
+live drift to the self-hosted raw-text branch-extraction seam, not the file
+content. The bounded fix in `src/compiler/cli.cr` is deliberately narrow:
+inside `collect_top_level_nodes(...)`, only exact begin-wrapped `MacroIfNode`
+raw-text spans (`{% begin %}`, `{%- begin %}`, `{%~ begin %}`) with a known
+selected `MacroLiteralNode` take an early piece-based path through
+`macro_literal_active_texts(...).join`, reparsing the already-active text
+before falling back to the older raw-text scanner for everything else. Focused
+coverage in `spec/semantic_cli_spec.cr` locks the corridor with a top-level
+`{% begin %}` body containing nested `flag?` branches plus a later
+`macro spawn(...)`, and both host `--no-codegen` and the full self-hosted
+`stage1 -> stage2` rebuild from `/tmp/stage1_collectfilter_gate_fix9` are
+green. The decisive adversary check is file-local: the exact
+`src/stdlib/concurrent.cr --no-prelude` `STOP_AFTER_HIR` carrier no longer dies
+with `error: End of file reached`; it now reaches the later
+`LibMachVM.mach_task_self` runtime-stub frontier. A broader begin-heavy sweep
+then split the remaining families cleanly: several files (`tuple`,
+`named_tuple`, `proc`, `indexable`, `io/file_descriptor`) are now green under
+the same carrier, while others move to the same later `LibMachVM` stub family.
+Boundary: this is a real top-level `{% begin %}` collector-corridor fix, but
+not a whole-prelude cure; `src/stdlib/prelude.cr --no-prelude` still remains
+red after this checkpoint, so the next honest bootstrap frontier is a later or
+sibling HIR/runtime corridor rather than the already-closed exact `concurrent`
+begin-wrapper collapse. {F/G/R: 0.98/0.72/0.98} [verified]
+
 [LM-445|verified]: After [LM-444], the next apparent self-hosted `stage2`
 parser frontier looked like one broad top-level macro-expansion family inside
 `collect_top_level_nodes(...)`, but the contradiction ledger falsified that

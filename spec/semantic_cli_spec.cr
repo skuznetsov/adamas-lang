@@ -393,6 +393,86 @@ describe CrystalV2::Compiler::CLI do
     end
   end
 
+  it "keeps semantic compile prepass green for top-level begin macros with nested branch text and later macro defs" do
+    with_temp_shadow_project({
+      "main.cr" => <<-'CRYSTAL',
+        {% begin %}
+        def spawn(same_thread = false)
+          {% if flag?(:execution_context) %}
+            1
+          {% else %}
+            value = 1
+            {% if flag?(:preview_mt) %} value = 2 if same_thread {% end %}
+            value
+          {% end %}
+        end
+        {% end %}
+
+        macro spawn(call)
+          {{call}}
+        end
+
+        spawn(spawn(false))
+      CRYSTAL
+    }) do |dir|
+      main_path = File.join(dir, "main.cr")
+      output_path = File.join(dir, "main")
+      out_io = IO::Memory.new
+      err_io = IO::Memory.new
+      status = 1
+
+      with_semantic_compile_env do
+        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        status = cli.run(out_io: out_io, err_io: err_io)
+      end
+
+      status.should eq(0)
+      out_io.to_s.should contain("semantic_diags=0")
+      out_io.to_s.should contain("resolution_diags=0")
+      out_io.to_s.should contain("type_diags=0")
+      err_io.to_s.should be_empty
+    end
+  end
+
+  it "keeps semantic compile prepass green for top-level macro if without begin wrapper and later macro defs" do
+    with_temp_shadow_project({
+      "main.cr" => <<-'CRYSTAL',
+        {% if flag?(:darwin) %}
+        def choose
+          1
+        end
+        {% else %}
+        def choose
+          2
+        end
+        {% end %}
+
+        macro wrap(call)
+          {{call}}
+        end
+
+        wrap(choose)
+      CRYSTAL
+    }) do |dir|
+      main_path = File.join(dir, "main.cr")
+      output_path = File.join(dir, "main")
+      out_io = IO::Memory.new
+      err_io = IO::Memory.new
+      status = 1
+
+      with_semantic_compile_env do
+        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        status = cli.run(out_io: out_io, err_io: err_io)
+      end
+
+      status.should eq(0)
+      out_io.to_s.should contain("semantic_diags=0")
+      out_io.to_s.should contain("resolution_diags=0")
+      out_io.to_s.should contain("type_diags=0")
+      err_io.to_s.should be_empty
+    end
+  end
+
   it "keeps semantic compile prepass green for splat call traversal" do
     with_temp_shadow_project({
       "main.cr" => <<-'CRYSTAL',

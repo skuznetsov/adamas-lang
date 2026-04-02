@@ -3999,10 +3999,45 @@ module CrystalV2
         when Frontend::VisibilityModifierNode
           collect_top_level_nodes(arena, arena_index, node.expression, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, depth, collect_main_exprs)
         when Frontend::MacroIfNode
+          condition = evaluate_macro_condition(arena, node.condition, flags)
           if env_enabled?("DEBUG_MACRO_EXPAND")
-            bootstrap_trace_puts "[DEBUG_MACRO_EXPAND] MacroIfNode condition=#{evaluate_macro_condition(arena, node.condition, flags).inspect}"
+            bootstrap_trace_puts "[DEBUG_MACRO_EXPAND] MacroIfNode condition=#{condition.inspect}"
           end
           if raw_text = macro_if_raw_text(node, source)
+            begin_wrapper = raw_text.starts_with?("{% begin") || raw_text.starts_with?("{%- begin") || raw_text.starts_with?("{%~ begin")
+            if begin_wrapper
+              # Self-hosted stage1 has shown raw-text rescanning can collapse exact
+              # top-level {% begin %} wrappers to empty even when the selected
+              # branch is already a plain def/class body. Prefer the active parsed
+              # pieces for this narrow begin-wrapper corridor, then fall back to
+              # the older raw-text path for all other MacroIfs.
+              selected_literal = case condition
+                                 when true
+                                   arena[node.then_body].as?(Frontend::MacroLiteralNode)
+                                 when false
+                                   if else_body = node.else_body
+                                     arena[else_body].as?(Frontend::MacroLiteralNode)
+                                   end
+                                 else
+                                   nil
+                                 end
+              if selected_literal
+                combined = macro_literal_active_texts(arena, selected_literal, flags).join
+                if env_enabled?("DEBUG_MACRO_EXPAND")
+                  bootstrap_trace_puts "[DEBUG_MACRO_EXPAND] MacroIfNode begin-combined empty=#{combined.strip.empty?} has_percent=#{combined.includes?("{%")} size=#{combined.size}"
+                end
+                unless combined.strip.empty? || combined.includes?("{%")
+                  if parsed = parse_macro_literal_program(combined)
+                    program, sanitized = parsed
+                    sources_by_arena[program.arena.object_id.to_u64] = sanitized
+                    program.roots.each do |inner_id|
+                      collect_top_level_nodes(program.arena, arena_index, inner_id, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, sanitized, depth + 1, false)
+                    end
+                    return
+                  end
+                end
+              end
+            end
             # If the raw text contains {% for %} loops, don't use macro_literal_texts_from_raw
             # which doesn't handle for-loops. Instead fall through to MacroLiteralNode processing.
             has_for_loop = raw_text.includes?("{% for") || raw_text.includes?("{%- for") || raw_text.includes?("{%~ for")
@@ -4034,7 +4069,6 @@ module CrystalV2
           if env_enabled?("DEBUG_MACRO_EXPAND")
             bootstrap_trace_puts "[DEBUG_MACRO_EXPAND] MacroIfNode continuing to condition check (raw_text exists=#{!raw_text.nil?})"
           end
-          condition = evaluate_macro_condition(arena, node.condition, flags)
           if condition == true
             if env_enabled?("DEBUG_MACRO_EXPAND")
               then_node = arena[node.then_body]
@@ -4682,7 +4716,7 @@ module CrystalV2
       end
 
       private def macro_literal_active_texts(
-        arena : Frontend::AstArena,
+        arena : Frontend::ArenaLike,
         node : Frontend::MacroLiteralNode,
         flags : Set(String)
       ) : Array(String)

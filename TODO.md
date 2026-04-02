@@ -1,6 +1,30 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-02)
 
 ## Current Status
+- **Fresh stage2 top-level `{% begin %}` collector checkpoint: self-hosted `stage2` no longer collapses the exact `src/stdlib/concurrent.cr` begin-wrapper branch to empty during top-level HIR collection; the exact reducer now moves from early `error: End of file reached` to the later `LibMachVM.mach_task_self` runtime-stub frontier, while wider `prelude` still remains red (2026-04-02, current session)**:
+  - trustworthy setup:
+    - `src/compiler/cli.cr` `collect_top_level_nodes(...)` now treats only exact begin-wrapped `MacroIfNode` raw-text spans (`{% begin %}`, `{%- begin %}`, `{%~ begin %}`) as a special corridor
+    - for that corridor only, when macro condition evaluation selects a `MacroLiteralNode`, the collector now prefers `macro_literal_active_texts(...).join` and reparses the already-active branch text before falling back to the older raw-text scanner
+    - the helper signature on `macro_literal_active_texts(...)` is widened to `Frontend::ArenaLike`, matching the top-level collector entry points without changing broader macro policy
+    - focused regression coverage now locks the proven corridor in `spec/semantic_cli_spec.cr` with a top-level `{% begin %}` body that contains nested `flag?` branches and a later `macro spawn(...)`
+  - decisive evidence:
+    - focused semantic CLI regression is green:
+      - `../crystal/bin/crystal spec spec/semantic_cli_spec.cr --error-trace --example 'keeps semantic compile prepass green for top-level begin macros with nested branch text and later macro defs'`
+    - host compiler gate is green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+    - self-hosted rebuild from the narrowed branch is green:
+      - `env CRYSTAL2_STAGE2_DEBUG=1 scripts/run_safe.sh /tmp/stage1_collectfilter_gate_fix9 420 12288 src/crystal_v2.cr -o /tmp/stage2_collectfilter_gate_fix9 > /tmp/stage2_collectfilter_gate_fix9_build.log 2>&1`
+      - result: `[EXIT: 0] after ~195s`
+    - the exact file-local HIR sentinel moves the right way:
+      - `env CRYSTAL_V2_STOP_AFTER_HIR=1 scripts/run_safe.sh /tmp/stage2_collectfilter_gate_fix9 30 4096 src/stdlib/concurrent.cr --no-prelude > /tmp/stage2_fix9_concurrent_hir.log 2>&1`
+      - before the fix, that carrier died with `error: End of file reached`
+      - after the fix, it reaches `STUB CALLED: LibMachVM$Dmach_task_self`
+    - adversary sweep on begin-heavy stdlib files now splits into later families instead of the old exact `concurrent.cr` EOF:
+      - `src/stdlib/tuple.cr`, `src/stdlib/named_tuple.cr`, `src/stdlib/proc.cr`, `src/stdlib/indexable.cr`, and `src/stdlib/io/file_descriptor.cr` now exit cleanly under the same `STOP_AFTER_HIR` carrier
+      - `src/stdlib/primitives.cr`, `src/stdlib/enumerable.cr`, `src/stdlib/file.cr`, `src/stdlib/raise.cr`, `src/stdlib/fiber.cr`, `src/stdlib/indexable/mutable.cr`, and `src/stdlib/socket.cr` move to the same later `LibMachVM.mach_task_self` stub family
+  - practical boundary:
+    - this is a verified collector-corridor fix for exact top-level `{% begin %}` branch extraction in self-hosted `stage2`, not a claim that top-level macro collection is fully solved
+    - `src/stdlib/prelude.cr --no-prelude` still remains red after this checkpoint, so the next honest frontier is a later or sibling HIR/runtime corridor rather than the already-closed `src/stdlib/concurrent.cr` begin-wrapper collapse
 - **Fresh self-hosted parser root checkpoint: stage1-generated parsers no longer split top-level `macro spawn(...)` or `{% if %}` roots during bootstrap probing; the old `src/stdlib/concurrent.cr` parser-root family is closed, and a fresh `stage2` parse/HIR split on `src/stdlib/prelude.cr --no-prelude` now lands with parse green and a later HIR red instead of the previous parser-root drift (2026-04-02, current session)**:
   - trustworthy setup:
     - `src/compiler/frontend/parser.cr` now treats successful `parse_macro_if_control(...)` results by `invalid?` rather than raw `== PREFIX_ERROR`, so self-hosted `%{ if/unless }` control blocks stop falling through to raw `MacroLiteral` recovery
