@@ -1,6 +1,34 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-01)
 
 ## Current Status
+- **Fresh Tuple-annotation collector checkpoint: semantic collection no longer mistakes builtin `Tuple` annotations for method type parameters, which closes the live `Atomic(Bool)#cast_from(value : Tuple)` nil-overload corridor and drives the honest stage3 semantic gate to `semantic_diags=0 resolution_diags=0 type_diags=0` on the current verified tree (2026-04-01, current session)**:
+  - trustworthy setup:
+    - `src/compiler/semantic/collectors/symbol_collector.cr` now explicitly treats builtin annotation names like `Tuple` as non-generic when deciding whether a constant-like annotation should become a method type parameter
+    - focused regression coverage now lives in:
+      - `spec/semantic/symbol_collector_spec.cr`
+      - `spec/semantic/type_inference_atomic_cast_from_spec.cr`
+  - decisive evidence:
+    - focused regression pack is green:
+      - `../crystal/bin/crystal spec spec/semantic/symbol_collector_spec.cr --example 'does not treat builtin Tuple annotations as generic method params' --error-trace`
+      - `../crystal/bin/crystal spec spec/semantic/type_inference_atomic_cast_from_spec.cr --error-trace`
+    - rebuild gate is green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+    - the decisive exact falsifier now routes `cast_from(nil)` to the unconstrained overload instead of the `Tuple` overload:
+      - `/tmp/semantic_atomic_tuple_overload_probe.cr`
+      - before the fix it failed on `Cannot index type Nil`
+      - after the fix the semantic prepass clears with `type_diags=0`
+    - the clean full semantic stage3 probe under the safe wrapper now reaches zero semantic diagnostics before falling later in HIR lowering:
+      - `env CRYSTAL_V2_SEMANTIC_COMPILE=1 scripts/run_safe.sh /tmp/crystal_v2_semantic_stage3probe 300 4096 src/crystal_v2.cr --stats --no-link -o /tmp/stage3_semantic_probe_after_tuple_fix_clean.out > /tmp/stage3_semantic_probe_after_tuple_fix_clean.log 2>&1`
+      - fresh summary on the current tree is:
+        - `semantic_diags=0`
+        - `resolution_diags=0`
+        - `type_diags=0`
+      - the remaining failure is no longer semantic:
+        - `error: Unsupported assignment target: CrystalV2::Compiler::Frontend::SplatNode`
+  - practical boundary:
+    - this is a real collector fix, not a tuple indexing builtin patch
+    - the decisive root-cause trace was `method type bindings cast_from: {"Tuple" => Nil}`, which proved that builtin `Tuple` had been falsely collected as a method type parameter
+    - semantic stage3 is now green; the next honest frontier moves to HIR lowering for splat assignment targets
 - **Fresh string-interpolation resolver checkpoint: name resolution now traverses interpolation expression pieces, which keeps rescue-bound locals visible inside interpolated strings and moves the honest stage3 semantic gate from `type_diags=6` to `type_diags=5` on the current verified tree (2026-04-01, current session)**:
   - trustworthy setup:
     - `src/compiler/semantic/resolvers/name_resolver.cr` now visits `StringInterpolationNode` expression pieces instead of skipping them entirely

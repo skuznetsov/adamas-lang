@@ -3,6 +3,33 @@
 Updated: 2026-04-01
 Context: compiler/bootstrap/stage2-stability
 
+[LM-425|verified]: After [LM-424], the cheapest honest mover was not another
+tuple builtin patch and not a broader overload-matcher rewrite, but a collector
+false positive around method type parameters. The decisive exact falsifier was
+`/tmp/semantic_atomic_tuple_overload_probe.cr`, which showed that
+`Atomic(Bool)#cast_from(nil)` still entered the `cast_from(value : Tuple)`
+overload and then failed on `Cannot index type Nil`. Debug tracing narrowed the
+cause further: the live binding dump showed
+`method type bindings cast_from: {"Tuple" => Nil}`, which means builtin
+`Tuple` had been collected as a fake method type parameter and then rebound to
+the actual argument type during overload matching. Source inspection confirmed
+the local defect in
+`src/compiler/semantic/collectors/symbol_collector.cr`:
+`detect_generic_type_parameters(...)` treated constant-like annotation names as
+generic unless they matched a short builtin exclusion list, and that list did
+not include `Tuple`. The verified fix stays narrow: builtin annotation names
+like `Tuple` now short-circuit generic-parameter detection, with focused
+regressions in `spec/semantic/symbol_collector_spec.cr` and
+`spec/semantic/type_inference_atomic_cast_from_spec.cr`. Both focused specs are
+green; `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+is green; the exact `cast_from(nil)` falsifier is green after the fix; and the
+clean full semantic stage3 probe under `scripts/run_safe.sh` reaches
+`semantic_diags=0 resolution_diags=0 type_diags=0`. Boundary: semantic prepass
+is now green, but whole-program bootstrap still fails later in HIR lowering on
+`Unsupported assignment target: CrystalV2::Compiler::Frontend::SplatNode`, so
+the next honest frontier is HIR lowering rather than semantic inference.
+{F/G/R: 0.99/0.88/0.99} [verified]
+
 [LM-424|verified]: After [LM-423], the next honest mover was not a general
 rescue-variable binding patch and not another exception builtin tweak, but a
 name-resolution gap for interpolation expression children. The decisive exact

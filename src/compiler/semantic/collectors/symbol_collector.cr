@@ -2210,7 +2210,7 @@ module CrystalV2
           return false unless constant_like_type_name?(type_name)
 
           # Builtin types
-          return false if ["Int32", "Int64", "Float64", "String", "Bool", "Nil", "Char"].includes?(type_name)
+          return false if builtin_annotation_type_name?(type_name)
 
           # Check if it's a defined class in current scope
           table = current_table
@@ -2224,6 +2224,16 @@ module CrystalV2
 
           # Not a builtin, not a defined class → generic type parameter
           true
+        end
+
+        private def builtin_annotation_type_name?(type_name : String) : Bool
+          case type_name
+          when "Int32", "Int64", "Float64", "String", "Bool", "Nil", "Char",
+               "Tuple"
+            true
+          else
+            false
+          end
         end
 
         private def top_level_named_tuple_separator(type_name : String) : Int32?

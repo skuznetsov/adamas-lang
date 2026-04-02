@@ -136,6 +136,32 @@ describe Semantic::SymbolCollector do
     pick_symbol.as(Semantic::MethodSymbol).type_parameters.should be_nil
   end
 
+  it "does not treat builtin Tuple annotations as generic method params" do
+    source = <<-CR
+      struct Atomic(T)
+        private def cast_from(value : Tuple)
+          value
+        end
+      end
+    CR
+
+    lexer = Frontend::Lexer.new(source)
+    parser = Frontend::Parser.new(lexer)
+    program = parser.parse_program
+
+    context = Semantic::Context.new(Semantic::SymbolTable.new)
+    collector = Semantic::SymbolCollector.new(program, context)
+    collector.collect
+
+    collector.diagnostics.should be_empty
+
+    atomic_symbol = context.symbol_table.lookup("Atomic").should_not be_nil
+    atomic_class = atomic_symbol.as(Semantic::ClassSymbol)
+    cast_from_symbol = atomic_class.scope.lookup("cast_from").should_not be_nil
+
+    cast_from_symbol.as(Semantic::MethodSymbol).type_parameters.should be_nil
+  end
+
   it "expands macros inherited through the class hierarchy" do
     source = <<-CR
       class Object
