@@ -35529,9 +35529,9 @@ module Crystal::HIR
       end
       cache_scope = @current_class || ""
       scope_cache = @subst_cache[cache_scope]?
-      unless scope_cache
+      if scope_cache.nil?
         scope_cache = {} of String => String
-        @subst_cache[cache_scope] = scope_cache
+        ensure_subst_cache_entry(cache_scope, scope_cache)
       end
 
       if cached = scope_cache[name]?
@@ -42178,6 +42178,12 @@ module Crystal::HIR
       end
       debug_flag_parse("flag.eval raw=#{flag_name.bytesize} clean=#{clean_name} result=#{result ? 1 : 0}")
       result
+    end
+
+    # V2 bootstrap workaround: separate method to avoid cross-block value
+    # corruption when @subst_cache receiver is reused across branch boundaries.
+    private def ensure_subst_cache_entry(key : String, value : Hash(String, String)) : Nil
+      @subst_cache[key] = value
     end
 
     private def normalize_macro_flag_name(flag_name : String) : String
