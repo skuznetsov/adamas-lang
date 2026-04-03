@@ -826,6 +826,7 @@ module Crystal::MIR
     # Fused parallel pipeline: MIR lowering in fork workers (experimental, correctness issues).
     property fused_mir_lowering : HIRToMIRLowering? = nil
     property hir_extern_functions : Hash(Tuple(String, String), Crystal::HIR::ExternFunction)? = nil
+    property hir_extern_by_name : Hash(String, Crystal::HIR::ExternFunction)? = nil
     # Per-worker MIR optimization: each fork worker optimizes its chunk before LLVM emission.
     # This parallelizes MIR opt across workers, saving serial MIR opt time.
     property worker_mir_opt : Bool = false
@@ -2131,8 +2132,13 @@ module Crystal::MIR
                  end
       return nil if lib_name.empty? || fun_name.empty?
       if externs = @hir_extern_functions
-        result = externs[{lib_name, fun_name}]?
-        return result
+        if result = externs[{lib_name, fun_name}]?
+          return result
+        end
+      end
+      # Fallback: same C function registered under different Crystal lib name
+      if by_name = @hir_extern_by_name
+        return by_name[fun_name]?
       end
       nil
     end
@@ -2168,7 +2174,7 @@ module Crystal::MIR
 
       String.build do |io|
         io << "; extern forwarding: " << mangled_name << " → " << real_name << "\n"
-        io << decl << "\n" unless @emitted_functions.includes?(real_name)
+        io << decl << "\n" unless @emitted_functions.includes?(real_name) || @undefined_externs.has_key?(real_name)
         io << "define #{return_type} @#{mangled_name}(#{param_list}) {\n"
         if return_type == "void"
           io << "  call void @#{real_name}(#{arg_forward})\n"

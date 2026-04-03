@@ -2580,14 +2580,21 @@ module CrystalV2
         if fused_parallel
           llvm_gen.fused_mir_lowering = mir_lowering
         end
-        # Provide HIR extern function map for lib function forwarding stubs
+        # Provide HIR extern function map for lib function forwarding stubs.
+        # Keyed by {lib_name, fun_name}. Also build a by-name-only fallback
+        # for cases where the same C function is registered under a different
+        # Crystal lib name (e.g. LibMachVMAst vs LibMachVM both wrap mach_task_self).
         extern_map = {} of Tuple(String, String) => Crystal::HIR::ExternFunction
+        extern_by_name = {} of String => Crystal::HIR::ExternFunction
         hir_module.extern_functions.each do |ef|
           if lib_name = ef.lib_name
             extern_map[{lib_name, ef.name}] = ef
           end
+          extern_by_name[ef.name] ||= ef
+          extern_by_name[ef.real_name] ||= ef
         end
         llvm_gen.hir_extern_functions = extern_map unless extern_map.empty?
+        llvm_gen.hir_extern_by_name = extern_by_name unless extern_by_name.empty?
         # Enable per-worker MIR optimization: workers optimize their function chunk
         # before LLVM emission, parallelizing MIR opt across fork workers.
         # This saves the serial MIR opt phase (skipped when workers do it).
