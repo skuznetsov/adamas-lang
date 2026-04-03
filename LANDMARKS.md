@@ -3,6 +3,47 @@
 Updated: 2026-04-02
 Context: compiler/bootstrap/stage2-stability
 
+[LM-450|verified]: After [LM-449], the next self-hosted `stage2 -> stage3`
+HIR red was no longer a broad parser corridor but a concrete top-level macro
+text provenance failure in `collect_top_level_nodes(...)`. The contradiction
+ledger is what made it trustworthy. First, the old full-gate segfault on
+`src/crystal_v2.cr` was reduced under LLDB to
+`__crystal_v2_array_join_string` called from
+`CLI#collect_top_level_nodes`, and a join breakpoint proved the live caller was
+the raw-text `MacroIf` path. Replacing only that `.join` with a direct builder
+did not move the head. Second, another breakpoint showed the remaining join was
+actually the active-text path `macro_literal_active_texts(...).join`, so the
+earlier “raw-text join is the only culprit” theory was refuted. Replacing that
+join too moved the crash one layer deeper into `String::Builder << text` inside
+`each_macro_literal_active_text(...)`, proving the real seam was not join
+selection but the provenance of macro text itself. Third, the parser-side
+construction path and existing HIR/semantic code suggested the smallest safe
+repair: prefer original `source + piece.span` reconstruction over
+`MacroPiece#text` in the CLI collector when source is available, and stop
+materializing parser macro piece text via `String.new(slice)` over transient
+buffers/spans. The verified fix therefore spans two narrow places only:
+`src/compiler/frontend/parser.cr` now uses `bytes_window_to_string(...)` when
+building `MacroPiece.text(...)` from macro buffers/fallback spans, and
+`src/compiler/cli.cr` now reconstructs active macro text from `source +
+piece.span` (with fallback to `piece.text`) while keeping the earlier direct
+builder path for raw-text and active-text collector combines. Focused semantic
+CLI regressions for begin-wrapper/simple-control/raw-text stitching are green,
+host `--no-codegen` and host build to `/tmp/stage1_spanactive_fix` are green,
+and the self-hosted rebuild to `/tmp/stage2_spanactive_fix` is green. Most
+importantly, the full `stage2 -> stage3` split on `src/crystal_v2.cr` moves
+from an immediate segfault to a later deterministic `error: End of file
+reached` under both `STOP_AFTER_HIR` and plain no-stats runs. Adversary
+sentinels also move later and split cleanly: `src/stdlib/dir.cr --no-prelude`
+and `src/stdlib/system.cr --no-prelude` now exit `0` under `STOP_AFTER_HIR`,
+`src/stdlib/concurrent.cr --no-prelude` reaches the later
+`LibMachVM.mach_task_self` stub family, and `src/stdlib/prelude.cr
+--no-prelude` now fails with later memory growth instead of the old macro-text
+segfault. Reusable lesson: when self-hosted macro collectors crash in string
+assembly, do not stop at helper selection (`join` vs builder); if both fail,
+shift one level up to string provenance and prefer `source + span` over copied
+struct payload Strings in hot bootstrap corridors. {F/G/R: 0.98/0.79/0.98}
+[verified]
+
 [LM-449|verified]: After [LM-448], the next self-hosted `stage2 -> stage3`
 parser red was no longer a vague late bootstrap drift but an exact
 escaped-interpolation transport failure in processed string tokens. The

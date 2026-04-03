@@ -1,6 +1,43 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-02)
 
 ## Current Status
+- **Fresh self-hosted macro-text provenance checkpoint: self-hosted `stage2` no longer segfaults in top-level macro text stitching during the `stage2 -> stage3` HIR split; the old `collect_top_level_nodes` `Array(String)#join` / `piece.text` crash family is closed, and the next live head has moved to a later plain `error: End of file reached` follower while file-local sentinels split cleanly into downstream runtime fronts (2026-04-02, current session)**:
+  - trustworthy setup:
+    - `src/compiler/cli.cr` no longer trusts `Array(String)#join` for top-level macro raw-text/active-text stitching in `collect_top_level_nodes(...)`; both corridors now build combined text directly
+    - more importantly, the active-text collector now prefers `source + piece.span` reconstruction over `MacroPiece#text` whenever the original source is available, falling back to `piece.text` only when source/span cannot be used
+    - `src/compiler/frontend/parser.cr` now materializes macro piece text through `bytes_window_to_string(...)` at the parser-side `MacroPiece.text(...)` construction sites that previously depended on `String.new(slice)` over transient macro buffers/spans
+    - focused semantic CLI coverage now locks the begin-wrapper/simple-control corridors plus an exact raw-text stitching case with embedded `{% ... %}` markers inside strings/comments
+  - decisive evidence:
+    - focused semantic CLI regressions are green:
+      - `../crystal/bin/crystal spec spec/semantic_cli_spec.cr --error-trace --example 'keeps semantic compile prepass green for top-level begin macros with nested branch text and later macro defs'`
+      - `../crystal/bin/crystal spec spec/semantic_cli_spec.cr --error-trace --example 'keeps semantic compile prepass green for top-level macro if without begin wrapper and later macro defs'`
+      - `../crystal/bin/crystal spec spec/semantic_cli_spec.cr --error-trace --example 'keeps semantic compile prepass green for nested top-level macro control literals without expander-only features'`
+      - `../crystal/bin/crystal spec spec/semantic_cli_spec.cr --error-trace --example 'keeps semantic compile prepass green for top-level macro if raw-text stitching with comment and string markers'`
+    - host compiler gates are green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/stage1_spanactive_fix --error-trace`
+    - fresh self-hosted rebuild from that host is green:
+      - `scripts/run_safe.sh /tmp/stage1_spanactive_fix 420 12288 src/crystal_v2.cr -o /tmp/stage2_spanactive_fix > /tmp/stage2_spanactive_fix_build.log 2>&1`
+      - result: `[EXIT: 0] after ~184s`
+    - the full `stage2 -> stage3` split moved in the right direction:
+      - before the fix family, `CRYSTAL_V2_STOP_AFTER_HIR=1` on `src/crystal_v2.cr` died immediately in `__crystal_v2_array_join_string` and later in `String::Builder << piece.text`
+      - after the provenance fix:
+        - `env CRYSTAL_V2_STOP_AFTER_HIR=1 scripts/run_safe.sh /tmp/stage2_spanactive_fix 180 12288 src/crystal_v2.cr -o /tmp/stage3_spanactive_fix_hir > /tmp/stage3_spanactive_fix_hir.log 2>&1`
+        - result: `error: End of file reached`, `[EXIT: 1] after ~3s`
+        - plain no-stats whole-program run now lands on the same later follower:
+          - `scripts/run_safe.sh /tmp/stage2_spanactive_fix 180 12288 src/crystal_v2.cr -o /tmp/stage3_spanactive_fix_nostats > /tmp/stage3_spanactive_fix_nostats.log 2>&1`
+    - file-level adversary sweep shows the old macro-text crash is no longer the earliest local head:
+      - `env CRYSTAL_V2_STOP_AFTER_HIR=1 scripts/run_safe.sh /tmp/stage2_spanactive_fix 60 4096 src/stdlib/dir.cr --no-prelude -o /tmp/sentinel_dir_hir > /tmp/sentinel_dir_hir.log 2>&1`
+        - result: `[EXIT: 0]`
+      - `env CRYSTAL_V2_STOP_AFTER_HIR=1 scripts/run_safe.sh /tmp/stage2_spanactive_fix 60 4096 src/stdlib/system.cr --no-prelude -o /tmp/sentinel_system_hir > /tmp/sentinel_system_hir.log 2>&1`
+        - result: `[EXIT: 0]`
+      - `env CRYSTAL_V2_STOP_AFTER_HIR=1 scripts/run_safe.sh /tmp/stage2_spanactive_fix 60 4096 src/stdlib/concurrent.cr --no-prelude -o /tmp/sentinel_concurrent_hir > /tmp/sentinel_concurrent_hir.log 2>&1`
+        - result: later `STUB CALLED: LibMachVM$Dmach_task_self`
+      - `env CRYSTAL_V2_STOP_AFTER_HIR=1 scripts/run_safe.sh /tmp/stage2_spanactive_fix 60 4096 src/stdlib/prelude.cr --no-prelude -o /tmp/sentinel_prelude_hir > /tmp/sentinel_prelude_hir.log 2>&1`
+        - result: later 4GB memory blow-up instead of the old macro-text segfault
+  - practical boundary:
+    - this closes the exact self-hosted top-level macro text provenance crash family behind the old `collect_top_level_nodes` join/materialization seam
+    - it does not make `stage2 -> stage3` green yet; the new honest frontier is a later parse/HIR/runtime follower (`error: End of file reached`, `LibMachVM.mach_task_self`, and `prelude` memory growth), not continued macro text corruption
 - **Fresh self-hosted escaped-interpolation parser checkpoint: self-hosted `stage2` no longer crashes on processed string-interpolation payloads with escaped text around `#{...}`, so the old `macro_expander.cr` parse red is closed and the next `stage2 -> stage3` blocker has moved downstream of parse into the post-parse/HIR corridor (2026-04-02, current session)**:
   - trustworthy setup:
     - `src/compiler/frontend/parser.cr` `parse_string_interpolation(...)` no longer rebuilds text/expression substrings through direct `Slice#[]` windows on processed `StringInterpolation` token payloads

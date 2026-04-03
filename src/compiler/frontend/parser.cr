@@ -8898,7 +8898,7 @@ module CrystalV2
 
         private def flush_macro_text(buffer, pieces, trim_trailing = false, start_span : Span? = nil, end_span : Span? = nil)
           return if buffer.size == 0
-          text = String.new(buffer.to_slice)
+          text = bytes_window_to_string(buffer.to_slice, 0, buffer.size)
           text = text.rstrip if trim_trailing
 
           # Capture span if we have start and end tokens
@@ -15211,7 +15211,7 @@ current_token.kind == Token::Kind::Identifier &&
           pieces = [] of MacroPiece
           if byte_count > 0
             slice = @source.to_slice[block_span.start_offset, byte_count]
-            pieces << MacroPiece.text(String.new(slice), block_span)
+            pieces << MacroPiece.text(bytes_window_to_string(slice, 0, byte_count), block_span)
           end
           @arena.add_typed(MacroLiteralNode.new(block_span, pieces, false, false))
         end

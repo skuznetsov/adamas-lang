@@ -3908,7 +3908,7 @@ module CrystalV2
           texts = if raw_text = extract_span_text(node.span, source)
                     macro_literal_texts_from_raw(raw_text, Runtime.target_flags)
                   else
-                    macro_literal_active_texts(arena, node, Runtime.target_flags)
+                    macro_literal_active_texts(arena, node, Runtime.target_flags, source)
                   end
           texts.each do |text|
             extract_link_libraries_from_text(text).each do |lib_name|
@@ -4022,7 +4022,7 @@ module CrystalV2
                                    nil
                                  end
               if selected_literal
-                combined = macro_literal_active_texts(arena, selected_literal, flags).join
+                combined = macro_literal_combined_active_text(arena, selected_literal, flags, source)
                 if env_enabled?("DEBUG_MACRO_EXPAND")
                   bootstrap_trace_puts "[DEBUG_MACRO_EXPAND] MacroIfNode begin-combined empty=#{combined.strip.empty?} has_percent=#{combined.includes?("{%")} size=#{combined.size}"
                 end
@@ -4043,7 +4043,7 @@ module CrystalV2
             has_for_loop = raw_text.includes?("{% for") || raw_text.includes?("{%- for") || raw_text.includes?("{%~ for")
             unless has_for_loop
               parsed_any = false
-              combined = macro_literal_texts_from_raw(raw_text, flags).join
+              combined = macro_literal_combined_text_from_raw(raw_text, flags)
               if env_enabled?("DEBUG_MACRO_EXPAND")
                 bootstrap_trace_puts "[DEBUG_MACRO_EXPAND] MacroIfNode combined empty=#{combined.strip.empty?} has_percent=#{combined.includes?("{%")} size=#{combined.size}"
                 if combined.size < 200
@@ -4096,7 +4096,7 @@ module CrystalV2
           end
           if has_control_flow
             if macro_literal_simple_control_flow?(node)
-              combined = macro_literal_active_texts(arena, node, flags).join
+              combined = macro_literal_combined_active_text(arena, node, flags, source)
               unless combined.strip.empty? || combined.includes?("{%")
                 if parsed = parse_macro_literal_program(combined)
                   program, exp_source = parsed
@@ -4126,7 +4126,7 @@ module CrystalV2
           elsif raw_text = macro_literal_raw_text(node, source)
             # Track macro variable assignments (e.g., {% nums = %w(Int8 ...) %})
             track_macro_var_assignment(raw_text)
-            combined = macro_literal_texts_from_raw(raw_text, flags).join
+            combined = macro_literal_combined_text_from_raw(raw_text, flags)
             unless combined.strip.empty? || combined.includes?("{%")
               if parsed = parse_macro_literal_program(combined)
                 program, sanitized = parsed
@@ -4744,27 +4744,68 @@ module CrystalV2
         value
       end
 
+      private def macro_literal_combined_active_text(
+        arena : Frontend::ArenaLike,
+        node : Frontend::MacroLiteralNode,
+        flags : Set(String),
+        source : String? = nil
+      ) : String
+        String.build do |io|
+          each_macro_literal_active_text(arena, node, flags, source) do |text|
+            io << text
+          end
+        end
+      end
+
       private def macro_literal_active_texts(
         arena : Frontend::ArenaLike,
         node : Frontend::MacroLiteralNode,
-        flags : Set(String)
+        flags : Set(String),
+        source : String? = nil
       ) : Array(String)
+        texts = [] of String
+        each_macro_literal_active_text(arena, node, flags, source) do |text|
+          texts << text
+        end
+        texts
+      end
+
+      private def each_macro_literal_active_text(
+        arena : Frontend::ArenaLike,
+        node : Frontend::MacroLiteralNode,
+        flags : Set(String),
+        source : String? = nil,
+        & : String ->) : Nil
         if node.pieces.size == 1 && node.pieces[0].kind == Frontend::MacroPiece::Kind::Text
-          if text = node.pieces[0].text
-            return macro_literal_texts_from_raw(text, flags) if text.includes?("{%")
-            return [text]
+          if source && (raw_text = extract_span_text(node.span, source))
+            if raw_text.includes?("{%")
+              each_macro_literal_raw_text_window(raw_text, flags) do |start, length|
+                yield copied_string_window(raw_text, start, length)
+              end
+            else
+              yield raw_text
+            end
+            return
+          elsif text = node.pieces[0].text
+            if text.includes?("{%")
+              each_macro_literal_raw_text_window(text, flags) do |start, length|
+                yield copied_string_window(text, start, length)
+              end
+            else
+              yield text
+            end
+            return
           end
         end
 
-        texts = [] of String
         control_stack = [] of {Bool, Bool, Bool} # {parent_active, branch_taken, active}
         active = true
 
         node.pieces.each do |piece|
           case piece.kind
           when Frontend::MacroPiece::Kind::Text
-            if active && (text = piece.text)
-              texts << text
+            if active && (text = macro_piece_source_text(piece, source))
+              yield text
             end
           when Frontend::MacroPiece::Kind::ControlStart
             keyword = piece.control_keyword || ""
@@ -4820,8 +4861,16 @@ module CrystalV2
             # Ignore expression/macro var pieces.
           end
         end
+      end
 
-        texts
+      private def macro_piece_source_text(piece : Frontend::MacroPiece, source : String?) : String?
+        if source && (span = piece.span)
+          if text = extract_span_text(span, source)
+            return text
+          end
+        end
+
+        piece.text
       end
 
       private def annotation_name_from_expr(
@@ -5001,8 +5050,23 @@ module CrystalV2
         builder.to_s
       end
 
+      private def macro_literal_combined_text_from_raw(text : String, flags : Set(String)) : String
+        String.build do |io|
+          each_macro_literal_raw_text_window(text, flags) do |start, length|
+            append_string_window(io, text, start, length)
+          end
+        end
+      end
+
       private def macro_literal_texts_from_raw(text : String, flags : Set(String)) : Array(String)
         texts = [] of String
+        each_macro_literal_raw_text_window(text, flags) do |start, length|
+          texts << copied_string_window(text, start, length)
+        end
+        texts
+      end
+
+      private def each_macro_literal_raw_text_window(text : String, flags : Set(String), & : Int32, Int32 ->) : Nil
         control_stack = [] of {Bool, Bool, Bool} # {parent_active, branch_taken, active}
         active = true
         idx = 0
@@ -5061,7 +5125,7 @@ module CrystalV2
 
           if bytes[idx] == '{'.ord && bytes[idx + 1] == '%'.ord
             if idx > segment_start && active
-              texts << text.byte_slice(segment_start, idx - segment_start)
+              yield segment_start, idx - segment_start
             end
             idx += 2
             tag_start = idx
@@ -5073,7 +5137,7 @@ module CrystalV2
               break
             end
 
-            tag = text.byte_slice(tag_start, idx - tag_start)
+            tag = copied_string_window(text, tag_start, idx - tag_start)
             tag = tag.strip
             tag = tag.lstrip('-').lstrip('~').rstrip('-').rstrip('~').strip
 
@@ -5087,7 +5151,7 @@ module CrystalV2
                      else
                        true
                      end
-              return [] of String if skip == true
+              return if skip == true
             elsif tag.starts_with?("if ")
               cond = evaluate_macro_condition_text(tag.lchop("if").strip, flags)
               parent_active = active
@@ -5156,10 +5220,27 @@ module CrystalV2
         end
 
         if !missing_end && segment_start < size && active
-          texts << text.byte_slice(segment_start, size - segment_start)
+          yield segment_start, size - segment_start
         end
+      end
 
-        texts
+      private def copied_string_window(text : String, start : Int32, length : Int32) : String
+        return "" if length <= 0
+
+        String.build do |io|
+          append_string_window(io, text, start, length)
+        end
+      end
+
+      private def append_string_window(io : IO, text : String, start : Int32, length : Int32) : Nil
+        return if length <= 0
+
+        bytes = text.to_slice
+        idx = 0
+        while idx < length
+          io.write_byte(bytes[start + idx])
+          idx += 1
+        end
       end
 
       private struct MacroReflectionEvaluator

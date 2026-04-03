@@ -473,6 +473,49 @@ describe CrystalV2::Compiler::CLI do
     end
   end
 
+  it "keeps semantic compile prepass green for top-level macro if raw-text stitching with comment and string markers" do
+    with_temp_shadow_project({
+      "main.cr" => <<-'CRYSTAL',
+        {% if flag?(:darwin) %}
+        def choose
+          text = "alpha {% not a macro %}"
+          # {% ignored %}
+          text
+        end
+        {% else %}
+        def choose
+          text = "beta {% not a macro %}"
+          # {% ignored %}
+          text
+        end
+        {% end %}
+
+        macro wrap(call)
+          {{call}}
+        end
+
+        wrap(choose)
+      CRYSTAL
+    }) do |dir|
+      main_path = File.join(dir, "main.cr")
+      output_path = File.join(dir, "main")
+      out_io = IO::Memory.new
+      err_io = IO::Memory.new
+      status = 1
+
+      with_semantic_compile_env do
+        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        status = cli.run(out_io: out_io, err_io: err_io)
+      end
+
+      status.should eq(0)
+      out_io.to_s.should contain("semantic_diags=0")
+      out_io.to_s.should contain("resolution_diags=0")
+      out_io.to_s.should contain("type_diags=0")
+      err_io.to_s.should be_empty
+    end
+  end
+
   it "keeps semantic compile prepass green for nested top-level macro control literals without expander-only features" do
     with_temp_shadow_project({
       "main.cr" => <<-'CRYSTAL',
