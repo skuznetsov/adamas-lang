@@ -55827,7 +55827,11 @@ module Crystal::HIR
 
       receiver_id : ValueId? = nil
       receiver_type : TypeRef = TypeRef::VOID
-      method_name : String
+      # V2 bootstrap: initialize to "" to avoid null cross-block phi value.
+      # Without this, V2's alloca-based phi scheme carries null on branches
+      # where method_name hasn't been assigned yet, crashing downstream
+      # String methods like includes?/index.
+      method_name : String = ""
       full_method_name : String? = nil
       static_class_name : String? = nil
       proc_return_type_name : String? = nil
