@@ -4358,6 +4358,10 @@ module Crystal::MIR
       emit_raw "  %raw = call ptr @__crystal_v2_malloc64(i64 48)\n"
       emit_raw "  call void @llvm.memset.p0.i64(ptr %raw, i8 0, i64 48, i1 false)\n"
       emit_raw "  store i32 %type_id, ptr %raw\n"
+      # Hash requires @indices_bytesize = 1 for empty state (offset 32, i8).
+      # Without this, indices_malloc_size returns 0 and first resize crashes.
+      emit_raw "  %ibs_ptr = getelementptr i8, ptr %raw, i32 32\n"
+      emit_raw "  store i8 1, ptr %ibs_ptr\n"
       emit_raw "  ret ptr %raw\n"
       emit_raw "}\n\n"
 
