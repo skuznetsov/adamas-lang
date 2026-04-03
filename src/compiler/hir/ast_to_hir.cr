@@ -44010,7 +44010,7 @@ module Crystal::HIR
       end
       return nil if idx >= bytesize
 
-      flag_name : String
+      flag_name : String = ""  # V2 bootstrap: avoid null cross-block phi
       case text.byte_at(idx)
       when ':'.ord.to_u8
         idx += 1
