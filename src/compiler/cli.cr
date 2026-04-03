@@ -4003,6 +4003,21 @@ module CrystalV2
           if env_enabled?("DEBUG_MACRO_EXPAND")
             bootstrap_trace_puts "[DEBUG_MACRO_EXPAND] MacroIfNode condition=#{condition.inspect}"
           end
+          # When the condition is definitively resolved (true/false), bypass
+          # raw-text reparsing and recurse through the selected AST body
+          # directly. The raw-text path can lose structural nodes (libs, classes)
+          # during text reconstruction. The parsed AST already has them as
+          # MacroLiteralNode which the collector will expand correctly.
+          unless condition.nil?
+            if condition == true
+              collect_top_level_nodes(arena, arena_index, node.then_body, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, depth, collect_main_exprs)
+            else
+              if else_body = node.else_body
+                collect_top_level_nodes(arena, arena_index, else_body, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, depth, collect_main_exprs)
+              end
+            end
+            return  # Skip raw-text and fallback paths
+          end
           if raw_text = macro_if_raw_text(node, source)
             begin_wrapper = raw_text.starts_with?("{% begin") || raw_text.starts_with?("{%- begin") || raw_text.starts_with?("{%~ begin")
             if begin_wrapper
