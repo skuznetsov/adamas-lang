@@ -64,6 +64,50 @@ bar")
     CrystalV2::Compiler::Frontend.node_member(member).try { |m| String.new(m) }.should eq("bar")
   end
 
+  it "preserves escaped quote text around string interpolation" do
+    source = %q(msg = "\"#{name}\"")
+
+    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    program = parser.parse_program
+
+    program.roots.size.should eq(1)
+    arena = program.arena
+
+    assign = arena[program.roots.first].as(CrystalV2::Compiler::Frontend::AssignNode)
+    value = arena[assign.value].as(CrystalV2::Compiler::Frontend::StringInterpolationNode)
+    pieces = value.pieces
+
+    pieces.size.should eq(3)
+    pieces[0].kind.should eq(CrystalV2::Compiler::Frontend::StringPiece::Kind::Text)
+    pieces[0].text.should eq("\"")
+    pieces[1].kind.should eq(CrystalV2::Compiler::Frontend::StringPiece::Kind::Expression)
+    pieces[1].expr.should_not be_nil
+    pieces[2].kind.should eq(CrystalV2::Compiler::Frontend::StringPiece::Kind::Text)
+    pieces[2].text.should eq("\"")
+  end
+
+  it "preserves escaped newline text around string interpolation" do
+    source = %q(msg = "\n#{name}\n")
+
+    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    program = parser.parse_program
+
+    program.roots.size.should eq(1)
+    arena = program.arena
+
+    assign = arena[program.roots.first].as(CrystalV2::Compiler::Frontend::AssignNode)
+    value = arena[assign.value].as(CrystalV2::Compiler::Frontend::StringInterpolationNode)
+    pieces = value.pieces
+
+    pieces.size.should eq(3)
+    pieces[0].kind.should eq(CrystalV2::Compiler::Frontend::StringPiece::Kind::Text)
+    pieces[0].text.should eq("\n")
+    pieces[1].kind.should eq(CrystalV2::Compiler::Frontend::StringPiece::Kind::Expression)
+    pieces[1].expr.should_not be_nil
+    pieces[2].kind.should eq(CrystalV2::Compiler::Frontend::StringPiece::Kind::Text)
+    pieces[2].text.should eq("\n")
+  end
+
   it "parses keyword identifiers like union in expressions" do
     source = <<-CR
       def test

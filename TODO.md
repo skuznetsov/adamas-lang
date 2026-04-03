@@ -1,6 +1,39 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-02)
 
 ## Current Status
+- **Fresh self-hosted escaped-interpolation parser checkpoint: self-hosted `stage2` no longer crashes on processed string-interpolation payloads with escaped text around `#{...}`, so the old `macro_expander.cr` parse red is closed and the next `stage2 -> stage3` blocker has moved downstream of parse into the post-parse/HIR corridor (2026-04-02, current session)**:
+  - trustworthy setup:
+    - `src/compiler/frontend/parser.cr` `parse_string_interpolation(...)` no longer rebuilds text/expression substrings through direct `Slice#[]` windows on processed `StringInterpolation` token payloads
+    - the parser now uses a bounded byte-copy helper `bytes_window_to_string(...)` for text pieces before/after interpolation and for the nested interpolation expression text itself
+    - this keeps the same source-level interpolation contract while bypassing the self-hosted slice-window drift seen only on escaped-text cases like `\"#{...}\"` and `\n#{...}\n`
+    - focused parser coverage now locks the exact family in `spec/parser/parser_spec.cr` with escaped quotes and escaped newlines around interpolation
+  - decisive evidence:
+    - focused parser regressions are green:
+      - `../crystal/bin/crystal spec spec/parser/parser_spec.cr --error-trace --example 'preserves escaped quote text around string interpolation'`
+      - `../crystal/bin/crystal spec spec/parser/parser_spec.cr --error-trace --example 'preserves escaped newline text around string interpolation'`
+    - host compiler gate is green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr --no-codegen --error-trace`
+    - host rebuild of the checkpoint compiler is green:
+      - `../crystal/bin/crystal build src/crystal_v2.cr -o /tmp/stage1_interp_fix --error-trace`
+    - self-hosted rebuild from that host is green:
+      - `scripts/run_safe.sh /tmp/stage1_interp_fix 420 12288 src/crystal_v2.cr -o /tmp/stage2_interp_fix > /tmp/stage2_interp_fix_build.log 2>&1`
+      - result: `[EXIT: 0] after ~183s`
+    - the old exact self-hosted parser carriers are now green under `/tmp/stage2_interp_fix`:
+      - `/tmp/string_interp_escape_bare.cr`
+      - `/tmp/string_interp_escape_min.cr`
+      - `/tmp/string_interp_newline_escape.cr`
+      - `/tmp/macro_expander_norequire.cr`
+      - `src/compiler/semantic/macro_expander.cr --no-prelude`
+    - the full `stage2 -> stage3` split moved in the expected direction:
+      - `env CRYSTAL_V2_STOP_AFTER_PARSE=1 scripts/run_safe.sh /tmp/stage2_interp_fix 180 12288 src/crystal_v2.cr -o /tmp/stage3_interp_fix_parse_stop > /tmp/stage3_interp_fix_parse_stop.log 2>&1`
+      - result: `[EXIT: 0] after ~2s`
+      - `env CRYSTAL_V2_STOP_AFTER_HIR=1 scripts/run_safe.sh /tmp/stage2_interp_fix 180 12288 src/crystal_v2.cr -o /tmp/stage3_interp_fix_hir_stop > /tmp/stage3_interp_fix_hir_stop.log 2>&1`
+      - result: `[CRASH] Segfault (exit 139)`
+      - plain no-stats whole-program run now fails later with `error: End of file reached` instead of the old parser `Index out of bounds`:
+        - `scripts/run_safe.sh /tmp/stage2_interp_fix 600 12288 src/crystal_v2.cr -o /tmp/stage3_interp_fix_nostats > /tmp/stage3_interp_fix_nostats.log 2>&1`
+  - practical boundary:
+    - this closes the verified escaped-text string-interpolation parser corridor behind the old `macro_expander.cr` parse failure
+    - it does not close the remaining `stage2 -> stage3` red: parse is now green, but post-parse/HIR remains red, and the separate `--stats` crash in `Time::Span` stays a later independent frontier
 - **Fresh stage2 top-level simple macro-control checkpoint: self-hosted `stage2` no longer blows the 4GB guard on `src/stdlib/crystal/system.cr --no-prelude` during top-level collection, because control-only `MacroLiteralNode` branches now take the cheap active-text path before the full expander (2026-04-02, current session)**:
   - trustworthy setup:
     - `src/compiler/cli.cr` now recognizes a narrow `macro_literal_simple_control_flow?(...)` family: top-level macro literals composed only of text plus `if/unless/elsif/else/end` control pieces, with no `for`, `{{ ... }}`, or macro-variable pieces

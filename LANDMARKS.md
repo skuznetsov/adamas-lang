@@ -3,6 +3,40 @@
 Updated: 2026-04-02
 Context: compiler/bootstrap/stage2-stability
 
+[LM-449|verified]: After [LM-448], the next self-hosted `stage2 -> stage3`
+parser red was no longer a vague late bootstrap drift but an exact
+escaped-interpolation transport failure in processed string tokens. The
+decisive reducer chain matters. First, the old whole-program failure on
+`src/crystal_v2.cr` was reduced to `src/compiler/semantic/macro_expander.cr
+--no-prelude`, then to `/tmp/macro_expander_norequire.cr`, then to a tiny
+`reparse` carrier, and finally to minimal strings where only escaped text
+around interpolation was toxic under self-hosted `stage2`: `"\"#{output}\""`,
+`"\n#{output}\n"`, and `"\\#{output}\\"` were red, while plain
+`"#{output}"`, prefix-only, suffix-only, and ordinary surrounding text stayed
+green. That falsified the broader “generic interpolation text is broken” theory
+and localized the live seam to slice-window reconstruction on processed
+`StringInterpolation` token payloads. The bounded fix in
+`src/compiler/frontend/parser.cr` is to stop rebuilding interpolation pieces
+and inner expression text via `Slice#[]` windows in `parse_string_interpolation`
+and instead materialize those substrings through a local byte-copy helper
+`bytes_window_to_string(...)`. Focused parser regressions in
+`spec/parser/parser_spec.cr` now lock the escaped-quote and escaped-newline
+forms, host `--no-codegen` is green, the rebuilt host `/tmp/stage1_interp_fix`
+and self-hosted `/tmp/stage2_interp_fix` are green, and the old exact bad
+carriers (`/tmp/string_interp_escape_bare.cr`,
+`/tmp/string_interp_escape_min.cr`, `/tmp/string_interp_newline_escape.cr`,
+`/tmp/macro_expander_norequire.cr`, and
+`src/compiler/semantic/macro_expander.cr --no-prelude`) are all green under the
+new self-hosted `stage2`. The critical frontier split also moved the right way:
+on `/tmp/stage2_interp_fix`, `CRYSTAL_V2_STOP_AFTER_PARSE=1` for
+`src/crystal_v2.cr` now exits `0`, while `CRYSTAL_V2_STOP_AFTER_HIR=1` still
+segfaults and the plain no-stats whole-program run now fails later with
+`error: End of file reached` instead of the old parser `Index out of bounds`.
+Boundary: this closes the escaped-text string-interpolation parser family, but
+the remaining `stage2 -> stage3` red is now downstream of parse, and the
+separate `--stats` `Time::Span` crash remains an independent later frontier.
+{F/G/R: 0.98/0.82/0.98} [verified]
+
 [LM-448|verified]: After [LM-447], the next exact self-hosted `stage2` HIR
 blocker was not another parser bug but a top-level collector memory wall in
 control-only macro literals. The decisive minimal live carrier became

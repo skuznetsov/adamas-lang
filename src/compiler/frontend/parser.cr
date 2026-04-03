@@ -12004,9 +12004,11 @@ module CrystalV2
 
             # Add text piece if any
             if interpolation_start && interpolation_start > text_start
-              pieces_b << StringPiece.text(String.new(content[text_start, i - text_start]))
+              text = bytes_window_to_string(content, text_start, i - text_start)
+              pieces_b << StringPiece.text(text)
             elsif interpolation_start.nil? && i > text_start
-              pieces_b << StringPiece.text(String.new(content[text_start, i - text_start]))
+              text = bytes_window_to_string(content, text_start, i - text_start)
+              pieces_b << StringPiece.text(text)
             end
 
             break unless interpolation_start
@@ -12025,7 +12027,7 @@ module CrystalV2
                 i += 1 if brace_depth > 0
               end
 
-              expr_text = String.new(content[expr_start, i - expr_start])
+              expr_text = bytes_window_to_string(content, expr_start, i - expr_start)
               expr_id = parse_interpolation_expression(expr_text)
               pieces_b << StringPiece.expression(expr_id)
               saw_expression = true
@@ -12069,7 +12071,7 @@ module CrystalV2
                 i += 1
               end
 
-              expr_text = String.new(content[expr_start, i - expr_start])
+              expr_text = bytes_window_to_string(content, expr_start, i - expr_start)
               expr_id = parse_interpolation_expression(expr_text)
               pieces_b << StringPiece.expression(expr_id)
               saw_expression = true
@@ -12128,6 +12130,21 @@ module CrystalV2
           expr_id = sub_parser.parse_expression(0)
 
           expr_id # Already in our arena
+        end
+
+        # Avoid Slice#[] window extraction here. Self-hosted stage2 has produced
+        # unstable slice windows on processed StringInterpolation token payloads
+        # (escaped text around #{...}), while direct byte-copy stays stable.
+        private def bytes_window_to_string(content : Slice(UInt8), start : Int32, length : Int32) : String
+          return "" if length <= 0
+
+          String.build do |io|
+            idx = 0
+            while idx < length
+              io.write_byte(content[start + idx])
+              idx += 1
+            end
+          end
         end
 
         # Phase 72: Parse method call with arguments (positional and/or named)
