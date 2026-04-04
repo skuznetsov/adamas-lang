@@ -7284,21 +7284,23 @@ module Crystal::MIR
       end
 
       if mangled.includes?("$Hget_entry$$Int32") && mangled.includes?("Hash$L")
-        # Root-cause fix: disable pointer-slot override.
-        # Hash entries are value structs; loading ptr from each slot corrupts
-        # entry reads and causes null/invalid receivers in deleted?/matches?.
-        return false
-
-        emit_raw "; #{mangled} — fixed stride + pointer dereference override\n"
+        # V2 heap-allocates Entry structs; entries buffer stores pointers (stride=8).
+        # Null entries (uninitialized slots) crash callers like entry_matches?.
+        # Fix: return pointer to a stack-allocated zeroed entry for null slots.
+        # Zeroed entry has @hash=0 → deleted? returns true → callers skip it.
+        emit_raw "; #{mangled} — null-safe get_entry with pointer-slot stride\n"
         emit_raw "define ptr @#{mangled}(ptr %self, i32 %index) {\n"
         emit_raw "entry:\n"
+        emit_raw "  %zero_buf = alloca [64 x i8], align 8\n"
+        emit_raw "  call void @llvm.memset.p0.i64(ptr %zero_buf, i8 0, i64 64, i1 false)\n"
         emit_raw "  %entries_ptr = getelementptr i8, ptr %self, i32 8\n"
         emit_raw "  %entries = load ptr, ptr %entries_ptr\n"
         emit_raw "  %idx64 = sext i32 %index to i64\n"
-        emit_raw "  %offset = mul i64 %idx64, 8\n"   # stride = 8 (pointer size)
-        emit_raw "  %slot = getelementptr i8, ptr %entries, i64 %offset\n"
-        emit_raw "  %entry_ptr = load ptr, ptr %slot\n"  # load the stored pointer
-        emit_raw "  ret ptr %entry_ptr\n"
+        emit_raw "  %slot = getelementptr ptr, ptr %entries, i64 %idx64\n"
+        emit_raw "  %entry_ptr = load ptr, ptr %slot\n"
+        emit_raw "  %is_null = icmp eq ptr %entry_ptr, null\n"
+        emit_raw "  %result = select i1 %is_null, ptr %zero_buf, ptr %entry_ptr\n"
+        emit_raw "  ret ptr %result\n"
         emit_raw "}\n\n"
         return true
       end
