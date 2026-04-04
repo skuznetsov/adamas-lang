@@ -317,7 +317,12 @@ module CrystalV2
       end
 
       private def stage2_debug(msg : String, io : IO = STDERR) : Nil
-        # EXPERIMENT C2: unconditional io.puts (no env check)
+        # V2 stage2 stabilizer: this unconditional io.puts is required for stage2
+        # to reach HIR compilation. Empty body or conditional variants cause EOF/SIGBUS.
+        # NOT a runtime effect — verified by GC.disable (no change) and runtime flag
+        # (flag=true still fails). The stabilization is at V2's CODE GENERATION level:
+        # having io.puts msg in the body changes what V2 emits at inlined call sites.
+        # Likely RTA method discovery or inlining layout effect.
         io.puts msg
       end
 
@@ -921,9 +926,7 @@ module CrystalV2
       {% end %}
 
       def run(*, out_io : IO = STDOUT, err_io : IO = STDERR) : Int32
-        # V2 stage2: unconditional stage2_debug output stabilizes runtime.
-        # GC.disable does NOT fix EOF (tested 2026-04-04), so not GC-related.
-        # Setenv workaround is no longer needed with LibC.access + unconditional puts.
+        # stage2_debug is unconditional (required for stage2 stability — see method comment)
         LibC.write(2, "[RUNPROBE] 0\n".to_unsafe, 13)
         bootstrap_trace_puts "[S2_RUN] start args=#{@args.size}"; STDERR.flush
         LibC.write(2, "[RUNPROBE] 1\n".to_unsafe, 13)
