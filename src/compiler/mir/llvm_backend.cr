@@ -7126,6 +7126,25 @@ module Crystal::MIR
         return true
       end
 
+      # ExprId#invalid? — null-safe guard for V2 struct-as-pointer ABI.
+      # ExprId is a wrapper struct { @index : Int32 }. V2 stores it as a heap pointer.
+      # Null ExprId pointer (uninitialized field) → treat as invalid (return true).
+      if mangled == "CrystalV2$CCCompiler$CCFrontend$CCExprId$Hinvalid$Q"
+        emit_raw "; #{mangled} — null-safe ExprId#invalid? override\n"
+        emit_raw "define i1 @#{mangled}(ptr %self) {\n"
+        emit_raw "entry:\n"
+        emit_raw "  %is_null = icmp eq ptr %self, null\n"
+        emit_raw "  br i1 %is_null, label %ret_true, label %check\n"
+        emit_raw "check:\n"
+        emit_raw "  %idx = load i32, ptr %self\n"
+        emit_raw "  %is_invalid = icmp slt i32 %idx, 0\n"
+        emit_raw "  ret i1 %is_invalid\n"
+        emit_raw "ret_true:\n"
+        emit_raw "  ret i1 true\n"
+        emit_raw "}\n\n"
+        return true
+      end
+
       # Hash::Entry#deleted? — pointer-slot-safe semantics.
       # In our current ABI Hash entry slots can be zeroed pointers after clear/delete.
       # Treat null entry pointer as deleted and otherwise read @hash by computed offset.
