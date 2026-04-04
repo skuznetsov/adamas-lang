@@ -526,7 +526,7 @@ module CrystalV2
         private def ensure_summary_unit_metric_size!(
           counts : Array(Int32),
           expected_size : Int32,
-          label : String
+          label : String = ""
         ) : Nil
           return if counts.size == expected_size
 
@@ -536,7 +536,7 @@ module CrystalV2
         private def summary_unit_metric!(
           counts : Array(Int32),
           unit_index : Int32,
-          label : String
+          label : String = ""
         ) : Int32
           counts[unit_index]? || raise "semantic shadow internal error: missing #{label} for unit_index=#{unit_index} size=#{counts.size}"
         end

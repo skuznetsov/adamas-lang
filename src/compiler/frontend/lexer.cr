@@ -2902,7 +2902,7 @@ module CrystalV2
             return nil
           end
           debug { "[HEREDOC] current_byte=#{current_byte} (#{current_byte.chr})" }
-          delimiter : String
+          delimiter : String = ""
           # Heredoc inside interpolation is not allowed
           if @macro_expr_depth > 0
             emit_diagnostic("heredoc cannot be used inside interpolation", Span.new(start_offset, @offset, start_line, start_column, @line, @column))

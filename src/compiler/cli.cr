@@ -503,7 +503,7 @@ module CrystalV2
         abs_path : String,
         arena : Frontend::ArenaLike,
         expr_id : Frontend::ExprId,
-        filter : String
+        filter : String = ""
       ) : Nil
         return if expr_id.invalid? || expr_id.index < 0 || expr_id.index >= arena.size
         node = arena[expr_id]
@@ -4276,7 +4276,7 @@ module CrystalV2
       private def resolve_top_level_macro_iterable(
         arena : Frontend::ArenaLike,
         iterable_id : Frontend::ExprId,
-        source : String
+        source : String = ""
       ) : Array(String)?
         node = arena[iterable_id]
 
@@ -4996,7 +4996,7 @@ module CrystalV2
 
       private def macro_literal_raw_text(
         node : Frontend::MacroLiteralNode,
-        source : String
+        source : String = ""
       ) : String?
         return nil if node.pieces.empty?
         builder = String::Builder.new
@@ -5024,7 +5024,7 @@ module CrystalV2
 
       private def macro_if_raw_text(
         node : Frontend::MacroIfNode,
-        source : String
+        source : String = ""
       ) : String?
         span = node.span
         start = span.start_offset
@@ -5874,7 +5874,7 @@ module CrystalV2
       private def pending_annotation_has?(
         pending_annotations : Array(Frontend::AnnotationNode),
         arena : Frontend::ArenaLike,
-        name : String
+        name : String = ""
       ) : Bool
         pending_annotations.any? { |ann_node| annotation_name_from_expr(arena, ann_node.name) == name }
       end
@@ -6821,7 +6821,7 @@ module CrystalV2
         arena : Frontend::ArenaLike,
         block_id : Frontend::ExprId,
         aggregate : Semantic::CompileShadowAggregate?,
-        fallback_source : String
+        fallback_source : String = ""
       ) : String?
         block_node = arena[block_id]
         return nil unless block_node.is_a?(Frontend::BlockNode)
