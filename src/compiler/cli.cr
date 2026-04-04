@@ -922,10 +922,11 @@ module CrystalV2
       {% end %}
 
       def run(*, out_io : IO = STDOUT, err_io : IO = STDERR) : Int32
-        # V2 stage2 bootstrap: set STAGE2_BOOTSTRAP_TRACE to exercise LibC.getenv +
-        # String.new(C_ptr) code path in env_enabled?. Without this, stage2 hits
-        # EOFError during prelude File.read. Root cause: unknown initialization
-        # dependency in V2-compiled IO/String runtime.
+        # V2 stage2 bootstrap workaround: without STAGE2_BOOTSTRAP_TRACE, stage2 hits
+        # EOFError during prelude parsing. Setting it forces env_enabled? → LibC.getenv →
+        # String.new(C_ptr) → IO.puts paths that exercise runtime initialization.
+        # The EOF also requires File.exists? → LibC.access replacement (below).
+        # Root cause: V2 runtime initialization order dependency (struct-as-pointer ABI).
         LibC.setenv("STAGE2_BOOTSTRAP_TRACE".to_unsafe, "1".to_unsafe, 1)
         LibC.write(2, "[RUNPROBE] 0\n".to_unsafe, 13)
         bootstrap_trace_puts "[S2_RUN] start args=#{@args.size}"; STDERR.flush
@@ -1291,7 +1292,9 @@ module CrystalV2
                          else
                            options.prelude_file
                          end
-          if File.exists?(prelude_path)
+          # V2 BOOTSTRAP: File.exists? calls check_no_null_byte which is broken
+          # in stage2 (String#byte_index(0) falsely finds nulls). Use LibC.access.
+          if LibC.access(prelude_path.to_unsafe, LibC::F_OK) == 0
             stage2_debug("[STAGE2_DEBUG] prelude exists", err_io)
             log(options, out_io, "  Loading prelude: #{prelude_path}")
             prelude_start = Time.instant
