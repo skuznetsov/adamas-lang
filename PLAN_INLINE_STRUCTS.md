@@ -57,6 +57,23 @@ end
 - [ ] Union containing struct: payload must fit struct inline size
 - [ ] Union wrap/unwrap: copy struct value, not pointer
 
+### Critical: Primitive Values in Compound Structs
+The struct-as-pointer ABI causes `false` and `0` to be stored as null pointers
+inside Tuples, NamedTuples, and other compound types. When code dereferences these
+pointers to read the primitive value, it crashes (null deref at address 0x0).
+
+**Proven crash path (2026-04-03):**
+- `pack_splat_args_for_call` returns `Tuple(Array(ValueId), Bool)`
+- V2 heap-allocates the tuple, stores `Bool false` as `inttoptr 0` (null ptr)
+- Tuple unpacking loads ptr from offset 16, dereferences → crash at `ldr w9, [x13]` where x13=0
+
+**This subsection MUST be addressed before or alongside Phase 1:**
+- Primitive elements (Bool, Int32, Float64, etc.) inside Tuples/NamedTuples/Structs
+  must be stored as their native LLVM types (i1, i32, double), not as ptr
+- `false` must be `i1 0`, not `ptr null`
+- `0_i32` must be `i32 0`, not `ptr null`
+- This is independent of whether the containing struct is inline or heap-allocated
+
 ## Testing Strategy
 - Run regression tests after each phase
 - Compare stage1 vs stage2 HIR/MIR for oracle programs
