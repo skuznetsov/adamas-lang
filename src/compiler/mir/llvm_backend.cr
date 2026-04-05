@@ -551,6 +551,13 @@ module Crystal::MIR
               else
                 ""
               end
+      # Debug anchor: emit source location and MIR info as LLVM comment
+      if @debug_emit_anchors && (cur_func = @current_mir_func)
+        emit_raw "; MIR[#{cur_func.id}] #{cur_func.name}\n"
+        if loc = cur_func.source_location
+          emit_raw "; src: #{loc.file}:#{loc.line}\n"
+        end
+      end
       emit_raw "define #{return_type} @#{mangled_name}(#{param_types.join(", ")})#{attrs} {\n"
     end
 
@@ -583,6 +590,8 @@ module Crystal::MIR
     @current_return_type_ref : TypeRef = TypeRef::VOID
     @current_func_name : String = ""
     @current_func_params : Array(Parameter) = [] of Parameter
+    @current_mir_func : Function? = nil
+    @debug_emit_anchors : Bool = false
     @current_slab_frame : Bool = false
     @emit_family_tag : Int32 = 0
     @tsan_needs_func_entry : Bool = false
@@ -881,6 +890,7 @@ module Crystal::MIR
       @string_offsets = {} of String => UInt32
       @reuse_function_block_buffer = bootstrap_env_enabled?("CRYSTAL_V2_LLVM_REUSE_BLOCK_BUFFER", "CRYSTAL2_LLVM_REUSE_BLOCK_BUFFER")
       @function_block_output = IO::Memory.new
+      @debug_emit_anchors = bootstrap_env_enabled?("CRYSTAL_V2_DEBUG_EMIT", "CRYSTAL2_DEBUG_EMIT")
     end
 
     @[AlwaysInline]
@@ -8425,6 +8435,7 @@ module Crystal::MIR
         return
       end
 
+      @current_mir_func = func
       reset_value_names(func)
       @emitted_allocas.clear
       @addressable_allocas.clear
