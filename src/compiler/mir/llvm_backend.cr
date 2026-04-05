@@ -590,6 +590,10 @@ module Crystal::MIR
         emit_raw "!#{loc_id} = !DILocation(line: #{line}, scope: !#{sp_id})\n"
         dbg_ref = " !dbg !#{sp_id}"
         @dwarf_current_sp_id = loc_id  # instructions use the location, not the subprogram
+        # Emit parameter variable metadata (module-level, before define)
+        if (cur = @current_mir_func)
+          emit_dwarf_param_metadata(cur, param_types, sp_id)
+        end
       end
       emit_raw "define #{return_type} @#{mangled_name}(#{param_types.join(", ")})#{attrs}#{dbg_ref} {\n"
     end
@@ -619,6 +623,12 @@ module Crystal::MIR
       emit_raw "!3 = !{i32 1, !\"wchar_size\", i32 4}\n"
       emit_raw "!4 = !DIFile(filename: \"crystal_v2.cr\", directory: \".\")\n"
       emit_raw "!5 = !DISubroutineType(types: !{})\n"
+      # Basic debug types for parameters (IDs 6-9 reserved)
+      emit_raw "!6 = !DIBasicType(name: \"ptr\", size: 64, encoding: DW_ATE_address)\n"
+      emit_raw "!7 = !DIBasicType(name: \"i32\", size: 32, encoding: DW_ATE_signed)\n"
+      emit_raw "!8 = !DIBasicType(name: \"i64\", size: 64, encoding: DW_ATE_signed)\n"
+      emit_raw "!9 = !DIBasicType(name: \"bool\", size: 8, encoding: DW_ATE_boolean)\n"
+      emit_raw "!900000 = !DIExpression()\n"
 
       # Emit DIFile nodes for unique source files (used by subprograms)
       @dwarf_files.each do |filename, file_md_id|
@@ -630,6 +640,52 @@ module Crystal::MIR
         end
         safe_dir = dir.gsub("\\", "\\\\").gsub("\"", "\\\"")
         emit_raw "!#{file_md_id} = !DIFile(filename: \"#{safe_name}\", directory: \"#{safe_dir}\")\n"
+      end
+    end
+
+    # Emit DILocalVariable metadata BEFORE function define, and dbg.declare INSIDE entry block
+    private def emit_dwarf_param_metadata(func : Function, param_types : Array(String), sp_id : Int32)
+      func.params.each_with_index do |param, idx|
+        param_name = param.name.empty? ? "arg#{idx}" : param.name
+        safe_name = param_name.gsub("\\", "\\\\").gsub("\"", "\\\"")
+        llvm_type = param_types[idx]? || "ptr"
+        base_type = llvm_type.split(' ').first
+
+        dbg_type_id = case base_type
+                      when "ptr"    then 6
+                      when "i32"    then 7
+                      when "i64"    then 8
+                      when "i1"     then 9
+                      when "i8", "i16" then 7
+                      when "float", "double" then 8
+                      else 6
+                      end
+
+        var_id = sp_id * 10 + 2000000 + idx  # unique per function+param
+        emit_raw "!#{var_id} = !DILocalVariable(name: \"#{safe_name}\", arg: #{idx + 1}, scope: !#{sp_id}, file: !4, type: !#{dbg_type_id})\n"
+      end
+    end
+
+    # Emit alloca + store + dbg.declare for each param INSIDE fn_entry block
+    private def emit_dwarf_param_declares(func : Function, param_types : Array(String), sp_id : Int32)
+      loc_id = sp_id + 500000
+      func.params.each_with_index do |param, idx|
+        param_name = param.name.empty? ? "arg#{idx}" : param.name
+        safe_name = param_name.gsub("\\", "\\\\").gsub("\"", "\\\"")
+        llvm_type = param_types[idx]? || "ptr"
+        base_type = llvm_type.split(' ').first
+        var_id = sp_id * 10 + 2000000 + idx
+
+        alloca_name = "%dbg.#{safe_name}.addr"
+        param_reg = if param_types[idx]?
+                      parts = param_types[idx].split(' ')
+                      parts.size > 1 ? parts[1] : "%arg#{idx}"
+                    else
+                      "%arg#{idx}"
+                    end
+        emit_raw "  #{alloca_name} = alloca #{base_type}, align 8\n"
+        emit_raw "  store #{base_type} #{param_reg}, ptr #{alloca_name}, align 8\n"
+        emit_raw "  call void @llvm.dbg.declare(metadata ptr #{alloca_name}, metadata !#{var_id}, metadata !#{@dwarf_expr_id}), !dbg !#{loc_id}\n"
       end
     end
 
@@ -665,7 +721,8 @@ module Crystal::MIR
     @current_mir_func : Function? = nil
     @debug_emit_anchors : Bool = false
     @dwarf_next_md_id : Int32 = 10  # start at 10, reserve 0-9 for module-level
-    @dwarf_current_sp_id : Int32 = 0  # Current function's DISubprogram ID (0 = no debug)
+    @dwarf_current_sp_id : Int32 = 0  # Current function's DILocation ID (0 = no debug)
+    @dwarf_expr_id : Int32 = 900000   # ID for shared !DIExpression() node
     @dwarf_files : Hash(String, Int32) = {} of String => Int32
     @current_slab_frame : Bool = false
     @emit_family_tag : Int32 = 0
@@ -3647,6 +3704,7 @@ module Crystal::MIR
       emit_raw "declare void @llvm.memmove.p0.p0.i64(ptr, ptr, i64, i1)\n"
       emit_raw "declare void @llvm.memcpy.p0.p0.i32(ptr, ptr, i32, i1)\n"
       emit_raw "declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)\n"
+      emit_raw "declare void @llvm.dbg.declare(metadata, metadata, metadata)\n"
       emit_raw "@.str_newline = private constant [2 x i8] c\"\\0A\\00\"\n"
       emit_raw "@.fixed_fmt = private constant [6 x i8] c\"%.17f\\00\"\n"
       emit_raw "@.prec_fmt = private constant [5 x i8] c\"%.*g\\00\"\n"
@@ -8821,6 +8879,11 @@ module Crystal::MIR
       # Use fn_entry to avoid conflict with parameter names like %entry
       emit_raw "fn_entry:\n"
       emit_hoisted_allocas(func)
+      # DWARF: emit debug declares for function parameters
+      if @dwarf_current_sp_id > 0
+        sp_id = @dwarf_current_sp_id - 500000  # recover DISubprogram ID from DILocation ID
+        emit_dwarf_param_declares(func, param_types, sp_id)
+      end
       if @current_slab_frame
         emit_raw "  call void @__crystal_v2_slab_frame_push()\n"
       end
