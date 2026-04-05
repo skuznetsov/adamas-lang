@@ -558,7 +558,79 @@ module Crystal::MIR
           emit_raw "; src: #{loc.file}:#{loc.line}\n"
         end
       end
-      emit_raw "define #{return_type} @#{mangled_name}(#{param_types.join(", ")})#{attrs} {\n"
+      # DWARF: emit DISubprogram INLINE (before define) so parallel workers include it
+      @dwarf_current_sp_id = 0  # Reset per function
+      dbg_ref = ""
+      if @debug_emit_anchors
+        # Use MIR function ID + 1000 as metadata ID to avoid collisions with reserved IDs 0-9
+        sp_id = if (cur = @current_mir_func)
+                  cur.id.to_i32 + 1000
+                else
+                  @dwarf_next_md_id += 1
+                  @dwarf_next_md_id - 1
+                end
+        file_id = dwarf_file_id("crystal_v2.cr")
+        func_display = if (cur = @current_mir_func)
+                          cur.name
+                        else
+                          mangled_name
+                        end
+        line = 0
+        if (cur = @current_mir_func) && (loc = cur.source_location)
+          file_id = dwarf_file_id(loc.file)
+          line = loc.line
+        end
+        safe_display = func_display.gsub("\\", "\\\\").gsub("\"", "\\\"")
+        safe_linkage = mangled_name.gsub("\\", "\\\\").gsub("\"", "\\\"")
+        # Emit DISubprogram immediately (before define) so it's included in worker output
+        # Uses !5 as subroutine type placeholder (defined in module header)
+        emit_raw "!#{sp_id} = distinct !DISubprogram(name: \"#{safe_display}\", linkageName: \"#{safe_linkage}\", scope: !#{file_id}, file: !#{file_id}, line: #{line}, type: !5, isLocal: false, isDefinition: true, scopeLine: #{line}, unit: !0)\n"
+        # Create a DILocation pointing to this subprogram (line 0 = function scope)
+        loc_id = sp_id + 500000  # offset to avoid collision
+        emit_raw "!#{loc_id} = !DILocation(line: #{line}, scope: !#{sp_id})\n"
+        dbg_ref = " !dbg !#{sp_id}"
+        @dwarf_current_sp_id = loc_id  # instructions use the location, not the subprogram
+      end
+      emit_raw "define #{return_type} @#{mangled_name}(#{param_types.join(", ")})#{attrs}#{dbg_ref} {\n"
+    end
+
+    # File IDs use a separate range starting at 100000 to avoid collisions
+    # with subprogram IDs (which start at 10 and grow sequentially).
+    @dwarf_next_file_id : Int32 = 100000
+
+    private def dwarf_file_id(filename : String) : Int32
+      @dwarf_files[filename] ||= begin
+        id = @dwarf_next_file_id
+        @dwarf_next_file_id += 1
+        id
+      end
+    end
+
+    private def emit_dwarf_metadata : Nil
+      return unless @debug_emit_anchors
+
+      # Module-level DWARF metadata. DISubprograms are emitted inline before each define.
+      # !0 = CompileUnit, !1-!3 = module flags, !4 = default file, !5 = subroutine type
+      emit_raw "\n!llvm.dbg.cu = !{!0}\n"
+      emit_raw "!llvm.module.flags = !{!1, !2, !3}\n"
+      emit_raw "!0 = distinct !DICompileUnit(language: DW_LANG_C99, file: !4, producer: \"crystal_v2\", isOptimized: false, emissionKind: FullDebug)\n"
+      emit_raw "!1 = !{i32 7, !\"Dwarf Version\", i32 4}\n"
+      emit_raw "!2 = !{i32 2, !\"Debug Info Version\", i32 3}\n"
+      emit_raw "!3 = !{i32 1, !\"wchar_size\", i32 4}\n"
+      emit_raw "!4 = !DIFile(filename: \"crystal_v2.cr\", directory: \".\")\n"
+      emit_raw "!5 = !DISubroutineType(types: !{})\n"
+
+      # Emit DIFile nodes for unique source files (used by subprograms)
+      @dwarf_files.each do |filename, file_md_id|
+        safe_name = filename.gsub("\\", "\\\\").gsub("\"", "\\\"")
+        dir = "."
+        if sep = filename.rindex('/')
+          dir = filename[0...sep]
+          safe_name = filename[(sep + 1)..]
+        end
+        safe_dir = dir.gsub("\\", "\\\\").gsub("\"", "\\\"")
+        emit_raw "!#{file_md_id} = !DIFile(filename: \"#{safe_name}\", directory: \"#{safe_dir}\")\n"
+      end
     end
 
     private def write_output_bytes(bytes : Bytes) : Nil
@@ -592,6 +664,9 @@ module Crystal::MIR
     @current_func_params : Array(Parameter) = [] of Parameter
     @current_mir_func : Function? = nil
     @debug_emit_anchors : Bool = false
+    @dwarf_next_md_id : Int32 = 10  # start at 10, reserve 0-9 for module-level
+    @dwarf_current_sp_id : Int32 = 0  # Current function's DISubprogram ID (0 = no debug)
+    @dwarf_files : Hash(String, Int32) = {} of String => Int32
     @current_slab_frame : Bool = false
     @emit_family_tag : Int32 = 0
     @tsan_needs_func_entry : Bool = false
@@ -1302,6 +1377,9 @@ module Crystal::MIR
       # Always emit type name table (needed for self.class at runtime)
       STDERR.puts "  [LLVM] emit_type_name_table..." if @progress
       emit_type_name_table
+
+      # DWARF: emit debug metadata at end of module
+      emit_dwarf_metadata
 
       STDERR.puts "  [LLVM] finalizing output..." if @progress
       if generated_in_memory
@@ -2883,7 +2961,15 @@ module Crystal::MIR
       when 8 then @emit_family_extern_bytes += output_bytes
       when 9 then @emit_family_other_bytes += output_bytes
       end
-      append_output(("  " * @indent) + s + "\n")
+      line = ("  " * @indent) + s
+      # Attach !dbg to ret, all calls, stores, branches (comma-separated per LLVM syntax)
+      if @dwarf_current_sp_id > 0
+        if s.starts_with?("ret ") || s.includes?("call ") || s.starts_with?("store ") ||
+           s.starts_with?("unreachable")
+          line += ", !dbg !#{@dwarf_current_sp_id}"
+        end
+      end
+      append_output(line + "\n")
     end
 
     private def emit_raw(s : String)
