@@ -129,6 +129,7 @@ module Crystal
         trace = mir_setup_trace?
         STDERR.puts "[MIR_INIT] begin" if trace
         @mir_module = Crystal::MIR::Module.new(@hir_module.name)
+        @mir_module.source_file = @hir_module.name
         STDERR.puts "[MIR_INIT] mir_module" if trace
         @value_map = {} of HIR::ValueId => ValueId
         STDERR.puts "[MIR_INIT] value_map" if trace
@@ -803,6 +804,34 @@ module Crystal
           mir_return_type
         )
 
+        if loc = hir_func.definition_location
+          mir_func.source_location = to_mir_source_location(loc)
+        else
+          # Fall back to the first HIR value location if the front-end created the
+          # function without a definition-site source span.
+          fallback_loc = nil
+          hir_func.params.each do |p|
+            if loc = hir_func.value_location(p.id)
+              fallback_loc ||= loc
+              break
+            end
+          end
+          unless fallback_loc
+            hir_func.blocks.each do |block|
+              block.instructions.each do |inst|
+                if loc = hir_func.value_location(inst.id)
+                  fallback_loc = loc
+                  break
+                end
+              end
+              break if fallback_loc
+            end
+          end
+          if loc = fallback_loc
+            mir_func.source_location = to_mir_source_location(loc)
+          end
+        end
+
         # Add parameter types (needed for call site type checking)
         hir_func.params.each do |param|
           mir_func.add_param(param.name, convert_type(param.type), param.default_literal)
@@ -877,6 +906,24 @@ module Crystal
         end
       end
 
+      private def to_mir_source_location(location : HIR::SourceLocation) : Crystal::MIR::SourceLocation
+        Crystal::MIR::SourceLocation.new(location.path, location.line, location.column)
+      end
+
+      private def record_mir_value_location(hir_func : HIR::Function, hir_id : HIR::ValueId, mir_func : Crystal::MIR::Function, mir_id : ValueId) : Nil
+        if loc = hir_func.value_location(hir_id)
+          mir_func.record_value_location(mir_id, to_mir_source_location(loc))
+        end
+      end
+
+      private def propagate_debug_local_bindings(hir_func : HIR::Function, mir_func : Crystal::MIR::Function) : Nil
+        hir_func.debug_local_bindings.each do |binding|
+          next unless slot_id = @value_map[binding.local_id]?
+          next unless value_id = @value_map[binding.value_id]?
+          mir_func.record_debug_local_binding(slot_id, value_id, to_mir_source_location(binding.location))
+        end
+      end
+
       # ─────────────────────────────────────────────────────────────────────────
       # Function Lowering
       # ─────────────────────────────────────────────────────────────────────────
@@ -923,7 +970,9 @@ module Crystal
         # Map HIR params to MIR params (already added in stub)
         hir_func.params.each_with_index do |param, idx|
           # MIR params are value IDs starting from 0
-          @value_map[param.id] = idx.to_u32
+          mir_id = idx.to_u32
+          @value_map[param.id] = mir_id
+          record_mir_value_location(hir_func, param.id, mir_func, mir_id)
         end
         STDERR.puts "[MIR_LOWER] params mapped count=#{hir_func.params.size}" if mir_lower_trace?
 
@@ -1113,6 +1162,8 @@ module Crystal
         mir_func.compute_predecessors
         STDERR.puts "[MIR_LOWER] compute_predecessors done" if mir_lower_trace?
 
+        propagate_debug_local_bindings(hir_func, mir_func)
+
         @stats.functions_lowered += 1
         @current_block_param_id = nil
       end
@@ -1298,6 +1349,9 @@ module Crystal
               param_type = convert_type(hir_value.type)
               slot = builder.alloc(MemoryStrategy::Stack, param_type)
               record_stack_slot(slot, param_type)
+              if param_type != TypeRef::VOID && !hir_value.name.empty?
+                @current_mir_func.try(&.record_debug_local_name(slot, hir_value.name))
+              end
               if (default_id = default_value_for_type(builder, param_type))
                 builder.store(slot, default_id)
               end
@@ -1385,7 +1439,14 @@ module Crystal
           raise "Index error in #{@current_lowering_func_name} lowering #{hir_value.class} (id=#{hir_value.id}): #{ex.message}\n#{ex.backtrace.first(10).join("\n")}"
         end
 
-        @value_map[hir_value.id] = mir_id if mir_id
+        if mir_id
+          @value_map[hir_value.id] = mir_id
+          if hir_func = @current_hir_func
+            if mir_func = @current_mir_func
+              record_mir_value_location(hir_func, hir_value.id, mir_func, mir_id)
+            end
+          end
+        end
 
         # Track reference-typed Call results for per-block ARC cleanup.
         # Only track calls to functions that return OWNED (+1) references —
@@ -1480,8 +1541,12 @@ module Crystal
 
         if local.mutable
           # Allocate space on stack
-          ptr = builder.alloc(MemoryStrategy::Stack, convert_type(local.type))
-          record_stack_slot(ptr, convert_type(local.type))
+          local_type = convert_type(local.type)
+          ptr = builder.alloc(MemoryStrategy::Stack, local_type)
+          record_stack_slot(ptr, local_type)
+          if local_type != TypeRef::VOID && !local.name.empty?
+            @current_mir_func.try(&.record_debug_local_name(ptr, local.name))
+          end
           @stats.stack_allocations += 1
           ptr
         else

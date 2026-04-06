@@ -138,6 +138,11 @@ module Crystal::HIR
     end
   end
 
+  record DebugLocalBinding,
+    local_id : ValueId,
+    value_id : ValueId,
+    location : SourceLocation
+
   # ═══════════════════════════════════════════════════════════════════════════
   # VALUES (Instructions that produce a result)
   # ═══════════════════════════════════════════════════════════════════════════
@@ -1214,6 +1219,7 @@ module Crystal::HIR
   class Function
     getter id : FunctionId
     getter name : String
+    property definition_location : SourceLocation?
     @id : FunctionId
     @name : String
     @return_type : TypeRef
@@ -1230,6 +1236,8 @@ module Crystal::HIR
     @next_block_id : BlockId = 0_u32
     @next_scope_id : ScopeId = 0_u32
     @value_locations : Hash(ValueId, SourceLocation)
+    @debug_local_bindings : Array(DebugLocalBinding)
+    getter debug_local_bindings : Array(DebugLocalBinding)
     @param_ids : Array(ValueId)
     @param_type_ids : Array(TypeId)
     @param_names : Array(String)
@@ -1242,10 +1250,12 @@ module Crystal::HIR
       @scopes = [] of Scope
       @blocks = [] of Block
       @value_locations = {} of ValueId => SourceLocation
+      @debug_local_bindings = [] of DebugLocalBinding
       @param_ids = [] of ValueId
       @param_type_ids = [] of TypeId
       @param_names = [] of String
       @param_default_literals = [] of String?
+      @definition_location = nil
 
       # Create entry block and function scope
       @entry_block = create_block(create_scope(ScopeKind::Function))
@@ -1320,6 +1330,13 @@ module Crystal::HIR
 
     def value_location(value_id : ValueId) : SourceLocation?
       @value_locations[value_id]?
+    end
+
+    def record_debug_local_binding(local_id : ValueId, value_id : ValueId, location : SourceLocation) : Nil
+      if last = @debug_local_bindings.last?
+        return if last.local_id == local_id && last.value_id == value_id && last.location == location
+      end
+      @debug_local_bindings << DebugLocalBinding.new(local_id, value_id, location)
     end
 
     def to_s(io : IO) : Nil

@@ -518,6 +518,607 @@ module Crystal::MIR
     "each_with_index$Int32", "each_entry_with_index", "sum",
   ]
 
+  record DwarfLocalValueBinding,
+    variable_id : Int32,
+    location_id : Int32
+
+  record DwarfLocalShadowStoreBinding,
+    slot_id : ValueId
+
+  record DwarfFunctionState,
+    metadata : String,
+    define_dbg_ref : String,
+    default_location_id : Int32,
+    param_debug_values : Array(String),
+    local_entry_debug_values : Array(String),
+    local_entry_debug_stores : Array(String),
+    local_debug_declares : Array(String),
+    local_debug_values : Hash(ValueId, Array(DwarfLocalValueBinding)),
+    local_debug_shadow_stores : Hash(ValueId, Array(DwarfLocalShadowStoreBinding)),
+    value_locations : Hash(ValueId, Int32)
+
+  class DwarfDebugContext
+    COMPILE_UNIT_ID       = 0
+    MODULE_FLAG_DWARF_ID  = 1
+    MODULE_FLAG_DEBUG_ID  = 2
+    MODULE_FLAG_WCHAR_ID  = 3
+    EXPRESSION_ID         = 900000
+    FILE_ID_BASE          = 100_000_000
+    FILE_ID_SPAN          = 150_000_000
+    SUBPROGRAM_ID_BASE    = 300_000_000
+    SUBROUTINE_ID_BASE    = 400_000_000
+    PARAM_VAR_ID_BASE     = 500_000_000
+    LOCAL_VAR_ID_BASE     = 550_000_000
+    LOCAL_VAR_ID_SPAN     = 100_000_000
+    SCOPE_ID_BASE         = 700_000_000
+    SCOPE_ID_SPAN         = 100_000_000
+    LOCATION_ID_BASE      = 900_000_000
+    LOCATION_ID_SPAN      = 250_000_000
+    BASIC_TYPE_ID_BASE    = 1_300_000_000
+    COMPOSITE_BODY_ID_BASE = 1_400_000_000
+    POINTER_TYPE_ID_BASE  = 1_500_000_000
+    MEMBER_ID_BASE        = 1_600_000_000
+
+    getter used_files : Set(String)
+
+    def initialize(@module : Module, @type_mapper : LLVMTypeMapper)
+      @used_files = Set(String).new
+      @file_ids = {} of String => Int32
+      @file_definitions = {} of Int32 => String
+      @assigned_location_ids = {} of Int32 => String
+      @debug_type_ids = {} of TypeRef => Int32
+      @type_definitions = {} of Int32 => String
+      @building_type_ids = Set(UInt32).new
+      register_file(@module.source_file || "unknown.cr")
+    end
+
+    def expression_id : Int32
+      EXPRESSION_ID
+    end
+
+    def register_external_file(filename : String) : Nil
+      register_file(filename)
+    end
+
+    def function_state(func : Function, mangled_name : String, param_bindings : Array(String)) : DwarfFunctionState
+      function_loc = function_location(func)
+      function_file_id = register_file(function_loc.file)
+      subprogram_id = SUBPROGRAM_ID_BASE + func.id.to_i32
+      subroutine_type_id = SUBROUTINE_ID_BASE + func.id.to_i32
+      value_locations = {} of ValueId => Int32
+      param_debug_values = [] of String
+      local_entry_debug_values = [] of String
+      local_entry_debug_stores = [] of String
+      local_debug_declares = [] of String
+      local_debug_values = {} of ValueId => Array(DwarfLocalValueBinding)
+      local_debug_shadow_stores = {} of ValueId => Array(DwarfLocalShadowStoreBinding)
+      default_location_id = unique_location_id(@assigned_location_ids, subprogram_id, function_loc.file, function_loc.line, function_loc.column, "default")
+      instructions_by_id = {} of ValueId => Value
+      func.blocks.each do |block|
+        block.instructions.each do |inst|
+          instructions_by_id[inst.id] = inst
+        end
+      end
+
+      metadata = String.build do |io|
+        io << "!#{subroutine_type_id} = !DISubroutineType(types: !{#{subroutine_type_elements(func)}})\n"
+        io << "!#{subprogram_id} = distinct !DISubprogram(name: \"#{escape_metadata_string(func.name)}\", linkageName: \"#{escape_metadata_string(mangled_name)}\", scope: !#{function_file_id}, file: !#{function_file_id}, line: #{positive_line(function_loc.line)}, type: !#{subroutine_type_id}, isLocal: false, isDefinition: true, scopeLine: #{positive_line(function_loc.line)}, unit: !#{COMPILE_UNIT_ID})\n"
+
+        scope_cache = {} of String => Int32
+        location_cache = {} of String => Int32
+        local_var_ids = {} of ValueId => Int32
+        declared_storage_bindings = Set(String).new
+        declared_entry_values = Set(String).new
+
+        emit_location_definition(
+          io,
+          location_cache,
+          @assigned_location_ids,
+          scope_cache,
+          subprogram_id,
+          function_loc.file,
+          function_loc,
+          "default",
+          default_location_id
+        )
+
+        func.params.each_with_index do |param, idx|
+          param_loc = func.value_location(param.index) || function_loc
+          param_location_id = emit_location_definition(io, location_cache, @assigned_location_ids, scope_cache, subprogram_id, function_loc.file, param_loc, "param:#{idx}")
+          value_locations[param.index] = param_location_id
+
+          var_id = parameter_variable_id(func, idx)
+          param_debug_type_id = debug_type_id(param.type)
+          file_id = register_file(param_loc.file)
+          scope_id = scope_id_for(io, scope_cache, subprogram_id, function_loc.file, param_loc.file)
+          param_name = param.name.empty? ? "arg#{idx}" : param.name
+          io << "!#{var_id} = !DILocalVariable(name: \"#{escape_metadata_string(param_name)}\", arg: #{idx + 1}, scope: !#{scope_id}, file: !#{file_id}, line: #{positive_line(param_loc.line)}, type: !#{param_debug_type_id})\n"
+
+          if binding = param_bindings[idx]?
+            param_debug_values << "  call void @llvm.dbg.value(metadata #{binding}, metadata !#{var_id}, metadata !#{EXPRESSION_ID}), !dbg !#{param_location_id}\n"
+          end
+        end
+
+        func.blocks.each do |block|
+          block.instructions.each do |inst|
+            next unless inst_loc = func.value_location(inst.id)
+            inst_location_id = emit_location_definition(
+              io,
+              location_cache,
+              @assigned_location_ids,
+              scope_cache,
+              subprogram_id,
+              function_loc.file,
+              inst_loc,
+              "value:#{inst.id}"
+            )
+            value_locations[inst.id] = inst_location_id
+
+            if local_name = func.debug_local_name(inst.id)
+              next unless inst.is_a?(Alloc)
+              next unless inst.strategy == MemoryStrategy::Stack
+              next if inst.alloc_type == TypeRef::VOID
+
+              var_id = local_variable_id(func, inst.id)
+              local_debug_type_id = storage_debug_type_id(inst.alloc_type)
+              file_id = register_file(inst_loc.file)
+              scope_id = scope_id_for(io, scope_cache, subprogram_id, function_loc.file, inst_loc.file)
+              io << "!#{var_id} = !DILocalVariable(name: \"#{escape_metadata_string(local_name)}\", scope: !#{scope_id}, file: !#{file_id}, line: #{positive_line(inst_loc.line)}, type: !#{local_debug_type_id})\n"
+              local_var_ids[inst.id] = var_id
+            end
+          end
+        end
+
+        func.debug_local_bindings.each_with_index do |binding, idx|
+          local_name = func.debug_local_name(binding.slot_id)
+          next unless local_name
+          slot_inst = instructions_by_id[binding.slot_id]?
+          next unless slot_inst.is_a?(Alloc)
+          next unless slot_inst.strategy == MemoryStrategy::Stack
+          next if slot_inst.alloc_type == TypeRef::VOID
+
+          var_id = local_var_ids[binding.slot_id]? || begin
+            slot_loc = func.value_location(binding.slot_id) || binding.location
+            local_debug_type_id = storage_debug_type_id(slot_inst.alloc_type)
+            file_id = register_file(slot_loc.file)
+            scope_id = scope_id_for(io, scope_cache, subprogram_id, function_loc.file, slot_loc.file)
+            generated_var_id = local_variable_id(func, binding.slot_id)
+            io << "!#{generated_var_id} = !DILocalVariable(name: \"#{escape_metadata_string(local_name)}\", scope: !#{scope_id}, file: !#{file_id}, line: #{positive_line(slot_loc.line)}, type: !#{local_debug_type_id})\n"
+            local_var_ids[binding.slot_id] = generated_var_id
+            generated_var_id
+          end
+          binding_location_id = emit_location_definition(
+            io,
+            location_cache,
+            @assigned_location_ids,
+            scope_cache,
+            subprogram_id,
+            function_loc.file,
+            binding.location,
+            "local-binding:#{binding.slot_id}:#{binding.value_id}:#{idx}"
+          )
+          use_shadow_slot = shadow_slot_debug_local?(slot_inst.alloc_type)
+          if binding.value_id < func.params.size
+            if value_binding = param_bindings[binding.value_id]?
+              if use_shadow_slot
+                declare_key = "#{var_id}:slot:#{binding.slot_id}"
+                unless declared_storage_bindings.includes?(declare_key)
+                  local_debug_declares << "  call void @llvm.dbg.declare(metadata ptr %r#{binding.slot_id}, metadata !#{var_id}, metadata !#{EXPRESSION_ID}), !dbg !#{binding_location_id}\n"
+                  declared_storage_bindings << declare_key
+                end
+                local_entry_debug_stores << "  store #{value_binding}, ptr %r#{binding.slot_id}, !dbg !#{binding_location_id}\n"
+              else
+                entry_key = "#{var_id}:param:#{binding.value_id}"
+                unless declared_entry_values.includes?(entry_key)
+                  local_entry_debug_values << "  call void @llvm.dbg.value(metadata #{value_binding}, metadata !#{var_id}, metadata !#{EXPRESSION_ID}), !dbg !#{binding_location_id}\n"
+                  declared_entry_values << entry_key
+                end
+              end
+            end
+            next
+          end
+
+          if bound_inst = instructions_by_id[binding.value_id]?
+            if bound_inst.is_a?(Alloc) && bound_inst.strategy == MemoryStrategy::Stack
+              declare_key = "#{var_id}:#{binding.value_id}"
+              unless declared_storage_bindings.includes?(declare_key)
+                local_debug_declares << "  call void @llvm.dbg.declare(metadata ptr %r#{binding.value_id}, metadata !#{var_id}, metadata !#{EXPRESSION_ID}), !dbg !#{binding_location_id}\n"
+                declared_storage_bindings << declare_key
+              end
+              next
+            end
+          end
+
+          if use_shadow_slot
+            declare_key = "#{var_id}:slot:#{binding.slot_id}"
+            unless declared_storage_bindings.includes?(declare_key)
+              local_debug_declares << "  call void @llvm.dbg.declare(metadata ptr %r#{binding.slot_id}, metadata !#{var_id}, metadata !#{EXPRESSION_ID}), !dbg !#{binding_location_id}\n"
+              declared_storage_bindings << declare_key
+            end
+            shadow_entries = local_debug_shadow_stores[binding.value_id]?
+            unless shadow_entries
+              shadow_entries = [] of DwarfLocalShadowStoreBinding
+              local_debug_shadow_stores[binding.value_id] = shadow_entries
+            end
+            unless shadow_entries.any? { |entry| entry.slot_id == binding.slot_id }
+              shadow_entries << DwarfLocalShadowStoreBinding.new(binding.slot_id)
+            end
+            next
+          end
+
+          entries = local_debug_values[binding.value_id]?
+          unless entries
+            entries = [] of DwarfLocalValueBinding
+            local_debug_values[binding.value_id] = entries
+          end
+          entries << DwarfLocalValueBinding.new(var_id, binding_location_id)
+        end
+      end
+
+      DwarfFunctionState.new(
+        metadata,
+        " !dbg !#{subprogram_id}",
+        default_location_id,
+        param_debug_values,
+        local_entry_debug_values,
+        local_entry_debug_stores,
+        local_debug_declares,
+        local_debug_values,
+        local_debug_shadow_stores,
+        value_locations
+      )
+    end
+
+    def module_metadata : String
+      @module.type_registry.types.each do |type|
+        debug_type_id(TypeRef.new(type.id))
+      end
+
+      compile_unit_file_id = register_file(@module.source_file || "unknown.cr")
+
+      String.build do |io|
+        io << "\n!llvm.dbg.cu = !{!#{COMPILE_UNIT_ID}}\n"
+        io << "!llvm.module.flags = !{!#{MODULE_FLAG_DWARF_ID}, !#{MODULE_FLAG_DEBUG_ID}, !#{MODULE_FLAG_WCHAR_ID}}\n"
+        io << "!#{COMPILE_UNIT_ID} = distinct !DICompileUnit(language: DW_LANG_C99, file: !#{compile_unit_file_id}, producer: \"crystal_v2\", isOptimized: false, emissionKind: FullDebug)\n"
+        io << "!#{MODULE_FLAG_DWARF_ID} = !{i32 7, !\"Dwarf Version\", i32 4}\n"
+        io << "!#{MODULE_FLAG_DEBUG_ID} = !{i32 2, !\"Debug Info Version\", i32 3}\n"
+        io << "!#{MODULE_FLAG_WCHAR_ID} = !{i32 1, !\"wchar_size\", i32 4}\n"
+        io << "!#{EXPRESSION_ID} = !DIExpression()\n"
+
+        @file_definitions.keys.sort.each do |id|
+          io << @file_definitions[id]
+        end
+
+        @type_definitions.keys.sort.each do |id|
+          io << @type_definitions[id]
+        end
+      end
+    end
+
+    private def function_location(func : Function) : SourceLocation
+      func.source_location || SourceLocation.new(@module.source_file || "unknown.cr", 1, 1)
+    end
+
+    private def parameter_variable_id(func : Function, index : Int32) : Int32
+      PARAM_VAR_ID_BASE + func.id.to_i32 * 1024 + index
+    end
+
+    private def local_variable_id(func : Function, slot_id : ValueId) : Int32
+      stable_metadata_id("local:#{func.id}:#{slot_id}", LOCAL_VAR_ID_BASE, LOCAL_VAR_ID_SPAN)
+    end
+
+    private def subroutine_type_elements(func : Function) : String
+      refs = [] of String
+      refs << return_debug_type_literal(func.return_type)
+      func.params.each do |param|
+        refs << "!#{debug_type_id(param.type)}"
+      end
+      refs.join(", ")
+    end
+
+    private def return_debug_type_literal(type_ref : TypeRef) : String
+      return "null" if type_ref == TypeRef::VOID || type_ref == TypeRef::NIL
+      "!#{debug_type_id(type_ref)}"
+    end
+
+    private def register_file(filename : String) : Int32
+      normalized = normalize_filename(filename)
+      @used_files << normalized
+      @file_ids[normalized] ||= begin
+        id = stable_metadata_id("file:#{normalized}", FILE_ID_BASE, FILE_ID_SPAN)
+        base = File.basename(normalized)
+        dir = File.dirname(normalized)
+        @file_definitions[id] = "!#{id} = !DIFile(filename: \"#{escape_metadata_string(base)}\", directory: \"#{escape_metadata_string(dir)}\")\n"
+        id
+      end
+    end
+
+    private def normalize_filename(filename : String?) : String
+      if filename.nil? || filename.empty?
+        @module.source_file || "unknown.cr"
+      else
+        filename
+      end
+    end
+
+    private def scope_id_for(io : IO, cache : Hash(String, Int32), subprogram_id : Int32, function_file : String, file : String) : Int32
+      normalized = normalize_filename(file)
+      return subprogram_id if normalized == normalize_filename(function_file)
+
+      cache[normalized] ||= begin
+        file_id = register_file(normalized)
+        scope_id = stable_metadata_id("scope:#{subprogram_id}:#{normalized}", SCOPE_ID_BASE, SCOPE_ID_SPAN)
+        io << "!#{scope_id} = !DILexicalBlockFile(scope: !#{subprogram_id}, file: !#{file_id}, discriminator: 0)\n"
+        scope_id
+      end
+    end
+
+    private def emit_location_definition(
+      io : IO,
+      location_cache : Hash(String, Int32),
+      assigned_location_ids : Hash(Int32, String),
+      scope_cache : Hash(String, Int32),
+      subprogram_id : Int32,
+      function_file : String,
+      location : SourceLocation,
+      salt : String,
+      forced_id : Int32? = nil
+    ) : Int32
+      normalized_file = normalize_filename(location.file)
+      key = "#{normalized_file}:#{positive_line(location.line)}:#{positive_column(location.column)}:#{salt}"
+      location_cache[key] ||= begin
+        scope_id = scope_id_for(io, scope_cache, subprogram_id, function_file, normalized_file)
+        loc_id = forced_id || unique_location_id(
+          assigned_location_ids,
+          subprogram_id,
+          normalized_file,
+          location.line,
+          location.column,
+          salt
+        )
+        assigned_location_ids[loc_id] = key
+        io << "!#{loc_id} = !DILocation(line: #{positive_line(location.line)}, column: #{positive_column(location.column)}, scope: !#{scope_id})\n"
+        loc_id
+      end
+    end
+
+    private def unique_location_id(
+      assigned_location_ids : Hash(Int32, String),
+      subprogram_id : Int32,
+      file : String,
+      line : Int32,
+      column : Int32,
+      salt : String,
+    ) : Int32
+      attempt = 0
+      loop do
+        candidate_salt = attempt == 0 ? salt : "#{salt}:#{attempt}"
+        candidate_id = location_id(subprogram_id, file, line, column, candidate_salt)
+        return candidate_id unless assigned_location_ids.has_key?(candidate_id)
+        attempt += 1
+      end
+    end
+
+    private def location_id(subprogram_id : Int32, file : String, line : Int32, column : Int32, salt : String) : Int32
+      stable_metadata_id(
+        "loc:#{subprogram_id}:#{normalize_filename(file)}:#{positive_line(line)}:#{positive_column(column)}:#{salt}",
+        LOCATION_ID_BASE,
+        LOCATION_ID_SPAN
+      )
+    end
+
+    private def stable_metadata_id(key : String, base : Int32, span : Int32) : Int32
+      hash = 14695981039346656037_u64
+      key.each_byte do |byte|
+        hash ^= byte.to_u64
+        hash &*= 1099511628211_u64
+      end
+      (base.to_u64 + (hash % span.to_u64)).to_i32
+    end
+
+    private def positive_line(line : Int32) : Int32
+      line > 0 ? line : 1
+    end
+
+    private def positive_column(column : Int32) : Int32
+      column > 0 ? column : 1
+    end
+
+    private def escape_metadata_string(value : String) : String
+      value.gsub("\\", "\\\\").gsub("\"", "\\\"")
+    end
+
+    private def storage_debug_type_id(type_ref : TypeRef) : Int32
+      debug_id = debug_type_id(type_ref)
+      return debug_id unless inline_storage_debug_type?(type_ref)
+      COMPOSITE_BODY_ID_BASE + type_ref.id.to_i32
+    end
+
+    private def inline_storage_debug_type?(type_ref : TypeRef) : Bool
+      return false unless type = @module.type_registry.get(type_ref)
+      type.kind.struct? || type.kind.tuple? || type.kind.union? || type.name.starts_with?("StaticArray(")
+    end
+
+    private def shadow_slot_debug_local?(type_ref : TypeRef) : Bool
+      return false if type_ref == TypeRef::VOID
+      !inline_storage_debug_type?(type_ref)
+    end
+
+    private def debug_type_id(type_ref : TypeRef) : Int32
+      if cached = @debug_type_ids[type_ref]?
+        return cached
+      end
+
+      if primitive_definition = primitive_debug_type_definition(type_ref)
+        id = BASIC_TYPE_ID_BASE + type_ref.id.to_i32
+        @debug_type_ids[type_ref] = id
+        @type_definitions[id] = primitive_definition
+        return id
+      end
+
+      type = @module.type_registry.get(type_ref)
+      unless type
+        id = BASIC_TYPE_ID_BASE + type_ref.id.to_i32
+        @debug_type_ids[type_ref] = id
+        @type_definitions[id] = "!#{id} = !DIBasicType(name: \"type##{type_ref.id}\", size: #{pointer_size_bits}, encoding: DW_ATE_address)\n"
+        return id
+      end
+
+      if type.kind.pointer?
+        id = POINTER_TYPE_ID_BASE + type_ref.id.to_i32
+        @debug_type_ids[type_ref] = id
+        target_id = if element_type = type.element_type
+                      debug_type_id(TypeRef.new(element_type.id))
+                    else
+                      BASIC_TYPE_ID_BASE + TypeRef::POINTER.id.to_i32
+                    end
+        @type_definitions[id] ||= "!#{id} = !DIDerivedType(tag: DW_TAG_pointer_type, name: \"#{escape_metadata_string(type.name)}\", baseType: !#{target_id}, size: #{pointer_size_bits})\n"
+        return id
+      end
+
+      pointer_backed = @type_mapper.llvm_type(type_ref) == "ptr"
+      body_id = COMPOSITE_BODY_ID_BASE + type_ref.id.to_i32
+      exposed_id = pointer_backed ? POINTER_TYPE_ID_BASE + type_ref.id.to_i32 : body_id
+      @debug_type_ids[type_ref] = exposed_id
+
+      return exposed_id if @building_type_ids.includes?(type_ref.id)
+      @building_type_ids << type_ref.id
+      begin
+        members = composite_member_refs(type_ref, type)
+        tag = type.kind.union? ? "DW_TAG_union_type" : "DW_TAG_structure_type"
+        @type_definitions[body_id] ||= "!#{body_id} = !DICompositeType(tag: #{tag}, name: \"#{escape_metadata_string(type.name)}\", size: #{type.size.to_u64 * 8_u64}, align: #{type.alignment.to_u64 * 8_u64}, elements: !{#{members.join(", ")}})\n"
+
+        if pointer_backed
+          @type_definitions[exposed_id] ||= "!#{exposed_id} = !DIDerivedType(tag: DW_TAG_pointer_type, name: \"#{escape_metadata_string(type.name)}\", baseType: !#{body_id}, size: #{pointer_size_bits})\n"
+        end
+      ensure
+        @building_type_ids.delete(type_ref.id)
+      end
+
+      exposed_id
+    end
+
+    private def primitive_debug_type_definition(type_ref : TypeRef) : String?
+      type = @module.type_registry.get(type_ref)
+      name = type.try(&.name) || "type##{type_ref.id}"
+
+      case type_ref
+      when TypeRef::VOID, TypeRef::NIL
+        "!#{BASIC_TYPE_ID_BASE + type_ref.id.to_i32} = !DIBasicType(name: \"#{escape_metadata_string(name)}\", size: 0, encoding: DW_ATE_address)\n"
+      when TypeRef::BOOL
+        "!#{BASIC_TYPE_ID_BASE + type_ref.id.to_i32} = !DIBasicType(name: \"#{escape_metadata_string(name)}\", size: 8, encoding: DW_ATE_boolean)\n"
+      when TypeRef::INT8, TypeRef::INT16, TypeRef::INT32, TypeRef::INT64, TypeRef::INT128
+        "!#{BASIC_TYPE_ID_BASE + type_ref.id.to_i32} = !DIBasicType(name: \"#{escape_metadata_string(name)}\", size: #{storage_size_bits(type_ref)}, encoding: DW_ATE_signed)\n"
+      when TypeRef::UINT8, TypeRef::UINT16, TypeRef::UINT32, TypeRef::UINT64, TypeRef::UINT128, TypeRef::SYMBOL
+        "!#{BASIC_TYPE_ID_BASE + type_ref.id.to_i32} = !DIBasicType(name: \"#{escape_metadata_string(name)}\", size: #{storage_size_bits(type_ref)}, encoding: DW_ATE_unsigned)\n"
+      when TypeRef::FLOAT32, TypeRef::FLOAT64
+        "!#{BASIC_TYPE_ID_BASE + type_ref.id.to_i32} = !DIBasicType(name: \"#{escape_metadata_string(name)}\", size: #{storage_size_bits(type_ref)}, encoding: DW_ATE_float)\n"
+      when TypeRef::CHAR
+        "!#{BASIC_TYPE_ID_BASE + type_ref.id.to_i32} = !DIBasicType(name: \"#{escape_metadata_string(name)}\", size: #{storage_size_bits(type_ref)}, encoding: DW_ATE_UTF)\n"
+      when TypeRef::POINTER
+        "!#{BASIC_TYPE_ID_BASE + type_ref.id.to_i32} = !DIBasicType(name: \"#{escape_metadata_string(name)}\", size: #{pointer_size_bits}, encoding: DW_ATE_address)\n"
+      else
+        if type && (type.kind.primitive? || type.kind.enum?)
+          encoding = if type.kind.floating?
+                       "DW_ATE_float"
+                     elsif type.kind == TypeKind::Bool
+                       "DW_ATE_boolean"
+                     elsif type.kind == TypeKind::Char
+                       "DW_ATE_UTF"
+                     elsif type.kind.integer? || type.kind == TypeKind::Enum
+                       type.kind.signed_integer? ? "DW_ATE_signed" : "DW_ATE_unsigned"
+                     else
+                       "DW_ATE_unsigned"
+                     end
+          "!#{BASIC_TYPE_ID_BASE + type_ref.id.to_i32} = !DIBasicType(name: \"#{escape_metadata_string(name)}\", size: #{storage_size_bits(type_ref)}, encoding: #{encoding})\n"
+        end
+      end
+    end
+
+    private def composite_member_refs(type_ref : TypeRef, type : Type) : Array(String)
+      refs = [] of String
+
+      if fields = type.fields
+        fields.each_with_index do |field, idx|
+          field_type_id = debug_type_id(field.type_ref)
+          member_id = MEMBER_ID_BASE + type_ref.id.to_i32 * 1024 + idx
+          field_name = field.name.starts_with?('@') ? field.name[1..] : field.name
+          @type_definitions[member_id] ||= "!#{member_id} = !DIDerivedType(tag: DW_TAG_member, name: \"#{escape_metadata_string(field_name)}\", baseType: !#{field_type_id}, size: #{storage_size_bits(field.type_ref)}, align: #{storage_align_bits(field.type_ref)}, offset: #{field.offset.to_u64 * 8_u64})\n"
+          refs << "!#{member_id}"
+        end
+      elsif type.kind.union? && (variants = type.variants)
+        variants.each_with_index do |variant, idx|
+          variant_ref = TypeRef.new(variant.id)
+          variant_type_id = debug_type_id(variant_ref)
+          member_id = MEMBER_ID_BASE + type_ref.id.to_i32 * 1024 + idx
+          @type_definitions[member_id] ||= "!#{member_id} = !DIDerivedType(tag: DW_TAG_member, name: \"#{escape_metadata_string(variant.name)}\", baseType: !#{variant_type_id}, size: #{variant.size.to_u64 * 8_u64}, align: #{variant.alignment.to_u64 * 8_u64}, offset: 0)\n"
+          refs << "!#{member_id}"
+        end
+      elsif type.kind.tuple? && (elements = type.element_types)
+        offset_bits = 0_u64
+        elements.each_with_index do |element, idx|
+          element_ref = TypeRef.new(element.id)
+          element_type_id = debug_type_id(element_ref)
+          member_id = MEMBER_ID_BASE + type_ref.id.to_i32 * 1024 + idx
+          align_bits = storage_align_bits(element_ref)
+          size_bits = storage_size_bits(element_ref)
+          offset_bits = align_to_bits(offset_bits, align_bits)
+          @type_definitions[member_id] ||= "!#{member_id} = !DIDerivedType(tag: DW_TAG_member, name: \"[#{idx}]\", baseType: !#{element_type_id}, size: #{size_bits}, align: #{align_bits}, offset: #{offset_bits})\n"
+          refs << "!#{member_id}"
+          offset_bits += size_bits
+        end
+      end
+
+      refs
+    end
+
+    private def align_to_bits(offset_bits : UInt64, align_bits : UInt64) : UInt64
+      return offset_bits if align_bits == 0
+      remainder = offset_bits % align_bits
+      return offset_bits if remainder == 0
+      offset_bits + (align_bits - remainder)
+    end
+
+    private def storage_size_bits(type_ref : TypeRef) : UInt64
+      if type = @module.type_registry.get(type_ref)
+        size = type.size
+        return pointer_size_bits if size == 0 && @type_mapper.llvm_type(type_ref) == "ptr"
+        return size.to_u64 * 8_u64 if size > 0
+      end
+
+      case @type_mapper.llvm_type(type_ref)
+      when "i1"     then 8_u64
+      when "i8"     then 8_u64
+      when "i16"    then 16_u64
+      when "i32"    then 32_u64
+      when "i64"    then 64_u64
+      when "i128"   then 128_u64
+      when "float"  then 32_u64
+      when "double" then 64_u64
+      else               pointer_size_bits
+      end
+    end
+
+    private def storage_align_bits(type_ref : TypeRef) : UInt64
+      if type = @module.type_registry.get(type_ref)
+        return type.alignment.to_u64 * 8_u64 if type.alignment > 0
+      end
+
+      case @type_mapper.llvm_type(type_ref)
+      when "i1", "i8" then 8_u64
+      when "i16"      then 16_u64
+      when "i32", "float" then 32_u64
+      when "i64", "double", "ptr" then 64_u64
+      when "i128"     then 128_u64
+      else                 pointer_size_bits
+      end
+    end
+
+    private def pointer_size_bits : UInt64
+      TARGET_POINTER_BYTES_U64 * 8_u64
+    end
+  end
+
   class LLVMIRGenerator
     private def bootstrap_trace_puts(value = "") : Nil
       return if ::CrystalV2::Compiler::BootstrapEnv.get?("CRYSTAL_V2_TRACE_STDERR").nil?
@@ -558,141 +1159,158 @@ module Crystal::MIR
           emit_raw "; src: #{loc.file}:#{loc.line}\n"
         end
       end
-      # DWARF: emit DISubprogram INLINE (before define) so parallel workers include it
-      @dwarf_current_sp_id = 0  # Reset per function
+      @dwarf_current_function = nil
+      @dwarf_current_location_id = 0
       dbg_ref = ""
-      if @debug_emit_anchors
-        # Use MIR function ID + 1000 as metadata ID to avoid collisions with reserved IDs 0-9
-        sp_id = if (cur = @current_mir_func)
-                  cur.id.to_i32 + 1000
-                else
-                  @dwarf_next_md_id += 1
-                  @dwarf_next_md_id - 1
-                end
-        file_id = 4  # Use default DIFile (!4) — per-file when source locations available
-        func_display = if (cur = @current_mir_func)
-                          cur.name
-                        else
-                          mangled_name
-                        end
-        line = 0
-        if (cur = @current_mir_func) && (loc = cur.source_location)
-          line = loc.line
-        end
-        safe_display = func_display.gsub("\\", "\\\\").gsub("\"", "\\\"")
-        safe_linkage = mangled_name.gsub("\\", "\\\\").gsub("\"", "\\\"")
-        # Emit DISubprogram immediately (before define) so it's included in worker output
-        # Uses !5 as subroutine type placeholder (defined in module header)
-        emit_raw "!#{sp_id} = distinct !DISubprogram(name: \"#{safe_display}\", linkageName: \"#{safe_linkage}\", scope: !#{file_id}, file: !#{file_id}, line: #{line}, type: !5, isLocal: false, isDefinition: true, scopeLine: #{line}, unit: !0)\n"
-        # Create a DILocation pointing to this subprogram
-        loc_id = sp_id * 1000 + 999  # unique per function, doesn't collide with var_ids (0..N)
-        emit_raw "!#{loc_id} = !DILocation(line: #{line}, scope: !#{sp_id})\n"
-        dbg_ref = " !dbg !#{sp_id}"
-        @dwarf_current_sp_id = loc_id
-        if (cur = @current_mir_func)
-          emit_dwarf_param_metadata(cur, param_types, sp_id)
-        end
+      if @debug_emit_anchors && (cur = @current_mir_func)
+        dwarf_state = @dwarf_debug.function_state(cur, mangled_name, param_types)
+        emit_raw dwarf_state.metadata
+        dbg_ref = dwarf_state.define_dbg_ref
+        @dwarf_current_function = dwarf_state
+        @dwarf_current_location_id = dwarf_state.default_location_id
       end
       emit_raw "define #{return_type} @#{mangled_name}(#{param_types.join(", ")})#{attrs}#{dbg_ref} {\n"
-    end
-
-    # File IDs use a separate range starting at 100000 to avoid collisions
-    # with subprogram IDs (which start at 10 and grow sequentially).
-    @dwarf_next_file_id : Int32 = 100000
-
-    private def dwarf_file_id(filename : String) : Int32
-      @dwarf_files[filename] ||= begin
-        id = @dwarf_next_file_id
-        @dwarf_next_file_id += 1
-        id
-      end
     end
 
     private def emit_dwarf_metadata : Nil
       return unless @debug_emit_anchors
 
-      # Module-level DWARF metadata. DISubprograms are emitted inline before each define.
-      # !0 = CompileUnit, !1-!3 = module flags, !4 = default file, !5 = subroutine type
-      emit_raw "\n!llvm.dbg.cu = !{!0}\n"
-      emit_raw "!llvm.module.flags = !{!1, !2, !3}\n"
-      emit_raw "!0 = distinct !DICompileUnit(language: DW_LANG_C99, file: !4, producer: \"crystal_v2\", isOptimized: false, emissionKind: FullDebug)\n"
-      emit_raw "!1 = !{i32 7, !\"Dwarf Version\", i32 4}\n"
-      emit_raw "!2 = !{i32 2, !\"Debug Info Version\", i32 3}\n"
-      emit_raw "!3 = !{i32 1, !\"wchar_size\", i32 4}\n"
-      emit_raw "!4 = !DIFile(filename: \"crystal_v2.cr\", directory: \".\")\n"
-      emit_raw "!5 = !DISubroutineType(types: !{})\n"
-      # Basic debug types for parameters (IDs 6-9 reserved)
-      emit_raw "!6 = !DIBasicType(name: \"ptr\", size: 64, encoding: DW_ATE_address)\n"
-      emit_raw "!7 = !DIBasicType(name: \"i32\", size: 32, encoding: DW_ATE_signed)\n"
-      emit_raw "!8 = !DIBasicType(name: \"i64\", size: 64, encoding: DW_ATE_signed)\n"
-      emit_raw "!9 = !DIBasicType(name: \"bool\", size: 8, encoding: DW_ATE_boolean)\n"
-      emit_raw "!900000 = !DIExpression()\n"
+      emit_raw @dwarf_debug.module_metadata
+    end
 
-      # Emit DIFile nodes for unique source files (used by subprograms)
-      @dwarf_files.each do |filename, file_md_id|
-        safe_name = filename.gsub("\\", "\\\\").gsub("\"", "\\\"")
-        dir = "."
-        if sep = filename.rindex('/')
-          dir = filename[0...sep]
-          safe_name = filename[(sep + 1)..]
-        end
-        safe_dir = dir.gsub("\\", "\\\\").gsub("\"", "\\\"")
-        emit_raw "!#{file_md_id} = !DIFile(filename: \"#{safe_name}\", directory: \"#{safe_dir}\")\n"
+    private def emit_dwarf_param_debug_values : Nil
+      return unless @debug_emit_anchors
+      return unless dwarf_state = @dwarf_current_function
+
+      dwarf_state.param_debug_values.each do |line|
+        emit_raw line
       end
     end
 
-    # Emit DILocalVariable metadata + alloca/declare for function parameters.
-    # Phase 1: metadata (before define) — returns array of var_ids
-    # Phase 2: declares (inside fn_entry) — uses stored var_ids
-    @dwarf_current_param_var_ids : Array(Int32) = [] of Int32
+    private def emit_dwarf_local_entry_debug_values : Nil
+      return unless @debug_emit_anchors
+      return unless dwarf_state = @dwarf_current_function
 
-    private def emit_dwarf_param_metadata(func : Function, param_types : Array(String), sp_id : Int32)
-      @dwarf_current_param_var_ids.clear
-      func.params.each_with_index do |param, idx|
-        param_name = param.name.empty? ? "arg#{idx}" : param.name
-        safe_name = param_name.gsub("\\", "\\\\").gsub("\"", "\\\"")
-        llvm_type = param_types[idx]? || "ptr"
-        base_type = llvm_type.split(' ').first
-
-        dbg_type_id = case base_type
-                      when "ptr"    then 6
-                      when "i32"    then 7
-                      when "i64"    then 8
-                      when "i1"     then 9
-                      when "i8", "i16" then 7
-                      when "float", "double" then 8
-                      else 6
-                      end
-
-        # var_id: sp_id * 1000 + idx — unique per (function, param)
-        # sp_id is unique per function, idx < 1000 params per function
-        var_id = sp_id * 1000 + idx
-        @dwarf_current_param_var_ids << var_id
-        emit_raw "!#{var_id} = !DILocalVariable(name: \"#{safe_name}\", arg: #{idx + 1}, scope: !#{sp_id}, file: !4, type: !#{dbg_type_id})\n"
+      dwarf_state.local_entry_debug_values.each do |line|
+        emit_raw line
       end
     end
 
-    private def emit_dwarf_param_declares(func : Function, param_types : Array(String), sp_id : Int32)
-      loc_id = sp_id * 1000 + 999
-      func.params.each_with_index do |param, idx|
-        param_name = param.name.empty? ? "arg#{idx}" : param.name
-        safe_name = param_name.gsub("\\", "\\\\").gsub("\"", "\\\"")
-        llvm_type = param_types[idx]? || "ptr"
-        base_type = llvm_type.split(' ').first
-        var_id = @dwarf_current_param_var_ids[idx]? || 0
-        next if var_id == 0
+    private def emit_dwarf_local_entry_debug_stores : Nil
+      return unless @debug_emit_anchors
+      return unless dwarf_state = @dwarf_current_function
 
-        alloca_name = "%dbg.#{safe_name}.#{idx}.addr"
-        param_reg = if param_types[idx]?
-                      parts = param_types[idx].split(' ')
-                      parts.size > 1 ? parts[1] : "%arg#{idx}"
-                    else
-                      "%arg#{idx}"
-                    end
-        emit_raw "  #{alloca_name} = alloca #{base_type}, align 8\n"
-        emit_raw "  store #{base_type} #{param_reg}, ptr #{alloca_name}, align 8\n"
-        emit_raw "  call void @llvm.dbg.declare(metadata ptr #{alloca_name}, metadata !#{var_id}, metadata !#{@dwarf_expr_id}), !dbg !#{loc_id}\n"
+      dwarf_state.local_entry_debug_stores.each do |line|
+        emit_raw line
       end
+    end
+
+    private def emit_dwarf_local_debug_declares : Nil
+      return unless @debug_emit_anchors
+      return unless dwarf_state = @dwarf_current_function
+
+      dwarf_state.local_debug_declares.each do |line|
+        emit_raw line
+      end
+    end
+
+    private def emitted_debug_value_type(inst : Value) : String?
+      emitted_type = if emitted = @emitted_value_types["%r#{inst.id}"]?
+                       emitted
+                     else
+                       @type_mapper.llvm_type(@value_types[inst.id]? || inst.type)
+                     end
+      return nil if emitted_type == "void"
+      emitted_type
+    end
+
+    private def value_debug_metadata_operand(inst : Value) : String?
+      emitted_type = emitted_debug_value_type(inst)
+      return nil unless emitted_type
+      "#{emitted_type} %r#{inst.id}"
+    end
+
+    private def dwarf_local_debug_value_lines(inst : Value) : Array(String)
+      return [] of String unless @debug_emit_anchors
+      return [] of String unless dwarf_state = @dwarf_current_function
+      return [] of String unless bindings = dwarf_state.local_debug_values[inst.id]?
+
+      value_metadata = value_debug_metadata_operand(inst)
+      return [] of String unless value_metadata
+
+      bindings.map do |binding|
+        "  call void @llvm.dbg.value(metadata #{value_metadata}, metadata !#{binding.variable_id}, metadata !#{@dwarf_debug.expression_id}), !dbg !#{binding.location_id}\n"
+      end
+    end
+
+    private def dwarf_local_shadow_store_statements(inst : Value) : Array(String)
+      return [] of String unless @debug_emit_anchors
+      return [] of String unless dwarf_state = @dwarf_current_function
+      return [] of String unless bindings = dwarf_state.local_debug_shadow_stores[inst.id]?
+      emitted_type = emitted_debug_value_type(inst)
+      return [] of String unless emitted_type
+
+      bindings.map do |binding|
+        "store #{emitted_type} %r#{inst.id}, ptr %r#{binding.slot_id}"
+      end
+    end
+
+    private def emit_dwarf_local_debug_values(inst : Value) : Nil
+      dwarf_local_debug_value_lines(inst).each do |line|
+        emit_raw line
+      end
+    end
+
+    private def emit_dwarf_local_shadow_stores(inst : Value) : Nil
+      dwarf_local_shadow_store_statements(inst).each do |statement|
+        emit statement
+      end
+    end
+
+    private def defer_dwarf_local_debug_values(inst : Value) : Nil
+      dwarf_local_debug_value_lines(inst).each do |line|
+        @deferred_phi_debug_values << line
+      end
+    end
+
+    private def defer_dwarf_local_shadow_stores(inst : Value) : Nil
+      dwarf_local_shadow_store_statements(inst).each do |statement|
+        @deferred_phi_debug_shadow_stores << statement
+      end
+    end
+
+    private def flush_deferred_phi_debug_values : Nil
+      @deferred_phi_debug_values.each do |line|
+        emit_raw line
+      end
+      @deferred_phi_debug_values.clear
+    end
+
+    private def flush_deferred_phi_debug_shadow_stores : Nil
+      @deferred_phi_debug_shadow_stores.each do |statement|
+        emit statement
+      end
+      @deferred_phi_debug_shadow_stores.clear
+    end
+
+    private def set_dwarf_location_for_value(inst : Value) : Nil
+      if dwarf_state = @dwarf_current_function
+        @dwarf_current_location_id = dwarf_state.value_locations[inst.id]? || dwarf_state.default_location_id
+      else
+        @dwarf_current_location_id = 0
+      end
+    end
+
+    private def set_default_dwarf_location : Nil
+      if dwarf_state = @dwarf_current_function
+        @dwarf_current_location_id = dwarf_state.default_location_id
+      else
+        @dwarf_current_location_id = 0
+      end
+    end
+
+    private def clear_dwarf_location : Nil
+      @dwarf_current_location_id = 0
     end
 
     private def write_output_bytes(bytes : Bytes) : Nil
@@ -726,11 +1344,9 @@ module Crystal::MIR
     @current_func_params : Array(Parameter) = [] of Parameter
     @current_mir_func : Function? = nil
     @debug_emit_anchors : Bool = false
-    @dwarf_next_md_id : Int32 = 10  # start at 10, reserve 0-9 for module-level
-    @dwarf_current_sp_id : Int32 = 0  # Current function's DILocation ID (0 = no debug)
-    @dwarf_expr_id : Int32 = 900000   # ID for shared !DIExpression() node
-    @dwarf_var_counter : Int32 = 2000000  # Sequential counter for DILocalVariable IDs
-    @dwarf_files : Hash(String, Int32) = {} of String => Int32
+    @dwarf_debug : DwarfDebugContext
+    @dwarf_current_function : DwarfFunctionState? = nil
+    @dwarf_current_location_id : Int32 = 0
     @current_slab_frame : Bool = false
     @emit_family_tag : Int32 = 0
     @tsan_needs_func_entry : Bool = false
@@ -908,6 +1524,8 @@ module Crystal::MIR
     @in_phi_block : Bool = false  # When true, we're emitting phi instructions (defer cross-block stores)
     @deferred_phi_stores : Array(String) = [] of String  # Stores to emit after all phis
     @deferred_phi_store_ops : Array({ValueId, String, String}) = [] of {ValueId, String, String}  # {inst_id, value_name, slot_name}
+    @deferred_phi_debug_values : Array(String) = [] of String
+    @deferred_phi_debug_shadow_stores : Array(String) = [] of String
     # Phi-shared slot optimization: when a phi has many incoming cross-block values,
     # share a single alloca instead of one per incoming value (prevents massive stack frames
     # in vdispatch functions with hundreds of type cases).
@@ -1030,6 +1648,7 @@ module Crystal::MIR
       @reuse_function_block_buffer = bootstrap_env_enabled?("CRYSTAL_V2_LLVM_REUSE_BLOCK_BUFFER", "CRYSTAL2_LLVM_REUSE_BLOCK_BUFFER")
       @function_block_output = IO::Memory.new
       @debug_emit_anchors = bootstrap_env_enabled?("CRYSTAL_V2_DEBUG_EMIT", "CRYSTAL2_DEBUG_EMIT")
+      @dwarf_debug = DwarfDebugContext.new(@module, @type_mapper)
     end
 
     @[AlwaysInline]
@@ -1315,6 +1934,9 @@ module Crystal::MIR
 
       total_funcs = functions_to_emit.size
       n_workers = parallel_llvm_workers
+      # Keep debug metadata in one emitter process so generic types and file caches
+      # don't get split across worker-local DWARF graphs.
+      n_workers = 1 if @debug_emit_anchors
       STDERR.puts "  [LLVM] emitting #{total_funcs} functions (#{@module.functions.size} total, #{@module.functions.size - total_funcs} pruned, workers=#{n_workers})..." if @progress
       func_emit_start = @progress ? Time.instant : nil
 
@@ -3026,12 +3648,22 @@ module Crystal::MIR
       when 9 then @emit_family_other_bytes += output_bytes
       end
       line = ("  " * @indent) + s
-      # Attach !dbg to ret, all calls, stores, branches (comma-separated per LLVM syntax)
-      if @dwarf_current_sp_id > 0
-        if s.starts_with?("ret ") || s.includes?("call ") || s.starts_with?("store ") ||
-           s.starts_with?("unreachable")
-          line += ", !dbg !#{@dwarf_current_sp_id}"
-        end
+      attach_debug = s.starts_with?('%') ||
+                     s.starts_with?("ret ") ||
+                     s.starts_with?("store ") ||
+                     s.starts_with?("br ") ||
+                     s.starts_with?("call ") ||
+                     s.starts_with?("unreachable") ||
+                     s.starts_with?("fence ") ||
+                     s.starts_with?("resume ")
+      if @dwarf_current_location_id > 0 &&
+         attach_debug &&
+         !s.includes?(" = phi ") &&
+         !s.empty? &&
+         !s.starts_with?(';') &&
+         !s.ends_with?(':') &&
+         !s.includes?(" !dbg !")
+        line += ", !dbg !#{@dwarf_current_location_id}"
       end
       append_output(line + "\n")
     end
@@ -3712,6 +4344,7 @@ module Crystal::MIR
       emit_raw "declare void @llvm.memcpy.p0.p0.i32(ptr, ptr, i32, i1)\n"
       emit_raw "declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)\n"
       emit_raw "declare void @llvm.dbg.declare(metadata, metadata, metadata)\n"
+      emit_raw "declare void @llvm.dbg.value(metadata, metadata, metadata)\n"
       emit_raw "@.str_newline = private constant [2 x i8] c\"\\0A\\00\"\n"
       emit_raw "@.fixed_fmt = private constant [6 x i8] c\"%.17f\\00\"\n"
       emit_raw "@.prec_fmt = private constant [5 x i8] c\"%.*g\\00\"\n"
@@ -8886,11 +9519,10 @@ module Crystal::MIR
       # Use fn_entry to avoid conflict with parameter names like %entry
       emit_raw "fn_entry:\n"
       emit_hoisted_allocas(func)
-      # DWARF: emit debug declares for function parameters
-      if @dwarf_current_sp_id > 0
-        sp_id = (@dwarf_current_sp_id - 999) // 1000  # recover DISubprogram ID from loc_id
-        emit_dwarf_param_declares(func, param_types, sp_id)
-      end
+      emit_dwarf_param_debug_values
+      emit_dwarf_local_entry_debug_values
+      emit_dwarf_local_debug_declares
+      emit_dwarf_local_entry_debug_stores
       if @current_slab_frame
         emit_raw "  call void @__crystal_v2_slab_frame_push()\n"
       end
@@ -9020,6 +9652,8 @@ module Crystal::MIR
       end
 
       emit_raw "}\n\n"
+      @dwarf_current_function = nil
+      clear_dwarf_location
     end
 
     # Emit all Alloc instructions at function entry for dominance
@@ -10535,24 +11169,30 @@ module Crystal::MIR
       @in_phi_block = true
       @deferred_phi_stores.clear
       @deferred_phi_store_ops.clear
+      @deferred_phi_debug_values.clear
+      @deferred_phi_debug_shadow_stores.clear
       phi_insts.each do |inst|
         emit_instruction(inst, func)
       end
       @in_phi_block = false
 
       # Now emit deferred stores for cross-block phi values
+      set_default_dwarf_location
       @deferred_phi_stores.each do |store_stmt|
         emit store_stmt
       end
       @deferred_phi_stores.clear
 
       # Emit deferred slot store operations (wrapping + store) that were skipped during PHI emission
+      set_default_dwarf_location
       @deferred_phi_store_ops.each do |(inst_id, val_name, slot_name)|
         emit_cross_block_slot_store(inst_id, val_name, slot_name)
       end
       @deferred_phi_store_ops.clear
+      flush_deferred_phi_debug_shadow_stores
 
       # TSan: emit function entry after phi nodes (if first block)
+      set_default_dwarf_location
       if @tsan_needs_func_entry
         emit "; TSan function entry"
         emit "%__tsan_func_ptr = bitcast ptr @#{@current_func_name} to ptr"
@@ -10561,27 +11201,43 @@ module Crystal::MIR
       end
 
       # Emit non-phi instructions
+      flushed_phi_debug_values = false
       non_phi_insts.each do |inst|
         emit_instruction(inst, func)
+        unless flushed_phi_debug_values
+          flush_deferred_phi_debug_values
+          flushed_phi_debug_values = true
+        end
       end
 
       # Emit predecessor loads for cross-block phi incoming values
       # This must happen BEFORE the terminator (branch) to successor blocks
+      set_default_dwarf_location
       emit_phi_predecessor_loads(block)
 
       # Emit type conversions for fixed-type values (params, ExternCalls) used in successor phi nodes
+      set_default_dwarf_location
       emit_phi_predecessor_conversions(block)
       # Emit union wraps for ptr/void values used in successor union phi nodes
+      set_default_dwarf_location
       emit_phi_predecessor_union_wraps(block)
       # Emit inttoptr for int values used in ptr phi nodes
+      set_default_dwarf_location
       emit_phi_int_to_ptr(block)
       # Emit union-to-ptr extractions for union values used in successor ptr phi nodes
+      set_default_dwarf_location
       emit_phi_union_to_ptr_extracts(block)
       # Emit union-to-union reinterpretations for union values used in successor union phi nodes with different type
+      set_default_dwarf_location
       emit_phi_union_to_union_converts(block)
       # Emit union payload extractions for union-slotted values used in primitive phi nodes
+      set_default_dwarf_location
       emit_phi_union_payload_extracts(block)
 
+      set_default_dwarf_location
+      unless flushed_phi_debug_values
+        flush_deferred_phi_debug_values
+      end
       emit_terminator(block.terminator)
       @indent = 0
       @current_block_id = nil
@@ -10921,6 +11577,7 @@ module Crystal::MIR
 
     private def emit_instruction(inst : Value, func : Function)
       name = "%r#{inst.id}"
+      set_dwarf_location_for_value(inst)
       @inst_total_count += 1
       previous_emit_family_tag = @emit_family_tag
       @emit_family_tag = case inst
@@ -11144,6 +11801,16 @@ module Crystal::MIR
       end
       ensure
         @emit_family_tag = previous_emit_family_tag
+      end
+
+      if produces_value
+        if inst.is_a?(Phi)
+          defer_dwarf_local_debug_values(inst)
+          defer_dwarf_local_shadow_stores(inst)
+        else
+          emit_dwarf_local_debug_values(inst)
+          emit_dwarf_local_shadow_stores(inst)
+        end
       end
 
       # Store to cross-block slot if this value is used across blocks
@@ -12013,6 +12680,11 @@ module Crystal::MIR
             @module_singleton_globals.each do |type_ref, global_name|
               f.puts "MSG\t#{type_ref.id}\t#{global_name}"
             end
+            if @debug_emit_anchors
+              @dwarf_debug.used_files.each do |filename|
+                f.puts "DGF\t#{Base64.strict_encode(filename)}"
+              end
+            end
             # String counter high-water mark
             f.puts "SCN\t#{@string_counter}"
           end
@@ -12148,6 +12820,9 @@ module Crystal::MIR
               global_name = parts[2]
               type_ref = TypeRef.new(type_id)
               @module_singleton_globals[type_ref] ||= global_name
+            when "DGF"
+              next if parts.size < 2
+              @dwarf_debug.register_external_file(Base64.decode_string(parts[1]))
             when "SCN"
               next if parts.size < 2
               worker_counter = parts[1].to_i

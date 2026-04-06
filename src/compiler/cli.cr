@@ -2781,6 +2781,15 @@ module CrystalV2
         "#{path}.cmdtmp"
       end
 
+      private def preserve_debug_object_file? : Bool
+        keep_requested = env_enabled?("CRYSTAL_V2_KEEP_DEBUG_OBJECT") || env_enabled?("CRYSTAL2_KEEP_DEBUG_OBJECT")
+        {% if flag?(:darwin) %}
+          keep_requested || env_enabled?("CRYSTAL_V2_DEBUG_EMIT") || env_enabled?("CRYSTAL2_DEBUG_EMIT")
+        {% else %}
+          keep_requested
+        {% end %}
+      end
+
       private def command_args_display(command_args : Array(String)) : String
         String.build do |io|
           idx = 0
@@ -3091,7 +3100,9 @@ module CrystalV2
         end
 
         # Clean up intermediate files
-        File.delete(obj_file) if File.exists?(obj_file)
+        if File.exists?(obj_file) && !preserve_debug_object_file?
+          File.delete(obj_file)
+        end
         if effective_llvm_opt && opt_ll_file != ll_file && File.exists?(opt_ll_file)
           File.delete(opt_ll_file)
         end

@@ -41,14 +41,18 @@ module Crystal::HIR
 
     # Current block being built
     property current_block : BlockId
+    property current_source_location : SourceLocation?
 
     # Variable name → ValueId mapping per scope
     @locals : Hash(String, ValueId)
     @self_id : ValueId?
+    @debug_local_ids : Hash(String, ValueId)
 
     # Scope stack for nested scopes
     @scope_stack : Array(ScopeId)
     @locals_snapshots : Array(Hash(String, ValueId))
+    @debug_local_snapshots : Array(Hash(String, ValueId))
+    @saved_debug_local_snapshots : Array(Hash(String, ValueId))
 
     # Type cache
     @type_cache : Hash(String, TypeRef)
@@ -64,10 +68,14 @@ module Crystal::HIR
 
     def initialize(@function : Crystal::HIR::Function, @module : Crystal::HIR::Module, @arena)
       @current_block = @function.entry_block
+      @current_source_location = nil
       @locals = {} of String => ValueId
       @self_id = nil
+      @debug_local_ids = {} of String => ValueId
       @scope_stack = [@function.scopes[0].id] # Function scope
       @locals_snapshots = [] of Hash(String, ValueId)
+      @debug_local_snapshots = [] of Hash(String, ValueId)
+      @saved_debug_local_snapshots = [] of Hash(String, ValueId)
       @type_cache = {} of String => TypeRef
       @value_types = {} of ValueId => TypeRef
       @values = {} of ValueId => Value
@@ -92,6 +100,7 @@ module Crystal::HIR
     # Push new scope
     def push_scope(kind : ScopeKind) : ScopeId
       @locals_snapshots << @locals.dup
+      @debug_local_snapshots << @debug_local_ids.dup
       scope_id = @function.create_scope(kind, current_scope)
       @scope_stack << scope_id
       scope_id
@@ -101,7 +110,15 @@ module Crystal::HIR
     def pop_scope : ScopeId
       scope_id = @scope_stack.pop
       if snapshot = @locals_snapshots.pop?
-        restore_locals(snapshot)
+        @locals = snapshot
+      end
+      if debug_snapshot = @debug_local_snapshots.pop?
+        @debug_local_ids = debug_snapshot
+      end
+      if self_id = @locals["self"]?
+        @self_id = self_id
+      else
+        @self_id = nil
       end
       scope_id
     end
@@ -132,6 +149,11 @@ module Crystal::HIR
       @value_types[value.id] = value.type # Track type for inference
       @values[value.id] = value
       @value_blocks[value.id] = @current_block
+      if location = @current_source_location
+        if @function.value_location(value.id).nil?
+          @function.record_value_location(value.id, location)
+        end
+      end
       if trace_shovel_types?
         STDERR.puts "[SHOVEL_TYPES] phase=emit func=#{@function.name} id=#{value.id} value=#{value.class.name} type=#{value.type.id}"
       end
@@ -152,6 +174,11 @@ module Crystal::HIR
       @value_types[value.id] = value.type
       @values[value.id] = value
       @value_blocks[value.id] = block_id
+      if location = @current_source_location
+        if @function.value_location(value.id).nil?
+          @function.record_value_location(value.id, location)
+        end
+      end
       if trace_shovel_types?
         STDERR.puts "[SHOVEL_TYPES] phase=emit_to_block func=#{@function.name} block=#{block_id} id=#{value.id} value=#{value.class.name} type=#{value.type.id}"
       end
@@ -205,6 +232,17 @@ module Crystal::HIR
       unless @value_blocks.has_key?(value_id)
         @value_blocks[value_id] = @current_block
       end
+      if local_id = @debug_local_ids[name]?
+        if value_id != local_id
+          if location = @current_source_location
+            @function.record_debug_local_binding(local_id, value_id, location)
+          end
+        end
+      end
+    end
+
+    def register_debug_local(name : String, local_id : ValueId) : Nil
+      @debug_local_ids[name] = local_id
     end
 
     def value_block(id : ValueId) : BlockId?
@@ -228,12 +266,16 @@ module Crystal::HIR
 
     # Save current locals state (for branching)
     def save_locals : Hash(String, ValueId)
+      @saved_debug_local_snapshots << @debug_local_ids.dup
       @locals.dup
     end
 
     # Restore locals state (for else branch)
     def restore_locals(saved : Hash(String, ValueId))
       @locals = saved.dup
+      if debug_snapshot = @saved_debug_local_snapshots.pop?
+        @debug_local_ids = debug_snapshot
+      end
       if self_id = @locals["self"]?
         @self_id = self_id
       else
@@ -9806,6 +9848,52 @@ module Crystal::HIR
       return unless path
       span = node.span
       ctx.function.record_value_location(value_id, SourceLocation.new(path, span.start_line, span.start_column))
+    end
+
+    private def source_location_for_node(
+      arena : CrystalV2::Compiler::Frontend::ArenaLike,
+      node : CrystalV2::Compiler::Frontend::Node,
+    ) : SourceLocation?
+      return unless path = source_path_for(arena)
+      span = node.span
+      SourceLocation.new(path, span.start_line, span.start_column)
+    end
+
+    private def record_hir_value_source_location(
+      ctx : LoweringContext,
+      value_id : ValueId,
+      arena : CrystalV2::Compiler::Frontend::ArenaLike,
+      node : CrystalV2::Compiler::Frontend::Node,
+    ) : Nil
+      return unless location = source_location_for_node(arena, node)
+      ctx.function.record_value_location(value_id, location)
+    end
+
+    private def set_function_definition_location(
+      function : HIR::Function,
+      arena : CrystalV2::Compiler::Frontend::ArenaLike,
+      line : Int32,
+      column : Int32
+    ) : Nil
+      return unless path = source_path_for(arena)
+      function.definition_location = SourceLocation.new(path, line, column)
+    end
+
+    private def set_function_definition_location(
+      function : HIR::Function,
+      arena : CrystalV2::Compiler::Frontend::ArenaLike,
+      span
+    ) : Nil
+      set_function_definition_location(function, arena, span.start_line, span.start_column)
+    end
+
+    private def set_synthetic_main_definition_location(function : HIR::Function) : Nil
+      module_path = @module.name
+      if !module_path.empty? && module_path != "main"
+        function.definition_location = SourceLocation.new(module_path, 1, 1)
+      else
+        set_function_definition_location(function, @arena, 1, 1)
+      end
     end
 
     private def store_extra_source(arena : CrystalV2::Compiler::Frontend::ArenaLike, text : String) : Nil
@@ -20304,6 +20392,7 @@ module Crystal::HIR
       register_pending_method_effects(full_name, param_types.size)
 
       func = @module.create_function(full_name, return_type)
+      set_function_definition_location(func, @arena, node.span)
       ctx = LoweringContext.new(func, @module, @arena)
       if ctx.lookup_local("self").nil? && func.name.includes?('#')
         if receiver_param = func.params.first?
@@ -25354,6 +25443,7 @@ module Crystal::HIR
         STDERR.puts "[LOWER_METHOD] enter class=#{class_name} full=#{full_name}"
       end
       func = @module.create_function(full_name, return_type)
+      set_function_definition_location(func, @arena, node.span)
       if debug_env_filter_match?("DEBUG_FROM_CHARS", base_name, full_name)
         STDERR.puts "[LOWER_METHOD] 2. After create_function"
         STDERR.flush
@@ -39434,6 +39524,7 @@ module Crystal::HIR
       set_function_def_arena(full_name, @arena)
 
       func = @module.create_function(full_name, return_type)
+      set_function_definition_location(func, @arena, node.span)
       ctx = LoweringContext.new(func, @module, @arena)
 
       param_infos.each_with_index do |(param_name, param_type), idx|
@@ -39589,6 +39680,7 @@ module Crystal::HIR
       # Create __crystal_main function with void return type
       # Signature: fun __crystal_main(argc : Int32, argv : UInt8**)
       func = @module.create_function("__crystal_main", TypeRef::VOID)
+      set_synthetic_main_definition_location(func)
 
       # Add parameters to match lib declaration
       argc_param = func.add_param("argc", TypeRef::INT32)
@@ -39887,6 +39979,7 @@ module Crystal::HIR
 
       # Create __crystal_main(argc, argv)
       func = @module.create_function("__crystal_main", TypeRef::VOID)
+      set_function_definition_location(func, @arena, node.span)
       argc_param = func.add_param("argc", TypeRef::INT32)
       argv_type = type_ref_for_name("Pointer(Pointer(UInt8))")
       argv_type = TypeRef::POINTER if argv_type == TypeRef::VOID
@@ -40694,11 +40787,23 @@ module Crystal::HIR
       end
       if arena == @arena
         node = @arena[expr_id]
-        lower_node(ctx, node)
+        previous_location = ctx.current_source_location
+        ctx.current_source_location = source_location_for_node(@arena, node)
+        begin
+          lower_node(ctx, node)
+        ensure
+          ctx.current_source_location = previous_location
+        end
       else
         with_arena(arena) do
           node = @arena[expr_id]
-          lower_node(ctx, node)
+          previous_location = ctx.current_source_location
+          ctx.current_source_location = source_location_for_node(@arena, node)
+          begin
+            lower_node(ctx, node)
+          ensure
+            ctx.current_source_location = previous_location
+          end
         end
       end
     end
@@ -45363,6 +45468,8 @@ module Crystal::HIR
       # Otherwise create a new local (first use)
       local = Local.new(ctx.next_id, TypeRef::VOID, name, ctx.current_scope)
       ctx.emit(local)
+      record_hir_value_source_location(ctx, local.id, @arena, node)
+      ctx.register_debug_local(name, local.id)
       ctx.register_local(name, local.id)
       local.id
     end
@@ -51817,6 +51924,7 @@ module Crystal::HIR
 
             exc_var = Local.new(ctx.next_id, exc_type_ref, (safe_slice_to_string(var_name) || ""), ctx.current_scope, true)
             ctx.emit(exc_var)
+            record_hir_value_source_location(ctx, exc_var.id, @arena, node)
             ctx.register_local((safe_slice_to_string(var_name) || ""), exc_var.id)
             ctx.register_type(exc_var.id, exc_type_ref)
 
@@ -72480,7 +72588,9 @@ module Crystal::HIR
           # New variable
           local = Local.new(ctx.next_id, value_type, name, ctx.current_scope)
           ctx.emit(local)
-          ctx.register_local(name, value_id)
+          record_hir_value_source_location(ctx, local.id, @arena, node)
+          ctx.register_debug_local(name, local.id)
+          ctx.register_local(name, local.id)
           # Also emit copy
           copy = Copy.new(ctx.next_id, value_type, value_id)
           ctx.emit(copy)
@@ -73358,7 +73468,9 @@ module Crystal::HIR
         else
           local = Local.new(ctx.next_id, value_type, name, ctx.current_scope)
           ctx.emit(local)
-          ctx.register_local(name, value_id)
+          record_hir_value_source_location(ctx, local.id, @arena, target_node)
+          ctx.register_debug_local(name, local.id)
+          ctx.register_local(name, local.id)
           copy = Copy.new(ctx.next_id, value_type, value_id)
           ctx.emit(copy)
           ctx.register_local(name, copy.id)

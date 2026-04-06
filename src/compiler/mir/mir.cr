@@ -1795,6 +1795,11 @@ module Crystal::MIR
     end
   end
 
+  record DebugLocalBinding,
+    slot_id : ValueId,
+    value_id : ValueId,
+    location : SourceLocation
+
   class Function
     @id : FunctionId
     @name : String
@@ -1803,6 +1808,9 @@ module Crystal::MIR
     @blocks : Array(BasicBlock)
     @entry_block : BlockId
     @source_location : SourceLocation?
+    @value_locations : Hash(ValueId, SourceLocation)
+    @debug_local_names : Hash(ValueId, String)
+    @debug_local_bindings : Array(DebugLocalBinding)
     @slab_frame : Bool
 
     getter id : FunctionId
@@ -1823,6 +1831,9 @@ module Crystal::MIR
       @blocks = [] of BasicBlock
       @block_map = {} of BlockId => BasicBlock
       @source_location = nil
+      @value_locations = {} of ValueId => SourceLocation
+      @debug_local_names = {} of ValueId => String
+      @debug_local_bindings = [] of DebugLocalBinding
       @slab_frame = false
 
       # Create entry block
@@ -1841,6 +1852,33 @@ module Crystal::MIR
       id = @next_value_id
       @next_value_id += 1
       id
+    end
+
+    def record_value_location(value_id : ValueId, location : SourceLocation) : Nil
+      @value_locations[value_id] = location
+    end
+
+    def value_location(value_id : ValueId) : SourceLocation?
+      @value_locations[value_id]?
+    end
+
+    def record_debug_local_name(value_id : ValueId, name : String) : Nil
+      @debug_local_names[value_id] = name
+    end
+
+    def debug_local_name(value_id : ValueId) : String?
+      @debug_local_names[value_id]?
+    end
+
+    def debug_local_bindings : Array(DebugLocalBinding)
+      @debug_local_bindings
+    end
+
+    def record_debug_local_binding(slot_id : ValueId, value_id : ValueId, location : SourceLocation) : Nil
+      if last = @debug_local_bindings.last?
+        return if last.slot_id == slot_id && last.value_id == value_id && last.location == location
+      end
+      @debug_local_bindings << DebugLocalBinding.new(slot_id, value_id, location)
     end
 
     def create_block : BlockId
