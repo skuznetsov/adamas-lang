@@ -135,11 +135,17 @@ module CrystalV2
         # Each line includes macro_file=... (path passed as macro_source_path from AstToHir / CLI).
         # call_count is expansions of the same macro body key (span + pieces + body_id); compare across V2 vs baseline runs.
         # Env CRYSTAL_V2_MACRO_BODY_OUTPUT_STATS_DUMP=1: end-of-process JSONL dump of all keys (see MacroBodyOutputStatsDump).
+        # Env CRYSTAL_V2_MACRO_BODY_GIANT_DIAG=1: immediate JSON line to stderr when single or cumulative
+        # expansion size crosses CRYSTAL_V2_MACRO_BODY_GIANT_SINGLE_BYTES (default 500_000) or
+        # CRYSTAL_V2_MACRO_BODY_GIANT_CUMULATIVE_BYTES (default 1_000_000). Diagnostic only — does not truncate output.
         @macro_body_output_stats : Bool
         @macro_body_stat_single_threshold : Int64
         @macro_body_stat_cumulative_threshold : Int64
         @macro_body_cumulative_bytes : Hash(String, Int64)
         @macro_body_call_count : Hash(String, Int32)
+        @macro_body_giant_diag : Bool
+        @macro_body_giant_single_bytes : Int64
+        @macro_body_giant_cumulative_bytes : Int64
 
         def initialize(
           @program : Program,
@@ -170,6 +176,9 @@ module CrystalV2
           @macro_body_stat_cumulative_threshold = ENV["CRYSTAL_V2_MACRO_BODY_STAT_CUMULATIVE"]?.try(&.to_i64?) || 1_000_000_i64
           @macro_body_cumulative_bytes = {} of String => Int64
           @macro_body_call_count = {} of String => Int32
+          @macro_body_giant_diag = ENV["CRYSTAL_V2_MACRO_BODY_GIANT_DIAG"]? == "1"
+          @macro_body_giant_single_bytes = ENV["CRYSTAL_V2_MACRO_BODY_GIANT_SINGLE_BYTES"]?.try(&.to_i64?) || 500_000_i64
+          @macro_body_giant_cumulative_bytes = ENV["CRYSTAL_V2_MACRO_BODY_GIANT_CUMULATIVE_BYTES"]?.try(&.to_i64?) || 1_000_000_i64
           MacroBodyOutputStatsDump.ensure_at_exit if MacroBodyOutputStatsDump.enabled?
         end
 
@@ -1393,7 +1402,7 @@ module CrystalV2
         private def maybe_record_macro_body_output(body_id : ExprId, body_node : Frontend::MacroLiteralNode, pieces_count : Int32, output : String) : Nil
           stats_on = @macro_body_output_stats
           dump_on = MacroBodyOutputStatsDump.enabled?
-          return unless stats_on || dump_on
+          return unless stats_on || dump_on || @macro_body_giant_diag
 
           span = body_node.span
           path = @macro_source_path || "(unknown)"
@@ -1401,23 +1410,39 @@ module CrystalV2
 
           MacroBodyOutputStatsDump.record(path, body_id, span, pieces_count, sz) if dump_on
 
-          return unless stats_on
-
           key = String.build do |io|
             io << "L" << span.start_line << '-' << span.end_line
             io << " pieces=" << pieces_count
             io << " body_id=" << body_id
           end
 
-          prev = @macro_body_cumulative_bytes[key]? || 0_i64
-          cum = prev + sz
-          @macro_body_cumulative_bytes[key] = cum
-          calls = (@macro_body_call_count[key]? || 0) + 1
-          @macro_body_call_count[key] = calls
+          cum = sz
+          calls = 1
 
-          if sz >= @macro_body_stat_single_threshold || cum >= @macro_body_stat_cumulative_threshold
-            src_sz = @macro_source.try(&.bytesize) || 0
-            STDERR.puts "[MACRO_BODY_OUTPUT_STAT] macro_file=#{path.inspect} call_count=#{calls} single_bytes=#{sz} cumulative_bytes=#{cum} macro_source_bytesize=#{src_sz} #{key}"
+          if stats_on
+            prev = @macro_body_cumulative_bytes[key]? || 0_i64
+            cum = prev + sz
+            @macro_body_cumulative_bytes[key] = cum
+            calls = (@macro_body_call_count[key]? || 0) + 1
+            @macro_body_call_count[key] = calls
+
+            if sz >= @macro_body_stat_single_threshold || cum >= @macro_body_stat_cumulative_threshold
+              src_sz = @macro_source.try(&.bytesize) || 0
+              STDERR.puts "[MACRO_BODY_OUTPUT_STAT] macro_file=#{path.inspect} call_count=#{calls} single_bytes=#{sz} cumulative_bytes=#{cum} macro_source_bytesize=#{src_sz} #{key}"
+            end
+          end
+
+          if @macro_body_giant_diag && (sz >= @macro_body_giant_single_bytes || cum >= @macro_body_giant_cumulative_bytes)
+            STDERR.puts({
+              "kind"             => "macro_body_giant",
+              "macro_file"       => path,
+              "span_start_line"  => span.start_line,
+              "span_end_line"    => span.end_line,
+              "pieces_count"     => pieces_count,
+              "single_bytes"     => sz,
+              "cumulative_bytes" => cum,
+              "call_count"       => calls,
+            }.to_json)
           end
         end
 

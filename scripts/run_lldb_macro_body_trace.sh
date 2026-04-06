@@ -24,6 +24,16 @@
 #   CRYSTAL_V2_LLDB_MB_FILTER_END_LINE=369 \
 #   ...
 #
+# primitives.cr L428-581 / pieces=113 (giant single expansion — expect 1 hit):
+#   CRYSTAL_V2_LLDB_MB_FILTER_PATH_SUBSTR=primitives.cr \
+#   CRYSTAL_V2_LLDB_MB_FILTER_PIECES=113 \
+#   CRYSTAL_V2_LLDB_MB_FILTER_START_LINE=428 \
+#   CRYSTAL_V2_LLDB_MB_FILTER_END_LINE=581 \
+#   ...
+#
+# Immediate giant diagnostic (stderr JSON, no lldb): CRYSTAL_V2_MACRO_BODY_GIANT_DIAG=1
+# (see macro_expander.cr / maybe_record_macro_body_output).
+#
 # Requires: crystal_v2 built with --debug (same as lldb_smoke / local DWARF work).
 set -euo pipefail
 
