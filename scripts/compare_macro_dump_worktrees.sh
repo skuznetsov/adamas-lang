@@ -7,9 +7,14 @@
 #   scripts/compare_macro_dump_worktrees.sh COMMIT_A COMMIT_B PATH_TO_CARRIER.cr
 #
 # Carriers:
-#   scripts/macro_dump_heavy_carrier.cr — more macro volume than a one-liner
+#   scripts/macro_dump_heavy_carrier.cr — synthetic gen_methods volume + prelude
+#   scripts/macro_dump_stdlib_heavy_carrier.cr — require json/uri/time/csv (more stdlib macro families)
 #   scripts/macro_dump_flag_carrier.cr — top-level {% if flag?(:darwin) %} + {% begin %}
 #   /tmp/macro_oracle_carrier.cr — minimal (prelude only)
+#
+# Pick A/B commits by producer-side changes, e.g.:
+#   git log --oneline -20 -- src/compiler/semantic/macro_expander.cr \\
+#     src/compiler/semantic/macro_value.cr
 #
 # If an older commit lacks DUMP telemetry, cherry-pick ffa32a87 onto each
 # worktree after add (clean on bootstrap-lineage commits; conflicts on tiny main trees).
