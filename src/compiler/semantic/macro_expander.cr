@@ -1,4 +1,5 @@
 require "set"
+require "json"
 require "semantic_version"
 require "../frontend/ast"
 require "../frontend/lexer"
@@ -11,6 +12,92 @@ require "./macro_value"
 module CrystalV2
   module Compiler
     module Semantic
+      # :nodoc:
+      # Env CRYSTAL_V2_MACRO_BODY_OUTPUT_STATS_DUMP=1: one JSON object per macro body key at process exit
+      # (global aggregate across all MacroExpander instances). Sorted by cumulative_bytes desc, then key fields.
+      # Does not change compilation; use with stderr redirect for clean JSONL. Complements threshold logging
+      # from CRYSTAL_V2_MACRO_BODY_OUTPUT_STATS=1.
+      module MacroBodyOutputStatsDump
+        @@mutex = Mutex.new
+        @@rows = {} of String => Row
+        @@at_exit_registered = false
+
+        private record Row,
+          macro_file : String,
+          body_id : Int32,
+          span_start : Int32,
+          span_end : Int32,
+          pieces_count : Int32,
+          call_count : Int64,
+          cumulative_bytes : Int64,
+          single_bytes_max : Int64,
+          single_bytes_last : Int64
+
+        def self.enabled? : Bool
+          ENV["CRYSTAL_V2_MACRO_BODY_OUTPUT_STATS_DUMP"]? == "1"
+        end
+
+        def self.ensure_at_exit : Nil
+          return unless enabled?
+          return if @@at_exit_registered
+          @@at_exit_registered = true
+          at_exit { flush }
+        end
+
+        def self.record(macro_file : String, body_id : Frontend::ExprId, span : Frontend::Span, pieces_count : Int32, output_bytes : Int64) : Nil
+          ensure_at_exit
+          key = "#{macro_file}\t#{body_id.index}\t#{span.start_line}\t#{span.end_line}\t#{pieces_count}"
+          @@mutex.synchronize do
+            if existing = @@rows[key]?
+              ncalls = existing.call_count + 1
+              cum = existing.cumulative_bytes + output_bytes
+              mx = existing.single_bytes_max >= output_bytes ? existing.single_bytes_max : output_bytes
+              @@rows[key] = Row.new(macro_file, body_id.index, span.start_line, span.end_line, pieces_count,
+                ncalls, cum, mx, output_bytes)
+            else
+              @@rows[key] = Row.new(macro_file, body_id.index, span.start_line, span.end_line, pieces_count,
+                1_i64, output_bytes, output_bytes, output_bytes)
+            end
+          end
+        end
+
+        def self.flush : Nil
+          return unless enabled?
+          @@mutex.synchronize do
+            return if @@rows.empty?
+            rows = @@rows.values.to_a
+            @@rows.clear
+            rows.sort! do |a, b|
+              cmp = b.cumulative_bytes <=> a.cumulative_bytes
+              if cmp != 0
+                cmp
+              else
+                row_tie(a) <=> row_tie(b)
+              end
+            end
+            rows.each do |r|
+              avg = r.cumulative_bytes.to_f / r.call_count.to_f
+              STDERR.puts({
+                "macro_file"        => r.macro_file,
+                "body_id"           => r.body_id,
+                "span_start_line"   => r.span_start,
+                "span_end_line"     => r.span_end,
+                "pieces_count"      => r.pieces_count,
+                "call_count"        => r.call_count,
+                "cumulative_bytes"  => r.cumulative_bytes,
+                "single_bytes_max"  => r.single_bytes_max,
+                "single_bytes_last" => r.single_bytes_last,
+                "avg_bytes"         => avg,
+              }.to_json)
+            end
+          end
+        end
+
+        private def self.row_tie(r : Row) : Tuple(String, Int32, Int32, Int32, Int32)
+          {r.macro_file, r.body_id, r.span_start, r.span_end, r.pieces_count}
+        end
+      end
+
       # Phase 87B-4A: General Macro Expansion Engine (with Control Flow + Range Iteration)
       #
       # SCOPE (Phase 87B-2 + 87B-3 + 87B-4A):
@@ -43,6 +130,17 @@ module CrystalV2
         getter diagnostics : Array(Diagnostic)
         getter last_output : String? = nil
 
+        # Env CRYSTAL_V2_MACRO_BODY_OUTPUT_STATS=1: log macro bodies whose expansion output is huge
+        # (single expansion or cumulative per span/piece-count key). For hunting String::Builder runaway.
+        # Each line includes macro_file=... (path passed as macro_source_path from AstToHir / CLI).
+        # call_count is expansions of the same macro body key (span + pieces + body_id); compare across V2 vs baseline runs.
+        # Env CRYSTAL_V2_MACRO_BODY_OUTPUT_STATS_DUMP=1: end-of-process JSONL dump of all keys (see MacroBodyOutputStatsDump).
+        @macro_body_output_stats : Bool
+        @macro_body_stat_single_threshold : Int64
+        @macro_body_stat_cumulative_threshold : Int64
+        @macro_body_cumulative_bytes : Hash(String, Int64)
+        @macro_body_call_count : Hash(String, Int32)
+
         def initialize(
           @program : Program,
           @arena : Frontend::ArenaLike,
@@ -52,6 +150,7 @@ module CrystalV2
           recovery_mode : Bool = false,
           source_provider : Proc(ExprId, String?)? = nil,
           macro_source : String? = nil,
+          macro_source_path : String? = nil,
           source_sink : Proc(String, Nil)? = nil
         )
           @diagnostics = [] of Diagnostic
@@ -62,9 +161,16 @@ module CrystalV2
           @recovery_mode = recovery_mode
           @source_provider = source_provider
           @macro_source = macro_source
+          @macro_source_path = macro_source_path
           @macro_source_provider = nil.as(Proc(Frontend::ExprId, String?)?)
           @source_sink = source_sink
           @string_pool = @program.string_pool
+          @macro_body_output_stats = ENV["CRYSTAL_V2_MACRO_BODY_OUTPUT_STATS"]? == "1"
+          @macro_body_stat_single_threshold = ENV["CRYSTAL_V2_MACRO_BODY_STAT_THRESHOLD"]?.try(&.to_i64?) || 100_000_i64
+          @macro_body_stat_cumulative_threshold = ENV["CRYSTAL_V2_MACRO_BODY_STAT_CUMULATIVE"]?.try(&.to_i64?) || 1_000_000_i64
+          @macro_body_cumulative_bytes = {} of String => Int64
+          @macro_body_call_count = {} of String => Int32
+          MacroBodyOutputStatsDump.ensure_at_exit if MacroBodyOutputStatsDump.enabled?
         end
 
         # Expansion context for macro evaluation
@@ -474,6 +580,7 @@ module CrystalV2
             recovery_mode: @recovery_mode,
             source_provider: @source_provider,
             macro_source: wrapped,
+            macro_source_path: @macro_source_path,
             source_sink: @source_sink
           )
           expander.macro_source_provider = @macro_source_provider
@@ -1283,16 +1390,48 @@ module CrystalV2
           MACRO_NIL
         end
 
+        private def maybe_record_macro_body_output(body_id : ExprId, body_node : Frontend::MacroLiteralNode, pieces_count : Int32, output : String) : Nil
+          stats_on = @macro_body_output_stats
+          dump_on = MacroBodyOutputStatsDump.enabled?
+          return unless stats_on || dump_on
+
+          span = body_node.span
+          path = @macro_source_path || "(unknown)"
+          sz = output.bytesize.to_i64
+
+          MacroBodyOutputStatsDump.record(path, body_id, span, pieces_count, sz) if dump_on
+
+          return unless stats_on
+
+          key = String.build do |io|
+            io << "L" << span.start_line << '-' << span.end_line
+            io << " pieces=" << pieces_count
+            io << " body_id=" << body_id
+          end
+
+          prev = @macro_body_cumulative_bytes[key]? || 0_i64
+          cum = prev + sz
+          @macro_body_cumulative_bytes[key] = cum
+          calls = (@macro_body_call_count[key]? || 0) + 1
+          @macro_body_call_count[key] = calls
+
+          if sz >= @macro_body_stat_single_threshold || cum >= @macro_body_stat_cumulative_threshold
+            src_sz = @macro_source.try(&.bytesize) || 0
+            STDERR.puts "[MACRO_BODY_OUTPUT_STAT] macro_file=#{path.inspect} call_count=#{calls} single_bytes=#{sz} cumulative_bytes=#{cum} macro_source_bytesize=#{src_sz} #{key}"
+          end
+        end
+
         private def evaluate_macro_body(body_id : ExprId, context : Context) : String
           # Get MacroLiteral node (works with typed or legacy nodes)
           body_node = @arena[body_id]
           return "" unless body_node.is_a?(Frontend::MacroLiteralNode)
           pieces = body_node.pieces
+          pieces_count = pieces.size.to_i32
           source = @macro_source
           prev_span_end : Int32? = nil
 
           # Phase 87B-3: Use indexed loop to handle control flow jumps
-          String.build do |str|
+          result = String.build do |str|
             index = 0
 
             while index < pieces.size
@@ -1369,6 +1508,9 @@ module CrystalV2
               prev_span_end = span.end_offset if source && span
             end
           end
+
+          maybe_record_macro_body_output(body_id, body_node, pieces_count, result)
+          result
         end
 
         private def macro_piece_source(piece : MacroPiece) : String?
