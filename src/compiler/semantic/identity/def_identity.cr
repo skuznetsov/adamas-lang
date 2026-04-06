@@ -7,8 +7,9 @@
 # Must NOT use mangled names, HIR TypeRef, or DefNode.object_id
 # (object_id is implementation detail; DefIdentity is the contract).
 # AstToHir's phase0_body_infer_expr_index lookaside cache keys by
-# canonical-arena id + structural FNV mix of the DefNode, not by DefNode heap identity.
-# Cache hits are verified with def_matches_phase0_body_infer_identity?; misses are not cached as -1.
+# canonical-arena id + Phase0BodyInferLookasideKey (structural fields aligned with
+# def_matches_phase0_body_infer_identity?), not by DefNode heap identity.
+# Cache hits are still verified with def_matches_phase0_body_infer_identity?; misses are not cached as -1.
 
 module CrystalV2::Compiler::Semantic
   # Structured def identity — injective by construction.

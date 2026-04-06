@@ -410,6 +410,18 @@ module Crystal::HIR
     namespace_override : String?,
     type_param_generation : UInt64
 
+  # Lookaside key for phase0_body_infer_expr_index: mirrors the discriminating
+  # fields checked by def_matches_phase0_body_infer_identity? (no heap identity).
+  private record Phase0BodyInferLookasideKey,
+    span : CrystalV2::Compiler::Frontend::Span,
+    name : String,
+    receiver : String,
+    return_type : String,
+    is_abstract : UInt8,
+    visibility : CrystalV2::Compiler::Frontend::Visibility?,
+    param_count : Int32,
+    body_size : Int32
+
   # Main AST to HIR converter
   class AstToHir
     private def bootstrap_trace_puts(value = "") : Nil
@@ -2039,12 +2051,11 @@ module Crystal::HIR
     # Keyed by canonical DefIdentity{arena_id, expr_index} after final arena resolution.
     @phase0_body_infer_counts : Hash(CrystalV2::Compiler::Semantic::DefIdentity, Int32) = Hash(CrystalV2::Compiler::Semantic::DefIdentity, Int32).new(0)
     # Cached recovered expr_index for legacy body-infer call sites. Keyed by
-    # canonical arena object_id + structural FNV mix of DefNode (not heap
-    # object_id — see Semantic::DefIdentity contract). On hit, the cached index
-    # is confirmed with def_matches_phase0_body_infer_identity?; otherwise the
-    # entry is dropped. Value -1 is never returned from cache (would risk false
-    # miss on mix collision) — negative results are recomputed by linear scan.
-    @phase0_body_infer_expr_index_cache : Hash(Tuple(UInt64, UInt64), Int32) = {} of Tuple(UInt64, UInt64) => Int32
+    # canonical arena object_id + Phase0BodyInferLookasideKey (structural fields
+    # aligned with def_matches_phase0_body_infer_identity?, not heap identity;
+    # see Semantic::DefIdentity). On hit, def_matches is still re-checked.
+    # Misses (-1) are not cached.
+    @phase0_body_infer_expr_index_cache : Hash(Tuple(UInt64, Phase0BodyInferLookasideKey), Int32) = {} of Tuple(UInt64, Phase0BodyInferLookasideKey) => Int32
 
     # Phase 1: Identity dry-run tracker (side-channel, no behavior change)
     getter identity_tracker : CrystalV2::Compiler::Semantic::IdentityDryRunTracker?
@@ -10223,44 +10234,36 @@ module Crystal::HIR
       (safe_slice_to_string(left.not_nil!) || "") == (safe_slice_to_string(right.not_nil!) || "")
     end
 
-    # FNV-1a mix of fields mirrored by def_matches_phase0_body_infer_identity? (except
-    # per-param detail — span + name shape already disambiguate defs in one arena).
-    private def body_infer_node_identity_mix(node : CrystalV2::Compiler::Frontend::DefNode) : UInt64
-      mix = 2166136261_u64
-      sp = node.span
-      mix = mix &* 16777619_u64 ^ sp.start_offset.to_u64
-      mix = mix &* 16777619_u64 ^ sp.end_offset.to_u64
-      mix = mix &* 16777619_u64 ^ sp.start_line.to_u64
-      mix = mix &* 16777619_u64 ^ sp.end_line.to_u64
-      if nm = safe_slice_to_string(node.name)
-        nm.each_byte { |b| mix = mix &* 16777619_u64 ^ b.to_u64 }
-      end
-      if recv = node.receiver
-        if rs = safe_slice_to_string(recv)
-          rs.each_byte { |b| mix = mix &* 16777619_u64 ^ b.to_u64 }
-        end
-      end
-      if rt = node.return_type
-        if rts = safe_slice_to_string(rt)
-          rts.each_byte { |b| mix = mix &* 16777619_u64 ^ b.to_u64 }
-        end
-      end
-      params = node.params
-      mix = mix &* 16777619_u64 ^ (params ? params.size : 0).to_u64
-      body_sz = node.body.try(&.size) || -1
-      mix = mix &* 16777619_u64 ^ body_sz.to_u64
-      case ab = node.is_abstract
-      when true
-        mix = mix &* 16777619_u64 ^ 3_u64
-      when false
-        mix = mix &* 16777619_u64 ^ 2_u64
-      else
-        mix = mix &* 16777619_u64 ^ 1_u64
-      end
-      if vis = node.visibility
-        mix = mix &* 16777619_u64 ^ vis.hash.to_u64
-      end
-      mix
+    # is_abstract: 0 = nil, 1 = false, 2 = true (matches def identity checks).
+    private def phase0_body_infer_lookaside_key(node : CrystalV2::Compiler::Frontend::DefNode) : Phase0BodyInferLookasideKey
+      abs = case ab = node.is_abstract
+            when true
+              2_u8
+            when false
+              1_u8
+            else
+              0_u8
+            end
+      recv_txt = if r = node.receiver
+                   safe_slice_to_string(r) || ""
+                 else
+                   ""
+                 end
+      ret_txt = if t = node.return_type
+                  safe_slice_to_string(t) || ""
+                else
+                  ""
+                end
+      Phase0BodyInferLookasideKey.new(
+        span: node.span,
+        name: safe_slice_to_string(node.name) || "",
+        receiver: recv_txt,
+        return_type: ret_txt,
+        is_abstract: abs,
+        visibility: node.visibility,
+        param_count: node.params.try(&.size.to_i32) || 0,
+        body_size: node.body.try(&.size.to_i32) || -1,
+      )
     end
 
     private def phase0_body_infer_expr_index(
@@ -10278,7 +10281,7 @@ module Crystal::HIR
         end
       end
 
-      cache_key = {canonical_arena.object_id.to_u64, body_infer_node_identity_mix(node)}
+      cache_key = {canonical_arena.object_id.to_u64, phase0_body_infer_lookaside_key(node)}
       if cached = @phase0_body_infer_expr_index_cache[cache_key]?
         if cached >= 0
           hit_id = CrystalV2::Compiler::Frontend::ExprId.new(cached)
@@ -10305,7 +10308,6 @@ module Crystal::HIR
         i += 1
       end
 
-      # Omit caching -1: a later DefNode with the same FNV mix could match the arena.
       -1
     end
 
