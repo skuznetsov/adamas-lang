@@ -1236,6 +1236,8 @@ module Crystal::HIR
     @next_block_id : BlockId = 0_u32
     @next_scope_id : ScopeId = 0_u32
     @value_locations : Hash(ValueId, SourceLocation)
+    @scope_opening_locations : Hash(ScopeId, SourceLocation)
+    @scope_closing_locations : Hash(ScopeId, SourceLocation)
     @debug_local_bindings : Array(DebugLocalBinding)
     getter debug_local_bindings : Array(DebugLocalBinding)
     @param_ids : Array(ValueId)
@@ -1250,6 +1252,8 @@ module Crystal::HIR
       @scopes = [] of Scope
       @blocks = [] of Block
       @value_locations = {} of ValueId => SourceLocation
+      @scope_opening_locations = {} of ScopeId => SourceLocation
+      @scope_closing_locations = {} of ScopeId => SourceLocation
       @debug_local_bindings = [] of DebugLocalBinding
       @param_ids = [] of ValueId
       @param_type_ids = [] of TypeId
@@ -1330,6 +1334,22 @@ module Crystal::HIR
 
     def value_location(value_id : ValueId) : SourceLocation?
       @value_locations[value_id]?
+    end
+
+    def record_scope_opening(scope_id : ScopeId, location : SourceLocation) : Nil
+      @scope_opening_locations[scope_id] = location
+    end
+
+    def scope_opening_location?(scope_id : ScopeId) : SourceLocation?
+      @scope_opening_locations[scope_id]?
+    end
+
+    def record_scope_closing(scope_id : ScopeId, location : SourceLocation) : Nil
+      @scope_closing_locations[scope_id] = location
+    end
+
+    def scope_closing_location?(scope_id : ScopeId) : SourceLocation?
+      @scope_closing_locations[scope_id]?
     end
 
     def record_debug_local_binding(local_id : ValueId, value_id : ValueId, location : SourceLocation) : Nil

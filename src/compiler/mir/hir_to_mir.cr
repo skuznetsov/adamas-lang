@@ -911,9 +911,66 @@ module Crystal
         Crystal::MIR::SourceLocation.new(location.path, location.line, location.column)
       end
 
+      private def hir_scope_depth(hir_func : HIR::Function, sid : UInt32) : Int32
+        depth = 0
+        cur : HIR::ScopeId? = sid
+        while id = cur
+          depth += 1
+          cur = hir_func.get_scope(id).parent
+        end
+        depth
+      end
+
+      private def hir_innermost_scope_for_source_line(hir_func : HIR::Function, loc : HIR::SourceLocation) : UInt32?
+        best : UInt32? = nil
+        best_depth = -1
+        hir_func.scopes.each do |scope|
+          next if scope.kind == HIR::ScopeKind::Function
+          ol = hir_func.scope_opening_location?(scope.id) || next
+          cl = hir_func.scope_closing_location?(scope.id) || next
+          next unless ol.path == loc.path && cl.path == loc.path
+          next unless ol.line <= loc.line && loc.line <= cl.line
+          depth = hir_scope_depth(hir_func, scope.id)
+          if depth > best_depth
+            best_depth = depth
+            best = scope.id
+          end
+        end
+        best
+      end
+
+      private def hir_effective_lexical_scope_for_debug(hir_func : HIR::Function, hir_id : HIR::ValueId) : UInt32?
+        hir_func.blocks.each do |blk|
+          blk.instructions.each do |inst|
+            next unless inst.id == hir_id
+            unless hir_func.get_scope(blk.scope).kind == HIR::ScopeKind::Function
+              return blk.scope
+            end
+            break
+          end
+        end
+        loc = hir_func.value_location(hir_id) || return nil
+        hir_innermost_scope_for_source_line(hir_func, loc)
+      end
+
       private def record_mir_value_location(hir_func : HIR::Function, hir_id : HIR::ValueId, mir_func : Crystal::MIR::Function, mir_id : ValueId) : Nil
         if loc = hir_func.value_location(hir_id)
           mir_func.record_value_location(mir_id, to_mir_source_location(loc))
+        end
+        if lex = hir_effective_lexical_scope_for_debug(hir_func, hir_id)
+          mir_func.record_value_lexical_scope(mir_id, lex)
+        end
+      end
+
+      private def propagate_debug_scope_metadata(hir_func : HIR::Function, mir_func : Crystal::MIR::Function) : Nil
+        hir_func.scopes.each do |scope|
+          next if scope.kind == HIR::ScopeKind::Function
+          if loc = hir_func.scope_opening_location?(scope.id)
+            mir_func.record_debug_scope_metadata(scope.id, scope.parent, to_mir_source_location(loc))
+          end
+          if cl = hir_func.scope_closing_location?(scope.id)
+            mir_func.record_debug_scope_closing(scope.id, to_mir_source_location(cl))
+          end
         end
       end
 
@@ -921,7 +978,8 @@ module Crystal
         hir_func.debug_local_bindings.each do |binding|
           next unless slot_id = @value_map[binding.local_id]?
           next unless value_id = @value_map[binding.value_id]?
-          mir_func.record_debug_local_binding(slot_id, value_id, to_mir_source_location(binding.location))
+          lex = hir_effective_lexical_scope_for_debug(hir_func, binding.local_id)
+          mir_func.record_debug_local_binding(slot_id, value_id, to_mir_source_location(binding.location), lex)
         end
       end
 
@@ -1163,6 +1221,7 @@ module Crystal
         mir_func.compute_predecessors
         STDERR.puts "[MIR_LOWER] compute_predecessors done" if mir_lower_trace?
 
+        propagate_debug_scope_metadata(hir_func, mir_func)
         propagate_debug_local_bindings(hir_func, mir_func)
 
         @stats.functions_lowered += 1

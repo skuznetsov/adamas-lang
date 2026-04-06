@@ -1798,7 +1798,8 @@ module Crystal::MIR
   record DebugLocalBinding,
     slot_id : ValueId,
     value_id : ValueId,
-    location : SourceLocation
+    location : SourceLocation,
+    lexical_scope_id : UInt32? = nil
 
   class Function
     @id : FunctionId
@@ -1809,8 +1810,12 @@ module Crystal::MIR
     @entry_block : BlockId
     @source_location : SourceLocation?
     @value_locations : Hash(ValueId, SourceLocation)
+    @value_lexical_scopes : Hash(ValueId, UInt32)
     @debug_local_names : Hash(ValueId, String)
     @debug_local_bindings : Array(DebugLocalBinding)
+    @debug_scope_parent : Hash(UInt32, UInt32?)
+    @debug_scope_opening : Hash(UInt32, SourceLocation)
+    @debug_scope_closing : Hash(UInt32, SourceLocation)
     @slab_frame : Bool
 
     getter id : FunctionId
@@ -1832,8 +1837,12 @@ module Crystal::MIR
       @block_map = {} of BlockId => BasicBlock
       @source_location = nil
       @value_locations = {} of ValueId => SourceLocation
+      @value_lexical_scopes = {} of ValueId => UInt32
       @debug_local_names = {} of ValueId => String
       @debug_local_bindings = [] of DebugLocalBinding
+      @debug_scope_parent = {} of UInt32 => UInt32?
+      @debug_scope_opening = {} of UInt32 => SourceLocation
+      @debug_scope_closing = {} of UInt32 => SourceLocation
       @slab_frame = false
 
       # Create entry block
@@ -1858,8 +1867,16 @@ module Crystal::MIR
       @value_locations[value_id] = location
     end
 
+    def record_value_lexical_scope(value_id : ValueId, hir_scope_id : UInt32) : Nil
+      @value_lexical_scopes[value_id] = hir_scope_id
+    end
+
     def value_location(value_id : ValueId) : SourceLocation?
       @value_locations[value_id]?
+    end
+
+    def value_lexical_scope(value_id : ValueId) : UInt32?
+      @value_lexical_scopes[value_id]?
     end
 
     def record_debug_local_name(value_id : ValueId, name : String) : Nil
@@ -1874,11 +1891,32 @@ module Crystal::MIR
       @debug_local_bindings
     end
 
-    def record_debug_local_binding(slot_id : ValueId, value_id : ValueId, location : SourceLocation) : Nil
+    def record_debug_local_binding(slot_id : ValueId, value_id : ValueId, location : SourceLocation, lexical_scope_id : UInt32? = nil) : Nil
       if last = @debug_local_bindings.last?
-        return if last.slot_id == slot_id && last.value_id == value_id && last.location == location
+        return if last.slot_id == slot_id && last.value_id == value_id && last.location == location && last.lexical_scope_id == lexical_scope_id
       end
-      @debug_local_bindings << DebugLocalBinding.new(slot_id, value_id, location)
+      @debug_local_bindings << DebugLocalBinding.new(slot_id, value_id, location, lexical_scope_id)
+    end
+
+    def record_debug_scope_metadata(scope_id : UInt32, parent_id : UInt32?, opening : SourceLocation) : Nil
+      @debug_scope_parent[scope_id] = parent_id
+      @debug_scope_opening[scope_id] = opening
+    end
+
+    def record_debug_scope_closing(scope_id : UInt32, closing : SourceLocation) : Nil
+      @debug_scope_closing[scope_id] = closing
+    end
+
+    def debug_scope_parent?(scope_id : UInt32) : UInt32?
+      @debug_scope_parent[scope_id]?
+    end
+
+    def debug_scope_opening?(scope_id : UInt32) : SourceLocation?
+      @debug_scope_opening[scope_id]?
+    end
+
+    def debug_scope_closing?(scope_id : UInt32) : SourceLocation?
+      @debug_scope_closing[scope_id]?
     end
 
     def create_block : BlockId

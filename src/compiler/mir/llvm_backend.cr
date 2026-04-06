@@ -556,6 +556,9 @@ module Crystal::MIR
     GLOBAL_EXPR_ID_SPAN   = 25_000_000
     SCOPE_ID_BASE         = 700_000_000
     SCOPE_ID_SPAN         = 50_000_000
+    # Must not overlap LOCATION_ID_BASE (900M + 250M span) — shared stable_metadata_id space.
+    LEXICAL_BLOCK_ID_BASE = 1_260_000_000
+    LEXICAL_BLOCK_ID_SPAN = 30_000_000
     NAMESPACE_ID_BASE     = 750_000_000
     NAMESPACE_ID_SPAN     = 50_000_000
     STATIC_MEMBER_ID_BASE = 800_000_000
@@ -639,11 +642,17 @@ module Crystal::MIR
         end
       end
 
+      bound_debug_slots = {} of ValueId => Bool
+      func.debug_local_bindings.each do |b|
+        bound_debug_slots[b.slot_id] = true
+      end
+
       metadata = String.build do |io|
         io << "!#{subroutine_type_id} = !DISubroutineType(types: !{#{subroutine_type_elements(func)}})\n"
         io << "!#{subprogram_id} = distinct !DISubprogram(name: \"#{escape_metadata_string(func.name)}\", linkageName: \"#{escape_metadata_string(mangled_name)}\", scope: !#{function_file_id}, file: !#{function_file_id}, line: #{positive_line(function_loc.line)}, type: !#{subroutine_type_id}, isLocal: false, isDefinition: true, scopeLine: #{positive_line(function_loc.line)}, unit: !#{COMPILE_UNIT_ID})\n"
 
         scope_cache = {} of String => Int32
+        lexical_scope_cache = {} of String => Int32
         location_cache = {} of String => Int32
         local_var_ids = {} of ValueId => Int32
         declared_storage_bindings = Set(String).new
@@ -681,6 +690,9 @@ module Crystal::MIR
         func.blocks.each do |block|
           block.instructions.each do |inst|
             next unless inst_loc = func.value_location(inst.id)
+            inst_lex_meta = if ls = func.value_lexical_scope(inst.id)
+                              lexical_scope_metadata_id(io, lexical_scope_cache, subprogram_id, func, ls)
+                            end
             inst_location_id = emit_location_definition(
               io,
               location_cache,
@@ -689,11 +701,14 @@ module Crystal::MIR
               subprogram_id,
               function_loc.file,
               inst_loc,
-              "value:#{inst.id}"
+              "value:#{inst.id}",
+              nil,
+              inst_lex_meta
             )
             value_locations[inst.id] = inst_location_id
 
             if local_name = func.debug_local_name(inst.id)
+              next if bound_debug_slots[inst.id]?
               next unless inst.is_a?(Alloc)
               next unless inst.strategy == MemoryStrategy::Stack
               next if inst.alloc_type == TypeRef::VOID
@@ -716,13 +731,17 @@ module Crystal::MIR
           next unless slot_inst.strategy == MemoryStrategy::Stack
           next if slot_inst.alloc_type == TypeRef::VOID
 
+          lex_scope_meta = if ms = binding.lexical_scope_id
+                             lexical_scope_metadata_id(io, lexical_scope_cache, subprogram_id, func, ms)
+                           end
+
           var_id = local_var_ids[binding.slot_id]? || begin
             slot_loc = func.value_location(binding.slot_id) || binding.location
             local_debug_type_id = storage_debug_type_id(slot_inst.alloc_type)
             file_id = register_file(slot_loc.file)
-            scope_id = scope_id_for(io, scope_cache, subprogram_id, function_loc.file, slot_loc.file)
+            scope_for_var = lex_scope_meta || scope_id_for(io, scope_cache, subprogram_id, function_loc.file, slot_loc.file)
             generated_var_id = local_variable_id(func, binding.slot_id)
-            io << "!#{generated_var_id} = !DILocalVariable(name: \"#{escape_metadata_string(local_name)}\", scope: !#{scope_id}, file: !#{file_id}, line: #{positive_line(slot_loc.line)}, type: !#{local_debug_type_id})\n"
+            io << "!#{generated_var_id} = !DILocalVariable(name: \"#{escape_metadata_string(local_name)}\", scope: !#{scope_for_var}, file: !#{file_id}, line: #{positive_line(slot_loc.line)}, type: !#{local_debug_type_id})\n"
             local_var_ids[binding.slot_id] = generated_var_id
             generated_var_id
           end
@@ -734,7 +753,9 @@ module Crystal::MIR
             subprogram_id,
             function_loc.file,
             binding.location,
-            "local-binding:#{binding.slot_id}:#{binding.value_id}:#{idx}"
+            "local-binding:#{binding.slot_id}:#{binding.value_id}:#{idx}",
+            nil,
+            lex_scope_meta
           )
           use_shadow_slot = shadow_slot_debug_local?(slot_inst.alloc_type)
           if binding.value_id < func.params.size
@@ -1095,6 +1116,42 @@ module Crystal::MIR
       end
     end
 
+    private def lexical_scope_metadata_id(
+      io : IO,
+      lexical_cache : Hash(String, Int32),
+      subprogram_id : Int32,
+      func : Function,
+      mir_scope_id : UInt32,
+    ) : Int32
+      cache_key = "#{subprogram_id}:lex:#{mir_scope_id}"
+      if existing = lexical_cache[cache_key]?
+        return existing
+      end
+
+      unless opening = func.debug_scope_opening?(mir_scope_id)
+        lexical_cache[cache_key] = subprogram_id
+        return subprogram_id
+      end
+
+      parent_id = func.debug_scope_parent?(mir_scope_id)
+      parent_meta = case parent_id
+                    when nil
+                      subprogram_id
+                    else
+                      if func.debug_scope_opening?(parent_id).nil?
+                        subprogram_id
+                      else
+                        lexical_scope_metadata_id(io, lexical_cache, subprogram_id, func, parent_id)
+                      end
+                    end
+
+      block_id = stable_metadata_id("lexblock:#{subprogram_id}:#{mir_scope_id}", LEXICAL_BLOCK_ID_BASE, LEXICAL_BLOCK_ID_SPAN)
+      file_id = register_file(opening.file)
+      io << "!#{block_id} = !DILexicalBlock(scope: !#{parent_meta}, file: !#{file_id}, line: #{positive_line(opening.line)}, column: #{positive_column(opening.column)})\n"
+      lexical_cache[cache_key] = block_id
+      block_id
+    end
+
     private def scope_id_for(io : IO, cache : Hash(String, Int32), subprogram_id : Int32, function_file : String, file : String) : Int32
       normalized = normalize_filename(file)
       return subprogram_id if normalized == normalize_filename(function_file)
@@ -1116,12 +1173,14 @@ module Crystal::MIR
       function_file : String,
       location : SourceLocation,
       salt : String,
-      forced_id : Int32? = nil
+      forced_id : Int32? = nil,
+      scope_override : Int32? = nil,
     ) : Int32
       normalized_file = normalize_filename(location.file)
-      key = "#{normalized_file}:#{positive_line(location.line)}:#{positive_column(location.column)}:#{salt}"
+      scope_key = scope_override ? "s#{scope_override}" : "s0"
+      key = "#{normalized_file}:#{positive_line(location.line)}:#{positive_column(location.column)}:#{salt}:#{scope_key}"
       location_cache[key] ||= begin
-        scope_id = scope_id_for(io, scope_cache, subprogram_id, function_file, normalized_file)
+        scope_id = scope_override || scope_id_for(io, scope_cache, subprogram_id, function_file, normalized_file)
         loc_id = forced_id || unique_location_id(
           assigned_location_ids,
           subprogram_id,

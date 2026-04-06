@@ -102,13 +102,37 @@ module Crystal::HIR
       @locals_snapshots << @locals.dup
       @debug_local_snapshots << @debug_local_ids.dup
       scope_id = @function.create_scope(kind, current_scope)
+      unless kind == ScopeKind::Function
+        if loc = @current_source_location
+          @function.record_scope_opening(scope_id, loc)
+        end
+      end
       @scope_stack << scope_id
       scope_id
+    end
+
+    private def max_source_line_in_hir_scope(scope_id : ScopeId) : Int32
+      max_ln = 0
+      @function.blocks.each do |blk|
+        next unless blk.scope == scope_id
+        blk.instructions.each do |inst|
+          next unless loc = @function.value_location(inst.id)
+          max_ln = loc.line if loc.line > max_ln
+        end
+      end
+      max_ln
     end
 
     # Pop scope
     def pop_scope : ScopeId
       scope_id = @scope_stack.pop
+      unless @function.get_scope(scope_id).kind == ScopeKind::Function
+        if ol = @function.scope_opening_location?(scope_id)
+          mx = max_source_line_in_hir_scope(scope_id)
+          close_line = mx >= ol.line ? mx : ol.line
+          @function.record_scope_closing(scope_id, SourceLocation.new(ol.path, close_line, 1))
+        end
+      end
       if snapshot = @locals_snapshots.pop?
         @locals = snapshot
       end
