@@ -6,6 +6,8 @@
 # Used as part of DefInstanceKey for semantic caching.
 # Must NOT use mangled names, HIR TypeRef, or DefNode.object_id
 # (object_id is implementation detail; DefIdentity is the contract).
+# AstToHir's phase0_body_infer_expr_index lookaside cache keys by
+# canonical-arena id + structural FNV mix of the DefNode, not by DefNode heap identity.
 
 module CrystalV2::Compiler::Semantic
   # Structured def identity — injective by construction.
