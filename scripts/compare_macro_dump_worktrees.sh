@@ -4,7 +4,11 @@
 # diff with macro_body_output_stats_tool.py (--span-key if paths differ).
 #
 # Usage (from repo root):
-#   scripts/compare_macro_dump_worktrees.sh COMMIT_A COMMIT_B /tmp/carrier.cr
+#   scripts/compare_macro_dump_worktrees.sh COMMIT_A COMMIT_B PATH_TO_CARRIER.cr
+#
+# Carriers:
+#   scripts/macro_dump_heavy_carrier.cr — more macro volume than a one-liner
+#   /tmp/macro_oracle_carrier.cr — minimal (prelude only)
 #
 # Requires: crystal, python3, git worktree support, ~30s+ compile per commit.
 set -euo pipefail
