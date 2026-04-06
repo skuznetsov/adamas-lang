@@ -550,10 +550,22 @@ module Crystal::MIR
     PARAM_VAR_ID_BASE     = 500_000_000
     LOCAL_VAR_ID_BASE     = 550_000_000
     LOCAL_VAR_ID_SPAN     = 100_000_000
+    GLOBAL_VAR_ID_BASE    = 650_000_000
+    GLOBAL_VAR_ID_SPAN    = 25_000_000
+    GLOBAL_EXPR_ID_BASE   = 675_000_000
+    GLOBAL_EXPR_ID_SPAN   = 25_000_000
     SCOPE_ID_BASE         = 700_000_000
-    SCOPE_ID_SPAN         = 100_000_000
+    SCOPE_ID_SPAN         = 50_000_000
+    NAMESPACE_ID_BASE     = 750_000_000
+    NAMESPACE_ID_SPAN     = 50_000_000
+    STATIC_MEMBER_ID_BASE = 800_000_000
+    STATIC_MEMBER_ID_SPAN = 50_000_000
+    STATIC_OWNER_ID_BASE  = 850_000_000
+    STATIC_OWNER_ID_SPAN  = 50_000_000
     LOCATION_ID_BASE      = 900_000_000
     LOCATION_ID_SPAN      = 250_000_000
+    CONST_TYPE_ID_BASE    = 1_200_000_000
+    CONST_TYPE_ID_SPAN    = 50_000_000
     BASIC_TYPE_ID_BASE    = 1_300_000_000
     COMPOSITE_BODY_ID_BASE = 1_400_000_000
     POINTER_TYPE_ID_BASE  = 1_500_000_000
@@ -568,6 +580,19 @@ module Crystal::MIR
       @assigned_location_ids = {} of Int32 => String
       @debug_type_ids = {} of TypeRef => Int32
       @type_definitions = {} of Int32 => String
+      @namespace_ids = {} of String => Int32
+      @namespace_definitions = {} of Int32 => String
+      @global_debug_definitions = {} of Int32 => String
+      @global_expression_ids = [] of Int32
+      @retained_type_ids = [] of Int32
+      @static_owner_ids = {} of String => Int32
+      @static_owner_names = {} of Int32 => String
+      @static_owner_tags = {} of Int32 => String
+      @static_owner_sizes = {} of Int32 => UInt64
+      @static_owner_alignments = {} of Int32 => UInt64
+      @static_owner_file_ids = {} of Int32 => Int32
+      @static_owner_lines = {} of Int32 => Int32
+      @static_owner_member_ids = {} of Int32 => Array(Int32)
       @building_type_ids = Set(UInt32).new
       register_file(@module.source_file || "unknown.cr")
     end
@@ -578,6 +603,20 @@ module Crystal::MIR
 
     def register_external_file(filename : String) : Nil
       register_file(filename)
+    end
+
+    def global_debug_attachment(global : GlobalVar, linkage_name : String, constant_literal : Float64 | Int64 | Nil = nil) : String
+      debug_name = global.debug_name
+      location = global.source_location
+      return "" unless debug_name && location
+
+      if expr_id = register_static_constant_debug_attachment(debug_name, linkage_name, global.type, location, constant_literal)
+        return ", !dbg !#{expr_id}"
+      end
+
+      literal = constant_literal || global.initial_value
+      expr_id = register_global_variable(debug_name, linkage_name, global.type, location, literal)
+      ", !dbg !#{expr_id}"
     end
 
     def function_state(func : Function, mangled_name : String, param_bindings : Array(String)) : DwarfFunctionState
@@ -777,16 +816,36 @@ module Crystal::MIR
       compile_unit_file_id = register_file(@module.source_file || "unknown.cr")
 
       String.build do |io|
+        retained_types_ref = if @retained_type_ids.empty?
+                               ""
+                             else
+                               refs = @retained_type_ids.uniq.sort.map { |id| "!#{id}" }.join(", ")
+                               ", retainedTypes: !{#{refs}}"
+                             end
+        globals_ref = if @global_expression_ids.empty?
+                        ""
+                      else
+                        refs = @global_expression_ids.uniq.sort.map { |id| "!#{id}" }.join(", ")
+                        ", globals: !{#{refs}}"
+                      end
         io << "\n!llvm.dbg.cu = !{!#{COMPILE_UNIT_ID}}\n"
         io << "!llvm.module.flags = !{!#{MODULE_FLAG_DWARF_ID}, !#{MODULE_FLAG_DEBUG_ID}, !#{MODULE_FLAG_WCHAR_ID}}\n"
-        io << "!#{COMPILE_UNIT_ID} = distinct !DICompileUnit(language: DW_LANG_C99, file: !#{compile_unit_file_id}, producer: \"crystal_v2\", isOptimized: false, emissionKind: FullDebug)\n"
-        io << "!#{MODULE_FLAG_DWARF_ID} = !{i32 7, !\"Dwarf Version\", i32 4}\n"
+        io << "!#{COMPILE_UNIT_ID} = distinct !DICompileUnit(language: DW_LANG_C_plus_plus_14, file: !#{compile_unit_file_id}, producer: \"crystal_v2\", isOptimized: false, emissionKind: FullDebug#{retained_types_ref}#{globals_ref})\n"
+        io << "!#{MODULE_FLAG_DWARF_ID} = !{i32 7, !\"Dwarf Version\", i32 5}\n"
         io << "!#{MODULE_FLAG_DEBUG_ID} = !{i32 2, !\"Debug Info Version\", i32 3}\n"
         io << "!#{MODULE_FLAG_WCHAR_ID} = !{i32 1, !\"wchar_size\", i32 4}\n"
         io << "!#{EXPRESSION_ID} = !DIExpression()\n"
 
         @file_definitions.keys.sort.each do |id|
           io << @file_definitions[id]
+        end
+
+        @namespace_definitions.keys.sort.each do |id|
+          io << @namespace_definitions[id]
+        end
+
+        @global_debug_definitions.keys.sort.each do |id|
+          io << @global_debug_definitions[id]
         end
 
         @type_definitions.keys.sort.each do |id|
@@ -805,6 +864,201 @@ module Crystal::MIR
 
     private def local_variable_id(func : Function, slot_id : ValueId) : Int32
       stable_metadata_id("local:#{func.id}:#{slot_id}", LOCAL_VAR_ID_BASE, LOCAL_VAR_ID_SPAN)
+    end
+
+    private def register_global_variable(
+      display_name : String,
+      linkage_name : String,
+      type_ref : TypeRef,
+      location : SourceLocation,
+      constant_literal : Float64 | Int64 | Nil = nil
+    ) : Int32
+      file_id = register_file(location.file)
+      type_id = debug_type_id(type_ref)
+      variable_id = stable_metadata_id("global:#{linkage_name}", GLOBAL_VAR_ID_BASE, GLOBAL_VAR_ID_SPAN)
+      expression_id = stable_metadata_id("global-expr:#{linkage_name}", GLOBAL_EXPR_ID_BASE, GLOBAL_EXPR_ID_SPAN)
+      namespace_parts, local_name = split_top_level_namespace_parts(display_name)
+      declaration_id = register_static_member_declaration(namespace_parts, local_name, display_name, type_ref, location, constant_literal)
+      scope_ref = "!#{COMPILE_UNIT_ID}"
+      declaration_ref = ""
+      unless declaration_id
+        scope_ref = if namespace_id = register_namespace_chain(namespace_parts)
+                      "!#{namespace_id}"
+                    else
+                      "!#{COMPILE_UNIT_ID}"
+                    end
+      else
+        declaration_ref = ", declaration: !#{declaration_id}"
+      end
+
+      @global_debug_definitions[variable_id] ||= "!#{variable_id} = distinct !DIGlobalVariable(name: \"#{escape_metadata_string(local_name)}\", linkageName: \"#{escape_metadata_string(linkage_name)}\", scope: #{scope_ref}, file: !#{file_id}, line: #{positive_line(location.line)}, type: !#{type_id}, isLocal: false, isDefinition: true#{declaration_ref})\n"
+      @global_debug_definitions[expression_id] ||= "!#{expression_id} = !DIGlobalVariableExpression(var: !#{variable_id}, expr: !#{EXPRESSION_ID})\n"
+      @global_expression_ids << expression_id unless @global_expression_ids.includes?(expression_id)
+      expression_id
+    end
+
+    private def register_static_member_declaration(
+      owner_parts : Array(String),
+      local_name : String,
+      display_name : String,
+      type_ref : TypeRef,
+      location : SourceLocation,
+      constant_literal : Float64 | Int64 | Nil = nil
+    ) : Int32?
+      return nil if owner_parts.empty?
+
+      owner_name = owner_parts.join("::")
+      owner_type = @module.type_registry.get_by_name(owner_name)
+      return nil unless owner_type
+
+      owner_ref = TypeRef.new(owner_type.id)
+      return nil if primitive_debug_type_definition(owner_ref)
+      return nil if owner_type.kind.pointer?
+
+      owner_id = register_static_owner(owner_name, owner_type, location)
+      member_id = stable_metadata_id("static-member:#{display_name}", STATIC_MEMBER_ID_BASE, STATIC_MEMBER_ID_SPAN)
+      file_id = register_file(location.file)
+      member_type_id = static_member_debug_type_id(local_name, type_ref)
+      member_flags = static_member_di_flags(@static_owner_tags[owner_id])
+      extra_data_ref = static_member_extra_data(local_name, type_ref, constant_literal)
+      @type_definitions[member_id] ||= "!#{member_id} = !DIDerivedType(tag: DW_TAG_variable, name: \"#{escape_metadata_string(local_name)}\", scope: !#{owner_id}, file: !#{file_id}, line: #{positive_line(location.line)}, baseType: !#{member_type_id}, flags: #{member_flags}#{extra_data_ref})\n"
+
+      member_ids = @static_owner_member_ids[owner_id]
+      unless member_ids.includes?(member_id)
+        member_ids << member_id
+        render_static_owner_definition(owner_id)
+      end
+
+      @retained_type_ids << owner_id unless @retained_type_ids.includes?(owner_id)
+      member_id
+    end
+
+    private def register_static_constant_debug_attachment(
+      display_name : String,
+      linkage_name : String,
+      type_ref : TypeRef,
+      location : SourceLocation,
+      constant_literal : Float64 | Int64 | Nil
+    ) : Int32?
+      return nil unless constant_literal
+
+      owner_parts, local_name = split_top_level_namespace_parts(display_name)
+      return nil if owner_parts.empty?
+      return nil if local_name.starts_with?("@@")
+
+      return nil unless register_static_member_declaration(owner_parts, local_name, display_name, type_ref, location, constant_literal)
+      register_global_variable(linkage_name, linkage_name, type_ref, location)
+    end
+
+    private def register_static_owner(owner_name : String, owner_type : Type, location : SourceLocation) : Int32
+      owner_id = @static_owner_ids[owner_name]? || begin
+        id = stable_metadata_id("static-owner:#{owner_name}", STATIC_OWNER_ID_BASE, STATIC_OWNER_ID_SPAN)
+        @static_owner_ids[owner_name] = id
+        @static_owner_names[id] = owner_name
+        @static_owner_tags[id] = static_owner_tag(owner_type)
+        @static_owner_sizes[id] = static_owner_size_bits(owner_type)
+        @static_owner_alignments[id] = static_owner_align_bits(owner_type)
+        @static_owner_file_ids[id] = register_file(location.file)
+        @static_owner_lines[id] = positive_line(location.line)
+        @static_owner_member_ids[id] = [] of Int32
+        id
+      end
+
+      current_line = @static_owner_lines[owner_id]
+      candidate_line = positive_line(location.line)
+      if candidate_line < current_line
+        @static_owner_file_ids[owner_id] = register_file(location.file)
+        @static_owner_lines[owner_id] = candidate_line
+      end
+
+      render_static_owner_definition(owner_id)
+      owner_id
+    end
+
+    private def render_static_owner_definition(owner_id : Int32) : Nil
+      owner_name = @static_owner_names[owner_id]
+      owner_tag = @static_owner_tags[owner_id]
+      file_id = @static_owner_file_ids[owner_id]
+      line = @static_owner_lines[owner_id]
+      size_bits = @static_owner_sizes[owner_id]
+      align_bits = @static_owner_alignments[owner_id]
+      member_ids = @static_owner_member_ids[owner_id]
+      flags_ref = owner_tag == "DW_TAG_union_type" ? "" : ", flags: DIFlagTypePassByValue"
+      identifier_ref = ", identifier: \"#{escape_metadata_string("crystal.static.#{@type_mapper.mangle_name(owner_name)}")}\""
+      @type_definitions[owner_id] = "!#{owner_id} = distinct !DICompositeType(tag: #{owner_tag}, name: \"#{escape_metadata_string(owner_name)}\", file: !#{file_id}, line: #{line}, size: #{size_bits}, align: #{align_bits}#{flags_ref}, elements: !{#{member_ids.map { |id| "!#{id}" }.join(", ")}}#{identifier_ref})\n"
+    end
+
+    private def static_owner_tag(owner_type : Type) : String
+      case owner_type.kind
+      when TypeKind::Struct, TypeKind::Tuple
+        "DW_TAG_structure_type"
+      when TypeKind::Union
+        "DW_TAG_union_type"
+      else
+        "DW_TAG_class_type"
+      end
+    end
+
+    private def static_owner_size_bits(owner_type : Type) : UInt64
+      size_bits = owner_type.size.to_u64 * 8_u64
+      size_bits == 0 ? 8_u64 : size_bits
+    end
+
+    private def static_owner_align_bits(owner_type : Type) : UInt64
+      align_bits = owner_type.alignment.to_u64 * 8_u64
+      align_bits == 0 ? 8_u64 : align_bits
+    end
+
+    private def static_member_di_flags(owner_tag : String) : String
+      owner_tag == "DW_TAG_class_type" ? "DIFlagPublic | DIFlagStaticMember" : "DIFlagStaticMember"
+    end
+
+    private def register_namespace_chain(parts : Array(String)) : Int32?
+      return nil if parts.empty?
+
+      parent_scope = nil.as(Int32?)
+      path = ""
+      parts.each do |part|
+        path = path.empty? ? part : "#{path}::#{part}"
+        namespace_id = @namespace_ids[path]? || begin
+          id = stable_metadata_id("namespace:#{path}", NAMESPACE_ID_BASE, NAMESPACE_ID_SPAN)
+          scope_ref = parent_scope ? "!#{parent_scope}" : "null"
+          @namespace_definitions[id] ||= "!#{id} = !DINamespace(name: \"#{escape_metadata_string(part)}\", scope: #{scope_ref})\n"
+          @namespace_ids[path] = id
+          id
+        end
+        parent_scope = namespace_id
+      end
+
+      parent_scope
+    end
+
+    private def split_top_level_namespace_parts(name : String) : Tuple(Array(String), String)
+      parts = [] of String
+      start = 0
+      depth = 0
+      idx = 0
+      while idx < name.bytesize
+        ch = name.byte_at(idx)
+        case ch
+        when '('.ord
+          depth += 1
+        when ')'.ord
+          depth -= 1 if depth > 0
+        end
+
+        if depth == 0 && ch == ':'.ord && idx + 1 < name.bytesize && name.byte_at(idx + 1) == ':'.ord
+          parts << name[start, idx - start]
+          idx += 2
+          start = idx
+          next
+        end
+
+        idx += 1
+      end
+
+      local_name = name[start..-1]
+      {parts, local_name}
     end
 
     private def subroutine_type_elements(func : Function) : String
@@ -932,6 +1186,53 @@ module Crystal::MIR
       debug_id = debug_type_id(type_ref)
       return debug_id unless inline_storage_debug_type?(type_ref)
       COMPOSITE_BODY_ID_BASE + type_ref.id.to_i32
+    end
+
+    private def static_member_debug_type_id(local_name : String, type_ref : TypeRef) : Int32
+      return debug_type_id(type_ref) if local_name.starts_with?("@@")
+      const_debug_type_id(type_ref)
+    end
+
+    private def static_member_extra_data(local_name : String, type_ref : TypeRef, constant_literal : Float64 | Int64 | Nil) : String
+      return "" if local_name.starts_with?("@@")
+      return "" unless literal = constant_literal
+
+      llvm_type = @type_mapper.llvm_type(type_ref)
+      case literal
+      when Int64
+        case llvm_type
+        when "i1", "i8", "i16", "i32", "i64", "i128"
+          ", extraData: #{llvm_type} #{literal}"
+        when "float"
+          ", extraData: float #{format_debug_float_literal(literal.to_f64)}"
+        when "double"
+          ", extraData: double #{format_debug_float_literal(literal.to_f64)}"
+        else
+          ""
+        end
+      when Float64
+        case llvm_type
+        when "float"
+          ", extraData: float #{format_debug_float_literal(literal)}"
+        when "double"
+          ", extraData: double #{format_debug_float_literal(literal)}"
+        else
+          ""
+        end
+      else
+        ""
+      end
+    end
+
+    private def format_debug_float_literal(value : Float64) : String
+      sprintf("%.6e", value)
+    end
+
+    private def const_debug_type_id(type_ref : TypeRef) : Int32
+      base_type_id = debug_type_id(type_ref)
+      const_id = stable_metadata_id("const-type:#{type_ref.id}", CONST_TYPE_ID_BASE, CONST_TYPE_ID_SPAN)
+      @type_definitions[const_id] ||= "!#{const_id} = !DIDerivedType(tag: DW_TAG_const_type, baseType: !#{base_type_id})\n"
+      const_id
     end
 
     private def inline_storage_debug_type?(type_ref : TypeRef) : Bool
@@ -1585,7 +1886,14 @@ module Crystal::MIR
     @reuse_function_block_buffer : Bool
     @function_block_output : IO::Memory
 
-    property emit_debug_info : Bool = true
+    def emit_debug_info : Bool
+      @debug_emit_anchors
+    end
+
+    def emit_debug_info=(enabled : Bool) : Bool
+      @debug_emit_anchors = enabled
+    end
+
     property emit_type_metadata : Bool = true
     property emit_tsan : Bool = false  # Thread Sanitizer instrumentation
     property progress : Bool = false   # Print progress during generation
@@ -3567,11 +3875,12 @@ module Crystal::MIR
           actual_name = ".global.#{mangled_name}"
           @global_name_mapping[mangled_name] = actual_name
         end
+        debug_attachment = @debug_emit_anchors ? @dwarf_debug.global_debug_attachment(global, actual_name, const_val) : ""
         # Use zeroinitializer for struct/union types, numeric 0 for primitives
         if llvm_type.starts_with?('%') || llvm_type.starts_with?('{')
-          emit_raw "@#{actual_name} = global #{llvm_type} zeroinitializer\n"
+          emit_raw "@#{actual_name} = global #{llvm_type} zeroinitializer#{debug_attachment}\n"
         elsif llvm_type == "ptr"
-          emit_raw "@#{actual_name} = global #{llvm_type} null\n"
+          emit_raw "@#{actual_name} = global #{llvm_type} null#{debug_attachment}\n"
         elsif llvm_type == "float" || llvm_type == "double"
           if const_val && initial == 0_i64
             float_value = const_val.is_a?(Float64) ? const_val.to_s : const_val.to_f64.to_s
@@ -3580,13 +3889,13 @@ module Crystal::MIR
           end
           float_value = "0.0" if float_value == "0"
           float_value = "#{float_value}.0" if float_value.matches?(/^-?\d+$/)
-          emit_raw "@#{actual_name} = global #{llvm_type} #{float_value}\n"
+          emit_raw "@#{actual_name} = global #{llvm_type} #{float_value}#{debug_attachment}\n"
         else
           if const_val && initial == 0_i64
             int_value = const_val.is_a?(Int64) ? const_val : const_val.to_i64
-            emit_raw "@#{actual_name} = global #{llvm_type} #{int_value}\n"
+            emit_raw "@#{actual_name} = global #{llvm_type} #{int_value}#{debug_attachment}\n"
           else
-            emit_raw "@#{actual_name} = global #{llvm_type} #{initial}\n"
+            emit_raw "@#{actual_name} = global #{llvm_type} #{initial}#{debug_attachment}\n"
           end
         end
       end

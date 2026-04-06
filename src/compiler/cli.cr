@@ -701,8 +701,10 @@ module CrystalV2
             options.no_prelude = true
           elsif arg == "-d" || arg == "--debug"
             options.debug = true
+            options.debug_explicit = true
           elsif arg == "--no-debug"
             options.debug = false
+            options.debug_explicit = true
           elsif arg == "--verbose"
             options.verbose = true
           elsif arg == "-s" || arg == "--stats"
@@ -998,8 +1000,14 @@ module CrystalV2
             p.on("--no-codegen", "Don't do code generation (semantic check only)") { options.check_only = true }
 
             # Debug info
-            p.on("-d", "--debug", "Add symbolic debug info") { options.debug = true }
-            p.on("--no-debug", "Skip symbolic debug info") { options.debug = false }
+            p.on("-d", "--debug", "Add full symbolic debug info") do
+              options.debug = true
+              options.debug_explicit = true
+            end
+            p.on("--no-debug", "Skip symbolic debug info") do
+              options.debug = false
+              options.debug_explicit = true
+            end
 
             # Verbose / progress (Crystal-compatible)
             p.on("--verbose", "Display executed commands") { options.verbose = true }
@@ -1153,6 +1161,7 @@ module CrystalV2
         property prelude_file : String = ""
         property no_prelude : Bool = false
         property debug : Bool = false
+        property debug_explicit : Bool = false
         property verbose : Bool = false
         property stats : Bool = false
         property debug_profile : Bool = false
@@ -2375,7 +2384,7 @@ module CrystalV2
         bootstrap_trace_puts "[STAGE2_TRACE] step4: lowering initialized"; STDERR.flush
 
         # Register globals from class variables
-        globals = [] of Tuple(String, HIR::TypeRef, Int64?)
+        globals = [] of Tuple(String, HIR::TypeRef, Int64?, String?, HIR::SourceLocation?)
         if mir_setup_trace
           bootstrap_trace_puts "[MIR_SETUP] class_info size=#{hir_converter.class_info.size}"
           bootstrap_trace_puts "[MIR_SETUP] class_vars scan start"
@@ -2383,7 +2392,8 @@ module CrystalV2
         hir_converter.class_info.each do |class_name, info|
           info.class_vars.each do |cvar|
             global_name = MIR::HIRToMIRLowering.class_var_global_name(class_name, cvar.name)
-            globals << {global_name, cvar.type, cvar.initial_value}
+            debug_info = hir_converter.global_debug_infos[global_name]?
+            globals << {global_name, cvar.type, cvar.initial_value, debug_info.try(&.display_name), debug_info.try(&.location)}
           end
         end
         bootstrap_trace_puts "[MIR_SETUP] class_vars scan done globals=#{globals.size}" if mir_setup_trace
@@ -2414,7 +2424,8 @@ module CrystalV2
           global_name = MIR::HIRToMIRLowering.class_var_global_name(owner, const_name)
           next if registered_globals.includes?(global_name)
           const_type = hir_converter.constant_types[full_name]? || HIR::TypeRef::INT32
-          globals << {global_name, const_type, macro_value.value.as(Int64)}
+          debug_info = hir_converter.global_debug_infos[global_name]?
+          globals << {global_name, const_type, macro_value.value.as(Int64), debug_info.try(&.display_name), debug_info.try(&.location)}
           registered_globals.add(global_name)
         end
         bootstrap_trace_puts "[MIR_SETUP] constant_literals scan done globals=#{globals.size}" if mir_setup_trace
@@ -2578,6 +2589,8 @@ module CrystalV2
         llvm_gen.emit_type_metadata = options.emit_type_metadata
         bootstrap_trace_puts "[STAGE2_TRACE] step5: flags1"; STDERR.flush
         bootstrap_trace_puts "[STAGE2_TRACE] step5: flags2"; STDERR.flush
+        debug_info_enabled = debug_info_requested?(options)
+        llvm_gen.emit_debug_info = debug_info_enabled
         llvm_gen.progress = options.progress
         bootstrap_trace_puts "[STAGE2_TRACE] step5: flags3"; STDERR.flush
         llvm_gen.reachability = false  # DISABLED for debugging PC=0 crash
@@ -2781,10 +2794,15 @@ module CrystalV2
         "#{path}.cmdtmp"
       end
 
-      private def preserve_debug_object_file? : Bool
+      private def debug_info_requested?(options : Options) : Bool
+        return options.debug if options.debug_explicit
+        env_enabled?("CRYSTAL_V2_DEBUG_EMIT") || env_enabled?("CRYSTAL2_DEBUG_EMIT")
+      end
+
+      private def preserve_debug_object_file?(options : Options) : Bool
         keep_requested = env_enabled?("CRYSTAL_V2_KEEP_DEBUG_OBJECT") || env_enabled?("CRYSTAL2_KEEP_DEBUG_OBJECT")
         {% if flag?(:darwin) %}
-          keep_requested || env_enabled?("CRYSTAL_V2_DEBUG_EMIT") || env_enabled?("CRYSTAL2_DEBUG_EMIT")
+          keep_requested || debug_info_requested?(options)
         {% else %}
           keep_requested
         {% end %}
@@ -2884,6 +2902,7 @@ module CrystalV2
         timings : Hash(String, Float64)
       ) : Int32
         trace_llvm_tail = env_enabled?("DEBUG_LLVM_TAIL")
+        debug_info_enabled = debug_info_requested?(options)
         bootstrap_trace_puts "[LLVM_TAIL] phase=enter ll=#{ll_file} output=#{options.output} link=#{options.link ? 1 : 0}" if trace_llvm_tail
         bootstrap_trace_puts "[LLVM_TAIL] phase=after_guard ll=#{ll_file}" if trace_llvm_tail
         obj_file = replace_suffix_if_present(ll_file, ".ll", ".o")
@@ -3052,6 +3071,7 @@ module CrystalV2
             end
 
             clang_args = ["clang", opt_flag] of String
+            clang_args << "-g" if debug_info_enabled
             clang_args << "-flto" if options.lto
             pgo_flags.each { |flag| clang_args << flag }
             clang_args << "-o"
@@ -3100,7 +3120,7 @@ module CrystalV2
         end
 
         # Clean up intermediate files
-        if File.exists?(obj_file) && !preserve_debug_object_file?
+        if File.exists?(obj_file) && !preserve_debug_object_file?(options)
           File.delete(obj_file)
         end
         if effective_llvm_opt && opt_ll_file != ll_file && File.exists?(opt_ll_file)

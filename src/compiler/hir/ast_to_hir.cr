@@ -328,6 +328,9 @@ module Crystal::HIR
   # Class variable info
   record ClassVarInfo, name : String, type : TypeRef, initial_value : Int64?
 
+  # Debug info for runtime globals that back class vars/constants
+  record DebugGlobalInfo, display_name : String, location : SourceLocation
+
   # Class type info (is_struct=true for value types)
   record ClassInfo, name : String, type_ref : TypeRef, ivars : Array(IVarInfo), class_vars : Array(ClassVarInfo), size : Int32, is_struct : Bool = false, parent_name : String? = nil
 
@@ -2928,6 +2931,7 @@ module Crystal::HIR
     @constant_defs : Set(String)
     getter constant_types : Hash(String, TypeRef)
     getter constant_literal_values : Hash(String, CrystalV2::Compiler::Semantic::MacroValue)
+    getter global_debug_infos : Hash(String, DebugGlobalInfo)
     @nested_type_names : Hash(String, Set(String))
 
     # Track top-level `def main` so we can remap calls and avoid entrypoint collisions.
@@ -3190,6 +3194,7 @@ module Crystal::HIR
       @constant_defs = Set(String).new
       @constant_types = {} of String => TypeRef
       @constant_literal_values = {} of String => CrystalV2::Compiler::Semantic::MacroValue
+      @global_debug_infos = {} of String => DebugGlobalInfo
       @nested_type_names = {} of String => Set(String)
       @debug_callsite = nil
       @pending_def_annotations = [] of Tuple(CrystalV2::Compiler::Frontend::AnnotationNode, CrystalV2::Compiler::Frontend::ArenaLike)
@@ -3421,6 +3426,7 @@ module Crystal::HIR
       @constant_defs = Set(String).new
       @constant_types = {} of String => TypeRef
       @constant_literal_values = {} of String => CrystalV2::Compiler::Semantic::MacroValue
+      @global_debug_infos = {} of String => DebugGlobalInfo
       @nested_type_names = {} of String => Set(String)
       @debug_callsite = nil
       @pending_def_annotations = [] of Tuple(CrystalV2::Compiler::Frontend::AnnotationNode, CrystalV2::Compiler::Frontend::ArenaLike)
@@ -16877,7 +16883,7 @@ module Crystal::HIR
                   initial_value = num_str.to_i64?
                 end
               end
-              record_class_var_type(module_name, cvar_name, cvar_type, initial_value)
+              record_class_var_type(module_name, cvar_name, cvar_type, initial_value, source_location_for_node(@arena, member))
             when CrystalV2::Compiler::Frontend::MacroDefNode
               register_macro(member, module_name)
             when CrystalV2::Compiler::Frontend::AssignNode
@@ -16888,7 +16894,7 @@ module Crystal::HIR
                 cvar_name = raw_name.lstrip('@')
                 value_node = @arena[member.value]
                 cvar_type = infer_type_from_class_ivar_assign(value_node)
-                record_class_var_type(module_name, cvar_name, cvar_type)
+                record_class_var_type(module_name, cvar_name, cvar_type, nil, source_location_for_node(@arena, target_node))
               end
             when CrystalV2::Compiler::Frontend::DefNode
               safe_str_guard(member.name, "next")
@@ -17147,7 +17153,7 @@ module Crystal::HIR
                       end
                     end
                     STDERR.puts "[DEBUG_CVAR_MACRO_IF] Registering #{module_name}::@@#{cvar_name} : #{(safe_slice_to_string(expr_node.type) || "")}" if env_get("DEBUG_CVAR")
-                    record_class_var_type(module_name, cvar_name, cvar_type, initial_value)
+                    record_class_var_type(module_name, cvar_name, cvar_type, initial_value, source_location_for_node(@arena, expr_node))
                   when CrystalV2::Compiler::Frontend::ClassVarNode
                     # Handle class var node followed by PathNode (type) - parser quirk for @@var : Type at top level
                     raw_name = (safe_slice_to_string(expr_node.name) || "")
@@ -17160,7 +17166,7 @@ module Crystal::HIR
                         type_name = collect_path_string(next_node)
                         cvar_type = type_ref_for_name(type_name)
                         STDERR.puts "[DEBUG_CVAR_MACRO_IF] Registering (ClassVarNode+PathNode) #{module_name}::@@#{cvar_name} : #{type_name}" if env_get("DEBUG_CVAR")
-                        record_class_var_type(module_name, cvar_name, cvar_type, nil)
+                        record_class_var_type(module_name, cvar_name, cvar_type, nil, source_location_for_node(@arena, expr_node))
                         skip_next = true
                       end
                     end
@@ -17226,7 +17232,7 @@ module Crystal::HIR
             initial_value = num_str.to_i64?
           end
         end
-        record_class_var_type(module_name, cvar_name, cvar_type, initial_value)
+        record_class_var_type(module_name, cvar_name, cvar_type, initial_value, source_location_for_node(@arena, body_node))
       when CrystalV2::Compiler::Frontend::ConstantNode
         record_constant_definition(module_name, (safe_slice_to_string(body_node.name) || ""), body_node.value, @arena)
       when CrystalV2::Compiler::Frontend::AssignNode
@@ -17360,7 +17366,7 @@ module Crystal::HIR
                     initial_value = num_str.to_i64?
                   end
                 end
-                record_class_var_type(module_name, cvar_name, cvar_type, initial_value)
+                record_class_var_type(module_name, cvar_name, cvar_type, initial_value, source_location_for_node(@arena, expr_node))
               end
             end
           end
@@ -17424,7 +17430,7 @@ module Crystal::HIR
                   initial_value = num_str.to_i64?
                 end
               end
-              record_class_var_type(module_name, cvar_name, cvar_type, initial_value)
+              record_class_var_type(module_name, cvar_name, cvar_type, initial_value, source_location_for_node(@arena, expr_node))
             end
           end
         end
@@ -17489,7 +17495,7 @@ module Crystal::HIR
                     initial_value = num_str.to_i64?
                   end
                 end
-                record_class_var_type(module_name, cvar_name, cvar_type, initial_value)
+                record_class_var_type(module_name, cvar_name, cvar_type, initial_value, source_location_for_node(@arena, expr_node))
               end
             end
           end
@@ -17528,7 +17534,7 @@ module Crystal::HIR
                   initial_value = num_str.to_i64?
                 end
               end
-              record_class_var_type(module_name, cvar_name, cvar_type, initial_value)
+              record_class_var_type(module_name, cvar_name, cvar_type, initial_value, source_location_for_node(@arena, expr_node))
             end
           end
         end
@@ -21221,6 +21227,7 @@ module Crystal::HIR
                   needs_runtime_init = true
                 end
               end
+              record_class_var_global_debug_info(class_name, cvar_name, source_location_for_node(@arena, member))
               class_vars << ClassVarInfo.new(cvar_name, cvar_type, initial_value)
               # Defer complex classvar initializers to run at start of __crystal_main
               if needs_runtime_init
@@ -21240,6 +21247,7 @@ module Crystal::HIR
                 if next_node.is_a?(CrystalV2::Compiler::Frontend::PathNode)
                   type_name = collect_path_string(next_node)
                   cvar_type = type_ref_for_name(type_name)
+                  record_class_var_global_debug_info(class_name, cvar_name, source_location_for_node(@arena, member))
                   class_vars << ClassVarInfo.new(cvar_name, cvar_type, nil)
                   skip_next = true
                 end
@@ -21795,6 +21803,7 @@ module Crystal::HIR
                 cvar_name = raw_name.lstrip('@')
                 value_node = @arena[member.value]
                 cvar_type = infer_type_from_class_ivar_assign(value_node)
+                record_class_var_global_debug_info(class_name, cvar_name, source_location_for_node(@arena, target_node))
                 if idx = class_vars.index { |cv| cv.name == cvar_name }
                   if class_vars[idx].type == TypeRef::VOID && cvar_type != TypeRef::VOID
                     class_vars[idx] = ClassVarInfo.new(cvar_name, cvar_type, class_vars[idx].initial_value)
@@ -33605,6 +33614,25 @@ module Crystal::HIR
       {owner, const_name}
     end
 
+    private def runtime_global_name(owner_name : String, name : String) : String
+      "#{owner_name}__classvar__#{name}"
+    end
+
+    private def record_global_debug_info(global_name : String, display_name : String, location : SourceLocation?) : Nil
+      return unless location
+      @global_debug_infos[global_name] ||= DebugGlobalInfo.new(display_name, location)
+    end
+
+    private def record_constant_global_debug_info(full_name : String, location : SourceLocation?) : Nil
+      owner, const_name = constant_storage_info(full_name)
+      display_name = owner == "Object" ? const_name : full_name
+      record_global_debug_info(runtime_global_name(owner, const_name), display_name, location)
+    end
+
+    private def record_class_var_global_debug_info(owner_name : String, cvar_name : String, location : SourceLocation?) : Nil
+      record_global_debug_info(runtime_global_name(owner_name, cvar_name), "#{owner_name}::@@#{cvar_name}", location)
+    end
+
     # Try to resolve a self class-method that returns a type literal.
     # Looks up the method body, expands macros, and checks if it returns a known type path.
     # Used for patterns like: backend_class.new → Crystal::EventLoop::Kqueue.new
@@ -33731,6 +33759,7 @@ module Crystal::HIR
 
     private def record_constant_definition(owner_name : String?, name : String, value_id : ExprId, arena : CrystalV2::Compiler::Frontend::ArenaLike)
       full_name = constant_full_name(owner_name, name)
+      record_constant_global_debug_info(full_name, source_location_for_node(arena, arena[value_id]))
       @constant_defs.add(full_name)
       trace_constant_literal_probe("record_call", full_name, owner_name)
       if env_get("DEBUG_CONST_REG") && name == "CACHE"
@@ -39113,9 +39142,16 @@ module Crystal::HIR
       end
     end
 
-    private def record_class_var_type(owner_name : String, cvar_name : String, cvar_type : TypeRef, initial_value : Int64? = nil) : Nil
+    private def record_class_var_type(
+      owner_name : String,
+      cvar_name : String,
+      cvar_type : TypeRef,
+      initial_value : Int64? = nil,
+      location : SourceLocation? = nil
+    ) : Nil
       return if owner_name.empty?
       return if cvar_type == TypeRef::VOID
+      record_class_var_global_debug_info(owner_name, cvar_name, location)
       if env_get("DEBUG_CVAR_TYPE")
         STDERR.puts "[DEBUG_CVAR_TYPE] owner=#{owner_name} var=#{cvar_name} type=#{get_type_name_from_ref(cvar_type)}"
       end
@@ -72745,7 +72781,7 @@ module Crystal::HIR
         end
         if cvar_type == TypeRef::VOID
           value_type = ctx.type_of(value_id)
-          record_class_var_type(class_name, name, value_type)
+          record_class_var_type(class_name, name, value_type, nil, source_location_for_node(@arena, target_cvar))
           cvar_type = value_type unless value_type == TypeRef::VOID
         end
         if enum_name = enum_value_name_for(ctx, value_id)
@@ -73599,7 +73635,7 @@ module Crystal::HIR
         class_name = @current_class || ""
         if cvar_type == TypeRef::VOID
           value_type = ctx.type_of(value_id)
-          record_class_var_type(class_name, name, value_type)
+          record_class_var_type(class_name, name, value_type, nil, source_location_for_node(@arena, target_cvar))
           cvar_type = value_type unless value_type == TypeRef::VOID
         end
         if enum_name = enum_value_name_for(ctx, value_id)

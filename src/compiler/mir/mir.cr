@@ -1949,7 +1949,12 @@ module Crystal::MIR
   # ═══════════════════════════════════════════════════════════════════════════
 
   # Global variable info
-  record GlobalVar, name : String, type : TypeRef, initial_value : Int64?
+  record GlobalVar,
+    name : String,
+    type : TypeRef,
+    initial_value : Int64?,
+    debug_name : String? = nil,
+    source_location : SourceLocation? = nil
 
   class Module
     getter name : String
@@ -2011,8 +2016,14 @@ module Crystal::MIR
       @module_type_refs.includes?(type_ref)
     end
 
-    def add_global(name : String, type : TypeRef, initial_value : Int64? = nil)
-      @globals << GlobalVar.new(name, type, initial_value)
+    def add_global(
+      name : String,
+      type : TypeRef,
+      initial_value : Int64? = nil,
+      debug_name : String? = nil,
+      source_location : SourceLocation? = nil
+    )
+      @globals << GlobalVar.new(name, type, initial_value, debug_name, source_location)
     end
 
     def add_extern_global(name : String, type : TypeRef)

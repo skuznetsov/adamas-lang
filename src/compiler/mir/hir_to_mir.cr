@@ -293,12 +293,13 @@ module Crystal
         @mir_module
       end
 
-      # Register class variables as globals
-      # Takes array of (global_name, hir_type, initial_value?)
-      def register_globals(globals : ::Array(Tuple(String, HIR::TypeRef, Int64?)))
-        globals.each do |global_name, hir_type, initial_value|
+      # Register class variables/constants as globals
+      # Takes array of (global_name, hir_type, initial_value?, debug_name?, source_location?)
+      def register_globals(globals : ::Array(Tuple(String, HIR::TypeRef, Int64?, String?, HIR::SourceLocation?)))
+        globals.each do |global_name, hir_type, initial_value, debug_name, source_location|
           mir_type = convert_type(hir_type)
-          @mir_module.add_global(global_name, mir_type, initial_value)
+          mir_location = source_location ? to_mir_source_location(source_location) : nil
+          @mir_module.add_global(global_name, mir_type, initial_value, debug_name, mir_location)
         end
       end
 
