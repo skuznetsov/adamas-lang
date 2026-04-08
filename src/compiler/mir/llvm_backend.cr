@@ -3462,6 +3462,26 @@ module Crystal::MIR
                "}\n"
       end
 
+      if name == "Crystal$CCMIR$CCSet$Hsize"
+        return "; #{name} — generic Crystal::MIR::Set#size via inner Hash size field\n" \
+               "define i32 @#{name}(ptr %self) {\n" \
+               "entry:\n" \
+               "  %self_null = icmp eq ptr %self, null\n" \
+               "  br i1 %self_null, label %ret_zero, label %load_hash\n" \
+               "load_hash:\n" \
+               "  %hash.slot = getelementptr i8, ptr %self, i32 0\n" \
+               "  %hash = load ptr, ptr %hash.slot\n" \
+               "  %hash_null = icmp eq ptr %hash, null\n" \
+               "  br i1 %hash_null, label %ret_zero, label %load_size\n" \
+               "load_size:\n" \
+               "  %size.ptr = getelementptr i8, ptr %hash, i32 24\n" \
+               "  %size = load i32, ptr %size.ptr\n" \
+               "  ret i32 %size\n" \
+               "ret_zero:\n" \
+               "  ret i32 0\n" \
+               "}\n"
+      end
+
       if name == "Crystal$CCMIR$CCSet$LCrystal$CCMIR$CCFunctionId$R$Hincludes$Q$$UInt32"
         return "; #{name} — delegate Crystal::MIR::Set(FunctionId)#includes? to ::Set(UInt32)\n" \
                "define i32 @#{name}(ptr %self, i32 %value) {\n" \

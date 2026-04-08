@@ -1,6 +1,26 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-02)
 
 ## Current Status
+- **Fresh stage2 generic `Crystal::MIR::Set#size` checkpoint: self-hosted `stage2` no longer aborts the tiny no-prelude smoke in the old `Crystal::MIR::Set#size` stub, because the backend now synthesizes the generic `Set#size` body directly from the inner hash layout, and the same smoke has moved forward again to a later `Enumerable::NotFoundError#each_key { ... }` stub head (2026-04-08, current session)**:
+  - trustworthy setup:
+    - `src/compiler/mir/llvm_backend.cr` now emits an exact dead-code fallback for `Crystal$CCMIR$CCSet$Hsize`, reading the inner `@hash` pointer at offset `0` and then the hash `size` field at offset `24`
+    - this avoids hard-coding any numbered `__vdispatch__Hash$Hsize$$T...` symbol and keeps the helper independent of the concrete key type, matching the already-emitted `Hash(... )#size` bodies
+  - decisive evidence:
+    - host compiler gate is green:
+      - `crystal build src/crystal_v2.cr -o /tmp/cv2_fix_mir_set_size --error-trace`
+    - self-host rebuild from that host is green:
+      - `scripts/run_safe.sh /tmp/cv2_fix_mir_set_size 900 12288 src/crystal_v2.cr -o /tmp/cv2_fix_mir_set_size_s2`
+      - result: `[EXIT: 0] after ~283s`
+    - the exact tiny no-prelude smoke moved past the old generic-set head:
+      - before this fix:
+        - `scripts/run_safe.sh /tmp/cv2_fix_typeref_cache_s2 120 1024 regression_tests/combined/test_no_prelude_interpolation.cr --no-prelude -o /tmp/noprel_fix_typeref_cache.bin`
+        - result: `STUB CALLED: Crystal$CCMIR$CCSet$Hsize`, `[EXIT: 134] after ~0s`
+      - after this fix:
+        - `scripts/run_safe.sh /tmp/cv2_fix_mir_set_size_s2 120 1024 regression_tests/combined/test_no_prelude_interpolation.cr --no-prelude -o /tmp/noprel_fix_mir_set_size.bin`
+        - result: `STUB CALLED: Enumerable$LT$R$CCNotFoundError$Heach_key$$block`, `[EXIT: 134] after ~0s`
+  - practical boundary:
+    - this closes the verified stage2 generic `Crystal::MIR::Set#size` stub frontier
+    - it does not make the smoke green yet; the next honest frontier is the later `Enumerable::NotFoundError#each_key$$block` head
 - **Fresh stage2 MIR `TypeRef` cache checkpoint: self-hosted `stage2` no longer aborts the tiny no-prelude smoke in `Crystal::MIR::Hash(TypeRef, String)#[]?`; both `LLVMTypeMapper.@type_ref_cache` and module-singleton tracking now use the real top-level `::Hash(TypeRef, String)`, and the same smoke has moved forward again to a later `Crystal::MIR::Set#size` stub head (2026-04-08, current session)**:
   - trustworthy setup:
     - `src/compiler/mir/llvm_backend.cr` now declares `LLVMTypeMapper.@type_ref_cache` as `::Hash(TypeRef, String)` and initializes it with `::Hash(TypeRef, String).new`, instead of the nested `Crystal::MIR::Hash(TypeRef, String)` alias that self-host stage2 never materialized on the read side
