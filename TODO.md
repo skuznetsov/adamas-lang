@@ -1,6 +1,30 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-02)
 
 ## Current Status
+- **Fresh stage2 LLVM array-owner checkpoint: self-hosted `stage2` no longer crashes the tiny no-prelude smoke in `LLVMIRGenerator#emit_functions_sequential(Array(Function))`, because backend helper signatures now use the real top-level `::Array(Function)` instead of self-host-specializing to `Crystal::MIR::Array(Function)` with a different field layout; the same smoke has moved forward again to a later `Enumerable::NotFoundError#upto { ... }` stub head (2026-04-08, current session)**:
+  - trustworthy setup:
+    - `src/compiler/mir/llvm_backend.cr` now qualifies the runtime-critical helper signatures
+      - `precompute_function_return_types(functions : ::Array(Function))`
+      - `emit_entrypoint_if_needed(functions_to_emit : ::Array(Function))`
+      - `emit_functions_sequential(functions : ::Array(Function))`
+      - `emit_functions_parallel(functions : ::Array(Function), n_workers : Int32)`
+    - before this fix, self-host HIR/call-sites mixed the real `::Array(Function)` value from `Module#functions()` with helpers monomorphized as `Crystal::MIR::Array(Function)`, so callers passed the top-level array object while callees read the parameter as a different compiler-local collection shape (`@@elements`), producing the later crash in `emit_functions_sequential`
+  - decisive evidence:
+    - host compiler gate is green:
+      - `crystal build src/crystal_v2.cr -o /tmp/cv2_fix_mir_array_param --error-trace`
+    - self-host rebuild from that host is green:
+      - `scripts/run_safe.sh /tmp/cv2_fix_mir_array_param 900 12288 src/crystal_v2.cr -o /tmp/cv2_fix_mir_array_param_s2`
+      - result: `[EXIT: 0] after ~296s`
+    - the exact tiny no-prelude smoke moved beyond the old `emit_functions_sequential(Array(Function))` crash family:
+      - before this fix:
+        - `scripts/run_safe.sh /tmp/cv2_fix_inline_owner_s2 120 1024 regression_tests/combined/test_no_prelude_interpolation.cr --no-prelude -o /tmp/noprel_fix_inline_owner.bin`
+        - result: `[CRASH] Segfault (exit 139)` with fresh `lldb` in `Crystal::MIR::LLVMIRGenerator#emit_functions_sequential(Array(Function))`
+      - after this fix:
+        - `scripts/run_safe.sh /tmp/cv2_fix_mir_array_param_s2 120 1024 regression_tests/combined/test_no_prelude_interpolation.cr --no-prelude -o /tmp/noprel_fix_mir_array_param.bin`
+        - result: `STUB CALLED: Enumerable$LT$R$CCNotFoundError$Hupto$$Int32_block`, `[EXIT: 134] after ~0s`
+  - practical boundary:
+    - this closes the verified stage2 `::Array(Function)` vs `Crystal::MIR::Array(Function)` helper-signature mismatch behind the old `emit_functions_sequential` crash
+    - it does not make the smoke green yet; the next honest frontier is the later `Enumerable::NotFoundError#upto$$Int32_block` stub head
 - **Fresh stage2 HIR inline-owner checkpoint: self-hosted `stage2` no longer aborts the tiny no-prelude smoke in the old `Enumerable::NotFoundError#each_key { ... }` stub family, because `inline_yield_function(...)` now keeps lexical owners for concrete class/struct methods instead of rebinding `@current_class` to the specialized receiver type during inline lowering; the same smoke has moved forward again to a later runtime crash in `LLVMIRGenerator#emit_functions_sequential(Array(Function))` (2026-04-08, current session)**:
   - trustworthy setup:
     - `src/compiler/hir/ast_to_hir.cr` `inline_yield_function(...)` now only overrides `@current_class` with the concrete receiver type for module-like owners; concrete class/struct owners keep their lexical owner during inline lowering

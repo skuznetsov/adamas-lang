@@ -2463,7 +2463,7 @@ module Crystal::MIR
     # NOTE: Do not upgrade ptr → union from call-site use alone. A single
     # symbol must keep one ABI, and non-nil unions (for example NoReturn|Slice)
     # are not ptr-compatible at the return boundary.
-    private def precompute_function_return_types(functions : Array(Function))
+    private def precompute_function_return_types(functions : ::Array(Function))
       # Build function lookup by ID for Call instruction resolution
       func_by_id = {} of FunctionId => Function
       idx = 0
@@ -8097,7 +8097,7 @@ module Crystal::MIR
       end
     end
 
-    private def emit_entrypoint_if_needed(functions_to_emit : Array(Function))
+    private def emit_entrypoint_if_needed(functions_to_emit : ::Array(Function))
       has_user_main = functions_to_emit.any? { |f| f.name == "main" }
       has_crystal_main = functions_to_emit.any? { |f| f.name == "__crystal_main" }
       return if has_user_main || !has_crystal_main
@@ -10867,16 +10867,30 @@ module Crystal::MIR
       # A Proc in our compiler is just a function pointer (Proc.new returns the block
       # pointer as-is). So Proc#call(self, args) must invoke self as a function pointer.
       if mangled_name.starts_with?("Proc$Hcall")
+        forwarded_args = param_types[1..].map do |param_decl|
+          parts = param_decl.split(' ')
+          next if parts.empty?
+          next if parts.size == 1
+          "#{parts[0]} #{parts[-1]}"
+        end.compact
+        forwarded_arg_list = forwarded_args.join(", ")
         emit_raw "define #{return_type} @#{mangled_name}(#{param_types.join(", ")}) {\n"
         emit_raw "entry:\n"
         # %self (param 0) IS the function pointer — invoke it directly.
-        # For zero-arg procs, call with no args. The return value (if any) is
-        # discarded when return_type is void, or returned otherwise.
+        # Forward only runtime args; captured locals are read via closure cells.
         if return_type == "void"
-          emit_raw "  call void %self()\n"
+          if forwarded_arg_list.empty?
+            emit_raw "  call void %self()\n"
+          else
+            emit_raw "  call void %self(#{forwarded_arg_list})\n"
+          end
           emit_raw "  ret void\n"
         else
-          emit_raw "  %result = call #{return_type} %self()\n"
+          if forwarded_arg_list.empty?
+            emit_raw "  %result = call #{return_type} %self()\n"
+          else
+            emit_raw "  %result = call #{return_type} %self(#{forwarded_arg_list})\n"
+          end
           emit_raw "  ret #{return_type} %result\n"
         end
         emit_raw "}\n\n"
@@ -13638,7 +13652,7 @@ module Crystal::MIR
     end
 
     # Sequential function emission (original path)
-    private def emit_functions_sequential(functions : Array(Function))
+    private def emit_functions_sequential(functions : ::Array(Function))
       snapshot_every = ::CrystalV2::Compiler::BootstrapEnv.get?("CRYSTAL_V2_LLVM_MEM_SNAPSHOT_EVERY").try(&.to_i?)
       functions.each_with_index do |func, idx|
         if @progress && (idx % 100 == 0 || idx == functions.size - 1)
@@ -13978,7 +13992,7 @@ module Crystal::MIR
     # Parallel function emission using Process.fork
     # Each worker emits its chunk of functions to a temp file.
     # Parent concatenates results and merges side-effect data.
-    private def emit_functions_parallel(functions : Array(Function), n_workers : Int32)
+    private def emit_functions_parallel(functions : ::Array(Function), n_workers : Int32)
       total = functions.size
 
       # Create temp directory for worker outputs
