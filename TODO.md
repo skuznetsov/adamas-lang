@@ -1,6 +1,24 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-02)
 
 ## Current Status
+- **Fresh stage2 `Set(FunctionId)` alias checkpoint: self-hosted `stage2` no-prelude smoke no longer crashes in `Hash(UInt32, Nil)#find_entry_with_index` while checking `Crystal::MIR::Set(FunctionId)#includes?`; the exact `Set(FunctionId).new/add/<<` alias path now initializes and mutates a real `::Set(UInt32)`, and the tiny smoke has moved forward to a new compiler-error head (`error: Unable to pos`) instead of the previous null-`@hash` segfault (2026-04-08, current session)**:
+  - trustworthy setup:
+    - `src/compiler/mir/llvm_backend.cr` now emits an exact builtin override for `Crystal::MIR::Set(FunctionId).new`, delegating to `Set(UInt32).new(nil capacity)` because the generic MIR-set delegate did not survive the `FunctionId -> UInt32` alias in mangled names
+    - the same file now emits exact dead-code delegates for `Crystal::MIR::Set(FunctionId)#add` and `#<<`, forwarding to `Set(UInt32)#add` instead of aborting
+  - decisive evidence:
+    - host compiler gate is green:
+      - `crystal build src/crystal_v2.cr -o /tmp/cv2_quick_verify4 --error-trace`
+    - self-host rebuild from that host is green:
+      - `scripts/run_safe.sh /tmp/cv2_quick_verify4 900 12288 src/crystal_v2.cr -o /tmp/cv2_quick_s2j`
+      - result: `[EXIT: 0] after ~282s`
+    - the exact tiny no-prelude smoke moved beyond the old crash family:
+      - before this fix, `lldb` on `/tmp/cv2_quick_s2i ... test_no_prelude_interpolation.cr --no-prelude` stopped in `Hash$LUInt32$C$_Nil$R$Hfind_entry_with_index$$UInt32` with `x0 = 0`, reached from `Set(UInt32)#includes?`
+      - after the fix:
+        - `scripts/run_safe.sh /tmp/cv2_quick_s2j 120 1024 regression_tests/combined/test_no_prelude_interpolation.cr --no-prelude -o /tmp/noprel_quick_s2j.bin`
+        - result: `error: Unable to pos`, `[EXIT: 1] after ~0s`
+  - practical boundary:
+    - this closes the verified `Set(FunctionId)` null-`@hash` / stub alias family in stage2 no-prelude smoke
+    - the next honest frontier is now a later compiler/file-position error, not the previous `Hash(UInt32, Nil)` runtime crash
 - **Fresh stage2 MIR-collection alias checkpoint: self-hosted `stage2` no longer dies on the earlier `DwarfDebugContext#register_file`, `Enumerable#any?`, `Crystal::MIR::Array(Function)#size`, `Crystal::MIR::Hash(String, TypeRef)#empty?`, or `Crystal::MIR::Set(String/FunctionId)` stub fronts during the tiny no-prelude smoke; the live no-prelude head has moved forward to a real runtime crash in `Hash(UInt32, Nil)#find_entry_with_index` reached through `Set(UInt32)#includes?` while the full self-host build remains green (2026-04-07, current session)**:
   - trustworthy setup:
     - `src/compiler/mir/llvm_backend.cr` no longer depends on `File.basename/File.dirname` when registering DWARF files; it now uses direct slash-splitting helpers to avoid the self-hosted `Path` dispatch crash in generated stage2 compilers

@@ -3354,6 +3354,24 @@ module Crystal::MIR
                "}\n"
       end
 
+      if name == "Crystal$CCMIR$CCSet$LCrystal$CCMIR$CCFunctionId$R$Hadd$$UInt32"
+        return "; #{name} — delegate Crystal::MIR::Set(FunctionId)#add to ::Set(UInt32)\n" \
+               "define i32 @#{name}(ptr %self, i32 %value) {\n" \
+               "entry:\n" \
+               "  %ignored = call ptr @Set$LUInt32$R$Hadd$$UInt32(ptr %self, i32 %value)\n" \
+               "  ret i32 0\n" \
+               "}\n"
+      end
+
+      if name == "Crystal$CCMIR$CCSet$LCrystal$CCMIR$CCFunctionId$R$H$SHL$$UInt32"
+        return "; #{name} — delegate Crystal::MIR::Set(FunctionId)#<< to ::Set(UInt32)#add\n" \
+               "define i32 @#{name}(ptr %self, i32 %value) {\n" \
+               "entry:\n" \
+               "  %ignored = call ptr @Set$LUInt32$R$Hadd$$UInt32(ptr %self, i32 %value)\n" \
+               "  ret i32 0\n" \
+               "}\n"
+      end
+
       # Crystal::MIR::Hash(K,V) is V2's mangling of `::Hash(K,V)` used from the MIR module.
       # The receiver is the real Hash object (type_id at offset 0), not a {inner: Hash*} wrapper.
       # Older stubs wrongly did `load ptr, ptr %self`, misreading the header as a pointer (stage2 crash).
@@ -7989,6 +8007,14 @@ module Crystal::MIR
       mangled = mangle_function_name(func.name)
       return true if emit_crystal_mir_set_new_delegate_override(func, mangled)
       case mangled
+      when "Crystal$CCMIR$CCSet$LCrystal$CCMIR$CCFunctionId$R$Dnew"
+        emit_raw "; #{mangled} — delegate Crystal::MIR::Set(FunctionId).new to ::Set(UInt32).new(nil capacity)\n"
+        emit_raw "define ptr @#{mangled}() {\n"
+        emit_raw "entry:\n"
+        emit_raw "  %r = call ptr @Set$LUInt32$R$Dnew(ptr null)\n"
+        emit_raw "  ret ptr %r\n"
+        emit_raw "}\n\n"
+        return true
       when "Crystal$CCMIR$CCHash$LUInt32$C$_Crystal$CCMIR$CCFunction$R$Hhas_key$Q$$UInt32"
         # V2 mangles `Hash(K,V)` from the MIR namespace as `Crystal::MIR::Hash`; the receiver
         # is the same GC `::Hash` object — not a wrapper whose first word is an inner pointer.
