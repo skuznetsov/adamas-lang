@@ -1376,7 +1376,14 @@ module Crystal
         # Only reference-typed results from functions that return +1 ownership.
         # Skip values used in other blocks (cross-block) — they're still alive.
         # Skip values that were MOVED (ownership transferred to a field/constructor).
-        @block_arc_temps.each do |(hir_id, mir_id)|
+        # Use index iteration, not `Array#each`: self-hosted crystal_v2 can resolve
+        # `each` on generic Array(Tuple(...)) to unlowered Indexable(T)#each$block
+        # (abort stub) during stage2 no-prelude smoke.
+        arc_i = 0
+        arc_n = @block_arc_temps.size
+        while arc_i < arc_n
+          hir_id, mir_id = @block_arc_temps[arc_i]
+          arc_i += 1
           next if @cross_block_values.includes?(hir_id)
           next if @moved_values.includes?(hir_id)
           builder.rc_dec(mir_id)
@@ -2845,6 +2852,7 @@ module Crystal
         if method_name_str.ends_with?("_super") && @mir_module.get_function(method_name_str).nil?
           method_name_str = method_name_str[0, method_name_str.size - 6]
         end
+        method_name_str = normalize_compiler_collection_method_name(method_name_str)
         colon_pos = method_name_str.index(':')
         dollar_pos = method_name_str.index('$')
         base_method_name = if colon_pos || dollar_pos
@@ -2894,6 +2902,7 @@ module Crystal
                 recv_desc = @hir_module.get_type_descriptor(recv_type)
                 type_name = recv_desc.try(&.name) || hir_type_name(recv_type)
                 if type_name && !type_name.empty?
+                  type_name = normalize_compiler_collection_type_name(type_name)
                   # Try qualified name with type prefix
                   qualified_name = "#{type_name}##{method_name_str}"
                   func = @mir_module.get_function(qualified_name)
@@ -4325,6 +4334,34 @@ module Crystal
         when HIR::TypeRef::SYMBOL  then "Symbol"
         when HIR::TypeRef::POINTER then "Pointer"
         else                            type_ref.id.to_s
+        end
+      end
+
+      private def normalize_compiler_collection_type_name(name : String) : String
+        if name.starts_with?("Crystal::MIR::Array(")
+          "Array(" + name["Crystal::MIR::Array(".bytesize..]
+        elsif name.starts_with?("Crystal::MIR::Hash(")
+          "Hash(" + name["Crystal::MIR::Hash(".bytesize..]
+        elsif name.starts_with?("Crystal::MIR::Set(")
+          "Set(" + name["Crystal::MIR::Set(".bytesize..]
+        else
+          name
+        end
+      end
+
+      private def normalize_compiler_collection_method_name(name : String) : String
+        if hash_pos = name.index('#')
+          owner = name[0, hash_pos]
+          rest = name[hash_pos..]
+          normalized_owner = normalize_compiler_collection_type_name(owner)
+          normalized_owner == owner ? name : normalized_owner + rest
+        elsif dot_pos = name.index('.')
+          owner = name[0, dot_pos]
+          rest = name[dot_pos..]
+          normalized_owner = normalize_compiler_collection_type_name(owner)
+          normalized_owner == owner ? name : normalized_owner + rest
+        else
+          name
         end
       end
 

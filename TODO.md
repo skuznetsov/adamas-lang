@@ -1,6 +1,28 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-02)
 
 ## Current Status
+- **Fresh stage2 HIR compiler-collection owner checkpoint: self-hosted `stage2` no longer mis-lowers `LLVMIRGenerator#precompute_function_return_types` through `Void` locals and random zero-arg member picks, because zero-arg member access now normalizes `Crystal::MIR::Array/Hash/Set(...)` owners before method lookup just like the typed call path; the `s2` rebuild is green again, and the tiny no-prelude smoke has moved forward to a later `Crystal::MIR::Hash(TypeRef, String)#[]?` stub head instead of the old bogus `MachO::Nlist64#name` / `ProcLiteralNode#return_type` chain (2026-04-08, current session)**:
+  - trustworthy setup:
+    - `src/compiler/hir/ast_to_hir.cr` `lower_member_access(...)` now normalizes `receiver_owner_hint`, `class_info`, `get_type_name_from_ref(...)`, and descriptor-derived owner names through `normalize_method_owner_name(...)`, so zero-arg member access on `Crystal::MIR::Array/Hash/Set` aliases resolves against the real top-level collection methods instead of falling through to `receiver_type.id == 0` global-name fallback
+    - `src/compiler/mir/llvm_backend.cr` now also bridges `Crystal::MIR::Set(ValueId).new/add/<<` to `::Set(UInt32)`, matching the already-verified `FunctionId -> UInt32` alias family that reappeared once the HIR corruption was removed
+  - decisive evidence:
+    - host compiler gate is green:
+      - `crystal build src/crystal_v2.cr -o /tmp/cv2_fix_hir_member_access --error-trace`
+    - emitted HIR is now correct at the exact old corruption site:
+      - `scripts/run_safe.sh /tmp/cv2_fix_hir_member_access 900 12288 src/crystal_v2.cr --emit hir -o /tmp/cv2_fix_hir_member_access_emit_hir`
+      - in `Crystal::MIR::LLVMIRGenerator#precompute_function_return_types$Crystal::MIR::Array(Crystal::MIR::Function)` the old `unsafe_fetch : 0` / `HIR::TypeRef#id` / `MachO::Nlist64#name` chain is gone; the same body now emits `Array(Crystal::MIR::Function)#unsafe_fetch : Crystal::MIR::Function` followed by `Crystal::MIR::Function#id` / `#name`
+    - emitted MIR now matches that corrected intent:
+      - `scripts/run_safe.sh /tmp/cv2_fix_hir_member_access 900 12288 src/crystal_v2.cr --emit mir -o /tmp/cv2_fix_hir_member_access_emit_mir`
+      - `precompute_function_return_types(...)` now calls the real `Crystal::MIR::Function#id` / `#name` / `#return_type` / `#blocks` methods instead of the previous unrelated `HIR` / `MachO` / `ProcLiteralNode` symbols
+    - self-host rebuild from that host is green again after the follow-up `Set(ValueId)` bridge:
+      - `scripts/run_safe.sh /tmp/cv2_fix_hir_member_access 900 12288 src/crystal_v2.cr -o /tmp/cv2_fix_hir_member_access_s2`
+      - result: `[EXIT: 0] after ~294s`
+    - the exact tiny no-prelude smoke moved beyond the old precompute corruption family:
+      - `scripts/run_safe.sh /tmp/cv2_fix_hir_member_access_s2 120 1024 regression_tests/combined/test_no_prelude_interpolation.cr --no-prelude -o /tmp/noprel_fix_hir_member_access.bin`
+      - result: `STUB CALLED: Crystal$CCMIR$CCHash$LCrystal$CCMIR$CCTypeRef$C$_String$R$H$IDXQ$$Crystal$CCMIR$CCTypeRef`
+  - practical boundary:
+    - this closes the verified `precompute_function_return_types` HIR corruption family where `Crystal::MIR::Array(Function)#unsafe_fetch` degraded to `Void` and poisoned later zero-arg member access resolution
+    - it does not make stage2 no-prelude smoke green yet; the next honest frontier is the later `Crystal::MIR::Hash(TypeRef, String)#[]?` alias/stub path
 - **Fresh stage2 `IO#pos` dispatch checkpoint: self-hosted `stage2` no longer dies in the previous `error: Unable to pos` compiler-error head during the tiny no-prelude smoke; the generated base `IO#pos` now dispatches to concrete `IO::Memory` / `IO::FileDescriptor` implementations instead of raising from the abstract stdlib body, and the exact smoke has moved forward again to a later blank `SIGSEGV` right after `lower_main: exprs=8` (2026-04-08, current session)**:
   - trustworthy setup:
     - `src/compiler/mir/llvm_backend.cr` now emits an exact builtin override for `IO$Hpos`, loading the receiver `type_id` and routing `IO::Memory` receivers to `IO::Memory#pos` and `IO::FileDescriptor` / `File` receivers to the existing file-descriptor `#pos` vdispatch helper

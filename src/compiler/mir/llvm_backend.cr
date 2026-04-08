@@ -3404,21 +3404,29 @@ module Crystal::MIR
       if name.starts_with?("Crystal$CCMIR$CCArray$L")
         target = name.sub("Crystal$CCMIR$CCArray$L", "Array$L")
         if target != name
+          target_func = @module.functions.find { |f| mangle_function_name(f.name) == target }
+          target_return_type = if target_func
+                                 actual = @type_mapper.llvm_type(target_func.return_type)
+                                 actual == "void" ? (@emitted_function_return_types[target]? || return_type) : (@emitted_function_return_types[target]? || actual)
+                               else
+                                 @emitted_function_return_types[target]? || return_type
+                               end
+
           if name.ends_with?("$Hsize")
             return "; #{name} — delegate Crystal::MIR::Array#size to ::Array#size\n" \
-                   "define #{return_type} @#{name}(ptr %self) {\n" \
+                   "define #{target_return_type} @#{name}(ptr %self) {\n" \
                    "entry:\n" \
-                   "  %r = call #{return_type} @#{target}(ptr %self)\n" \
-                   "  ret #{return_type} %r\n" \
+                   "  %r = call #{target_return_type} @#{target}(ptr %self)\n" \
+                   "  ret #{target_return_type} %r\n" \
                    "}\n"
           end
 
           if name.ends_with?("$Hunsafe_fetch$$Int32")
             return "; #{name} — delegate Crystal::MIR::Array#unsafe_fetch(Int32) to ::Array\n" \
-                   "define #{return_type} @#{name}(ptr %self, i32 %index) {\n" \
+                   "define #{target_return_type} @#{name}(ptr %self, i32 %index) {\n" \
                    "entry:\n" \
-                   "  %r = call #{return_type} @#{target}(ptr %self, i32 %index)\n" \
-                   "  ret #{return_type} %r\n" \
+                   "  %r = call #{target_return_type} @#{target}(ptr %self, i32 %index)\n" \
+                   "  ret #{target_return_type} %r\n" \
                    "}\n"
           end
         end
@@ -3475,6 +3483,34 @@ module Crystal::MIR
 
       if name == "Crystal$CCMIR$CCSet$LCrystal$CCMIR$CCFunctionId$R$H$SHL$$UInt32"
         return "; #{name} — delegate Crystal::MIR::Set(FunctionId)#<< to ::Set(UInt32)#add\n" \
+               "define i32 @#{name}(ptr %self, i32 %value) {\n" \
+               "entry:\n" \
+               "  %ignored = call ptr @Set$LUInt32$R$Hadd$$UInt32(ptr %self, i32 %value)\n" \
+               "  ret i32 0\n" \
+               "}\n"
+      end
+
+      if name == "Crystal$CCMIR$CCSet$LCrystal$CCMIR$CCValueId$R$Hincludes$Q$$UInt32"
+        return "; #{name} — delegate Crystal::MIR::Set(ValueId)#includes? to ::Set(UInt32)\n" \
+               "define i32 @#{name}(ptr %self, i32 %value) {\n" \
+               "entry:\n" \
+               "  %r.bool = call i1 @Set$LUInt32$R$Hincludes$Q$$UInt32(ptr %self, i32 %value)\n" \
+               "  %r = zext i1 %r.bool to i32\n" \
+               "  ret i32 %r\n" \
+               "}\n"
+      end
+
+      if name == "Crystal$CCMIR$CCSet$LCrystal$CCMIR$CCValueId$R$Hadd$$UInt32"
+        return "; #{name} — delegate Crystal::MIR::Set(ValueId)#add to ::Set(UInt32)\n" \
+               "define i32 @#{name}(ptr %self, i32 %value) {\n" \
+               "entry:\n" \
+               "  %ignored = call ptr @Set$LUInt32$R$Hadd$$UInt32(ptr %self, i32 %value)\n" \
+               "  ret i32 0\n" \
+               "}\n"
+      end
+
+      if name == "Crystal$CCMIR$CCSet$LCrystal$CCMIR$CCValueId$R$H$SHL$$UInt32"
+        return "; #{name} — delegate Crystal::MIR::Set(ValueId)#<< to ::Set(UInt32)#add\n" \
                "define i32 @#{name}(ptr %self, i32 %value) {\n" \
                "entry:\n" \
                "  %ignored = call ptr @Set$LUInt32$R$Hadd$$UInt32(ptr %self, i32 %value)\n" \
@@ -8254,6 +8290,14 @@ module Crystal::MIR
         emit_raw "  ret ptr %r\n"
         emit_raw "}\n\n"
         return true
+      when "Crystal$CCMIR$CCSet$LCrystal$CCMIR$CCValueId$R$Dnew"
+        emit_raw "; #{mangled} — delegate Crystal::MIR::Set(ValueId).new to ::Set(UInt32).new(nil capacity)\n"
+        emit_raw "define ptr @#{mangled}() {\n"
+        emit_raw "entry:\n"
+        emit_raw "  %r = call ptr @Set$LUInt32$R$Dnew(ptr null)\n"
+        emit_raw "  ret ptr %r\n"
+        emit_raw "}\n\n"
+        return true
       when "Crystal$CCMIR$CCHash$LUInt32$C$_Crystal$CCMIR$CCFunction$R$Hhas_key$Q$$UInt32"
         # V2 mangles `Hash(K,V)` from the MIR namespace as `Crystal::MIR::Hash`; the receiver
         # is the same GC `::Hash` object — not a wrapper whose first word is an inner pointer.
@@ -10167,6 +10211,19 @@ module Crystal::MIR
     private def emitted_param_llvm_type(param) : String
       llvm_type = @type_mapper.llvm_type(param.type)
       llvm_type == "void" ? "ptr" : llvm_type
+    end
+
+    private def crystal_mir_array_delegate_target(mangled : String) : {String, Function}?
+      return nil unless mangled.starts_with?("Crystal$CCMIR$CCArray$L")
+
+      target = mangled.sub("Crystal$CCMIR$CCArray$L", "Array$L")
+      return nil if target == mangled
+
+      if target_func = @module.functions.find { |f| mangle_function_name(f.name) == target }
+        {target, target_func}
+      else
+        nil
+      end
     end
 
     private def compiler_u32_alias_key_hash?(mangled : String) : Bool
@@ -17097,6 +17154,16 @@ module Crystal::MIR
                       undefined_name
                     end
       raw_callee_name = callee_func.try(&.name)
+
+      # Crystal::MIR::Array(T) is runtime-identical to top-level ::Array(T).
+      # If self-host resolves calls through the MIR namespace alias, use the
+      # canonical ::Array specialization immediately so call-site ABI follows
+      # the real function signature instead of stale alias metadata.
+      if delegate = crystal_mir_array_delegate_target(callee_name)
+        callee_name = delegate[0]
+        callee_func = delegate[1]
+        raw_callee_name = callee_func.name
+      end
 
       # Keep direct self-recursive calls intact. Overload retargeting must be resolved
       # in HIR/MIR; backend-level substitution can silently redirect to wrong overloads.

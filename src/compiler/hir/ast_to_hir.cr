@@ -27801,6 +27801,18 @@ module Crystal::HIR
 
     # Resolve method call for a receiver type and method name
     # Returns the properly mangled method name that should be used in the Call node
+    private def normalize_compiler_collection_owner_name(name : String) : String
+      if name.starts_with?("Crystal::MIR::Array(")
+        "Array(" + name["Crystal::MIR::Array(".bytesize..]
+      elsif name.starts_with?("Crystal::MIR::Hash(")
+        "Hash(" + name["Crystal::MIR::Hash(".bytesize..]
+      elsif name.starts_with?("Crystal::MIR::Set(")
+        "Set(" + name["Crystal::MIR::Set(".bytesize..]
+      else
+        name
+      end
+    end
+
     private def normalize_method_owner_name(name : String) : String
       return "" if name.unsafe_as(UInt64) == 0_u64
       return name if name.empty?
@@ -27818,6 +27830,22 @@ module Crystal::HIR
       end
       return "Tuple" if name.starts_with?("Tuple(")
       name
+    end
+
+    private def normalize_compiler_collection_method_name(name : String) : String
+      if hash_pos = name.index('#')
+        owner = name[0, hash_pos]
+        rest = name[hash_pos..]
+        normalized_owner = normalize_compiler_collection_owner_name(owner)
+        normalized_owner == owner ? name : normalized_owner + rest
+      elsif dot_pos = name.index('.')
+        owner = name[0, dot_pos]
+        rest = name[dot_pos..]
+        normalized_owner = normalize_compiler_collection_owner_name(owner)
+        normalized_owner == owner ? name : normalized_owner + rest
+      else
+        name
+      end
     end
 
     private def unresolved_generic_return_type?(type_ref : TypeRef) : Bool
@@ -33081,16 +33109,40 @@ module Crystal::HIR
       direct = @function_defs[name]? || @function_defs[base_name]?
       return direct if direct
 
+      normalized_name = normalize_compiler_collection_method_name(name)
+      normalized_base = normalize_compiler_collection_method_name(base_name)
+      if normalized_name != name || normalized_base != base_name
+        direct = @function_defs[normalized_name]? || @function_defs[normalized_base]?
+        return direct if direct
+      end
+
       stripped_name = strip_generic_receiver_from_base_name(name)
       stripped_base = strip_generic_receiver_from_base_name(base_name)
       direct = @function_defs[stripped_name]? || @function_defs[stripped_base]?
       return direct if direct
 
+      normalized_stripped_name = strip_generic_receiver_from_base_name(normalized_name)
+      normalized_stripped_base = strip_generic_receiver_from_base_name(normalized_base)
+      if normalized_stripped_name != stripped_name || normalized_stripped_base != stripped_base
+        direct = @function_defs[normalized_stripped_name]? || @function_defs[normalized_stripped_base]?
+        return direct if direct
+      end
+
       if overload = lookup_return_def_from_overloads(base_name)
         return overload
       end
+      if normalized_base != base_name
+        if overload = lookup_return_def_from_overloads(normalized_base)
+          return overload
+        end
+      end
       if stripped_base != base_name
         if overload = lookup_return_def_from_overloads(stripped_base)
+          return overload
+        end
+      end
+      if normalized_stripped_base != stripped_base && normalized_stripped_base != normalized_base
+        if overload = lookup_return_def_from_overloads(normalized_stripped_base)
           return overload
         end
       end
@@ -36989,21 +37041,9 @@ module Crystal::HIR
       base_method_name : String,
       receiver_type : TypeRef?,
     ) : TypeRef?
-      func_def = @function_defs[mangled_method_name]? || @function_defs[base_method_name]?
-      if func_def.nil?
-        stripped_mangled = strip_generic_receiver_from_base_name(mangled_method_name)
-        stripped_base = strip_generic_receiver_from_base_name(base_method_name)
-        func_def = @function_defs[stripped_mangled]? || @function_defs[stripped_base]?
-      end
-      if func_def.nil?
-        func_def = lookup_return_def_from_overloads(base_method_name)
-        if func_def.nil?
-          stripped_base = strip_generic_receiver_from_base_name(base_method_name)
-          if stripped_base != base_method_name
-            func_def = lookup_return_def_from_overloads(stripped_base)
-          end
-        end
-      end
+      normalized_mangled = normalize_compiler_collection_method_name(mangled_method_name)
+      normalized_base = normalize_compiler_collection_method_name(base_method_name)
+      func_def = lookup_function_def_for_return(normalized_mangled, normalized_base)
       return nil unless func_def
 
       return_type_slice = func_def.return_type
@@ -37012,9 +37052,9 @@ module Crystal::HIR
       return_type_name = (safe_slice_to_string(return_type_slice) || "")
       return nil if return_type_name.empty?
 
-      owner_override = method_owner(base_method_name)
+      owner_override = method_owner(normalized_base)
       if owner_override.empty?
-        owner_override = method_owner(mangled_method_name)
+        owner_override = method_owner(normalized_mangled)
       end
       qualified_return_type = return_type_name
       if !owner_override.empty? && !return_type_name.includes?("::")
@@ -37024,7 +37064,8 @@ module Crystal::HIR
         end
       end
 
-      if cached = @function_types[mangled_method_name]? || @function_types[base_method_name]?
+      if cached = @function_types[mangled_method_name]? || @function_types[base_method_name]? ||
+                  @function_types[normalized_mangled]? || @function_types[normalized_base]?
         if cached != TypeRef::VOID &&
            return_type_name != "self" &&
            !return_type_name.includes?("typeof(") &&
@@ -37059,14 +37100,15 @@ module Crystal::HIR
         end
       end
 
-      param_map = function_type_param_map_for(mangled_method_name, base_method_name)
-      receiver_map = type_param_map_for_receiver_name(base_method_name)
+      param_map = function_type_param_map_for(normalized_mangled, normalized_base)
+      receiver_map = type_param_map_for_receiver_name(normalized_base)
       if receiver_map.empty?
-        receiver_map = type_param_map_for_receiver_name(mangled_method_name)
+        receiver_map = type_param_map_for_receiver_name(normalized_mangled)
       end
       if receiver_map.empty? && receiver_type && receiver_type != TypeRef::VOID
         if desc = @module.get_type_descriptor(receiver_type)
-          if info = split_generic_base_and_args(desc.name)
+          normalized_receiver_name = normalize_compiler_collection_owner_name(desc.name)
+          if info = split_generic_base_and_args(normalized_receiver_name)
             if template = @generic_templates[info.base]?
               if desc.type_params.size == template.type_params.size
                 template.type_params.each_with_index do |param, idx|
@@ -37088,6 +37130,10 @@ module Crystal::HIR
       if pending = @pending_type_param_maps[mangled_method_name]?
         merged.merge!(pending) unless pending.empty?
       elsif pending = @pending_type_param_maps[base_method_name]?
+        merged.merge!(pending) unless pending.empty?
+      elsif pending = @pending_type_param_maps[normalized_mangled]?
+        merged.merge!(pending) unless pending.empty?
+      elsif pending = @pending_type_param_maps[normalized_base]?
         merged.merge!(pending) unless pending.empty?
       end
 
@@ -72018,6 +72064,9 @@ module Crystal::HIR
           end
         end
       end
+      if receiver_owner_hint
+        receiver_owner_hint = normalize_method_owner_name(receiver_owner_hint)
+      end
       # Some module-like types can end up with a non-Module descriptor kind (e.g. upgraded),
       # but should still be treated as module receivers for dispatch.
       receiver_is_module_type = module_type_ref?(receiver_type)
@@ -72043,29 +72092,31 @@ module Crystal::HIR
       if receiver_type.id > 0 && !receiver_is_module_type
         info = @class_info_by_type_id[receiver_type.id]?
         if info
+          normalized_info_name = normalize_method_owner_name(info.name)
           if recv_desc = @module.get_type_descriptor(receiver_type)
-            desc_owner = strip_generic_args(recv_desc.name)
-            info_owner = strip_generic_args(info.name)
+            desc_owner = strip_generic_args(normalize_method_owner_name(recv_desc.name))
+            info_owner = strip_generic_args(normalized_info_name)
             if !desc_owner.empty? && info_owner != desc_owner
               info = nil
             end
           end
         end
         if info
-          ref_owner = get_type_name_from_ref(receiver_type)
+          ref_owner = normalize_method_owner_name(get_type_name_from_ref(receiver_type))
           if !ref_owner.empty? && ref_owner != "Void" && ref_owner != "Unknown"
-            info_owner = strip_generic_args(info.name)
+            info_owner = strip_generic_args(normalize_method_owner_name(info.name))
             ref_owner_base = strip_generic_args(ref_owner)
             info = nil if info_owner != ref_owner_base
           end
         end
         if info
           # Use inheritance-aware method resolution
-          if base_method = resolve_method_with_inheritance(info.name, member_name)
+          info_name = normalize_method_owner_name(info.name)
+          if base_method = resolve_method_with_inheritance(info_name, member_name)
             if resolved = resolve_untyped_overload(base_method, 0, false)
               resolved_method_name = resolved
               return_type = get_function_return_type(resolved)
-            elsif resolved = resolve_ancestor_overload(info.name, member_name, 0, false)
+            elsif resolved = resolve_ancestor_overload(info_name, member_name, 0, false)
               resolved_method_name = resolved
               return_type = get_function_return_type(resolved)
             else
@@ -72079,10 +72130,10 @@ module Crystal::HIR
             # type_name inside describe) dispatch to the subclass's overrides.
             if resolved_method_name
               resolved_owner = method_owner(resolved_method_name)
-              if !resolved_owner.empty? && resolved_owner != info.name &&
-                 @class_info.has_key?(info.name) && !info.name.includes?('|') &&
-                 !per_class_inherited_skip?(info.name, resolved_owner)
-                per_class_name = "#{info.name}##{member_name}"
+              if !resolved_owner.empty? && resolved_owner != info_name &&
+                 @class_info.has_key?(info_name) && !info_name.includes?('|') &&
+                 !per_class_inherited_skip?(info_name, resolved_owner)
+                per_class_name = "#{info_name}##{member_name}"
                 # Keep return_type from parent resolution (already determined)
                 resolved_method_name = per_class_name
               end
@@ -72093,7 +72144,7 @@ module Crystal::HIR
 
       # Fallback 1: Try to match by type descriptor name (when type_ref IDs don't match)
       if resolved_method_name.nil? && receiver_type.id > 0 && !receiver_is_module_type
-        ref_type_name = get_type_name_from_ref(receiver_type)
+        ref_type_name = normalize_method_owner_name(get_type_name_from_ref(receiver_type))
         if !ref_type_name.empty? && ref_type_name != "Void" && ref_type_name != "Unknown" &&
            @class_info.has_key?(ref_type_name)
           if base_method = resolve_method_with_inheritance(ref_type_name, member_name)
@@ -72114,7 +72165,7 @@ module Crystal::HIR
       # Fallback 2: Try to match by type descriptor name (when type_ref IDs don't match)
       if resolved_method_name.nil? && receiver_type.id > 0 && !receiver_is_module_type
         if type_desc = @module.get_type_descriptor(receiver_type)
-          type_name = type_desc.name
+          type_name = normalize_method_owner_name(type_desc.name)
           # Try full name first
           if @class_info.has_key?(type_name)
             if base_method = resolve_method_with_inheritance(type_name, member_name)
@@ -72134,6 +72185,7 @@ module Crystal::HIR
             # e.g., type_name="Span" matches "CrystalV2::Compiler::Frontend::Span"
             if candidates = @short_type_index[type_name]?
               if candidate = candidates.first?
+                candidate = normalize_method_owner_name(candidate)
                 if base_method = resolve_method_with_inheritance(candidate, member_name)
                   if resolved = resolve_untyped_overload(base_method, 0, false)
                     resolved_method_name = resolved
