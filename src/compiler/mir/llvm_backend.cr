@@ -3556,6 +3556,19 @@ module Crystal::MIR
                "}\n"
       end
 
+      if name.starts_with?("Crystal$CCMIR$CCHash$L") && name.ends_with?("$Hclear")
+        target = name.sub("Crystal$CCMIR$CCHash$L", "Hash$L")
+        if target != name
+          @called_crystal_functions[target] = {"ptr", 1, ["ptr"] of String}
+          return "; #{name} — delegate Crystal::MIR::Hash#clear to ::Hash on the same receiver\n" \
+                 "define ptr @#{name}(ptr %self) {\n" \
+                 "entry:\n" \
+                 "  %r = call ptr @#{target}(ptr %self)\n" \
+                 "  ret ptr %r\n" \
+                 "}\n"
+        end
+      end
+
       # Crystal::MIR::Hash(K,V) is V2's mangling of `::Hash(K,V)` used from the MIR module.
       # The receiver is the real Hash object (type_id at offset 0), not a {inner: Hash*} wrapper.
       # Older stubs wrongly did `load ptr, ptr %self`, misreading the header as a pointer (stage2 crash).
@@ -8349,6 +8362,17 @@ module Crystal::MIR
         emit_raw "define ptr @#{mangled}(ptr %self) {\n"
         emit_raw "entry:\n"
         emit_raw "  %r = call ptr @Set$LUInt32$R$Hclear(ptr %self)\n"
+        emit_raw "  ret ptr %r\n"
+        emit_raw "}\n\n"
+        return true
+      when /^Crystal\$CCMIR\$CCHash\$L.+\$Hclear$/
+        target = mangled.sub("Crystal$CCMIR$CCHash$L", "Hash$L")
+        return false if target == mangled
+        @called_crystal_functions[target] = {"ptr", 1, ["ptr"] of String}
+        emit_raw "; #{mangled} — delegate Crystal::MIR::Hash#clear to ::Hash on the same receiver\n"
+        emit_raw "define ptr @#{mangled}(ptr %self) {\n"
+        emit_raw "entry:\n"
+        emit_raw "  %r = call ptr @#{target}(ptr %self)\n"
         emit_raw "  ret ptr %r\n"
         emit_raw "}\n\n"
         return true
