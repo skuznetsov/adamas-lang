@@ -1,6 +1,26 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-02)
 
 ## Current Status
+- **Fresh stage2 `IO#pos` dispatch checkpoint: self-hosted `stage2` no longer dies in the previous `error: Unable to pos` compiler-error head during the tiny no-prelude smoke; the generated base `IO#pos` now dispatches to concrete `IO::Memory` / `IO::FileDescriptor` implementations instead of raising from the abstract stdlib body, and the exact smoke has moved forward again to a later blank `SIGSEGV` right after `lower_main: exprs=8` (2026-04-08, current session)**:
+  - trustworthy setup:
+    - `src/compiler/mir/llvm_backend.cr` now emits an exact builtin override for `IO$Hpos`, loading the receiver `type_id` and routing `IO::Memory` receivers to `IO::Memory#pos` and `IO::FileDescriptor` / `File` receivers to the existing file-descriptor `#pos` vdispatch helper
+    - the same file now emits the matching dead-code fallback for `IO$Hpos`, so late materialization cannot regress back to the abstract `raise "Unable to pos"` body
+    - this intentionally preserves the already-emitted `i32` ABI seen in generated stage2 code, including the broken `IO#tell -> IO#pos` static-call shape, while removing the immediate abstract-IO failure
+  - decisive evidence:
+    - host compiler gate is green:
+      - `crystal build src/crystal_v2.cr -o /tmp/cv2_quick_verify5 --error-trace`
+    - self-host rebuild from that host is green:
+      - `scripts/run_safe.sh /tmp/cv2_quick_verify5 900 12288 src/crystal_v2.cr -o /tmp/cv2_quick_s2k`
+      - result: `[EXIT: 0] after ~297s`
+    - the exact tiny no-prelude smoke moved beyond the old `IO#pos` error:
+      - before this fix, `/tmp/cv2_quick_s2j ... test_no_prelude_interpolation.cr --no-prelude` stopped with `error: Unable to pos`
+      - after the fix:
+        - `scripts/run_safe.sh /tmp/cv2_quick_s2k 120 1024 regression_tests/combined/test_no_prelude_interpolation.cr --no-prelude -o /tmp/noprel_quick_s2k.bin`
+        - result: `[CRASH] Segfault (exit 139)` after the old `Unable to pos` head is gone
+        - direct invocation now reaches the same point and crashes only after `lower_main: exprs=8`, while batch `lldb` no longer reports the old `IO#pos` error path
+  - practical boundary:
+    - this closes the verified abstract-`IO#pos` / `IO#tell` file-position error family in stage2 no-prelude smoke
+    - it does not make stage2 smoke green yet; the next honest frontier is a later blank crash after `lower_main` setup, not another `IO#pos`/`tell` failure
 - **Fresh stage2 `Set(FunctionId)` alias checkpoint: self-hosted `stage2` no-prelude smoke no longer crashes in `Hash(UInt32, Nil)#find_entry_with_index` while checking `Crystal::MIR::Set(FunctionId)#includes?`; the exact `Set(FunctionId).new/add/<<` alias path now initializes and mutates a real `::Set(UInt32)`, and the tiny smoke has moved forward to a new compiler-error head (`error: Unable to pos`) instead of the previous null-`@hash` segfault (2026-04-08, current session)**:
   - trustworthy setup:
     - `src/compiler/mir/llvm_backend.cr` now emits an exact builtin override for `Crystal::MIR::Set(FunctionId).new`, delegating to `Set(UInt32).new(nil capacity)` because the generic MIR-set delegate did not survive the `FunctionId -> UInt32` alias in mangled names

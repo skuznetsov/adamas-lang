@@ -3280,6 +3280,36 @@ module Crystal::MIR
         return emit_extern_forwarding_stub(name, extern, return_type, arg_count, arg_types)
       end
 
+      if name == "IO$Hpos" && return_type == "i32" && arg_count == 1
+        io_memory_tid = @module.type_registry.get_by_name("IO::Memory").try(&.id.to_i32) || -1
+        io_fd_tid = @module.type_registry.get_by_name("IO::FileDescriptor").try(&.id.to_i32) || -1
+        file_tid = @module.type_registry.get_by_name("File").try(&.id.to_i32) || -1
+        return "; #{name} — fallback runtime dispatch to concrete IO#pos implementations\n" \
+               "define i32 @#{name}(ptr %self) {\n" \
+               "entry:\n" \
+               "  %is_null = icmp eq ptr %self, null\n" \
+               "  br i1 %is_null, label %ret_zero, label %check_tid\n" \
+               "check_tid:\n" \
+               "  %tid = load i32, ptr %self\n" \
+               "  %is_mem = icmp eq i32 %tid, #{io_memory_tid}\n" \
+               "  br i1 %is_mem, label %memory_case, label %check_fd\n" \
+               "memory_case:\n" \
+               "  %mem_pos = call i32 @IO$CCMemory$Hpos(ptr %self)\n" \
+               "  ret i32 %mem_pos\n" \
+               "check_fd:\n" \
+               "  %is_fd = icmp eq i32 %tid, #{io_fd_tid}\n" \
+               "  %is_file = icmp eq i32 %tid, #{file_tid}\n" \
+               "  %is_fd_like = or i1 %is_fd, %is_file\n" \
+               "  br i1 %is_fd_like, label %fd_case, label %ret_zero\n" \
+               "fd_case:\n" \
+               "  %fd_pos64 = call i64 @__vdispatch__IO$CCFileDescriptor$Hpos$$T187(ptr %self)\n" \
+               "  %fd_pos = trunc i64 %fd_pos64 to i32\n" \
+               "  ret i32 %fd_pos\n" \
+               "ret_zero:\n" \
+               "  ret i32 0\n" \
+               "}\n"
+      end
+
       if stub = try_emit_no_prelude_string_builder_stub(name, return_type, arg_count, arg_types)
         return stub
       end
@@ -8007,6 +8037,53 @@ module Crystal::MIR
       mangled = mangle_function_name(func.name)
       return true if emit_crystal_mir_set_new_delegate_override(func, mangled)
       case mangled
+      when "IO$Hpos"
+        io_memory_tid = @module.type_registry.get_by_name("IO::Memory").try(&.id.to_i32)
+        io_fd_tid = @module.type_registry.get_by_name("IO::FileDescriptor").try(&.id.to_i32)
+        file_tid = @module.type_registry.get_by_name("File").try(&.id.to_i32)
+        return false unless io_memory_tid || io_fd_tid || file_tid
+
+        emit_raw "; #{mangled} — runtime dispatch to concrete IO#pos implementations\n"
+        emit_raw "define i32 @#{mangled}(ptr %self) {\n"
+        emit_raw "entry:\n"
+        emit_raw "  %is_null = icmp eq ptr %self, null\n"
+        emit_raw "  br i1 %is_null, label %ret_zero, label %check_tid\n"
+        emit_raw "check_tid:\n"
+        emit_raw "  %tid = load i32, ptr %self\n"
+        if io_memory_tid
+          emit_raw "  %is_mem = icmp eq i32 %tid, #{io_memory_tid}\n"
+          emit_raw "  br i1 %is_mem, label %memory_case, label %check_fd\n"
+          emit_raw "memory_case:\n"
+          emit_raw "  %mem_pos = call i32 @IO$CCMemory$Hpos(ptr %self)\n"
+          emit_raw "  ret i32 %mem_pos\n"
+        else
+          emit_raw "  br label %check_fd\n"
+        end
+        emit_raw "check_fd:\n"
+        if io_fd_tid && file_tid
+          emit_raw "  %is_fd = icmp eq i32 %tid, #{io_fd_tid}\n"
+          emit_raw "  %is_file = icmp eq i32 %tid, #{file_tid}\n"
+          emit_raw "  %is_fd_like = or i1 %is_fd, %is_file\n"
+          emit_raw "  br i1 %is_fd_like, label %fd_case, label %ret_zero\n"
+        elsif io_fd_tid
+          emit_raw "  %is_fd = icmp eq i32 %tid, #{io_fd_tid}\n"
+          emit_raw "  br i1 %is_fd, label %fd_case, label %ret_zero\n"
+        elsif file_tid
+          emit_raw "  %is_file = icmp eq i32 %tid, #{file_tid}\n"
+          emit_raw "  br i1 %is_file, label %fd_case, label %ret_zero\n"
+        else
+          emit_raw "  br label %ret_zero\n"
+        end
+        if io_fd_tid || file_tid
+          emit_raw "fd_case:\n"
+          emit_raw "  %fd_pos64 = call i64 @__vdispatch__IO$CCFileDescriptor$Hpos$$T187(ptr %self)\n"
+          emit_raw "  %fd_pos = trunc i64 %fd_pos64 to i32\n"
+          emit_raw "  ret i32 %fd_pos\n"
+        end
+        emit_raw "ret_zero:\n"
+        emit_raw "  ret i32 0\n"
+        emit_raw "}\n\n"
+        return true
       when "Crystal$CCMIR$CCSet$LCrystal$CCMIR$CCFunctionId$R$Dnew"
         emit_raw "; #{mangled} — delegate Crystal::MIR::Set(FunctionId).new to ::Set(UInt32).new(nil capacity)\n"
         emit_raw "define ptr @#{mangled}() {\n"
