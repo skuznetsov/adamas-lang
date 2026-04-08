@@ -3510,6 +3510,15 @@ module Crystal::MIR
                "}\n"
       end
 
+      if name == "Crystal$CCMIR$CCSet$LCrystal$CCMIR$CCFunctionId$R$Hclear"
+        return "; #{name} — delegate Crystal::MIR::Set(FunctionId)#clear to ::Set(UInt32)\n" \
+               "define ptr @#{name}(ptr %self) {\n" \
+               "entry:\n" \
+               "  %r = call ptr @Set$LUInt32$R$Hclear(ptr %self)\n" \
+               "  ret ptr %r\n" \
+               "}\n"
+      end
+
       if name == "Crystal$CCMIR$CCSet$LCrystal$CCMIR$CCValueId$R$Hincludes$Q$$UInt32"
         return "; #{name} — delegate Crystal::MIR::Set(ValueId)#includes? to ::Set(UInt32)\n" \
                "define i32 @#{name}(ptr %self, i32 %value) {\n" \
@@ -3535,6 +3544,15 @@ module Crystal::MIR
                "entry:\n" \
                "  %ignored = call ptr @Set$LUInt32$R$Hadd$$UInt32(ptr %self, i32 %value)\n" \
                "  ret i32 0\n" \
+               "}\n"
+      end
+
+      if name == "Crystal$CCMIR$CCSet$LCrystal$CCMIR$CCValueId$R$Hclear"
+        return "; #{name} — delegate Crystal::MIR::Set(ValueId)#clear to ::Set(UInt32)\n" \
+               "define ptr @#{name}(ptr %self) {\n" \
+               "entry:\n" \
+               "  %r = call ptr @Set$LUInt32$R$Hclear(ptr %self)\n" \
+               "  ret ptr %r\n" \
                "}\n"
       end
 
@@ -8315,6 +8333,22 @@ module Crystal::MIR
         emit_raw "define ptr @#{mangled}() {\n"
         emit_raw "entry:\n"
         emit_raw "  %r = call ptr @Set$LUInt32$R$Dnew(ptr null)\n"
+        emit_raw "  ret ptr %r\n"
+        emit_raw "}\n\n"
+        return true
+      when "Crystal$CCMIR$CCSet$LCrystal$CCMIR$CCFunctionId$R$Hclear"
+        emit_raw "; #{mangled} — delegate Crystal::MIR::Set(FunctionId)#clear to ::Set(UInt32)\n"
+        emit_raw "define ptr @#{mangled}(ptr %self) {\n"
+        emit_raw "entry:\n"
+        emit_raw "  %r = call ptr @Set$LUInt32$R$Hclear(ptr %self)\n"
+        emit_raw "  ret ptr %r\n"
+        emit_raw "}\n\n"
+        return true
+      when "Crystal$CCMIR$CCSet$LCrystal$CCMIR$CCValueId$R$Hclear"
+        emit_raw "; #{mangled} — delegate Crystal::MIR::Set(ValueId)#clear to ::Set(UInt32)\n"
+        emit_raw "define ptr @#{mangled}(ptr %self) {\n"
+        emit_raw "entry:\n"
+        emit_raw "  %r = call ptr @Set$LUInt32$R$Hclear(ptr %self)\n"
         emit_raw "  ret ptr %r\n"
         emit_raw "}\n\n"
         return true

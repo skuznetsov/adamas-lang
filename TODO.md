@@ -1,6 +1,28 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-02)
 
 ## Current Status
+- **Fresh stage2 compiler-set-clear checkpoint: self-hosted `stage2` no longer aborts the tiny no-prelude smoke in the old `Crystal::MIR::Set(FunctionId)#clear` stub family, because backend overrides now delegate `Crystal::MIR::Set(FunctionId/ValueId)#clear` directly to `::Set(UInt32)#clear`; the same smoke has moved forward again to a later `Crystal::MIR::Hash(UInt32, Tuple(Int32, Int32))#clear` stub head (2026-04-08, current session)**:
+  - trustworthy setup:
+    - `src/compiler/mir/llvm_backend.cr` now emits exact delegates for
+      - `Crystal::MIR::Set(FunctionId)#clear`
+      - `Crystal::MIR::Set(ValueId)#clear`
+    - both the normal builtin-override path and the dead-code fallback path now call `Set(UInt32)#clear` on the same runtime receiver object
+  - decisive evidence:
+    - host compiler gate is green:
+      - `crystal build src/crystal_v2.cr -o /tmp/cv2_fix_set_clear --error-trace`
+    - self-host rebuild from that host is green:
+      - `scripts/run_safe.sh /tmp/cv2_fix_set_clear 900 12288 src/crystal_v2.cr -o /tmp/cv2_fix_set_clear_s2`
+      - result: `[EXIT: 0] after ~289s`
+    - the exact tiny no-prelude smoke moved beyond the old `Set(FunctionId)#clear` head:
+      - before this fix:
+        - `scripts/run_safe.sh /tmp/cv2_fix_u32_alias_loops_s2 120 1024 regression_tests/combined/test_no_prelude_interpolation.cr --no-prelude -o /tmp/noprel_fix_u32_alias_loops.bin`
+        - result: `STUB CALLED: Crystal$CCMIR$CCSet$LCrystal$CCMIR$CCFunctionId$R$Hclear`, `[EXIT: 134] after ~0s`
+      - after this fix:
+        - `scripts/run_safe.sh /tmp/cv2_fix_set_clear_s2 120 1024 regression_tests/combined/test_no_prelude_interpolation.cr --no-prelude -o /tmp/noprel_fix_set_clear.bin`
+        - result: `STUB CALLED: Crystal$CCMIR$CCHash$LUInt32$C$_Tuple$LInt32$C$_Int32$R$R$Hclear`, `[EXIT: 134] after ~0s`
+  - practical boundary:
+    - this closes the verified stage2 `Crystal::MIR::Set(FunctionId/ValueId)#clear` alias gap
+    - it does not make the smoke green yet; the next honest frontier is the later `Crystal::MIR::Hash(UInt32, Tuple(Int32, Int32))#clear` stub head
 - **Fresh stage2 compiler-id alias-loop checkpoint: self-hosted `stage2` no longer aborts the tiny no-prelude smoke in the old `Enumerable::NotFoundError#upto { ... }` stub path, because the backend compiler-id alias helpers now use explicit `while` scans instead of `find` / `any?` over literal arrays; the same smoke has moved forward again to a later `Crystal::MIR::Set(FunctionId)#clear` stub head (2026-04-08, current session)**:
   - trustworthy setup:
     - `src/compiler/mir/llvm_backend.cr`
