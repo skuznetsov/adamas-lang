@@ -1,6 +1,34 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-02)
 
 ## Current Status
+- **Fresh stage1 absolute static-owner normalization checkpoint: full-compiler HIR lowering no longer mis-resolves `::Hash(Crystal::HIR::BlockId, Crystal::HIR::Block).new(initial_capacity: ...)` inside `Crystal::MIR::HIRToMIRLowering#order_blocks_for`; `lower_call(...)` now strips the syntactic root `::` from normalized static-call owners before late overload lookup, so the old fallback from `Hash(UInt32, Crystal::HIR::Block).new` to the unrelated `::Hash(Crystal::HIR::ValueId, Int32).new$Int32` disappears and the emitted HIR callsite becomes `Hash(UInt32, Crystal::HIR::Block).new$Nil_Int32` again (2026-04-08, current session)**:
+  - trustworthy setup:
+    - `src/compiler/hir/ast_to_hir.cr`
+      - after `normalize_method_owner_name(class_name_str)`, static type-literal owners now strip a leading `::` before class-method/constructor lookup
+      - this is a generic owner-normalization fix for static calls, not a `Hash`-specific hardcode: the verified failure pattern was "absolute generic owner survives into late overload lookup and gets matched against the wrong specialization family"
+  - decisive evidence:
+    - host compiler gate is green:
+      - `crystal build src/crystal_v2.cr -o /tmp/cv2_orderblocks_cleanfix_host --error-trace`
+      - result: success in `~7s`
+    - pre-fix trace showed the exact bad late lookup:
+      - `/tmp/cv2_orderblocks_late_trace_full.log`
+      - lines `195-198`:
+        - `late_lookup_enter full_method_name="::Hash(UInt32, Crystal::HIR::Block).new"`
+        - `late_lookup_hit ... entry="::Hash(Crystal::HIR::ValueId, Int32).new$Int32"`
+        - then `explicit_new ... mangled="Hash(UInt32, Int32).new$Nil_Int32"`
+    - after the owner-normalization fix, the full HIR oracle reaches HIR emission and the bad callsite is gone:
+      - `env DEBUG_MAIN=1 CRYSTAL_V2_STOP_AFTER_HIR=1 scripts/run_safe.sh /tmp/cv2_orderblocks_ownerfix_host 900 12288 src/crystal_v2.cr --emit hir -o /tmp/cv2_orderblocks_ownerfix_plain`
+      - result: `[EXIT: 0] after ~172s`
+      - emitted HIR:
+        - `/tmp/cv2_orderblocks_ownerfix_plain.hir:748309`
+          `func @Crystal::MIR::HIRToMIRLowering#order_blocks_for$Crystal::HIR::Function(...)`
+        - `/tmp/cv2_orderblocks_ownerfix_plain.hir:748342`
+          `%7 = call Hash(UInt32, Crystal::HIR::Block).new$Nil_Int32(...)`
+        - `/tmp/cv2_orderblocks_ownerfix_plain.hir:138473`
+          `func @Hash(UInt32, Crystal::HIR::Block).new$Nil_Int32(...)`
+  - practical boundary:
+    - this closes the verified `order_blocks_for` late constructor misdispatch family (`::Hash(...).new` selecting the wrong specialization owner after arg-type-aware lookup)
+    - it does **not** make the bootstrap ladder green yet; a later, unrelated full-compiler crash still exists after this point, so `stage1 -> stage5` remains far away because even broader stage2/full smoke is not green
 - **Fresh stage2 direct-lowering idempotency checkpoint: self-hosted `stage2` no longer corrupts `Crystal::Hasher#initialize(UInt64, UInt64)` into a duplicated six-parameter MIR signature when a direct lowering path revisits the same fully-mangled method name; `lower_method(...)` now treats an already-emitted body as authoritative for that exact `full_name` and marks successful direct lowers as `Completed`, so the tiny no-prelude smoke moves past the old null-self `Hasher` crash to a later compiler-side blank `SIGSEGV` after `lower_main: exprs=5` (2026-04-08, current session)**:
   - trustworthy setup:
     - `src/compiler/hir/ast_to_hir.cr`

@@ -57279,6 +57279,9 @@ module Crystal::HIR
 
         if class_name_str
           normalized_class_name = normalize_method_owner_name(class_name_str)
+          if normalized_class_name.starts_with?("::")
+            normalized_class_name = strip_absolute_name_prefix(normalized_class_name)
+          end
           class_name_str = normalized_class_name unless normalized_class_name.empty?
         end
 
