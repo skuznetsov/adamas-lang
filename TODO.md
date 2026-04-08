@@ -1,6 +1,28 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-02)
 
 ## Current Status
+- **Fresh stage2 MIR-`TypeRef` hash `has_key?` checkpoint: self-hosted `stage2` no longer aborts the tiny no-prelude smoke in the old `Crystal::MIR::Hash(UInt32, TypeRef)#has_key?` stub family, because the backend now delegates that MIR wrapper to the already-lowered top-level `Hash(UInt32, TypeRef)#[]?` and checks the nilable-union discriminator directly; the same smoke has moved forward again to a later `Crystal::MIR::Set(BlockId)#includes?` stub head (2026-04-08, current session)**:
+  - trustworthy setup:
+    - `src/compiler/mir/llvm_backend.cr` now emits an exact delegate for `Crystal::MIR::Hash(UInt32, TypeRef)#has_key?(UInt32)` in both the builtin-override path and the dead-code fallback path
+      - it calls the already-lowered top-level `Hash(UInt32, TypeRef)#[]?`
+      - it stores the returned `%Nil | TypeRef` union and checks the discriminator directly (`Nil` is variant `0` in the existing union ABI)
+    - this fix is narrow: it does not change the already-working `Crystal::MIR::Hash(UInt32, Function)#has_key?` path and does not add any new generic collection runtime synthesis
+  - decisive evidence:
+    - host compiler gate is green:
+      - `crystal build src/crystal_v2.cr -o /tmp/cv2_fix_mir_typeref_has_key --error-trace`
+    - self-host rebuild from that host is green:
+      - `scripts/run_safe.sh /tmp/cv2_fix_mir_typeref_has_key 900 12288 src/crystal_v2.cr -o /tmp/cv2_fix_mir_typeref_has_key_s2`
+      - result: `[EXIT: 0] after ~284s`
+    - the exact tiny no-prelude smoke moved beyond the old MIR-TypeRef hash head:
+      - before this fix:
+        - `scripts/run_safe.sh /tmp/cv2_fix_hash_clear_body_s2 120 1024 regression_tests/combined/test_no_prelude_interpolation.cr --no-prelude -o /tmp/noprel_fix_hash_clear_body.bin`
+        - result: `STUB CALLED: Crystal$CCMIR$CCHash$LUInt32$C$_Crystal$CCMIR$CCTypeRef$R$Hhas_key$Q$$UInt32`, `[EXIT: 134] after ~0s`
+      - after this fix:
+        - `scripts/run_safe.sh /tmp/cv2_fix_mir_typeref_has_key_s2 120 1024 regression_tests/combined/test_no_prelude_interpolation.cr --no-prelude -o /tmp/noprel_fix_mir_typeref_has_key.bin`
+        - result: `STUB CALLED: Crystal$CCMIR$CCSet$LCrystal$CCMIR$CCBlockId$R$Hincludes$Q$$UInt32`, `[EXIT: 134] after ~0s`
+  - practical boundary:
+    - this closes the verified stage2 `Crystal::MIR::Hash(UInt32, TypeRef)#has_key?` stub frontier
+    - it does not make the smoke green yet; the next honest frontier is the later `Crystal::MIR::Set(BlockId)#includes?(UInt32)` stub head
 - **Fresh stage2 top-level hash-clear checkpoint: self-hosted `stage2` no longer aborts the tiny no-prelude smoke in the old top-level `Hash(UInt32, Tuple(Int32, Int32))#clear` stub family, because the backend now synthesizes the unlowered `Hash#clear` body directly from the verified V2 runtime layout; the same smoke has moved forward again to a later `Crystal::MIR::Hash(UInt32, TypeRef)#has_key?` stub head (2026-04-08, current session)**:
   - trustworthy setup:
     - `src/compiler/mir/llvm_backend.cr` now emits a dead-code fallback for any unlowered top-level `Hash(... )#clear`

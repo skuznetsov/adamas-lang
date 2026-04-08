@@ -3638,6 +3638,22 @@ module Crystal::MIR
                "}\n"
       end
 
+      if name == "Crystal$CCMIR$CCHash$LUInt32$C$_Crystal$CCMIR$CCTypeRef$R$Hhas_key$Q$$UInt32"
+        union_type = "%Nil$_$OR$_Crystal$CCMIR$CCTypeRef.union"
+        return "; #{name} — delegate has_key? to monomorphized ::Hash#[]? on self\n" \
+               "define i32 @#{name}(ptr %self, i32 %key) {\n" \
+               "entry:\n" \
+               "  %val = call #{union_type} @Hash$LUInt32$C$_Crystal$CCMIR$CCTypeRef$R$H$IDXQ(ptr %self, i32 %key)\n" \
+               "  %val_ptr = alloca #{union_type}, align 8\n" \
+               "  store #{union_type} %val, ptr %val_ptr\n" \
+               "  %tid_ptr = getelementptr #{union_type}, ptr %val_ptr, i32 0, i32 0\n" \
+               "  %tid = load i32, ptr %tid_ptr\n" \
+               "  %found = icmp ne i32 %tid, 0\n" \
+               "  %result = select i1 %found, i32 1, i32 0\n" \
+               "  ret i32 %result\n" \
+               "}\n"
+      end
+
       if name == "Crystal$CCMIR$CCHash$LUInt32$C$_Crystal$CCMIR$CCFunction$R$H$IDXS$$UInt32_Crystal$CCMIR$CCFunction"
         return "; #{name} — delegate []= to monomorphized ::Hash on self\n" \
                "define void @#{name}(ptr %self, i32 %key, ptr %value) {\n" \
@@ -8440,6 +8456,20 @@ module Crystal::MIR
         emit_raw "  %val = call ptr @Hash$LUInt32$C$_Crystal$CCMIR$CCFunction$R$H$IDXQ$$UInt32(ptr %self, i32 %key)\n"
         emit_raw "  %is_null = icmp eq ptr %val, null\n"
         emit_raw "  %result = select i1 %is_null, i32 0, i32 1\n"
+        emit_raw "  ret i32 %result\n"
+        emit_raw "}\n\n"
+        return true
+      when "Crystal$CCMIR$CCHash$LUInt32$C$_Crystal$CCMIR$CCTypeRef$R$Hhas_key$Q$$UInt32"
+        emit_raw "; #{mangled} — delegate has_key? to monomorphized ::Hash#[]? on self\n"
+        emit_raw "define i32 @#{mangled}(ptr %self, i32 %key) {\n"
+        emit_raw "entry:\n"
+        emit_raw "  %val = call %Nil$_$OR$_Crystal$CCMIR$CCTypeRef.union @Hash$LUInt32$C$_Crystal$CCMIR$CCTypeRef$R$H$IDXQ(ptr %self, i32 %key)\n"
+        emit_raw "  %val_ptr = alloca %Nil$_$OR$_Crystal$CCMIR$CCTypeRef.union, align 8\n"
+        emit_raw "  store %Nil$_$OR$_Crystal$CCMIR$CCTypeRef.union %val, ptr %val_ptr\n"
+        emit_raw "  %tid_ptr = getelementptr %Nil$_$OR$_Crystal$CCMIR$CCTypeRef.union, ptr %val_ptr, i32 0, i32 0\n"
+        emit_raw "  %tid = load i32, ptr %tid_ptr\n"
+        emit_raw "  %found = icmp ne i32 %tid, 0\n"
+        emit_raw "  %result = select i1 %found, i32 1, i32 0\n"
         emit_raw "  ret i32 %result\n"
         emit_raw "}\n\n"
         return true
