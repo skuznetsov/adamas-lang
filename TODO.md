@@ -8077,3 +8077,50 @@ Immediate next steps:
    - prelude crash: `Parser#slice_eq(...)` from `parse_identifier_like`
    - no-prelude/runtime heads: `Array#empty?`, `Time::Span#to_i`,
      `LibMachVM.mach_task_self` / `safe_slice_to_string`
+
+## Checkpoint — 2026-04-08 (stage2 no-prelude DWARF precompute head moved again)
+
+Verified this turn:
+- The old stage2 no-prelude `error: Unable to pos` head is closed by the
+  `IO#pos` runtime dispatch checkpoint (`380b6bce`), and the next live
+  no-prelude blocker was narrowed to `JSON::Builder::Escape#read` during
+  `Crystal::DWARF.read_unsigned_leb128(IO)`.
+- Two bounded backend changes advance that frontier further:
+  - `src/compiler/mir/llvm_backend.cr`: exact builtin/dead-code override for
+    `JSON::Builder::Escape#read(Slice(UInt8))`, delegating to the wrapped
+    inner IO receiver (`@io` at offset `56`) for `IO::Memory`,
+    `IO::FileDescriptor`/`File`, and `File::PReader`, instead of the abstract
+    stdlib `raise ""` body.
+  - `src/compiler/mir/llvm_backend.cr`:
+    `precompute_function_return_types(functions : Array(Function))` rewritten
+    from nested `each`/block closures to index-based `while` loops, so the
+    stage2-generated body no longer depends on the same block/closure lowering
+    family that already bit us in `Indexable#each` and MIR collection paths.
+- Operational proof:
+  - `crystal build src/crystal_v2.cr -o /tmp/cv2_quick_verify7 --error-trace`
+    => host build green.
+  - `scripts/run_safe.sh /tmp/cv2_quick_verify7 900 12288 src/crystal_v2.cr -o /tmp/cv2_quick_s2m`
+    => self-host `stage2` green, `[EXIT: 0] after ~289s`.
+  - `scripts/run_safe.sh /tmp/cv2_quick_s2m 120 1024 regression_tests/combined/test_no_prelude_interpolation.cr --no-prelude -o /tmp/noprel_quick_s2m.bin`
+    => old `JSON::Builder::Escape#read` / `DWARF.read_unsigned_leb128(IO)`
+    crash-family no longer leads the stack; fresh `lldb` now stops in
+    `Crystal::MachO::Nlist64#name` inside
+    `Crystal::MIR::LLVMIRGenerator#precompute_function_return_types(...)`.
+
+Whole-program / behavioral effect:
+- The tiny stage2 no-prelude smoke is still red, but it moved again:
+  - previous head after `IO#pos` fix: `JSON::Builder::Escape#read` with bogus
+    receiver during `DWARF.read_unsigned_leb128(IO)`
+  - fresh head after this checkpoint: `Crystal::MachO::Nlist64#name`
+    (`EXC_BAD_ACCESS address=0x20`) from
+    `LLVMIRGenerator#precompute_function_return_types(...)`
+- This is progress, not a green result: the active frontier is now Mach-O
+  symbol/materialization during return-type precompute, not the earlier
+  JSON/IO dispatch path.
+
+Immediate next steps:
+1. Treat the old `JSON::Builder::Escape#read`/`IO#pos` stage2 no-prelude head
+   as superseded.
+2. Continue from the fresh bounded frontier:
+   `Crystal::MachO::Nlist64#name` inside
+   `LLVMIRGenerator#precompute_function_return_types(...)`.

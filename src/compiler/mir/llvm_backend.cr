@@ -2466,15 +2466,23 @@ module Crystal::MIR
     private def precompute_function_return_types(functions : Array(Function))
       # Build function lookup by ID for Call instruction resolution
       func_by_id = {} of FunctionId => Function
-      functions.each { |f| func_by_id[f.id] = f }
+      idx = 0
+      while idx < functions.size
+        f = functions.unsafe_fetch(idx)
+        func_by_id[f.id] = f
+        idx += 1
+      end
 
       # Phase 1: Record the declared return type for every function.
       # We do NOT blindly upgrade void→ptr here because Crystal methods
       # nearly always have Return(value) (last expression) even when void.
-      functions.each do |func|
+      idx = 0
+      while idx < functions.size
+        func = functions.unsafe_fetch(idx)
         mangled = mangle_function_name(func.name)
         return_type = @type_mapper.llvm_type(func.return_type)
         @emitted_function_return_types[mangled] = return_type
+        idx += 1
       end
 
       # Phase 2: Scan call sites (Call only, not ExternCall) for better type info.
@@ -2482,24 +2490,38 @@ module Crystal::MIR
       # upgrade to that observed call-site type.
       # V2 BOOTSTRAP: ENV access crashes V2-compiled binaries.
       if true # was: !ENV["CRYSTAL_V2_NO_PRECOMPUTE_P2"]?
-        functions.each do |func|
-          func.blocks.each do |block|
-            block.instructions.each do |inst|
+        func_idx = 0
+        while func_idx < functions.size
+          func = functions.unsafe_fetch(func_idx)
+
+          block_idx = 0
+          while block_idx < func.blocks.size
+            block = func.blocks.unsafe_fetch(block_idx)
+
+            inst_idx = 0
+            while inst_idx < block.instructions.size
+              inst = block.instructions.unsafe_fetch(inst_idx)
               if inst.is_a?(Call)
-                callee_func = func_by_id[inst.callee]?
-                next unless callee_func
-                callee_mangled = mangle_function_name(callee_func.name)
-                call_type = @type_mapper.llvm_type(inst.type)
-                next if call_type == "void"
-                # Upgrade void → observed call type.
-                existing = @emitted_function_return_types[callee_mangled]?
-                if existing == "void"
-                  @emitted_function_return_types[callee_mangled] = call_type
-                  STDERR.puts "  [PRECOMPUTE-P2] #{callee_mangled}: void → #{call_type}" if ENV["CRYSTAL_V2_PRECOMPUTE_DEBUG"]?
+                if callee_func = func_by_id[inst.callee]?
+                  callee_mangled = mangle_function_name(callee_func.name)
+                  call_type = @type_mapper.llvm_type(inst.type)
+                  if call_type != "void"
+                    # Upgrade void → observed call type.
+                    existing = @emitted_function_return_types[callee_mangled]?
+                    if existing == "void"
+                      @emitted_function_return_types[callee_mangled] = call_type
+                      STDERR.puts "  [PRECOMPUTE-P2] #{callee_mangled}: void → #{call_type}" if ENV["CRYSTAL_V2_PRECOMPUTE_DEBUG"]?
+                    end
+                  end
                 end
               end
+              inst_idx += 1
             end
+
+            block_idx += 1
           end
+
+          func_idx += 1
         end
       end
     end
@@ -3307,6 +3329,64 @@ module Crystal::MIR
                "  ret i32 %fd_pos\n" \
                "ret_zero:\n" \
                "  ret i32 0\n" \
+               "}\n"
+      end
+
+      if name == "JSON$CCBuilder$CCEscape$Hread$$Slice$LUInt8$R" &&
+         return_type == "%Int32$_$OR$_NoReturn$_$OR$_String.union" &&
+         arg_count == 2
+        io_memory_tid = @module.type_registry.get_by_name("IO::Memory").try(&.id.to_i32) || -1
+        io_fd_tid = @module.type_registry.get_by_name("IO::FileDescriptor").try(&.id.to_i32) || -1
+        file_tid = @module.type_registry.get_by_name("File").try(&.id.to_i32) || -1
+        preader_tid = @module.type_registry.get_by_name("File::PReader").try(&.id.to_i32) || -1
+        return "; #{name} — delegate JSON::Builder::Escape#read to inner IO receiver\n" \
+               "define #{return_type} @#{name}(ptr %self, ptr %slice) {\n" \
+               "entry:\n" \
+               "  %ret.slot = alloca #{return_type}, align 8\n" \
+               "  store #{return_type} zeroinitializer, ptr %ret.slot\n" \
+               "  %is_null = icmp eq ptr %self, null\n" \
+               "  br i1 %is_null, label %ret_zero, label %load_inner\n" \
+               "load_inner:\n" \
+               "  %inner.ptr.addr = getelementptr i8, ptr %self, i32 56\n" \
+               "  %inner = load ptr, ptr %inner.ptr.addr\n" \
+               "  %inner_null = icmp eq ptr %inner, null\n" \
+               "  br i1 %inner_null, label %ret_zero, label %dispatch\n" \
+               "dispatch:\n" \
+               "  %tid = load i32, ptr %inner\n" \
+               "  %is_mem = icmp eq i32 %tid, #{io_memory_tid}\n" \
+               "  br i1 %is_mem, label %memory_case, label %check_fd\n" \
+               "memory_case:\n" \
+               "  %mem_read = call i32 @IO$CCMemory$Hread$$Slice$LUInt8$R(ptr %inner, ptr %slice)\n" \
+               "  br label %wrap_i32\n" \
+               "check_fd:\n" \
+               "  %is_fd = icmp eq i32 %tid, #{io_fd_tid}\n" \
+               "  %is_file = icmp eq i32 %tid, #{file_tid}\n" \
+               "  %is_fd_like = or i1 %is_fd, %is_file\n" \
+               "  br i1 %is_fd_like, label %fd_case, label %check_preader\n" \
+               "fd_case:\n" \
+               "  %fd_read = call i32 @IO$CCFileDescriptor$Hread$$Slice$LUInt8$R(ptr %inner, ptr %slice)\n" \
+               "  br label %wrap_i32\n" \
+               "check_preader:\n" \
+               "  %is_preader = icmp eq i32 %tid, #{preader_tid}\n" \
+               "  br i1 %is_preader, label %preader_case, label %ret_zero\n" \
+               "preader_case:\n" \
+               "  %preader_read = call i32 @File$CCPReader$Hread$$Slice$LUInt8$R(ptr %inner, ptr %slice)\n" \
+               "  br label %wrap_i32\n" \
+               "wrap_i32:\n" \
+               "  %read.count = phi i32 [%mem_read, %memory_case], [%fd_read, %fd_case], [%preader_read, %preader_case]\n" \
+               "  %ret.tid = getelementptr #{return_type}, ptr %ret.slot, i32 0, i32 0\n" \
+               "  store i32 5, ptr %ret.tid\n" \
+               "  %ret.pay = getelementptr #{return_type}, ptr %ret.slot, i32 0, i32 1\n" \
+               "  store i32 %read.count, ptr %ret.pay, align 4\n" \
+               "  %ret.val = load #{return_type}, ptr %ret.slot\n" \
+               "  ret #{return_type} %ret.val\n" \
+               "ret_zero:\n" \
+               "  %ret.zero.tid = getelementptr #{return_type}, ptr %ret.slot, i32 0, i32 0\n" \
+               "  store i32 5, ptr %ret.zero.tid\n" \
+               "  %ret.zero.pay = getelementptr #{return_type}, ptr %ret.slot, i32 0, i32 1\n" \
+               "  store i32 0, ptr %ret.zero.pay, align 4\n" \
+               "  %ret.zero = load #{return_type}, ptr %ret.slot\n" \
+               "  ret #{return_type} %ret.zero\n" \
                "}\n"
       end
 
@@ -8082,6 +8162,88 @@ module Crystal::MIR
         end
         emit_raw "ret_zero:\n"
         emit_raw "  ret i32 0\n"
+        emit_raw "}\n\n"
+        return true
+      when "JSON$CCBuilder$CCEscape$Hread$$Slice$LUInt8$R"
+        io_memory_tid = @module.type_registry.get_by_name("IO::Memory").try(&.id.to_i32)
+        io_fd_tid = @module.type_registry.get_by_name("IO::FileDescriptor").try(&.id.to_i32)
+        file_tid = @module.type_registry.get_by_name("File").try(&.id.to_i32)
+        preader_tid = @module.type_registry.get_by_name("File::PReader").try(&.id.to_i32)
+        return false unless io_memory_tid || io_fd_tid || file_tid || preader_tid
+
+        union_type = "%Int32$_$OR$_NoReturn$_$OR$_String.union"
+        emit_raw "; #{mangled} — delegate JSON::Builder::Escape#read to inner IO receiver\n"
+        emit_raw "define #{union_type} @#{mangled}(ptr %self, ptr %slice) {\n"
+        emit_raw "entry:\n"
+        emit_raw "  %ret.slot = alloca #{union_type}, align 8\n"
+        emit_raw "  store #{union_type} zeroinitializer, ptr %ret.slot\n"
+        emit_raw "  %is_null = icmp eq ptr %self, null\n"
+        emit_raw "  br i1 %is_null, label %ret_zero, label %load_inner\n"
+        emit_raw "load_inner:\n"
+        emit_raw "  %inner.ptr.addr = getelementptr i8, ptr %self, i32 56\n"
+        emit_raw "  %inner = load ptr, ptr %inner.ptr.addr\n"
+        emit_raw "  %inner_null = icmp eq ptr %inner, null\n"
+        emit_raw "  br i1 %inner_null, label %ret_zero, label %dispatch\n"
+        emit_raw "dispatch:\n"
+        emit_raw "  %tid = load i32, ptr %inner\n"
+        if io_memory_tid
+          emit_raw "  %is_mem = icmp eq i32 %tid, #{io_memory_tid}\n"
+          emit_raw "  br i1 %is_mem, label %memory_case, label %check_fd\n"
+          emit_raw "memory_case:\n"
+          emit_raw "  %mem_read = call i32 @IO$CCMemory$Hread$$Slice$LUInt8$R(ptr %inner, ptr %slice)\n"
+          emit_raw "  br label %wrap_i32\n"
+        else
+          emit_raw "  br label %check_fd\n"
+        end
+        emit_raw "check_fd:\n"
+        if io_fd_tid && file_tid
+          emit_raw "  %is_fd = icmp eq i32 %tid, #{io_fd_tid}\n"
+          emit_raw "  %is_file = icmp eq i32 %tid, #{file_tid}\n"
+          emit_raw "  %is_fd_like = or i1 %is_fd, %is_file\n"
+          emit_raw "  br i1 %is_fd_like, label %fd_case, label %check_preader\n"
+        elsif io_fd_tid
+          emit_raw "  %is_fd = icmp eq i32 %tid, #{io_fd_tid}\n"
+          emit_raw "  br i1 %is_fd, label %fd_case, label %check_preader\n"
+        elsif file_tid
+          emit_raw "  %is_file = icmp eq i32 %tid, #{file_tid}\n"
+          emit_raw "  br i1 %is_file, label %fd_case, label %check_preader\n"
+        else
+          emit_raw "  br label %check_preader\n"
+        end
+        if io_fd_tid || file_tid
+          emit_raw "fd_case:\n"
+          emit_raw "  %fd_read = call i32 @IO$CCFileDescriptor$Hread$$Slice$LUInt8$R(ptr %inner, ptr %slice)\n"
+          emit_raw "  br label %wrap_i32\n"
+        end
+        emit_raw "check_preader:\n"
+        if preader_tid
+          emit_raw "  %is_preader = icmp eq i32 %tid, #{preader_tid}\n"
+          emit_raw "  br i1 %is_preader, label %preader_case, label %ret_zero\n"
+          emit_raw "preader_case:\n"
+          emit_raw "  %preader_read = call i32 @File$CCPReader$Hread$$Slice$LUInt8$R(ptr %inner, ptr %slice)\n"
+          emit_raw "  br label %wrap_i32\n"
+        else
+          emit_raw "  br label %ret_zero\n"
+        end
+        emit_raw "wrap_i32:\n"
+        incoming = [] of String
+        incoming << "[%mem_read, %memory_case]" if io_memory_tid
+        incoming << "[%fd_read, %fd_case]" if io_fd_tid || file_tid
+        incoming << "[%preader_read, %preader_case]" if preader_tid
+        emit_raw "  %read.count = phi i32 #{incoming.join(", ")}\n"
+        emit_raw "  %ret.tid = getelementptr #{union_type}, ptr %ret.slot, i32 0, i32 0\n"
+        emit_raw "  store i32 5, ptr %ret.tid\n"
+        emit_raw "  %ret.pay = getelementptr #{union_type}, ptr %ret.slot, i32 0, i32 1\n"
+        emit_raw "  store i32 %read.count, ptr %ret.pay, align 4\n"
+        emit_raw "  %ret.val = load #{union_type}, ptr %ret.slot\n"
+        emit_raw "  ret #{union_type} %ret.val\n"
+        emit_raw "ret_zero:\n"
+        emit_raw "  %ret.zero.tid = getelementptr #{union_type}, ptr %ret.slot, i32 0, i32 0\n"
+        emit_raw "  store i32 5, ptr %ret.zero.tid\n"
+        emit_raw "  %ret.zero.pay = getelementptr #{union_type}, ptr %ret.slot, i32 0, i32 1\n"
+        emit_raw "  store i32 0, ptr %ret.zero.pay, align 4\n"
+        emit_raw "  %ret.zero = load #{union_type}, ptr %ret.slot\n"
+        emit_raw "  ret #{union_type} %ret.zero\n"
         emit_raw "}\n\n"
         return true
       when "Crystal$CCMIR$CCSet$LCrystal$CCMIR$CCFunctionId$R$Dnew"
