@@ -8649,3 +8649,53 @@ Immediate next steps:
    `Crystal::MIR::HIRToMIRLowering#block_successors(Crystal::HIR::Block)`.
 3. Check whether `Crystal::HIR::Block` is being passed/boxed with the wrong
    ABI (small integer id vs heap/object pointer) in the self-hosted call path.
+
+## Checkpoint — 2026-04-08 (late-emitted nested Crystal callees registered from synthesized IR)
+
+Verified this turn:
+- The fresh earliest bootstrap red gate was no longer a stage2-only head. A
+  fresh ladder run failed already in stage1 plain smoke (`puts 42`) with:
+  `llc: error: use of undefined value '@IO$CCMemory$Hpos'`.
+- Root cause was a backend emission-gap pattern, not another parser/HIR
+  regression: synthesized LLVM bodies such as the `IO#pos` override emitted
+  nested Crystal calls (`IO::Memory#pos`, `__vdispatch__IO::FileDescriptor#pos`)
+  that never passed through MIR call lowering, so they were absent from the
+  normal call-emission queue.
+- `src/compiler/mir/llvm_backend.cr` now does two generic things for that
+  family:
+  - `register_called_crystal_functions_from_ir` scans backend-synthesized IR
+    bodies and records nested Crystal/vdispatch callees into
+    `@called_crystal_functions`
+  - `emit_missing_crystal_function_stubs` performs a late emission loop over
+    those newly discovered callees before falling back to declarations/stubs
+- The registration helper no longer applies `crystalish_extern_name?`
+  filtering: that heuristic is correct for unresolved extern matching, but it
+  was wrong for synthetic backend IR where the nested callees are exactly the
+  Crystal-mangled names that must be emitted late.
+
+Operational proof:
+- `crystal build src/crystal_v2.cr -o /tmp/cv2_io_pos_fix3 --error-trace`
+  => host build green.
+- `scripts/run_safe.sh /tmp/cv2_io_pos_fix3 60 8192 /tmp/puts42_oracle.cr -o /tmp/puts42_oracle_fix3.bin`
+  => plain smoke compile green, `[EXIT: 0] after ~14s`.
+- `scripts/run_safe.sh /tmp/puts42_oracle_fix3.bin 5 512`
+  => produced binary runs and prints `42`.
+- `scripts/run_safe.sh /tmp/cv2_io_pos_fix3 120 1024 regression_tests/combined/test_no_prelude_interpolation.cr --no-prelude -o /tmp/noprel_io_pos_fix3.bin`
+  => no-prelude smoke remains green, `[EXIT: 0]`.
+- `BOOTSTRAP_SMOKE_PLAIN_MEM_MB=8192 ./scripts/bootstrap_chain.sh --host /opt/homebrew/bin/crystal --stages 1 --out /tmp/cv2_stage1_post_iopos`
+  => stage1 ladder now fully green:
+  build `~7.90s`, smoke plain `ok`, smoke no-prelude `ok`.
+
+Whole-program / bootstrap effect:
+- This is a pattern fix, not an `IO::Memory#pos` one-off. It hardens any
+  backend-generated body that nests Crystal calls outside MIR lowering.
+- The ladder still does not approach `stage5`: at this checkpoint we only
+  re-verified `stage1` after the fix; the latest known broader frontier is
+  still beyond stage1/stage2 smoke, so we remain far from a full green
+  `stage1 -> stage5` chain.
+
+Immediate next steps:
+1. Re-run a fresh `--stages 2` ladder from this checkpoint.
+2. Freeze the new earliest red gate after stage1 plain smoke is gone.
+3. Keep preferring pattern fixes in compiler-internal bookkeeping/emission over
+   new mangled-name stubs.

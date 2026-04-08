@@ -2855,6 +2855,32 @@ module Crystal::MIR
       already_declared << "puts" << "printf" << "fwrite" << "fflush"
       already_declared << "ttyname_r" << "fcntl"
       add_runtime_declared_extern_names(already_declared)
+      # Pattern fix: builtin overrides / synthesized stubs can contain nested
+      # Crystal calls that never passed through MIR Call lowering, so they are
+      # absent from the normal emission queue. Emit any known late callees first
+      # before falling back to declare/stub generation.
+      loop do
+        progressed = false
+        missing_known = @called_crystal_functions.reject do |name, _|
+          @emitted_functions.includes?(name) || @undefined_externs.has_key?(name) || already_declared.includes?(name)
+        end
+        break if missing_known.empty?
+
+        missing_known.each_key do |name|
+          next unless func = @func_by_name[name]?
+          next if @emitted_functions.includes?(name)
+          begin
+            emit_function(func)
+            progressed = true
+          rescue ex
+            if ENV["DEBUG_MISSING_CRYSTAL_FILTER"]?.try(&.empty?) || ENV["DEBUG_MISSING_CRYSTAL_FILTER"]?.try { |f| name.includes?(f) }
+              STDERR.puts "[MISSING_CRYSTAL_LATE_EMIT] name=#{name} failed=#{ex.class}: #{ex.message}"
+            end
+          end
+        end
+
+        break unless progressed
+      end
       missing = @called_crystal_functions.reject { |name, _| @emitted_functions.includes?(name) || @undefined_externs.has_key?(name) || already_declared.includes?(name) }
       return if missing.empty?
       debug_missing_filter = ENV["DEBUG_MISSING_CRYSTAL_FILTER"]?
@@ -2892,6 +2918,34 @@ module Crystal::MIR
           param_list = (0...arg_count).map { |i| "ptr" }.join(", ") if param_list.empty?
           emit_raw "declare #{return_type} @#{name}(#{param_list})\n"
         end
+      end
+    end
+
+    private def register_called_crystal_functions_from_ir(ir : String) : Nil
+      ir.each_line do |line|
+        next unless line.includes?(" call ")
+        match = line.match(/\bcall\s+(.+?)\s+@([A-Za-z0-9_$.]+)\((.*)\)/)
+        next unless match
+        return_type = match[1]
+        callee_name = match[2]
+        next unless callee_name.starts_with?("__vdispatch__") || callee_name.includes?('$')
+        # This helper is only used for backend-synthesized IR bodies. Their nested
+        # callees never passed through MIR call lowering, so Crystal-mangled names
+        # must be registered here instead of being filtered by extern heuristics.
+
+        arg_list = match[3].strip
+        arg_types = [] of String
+        unless arg_list.empty?
+          arg_list.split(',').each do |arg|
+            token = arg.strip
+            next if token.empty?
+            space = token.index(' ')
+            arg_types << (space ? token.byte_slice(0, space) : token)
+          end
+        end
+
+        normalized_return = return_type == "void" ? "ptr" : return_type
+        @called_crystal_functions[callee_name] ||= {normalized_return, arg_types.size, arg_types}
       end
     end
 
@@ -3308,30 +3362,32 @@ module Crystal::MIR
         io_memory_tid = @module.type_registry.get_by_name("IO::Memory").try(&.id.to_i32) || -1
         io_fd_tid = @module.type_registry.get_by_name("IO::FileDescriptor").try(&.id.to_i32) || -1
         file_tid = @module.type_registry.get_by_name("File").try(&.id.to_i32) || -1
-        return "; #{name} — fallback runtime dispatch to concrete IO#pos implementations\n" \
-               "define i32 @#{name}(ptr %self) {\n" \
-               "entry:\n" \
-               "  %is_null = icmp eq ptr %self, null\n" \
-               "  br i1 %is_null, label %ret_zero, label %check_tid\n" \
-               "check_tid:\n" \
-               "  %tid = load i32, ptr %self\n" \
-               "  %is_mem = icmp eq i32 %tid, #{io_memory_tid}\n" \
-               "  br i1 %is_mem, label %memory_case, label %check_fd\n" \
-               "memory_case:\n" \
-               "  %mem_pos = call i32 @IO$CCMemory$Hpos(ptr %self)\n" \
-               "  ret i32 %mem_pos\n" \
-               "check_fd:\n" \
-               "  %is_fd = icmp eq i32 %tid, #{io_fd_tid}\n" \
-               "  %is_file = icmp eq i32 %tid, #{file_tid}\n" \
-               "  %is_fd_like = or i1 %is_fd, %is_file\n" \
-               "  br i1 %is_fd_like, label %fd_case, label %ret_zero\n" \
-               "fd_case:\n" \
-               "  %fd_pos64 = call i64 @__vdispatch__IO$CCFileDescriptor$Hpos$$T187(ptr %self)\n" \
-               "  %fd_pos = trunc i64 %fd_pos64 to i32\n" \
-               "  ret i32 %fd_pos\n" \
-               "ret_zero:\n" \
-               "  ret i32 0\n" \
-               "}\n"
+        ir = "; #{name} — fallback runtime dispatch to concrete IO#pos implementations\n" \
+             "define i32 @#{name}(ptr %self) {\n" \
+             "entry:\n" \
+             "  %is_null = icmp eq ptr %self, null\n" \
+             "  br i1 %is_null, label %ret_zero, label %check_tid\n" \
+             "check_tid:\n" \
+             "  %tid = load i32, ptr %self\n" \
+             "  %is_mem = icmp eq i32 %tid, #{io_memory_tid}\n" \
+             "  br i1 %is_mem, label %memory_case, label %check_fd\n" \
+             "memory_case:\n" \
+             "  %mem_pos = call i32 @IO$CCMemory$Hpos(ptr %self)\n" \
+             "  ret i32 %mem_pos\n" \
+             "check_fd:\n" \
+             "  %is_fd = icmp eq i32 %tid, #{io_fd_tid}\n" \
+             "  %is_file = icmp eq i32 %tid, #{file_tid}\n" \
+             "  %is_fd_like = or i1 %is_fd, %is_file\n" \
+             "  br i1 %is_fd_like, label %fd_case, label %ret_zero\n" \
+             "fd_case:\n" \
+             "  %fd_pos64 = call i64 @__vdispatch__IO$CCFileDescriptor$Hpos$$T187(ptr %self)\n" \
+             "  %fd_pos = trunc i64 %fd_pos64 to i32\n" \
+             "  ret i32 %fd_pos\n" \
+             "ret_zero:\n" \
+             "  ret i32 0\n" \
+             "}\n"
+        register_called_crystal_functions_from_ir(ir)
+        return ir
       end
 
       if name == "JSON$CCBuilder$CCEscape$Hread$$Slice$LUInt8$R" &&
@@ -8310,47 +8366,50 @@ module Crystal::MIR
         io_fd_tid = @module.type_registry.get_by_name("IO::FileDescriptor").try(&.id.to_i32)
         file_tid = @module.type_registry.get_by_name("File").try(&.id.to_i32)
         return false unless io_memory_tid || io_fd_tid || file_tid
-
-        emit_raw "; #{mangled} — runtime dispatch to concrete IO#pos implementations\n"
-        emit_raw "define i32 @#{mangled}(ptr %self) {\n"
-        emit_raw "entry:\n"
-        emit_raw "  %is_null = icmp eq ptr %self, null\n"
-        emit_raw "  br i1 %is_null, label %ret_zero, label %check_tid\n"
-        emit_raw "check_tid:\n"
-        emit_raw "  %tid = load i32, ptr %self\n"
-        if io_memory_tid
-          emit_raw "  %is_mem = icmp eq i32 %tid, #{io_memory_tid}\n"
-          emit_raw "  br i1 %is_mem, label %memory_case, label %check_fd\n"
-          emit_raw "memory_case:\n"
-          emit_raw "  %mem_pos = call i32 @IO$CCMemory$Hpos(ptr %self)\n"
-          emit_raw "  ret i32 %mem_pos\n"
-        else
-          emit_raw "  br label %check_fd\n"
+        ir = String.build do |io|
+          io << "; " << mangled << " — runtime dispatch to concrete IO#pos implementations\n"
+          io << "define i32 @" << mangled << "(ptr %self) {\n"
+          io << "entry:\n"
+          io << "  %is_null = icmp eq ptr %self, null\n"
+          io << "  br i1 %is_null, label %ret_zero, label %check_tid\n"
+          io << "check_tid:\n"
+          io << "  %tid = load i32, ptr %self\n"
+          if io_memory_tid
+            io << "  %is_mem = icmp eq i32 %tid, " << io_memory_tid << "\n"
+            io << "  br i1 %is_mem, label %memory_case, label %check_fd\n"
+            io << "memory_case:\n"
+            io << "  %mem_pos = call i32 @IO$CCMemory$Hpos(ptr %self)\n"
+            io << "  ret i32 %mem_pos\n"
+          else
+            io << "  br label %check_fd\n"
+          end
+          io << "check_fd:\n"
+          if io_fd_tid && file_tid
+            io << "  %is_fd = icmp eq i32 %tid, " << io_fd_tid << "\n"
+            io << "  %is_file = icmp eq i32 %tid, " << file_tid << "\n"
+            io << "  %is_fd_like = or i1 %is_fd, %is_file\n"
+            io << "  br i1 %is_fd_like, label %fd_case, label %ret_zero\n"
+          elsif io_fd_tid
+            io << "  %is_fd = icmp eq i32 %tid, " << io_fd_tid << "\n"
+            io << "  br i1 %is_fd, label %fd_case, label %ret_zero\n"
+          elsif file_tid
+            io << "  %is_file = icmp eq i32 %tid, " << file_tid << "\n"
+            io << "  br i1 %is_file, label %fd_case, label %ret_zero\n"
+          else
+            io << "  br label %ret_zero\n"
+          end
+          if io_fd_tid || file_tid
+            io << "fd_case:\n"
+            io << "  %fd_pos64 = call i64 @__vdispatch__IO$CCFileDescriptor$Hpos$$T187(ptr %self)\n"
+            io << "  %fd_pos = trunc i64 %fd_pos64 to i32\n"
+            io << "  ret i32 %fd_pos\n"
+          end
+          io << "ret_zero:\n"
+          io << "  ret i32 0\n"
+          io << "}\n\n"
         end
-        emit_raw "check_fd:\n"
-        if io_fd_tid && file_tid
-          emit_raw "  %is_fd = icmp eq i32 %tid, #{io_fd_tid}\n"
-          emit_raw "  %is_file = icmp eq i32 %tid, #{file_tid}\n"
-          emit_raw "  %is_fd_like = or i1 %is_fd, %is_file\n"
-          emit_raw "  br i1 %is_fd_like, label %fd_case, label %ret_zero\n"
-        elsif io_fd_tid
-          emit_raw "  %is_fd = icmp eq i32 %tid, #{io_fd_tid}\n"
-          emit_raw "  br i1 %is_fd, label %fd_case, label %ret_zero\n"
-        elsif file_tid
-          emit_raw "  %is_file = icmp eq i32 %tid, #{file_tid}\n"
-          emit_raw "  br i1 %is_file, label %fd_case, label %ret_zero\n"
-        else
-          emit_raw "  br label %ret_zero\n"
-        end
-        if io_fd_tid || file_tid
-          emit_raw "fd_case:\n"
-          emit_raw "  %fd_pos64 = call i64 @__vdispatch__IO$CCFileDescriptor$Hpos$$T187(ptr %self)\n"
-          emit_raw "  %fd_pos = trunc i64 %fd_pos64 to i32\n"
-          emit_raw "  ret i32 %fd_pos\n"
-        end
-        emit_raw "ret_zero:\n"
-        emit_raw "  ret i32 0\n"
-        emit_raw "}\n\n"
+        register_called_crystal_functions_from_ir(ir)
+        emit_raw ir
         return true
       when "JSON$CCBuilder$CCEscape$Hread$$Slice$LUInt8$R"
         io_memory_tid = @module.type_registry.get_by_name("IO::Memory").try(&.id.to_i32)
