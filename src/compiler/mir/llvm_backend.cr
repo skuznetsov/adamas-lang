@@ -10536,7 +10536,11 @@ module Crystal::MIR
 
     private def typeref_set_delegate_target(mangled : String) : {String, Function}?
       prefixes = {
+        "$CCSet$LTypeRef$R",
+        "Set$LTypeRef$R",
+        "$CCSet$LCrystal$CCMIR$CCTypeRef$R",
         "Set$LCrystal$CCMIR$CCTypeRef$R",
+        "$CCSet$LCrystal$CCHIR$CCTypeRef$R",
         "Set$LCrystal$CCHIR$CCTypeRef$R",
       }
 
@@ -10547,6 +10551,7 @@ module Crystal::MIR
           target = mangled.sub(prefix, "Set$LUInt32$R")
           target = target.sub("$$Crystal$CCMIR$CCTypeRef", "$$UInt32")
           target = target.sub("$$Crystal$CCHIR$CCTypeRef", "$$UInt32")
+          target = target.sub("$$TypeRef", "$$UInt32")
           if target_func = @func_by_name[target]?
             return {target, target_func}
           end

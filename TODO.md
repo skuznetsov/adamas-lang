@@ -1,6 +1,28 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-02)
 
 ## Current Status
+- **Fresh stage2 rooted/plain `Set(TypeRef)` constructor canonicalization checkpoint: self-hosted `stage2` no longer initializes `Crystal::MIR::Module#@module_type_refs` through the broken rooted `@$CCSet$LTypeRef$R$Dnew` auto-allocator path; backend typeref-set delegation now covers rooted/plain `TypeRef` spellings and rewrites that constructor call to canonical `Set(UInt32).new`, so the tiny no-prelude smoke moves past the old null-`@hash` `Set(UInt32)#includes? -> Hash(UInt32, Nil)#find_entry_with_index` crash and reaches a later compiler-side `error: Index error in emit_function for: __crystal_main / Negative capacity` (2026-04-08, current session)**:
+  - trustworthy setup:
+    - `src/compiler/mir/llvm_backend.cr`
+      - `typeref_set_delegate_target(...)` now recognizes rooted/plain `Set(TypeRef)` spellings in addition to the already-covered fully qualified `Crystal::MIR::TypeRef` / `Crystal::HIR::TypeRef` variants
+      - this is a canonicalization-seam fix, not a `Module#initialize` hardcode: the verified failure pattern was "rooted/plain wrapper-key `Set(TypeRef)` constructor escapes retargeting and keeps the internal `@hash` null"
+  - decisive evidence:
+    - host compiler gate is green:
+      - `crystal build src/crystal_v2.cr -o /tmp/cv2_typeref_ctor_host --error-trace`
+      - result: success with only the known stdlib warning
+    - self-host rebuild from that host is green:
+      - `scripts/run_safe.sh /tmp/cv2_typeref_ctor_host 900 12288 src/crystal_v2.cr -o /tmp/cv2_typeref_ctor_s2`
+      - result: `[EXIT: 0] after ~321s`
+    - the emitted stage2 constructor path is now canonical:
+      - in `/tmp/cv2_typeref_ctor_s2.ll`, `Crystal::MIR::Module#initialize(String)` no longer contains `call ptr @$CCSet$LTypeRef$R$Dnew(ptr null)`
+      - the same function now contains `call ptr @Set$LUInt32$R$Dnew(ptr null)` for `@module_type_refs`
+    - the exact tiny no-prelude oracle moved beyond the old `Hash(UInt32, Nil)` null-self crash:
+      - `scripts/run_safe.sh /tmp/cv2_typeref_ctor_s2 120 1024 regression_tests/combined/test_no_prelude_interpolation.cr --no-prelude -o /tmp/noprel_typeref_ctor_lldb.bin`
+      - result: `error: Index error in emit_function for: __crystal_main` / `Negative capacity`, `[EXIT: 1] after ~0s`
+      - this replaces the old `SIGSEGV` in `Set(UInt32)#includes? -> Hash(UInt32, Nil)#find_entry_with_index`
+  - practical boundary:
+    - this closes the verified stage2 rooted/plain `Set(TypeRef)` constructor drift family behind `@module_type_refs`
+    - it does not make `stage2` smoke green yet; the next honest frontier is the later compiler-side negative-capacity path inside `emit_function(__crystal_main)`, so `stage1 -> stage5` remains far away because even the tiny `stage2` no-prelude smoke is still red
 - **Fresh stage1 absolute static-owner normalization checkpoint: full-compiler HIR lowering no longer mis-resolves `::Hash(Crystal::HIR::BlockId, Crystal::HIR::Block).new(initial_capacity: ...)` inside `Crystal::MIR::HIRToMIRLowering#order_blocks_for`; `lower_call(...)` now strips the syntactic root `::` from normalized static-call owners before late overload lookup, so the old fallback from `Hash(UInt32, Crystal::HIR::Block).new` to the unrelated `::Hash(Crystal::HIR::ValueId, Int32).new$Int32` disappears and the emitted HIR callsite becomes `Hash(UInt32, Crystal::HIR::Block).new$Nil_Int32` again (2026-04-08, current session)**:
   - trustworthy setup:
     - `src/compiler/hir/ast_to_hir.cr`
