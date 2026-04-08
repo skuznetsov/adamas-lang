@@ -10135,7 +10135,7 @@ module Crystal::MIR
     end
 
     private def compiler_u32_alias_hash_token?(mangled : String) : String?
-      {
+      tokens = {
         "HIR$CCValueId",
         "HIR$CCBlockId",
         "HIR$CCScopeId",
@@ -10156,7 +10156,16 @@ module Crystal::MIR
         "Crystal$CCMIR$CCBlockId",
         "Crystal$CCMIR$CCFunctionId",
         "Crystal$CCMIR$CCTypeId",
-      }.find { |token| mangled.includes?("Hash$L#{token}$C$_") }
+      }
+
+      idx = 0
+      while idx < tokens.size
+        token = tokens.unsafe_fetch(idx)
+        return token if mangled.includes?("Hash$L#{token}$C$_")
+        idx += 1
+      end
+
+      nil
     end
 
     private def emit_compiler_u32_alias_hash_delegate_override(func : Function, mangled : String) : Bool
@@ -10247,7 +10256,7 @@ module Crystal::MIR
     end
 
     private def compiler_u32_alias_key_hash?(mangled : String) : Bool
-      {
+      suffixes = {
         "$Hkey_hash$$HIR$CCValueId",
         "$Hkey_hash$$HIR$CCBlockId",
         "$Hkey_hash$$HIR$CCScopeId",
@@ -10268,14 +10277,30 @@ module Crystal::MIR
         "$Hkey_hash$$Crystal$CCMIR$CCBlockId",
         "$Hkey_hash$$Crystal$CCMIR$CCFunctionId",
         "$Hkey_hash$$Crystal$CCMIR$CCTypeId",
-      }.any? { |suffix| mangled.ends_with?(suffix) }
+      }
+
+      idx = 0
+      while idx < suffixes.size
+        return true if mangled.ends_with?(suffixes.unsafe_fetch(idx))
+        idx += 1
+      end
+
+      false
     end
 
     private def compiler_i32_wrapper_key_hash?(mangled : String) : Bool
-      {
+      suffixes = {
         "$Hkey_hash$$CrystalV2$CCCompiler$CCFrontend$CCExprId",
         "$Hkey_hash$$CrystalV2$CCCompiler$CCSemantic$CCTypeId",
-      }.any? { |suffix| mangled.ends_with?(suffix) }
+      }
+
+      idx = 0
+      while idx < suffixes.size
+        return true if mangled.ends_with?(suffixes.unsafe_fetch(idx))
+        idx += 1
+      end
+
+      false
     end
 
     private def concrete_value_key_hash_delegate_target(mangled : String, key_type_ref : TypeRef) : String?

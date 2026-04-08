@@ -1,6 +1,33 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-02)
 
 ## Current Status
+- **Fresh stage2 compiler-id alias-loop checkpoint: self-hosted `stage2` no longer aborts the tiny no-prelude smoke in the old `Enumerable::NotFoundError#upto { ... }` stub path, because the backend compiler-id alias helpers now use explicit `while` scans instead of `find` / `any?` over literal arrays; the same smoke has moved forward again to a later `Crystal::MIR::Set(FunctionId)#clear` stub head (2026-04-08, current session)**:
+  - trustworthy setup:
+    - `src/compiler/mir/llvm_backend.cr`
+      - `compiler_u32_alias_hash_token?(...)`
+      - `compiler_u32_alias_key_hash?(...)`
+      - `compiler_i32_wrapper_key_hash?(...)`
+    - these helpers now scan their literal suffix/token tables with explicit index-based `while` loops instead of `find` / `any?`, so the stage2 backend no longer pulls in the unfinished `Enumerable` block iteration path while emitting compiler-id alias overrides
+  - decisive evidence:
+    - host compiler gate is green:
+      - `crystal build src/crystal_v2.cr -o /tmp/cv2_fix_u32_alias_loops --error-trace`
+    - self-host rebuild from that host is green:
+      - `scripts/run_safe.sh /tmp/cv2_fix_u32_alias_loops 900 12288 src/crystal_v2.cr -o /tmp/cv2_fix_u32_alias_loops_s2`
+      - result: `[EXIT: 0] after ~289s`
+    - the exact tiny no-prelude smoke moved beyond the old `Enumerable::NotFoundError#upto$$Int32_block` head:
+      - before this fix:
+        - `scripts/run_safe.sh /tmp/cv2_fix_mir_array_param_s2 120 1024 regression_tests/combined/test_no_prelude_interpolation.cr --no-prelude -o /tmp/noprel_fix_mir_array_param.bin`
+        - result: `STUB CALLED: Enumerable$LT$R$CCNotFoundError$Hupto$$Int32_block`, `[EXIT: 134] after ~0s`
+        - fresh `lldb` showed the path
+          - `emit_builtin_override`
+          - `emit_compiler_u32_alias_hash_delegate_override`
+          - `compiler_u32_alias_hash_token?`
+      - after this fix:
+        - `scripts/run_safe.sh /tmp/cv2_fix_u32_alias_loops_s2 120 1024 regression_tests/combined/test_no_prelude_interpolation.cr --no-prelude -o /tmp/noprel_fix_u32_alias_loops.bin`
+        - result: `STUB CALLED: Crystal$CCMIR$CCSet$LCrystal$CCMIR$CCFunctionId$R$Hclear`, `[EXIT: 134] after ~0s`
+  - practical boundary:
+    - this closes the verified stage2 compiler-id alias helper / `Enumerable::NotFoundError#upto` stub family
+    - it does not make the smoke green yet; the next honest frontier is the later `Crystal::MIR::Set(FunctionId)#clear` stub head
 - **Fresh stage2 LLVM array-owner checkpoint: self-hosted `stage2` no longer crashes the tiny no-prelude smoke in `LLVMIRGenerator#emit_functions_sequential(Array(Function))`, because backend helper signatures now use the real top-level `::Array(Function)` instead of self-host-specializing to `Crystal::MIR::Array(Function)` with a different field layout; the same smoke has moved forward again to a later `Enumerable::NotFoundError#upto { ... }` stub head (2026-04-08, current session)**:
   - trustworthy setup:
     - `src/compiler/mir/llvm_backend.cr` now qualifies the runtime-critical helper signatures
