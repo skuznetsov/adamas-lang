@@ -141,7 +141,7 @@ module Crystal::MIR
 
   class LLVMTypeMapper
     @type_registry : TypeRegistry
-    @type_ref_cache : Hash(TypeRef, String)
+    @type_ref_cache : ::Hash(TypeRef, String)
     @mangle_calls : Int64 = 0_i64
     @mangle_input_bytes : Int64 = 0_i64
     @mangle_output_bytes : Int64 = 0_i64
@@ -154,7 +154,7 @@ module Crystal::MIR
     property union_descriptors : Hash(TypeRef, UnionDescriptor)?
 
     def initialize(@type_registry : TypeRegistry)
-      @type_ref_cache = {} of TypeRef => String
+      @type_ref_cache = ::Hash(TypeRef, String).new
       @mangle_cache = {} of String => String
     end
 
@@ -1734,7 +1734,7 @@ module Crystal::MIR
     @array_info : Hash(ValueId, {String, Int32})  # Array element_type and size
     @string_constants : Hash(String, String)  # String value -> global name
     @string_aliases : Hash(String, String) = {} of String => String  # worker_name -> canonical_name (for parallel dedup)
-    @module_singleton_globals : Hash(TypeRef, String)  # Module type -> singleton global name
+    @module_singleton_globals : ::Hash(TypeRef, String)  # Module type -> singleton global name
     @emitted_value_types : Hash(String, String)  # SSA name -> LLVM type (per function)
     @emitted_value_names : Set(String)  # SSA names materialized in current function
     @emitted_allocas : Set(ValueId) = Set(ValueId).new  # Track pre-emitted allocas
@@ -2001,7 +2001,7 @@ module Crystal::MIR
       @alloc_element_types = {} of ValueId => TypeRef
       @array_info = {} of ValueId => {String, Int32}
       @string_constants = {} of String => String
-      @module_singleton_globals = {} of TypeRef => String
+      @module_singleton_globals = ::Hash(TypeRef, String).new
       @emitted_value_types = {} of String => String
       bootstrap_trace_puts "[LLVM_INIT] hashes done"
       @emitted_value_names = Set(String).new
@@ -17164,7 +17164,6 @@ module Crystal::MIR
         callee_func = delegate[1]
         raw_callee_name = callee_func.name
       end
-
       # Keep direct self-recursive calls intact. Overload retargeting must be resolved
       # in HIR/MIR; backend-level substitution can silently redirect to wrong overloads.
 

@@ -1,6 +1,27 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-02)
 
 ## Current Status
+- **Fresh stage2 MIR `TypeRef` cache checkpoint: self-hosted `stage2` no longer aborts the tiny no-prelude smoke in `Crystal::MIR::Hash(TypeRef, String)#[]?`; both `LLVMTypeMapper.@type_ref_cache` and module-singleton tracking now use the real top-level `::Hash(TypeRef, String)`, and the same smoke has moved forward again to a later `Crystal::MIR::Set#size` stub head (2026-04-08, current session)**:
+  - trustworthy setup:
+    - `src/compiler/mir/llvm_backend.cr` now declares `LLVMTypeMapper.@type_ref_cache` as `::Hash(TypeRef, String)` and initializes it with `::Hash(TypeRef, String).new`, instead of the nested `Crystal::MIR::Hash(TypeRef, String)` alias that self-host stage2 never materialized on the read side
+    - the same file keeps module-singleton tracking on `::Hash(TypeRef, String)`, so both hot `TypeRef -> String` caches now use the canonical runtime collection instead of stage2-local `Crystal::MIR::Hash` symbols
+    - a previously attempted backend-only retarget hook for `Crystal::MIR::Hash(...)` calls was removed again; the head shift below comes from the source-level cache type fix, not from speculative callsite rewriting
+  - decisive evidence:
+    - host compiler gate is green:
+      - `crystal build src/crystal_v2.cr -o /tmp/cv2_fix_typeref_cache --error-trace`
+    - self-host rebuild from that host is green:
+      - `scripts/run_safe.sh /tmp/cv2_fix_typeref_cache 900 12288 src/crystal_v2.cr -o /tmp/cv2_fix_typeref_cache_s2`
+      - result: `[EXIT: 0] after ~285s`
+    - the exact tiny no-prelude smoke moved past the old MIR-hash head:
+      - before this fix:
+        - `scripts/run_safe.sh /tmp/cv2_fix_hir_member_access_s2 120 1024 regression_tests/combined/test_no_prelude_interpolation.cr --no-prelude -o /tmp/noprel_fix_hir_member_access.bin`
+        - result: `STUB CALLED: Crystal$CCMIR$CCHash$LCrystal$CCMIR$CCTypeRef$C$_String$R$H$IDXQ$$Crystal$CCMIR$CCTypeRef`
+      - after this fix:
+        - `scripts/run_safe.sh /tmp/cv2_fix_typeref_cache_s2 120 1024 regression_tests/combined/test_no_prelude_interpolation.cr --no-prelude -o /tmp/noprel_fix_typeref_cache.bin`
+        - result: `STUB CALLED: Crystal$CCMIR$CCSet$Hsize`, `[EXIT: 134] after ~0s`
+  - practical boundary:
+    - this closes the verified stage2 `Crystal::MIR::Hash(TypeRef, String)` cache read-path frontier for the tiny no-prelude oracle
+    - it does not make the smoke green yet; the next honest frontier is the later `Crystal::MIR::Set#size` stub head
 - **Fresh stage2 HIR compiler-collection owner checkpoint: self-hosted `stage2` no longer mis-lowers `LLVMIRGenerator#precompute_function_return_types` through `Void` locals and random zero-arg member picks, because zero-arg member access now normalizes `Crystal::MIR::Array/Hash/Set(...)` owners before method lookup just like the typed call path; the `s2` rebuild is green again, and the tiny no-prelude smoke has moved forward to a later `Crystal::MIR::Hash(TypeRef, String)#[]?` stub head instead of the old bogus `MachO::Nlist64#name` / `ProcLiteralNode#return_type` chain (2026-04-08, current session)**:
   - trustworthy setup:
     - `src/compiler/hir/ast_to_hir.cr` `lower_member_access(...)` now normalizes `receiver_owner_hint`, `class_info`, `get_type_name_from_ref(...)`, and descriptor-derived owner names through `normalize_method_owner_name(...)`, so zero-arg member access on `Crystal::MIR::Array/Hash/Set` aliases resolves against the real top-level collection methods instead of falling through to `receiver_type.id == 0` global-name fallback
