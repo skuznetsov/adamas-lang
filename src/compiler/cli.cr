@@ -2934,7 +2934,9 @@ module CrystalV2
 
         opt_mode_tag = options.llvm_opt ? "#{opt_flag}#{opt_bisect_flag}" : "none"
         opt_tag = "opt=#{opt_mode_tag}"
-        llc_tag = "llc=#{opt_flag}"
+        # Debug builds compile IR with clang -c -g (llc has no -g; IR DI → DWARF via clang).
+        obj_tool_tag = debug_info_enabled ? "clang_c=#{opt_flag}|g" : "llc=#{opt_flag}"
+        llc_tag = obj_tool_tag
         opt_cache_file = options.llvm_cache ? path_join(cache_dir, "#{digest_string("#{base_hash}|#{opt_tag}")}.opt.bc") : ""
         obj_cache_file = options.llvm_cache ? path_join(cache_dir, "#{digest_string("#{base_hash}|#{opt_tag}|#{llc_tag}")}.o") : ""
 
@@ -2993,12 +2995,20 @@ module CrystalV2
             llc_used_fallback = false
             # Use --fast-isel at -O0 for faster code generation (~20% speedup)
             obj_tmp_file = temp_command_output_path(obj_file)
-            llc_args = ["llc", opt_flag] of String
-            llc_args << "--fast-isel" if options.optimize == 0
-            llc_args << "-filetype=obj"
-            llc_args << "-o"
-            llc_args << obj_tmp_file
-            llc_args << opt_ll_file
+            if debug_info_enabled
+              # clang accepts .ll/.bc and honors DI in IR; llc does not support -g.
+              llc_args = ["clang", "-c", opt_flag, "-g"] of String
+              llc_args << "-o"
+              llc_args << obj_tmp_file
+              llc_args << opt_ll_file
+            else
+              llc_args = ["llc", opt_flag] of String
+              llc_args << "--fast-isel" if options.optimize == 0
+              llc_args << "-filetype=obj"
+              llc_args << "-o"
+              llc_args << obj_tmp_file
+              llc_args << opt_ll_file
+            end
             llc_cmd = command_args_display(llc_args)
             bootstrap_trace_puts "[LLVM_TAIL] phase=llc_cmd value=#{llc_cmd}" if trace_llvm_tail
             log(options, out_io, "  $ #{llc_cmd}")
@@ -3008,12 +3018,19 @@ module CrystalV2
               if effective_llvm_opt && opt_ll_file != ll_file
                 llc_used_fallback = true
                 err_io.puts "llc failed on optimized IR, retrying unoptimized IR..."
-                fallback_args = ["llc", opt_flag] of String
-                fallback_args << "--fast-isel" if options.optimize == 0
-                fallback_args << "-filetype=obj"
-                fallback_args << "-o"
-                fallback_args << obj_tmp_file
-                fallback_args << ll_file
+                if debug_info_enabled
+                  fallback_args = ["clang", "-c", opt_flag, "-g"] of String
+                  fallback_args << "-o"
+                  fallback_args << obj_tmp_file
+                  fallback_args << ll_file
+                else
+                  fallback_args = ["llc", opt_flag] of String
+                  fallback_args << "--fast-isel" if options.optimize == 0
+                  fallback_args << "-filetype=obj"
+                  fallback_args << "-o"
+                  fallback_args << obj_tmp_file
+                  fallback_args << ll_file
+                end
                 fallback_cmd = command_args_display(fallback_args)
                 bootstrap_trace_puts "[LLVM_TAIL] phase=llc_fallback_cmd value=#{fallback_cmd}" if trace_llvm_tail
                 log(options, out_io, "  $ #{fallback_cmd}")
@@ -3097,6 +3114,7 @@ module CrystalV2
             end
           else
             link_args = ["cc", "-o", link_tmp_output] of String
+            link_args << "-g" if debug_info_enabled
             link_objs.each { |obj| link_args << obj }
             link_flags.each { |flag| link_args << flag }
             {% if flag?(:darwin) %}
