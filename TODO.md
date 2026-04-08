@@ -1,6 +1,26 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-02)
 
 ## Current Status
+- **Fresh stage2 MIR-collection alias checkpoint: self-hosted `stage2` no longer dies on the earlier `DwarfDebugContext#register_file`, `Enumerable#any?`, `Crystal::MIR::Array(Function)#size`, `Crystal::MIR::Hash(String, TypeRef)#empty?`, or `Crystal::MIR::Set(String/FunctionId)` stub fronts during the tiny no-prelude smoke; the live no-prelude head has moved forward to a real runtime crash in `Hash(UInt32, Nil)#find_entry_with_index` reached through `Set(UInt32)#includes?` while the full self-host build remains green (2026-04-07, current session)**:
+  - trustworthy setup:
+    - `src/compiler/mir/llvm_backend.cr` no longer depends on `File.basename/File.dirname` when registering DWARF files; it now uses direct slash-splitting helpers to avoid the self-hosted `Path` dispatch crash in generated stage2 compilers
+    - `regex_runtime_needed?` in the same file no longer uses block-based `Enumerable#any?` on MIR collections; it now walks functions/blocks/instructions with index-based loops
+    - `emit_dead_code_stub(...)` now delegates the verified `Crystal::MIR::Array`, `Crystal::MIR::Set(String)`, `Crystal::MIR::Set(FunctionId)#includes?`, and `Crystal::MIR::Hash(String, TypeRef)#empty?` alias cases to working top-level runtime paths (or derives `Hash#empty?` from `Hash#size`) instead of abort stubs
+    - `src/compiler/mir/mir.cr` now qualifies the core MIR container storage (`::Array`, `::Hash`, `::Set`) and the remaining known `::Set.new` call sites so stage2 no longer materializes namespace-local collection constructors with missing initialization
+  - decisive evidence:
+    - host compiler gate is green:
+      - `crystal build src/crystal_v2.cr -o /tmp/cv2_quick_verify3 --error-trace`
+    - self-host rebuild from that host is green:
+      - `scripts/run_safe.sh /tmp/cv2_quick_verify3 900 12288 src/crystal_v2.cr -o /tmp/cv2_quick_s2i`
+      - result: `[EXIT: 0] after ~285s`
+    - the exact tiny no-prelude smoke now moves beyond the old stub family:
+      - `scripts/run_safe.sh /tmp/cv2_quick_s2i 120 1024 regression_tests/combined/test_no_prelude_interpolation.cr --no-prelude -o /tmp/noprel_quick_s2i.bin`
+      - result: `[CRASH] Segfault (exit 139)` instead of `STUB CALLED: Crystal$CCMIR$CCSet$LCrystal$CCMIR$CCFunctionId$R$Hincludes$Q$$UInt32`
+      - `lldb --batch -o 'run' -k 'bt 20' -k 'register read' -k 'disassemble --frame' -- /tmp/cv2_quick_s2i regression_tests/combined/test_no_prelude_interpolation.cr --no-prelude -o /tmp/noprel_quick_s2i_dbg.bin`
+      - top frame: `Hash$LUInt32$C$_Nil$R$Hfind_entry_with_index$$UInt32`, called from `Hash(UInt32, Nil)#has_key? -> Set(UInt32)#includes? -> Crystal::MIR::Set(FunctionId)#includes? -> LLVMIRGenerator#generate`
+  - practical boundary:
+    - this is a verified stage2 progress checkpoint for the MIR collection alias/runtime path, not a claim that stage2 smoke is green
+    - the next honest no-prelude frontier is a real `Hash(UInt32, Nil)` runtime/state crash rather than another missing MIR collection stub
 - **Fresh self-hosted macro-text provenance checkpoint: self-hosted `stage2` no longer segfaults in top-level macro text stitching during the `stage2 -> stage3` HIR split; the old `collect_top_level_nodes` `Array(String)#join` / `piece.text` crash family is closed, and the next live head has moved to a later plain `error: End of file reached` follower while file-local sentinels split cleanly into downstream runtime fronts (2026-04-02, current session)**:
   - trustworthy setup:
     - `src/compiler/cli.cr` no longer trusts `Array(String)#join` for top-level macro raw-text/active-text stitching in `collect_top_level_nodes(...)`; both corridors now build combined text directly

@@ -1722,11 +1722,11 @@ module Crystal::MIR
 
   class BasicBlock
     getter id : BlockId
-    getter instructions : Array(Value)
+    getter instructions : ::Array(Value)
     property terminator : Terminator
 
     # Predecessor blocks (computed)
-    property predecessors : Array(BlockId)
+    property predecessors : ::Array(BlockId)
 
     def initialize(@id : BlockId)
       @instructions = [] of Value
@@ -1804,32 +1804,32 @@ module Crystal::MIR
   class Function
     @id : FunctionId
     @name : String
-    @params : Array(Parameter)
+    @params : ::Array(Parameter)
     @return_type : TypeRef
-    @blocks : Array(BasicBlock)
+    @blocks : ::Array(BasicBlock)
     @entry_block : BlockId
     @source_location : SourceLocation?
-    @value_locations : Hash(ValueId, SourceLocation)
-    @value_lexical_scopes : Hash(ValueId, UInt32)
-    @debug_local_names : Hash(ValueId, String)
-    @debug_local_bindings : Array(DebugLocalBinding)
-    @debug_scope_parent : Hash(UInt32, UInt32?)
-    @debug_scope_opening : Hash(UInt32, SourceLocation)
-    @debug_scope_closing : Hash(UInt32, SourceLocation)
+    @value_locations : ::Hash(ValueId, SourceLocation)
+    @value_lexical_scopes : ::Hash(ValueId, UInt32)
+    @debug_local_names : ::Hash(ValueId, String)
+    @debug_local_bindings : ::Array(DebugLocalBinding)
+    @debug_scope_parent : ::Hash(UInt32, UInt32?)
+    @debug_scope_opening : ::Hash(UInt32, SourceLocation)
+    @debug_scope_closing : ::Hash(UInt32, SourceLocation)
     @slab_frame : Bool
 
     getter id : FunctionId
     getter name : String
-    getter params : Array(Parameter)
+    getter params : ::Array(Parameter)
     getter return_type : TypeRef
-    getter blocks : Array(BasicBlock)
+    getter blocks : ::Array(BasicBlock)
     getter entry_block : BlockId
     property source_location : SourceLocation?
     property slab_frame : Bool = false
 
     @next_value_id : ValueId = 0_u32
     @next_block_id : BlockId = 0_u32
-    @block_map : Hash(BlockId, BasicBlock)
+    @block_map : ::Hash(BlockId, BasicBlock)
 
     def initialize(@id : FunctionId, @name : String, @return_type : TypeRef)
       @params = [] of Parameter
@@ -1887,7 +1887,7 @@ module Crystal::MIR
       @debug_local_names[value_id]?
     end
 
-    def debug_local_bindings : Array(DebugLocalBinding)
+    def debug_local_bindings : ::Array(DebugLocalBinding)
       @debug_local_bindings
     end
 
@@ -1943,7 +1943,7 @@ module Crystal::MIR
       @blocks.each do |block|
         succ_ids = block.terminator.successors
         if succ_ids.size > 1
-          seen = Set(BlockId).new
+          seen = ::Set(BlockId).new
           succ_ids.each do |succ_id|
             next if seen.includes?(succ_id)
             seen << succ_id
@@ -1996,19 +1996,19 @@ module Crystal::MIR
 
   class Module
     getter name : String
-    getter functions : Array(Function)
+    getter functions : ::Array(Function)
     getter type_registry : TypeRegistry
-    getter globals : Array(GlobalVar)
-    getter extern_globals : Hash(String, TypeRef)
-    getter union_descriptors : Hash(TypeRef, UnionDescriptor)
-    getter module_type_refs : Set(TypeRef)
+    getter globals : ::Array(GlobalVar)
+    getter extern_globals : ::Hash(String, TypeRef)
+    getter union_descriptors : ::Hash(TypeRef, UnionDescriptor)
+    getter module_type_refs : ::Set(TypeRef)
     property source_file : String?
 
     @next_function_id : FunctionId = 0_u32
-    @function_map : Hash(String, Function)
+    @function_map : ::Hash(String, Function)
     # Symbol table: maps symbol name -> integer ID for :symbol_to_s lookup
-    getter symbol_names : Array(String)
-    @symbol_name_to_id : Hash(String, Int32)
+    getter symbol_names : ::Array(String)
+    @symbol_name_to_id : ::Hash(String, Int32)
 
     def initialize(@name : String = "main")
       @functions = [] of Function
@@ -2017,7 +2017,7 @@ module Crystal::MIR
       @globals = [] of GlobalVar
       @extern_globals = {} of String => TypeRef
       @union_descriptors = {} of TypeRef => UnionDescriptor
-      @module_type_refs = Set(TypeRef).new
+      @module_type_refs = ::Set(TypeRef).new
       @symbol_names = [] of String
       @symbol_name_to_id = {} of String => Int32
     end

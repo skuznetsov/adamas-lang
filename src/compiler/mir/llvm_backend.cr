@@ -1124,8 +1124,10 @@ module Crystal::MIR
       @used_files << normalized
       @file_ids[normalized] ||= begin
         id = stable_metadata_id("file:#{normalized}", FILE_ID_BASE, FILE_ID_SPAN)
-        base = File.basename(normalized)
-        dir = File.dirname(normalized)
+        # Avoid File.basename/File.dirname here: they route through Path helpers,
+        # which still hit a self-host dispatch bug in generated stage2 compilers.
+        base = safe_metadata_basename(normalized)
+        dir = safe_metadata_dirname(normalized)
         @file_definitions[id] = "!#{id} = !DIFile(filename: \"#{escape_metadata_string(base)}\", directory: \"#{escape_metadata_string(dir)}\")\n"
         id
       end
@@ -1137,6 +1139,20 @@ module Crystal::MIR
       else
         filename
       end
+    end
+
+    private def safe_metadata_basename(path : String) : String
+      return "" if path.empty?
+      last_sep = path.rindex('/')
+      last_sep ? path.byte_slice(last_sep + 1) : path
+    end
+
+    private def safe_metadata_dirname(path : String) : String
+      return "." if path.empty?
+      last_sep = path.rindex('/')
+      return "." unless last_sep
+      return "/" if last_sep == 0
+      path.byte_slice(0, last_sep)
     end
 
     private def lexical_scope_metadata_id(
@@ -2625,26 +2641,34 @@ module Crystal::MIR
       runtime_declared_extern_names.each { |name| already_declared << name }
     end
 
-    private def regex_runtime_needed?(functions : Enumerable(Function)) : Bool
-      functions.any? do |func|
-        regex_runtime_needed_for_function?(func)
+    private def regex_runtime_needed?(functions : ::Array(Function)) : Bool
+      i = 0
+      while i < functions.size
+        return true if regex_runtime_needed_for_function?(functions.unsafe_fetch(i))
+        i += 1
       end
+      false
     end
 
     private def regex_runtime_needed_for_function?(func : Function) : Bool
       mangled = mangle_function_name(func.name)
       return true if regex_runtime_override_function?(mangled)
 
-      func.blocks.any? do |block|
-        block.instructions.any? do |inst|
-          case inst
-          when ExternCall
-            regex_runtime_helper_extern?(inst.extern_name)
-          else
-            false
+      blocks = func.blocks
+      block_index = 0
+      while block_index < blocks.size
+        instructions = blocks.unsafe_fetch(block_index).instructions
+        inst_index = 0
+        while inst_index < instructions.size
+          inst = instructions.unsafe_fetch(inst_index)
+          if inst.is_a?(ExternCall) && regex_runtime_helper_extern?(inst.extern_name)
+            return true
           end
+          inst_index += 1
         end
+        block_index += 1
       end
+      false
     end
 
     private def regex_runtime_override_function?(mangled : String) : Bool
@@ -3262,6 +3286,153 @@ module Crystal::MIR
 
       if (oracle = try_emit_no_prelude_string_builder_stub(name, return_type, arg_count, arg_types))
         return oracle
+      end
+
+      # Crystal::MIR::Array(T) is the same runtime object as top-level ::Array(T),
+      # but self-host sometimes materializes a separate V2 symbol path for methods
+      # like #size / #unsafe_fetch. Delegate those missing bodies to the real Array.
+      if name.starts_with?("Crystal$CCMIR$CCArray$L")
+        target = name.sub("Crystal$CCMIR$CCArray$L", "Array$L")
+        if target != name
+          if name.ends_with?("$Hsize")
+            return "; #{name} — delegate Crystal::MIR::Array#size to ::Array#size\n" \
+                   "define #{return_type} @#{name}(ptr %self) {\n" \
+                   "entry:\n" \
+                   "  %r = call #{return_type} @#{target}(ptr %self)\n" \
+                   "  ret #{return_type} %r\n" \
+                   "}\n"
+          end
+
+          if name.ends_with?("$Hunsafe_fetch$$Int32")
+            return "; #{name} — delegate Crystal::MIR::Array#unsafe_fetch(Int32) to ::Array\n" \
+                   "define #{return_type} @#{name}(ptr %self, i32 %index) {\n" \
+                   "entry:\n" \
+                   "  %r = call #{return_type} @#{target}(ptr %self, i32 %index)\n" \
+                   "  ret #{return_type} %r\n" \
+                   "}\n"
+          end
+        end
+      end
+
+      # Crystal::MIR::Set(T) uses the same runtime object as top-level ::Set(T).
+      # When self-host materializes namespace-prefixed instance method symbols,
+      # delegate them to the real Set implementation instead of aborting.
+      if name == "Crystal$CCMIR$CCSet$LString$R$Hincludes$Q$$String"
+        return "; #{name} — delegate Crystal::MIR::Set(String)#includes? to ::Set\n" \
+               "define i32 @#{name}(ptr %self, ptr %value) {\n" \
+               "entry:\n" \
+               "  %r = call i32 @Set$LString$R$Hincludes$Q$$String(ptr %self, ptr %value)\n" \
+               "  ret i32 %r\n" \
+               "}\n"
+      end
+
+      if name == "Crystal$CCMIR$CCSet$LString$R$Hadd$$String"
+        return "; #{name} — delegate Crystal::MIR::Set(String)#add to ::Set\n" \
+               "define void @#{name}(ptr %self, ptr %value) {\n" \
+               "entry:\n" \
+               "  call void @Set$LString$R$Hadd$$String(ptr %self, ptr %value)\n" \
+               "  ret void\n" \
+               "}\n"
+      end
+
+      if name == "Crystal$CCMIR$CCSet$LString$R$H$SHL$$String"
+        return "; #{name} — delegate Crystal::MIR::Set(String)#<< to ::Set\n" \
+               "define ptr @#{name}(ptr %self, ptr %value) {\n" \
+               "entry:\n" \
+               "  %r = call ptr @Set$LString$R$H$SHL$$String(ptr %self, ptr %value)\n" \
+               "  ret ptr %r\n" \
+               "}\n"
+      end
+
+      if name == "Crystal$CCMIR$CCSet$LCrystal$CCMIR$CCFunctionId$R$Hincludes$Q$$UInt32"
+        return "; #{name} — delegate Crystal::MIR::Set(FunctionId)#includes? to ::Set(UInt32)\n" \
+               "define i32 @#{name}(ptr %self, i32 %value) {\n" \
+               "entry:\n" \
+               "  %r.bool = call i1 @Set$LUInt32$R$Hincludes$Q$$UInt32(ptr %self, i32 %value)\n" \
+               "  %r = zext i1 %r.bool to i32\n" \
+               "  ret i32 %r\n" \
+               "}\n"
+      end
+
+      # Crystal::MIR::Hash(K,V) is V2's mangling of `::Hash(K,V)` used from the MIR module.
+      # The receiver is the real Hash object (type_id at offset 0), not a {inner: Hash*} wrapper.
+      # Older stubs wrongly did `load ptr, ptr %self`, misreading the header as a pointer (stage2 crash).
+      if name == "Crystal$CCMIR$CCHash$LUInt32$C$_Crystal$CCMIR$CCFunction$R$Hhas_key$Q$$UInt32"
+        return "; #{name} — delegate has_key? to monomorphized ::Hash#[]? on self\n" \
+               "define i32 @#{name}(ptr %self, i32 %key) {\n" \
+               "entry:\n" \
+               "  %val = call ptr @Hash$LUInt32$C$_Crystal$CCMIR$CCFunction$R$H$IDXQ$$UInt32(ptr %self, i32 %key)\n" \
+               "  %is_null = icmp eq ptr %val, null\n" \
+               "  %result = select i1 %is_null, i32 0, i32 1\n" \
+               "  ret i32 %result\n" \
+               "}\n"
+      end
+
+      if name == "Crystal$CCMIR$CCHash$LUInt32$C$_Crystal$CCMIR$CCFunction$R$H$IDXS$$UInt32_Crystal$CCMIR$CCFunction"
+        return "; #{name} — delegate []= to monomorphized ::Hash on self\n" \
+               "define void @#{name}(ptr %self, i32 %key, ptr %value) {\n" \
+               "entry:\n" \
+               "  call void @Hash$LUInt32$C$_Crystal$CCMIR$CCFunction$R$H$IDXS$$UInt32_Crystal$CCMIR$CCFunction(ptr %self, i32 %key, ptr %value)\n" \
+               "  ret void\n" \
+               "}\n"
+      end
+
+      if name == "Crystal$CCMIR$CCHash$LString$C$_Crystal$CCMIR$CCFunction$R$Hhas_key$Q$$String"
+        return "; #{name} — delegate has_key? to monomorphized ::Hash#[]? on self\n" \
+               "define i32 @#{name}(ptr %self, ptr %key) {\n" \
+               "entry:\n" \
+               "  %val = call ptr @Hash$LString$C$_Crystal$CCMIR$CCFunction$R$H$IDXQ$$String(ptr %self, ptr %key)\n" \
+               "  %is_null = icmp eq ptr %val, null\n" \
+               "  %result = select i1 %is_null, i32 0, i32 1\n" \
+               "  ret i32 %result\n" \
+               "}\n"
+      end
+
+      if name == "Crystal$CCMIR$CCHash$LString$C$_Crystal$CCMIR$CCFunction$R$H$IDXS$$String_Crystal$CCMIR$CCFunction"
+        return "; #{name} — delegate []= to monomorphized ::Hash on self\n" \
+               "define void @#{name}(ptr %self, ptr %key, ptr %value) {\n" \
+               "entry:\n" \
+               "  call void @Hash$LString$C$_Crystal$CCMIR$CCFunction$R$H$IDXS$$String_Crystal$CCMIR$CCFunction(ptr %self, ptr %key, ptr %value)\n" \
+               "  ret void\n" \
+               "}\n"
+      end
+
+      if name == "Crystal$CCMIR$CCHash$LString$C$_Crystal$CCMIR$CCTypeRef$R$Hempty$Q"
+        return "; #{name} — derive Crystal::MIR::Hash(String, TypeRef)#empty? from ::Hash#size\n" \
+               "define i32 @#{name}(ptr %self) {\n" \
+               "entry:\n" \
+               "  %size = call i32 @Hash$LString$C$_Crystal$CCMIR$CCTypeRef$R$Hsize(ptr %self)\n" \
+               "  %is_empty = icmp eq i32 %size, 0\n" \
+               "  %r = zext i1 %is_empty to i32\n" \
+               "  ret i32 %r\n" \
+               "}\n"
+      end
+
+      # Crystal::MIR::Set(T).new lowered without running #initialize — @hash stays null (SIGSEGV in Set#add).
+      if name.starts_with?("Crystal$CCMIR$CCSet$L") && name.includes?("$R$Dnew")
+        target = name.sub("Crystal$CCMIR$CCSet$L", "Set$L")
+        if target != name
+          obj_params = if !arg_types.empty?
+                         arg_types.map_with_index { |t, i| "#{t} %a#{i}" }.join(", ")
+                       elsif arg_count == 0
+                         ""
+                       else
+                         (0...arg_count).map { |i| "ptr %a#{i}" }.join(", ")
+                       end
+          call_args = if !arg_types.empty?
+                        arg_types.size.times.map { |i| "%a#{i}" }.join(", ")
+                      elsif arg_count == 0
+                        "ptr null"
+                      else
+                        (0...arg_count).map { |i| "%a#{i}" }.join(", ")
+                      end
+          return "; #{name} — delegate Set.new to ::Set (initializes internal Hash)\n" \
+                 "define ptr @#{name}(#{obj_params}) {\n" \
+                 "entry:\n" \
+                 "  %r = call ptr @#{target}(#{call_args})\n" \
+                 "  ret ptr %r\n" \
+                 "}\n"
+        end
       end
 
       # Methods on Nil (e.g. Nil$Hzero, Nil$Hto_i, Nil$Hadditive_identity)
@@ -7766,11 +7937,97 @@ module Crystal::MIR
       end
     end
 
+    # `Set(T)` referenced from `Crystal::MIR` gets a distinct V2 symbol `Crystal::MIR::Set(T).new`
+    # that was emitted as malloc+sentinel only, skipping `#initialize` (internal `@hash` never created).
+    # Delegate to top-level `Set(T).new`, which runs `Set#initialize` and allocates the Hash.
+    private def emit_crystal_mir_set_new_delegate_override(func : Function, mangled : String) : Bool
+      return false unless mangled.starts_with?("Crystal$CCMIR$CCSet$L") && mangled.includes?("$R$Dnew")
+      target = mangled.sub("Crystal$CCMIR$CCSet$L", "Set$L")
+      return false if target == mangled
+
+      target_func = @module.functions.find { |f| mangle_function_name(f.name) == target }
+      return false unless target_func
+
+      # Nilary `.new` lowers to a single `ptr` arg (nil capacity) on ::Set — not the `$$Int32` overload.
+      if !mangled.includes?("$Dnew$$")
+        return false unless target_func.params.size == 1
+        return false unless emitted_param_llvm_type(target_func.params[0]) == "ptr"
+        emit_raw "; #{mangled} — delegate Crystal::MIR::Set.new → ::Set.new(nil capacity)\n"
+        emit_raw "define ptr @#{mangled}() {\n"
+        emit_raw "entry:\n"
+        emit_raw "  %r = call ptr @#{target}(ptr null)\n"
+        emit_raw "  ret ptr %r\n"
+        emit_raw "}\n\n"
+        return true
+      end
+
+      return false unless target_func.params.size == func.params.size
+      func.params.each_with_index do |p, i|
+        return false unless emitted_param_llvm_type(p) == emitted_param_llvm_type(target_func.params[i])
+      end
+
+      param_decls = [] of String
+      param_names = [] of String
+      func.params.each_with_index do |p, i|
+        t = emitted_param_llvm_type(p)
+        param_decls << "#{t} %a#{i}"
+        param_names << "%a#{i}"
+      end
+      plist = param_decls.join(", ")
+      emit_raw "; #{mangled} — delegate Crystal::MIR::Set.new → ::Set.new (same LLVM param types)\n"
+      emit_raw "define ptr @#{mangled}(#{plist}) {\n"
+      emit_raw "entry:\n"
+      emit_raw "  %r = call ptr @#{target}(#{param_names.join(", ")})\n"
+      emit_raw "  ret ptr %r\n"
+      emit_raw "}\n\n"
+      true
+    end
+
     # Intercept known-broken stdlib constructors whose bodies don't compile correctly.
     # Returns true if the function was handled (emitted as a runtime helper), false otherwise.
     private def emit_builtin_override(func : Function) : Bool
       mangled = mangle_function_name(func.name)
+      return true if emit_crystal_mir_set_new_delegate_override(func, mangled)
       case mangled
+      when "Crystal$CCMIR$CCHash$LUInt32$C$_Crystal$CCMIR$CCFunction$R$Hhas_key$Q$$UInt32"
+        # V2 mangles `Hash(K,V)` from the MIR namespace as `Crystal::MIR::Hash`; the receiver
+        # is the same GC `::Hash` object — not a wrapper whose first word is an inner pointer.
+        emit_raw "; #{mangled} — delegate has_key? to monomorphized ::Hash#[]? on self\n"
+        emit_raw "define i32 @#{mangled}(ptr %self, i32 %key) {\n"
+        emit_raw "entry:\n"
+        emit_raw "  %val = call ptr @Hash$LUInt32$C$_Crystal$CCMIR$CCFunction$R$H$IDXQ$$UInt32(ptr %self, i32 %key)\n"
+        emit_raw "  %is_null = icmp eq ptr %val, null\n"
+        emit_raw "  %result = select i1 %is_null, i32 0, i32 1\n"
+        emit_raw "  ret i32 %result\n"
+        emit_raw "}\n\n"
+        return true
+      when "Crystal$CCMIR$CCHash$LUInt32$C$_Crystal$CCMIR$CCFunction$R$H$IDXS$$UInt32_Crystal$CCMIR$CCFunction"
+        # `build_function_lookup_indexes` calls `[]=` on this hash; without a body this was an abort stub.
+        emit_raw "; #{mangled} — delegate []= to monomorphized ::Hash on self\n"
+        emit_raw "define void @#{mangled}(ptr %self, i32 %key, ptr %value) {\n"
+        emit_raw "entry:\n"
+        emit_raw "  call void @Hash$LUInt32$C$_Crystal$CCMIR$CCFunction$R$H$IDXS$$UInt32_Crystal$CCMIR$CCFunction(ptr %self, i32 %key, ptr %value)\n"
+        emit_raw "  ret void\n"
+        emit_raw "}\n\n"
+        return true
+      when "Crystal$CCMIR$CCHash$LString$C$_Crystal$CCMIR$CCFunction$R$Hhas_key$Q$$String"
+        emit_raw "; #{mangled} — delegate has_key? to monomorphized ::Hash#[]? on self\n"
+        emit_raw "define i32 @#{mangled}(ptr %self, ptr %key) {\n"
+        emit_raw "entry:\n"
+        emit_raw "  %val = call ptr @Hash$LString$C$_Crystal$CCMIR$CCFunction$R$H$IDXQ$$String(ptr %self, ptr %key)\n"
+        emit_raw "  %is_null = icmp eq ptr %val, null\n"
+        emit_raw "  %result = select i1 %is_null, i32 0, i32 1\n"
+        emit_raw "  ret i32 %result\n"
+        emit_raw "}\n\n"
+        return true
+      when "Crystal$CCMIR$CCHash$LString$C$_Crystal$CCMIR$CCFunction$R$H$IDXS$$String_Crystal$CCMIR$CCFunction"
+        emit_raw "; #{mangled} — delegate []= to monomorphized ::Hash on self\n"
+        emit_raw "define void @#{mangled}(ptr %self, ptr %key, ptr %value) {\n"
+        emit_raw "entry:\n"
+        emit_raw "  call void @Hash$LString$C$_Crystal$CCMIR$CCFunction$R$H$IDXS$$String_Crystal$CCMIR$CCFunction(ptr %self, ptr %key, ptr %value)\n"
+        emit_raw "  ret void\n"
+        emit_raw "}\n\n"
+        return true
       when "String$Dnew$$Pointer$LUInt8$R"
         # String.new(chars : UInt8*) — calls strlen then delegates to 3-arg version.
         # The auto-allocator ignores the argument; this override implements the
@@ -8889,25 +9146,41 @@ module Crystal::MIR
         return true
       end
 
-      if mangled.includes?("$Hget_entry$$Int32") && mangled.includes?("Hash$L")
-        # V2 heap-allocates Entry structs; entries buffer stores pointers (stride=8).
-        # Null entries (uninitialized slots) crash callers like entry_matches?.
-        # Fix: return pointer to a stack-allocated zeroed entry for null slots.
-        # Zeroed entry has @hash=0 → deleted? returns true → callers skip it.
+      # Hash#get_entry — null-safe pointer-slot stride for heap-allocated Entry*.
+      # Unmatched null slots used to reach entry_matches? and fault on entry+0x10.
+      # MIR often lowers the Int32 index as ptr (inttoptr) and mangles the method as
+      # $$arity1 or plain $Hget_entry, so the old $$Int32-only hook never fired.
+      if mangled.starts_with?("Hash$") && mangled.includes?("$Hget_entry") && !mangled.includes?("$Hget_entry$$Pointer")
         emit_raw "; #{mangled} — null-safe get_entry with pointer-slot stride\n"
-        emit_raw "define ptr @#{mangled}(ptr %self, i32 %index) {\n"
-        emit_raw "entry:\n"
-        emit_raw "  %zero_buf = alloca [64 x i8], align 8\n"
-        emit_raw "  call void @llvm.memset.p0.i64(ptr %zero_buf, i8 0, i64 64, i1 false)\n"
-        emit_raw "  %entries_ptr = getelementptr i8, ptr %self, i32 8\n"
-        emit_raw "  %entries = load ptr, ptr %entries_ptr\n"
-        emit_raw "  %idx64 = sext i32 %index to i64\n"
-        emit_raw "  %slot = getelementptr ptr, ptr %entries, i64 %idx64\n"
-        emit_raw "  %entry_ptr = load ptr, ptr %slot\n"
-        emit_raw "  %is_null = icmp eq ptr %entry_ptr, null\n"
-        emit_raw "  %result = select i1 %is_null, ptr %zero_buf, ptr %entry_ptr\n"
-        emit_raw "  ret ptr %result\n"
-        emit_raw "}\n\n"
+        if mangled.includes?("$Hget_entry$$Int32")
+          emit_raw "define ptr @#{mangled}(ptr %self, i32 %index) {\n"
+          emit_raw "entry:\n"
+          emit_raw "  %zero_buf = alloca [64 x i8], align 8\n"
+          emit_raw "  call void @llvm.memset.p0.i64(ptr %zero_buf, i8 0, i64 64, i1 false)\n"
+          emit_raw "  %entries_ptr = getelementptr i8, ptr %self, i32 8\n"
+          emit_raw "  %entries = load ptr, ptr %entries_ptr\n"
+          emit_raw "  %idx64 = sext i32 %index to i64\n"
+          emit_raw "  %slot = getelementptr ptr, ptr %entries, i64 %idx64\n"
+          emit_raw "  %entry_ptr = load ptr, ptr %slot\n"
+          emit_raw "  %is_null = icmp eq ptr %entry_ptr, null\n"
+          emit_raw "  %result = select i1 %is_null, ptr %zero_buf, ptr %entry_ptr\n"
+          emit_raw "  ret ptr %result\n"
+          emit_raw "}\n\n"
+        else
+          emit_raw "define ptr @#{mangled}(ptr %self, ptr %index) {\n"
+          emit_raw "entry:\n"
+          emit_raw "  %zero_buf = alloca [64 x i8], align 8\n"
+          emit_raw "  call void @llvm.memset.p0.i64(ptr %zero_buf, i8 0, i64 64, i1 false)\n"
+          emit_raw "  %entries_ptr = getelementptr i8, ptr %self, i32 8\n"
+          emit_raw "  %entries = load ptr, ptr %entries_ptr\n"
+          emit_raw "  %idx64 = ptrtoint ptr %index to i64\n"
+          emit_raw "  %slot = getelementptr ptr, ptr %entries, i64 %idx64\n"
+          emit_raw "  %entry_ptr = load ptr, ptr %slot\n"
+          emit_raw "  %is_null = icmp eq ptr %entry_ptr, null\n"
+          emit_raw "  %result = select i1 %is_null, ptr %zero_buf, ptr %entry_ptr\n"
+          emit_raw "  ret ptr %result\n"
+          emit_raw "}\n\n"
+        end
         return true
       end
 
@@ -10059,6 +10332,10 @@ module Crystal::MIR
       # Pre-pass: infer binary op result types (for widening detection in phi nodes)
       prepass_infer_binary_op_types(func)
 
+      # Last write wins: any Call whose resolved callee returns a union must carry that
+      # union in @value_types, or cross-block slot allocas stay i64 and break union loads.
+      prepass_reconcile_call_union_results(func)
+
       # Function signature
       # Note: void is not valid for parameters, substitute with ptr
       used_param_names = Hash(String, Int32).new(0)
@@ -10512,12 +10789,7 @@ module Crystal::MIR
           unless phi_shared_created.includes?(phi_id)
             # Create ONE shared alloca for this phi node using the phi's type
             phi_shared_created << phi_id
-            phi_inst = find_def_inst(phi_id)
-            phi_type = if phi_inst
-                         @value_types[phi_id]? || phi_inst.type
-                       else
-                         @value_types[phi_id]? || TypeRef::POINTER
-                       end
+            phi_type = resolve_phi_slot_type_ref(phi_id)
             phi_llvm_type = @type_mapper.llvm_type(phi_type)
             phi_llvm_type = "i64" if phi_llvm_type == "void"
             shared_slot = "%r#{phi_id}.phi_slot"
@@ -10536,12 +10808,7 @@ module Crystal::MIR
             end
           end
           # Map this value to the shared slot
-          phi_inst = find_def_inst(phi_id)
-          phi_type = if phi_inst
-                       @value_types[phi_id]? || phi_inst.type
-                     else
-                       @value_types[phi_id]? || TypeRef::POINTER
-                     end
+          phi_type = resolve_phi_slot_type_ref(phi_id)
           phi_llvm_type = @type_mapper.llvm_type(phi_type)
           phi_llvm_type = "i64" if phi_llvm_type == "void"
           @cross_block_slots[val_id] = "r#{phi_id}.phi_slot"
@@ -10557,9 +10824,21 @@ module Crystal::MIR
         if def_inst = find_def_inst(val_id)
           def_type = def_inst.type
           def_llvm = @type_mapper.llvm_type(def_type)
+          # Resolved callee return type wins when MIR still carries a primitive inst.type
+          # but the function returns a union (cross-block slot must be union-sized).
+          if def_inst.is_a?(Call)
+            if callee = @func_by_id[def_inst.callee]?
+              callee_ret = callee.return_type
+              callee_ret_llvm = @type_mapper.llvm_type(callee_ret)
+              if is_union_llvm_type?(callee_ret_llvm) && !is_union_llvm_type?(def_llvm)
+                def_type = callee_ret
+                def_llvm = callee_ret_llvm
+              end
+            end
+          end
           if val_type
             current_llvm = @type_mapper.llvm_type(val_type)
-            if def_llvm.includes?(".union") && !current_llvm.includes?(".union")
+            if is_union_llvm_type?(def_llvm) && !is_union_llvm_type?(current_llvm)
               val_type = def_type
             end
           else
@@ -10573,6 +10852,30 @@ module Crystal::MIR
           STDERR.puts "[SLOT_TYPES] slot val_id=#{val_id} val_type=#{val_type} #{val_type_name} llvm=#{llvm_type}"
         end
         llvm_type = "i64" if llvm_type == "void"  # fallback
+        # Final override: union Call results must use a union-sized slot. Prefer the Call
+        # instruction's MIR type (matches LLVM emission); callee.return_type can still be
+        # a conservative primitive in the MIR Function table for some methods.
+        if (di = find_def_inst(val_id)) && di.is_a?(Call)
+          call_inst_llvm = @type_mapper.llvm_type(di.type)
+          if is_union_llvm_type?(call_inst_llvm)
+            val_type = di.type
+            llvm_type = call_inst_llvm
+          elsif (callee = @func_by_id[di.callee]?)
+            ret_llvm = @type_mapper.llvm_type(callee.return_type)
+            if is_union_llvm_type?(ret_llvm)
+              val_type = callee.return_type
+              llvm_type = ret_llvm
+            elsif (emitted_abi = @emitted_function_return_types[mangle_function_name(callee.name)]?) &&
+                  is_union_llvm_type?(emitted_abi)
+              # emit_call uses @emitted_function_return_types[callee_mangled] before MIR
+              # Function.return_type when the callee was already emitted. MIR can still
+              # carry a primitive Call.inst / callee.return_type — slot must match ABI.
+              llvm_type = emitted_abi
+              val_type = find_union_type_ref_for_llvm_string(emitted_abi) ||
+                         find_type_ref_for_llvm_type(emitted_abi) || di.type
+            end
+          end
+        end
         slot_name = "%r#{val_id}.slot"
         @cross_block_slots[val_id] = "r#{val_id}.slot"
         @cross_block_slot_types[val_id] = llvm_type  # Record allocation type for consistent loads
@@ -10991,6 +11294,14 @@ module Crystal::MIR
                 # Preserve concrete/non-pointer types (e.g., union/struct/tuple) inferred at callsite.
                 if inst.type == TypeRef::VOID || inst.type == TypeRef::NIL || inst_type_str == "ptr"
                   effective_type = TypeRef::VOID
+                end
+              elsif is_union_llvm_type?(callee_ret_type)
+                # MIR may still attach a primitive inst.type to Call while the resolved callee
+                # returns a union; later prepasses can widen @value_types to i64. Align with the
+                # callee so cross-block slots and union_to_int see a union SSA type.
+                inst_ret_llvm = @type_mapper.llvm_type(inst.type)
+                unless is_union_llvm_type?(inst_ret_llvm)
+                  effective_type = callee_func.return_type
                 end
               end
             else
@@ -11588,6 +11899,28 @@ module Crystal::MIR
       din <= uin && @dominance_out_time[di] >= @dominance_out_time[ui]
     end
 
+    # Phi-shared alloca must use the same union-vs-scalar resolution as per-value
+    # cross-block slots. @value_types[phi_id] can be degraded (e.g. union phi marked
+    # POINTER for ptr-typed emission, or INT widening) while the Phi instruction's MIR
+    # type is still a union — using the degraded type for %rN.phi_slot makes loads i64/ptr
+    # but downstream expects a union (invalid IR on union_to_int / union stores).
+    private def resolve_phi_slot_type_ref(phi_id : ValueId) : TypeRef
+      phi_inst = find_def_inst(phi_id)
+      return TypeRef::POINTER unless phi_inst.is_a?(Phi)
+      phi_type = @value_types[phi_id]? || phi_inst.type
+      def_type = phi_inst.type
+      def_llvm = @type_mapper.llvm_type(def_type)
+      if phi_type
+        current_llvm = @type_mapper.llvm_type(phi_type)
+        if def_llvm.includes?(".union") && !current_llvm.includes?(".union")
+          phi_type = def_type
+        end
+      else
+        phi_type = def_type
+      end
+      phi_type
+    end
+
     # without guaranteed dominance. These need alloca slots for correctness.
     private def prepass_detect_cross_block_values(func : Function)
       return if func.blocks.size <= 1  # Single block - no cross-block issues
@@ -11770,6 +12103,27 @@ module Crystal::MIR
           @value_types[inst.id] = TypeRef::POINTER unless @value_types.has_key?(inst.id)
           @alloc_types[inst.id] = inst.alloc_type
           @alloc_element_types[inst.id] = inst.alloc_type
+        end
+      end
+    end
+
+    # After prepass_infer_binary_op_types: force Call results to match callee union
+    # return types when @value_types was left as a primitive (usage inference, etc.).
+    private def prepass_reconcile_call_union_results(func : Function)
+      func.blocks.each do |block|
+        block.instructions.each do |inst|
+          next unless inst.is_a?(Call)
+          callee = @func_by_id[inst.callee]?
+          next unless callee
+          ret_ref = callee.return_type
+          callee_ret_llvm = @type_mapper.llvm_type(ret_ref)
+          next unless is_union_llvm_type?(callee_ret_llvm)
+          vt = @value_types[inst.id]?
+          next unless vt
+          next if vt == ret_ref
+          v_llvm = @type_mapper.llvm_type(vt)
+          next if is_union_llvm_type?(v_llvm)
+          @value_types[inst.id] = ret_ref
         end
       end
     end
@@ -17809,6 +18163,17 @@ module Crystal::MIR
       nil
     end
 
+    # Prefer union_descriptors for union LLVM names — the full registry scan can pick
+    # the wrong TypeRef if multiple logical types share an LLVM spelling (should be rare
+    # but union layout/wrap paths need the descriptor-backed TypeRef).
+    private def find_union_type_ref_for_llvm_string(llvm_type : String) : TypeRef?
+      return nil unless is_union_llvm_type?(llvm_type)
+      @module.union_descriptors.each_key do |ref|
+        return ref if @type_mapper.llvm_type(ref) == llvm_type
+      end
+      nil
+    end
+
     private def emit_extern_call(inst : ExternCall, name : String)
       # Intercept __crystal_v2_select_ptr(is_a_bool, obj) → select i1, ptr, ptr null
       # Used by as?() implementation: returns obj if type matches, null if not.
@@ -21604,6 +21969,12 @@ module Crystal::MIR
         llvm_type = @cross_block_slot_types[id]? ||
           (val_type ? @type_mapper.llvm_type(val_type) : "i64")
         llvm_type = "i64" if llvm_type == "void"
+        if ENV["CRYSTAL_V2_SLOT_UNION_MISMATCH_TRACE"]? == "1" && val_type
+          expected_llvm = @type_mapper.llvm_type(val_type)
+          if expected_llvm.includes?(".union") && !llvm_type.includes?(".union")
+            STDERR.puts "[SLOT_UNION_MISMATCH] func=#{@current_func_name} val=#{id} slot=#{llvm_type} expected=#{expected_llvm}"
+          end
+        end
         temp_name = "%r#{id}.fromslot.#{@cond_counter}"
         @cond_counter += 1
         emit_from_value_ref "#{temp_name} = load #{llvm_type}, ptr %#{slot_name}"
@@ -21768,11 +22139,10 @@ module Crystal::MIR
 
     # Check if LLVM type string represents a union type
     # Union types are named with ".union" suffix (e.g., "%Int32_$OR$_Nil.union")
-    # This is more robust than simple string matching - checks for the pattern
-    # at the end of a type reference to avoid false positives with user types
+    # Quoted LLVM identifiers end with a closing quote: %"Int32$_$OR$_Nil.union"
     private def is_union_llvm_type?(llvm_type : String) : Bool
-      # Union types end with ".union" or ".union}" for struct fields
-      llvm_type.ends_with?(".union") || llvm_type.ends_with?(".union}")
+      base = llvm_type.rstrip('"')
+      base.ends_with?(".union") || base.ends_with?(".union}")
     end
 
     # Transparent wrapper struct = one field at offset 0 backed by an integer scalar.
