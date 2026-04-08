@@ -10534,6 +10534,29 @@ module Crystal::MIR
       end
     end
 
+    private def typeref_set_delegate_target(mangled : String) : {String, Function}?
+      prefixes = {
+        "Set$LCrystal$CCMIR$CCTypeRef$R",
+        "Set$LCrystal$CCHIR$CCTypeRef$R",
+      }
+
+      idx = 0
+      while idx < prefixes.size
+        prefix = prefixes.unsafe_fetch(idx)
+        if mangled.starts_with?(prefix)
+          target = mangled.sub(prefix, "Set$LUInt32$R")
+          target = target.sub("$$Crystal$CCMIR$CCTypeRef", "$$UInt32")
+          target = target.sub("$$Crystal$CCHIR$CCTypeRef", "$$UInt32")
+          if target_func = @func_by_name[target]?
+            return {target, target_func}
+          end
+        end
+        idx += 1
+      end
+
+      nil
+    end
+
     private def compiler_u32_alias_key_hash?(mangled : String) : Bool
       suffixes = {
         "$Hkey_hash$$HIR$CCValueId",
@@ -17649,6 +17672,11 @@ module Crystal::MIR
         callee_func = delegate[1]
         raw_callee_name = callee_func.name
       end
+      if delegate = typeref_set_delegate_target(callee_name)
+        callee_name = delegate[0]
+        callee_func = delegate[1]
+        raw_callee_name = callee_func.name
+      end
       if rooted_delegate = rooted_top_level_delegate_target(callee_name)
         callee_name = rooted_delegate[0]
         if target_func = rooted_delegate[1]
@@ -19519,6 +19547,10 @@ module Crystal::MIR
       )
       if matching_func
         mangled_extern_name = @type_mapper.mangle_name(matching_func.name)
+      end
+      if delegate = typeref_set_delegate_target(mangled_extern_name)
+        mangled_extern_name = delegate[0]
+        matching_func = delegate[1]
       end
       if rooted_delegate = rooted_top_level_delegate_target(mangled_extern_name)
         mangled_extern_name = rooted_delegate[0]

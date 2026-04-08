@@ -8850,3 +8850,54 @@ Immediate next steps:
    `module_type?` receiver/state invariant.
 3. Keep pushing canonical-name and collection-shape fixes at generic seams, not
    per-symbol stubs.
+
+## Checkpoint — 2026-04-08 (retarget `Set(TypeRef)` calls to `Set(UInt32)` in backend)
+
+Verified this turn:
+- The post-rooted-call stage2 no-prelude crash family was:
+  `Hash(Crystal::MIR::TypeRef, Nil)#find_entry_with_index`
+  reached from
+  `Set(Crystal::MIR::TypeRef)#includes? -> Crystal::MIR::Module#module_type? -> LLVMIRGenerator#collect_module_singleton_globals`.
+- `src/compiler/mir/llvm_backend.cr` now adds an early call-emission retarget
+  for top-level `Set(Crystal::MIR::TypeRef)` and `Set(Crystal::HIR::TypeRef)`:
+  - new helper: `typeref_set_delegate_target(mangled)`
+  - `emit_call(...)` and `emit_extern_call(...)` rewrite matching
+    `Set(TypeRef)` callees to canonical `Set(UInt32)` twins when that body is
+    known
+- This is still a pattern fix at the call-emission seam, not a new dead-code
+  stub: the existing argument coercions already know how to turn a `TypeRef`
+  wrapper pointer into the `UInt32` field-0 value expected by `Set(UInt32)`.
+
+Operational proof:
+- `crystal build src/crystal_v2.cr -o /tmp/cv2_typerefset_host --error-trace`
+  => host build green.
+- `scripts/run_safe.sh /tmp/cv2_typerefset_host 900 12288 src/crystal_v2.cr -o /tmp/cv2_typerefset_s2`
+  => self-host stage2 build green, `[EXIT: 0] after ~287s`.
+- Before this retarget:
+  - `lldb --batch -o 'run regression_tests/combined/test_no_prelude_interpolation.cr --no-prelude -o /tmp/noprel_rootcall_lldb.bin' -k 'thread backtrace -c 25' -k 'register read' -k 'disassemble --frame' -k 'quit' /tmp/cv2_rootcall_s2`
+  - top frame:
+    `Hash$LCrystal$CCMIR$CCTypeRef$C$_Nil$R$Hfind_entry_with_index$$Crystal$CCMIR$CCTypeRef`
+- After this retarget:
+  - `scripts/run_safe.sh /tmp/cv2_typerefset_s2 120 1024 regression_tests/combined/test_no_prelude_interpolation.cr --no-prelude -o /tmp/noprel_typerefset.bin`
+    => still red, `[CRASH] Segfault (exit 139)`
+  - but fresh LLDB moved the crash to the canonical UInt32 path:
+    `Hash$LUInt32$C$_Nil$R$Hfind_entry_with_index$$UInt32`
+    reached from
+    `Set$LUInt32$R$Hincludes$Q$$UInt32 -> Crystal::MIR::Module#module_type?`
+
+Whole-program / bootstrap effect:
+- This confirms the `TypeRef` wrapper-key drift was real and is now bypassed by
+  the same style of early retargeting that already worked for rooted top-level
+  names and earlier collection aliases.
+- Stage2 build remains green.
+- Stage2 no-prelude smoke is still red, but the crash has moved from the
+  wrapper-key specialization to the canonical `UInt32` `Set/Hash` runtime
+  path, which is later and cleaner.
+- We are still far from `stage5`: stage1 is green, stage2 build is green, but
+  stage2 smoke is not yet green.
+
+Immediate next steps:
+1. Freeze why `Set(UInt32)#includes?` still sees a null internal `Hash(UInt32, Nil)`.
+2. Decide whether that is a constructor/init gap or another state/layout bug in
+   `module_type?` collection setup.
+3. Keep rejecting fixes that fail to move the head; only keep verified shifts.
