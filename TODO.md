@@ -8699,3 +8699,45 @@ Immediate next steps:
 2. Freeze the new earliest red gate after stage1 plain smoke is gone.
 3. Keep preferring pattern fixes in compiler-internal bookkeeping/emission over
    new mangled-name stubs.
+
+## Checkpoint — 2026-04-08 (unary operator text falls back to source, not raw slice)
+
+Verified this turn:
+- After the late-emitted nested-callee fix, the next fresh earliest red gate
+  was host-side stage1 plain smoke again, but now in HIR lowering:
+  `safe_slice_to_string -> unary_operator_text -> lower_unary ->
+  reorder_named_args`.
+- The crash was not a `reorder_named_args` root cause. The real failure was
+  still unary-operator text ingestion reading a corrupted `node.operator` slice
+  during a fallback path.
+- `src/compiler/hir/ast_to_hir.cr` now makes `unary_operator_text(...)`
+  fall back to `safe_unary_operator_string(node)` instead of
+  `safe_slice_to_string(node.operator) || ""`.
+  This keeps the recovery path source/span-based and avoids touching the
+  potentially corrupted operator slice at all.
+
+Operational proof:
+- `crystal build src/crystal_v2.cr -o /tmp/cv2_unaryfix_host --error-trace`
+  => host build green.
+- `scripts/run_safe.sh /tmp/cv2_unaryfix_host 60 8192 /tmp/puts42_oracle.cr -o /tmp/puts42_unaryfix_rerun.bin`
+  => direct plain smoke compile green on rerun, `[EXIT: 0] after ~13s`.
+- `scripts/run_safe.sh /tmp/cv2_stage1_post_unaryfix/cv2_s1 60 8192 /tmp/puts42_oracle.cr -o /tmp/puts42_stage1binary.bin`
+  => fresh stage1 binary also compiles the same plain smoke oracle, `[EXIT: 0]`.
+- `scripts/run_safe.sh /tmp/cv2_unaryfix_host 120 1024 regression_tests/combined/test_no_prelude_interpolation.cr --no-prelude -o /tmp/noprel_unaryfix.bin`
+  => no-prelude guard remains green, `[EXIT: 0]`.
+- `BOOTSTRAP_SMOKE_PLAIN_MEM_MB=8192 ./scripts/bootstrap_chain.sh --host /opt/homebrew/bin/crystal --stages 1 --out /tmp/cv2_stage1_post_unaryfix`
+  => stage1 ladder all green again:
+  build `~7.85s`, smoke plain `ok`, smoke no-prelude `ok`.
+
+Whole-program / bootstrap effect:
+- This is a source-derived recovery fix, not another widening of raw slice
+  trust. It removes one more stale/unreliable bootstrap follower in the
+  parser/HIR boundary.
+- We are still far from `stage5`: this checkpoint re-stabilizes `stage1`, but
+  the next live head still has to be re-frozen with a fresh `--stages 2` run.
+
+Immediate next steps:
+1. Run a fresh `--stages 2` ladder from this checkpoint.
+2. Freeze the next earliest red gate after the unary-slice family is gone.
+3. Keep preferring source/span reconstruction over broader raw-slice trust
+   expansion.

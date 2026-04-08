@@ -48417,7 +48417,7 @@ module Crystal::HIR
         end
       end
 
-      safe_slice_to_string(node.operator) || ""
+      safe_unary_operator_string(node)
     end
 
     # ═══════════════════════════════════════════════════════════════════════
