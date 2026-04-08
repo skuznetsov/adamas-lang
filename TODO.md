@@ -8923,3 +8923,66 @@ Immediate next steps:
 2. Decide whether that is a constructor/init gap or another state/layout bug in
    `module_type?` collection setup.
 3. Keep rejecting fixes that fail to move the head; only keep verified shifts.
+
+## Checkpoint — 2026-04-08 (stream LLVM function headers instead of `Array(String)#join`)
+
+Verified this turn:
+- The latest tiny stage2 no-prelude blocker after the `Set(TypeRef) -> Set(UInt32)`
+  retarget was no longer a `Hash/Set` runtime crash. It became:
+  - `error: Index error in emit_function for: __crystal_main`
+  - `Negative capacity`
+- A fresh MIR-only stop proved the tiny oracle itself was not creating an
+  `ArrayNew` or other suspicious capacity source in user MIR:
+  - `CRYSTAL_V2_STOP_AFTER_MIR=1 scripts/run_safe.sh /tmp/cv2_typeref_ctor_s2 120 1024 regression_tests/combined/test_no_prelude_interpolation.cr --no-prelude --emit mir -o /tmp/noprel_typeref_ctor_stopmir`
+  - result: `[EXIT: 0]`, MIR for `@__crystal_main` stays tiny and contains no
+    `ArrayNew`
+- Env-gated tracing in `emit_function` narrowed the failure to the LLVM header
+  construction step:
+  - `CRYSTAL_V2_EMIT_FUNCTION_TRACE=1 scripts/run_safe.sh /tmp/cv2_headertrace_s2 120 1024 regression_tests/combined/test_no_prelude_interpolation.cr --no-prelude -o /tmp/noprel_headertrace.bin`
+  - trace reached:
+    `phase=definition_header`
+    `header=pre_join params=2`
+  - and then failed with `Negative capacity`
+- `src/compiler/mir/llvm_backend.cr` now avoids the fragile `param_types.join(", ")`
+  path entirely in `emit_function_definition_header(...)`:
+  - it writes the function header directly to the output buffer
+  - emits the parameter list with an index-based `while`
+  - avoids building an intermediate joined signature string
+
+Operational proof:
+- `crystal build src/crystal_v2.cr -o /tmp/cv2_headerparts_host --error-trace`
+  => host build green.
+- `scripts/run_safe.sh /tmp/cv2_headerparts_host 900 12288 src/crystal_v2.cr -o /tmp/cv2_headerparts_s2`
+  => self-host stage2 build green, `[EXIT: 0] after ~286s`.
+- Before the fix:
+  - `CRYSTAL_V2_EMIT_FUNCTION_TRACE=1 scripts/run_safe.sh /tmp/cv2_headertrace_s2 120 1024 regression_tests/combined/test_no_prelude_interpolation.cr --no-prelude -o /tmp/noprel_headertrace.bin`
+  - result:
+    `phase=definition_header`
+    `header=pre_join params=2`
+    `Negative capacity`
+- After the fix:
+  - `CRYSTAL_V2_EMIT_FUNCTION_TRACE=1 scripts/run_safe.sh /tmp/cv2_headerparts_s2 120 1024 regression_tests/combined/test_no_prelude_interpolation.cr --no-prelude -o /tmp/noprel_headerparts.bin`
+  - result:
+    `header=post_emit_parts`
+    `phase=entry_hoisted_allocas`
+    `phase=prepass_phi_edges`
+    `phase=emit_blocks`
+    then a later `[CRASH] Segfault (exit 139)`
+
+Whole-program / bootstrap effect:
+- This is a pattern/root-cause style fix for a compiler-internal hot path:
+  function header emission no longer depends on `Array(String)#join` or an
+  intermediate `String` allocation.
+- It is also closer to the repo's zero-copy preference: pieces are streamed
+  directly into the LLVM output buffer.
+- Stage1 remains green, stage2 build remains green, and the tiny stage2
+  no-prelude smoke now moves past the old `Negative capacity` head into a later
+  `emit_blocks` crash.
+- We are still far from `stage5`: even full stage2 smoke is not green yet.
+
+Immediate next steps:
+1. Freeze the new post-header crash inside `emit_blocks`.
+2. Determine whether it is block buffering / processed block line emission or a
+   later value emission bug inside `__crystal_main`.
+3. Keep flattening compiler-internal hot paths when they depend on fragile
+   generic container/string helpers under self-host.

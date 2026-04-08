@@ -1511,6 +1511,7 @@ module Crystal::MIR
     end
 
     private def emit_function_definition_header(return_type : String, mangled_name : String, param_types : Array(String)) : Nil
+      emit_function_trace = bootstrap_env_enabled?("CRYSTAL_V2_EMIT_FUNCTION_TRACE", "CRYSTAL2_EMIT_FUNCTION_TRACE") && mangled_name == "__crystal_main"
       attrs = if llvm_entry_opt_guard_enabled? && llvm_entry_guard_target_name?(mangled_name)
                 " noinline optnone"
               else
@@ -1533,7 +1534,23 @@ module Crystal::MIR
         @dwarf_current_function = dwarf_state
         @dwarf_current_location_id = dwarf_state.default_location_id
       end
-      emit_raw "define #{return_type} @#{mangled_name}(#{param_types.join(", ")})#{attrs}#{dbg_ref} {\n"
+      STDERR.puts "[EMIT_FUNCTION_TRACE] func=#{mangled_name} header=pre_emit_parts params=#{param_types.size}" if emit_function_trace
+      emit_raw "define "
+      emit_raw return_type
+      emit_raw " @"
+      emit_raw mangled_name
+      emit_raw "("
+      i = 0
+      while i < param_types.size
+        emit_raw ", " if i > 0
+        emit_raw param_types.unsafe_fetch(i)
+        i += 1
+      end
+      emit_raw ")"
+      emit_raw attrs unless attrs.empty?
+      emit_raw dbg_ref unless dbg_ref.empty?
+      emit_raw " {\n"
+      STDERR.puts "[EMIT_FUNCTION_TRACE] func=#{mangled_name} header=post_emit_parts" if emit_function_trace
     end
 
     private def emit_dwarf_metadata : Nil
@@ -10942,6 +10959,7 @@ module Crystal::MIR
 
     private def emit_function(func : Function)
       mangled_name = mangle_function_name(func.name)
+      emit_function_trace = bootstrap_env_enabled?("CRYSTAL_V2_EMIT_FUNCTION_TRACE", "CRYSTAL2_EMIT_FUNCTION_TRACE") && func.name == "__crystal_main"
 
       if emit_builtin_override(func)
         # Builtin overrides emit raw LLVM directly and can return before the regular
@@ -10984,6 +11002,7 @@ module Crystal::MIR
 
       # Pre-pass: collect constant values for phi node resolution
       # This ensures forward-referenced constants are available
+      STDERR.puts "[EMIT_FUNCTION_TRACE] func=#{func.name} phase=prepass_constants" if emit_function_trace
       prepass_collect_constants(func)
 
       # Set current func name BEFORE prepass
@@ -10991,23 +11010,29 @@ module Crystal::MIR
 
       # Pre-pass: register alloc metadata up front so forward/cross-block users
       # can recover pointee types before the defining Alloc is emitted.
+      STDERR.puts "[EMIT_FUNCTION_TRACE] func=#{func.name} phase=prepass_alloc_metadata" if emit_function_trace
       prepass_register_alloc_metadata(func)
 
       # Pre-pass: compute dominance tree for phi edge definedness checking
+      STDERR.puts "[EMIT_FUNCTION_TRACE] func=#{func.name} phase=prepass_dominance" if emit_function_trace
       prepass_compute_dominance(func)
 
       # Pre-pass: detect cross-block values that need alloca slots for dominance
+      STDERR.puts "[EMIT_FUNCTION_TRACE] func=#{func.name} phase=prepass_cross_block" if emit_function_trace
       prepass_detect_cross_block_values(func)
 
       # Pre-pass: detect phi nodes with many incoming cross-block values
       # and redirect them to share a single alloca (prevents 398KB+ stack frames)
+      STDERR.puts "[EMIT_FUNCTION_TRACE] func=#{func.name} phase=prepass_phi_slots" if emit_function_trace
       prepass_detect_phi_shared_slots(func)
 
       # Pre-pass: infer binary op result types (for widening detection in phi nodes)
+      STDERR.puts "[EMIT_FUNCTION_TRACE] func=#{func.name} phase=prepass_binary_types" if emit_function_trace
       prepass_infer_binary_op_types(func)
 
       # Last write wins: any Call whose resolved callee returns a union must carry that
       # union in @value_types, or cross-block slot allocas stay i64 and break union loads.
+      STDERR.puts "[EMIT_FUNCTION_TRACE] func=#{func.name} phase=prepass_call_unions" if emit_function_trace
       prepass_reconcile_call_union_results(func)
 
       # Function signature
@@ -11271,11 +11296,13 @@ module Crystal::MIR
         return
       end
 
+      STDERR.puts "[EMIT_FUNCTION_TRACE] func=#{func.name} phase=definition_header" if emit_function_trace
       emit_function_definition_header(return_type, mangled_name, param_types)
 
       # Emit entry block with hoisted allocas for dominance correctness
       # Use fn_entry to avoid conflict with parameter names like %entry
       emit_raw "fn_entry:\n"
+      STDERR.puts "[EMIT_FUNCTION_TRACE] func=#{func.name} phase=entry_hoisted_allocas" if emit_function_trace
       emit_hoisted_allocas(func)
       emit_dwarf_param_debug_values
       emit_dwarf_local_entry_debug_values
@@ -11290,6 +11317,7 @@ module Crystal::MIR
 
       # Prepass: identify which cross-block values need predecessor loads for phi nodes
       # This MUST happen before emitting blocks because block order may differ from CFG order
+      STDERR.puts "[EMIT_FUNCTION_TRACE] func=#{func.name} phase=prepass_phi_edges" if emit_function_trace
       prepass_collect_phi_predecessor_loads(func)
 
       # Prepass: identify which fixed-type values need conversion in predecessor blocks for phi nodes
@@ -11324,6 +11352,7 @@ module Crystal::MIR
       # current function which is invalid LLVM IR.
       @toplevel_output = saved_output
 
+      STDERR.puts "[EMIT_FUNCTION_TRACE] func=#{func.name} phase=emit_blocks" if emit_function_trace
       func.blocks.each do |block|
         emit_block(block, func)
       end
@@ -11339,6 +11368,7 @@ module Crystal::MIR
       # Extract alloca instructions from block IR and hoist to entry block.
       # These are scratch allocas for union operations (store→GEP→load patterns)
       # that are safe to allocate once in the entry block and reuse.
+      STDERR.puts "[EMIT_FUNCTION_TRACE] func=#{func.name} phase=split_block_ir" if emit_function_trace
       hoisted_allocas = [] of String
       processed_block_lines = [] of String
       processed_lines = 0
@@ -11385,6 +11415,7 @@ module Crystal::MIR
         STDERR.puts "[LLVM_BLOCK_COPY] func=#{func.name} processed_lines=#{processed_lines} hoisted_allocas=#{hoisted_allocas.size} processed_bytes=#{processed_bytes}"
       end
       # Emit hoisted allocas in entry block (before the br)
+      STDERR.puts "[EMIT_FUNCTION_TRACE] func=#{func.name} phase=emit_hoisted_alloca_lines count=#{hoisted_allocas.size}" if emit_function_trace
       hoisted_allocas.each do |alloca_line|
         emit_raw alloca_line
         emit_raw "\n"
@@ -11397,6 +11428,7 @@ module Crystal::MIR
 
       # Emit block IR with allocas replaced by no-ops (comments).
       # The alloca SSA names are now defined in the entry block.
+      STDERR.puts "[EMIT_FUNCTION_TRACE] func=#{func.name} phase=emit_processed_block_lines count=#{processed_block_lines.size}" if emit_function_trace
       begin
         processed_block_lines.each do |line|
           emit_raw line
@@ -11409,6 +11441,7 @@ module Crystal::MIR
         raise ex
       end
 
+      STDERR.puts "[EMIT_FUNCTION_TRACE] func=#{func.name} phase=finalize" if emit_function_trace
       emit_raw "}\n\n"
       @dwarf_current_function = nil
       clear_dwarf_location
