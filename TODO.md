@@ -1,6 +1,30 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-02)
 
 ## Current Status
+- **Fresh stage2 `Set(BlockId)` alias checkpoint: self-hosted `stage2` no-prelude smoke no longer crashes in `Hash(UInt32, Nil)#find_entry_with_index` while checking `Crystal::MIR::Set(BlockId)#includes?`; the exact `Set(BlockId).new/add/<<` alias path now initializes and mutates a real `::Set(UInt32)`, and the tiny smoke has moved forward to a new compiler-error head (`error: Index error in emit_function for: __crystal_main`) instead of the previous null-`@hash` segfault (2026-04-08, current session)**:
+  - trustworthy setup:
+    - `src/compiler/mir/llvm_backend.cr` now emits exact delegates for
+      - `Crystal::MIR::Set(BlockId).new`
+      - `Crystal::MIR::Set(BlockId)#add`
+      - `Crystal::MIR::Set(BlockId)#<<`
+      - `Crystal::MIR::Set(BlockId)#includes?(UInt32)`
+    - each of these paths forwards to the already-working top-level `::Set(UInt32)` runtime implementation, matching the previously verified `FunctionId` / `ValueId` alias families instead of leaving `BlockId` on a stubbed or uninitialized MIR-local path
+  - decisive evidence:
+    - host compiler gate is green:
+      - `crystal build src/crystal_v2.cr -o /tmp/cv2_fix_blockid_dom --error-trace`
+    - self-host rebuild from that host is green:
+      - `scripts/run_safe.sh /tmp/cv2_fix_blockid_dom 900 12288 src/crystal_v2.cr -o /tmp/cv2_fix_blockid_dom_s2`
+      - result: `[EXIT: 0] after ~284s`
+    - the exact tiny no-prelude smoke moved beyond the old null-`@hash` crash:
+      - before this fix:
+        - `scripts/run_safe.sh /tmp/cv2_fix_mir_blockid_includes_s2 120 1024 regression_tests/combined/test_no_prelude_interpolation.cr --no-prelude -o /tmp/noprel_fix_mir_blockid_includes.bin`
+        - fresh `lldb` landed in `Hash$LUInt32$C$_Nil$R$Hfind_entry_with_index$$UInt32`, reached from `Hash(UInt32, Nil)#has_key? -> Set(UInt32)#includes? -> Crystal::MIR::Set(BlockId)#includes?`
+      - after this fix:
+        - `scripts/run_safe.sh /tmp/cv2_fix_blockid_dom_s2 120 1024 regression_tests/combined/test_no_prelude_interpolation.cr --no-prelude -o /tmp/noprel_fix_blockid_dom.bin`
+        - result: `error: Index error in emit_function for: __crystal_main`, `[EXIT: 1] after ~0s`
+  - practical boundary:
+    - this closes the verified `Set(BlockId)` null-`@hash` / stub alias family in stage2 no-prelude smoke
+    - it does not make the smoke green yet; the next honest frontier is the later compiler-side `emit_function(__crystal_main)` index-error path, not another `Set(BlockId)` runtime crash
 - **Fresh stage2 MIR-`TypeRef` hash `has_key?` checkpoint: self-hosted `stage2` no longer aborts the tiny no-prelude smoke in the old `Crystal::MIR::Hash(UInt32, TypeRef)#has_key?` stub family, because the backend now delegates that MIR wrapper to the already-lowered top-level `Hash(UInt32, TypeRef)#[]?` and checks the nilable-union discriminator directly; the same smoke has moved forward again to a later `Crystal::MIR::Set(BlockId)#includes?` stub head (2026-04-08, current session)**:
   - trustworthy setup:
     - `src/compiler/mir/llvm_backend.cr` now emits an exact delegate for `Crystal::MIR::Hash(UInt32, TypeRef)#has_key?(UInt32)` in both the builtin-override path and the dead-code fallback path

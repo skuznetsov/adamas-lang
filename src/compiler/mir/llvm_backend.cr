@@ -3529,6 +3529,34 @@ module Crystal::MIR
                "}\n"
       end
 
+      if name == "Crystal$CCMIR$CCSet$LCrystal$CCMIR$CCBlockId$R$Hincludes$Q$$UInt32"
+        return "; #{name} — delegate Crystal::MIR::Set(BlockId)#includes? to ::Set(UInt32)\n" \
+               "define i32 @#{name}(ptr %self, i32 %value) {\n" \
+               "entry:\n" \
+               "  %r.bool = call i1 @Set$LUInt32$R$Hincludes$Q$$UInt32(ptr %self, i32 %value)\n" \
+               "  %r = zext i1 %r.bool to i32\n" \
+               "  ret i32 %r\n" \
+               "}\n"
+      end
+
+      if name == "Crystal$CCMIR$CCSet$LCrystal$CCMIR$CCBlockId$R$Hadd$$UInt32"
+        return "; #{name} — delegate Crystal::MIR::Set(BlockId)#add to ::Set(UInt32)\n" \
+               "define i32 @#{name}(ptr %self, i32 %value) {\n" \
+               "entry:\n" \
+               "  %ignored = call ptr @Set$LUInt32$R$Hadd$$UInt32(ptr %self, i32 %value)\n" \
+               "  ret i32 0\n" \
+               "}\n"
+      end
+
+      if name == "Crystal$CCMIR$CCSet$LCrystal$CCMIR$CCBlockId$R$H$SHL$$UInt32"
+        return "; #{name} — delegate Crystal::MIR::Set(BlockId)#<< to ::Set(UInt32)#add\n" \
+               "define i32 @#{name}(ptr %self, i32 %value) {\n" \
+               "entry:\n" \
+               "  %ignored = call ptr @Set$LUInt32$R$Hadd$$UInt32(ptr %self, i32 %value)\n" \
+               "  ret i32 0\n" \
+               "}\n"
+      end
+
       if name == "Crystal$CCMIR$CCSet$LCrystal$CCMIR$CCValueId$R$Hadd$$UInt32"
         return "; #{name} — delegate Crystal::MIR::Set(ValueId)#add to ::Set(UInt32)\n" \
                "define i32 @#{name}(ptr %self, i32 %value) {\n" \
@@ -8420,6 +8448,14 @@ module Crystal::MIR
         emit_raw "  ret ptr %r\n"
         emit_raw "}\n\n"
         return true
+      when "Crystal$CCMIR$CCSet$LCrystal$CCMIR$CCBlockId$R$Dnew"
+        emit_raw "; #{mangled} — delegate Crystal::MIR::Set(BlockId).new to ::Set(UInt32).new(nil capacity)\n"
+        emit_raw "define ptr @#{mangled}() {\n"
+        emit_raw "entry:\n"
+        emit_raw "  %r = call ptr @Set$LUInt32$R$Dnew(ptr null)\n"
+        emit_raw "  ret ptr %r\n"
+        emit_raw "}\n\n"
+        return true
       when "Crystal$CCMIR$CCSet$LCrystal$CCMIR$CCFunctionId$R$Hclear"
         emit_raw "; #{mangled} — delegate Crystal::MIR::Set(FunctionId)#clear to ::Set(UInt32)\n"
         emit_raw "define ptr @#{mangled}(ptr %self) {\n"
@@ -8434,6 +8470,31 @@ module Crystal::MIR
         emit_raw "entry:\n"
         emit_raw "  %r = call ptr @Set$LUInt32$R$Hclear(ptr %self)\n"
         emit_raw "  ret ptr %r\n"
+        emit_raw "}\n\n"
+        return true
+      when "Crystal$CCMIR$CCSet$LCrystal$CCMIR$CCBlockId$R$Hincludes$Q$$UInt32"
+        emit_raw "; #{mangled} — delegate Crystal::MIR::Set(BlockId)#includes? to ::Set(UInt32)\n"
+        emit_raw "define i32 @#{mangled}(ptr %self, i32 %value) {\n"
+        emit_raw "entry:\n"
+        emit_raw "  %r.bool = call i1 @Set$LUInt32$R$Hincludes$Q$$UInt32(ptr %self, i32 %value)\n"
+        emit_raw "  %r = zext i1 %r.bool to i32\n"
+        emit_raw "  ret i32 %r\n"
+        emit_raw "}\n\n"
+        return true
+      when "Crystal$CCMIR$CCSet$LCrystal$CCMIR$CCBlockId$R$Hadd$$UInt32"
+        emit_raw "; #{mangled} — delegate Crystal::MIR::Set(BlockId)#add to ::Set(UInt32)\n"
+        emit_raw "define i32 @#{mangled}(ptr %self, i32 %value) {\n"
+        emit_raw "entry:\n"
+        emit_raw "  %ignored = call ptr @Set$LUInt32$R$Hadd$$UInt32(ptr %self, i32 %value)\n"
+        emit_raw "  ret i32 0\n"
+        emit_raw "}\n\n"
+        return true
+      when "Crystal$CCMIR$CCSet$LCrystal$CCMIR$CCBlockId$R$H$SHL$$UInt32"
+        emit_raw "; #{mangled} — delegate Crystal::MIR::Set(BlockId)#<< to ::Set(UInt32)#add\n"
+        emit_raw "define i32 @#{mangled}(ptr %self, i32 %value) {\n"
+        emit_raw "entry:\n"
+        emit_raw "  %ignored = call ptr @Set$LUInt32$R$Hadd$$UInt32(ptr %self, i32 %value)\n"
+        emit_raw "  ret i32 0\n"
         emit_raw "}\n\n"
         return true
       when /^Crystal\$CCMIR\$CCHash\$L.+\$Hclear$/
