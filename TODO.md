@@ -8986,3 +8986,72 @@ Immediate next steps:
    later value emission bug inside `__crystal_main`.
 3. Keep flattening compiler-internal hot paths when they depend on fragile
    generic container/string helpers under self-host.
+
+## Checkpoint — 2026-04-08 (harden `emit_constant` nil flow and make `Array#size` primitive)
+
+Verified this turn:
+- After streaming LLVM function headers directly, the next stage2 tiny no-prelude
+  head moved into emitted block/instruction runtime paths.
+- Fresh LLDB on `/tmp/cv2_headerparts_s2` showed the first new crash in:
+  - `Crystal::MIR::Type#name`
+  - caller: `Crystal::MIR::LLVMIRGenerator#emit_constant(Constant::String)`
+  - fault: null receiver at `Type#name`
+- The relevant code path in `emit_constant(...)` used a chained nilable `&&`
+  condition:
+  - `(type == "void" || value == "null" || type == "ptr") && (sa_type = @module.type_registry.get(inst.type)) && sa_type.name.starts_with?("StaticArray(")`
+- `src/compiler/mir/llvm_backend.cr` now rewrites that seam into explicit nested
+  control flow:
+  - compute `pointer_like_constant`
+  - fetch `static_array_type` only once
+  - only inspect `sa_type.name` after an explicit non-nil check
+- After that fix, the old `Type#name(null)` head disappeared and the next live
+  failure became a recursive canonical `Array$Hsize` runtime path.
+- Fresh LLDB on `/tmp/cv2_emitconst_s2_rerun` showed:
+  - top frame: `Array$Hsize`
+  - infinite self-recursion instead of a direct `@size` field load
+- `src/compiler/mir/llvm_backend.cr` now provides a generic primitive override
+  for any top-level `Array$...$Hsize`:
+  - load `@size` from byte offset `4`
+  - return `0` on null receiver
+  - mirrored in the dead-code fallback path too
+
+Operational proof:
+- `crystal build src/crystal_v2.cr -o /tmp/cv2_emitconst_host --error-trace`
+  => host build green.
+- `scripts/run_safe.sh /tmp/cv2_emitconst_host 900 12288 src/crystal_v2.cr -o /tmp/cv2_emitconst_s2_rerun`
+  => stage2 self-host build green on rerun, `[EXIT: 0] after ~287s`.
+- Before the `emit_constant` rewrite:
+  - `lldb --batch -o 'run regression_tests/combined/test_no_prelude_interpolation.cr --no-prelude -o /tmp/noprel_headerparts_lldb.bin' -k 'thread backtrace -c 30' -k 'register read' -k 'disassemble --frame' -k 'quit' /tmp/cv2_headerparts_s2`
+  - top frame: `Crystal$CCMIR$CCType$Hname`
+  - caller chain:
+    `emit_constant(Constant::String) -> emit_instruction -> emit_block -> emit_function`
+- After the `emit_constant` rewrite but before the `Array#size` primitive:
+  - `lldb --batch -o 'run regression_tests/combined/test_no_prelude_interpolation.cr --no-prelude -o /tmp/noprel_emitconst_lldb.bin' -k 'thread backtrace -c 30' -k 'register read' -k 'disassemble --frame' -k 'quit' /tmp/cv2_emitconst_s2_rerun`
+  - top frame: recursive `Array$Hsize`
+- After the `Array#size` primitive:
+  - `crystal build src/crystal_v2.cr -o /tmp/cv2_arraysize_host --error-trace`
+  - `scripts/run_safe.sh /tmp/cv2_arraysize_host 900 12288 src/crystal_v2.cr -o /tmp/cv2_arraysize_s2`
+    => stage2 self-host build green, `[EXIT: 0] after ~289s`
+  - `scripts/run_safe.sh /tmp/cv2_arraysize_s2 120 1024 regression_tests/combined/test_no_prelude_interpolation.cr --no-prelude -o /tmp/noprel_arraysize.bin`
+    => old `Type#name(null)` and `Array$Hsize` recursion are gone
+    => new head:
+       `STUB CALLED: Int32$Htype_id`, `[EXIT: 134]`
+
+Whole-program / bootstrap effect:
+- This is another pattern/root-cause step, not a symbol-specific quarantine:
+  - explicit nil-safe control flow in a fragile compiler hot path
+  - a generic primitive `Array#size` bedrock override for all `Array(...)`
+    specializations
+- Stage1 remains green.
+- Stage2 build remains green at roughly `287–289s`.
+- Stage2 tiny no-prelude smoke is still red, but it has moved from
+  `emit_constant -> Type#name(null)` and recursive `Array#size` to a later
+  primitive/stub frontier `Int32#type_id`.
+- We are still far from `stage5`: stage2 smoke is not yet green.
+
+Immediate next steps:
+1. Freeze why `Int32$Htype_id` is still emitted as a stub in the stage2 tiny
+   no-prelude path.
+2. Decide whether this should be a primitive numeric override or whether a
+   broader type-id/runtime-header seam is still misclassified.
+3. Keep preferring generic primitive/flow fixes over new name-by-name stubs.

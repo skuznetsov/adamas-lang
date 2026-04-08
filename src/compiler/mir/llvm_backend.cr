@@ -3473,6 +3473,21 @@ module Crystal::MIR
         return oracle
       end
 
+      if name.starts_with?("Array$") && name.ends_with?("$Hsize") && return_type == "i32" && arg_count == 1
+        return "; #{name} — primitive Array#size via @size field\n" \
+               "define i32 @#{name}(ptr %self) {\n" \
+               "entry:\n" \
+               "  %self_null = icmp eq ptr %self, null\n" \
+               "  br i1 %self_null, label %ret_zero, label %load_size\n" \
+               "load_size:\n" \
+               "  %size_ptr = getelementptr i8, ptr %self, i32 4\n" \
+               "  %size = load i32, ptr %size_ptr\n" \
+               "  ret i32 %size\n" \
+               "ret_zero:\n" \
+               "  ret i32 0\n" \
+               "}\n"
+      end
+
       # Crystal::MIR::Array(T) is the same runtime object as top-level ::Array(T),
       # but self-host sometimes materializes a separate V2 symbol path for methods
       # like #size / #unsafe_fetch. Delegate those missing bodies to the real Array.
@@ -8377,6 +8392,21 @@ module Crystal::MIR
     private def emit_builtin_override(func : Function) : Bool
       mangled = mangle_function_name(func.name)
       return true if emit_crystal_mir_set_new_delegate_override(func, mangled)
+      if mangled.starts_with?("Array$") && mangled.ends_with?("$Hsize")
+        emit_raw "; #{mangled} — primitive Array#size via @size field\n"
+        emit_raw "define i32 @#{mangled}(ptr %self) {\n"
+        emit_raw "entry:\n"
+        emit_raw "  %self_null = icmp eq ptr %self, null\n"
+        emit_raw "  br i1 %self_null, label %ret_zero, label %load_size\n"
+        emit_raw "load_size:\n"
+        emit_raw "  %size_ptr = getelementptr i8, ptr %self, i32 4\n"
+        emit_raw "  %size = load i32, ptr %size_ptr\n"
+        emit_raw "  ret i32 %size\n"
+        emit_raw "ret_zero:\n"
+        emit_raw "  ret i32 0\n"
+        emit_raw "}\n\n"
+        return true
+      end
       case mangled
       when "IO$Hpos"
         io_memory_tid = @module.type_registry.get_by_name("IO::Memory").try(&.id.to_i32)
@@ -14086,6 +14116,14 @@ module Crystal::MIR
       # Store constant for inlining at use sites
       @constant_values[inst.id] = value
       STDERR.puts "[EMIT_CONST] after constant_values store" if ENV["CRYSTAL2_TRACE_EMIT_CONSTANT"]?
+      pointer_like_constant = type == "void" || value == "null" || type == "ptr"
+      static_array_type = nil.as(Type?)
+      if pointer_like_constant
+        if sa_type = @module.type_registry.get(inst.type)
+          static_array_type = sa_type if sa_type.name.starts_with?("StaticArray(")
+        end
+      end
+
       # Generate real instruction so phi nodes can reference it
       # Using add 0, X is a common LLVM idiom for materializing constants
       if type.includes?(".union")
@@ -14098,9 +14136,7 @@ module Crystal::MIR
         emit "#{name} = load #{type}, ptr %#{base_name}.ptr"
         @value_types[inst.id] = inst.type
         STDERR.puts "[EMIT_CONST] after union materialize" if ENV["CRYSTAL2_TRACE_EMIT_CONSTANT"]?
-      elsif (type == "void" || value == "null" || type == "ptr") &&
-            (sa_type = @module.type_registry.get(inst.type)) &&
-            sa_type.name.starts_with?("StaticArray(")
+      elsif sa_type = static_array_type
         STDERR.puts "[EMIT_CONST] branch staticarray null" if ENV["CRYSTAL2_TRACE_EMIT_CONSTANT"]?
         # uninitialized StaticArray(T, N) — emit stack alloca.
         # Parse element type and count from name, look up element size from registry.
@@ -14120,7 +14156,7 @@ module Crystal::MIR
         @constant_values[inst.id] = name
         @value_types[inst.id] = TypeRef::POINTER
         STDERR.puts "[EMIT_CONST] after staticarray materialize" if ENV["CRYSTAL2_TRACE_EMIT_CONSTANT"]?
-      elsif type == "void" || value == "null" || type == "ptr"
+      elsif pointer_like_constant
         STDERR.puts "[EMIT_CONST] branch ptr/null" if ENV["CRYSTAL2_TRACE_EMIT_CONSTANT"]?
         # void/null/ptr constants are treated as ptr type in LLVM
         # Must emit real instruction (not comment) so phi nodes can reference it
