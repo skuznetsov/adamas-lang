@@ -52,10 +52,10 @@ module Crystal::MIR
     getter function : Function
     getter eliminated : Int32 = 0
     # Track must-alias relationships (ptr1, ptr2) within a block
-    getter must_alias : Set(Tuple(ValueId, ValueId))
+    getter must_alias : ::Set(Tuple(ValueId, ValueId))
 
     def initialize(@function : Function)
-      @must_alias = Set(Tuple(ValueId, ValueId)).new
+      @must_alias = ::Set(Tuple(ValueId, ValueId)).new
     end
 
     def run : Int32
@@ -71,16 +71,16 @@ module Crystal::MIR
       # Track rc_inc operations by pointer
       pending_incs = {} of ValueId => Array(Int32)  # ptr → instruction indices
       alias_map = {} of ValueId => ValueId          # simple copy-based alias map
-      no_alias_ids = Set(ValueId).new
+      no_alias_ids = ::Set(ValueId).new
       # Track which allocation sites have "escaped" (stored to field/container)
-      escaped_allocs = Set(ValueId).new
+      escaped_allocs = ::Set(ValueId).new
       # Track allocation site for each pointer (for structural noalias)
       alloc_site = {} of ValueId => ValueId  # ptr → original alloc id
       # TBAA: Track alloc_type for each allocation site
       alloc_type = {} of ValueId => TypeRef  # alloc_site → type of allocated object
 
       instructions = block.instructions
-      to_remove = Set(Int32).new
+      to_remove = ::Set(Int32).new
 
       # Pre-scan for noalias-producing instructions and build alloc_site map
       instructions.each do |inst|
@@ -600,9 +600,9 @@ module Crystal::MIR
       @coarsened = 0
 
       # Track allocation sites and their escape status
-      escaped_allocs = Set(ValueId).new
-      thread_shared = Set(ValueId).new  # Allocations passed to spawn/channel
-      mutex_allocs = Set(ValueId).new   # Known mutex allocations
+      escaped_allocs = ::Set(ValueId).new
+      thread_shared = ::Set(ValueId).new  # Allocations passed to spawn/channel
+      mutex_allocs = ::Set(ValueId).new   # Known mutex allocations
 
       # First pass: identify escapes and thread-shared allocations
       @function.blocks.each do |block|
@@ -674,9 +674,9 @@ module Crystal::MIR
     # Remove locks on objects that are provably thread-local
     private def elide_thread_local_locks(
       block : BasicBlock,
-      escaped_allocs : Set(ValueId),
-      thread_shared : Set(ValueId),
-      mutex_allocs : Set(ValueId)
+      escaped_allocs : ::Set(ValueId),
+      thread_shared : ::Set(ValueId),
+      mutex_allocs : ::Set(ValueId)
     )
       to_remove = [] of Int32
 
@@ -715,7 +715,7 @@ module Crystal::MIR
     # Only the inner lock/unlock pair is redundant
     private def elide_redundant_locks(block : BasicBlock)
       # Track lock depth per mutex: depth > 1 means nested
-      lock_depth = Hash(ValueId, Int32).new(0)
+      lock_depth = ::Hash(ValueId, Int32).new(0)
       to_remove = [] of Int32
 
       block.instructions.each_with_index do |inst, idx|
@@ -910,8 +910,8 @@ module Crystal::MIR
     getter propagated : Int32 = 0
     @assume_dominates : Bool = false
     @@cp_phase_timing_enabled : Bool = ENV["CRYSTAL_V2_CP_PHASE_TIMING"]? == "1"
-    @@cp_phase_time_totals : Hash(String, Float64) = Hash(String, Float64).new(0.0)
-    @@cp_phase_call_counts : Hash(String, Int32) = Hash(String, Int32).new(0)
+    @@cp_phase_time_totals : ::Hash(String, Float64) = ::Hash(String, Float64).new(0.0)
+    @@cp_phase_call_counts : ::Hash(String, Int32) = ::Hash(String, Int32).new(0)
     @@cp_phase_timing_lock : Mutex = Mutex.new
 
     def initialize(@function : Function)
@@ -952,7 +952,7 @@ module Crystal::MIR
       value_nodes = {} of ValueId => Value
       constants = {} of ValueId => (Int64 | UInt64 | Float64 | Bool | Nil)
       alloc_site = {} of ValueId => ValueId
-      no_alias_sites = Set(ValueId).new
+      no_alias_sites = ::Set(ValueId).new
 
       timed_cp_phase("run_collect_state") do
         @function.params.each do |param|
@@ -1149,7 +1149,7 @@ module Crystal::MIR
 
       replacement_keys = replacements.keys.to_set
       affected_block_ids = timed_cp_phase("apply_collect_affected_blocks") do
-        affected = Set(BlockId).new
+        affected = ::Set(BlockId).new
         @function.blocks.each do |block|
           if block_uses_replacements?(block, replacement_keys)
             affected << block.id
@@ -1690,13 +1690,13 @@ module Crystal::MIR
       max_block_id = @function.blocks.max_of(&.id).to_i
       size = max_block_id + 1
 
-      rpo_index = Array.new(size, -1)
+      rpo_index = ::Array.new(size, -1)
       rpo.each_with_index do |block_id, idx|
         rpo_index[block_id.to_i] = idx
       end
 
       entry_idx = entry.to_i
-      idom = Array(Int32?).new(size, nil)
+      idom = ::Array(Int32?).new(size, nil)
       idom[entry_idx] = entry_idx
 
       changed = true
@@ -1728,7 +1728,7 @@ module Crystal::MIR
         end
       end
 
-      children = Array.new(size) { [] of Int32 }
+      children = ::Array.new(size) { [] of Int32 }
       rpo.each do |block_id|
         block_idx = block_id.to_i
         next if block_idx == entry_idx
@@ -1737,8 +1737,8 @@ module Crystal::MIR
         children[parent] << block_idx
       end
 
-      in_time = Array.new(size, -1)
-      out_time = Array.new(size, -1)
+      in_time = ::Array.new(size, -1)
+      out_time = ::Array.new(size, -1)
       time = 0
       stack = [{entry_idx, false}] of Tuple(Int32, Bool)
       while frame = stack.pop?
@@ -1790,7 +1790,7 @@ module Crystal::MIR
     end
 
     private def compute_reverse_postorder(entry : BlockId) : Array(BlockId)
-      visited = Set(BlockId).new
+      visited = ::Set(BlockId).new
       postorder = [] of BlockId
       stack = [{entry, false}] of Tuple(BlockId, Bool)
 
@@ -1977,8 +1977,8 @@ module Crystal::MIR
     getter function : Function
     getter stats : OptimizationStats
     @@pass_timing_enabled : Bool = ENV["CRYSTAL_V2_MIR_PASS_TIMING"]? == "1"
-    @@pass_time_totals : Hash(String, Float64) = Hash(String, Float64).new(0.0)
-    @@pass_call_counts : Hash(String, Int32) = Hash(String, Int32).new(0)
+    @@pass_time_totals : ::Hash(String, Float64) = ::Hash(String, Float64).new(0.0)
+    @@pass_call_counts : ::Hash(String, Int32) = ::Hash(String, Int32).new(0)
     @@pass_timing_lock : Mutex = Mutex.new
 
     def initialize(@function : Function)
@@ -2396,11 +2396,11 @@ module Crystal::MIR
 
     # Per-value use counts for corridor tracing.
     # LTPEngine only needs exposure/cardinality, not the full def-use payload.
-    @use_map : Hash(ValueId, Int32)
+    @use_map : ::Hash(ValueId, Int32)
     # Alias map for pointer canonicalization
-    @alias_map : Hash(ValueId, ValueId)
+    @alias_map : ::Hash(ValueId, ValueId)
     # NoAlias set (values that don't alias anything)
-    @no_alias_ids : Set(ValueId)
+    @no_alias_ids : ::Set(ValueId)
 
     def initialize(@function : Function)
       @moves_applied = [] of LegalMove
@@ -2409,9 +2409,9 @@ module Crystal::MIR
       @potential_trace = [] of LTPPotential
       @debug = false
       @frame_kind = FrameKind::Primary
-      @use_map = Hash(ValueId, Int32).new
-      @alias_map = Hash(ValueId, ValueId).new
-      @no_alias_ids = Set(ValueId).new
+      @use_map = ::Hash(ValueId, Int32).new
+      @alias_map = ::Hash(ValueId, ValueId).new
+      @no_alias_ids = ::Set(ValueId).new
     end
 
     # ═══════════════════════════════════════════════════════════════════════════
@@ -2805,7 +2805,7 @@ module Crystal::MIR
       corner_mismatch = 0     # P: conflicts/bad patterns
       area = 0                # |Δ|: total instructions
 
-      windows_by_ptr = Hash(ValueId, Int32).new(0)
+      windows_by_ptr = ::Hash(ValueId, Int32).new(0)
 
       @function.blocks.each do |block|
         area += block.instructions.size

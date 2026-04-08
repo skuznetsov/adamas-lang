@@ -574,10 +574,10 @@ module Crystal::MIR
     POINTER_TYPE_ID_BASE  = 1_500_000_000
     MEMBER_ID_BASE        = 1_600_000_000
 
-    getter used_files : Set(String)
+    getter used_files : ::Set(String)
 
     def initialize(@module : Module, @type_mapper : LLVMTypeMapper)
-      @used_files = Set(String).new
+      @used_files = ::Set(String).new
       @file_ids = {} of String => Int32
       @file_definitions = {} of Int32 => String
       @assigned_location_ids = {} of Int32 => String
@@ -596,7 +596,7 @@ module Crystal::MIR
       @static_owner_file_ids = {} of Int32 => Int32
       @static_owner_lines = {} of Int32 => Int32
       @static_owner_member_ids = {} of Int32 => Array(Int32)
-      @building_type_ids = Set(UInt32).new
+      @building_type_ids = ::Set(UInt32).new
       register_file(@module.source_file || "unknown.cr")
     end
 
@@ -655,8 +655,8 @@ module Crystal::MIR
         lexical_scope_cache = {} of String => Int32
         location_cache = {} of String => Int32
         local_var_ids = {} of ValueId => Int32
-        declared_storage_bindings = Set(String).new
-        declared_entry_values = Set(String).new
+        declared_storage_bindings = ::Set(String).new
+        declared_entry_values = ::Set(String).new
 
         emit_location_definition(
           io,
@@ -1716,8 +1716,8 @@ module Crystal::MIR
     @tsan_needs_func_entry : Bool = false
     @constant_values : Hash(ValueId, String)  # For inlining constants
     @value_types : Hash(ValueId, TypeRef)     # For tracking operand types
-    @void_values : Set(ValueId) = Set(ValueId).new  # Values emitted as void (no LLVM result)
-    @emitted_functions : Set(String) = Set(String).new  # Track emitted function names to avoid duplicates
+    @void_values : ::Set(ValueId) = ::Set(ValueId).new  # Values emitted as void (no LLVM result)
+    @emitted_functions : ::Set(String) = ::Set(String).new  # Track emitted function names to avoid duplicates
     # When Dnew$$String stub bundles Dnew$$Int32 IR, skip duplicate define if Dnew$$Int32 is also missing.
     @no_prelude_string_builder_dnew_int32_stub_emitted : Bool = false
     # Same for #<<(String): synthesized calls inside Dnew$$String are not in @called_crystal_functions.
@@ -1737,15 +1737,15 @@ module Crystal::MIR
     @module_singleton_globals : ::Hash(TypeRef, String)  # Module type -> singleton global name
     @emitted_value_types : Hash(String, String)  # SSA name -> LLVM type (per function)
     @emitted_value_names : Set(String)  # SSA names materialized in current function
-    @emitted_allocas : Set(ValueId) = Set(ValueId).new  # Track pre-emitted allocas
+    @emitted_allocas : ::Set(ValueId) = ::Set(ValueId).new  # Track pre-emitted allocas
     @alloc_types : Hash(ValueId, TypeRef) = {} of ValueId => TypeRef  # Track original alloc_type for enum detection
-    @inttoptr_value_ids : Set(ValueId) = Set(ValueId).new  # Track values created by inttoptr (packed scalars)
+    @inttoptr_value_ids : ::Set(ValueId) = ::Set(ValueId).new  # Track values created by inttoptr (packed scalars)
     # When a ptrtoint from a heap pointer to a small int (<64 bits) would truncate
     # the address, we skip emitting the ptrtoint and alias the result to the original
     # ptr. Downstream zext/inttoptr chain is also skipped. Maps ValueId → "ptr %name".
     @ptr_passthrough : Hash(ValueId, String) = {} of ValueId => String
     @addressable_allocas : Hash(ValueId, String) = {} of ValueId => String  # operand_id -> alloca SSA name
-    @addressable_alloca_initialized : Set(ValueId) = Set(ValueId).new  # Track which addressable allocas have been stored to
+    @addressable_alloca_initialized : ::Set(ValueId) = ::Set(ValueId).new  # Track which addressable allocas have been stored to
     @pending_allocas : Array({String, String, Int32}) = [] of {String, String, Int32}  # name, type, align
     @string_counter : Int32 = 0
     @cond_counter : Int32 = 0  # For unique branch condition variable names
@@ -1875,7 +1875,7 @@ module Crystal::MIR
 
     # String type_id for runtime helpers and string literals
     @string_type_id : Int32 = 16  # TypeRef::STRING.id default, updated during prelude emission
-    @dtor_type_ids : Set(UInt32) = Set(UInt32).new  # Type IDs that have ARC destructors
+    @dtor_type_ids : ::Set(UInt32) = ::Set(UInt32).new  # Type IDs that have ARC destructors
     @emit_regex_runtime : Bool = false
 
     # Dominance info for phi edge definedness checking (Cooper's algorithm)
@@ -1884,7 +1884,7 @@ module Crystal::MIR
 
     # Cross-block value tracking for dominance fix
     @value_def_block : Hash(ValueId, BlockId) = {} of ValueId => BlockId  # value → block where defined
-    @cross_block_values : Set(ValueId) = Set(ValueId).new  # values that need alloca slots
+    @cross_block_values : ::Set(ValueId) = ::Set(ValueId).new  # values that need alloca slots
     @cross_block_slots : Hash(ValueId, String) = {} of ValueId => String  # value → alloca slot name
     @cross_block_slot_types : Hash(ValueId, String) = {} of ValueId => String  # value → slot LLVM type
     @cross_block_slot_type_refs : Hash(ValueId, TypeRef) = {} of ValueId => TypeRef  # value → slot TypeRef (signedness)
@@ -1935,14 +1935,14 @@ module Crystal::MIR
 
     # Track phi nodes that have nil incoming values (for union return type handling)
     # Maps phi value_id -> set of blocks that contribute nil
-    @phi_nil_incoming_blocks : Hash(ValueId, Set(BlockId)) = {} of ValueId => Set(BlockId)
+    @phi_nil_incoming_blocks : Hash(ValueId, ::Set(BlockId)) = {} of ValueId => ::Set(BlockId)
 
     # Track emitted union type definitions to avoid duplicates and ensure forward declarations
-    @emitted_union_type_names : Set(String) = Set(String).new
+    @emitted_union_type_names : ::Set(String) = ::Set(String).new
 
     # Global zero-filled struct sentinels for struct-typed cross-block alloca slots.
     # V2 heap-allocates structs as pointers; null init causes SIGSEGV on unexecuted paths.
-    @zero_struct_globals : Set(String) = Set(String).new
+    @zero_struct_globals : ::Set(String) = ::Set(String).new
     @zero_struct_global_decls : IO::Memory = IO::Memory.new
 
     # Type metadata for debug DX
@@ -2006,7 +2006,7 @@ module Crystal::MIR
       @module_singleton_globals = ::Hash(TypeRef, String).new
       @emitted_value_types = {} of String => String
       bootstrap_trace_puts "[LLVM_INIT] hashes done"
-      @emitted_value_names = Set(String).new
+      @emitted_value_names = ::Set(String).new
       bootstrap_trace_puts "[LLVM_INIT] set done"
       @func_by_name = {} of String => Function
       @func_by_suffix = {} of String => Function
@@ -2228,7 +2228,7 @@ module Crystal::MIR
       unresolved_patterns = ["typeof("]
 
       # Build a skip set by FunctionId so we can propagate skips through the call graph.
-      skip_ids = Set(FunctionId).new
+      skip_ids = ::Set(FunctionId).new
 
       # 1) Directly unresolved: function name contains unresolved type patterns.
       functions_to_emit.each do |func|
@@ -2297,7 +2297,7 @@ module Crystal::MIR
       precompute_function_return_types(@module.functions)
 
       # Deduplicate functions by mangled name (keep first occurrence).
-      dedup_seen = Set(String).new(@emitted_functions.size + functions_to_emit.size)
+      dedup_seen = ::Set(String).new(@emitted_functions.size + functions_to_emit.size)
       @emitted_functions.each { |n| dedup_seen << n }
       functions_to_emit = functions_to_emit.reject do |func|
         mangled = mangle_function_name(func.name)
@@ -2529,8 +2529,8 @@ module Crystal::MIR
     end
 
     # Compute reachable functions from main via transitive call graph
-    private def compute_reachable_functions : Set(FunctionId)
-      reachable = Set(FunctionId).new
+    private def compute_reachable_functions : ::Set(FunctionId)
+      reachable = ::Set(FunctionId).new
       worklist = [] of FunctionId
 
       # Find entry functions (Crystal uses __crystal_main as the synthetic entry).
@@ -2661,7 +2661,7 @@ module Crystal::MIR
       names
     end
 
-    private def add_runtime_declared_extern_names(already_declared : Set(String))
+    private def add_runtime_declared_extern_names(already_declared : ::Set(String))
       runtime_declared_extern_names.each { |name| already_declared << name }
     end
 
@@ -2848,7 +2848,7 @@ module Crystal::MIR
 
     private def emit_missing_crystal_function_stubs
       # Skip functions already declared in emit_runtime_declarations or emit_header
-      already_declared = Set(String).new
+      already_declared = ::Set(String).new
       already_declared << "getcwd" << "realpath" << "open" << "close" << "read" << "lseek"
       already_declared << "write" << "malloc" << "calloc" << "realloc" << "free" << "memcpy" << "memmove" << "memset"
       already_declared << "strlen" << "strcmp" << "strncmp" << "strstr" << "strerror" << "snprintf" << "exit" << "abort"
@@ -4746,7 +4746,7 @@ module Crystal::MIR
       collect_module_singleton_globals unless @fused_mir_lowering
 
       # Collect all defined globals
-      defined_globals = Set(String).new
+      defined_globals = ::Set(String).new
       @module.globals.each do |global|
         mangled_name = @type_mapper.mangle_name(global.name)
         defined_globals << mangled_name
@@ -4760,7 +4760,7 @@ module Crystal::MIR
       # Collect all referenced globals from GlobalLoad/GlobalStore instructions.
       # For each global, prefer the most specific (non-pointer) type — union types
       # from closure cells must not be downgraded to ptr by later GlobalLoad/Store.
-      referenced_globals = Hash(String, TypeRef).new
+      referenced_globals = ::Hash(String, TypeRef).new
       @module.functions.each do |func|
         func.blocks.each do |block|
           block.instructions.each do |inst|
@@ -4795,7 +4795,7 @@ module Crystal::MIR
       end
 
       # Build set of function names to avoid conflict
-      function_names = Set(String).new
+      function_names = ::Set(String).new
       @module.functions.each do |func|
         function_names << mangle_function_name(func.name)
       end
@@ -4809,7 +4809,7 @@ module Crystal::MIR
       end
 
       # Emit defined globals (deduplicate — MIR may register the same global multiple times)
-      emitted_globals = Set(String).new
+      emitted_globals = ::Set(String).new
       @module.globals.each do |global|
         llvm_type = @type_mapper.llvm_type(global.type)
         llvm_type = "ptr" if llvm_type == "void"
@@ -5068,7 +5068,7 @@ module Crystal::MIR
       end
 
       # Track emitted types to avoid duplicates
-      emitted_types = Set(String).new
+      emitted_types = ::Set(String).new
 
       # Emit struct types from registry
       @module.type_registry.types.each do |type|
@@ -7767,7 +7767,7 @@ module Crystal::MIR
       end
 
       # Track which type_ids have destructors for the dispatch table
-      @dtor_type_ids = Set(UInt32).new
+      @dtor_type_ids = ::Set(UInt32).new
 
       # Generate per-type destructors
       dtor_types.each do |type|
@@ -10911,7 +10911,7 @@ module Crystal::MIR
 
       # Function signature
       # Note: void is not valid for parameters, substitute with ptr
-      used_param_names = Hash(String, Int32).new(0)
+      used_param_names = ::Hash(String, Int32).new(0)
       param_types = func.params.map do |p|
         llvm_type = @type_mapper.llvm_type(p.type)
         llvm_type = "ptr" if llvm_type == "void"
@@ -11346,7 +11346,7 @@ module Crystal::MIR
       # Pre-create allocas for AddressOf operands that aren't already stack allocas.
       # This ensures pointerof(x) has a properly-sized alloca in the entry block,
       # and multiple pointerof(x) calls share the same alloca.
-      seen_addressof_operands = Set(ValueId).new
+      seen_addressof_operands = ::Set(ValueId).new
       func.blocks.each do |block|
         block.instructions.each do |inst|
           next unless inst.is_a?(AddressOf)
@@ -11369,7 +11369,7 @@ module Crystal::MIR
 
       # Create alloca slots for cross-block values to fix dominance issues
       # Track which phi-shared slots have already been created
-      phi_shared_created = Set(ValueId).new
+      phi_shared_created = ::Set(ValueId).new
       @cross_block_values.each do |val_id|
         # Phi-shared slot optimization: redirect many incoming values to one alloca
         if phi_id = @phi_slot_redirect[val_id]?
@@ -12097,7 +12097,7 @@ module Crystal::MIR
       # This handles cases like UInt8___ (returns i8) used in phi expecting i32
       # BUT: For ExternCall instructions AND parameters, record zext/sext conversion needed
       # instead of changing type (their return/LLVM types are fixed)
-      fixed_type_ids = Set(ValueId).new
+      fixed_type_ids = ::Set(ValueId).new
       # Parameters have fixed LLVM types in function signature
       func.params.each do |param|
         fixed_type_ids << param.index
@@ -12179,7 +12179,7 @@ module Crystal::MIR
         block.instructions.each do |inst|
           next unless inst.is_a?(Phi)
 
-          nil_blocks = Set(BlockId).new
+          nil_blocks = ::Set(BlockId).new
           inst.incoming.each do |(block_id, val)|
             val_type = @value_types[val]?
             const_val = @constant_values[val]?
@@ -12223,7 +12223,7 @@ module Crystal::MIR
 
     # Collect all value IDs that are used (referenced by other instructions)
     private def collect_used_values(func : Function) : Set(UInt32)
-      used = Set(UInt32).new
+      used = ::Set(UInt32).new
 
       func.blocks.each do |block|
         block.instructions.each do |inst|
@@ -12292,7 +12292,7 @@ module Crystal::MIR
 
     # Collect usage contexts to infer types (ptr vs int types)
     private def collect_usage_contexts(func : Function) : Hash(UInt32, TypeRef)
-      contexts = Hash(UInt32, TypeRef).new
+      contexts = ::Hash(UInt32, TypeRef).new
 
       func.blocks.each do |block|
         block.instructions.each do |inst|
@@ -14396,10 +14396,10 @@ module Crystal::MIR
       # Balance load across workers by instruction count (greedy assignment).
       # Without balancing, W0 gets the largest early functions and takes 3-5x
       # longer than other workers (e.g. 1338ms vs 200ms).
-      worker_assignments = Array(Array(Int32)).new(n_workers) { [] of Int32 }
-      worker_loads = Array(Int32).new(n_workers, 0)
+      worker_assignments = ::Array(::Array(Int32)).new(n_workers) { [] of Int32 }
+      worker_loads = ::Array(Int32).new(n_workers, 0)
       # Sort functions by instruction count (descending) for greedy assignment
-      func_costs = Array({Int32, Int32}).new(total)
+      func_costs = ::Array({Int32, Int32}).new(total)
       max_cost = 0
       max_cost_name = ""
       functions.each_with_index do |func, idx|
@@ -22625,7 +22625,7 @@ module Crystal::MIR
         @indent += 1
         # Deduplicate case values — LLVM requires unique switch case values.
         # MIR may produce duplicates when multiple subtypes share the same type_id.
-        seen_cases = Set(Int64).new
+        seen_cases = ::Set(Int64).new
         term.cases.each do |(case_val, block)|
           next if seen_cases.includes?(case_val)
           seen_cases << case_val

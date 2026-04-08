@@ -27824,10 +27824,28 @@ module Crystal::HIR
     private def normalize_compiler_collection_owner_name(name : String) : String
       if name.starts_with?("Crystal::MIR::Array(")
         "Array(" + name["Crystal::MIR::Array(".bytesize..]
+      elsif name.starts_with?("MIR::Array(")
+        "Array(" + name["MIR::Array(".bytesize..]
+      elsif name.starts_with?("Crystal::HIR::Array(")
+        "Array(" + name["Crystal::HIR::Array(".bytesize..]
+      elsif name.starts_with?("HIR::Array(")
+        "Array(" + name["HIR::Array(".bytesize..]
       elsif name.starts_with?("Crystal::MIR::Hash(")
         "Hash(" + name["Crystal::MIR::Hash(".bytesize..]
+      elsif name.starts_with?("MIR::Hash(")
+        "Hash(" + name["MIR::Hash(".bytesize..]
+      elsif name.starts_with?("Crystal::HIR::Hash(")
+        "Hash(" + name["Crystal::HIR::Hash(".bytesize..]
+      elsif name.starts_with?("HIR::Hash(")
+        "Hash(" + name["HIR::Hash(".bytesize..]
       elsif name.starts_with?("Crystal::MIR::Set(")
         "Set(" + name["Crystal::MIR::Set(".bytesize..]
+      elsif name.starts_with?("MIR::Set(")
+        "Set(" + name["MIR::Set(".bytesize..]
+      elsif name.starts_with?("Crystal::HIR::Set(")
+        "Set(" + name["Crystal::HIR::Set(".bytesize..]
+      elsif name.starts_with?("HIR::Set(")
+        "Set(" + name["HIR::Set(".bytesize..]
       else
         name
       end
@@ -27836,20 +27854,31 @@ module Crystal::HIR
     private def normalize_method_owner_name(name : String) : String
       return "" if name.unsafe_as(UInt64) == 0_u64
       return name if name.empty?
+      normalized = name
       if mapped = @type_param_map[name]?
-        return mapped
-      end
-      resolved_alias = resolve_type_alias_chain(name)
-      return resolved_alias if resolved_alias != name
-      if (idx = name.index("::"))
-        prefix = name[0, idx]
-        if mapped = @type_param_map[prefix]?
-          suffix = name[(idx + 2)..]
-          return "#{mapped}::#{suffix}"
+        normalized = mapped
+      else
+        resolved_alias = resolve_type_alias_chain(name)
+        if resolved_alias != name
+          normalized = resolved_alias
+        elsif (idx = name.index("::"))
+          prefix = name[0, idx]
+          if mapped = @type_param_map[prefix]?
+            suffix = name[(idx + 2)..]
+            normalized = "#{mapped}::#{suffix}"
+          end
         end
       end
-      return "Tuple" if name.starts_with?("Tuple(")
-      name
+      if info = split_generic_base_and_args(normalized)
+        normalized_base = normalize_compiler_collection_owner_name(info.base)
+        normalized_args = split_generic_type_args(info.args).map do |arg|
+          resolved_arg = resolve_type_alias_chain(resolve_type_name_in_context(arg.strip))
+          normalize_compiler_collection_owner_name(resolved_arg)
+        end
+        normalized = "#{normalized_base}(#{normalized_args.join(", ")})"
+      end
+      return "Tuple" if normalized.starts_with?("Tuple(")
+      normalize_compiler_collection_owner_name(normalized)
     end
 
     private def normalize_compiler_collection_method_name(name : String) : String
@@ -34116,6 +34145,9 @@ module Crystal::HIR
       if mapped = @type_param_map[name]?
         return resolve_type_name_in_context(mapped) if mapped != name
       end
+      if target = compiler_internal_alias_target(name)
+        return target
+      end
       if name.starts_with?("::")
         stripped = strip_absolute_name_prefix(name)
         return "" if stripped.empty?
@@ -34213,6 +34245,10 @@ module Crystal::HIR
       name = normalize_missing_generic_parens(name)
       if mapped = @type_param_map[name]?
         return resolve_type_name_in_context(mapped) if mapped != name
+      end
+      if target = compiler_internal_alias_target(name)
+        resolved_type_name_cache_set(name, target)
+        return target
       end
       ns_idx = namespace_separator_index(name)
       if idx = ns_idx
@@ -35303,10 +35339,23 @@ module Crystal::HIR
       nil
     end
 
+    private def compiler_internal_alias_target(name : String) : String?
+      case name
+      when "ValueId", "BlockId", "FunctionId",
+           "HIR::ValueId", "HIR::BlockId", "HIR::FunctionId",
+           "MIR::ValueId", "MIR::BlockId", "MIR::FunctionId",
+           "Crystal::HIR::ValueId", "Crystal::HIR::BlockId", "Crystal::HIR::FunctionId",
+           "Crystal::MIR::ValueId", "Crystal::MIR::BlockId", "Crystal::MIR::FunctionId"
+        "UInt32"
+      else
+        nil
+      end
+    end
+
     private def resolve_type_alias_chain_no_context(name : String) : String
-      resolved = @type_aliases[name]? || LIBC_TYPE_ALIASES[name]? || name
+      resolved = @type_aliases[name]? || LIBC_TYPE_ALIASES[name]? || compiler_internal_alias_target(name) || name
       depth = 0
-      while (next_resolved = @type_aliases[resolved]? || LIBC_TYPE_ALIASES[resolved]?) && next_resolved != resolved && depth < 10
+      while (next_resolved = @type_aliases[resolved]? || LIBC_TYPE_ALIASES[resolved]? || compiler_internal_alias_target(resolved)) && next_resolved != resolved && depth < 10
         resolved = next_resolved
         depth += 1
       end
@@ -57226,6 +57275,11 @@ module Crystal::HIR
               end
             end
           end
+        end
+
+        if class_name_str
+          normalized_class_name = normalize_method_owner_name(class_name_str)
+          class_name_str = normalized_class_name unless normalized_class_name.empty?
         end
 
         # Fast callsite cache for instance member calls when receiver and arg types are known.

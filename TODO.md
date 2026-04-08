@@ -8552,3 +8552,72 @@ Immediate next steps:
 1. Treat the old tuple-array `#clear` head as superseded.
 2. Continue from the new bounded frontier:
    `Index error in emit_function(__crystal_main): Negative capacity`.
+
+## Checkpoint — 2026-04-08 (self-host collection owners canonicalized to top-level core types)
+
+Verified this turn:
+- The live `llc` blocker was not another isolated backend-stub gap. The
+  self-hosted compiler was still constructing phantom `Crystal::MIR::{Set,Hash}`
+  owners from unqualified core collection usage inside `module Crystal::MIR`,
+  so stage2 `--emit mir` died on missing constructors like
+  `@Set$LInt64$R$Dnew`.
+- `src/compiler/hir/ast_to_hir.cr` now canonicalizes compiler-internal
+  collection owners and compiler id aliases in the real class-method/constructor
+  lowering path:
+  - `normalize_compiler_collection_owner_name` now strips
+    `Crystal::MIR::`, `MIR::`, `Crystal::HIR::`, and `HIR::` prefixes for
+    `Array`, `Hash`, and `Set`
+  - `compiler_internal_alias_target(...)` maps
+    `ValueId` / `BlockId` / `FunctionId` (including `HIR::` / `MIR::` /
+    `Crystal::...` spellings) to `UInt32`
+  - `resolve_type_name_in_context*` now consult those alias targets
+  - `class_name_str` is normalized before class-method dispatch, so `.new`
+    stops bypassing owner canonicalization
+- `src/compiler/mir/llvm_backend.cr` and
+  `src/compiler/mir/optimizations.cr` now qualify compiler-internal core
+  collection usage as `::Set`, `::Hash`, and `::Array` in the remaining hot
+  runtime/state paths. This removes the need to keep discovering new
+  `Crystal::MIR::{Set,Hash,Array}.*` followers one symbol at a time.
+
+Operational proof:
+- `crystal build src/crystal_v2.cr -o /tmp/cv2_corecollections_host --error-trace`
+  => host build green.
+- `scripts/run_safe.sh /tmp/cv2_corecollections_host 900 12288 src/crystal_v2.cr --emit mir -o /tmp/cv2_corecollections_emitmir`
+  => self-host `stage2 --emit mir` green, `[EXIT: 0] after ~328s`.
+- The previous `llc` family is gone:
+  - old head: undefined / stubbed compiler-internal collection ctors such as
+    `@Set$LInt64$R$Dnew` reachable from `Crystal::MIR` code
+  - fresh emitted IR no longer contains live
+    `Crystal::MIR::Set(Int64).new` ctor calls; the old `Crystal::MIR::Set(Int64)`
+    callsite family is superseded.
+- `CRYSTAL_V2_LLVM_WORKERS=1 scripts/run_safe.sh /tmp/cv2_corecollections_emitmir 120 1024 regression_tests/combined/test_no_prelude_interpolation.cr --no-prelude -o /tmp/noprel_corecollections.bin`
+  => tiny stage2 no-prelude smoke still red, but it moved past the collection
+  constructor family into a later compiler-side crash.
+
+Fresh bounded frontier:
+- `lldb` on `/tmp/cv2_corecollections_emitmir` compiling the tiny no-prelude
+  oracle now stops in:
+  - `Crystal::MIR::HIRToMIRLowering#block_successors(Crystal::HIR::Block)`
+  - stack:
+    `block_successors -> order_blocks_for -> lower_function_body ->
+    lower_all_bodies -> CLI#compile`
+  - key register evidence:
+    the `block` argument slot is a small integer-like value (`x1/x8 = 0x524`)
+    rather than a valid heap pointer, and the crash happens on
+    `ldr x10, [x8, #0x18]`
+
+Whole-program / bootstrap effect:
+- `stage1` host build remains green and fast (latest timed host rebuild here:
+  `~8-17s` band; this exact proof run used the standard host build command).
+- `stage2` self-host build remains green, but still well above the old target
+  budget (`~328s` here versus the older rough expectation of `~180s`).
+- We are still far from a successful `stage5`: the ladder does not yet clear
+  even the tiny stage2 no-prelude smoke, though the frontier is now later and
+  narrower than the earlier collection-constructor failures.
+
+Immediate next steps:
+1. Treat the old compiler-internal collection ctor heads as superseded.
+2. Continue from the new HIR→MIR frontier:
+   `Crystal::MIR::HIRToMIRLowering#block_successors(Crystal::HIR::Block)`.
+3. Check whether `Crystal::HIR::Block` is being passed/boxed with the wrong
+   ABI (small integer id vs heap/object pointer) in the self-hosted call path.
