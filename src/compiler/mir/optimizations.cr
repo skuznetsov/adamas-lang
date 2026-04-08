@@ -282,13 +282,14 @@ module Crystal::MIR
 
       # Build use counts for all values
       use_counts = [] of Int32
+      use_counts_len = 0
 
       @function.blocks.each do |block|
         block.instructions.each do |inst|
-          ensure_use_capacity(use_counts, inst.id)
+          use_counts_len = ensure_use_capacity(use_counts, use_counts_len, inst.id)
           inst.operands.each do |op|
             op_index = op.to_i
-            ensure_use_capacity(use_counts, op)
+            use_counts_len = ensure_use_capacity(use_counts, use_counts_len, op)
             use_counts[op_index] += 1
           end
         end
@@ -297,16 +298,16 @@ module Crystal::MIR
         case term = block.terminator
         when Branch
           cond_index = term.condition.to_i
-          ensure_use_capacity(use_counts, term.condition)
+          use_counts_len = ensure_use_capacity(use_counts, use_counts_len, term.condition)
           use_counts[cond_index] += 1
         when Switch
           value_index = term.value.to_i
-          ensure_use_capacity(use_counts, term.value)
+          use_counts_len = ensure_use_capacity(use_counts, use_counts_len, term.value)
           use_counts[value_index] += 1
         when Return
           if v = term.value
             value_index = v.to_i
-            ensure_use_capacity(use_counts, v)
+            use_counts_len = ensure_use_capacity(use_counts, use_counts_len, v)
             use_counts[value_index] += 1
           end
         end
@@ -320,13 +321,13 @@ module Crystal::MIR
         @function.blocks.each do |block|
           block.instructions.reject! do |inst|
             inst_index = inst.id.to_i
-            inst_uses = inst_index < use_counts.size ? use_counts[inst_index] : 0
+            inst_uses = inst_index < use_counts_len ? use_counts[inst_index] : 0
             if !has_side_effects?(inst) && inst_uses == 0
               # This instruction is dead - remove it
               # Also decrement use counts for its operands
               inst.operands.each do |op|
                 op_index = op.to_i
-                next if op_index >= use_counts.size
+                next if op_index >= use_counts_len
                 use_counts[op_index] -= 1
               end
               @eliminated += 1
@@ -342,11 +343,14 @@ module Crystal::MIR
       @eliminated
     end
 
-    private def ensure_use_capacity(use_counts : Array(Int32), id : ValueId) : Nil
+    private def ensure_use_capacity(use_counts : Array(Int32), current_len : Int32, id : ValueId) : Int32
       required = id.to_i + 1
-      while use_counts.size < required
+      len = current_len
+      while len < required
         use_counts << 0
+        len += 1
       end
+      len
     end
 
     private def has_side_effects?(inst : Value) : Bool
@@ -2390,8 +2394,9 @@ module Crystal::MIR
     property debug : Bool
     property frame_kind : FrameKind
 
-    # Def-use chains for corridor tracing
-    @use_map : Hash(ValueId, Array(Tuple(BasicBlock, Int32, Value)))
+    # Per-value use counts for corridor tracing.
+    # LTPEngine only needs exposure/cardinality, not the full def-use payload.
+    @use_map : Hash(ValueId, Int32)
     # Alias map for pointer canonicalization
     @alias_map : Hash(ValueId, ValueId)
     # NoAlias set (values that don't alias anything)
@@ -2404,7 +2409,7 @@ module Crystal::MIR
       @potential_trace = [] of LTPPotential
       @debug = false
       @frame_kind = FrameKind::Primary
-      @use_map = Hash(ValueId, Array(Tuple(BasicBlock, Int32, Value))).new
+      @use_map = Hash(ValueId, Int32).new
       @alias_map = Hash(ValueId, ValueId).new
       @no_alias_ids = Set(ValueId).new
     end
@@ -2515,7 +2520,7 @@ module Crystal::MIR
             ptr = canonical_ptr(inst.ptr)
             next unless @no_alias_ids.includes?(ptr)
 
-            exposure = (@use_map[ptr]?.try(&.size) || 0)
+            exposure = (@use_map[ptr]? || 0)
 
             if exposure > best_exposure
               best_exposure = exposure
@@ -2678,7 +2683,7 @@ module Crystal::MIR
           case inst
           when RCIncrement
             if canonical_ptr(inst.ptr) == ptr
-              exp = (@use_map[ptr]?.try(&.size) || 0)
+              exp = (@use_map[ptr]? || 0)
               competing_windows << Window.new(inst, block, idx, exp, ptr)
             end
           end
@@ -2862,7 +2867,7 @@ module Crystal::MIR
           ptr = canonical_ptr(inst.ptr)
           next unless @no_alias_ids.includes?(ptr)
 
-          exposure = (@use_map[ptr]?.try(&.size) || 0)
+          exposure = (@use_map[ptr]? || 0)
           window = Window.new(inst, block, idx, exposure, ptr)
           corridor = trace_corridor(window)
 
@@ -2914,7 +2919,7 @@ module Crystal::MIR
         block.instructions.each_with_index do |inst, idx|
           # Build use map
           inst.operands.each do |op|
-            (@use_map[op] ||= [] of Tuple(BasicBlock, Int32, Value)) << {block, idx, inst}
+            @use_map[op] = (@use_map[op]? || 0) + 1
           end
 
           # Build alias map and no_alias set

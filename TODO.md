@@ -1,6 +1,31 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-02)
 
 ## Current Status
+- **Fresh stage2 DCE-use-map checkpoint: self-hosted `stage2` no longer aborts the tiny no-prelude smoke in `Object#size` from `Crystal::MIR::DeadCodeEliminationPass#ensure_use_capacity(Array(Int32), UInt32)`, because the pass now carries an explicit logical length and no longer relies on `Array(Int32)#size` in its compiler-internal hot path; the same trusted smoke has moved forward to a later `Crystal::Hasher.new/initialize` null-self crash instead of the old DCE stub family (2026-04-08, current session)**:
+  - trustworthy setup:
+    - `src/compiler/mir/optimizations.cr`
+      - `DeadCodeEliminationPass` now tracks `use_counts_len : Int32`
+      - `ensure_use_capacity(...)` returns the updated logical length instead of polling `use_counts.size`
+      - dead-instruction and operand bounds checks now use `use_counts_len`, removing the old dependency on generic `Array(Int32)#size`
+    - this is a structural compiler-internal fix, not another symbol-specific runtime alias: the pass was only using cardinality, so carrying an explicit length matches the real data dependency and avoids one more self-hosted collection helper in the optimization pipeline
+  - decisive evidence:
+    - host compiler gate is green:
+      - `crystal build src/crystal_v2.cr -o /tmp/cv2_usemap_host --error-trace`
+    - trusted self-host rebuild with MIR emission is green:
+      - `scripts/run_safe.sh /tmp/cv2_usemap_host 900 12288 src/crystal_v2.cr --emit mir -o /tmp/cv2_usemap_emitmir`
+      - result: `[EXIT: 0] after ~300s`
+    - the exact tiny no-prelude oracle moved beyond the old DCE head:
+      - before this fix:
+        - `CRYSTAL_V2_LLVM_WORKERS=1 scripts/run_safe.sh /tmp/cv2_emitcap_emit_mir2 120 1024 regression_tests/combined/test_no_prelude_interpolation.cr --no-prelude -o /tmp/noprel_emitcap_seq2.bin`
+        - result: `STUB CALLED: Object$Hsize`
+        - fresh `lldb` stack: `Object$Hsize -> Crystal::MIR::DeadCodeEliminationPass#ensure_use_capacity(Array(Int32), UInt32) -> ...`
+      - after this fix:
+        - `CRYSTAL_V2_LLVM_WORKERS=1 scripts/run_safe.sh /tmp/cv2_usemap_emitmir 120 1024 regression_tests/combined/test_no_prelude_interpolation.cr --no-prelude -o /tmp/noprel_usemap_emitmir.bin`
+        - result: `[CRASH] Segfault (exit 139)`
+        - fresh `lldb` stack now starts at `Crystal::Hasher#initialize(UInt64, UInt64)` reached from `Hash(Token::Kind, Int32)#[]=` during startup, not from `DeadCodeEliminationPass`
+  - practical boundary:
+    - this closes the verified stage2 DCE `Array(Int32)#size` self-host corridor
+    - it does not make the tiny smoke green yet; the next honest frontier is the later `Crystal::Hasher.new/initialize` null-self crash in startup/runtime hashing, not another DCE/container-size helper
 - **Fresh stage2 parser no-parens checkpoint: self-hosted `stage2` no longer splits top-level no-parens calls like `puts "hello #{name}"` into `Identifier + StringInterpolation/String`; the parser now anchors the preceding-token lookup to the original identifier token index and avoids the old nilable-token short-circuit chain in the dot-guard, so the tiny no-prelude smoke matches the host again at `main=5` / `lower_main: exprs=5` and moves forward to a later compiler-side `error: Index error in emit_function for: __crystal_main` (2026-04-08, current session)**:
   - trustworthy setup:
     - `src/compiler/frontend/parser.cr` now resolves the previous non-trivia token from the identifier's original token index, not from the parser cursor after `advance`/`skip_trivia`
