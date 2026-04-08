@@ -1,6 +1,29 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-02)
 
 ## Current Status
+- **Fresh stage2 parser no-parens checkpoint: self-hosted `stage2` no longer splits top-level no-parens calls like `puts "hello #{name}"` into `Identifier + StringInterpolation/String`; the parser now anchors the preceding-token lookup to the original identifier token index and avoids the old nilable-token short-circuit chain in the dot-guard, so the tiny no-prelude smoke matches the host again at `main=5` / `lower_main: exprs=5` and moves forward to a later compiler-side `error: Index error in emit_function for: __crystal_main` (2026-04-08, current session)**:
+  - trustworthy setup:
+    - `src/compiler/frontend/parser.cr` now resolves the previous non-trivia token from the identifier's original token index, not from the parser cursor after `advance`/`skip_trivia`
+    - the no-parens dot-guard is now explicit nested control flow instead of `prev_token && prev_token.kind == ... && ...`, avoiding the self-host-only short-circuit corruption seen in this hot parser path
+  - decisive evidence:
+    - host compiler gate is green:
+      - `crystal build src/crystal_v2.cr -o /tmp/cv2_prevtoken_short_host --error-trace`
+    - self-host rebuild from that host is green:
+      - `scripts/run_safe.sh /tmp/cv2_prevtoken_short_host 900 12288 src/crystal_v2.cr -o /tmp/cv2_prevtoken_short_s2`
+      - result: `[EXIT: 0] after ~310s`
+    - exact host/s2 HIR oracle now matches:
+      - host:
+        - `CRYSTAL_V2_TRACE_NOPAREN_BOUNDARY=1 CRYSTAL_V2_TRACE_ROOT_LOOP=1 CRYSTAL_V2_STOP_AFTER_HIR=1 scripts/run_safe.sh /tmp/cv2_prevtoken_short_host 120 1024 regression_tests/combined/test_no_prelude_interpolation.cr --no-prelude -o /tmp/noparen_prev_short_host`
+        - result: top-level calls stay as `Call`; `main=5`; `lower_main: exprs=5`
+      - self-host:
+        - `CRYSTAL_V2_TRACE_NOPAREN_BOUNDARY=1 CRYSTAL_V2_TRACE_ROOT_LOOP=1 CRYSTAL_V2_STOP_AFTER_HIR=1 scripts/run_safe.sh /tmp/cv2_prevtoken_short_s2 120 1024 regression_tests/combined/test_no_prelude_interpolation.cr --no-prelude -o /tmp/noparen_prev_short_s2`
+        - result: `puts` now takes `action=try-call -> return-call`; `main=5`; `lower_main: exprs=5`
+    - without the HIR stop, the same tiny smoke now reaches a later compiler error instead of the old parser divergence:
+      - `scripts/run_safe.sh /tmp/cv2_prevtoken_clean_s2 120 1024 regression_tests/combined/test_no_prelude_interpolation.cr --no-prelude -o /tmp/noprel_after_prevtoken_clean.bin`
+      - result: `error: Index error in emit_function for: __crystal_main`, `[EXIT: 1]` after `lower_main: exprs=5`
+  - practical boundary:
+    - this closes the verified stage2 parser/no-parens root-shape divergence on the tiny no-prelude interpolation oracle
+    - it does not make stage2 smoke green yet; the next honest frontier is the later compiler-side `emit_function(__crystal_main)` index-error path and should now be debugged without reopening the old `exprs=8` parser split
 - **Fresh stage2 `Set(BlockId)` alias checkpoint: self-hosted `stage2` no-prelude smoke no longer crashes in `Hash(UInt32, Nil)#find_entry_with_index` while checking `Crystal::MIR::Set(BlockId)#includes?`; the exact `Set(BlockId).new/add/<<` alias path now initializes and mutates a real `::Set(UInt32)`, and the tiny smoke has moved forward to a new compiler-error head (`error: Index error in emit_function for: __crystal_main`) instead of the previous null-`@hash` segfault (2026-04-08, current session)**:
   - trustworthy setup:
     - `src/compiler/mir/llvm_backend.cr` now emits exact delegates for

@@ -10255,7 +10255,7 @@ module CrystalV2
             parse_require
           when Token::Kind::Identifier,
                Token::Kind::Of, Token::Kind::As, Token::Kind::In
-            parse_identifier_like(token.span, stable_identifier_token_slice(token), @previous_token)
+            parse_identifier_like(token.span, stable_identifier_token_slice(token))
           when Token::Kind::InstanceVar
             # Instance variable (@var)
             id = @arena.add_typed(InstanceVarNode.new(token.span, token.slice))
@@ -10435,7 +10435,7 @@ module CrystalV2
             PREFIX_ERROR
           else
               if is_keyword_identifier?(token)
-                parse_identifier_like(token.span, stable_identifier_token_slice(token), @previous_token)
+                parse_identifier_like(token.span, stable_identifier_token_slice(token))
             else
               emit_unexpected(token)
               advance
@@ -13362,7 +13362,22 @@ current_token.kind == Token::Kind::Identifier &&
           end
         end
 
-        private def parse_identifier_like(identifier_span : Span, identifier_slice : Slice(UInt8), prev_token : Token?) : ExprId
+        private def previous_non_trivia_token_before(index : Int32) : Token?
+          i = index - 1
+          while i >= 0
+            token = @tokens.unsafe_fetch(i)
+            unless token.kind == Token::Kind::Whitespace ||
+                   token.kind == Token::Kind::Comment ||
+                   token.kind == Token::Kind::Newline
+              return token
+            end
+            i -= 1
+          end
+          nil
+        end
+
+        private def parse_identifier_like(identifier_span : Span, identifier_slice : Slice(UInt8)) : ExprId
+          identifier_token_index = @index
           advance
           trace_identifier_transition(identifier_span, "after-advance", current_token)
 
@@ -13398,17 +13413,26 @@ current_token.kind == Token::Kind::Identifier &&
           colon_immediate = current_token.kind == Token::Kind::Colon && !space_consumed
           macro_call_candidate = typed_macro_args_name?(identifier_slice)
 
+          allow_call_without_parens = false
+          if macro_call_candidate || colon_immediate
+            allow_call_without_parens = true
+          elsif space_consumed && current_token.kind != Token::Kind::Colon
+            prev_token = previous_non_trivia_token_before(identifier_token_index)
+            allow_call_without_parens = true
+            if prev_token
+              if prev_token.kind == Token::Kind::Operator
+                allow_call_without_parens = !slice_eq?(prev_token.slice, ".")
+              end
+            end
+          end
+
           if identifier_slice.size > 0 &&
              identifier_slice[0] >= 'A'.ord && identifier_slice[0] <= 'Z'.ord &&
              current_token.kind == Token::Kind::LParen
             parse_generic_instantiation(identifier_span, identifier_slice)
           elsif @no_type_declaration == 0 && current_token.kind == Token::Kind::Colon && space_consumed
             parse_type_declaration_from_identifier(identifier_span, identifier_slice)
-          elsif @parsing_call_args == 0 &&
-                (macro_call_candidate ||
-                colon_immediate ||
-                (space_consumed && current_token.kind != Token::Kind::Colon &&
-                !(prev_token && prev_token.kind == Token::Kind::Operator && slice_eq?(prev_token.slice, "."))))
+          elsif @parsing_call_args == 0 && allow_call_without_parens
             boundary_token = current_token
             force_call = macro_call_candidate || colon_immediate
             # Allow Plus/Minus through as potential unary prefix when immediately
