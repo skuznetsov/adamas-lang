@@ -566,6 +566,179 @@ describe Crystal::MIR::LLVMIRGenerator do
       body.should_not contain("load double, ptr %p")
     end
 
+    it "evaluates abstract Int#remainder(Int32) directly for scalar receivers" do
+      mod = Crystal::MIR::Module.new("test")
+
+      check = mod.create_function("Int#check_div_argument$Int32", Crystal::MIR::TypeRef::INT32)
+      check.add_param("self", Crystal::MIR::TypeRef::POINTER)
+      check.add_param("other", Crystal::MIR::TypeRef::INT32)
+      check_builder = Crystal::MIR::Builder.new(check)
+      zero = check_builder.const_int(0, Crystal::MIR::TypeRef::INT32)
+      check_builder.ret(zero)
+
+      callee = mod.create_function("Int#remainder$Int32", Crystal::MIR::TypeRef::INT32)
+      callee.add_param("self", Crystal::MIR::TypeRef::POINTER)
+      callee.add_param("other", Crystal::MIR::TypeRef::INT32)
+      callee_builder = Crystal::MIR::Builder.new(callee)
+      callee_builder.ret(1_u32)
+
+      caller = mod.create_function("call_int_remainder", Crystal::MIR::TypeRef::INT32)
+      caller.add_param("self", Crystal::MIR::TypeRef::INT32)
+      caller.add_param("other", Crystal::MIR::TypeRef::INT32)
+      caller_builder = Crystal::MIR::Builder.new(caller)
+      call = caller_builder.call(callee.id, [0_u32, 1_u32], Crystal::MIR::TypeRef::INT32)
+      caller_builder.ret(call)
+
+      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen.emit_type_metadata = false
+      output = gen.generate
+
+      func_ir = output[/define i32 @call_int_remainder\([^)]*\)\s*\{.*?\n\}/m]
+      func_ir.should_not be_nil
+      body = func_ir.not_nil!
+
+      body.should contain("alloca i32")
+      body.should contain("store i32 %self")
+      body.should contain("call i32 @Int$Hcheck_div_argument$$Int32")
+      body.should contain("srem i32 %self, %other")
+      body.should_not contain("call i32 @Int$Hremainder$$Int32")
+      body.should_not contain("inttoptr i64 %self")
+    end
+
+    it "evaluates abstract Int#tdiv(Int32) directly for scalar receivers" do
+      mod = Crystal::MIR::Module.new("test")
+
+      check = mod.create_function("Int#check_div_argument$Int32", Crystal::MIR::TypeRef::INT32)
+      check.add_param("self", Crystal::MIR::TypeRef::POINTER)
+      check.add_param("other", Crystal::MIR::TypeRef::INT32)
+      check_builder = Crystal::MIR::Builder.new(check)
+      zero = check_builder.const_int(0, Crystal::MIR::TypeRef::INT32)
+      check_builder.ret(zero)
+
+      callee = mod.create_function("Int#tdiv$Int32", Crystal::MIR::TypeRef::POINTER)
+      callee.add_param("self", Crystal::MIR::TypeRef::POINTER)
+      callee.add_param("other", Crystal::MIR::TypeRef::INT32)
+      callee_builder = Crystal::MIR::Builder.new(callee)
+      callee_builder.ret(0_u32)
+
+      caller = mod.create_function("call_int_tdiv", Crystal::MIR::TypeRef::POINTER)
+      caller.add_param("self", Crystal::MIR::TypeRef::INT32)
+      caller.add_param("other", Crystal::MIR::TypeRef::INT32)
+      caller_builder = Crystal::MIR::Builder.new(caller)
+      call = caller_builder.call(callee.id, [0_u32, 1_u32], Crystal::MIR::TypeRef::POINTER)
+      caller_builder.ret(call)
+
+      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen.emit_type_metadata = false
+      output = gen.generate
+
+      func_ir = output[/define ptr @call_int_tdiv\([^)]*\)\s*\{.*?\n\}/m]
+      func_ir.should_not be_nil
+      body = func_ir.not_nil!
+
+      body.should contain("alloca i32")
+      body.should contain("store i32 %self")
+      body.should contain("call i32 @Int$Hcheck_div_argument$$Int32")
+      body.should contain("sdiv i32 %self, %other")
+      body.should contain("%int_div_ret.")
+      body.should contain("store i32 %int_div_res.")
+      body.should_not contain("call ptr @Int$Htdiv$$Int32")
+      body.should_not contain("inttoptr i64 %self")
+    end
+
+    it "dispatches abstract Int#to_s on scalar receivers to concrete integer implementations" do
+      mod = Crystal::MIR::Module.new("test")
+
+      concrete = mod.create_function("Int32#to_s", Crystal::MIR::TypeRef::POINTER)
+      concrete.add_param("self", Crystal::MIR::TypeRef::INT32)
+      concrete.add_param("base", Crystal::MIR::TypeRef::INT32)
+      concrete.add_param("precision", Crystal::MIR::TypeRef::INT32)
+      concrete.add_param("upcase", Crystal::MIR::TypeRef::BOOL)
+      concrete_builder = Crystal::MIR::Builder.new(concrete)
+      concrete_builder.ret(0_u32)
+
+      callee = mod.create_function("Int#to_s$Int32_Int32_Bool", Crystal::MIR::TypeRef::POINTER)
+      callee.add_param("self", Crystal::MIR::TypeRef::POINTER)
+      callee.add_param("base", Crystal::MIR::TypeRef::INT32)
+      callee.add_param("precision", Crystal::MIR::TypeRef::INT32)
+      callee.add_param("upcase", Crystal::MIR::TypeRef::BOOL)
+      callee_builder = Crystal::MIR::Builder.new(callee)
+      callee_builder.ret(0_u32)
+
+      caller = mod.create_function("call_abstract_int_to_s", Crystal::MIR::TypeRef::POINTER)
+      caller.add_param("self", Crystal::MIR::TypeRef::INT32)
+      caller.add_param("base", Crystal::MIR::TypeRef::INT32)
+      caller.add_param("precision", Crystal::MIR::TypeRef::INT32)
+      caller.add_param("upcase", Crystal::MIR::TypeRef::BOOL)
+      caller_builder = Crystal::MIR::Builder.new(caller)
+      call = caller_builder.call(callee.id, [0_u32, 1_u32, 2_u32, 3_u32], Crystal::MIR::TypeRef::POINTER)
+      caller_builder.ret(call)
+
+      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen.emit_type_metadata = false
+      output = gen.generate
+
+      func_ir = output[/define ptr @call_abstract_int_to_s\([^)]*\)\s*\{.*?\n\}/m]
+      func_ir.should_not be_nil
+      body = func_ir.not_nil!
+
+      body.should contain("call ptr @Int32$Hto_s(i32 %self, i32 %base, i32 %precision, i1 %upcase)")
+      body.should_not contain("call ptr @Int$Hto_s$$Int32_Int32_Bool")
+      body.should_not contain("inttoptr i64 %self")
+      body.should_not contain("inttoptr i32 %self")
+    end
+
+    it "lowers abstract Int#to_s(IO, ...) on scalar receivers via concrete to_s plus IO << String" do
+      mod = Crystal::MIR::Module.new("test")
+
+      concrete = mod.create_function("Int32#to_s", Crystal::MIR::TypeRef::POINTER)
+      concrete.add_param("self", Crystal::MIR::TypeRef::INT32)
+      concrete.add_param("base", Crystal::MIR::TypeRef::INT32)
+      concrete.add_param("precision", Crystal::MIR::TypeRef::INT32)
+      concrete.add_param("upcase", Crystal::MIR::TypeRef::BOOL)
+      concrete_builder = Crystal::MIR::Builder.new(concrete)
+      concrete_builder.ret(0_u32)
+
+      io_append = mod.create_function("IO#<<$String", Crystal::MIR::TypeRef::POINTER)
+      io_append.add_param("io", Crystal::MIR::TypeRef::POINTER)
+      io_append.add_param("str", Crystal::MIR::TypeRef::POINTER)
+      io_builder = Crystal::MIR::Builder.new(io_append)
+      io_builder.ret(0_u32)
+
+      callee = mod.create_function("Int#to_s$IO_Int32_Int32_Bool", Crystal::MIR::TypeRef::VOID)
+      callee.add_param("self", Crystal::MIR::TypeRef::POINTER)
+      callee.add_param("io", Crystal::MIR::TypeRef::POINTER)
+      callee.add_param("base", Crystal::MIR::TypeRef::INT32)
+      callee.add_param("precision", Crystal::MIR::TypeRef::INT32)
+      callee.add_param("upcase", Crystal::MIR::TypeRef::BOOL)
+      callee_builder = Crystal::MIR::Builder.new(callee)
+      callee_builder.ret
+
+      caller = mod.create_function("call_abstract_int_to_s_io", Crystal::MIR::TypeRef::VOID)
+      caller.add_param("self", Crystal::MIR::TypeRef::INT32)
+      caller.add_param("io", Crystal::MIR::TypeRef::POINTER)
+      caller.add_param("base", Crystal::MIR::TypeRef::INT32)
+      caller.add_param("precision", Crystal::MIR::TypeRef::INT32)
+      caller.add_param("upcase", Crystal::MIR::TypeRef::BOOL)
+      caller_builder = Crystal::MIR::Builder.new(caller)
+      caller_builder.call(callee.id, [0_u32, 1_u32, 2_u32, 3_u32, 4_u32], Crystal::MIR::TypeRef::VOID)
+      caller_builder.ret
+
+      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen.emit_type_metadata = false
+      output = gen.generate
+
+      func_ir = output[/define void @call_abstract_int_to_s_io\([^)]*\)\s*\{.*?\n\}/m]
+      func_ir.should_not be_nil
+      body = func_ir.not_nil!
+
+      body.should contain("call ptr @Int32$Hto_s(i32 %self, i32 %base, i32 %precision, i1 %upcase)")
+      body.should contain("call ptr @IO$H$SHL$$String(ptr %io, ptr %int_to_s_io.")
+      body.should_not contain("call void @Int$Hto_s$$IO_Int32_Int32_Bool")
+      body.should_not contain("inttoptr i64 %self")
+      body.should_not contain("inttoptr i32 %self")
+    end
+
     it "uses uitofp for uint128 argument when calling float64 callee" do
       mod = Crystal::MIR::Module.new("test")
 

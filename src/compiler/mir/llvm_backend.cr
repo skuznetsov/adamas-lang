@@ -2128,6 +2128,34 @@ module Crystal::MIR
         type_ref == TypeRef::UINT128
     end
 
+    private def integer_scalar_llvm_type?(llvm_type : String) : Bool
+      llvm_type.starts_with?('i') && !llvm_type.includes?(".union")
+    end
+
+    private def abstract_numeric_self_ptr_call?(func_name : String) : Bool
+      func_name.starts_with?("Int#") ||
+        func_name.starts_with?("UInt#") ||
+        func_name.starts_with?("Float#") ||
+        func_name.starts_with?("Number#")
+    end
+
+    private def concrete_integer_type_name(type_ref : TypeRef?) : String?
+      case type_ref
+      when TypeRef::INT8   then "Int8"
+      when TypeRef::INT16  then "Int16"
+      when TypeRef::INT32  then "Int32"
+      when TypeRef::INT64  then "Int64"
+      when TypeRef::INT128 then "Int128"
+      when TypeRef::UINT8   then "UInt8"
+      when TypeRef::UINT16  then "UInt16"
+      when TypeRef::UINT32  then "UInt32"
+      when TypeRef::UINT64  then "UInt64"
+      when TypeRef::UINT128 then "UInt128"
+      else
+        nil
+      end
+    end
+
     # String type_id for runtime helpers and string literals
     @string_type_id : Int32 = 16  # TypeRef::STRING.id default, updated during prelude emission
     @dtor_type_ids : ::Set(UInt32) = ::Set(UInt32).new  # Type IDs that have ARC destructors
@@ -18087,6 +18115,168 @@ module Crystal::MIR
         end
       end
 
+      # Bypass abstract Int#to_s variants for concrete integer receivers. The abstract
+      # lowered bodies still rely on the packed-scalar ptr-self ABI and recursively
+      # call other abstract Int helpers such as remainder/tdiv. Concrete integer
+      # specializations already exist and operate on value receivers.
+      if callee_name == "Int$Hto_s$$Int32_Int32_Bool"
+        if inst.args.size == 4
+          self_id = inst.args[0]
+          if integer_scalar_llvm_type?(lookup_value_llvm_type(self_id))
+            if type_name = concrete_integer_type_name(@value_types[self_id]?)
+              self_val = value_ref(self_id)
+              base_val = value_ref(inst.args[1])
+              precision_val = value_ref(inst.args[2])
+              upcase_val = value_ref(inst.args[3])
+              emit "#{name} = call ptr @#{type_name}$Hto_s(#{lookup_value_llvm_type(self_id)} #{self_val}, i32 #{base_val}, i32 #{precision_val}, i1 #{upcase_val})"
+              record_emitted_type(name, "ptr")
+              @value_types[inst.id] = TypeRef::POINTER
+              return
+            end
+          end
+        end
+      end
+
+      if callee_name == "Int$Hto_s$$IO_Int32_Int32_Bool"
+        if inst.args.size == 5
+          self_id = inst.args[0]
+          if integer_scalar_llvm_type?(lookup_value_llvm_type(self_id))
+            if type_name = concrete_integer_type_name(@value_types[self_id]?)
+              self_val = value_ref(self_id)
+              io_val = value_ref(inst.args[1])
+              base_val = value_ref(inst.args[2])
+              precision_val = value_ref(inst.args[3])
+              upcase_val = value_ref(inst.args[4])
+              c = @cond_counter
+              @cond_counter += 1
+              str_val = "%int_to_s_io.#{c}.str"
+              emit "#{str_val} = call ptr @#{type_name}$Hto_s(#{lookup_value_llvm_type(self_id)} #{self_val}, i32 #{base_val}, i32 #{precision_val}, i1 #{upcase_val})"
+              emit "%int_to_s_io.#{c}.io = call ptr @IO$H$SHL$$String(ptr #{io_val}, ptr #{str_val})"
+              @void_values << inst.id
+              @value_types[inst.id] = TypeRef::VOID
+              return
+            end
+          end
+        end
+      end
+
+      # Abstract Int#remainder(Int32) / Int#tdiv(Int32) still use the packed-scalar
+      # ptr-self ABI in their lowered bodies. When the receiver is already a concrete
+      # integer SSA value, evaluating the operation directly here preserves semantics
+      # and avoids bogus inttoptr/ptrtoint arithmetic on the receiver address.
+      if match = callee_name.match(/\AInt\$H(remainder|tdiv)\$\$(Int8|Int16|Int32|Int64|UInt8|UInt16|UInt32|UInt64|Int128|UInt128)\z/)
+        if inst.args.size >= 2
+          self_id = inst.args[0]
+          other_id = inst.args[1]
+          self_llvm = lookup_value_llvm_type(self_id)
+          other_llvm = lookup_value_llvm_type(other_id)
+          if integer_scalar_llvm_type?(self_llvm) && integer_scalar_llvm_type?(other_llvm)
+            self_val = value_ref(self_id)
+            other_val = value_ref(other_id)
+            arg_type_name = match[2]
+            check_arg_llvm = case arg_type_name
+                             when "Int8", "UInt8"     then "i8"
+                             when "Int16", "UInt16"   then "i16"
+                             when "Int32", "UInt32"   then "i32"
+                             when "Int64", "UInt64"   then "i64"
+                             when "Int128", "UInt128" then "i128"
+                             else "i32"
+                             end
+            c = @cond_counter
+            @cond_counter += 1
+
+            coerced_other = other_val
+            if other_llvm != self_llvm
+              src_bits = other_llvm[1..].to_i?
+              dst_bits = self_llvm[1..].to_i?
+              if src_bits && dst_bits
+                if dst_bits > src_bits
+                  ext_op = (other_type_ref = @value_types[other_id]?) && unsigned_type_ref?(other_type_ref) ? "zext" : "sext"
+                  coerced_other = "%int_div_rhs.#{c}.ext"
+                  emit "#{coerced_other} = #{ext_op} #{other_llvm} #{other_val} to #{self_llvm}"
+                elsif dst_bits < src_bits
+                  coerced_other = "%int_div_rhs.#{c}.trunc"
+                  emit "#{coerced_other} = trunc #{other_llvm} #{other_val} to #{self_llvm}"
+                end
+              end
+            end
+
+            if check_arg_llvm != other_llvm
+              src_bits = other_llvm[1..].to_i?
+              dst_bits = check_arg_llvm[1..].to_i?
+              if src_bits && dst_bits
+                if dst_bits > src_bits
+                  ext_op = (other_type_ref = @value_types[other_id]?) && unsigned_type_ref?(other_type_ref) ? "zext" : "sext"
+                  other_for_check = "%int_div_chk.#{c}.ext"
+                  emit "#{other_for_check} = #{ext_op} #{other_llvm} #{other_val} to #{check_arg_llvm}"
+                  other_val = other_for_check
+                elsif dst_bits < src_bits
+                  other_for_check = "%int_div_chk.#{c}.trunc"
+                  emit "#{other_for_check} = trunc #{other_llvm} #{other_val} to #{check_arg_llvm}"
+                  other_val = other_for_check
+                end
+              end
+            end
+
+            self_slot = "%int_div_self.#{c}.slot"
+            align = case self_llvm
+                    when "i1", "i8" then 1
+                    when "i16" then 2
+                    when "i32" then 4
+                    else 8
+                    end
+            emit "#{self_slot} = alloca #{self_llvm}, align #{align}"
+            emit "store #{self_llvm} #{self_val}, ptr #{self_slot}"
+            emit "%int_div_check.#{c} = call #{check_arg_llvm} @Int$Hcheck_div_argument$$#{arg_type_name}(ptr #{self_slot}, #{check_arg_llvm} #{other_val})"
+
+            op = if self_type_ref = @value_types[self_id]?
+                   unsigned_type_ref?(self_type_ref) ? (match[1] == "remainder" ? "urem" : "udiv") : (match[1] == "remainder" ? "srem" : "sdiv")
+                 else
+                   match[1] == "remainder" ? "srem" : "sdiv"
+                 end
+            raw_result = "%int_div_res.#{c}"
+            emit "#{raw_result} = #{op} #{self_llvm} #{self_val}, #{coerced_other}"
+
+            if match[1] == "tdiv"
+              result_slot = "%int_div_ret.#{c}.slot"
+              align = case self_llvm
+                      when "i1", "i8" then 1
+                      when "i16" then 2
+                      when "i32" then 4
+                      else 8
+                      end
+              emit "#{result_slot} = alloca #{self_llvm}, align #{align}"
+              emit "store #{self_llvm} #{raw_result}, ptr #{result_slot}"
+              emit "#{name} = bitcast ptr #{result_slot} to ptr"
+              record_emitted_type(name, "ptr")
+              @value_types[inst.id] = @value_types[self_id]? || find_type_ref_for_llvm_type(self_llvm) || inst.type
+            else
+              result_type = inst.type
+              result_llvm = @type_mapper.llvm_type(result_type)
+              final_result = raw_result
+              if result_llvm != self_llvm && integer_scalar_llvm_type?(result_llvm)
+                src_bits = self_llvm[1..].to_i?
+                dst_bits = result_llvm[1..].to_i?
+                if src_bits && dst_bits
+                  if dst_bits > src_bits
+                    ext_op = unsigned_type_ref?(@value_types[self_id]? || result_type) ? "zext" : "sext"
+                    final_result = "%int_div_ret.#{c}.ext"
+                    emit "#{final_result} = #{ext_op} #{self_llvm} #{raw_result} to #{result_llvm}"
+                  elsif dst_bits < src_bits
+                    final_result = "%int_div_ret.#{c}.trunc"
+                    emit "#{final_result} = trunc #{self_llvm} #{raw_result} to #{result_llvm}"
+                  end
+                end
+              end
+              emit "#{name} = add #{result_llvm} 0, #{final_result}"
+              record_emitted_type(name, result_llvm)
+              @value_types[inst.id] = find_type_ref_for_llvm_type(result_llvm) || result_type
+            end
+            return
+          end
+        end
+      end
+
       # Intercept String#index(String, offset) — stdlib compilation produces wrong method
       # calls (IO::FileDescriptor#tell) and contaminated union return types.
       # Redirect to our strstr-based runtime helper.
@@ -18611,6 +18801,19 @@ module Crystal::MIR
                    val = value_ref(a)
                    if actual_llvm_type == "ptr"
                      "ptr #{val}"  # Already a ptr
+                   elsif i == 0 && callee_func && abstract_numeric_self_ptr_call?(callee_func.name)
+                     c = @cond_counter
+                     @cond_counter += 1
+                     slot_name = "%numeric_self.#{c}.slot"
+                     align = case actual_llvm_type
+                             when "i1", "i8" then 1
+                             when "i16" then 2
+                             when "i32" then 4
+                             else 8
+                             end
+                     emit "#{slot_name} = alloca #{actual_llvm_type}, align #{align}"
+                     emit "store #{actual_llvm_type} #{val}, ptr #{slot_name}"
+                     "ptr #{slot_name}"
                    elsif wrapper_field_llvm = transparent_wrapper_struct_scalar_llvm_type(param_type)
                      c = @cond_counter
                      @cond_counter += 1
