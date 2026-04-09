@@ -627,6 +627,7 @@ module Crystal::MIR
       function_file_id = register_file(function_loc.file)
       subprogram_id = SUBPROGRAM_ID_BASE + func.id.to_i32
       subroutine_type_id = SUBROUTINE_ID_BASE + func.id.to_i32
+      file_anchor_lines = build_debug_file_anchor_lines(func, function_loc)
       value_locations = {} of ValueId => Int32
       param_debug_values = [] of String
       local_entry_debug_values = [] of String
@@ -654,6 +655,7 @@ module Crystal::MIR
         scope_cache = {} of String => Int32
         lexical_scope_cache = {} of String => Int32
         location_cache = {} of String => Int32
+        last_valid_locations = {} of String => SourceLocation
         local_var_ids = {} of ValueId => Int32
         declared_storage_bindings = ::Set(String).new
         declared_entry_values = ::Set(String).new
@@ -665,20 +667,21 @@ module Crystal::MIR
           scope_cache,
           subprogram_id,
           function_loc.file,
+          file_anchor_lines,
           function_loc,
           "default",
           default_location_id
         )
 
         func.params.each_with_index do |param, idx|
-          param_loc = func.value_location(param.index) || function_loc
-          param_location_id = emit_location_definition(io, location_cache, @assigned_location_ids, scope_cache, subprogram_id, function_loc.file, param_loc, "param:#{idx}")
+          param_loc = normalize_debug_location(func.value_location(param.index) || function_loc, function_loc, file_anchor_lines, last_valid_locations, "param:#{idx}")
+          param_location_id = emit_location_definition(io, location_cache, @assigned_location_ids, scope_cache, subprogram_id, function_loc.file, file_anchor_lines, param_loc, "param:#{idx}")
           value_locations[param.index] = param_location_id
 
           var_id = parameter_variable_id(func, idx)
           param_debug_type_id = debug_type_id(param.type)
           file_id = register_file(param_loc.file)
-          scope_id = scope_id_for(io, scope_cache, subprogram_id, function_loc.file, param_loc.file)
+          scope_id = scope_id_for(io, scope_cache, subprogram_id, function_loc.file, param_loc.file, file_anchor_lines)
           param_name = param.name.empty? ? "arg#{idx}" : param.name
           io << "!#{var_id} = !DILocalVariable(name: \"#{escape_metadata_string(param_name)}\", arg: #{idx + 1}, scope: !#{scope_id}, file: !#{file_id}, line: #{positive_line(param_loc.line)}, type: !#{param_debug_type_id})\n"
 
@@ -693,6 +696,7 @@ module Crystal::MIR
             inst_lex_meta = if ls = func.value_lexical_scope(inst.id)
                               lexical_scope_metadata_id(io, lexical_scope_cache, subprogram_id, func, ls)
                             end
+            inst_loc = normalize_debug_location(inst_loc, function_loc, file_anchor_lines, last_valid_locations, inst_lex_meta ? "scope:#{inst_lex_meta}" : nil)
             inst_location_id = emit_location_definition(
               io,
               location_cache,
@@ -700,6 +704,7 @@ module Crystal::MIR
               scope_cache,
               subprogram_id,
               function_loc.file,
+              file_anchor_lines,
               inst_loc,
               "value:#{inst.id}",
               nil,
@@ -716,7 +721,7 @@ module Crystal::MIR
               var_id = local_variable_id(func, inst.id)
               local_debug_type_id = storage_debug_type_id(inst.alloc_type)
               file_id = register_file(inst_loc.file)
-              scope_id = scope_id_for(io, scope_cache, subprogram_id, function_loc.file, inst_loc.file)
+              scope_id = inst_lex_meta || scope_id_for(io, scope_cache, subprogram_id, function_loc.file, inst_loc.file, file_anchor_lines)
               io << "!#{var_id} = !DILocalVariable(name: \"#{escape_metadata_string(local_name)}\", scope: !#{scope_id}, file: !#{file_id}, line: #{positive_line(inst_loc.line)}, type: !#{local_debug_type_id})\n"
               local_var_ids[inst.id] = var_id
             end
@@ -736,15 +741,16 @@ module Crystal::MIR
                            end
 
           var_id = local_var_ids[binding.slot_id]? || begin
-            slot_loc = func.value_location(binding.slot_id) || binding.location
+            slot_loc = normalize_debug_location(func.value_location(binding.slot_id) || binding.location, function_loc, file_anchor_lines, last_valid_locations, lex_scope_meta ? "scope:#{lex_scope_meta}" : nil)
             local_debug_type_id = storage_debug_type_id(slot_inst.alloc_type)
             file_id = register_file(slot_loc.file)
-            scope_for_var = lex_scope_meta || scope_id_for(io, scope_cache, subprogram_id, function_loc.file, slot_loc.file)
+            scope_for_var = lex_scope_meta || scope_id_for(io, scope_cache, subprogram_id, function_loc.file, slot_loc.file, file_anchor_lines)
             generated_var_id = local_variable_id(func, binding.slot_id)
             io << "!#{generated_var_id} = !DILocalVariable(name: \"#{escape_metadata_string(local_name)}\", scope: !#{scope_for_var}, file: !#{file_id}, line: #{positive_line(slot_loc.line)}, type: !#{local_debug_type_id})\n"
             local_var_ids[binding.slot_id] = generated_var_id
             generated_var_id
           end
+          binding_loc = normalize_debug_location(binding.location, function_loc, file_anchor_lines, last_valid_locations, lex_scope_meta ? "scope:#{lex_scope_meta}" : nil)
           binding_location_id = emit_location_definition(
             io,
             location_cache,
@@ -752,7 +758,8 @@ module Crystal::MIR
             scope_cache,
             subprogram_id,
             function_loc.file,
-            binding.location,
+            file_anchor_lines,
+            binding_loc,
             "local-binding:#{binding.slot_id}:#{binding.value_id}:#{idx}",
             nil,
             lex_scope_meta
@@ -876,7 +883,8 @@ module Crystal::MIR
     end
 
     private def function_location(func : Function) : SourceLocation
-      func.source_location || SourceLocation.new(@module.source_file || "unknown.cr", 1, 1)
+      raw = func.source_location || SourceLocation.new(@module.source_file || "unknown.cr", 1, 1)
+      SourceLocation.new(normalize_filename(raw.file), raw.line, positive_column(raw.column))
     end
 
     private def parameter_variable_id(func : Function, index : Int32) : Int32
@@ -1134,11 +1142,40 @@ module Crystal::MIR
     end
 
     private def normalize_filename(filename : String?) : String
-      if filename.nil? || filename.empty?
-        @module.source_file || "unknown.cr"
-      else
-        filename
+      raw = if filename.nil? || filename.empty?
+              @module.source_file || "unknown.cr"
+            else
+              filename
+            end
+      normalize_debug_path(raw)
+    end
+
+    private def normalize_debug_path(path : String) : String
+      return "." if path.empty?
+
+      expanded = path
+      unless expanded.starts_with?("/")
+        cwd = Dir.current
+        expanded = cwd.ends_with?("/") ? "#{cwd}#{expanded}" : "#{cwd}/#{expanded}"
       end
+
+      parts = [] of String
+      start = 0
+      while start <= expanded.bytesize
+        slash = expanded.byte_index('/', start) || expanded.bytesize
+        segment = expanded.byte_slice(start, slash - start)
+        unless segment.empty? || segment == "."
+          if segment == ".."
+            parts.pop? unless parts.empty?
+          else
+            parts << segment
+          end
+        end
+        break if slash >= expanded.bytesize
+        start = slash + 1
+      end
+
+      "/" + parts.join("/")
     end
 
     private def safe_metadata_basename(path : String) : String
@@ -1191,14 +1228,137 @@ module Crystal::MIR
       block_id
     end
 
-    private def scope_id_for(io : IO, cache : Hash(String, Int32), subprogram_id : Int32, function_file : String, file : String) : Int32
+    private def build_debug_file_anchor_lines(func : Function, function_loc : SourceLocation) : Hash(String, Int32)
+      anchors = {} of String => Int32
+      record_debug_file_anchor(anchors, function_loc)
+
+      func.params.each do |param|
+        if loc = func.value_location(param.index)
+          record_debug_file_anchor(anchors, loc)
+        end
+      end
+
+      func.blocks.each do |block|
+        block.instructions.each do |inst|
+          if loc = func.value_location(inst.id)
+            record_debug_file_anchor(anchors, loc)
+          end
+        end
+      end
+
+      func.debug_local_bindings.each do |binding|
+        record_debug_file_anchor(anchors, binding.location)
+      end
+
+      seen_scope_ids = Set(UInt32).new
+      func.blocks.each do |block|
+        block.instructions.each do |inst|
+          if scope_id = func.value_lexical_scope(inst.id)
+            seen_scope_ids << scope_id
+          end
+        end
+      end
+
+      func.debug_local_bindings.each do |binding|
+        if scope_id = binding.lexical_scope_id
+          seen_scope_ids << scope_id
+        end
+      end
+
+      seen_scope_ids.each do |scope_id|
+        if opening = func.debug_scope_opening?(scope_id)
+          record_debug_file_anchor(anchors, opening)
+        end
+
+        if closing = func.debug_scope_closing?(scope_id)
+          record_debug_file_anchor(anchors, closing)
+        end
+      end
+
+      anchors
+    end
+
+    private def record_debug_file_anchor(anchors : Hash(String, Int32), location : SourceLocation) : Nil
+      return unless location.line > 0
+
+      normalized = normalize_filename(location.file)
+      line = location.line
+      if current = anchors[normalized]?
+        anchors[normalized] = line if line < current
+      else
+        anchors[normalized] = line
+      end
+    end
+
+    private def normalize_debug_location(
+      location : SourceLocation,
+      function_loc : SourceLocation,
+      file_anchor_lines : Hash(String, Int32),
+      last_valid_locations : Hash(String, SourceLocation),
+      scope_key : String? = nil,
+    ) : SourceLocation
+      normalized_file = normalize_filename(location.file)
+      file_key = "file:#{normalized_file}"
+      column = positive_column(location.column)
+      if location.line > 0
+        if location.line == 1 && normalized_file == function_loc.file && function_loc.line == 1
+          if scope_key && (last_in_scope = last_valid_locations[scope_key]?) && last_in_scope.file == normalized_file && last_in_scope.line > 1
+            return SourceLocation.new(last_in_scope.file, last_in_scope.line, last_in_scope.column)
+          end
+
+          if last_in_file = last_valid_locations[file_key]?
+            if last_in_file.line > 1
+              return SourceLocation.new(last_in_file.file, last_in_file.line, last_in_file.column)
+            end
+          end
+        end
+
+        normalized = SourceLocation.new(normalized_file, location.line, column)
+        remember_debug_location(last_valid_locations, normalized, scope_key)
+        return normalized
+      end
+
+      if scope_key && (last_in_scope = last_valid_locations[scope_key]?)
+        return SourceLocation.new(last_in_scope.file, last_in_scope.line, last_in_scope.column)
+      end
+
+      if last_in_file = last_valid_locations[file_key]?
+        return SourceLocation.new(last_in_file.file, last_in_file.line, last_in_file.column)
+      end
+
+      anchor_line = file_anchor_lines[normalized_file]? || (normalized_file == function_loc.file ? positive_line(function_loc.line) : 1)
+      fallback = SourceLocation.new(normalized_file, anchor_line, column)
+      remember_debug_location(last_valid_locations, fallback, scope_key)
+      fallback
+    end
+
+    private def remember_debug_location(
+      last_valid_locations : Hash(String, SourceLocation),
+      location : SourceLocation,
+      scope_key : String? = nil,
+    ) : Nil
+      return unless location.line > 0
+
+      last_valid_locations["file:#{location.file}"] = location
+      last_valid_locations[scope_key] = location if scope_key
+    end
+
+    private def scope_id_for(
+      io : IO,
+      cache : Hash(String, Int32),
+      subprogram_id : Int32,
+      function_file : String,
+      file : String,
+      file_anchor_lines : Hash(String, Int32),
+    ) : Int32
       normalized = normalize_filename(file)
       return subprogram_id if normalized == normalize_filename(function_file)
 
       cache[normalized] ||= begin
         file_id = register_file(normalized)
         scope_id = stable_metadata_id("scope:#{subprogram_id}:#{normalized}", SCOPE_ID_BASE, SCOPE_ID_SPAN)
-        io << "!#{scope_id} = !DILexicalBlockFile(scope: !#{subprogram_id}, file: !#{file_id}, discriminator: 0)\n"
+        anchor_line = file_anchor_lines[normalized]? || 1
+        io << "!#{scope_id} = !DILexicalBlock(scope: !#{subprogram_id}, file: !#{file_id}, line: #{anchor_line}, column: 1)\n"
         scope_id
       end
     end
@@ -1210,6 +1370,7 @@ module Crystal::MIR
       scope_cache : Hash(String, Int32),
       subprogram_id : Int32,
       function_file : String,
+      file_anchor_lines : Hash(String, Int32),
       location : SourceLocation,
       salt : String,
       forced_id : Int32? = nil,
@@ -1219,7 +1380,7 @@ module Crystal::MIR
       scope_key = scope_override ? "s#{scope_override}" : "s0"
       key = "#{normalized_file}:#{positive_line(location.line)}:#{positive_column(location.column)}:#{salt}:#{scope_key}"
       location_cache[key] ||= begin
-        scope_id = scope_override || scope_id_for(io, scope_cache, subprogram_id, function_file, normalized_file)
+        scope_id = scope_override || scope_id_for(io, scope_cache, subprogram_id, function_file, normalized_file, file_anchor_lines)
         loc_id = forced_id || unique_location_id(
           assigned_location_ids,
           subprogram_id,
@@ -1532,7 +1693,7 @@ module Crystal::MIR
         emit_raw dwarf_state.metadata
         dbg_ref = dwarf_state.define_dbg_ref
         @dwarf_current_function = dwarf_state
-        @dwarf_current_location_id = dwarf_state.default_location_id
+        @dwarf_current_location_id = 0
       end
       STDERR.puts "[EMIT_FUNCTION_TRACE] func=#{mangled_name} header=pre_emit_parts params=#{param_types.size}" if emit_function_trace
       emit_raw "define "
@@ -1676,18 +1837,17 @@ module Crystal::MIR
 
     private def set_dwarf_location_for_value(inst : Value) : Nil
       if dwarf_state = @dwarf_current_function
-        @dwarf_current_location_id = dwarf_state.value_locations[inst.id]? || dwarf_state.default_location_id
+        @dwarf_current_location_id = dwarf_state.value_locations[inst.id]? || 0
       else
         @dwarf_current_location_id = 0
       end
     end
 
     private def set_default_dwarf_location : Nil
-      if dwarf_state = @dwarf_current_function
-        @dwarf_current_location_id = dwarf_state.default_location_id
-      else
-        @dwarf_current_location_id = 0
-      end
+      # Synthetic glue IR (phi slot stores, predecessor conversions, etc.)
+      # should not inherit a source line. Otherwise stepping bounces through
+      # unrelated locations between real statements.
+      @dwarf_current_location_id = 0
     end
 
     private def clear_dwarf_location : Nil
@@ -23556,19 +23716,23 @@ module Crystal::MIR
     end
 
     private def emit_type_metadata_globals
+      type_info_entries = @type_info_entries.not_nil!
+      field_info_entries = @field_info_entries.not_nil!
       emit_raw "; Type metadata for debug DX (LLDB Python + DAP)\n"
 
       # __crystal_type_count
-      emit_raw "@__crystal_type_count = constant i32 #{@type_info_entries.size}\n"
+      emit_raw "@__crystal_type_count = constant i32 #{type_info_entries.size}\n"
 
       # __crystal_type_info array
-      if @type_info_entries.empty?
+      if type_info_entries.empty?
         emit_raw "@__crystal_type_info = constant [0 x %__crystal_type_info_entry] []\n"
       else
         emit_raw "%__crystal_type_info_entry = type { i32, i32, i32, i32, i32, i32, i32, i32 }\n"
-        emit_raw "@__crystal_type_info = constant [#{@type_info_entries.size} x %__crystal_type_info_entry] [\n"
-        @type_info_entries.each_with_index do |entry, idx|
-          comma = idx < @type_info_entries.size - 1 ? "," : ""
+        emit_raw "@__crystal_type_info = constant [#{type_info_entries.size} x %__crystal_type_info_entry] [\n"
+        idx = 0
+        while idx < type_info_entries.size
+          entry = type_info_entries.unsafe_fetch(idx)
+          comma = idx < type_info_entries.size - 1 ? "," : ""
           emit_raw "  %__crystal_type_info_entry { "
           emit_raw "i32 #{entry.type_id}, "
           emit_raw "i32 #{entry.flags}, "
@@ -23579,6 +23743,7 @@ module Crystal::MIR
           emit_raw "i32 #{entry.fields_count}, "
           emit_raw "i32 #{entry.fields_offset}"
           emit_raw " }#{comma}\n"
+          idx += 1
         end
         emit_raw "]\n"
       end
@@ -23586,24 +23751,30 @@ module Crystal::MIR
       # __crystal_type_strings
       string_bytes = @string_table.to_slice
       emit_raw "@__crystal_type_strings = constant [#{string_bytes.size} x i8] ["
-      string_bytes.each_with_index do |b, idx|
+      idx = 0
+      while idx < string_bytes.size
+        b = string_bytes.unsafe_fetch(idx)
         comma = idx < string_bytes.size - 1 ? ", " : ""
         emit_raw "i8 #{b}#{comma}"
+        idx += 1
       end
       emit_raw "]\n"
 
       # __crystal_field_info array
-      unless @field_info_entries.empty?
+      unless field_info_entries.empty?
         emit_raw "%__crystal_field_info_entry = type { i32, i32, i32, i32 }\n"
-        emit_raw "@__crystal_field_info = constant [#{@field_info_entries.size} x %__crystal_field_info_entry] [\n"
-        @field_info_entries.each_with_index do |entry, idx|
-          comma = idx < @field_info_entries.size - 1 ? "," : ""
+        emit_raw "@__crystal_field_info = constant [#{field_info_entries.size} x %__crystal_field_info_entry] [\n"
+        idx = 0
+        while idx < field_info_entries.size
+          entry = field_info_entries.unsafe_fetch(idx)
+          comma = idx < field_info_entries.size - 1 ? "," : ""
           emit_raw "  %__crystal_field_info_entry { "
           emit_raw "i32 #{entry.name_offset}, "
           emit_raw "i32 #{entry.type_id}, "
           emit_raw "i32 #{entry.offset}, "
           emit_raw "i32 #{entry.flags}"
           emit_raw " }#{comma}\n"
+          idx += 1
         end
         emit_raw "]\n"
       end
@@ -23617,6 +23788,7 @@ module Crystal::MIR
 
     private def emit_type_name_table
       string_type_id = @string_type_id || 0
+      type_info_entries = @type_info_entries.not_nil!
 
       # Collect all type_id → name mappings
       # Start with primitive types (IDs 0-18)
@@ -23633,7 +23805,7 @@ module Crystal::MIR
       primitive_names.each { |id, name| type_names[id] = name }
 
       # Add types from the type registry
-      @type_info_entries.each do |entry|
+      type_info_entries.each do |entry|
         # Look up name from string table using name_offset
         name = read_string_from_table(entry.name_offset)
         type_names[entry.type_id] = name unless name.empty?
@@ -23734,7 +23906,9 @@ module Crystal::MIR
     end
 
     private def emit_union_metadata_globals
-      return if @union_info_entries.empty?
+      union_info_entries = @union_info_entries.not_nil!
+      union_variant_entries = @union_variant_entries.not_nil!
+      return if union_info_entries.empty?
 
       # IO::Memory-backed IR buffer has a practical upper bound around 2GB.
       # On large stage2 builds IR text can already approach this size before
@@ -23745,8 +23919,8 @@ module Crystal::MIR
       current_pos = @output.pos.to_i64
       estimated_union_metadata_bytes =
         512_i64 +
-        (@union_info_entries.size.to_i64 * 128_i64) +
-        (@union_variant_entries.size.to_i64 * 128_i64)
+        (union_info_entries.size.to_i64 * 128_i64) +
+        (union_variant_entries.size.to_i64 * 128_i64)
       io_memory_safety_limit = 2_000_000_000_i64
       if current_pos + estimated_union_metadata_bytes >= io_memory_safety_limit
         if @progress || ENV["CRYSTAL2_STAGE2_DEBUG"]?
@@ -23758,13 +23932,15 @@ module Crystal::MIR
       emit_raw "; Union metadata for enhanced debug DX\n"
 
       # __crystal_union_count
-      emit_raw "@__crystal_union_count = constant i32 #{@union_info_entries.size}\n"
+      emit_raw "@__crystal_union_count = constant i32 #{union_info_entries.size}\n"
 
       # __crystal_union_info array
       emit_raw "%__crystal_union_info_entry = type { i32, i32, i32, i32, i32, i32, i32 }\n"
-      emit_raw "@__crystal_union_info = constant [#{@union_info_entries.size} x %__crystal_union_info_entry] [\n"
-      @union_info_entries.each_with_index do |entry, idx|
-        comma = idx < @union_info_entries.size - 1 ? "," : ""
+      emit_raw "@__crystal_union_info = constant [#{union_info_entries.size} x %__crystal_union_info_entry] [\n"
+      idx = 0
+      while idx < union_info_entries.size
+        entry = union_info_entries.unsafe_fetch(idx)
+        comma = idx < union_info_entries.size - 1 ? "," : ""
         emit_raw "  %__crystal_union_info_entry { "
         emit_raw "i32 #{entry.type_id}, "
         emit_raw "i32 #{entry.name_offset}, "
@@ -23774,15 +23950,18 @@ module Crystal::MIR
         emit_raw "i32 #{entry.alignment}, "
         emit_raw "i32 #{entry.payload_offset}"
         emit_raw " }#{comma}\n"
+        idx += 1
       end
       emit_raw "]\n"
 
       # __crystal_union_variant_info array
-      unless @union_variant_entries.empty?
+      unless union_variant_entries.empty?
         emit_raw "%__crystal_union_variant_entry = type { i32, i32, i32, i32, i32, i32 }\n"
-        emit_raw "@__crystal_union_variant_info = constant [#{@union_variant_entries.size} x %__crystal_union_variant_entry] [\n"
-        @union_variant_entries.each_with_index do |entry, idx|
-          comma = idx < @union_variant_entries.size - 1 ? "," : ""
+        emit_raw "@__crystal_union_variant_info = constant [#{union_variant_entries.size} x %__crystal_union_variant_entry] [\n"
+        idx = 0
+        while idx < union_variant_entries.size
+          entry = union_variant_entries.unsafe_fetch(idx)
+          comma = idx < union_variant_entries.size - 1 ? "," : ""
           emit_raw "  %__crystal_union_variant_entry { "
           emit_raw "i32 #{entry.union_type_id}, "
           emit_raw "i32 #{entry.variant_type_id}, "
@@ -23791,6 +23970,7 @@ module Crystal::MIR
           emit_raw "i32 #{entry.size}, "
           emit_raw "i32 #{entry.alignment}"
           emit_raw " }#{comma}\n"
+          idx += 1
         end
         emit_raw "]\n"
       end

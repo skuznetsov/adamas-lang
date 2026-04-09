@@ -2887,6 +2887,32 @@ module CrystalV2
         {"[#{ex.class}] #{ex.message}", false}
       end
 
+      private def generate_dwarf_companion(binary_path : String, options : Options, out_io : IO, err_io : IO) : Nil
+        {% unless flag?(:darwin) %}
+          return
+        {% end %}
+        return unless debug_info_requested?(options)
+        return unless File.exists?(binary_path)
+
+        dwarf_path = "#{binary_path}.dwarf"
+        dwarf_tmp_path = temp_command_output_path(dwarf_path)
+
+        attempts = [
+          ["xcrun", "dsymutil", "-f", binary_path, "-o", dwarf_tmp_path] of String,
+          ["dsymutil", "-f", binary_path, "-o", dwarf_tmp_path] of String,
+        ]
+
+        attempts.each_with_index do |args, idx|
+          log(options, out_io, "  $ #{command_args_display(args)}")
+          output, ok = run_command_to_temp_output(args, dwarf_tmp_path, dwarf_path)
+          return if ok
+
+          next unless idx == attempts.size - 1
+          err_io.puts "warning: failed to generate DWARF companion #{dwarf_path}"
+          err_io.puts output unless output.empty?
+        end
+      end
+
       private def llvm_entry_guard_target_line?(line : String) : Bool
         line.starts_with?("define void @__crystal_main(") ||
           line.starts_with?("define void @Crystal$Dmain$$Int32_Pointer$LPointer$LUInt8$R$R(") ||
@@ -3132,6 +3158,7 @@ module CrystalV2
               return 1
             end
           end
+          generate_dwarf_companion(options.output, options, out_io, err_io) if debug_info_enabled
           timings["link"] = (Time.instant - link_start).total_milliseconds if options.stats
         else
           log(options, out_io, "  Skipping link (--no-link)")
