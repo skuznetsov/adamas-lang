@@ -3,6 +3,35 @@
 Updated: 2026-04-09
 Context: compiler/bootstrap/stage2-stability
 
+[LM-453|verified]: A distinct callsite return-typing seam exists after exact
+overload resolution for typed virtual calls in `lower_call(...)`. The reducer
+`Parent#read_bytes(type, format : Int32); warm(io : Parent) = io.read_bytes(0_u64, 0); decode(io : Parent) = io.read_bytes(0_u16, 0).to_i`
+showed the failure precisely: `before_lower_function` already had the exact
+specialized return (`UInt16`), yet `before_emit` had drifted back to the
+unspecialized base cache (`UInt64`), so emitted HIR carried
+`call ... Parent#read_bytes$UInt16_Int32 ... : UInt64 [virtual]` and later MIR
+lowered invalid integer casts. The decisive trace was
+`DEBUG_CALL_TRACE=IO#read_bytes$UInt16_IO::ByteFormat`, which showed
+`return=8` before lazy lowering and `return=10` before emission, while
+`DEBUG_GET_RETURN` for the exact mangled name still reported
+`func_type=UInt16` / `module_rt=UInt16`. That contradiction isolated the bug to
+the late “Prefer the actual lowered function return type” loop in
+`src/compiler/hir/ast_to_hir.cr`: it iterated over
+`[mangled_method_name, primary_mangled_name, base_method_name]` and let the
+lowered unspecialized base def overwrite a concrete specialized return. The
+bounded verified fix is to preserve the already-concrete specialized return
+when `has_typed_args` and `mangled_method_name != base_method_name`, skipping
+the base-name overwrite path for that case. Focused regression
+`keeps virtual generic callsites on their exact typed return instead of the lowered base return`
+is green, and both real benchmark compiles now pass:
+`scripts/run_safe.sh /tmp/cv2_virtual_return_fix 240 4096 /tmp/cv2_virtual_return_fix /Users/sergey/Projects/Python/Grafana/python/bench_crystal.cr -o /tmp/bench_crystal_vreturn_fix`
+and
+`scripts/run_safe.sh /tmp/cv2_virtual_return_fix 240 4096 /tmp/cv2_virtual_return_fix examples/bench_comprehensive.cr -o /tmp/bench_comprehensive_vreturn_fix`
+both exit `0`. Boundary: this closes the late base-overwrite family for typed
+virtual calls; it does not prove every remaining vdispatch wrapper/cast issue
+is gone, so future primitive signedness drift in MIR should still be treated as
+a separate frontier until directly verified. {F/G/R: 0.95/0.79/0.96} [verified]
+
 [LM-452|verified]: A second reusable return-typing seam sits in block-dependent
 `...?` methods without explicit proc annotations. A reducer
 `def read_section?(name, &); return nil if name == "miss"; if name == "hit"; yield 1, 2; end; end`

@@ -28,6 +28,10 @@ class Crystal::HIR::AstToHir
   def __test_get_type_name_from_ref(type_ref : Crystal::HIR::TypeRef) : String
     get_type_name_from_ref(type_ref)
   end
+
+  def __test_repair_stale_call_return_types : Nil
+    repair_stale_call_return_types
+  end
 end
 
 # Helper to parse Crystal code and get AST
@@ -2139,6 +2143,104 @@ describe Crystal::HIR::AstToHir do
     end
   end
 
+  describe "parent overload lookup" do
+    it "keeps inherited typed overload callsites specialized" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        class Parent
+          def read_bytes(type : UInt8, format : Int32) : UInt8
+            type
+          end
+
+          def read_bytes(type : UInt64, format : Int32) : UInt64
+            type
+          end
+        end
+
+        class Child < Parent
+        end
+
+        def decode(io : Child)
+          io.read_bytes(0_u8, 0).to_i
+        end
+
+        decode(Child.new)
+      CRYSTAL
+
+      func = converter.module.function_by_name("decode$Child")
+      func.should_not be_nil
+
+      text = hir_text(func.not_nil!)
+      text.should contain("call %1.Parent#read_bytes$UInt8_Int32")
+      text.should contain(": 7")
+      text.should_not contain("Parent#read_bytes$UInt64_Int32")
+      text.should_not contain(": 10")
+    end
+
+    it "does not reuse a base signature return type for later typed inherited calls" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        class Parent
+          def read_bytes(type, format : Int32)
+            type
+          end
+        end
+
+        class Child < Parent
+        end
+
+        def warm(io : Child)
+          io.read_bytes(0_u64, 0)
+        end
+
+        def decode(io : Child)
+          io.read_bytes(0_u8, 0).to_i
+        end
+
+        warm(Child.new)
+        decode(Child.new)
+      CRYSTAL
+
+      func = converter.module.function_by_name("decode$Child")
+      func.should_not be_nil
+
+      text = hir_text(func.not_nil!)
+      text.should contain("call %1.Parent#read_bytes$UInt8_Int32")
+      text.should contain(": 7")
+      text.should_not contain(": 10")
+    end
+
+    it "keeps virtual generic callsites on their exact typed return instead of the lowered base return" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        class Parent
+          def read_bytes(type, format : Int32)
+            type
+          end
+        end
+
+        class Child < Parent
+        end
+
+        def warm(io : Parent)
+          io.read_bytes(0_u64, 0)
+        end
+
+        def decode(io : Parent)
+          io.read_bytes(0_u16, 0).to_i
+        end
+
+        warm(Child.new)
+        decode(Child.new)
+      CRYSTAL
+
+      func = converter.module.function_by_name("decode$Parent")
+      func.should_not be_nil
+
+      text = hir_text(func.not_nil!)
+      text.should contain("Parent#read_bytes$UInt16_Int32")
+      text.should contain(": 8 [virtual]")
+      text.should_not contain(": 10 [virtual]")
+    end
+  end
+
   describe "default arg lexical context" do
     it "resolves nested constants in class method defaults against the callee owner" do
       converter = lower_program_with_main(<<-CRYSTAL)
@@ -2274,6 +2376,66 @@ describe Crystal::HIR::AstToHir do
         type_name.should contain("Int32")
         type_name.should contain("Nil")
         type_name.should_not eq("Bool")
+      ensure
+        if previous
+          ENV["CRYSTAL_V2_DISABLE_INLINE_YIELD"] = previous
+        else
+          ENV.delete("CRYSTAL_V2_DISABLE_INLINE_YIELD")
+        end
+      end
+    end
+
+    it "repairs stale direct call types from finalized callee returns" do
+      previous = ENV["CRYSTAL_V2_DISABLE_INLINE_YIELD"]?
+      ENV["CRYSTAL_V2_DISABLE_INLINE_YIELD"] = "1"
+      begin
+        converter = lower_program_with_sources(<<-CRYSTAL)
+          class Worker
+            def use
+              read_section?("hit") { |sh, io| sh }
+            end
+
+            def read_section?(name, &)
+              return nil if name == "miss"
+
+              seek(1) do
+                yield 1, 2
+              end
+            end
+
+            def seek(pos, &)
+              yield
+            end
+          end
+
+          Worker.new.use
+        CRYSTAL
+
+        use_func = converter.module.functions.find { |func| func.name.starts_with?("Worker#use") }
+        use_func.should_not be_nil
+
+        section_index = use_func.not_nil!.blocks[0].instructions.index! do |inst|
+          inst.is_a?(Crystal::HIR::Call) && inst.as(Crystal::HIR::Call).method_name.starts_with?("Worker#read_section?")
+        end
+        original_call = use_func.not_nil!.blocks[0].instructions[section_index].as(Crystal::HIR::Call)
+        use_func.not_nil!.blocks[0].instructions[section_index] = Crystal::HIR::Call.new(
+          original_call.id,
+          Crystal::HIR::TypeRef::BOOL,
+          original_call.receiver,
+          original_call.method_name,
+          original_call.args,
+          original_call.block,
+          original_call.virtual
+        )
+
+        converter.__test_repair_stale_call_return_types
+
+        repaired_call = use_func.not_nil!.blocks[0].instructions[section_index].as(Crystal::HIR::Call)
+        repaired_desc = converter.module.get_type_descriptor(repaired_call.type)
+        repaired_desc.should_not be_nil
+        repaired_desc.not_nil!.kind.should eq(Crystal::HIR::TypeKind::Union)
+        repaired_desc.not_nil!.name.should contain("Nil")
+        repaired_desc.not_nil!.name.should contain("Int32")
       ensure
         if previous
           ENV["CRYSTAL_V2_DISABLE_INLINE_YIELD"] = previous
