@@ -2095,6 +2095,32 @@ describe Crystal::HIR::AstToHir do
       text.should_not contain("ItemIterator(Pointer(Void), Pointer(Void))")
       text.should_not contain("Pointer(Void)#size")
     end
+
+    it "keeps exact callsite tuple types available to typeof-based formatter specializations" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        class Holder(T)
+          def self.marker
+            1
+          end
+        end
+
+        def wrap(args : Array | Tuple)
+          Holder(typeof(args)).marker
+        end
+
+        value = {0.125_f64}
+        wrap(value)
+      CRYSTAL
+
+      text = String.build do |io|
+        converter.module.functions.each do |func|
+          func.to_s(io)
+        end
+      end
+
+      text.should contain("Holder(Tuple(Float64)).marker")
+      text.should_not contain("Holder(Pointer(Void)).marker")
+    end
   end
 
   describe "named arg block overload resolution" do

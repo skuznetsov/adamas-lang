@@ -955,10 +955,14 @@ module Crystal
 
       private def record_mir_value_location(hir_func : HIR::Function, hir_id : HIR::ValueId, mir_func : Crystal::MIR::Function, mir_id : ValueId) : Nil
         if loc = hir_func.value_location(hir_id)
-          mir_func.record_value_location(mir_id, to_mir_source_location(loc))
+          if mir_func.value_location(mir_id).nil?
+            mir_func.record_value_location(mir_id, to_mir_source_location(loc))
+          end
         end
         if lex = hir_effective_lexical_scope_for_debug(hir_func, hir_id)
-          mir_func.record_value_lexical_scope(mir_id, lex)
+          if mir_func.value_lexical_scope(mir_id).nil?
+            mir_func.record_value_lexical_scope(mir_id, lex)
+          end
         end
       end
 
@@ -2577,7 +2581,7 @@ module Crystal
           end
         end
 
-        value
+        arr_set.id
       end
 
       # ─────────────────────────────────────────────────────────────────────────

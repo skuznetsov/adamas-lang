@@ -223,4 +223,21 @@ describe CrystalV2::Compiler::Frontend::Parser do
     CrystalV2::Compiler::Frontend.node_kind(first_stmt).should eq(CrystalV2::Compiler::Frontend::NodeKind::Call)
     CrystalV2::Compiler::Frontend.node_kind(second_stmt).should eq(CrystalV2::Compiler::Frontend::NodeKind::Bool)
   end
+
+  it "parses top-level singleton defs with path receivers" do
+    source = <<-CR
+      def Time::Location.utc
+        1
+      end
+    CR
+
+    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    program = parser.parse_program
+
+    program.roots.size.should eq(1)
+    def_node = program.arena[program.roots.first].as(CrystalV2::Compiler::Frontend::DefNode)
+    String.new(def_node.name).should eq("utc")
+    String.new(def_node.receiver.not_nil!).should eq("Time::Location")
+    def_node.body.not_nil!.size.should eq(1)
+  end
 end

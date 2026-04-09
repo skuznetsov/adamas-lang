@@ -1598,11 +1598,14 @@ module CrystalV2
                 pending_annotations,
                 acyclic_types,
                 top_level_type_names,
-                top_level_class_kinds,
-                flags,
-                sources_by_arena,
-                source,
-                file_path
+              top_level_class_kinds,
+              flags,
+              sources_by_arena,
+              source,
+              file_path,
+              0,
+              true,
+              paths_by_arena
               )
               expr_i += 1
             end
@@ -4031,9 +4034,15 @@ module CrystalV2
         source : String,
         macro_origin_path : String? = nil,
         depth : Int32 = 0,
-        collect_main_exprs : Bool = true
+        collect_main_exprs : Bool = true,
+        paths_by_arena : Hash(UInt64, String)? = nil
       ) : Nil
         return if depth > 4
+        if paths_by_arena
+          if current_path = macro_origin_path || paths_by_arena[arena.object_id.to_u64]?
+            paths_by_arena[arena.object_id.to_u64] = current_path
+          end
+        end
         node = arena[expr_id]
         if env_enabled?("CRYSTAL2_COLLECT_TRACE")
           bootstrap_trace_puts "[COLLECT] depth=#{depth} expr=#{expr_id.index} kind=#{Frontend.node_kind(node)} macrodef=#{node.is_a?(Frontend::MacroDefNode)} arena_size=#{arena.size}"
@@ -4087,9 +4096,9 @@ module CrystalV2
         when Frontend::RequireNode
           # Skip - already processed
         when Frontend::MacroExpressionNode
-          collect_top_level_nodes(arena, arena_index, node.expression, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs)
+          collect_top_level_nodes(arena, arena_index, node.expression, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs, paths_by_arena)
         when Frontend::VisibilityModifierNode
-          collect_top_level_nodes(arena, arena_index, node.expression, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs)
+          collect_top_level_nodes(arena, arena_index, node.expression, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs, paths_by_arena)
         when Frontend::MacroIfNode
           condition = evaluate_macro_condition(arena, node.condition, flags)
           if env_enabled?("DEBUG_MACRO_EXPAND")
@@ -4102,10 +4111,10 @@ module CrystalV2
           # MacroLiteralNode which the collector will expand correctly.
           unless condition.nil?
             if condition == true
-              collect_top_level_nodes(arena, arena_index, node.then_body, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs)
+              collect_top_level_nodes(arena, arena_index, node.then_body, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs, paths_by_arena)
             else
               if else_body = node.else_body
-                collect_top_level_nodes(arena, arena_index, else_body, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs)
+                collect_top_level_nodes(arena, arena_index, else_body, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs, paths_by_arena)
               end
             end
             return  # Skip raw-text and fallback paths
@@ -4137,8 +4146,13 @@ module CrystalV2
                   if parsed = parse_macro_literal_program(combined)
                     program, sanitized = parsed
                     sources_by_arena[program.arena.object_id.to_u64] = sanitized
+                    if paths_by_arena
+                      if origin_path = macro_origin_path || paths_by_arena[arena.object_id.to_u64]?
+                        paths_by_arena[program.arena.object_id.to_u64] = origin_path
+                      end
+                    end
                     program.roots.each do |inner_id|
-                      collect_top_level_nodes(program.arena, arena_index, inner_id, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, sanitized, macro_origin_path, depth + 1, false)
+                      collect_top_level_nodes(program.arena, arena_index, inner_id, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, sanitized, macro_origin_path, depth + 1, false, paths_by_arena)
                     end
                     return
                   end
@@ -4162,8 +4176,13 @@ module CrystalV2
                   program, sanitized = parsed
                   parsed_any = true
                   sources_by_arena[program.arena.object_id.to_u64] = sanitized
+                  if paths_by_arena
+                    if origin_path = macro_origin_path || paths_by_arena[arena.object_id.to_u64]?
+                      paths_by_arena[program.arena.object_id.to_u64] = origin_path
+                    end
+                  end
                   program.roots.each do |inner_id|
-                    collect_top_level_nodes(program.arena, arena_index, inner_id, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, sanitized, macro_origin_path, depth + 1, false)
+                    collect_top_level_nodes(program.arena, arena_index, inner_id, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, sanitized, macro_origin_path, depth + 1, false, paths_by_arena)
                   end
                 end
               end
@@ -4181,15 +4200,15 @@ module CrystalV2
               then_node = arena[node.then_body]
               bootstrap_trace_puts "[DEBUG_MACRO_EXPAND] MacroIfNode then_body type=#{then_node.class}"
             end
-            collect_top_level_nodes(arena, arena_index, node.then_body, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs)
+            collect_top_level_nodes(arena, arena_index, node.then_body, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs, paths_by_arena)
           elsif condition == false
             if else_body = node.else_body
-              collect_top_level_nodes(arena, arena_index, else_body, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs)
+              collect_top_level_nodes(arena, arena_index, else_body, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs, paths_by_arena)
             end
           else
-            collect_top_level_nodes(arena, arena_index, node.then_body, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs)
+            collect_top_level_nodes(arena, arena_index, node.then_body, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs, paths_by_arena)
             if else_body = node.else_body
-              collect_top_level_nodes(arena, arena_index, else_body, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs)
+              collect_top_level_nodes(arena, arena_index, else_body, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs, paths_by_arena)
             end
           end
         when Frontend::MacroLiteralNode
@@ -4208,8 +4227,13 @@ module CrystalV2
                 if parsed = parse_macro_literal_program(combined)
                   program, exp_source = parsed
                   sources_by_arena[program.arena.object_id.to_u64] = exp_source
+                  if paths_by_arena
+                    if origin_path = macro_origin_path || paths_by_arena[arena.object_id.to_u64]?
+                      paths_by_arena[program.arena.object_id.to_u64] = origin_path
+                    end
+                  end
                   program.roots.each do |inner_id|
-                    collect_top_level_nodes(program.arena, arena_index, inner_id, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, exp_source, macro_origin_path, depth + 1, false)
+                    collect_top_level_nodes(program.arena, arena_index, inner_id, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, exp_source, macro_origin_path, depth + 1, false, paths_by_arena)
                   end
                   return
                 end
@@ -4224,8 +4248,13 @@ module CrystalV2
                 if parsed = parse_top_level_macro_expansion(expanded)
                   program, exp_source = parsed
                   sources_by_arena[program.arena.object_id.to_u64] = exp_source
+                  if paths_by_arena
+                    if origin_path = macro_origin_path || paths_by_arena[arena.object_id.to_u64]?
+                      paths_by_arena[program.arena.object_id.to_u64] = origin_path
+                    end
+                  end
                   program.roots.each do |inner_id|
-                    collect_top_level_nodes(program.arena, arena_index, inner_id, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, exp_source, macro_origin_path, depth + 1, false)
+                    collect_top_level_nodes(program.arena, arena_index, inner_id, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, exp_source, macro_origin_path, depth + 1, false, paths_by_arena)
                   end
                 end
               end
@@ -4238,14 +4267,19 @@ module CrystalV2
               if parsed = parse_macro_literal_program(combined)
                 program, sanitized = parsed
                 sources_by_arena[program.arena.object_id.to_u64] = sanitized
+                if paths_by_arena
+                  if origin_path = macro_origin_path || paths_by_arena[arena.object_id.to_u64]?
+                    paths_by_arena[program.arena.object_id.to_u64] = origin_path
+                  end
+                end
                 program.roots.each do |inner_id|
-                  collect_top_level_nodes(program.arena, arena_index, inner_id, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, sanitized, macro_origin_path, depth + 1, false)
+                  collect_top_level_nodes(program.arena, arena_index, inner_id, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, sanitized, macro_origin_path, depth + 1, false, paths_by_arena)
                 end
               end
             end
           end
         when Frontend::MacroForNode
-          expand_top_level_macro_for(node, arena, arena_index, source, macro_origin_path, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, depth)
+          expand_top_level_macro_for(node, arena, arena_index, source, macro_origin_path, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, depth, paths_by_arena)
         when Frontend::AssignNode
           target = arena[node.target]
           if target.is_a?(Frontend::ConstantNode)
@@ -4301,7 +4335,8 @@ module CrystalV2
         top_level_class_kinds : Hash(String, Bool),
         flags : Set(String),
         sources_by_arena : Hash(UInt64, String),
-        depth : Int32
+        depth : Int32,
+        paths_by_arena : Hash(UInt64, String)? = nil
       ) : Nil
         return if depth > 3
 
@@ -4343,8 +4378,13 @@ module CrystalV2
         if parsed = parse_top_level_macro_expansion(expanded)
           program, exp_source = parsed
           sources_by_arena[program.arena.object_id.to_u64] = exp_source
+          if paths_by_arena
+            if origin_path = macro_origin_path || paths_by_arena[arena.object_id.to_u64]?
+              paths_by_arena[program.arena.object_id.to_u64] = origin_path
+            end
+          end
           program.roots.each do |inner_id|
-            collect_top_level_nodes(program.arena, arena_index, inner_id, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, exp_source, macro_origin_path, depth + 1, false)
+            collect_top_level_nodes(program.arena, arena_index, inner_id, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, exp_source, macro_origin_path, depth + 1, false, paths_by_arena)
           end
         end
       end
@@ -6597,11 +6637,13 @@ module CrystalV2
         top_level_class_kinds = {} of String => Bool
         flags = Runtime.target_flags
         sources_by_arena = Hash(UInt64, String).new(initial_capacity: aggregate.unit_summaries.size)
+        paths_by_arena = Hash(UInt64, String).new(initial_capacity: aggregate.unit_summaries.size)
         sources_by_arena[aggregate_arena.object_id.to_u64] = ""
 
         aggregate.unit_summaries.each do |unit_summary|
           arena = aggregate_arena
           source = unit_summary.source
+          paths_by_arena[arena.object_id.to_u64] = unit_summary.path
           next if skip_file_directive?(source, flags)
 
           pending_annotations = [] of Frontend::AnnotationNode
@@ -6628,7 +6670,10 @@ module CrystalV2
               flags,
               sources_by_arena,
               source,
-              unit_summary.path
+              unit_summary.path,
+              0,
+              true,
+              paths_by_arena
             )
 
             root_node = arena[root_id]
@@ -6643,6 +6688,7 @@ module CrystalV2
                 unit_summary.path,
                 flags,
                 sources_by_arena,
+                paths_by_arena,
                 def_nodes,
                 class_nodes,
                 module_nodes,
@@ -6800,6 +6846,7 @@ module CrystalV2
         macro_origin_path : String,
         flags : Set(String),
         sources_by_arena : Hash(UInt64, String),
+        paths_by_arena : Hash(UInt64, String),
         def_nodes : Array(Tuple(Frontend::DefNode, Frontend::ArenaLike)),
         class_nodes : Array(Tuple(Frontend::ClassNode, Frontend::ArenaLike)),
         module_nodes : Array(Tuple(Frontend::ModuleNode, Frontend::ArenaLike)),
@@ -6883,6 +6930,7 @@ module CrystalV2
         if parsed = parse_top_level_macro_expansion(output.not_nil!)
           program, exp_source = parsed
           sources_by_arena[program.arena.object_id.to_u64] = exp_source
+          paths_by_arena[program.arena.object_id.to_u64] = macro_origin_path
           program.roots.each do |inner_id|
             collect_top_level_nodes(
               program.arena,
@@ -6906,7 +6954,8 @@ module CrystalV2
               exp_source,
               macro_origin_path,
               1,
-              false
+              false,
+              paths_by_arena
             )
           end
         end

@@ -2244,47 +2244,72 @@ module CrystalV2
           end
         end
 
-        # Phase PERCENT_LITERALS: Parse optional receiver for class/singleton methods
-        # Returns (receiver_token, dot_token) or (nil, nil)
-        # Handles: def self.foo, def obj.foo
-        private def parse_def_receiver : {Token?, Token?}
-          case current_token.kind
-          when Token::Kind::Self
-            receiver = current_token
-            advance
-            skip_whitespace_and_optional_newlines
+        # Phase PERCENT_LITERALS: Parse optional receiver for class/singleton methods.
+        # Returns (receiver_slice, dot_token) or (nil, nil).
+        # Handles: def self.foo, def Foo.foo, def Foo::Bar.foo
+        private def parse_def_receiver : {Slice(UInt8)?, Token?}
+          saved_index = @index
+          saved_previous = @previous_token
 
-            if current_token.kind == Token::Kind::Operator && slice_eq?(current_token.slice, ".")
-              dot = current_token
-              advance
-              skip_trivia
-              {receiver, dot}
-            else
-              # self without dot - not a receiver, rewind
-              unadvance
-              {nil, nil}
-            end
-          when Token::Kind::Identifier
-            # Lookahead for .
-            saved_index = @index
-            name_token = current_token
+          receiver_slice = parse_def_receiver_name
+          unless receiver_slice
+            @index = saved_index
+            @previous_token = saved_previous
+            return {nil, nil}
+          end
+
+          if current_token.kind == Token::Kind::Operator && slice_eq?(current_token.slice, ".")
+            dot = current_token
             advance
             skip_trivia
+            {receiver_slice, dot}
+          else
+            @index = saved_index
+            @previous_token = saved_previous
+            {nil, nil}
+          end
+        end
 
-            if current_token.kind == Token::Kind::Operator && slice_eq?(current_token.slice, ".")
-              # It's receiver.method (singleton method)
-              dot = current_token
+        private def parse_def_receiver_name : Slice(UInt8)?
+          case current_token.kind
+          when Token::Kind::Self
+            receiver = stable_identifier_slice(current_token.slice)
+            advance
+            skip_whitespace_and_optional_newlines
+            receiver
+          when Token::Kind::Identifier, Token::Kind::ColonColon
+            receiver_text = String.build do |io|
+              if current_token.kind == Token::Kind::ColonColon
+                io << "::"
+                advance
+                skip_trivia
+              end
+
+              token = current_token
+              unless token.kind == Token::Kind::Identifier || is_keyword_identifier?(token)
+                return nil
+              end
+              io.write token.slice
               advance
               skip_trivia
-              {name_token, dot}
-            else
-              # Just method name, rewind
-              @index = saved_index
-              {nil, nil}
+
+              while current_token.kind == Token::Kind::ColonColon
+                io << "::"
+                advance
+                skip_trivia
+
+                token = current_token
+                unless token.kind == Token::Kind::Identifier || is_keyword_identifier?(token)
+                  return nil
+                end
+                io.write token.slice
+                advance
+                skip_trivia
+              end
             end
+            intern_retained_text(receiver_text)
           else
-            # No receiver (operator methods or error)
-            {nil, nil}
+            nil
           end
         end
 
@@ -2300,7 +2325,7 @@ module CrystalV2
           skip_trivia
 
           # Phase PERCENT_LITERALS: Parse optional receiver (self.method or obj.method)
-          receiver_token, dot_token = parse_def_receiver
+          receiver_slice, dot_token = parse_def_receiver
 
           # Phase OPERATOR_METHODS: Parse method name (identifier or operator)
           name_token = current_token
@@ -2551,8 +2576,6 @@ module CrystalV2
                      end
 
           # Phase PERCENT_LITERALS: Extract receiver slice if present
-          receiver_slice = receiver_token ? receiver_token.slice : nil
-
           @arena.add_typed(
             DefNode.new(
               def_span,
@@ -4036,8 +4059,6 @@ module CrystalV2
 
             # Parse in pattern list. Accept both regular expressions and
             # dot-predicate shorthand (e.g., `in .i8? then ...`).
-            # In the dot-predicate form we attach the member access to the
-            # case value when present so the AST remains consistent.
             patterns_b = ExprIdBuffer.new(2)
             loop do
               pattern = parse_in_pattern_expr(value)
@@ -4137,8 +4158,8 @@ module CrystalV2
         # Parse a single `in`-pattern expression.
         # Supports:
         #  - Regular expression pattern (fallback to parse_expression)
-        #  - Dot-predicate shorthand: `.pred?` which is desugared into
-        #    a member access on the case value (when provided).
+        #  - Dot-predicate shorthand: `.pred?` which becomes a zero-arg call
+        #    on an implicit receiver, matching Crystal's case/in AST contract.
         private def parse_in_pattern_expr(case_value : ExprId?) : ExprId
           # Accept leading dot shorthand only when a case value exists
           if case_value && current_token.kind == Token::Kind::Operator && slice_eq?(current_token.slice, ".")
@@ -4152,16 +4173,11 @@ module CrystalV2
               emit_unexpected(name)
               return PREFIX_ERROR
             end
-            member_span = @arena[case_value.not_nil!].span.cover(dot.span).cover(name.span)
-            node = @arena.add_typed(
-              MemberAccessNode.new(
-                member_span,
-                case_value.not_nil!,
-                name.slice
-              )
-            )
+            implicit_obj = @arena.add_typed(ImplicitObjNode.new(dot.span))
+            member_span = dot.span.cover(name.span)
+            node = @arena.add_typed(MemberAccessNode.new(member_span, implicit_obj, name.slice))
             advance
-            return node
+            return @arena.add_typed(CallNode.new(member_span, node, [] of ExprId))
           end
 
           # Fallback: regular expression

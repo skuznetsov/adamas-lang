@@ -9480,6 +9480,39 @@ module Crystal::HIR
       @infer_type_cache_version += 1
     end
 
+    private def should_use_exact_call_type_for_local_inference?(param_type : TypeRef, call_type : TypeRef) : Bool
+      return false if call_type == TypeRef::VOID || param_type == call_type
+
+      param_name = get_type_name_from_ref(param_type)
+      call_name = get_type_name_from_ref(call_type)
+      return false if call_name.empty? || call_name == "Void" || call_name == "Unknown"
+      return true if param_name.empty? || param_name == "Void" || param_name == "Unknown"
+      return false if param_name == call_name
+
+      # Preserve exact call-site specializations for typeof/local inference when the
+      # runtime parameter type intentionally stays broader (for example `args : Array | Tuple`).
+      return true if param_name.includes?('|')
+      return true if module_type_ref?(param_type) && !module_type_ref?(call_type)
+
+      if param_name == "Array" || param_name == "Tuple" || param_name == "NamedTuple" || param_name == "Proc"
+        return call_name.starts_with?("#{param_name}(")
+      end
+
+      if info = split_generic_base_and_args(call_name)
+        return info[:base] == param_name
+      end
+
+      false
+    end
+
+    private def specialized_runtime_param_types?(full_name_override : String?) : Bool
+      if override_name = full_name_override
+        return override_name.includes?('$')
+      end
+
+      false
+    end
+
     private def concrete_type_name_for(type_ref : TypeRef) : String?
       return nil if type_ref == TypeRef::VOID
 
@@ -20555,6 +20588,8 @@ module Crystal::HIR
       splat_param_info_index : Int32? = nil
       splat_param_types_index : Int32? = nil
       splat_param_name : String? = nil
+      lookup_name : String = full_name_override || base_name
+      use_specialized_runtime_param_types = specialized_runtime_param_types?(full_name_override)
 
       if params = node.params
         each_param(params) do |param|
@@ -20644,13 +20679,21 @@ module Crystal::HIR
           if param_name.ends_with?("_class") && call_type_for_param != TypeRef::VOID
             param_type = call_type_for_param
           end
-          param_type_map[param_name] = param_type
-          param_infos << {param_name, param_type}
+          exact_runtime_param_type = if use_specialized_runtime_param_types &&
+                                        !param.is_block && !param.is_splat && !param.is_double_splat &&
+                                        should_use_exact_call_type_for_local_inference?(param_type, call_type_for_param)
+                                       call_type_for_param
+                                     else
+                                       param_type
+                                     end
+          local_inference_type = exact_runtime_param_type
+          param_type_map[param_name] = local_inference_type
+          param_infos << {param_name, exact_runtime_param_type}
           param_default_literals << extract_param_default_literal(param)
           enum_name = call_index < call_enum_names.size ? call_enum_names[call_index] : nil
           param_type_names << (type_ann_str || enum_name)
           if ta = param.type_annotation
-            concrete_name = get_type_name_from_ref(param_type)
+            concrete_name = get_type_name_from_ref(local_inference_type)
             if concrete_name.empty? || concrete_name == "Void" || concrete_name == "Unknown"
               update_typeof_local_name(param_name, (safe_slice_to_string(ta) || ""))
             else
@@ -20722,7 +20765,7 @@ module Crystal::HIR
             elsif !param.is_double_splat
               call_index += 1
             end
-            param_types << param_type
+            param_types << exact_runtime_param_type
           end
           param_literal_flags << param_literal
           if debug_hook_filter_match?(base_name)
@@ -20734,9 +20777,9 @@ module Crystal::HIR
         end
       end
 
-      if registered_params = function_type_param_map_for(full_name_override || base_name, base_name)
+      if registered_params = function_type_param_map_for(lookup_name, base_name)
         extra_type_params.merge!(registered_params)
-        if debug_env_filter_match?("DEBUG_LOWER_METHOD_TPM", full_name_override || base_name, base_name)
+        if debug_env_filter_match?("DEBUG_LOWER_METHOD_TPM", lookup_name, base_name)
           STDERR.puts "[LOWER_MODULE_TPM] base=#{base_name} override=#{full_name_override || "nil"} merged=#{registered_params}"
         end
       end
@@ -24122,7 +24165,7 @@ module Crystal::HIR
             saved_class = @current_class
             @arena = default_arena
             @current_class = class_name
-            default_id = lower_expr(ctx, default_expr_id)
+            default_id = try_lower_enum_symbol_default(ctx, class_name, ivar.type, default_node) || lower_expr(ctx, default_expr_id)
             ivar_store = FieldSet.new(ctx.next_id, ivar.type, alloc.id, ivar.name, default_id, ivar.offset)
             ctx.emit(ivar_store)
             @arena = saved_arena
@@ -24593,7 +24636,7 @@ module Crystal::HIR
             saved_class = @current_class
             @arena = default_arena
             @current_class = class_name
-            default_id = lower_expr(ctx, default_expr_id)
+            default_id = try_lower_enum_symbol_default(ctx, class_name, ivar.type, default_node) || lower_expr(ctx, default_expr_id)
             ivar_store = FieldSet.new(ctx.next_id, ivar.type, alloc.id, ivar.name, default_id, ivar.offset)
             ctx.emit(ivar_store)
             @arena = saved_arena
@@ -25240,6 +25283,28 @@ module Crystal::HIR
       end
     end
 
+    private def try_lower_enum_symbol_default(
+      ctx : LoweringContext,
+      owner_name : String,
+      ivar_type : TypeRef,
+      default_node,
+    ) : ValueId?
+      return nil unless default_node.is_a?(CrystalV2::Compiler::Frontend::SymbolNode)
+
+      enum_type_name = get_type_name_from_ref(ivar_type)
+      return nil if enum_type_name.empty? || enum_type_name == "Void" || enum_type_name == "Unknown"
+
+      symbol_name = (safe_slice_to_string(default_node.name) || "")
+      return nil if symbol_name.empty?
+
+      return nil unless value = enum_member_value(enum_type_name, symbol_name, owner_name)
+
+      lit = Literal.new(ctx.next_id, ivar_type, value)
+      ctx.emit(lit)
+      (@enum_value_types ||= {} of ValueId => String)[lit.id] = resolve_type_alias_chain(enum_type_name)
+      lit.id
+    end
+
     private def default_literal_for_type(ctx : LoweringContext, type_ref : TypeRef) : ValueId
       case type_ref
       when TypeRef::BOOL
@@ -25632,6 +25697,7 @@ module Crystal::HIR
       splat_param_info_index : Int32? = nil
       splat_param_types_index : Int32? = nil
       splat_param_name : String? = nil
+      use_specialized_runtime_param_types = specialized_runtime_param_types?(full_name_override)
 
       if params = node.params
         each_param(params) do |param|
@@ -25768,13 +25834,21 @@ module Crystal::HIR
           if !param_literal && type_ann_str && call_type_for_param != TypeRef::VOID
             merge_type_param_substitutions_from_callsite(extra_type_params, type_ann_str, call_type_for_param)
           end
-          param_type_map[param_name] = param_type
-          param_infos << {param_name, param_type, is_ivar_param}
+          exact_runtime_param_type = if use_specialized_runtime_param_types &&
+                                        !param.is_block && !param.is_splat && !param.is_double_splat &&
+                                        should_use_exact_call_type_for_local_inference?(param_type, call_type_for_param)
+                                       call_type_for_param
+                                     else
+                                       param_type
+                                     end
+          local_inference_type = exact_runtime_param_type
+          param_type_map[param_name] = local_inference_type
+          param_infos << {param_name, exact_runtime_param_type, is_ivar_param}
           param_default_literals << extract_param_default_literal(param)
           enum_name = call_index < call_enum_names.size ? call_enum_names[call_index] : nil
           param_type_names << (type_ann_str || enum_name)
           if ta = param.type_annotation
-            concrete_name = get_type_name_from_ref(param_type)
+            concrete_name = get_type_name_from_ref(local_inference_type)
             if concrete_name.empty? || concrete_name == "Void" || concrete_name == "Unknown"
               update_typeof_local_name(param_name, (safe_slice_to_string(ta) || ""))
             else
@@ -25791,7 +25865,7 @@ module Crystal::HIR
             elsif !param.is_double_splat
               call_index += 1
             end
-            param_types << param_type
+            param_types << exact_runtime_param_type
           end
           param_literal_flags << param_literal
           if debug_hook_filter_match?(base_name)
@@ -30592,19 +30666,10 @@ module Crystal::HIR
                   end
 
                   if splat_variants
-                    splat_arg_name = if splat_arg_desc = @module.get_type_descriptor(splat_arg_type)
-                                       resolve_type_alias_chain(splat_arg_desc.name)
-                                     else
-                                       resolve_type_alias_chain(get_type_name_from_ref(splat_arg_type))
-                                     end
-                    unless splat_arg_name.empty?
-                      variant_match = splat_variants.any? do |variant_name|
-                        resolved_variant = resolve_type_alias_chain(variant_name)
-                        resolved_variant == splat_arg_name ||
-                          strip_generic_args(resolved_variant) == strip_generic_args(splat_arg_name)
-                      end
-                      return false unless variant_match
+                    variant_match = splat_variants.any? do |variant_name|
+                      !!declared_type_match_score(splat_arg_type, variant_name)
                     end
+                    return false unless variant_match
                   end
 
                   if splat_type != TypeRef::VOID && splat_arg_type != TypeRef::VOID
@@ -30671,6 +30736,12 @@ module Crystal::HIR
           param_type = type_ref_for_name(resolved_name)
         else
           param_type = TypeRef::VOID
+        end
+
+        if param_type == TypeRef::VOID && !param_resolved_name.empty? && union_type_name?(param_resolved_name)
+          return false unless declared_type_match_score(arg_type, param_resolved_name)
+          arg_idx += 1
+          next
         end
 
         if param_type != TypeRef::VOID && arg_type != TypeRef::VOID
@@ -30818,6 +30889,13 @@ module Crystal::HIR
             next
           end
           param_type = type_ref_for_name(resolved_name)
+          if param_type == TypeRef::VOID && union_type_name?(resolved_name)
+            if match_score = declared_type_match_score(arg_type, resolved_name)
+              score += match_score
+              arg_idx += 1
+              next
+            end
+          end
           if param_type != TypeRef::VOID
             if param_type == arg_type
               score += 2
@@ -30989,6 +31067,83 @@ module Crystal::HIR
       ann_args.each_with_index do |ann_arg, idx|
         collect_type_param_substitutions(ann_arg.strip, concrete_args[idx].strip, substitutions)
       end
+    end
+
+    private def declared_type_match_score(arg_type : TypeRef, declared_type_name : String) : Int32?
+      return nil if arg_type == TypeRef::VOID
+
+      resolved_name = resolve_type_alias_chain(declared_type_name.strip)
+      return nil if resolved_name.empty?
+
+      if union_type_name?(resolved_name)
+        best_score : Int32? = nil
+        split_union_type_name(resolved_name).each do |variant_name|
+          next if variant_name.empty?
+          if variant_score = declared_type_match_score(arg_type, variant_name)
+            best_score = best_score ? Math.max(best_score.not_nil!, variant_score) : variant_score
+          end
+        end
+        return best_score
+      end
+
+      if module_like_type_name?(resolved_name) || collection_module_type_name?(resolved_name)
+        return nil if primitive_type?(arg_type)
+        if collection_module_type_name?(resolved_name)
+          if arg_desc = @module.get_type_descriptor(arg_type)
+            return 2 if arg_desc.kind.tuple? || arg_desc.name.starts_with?("Tuple(") ||
+                        arg_desc.name.starts_with?("Array(") || arg_desc.name.starts_with?("Slice(") ||
+                        arg_desc.name.starts_with?("StaticArray(")
+          end
+        end
+        return 1
+      end
+
+      param_type = type_ref_for_name(resolved_name)
+      if param_type != TypeRef::VOID
+        return 2 if param_type == arg_type
+        if union_type_cached?(param_type)
+          if param_desc = @module.get_type_descriptor(param_type)
+            return 1 if declared_type_match_score(arg_type, param_desc.name)
+          end
+        end
+        return 1 if numeric_compatible?(arg_type, param_type)
+        return 1 if numeric_param_target_type(resolved_name, arg_type)
+      end
+
+      arg_name = if arg_desc = @module.get_type_descriptor(arg_type)
+                   resolve_type_alias_chain(arg_desc.name)
+                 else
+                   resolve_type_alias_chain(get_type_name_from_ref(arg_type))
+                 end
+      return nil if arg_name.empty?
+
+      return 2 if arg_name == resolved_name
+
+      resolved_base = strip_generic_args(resolved_name)
+      arg_base = strip_generic_args(arg_name)
+      return 1 if resolved_base == arg_base
+
+      if BUILTIN_GENERIC_BASES.includes?(resolved_base) && arg_name.starts_with?("#{resolved_base}(")
+        return 1
+      end
+
+      if @class_info.has_key?(arg_name) && @class_info.has_key?(resolved_name)
+        return 1 if class_inherits_from?(arg_name, resolved_name)
+      end
+
+      if @class_included_modules[arg_name]?.try(&.any? { |m| m.includes?(resolved_base) || resolved_base.includes?(last_namespace_component(m)) })
+        return 1
+      end
+
+      if arg_type == TypeRef::SYMBOL && @enum_info.try(&.has_key?(resolved_name))
+        return 1
+      end
+
+      if union_of_integers?(arg_name) && integer_param_type?(resolved_name)
+        return 1
+      end
+
+      nil
     end
 
     private def primitive_type?(type : TypeRef) : Bool
@@ -40115,6 +40270,22 @@ module Crystal::HIR
         @top_level_main_defined = true
       end
       base_name = top_level_def_base_name(node, base_name)
+      lookup_name : String = full_name_override || base_name
+      use_specialized_runtime_param_types = specialized_runtime_param_types?(full_name_override)
+      if use_specialized_runtime_param_types
+        if suffix = method_suffix(lookup_name)
+          unless suffix.empty?
+            parsed_types = parse_types_from_suffix(suffix)
+            unless parsed_types.empty?
+              if call_arg_types.nil?
+                call_arg_types = parsed_types
+              else
+                call_arg_types = merge_call_arg_types_from_suffix_with_signature(call_arg_types, parsed_types, node)
+              end
+            end
+          end
+        end
+      end
 
       # Lower parameters
       param_infos = [] of Tuple(String, TypeRef)
@@ -40136,7 +40307,7 @@ module Crystal::HIR
       splat_param_info_index : Int32? = nil
       splat_param_types_index : Int32? = nil
       splat_param_name : String? = nil
-      registered_param_map = function_type_param_map_for(full_name_override || base_name, base_name)
+      registered_param_map = function_type_param_map_for(lookup_name, base_name)
 
       if params = node.params
         param_loop = -> {
@@ -40216,14 +40387,22 @@ module Crystal::HIR
               param_type = call_type_for_param
             end
 
-            param_type_map[param_name] = param_type
-            param_infos << {param_name, param_type}
+            exact_runtime_param_type = if use_specialized_runtime_param_types &&
+                                          !param.is_block && !param.is_splat && !param.is_double_splat &&
+                                          should_use_exact_call_type_for_local_inference?(param_type, call_type_for_param)
+                                         call_type_for_param
+                                       else
+                                         param_type
+                                       end
+            local_inference_type = exact_runtime_param_type
+            param_type_map[param_name] = local_inference_type
+            param_infos << {param_name, exact_runtime_param_type}
             param_default_literals << extract_param_default_literal(param)
             # Track type annotation name for enum detection
             enum_name = call_index < call_enum_names.size ? call_enum_names[call_index] : nil
             param_type_names << (if ta = param.type_annotation; safe_slice_to_string(ta) || enum_name; else; enum_name; end)
             if ta = param.type_annotation
-              concrete_name = get_type_name_from_ref(param_type)
+              concrete_name = get_type_name_from_ref(local_inference_type)
               if concrete_name.empty? || concrete_name == "Void" || concrete_name == "Unknown"
                 update_typeof_local_name(param_name, (safe_slice_to_string(ta) || ""))
               else
@@ -40294,7 +40473,7 @@ module Crystal::HIR
               elsif !param.is_double_splat
                 call_index += 1
               end
-              param_types << param_type
+              param_types << exact_runtime_param_type
             end
             param_literal_flags << param_literal
           end
@@ -40327,7 +40506,7 @@ module Crystal::HIR
         if splat_type != TypeRef::VOID
           param_type_map[splat_param_name.not_nil!] = splat_type
           if idx = splat_param_info_index
-            param_infos[idx] = {splat_param_name.not_nil!, splat_type}
+          param_infos[idx] = {splat_param_name.not_nil!, splat_type}
           end
           if idx = splat_param_types_index
             param_types[idx] = splat_type
@@ -60458,6 +60637,18 @@ module Crystal::HIR
             has_splat = true
           end
         end
+        if splat_packed && use_prepack_callsite_types
+          entry_stats_for_callsite = @function_param_stats[entry_name]? || function_param_stats(entry_name, entry_def)
+          unless entry_stats_for_callsite.has_splat || entry_stats_for_callsite.has_double_splat
+            callsite_arg_types = arg_types.dup
+            callsite_arg_literals = arg_literals.dup
+            callsite_arg_enum_names = nil
+            if enum_map = @enum_value_types
+              names = args.map { |arg_id| enum_map[arg_id]? }
+              callsite_arg_enum_names = names if names.any?
+            end
+          end
+        end
         if env_has?("DEBUG_SLICE_EACH") && method_name == "each" && (lookup_name.includes?("Slice") || entry_name.includes?("Flags"))
           STDERR.puts "[SLICE_LOOKUP_HIT] lookup=#{lookup_name} → entry=#{entry_name}"
         end
@@ -64950,9 +65141,9 @@ module Crystal::HIR
       return false if arg_type == param_type
 
       return false unless union_type_cached?(param_type)
+      return false unless param_desc = @module.get_type_descriptor(param_type)
 
-      # Param is union type - check if arg is a concrete type
-      !union_type_cached?(arg_type)
+      !!declared_type_match_score(arg_type, param_desc.name)
     end
 
     # Check if a type is a union type

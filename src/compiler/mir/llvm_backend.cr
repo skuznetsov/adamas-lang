@@ -1749,6 +1749,17 @@ module Crystal::MIR
         mangled_name == "Crystal$Dmain_user_code$$Int32_Pointer$LPointer$LUInt8$R$R"
     end
 
+    private def inline_pointer_aggregate_type?(type_ref : TypeRef) : Bool
+      return false unless type = @module.type_registry.get(type_ref)
+      type.kind.tuple? || type.name.starts_with?("StaticArray(")
+    end
+
+    private def inline_pointer_aggregate_size(type_ref : TypeRef) : UInt64
+      type = @module.type_registry.get(type_ref)
+      return 0_u64 unless type
+      type.size
+    end
+
     private def emit_function_definition_header(return_type : String, mangled_name : String, param_types : Array(String)) : Nil
       emit_function_trace = bootstrap_env_enabled?("CRYSTAL_V2_EMIT_FUNCTION_TRACE", "CRYSTAL2_EMIT_FUNCTION_TRACE") && mangled_name == "__crystal_main"
       attrs = if llvm_entry_opt_guard_enabled? && llvm_entry_guard_target_name?(mangled_name)
@@ -15356,6 +15367,12 @@ module Crystal::MIR
         @value_types[inst.id] = inst.type
       end
 
+      if inline_pointer_aggregate_type?(inst.type)
+        emit "#{name} = getelementptr i8, ptr #{ptr}, i32 0"
+        record_emitted_type(name, "ptr")
+        return
+      end
+
       # TSan instrumentation: report read before load
       if @emit_tsan
         tsan_size = tsan_access_size(inst.type)
@@ -15472,6 +15489,18 @@ module Crystal::MIR
       # first user field instead of a discriminator.
       field_type_ref = inst.field_type
       if field_type_ref
+        if inline_pointer_aggregate_type?(field_type_ref)
+          aggregate_size = inline_pointer_aggregate_size(field_type_ref)
+          if aggregate_size > 0
+            if val == "null"
+              emit "call void @llvm.memset.p0.i64(ptr #{ptr}, i8 0, i64 #{aggregate_size}, i1 false)"
+            else
+              emit "call void @llvm.memcpy.p0.p0.i64(ptr #{ptr}, ptr #{val}, i64 #{aggregate_size}, i1 false)"
+            end
+            return
+          end
+        end
+
         field_type_str = @type_mapper.llvm_type(field_type_ref)
         final_emitted = @emitted_value_types[val]? || val_type_str
         # V2 BOOTSTRAP: If the value's MIR type is a union but it's passed as ptr
