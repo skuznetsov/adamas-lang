@@ -39989,11 +39989,27 @@ module Crystal::HIR
       return false unless has_method_separator?(resolved_base)
       return false unless requested_base.includes?('#') && resolved_base.includes?('#')
 
-      requested_owner = normalize_method_owner_name(method_owner(requested_base))
-      resolved_owner = normalize_method_owner_name(method_owner(resolved_base))
-      return false if requested_owner.empty? || resolved_owner.empty? || requested_owner == resolved_owner
+      # Use raw (unnormalized) owners for the distinctness check. During
+      # primitive template lowering, @type_param_map contains the abstract →
+      # concrete mapping (e.g. Int → Int32), which would cause
+      # normalize_method_owner_name to collapse both "Int32" and "Int" into
+      # "Int32" and hide the fact that the requested name already targets
+      # the concrete owner and should be preserved.
+      raw_requested_owner = method_owner(requested_base)
+      raw_resolved_owner = method_owner(resolved_base)
+      return false if raw_requested_owner.empty? || raw_resolved_owner.empty?
+      return false if raw_requested_owner == raw_resolved_owner
 
-      return true if inherited_value_dispatch_needs_origin?(requested_owner)
+      # Primitive/value types that need origin-specific dispatch (Int32, Bool,
+      # enums, structs) must keep the requested owner so the method is
+      # materialized under the concrete type, not the abstract template.
+      return true if inherited_value_dispatch_needs_origin?(raw_requested_owner)
+
+      # For generic owner preservation, fall back to normalized comparison
+      # so type aliases (e.g. Bytes → Slice(UInt8)) still collapse correctly.
+      requested_owner = normalize_method_owner_name(raw_requested_owner)
+      resolved_owner = normalize_method_owner_name(raw_resolved_owner)
+      return false if requested_owner == resolved_owner
 
       preserve_requested_generic_owner_specialization?(requested_owner, resolved_owner)
     end
