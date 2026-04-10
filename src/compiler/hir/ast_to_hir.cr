@@ -31127,6 +31127,15 @@ module Crystal::HIR
                 corrected_name = candidate
               end
             end
+            # Don't downgrade a concretely-typed call to an arity-wildcard variant.
+            # Example: IO#<<$Char (concrete) → IO#<<$arity1 (wildcard) is wrong.
+            inst_has_concrete_type = inst.method_name.includes?("$") && !inst.method_name.includes?("$arity")
+            corrected_introduces_arity = corrected_name.includes?("$arity")
+            if inst_has_concrete_type && corrected_introduces_arity
+              targets_to_lower << inst.method_name unless @module.has_function_with_body?(inst.method_name)
+              next
+            end
+
             corrected_base = strip_type_suffix(corrected_name)
             needs_materialization = !@module.has_function_with_body?(corrected_name) &&
               !@module.has_function_with_body?(corrected_base)
@@ -49301,6 +49310,10 @@ module Crystal::HIR
             lower_function_if_needed(method_name)
           end
         end
+        # If resolve_method_call returned an arity-indexed name (e.g. "IO#<<$arity1")
+        # due to cache effects or inheritance lookup, convert it to the properly typed
+        # name now that we know the concrete arg type (e.g. "IO#<<$Char").
+        method_name = prefer_callsite_over_arity(method_name, strip_type_suffix(method_name), [right_type], false)
         call_target_name = prefer_primary_call_target(method_name, primary_mangled_name, [right_type])
         call = Call.new(ctx.next_id, left_type, left_id, call_target_name, [right_id])
         ctx.emit(call)
@@ -56137,10 +56150,22 @@ module Crystal::HIR
       end
       unless func_def
         if has_method_separator?(base_name)
-          if lookup_arg_types.nil? && (suffix = lookup_suffix)
+          if suffix = lookup_suffix
             stripped_suffix = strip_mangled_suffix_flags(suffix)
             parsed_suffix_types = parse_types_from_suffix(stripped_suffix)
-            lookup_arg_types = parsed_suffix_types unless parsed_suffix_types.empty?
+            # If the name has a concrete type suffix (not $arity), and the callsite
+            # types came from the base name (not from the exact/target name), prefer
+            # the suffix-derived types. This prevents IO#puts$Int32 from being resolved
+            # using IO#puts's String callsite, which would incorrectly match IO#puts$String.
+            if !parsed_suffix_types.empty?
+              has_concrete_suffix = name.includes?('$') && !name.includes?("$arity")
+              exact_callsite = @pending_arg_types[name]? || @pending_arg_types[target_name]?
+              if has_concrete_suffix && exact_callsite.nil?
+                lookup_arg_types = parsed_suffix_types
+              elsif lookup_arg_types.nil?
+                lookup_arg_types = parsed_suffix_types
+              end
+            end
           end
           exact_arg_types = lookup_arg_types || [] of TypeRef
           if entry = lookup_function_def_for_call(
@@ -56155,7 +56180,13 @@ module Crystal::HIR
             resolved_entry_name, resolved_entry_def = entry
             func_def = resolved_entry_def
             arena = @function_def_arenas[resolved_entry_name]?
+            # If the requested name has a concrete type suffix (e.g. IO#puts$Int32)
+            # but the resolved overload is an arity-wildcard (e.g. IO#puts$arity1),
+            # keep the requested name so the caller can find it.
+            requested_has_concrete_type = name.includes?('$') && !name.includes?("$arity")
+            resolved_is_arity_wildcard = resolved_entry_name.includes?("$arity")
             keep_requested_name =
+              (requested_has_concrete_type && resolved_is_arity_wildcard) ||
               preserve_requested_value_owner_specialization?(name, resolved_entry_name) ||
               (name.includes?('$') &&
                 !prefer_callsite_specialization(base_name, resolved_entry_name, exact_arg_types, lookup_expect_block).nil?)
