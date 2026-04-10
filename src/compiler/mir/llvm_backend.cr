@@ -17141,10 +17141,20 @@ module Crystal::MIR
         end
       end
       if (op == "trunc" || op == "bitcast") && is_src_float && is_dst_int
-        # Check if destination is unsigned type to choose fptoui vs fptosi
-        dst_kind = @module.type_registry.get(inst.type).try(&.kind)
-        dst_unsigned = dst_kind && dst_kind.integer? && !dst_kind.signed_integer?
-        op = dst_unsigned ? "fptoui" : "fptosi"
+        # Preserve same-width float<->int bit reinterpretation for unsafe_as
+        # (double<->i64, float<->i32). Only width-changing casts should fall
+        # back to numeric conversion.
+        src_bits = src_type == "float" ? 32 : 64
+        dst_bits = dst_type[1..].to_i?
+        needs_numeric = op == "trunc"
+        needs_numeric ||= dst_bits && dst_bits != src_bits
+        if needs_numeric
+          dst_kind = @module.type_registry.get(inst.type).try(&.kind)
+          dst_unsigned = dst_kind && dst_kind.integer? && !dst_kind.signed_integer?
+          op = dst_unsigned ? "fptoui" : "fptosi"
+        else
+          op = "bitcast"
+        end
       end
 
       # Guard: int-to-float casts.
