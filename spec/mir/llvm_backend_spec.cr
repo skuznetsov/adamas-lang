@@ -1568,6 +1568,49 @@ describe Crystal::MIR::LLVMIRGenerator do
       output.should_not contain("call ptr @Crystal$CCHasher$Dnew(i64 0, i64 0)")
       output.should_not contain("call i64 @Crystal$CCHasher$Hresult(ptr %hasher2)")
     end
+
+    it "delegates tuple key_hash overrides to generic Tuple#hash with a live hasher" do
+      mod = Crystal::MIR::Module.new("test")
+      mod.type_registry.create_type(
+        Crystal::MIR::TypeKind::Struct,
+        "Crystal::Hasher",
+        16_u64,
+        8_u32
+      )
+
+      tuple_type = mod.type_registry.create_type(
+        Crystal::MIR::TypeKind::Tuple,
+        "Tuple(Float64)",
+        8_u64,
+        8_u32
+      )
+      float64_type = mod.type_registry.get(Crystal::MIR::TypeRef::FLOAT64)
+      float64_type.should_not be_nil
+      tuple_type.add_element_type(float64_type.not_nil!)
+      tuple_ref = Crystal::MIR::TypeRef.new(tuple_type.id)
+
+      tuple_hash = mod.create_function("Tuple#hash", Crystal::MIR::TypeRef::POINTER)
+      tuple_hash.add_param("self", tuple_ref)
+      tuple_hash.add_param("hasher", Crystal::MIR::TypeRef::POINTER)
+      tuple_hash_builder = Crystal::MIR::Builder.new(tuple_hash)
+      tuple_hash_builder.ret(1_u32)
+
+      func = mod.create_function("Hash(Tuple(Float64), Nil)#key_hash$Tuple(Float64)", Crystal::MIR::TypeRef::INT32)
+      func.add_param("self", Crystal::MIR::TypeRef::POINTER)
+      func.add_param("key", tuple_ref)
+
+      builder = Crystal::MIR::Builder.new(func)
+      zero = builder.const_int(0_i64, Crystal::MIR::TypeRef::INT32)
+      builder.ret(zero)
+
+      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen.emit_type_metadata = false
+      output = gen.generate
+
+      output.should contain("define i32 @Hash$LTuple$LFloat64$R$C$_Nil$R$Hkey_hash$$Tuple$LFloat64$R")
+      output.should contain("call ptr @Tuple$Hhash(ptr %key, ptr %hasher)")
+      output.should_not contain("call ptr @Tuple$Hhash(ptr %key, ptr null)")
+    end
   end
 end
 

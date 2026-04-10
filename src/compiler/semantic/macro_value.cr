@@ -111,6 +111,53 @@ module CrystalV2
         getter value : Int64 | Float64
         getter source_literal : String?
 
+        def self.from_literal(literal : String) : MacroNumberValue?
+          normalized = literal.gsub("_", "")
+          suffix = numeric_suffix(normalized)
+          body = suffix ? normalized[0, normalized.size - suffix.size] : normalized
+
+          if body.includes?(".") || body.includes?("e") || body.includes?("E")
+            value = body.to_f64?
+            return value ? MacroNumberValue.new(value, literal) : nil
+          end
+
+          if suffix && unsigned_numeric_suffix?(suffix)
+            return nil if body.starts_with?('-')
+
+            base = 10
+            digits = body
+            if digits.starts_with?("0x")
+              base = 16
+              digits = digits[2..]
+            elsif digits.starts_with?("0b")
+              base = 2
+              digits = digits[2..]
+            elsif digits.starts_with?("0o")
+              base = 8
+              digits = digits[2..]
+            end
+
+            return nil if digits.empty?
+            uint_value = digits.to_u64?(base)
+            return nil unless uint_value
+            return MacroNumberValue.new(uint_value.unsafe_as(Int64), literal)
+          end
+
+          value = body.to_i64?(prefix: true)
+          value ? MacroNumberValue.new(value, literal) : nil
+        end
+
+        private def self.numeric_suffix(literal : String) : String?
+          ["_i8", "_i16", "_i32", "_i64", "_u8", "_u16", "_u32", "_u64", "_f32", "_f64",
+           "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64"].find do |candidate|
+            literal.ends_with?(candidate)
+          end
+        end
+
+        private def self.unsigned_numeric_suffix?(suffix : String) : Bool
+          suffix.ends_with?("u8") || suffix.ends_with?("u16") || suffix.ends_with?("u32") || suffix.ends_with?("u64")
+        end
+
         def initialize(value : Int32 | Int64 | Float32 | Float64, @source_literal : String? = nil)
           @value = value.is_a?(Float32 | Float64) ? value.to_f64 : value.to_i64
         end
@@ -1072,11 +1119,7 @@ module CrystalV2
           when .number?
             literal = Frontend.node_literal_string(node)
             if literal
-              if literal.includes?(".")
-                MacroNumberValue.new(literal.to_f64)
-              else
-                MacroNumberValue.new(literal.to_i64)
-              end
+              MacroNumberValue.from_literal(literal) || MacroNilValue.new
             else
               MacroNilValue.new
             end

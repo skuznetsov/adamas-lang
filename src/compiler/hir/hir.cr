@@ -1867,6 +1867,7 @@ module Crystal::HIR
               if desc = get_type_descriptor(inst.type)
                 instantiated_types << strip_generics.call(desc.name)
               end
+              instantiated_types << "Array"
               if desc = get_type_descriptor(inst.element_type)
                 instantiated_types << strip_generics.call(desc.name)
               end

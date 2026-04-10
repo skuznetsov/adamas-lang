@@ -11016,23 +11016,21 @@ module Crystal::MIR
 
       # Try exact specific hash(hasher) for this type
       target = "#{key_suffix}$Hhash$$Crystal$CCHasher"
-      if func = @module.functions.find { |f| mangle_function_name(f.name) == target }
-        return mangle_function_name(func.name)
+      if resolved = find_hash_with_hasher_target(target, key_suffix)
+        return resolved
       end
 
       # For tuple types, try the generic Tuple#hash(Crystal::Hasher)
       if key_type.kind.tuple?
-        generic_target = "Tuple$Hhash$$Crystal$CCHasher"
-        if func = @module.functions.find { |f| mangle_function_name(f.name) == generic_target }
-          return mangle_function_name(func.name)
+        if resolved = find_hash_with_hasher_target("Tuple$Hhash$$Crystal$CCHasher", "Tuple$Hhash")
+          return resolved
         end
       end
 
       # For named tuple types, try the generic NamedTuple#hash(Crystal::Hasher)
       if key_type.name.starts_with?("NamedTuple(")
-        generic_target = "NamedTuple$Hhash$$Crystal$CCHasher"
-        if func = @module.functions.find { |f| mangle_function_name(f.name) == generic_target }
-          return mangle_function_name(func.name)
+        if resolved = find_hash_with_hasher_target("NamedTuple$Hhash$$Crystal$CCHasher", "NamedTuple$Hhash")
+          return resolved
         end
       end
 
@@ -11045,6 +11043,23 @@ module Crystal::MIR
         if func = @module.functions.find { |f| mangle_function_name(f.name) == base_target }
           return mangle_function_name(func.name)
         end
+      end
+
+      nil
+    end
+
+    private def find_hash_with_hasher_target(exact_mangled : String, generic_prefix : String) : String?
+      if func = @module.functions.find { |f| mangle_function_name(f.name) == exact_mangled }
+        return mangle_function_name(func.name)
+      end
+
+      if func = @module.functions.find { |f|
+           mangled = mangle_function_name(f.name)
+           next false unless mangled == generic_prefix || mangled.starts_with?("#{generic_prefix}$$")
+           next false unless f.params.size >= 2
+           emitted_param_llvm_type(f.params[1]) == "ptr"
+         }
+        return mangle_function_name(func.name)
       end
 
       nil

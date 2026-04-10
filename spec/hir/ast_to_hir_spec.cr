@@ -32,6 +32,63 @@ class Crystal::HIR::AstToHir
   def __test_repair_stale_call_return_types : Nil
     repair_stale_call_return_types
   end
+
+  def __test_queue_pending_inside_lowering(name : String) : Nil
+    old_depth = @lowering_depth
+    @lowering_depth = @lowering_depth_limit + 1
+    lower_function_if_needed(name)
+  ensure
+    @lowering_depth = old_depth.as(Int32)
+  end
+
+  def __test_rta_called_method?(name : String) : Bool
+    @rta_called_methods.includes?(name)
+  end
+
+  def __test_rta_called_method_part?(name : String) : Bool
+    @rta_called_method_parts.includes?(name)
+  end
+
+  def __test_pending_function?(name : String) : Bool
+    @pending_function_queue.includes?(name)
+  end
+
+  def __test_remember_callsite_arg_types(name : String, arg_types : Array(Crystal::HIR::TypeRef), has_block : Bool = false) : Nil
+    remember_callsite_arg_types(name, arg_types, has_block: has_block)
+  end
+
+  def __test_repair_partial_untyped_call_types_from_history(
+    lookup_name : String,
+    node : CrystalV2::Compiler::Frontend::DefNode,
+    call_types : Array(Crystal::HIR::TypeRef),
+  ) : Array(Crystal::HIR::TypeRef)
+    repair_partial_untyped_call_types_from_history(lookup_name, node, call_types)
+  end
+
+  def __test_missing_required_runtime_param_types?(
+    node : CrystalV2::Compiler::Frontend::DefNode,
+    call_types : Array(Crystal::HIR::TypeRef),
+  ) : Bool
+    missing_required_runtime_param_types?(node, call_types)
+  end
+
+  def __test_classvar_lazy_init_key?(key : String) : Bool
+    @classvar_lazy_init_info.has_key?(key)
+  end
+
+  def __test_deferred_classvar_init_names : Array(String)
+    @deferred_classvar_inits.compact_map do |entry|
+      expr_id, arena, _owner = entry
+      extract_deferred_classvar_name(arena, expr_id)
+    end
+  end
+
+  def __test_constant_literal_int_value(name : String) : Int64?
+    value = @constant_literal_values[name]?
+    return nil unless value.is_a?(CrystalV2::Compiler::Semantic::MacroNumberValue)
+    raw = value.value
+    raw.is_a?(Int64) ? raw : nil
+  end
 end
 
 # Helper to parse Crystal code and get AST
@@ -2121,6 +2178,188 @@ describe Crystal::HIR::AstToHir do
       text.should contain("Holder(Tuple(Float64)).marker")
       text.should_not contain("Holder(Pointer(Void)).marker")
     end
+
+    it "keeps formatter sequential arg fetches on the concrete tuple element type" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        value = 1.25_f64
+        sprintf("%.3f", value)
+      CRYSTAL
+
+      converter.__test_lower_function_if_needed("String::Formatter(Tuple(Float64))#arg_at$Nil")
+      converter.__test_lower_function_if_needed("String::Formatter(Tuple(Float64))#float$String::Formatter::Flags_Float64")
+
+      arg_at = converter.module.function_by_name("String::Formatter(Tuple(Float64))#arg_at$Nil")
+      arg_at.should_not be_nil
+      arg_at_type = converter.__test_get_type_name_from_ref(arg_at.not_nil!.return_type)
+      arg_at_type.should contain("Float64")
+      arg_at_type.should_not eq("Int32")
+
+      text = hir_text(arg_at.not_nil!)
+      text.should contain("local \"arg\" : 13")
+      text.should_not contain("local \"arg\" : 0")
+
+      float_fn = converter.module.function_by_name("String::Formatter(Tuple(Float64))#float$String::Formatter::Flags_Float64 | Int32")
+      float_fn.should_not be_nil
+      float_text = hir_text(float_fn.not_nil!)
+      float_text.should_not contain("Expected a float, not ")
+      float_text.should_not contain("Float64#inspect()")
+
+      converter.module.function_by_name("String::Formatter(Tuple(Float64))#float$String::Formatter::Flags_Int32").should be_nil
+    end
+
+    it "preserves concrete owner type params for generic-module unsafe_as and constants" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        module Reint(F, U)
+          def self.bits(num : F)
+            u = num.unsafe_as(U)
+            u & U::MAX
+          end
+        end
+
+        Reint(Float64, UInt64).bits(1.5_f64)
+      CRYSTAL
+
+      uint64_ref = converter.__test_type_ref_for_name("UInt64")
+
+      converter.__test_lower_function_if_needed("Reint(Float64, UInt64).bits$Float64")
+      func = converter.module.function_by_name("Reint(Float64, UInt64).bits$Float64")
+      func.should_not be_nil
+
+      text = hir_text(func.not_nil!)
+      text.should contain("cast %1 as #{uint64_ref.id}")
+      text.should contain("classvar_get UInt64.@@MAX")
+      text.should_not contain("Object#unsafe_as$T")
+      text.should_not contain("Tuple#to_i")
+    end
+
+    it "preserves parameter reassignments across statically selected if branches" do
+      converter = lower_program(<<-CRYSTAL)
+        def foo(x : Bool?)
+          if true
+            x = true
+          end
+          x
+        end
+      CRYSTAL
+
+      foo = converter.module.function_by_name("foo$Nil | Bool")
+      foo.should_not be_nil
+
+      exit_term = foo.not_nil!.get_block(foo.not_nil!.entry_block).terminator
+      exit_term.should be_a(Crystal::HIR::Return)
+      return_value = exit_term.as(Crystal::HIR::Return).value
+      return_value.should_not be_nil
+
+      return_copy = foo.not_nil!.blocks.flat_map(&.instructions).find do |inst|
+        inst.is_a?(Crystal::HIR::Copy) && inst.id == return_value
+      end
+      return_copy.should_not be_nil
+      return_copy.not_nil!.as(Crystal::HIR::Copy).source.should_not eq(foo.not_nil!.params.first.id)
+    end
+
+    it "materializes inherited struct instance dispatch under the concrete owner" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        module Outer
+          module Inner
+            struct Point
+              def initialize(@x : Int32, @y : Int32)
+              end
+            end
+          end
+        end
+
+        STDOUT << Outer::Inner::Point.new(1, 2)
+      CRYSTAL
+
+      converter.__test_lower_function_if_needed("IO#<<$Outer::Inner::Point")
+
+      io_append = converter.module.function_by_name("IO#<<$Outer::Inner::Point")
+      io_append.should_not be_nil
+      io_text = hir_text(io_append.not_nil!)
+      io_text.should contain("Outer::Inner::Point#to_s")
+      io_text.should_not contain("Struct#to_s$IO")
+    end
+
+    it "keeps concrete array inspect virtual targets lowerable on demand" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        struct Point
+          def initialize(@x : Int32, @y : Int32)
+          end
+        end
+
+        puts [Point.new(1, 2)].inspect
+      CRYSTAL
+
+      converter.__test_lower_function_if_needed("Array(Point)#inspect$IO")
+      converter.__test_lower_function_if_needed("Array(Point)#to_s$IO")
+
+      converter.module.function_by_name("Array(Point)#inspect$IO").should_not be_nil
+      converter.module.function_by_name("Array(Point)#to_s$IO").should_not be_nil
+    end
+
+    it "does not materialize unrelated inspect virtual targets when lowering one concrete array" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        struct Point
+          def initialize(@x : Int32, @y : Int32)
+          end
+        end
+
+        puts [Point.new(1, 2)].inspect
+      CRYSTAL
+
+      converter.__test_lower_function_if_needed("Array(Point)#inspect$IO")
+      converter.__test_lower_function_if_needed("Array(Point)#to_s$IO")
+
+      converter.module.function_by_name("Array(Point)#inspect$IO").should_not be_nil
+      converter.module.function_by_name("Array(Point)#to_s$IO").should_not be_nil
+      converter.module.function_by_name("Array(Array(Int32))#inspect$IO").should be_nil
+      converter.module.function_by_name("Array(Array(Int32))#to_s$IO").should be_nil
+    end
+
+    it "preserves concrete generic receiver owners when lowering inherited inspect bodies" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        struct Point
+          def initialize(@x : Int32, @y : Int32)
+          end
+        end
+
+        puts [Point.new(1, 2)].inspect
+      CRYSTAL
+
+      converter.__test_lower_function_if_needed("Array(Point)#inspect$IO")
+      converter.__test_lower_function_if_needed("Array(Point)#to_s$IO")
+
+      inspect_fn = converter.module.function_by_name("Array(Point)#inspect$IO")
+      to_s_fn = converter.module.function_by_name("Array(Point)#to_s$IO")
+      inspect_fn.should_not be_nil
+      to_s_fn.should_not be_nil
+      hir_text(inspect_fn.not_nil!).should contain("Array(Point)#to_s$IO")
+    end
+
+    it "marks deferred concrete callees as lazy-rta call targets" do
+      arena = parse("1")[0]
+      converter = Crystal::HIR::AstToHir.new(arena)
+      converter.arena = arena
+
+      converter.__test_queue_pending_inside_lowering("Array(Point)#inspect$IO")
+
+      converter.__test_rta_called_method?("Array(Point)#inspect$IO").should be_true
+      converter.__test_rta_called_method?("Array(Point)#inspect").should be_false
+      converter.__test_rta_called_method_part?("inspect$IO").should be_false
+      converter.__test_rta_called_method_part?("inspect").should be_false
+    end
+
+    it "keeps duplicate deferred callee recording exact-name idempotent" do
+      arena = parse("1")[0]
+      converter = Crystal::HIR::AstToHir.new(arena)
+      converter.arena = arena
+
+      converter.__test_queue_pending_inside_lowering("Array(Point)#inspect$IO")
+      converter.__test_rta_called_method?("Array(Point)#inspect$IO").should be_true
+
+      converter.__test_queue_pending_inside_lowering("Array(Point)#inspect$IO")
+      converter.__test_rta_called_method?("Array(Point)#inspect$IO").should be_true
+    end
   end
 
   describe "named arg block overload resolution" do
@@ -2466,6 +2705,536 @@ describe Crystal::HIR::AstToHir do
       system_type_func.should_not be_nil
       system_type_func.not_nil!.blocks.any? { |block| !block.instructions.empty? }.should be_true
     end
+
+    it "rebinds consumer overloads after nested call return types are repaired" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        struct Point
+          property val : Float64
+          property ts : Int64
+
+          def initialize(@val : Float64, @ts : Int64)
+          end
+        end
+
+        puts [Point.new(1.0, 2_i64)].inspect
+      CRYSTAL
+
+      main = converter.module.function_by_name("__crystal_main")
+      main.should_not be_nil
+
+      text = hir_text(main.not_nil!)
+      text.should contain("Array(Point)#inspect() : 15")
+      text.should contain("__crystal_v2_print_string_ln")
+      text.should_not contain("IO#puts$Nil")
+    end
+
+    it "orders dependent deferred constants after their referenced constants" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        class H
+          HASH_BITS = begin
+            61
+          end
+          HASH_MODULUS = (1_i64 << HASH_BITS) - 1
+        end
+
+        def run
+          H::HASH_MODULUS
+        end
+
+        run()
+      CRYSTAL
+
+      main = converter.module.function_by_name("__crystal_main")
+      main.should_not be_nil
+
+      text = hir_text(main.not_nil!)
+      bits_idx = text.index("classvar_set H.@@HASH_BITS")
+      bits_idx.should_not be_nil
+      modulus_idx = text.index("classvar_set H.@@HASH_MODULUS")
+      modulus_idx.should_not be_nil
+      bits_idx.not_nil!.should be < modulus_idx.not_nil!
+    end
+
+    it "keeps source order for unrelated deferred constants instead of preferring deeper namespaces" do
+      converter = lower_program_with_sources(<<-CRYSTAL)
+        class H
+          HASH_BITS = 61
+          HASH_MODULUS = (1_i64 << HASH_BITS) - 1
+        end
+
+        module Outer
+          module Inner
+            DEEP = {1, 2}
+          end
+        end
+
+        def run
+          H::HASH_MODULUS
+          Outer::Inner::DEEP
+        end
+
+        run()
+      CRYSTAL
+
+      main = converter.module.function_by_name("__crystal_main")
+      main.should_not be_nil
+
+      text = hir_text(main.not_nil!)
+      modulus_idx = text.index("classvar_set H.@@HASH_MODULUS")
+      modulus_idx.should_not be_nil
+      deep_idx = text.index("classvar_set Outer::Inner.@@DEEP")
+      deep_idx.should_not be_nil
+      modulus_idx.not_nil!.should be < deep_idx.not_nil!
+    end
+
+    it "keeps typed super dispatch flags out of parsed callsite arg types" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        class Exception
+          def initialize(@message : String? = nil, @cause : Exception? = nil)
+          end
+        end
+
+        class ArgumentError < Exception
+          def initialize(message = "Argument error")
+            super(message)
+          end
+        end
+
+        ArgumentError.new("boom")
+      CRYSTAL
+
+      converter.__test_lower_function_if_needed("ArgumentError#initialize$String")
+      typed_init = converter.module.function_by_name("ArgumentError#initialize$String")
+      typed_init.should_not be_nil
+      typed_text = hir_text(typed_init.not_nil!)
+      typed_text.should contain("Exception#initialize")
+      typed_text.should contain("_super")
+      typed_text.should_not contain("call %0.ArgumentError#initialize(")
+    end
+
+    it "does not retarget super-tagged exception initialize wrappers back to self" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        class Exception
+          def initialize(@message : String? = nil, @cause : Exception? = nil)
+          end
+        end
+
+        class ArgumentError < Exception
+          def initialize(message = "Argument error")
+            super(message)
+          end
+        end
+
+        arg = ArgumentError.new("boom")
+        arg.message
+      CRYSTAL
+
+      converter.__test_lower_function_if_needed("ArgumentError#initialize")
+
+      base_init = converter.module.function_by_name("ArgumentError#initialize")
+      base_init.should_not be_nil
+      base_text = hir_text(base_init.not_nil!)
+      base_text.should contain("Exception#initialize")
+      base_text.should contain("_super")
+      base_text.should_not contain("call %0.ArgumentError#initialize(")
+    end
+
+    it "backfills partial untyped default-arg call types from recorded history before lowering" do
+      arena, exprs = parse(<<-CRYSTAL)
+        def wait_like(io, timeout = nil)
+          io.to_s
+        end
+      CRYSTAL
+
+      converter = Crystal::HIR::AstToHir.new(arena)
+      converter.arena = arena
+
+      def_expr = exprs.find { |expr_id| arena[expr_id].is_a?(CrystalV2::Compiler::Frontend::DefNode) }
+      def_expr.should_not be_nil
+      def_node = arena[def_expr.not_nil!].as(CrystalV2::Compiler::Frontend::DefNode)
+
+      converter.register_function(def_node)
+
+      int32_ref = converter.__test_type_ref_for_name("Int32")
+      nil_ref = Crystal::HIR::TypeRef::NIL
+      partial = [Crystal::HIR::TypeRef::VOID, nil_ref]
+
+      converter.__test_missing_required_runtime_param_types?(def_node, partial).should be_true
+      converter.__test_remember_callsite_arg_types("wait_like", [int32_ref, nil_ref])
+
+      repaired = converter.__test_repair_partial_untyped_call_types_from_history("wait_like", def_node, partial)
+      repaired.should eq([int32_ref, nil_ref])
+      converter.__test_missing_required_runtime_param_types?(def_node, repaired).should be_false
+    end
+
+    it "keeps visibility-wrapped private constants reachable in deferred init bookkeeping" do
+      arena, exprs = parse(<<-CRYSTAL)
+        class Box
+          private C1 = 11_i64
+
+          def value
+            C1
+          end
+        end
+      CRYSTAL
+
+      converter = Crystal::HIR::AstToHir.new(arena)
+      converter.arena = arena
+
+      class_expr = exprs.find { |expr_id| arena[expr_id].is_a?(CrystalV2::Compiler::Frontend::ClassNode) }
+      class_expr.should_not be_nil
+      class_node = arena[class_expr.not_nil!].as(CrystalV2::Compiler::Frontend::ClassNode)
+
+      converter.register_class(class_node)
+      converter.lower_class(class_node)
+
+      converter.__test_deferred_classvar_init_names.should contain("C1")
+    end
+
+    it "preserves high-bit UInt64 private constant literals instead of zeroing them" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        struct X
+          private C1 = 0xacd5ad43274593b9_u64
+
+          def self.c1
+            C1
+          end
+        end
+
+        X.c1
+      CRYSTAL
+
+      converter.__test_constant_literal_int_value("X::C1").should eq(0xacd5ad43274593b9_u64.unsafe_as(Int64))
+    end
+
+    it "inlines enum predicates through zero-arg enum-returning calls" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        enum FileType : UInt8
+          File
+          Pipe
+        end
+
+        class Info
+          def type : FileType
+            FileType::Pipe
+          end
+        end
+
+        class Box
+          def foo(info : Info)
+            info.type.pipe?
+          end
+        end
+
+        Box.new.foo(Info.new)
+      CRYSTAL
+
+      converter.__test_lower_function_if_needed("Box#foo$Info")
+
+      foo = converter.module.function_by_name("Box#foo$Info")
+      foo.should_not be_nil
+      text = hir_text(foo.not_nil!)
+      text.should contain("binop Eq")
+      text.should_not contain(".pipe?()")
+    end
+
+    it "inlines enum predicates in case-dot-when branches over enum-returning calls" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        enum FileType : UInt8
+          File
+          Pipe
+          Socket
+        end
+
+        class Info
+          def type : FileType
+            FileType::Pipe
+          end
+        end
+
+        class Box
+          def foo(info : Info)
+            case info.type
+            when .pipe?, .socket?
+              1
+            else
+              2
+            end
+          end
+        end
+
+        Box.new.foo(Info.new)
+      CRYSTAL
+
+      converter.__test_lower_function_if_needed("Box#foo$Info")
+
+      foo = converter.module.function_by_name("Box#foo$Info")
+      foo.should_not be_nil
+      text = hir_text(foo.not_nil!)
+      text.should contain("binop Eq")
+      text.should_not contain(".pipe?()")
+      text.should_not contain(".socket?()")
+    end
+
+    it "inlines enum predicates in case-dot-when branches over nested receiver calls" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        enum FileType : UInt8
+          File
+          Pipe
+          Socket
+        end
+
+        class Info
+          def type : FileType
+            FileType::Pipe
+          end
+        end
+
+        module HasInfo
+          def system_info
+            Info.new
+          end
+        end
+
+        class Box
+          include HasInfo
+
+          def foo
+            case system_info.type
+            when .pipe?, .socket?
+              1
+            else
+              2
+            end
+          end
+        end
+
+        Box.new.foo
+      CRYSTAL
+
+      converter.__test_lower_function_if_needed("Box#foo")
+
+      foo = converter.module.function_by_name("Box#foo")
+      foo.should_not be_nil
+      text = hir_text(foo.not_nil!)
+      text.should contain("Box#system_info")
+      text.should contain("Info#type")
+      text.should contain("binop Eq")
+      text.should_not contain(".pipe?()")
+      text.should_not contain(".socket?()")
+    end
+
+    it "inlines case-dot-when predicates for nested enum owners with shorthand return annotations" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        class File
+          enum Type : UInt8
+            File
+            Pipe
+            Socket
+          end
+
+          class Info
+            def type : Type
+              Type::Pipe
+            end
+          end
+        end
+
+        module HasInfo
+          def system_info
+            File::Info.new
+          end
+        end
+
+        class Box
+          include HasInfo
+
+          def foo
+            case system_info.type
+            when .pipe?, .socket?
+              1
+            else
+              2
+            end
+          end
+        end
+
+        Box.new.foo
+      CRYSTAL
+
+      converter.__test_lower_function_if_needed("Box#foo")
+
+      foo = converter.module.function_by_name("Box#foo")
+      foo.should_not be_nil
+      text = hir_text(foo.not_nil!)
+      text.should contain("File::Info#type")
+      text.should contain("binop Eq")
+      text.should_not contain(".pipe?()")
+      text.should_not contain(".socket?()")
+    end
+
+    it "inlines case-dot-when predicates through enum-returning forwarding methods" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        class File
+          enum Type : UInt8
+            File
+            Pipe
+            Socket
+          end
+
+          class Info
+            def type : Type
+              system_type
+            end
+
+            def system_type : Type
+              Type::Pipe
+            end
+          end
+        end
+
+        module HasInfo
+          def system_info
+            File::Info.new
+          end
+        end
+
+        class Box
+          include HasInfo
+
+          def foo
+            case system_info.type
+            when .pipe?, .socket?
+              1
+            else
+              2
+            end
+          end
+        end
+
+        Box.new.foo
+      CRYSTAL
+
+      converter.__test_lower_function_if_needed("Box#foo")
+
+      foo = converter.module.function_by_name("Box#foo")
+      foo.should_not be_nil
+      text = hir_text(foo.not_nil!)
+      text.should contain("File::Info#type")
+      text.should contain("binop Eq")
+      text.should_not contain(".pipe?()")
+      text.should_not contain(".socket?()")
+    end
+
+    it "inlines case-dot-when predicates through enum-returning forwarding methods on structs" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        class File
+          enum Type : UInt8
+            File
+            Pipe
+            Socket
+          end
+
+          struct Info
+            def type : Type
+              system_type
+            end
+
+            def system_type : Type
+              Type::Pipe
+            end
+          end
+        end
+
+        module HasInfo
+          def system_info
+            File::Info.new
+          end
+        end
+
+        class Box
+          include HasInfo
+
+          def foo
+            case system_info.type
+            when .pipe?, .socket?
+              1
+            else
+              2
+            end
+          end
+        end
+
+        Box.new.foo
+      CRYSTAL
+
+      converter.__test_lower_function_if_needed("Box#foo")
+
+      foo = converter.module.function_by_name("Box#foo")
+      foo.should_not be_nil
+      text = hir_text(foo.not_nil!)
+      text.should contain("File::Info#type")
+      text.should contain("binop Eq")
+      text.should_not contain(".pipe?()")
+      text.should_not contain(".socket?()")
+    end
+
+    it "inlines case-dot-when predicates through included-module enum forwarders on structs" do
+      converter = lower_program_with_main(<<-CRYSTAL)
+        module Crystal::System::FileInfo
+          def system_type : ::File::Type
+            ::File::Type::Pipe
+          end
+        end
+
+        class File
+          enum Type : UInt8
+            File
+            Pipe
+            Socket
+          end
+
+          struct Info
+            include Crystal::System::FileInfo
+
+            def type : Type
+              system_type
+            end
+          end
+        end
+
+        module HasInfo
+          def system_info
+            File::Info.new
+          end
+        end
+
+        class Box
+          include HasInfo
+
+          def foo
+            case system_info.type
+            when .pipe?, .socket?
+              1
+            else
+              2
+            end
+          end
+        end
+
+        Box.new.foo
+      CRYSTAL
+
+      converter.__test_lower_function_if_needed("Box#foo")
+
+      foo = converter.module.function_by_name("Box#foo")
+      foo.should_not be_nil
+      text = hir_text(foo.not_nil!)
+      text.should contain("File::Info#type")
+      text.should contain("binop Eq")
+      text.should_not contain(".pipe?()")
+      text.should_not contain(".socket?()")
+    end
   end
 
   describe "macro literal parameter filtering" do
@@ -2644,6 +3413,7 @@ describe Crystal::HIR::AstToHir do
       end
     end
   end
+
 
   describe "inline block tuple binding" do
     it "destructures yielded tuples for multi-param blocks without retargeting the first param to the whole tuple" do

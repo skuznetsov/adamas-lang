@@ -620,20 +620,7 @@ module CrystalV2
         end
 
         private def macro_number_value_from_literal(literal : String) : MacroNumberValue
-          normalized = literal
-          ["_i8", "_i16", "_i32", "_i64", "_u8", "_u16", "_u32", "_u64", "_f32", "_f64",
-           "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64"].each do |suffix|
-            if normalized.ends_with?(suffix)
-              normalized = normalized[0, normalized.size - suffix.size]
-              break
-            end
-          end
-
-          if normalized.includes?(".") || normalized.includes?("e") || normalized.includes?("E")
-            MacroNumberValue.new(normalized.to_f64? || 0.0, literal)
-          else
-            MacroNumberValue.new(normalized.to_i64? || 0_i64, literal)
-          end
+          MacroNumberValue.from_literal(literal) || MacroNumberValue.new(0_i64, literal)
         end
 
         # Convert AST expression to MacroValue (for simple literals only)

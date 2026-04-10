@@ -52,6 +52,21 @@ describe "Codegen Integration" do
       output.strip.should eq("13 7 30 3 1")
     end
 
+    it "handles signed floor division and modulo semantics" do
+      source = <<-CR
+        lib LibC
+          fun printf(format : UInt8*, ...) : Int32
+        end
+
+        a = -5_i64
+        b = 10_i64
+        LibC.printf("%lld %lld\\n", a // b, a % b)
+        CR
+
+      output = CodegenTestHelper.compile_and_run(source)
+      output.strip.should eq("-1 5")
+    end
+
     it "handles Float64 arithmetic" do
       source = <<-CR
         lib LibC
