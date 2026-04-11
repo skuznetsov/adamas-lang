@@ -24,21 +24,21 @@
 d : Int32 | UInt32 = 236_i32
 d = 236_u32 if 1 == 1
 
-puts d % 10                 # 6  (UInt32 % Int32)
-puts d // 10                # 23 (UInt32 // Int32)
-puts d << 1                 # 472
-puts d >> 2                 # 59
-puts d + 4                  # 240
-puts d - 6                  # 230
-puts d * 2                  # 472
+raise "d % 10" unless (d % 10) == 6          # UInt32 % Int32
+raise "d // 10" unless (d // 10) == 23       # UInt32 // Int32
+raise "d << 1" unless (d << 1) == 472
+raise "d >> 2" unless (d >> 2) == 59
+raise "d + 4" unless (d + 4) == 240
+raise "d - 6" unless (d - 6) == 230
+raise "d * 2" unless (d * 2) == 472
 
 # Comparison returns Bool on both variants.
-puts (d > 100)              # true
-puts (d == 236)             # true
+raise "d > 100" unless d > 100
+raise "d == 236" unless d == 236
 
 # Negative signed path (flooring semantics for // and %).
 s : Int32 | UInt32 = -7_i32
-puts s % 3                  # 2  (flooring, not truncating)
-puts s // 3                 # -3
+raise "s % 3" unless (s % 3) == 2            # flooring, not truncating
+raise "s // 3" unless (s // 3) == -3
 
 puts "union_prim_binop_ok"

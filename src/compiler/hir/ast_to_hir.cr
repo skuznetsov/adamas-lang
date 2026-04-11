@@ -17981,10 +17981,15 @@ module Crystal::HIR
     end
 
     private def wrap_module_body_macro_output(owner_name : String, output : String) : String
+      # Use a sentinel wrapper name instead of the real owner path. If we used
+      # the real path (e.g. "module Float::Printer::RyuPrintf"), the parser
+      # would split it into nested ModuleNodes (Float > Printer > RyuPrintf),
+      # and then process_begin_macro_if_in_module would prepend module_name
+      # again when recursing into children, producing a doubled namespace like
+      # "Float::Printer::RyuPrintf::Printer::RyuPrintf". The sentinel keeps a
+      # single wrapper level so the body is walked directly at module_name.
       String.build do |builder|
-        builder << "module "
-        builder << owner_name
-        builder << '\n'
+        builder << "module __V2MacroBody__\n"
         builder << output
         builder << '\n' unless output.ends_with?('\n')
         builder << "end\n"
