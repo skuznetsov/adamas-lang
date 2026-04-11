@@ -53576,10 +53576,14 @@ module Crystal::HIR
                      end
             if cop = cmp_op
               arg_val = lower_expr(ctx, cond_node.args[0])
-              binop = BinaryOperation.new(ctx.next_id, TypeRef::BOOL, cop, subject_id, arg_val)
-              ctx.emit(binop)
-              ctx.register_type(binop.id, TypeRef::BOOL)
-              return binop.id
+              if numeric_primitive?(ctx.type_of(subject_id)) && numeric_primitive?(ctx.type_of(arg_val))
+                binop = BinaryOperation.new(ctx.next_id, TypeRef::BOOL, cop, subject_id, arg_val)
+                ctx.emit(binop)
+                ctx.register_type(binop.id, TypeRef::BOOL)
+                return binop.id
+              end
+
+              return emit_binary_call(ctx, subject_id, member_name, arg_val)
             end
           end
 
