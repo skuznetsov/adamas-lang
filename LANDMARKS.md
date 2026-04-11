@@ -1,7 +1,33 @@
 # LANDMARKS
 
-Updated: 2026-04-09
+Updated: 2026-04-11
 Context: compiler/bootstrap/stage2-stability
+
+[LM-454|verified]: `case subject; when .op(arg)` shortcut lowering has a
+narrow but important invariant: the shortcut means `subject.op(arg)`, but
+lowering it to a raw HIR `BinaryOperation` is only semantics-preserving for
+numeric primitive operands. The live Ryu failure fixed by `502582a0` was the
+numeric side of this seam: `Float::Printer::RyuPrintf#decimal_length9` used
+`case v; when .>=(N)` and the previous fallback compared the `UInt32` subject
+against the lowered Bool result of `v >= N`, producing wrong decimal lengths
+and outputs like `2.150` for `236.15`. The adversary case showed why the
+direct fix could not stay broad: a dynamic `String` subject under
+`case s; when .==("abc")` must call `String#==` and not raw pointer/value
+equality. The bounded follow-up fix in `src/compiler/hir/ast_to_hir.cr` keeps
+direct `BinaryOperation` only when both subject and argument are
+`numeric_primitive?`, and routes non-numeric shortcut operators through
+`emit_binary_call(ctx, subject_id, member_name, arg_val)`. Regression
+`regression_tests/case_when_operator_shortcut.cr` covers the Ryu-like
+`UInt32` length ladder including the top threshold and dynamic String
+`.==`/`.!=` dispatch. Verification: fresh compiler build was green;
+`scripts/run_safe.sh /tmp/case_when_operator_shortcut_verify 10 512` printed
+`case_when_operator_shortcut_ok`; the Ryu reducer printed `size=7` and
+`buf=236.150`; and `/Users/sergey/Projects/Python/Grafana/python/bench_crystal.cr`
+compiled and ran to exit `0`. Boundary: this closes the case shortcut/Ryu
+integer-part bug and removes the old garbage/truncation in the benchmark, but
+`sprintf` precision remains a separate frontier because V2 still prints long
+float tails where original Crystal honors formats such as `%.3f` and `%.0f`.
+{F/G/R: 0.94/0.78/0.95} [verified]
 
 [LM-453|verified]: A distinct callsite return-typing seam exists after exact
 overload resolution for typed virtual calls in `lower_call(...)`. The reducer
