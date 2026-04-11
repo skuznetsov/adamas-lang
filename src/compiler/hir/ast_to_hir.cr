@@ -49658,6 +49658,12 @@ module Crystal::HIR
 
       result_type = if is_comparison_op?(op_str)
                       TypeRef::BOOL
+                    elsif left_type == TypeRef::CHAR && ctx.type_of(right_id) == TypeRef::CHAR && op_str == "-"
+                      # `Char - Char` returns Int32 (codepoint difference) in Crystal.
+                      # Without this, the result would be typed as Char and later consumers
+                      # (e.g. `String::Formatter#consume_number` using `num *= 10`) would see
+                      # a `Char | Int32` union and silently read the type-id as the value.
+                      TypeRef::INT32
                     else
                       # For arithmetic ops, infer type from left operand
                       ctx.type_of(left_id)
