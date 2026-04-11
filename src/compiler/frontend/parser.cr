@@ -8895,6 +8895,28 @@ module CrystalV2
                 end
               end
 
+              # Expand `{% ... %}` / `{{ ... }}` directives embedded inside
+              # string-literal tokens. V2 pre-lexes strings as single String
+              # tokens which would otherwise preserve the directive text
+              # verbatim, breaking stdlib constructs like Ryu's DIGIT_TABLE.
+              # Mirrors how original Crystal's next_macro_token scans raw
+              # bytes for macro delimiters regardless of string context.
+              if token.kind == Token::Kind::String || token.kind == Token::Kind::StringInterpolation
+                if expanded = expand_macro_directives_in_string_token(token)
+                  if buffer_end_span
+                    trim_gap = append_macro_gap(buffer, buffer_end_span, token.span, trim_gap)
+                  end
+                  flush_macro_text(buffer, pieces, false, buffer_start_span, buffer_end_span)
+                  buffer_start_span = nil
+                  buffer_end_span = nil
+                  expanded.each { |sp| pieces << sp }
+                  buffer_end_span = token.span
+                  trim_gap = false
+                  advance
+                  next
+                end
+              end
+
               if buffer_end_span
                 trim_gap = append_macro_gap(buffer, buffer_end_span, token.span, trim_gap)
               else
@@ -14962,6 +14984,202 @@ current_token.kind == Token::Kind::Identifier &&
 
         private def whitespace_token?(token : Token)
           token.kind == Token::Kind::Whitespace || token.kind == Token::Kind::Newline
+        end
+
+        # Detect whether the current token's raw source contains unescaped
+        # `{%` / `{{` macro directives that should be expanded inline inside
+        # parse_macro_body. This is needed because V2 pre-lexes string
+        # literals as single String tokens, which would otherwise swallow
+        # macro directives that happen to appear inside quoted strings.
+        # Original Crystal's next_macro_token walks raw bytes and recognizes
+        # `{%` / `{{` anywhere, including inside strings, so stdlib code like
+        # `Float::Printer::RyuPrintf::DIGIT_TABLE` (which builds a lookup
+        # table inside a quoted string via `{% for %}`) relies on this.
+        private def string_token_source_has_macro_directive?(source_slice : Slice(UInt8)) : Bool
+          i = 0
+          while i + 1 < source_slice.size
+            b = source_slice.unsafe_fetch(i)
+            if b == '\\'.ord.to_u8 && source_slice.unsafe_fetch(i + 1) == '{'.ord.to_u8
+              # Escaped `\{` — skip both bytes so `\{%` / `\{{` stays literal.
+              i += 2
+              next
+            end
+            if b == '{'.ord.to_u8
+              nb = source_slice.unsafe_fetch(i + 1)
+              return true if nb == '%'.ord.to_u8 || nb == '{'.ord.to_u8
+            end
+            i += 1
+          end
+          false
+        end
+
+        # Scan `source_slice` starting at byte offset `start` (where
+        # `source_slice[start..start+1]` is `{%` or `{{`) and return the byte
+        # offset just past the matching closing sequence (`%}` or `}}`).
+        # Returns nil if no closing sequence is found within the slice.
+        # Directives embedded inside string literals are typically simple
+        # (e.g. `{% for i in 0..9 %}`), so linear scanning is sufficient.
+        private def find_embedded_macro_directive_end(source_slice : Slice(UInt8), start : Int32, is_control : Bool) : Int32?
+          close_first = is_control ? '%'.ord.to_u8 : '}'.ord.to_u8
+          i = start + 2
+          while i + 1 < source_slice.size
+            if source_slice.unsafe_fetch(i) == close_first && source_slice.unsafe_fetch(i + 1) == '}'.ord.to_u8
+              return i + 2
+            end
+            i += 1
+          end
+          nil
+        end
+
+        # Parse a single macro directive (either `{% ... %}` or `{{ ... }}`)
+        # by wrapping it in a synthetic macro definition and running a
+        # sub-parser that shares our arena. Returns the resulting macro body
+        # pieces (usually a single ControlStart/ControlEnd/Expression), or
+        # nil if sub-parsing fails.
+        private def sub_parse_embedded_macro_directive(directive_source : String) : Array(MacroPiece)?
+          wrapped = "macro __v2_inline_directive__\n" + directive_source + "\nend"
+          sub_lexer = Lexer.new(wrapped)
+          @arena.retain_source(wrapped)
+          sub_parser = Parser.new(sub_lexer, @arena, recovery_mode: @recovery_mode)
+          roots = sub_parser.parse_program_roots
+          return nil unless sub_parser.diagnostics.empty?
+          root_id = roots.first?
+          return nil unless root_id
+          macro_def_node = @arena[root_id]
+          return nil unless macro_def_node.is_a?(MacroDefNode)
+          body_id = macro_def_node.body
+          body_node = @arena[body_id]
+          return nil unless body_node.is_a?(MacroLiteralNode)
+          # Drop Text pieces — we sub-parse exactly one directive, so any
+          # Text piece is noise from the synthetic wrapper (e.g. the "\nend"
+          # we append becomes a trailing Text when a {% for %} has no
+          # matching {% end %} in the directive substring).
+          body_node.pieces.reject { |p| p.kind == MacroPiece::Kind::Text }
+        rescue
+          nil
+        end
+
+        # Build a zero-length phantom span anchored at the start of the given
+        # outer span. Used for pieces emitted from within a String/StringInterpolation
+        # token: macro_piece_text reads source bytes via `span.start_offset ..
+        # span.end_offset` when length > 0, which would pull in the raw
+        # `{% ... %}` directive text verbatim. A zero-length span makes
+        # macro_piece_text fall through to `piece.text` (the explicit,
+        # already-processed text set by the parser), while still giving
+        # evaluate_macro_body a well-defined offset for gap tracking.
+        private def phantom_span_at(outer : Span) : Span
+          Span.new(
+            outer.start_offset,
+            outer.start_offset,
+            outer.start_line,
+            outer.start_column,
+            outer.start_line,
+            outer.start_column,
+          )
+        end
+
+        # Rebuild a MacroPiece with the given span. Used when injecting
+        # sub-parsed directive pieces into the outer parse_macro_body stream:
+        # the sub-parser sees spans inside a synthetic wrapper source, but
+        # downstream (e.g. evaluate_macro_body) reads `@macro_source` using
+        # those span offsets to emit gap text between pieces. A zero-length
+        # phantom span anchored at the outer String token forces
+        # macro_piece_text to use the explicit piece.text instead of
+        # reading the raw directive bytes from @macro_source.
+        private def rebind_macro_piece_span(piece : MacroPiece, new_span : Span) : MacroPiece
+          MacroPiece.new(
+            piece.kind,
+            piece.text,
+            piece.expr,
+            piece.control_keyword,
+            piece.trim_left,
+            piece.trim_right,
+            piece.iter_vars,
+            piece.iterable,
+            new_span,
+            piece.macro_var_name,
+          )
+        end
+
+        # Walk the raw source of a String/StringInterpolation token and emit
+        # a MacroPiece stream that expands embedded `{%`/`{{` directives, so
+        # parse_macro_body preserves the bytes around them as literal text.
+        # Returns nil if the token has no embedded directive, so the caller
+        # can fall through to its normal text-writing path. Returns nil if
+        # sub-parsing fails (so the caller falls through to treating the
+        # token as plain text, preserving the previous behavior for inputs
+        # that the sub-parser can't handle).
+        private def expand_macro_directives_in_string_token(token : Token) : Array(MacroPiece)?
+          source_slice = macro_token_text_slice(token)
+          return nil unless string_token_source_has_macro_directive?(source_slice)
+
+          # Use a zero-length phantom span at the start of the outer string
+          # token for every piece we emit. Otherwise macro_piece_text would
+          # read @macro_source bytes via the outer span and emit the raw
+          # `{% ... %}` directive text verbatim instead of the processed text.
+          anchor = phantom_span_at(token.span)
+
+          pieces = [] of MacroPiece
+          text_buf = IO::Memory.new
+
+          i = 0
+          while i < source_slice.size
+            b = source_slice.unsafe_fetch(i)
+
+            # Handle backslash escapes: \{%, \{{, \{ → emit literal bytes.
+            if b == '\\'.ord.to_u8 && i + 2 < source_slice.size && source_slice.unsafe_fetch(i + 1) == '{'.ord.to_u8
+              nb2 = source_slice.unsafe_fetch(i + 2)
+              if nb2 == '%'.ord.to_u8 || nb2 == '{'.ord.to_u8
+                text_buf.write_byte(source_slice.unsafe_fetch(i + 1))
+                text_buf.write_byte(nb2)
+                i += 3
+                next
+              end
+            end
+
+            if b == '{'.ord.to_u8 && i + 1 < source_slice.size
+              nb = source_slice.unsafe_fetch(i + 1)
+              is_control = nb == '%'.ord.to_u8
+              is_expr = nb == '{'.ord.to_u8
+              if is_control || is_expr
+                if text_buf.size > 0
+                  pieces << MacroPiece.text(
+                    bytes_window_to_string(text_buf.to_slice, 0, text_buf.size),
+                    anchor
+                  )
+                  text_buf = IO::Memory.new
+                end
+
+                directive_end = find_embedded_macro_directive_end(source_slice, i, is_control)
+                return nil unless directive_end
+                directive_len = directive_end - i
+                directive_str = String.build do |io|
+                  k = 0
+                  while k < directive_len
+                    io.write_byte(source_slice.unsafe_fetch(i + k))
+                    k += 1
+                  end
+                end
+                sub_pieces = sub_parse_embedded_macro_directive(directive_str)
+                return nil unless sub_pieces
+                sub_pieces.each { |p| pieces << rebind_macro_piece_span(p, anchor) }
+                i = directive_end
+                next
+              end
+            end
+
+            text_buf.write_byte(b)
+            i += 1
+          end
+
+          if text_buf.size > 0
+            pieces << MacroPiece.text(
+              bytes_window_to_string(text_buf.to_slice, 0, text_buf.size),
+              anchor
+            )
+          end
+
+          pieces
         end
 
         private def parse_macro_for_header
