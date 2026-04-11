@@ -53121,7 +53121,7 @@ module Crystal::HIR
 
     # Emit comparison for case/when using appropriate === semantics
     # Returns ValueId of boolean result
-    private def emit_case_comparison(ctx : LoweringContext, subject_id : ValueId, cond_expr : ExprId) : ValueId
+    private def emit_case_comparison(ctx : LoweringContext, subject_id : ValueId, cond_expr : ExprId, subject_expr_id : ExprId? = nil) : ValueId
       cond_node = @arena[cond_expr]
       debug_stdio_case = ENV.has_key?("DEBUG_STDIO_CASE_ENUM") &&
                          ctx.function.name == "IO::FileDescriptor#system_blocking_init$Nil | Bool"
@@ -53551,6 +53551,38 @@ module Crystal::HIR
           obj_node = @arena[callee_node.object]
           member_name = (safe_slice_to_string(callee_node.member) || "")
 
+          # `when .>=(N)` / `when .<(N)` / etc. shortcut handling.
+          # The parser (parse_case) literally substitutes the case subject's ExprId into
+          # the MemberAccessNode's object slot when it sees the `.op(...)` shortcut form.
+          # That means we must NOT fall through to the default path that emits
+          # `subject_id == lower_expr(cond_expr)`, because lower_expr(cond_expr) would
+          # produce a Bool (e.g. `v >= 100`), and then comparing an integer subject to a
+          # Bool silently always-evaluates false — silently corrupting case-based lookup
+          # tables like `Float::Printer::RyuPrintf#decimal_length9`, which made the Ryu
+          # integer path emit only the last digit and produced outputs like `2.150` for
+          # `236.15`. We detect the shortcut by ExprId identity (or an ImplicitObjNode for
+          # the `case/in` dot-pattern parser path) and emit `subject OP arg` directly.
+          is_implicit_shortcut = obj_node.is_a?(CrystalV2::Compiler::Frontend::ImplicitObjNode) ||
+                                 (subject_expr_id && callee_node.object == subject_expr_id)
+          if is_implicit_shortcut && cond_node.args.size == 1
+            cmp_op = case member_name
+                     when "==", "===" then BinaryOp::Eq
+                     when "!="        then BinaryOp::Ne
+                     when "<"         then BinaryOp::Lt
+                     when "<="        then BinaryOp::Le
+                     when ">"         then BinaryOp::Gt
+                     when ">="        then BinaryOp::Ge
+                     else                  nil
+                     end
+            if cop = cmp_op
+              arg_val = lower_expr(ctx, cond_node.args[0])
+              binop = BinaryOperation.new(ctx.next_id, TypeRef::BOOL, cop, subject_id, arg_val)
+              ctx.emit(binop)
+              ctx.register_type(binop.id, TypeRef::BOOL)
+              return binop.id
+            end
+          end
+
           # Check for implicit receiver OR explicit receiver that matches the case subject.
           # The parser (parse_case) sets the case subject expression as the MemberAccessNode's
           # object for `when .method?` patterns. The obj_node can be ImplicitObjNode, IdentifierNode,
@@ -53780,9 +53812,13 @@ module Crystal::HIR
 
         # Build condition (any match)
         if subject_id
-          # Match subject against when values using appropriate === semantics
+          # Match subject against when values using appropriate === semantics.
+          # `node.value` is the case subject ExprId; parse_case substitutes it
+          # into `.method` shortcut nodes, so emit_case_comparison can detect
+          # the `when .>=(N)` / `when .<(N)` shortcut via ExprId identity.
+          case_subject_expr = node.value
           conds = when_branch.conditions.map do |cond_expr|
-            emit_case_comparison(ctx, subject_id.not_nil!, cond_expr)
+            emit_case_comparison(ctx, subject_id.not_nil!, cond_expr, case_subject_expr)
           end
 
           # Combine with OR
