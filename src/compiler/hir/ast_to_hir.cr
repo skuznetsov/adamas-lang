@@ -49180,7 +49180,7 @@ module Crystal::HIR
     # ═══════════════════════════════════════════════════════════════════════
 
     private def is_comparison_op?(op : String) : Bool
-      op == "<" || op == "<=" || op == ">" || op == ">=" || op == "==" || op == "!="
+      op == "<" || op == "<=" || op == ">" || op == ">=" || op == "==" || op == "!=" || op == "==="
     end
 
     private def lower_binary(ctx : LoweringContext, node : CrystalV2::Compiler::Frontend::BinaryNode) : ValueId
