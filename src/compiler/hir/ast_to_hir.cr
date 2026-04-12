@@ -67120,6 +67120,19 @@ module Crystal::HIR
             end
             overload_keys = filtered unless filtered.empty?
           end
+          # Prefer candidates whose separator ('#' for instance, '.' for class)
+          # matches the requested call.  Without this, a 0-arity instance method
+          # call like `scheduler.reschedule` resolves to the class method
+          # `Scheduler.reschedule` when both exist with the same name and arity,
+          # because the scoring loop has no separator-awareness.
+          if overload_keys.size > 1 && parts.separator
+            wanted_prefix = "#{base_owner}#{parts.separator}"
+            sep_filtered = [] of String
+            overload_keys.each do |cand|
+              sep_filtered << cand if cand.starts_with?(wanted_prefix)
+            end
+            overload_keys = sep_filtered unless sep_filtered.empty?
+          end
         end
       end
 
