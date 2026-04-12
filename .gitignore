@@ -73,10 +73,12 @@ docs/**
 notes/**
 !notes/**/
 !notes/**/*.md
-regression_tests/complex/**
-!regression_tests/complex/**/
-!regression_tests/complex/**/*.cr
-!regression_tests/complex/**/*.md
+regression_tests/**
+!regression_tests/**/
+!regression_tests/**/*.cr
+!regression_tests/**/*.sh
+!regression_tests/**/*.out
+!regression_tests/**/*.md
 spec/compiler/**
 !spec/compiler/**/
 !spec/compiler/**/*.cr
