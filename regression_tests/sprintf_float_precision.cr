@@ -1,13 +1,15 @@
 # Regression: sprintf("%.Nf", Float64) with explicit precision.
 #
-# Prior bugs (both fixed in this change):
-#   1. `Char - Char` (e.g. `'2' - '0'`) was inferred as Char instead of Int32
-#      in lower_binary_primitive, so consume_number read the type-id of the
-#      Char|Int32 union (15) as the precision value. Result: always 15 digits.
-#   2. `===` was not recognized by is_comparison_op?, so BinaryOperation(Eq)
-#      for `===` was typed as the left operand type instead of Bool. This
-#      broke `if cond` downstream of `cond = x === y`, causing Ryu's rounding
-#      block to unconditionally take the wrong branch on precision=0.
+# Exercises three independent HIR lowering fixes:
+#   1. `Char - Char` → Int32 (a6e8d465): lower_binary_primitive inferred Char
+#      instead of Int32, so consume_number read the union type-id as precision.
+#   2. `===` as comparison op (b9551c85): is_comparison_op? didn't include ===,
+#      so BinaryOperation(Eq) for === was typed as the left operand instead of
+#      Bool, breaking downstream `if cond` in Ryu's rounding block.
+#   3. Case/when branch local mutations (945b900f): lower_case captured branch
+#      locals after pop_scope (which restored the pre-push snapshot), silently
+#      dropping mutations like `num *= 10; num += digit` inside while loops.
+#      Cases 8-10 exercise multi-digit precision that requires this fix.
 #
 # EXPECT: sprintf_float_precision_ok
 
