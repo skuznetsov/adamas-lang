@@ -8674,3 +8674,26 @@ Boundary/adversary:
   integer `remainder/tdiv/to_s` ABI family for concrete scalar receivers, but
   it does not prove the remaining formatter/vdispatch or pointer-linked-list
   runtime is sound. {F/G/R: 0.94/0.73/0.96} [verified]
+- [LM-455|verified]: The `sprintf("%.10f", ...)` / Ryu precision corridor was
+  not a remaining formatter-only bug after the Char arithmetic, `===`, and
+  case-operator shortcut fixes. Commit `945b900f` closed the next root cause in
+  HIR `lower_case`: branch locals were captured after `ctx.pop_scope`, which
+  restored the pre-branch local snapshot and dropped mutations performed inside
+  the branch body. In a `while` loop this meant the case-merged value was
+  phi'd back to the loop header, so multi-digit precision parsing reset on each
+  iteration. The bounded fix captures branch locals before `pop_scope`, filters
+  the propagated snapshot to AST-assigned variables to avoid leaking subject
+  narrowing replacements, and coerces mixed branch-local phi inputs with
+  `UnionWrap` / numeric `Cast` when needed. Verification on 2026-04-11:
+  `crystal build src/crystal_v2.cr -o /tmp/cv2_case_locals_audit --error-trace`
+  passed; `scripts/run_safe.sh /tmp/cv2_case_locals_audit 120 2048
+  regression_tests/sprintf_float_precision.cr -o
+  /tmp/sprintf_float_precision_audit` passed and the produced binary printed
+  `sprintf_float_precision_ok`; the adjacent
+  `regression_tests/case_when_operator_shortcut.cr` passed; and
+  `/Users/sergey/Projects/Python/Grafana/python/bench_crystal.cr` compiled and
+  ran successfully under `scripts/run_safe.sh`, printing the four expected
+  benchmark rows. Boundary: this validates the local case/loop mutation family
+  and the current `bench_crystal.cr` oracle, but it does not prove the broader
+  full-suite baseline or debug-info stepping behavior. {F/G/R: 0.97/0.78/0.98}
+  [verified]
