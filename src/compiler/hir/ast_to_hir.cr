@@ -74736,10 +74736,17 @@ module Crystal::HIR
                   ivar_info = ci.ivars.find { |iv| iv.name == member_name || iv.name == "@#{member_name}" }
                 end
                 if ivar_info
-                  field_get = FieldGet.new(ctx.next_id, ivar_info.type, ptr_id, ivar_info.name, ivar_info.offset)
-                  ctx.emit(field_get)
-                  ctx.register_type(field_get.id, ivar_info.type)
-                  return field_get.id
+                  # Pointer(T) buffers hold pointer-sized slots for heap-allocated
+                  # classes and user structs (see hir_to_mir lower_pointer_load).
+                  # FieldGet on the buffer address would apply ivar offsets to the
+                  # wrong memory; only lib structs are stored inline in the slot.
+                  heap_slot_element = (!ci.is_struct) || (ci.is_struct && !@lib_structs.includes?(element_class_name))
+                  unless heap_slot_element
+                    field_get = FieldGet.new(ctx.next_id, ivar_info.type, ptr_id, ivar_info.name, ivar_info.offset)
+                    ctx.emit(field_get)
+                    ctx.register_type(field_get.id, ivar_info.type)
+                    return field_get.id
+                  end
                 end
               end
             end
