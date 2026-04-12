@@ -24552,11 +24552,15 @@ module Crystal::HIR
 
       # Also check if function already exists in HIR module (belt and suspenders)
       if @module.has_function_with_body?(func_name)
-        if class_name.includes?("Scheduler")
+        if class_name.includes?("Scheduler") || class_name.includes?("Channel")
           STDERR.puts "[ALLOC_SKIP] #{func_name}: already exists in module, skipping body generation"
         end
         return
       end
+      # Mark the allocator as in-progress so layout invalidation (which can
+      # be triggered by lower_expr/lower_function_if_needed inside body gen)
+      # does NOT remove this function from the module mid-generation.
+      @function_lowering_states[func_name] = FunctionLoweringState::InProgress
 
       # Get initialize parameters for this class
       init_params = @init_params[class_name]? || [] of {String, TypeRef}
@@ -24833,6 +24837,8 @@ module Crystal::HIR
         instance_ctx.register_type(new_call.id, class_info.type_ref)
         instance_ctx.terminate(Return.new(new_call.id))
       end
+
+      @function_lowering_states[func_name] = FunctionLoweringState::Completed
 
       generate_allocator_overload(class_name, class_info, call_arg_types, call_has_named_args, call_has_block)
     end
@@ -81301,6 +81307,29 @@ module Crystal::HIR
           if raw_params.size != expected_arity
             strict_params = split_proc_type_inputs(params_str)
             raw_params = strict_params if strict_params.size == expected_arity
+          end
+        else
+          # Nested generic class fallback: when the short name (e.g. "SelectContext")
+          # has no template, try qualifying with the current class's base namespace
+          # (e.g. "Channel::SelectContext"). This handles private nested generics
+          # referenced from within the parent generic's monomorphized methods.
+          if !base_name.includes?("::") && (current = @current_class)
+            current_base = if cinfo = split_generic_base_and_args(current)
+                             cinfo.base
+                           else
+                             current
+                           end
+            qualified = "#{current_base}::#{base_name}"
+            if template = @generic_templates[qualified]?
+              base_name = qualified
+              lookup_name = "#{base_name}(#{params_str})"
+              substituted_name = lookup_name
+              expected_arity = template.type_params.size
+              if raw_params.size != expected_arity
+                strict_params = split_proc_type_inputs(params_str)
+                raw_params = strict_params if strict_params.size == expected_arity
+              end
+            end
           end
         end
 
