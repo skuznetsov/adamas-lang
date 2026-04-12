@@ -2791,6 +2791,7 @@ module Crystal::HIR
 
     # Track which allocators have been generated (to avoid duplicates for reopened classes)
     @generated_allocators : Set(String)
+    @stale_empty_allocators : Set(String)  # Classes whose allocator was generated with empty ivars
     @deferred_allocators : Set(String)
 
     # Type cache to prevent infinite recursion in type_ref_for_name/create_union_type
@@ -3199,6 +3200,7 @@ module Crystal::HIR
       @resolved_type_alias_cache = Hash(String, String).new(initial_capacity: 4096)
       @type_alias_keys_by_suffix = {} of String => Array(String)
       @generated_allocators = Set(String).new
+      @stale_empty_allocators = Set(String).new
       @deferred_allocators = Set(String).new
       @type_ref_depth = 0
       @type_cache = {} of String => TypeRef
@@ -23409,7 +23411,12 @@ module Crystal::HIR
       deferred_copy = @deferred_allocators.dup
       @deferred_allocators.clear
       deferred_copy.each do |class_name|
-        next if @generated_allocators.includes?(class_name)
+        # Skip classes already properly generated — but NOT those whose
+        # allocator was generated with empty ivars (stale).  Those need
+        # replacement with proper ivar initialization.
+        if @generated_allocators.includes?(class_name) && !@stale_empty_allocators.includes?(class_name)
+          next
+        end
         class_info = @class_info[class_name]?
         next unless class_info
         bootstrap_trace_puts "[ALLOC_FLUSH] Generating allocator for #{class_name} ivars=#{class_info.ivars.size}"
@@ -24527,24 +24534,47 @@ module Crystal::HIR
 
       # Skip if allocator already generated (for reopened classes), but
       # still feed callsite arg types to initialize lowering when available.
+      # Exception: if the allocator was generated with empty ivars (stale), the
+      # deferred flush should replace it with a proper version that initializes
+      # instance variables.  This is a one-shot upgrade tracked by
+      # @stale_empty_allocators so the remove+regenerate happens at most once.
       if @generated_allocators.includes?(class_name)
-        if call_arg_types && call_arg_types.any? { |t| t != TypeRef::VOID }
-          if init_base_name = resolve_method_with_inheritance(class_name, "initialize")
-            remember_callsite_arg_types(init_base_name, call_arg_types, nil, nil, call_has_block)
-            lower_function_if_needed(init_base_name)
+        if @stale_empty_allocators.includes?(class_name) && !class_info.ivars.empty?
+          # One-shot upgrade: stale allocator was generated with empty ivars.
+          # Remove and fall through to regenerate with proper ivar initialization.
+          func_name = allocator_new_name_for(class_name)
+          @module.remove_function(func_name)
+          @generated_allocators.delete(class_name)
+          @stale_empty_allocators.delete(class_name)
+        else
+          if call_arg_types && call_arg_types.any? { |t| t != TypeRef::VOID }
+            if init_base_name = resolve_method_with_inheritance(class_name, "initialize")
+              remember_callsite_arg_types(init_base_name, call_arg_types, nil, nil, call_has_block)
+              lower_function_if_needed(init_base_name)
+            end
+            generate_allocator_overload(class_name, class_info, call_arg_types, call_has_named_args, call_has_block)
           end
-          generate_allocator_overload(class_name, class_info, call_arg_types, call_has_named_args, call_has_block)
+          return
         end
-        return
       end
 
       # Don't generate allocator with empty ivars for non-struct classes — defer
       # until class is fully registered so field defaults are properly evaluated.
       # When force=true (from flush_deferred_allocators), generate anyway.
       if !force && class_info.ivars.empty? && !class_info.is_struct
-        STDERR.puts "[ALLOC_DEFER] #{class_name}: deferred (empty ivars)" if class_name.includes?("Scheduler") || class_name.includes?("AstToHir")
         @deferred_allocators << class_name
         return
+      end
+
+      # Track classes generated with empty ivars so the deferred flush can
+      # replace them later (one-shot upgrade, not repeated regeneration).
+      if class_info.ivars.empty? && !class_info.is_struct
+        @stale_empty_allocators.add(class_name)
+      else
+        # Non-empty (or struct) generation is authoritative; clear stale so
+        # layout invalidation + flush does not leave a stale marker that would
+        # force a second remove/regenerate on the next Class.new.
+        @stale_empty_allocators.delete(class_name)
       end
 
       @generated_allocators.add(class_name)
@@ -24552,9 +24582,6 @@ module Crystal::HIR
 
       # Also check if function already exists in HIR module (belt and suspenders)
       if @module.has_function_with_body?(func_name)
-        if class_name.includes?("Scheduler") || class_name.includes?("Channel")
-          STDERR.puts "[ALLOC_SKIP] #{func_name}: already exists in module, skipping body generation"
-        end
         return
       end
       # Mark the allocator as in-progress so layout invalidation (which can
