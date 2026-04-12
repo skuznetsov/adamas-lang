@@ -77053,10 +77053,9 @@ module Crystal::HIR
         STDERR.puts "[MULTI_ASSIGN] rhs_type=#{rhs_type.id} name=#{rhs_name} targets=#{node.targets.size} scope=#{@current_class || ""}##{@current_method || ""}"
       end
 
-      # `a, b = some_struct` — unpack ivars in declaration order (e.g. forked stdlib
-      # `seconds, nanoseconds = System::Time.instant`). IndexGet lowers like Array and
-      # reads the wrong memory for struct values.
-      if try_lower_struct_sequential_multi_assign(ctx, node.targets, rhs_id, rhs_type)
+      # Forked event_loop only: `seconds, nanoseconds = System::Time.instant` (Time::Instant).
+      # Do not generalize to arbitrary structs — Crystal uses `tmp[0]`, `tmp[1]` via `#[]`.
+      if try_lower_time_instant_unpack_multi_assign(ctx, node.targets, rhs_id, rhs_type)
         return rhs_id
       end
 
@@ -77078,33 +77077,36 @@ module Crystal::HIR
       rhs_id
     end
 
-    # Sequential multi-assign from a concrete struct: first N ivars in `class_info` order.
-    private def try_lower_struct_sequential_multi_assign(
+    # Narrow special case: Time::Instant has no `#[]`; forked stdlib unpacks @seconds/@nanoseconds.
+    private def try_lower_time_instant_unpack_multi_assign(
       ctx : LoweringContext,
       targets : Array(CrystalV2::Compiler::Frontend::ExprId),
       rhs_id : ValueId,
       rhs_type : TypeRef,
     ) : Bool
-      return false if targets.empty?
+      return false unless targets.size == 2
+      type_name = get_type_name_from_ref(rhs_type)
+      return false if type_name.empty?
+      return false unless type_name == "Time::Instant" || type_name.ends_with?("::Time::Instant")
       desc = @module.get_type_descriptor(rhs_type)
       return false unless desc
       return false if desc.kind == TypeKind::Union
-      return false if desc.kind == TypeKind::Tuple || desc.name.starts_with?("Tuple(")
-      return false if desc.kind == TypeKind::NamedTuple
-      type_name = get_type_name_from_ref(rhs_type)
-      return false if type_name.empty?
       ci = @class_info[type_name]?
       return false unless ci
       return false unless ci.is_struct
-      return false if targets.size > ci.ivars.size
+      sec_iv = ci.ivars.find { |iv| iv.name == "@seconds" }
+      nsec_iv = ci.ivars.find { |iv| iv.name == "@nanoseconds" }
+      return false unless sec_iv && nsec_iv
 
-      targets.each_with_index do |target_expr, idx|
-        iv = ci.ivars[idx]
-        field_get = FieldGet.new(ctx.next_id, iv.type, rhs_id, iv.name, iv.offset)
-        ctx.emit(field_get)
-        ctx.register_type(field_get.id, iv.type)
-        assign_value_to_target(ctx, target_expr, field_get.id)
-      end
+      fg_s = FieldGet.new(ctx.next_id, sec_iv.type, rhs_id, sec_iv.name, sec_iv.offset)
+      ctx.emit(fg_s)
+      ctx.register_type(fg_s.id, sec_iv.type)
+      assign_value_to_target(ctx, targets[0], fg_s.id)
+
+      fg_n = FieldGet.new(ctx.next_id, nsec_iv.type, rhs_id, nsec_iv.name, nsec_iv.offset)
+      ctx.emit(fg_n)
+      ctx.register_type(fg_n.id, nsec_iv.type)
+      assign_value_to_target(ctx, targets[1], fg_n.id)
       true
     end
 
