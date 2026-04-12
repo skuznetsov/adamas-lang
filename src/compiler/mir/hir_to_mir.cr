@@ -2770,6 +2770,22 @@ module Crystal
           end
         end
 
+        # Proc accessors: V2 ABI represents Proc as a bare function pointer.
+        # Avoid lowering through stdlib Proc#internal_representation which
+        # expects tuple-backed Proc storage not guaranteed by HIR func_pointer.
+        if call.receiver && recv_desc && (recv_desc.kind == HIR::TypeKind::Proc || recv_desc.name == "Proc" || recv_desc.name.starts_with?("Proc("))
+          if method_suffix = extract_method_suffix_loose(call.method_name)
+            case method_suffix
+            when "pointer"
+              return args[0]
+            when "closure_data"
+              return builder.const_nil_typed(TypeRef::POINTER)
+            when "closure?"
+              return builder.const_bool(false)
+            end
+          end
+        end
+
         # Special handling for Proc#call - emit indirect call through function pointer
         # Proc calls have format "call$Type" or just "call" and receiver is a Proc type
         # Also match "call(...)" patterns from typed proc calls
