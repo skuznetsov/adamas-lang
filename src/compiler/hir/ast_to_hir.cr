@@ -435,6 +435,12 @@ module Crystal::HIR
     alias AstNode = CrystalV2::Compiler::Frontend::Node
     alias ExprId = CrystalV2::Compiler::Frontend::ExprId
     # V2 safety: was NamedTuple, but V2 compiles NamedTuple[:key] as runtime lookups that crash.
+    # - `base` is the registered generic template key (e.g. `Crystal::EventLoop::Timers`) after
+    #   `resolve_generic_template_base`, used for `@generic_templates` lookup and
+    #   `monomorphize_generic_class(template_base, ...)`.
+    # - `owner` keeps the callsite / specialized owner spelling from the split method name
+    #   (e.g. unqualified `Timers(T)` inside a namespace) so it lines up with `class_info`,
+    #   mangled callee names, and pending lowering queues.
     private struct GenericOwnerInfo
       getter base : String
       getter owner : String
@@ -23680,6 +23686,7 @@ module Crystal::HIR
       specialized_name : String,
       drain_pending : Bool = true,
     )
+      base_name = resolve_generic_template_base(base_name)
       template = @generic_templates[base_name]?
       return unless template
 
@@ -40027,7 +40034,7 @@ module Crystal::HIR
       info = split_generic_base_and_args(name)
       return unless info
 
-      base = info.base
+      base = resolve_generic_template_base(info.base)
       return if base == "Pointer"
       template = @generic_templates[base]?
       return unless template
@@ -55822,6 +55829,35 @@ module Crystal::HIR
       false
     end
 
+    # Map an unqualified generic base (e.g. `Timers` inside `Crystal::EventLoop`)
+    # to the registered template key (`Crystal::EventLoop::Timers`). Source-level
+    # relative names otherwise fail template lookup and skip monomorphization.
+    #
+    # Order: (1) exact key, (2) context-aware resolution (same as generic type references:
+    # nested types and current namespace beat unrelated top-level names), (3) unique
+    # `@generic_templates` entry whose last namespace component matches `base` — only
+    # as a last resort so `Box` in one module does not bind to `Other::Box` by accident.
+    private def resolve_generic_template_base(base : String) : String
+      return base if base.empty? || @generic_templates.has_key?(base)
+      return base if base.includes?('(')
+
+      unless base.includes?("::")
+        _, lookup_base = resolve_generic_base_names(base)
+        if @generic_templates.has_key?(lookup_base)
+          return lookup_base
+        end
+      end
+
+      if !base.includes?("::")
+        matches = [] of String
+        @generic_templates.each_key do |tmpl_key|
+          matches << tmpl_key if last_namespace_component(tmpl_key) == base
+        end
+        return matches[0] if matches.size == 1
+      end
+      base
+    end
+
     @[NoInline]
     private def generic_owner_info(owner : String) : GenericOwnerInfo?
       if @generic_owner_info_cache_gen != @subst_cache_gen
@@ -55839,12 +55875,13 @@ module Crystal::HIR
       end
 
       base = info.base
+      template_base = resolve_generic_template_base(base)
       raw_args = split_generic_type_args(info.args).map do |arg|
         normalize_tuple_literal_type_name(arg.strip)
       end
 
       param_names : Array(String)? = nil
-      if template = @generic_templates[base]?
+      if template = @generic_templates[template_base]?
         param_names = template.type_params
       elsif mod_defs = @module_defs[base]?
         mod_defs.each do |mod_node, _|
@@ -55887,7 +55924,7 @@ module Crystal::HIR
       end
 
       resolved_owner = "#{base}(#{substituted_args.join(", ")})"
-      result = GenericOwnerInfo.new(base: base, owner: resolved_owner, args: substituted_args, map: map)
+      result = GenericOwnerInfo.new(base: template_base, owner: resolved_owner, args: substituted_args, map: map)
       @generic_owner_info_cache[owner] = result
       result
     end
