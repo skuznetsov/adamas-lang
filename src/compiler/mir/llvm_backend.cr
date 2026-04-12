@@ -8737,6 +8737,68 @@ module Crystal::MIR
       true
     end
 
+    # Emit AArch64 fiber context switch.  The original Crystal stdlib uses
+    # @[Naked] + inline asm which V2 can't lower.  We emit it directly as
+    # LLVM IR with an inline asm block.
+    #
+    # V2 ABI note: the caller passes pointers to *stack allocas* that hold
+    # the real Fiber::Context pointers, so the first thing the asm does is
+    # dereference x0/x1 once to obtain the actual context addresses.
+    private def emit_fiber_swapcontext_override(mangled : String) : Nil
+      emit_raw "; #{mangled} — AArch64 fiber context switch (builtin override)\n"
+      emit_raw "define void @#{mangled}(ptr %current_pp, ptr %new_pp) naked noinline {\n"
+      emit_raw "entry:\n"
+      emit_raw "  call void asm sideeffect \""
+      emit_raw "\\0A"  # newline
+      # Dereference the V2 alloca indirection: x0/x1 point to stack slots
+      # that hold the real Fiber::Context pointers.
+      emit_raw "    ldr     x0, [x0]\\0A"
+      emit_raw "    ldr     x1, [x1]\\0A"
+      # Save callee-saved registers (AAPCS64): d8-d15, x19-x30, plus x0/x1.
+      emit_raw "    stp     d15, d14, [sp, #-22*8]!\\0A"
+      emit_raw "    stp     d13, d12, [sp, #2*8]\\0A"
+      emit_raw "    stp     d11, d10, [sp, #4*8]\\0A"
+      emit_raw "    stp     d9,  d8,  [sp, #6*8]\\0A"
+      emit_raw "    stp     x30, x29, [sp, #8*8]\\0A"
+      emit_raw "    stp     x28, x27, [sp, #10*8]\\0A"
+      emit_raw "    stp     x26, x25, [sp, #12*8]\\0A"
+      emit_raw "    stp     x24, x23, [sp, #14*8]\\0A"
+      emit_raw "    stp     x22, x21, [sp, #16*8]\\0A"
+      emit_raw "    stp     x20, x19, [sp, #18*8]\\0A"
+      emit_raw "    stp     x0,  x1,  [sp, #20*8]\\0A"
+      # Save current stack pointer → current_context.stack_top
+      emit_raw "    mov     x19, sp\\0A"
+      emit_raw "    str     x19, [x0, #0]\\0A"
+      # current_context.resumable = 1
+      emit_raw "    mov     x19, #1\\0A"
+      emit_raw "    str     x19, [x0, #8]\\0A"
+      # new_context.resumable = 0
+      emit_raw "    mov     x19, #0\\0A"
+      emit_raw "    str     x19, [x1, #8]\\0A"
+      # Switch to new stack
+      emit_raw "    ldr     x19, [x1, #0]\\0A"
+      emit_raw "    mov     sp, x19\\0A"
+      # Restore registers from new context's stack
+      emit_raw "    ldp     x0,  x1,  [sp, #20*8]\\0A"
+      emit_raw "    ldp     x20, x19, [sp, #18*8]\\0A"
+      emit_raw "    ldp     x22, x21, [sp, #16*8]\\0A"
+      emit_raw "    ldp     x24, x23, [sp, #14*8]\\0A"
+      emit_raw "    ldp     x26, x25, [sp, #12*8]\\0A"
+      emit_raw "    ldp     x28, x27, [sp, #10*8]\\0A"
+      emit_raw "    ldp     x30, x29, [sp, #8*8]\\0A"
+      emit_raw "    ldp     d9,  d8,  [sp, #6*8]\\0A"
+      emit_raw "    ldp     d11, d10, [sp, #4*8]\\0A"
+      emit_raw "    ldp     d13, d12, [sp, #2*8]\\0A"
+      emit_raw "    ldp     d15, d14, [sp], #22*8\\0A"
+      # Jump to restored LR (avoid confusing the unwinder)
+      emit_raw "    mov     x16, x30\\0A"
+      emit_raw "    mov     x30, #0\\0A"
+      emit_raw "    br      x16\\0A"
+      emit_raw "\", \"\"()\n"
+      emit_raw "  unreachable\n"
+      emit_raw "}\n\n"
+    end
+
     # Intercept known-broken stdlib constructors whose bodies don't compile correctly.
     # Returns true if the function was handled (emitted as a runtime helper), false otherwise.
     private def emit_builtin_override(func : Function) : Bool
@@ -8755,6 +8817,10 @@ module Crystal::MIR
         emit_raw "ret_zero:\n"
         emit_raw "  ret i32 0\n"
         emit_raw "}\n\n"
+        return true
+      end
+      if mangled.starts_with?("Fiber$Dswapcontext")
+        emit_fiber_swapcontext_override(mangled)
         return true
       end
       case mangled
