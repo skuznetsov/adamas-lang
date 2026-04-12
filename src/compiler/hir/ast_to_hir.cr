@@ -77053,6 +77053,13 @@ module Crystal::HIR
         STDERR.puts "[MULTI_ASSIGN] rhs_type=#{rhs_type.id} name=#{rhs_name} targets=#{node.targets.size} scope=#{@current_class || ""}##{@current_method || ""}"
       end
 
+      # `a, b = some_struct` — unpack ivars in declaration order (e.g. forked stdlib
+      # `seconds, nanoseconds = System::Time.instant`). IndexGet lowers like Array and
+      # reads the wrong memory for struct values.
+      if try_lower_struct_sequential_multi_assign(ctx, node.targets, rhs_id, rhs_type)
+        return rhs_id
+      end
+
       # For each target, emit index operation to destructure
       node.targets.each_with_index do |target_expr, idx|
         target_node = @arena[target_expr]
@@ -77069,6 +77076,36 @@ module Crystal::HIR
       end
 
       rhs_id
+    end
+
+    # Sequential multi-assign from a concrete struct: first N ivars in `class_info` order.
+    private def try_lower_struct_sequential_multi_assign(
+      ctx : LoweringContext,
+      targets : Array(CrystalV2::Compiler::Frontend::ExprId),
+      rhs_id : ValueId,
+      rhs_type : TypeRef,
+    ) : Bool
+      return false if targets.empty?
+      desc = @module.get_type_descriptor(rhs_type)
+      return false unless desc
+      return false if desc.kind == TypeKind::Union
+      return false if desc.kind == TypeKind::Tuple || desc.name.starts_with?("Tuple(")
+      return false if desc.kind == TypeKind::NamedTuple
+      type_name = get_type_name_from_ref(rhs_type)
+      return false if type_name.empty?
+      ci = @class_info[type_name]?
+      return false unless ci
+      return false unless ci.is_struct
+      return false if targets.size > ci.ivars.size
+
+      targets.each_with_index do |target_expr, idx|
+        iv = ci.ivars[idx]
+        field_get = FieldGet.new(ctx.next_id, iv.type, rhs_id, iv.name, iv.offset)
+        ctx.emit(field_get)
+        ctx.register_type(field_get.id, iv.type)
+        assign_value_to_target(ctx, target_expr, field_get.id)
+      end
+      true
     end
 
     private def multiple_assign_splat_index(targets : Array(CrystalV2::Compiler::Frontend::ExprId)) : Int32?
