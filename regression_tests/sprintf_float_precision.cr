@@ -21,11 +21,14 @@ raise "case5" unless sprintf("%.2f", 1.005_f64) == "1.00"
 raise "case6" unless sprintf("%.5f", 0.1_f64) == "0.10000"
 raise "case7" unless sprintf("%.0f", 3.5_f64) == "4"
 
-# Multi-digit precision (e.g. "%.10f") is still broken: consume_number
-# parses digits via a `case/when` inside a `while` loop, and V2 currently
-# loses local mutations across while iterations when the body is a case
-# expression. Re-enable once that is fixed.
-# raise "case8" unless sprintf("%.10f", 1.0_f64) == "1.0000000000"
+# Multi-digit precision: consume_number parses digits via `case/when`
+# inside a `while` loop. This used to silently drop mutations across loop
+# iterations because lower_case captured per-branch locals AFTER pop_scope
+# (which restored the pre-push snapshot). Fixed by saving the branch
+# locals before pop_scope and filtering by AST-assigned variables.
+raise "case8" unless sprintf("%.10f", 1.0_f64) == "1.0000000000"
+raise "case9" unless sprintf("%.15f", 0.5_f64) == "0.500000000000000"
+raise "case10" unless sprintf("%.10f", 3.14159265358979_f64) == "3.1415926536"
 
 # Direct exercise of === operator (regression for is_comparison_op? fix)
 c = 50_u8

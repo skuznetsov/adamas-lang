@@ -51595,10 +51595,45 @@ module Crystal::HIR
           next
         end
 
-        # Create phi to merge values from all branches
-        var_type = ctx.type_of(first_val)
+        # Determine merged type. Branches may assign values of different types
+        # to the same variable (e.g. dwarf parser's `value` re-assigned to a
+        # String in one branch and left as the original union in others). We
+        # need to unify the types and coerce incoming values, otherwise the
+        # phi receives mismatched types and the LLVM backend rejects the IR.
+        var_types = branch_values.map { |(_, v)| ctx.type_of(v) }.uniq
+        non_void_types = var_types.reject { |t| t == TypeRef::VOID }
+        var_types = non_void_types unless non_void_types.empty?
+        var_type = if var_types.size == 1
+                     var_types.first
+                   else
+                     var_types.reduce { |acc, t| union_type_for_values(acc, t) }
+                   end
+        next if var_type == TypeRef::VOID
+
+        coerced = branch_values.map do |(blk, val)|
+          val_type = ctx.type_of(val)
+          if val_type == var_type
+            {blk, val}
+          elsif is_union_type?(var_type)
+            variant_id = get_union_variant_id(var_type, val_type)
+            if variant_id >= 0
+              wrap = UnionWrap.new(ctx.next_id, var_type, val, variant_id)
+              ctx.emit_to_block(blk, wrap)
+              {blk, wrap.id}
+            else
+              {blk, val}
+            end
+          elsif numeric_primitive?(val_type) && numeric_primitive?(var_type)
+            cast = Cast.new(ctx.next_id, var_type, val, var_type, safe: false)
+            ctx.emit_to_block(blk, cast)
+            {blk, cast.id}
+          else
+            {blk, val}
+          end
+        end
+
         merge_phi = Phi.new(ctx.next_id, var_type)
-        branch_values.each { |(blk, val)| merge_phi.add_incoming(blk, val) }
+        coerced.each { |(blk, val)| merge_phi.add_incoming(blk, val) }
         ctx.emit(merge_phi)
         ctx.register_local(var_name, merge_phi.id)
       end
@@ -53957,7 +53992,24 @@ module Crystal::HIR
         ctx.push_scope(ScopeKind::Block)
         result = lower_body(ctx, when_branch.body)
         exit_block = ctx.current_block
+        # Capture branch locals BEFORE pop_scope: pop_scope restores @locals
+        # from the snapshot taken at push_scope, which would wipe any mutations
+        # performed inside the branch body (e.g. `num += 1`). Matches lower_if.
+        post_when_locals = ctx.save_locals
         ctx.pop_scope
+
+        # Only propagate variables the branch actually *assigned* (via AST
+        # inspection). Using the raw @locals snapshot would also capture
+        # subject-variable narrowing (UnionUnwrap/Cast replacements) and
+        # would make merge_case_locals try to phi narrowed values of the
+        # subject across branches, which confuses downstream type inference.
+        assigned_when = collect_assigned_vars(when_branch.body).to_set
+        filtered_when_locals = pre_case_locals.dup
+        assigned_when.each do |name|
+          if v = post_when_locals[name]?
+            filtered_when_locals[name] = v
+          end
+        end
 
         # Check if branch flows to merge
         when_block_data = ctx.get_block(ctx.current_block)
@@ -53968,7 +54020,7 @@ module Crystal::HIR
 
         if when_flows_to_merge
           # Save branch locals before jumping to merge (only if flowing)
-          branch_locals << {exit_block, ctx.save_locals}
+          branch_locals << {exit_block, filtered_when_locals}
           ctx.terminate(Jump.new(merge_block))
           incoming << {exit_block, result}
         end
@@ -54011,7 +54063,22 @@ module Crystal::HIR
                       nil_lit.id
                     end
       else_exit = ctx.current_block
+      # Capture before pop_scope (mirrors when-branch handling above).
+      post_else_locals = ctx.save_locals
       ctx.pop_scope
+
+      # Filter else branch locals to only the variables it assigned.
+      assigned_else = if eb = node.else_branch
+                        collect_assigned_vars(eb).to_set
+                      else
+                        Set(String).new
+                      end
+      filtered_else_locals = pre_case_locals.dup
+      assigned_else.each do |name|
+        if v = post_else_locals[name]?
+          filtered_else_locals[name] = v
+        end
+      end
 
       # Check if else branch flows to merge
       else_block_data = ctx.get_block(ctx.current_block)
@@ -54022,7 +54089,7 @@ module Crystal::HIR
 
       if else_flows_to_merge
         # Save else branch locals (only if flowing)
-        branch_locals << {else_exit, ctx.save_locals}
+        branch_locals << {else_exit, filtered_else_locals}
         ctx.terminate(Jump.new(merge_block))
         incoming << {else_exit, else_result}
       end
