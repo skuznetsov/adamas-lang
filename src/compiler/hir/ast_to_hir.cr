@@ -31717,6 +31717,16 @@ module Crystal::HIR
               arg_idx += 1
               next
             end
+            # $arityN suffix on arg type name: the function arity discriminator
+            # can leak into union type names (e.g. "Nil | String$arity2" vs
+            # "Nil | String"). Strip and re-compare.
+            if arg_desc && arg_desc.name.includes?("$arity")
+              clean_name = arg_desc.name.gsub(/\$arity\d+/, "")
+              if clean_name == param_resolved_name || clean_name == resolve_type_alias_chain(param_type_name)
+                arg_idx += 1
+                next
+              end
+            end
             return false
           end
         end
@@ -80276,6 +80286,14 @@ module Crystal::HIR
         # Skip mangling markers that are not types (block/named/splat/arity/super).
         next if part == "block" || part == "named" || part == "splat" || part == "double" || part == "double_splat" || part == "super"
         next if part.starts_with?("arity")
+        # Strip $arityN that may be embedded in the last type component
+        # (defense-in-depth for strip_mangled_suffix_flags).
+        if (arity_pos = part.index("$arity")) && arity_pos > 0
+          after = part[(arity_pos + 6)..]
+          if after.empty? || after.each_char.all?(&.ascii_number?)
+            part = part[0, arity_pos]
+          end
+        end
         # Convert mangled type name back to Crystal type name
         # e.g., "Pointer(LibC::Kevent)" stays as is
         # e.g., "LibC__Kevent" -> "LibC::Kevent"
@@ -80555,6 +80573,14 @@ module Crystal::HIR
           end
         end
         break unless removed
+      end
+      # Strip $arityN function discriminator — it encodes overload arity,
+      # not type information, and must not leak into type name extraction.
+      if (arity_idx = stripped.rindex("$arity"))
+        rest = stripped[(arity_idx + 6)..]
+        if rest.empty? || rest.each_char.all?(&.ascii_number?)
+          stripped = stripped[0, arity_idx]
+        end
       end
       stripped
     end
