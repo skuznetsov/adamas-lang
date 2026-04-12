@@ -41,7 +41,8 @@ struct Crystal::EventLoop::Polling::Event
 
   def initialize(@type : Type, @fiber, @index = nil, timeout : Time::Span? = nil)
     if timeout
-      now = Crystal::System::Time.instant
+      seconds, nanoseconds = System::Time.instant
+      now = Time::Span.new(seconds: seconds, nanoseconds: nanoseconds)
       @wake_at = now + timeout
     end
   end
