@@ -53507,8 +53507,9 @@ module Crystal::HIR
             if enum_name.nil?
               subject_type_known_non_enum = false
               subject_type_check = ctx.type_of(subject_id)
-              # Built-in primitive types are never enums
-              if subject_type_check.id < TypeRef::FIRST_USER_TYPE
+              # Built-in primitive types are never enums — but VOID means
+              # "unknown", not "known non-enum", so allow the global search.
+              if subject_type_check != TypeRef::VOID && subject_type_check.id < TypeRef::FIRST_USER_TYPE
                 subject_type_known_non_enum = true
               elsif td = @module.get_type_descriptor(subject_type_check)
                 # If type has a name and that name is NOT in @enum_info, it's not an enum
@@ -53688,13 +53689,29 @@ module Crystal::HIR
               enum_name = enum_value_name_for(ctx, actual_object_id)
             end
 
+            # Try enum_base_types: when the subject is a primitive backing type
+            # (e.g., Int32 for DeliveryState), match by base type + member name.
+            if enum_name.nil? && @enum_base_types
+              @enum_base_types.not_nil!.each do |ename, etype|
+                if etype == obj_type
+                  if members = @enum_info.try(&.[ename]?)
+                    if members.keys.any? { |m| underscore_lower(m) == underscore_lower(base_name) }
+                      enum_name = ename
+                      break
+                    end
+                  end
+                end
+              end
+            end
+
             # Last resort: global enum search, but ONLY if subject type is unknown or is an enum.
             # Do NOT match when subject is a known non-enum type (Char, Int32, String, etc.)
             # to avoid false matches like `.ascii?` → `Unicode::CaseOptions::ASCII`.
             if enum_name.nil?
               subject_type_known_non_enum = false
-              # Built-in primitive types are never enums
-              if obj_type.id < TypeRef::FIRST_USER_TYPE
+              # Built-in primitive types are never enums — but VOID means
+              # "unknown", not "known non-enum", so allow the global search.
+              if obj_type != TypeRef::VOID && obj_type.id < TypeRef::FIRST_USER_TYPE
                 subject_type_known_non_enum = true
               elsif td = @module.get_type_descriptor(obj_type)
                 subject_type_known_non_enum = !(@enum_info.try(&.has_key?(td.name)) || false)
