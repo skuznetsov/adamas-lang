@@ -36924,7 +36924,12 @@ module Crystal::HIR
            !@module_defs.has_key?(name) &&
            !@type_aliases.has_key?(name) &&
            !BUILTIN_TYPE_NAMES.includes?(name)
-          return name
+          # Forked stdlib uses `System::Time` as shorthand for `Crystal::System::Time` inside
+          # `Crystal::*` namespaces. The fast-path would return bare "System" and block
+          # `resolve_path_string_in_context` from rewriting `System::Time` → `Crystal::System::Time`.
+          unless name == "System" && type_name_exists?("Crystal::System")
+            return name
+          end
         end
       end
 
