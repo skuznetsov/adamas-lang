@@ -31299,7 +31299,20 @@ module Crystal::HIR
         func.blocks.each do |block|
           block.instructions.each_with_index do |inst, idx|
             next unless inst.is_a?(Call)
-            next if inst.virtual
+            # Normally virtual calls are lowered via vdispatch and skip this repair.
+            # Block/proc call sites may still carry a bare `Owner#m` in HIR while the only
+            # lowered body is `Owner#m$..._block` (private defs, yield+return skipping inline).
+            # Leaving the bare name breaks MIR/LLVM symbol resolution → abort stubs.
+            #
+            # When `virtual` is true we only rewrite **bare** `Owner#m` symbols so the HIR/MIR
+            # name matches the block-overload the vdispatch shim forwards to. True dynamic
+            # dispatch with different block overloads across a class hierarchy is not modeled
+            # here; such calls should already carry a typed `$..._block` symbol from lowering.
+            if inst.virtual
+              unless !inst.method_name.includes?('$') && !inst.block.nil?
+                next
+              end
+            end
             # Super-tagged calls already point at the resolved parent body.
             # Rebinding them through the receiver type turns
             # `Exception#initialize..._super` back into `ArgumentError#initialize`,
@@ -31327,11 +31340,20 @@ module Crystal::HIR
             current_owner_base = strip_generic_args(current_owner)
             receiver_base = strip_generic_args(receiver_name)
             if !current_owner.empty? && current_owner_base == receiver_base
-              unless @module.has_function_with_body?(inst.method_name) || @module.has_function_with_body?(base_name)
-                targets_to_lower << inst.method_name
-                targets_to_lower << base_name unless inst.method_name == base_name
+              # Receiver matches the textual owner in `inst.method_name`. If a real body is
+              # already registered under this exact symbol, nothing to do.
+              if @module.has_function_with_body?(inst.method_name) || @module.has_function_with_body?(base_name)
+                next
               end
-              next
+              targets_to_lower << inst.method_name
+              targets_to_lower << base_name unless inst.method_name == base_name
+              # If the call already carries a `$type` / `$block` suffix, keep the old
+              # fast-path (avoids re-entrancy into lowering). If it is still a bare `Class#m`
+              # while the body only exists under a mangled overload key, fall through so
+              # lookup below can recover the concrete symbol.
+              if inst.method_name.includes?('$')
+                next
+              end
             end
 
             resolved_base = resolve_method_with_inheritance(receiver_name, method_name)
@@ -31342,6 +31364,15 @@ module Crystal::HIR
 
             arg_types = inst.args.map { |arg| value_types[arg]? || TypeRef::VOID }
             has_block_call = !inst.block.nil?
+            recv_for_block = strip_generic_args(receiver_name)
+            # Only drop the trailing arg when it is the materialized Proc for `&`, not when
+            # all values are real positional arguments (e.g. `foo(a, b) { }`).
+            if has_block_call && materialized_trailing_block_proc_arg?(arg_types)
+              trimmed = arg_types[0, arg_types.size - 1]
+              if lookup_block_function_def_for_call(resolved_base, trimmed.size, trimmed, recv_for_block)
+                arg_types = trimmed
+              end
+            end
             corrected_name = resolved_base
             if entry = lookup_function_def_for_call(resolved_base, arg_types.size, has_block_call, arg_types)
               corrected_name = entry[0]
@@ -31349,6 +31380,14 @@ module Crystal::HIR
               candidate = mangle_function_name(resolved_base, arg_types, has_block_call)
               if @function_types.has_key?(candidate) || @module.has_function?(candidate) || @function_defs.has_key?(candidate)
                 corrected_name = candidate
+              elsif has_block_call
+                if block_entry = lookup_block_function_def_for_call(resolved_base, arg_types.size, arg_types, recv_for_block)
+                  corrected_name = block_entry[0]
+                elsif count_distinct_block_overloads_arity_only(resolved_base, arg_types.size, recv_for_block) == 1
+                  if block_entry = lookup_block_function_def_for_call(resolved_base, arg_types.size, nil, recv_for_block)
+                    corrected_name = block_entry[0]
+                  end
+                end
               end
             end
             # Don't downgrade a concretely-typed call to an arity-wildcard variant.
@@ -40075,7 +40114,10 @@ module Crystal::HIR
         # O(1) lookup: check exact match first, then check if base name exists.
         # Also check @function_defs for methods that exist in AST but haven't been
         # lowered yet (e.g., private methods defined after the call site).
-        if @function_types.has_key?(test_name) || has_function_base?(test_name) || @function_defs.has_key?(test_name)
+        # Private defs may register only mangled keys (`Class#m$T`); `function_def_overloads`
+        # still lists them under the base `Class#m`.
+        if @function_types.has_key?(test_name) || has_function_base?(test_name) || @function_defs.has_key?(test_name) ||
+           !function_def_overloads(test_name).empty?
           # For primitive value types (Int32, Float64, etc.), finding a parent class
           # method (Int#to_s) is not enough — we need a specialized version with
           # the correct calling convention (i32 %self vs ptr %self).
@@ -40097,7 +40139,8 @@ module Crystal::HIR
         current_base = strip_generic_args(current)
         if current_base != current
           base_test = "#{current_base}##{method_name}"
-          if @function_types.has_key?(base_test) || has_function_base?(base_test) || @function_defs.has_key?(base_test)
+          if @function_types.has_key?(base_test) || has_function_base?(base_test) || @function_defs.has_key?(base_test) ||
+             !function_def_overloads(base_test).empty?
             if debug_env_filter_match?("DEBUG_METHOD_RESOLVE", method_name)
               STDERR.puts "[METHOD_RESOLVE] class=#{class_name} current=#{current} branch=base_test resolved=#{base_test}"
             end
@@ -40127,7 +40170,8 @@ module Crystal::HIR
             visited_modules << mod
             base_module = strip_generic_args(mod)
             module_method = "#{base_module}##{method_name}"
-            if @function_types.has_key?(module_method) || has_function_base?(module_method) || @function_defs.has_key?(module_method)
+            if @function_types.has_key?(module_method) || has_function_base?(module_method) || @function_defs.has_key?(module_method) ||
+               !function_def_overloads(module_method).empty?
               # Return with class prefix so it gets lowered for this class
               resolved = current == origin ? test_name : "#{origin}##{method_name}"
               @method_inheritance_cache[cache_key] = resolved
@@ -62228,7 +62272,10 @@ module Crystal::HIR
                              current_class_candidate : String? = nil
                              if !@current_method_is_class
                                cc = "#{current}##{method_name}"
-                               if @function_defs.has_key?(cc) || @function_types.has_key?(cc) || has_function_base?(cc)
+                               # Private defs often register only mangled keys (`Class#m$T_block`), not the
+                               # bare `Class#m` base — `function_def_overloads` still lists them.
+                               if @function_defs.has_key?(cc) || @function_types.has_key?(cc) || has_function_base?(cc) ||
+                                  !function_def_overloads(cc).empty?
                                  current_class_candidate = cc
                                end
                              end
@@ -62316,21 +62363,20 @@ module Crystal::HIR
       end
 
       has_unknown_arg_types = arg_types.any? { |t| t == TypeRef::VOID }
+      # `mangle_function_name(..., has_block: true)` must match `function_full_name_for_def`
+      # for `def foo(..., &)` — otherwise call sites target a symbol that was never
+      # registered (LLVM abort stubs). When arg types are still VOID, a bare base
+      # name is never valid for block defs; use `$block` at minimum — arity-aware
+      # `lookup_block_function_def_for_call` later canonicalizes to the typed key.
       mangled_method_name = if has_unknown_arg_types
-                              base_method_name
+                              if has_block_call
+                                mangle_function_name(base_method_name, [] of TypeRef, true)
+                              else
+                                base_method_name
+                              end
                             else
-                              mangle_function_name(base_method_name, arg_types)
+                              mangle_function_name(base_method_name, arg_types, has_block_call)
                             end
-      if has_block_call
-        mangled_with_block = if has_unknown_arg_types
-                               mangle_function_name(base_method_name, [] of TypeRef, true)
-                             else
-                               mangle_function_name(base_method_name, arg_types, true)
-                             end
-        if @function_types.has_key?(mangled_with_block) || @yield_functions.includes?(mangled_with_block) || @module.has_function?(mangled_with_block)
-          mangled_method_name = mangled_with_block
-        end
-      end
 
       if receiver_id && base_method_name.includes?('|') && base_method_name.includes?('#')
         union_name = method_owner(base_method_name)
@@ -62814,11 +62860,9 @@ module Crystal::HIR
       if callsite = prefer_callsite_specialization(base_method_name, mangled_method_name, arg_types, has_block_call)
         mangled_method_name = callsite
       end
-      desired_mangled_name = mangled_method_name
       if !has_unknown_arg_types && arg_types.any? { |t| t != TypeRef::VOID } &&
          NILABLE_QUERY_METHODS.includes?(method_name)
         desired_mangled = mangle_function_name(base_method_name, arg_types, has_block_call)
-        desired_mangled_name = desired_mangled unless desired_mangled.empty?
         if desired_mangled != mangled_method_name &&
            (@function_types.has_key?(desired_mangled) || @function_defs.has_key?(desired_mangled) || @module.has_function?(desired_mangled))
           mangled_method_name = desired_mangled
@@ -62855,7 +62899,7 @@ module Crystal::HIR
           end
         end
       end
-      primary_mangled_name = desired_mangled_name
+      primary_mangled_name = mangled_method_name
       receiver_name = ""
       if receiver_id
         if desc = @module.get_type_descriptor(ctx.type_of(receiver_id))
@@ -63419,7 +63463,20 @@ module Crystal::HIR
             callee_has_yield = callee_in_yield_set || def_contains_yield?(yield_def, callee_arena)
             callee_has_block_call = def_contains_block_call?(yield_def, callee_arena)
             force_inline_non_local = contains_return?(block_for_inline.body)
-            if force_inline_non_local || callee_has_yield || callee_has_block_call
+            # Mirror `skip_inline` for callee_yield_with_return (early block): late inline must not
+            # bypass normal Call emission when yield+return in the callee makes inline-yield unsafe.
+            skip_late_inline = false
+            if def_contains_yield?(yield_def, callee_arena)
+              callee_has_return_late = false
+              if body = yield_def.body
+                callee_has_return_late = with_arena(callee_arena) { contains_return?(body) }
+              end
+              if callee_has_return_late
+                skip_late_inline = true
+                debug_hook("call.inline.skip", "callee=#{yield_name} reason=callee_yield_with_return_late")
+              end
+            end
+            if !skip_late_inline && (force_inline_non_local || callee_has_yield || callee_has_block_call)
               @yield_functions.add(yield_name) if callee_has_yield
               return inline_yield_function(
                 ctx,
@@ -63506,7 +63563,12 @@ module Crystal::HIR
           receiver_desc = @module.get_type_descriptor(ctx.type_of(receiver_id))
           receiver_base_for_block_target = yield_receiver_base_name(ctx.type_of(receiver_id)) unless receiver_desc && receiver_desc.name.includes?('(')
         end
-        if block_entry = lookup_block_function_def_for_call(base_method_name, call_args.size, arg_types, receiver_base_for_block_target)
+        block_target_arg_types = if block_id && !has_block_call && args.size > call_args.size && call_args.size <= arg_types.size
+                                   arg_types[0, call_args.size]
+                                 else
+                                   arg_types
+                                 end
+        if block_entry = lookup_block_function_def_for_call(base_method_name, call_args.size, block_target_arg_types, receiver_base_for_block_target)
           mangled_method_name = block_entry[0]
           primary_mangled_name = mangled_method_name
         end
@@ -63672,6 +63734,27 @@ module Crystal::HIR
         base_block_mangled = mangle_function_name(base_method_name, [] of TypeRef, has_block_call)
         if mangled_method_name == base_block_mangled
           mangled_method_name = mangle_function_name(base_method_name, arg_types, has_block_call)
+        end
+      end
+      # After callsite types are known, resolve the real `def ... &` key (typed suffix +
+      # `_block`). Prefer typed lookup; arity-only (`nil` arg types) can select the wrong
+      # overload when multiple block defs share arity but differ in parameter types.
+      # `lower_function_if_needed(primary_mangled_name)` runs later — keep `primary_mangled_name` in sync.
+      if has_block_call
+        receiver_base_for_canon = nil
+        if receiver_id
+          recv_desc_canon = @module.get_type_descriptor(ctx.type_of(receiver_id))
+          receiver_base_for_canon = yield_receiver_base_name(ctx.type_of(receiver_id)) unless recv_desc_canon && recv_desc_canon.name.includes?('(')
+        end
+        typed_canon = lookup_block_function_def_for_call(base_method_name, call_args.size, arg_types, receiver_base_for_canon)
+        if typed_canon
+          mangled_method_name = typed_canon[0]
+          primary_mangled_name = mangled_method_name
+        elsif count_distinct_block_overloads_arity_only(base_method_name, call_args.size, receiver_base_for_canon) == 1
+          if fallback_canon = lookup_block_function_def_for_call(base_method_name, call_args.size, nil, receiver_base_for_canon)
+            mangled_method_name = fallback_canon[0]
+            primary_mangled_name = mangled_method_name
+          end
         end
       end
       base_signature_exists = @function_types.has_key?(base_method_name)
@@ -65895,7 +65978,47 @@ module Crystal::HIR
         end
       end
 
-      call = Call.new(ctx.next_id, return_type, receiver_id, mangled_method_name, args, block_id, call_virtual)
+      # Block call sites must use the same symbol as `function_full_name_for_def` for `def ... &`.
+      # Upstream lowering can leave a bare `Owner#m`, a weak `$block` mangle when some args
+      # were still VOID, or a virtual/repair artifact — MIR then emits the wrong LLVM name and
+      # the callee stays an abort stub. Reconcile once at emit time (lookup is cached).
+      emit_method_name = mangled_method_name
+      # Block may be lowered to a trailing proc (`has_block_call` false) while `block_id` stays set.
+      # `args`/`arg_types` then include the proc, but `lookup_block_function_def_for_call` must match
+      # the `def ... &` arity using only the non-proc arguments from `call_args`.
+      if (has_block_call || block_id) && receiver_id
+        recv_desc_emit = @module.get_type_descriptor(ctx.type_of(receiver_id))
+        recv_base_for_emit = unless recv_desc_emit && recv_desc_emit.name.includes?('(')
+                                 yield_receiver_base_name(ctx.type_of(receiver_id))
+                               end
+        lookup_arg_types = if block_id && !has_block_call && args.size > call_args.size && call_args.size <= arg_types.size
+                             arg_types[0, call_args.size]
+                           else
+                             arg_types
+                           end
+        resolved_emit = emit_method_name
+        if block_entry = lookup_block_function_def_for_call(base_method_name, call_args.size, lookup_arg_types, recv_base_for_emit)
+          resolved_emit = block_entry[0]
+        elsif count_distinct_block_overloads_arity_only(base_method_name, call_args.size, recv_base_for_emit) == 1
+          if block_entry = lookup_block_function_def_for_call(base_method_name, call_args.size, nil, recv_base_for_emit)
+            resolved_emit = block_entry[0]
+          end
+        end
+        if resolved_emit == emit_method_name
+          typed_block = mangle_function_name(base_method_name, lookup_arg_types, true)
+          if @function_defs.has_key?(typed_block) || @module.has_function?(typed_block) || @function_types.has_key?(typed_block)
+            resolved_emit = typed_block
+          end
+        end
+        if resolved_emit != mangled_method_name
+          emit_method_name = resolved_emit
+          mangled_method_name = resolved_emit
+          primary_mangled_name = resolved_emit
+          lower_function_if_needed(resolved_emit)
+        end
+      end
+
+      call = Call.new(ctx.next_id, return_type, receiver_id, emit_method_name, args, block_id, call_virtual)
       if env_get("DEBUG_BLOCK_CALL_ABI") && has_block_call
         block_dbg = block_id ? block_id.to_s : "nil"
         recv_dbg = receiver_id ? get_type_name_from_ref(ctx.type_of(receiver_id)) : "nil"
@@ -67823,6 +67946,68 @@ module Crystal::HIR
       end
       @block_lookup_cache[cache_key] = nil
       nil
+    end
+
+    # True when the last lowered argument is a materialized Proc for `&block` plumbing
+    # (lower_call appends the proc after real positional args).
+    private def materialized_trailing_block_proc_arg?(arg_types : Array(TypeRef)) : Bool
+      return false if arg_types.size < 2
+      trailing = arg_types.last
+      if d = @module.get_type_descriptor(trailing)
+        return true if d.kind == TypeKind::Proc ||
+                       d.name == "Proc" ||
+                       d.name.starts_with?("Proc(")
+      end
+      false
+    end
+
+    # Count distinct block defs matching `func_name` prefix + arity, without typed compatibility.
+    # Used to gate arity-only (`arg_types == nil`) lookup: multiple arity-compatible overloads
+    # can differ only in parameter types — selecting without types is ambiguous.
+    private def count_distinct_block_overloads_arity_only(
+      func_name : String,
+      arg_count : Int32,
+      receiver_base : String?,
+    ) : Int32
+      seen = Set(String).new
+      base_name = strip_type_suffix(func_name)
+      func_name_dollar = "#{func_name}$"
+      function_def_overloads(base_name).each do |name|
+        next unless name == func_name || name.starts_with?(func_name_dollar)
+        next if name.includes?("$$block")
+        def_node = @function_defs[name]?
+        next unless def_node
+        stats = function_param_stats(name, def_node)
+        next unless stats.has_block
+        next if arg_count < stats.required
+        next if arg_count > stats.param_count && !stats.has_splat && !stats.has_double_splat
+        seen << name
+      end
+      if method_short = method_short_from_name(func_name)
+        allowed_owner_set = receiver_base ? yield_allowed_owner_set(receiver_base) : nil
+        fallback_candidates = block_fallback_candidates_for_method(method_short)
+        fallback_candidates.each do |name|
+          next if name.includes?("$$block")
+          def_node = @function_defs[name]?
+          next unless def_node
+          if receiver_base
+            owner = method_owner_from_name(name)
+            candidate_owner_base = strip_generic_args(owner)
+            owner_allowed = allowed_owner_set.not_nil!.includes?(candidate_owner_base)
+            unless owner_allowed
+              owner_short = last_namespace_component_if_nested(candidate_owner_base)
+              owner_allowed = owner_short ? allowed_owner_set.not_nil!.includes?(owner_short) : false
+            end
+            next unless owner_allowed
+          end
+          stats = function_param_stats(name, def_node)
+          next unless stats.has_block
+          next if arg_count < stats.required
+          next if arg_count > stats.param_count && !stats.has_splat && !stats.has_double_splat
+          seen << name
+        end
+      end
+      seen.size
     end
 
     private def block_fallback_candidates_for_method(method_short : String) : Array(String)
@@ -72178,7 +72363,30 @@ module Crystal::HIR
         block_arena_for_proc = @block_node_arenas[block.object_id]? || resolve_arena_for_block(block, caller_arena) || caller_arena
         proc_id = lower_block_to_proc(ctx, block, block_param_types, block_arena_for_proc)
         fallback_args << proc_id
-        call = Call.new(ctx.next_id, return_type, receiver_id, inline_key, fallback_args, block_id)
+        # `inline_key` can still be a bare `Owner#m` when the yield inline path bails out early.
+        # The lowered def is registered only under the `def ... &` overload key (`$..._block`).
+        call_target = inline_key
+        if receiver_id && !call_target.includes?('$')
+          recv_desc_fb = @module.get_type_descriptor(ctx.type_of(receiver_id))
+          recv_base_fb = unless recv_desc_fb && recv_desc_fb.name.includes?('(')
+                             yield_receiver_base_name(ctx.type_of(receiver_id))
+                           end
+          if block_entry = lookup_block_function_def_for_call(base_inline_name, call_args.size, callsite_arg_types, recv_base_fb)
+            call_target = block_entry[0]
+          elsif count_distinct_block_overloads_arity_only(base_inline_name, call_args.size, recv_base_fb) == 1
+            if block_entry = lookup_block_function_def_for_call(base_inline_name, call_args.size, nil, recv_base_fb)
+              call_target = block_entry[0]
+            end
+          end
+          if call_target == inline_key
+            typed_b = mangle_function_name(base_inline_name, callsite_arg_types, true)
+            if @function_defs.has_key?(typed_b) || @module.has_function?(typed_b) || @function_types.has_key?(typed_b)
+              call_target = typed_b
+            end
+          end
+          lower_function_if_needed(call_target) if call_target != inline_key
+        end
+        call = Call.new(ctx.next_id, return_type, receiver_id, call_target, fallback_args, block_id)
         ctx.emit(call)
         ctx.register_type(call.id, return_type)
         call.id
