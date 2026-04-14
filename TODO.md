@@ -1,6 +1,27 @@
-# Crystal V2 Bootstrap — TODO (Updated 2026-04-02)
+# Crystal V2 Bootstrap — TODO (Updated 2026-04-14)
 
 ## Current Status
+- **Fresh HIR `System::Time` shorthand checkpoint: forked stdlib shorthand now resolves only inside nested `Crystal::*` contexts, while top-level `System::Time.instant` is rejected instead of lowering to a void static call (2026-04-14, current session)**:
+  - trustworthy setup:
+    - `src/compiler/hir/ast_to_hir.cr`
+      - `System::<tail>` is treated as `Crystal::System::<tail>` only when the active namespace/class or HIR function owner is nested below `Crystal::*`
+      - `MemberAccessNode` + `PathNode` receivers are handled directly, which is the actual AST shape for `System::Time.instant`; no MIR alias, source-text scan, or stdlib edit is involved
+    - `regression_tests/system_time_shorthand_top_level_negative_repro.sh`
+      - covers the negative top-level case so shorthand does not leak into user code
+  - decisive evidence:
+    - `crystal build src/crystal_v2.cr -o /tmp/cv2_system_time_guard --error-trace`
+    - `env -u CRYSTAL_V2_STOP_AFTER_HIR /tmp/cv2_system_time_guard regression_tests/system_time_shorthand_unpack_repro.cr -o /tmp/system_time_shorthand_unpack`
+    - `scripts/run_safe.sh /tmp/system_time_shorthand_unpack 5 512`
+      - result: prints `system_time_shorthand_unpack_ok`, `[EXIT: 0]`
+    - `bash regression_tests/system_time_shorthand_top_level_negative_repro.sh /tmp/cv2_system_time_guard`
+      - result: `ok: system_time_shorthand_top_level_negative_repro`
+    - emitted HIR for the positive reducer contains `call Crystal::System::Time.instant() : Time::Instant` followed by `field_get @@seconds` / `field_get @@nanoseconds`
+    - `scripts/run_safe.sh /tmp/yield_sleep_check 10 512`
+      - result: prints `before_yield` and `after_yield`, `[EXIT: 0]`
+    - adjacent checks `lib_struct_pointer_index_stride_repro` and `stage2_block_overload_hir_probes.sh` are green
+  - practical boundary:
+    - `examples/bench_comprehensive.cr` now compiles with `/tmp/cv2_system_time_guard`
+    - runtime still segfaults later after `Primes below 5000000: 348513`; that is the next frontier, not a `System::Time`/Fiber-yield stub fallback
 - **Fresh stage2 rooted/plain `Set(TypeRef)` constructor canonicalization checkpoint: self-hosted `stage2` no longer initializes `Crystal::MIR::Module#@module_type_refs` through the broken rooted `@$CCSet$LTypeRef$R$Dnew` auto-allocator path; backend typeref-set delegation now covers rooted/plain `TypeRef` spellings and rewrites that constructor call to canonical `Set(UInt32).new`, so the tiny no-prelude smoke moves past the old null-`@hash` `Set(UInt32)#includes? -> Hash(UInt32, Nil)#find_entry_with_index` crash and reaches a later compiler-side `error: Index error in emit_function for: __crystal_main / Negative capacity` (2026-04-08, current session)**:
   - trustworthy setup:
     - `src/compiler/mir/llvm_backend.cr`
