@@ -26,6 +26,6 @@ end
 if result == rounds
   puts "channel_ping_pong_ok"
 else
-  puts "channel_ping_pong_fail"
   puts result
+  raise "channel ping-pong failed"
 end
