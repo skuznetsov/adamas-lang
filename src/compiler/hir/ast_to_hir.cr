@@ -4654,6 +4654,11 @@ module Crystal::HIR
         type_ids = arg_types.map(&.id).join(",")
         STDERR.puts "[VIRTUAL_TARGET] record parent=#{parent_name} method=#{method_name} args=[#{type_ids}] block=#{has_block ? 1 : 0} splat=#{has_splat ? 1 : 0}"
       end
+      if env_get("DEBUG_TUPLE_VTR") && method_name == "includes?"
+        arg_names = arg_types.map { |t| get_type_name_from_ref(t) }.join(",")
+        cur = "#{@current_class || "(?)"}##{@current_method || "(?)"}"
+        STDERR.puts "[TUPLE_VTR] record parent=#{parent_name} method=#{method_name} args=[#{arg_names}] requester=#{cur}"
+      end
 
       # If descendants are already known, lower the recorded target for them
       # immediately. Direct-children-only replay misses generic instantiations
@@ -4711,6 +4716,11 @@ module Crystal::HIR
     ) : Nil
       base_name = "#{owner}##{method_name}"
       candidate = mangle_function_name(base_name, arg_types, has_block_call)
+      if env_get("DEBUG_TUPLE_VTR") && owner == "Tuple" && method_name == "includes?"
+        arg_names = arg_types.map { |t| get_type_name_from_ref(t) }.join(",")
+        cur = "#{@current_class || "(?)"}##{@current_method || "(?)"}"
+        STDERR.puts "[TUPLE_VTO] owner=Tuple method=includes? candidate=#{candidate} args=[#{arg_names}] requester=#{cur}"
+      end
 
       # Virtual-target prelower often needs the exact callsite arg signature to
       # synthesize inherited child wrappers (for example Kqueue#write from
@@ -26686,6 +26696,13 @@ module Crystal::HIR
                                        param_type
                                      end
           local_inference_type = exact_runtime_param_type
+          if env_get("DEBUG_OBJECT_IN_LOWER") && method_name == "in?"
+            ann_name = type_ann_str || "(none)"
+            call_name = get_type_name_from_ref(call_type_for_param)
+            loc_name = get_type_name_from_ref(local_inference_type)
+            override_label = full_name_override || "(none)"
+            STDERR.puts "[OBJECT_IN_LOWER] class=#{class_name} override=#{override_label} param=#{param_name} ann=#{ann_name} call=#{call_name} local=#{loc_name}"
+          end
           param_type_map[param_name] = local_inference_type
           param_infos << {param_name, exact_runtime_param_type, is_ivar_param}
           param_default_literals << extract_param_default_literal(param)
@@ -56706,6 +56723,11 @@ module Crystal::HIR
         canonical_names ? canonical_names.dup : nil,
       )
       @pending_arg_types[name] = callsite
+      if env_get("DEBUG_TUPLE_INCLUDES_CALLSITE") && name.starts_with?("Tuple#includes?")
+        arg_names = arg_types.map { |t| get_type_name_from_ref(t) }.join(",")
+        cur = "#{@current_class || "(?)"}##{@current_method || "(?)"}"
+        STDERR.puts "[TUPLE_INCL_CS] name=#{name} args=[#{arg_names}] requester=#{cur}"
+      end
       return if base_key.empty?
       literal_key = if arg_literals
                       arg_literals.map { |flag| flag ? '1' : '0' }.join
