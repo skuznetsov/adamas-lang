@@ -4716,10 +4716,10 @@ module Crystal::HIR
     ) : Nil
       base_name = "#{owner}##{method_name}"
       candidate = mangle_function_name(base_name, arg_types, has_block_call)
-      if env_get("DEBUG_TUPLE_VTR") && owner == "Tuple" && method_name == "includes?"
+      if env_get("DEBUG_TUPLE_VTR") && method_name == "includes?" && (owner == "Tuple" || owner.starts_with?("Tuple("))
         arg_names = arg_types.map { |t| get_type_name_from_ref(t) }.join(",")
         cur = "#{@current_class || "(?)"}##{@current_method || "(?)"}"
-        STDERR.puts "[TUPLE_VTO] owner=Tuple method=includes? candidate=#{candidate} args=[#{arg_names}] requester=#{cur}"
+        STDERR.puts "[TUPLE_VTO] owner=#{owner} method=includes? candidate=#{candidate} args=[#{arg_names}] requester=#{cur}"
       end
 
       # Virtual-target prelower often needs the exact callsite arg signature to
@@ -57887,6 +57887,10 @@ module Crystal::HIR
     private def lower_function_if_needed(name : String) : Nil
       if @debug_hir_lower_reasons && !@function_lowering_reasons.has_key?(name)
         @function_lowering_reasons[name] = ["direct_call"]
+      end
+      if env_get("DEBUG_TUPLE_INCL_LFN") && name.starts_with?("Tuple#includes?") && !@module.has_function_with_body?(name)
+        caller_name = @lowering_function_stack.last? || "(top)"
+        STDERR.puts "[TUPLE_LFN] name=#{name} caller=#{caller_name} inside_lowering=#{inside_lowering?}"
       end
       lower_function_if_needed_impl(name)
     end
