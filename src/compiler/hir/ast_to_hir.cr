@@ -43664,6 +43664,49 @@ module Crystal::HIR
               STDERR.puts "  #{caller} → #{body_owner}: #{c}"
             end
           end
+
+          # Sample the largest body-owner cluster (Tuple with includes?) by
+          # listing the actual mangled body names and their first requesters.
+          # This reveals whether the 570-body Tuple#includes? burst is a few
+          # repeated Tuple shapes (shape duplication) or hundreds of unique
+          # generic instantiations (shape fanout).
+          # Correct filter: body names are "Tuple#includes?$<arg_type>" (abstract
+          # owner + per-arg-type mono), NOT "Tuple(A,B,C)#includes?". So the
+          # fanout dimension is arg types passed to includes?, not tuple shapes.
+          tuple_sample = [] of String
+          nor_nested_defer_bodies.each do |name|
+            tuple_sample << name if name.starts_with?("Tuple#includes?")
+          end
+          unless tuple_sample.empty?
+            STDERR.puts "[LOWER_REASONS][NOR] Tuple#includes?$<arg_type> body sample (first 40 of #{tuple_sample.size}):"
+            tuple_sample.first(40).each do |name|
+              caller = @nested_defer_first_requester[name]? || "<no requester>"
+              STDERR.puts "  #{name}  <-  #{caller}"
+            end
+            # Arg-type family breakdown: count by the normalized arg-type prefix
+            # (part after "$", base type without inner generic args). This
+            # reveals whether the fanout is dominated by Hash variants,
+            # Array variants, Tuple variants, or primitive types.
+            family_counts = Hash(String, Int32).new(0)
+            tuple_sample.each do |name|
+              if idx = name.index('$')
+                arg_s = name[idx + 1, name.size - idx - 1]
+                # Strip generic args from arg_s: first "(" truncates; "|" keeps
+                # first branch for union arg types.
+                if paren = arg_s.index('(')
+                  family_counts[arg_s[0, paren]] += 1
+                elsif pipe = arg_s.index('|')
+                  family_counts[arg_s[0, pipe].strip + "|..."] += 1
+                else
+                  family_counts[arg_s] += 1
+                end
+              end
+            end
+            STDERR.puts "[LOWER_REASONS][NOR] Tuple#includes? arg-type family breakdown (top 20):"
+            family_counts.to_a.sort_by { |_, c| -c }.first(20).each do |family, c|
+              STDERR.puts "  $#{family}: #{c}"
+            end
+          end
         end
       end
     end
