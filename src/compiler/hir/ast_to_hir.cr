@@ -43772,11 +43772,11 @@ module Crystal::HIR
         STDERR.puts "    virtual_target_live_signature: #{void_body_virtual_live_sig}"
         STDERR.puts "    virtual_target_live_method:    #{void_body_virtual_live_method}"
         STDERR.puts "    init_allocator_layout:         #{void_body_init_allocator}"
-        STDERR.puts "    no_observed_reference (DEAD):  #{void_body_no_reference}"
+        STDERR.puts "    no_observed_reference:         #{void_body_no_reference}  [candidate; needs reducer proof]"
+        STDERR.puts "    (no_observed_reference = not a Call target, not live vsig, not init/allocator — diagnostic only)"
         if void_with_body > 0
-          STDERR.puts "    ↑ 'no_observed_reference' is the prunable count: force_lower produced neither rt nor a called body."
           pct = (void_body_no_reference * 100.0 / void_with_body).round(1)
-          STDERR.puts "    dead-body share of VOID+body: #{pct}%"
+          STDERR.puts "    no_observed_reference share of VOID+body: #{pct}%"
         end
 
         # Top targets among VOID records (split by body).
@@ -43830,22 +43830,24 @@ module Crystal::HIR
         end
 
         unless void_body_dead_samples.empty?
-          STDERR.puts "[FORCE_LOWER_ATTR][VOID] VOID+body DEAD samples (no downstream ref):"
+          STDERR.puts "[FORCE_LOWER_ATTR][VOID] VOID+body candidate samples (no observed reference; reducer-proof required):"
           void_body_dead_samples.each { |s| STDERR.puts "    #{s}" }
         end
       end
 
       # --- any_exact_match × body_emitted deep dive ---
-      # This is the GPT-safe fast-path candidate set: records where at least
-      # one cheap source (annotation / cached / well_known / inferred) equals
-      # rt_after AND a body was emitted. If the emitted body is DEAD (no
-      # downstream Call and not a live virtual target), a fast path that
-      # satisfies the return-type-only caller without forcing body lowering
-      # would not regress behavior. Distinguish:
-      #   - directly_called:   body is called → MUST NOT skip body (GPT rule)
+      # Narrow fast-path candidate set: records where at least one cheap
+      # source (annotation / cached / well_known / inferred) equals rt_after
+      # AND a body was emitted. If the emitted body is not referenced by any
+      # HIR Call and not a live virtual target, a fast path that satisfies
+      # the return-type-only caller without forcing body lowering *might*
+      # not regress behavior — but no_observed_reference is a diagnostic,
+      # NOT formal dead-code proof (backend / vtable / initializer side
+      # effects may still require the body). Classification:
+      #   - directly_called:   body is called → MUST NOT skip body
       #   - virtual_target_live_*: body feeds a live vdispatch → MUST NOT skip
       #   - init_allocator_layout: needed for object construction → keep
-      #   - no_observed_reference: DEAD → safe prune candidate
+      #   - no_observed_reference: CANDIDATE; needs reducer proof before prune
       exact_body_records = @force_lower_records.select do |r|
         rt_a = r[:rt_after]
         next false if rt_a == TypeRef::VOID
@@ -43904,17 +43906,18 @@ module Crystal::HIR
         STDERR.puts "    virtual_target_live_signature: #{eb_virtual_live_sig} (#{(eb_virtual_live_sig * 100.0 / eb_total).round(1)}%)  [MUST NOT skip body]"
         STDERR.puts "    virtual_target_live_method:    #{eb_virtual_live_method} (#{(eb_virtual_live_method * 100.0 / eb_total).round(1)}%)  [likely must keep]"
         STDERR.puts "    init_allocator_layout:         #{eb_init_allocator} (#{(eb_init_allocator * 100.0 / eb_total).round(1)}%)"
-        STDERR.puts "    no_observed_reference (DEAD):  #{eb_no_reference} (#{(eb_no_reference * 100.0 / eb_total).round(1)}%)  [safe prune candidate]"
+        STDERR.puts "    no_observed_reference:         #{eb_no_reference} (#{(eb_no_reference * 100.0 / eb_total).round(1)}%)  [candidate; needs reducer proof]"
+        STDERR.puts "    (no_observed_reference = not seen as HIR Call target, not a live virtual signature, not allocator/init — diagnostic only, not proof of unreachable code)"
 
         # Dead-by-source: which cheap source would a fast path have relied on?
         unless eb_dead_by_source.empty?
-          STDERR.puts "[FORCE_LOWER_ATTR][EXACT+BODY] DEAD records by matching cheap source (a record can match multiple):"
+          STDERR.puts "[FORCE_LOWER_ATTR][EXACT+BODY] candidate records by matching cheap source (multi-match possible):"
           eb_dead_by_source.to_a.sort_by { |_, c| -c }.each do |src, c|
             STDERR.puts "    #{src}: #{c}"
           end
         end
 
-        # Top targets in the DEAD subset — the concrete prune list.
+        # Top targets in the no_observed_reference subset.
         dead_target_hist = Hash(String, Int32).new(0)
         dead_requester_hist = Hash(String, Int32).new(0)
         exact_body_records.each do |r|
@@ -43924,18 +43927,18 @@ module Crystal::HIR
           dead_requester_hist[r[:requester]] += 1
         end
         unless dead_target_hist.empty?
-          STDERR.puts "[FORCE_LOWER_ATTR][EXACT+BODY] top DEAD targets (top 20):"
+          STDERR.puts "[FORCE_LOWER_ATTR][EXACT+BODY] top candidate targets (no observed ref; top 20):"
           dead_target_hist.to_a.sort_by { |_, c| -c }.first(20).each do |name, c|
             STDERR.puts "    #{name}: #{c}"
           end
-          STDERR.puts "[FORCE_LOWER_ATTR][EXACT+BODY] top DEAD requesters (top 15):"
+          STDERR.puts "[FORCE_LOWER_ATTR][EXACT+BODY] top candidate requesters (top 15):"
           dead_requester_hist.to_a.sort_by { |_, c| -c }.first(15).each do |r, c|
             STDERR.puts "    #{r}: #{c}"
           end
         end
 
         unless eb_dead_samples.empty?
-          STDERR.puts "[FORCE_LOWER_ATTR][EXACT+BODY] DEAD samples:"
+          STDERR.puts "[FORCE_LOWER_ATTR][EXACT+BODY] candidate samples (reducer proof required):"
           eb_dead_samples.each { |s| STDERR.puts "    #{s}" }
         end
       end
