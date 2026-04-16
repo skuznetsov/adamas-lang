@@ -43093,39 +43093,76 @@ module Crystal::HIR
       emit_hir_lower_reasons_report if @debug_hir_lower_reasons
     end
 
-    # Aggregates @function_lowering_reasons by tag and produces a
-    # "who ordered each function" report. Also classifies every lowered
-    # function by observed downstream references (Call.method_name) inside
-    # the final HIR module so we can distinguish directly-called bodies from
-    # apparently unused ones.
+    # Extract the "method + signature" part of a mangled function name for
+    # virtual-dispatch signature matching. Input:  "Array(Int32)#to_s$IO"
+    # Output: "to_s$IO". If no separator, returns the whole name.
+    @[AlwaysInline]
+    private def method_and_signature_from_name(name : String) : String
+      idx = name.index('#') || name.index('.')
+      idx ? name[(idx + 1)..] : name
+    end
+
+    # Primary reason assignment: first non-direct_call tag wins, else direct_call,
+    # else "no_reason" if we saw no tags at all for a given name.
+    @[AlwaysInline]
+    private def primary_reason_for(reasons : Array(String)?) : String
+      return "no_reason" if reasons.nil? || reasons.empty?
+      reasons.not_nil!.find { |r| r != "direct_call" } || reasons.not_nil!.first
+    end
+
+    # Produces two attribution views:
+    # 1. Tracked-name view: iterates @function_lowering_reasons. Includes
+    #    aliases, base-name stubs, unresolved candidates — counts exceed the
+    #    emitted-body total.
+    # 2. Emitted-body view: iterates @module.functions (the actual lowered
+    #    bodies). Counts sum exactly to @module.functions.size. This is the
+    #    load-bearing view for any pruning recommendation.
+    # Also classifies emitted bodies as directly_called / virtual_target_only
+    # (split by live-virtual-signature presence) / init_allocator_layout /
+    # no_observed_reference.
     private def emit_hir_lower_reasons_report : Nil
       total_tracked = @function_lowering_reasons.size
       total_lowered_bodies = @module.functions.size
       STDERR.puts "[LOWER_REASONS] tracked names: #{total_tracked}"
       STDERR.puts "[LOWER_REASONS] HIR functions emitted: #{total_lowered_bodies}"
 
-      reason_counts = Hash(String, Int32).new(0)
-      primary_reason_counts = Hash(String, Int32).new(0)
-      # Bucket names by primary reason for per-reason owner/method histograms.
-      primary_reason_names = Hash(String, Array(String)).new { |h, k| h[k] = [] of String }
-      @function_lowering_reasons.each do |name, reasons|
-        reasons.each { |r| reason_counts[r] += 1 }
-        # Primary reason = first non-direct_call tag if any, otherwise direct_call.
-        primary = reasons.find { |r| r != "direct_call" } || reasons.first
-        primary_reason_counts[primary] += 1
-        primary_reason_names[primary] << name
+      # ---- Tracked-name attribution (may include non-emitted aliases/candidates) ----
+      tracked_reason_counts = Hash(String, Int32).new(0)
+      tracked_primary_counts = Hash(String, Int32).new(0)
+      @function_lowering_reasons.each do |_name, reasons|
+        reasons.each { |r| tracked_reason_counts[r] += 1 }
+        tracked_primary_counts[primary_reason_for(reasons)] += 1
       end
-      STDERR.puts "[LOWER_REASONS] reason counts (all tags, may double-count):"
-      reason_counts.to_a.sort_by { |_, c| -c }.each do |reason, count|
-        STDERR.puts "  #{reason}: #{count}"
+      STDERR.puts "[LOWER_REASONS] TRACKED-NAME view (includes non-emitted aliases/candidates)"
+      STDERR.puts "[LOWER_REASONS]   reason counts (all tags, may double-count):"
+      tracked_reason_counts.to_a.sort_by { |_, c| -c }.each do |reason, count|
+        STDERR.puts "    #{reason}: #{count}"
       end
-      STDERR.puts "[LOWER_REASONS] primary-reason counts (one reason per function):"
-      primary_reason_counts.to_a.sort_by { |_, c| -c }.each do |reason, count|
-        STDERR.puts "  #{reason}: #{count}"
+      STDERR.puts "[LOWER_REASONS]   primary-reason counts:"
+      tracked_primary_counts.to_a.sort_by { |_, c| -c }.each do |reason, count|
+        STDERR.puts "    #{reason}: #{count}"
       end
 
-      # Per-primary-reason: top owner prefixes and top method names.
-      primary_reason_names.each do |reason, names|
+      # ---- Emitted-body attribution (authoritative for pruning decisions) ----
+      # One primary reason per emitted function. Counts MUST sum to
+      # @module.functions.size. Unknown falls into "no_reason" bucket.
+      emitted_primary_counts = Hash(String, Int32).new(0)
+      emitted_primary_names = Hash(String, Array(String)).new { |h, k| h[k] = [] of String }
+      @module.functions.each do |func|
+        primary = primary_reason_for(@function_lowering_reasons[func.name]?)
+        emitted_primary_counts[primary] += 1
+        emitted_primary_names[primary] << func.name
+      end
+      emitted_sum = emitted_primary_counts.values.sum
+      STDERR.puts "[LOWER_REASONS] EMITTED-BODY view (authoritative — sums to #{total_lowered_bodies})"
+      STDERR.puts "[LOWER_REASONS]   primary-reason counts (sum=#{emitted_sum}):"
+      emitted_primary_counts.to_a.sort_by { |_, c| -c }.each do |reason, count|
+        pct = total_lowered_bodies > 0 ? (count * 100.0 / total_lowered_bodies).round(1) : 0.0
+        STDERR.puts "    #{reason}: #{count} (#{pct}%)"
+      end
+
+      # Per-primary-reason (emitted-body only): top owner prefixes + method names.
+      emitted_primary_names.each do |reason, names|
         next if names.size < 10
         owner_hist = Hash(String, Int32).new(0)
         method_hist = Hash(String, Int32).new(0)
@@ -43137,59 +43174,85 @@ module Crystal::HIR
         end
         top_owners = owner_hist.to_a.sort_by { |_, c| -c }.first(15)
         top_methods = method_hist.to_a.sort_by { |_, c| -c }.first(15)
-        STDERR.puts "[LOWER_REASONS] reason=#{reason} top owner bases:"
-        top_owners.each { |o, c| STDERR.puts "  #{o}: #{c}" }
-        STDERR.puts "[LOWER_REASONS] reason=#{reason} top method names:"
-        top_methods.each { |m, c| STDERR.puts "  #{m}: #{c}" }
+        STDERR.puts "[LOWER_REASONS]   reason=#{reason} top owner bases (emitted):"
+        top_owners.each { |o, c| STDERR.puts "    #{o}: #{c}" }
+        STDERR.puts "[LOWER_REASONS]   reason=#{reason} top method names (emitted):"
+        top_methods.each { |m, c| STDERR.puts "    #{m}: #{c}" }
       end
 
-      # Per-class method histograms for the four dominant HIR-function owners
-      # identified in prior profiling (Array, Pointer, Slice, Hash). Helps
-      # decide whether instance fanout is driven by the same few methods (e.g.
-      # each/size/[]) or by a long tail.
+      # Per-class method histograms (emitted-body only) for the dominant owners.
       ["Array", "Pointer", "Slice", "Hash"].each do |target_base|
         method_hist = Hash(String, Int32).new(0)
-        @function_lowering_reasons.each_key do |name|
-          owner_base = strip_generic_args(method_owner_from_name(name))
+        @module.functions.each do |func|
+          owner_base = strip_generic_args(method_owner_from_name(func.name))
           next unless owner_base == target_base
-          if m = method_short_from_name(name)
+          if m = method_short_from_name(func.name)
             method_hist[m] += 1
           end
         end
         next if method_hist.empty?
-        STDERR.puts "[LOWER_REASONS] #{target_base} method histogram (#{method_hist.values.sum} functions):"
+        STDERR.puts "[LOWER_REASONS] #{target_base} method histogram (emitted bodies: #{method_hist.values.sum}):"
         method_hist.to_a.sort_by { |_, c| -c }.first(20).each do |m, c|
           STDERR.puts "  #{m}: #{c}"
         end
       end
 
-      # Post-HIR Call-reference scan: walk final HIR, tally every Call.method_name
-      # seen inside any emitted function body, then classify each lowered body
-      # as directly_called / virtual_target_only / init_allocator_layout /
-      # no_observed_reference. Provides evidence for an unused-method pruning
-      # hypothesis independent of @function_lowering_reasons.
+      # ---- Post-HIR Call scan: observed references + live virtual signatures ----
       observed_call_names = Set(String).new
+      live_virtual_method_names = Set(String).new
+      live_virtual_signatures = Set(String).new
+      virtual_call_count = 0
       @module.functions.each do |func|
         func.blocks.each do |block|
           block.instructions.each do |inst|
             next unless inst.is_a?(Call)
             observed_call_names << inst.method_name
+            next unless inst.virtual
+            virtual_call_count += 1
+            if m = method_short_from_name(inst.method_name)
+              live_virtual_method_names << m
+            end
+            live_virtual_signatures << method_and_signature_from_name(inst.method_name)
           end
         end
       end
       STDERR.puts "[LOWER_REASONS] distinct Call.method_name values in HIR: #{observed_call_names.size}"
+      STDERR.puts "[LOWER_REASONS] virtual Call instructions: #{virtual_call_count}"
+      STDERR.puts "[LOWER_REASONS] distinct live virtual method names: #{live_virtual_method_names.size}"
+      STDERR.puts "[LOWER_REASONS] distinct live virtual signatures: #{live_virtual_signatures.size}"
 
+      # ---- Emitted-body classification (sums to @module.functions.size) ----
       classification = Hash(String, Int32).new(0)
+      # Skipped-signature histogram: for virtual_target_only bodies that have
+      # no live virtual signature, tally the (method+sig) key. These are the
+      # concrete candidates a signature-based replay filter could avoid.
+      skipped_sig_hist = Hash(String, Int32).new(0)
+      skipped_method_hist = Hash(String, Int32).new(0)
+      virtual_only_live_sample = [] of String
+      virtual_only_nolive_sample = [] of String
       unreferenced_sample = [] of String
-      virtual_only_sample = [] of String
       @module.functions.each do |func|
         name = func.name
         reasons = @function_lowering_reasons[name]?
         if observed_call_names.includes?(name)
           classification["directly_called"] += 1
         elsif reasons && (reasons.includes?("virtual_target_owner") || reasons.includes?("virtual_target_resolved"))
-          classification["virtual_target_only"] += 1
-          virtual_only_sample << name if virtual_only_sample.size < 20
+          sig = method_and_signature_from_name(name)
+          short = method_short_from_name(name)
+          live_by_sig = live_virtual_signatures.includes?(sig)
+          live_by_method = short && live_virtual_method_names.includes?(short)
+          if live_by_sig
+            classification["virtual_target_only_live_signature"] += 1
+            virtual_only_live_sample << name if virtual_only_live_sample.size < 15
+          elsif live_by_method
+            classification["virtual_target_only_live_method_only"] += 1
+            skipped_sig_hist[sig] += 1
+          else
+            classification["virtual_target_only_no_live_vcall"] += 1
+            skipped_sig_hist[sig] += 1
+            skipped_method_hist[short || "?"] += 1
+            virtual_only_nolive_sample << name if virtual_only_nolive_sample.size < 20
+          end
         elsif name.ends_with?(".new") || name.includes?("#initialize") || name.includes?("allocate")
           classification["init_allocator_layout"] += 1
         else
@@ -43197,13 +43260,31 @@ module Crystal::HIR
           unreferenced_sample << name if unreferenced_sample.size < 30
         end
       end
-      STDERR.puts "[LOWER_REASONS] HIR body classification:"
+      classification_sum = classification.values.sum
+      STDERR.puts "[LOWER_REASONS] HIR body classification (sum=#{classification_sum}, expected=#{total_lowered_bodies}):"
       classification.to_a.sort_by { |_, c| -c }.each do |tag, count|
-        STDERR.puts "  #{tag}: #{count}"
+        pct = total_lowered_bodies > 0 ? (count * 100.0 / total_lowered_bodies).round(1) : 0.0
+        STDERR.puts "  #{tag}: #{count} (#{pct}%)"
       end
-      unless virtual_only_sample.empty?
-        STDERR.puts "[LOWER_REASONS] virtual_target_only sample:"
-        virtual_only_sample.each { |n| STDERR.puts "  #{n}" }
+      unless virtual_only_live_sample.empty?
+        STDERR.puts "[LOWER_REASONS] virtual_target_only_live_signature sample (KEEP these):"
+        virtual_only_live_sample.each { |n| STDERR.puts "  #{n}" }
+      end
+      unless virtual_only_nolive_sample.empty?
+        STDERR.puts "[LOWER_REASONS] virtual_target_only_no_live_vcall sample (PRUNE candidates):"
+        virtual_only_nolive_sample.each { |n| STDERR.puts "  #{n}" }
+      end
+      unless skipped_method_hist.empty?
+        STDERR.puts "[LOWER_REASONS] top methods with no live virtual signature (prune candidates):"
+        skipped_method_hist.to_a.sort_by { |_, c| -c }.first(20).each do |m, c|
+          STDERR.puts "  #{m}: #{c}"
+        end
+      end
+      unless skipped_sig_hist.empty?
+        STDERR.puts "[LOWER_REASONS] top method+sig with no live virtual signature:"
+        skipped_sig_hist.to_a.sort_by { |_, c| -c }.first(20).each do |sig, c|
+          STDERR.puts "  #{sig}: #{c}"
+        end
       end
       unless unreferenced_sample.empty?
         STDERR.puts "[LOWER_REASONS] no_observed_reference sample:"
