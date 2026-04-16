@@ -43682,6 +43682,146 @@ module Crystal::HIR
         STDERR.puts "[FORCE_LOWER_ATTR] inferred MISMATCH sample (inferred_rt != rt_after):"
         mismatch_samples_infer.each { |s| STDERR.puts "    #{s}" }
       end
+
+      # --- rt_after=VOID deep dive ---
+      # ~55% of force_lower calls leave rt_after == VOID. For those records,
+      # force_lower produced no usable return-type knowledge. Figure out who
+      # requested them, whether they still emitted a body, and — if they did —
+      # whether the emitted body is actually called downstream, so we can tell
+      # whether this bucket is prunable.
+      void_records = @force_lower_records.select { |r| r[:rt_after] == TypeRef::VOID }
+      if void_records.empty?
+        STDERR.puts "[FORCE_LOWER_ATTR][VOID] no records with rt_after == VOID"
+      else
+        # Observed downstream calls across the emitted module (local scan so the
+        # VOID dive stays self-contained).
+        observed_calls_void = Set(String).new
+        live_virtual_methods_void = Set(String).new
+        live_virtual_sigs_void = Set(String).new
+        @module.functions.each do |func|
+          func.blocks.each do |block|
+            block.instructions.each do |inst|
+              next unless inst.is_a?(Call)
+              observed_calls_void << inst.method_name
+              next unless inst.virtual
+              if m = method_short_from_name(inst.method_name)
+                live_virtual_methods_void << m
+              end
+              live_virtual_sigs_void << method_and_signature_from_name(inst.method_name)
+            end
+          end
+        end
+
+        void_total = void_records.size
+        void_with_body = void_records.count(&.[:body_emitted])
+        void_without_body = void_total - void_with_body
+        STDERR.puts "[FORCE_LOWER_ATTR][VOID] records with rt_after == VOID: #{void_total} (#{(void_total * 100.0 / total).round(1)}% of all force_lower)"
+        STDERR.puts "[FORCE_LOWER_ATTR][VOID]   body_emitted=true:  #{void_with_body} (#{void_total > 0 ? (void_with_body * 100.0 / void_total).round(1) : 0}% of VOID)"
+        STDERR.puts "[FORCE_LOWER_ATTR][VOID]   body_emitted=false: #{void_without_body} (#{void_total > 0 ? (void_without_body * 100.0 / void_total).round(1) : 0}% of VOID)"
+
+        # Of the VOID records that DID emit a body, how many are actually
+        # referenced by a downstream Call? Those that aren't are the strongest
+        # prune candidates: we forced lowering, got no rt, and the body is dead.
+        void_body_directly_called = 0
+        void_body_virtual_live_sig = 0
+        void_body_virtual_live_method = 0
+        void_body_init_allocator = 0
+        void_body_no_reference = 0
+        void_body_dead_samples = [] of String
+        void_records.each do |r|
+          next unless r[:body_emitted]
+          name = r[:name]
+          if observed_calls_void.includes?(name)
+            void_body_directly_called += 1
+            next
+          end
+          reasons = @function_lowering_reasons[name]?
+          is_vtarget = reasons && (reasons.includes?("virtual_target_owner") || reasons.includes?("virtual_target_resolved"))
+          if is_vtarget
+            sig = method_and_signature_from_name(name)
+            short = method_short_from_name(name)
+            if live_virtual_sigs_void.includes?(sig)
+              void_body_virtual_live_sig += 1
+            elsif short && live_virtual_methods_void.includes?(short)
+              void_body_virtual_live_method += 1
+            else
+              void_body_no_reference += 1
+              void_body_dead_samples << name if void_body_dead_samples.size < 20
+            end
+          elsif name.ends_with?(".new") || name.includes?("#initialize") || name.includes?("allocate")
+            void_body_init_allocator += 1
+          else
+            void_body_no_reference += 1
+            void_body_dead_samples << name if void_body_dead_samples.size < 20
+          end
+        end
+        STDERR.puts "[FORCE_LOWER_ATTR][VOID] body × downstream classification (of #{void_with_body} VOID+body records):"
+        STDERR.puts "    directly_called:               #{void_body_directly_called}"
+        STDERR.puts "    virtual_target_live_signature: #{void_body_virtual_live_sig}"
+        STDERR.puts "    virtual_target_live_method:    #{void_body_virtual_live_method}"
+        STDERR.puts "    init_allocator_layout:         #{void_body_init_allocator}"
+        STDERR.puts "    no_observed_reference (DEAD):  #{void_body_no_reference}"
+        if void_with_body > 0
+          STDERR.puts "    ↑ 'no_observed_reference' is the prunable count: force_lower produced neither rt nor a called body."
+          pct = (void_body_no_reference * 100.0 / void_with_body).round(1)
+          STDERR.puts "    dead-body share of VOID+body: #{pct}%"
+        end
+
+        # Top targets among VOID records (split by body).
+        void_target_body_hist = Hash(String, Int32).new(0)
+        void_target_nobody_hist = Hash(String, Int32).new(0)
+        void_records.each do |r|
+          if r[:body_emitted]
+            void_target_body_hist[r[:name]] += 1
+          else
+            void_target_nobody_hist[r[:name]] += 1
+          end
+        end
+        STDERR.puts "[FORCE_LOWER_ATTR][VOID] top targets with body (top 20):"
+        void_target_body_hist.to_a.sort_by { |_, c| -c }.first(20).each do |name, c|
+          tag = observed_calls_void.includes?(name) ? "called" : "dead?"
+          STDERR.puts "    [#{tag}] #{name}: #{c}"
+        end
+        STDERR.puts "[FORCE_LOWER_ATTR][VOID] top targets without body (top 20):"
+        void_target_nobody_hist.to_a.sort_by { |_, c| -c }.first(20).each do |name, c|
+          STDERR.puts "    #{name}: #{c}"
+        end
+
+        # Top methods / owners / requesters restricted to VOID records.
+        void_method_hist = Hash(String, Int32).new(0)
+        void_owner_hist = Hash(String, Int32).new(0)
+        void_requester_hist = Hash(String, Int32).new(0)
+        void_caller_reason_hist = Hash(String, Int32).new(0)
+        void_records.each do |r|
+          if m = method_short_from_name(r[:name])
+            void_method_hist[m] += 1
+          end
+          void_owner_hist[strip_generic_args(method_owner_from_name(r[:name]))] += 1
+          void_requester_hist[r[:requester]] += 1
+          void_caller_reason_hist[r[:caller_reason]] += 1
+        end
+        STDERR.puts "[FORCE_LOWER_ATTR][VOID] top methods (top 20):"
+        void_method_hist.to_a.sort_by { |_, c| -c }.first(20).each do |m, c|
+          STDERR.puts "    #{m}: #{c}"
+        end
+        STDERR.puts "[FORCE_LOWER_ATTR][VOID] top owner bases (top 15):"
+        void_owner_hist.to_a.sort_by { |_, c| -c }.first(15).each do |o, c|
+          STDERR.puts "    #{o}: #{c}"
+        end
+        STDERR.puts "[FORCE_LOWER_ATTR][VOID] top requesters (top 20):"
+        void_requester_hist.to_a.sort_by { |_, c| -c }.first(20).each do |r, c|
+          STDERR.puts "    #{r}: #{c}"
+        end
+        STDERR.puts "[FORCE_LOWER_ATTR][VOID] caller primary reason distribution (VOID only):"
+        void_caller_reason_hist.to_a.sort_by { |_, c| -c }.each do |r, c|
+          STDERR.puts "    #{r}: #{c}"
+        end
+
+        unless void_body_dead_samples.empty?
+          STDERR.puts "[FORCE_LOWER_ATTR][VOID] VOID+body DEAD samples (no downstream ref):"
+          void_body_dead_samples.each { |s| STDERR.puts "    #{s}" }
+        end
+      end
     end
 
     # Emit all tracked callsite signatures that haven't been lowered yet.
