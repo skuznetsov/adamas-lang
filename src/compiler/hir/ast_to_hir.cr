@@ -43381,6 +43381,10 @@ module Crystal::HIR
       virtual_only_live_sample = [] of String
       virtual_only_nolive_sample = [] of String
       unreferenced_sample = [] of String
+      # Collect every no_observed_reference body for the deep-dive below. We
+      # need the full list (not just a sample) so we can slice by primary
+      # reason, gen_path, owner base, and method name.
+      unreferenced_bodies = [] of String
       # Cross-tab: nested_defer bodies by their downstream classification.
       nested_defer_outcome = Hash(String, Int32).new(0)
       @module.functions.each do |func|
@@ -43417,6 +43421,7 @@ module Crystal::HIR
         else
           classification["no_observed_reference"] += 1
           unreferenced_sample << name if unreferenced_sample.size < 30
+          unreferenced_bodies << name
           outcome = "no_observed_reference"
         end
         nested_defer_outcome[outcome] += 1 if is_nested_defer
@@ -43457,6 +43462,145 @@ module Crystal::HIR
         nested_defer_outcome.to_a.sort_by { |_, c| -c }.each do |tag, c|
           pct = nd_outcome_sum > 0 ? (c * 100.0 / nd_outcome_sum).round(1) : 0.0
           STDERR.puts "  #{tag}: #{c} (#{pct}%)"
+        end
+      end
+
+      # ---- no_observed_reference deep-dive ----
+      # GPT directive: classify no_observed_reference bodies by source path.
+      # no_observed_reference != dead code — backend vdispatch tables,
+      # initializers, runtime exports may still require these bodies. This
+      # section is diagnostic only; it identifies which emission path is
+      # responsible for lowering bodies that aren't referenced by any HIR
+      # Call and aren't classified as a live-vsig virtual target.
+      unless unreferenced_bodies.empty?
+        nor_total = unreferenced_bodies.size
+        STDERR.puts "[LOWER_REASONS][NOR] no_observed_reference deep dive (#{nor_total} bodies)"
+        STDERR.puts "[LOWER_REASONS][NOR] (diagnostic only — not proof of unreachable code; backend/vdispatch/init may still require)"
+
+        nor_primary = Hash(String, Int32).new(0)
+        nor_gen_path = Hash(String, Int32).new(0)
+        nor_owner = Hash(String, Int32).new(0)
+        nor_method = Hash(String, Int32).new(0)
+        nor_tag_hist = Hash(String, Int32).new(0) # counts every tag (multi-count)
+        nor_first_tag = Hash(String, Int32).new(0) # first tag recorded (chronological)
+        nor_has_direct_call = 0
+        nor_has_virtual_target_owner = 0
+        nor_has_virtual_target_resolved = 0
+        nor_has_nested_defer = 0
+        nor_has_gen_path = 0
+        nor_no_reason = 0
+        unreferenced_bodies.each do |name|
+          reasons = @function_lowering_reasons[name]?
+          pr = primary_reason_for(reasons)
+          nor_primary[pr] += 1
+          if reasons.nil? || reasons.empty?
+            nor_no_reason += 1
+          else
+            nor_first_tag[reasons.first] += 1
+            reasons.each do |tag|
+              nor_tag_hist[tag] += 1
+              if tag.starts_with?("gen_path:")
+                nor_gen_path[tag.sub("gen_path:", "")] += 1
+              end
+            end
+            nor_has_direct_call += 1 if reasons.includes?("direct_call")
+            nor_has_virtual_target_owner += 1 if reasons.includes?("virtual_target_owner")
+            nor_has_virtual_target_resolved += 1 if reasons.includes?("virtual_target_resolved")
+            nor_has_nested_defer += 1 if reasons.any? { |r| r.starts_with?("nested_defer") }
+            nor_has_gen_path += 1 if reasons.any? { |r| r.starts_with?("gen_path:") }
+          end
+          nor_owner[strip_generic_args(method_owner_from_name(name))] += 1
+          if m = method_short_from_name(name)
+            nor_method[m] += 1
+          end
+        end
+
+        STDERR.puts "[LOWER_REASONS][NOR] primary-reason distribution:"
+        nor_primary.to_a.sort_by { |_, c| -c }.each do |tag, c|
+          pct = (c * 100.0 / nor_total).round(1)
+          STDERR.puts "  #{tag}: #{c} (#{pct}%)"
+        end
+
+        STDERR.puts "[LOWER_REASONS][NOR] tag-presence (a body can appear in several rows):"
+        STDERR.puts "  has_direct_call tag:               #{nor_has_direct_call}"
+        STDERR.puts "  has_virtual_target_owner tag:      #{nor_has_virtual_target_owner}"
+        STDERR.puts "  has_virtual_target_resolved tag:   #{nor_has_virtual_target_resolved}"
+        STDERR.puts "  has_nested_defer:* tag:            #{nor_has_nested_defer}"
+        STDERR.puts "  has_gen_path:* tag:                #{nor_has_gen_path}"
+        STDERR.puts "  no_reason (unlabeled):             #{nor_no_reason}"
+
+        unless nor_gen_path.empty?
+          STDERR.puts "[LOWER_REASONS][NOR] gen_path breakdown (every gen_path tag occurrence):"
+          nor_gen_path.to_a.sort_by { |_, c| -c }.each do |tag, c|
+            STDERR.puts "  #{tag}: #{c}"
+          end
+        end
+
+        STDERR.puts "[LOWER_REASONS][NOR] top owner bases (top 20):"
+        nor_owner.to_a.sort_by { |_, c| -c }.first(20).each do |o, c|
+          pct = (c * 100.0 / nor_total).round(1)
+          STDERR.puts "  #{o}: #{c} (#{pct}%)"
+        end
+
+        STDERR.puts "[LOWER_REASONS][NOR] top method names (top 30):"
+        nor_method.to_a.sort_by { |_, c| -c }.first(30).each do |m, c|
+          pct = (c * 100.0 / nor_total).round(1)
+          STDERR.puts "  #{m}: #{c} (#{pct}%)"
+        end
+
+        unless nor_first_tag.empty?
+          STDERR.puts "[LOWER_REASONS][NOR] first-tag (chronological first reason recorded) distribution:"
+          nor_first_tag.to_a.sort_by { |_, c| -c }.each do |tag, c|
+            STDERR.puts "  #{tag}: #{c}"
+          end
+        end
+
+        # Cross-tab: primary reason × owner base (top cells). Reveals whether a
+        # specific emission path is concentrated on specific owners — e.g.
+        # virtual_target_owner × Array, or nested_defer:force_lower_return_type
+        # × Hash::EntryIterator.
+        nor_cross = Hash({String, String}, Int32).new(0)
+        unreferenced_bodies.each do |name|
+          reasons = @function_lowering_reasons[name]?
+          pr = primary_reason_for(reasons)
+          owner = strip_generic_args(method_owner_from_name(name))
+          nor_cross[{pr, owner}] += 1
+        end
+        STDERR.puts "[LOWER_REASONS][NOR] primary-reason × owner-base cross-tab (top 30 cells):"
+        nor_cross.to_a.sort_by { |_, c| -c }.first(30).each do |(pr, owner), c|
+          STDERR.puts "  #{pr} × #{owner}: #{c}"
+        end
+
+        # Full-name top 50 — ordered concrete list the user can eyeball.
+        nor_name_hist = Hash(String, Int32).new(0)
+        unreferenced_bodies.each { |n| nor_name_hist[n] += 1 }
+        STDERR.puts "[LOWER_REASONS][NOR] top 50 full function names:"
+        nor_name_hist.to_a.sort_by { |_, c| -c }.first(50).each do |n, c|
+          STDERR.puts "  #{n}: #{c}"
+        end
+
+        # Nested_defer requesters restricted to NOR subset: who caused the
+        # deferral that later became a dead body?
+        nor_nested_defer_bodies = unreferenced_bodies.select do |name|
+          (reasons = @function_lowering_reasons[name]?) && reasons.any? { |r| r.starts_with?("nested_defer") }
+        end
+        unless nor_nested_defer_bodies.empty?
+          STDERR.puts "[LOWER_REASONS][NOR] nested_defer subset: #{nor_nested_defer_bodies.size} bodies"
+          # Sub-reason counts for NOR∩nested_defer.
+          nor_nd_sub = Hash(String, Int32).new(0)
+          nor_nested_defer_bodies.each do |name|
+            reasons = @function_lowering_reasons[name]?
+            next unless reasons
+            reasons.each do |tag|
+              if tag.starts_with?("nested_defer:")
+                nor_nd_sub[tag.sub("nested_defer:", "")] += 1
+              end
+            end
+          end
+          STDERR.puts "[LOWER_REASONS][NOR] nested_defer sub-reason counts (NOR subset):"
+          nor_nd_sub.to_a.sort_by { |_, c| -c }.each do |sub, c|
+            STDERR.puts "  #{sub}: #{c}"
+          end
         end
       end
     end
