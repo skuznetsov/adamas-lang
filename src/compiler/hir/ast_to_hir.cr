@@ -3000,6 +3000,24 @@ module Crystal::HIR
     record VirtualTarget, method_name : String, arg_types : Array(TypeRef), has_block : Bool, has_splat : Bool
     @virtual_targets_by_parent : Hash(String, Array(VirtualTarget)) = {} of String => Array(VirtualTarget)
     @virtual_targets_recorded : Set(String) = Set(String).new
+    # Dedup replay work at the (child, parent, method, args_hash, flags) grain:
+    # same concrete child may be replayed against the same parent bucket many
+    # times (mark_live_type + record_virtual_target inline replay + class
+    # registration all call lower_virtual_targets_for_child). The first attempt
+    # per full-identity key does the work; subsequent attempts skip. Generic
+    # instantiations (Array(Int32), Array(String)) retain distinct child keys
+    # so concrete-owner lowering is preserved.
+    @virtual_target_replay_attempted : Set({String, String, String, UInt64, UInt8}) = Set({String, String, String, UInt64, UInt8}).new
+    # Instrumentation (DEBUG_VIRTUAL_TARGET_REPLAY_STATS) — increments gated
+    # on the boolean below, which is set once from the env var in
+    # flush_pending_functions. The dedup Set above is always-on (functional
+    # state); only the counters are debug-only.
+    @debug_virtual_target_replay_stats : Bool = false
+    @vtr_stats_lower_child_calls : Int64 = 0_i64
+    @vtr_stats_owner_attempts : Int64 = 0_i64
+    @vtr_stats_owner_skipped : Int64 = 0_i64
+    @vtr_stats_replay_calls : Int64 = 0_i64
+    @vtr_stats_record_calls : Int64 = 0_i64
 
     @[AlwaysInline]
     private def control_flow_dead_block?(ctx : LoweringContext, block_id : BlockId) : Bool
@@ -4534,6 +4552,7 @@ module Crystal::HIR
       key = "#{parent_name}|#{method_name}|#{arg_types.map(&.id).join(",")}|#{has_block ? 1 : 0}|#{has_splat ? 1 : 0}"
       return if @virtual_targets_recorded.includes?(key)
       @virtual_targets_recorded.add(key)
+      @vtr_stats_record_calls &+= 1 if @debug_virtual_target_replay_stats
 
       entry = VirtualTarget.new(method_name, arg_types.dup, has_block, has_splat)
       (@virtual_targets_by_parent[parent_name] ||= [] of VirtualTarget) << entry
@@ -4555,6 +4574,7 @@ module Crystal::HIR
     end
 
     private def lower_virtual_targets_for_child(child_name : String, parent_name : String) : Nil
+      @vtr_stats_lower_child_calls &+= 1 if @debug_virtual_target_replay_stats
       targets = @virtual_targets_by_parent[parent_name]?
       return unless targets
       if env_get("DEBUG_VIRTUAL_TARGETS")
@@ -4562,11 +4582,23 @@ module Crystal::HIR
       end
 
       targets.each do |target|
+        @vtr_stats_owner_attempts &+= 1 if @debug_virtual_target_replay_stats
+        ah = arg_types_hash(target.arg_types)
+        flags = 0_u8
+        flags |= 1_u8 if target.has_block
+        flags |= 2_u8 if target.has_splat
+        key = {child_name, parent_name, target.method_name, ah, flags}
+        if @virtual_target_replay_attempted.includes?(key)
+          @vtr_stats_owner_skipped &+= 1 if @debug_virtual_target_replay_stats
+          next
+        end
+        @virtual_target_replay_attempted << key
         lower_virtual_target_owner(child_name, target.method_name, target.arg_types, target.has_block, target.has_splat)
       end
     end
 
     private def replay_virtual_targets_for_registered_class(class_name : String) : Nil
+      @vtr_stats_replay_calls &+= 1 if @debug_virtual_target_replay_stats
       ancestors = ([class_name] + get_ancestor_chain(class_name)).uniq
       if class_name != "Object" && !ancestors.includes?("Object")
         ancestors << "Object"
@@ -42847,6 +42879,7 @@ module Crystal::HIR
     def flush_pending_functions
       phase_stats = env_has?("CRYSTAL_V2_PHASE_STATS")
       @debug_arena_stats = env_has?("DEBUG_ARENA_RESOLVE_STATS")
+      @debug_virtual_target_replay_stats = env_has?("DEBUG_VIRTUAL_TARGET_REPLAY_STATS")
 
       # Before activating the filter, seed method names from the initial pending queue.
       # These functions were deferred during lower_main (prelude initialization) and are
@@ -43010,6 +43043,19 @@ module Crystal::HIR
         STDERR.puts "[ARENA_STATS] set_function_def_arena skipped (same arena): #{@arena_stats_set_skipped}"
         STDERR.puts "[ARENA_STATS] unique arenas: #{@unique_def_arenas.size}"
         STDERR.puts "[ARENA_STATS] arena_fits_def_cache size: #{@arena_fits_def_cache.size}"
+      end
+
+      if @debug_virtual_target_replay_stats
+        STDERR.puts "[VTR_STATS] record_virtual_target calls: #{@vtr_stats_record_calls}"
+        STDERR.puts "[VTR_STATS] replay_virtual_targets_for_registered_class calls: #{@vtr_stats_replay_calls}"
+        STDERR.puts "[VTR_STATS] lower_virtual_targets_for_child calls: #{@vtr_stats_lower_child_calls}"
+        STDERR.puts "[VTR_STATS] lower_virtual_target_owner attempts: #{@vtr_stats_owner_attempts}"
+        STDERR.puts "[VTR_STATS] lower_virtual_target_owner skipped (dedup): #{@vtr_stats_owner_skipped}"
+        STDERR.puts "[VTR_STATS] unique replay keys: #{@virtual_target_replay_attempted.size}"
+        STDERR.puts "[VTR_STATS] targets_by_parent parents: #{@virtual_targets_by_parent.size}"
+        top_parents = @virtual_targets_by_parent.to_a.sort_by { |_, v| -v.size }.first(30)
+        STDERR.puts "[VTR_STATS] Top parents by target count:"
+        top_parents.each { |name, targets| STDERR.puts "  #{name}: #{targets.size} targets" }
       end
     end
 
