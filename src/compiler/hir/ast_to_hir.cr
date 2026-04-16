@@ -2078,6 +2078,7 @@ module Crystal::HIR
         if should_undefer
           @rta_deferred_set.delete(name)
           @pending_function_queue << name
+          record_lower_reason(name, "rta_undefer")
           count += 1
           true
         else
@@ -3018,6 +3019,24 @@ module Crystal::HIR
     @vtr_stats_owner_skipped : Int64 = 0_i64
     @vtr_stats_replay_calls : Int64 = 0_i64
     @vtr_stats_record_calls : Int64 = 0_i64
+
+    # Diagnostic: classify every function that enters the pending/lower pipeline
+    # by the reason it was requested. Gated on DEBUG_HIR_LOWER_REASONS. The goal
+    # is to answer "who ordered these N functions?" before attempting any
+    # semantic pruning of unused methods.
+    @debug_hir_lower_reasons : Bool = false
+    @function_lowering_reasons : Hash(String, Array(String)) = {} of String => Array(String)
+
+    @[AlwaysInline]
+    private def record_lower_reason(name : String, reason : String) : Nil
+      return unless @debug_hir_lower_reasons
+      bucket = @function_lowering_reasons[name]?
+      if bucket
+        bucket << reason
+      else
+        @function_lowering_reasons[name] = [reason]
+      end
+    end
 
     @[AlwaysInline]
     private def control_flow_dead_block?(ctx : LoweringContext, block_id : BlockId) : Bool
@@ -4634,16 +4653,28 @@ module Crystal::HIR
           preserve_requested_value_owner_specialization?(base_name, resolved_name)
         if preserve_requested_owner ||
            (!resolved_owner.empty? && strip_generic_args(resolved_owner) != strip_generic_args(owner))
+          record_lower_reason(candidate, "virtual_target_owner")
           lower_function_if_needed(candidate)
-          lower_function_if_needed(base_name) unless candidate == base_name
+          unless candidate == base_name
+            record_lower_reason(base_name, "virtual_target_owner")
+            lower_function_if_needed(base_name)
+          end
         else
+          record_lower_reason(resolved_name, "virtual_target_resolved")
           lower_function_if_needed(resolved_name)
           resolved_base = strip_type_suffix(resolved_name)
-          lower_function_if_needed(resolved_base) unless resolved_name == resolved_base
+          unless resolved_name == resolved_base
+            record_lower_reason(resolved_base, "virtual_target_resolved")
+            lower_function_if_needed(resolved_base)
+          end
         end
       else
+        record_lower_reason(candidate, "virtual_target_owner")
         lower_function_if_needed(candidate)
-        lower_function_if_needed(base_name) unless candidate == base_name
+        unless candidate == base_name
+          record_lower_reason(base_name, "virtual_target_owner")
+          lower_function_if_needed(base_name)
+        end
       end
     end
 
@@ -42880,6 +42911,7 @@ module Crystal::HIR
       phase_stats = env_has?("CRYSTAL_V2_PHASE_STATS")
       @debug_arena_stats = env_has?("DEBUG_ARENA_RESOLVE_STATS")
       @debug_virtual_target_replay_stats = env_has?("DEBUG_VIRTUAL_TARGET_REPLAY_STATS")
+      @debug_hir_lower_reasons = env_has?("DEBUG_HIR_LOWER_REASONS")
 
       # Before activating the filter, seed method names from the initial pending queue.
       # These functions were deferred during lower_main (prelude initialization) and are
@@ -43056,6 +43088,126 @@ module Crystal::HIR
         top_parents = @virtual_targets_by_parent.to_a.sort_by { |_, v| -v.size }.first(30)
         STDERR.puts "[VTR_STATS] Top parents by target count:"
         top_parents.each { |name, targets| STDERR.puts "  #{name}: #{targets.size} targets" }
+      end
+
+      emit_hir_lower_reasons_report if @debug_hir_lower_reasons
+    end
+
+    # Aggregates @function_lowering_reasons by tag and produces a
+    # "who ordered each function" report. Also classifies every lowered
+    # function by observed downstream references (Call.method_name) inside
+    # the final HIR module so we can distinguish directly-called bodies from
+    # apparently unused ones.
+    private def emit_hir_lower_reasons_report : Nil
+      total_tracked = @function_lowering_reasons.size
+      total_lowered_bodies = @module.functions.size
+      STDERR.puts "[LOWER_REASONS] tracked names: #{total_tracked}"
+      STDERR.puts "[LOWER_REASONS] HIR functions emitted: #{total_lowered_bodies}"
+
+      reason_counts = Hash(String, Int32).new(0)
+      primary_reason_counts = Hash(String, Int32).new(0)
+      # Bucket names by primary reason for per-reason owner/method histograms.
+      primary_reason_names = Hash(String, Array(String)).new { |h, k| h[k] = [] of String }
+      @function_lowering_reasons.each do |name, reasons|
+        reasons.each { |r| reason_counts[r] += 1 }
+        # Primary reason = first non-direct_call tag if any, otherwise direct_call.
+        primary = reasons.find { |r| r != "direct_call" } || reasons.first
+        primary_reason_counts[primary] += 1
+        primary_reason_names[primary] << name
+      end
+      STDERR.puts "[LOWER_REASONS] reason counts (all tags, may double-count):"
+      reason_counts.to_a.sort_by { |_, c| -c }.each do |reason, count|
+        STDERR.puts "  #{reason}: #{count}"
+      end
+      STDERR.puts "[LOWER_REASONS] primary-reason counts (one reason per function):"
+      primary_reason_counts.to_a.sort_by { |_, c| -c }.each do |reason, count|
+        STDERR.puts "  #{reason}: #{count}"
+      end
+
+      # Per-primary-reason: top owner prefixes and top method names.
+      primary_reason_names.each do |reason, names|
+        next if names.size < 10
+        owner_hist = Hash(String, Int32).new(0)
+        method_hist = Hash(String, Int32).new(0)
+        names.each do |name|
+          owner_hist[strip_generic_args(method_owner_from_name(name))] += 1
+          if m = method_short_from_name(name)
+            method_hist[m] += 1
+          end
+        end
+        top_owners = owner_hist.to_a.sort_by { |_, c| -c }.first(15)
+        top_methods = method_hist.to_a.sort_by { |_, c| -c }.first(15)
+        STDERR.puts "[LOWER_REASONS] reason=#{reason} top owner bases:"
+        top_owners.each { |o, c| STDERR.puts "  #{o}: #{c}" }
+        STDERR.puts "[LOWER_REASONS] reason=#{reason} top method names:"
+        top_methods.each { |m, c| STDERR.puts "  #{m}: #{c}" }
+      end
+
+      # Per-class method histograms for the four dominant HIR-function owners
+      # identified in prior profiling (Array, Pointer, Slice, Hash). Helps
+      # decide whether instance fanout is driven by the same few methods (e.g.
+      # each/size/[]) or by a long tail.
+      ["Array", "Pointer", "Slice", "Hash"].each do |target_base|
+        method_hist = Hash(String, Int32).new(0)
+        @function_lowering_reasons.each_key do |name|
+          owner_base = strip_generic_args(method_owner_from_name(name))
+          next unless owner_base == target_base
+          if m = method_short_from_name(name)
+            method_hist[m] += 1
+          end
+        end
+        next if method_hist.empty?
+        STDERR.puts "[LOWER_REASONS] #{target_base} method histogram (#{method_hist.values.sum} functions):"
+        method_hist.to_a.sort_by { |_, c| -c }.first(20).each do |m, c|
+          STDERR.puts "  #{m}: #{c}"
+        end
+      end
+
+      # Post-HIR Call-reference scan: walk final HIR, tally every Call.method_name
+      # seen inside any emitted function body, then classify each lowered body
+      # as directly_called / virtual_target_only / init_allocator_layout /
+      # no_observed_reference. Provides evidence for an unused-method pruning
+      # hypothesis independent of @function_lowering_reasons.
+      observed_call_names = Set(String).new
+      @module.functions.each do |func|
+        func.blocks.each do |block|
+          block.instructions.each do |inst|
+            next unless inst.is_a?(Call)
+            observed_call_names << inst.method_name
+          end
+        end
+      end
+      STDERR.puts "[LOWER_REASONS] distinct Call.method_name values in HIR: #{observed_call_names.size}"
+
+      classification = Hash(String, Int32).new(0)
+      unreferenced_sample = [] of String
+      virtual_only_sample = [] of String
+      @module.functions.each do |func|
+        name = func.name
+        reasons = @function_lowering_reasons[name]?
+        if observed_call_names.includes?(name)
+          classification["directly_called"] += 1
+        elsif reasons && (reasons.includes?("virtual_target_owner") || reasons.includes?("virtual_target_resolved"))
+          classification["virtual_target_only"] += 1
+          virtual_only_sample << name if virtual_only_sample.size < 20
+        elsif name.ends_with?(".new") || name.includes?("#initialize") || name.includes?("allocate")
+          classification["init_allocator_layout"] += 1
+        else
+          classification["no_observed_reference"] += 1
+          unreferenced_sample << name if unreferenced_sample.size < 30
+        end
+      end
+      STDERR.puts "[LOWER_REASONS] HIR body classification:"
+      classification.to_a.sort_by { |_, c| -c }.each do |tag, count|
+        STDERR.puts "  #{tag}: #{count}"
+      end
+      unless virtual_only_sample.empty?
+        STDERR.puts "[LOWER_REASONS] virtual_target_only sample:"
+        virtual_only_sample.each { |n| STDERR.puts "  #{n}" }
+      end
+      unless unreferenced_sample.empty?
+        STDERR.puts "[LOWER_REASONS] no_observed_reference sample:"
+        unreferenced_sample.each { |n| STDERR.puts "  #{n}" }
       end
     end
 
@@ -43246,6 +43398,7 @@ module Crystal::HIR
 
         sigs_to_lower.each do |name|
           attempted.add(name)
+          record_lower_reason(name, "emit_tracked_signature")
           lower_function_if_needed(name)
         end
 
@@ -43340,6 +43493,7 @@ module Crystal::HIR
 
         before = @module.functions.size
         missing.each do |name|
+          record_lower_reason(name, "lower_missing_call_targets")
           lower_function_if_needed(name)
           # If the missing call is a module/class method and still unresolved,
           # attempt a direct module-method lower against the recorded def.
@@ -56724,6 +56878,9 @@ module Crystal::HIR
     end
 
     private def lower_function_if_needed(name : String) : Nil
+      if @debug_hir_lower_reasons && !@function_lowering_reasons.has_key?(name)
+        @function_lowering_reasons[name] = ["direct_call"]
+      end
       lower_function_if_needed_impl(name)
     end
 
@@ -56795,6 +56952,7 @@ module Crystal::HIR
       # Phase 0 metric: count forced lowers
       @phase0_forced_lower_count += 1
       @phase0_forced_lower_names << name
+      record_lower_reason(name, "force_lower_return_type")
 
       # Clear pending state if set (we'll handle it now)
       if function_state(name).pending?
@@ -56948,6 +57106,7 @@ module Crystal::HIR
         unless function_state(name).pending?
           @function_lowering_states[name] = FunctionLoweringState::Pending
           @pending_function_queue << name
+          record_lower_reason(name, "nested_defer")
           # Keep AST reachability filter aligned for deferred functions.
           if @ast_filter_active
             if method_names = @ast_reachable_method_names
