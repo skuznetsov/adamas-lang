@@ -3026,6 +3026,17 @@ module Crystal::HIR
     # semantic pruning of unused methods.
     @debug_hir_lower_reasons : Bool = false
     @function_lowering_reasons : Hash(String, Array(String)) = {} of String => Array(String)
+    # Lowering call stack — pushed when a function begins lowering, popped on
+    # exit. Used to attribute nested_defer enqueues to their requester and to
+    # carry the caller's primary reason forward.
+    @lowering_function_stack : Array(String) = [] of String
+    # Generation-path reason: set by tag_generation_path_as(reason, name) calls
+    # at known create_function bypass sites so "no_reason" bodies get labeled.
+    # Hash key = full function name being created; value = path reason.
+    @generation_path_reasons : Hash(String, String) = {} of String => String
+    # Histogram of nested_defer requester->requested (gated).
+    @nested_defer_requester : Hash(String, Int32) = Hash(String, Int32).new(0)
+    @nested_defer_sub_counts : Hash(String, Int32) = Hash(String, Int32).new(0)
 
     @[AlwaysInline]
     private def record_lower_reason(name : String, reason : String) : Nil
@@ -3036,6 +3047,27 @@ module Crystal::HIR
       else
         @function_lowering_reasons[name] = [reason]
       end
+    end
+
+    # Tag a create_function bypass path. Stores the path reason keyed by the
+    # function's full name; the emit_hir_lower_reasons_report consults this
+    # hash for any emitted body missing a regular lower-reason tag.
+    @[AlwaysInline]
+    private def tag_generation_path(full_name : String, path_reason : String) : Nil
+      return unless @debug_hir_lower_reasons
+      @generation_path_reasons[full_name] = path_reason unless @generation_path_reasons.has_key?(full_name)
+    end
+
+    # Returns the primary reason of the caller currently on top of the
+    # lowering stack (for nested_defer attribution). Empty stack → "unknown".
+    @[AlwaysInline]
+    private def current_lowering_caller_reason : String
+      return "unknown" if @lowering_function_stack.empty?
+      caller_name = @lowering_function_stack.last
+      caller_reasons = @function_lowering_reasons[caller_name]?
+      return "unknown" if caller_reasons.nil? || caller_reasons.empty?
+      caller_reasons.not_nil!.find { |r| r != "direct_call" && !r.starts_with?("nested_defer") } ||
+        caller_reasons.not_nil!.first
     end
 
     @[AlwaysInline]
@@ -3163,6 +3195,9 @@ module Crystal::HIR
       # the ENV cache exists before the first env_has?/env_get call below.
       @env_cache = {} of String => String
       @debug_infer_guard_enabled = env_has?("DEBUG_INFER_GUARD")
+      # Precompute before first lower_main/create_function so early generation
+      # paths (__crystal_main, pre-flush synthetic wrappers) see a correct flag.
+      @debug_hir_lower_reasons = env_has?("DEBUG_HIR_LOWER_REASONS")
       @infer_guard_hits = 0
       @infer_guard_last_report = nil
       @lower_method_time_stack = [] of LowerMethodTiming
@@ -21501,6 +21536,7 @@ module Crystal::HIR
       register_pending_method_effects(full_name, param_types.size)
 
       func = @module.create_function(full_name, return_type)
+      tag_generation_path(full_name, "module_method")
       set_function_definition_location(func, @arena, node.span)
       ctx = LoweringContext.new(func, @module, @arena)
       if ctx.lookup_local("self").nil? && func.name.includes?('#')
@@ -24803,6 +24839,7 @@ module Crystal::HIR
       # Return type is the class type (semantically)
       # LLVM backend converts to ptr for ABI
       func = @module.create_function(func_name, class_info.type_ref)
+      tag_generation_path(func_name, "allocator_new")
       ctx = LoweringContext.new(func, @module, @arena)
 
       # Add parameters to new() that match initialize()
@@ -25030,6 +25067,7 @@ module Crystal::HIR
       instance_name = allocator_instance_new_name_for(class_name)
       unless @module.has_function_with_body?(instance_name) || @function_types.has_key?(instance_name) || has_function_base?(instance_name)
         instance_func = @module.create_function(instance_name, class_info.type_ref)
+        tag_generation_path(instance_name, "instance_new_wrapper")
         instance_ctx = LoweringContext.new(instance_func, @module, @arena)
 
         self_param = instance_func.add_param("self", class_info.type_ref)
@@ -25301,6 +25339,7 @@ module Crystal::HIR
       end
 
       func = @module.create_function(overload_name, class_info.type_ref)
+      tag_generation_path(overload_name, "allocator_overload")
       ctx = LoweringContext.new(func, @module, @arena)
 
       param_ids = [] of ValueId
@@ -25479,6 +25518,7 @@ module Crystal::HIR
       overload_name : String,
     ) : Nil
       func = @module.create_function(overload_name, class_info.type_ref)
+      tag_generation_path(overload_name, "file_new_allocator")
       ctx = LoweringContext.new(func, @module, @arena)
 
       # Add ALL params matching call_arg_types (including VOID) to match the normal
@@ -25555,6 +25595,7 @@ module Crystal::HIR
       overload_name : String,
     ) : Nil
       func = @module.create_function(overload_name, class_info.type_ref)
+      tag_generation_path(overload_name, "slice_new_allocator")
       ctx = LoweringContext.new(func, @module, @arena)
 
       # Add ALL params from call_arg_types (same as File.new fix — keep full count)
@@ -25634,6 +25675,7 @@ module Crystal::HIR
       return if @module.has_function_with_body?(func_name)
 
       func = @module.function_by_name(func_name) || @module.create_function(func_name, ivar_type)
+      tag_generation_path(func_name, "lazy_getter")
       ctx = LoweringContext.new(func, @module, @arena)
 
       self_type_ref = class_info.type_ref
@@ -25731,6 +25773,7 @@ module Crystal::HIR
       end
 
       func = @module.function_by_name(func_name) || @module.create_function(func_name, ivar_type)
+      tag_generation_path(func_name, "getter")
       ctx = LoweringContext.new(func, @module, @arena)
 
       self_type_ref ||= class_info.type_ref
@@ -25760,6 +25803,7 @@ module Crystal::HIR
       return if @module.has_function_with_body?(func_name)
 
       func = @module.create_function(func_name, ivar_type)
+      tag_generation_path(func_name, "setter")
       ctx = LoweringContext.new(func, @module, @arena)
 
       self_param = func.add_param("self", class_info.type_ref)
@@ -25805,6 +25849,7 @@ module Crystal::HIR
       end
 
       func = @module.create_function(full_name, return_type)
+      tag_generation_path(full_name, "class_getter")
       ctx = LoweringContext.new(func, @module, arena)
 
       if default_value = spec.default_value
@@ -25861,6 +25906,7 @@ module Crystal::HIR
       return if @module.has_function_with_body?(full_name)
 
       func = @module.create_function(full_name, param_type)
+      tag_generation_path(full_name, "class_setter")
       ctx = LoweringContext.new(func, @module, @arena)
       value_param = func.add_param("value", param_type)
       ctx.register_local("value", value_param.id)
@@ -25916,6 +25962,7 @@ module Crystal::HIR
         return full_name if @module.has_function?(full_name)
 
         func = @module.create_function(full_name, TypeRef::STRING)
+        tag_generation_path(full_name, "type_literal_name_method")
         ctx = LoweringContext.new(func, @module, @arena)
         lit = Literal.new(ctx.next_id, TypeRef::STRING, owner_name)
         ctx.emit(lit)
@@ -25933,6 +25980,7 @@ module Crystal::HIR
 
       return_type = get_function_return_type(meta_method)
       func = @module.create_function(full_name, return_type)
+      tag_generation_path(full_name, "type_literal_meta_method")
       ctx = LoweringContext.new(func, @module, @arena)
 
       arg_ids = [] of ValueId
@@ -25985,6 +26033,7 @@ module Crystal::HIR
 
       return_type = get_function_return_type(instance_name)
       func = @module.create_function(wrapper_name, return_type)
+      tag_generation_path(wrapper_name, "unbound_instance_wrapper")
       ctx = LoweringContext.new(func, @module, @arena)
 
       arg_ids = [] of ValueId
@@ -26823,6 +26872,7 @@ module Crystal::HIR
       end
 
       func = @module.create_function(full_name, return_type)
+      tag_generation_path(full_name, "lower_method")
       set_function_definition_location(func, @arena, node.span)
       if debug_env_filter_match?("DEBUG_FROM_CHARS", base_name, full_name)
         STDERR.puts "[LOWER_METHOD] 2. After create_function"
@@ -42399,6 +42449,7 @@ module Crystal::HIR
       set_function_def_arena(full_name, @arena)
 
       func = @module.create_function(full_name, return_type)
+      tag_generation_path(full_name, "lower_def")
       set_function_definition_location(func, @arena, node.span)
       ctx = LoweringContext.new(func, @module, @arena)
 
@@ -42555,6 +42606,7 @@ module Crystal::HIR
       # Create __crystal_main function with void return type
       # Signature: fun __crystal_main(argc : Int32, argv : UInt8**)
       func = @module.create_function("__crystal_main", TypeRef::VOID)
+      tag_generation_path("__crystal_main", "main_synthetic")
       set_synthetic_main_definition_location(func)
 
       # Add parameters to match lib declaration
@@ -42835,6 +42887,7 @@ module Crystal::HIR
 
       # Create __crystal_main(argc, argv)
       func = @module.create_function("__crystal_main", TypeRef::VOID)
+      tag_generation_path("__crystal_main", "main_from_def")
       set_function_definition_location(func, @arena, node.span)
       argc_param = func.add_param("argc", TypeRef::INT32)
       argv_type = type_ref_for_name("Pointer(Pointer(UInt8))")
@@ -42911,7 +42964,8 @@ module Crystal::HIR
       phase_stats = env_has?("CRYSTAL_V2_PHASE_STATS")
       @debug_arena_stats = env_has?("DEBUG_ARENA_RESOLVE_STATS")
       @debug_virtual_target_replay_stats = env_has?("DEBUG_VIRTUAL_TARGET_REPLAY_STATS")
-      @debug_hir_lower_reasons = env_has?("DEBUG_HIR_LOWER_REASONS")
+      # @debug_hir_lower_reasons initialized in constructor to cover early
+      # create_function paths (lower_main, pre-flush synthetic wrappers).
 
       # Before activating the filter, seed method names from the initial pending queue.
       # These functions were deferred during lower_main (prelude initialization) and are
@@ -43145,11 +43199,26 @@ module Crystal::HIR
 
       # ---- Emitted-body attribution (authoritative for pruning decisions) ----
       # One primary reason per emitted function. Counts MUST sum to
-      # @module.functions.size. Unknown falls into "no_reason" bucket.
+      # @module.functions.size. Unknown falls into "no_reason" bucket but is
+      # then sub-attributed via @generation_path_reasons when available.
       emitted_primary_counts = Hash(String, Int32).new(0)
       emitted_primary_names = Hash(String, Array(String)).new { |h, k| h[k] = [] of String }
+      gen_path_hit = 0
+      gen_path_miss = 0
+      gen_path_hist = Hash(String, Int32).new(0)
+      gen_path_miss_sample = [] of String
       @module.functions.each do |func|
         primary = primary_reason_for(@function_lowering_reasons[func.name]?)
+        if primary == "no_reason"
+          if tag = @generation_path_reasons[func.name]?
+            primary = "gen_path:#{tag}"
+            gen_path_hit += 1
+            gen_path_hist[tag] += 1
+          else
+            gen_path_miss += 1
+            gen_path_miss_sample << func.name if gen_path_miss_sample.size < 30
+          end
+        end
         emitted_primary_counts[primary] += 1
         emitted_primary_names[primary] << func.name
       end
@@ -43159,6 +43228,52 @@ module Crystal::HIR
       emitted_primary_counts.to_a.sort_by { |_, c| -c }.each do |reason, count|
         pct = total_lowered_bodies > 0 ? (count * 100.0 / total_lowered_bodies).round(1) : 0.0
         STDERR.puts "    #{reason}: #{count} (#{pct}%)"
+      end
+      STDERR.puts "[LOWER_REASONS]   no_reason gen-path coverage: hit=#{gen_path_hit} miss=#{gen_path_miss}"
+      unless gen_path_hist.empty?
+        STDERR.puts "[LOWER_REASONS]   gen_path breakdown:"
+        gen_path_hist.to_a.sort_by { |_, c| -c }.each do |tag, c|
+          STDERR.puts "    #{tag}: #{c}"
+        end
+      end
+      unless gen_path_miss_sample.empty?
+        STDERR.puts "[LOWER_REASONS]   no_reason+no_gen_path sample (unlabeled create_function paths):"
+        gen_path_miss_sample.each { |n| STDERR.puts "    #{n}" }
+      end
+
+      # ---- nested_defer sub-reason attribution ----
+      unless @nested_defer_sub_counts.empty?
+        nd_total = @nested_defer_sub_counts.values.sum
+        STDERR.puts "[LOWER_REASONS] nested_defer sub-reason counts (total=#{nd_total}):"
+        @nested_defer_sub_counts.to_a.sort_by { |_, c| -c }.each do |sub, c|
+          pct = nd_total > 0 ? (c * 100.0 / nd_total).round(1) : 0.0
+          STDERR.puts "    #{sub}: #{c} (#{pct}%)"
+        end
+      end
+      unless @nested_defer_requester.empty?
+        STDERR.puts "[LOWER_REASONS] nested_defer top requesters (top 30):"
+        @nested_defer_requester.to_a.sort_by { |_, c| -c }.first(30).each do |caller_name, c|
+          STDERR.puts "    #{caller_name}: #{c}"
+        end
+      end
+
+      # nested_defer: owner+method + outcome breakdown
+      nd_names = emitted_primary_names.each_with_object([] of String) do |(reason, names), acc|
+        acc.concat(names) if reason.starts_with?("nested_defer")
+      end
+      unless nd_names.empty?
+        nd_owner_hist = Hash(String, Int32).new(0)
+        nd_method_hist = Hash(String, Int32).new(0)
+        nd_names.each do |name|
+          nd_owner_hist[strip_generic_args(method_owner_from_name(name))] += 1
+          if m = method_short_from_name(name)
+            nd_method_hist[m] += 1
+          end
+        end
+        STDERR.puts "[LOWER_REASONS] nested_defer top owner bases (top 20):"
+        nd_owner_hist.to_a.sort_by { |_, c| -c }.first(20).each { |o, c| STDERR.puts "    #{o}: #{c}" }
+        STDERR.puts "[LOWER_REASONS] nested_defer top methods (top 30):"
+        nd_method_hist.to_a.sort_by { |_, c| -c }.first(30).each { |m, c| STDERR.puts "    #{m}: #{c}" }
       end
 
       # Per-primary-reason (emitted-body only): top owner prefixes + method names.
@@ -43231,11 +43346,16 @@ module Crystal::HIR
       virtual_only_live_sample = [] of String
       virtual_only_nolive_sample = [] of String
       unreferenced_sample = [] of String
+      # Cross-tab: nested_defer bodies by their downstream classification.
+      nested_defer_outcome = Hash(String, Int32).new(0)
       @module.functions.each do |func|
         name = func.name
         reasons = @function_lowering_reasons[name]?
+        is_nested_defer = reasons && reasons.any? { |r| r.starts_with?("nested_defer") }
+        outcome = ""
         if observed_call_names.includes?(name)
           classification["directly_called"] += 1
+          outcome = "directly_called"
         elsif reasons && (reasons.includes?("virtual_target_owner") || reasons.includes?("virtual_target_resolved"))
           sig = method_and_signature_from_name(name)
           short = method_short_from_name(name)
@@ -43244,21 +43364,27 @@ module Crystal::HIR
           if live_by_sig
             classification["virtual_target_only_live_signature"] += 1
             virtual_only_live_sample << name if virtual_only_live_sample.size < 15
+            outcome = "virtual_target_only_live_signature"
           elsif live_by_method
             classification["virtual_target_only_live_method_only"] += 1
             skipped_sig_hist[sig] += 1
+            outcome = "virtual_target_only_live_method_only"
           else
             classification["virtual_target_only_no_live_vcall"] += 1
             skipped_sig_hist[sig] += 1
             skipped_method_hist[short || "?"] += 1
             virtual_only_nolive_sample << name if virtual_only_nolive_sample.size < 20
+            outcome = "virtual_target_only_no_live_vcall"
           end
         elsif name.ends_with?(".new") || name.includes?("#initialize") || name.includes?("allocate")
           classification["init_allocator_layout"] += 1
+          outcome = "init_allocator_layout"
         else
           classification["no_observed_reference"] += 1
           unreferenced_sample << name if unreferenced_sample.size < 30
+          outcome = "no_observed_reference"
         end
+        nested_defer_outcome[outcome] += 1 if is_nested_defer
       end
       classification_sum = classification.values.sum
       STDERR.puts "[LOWER_REASONS] HIR body classification (sum=#{classification_sum}, expected=#{total_lowered_bodies}):"
@@ -43289,6 +43415,14 @@ module Crystal::HIR
       unless unreferenced_sample.empty?
         STDERR.puts "[LOWER_REASONS] no_observed_reference sample:"
         unreferenced_sample.each { |n| STDERR.puts "  #{n}" }
+      end
+      unless nested_defer_outcome.empty?
+        nd_outcome_sum = nested_defer_outcome.values.sum
+        STDERR.puts "[LOWER_REASONS] nested_defer downstream outcome (total=#{nd_outcome_sum}):"
+        nested_defer_outcome.to_a.sort_by { |_, c| -c }.each do |tag, c|
+          pct = nd_outcome_sum > 0 ? (c * 100.0 / nd_outcome_sum).round(1) : 0.0
+          STDERR.puts "  #{tag}: #{c} (#{pct}%)"
+        end
       end
     end
 
@@ -48967,6 +49101,7 @@ module Crystal::HIR
 
       # Create init function: void func_name()
       func = @module.create_function(func_name, TypeRef::VOID)
+      tag_generation_path(func_name, "classvar_lazy_init")
       init_ctx = LoweringContext.new(func, @module, init_arena)
 
       @arena = init_arena
@@ -49330,6 +49465,7 @@ module Crystal::HIR
         owner_ref = type_ref_for_name(owner)
         self_ref = owner_ref == TypeRef::VOID ? TypeRef::POINTER : owner_ref
         shim = @module.function_by_name(resolved_super_name) || @module.create_function(resolved_super_name, TypeRef::STRING)
+        tag_generation_path(resolved_super_name, "super_inspect_shim")
         if shim.blocks.empty?
           shim_ctx = LoweringContext.new(shim, @module, @arena)
           self_param = if shim.params.empty?
@@ -57187,7 +57323,14 @@ module Crystal::HIR
         unless function_state(name).pending?
           @function_lowering_states[name] = FunctionLoweringState::Pending
           @pending_function_queue << name
-          record_lower_reason(name, "nested_defer")
+          if @debug_hir_lower_reasons
+            sub = current_lowering_caller_reason
+            record_lower_reason(name, "nested_defer:#{sub}")
+            if caller_name = @lowering_function_stack.last?
+              @nested_defer_requester[caller_name] += 1
+            end
+            @nested_defer_sub_counts[sub] += 1
+          end
           # Keep AST reachability filter aligned for deferred functions.
           if @ast_filter_active
             if method_names = @ast_reachable_method_names
@@ -58957,6 +59100,7 @@ module Crystal::HIR
 
       # WORK QUEUE: Track that we're inside lowering to defer nested calls
       @lowering_depth += 1
+      @lowering_function_stack << target_name if @debug_hir_lower_reasons
 
       debug_hook("function.lower.start", "name=#{target_name} requested=#{name}")
       if debug_env_filter_match?("DEBUG_CLASS_MODULES", target_name, name)
@@ -59233,6 +59377,7 @@ module Crystal::HIR
       ensure
         # WORK QUEUE: Restore previous inside_lowering state
         @lowering_depth -= 1
+        @lowering_function_stack.pop? if @debug_hir_lower_reasons
         @function_lowering_states[target_name] = FunctionLoweringState::Completed
         debug_hook("function.lower.done", "name=#{target_name}")
         if start_time
@@ -67318,6 +67463,7 @@ module Crystal::HIR
 
       # Create a new top-level function for the callback
       callback_func = @module.create_function(callback_name, return_type)
+      tag_generation_path(callback_name, "extern_callback")
       callback_ctx = LoweringContext.new(callback_func, @module, @arena)
 
       # Add parameters from the proc literal
@@ -79584,6 +79730,7 @@ module Crystal::HIR
 
       # Create standalone function for the proc body
       proc_func = @module.create_function(proc_func_name, proc_return_type)
+      tag_generation_path(proc_func_name, "proc_literal")
       proc_ctx = LoweringContext.new(proc_func, @module, @arena)
 
       # Collect proc param names (to exclude from capture detection)
@@ -79871,6 +80018,7 @@ module Crystal::HIR
 
       # Create standalone function for the block body
       proc_func = @module.create_function(proc_func_name, proc_return_type)
+      tag_generation_path(proc_func_name, "block_to_proc")
       proc_ctx = LoweringContext.new(proc_func, @module, block_arena)
       saved_enum_value_types = @enum_value_types
       @enum_value_types = nil
