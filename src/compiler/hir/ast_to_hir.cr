@@ -3039,34 +3039,34 @@ module Crystal::HIR
     @nested_defer_sub_counts : Hash(String, Int32) = Hash(String, Int32).new(0)
 
     # Deep attribution for force_lower_function_for_return_type. Gated on
-    # DEBUG_FORCE_LOWER_ATTRIBUTION. Answers "could we have avoided this
-    # force-lower with a declared annotation, cached return type, or AST-walk
-    # inference?" One record per force_lower attempt that actually lowered.
+    # DEBUG_FORCE_LOWER_ATTRIBUTION. Records actual TypeRef candidates from
+    # each cheap source so we can classify by EXACT MATCH against the type
+    # produced by full body lowering — availability of a cheap source does
+    # not prove correctness of its value. One record per force_lower attempt
+    # that actually lowered.
     @debug_force_lower_attribution : Bool = false
     @force_lower_records : Array(NamedTuple(
       name: String,
       requester: String,
       caller_reason: String,
-      had_annotation: Bool,
-      cached_rt_nonvoid: Bool,
-      well_known_rt: Bool,
-      inferred_before_force: Bool,
+      annotation_rt: TypeRef,
+      cached_rt: TypeRef,
+      well_known_rt: TypeRef,
+      inferred_rt: TypeRef,
       rt_before: TypeRef,
       rt_after: TypeRef,
-      rt_changed: Bool,
       body_emitted: Bool,
       nested_defers_caused: Int32,
     )) = [] of NamedTuple(
       name: String,
       requester: String,
       caller_reason: String,
-      had_annotation: Bool,
-      cached_rt_nonvoid: Bool,
-      well_known_rt: Bool,
-      inferred_before_force: Bool,
+      annotation_rt: TypeRef,
+      cached_rt: TypeRef,
+      well_known_rt: TypeRef,
+      inferred_rt: TypeRef,
       rt_before: TypeRef,
       rt_after: TypeRef,
-      rt_changed: Bool,
       body_emitted: Bool,
       nested_defers_caused: Int32,
     )
@@ -43461,67 +43461,156 @@ module Crystal::HIR
       end
     end
 
-    # Force-lower attribution report. For each record captured during
-    # force_lower_function_for_return_type, shows whether a cheaper path
-    # (declared return annotation, cached base-return type, well-known
-    # return type, AST-walk inference) could have satisfied the caller
-    # without full body lowering. Use to decide whether a fast path in
-    # force_lower_function_for_return_type is warranted.
+    # Force-lower attribution report. Classifies each force_lower invocation
+    # by whether a cheap source (declared annotation, cached base-return
+    # type, well-known, AST-walk inference) would have matched the TypeRef
+    # produced by full body lowering. Availability != correctness: this
+    # report compares concrete TypeRef values to rt_after to prove whether
+    # a fast path would be safe for each source.
     private def emit_force_lower_attribution_report : Nil
       return if @force_lower_records.empty?
       total = @force_lower_records.size
       STDERR.puts "[FORCE_LOWER_ATTR] total force_lower invocations that ran: #{total}"
 
-      annot = @force_lower_records.count(&.[:had_annotation])
-      cached = @force_lower_records.count(&.[:cached_rt_nonvoid])
-      wk = @force_lower_records.count(&.[:well_known_rt])
-      inferred = @force_lower_records.count(&.[:inferred_before_force])
+      # Availability: cheap source produced any non-VOID value.
+      annot_avail = @force_lower_records.count { |r| r[:annotation_rt] != TypeRef::VOID }
+      cached_avail = @force_lower_records.count { |r| r[:cached_rt] != TypeRef::VOID }
+      wk_avail = @force_lower_records.count { |r| r[:well_known_rt] != TypeRef::VOID }
+      infer_avail = @force_lower_records.count { |r| r[:inferred_rt] != TypeRef::VOID }
       body = @force_lower_records.count(&.[:body_emitted])
-      rt_changed = @force_lower_records.count(&.[:rt_changed])
+      rt_nonvoid = @force_lower_records.count { |r| r[:rt_after] != TypeRef::VOID }
 
-      STDERR.puts "[FORCE_LOWER_ATTR] fast-path availability (% of #{total}):"
-      STDERR.puts "    had_declared_annotation: #{annot} (#{(annot * 100.0 / total).round(1)}%)"
-      STDERR.puts "    cached_rt_nonvoid:       #{cached} (#{(cached * 100.0 / total).round(1)}%)"
-      STDERR.puts "    well_known_return_type:  #{wk} (#{(wk * 100.0 / total).round(1)}%)"
-      STDERR.puts "    inferred_before_force:   #{inferred} (#{(inferred * 100.0 / total).round(1)}%)"
+      STDERR.puts "[FORCE_LOWER_ATTR] cheap-source availability (non-VOID) % of #{total}:"
+      STDERR.puts "    annotation_rt:  #{annot_avail} (#{(annot_avail * 100.0 / total).round(1)}%)"
+      STDERR.puts "    cached_rt:      #{cached_avail} (#{(cached_avail * 100.0 / total).round(1)}%)"
+      STDERR.puts "    well_known_rt:  #{wk_avail} (#{(wk_avail * 100.0 / total).round(1)}%)"
+      STDERR.puts "    inferred_rt:    #{infer_avail} (#{(infer_avail * 100.0 / total).round(1)}%)"
       STDERR.puts "[FORCE_LOWER_ATTR] outcome:"
-      STDERR.puts "    body_emitted:            #{body} (#{(body * 100.0 / total).round(1)}%)"
-      STDERR.puts "    rt_changed_after_lower:  #{rt_changed} (#{(rt_changed * 100.0 / total).round(1)}%)"
-      no_rt_change_but_body = @force_lower_records.count { |r| r[:body_emitted] && !r[:rt_changed] }
-      STDERR.puts "    body+no_rt_change:       #{no_rt_change_but_body} (#{(no_rt_change_but_body * 100.0 / total).round(1)}%)   ← potentially wasteful"
+      STDERR.puts "    body_emitted:   #{body} (#{(body * 100.0 / total).round(1)}%)"
+      STDERR.puts "    rt_after_nonvoid: #{rt_nonvoid} (#{(rt_nonvoid * 100.0 / total).round(1)}%)"
 
-      # Joint coverage: any cheaper path available?
-      any_cheap = @force_lower_records.count do |r|
-        r[:had_annotation] || r[:cached_rt_nonvoid] || r[:well_known_rt] || r[:inferred_before_force]
-      end
-      STDERR.puts "    any_cheap_path_available: #{any_cheap} (#{(any_cheap * 100.0 / total).round(1)}%)"
-
-      # Per-record classification:
-      #   fast_path_proven   = any cheap path had non-VOID AND lowering produced non-VOID rt (so cheap would match)
-      #   wasteful_lower     = body emitted but rt_before == rt_after
-      #   genuinely_needed   = no cheap path AND rt_changed from VOID → non-VOID
-      #   inconclusive       = other
-      fast_path_proven = 0
-      wasteful_lower = 0
+      # Exact-match correctness: does the cheap source equal rt_after?
+      # Only records where rt_after != VOID can be exact-matched; if the
+      # lowered rt is VOID, there is nothing for a cheap path to match.
+      exact_annot = 0
+      exact_cached = 0
+      exact_wk = 0
+      exact_infer = 0
+      any_exact = 0
+      cheap_available_but_mismatch = 0
       genuinely_needed = 0
-      inconclusive = 0
+      rt_after_void = 0
+      mismatch_samples_annot = [] of String
+      mismatch_samples_cached = [] of String
+      mismatch_samples_wk = [] of String
+      mismatch_samples_infer = [] of String
+
       @force_lower_records.each do |r|
-        any_cheap_here = r[:had_annotation] || r[:cached_rt_nonvoid] || r[:well_known_rt] || r[:inferred_before_force]
-        if any_cheap_here && r[:rt_after] != TypeRef::VOID
-          fast_path_proven += 1
-        elsif r[:body_emitted] && !r[:rt_changed]
-          wasteful_lower += 1
-        elsif !any_cheap_here && r[:rt_before] == TypeRef::VOID && r[:rt_after] != TypeRef::VOID
+        rt_a = r[:rt_after]
+        if rt_a == TypeRef::VOID
+          rt_after_void += 1
+          next
+        end
+        any_available = r[:annotation_rt] != TypeRef::VOID ||
+                        r[:cached_rt] != TypeRef::VOID ||
+                        r[:well_known_rt] != TypeRef::VOID ||
+                        r[:inferred_rt] != TypeRef::VOID
+        unless any_available
           genuinely_needed += 1
+          next
+        end
+
+        m_annot = r[:annotation_rt] != TypeRef::VOID && r[:annotation_rt] == rt_a
+        m_cached = r[:cached_rt] != TypeRef::VOID && r[:cached_rt] == rt_a
+        m_wk = r[:well_known_rt] != TypeRef::VOID && r[:well_known_rt] == rt_a
+        m_infer = r[:inferred_rt] != TypeRef::VOID && r[:inferred_rt] == rt_a
+        exact_annot += 1 if m_annot
+        exact_cached += 1 if m_cached
+        exact_wk += 1 if m_wk
+        exact_infer += 1 if m_infer
+
+        if m_annot || m_cached || m_wk || m_infer
+          any_exact += 1
         else
-          inconclusive += 1
+          cheap_available_but_mismatch += 1
+          # Collect mismatch samples with actual type names so we can see
+          # whether the gap is type-param resolution, narrowing, or totally
+          # wrong annotation.
+          if r[:annotation_rt] != TypeRef::VOID && mismatch_samples_annot.size < 20
+            mismatch_samples_annot << "#{r[:name]} annot=#{get_type_name_from_ref(r[:annotation_rt])} actual=#{get_type_name_from_ref(rt_a)}"
+          end
+          if r[:cached_rt] != TypeRef::VOID && mismatch_samples_cached.size < 20
+            mismatch_samples_cached << "#{r[:name]} cached=#{get_type_name_from_ref(r[:cached_rt])} actual=#{get_type_name_from_ref(rt_a)}"
+          end
+          if r[:well_known_rt] != TypeRef::VOID && mismatch_samples_wk.size < 20
+            mismatch_samples_wk << "#{r[:name]} wk=#{get_type_name_from_ref(r[:well_known_rt])} actual=#{get_type_name_from_ref(rt_a)}"
+          end
+          if r[:inferred_rt] != TypeRef::VOID && mismatch_samples_infer.size < 20
+            mismatch_samples_infer << "#{r[:name]} infer=#{get_type_name_from_ref(r[:inferred_rt])} actual=#{get_type_name_from_ref(rt_a)}"
+          end
         end
       end
-      STDERR.puts "[FORCE_LOWER_ATTR] classification:"
-      STDERR.puts "    fast_path_proven   (cheap path existed + produced matching rt): #{fast_path_proven} (#{(fast_path_proven * 100.0 / total).round(1)}%)"
-      STDERR.puts "    wasteful_lower     (body emitted, no rt change):               #{wasteful_lower} (#{(wasteful_lower * 100.0 / total).round(1)}%)"
-      STDERR.puts "    genuinely_needed   (no cheap path, VOID→non-VOID via lower):   #{genuinely_needed} (#{(genuinely_needed * 100.0 / total).round(1)}%)"
-      STDERR.puts "    inconclusive       (other):                                     #{inconclusive} (#{(inconclusive * 100.0 / total).round(1)}%)"
+
+      STDERR.puts "[FORCE_LOWER_ATTR] exact-match classification (on records with rt_after != VOID):"
+      STDERR.puts "    exact_match_annotation: #{exact_annot} (#{(exact_annot * 100.0 / total).round(1)}%)"
+      STDERR.puts "    exact_match_cached:     #{exact_cached} (#{(exact_cached * 100.0 / total).round(1)}%)"
+      STDERR.puts "    exact_match_well_known: #{exact_wk} (#{(exact_wk * 100.0 / total).round(1)}%)"
+      STDERR.puts "    exact_match_inferred:   #{exact_infer} (#{(exact_infer * 100.0 / total).round(1)}%)"
+      STDERR.puts "    any_exact_match:        #{any_exact} (#{(any_exact * 100.0 / total).round(1)}%)"
+      STDERR.puts "    cheap_available_but_mismatch: #{cheap_available_but_mismatch} (#{(cheap_available_but_mismatch * 100.0 / total).round(1)}%)"
+      STDERR.puts "    no_cheap_genuinely_needed:    #{genuinely_needed} (#{(genuinely_needed * 100.0 / total).round(1)}%)"
+      STDERR.puts "    rt_after_void (not classifiable): #{rt_after_void} (#{(rt_after_void * 100.0 / total).round(1)}%)"
+
+      # Cross-tab with body_emitted: for the any_exact_match bucket, do
+      # callers actually need the body? If yes, a fast path that skips body
+      # lowering would regress them.
+      exact_with_body = 0
+      exact_without_body = 0
+      mismatch_with_body = 0
+      mismatch_without_body = 0
+      needed_with_body = 0
+      needed_without_body = 0
+      @force_lower_records.each do |r|
+        rt_a = r[:rt_after]
+        next if rt_a == TypeRef::VOID
+        any_available = r[:annotation_rt] != TypeRef::VOID ||
+                        r[:cached_rt] != TypeRef::VOID ||
+                        r[:well_known_rt] != TypeRef::VOID ||
+                        r[:inferred_rt] != TypeRef::VOID
+        unless any_available
+          if r[:body_emitted]
+            needed_with_body += 1
+          else
+            needed_without_body += 1
+          end
+          next
+        end
+        m_any = (r[:annotation_rt] == rt_a && r[:annotation_rt] != TypeRef::VOID) ||
+                (r[:cached_rt] == rt_a && r[:cached_rt] != TypeRef::VOID) ||
+                (r[:well_known_rt] == rt_a && r[:well_known_rt] != TypeRef::VOID) ||
+                (r[:inferred_rt] == rt_a && r[:inferred_rt] != TypeRef::VOID)
+        if m_any
+          if r[:body_emitted]
+            exact_with_body += 1
+          else
+            exact_without_body += 1
+          end
+        else
+          if r[:body_emitted]
+            mismatch_with_body += 1
+          else
+            mismatch_without_body += 1
+          end
+        end
+      end
+      STDERR.puts "[FORCE_LOWER_ATTR] body_emitted × classification cross-tab:"
+      STDERR.puts "    any_exact_match   × body_emitted=true:  #{exact_with_body}"
+      STDERR.puts "    any_exact_match   × body_emitted=false: #{exact_without_body}"
+      STDERR.puts "    cheap_mismatch    × body_emitted=true:  #{mismatch_with_body}"
+      STDERR.puts "    cheap_mismatch    × body_emitted=false: #{mismatch_without_body}"
+      STDERR.puts "    no_cheap          × body_emitted=true:  #{needed_with_body}"
+      STDERR.puts "    no_cheap          × body_emitted=false: #{needed_without_body}"
+      STDERR.puts "    ↑ 'any_exact × body_emitted=true' counts records where a fast path would skip a body we currently lower — verify those callers do not depend on the body before skipping."
 
       # Top force-lowered targets by count.
       target_hist = Hash(String, Int32).new(0)
@@ -43531,7 +43620,7 @@ module Crystal::HIR
         STDERR.puts "    #{name}: #{c}"
       end
 
-      # Top methods (short) by count.
+      # Top methods (short).
       method_hist = Hash(String, Int32).new(0)
       @force_lower_records.each do |r|
         if m = method_short_from_name(r[:name])
@@ -43553,7 +43642,7 @@ module Crystal::HIR
         STDERR.puts "    #{o}: #{c}"
       end
 
-      # Top requesters (who called force_lower).
+      # Top requesters.
       requester_hist = Hash(String, Int32).new(0)
       @force_lower_records.each { |r| requester_hist[r[:requester]] += 1 }
       STDERR.puts "[FORCE_LOWER_ATTR] top requesters (top 30):"
@@ -43561,7 +43650,7 @@ module Crystal::HIR
         STDERR.puts "    #{r}: #{c}"
       end
 
-      # Top requester primary reasons.
+      # Caller primary reason distribution.
       caller_reason_hist = Hash(String, Int32).new(0)
       @force_lower_records.each { |r| caller_reason_hist[r[:caller_reason]] += 1 }
       STDERR.puts "[FORCE_LOWER_ATTR] caller primary reason distribution:"
@@ -43569,43 +43658,29 @@ module Crystal::HIR
         STDERR.puts "    #{r}: #{c}"
       end
 
-      # Top nested_defer amplifiers (force_lowers that dragged in other work).
+      # Top nested_defer amplifiers.
       amplifier_hist = @force_lower_records.sort_by { |r| -r[:nested_defers_caused] }.first(20)
-      STDERR.puts "[FORCE_LOWER_ATTR] top nested_defer amplifiers (force_lowers that caused most nested_defers):"
+      STDERR.puts "[FORCE_LOWER_ATTR] top nested_defer amplifiers:"
       amplifier_hist.each do |r|
         STDERR.puts "    #{r[:name]}: caused=#{r[:nested_defers_caused]} requester=#{r[:requester]}"
       end
 
-      # Sample of each classification bucket.
-      fast_path_sample = [] of String
-      wasteful_sample = [] of String
-      needed_sample = [] of String
-      @force_lower_records.each do |r|
-        any_cheap_here = r[:had_annotation] || r[:cached_rt_nonvoid] || r[:well_known_rt] || r[:inferred_before_force]
-        if any_cheap_here && r[:rt_after] != TypeRef::VOID && fast_path_sample.size < 15
-          which = [] of String
-          which << "annot" if r[:had_annotation]
-          which << "cached" if r[:cached_rt_nonvoid]
-          which << "well_known" if r[:well_known_rt]
-          which << "inferred" if r[:inferred_before_force]
-          fast_path_sample << "#{r[:name]} via #{which.join(",")}"
-        elsif r[:body_emitted] && !r[:rt_changed] && wasteful_sample.size < 15
-          wasteful_sample << r[:name]
-        elsif !any_cheap_here && r[:rt_before] == TypeRef::VOID && r[:rt_after] != TypeRef::VOID && needed_sample.size < 15
-          needed_sample << r[:name]
-        end
+      # Mismatch samples — what does the gap look like?
+      unless mismatch_samples_annot.empty?
+        STDERR.puts "[FORCE_LOWER_ATTR] annotation MISMATCH sample (annotation_rt != rt_after):"
+        mismatch_samples_annot.each { |s| STDERR.puts "    #{s}" }
       end
-      unless fast_path_sample.empty?
-        STDERR.puts "[FORCE_LOWER_ATTR] fast_path_proven sample (cheap path existed):"
-        fast_path_sample.each { |s| STDERR.puts "    #{s}" }
+      unless mismatch_samples_cached.empty?
+        STDERR.puts "[FORCE_LOWER_ATTR] cached MISMATCH sample (cached_rt != rt_after):"
+        mismatch_samples_cached.each { |s| STDERR.puts "    #{s}" }
       end
-      unless wasteful_sample.empty?
-        STDERR.puts "[FORCE_LOWER_ATTR] wasteful_lower sample (no rt change after lower):"
-        wasteful_sample.each { |s| STDERR.puts "    #{s}" }
+      unless mismatch_samples_wk.empty?
+        STDERR.puts "[FORCE_LOWER_ATTR] well_known MISMATCH sample (well_known_rt != rt_after):"
+        mismatch_samples_wk.each { |s| STDERR.puts "    #{s}" }
       end
-      unless needed_sample.empty?
-        STDERR.puts "[FORCE_LOWER_ATTR] genuinely_needed sample (VOID→non-VOID via lower):"
-        needed_sample.each { |s| STDERR.puts "    #{s}" }
+      unless mismatch_samples_infer.empty?
+        STDERR.puts "[FORCE_LOWER_ATTR] inferred MISMATCH sample (inferred_rt != rt_after):"
+        mismatch_samples_infer.each { |s| STDERR.puts "    #{s}" }
       end
     end
 
@@ -57354,15 +57429,16 @@ module Crystal::HIR
       @phase0_forced_lower_names << name
       record_lower_reason(name, "force_lower_return_type")
 
-      # Deep attribution: capture pre-state before we mutate anything. Answers
-      # "could the fast paths (declared annotation, cached rt, well-known,
-      # AST-walk inference) have satisfied this without full body lowering?"
+      # Deep attribution: capture concrete TypeRef candidates from each cheap
+      # source so we can classify by EXACT MATCH against rt_after. Availability
+      # != correctness; only equality with the lowered rt proves the fast path
+      # would have been safe. All captures read state; no writes to caches.
       attr_requester = ""
       attr_caller_reason = ""
-      attr_had_annotation = false
-      attr_cached_rt_nonvoid = false
-      attr_well_known_rt = false
-      attr_inferred_before_force = false
+      attr_annotation_rt = TypeRef::VOID
+      attr_cached_rt = TypeRef::VOID
+      attr_well_known_rt = TypeRef::VOID
+      attr_inferred_rt = TypeRef::VOID
       attr_rt_before = TypeRef::VOID
       attr_nested_defers_baseline = 0
       if @debug_force_lower_attribution
@@ -57371,18 +57447,23 @@ module Crystal::HIR
         base_name_for_attr = strip_type_suffix(name)
         attr_rt_before = @function_types[name]? || @function_base_return_types[base_name_for_attr]? || TypeRef::VOID
         if cached = @function_base_return_types[base_name_for_attr]?
-          attr_cached_rt_nonvoid = cached != TypeRef::VOID
+          attr_cached_rt = cached
         end
         if wk = well_known_method_return_type(base_name_for_attr)
-          attr_well_known_rt = wk != TypeRef::VOID
+          attr_well_known_rt = wk
         end
         if def_node = lookup_function_def_for_return(name, base_name_for_attr)
-          attr_had_annotation = !def_node.return_type.nil?
-          unless attr_had_annotation
-            owner_name = function_context_from_name(base_name_for_attr)
-            if inferred = infer_return_type_from_body_without_callsite(def_node, owner_name)
-              attr_inferred_before_force = inferred != TypeRef::VOID
+          if def_node.return_type
+            # resolve_return_type_from_def reads state and allocates via
+            # type_ref_for_name but does not mutate @function_types nor
+            # @function_base_return_types — safe as a diagnostic probe.
+            if resolved = resolve_return_type_from_def(name, base_name_for_attr, nil)
+              attr_annotation_rt = resolved
             end
+          end
+          owner_name = function_context_from_name(base_name_for_attr)
+          if inferred = infer_return_type_from_body_without_callsite(def_node, owner_name)
+            attr_inferred_rt = inferred
           end
         end
         attr_nested_defers_baseline = @nested_defer_sub_counts.values.sum
@@ -57435,18 +57516,17 @@ module Crystal::HIR
         body_emitted = @module.has_function_with_body?(name)
         defers_caused = @nested_defer_sub_counts.values.sum - attr_nested_defers_baseline
         @force_lower_records << {
-          name:                   name,
-          requester:              attr_requester,
-          caller_reason:          attr_caller_reason,
-          had_annotation:         attr_had_annotation,
-          cached_rt_nonvoid:      attr_cached_rt_nonvoid,
-          well_known_rt:          attr_well_known_rt,
-          inferred_before_force:  attr_inferred_before_force,
-          rt_before:              attr_rt_before,
-          rt_after:               rt_after,
-          rt_changed:             attr_rt_before != rt_after,
-          body_emitted:           body_emitted,
-          nested_defers_caused:   defers_caused,
+          name:                 name,
+          requester:            attr_requester,
+          caller_reason:        attr_caller_reason,
+          annotation_rt:        attr_annotation_rt,
+          cached_rt:            attr_cached_rt,
+          well_known_rt:        attr_well_known_rt,
+          inferred_rt:          attr_inferred_rt,
+          rt_before:            attr_rt_before,
+          rt_after:             rt_after,
+          body_emitted:         body_emitted,
+          nested_defers_caused: defers_caused,
         }
       end
 
