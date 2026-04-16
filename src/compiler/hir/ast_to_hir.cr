@@ -43683,6 +43683,48 @@ module Crystal::HIR
         mismatch_samples_infer.each { |s| STDERR.puts "    #{s}" }
       end
 
+      # --- Downstream Call liveness (shared between VOID and any_exact sections) ---
+      downstream_observed_calls = Set(String).new
+      downstream_live_virtual_methods = Set(String).new
+      downstream_live_virtual_sigs = Set(String).new
+      @module.functions.each do |func|
+        func.blocks.each do |block|
+          block.instructions.each do |inst|
+            next unless inst.is_a?(Call)
+            downstream_observed_calls << inst.method_name
+            next unless inst.virtual
+            if m = method_short_from_name(inst.method_name)
+              downstream_live_virtual_methods << m
+            end
+            downstream_live_virtual_sigs << method_and_signature_from_name(inst.method_name)
+          end
+        end
+      end
+
+      classify_body_liveness = ->(name : String) : String do
+        if downstream_observed_calls.includes?(name)
+          "directly_called"
+        else
+          reasons = @function_lowering_reasons[name]?
+          is_vtarget = reasons && (reasons.includes?("virtual_target_owner") || reasons.includes?("virtual_target_resolved"))
+          if is_vtarget
+            sig = method_and_signature_from_name(name)
+            short = method_short_from_name(name)
+            if downstream_live_virtual_sigs.includes?(sig)
+              "virtual_target_live_signature"
+            elsif short && downstream_live_virtual_methods.includes?(short)
+              "virtual_target_live_method"
+            else
+              "no_observed_reference"
+            end
+          elsif name.ends_with?(".new") || name.includes?("#initialize") || name.includes?("allocate")
+            "init_allocator_layout"
+          else
+            "no_observed_reference"
+          end
+        end
+      end
+
       # --- rt_after=VOID deep dive ---
       # ~55% of force_lower calls leave rt_after == VOID. For those records,
       # force_lower produced no usable return-type knowledge. Figure out who
@@ -43693,25 +43735,6 @@ module Crystal::HIR
       if void_records.empty?
         STDERR.puts "[FORCE_LOWER_ATTR][VOID] no records with rt_after == VOID"
       else
-        # Observed downstream calls across the emitted module (local scan so the
-        # VOID dive stays self-contained).
-        observed_calls_void = Set(String).new
-        live_virtual_methods_void = Set(String).new
-        live_virtual_sigs_void = Set(String).new
-        @module.functions.each do |func|
-          func.blocks.each do |block|
-            block.instructions.each do |inst|
-              next unless inst.is_a?(Call)
-              observed_calls_void << inst.method_name
-              next unless inst.virtual
-              if m = method_short_from_name(inst.method_name)
-                live_virtual_methods_void << m
-              end
-              live_virtual_sigs_void << method_and_signature_from_name(inst.method_name)
-            end
-          end
-        end
-
         void_total = void_records.size
         void_with_body = void_records.count(&.[:body_emitted])
         void_without_body = void_total - void_with_body
@@ -43730,29 +43753,18 @@ module Crystal::HIR
         void_body_dead_samples = [] of String
         void_records.each do |r|
           next unless r[:body_emitted]
-          name = r[:name]
-          if observed_calls_void.includes?(name)
+          case classify_body_liveness.call(r[:name])
+          when "directly_called"
             void_body_directly_called += 1
-            next
-          end
-          reasons = @function_lowering_reasons[name]?
-          is_vtarget = reasons && (reasons.includes?("virtual_target_owner") || reasons.includes?("virtual_target_resolved"))
-          if is_vtarget
-            sig = method_and_signature_from_name(name)
-            short = method_short_from_name(name)
-            if live_virtual_sigs_void.includes?(sig)
-              void_body_virtual_live_sig += 1
-            elsif short && live_virtual_methods_void.includes?(short)
-              void_body_virtual_live_method += 1
-            else
-              void_body_no_reference += 1
-              void_body_dead_samples << name if void_body_dead_samples.size < 20
-            end
-          elsif name.ends_with?(".new") || name.includes?("#initialize") || name.includes?("allocate")
+          when "virtual_target_live_signature"
+            void_body_virtual_live_sig += 1
+          when "virtual_target_live_method"
+            void_body_virtual_live_method += 1
+          when "init_allocator_layout"
             void_body_init_allocator += 1
           else
             void_body_no_reference += 1
-            void_body_dead_samples << name if void_body_dead_samples.size < 20
+            void_body_dead_samples << r[:name] if void_body_dead_samples.size < 20
           end
         end
         STDERR.puts "[FORCE_LOWER_ATTR][VOID] body × downstream classification (of #{void_with_body} VOID+body records):"
@@ -43779,7 +43791,7 @@ module Crystal::HIR
         end
         STDERR.puts "[FORCE_LOWER_ATTR][VOID] top targets with body (top 20):"
         void_target_body_hist.to_a.sort_by { |_, c| -c }.first(20).each do |name, c|
-          tag = observed_calls_void.includes?(name) ? "called" : "dead?"
+          tag = downstream_observed_calls.includes?(name) ? "called" : "dead?"
           STDERR.puts "    [#{tag}] #{name}: #{c}"
         end
         STDERR.puts "[FORCE_LOWER_ATTR][VOID] top targets without body (top 20):"
@@ -43820,6 +43832,111 @@ module Crystal::HIR
         unless void_body_dead_samples.empty?
           STDERR.puts "[FORCE_LOWER_ATTR][VOID] VOID+body DEAD samples (no downstream ref):"
           void_body_dead_samples.each { |s| STDERR.puts "    #{s}" }
+        end
+      end
+
+      # --- any_exact_match × body_emitted deep dive ---
+      # This is the GPT-safe fast-path candidate set: records where at least
+      # one cheap source (annotation / cached / well_known / inferred) equals
+      # rt_after AND a body was emitted. If the emitted body is DEAD (no
+      # downstream Call and not a live virtual target), a fast path that
+      # satisfies the return-type-only caller without forcing body lowering
+      # would not regress behavior. Distinguish:
+      #   - directly_called:   body is called → MUST NOT skip body (GPT rule)
+      #   - virtual_target_live_*: body feeds a live vdispatch → MUST NOT skip
+      #   - init_allocator_layout: needed for object construction → keep
+      #   - no_observed_reference: DEAD → safe prune candidate
+      exact_body_records = @force_lower_records.select do |r|
+        rt_a = r[:rt_after]
+        next false if rt_a == TypeRef::VOID
+        next false unless r[:body_emitted]
+        (r[:annotation_rt] != TypeRef::VOID && r[:annotation_rt] == rt_a) ||
+          (r[:cached_rt] != TypeRef::VOID && r[:cached_rt] == rt_a) ||
+          (r[:well_known_rt] != TypeRef::VOID && r[:well_known_rt] == rt_a) ||
+          (r[:inferred_rt] != TypeRef::VOID && r[:inferred_rt] == rt_a)
+      end
+      if exact_body_records.empty?
+        STDERR.puts "[FORCE_LOWER_ATTR][EXACT+BODY] no records with any_exact_match && body_emitted"
+      else
+        eb_total = exact_body_records.size
+        eb_directly_called = 0
+        eb_virtual_live_sig = 0
+        eb_virtual_live_method = 0
+        eb_init_allocator = 0
+        eb_no_reference = 0
+        eb_dead_samples = [] of String
+        eb_dead_by_source = Hash(String, Int32).new(0)
+        exact_body_records.each do |r|
+          outcome = classify_body_liveness.call(r[:name])
+          case outcome
+          when "directly_called"
+            eb_directly_called += 1
+          when "virtual_target_live_signature"
+            eb_virtual_live_sig += 1
+          when "virtual_target_live_method"
+            eb_virtual_live_method += 1
+          when "init_allocator_layout"
+            eb_init_allocator += 1
+          else
+            eb_no_reference += 1
+            eb_dead_samples << r[:name] if eb_dead_samples.size < 30
+            # Track which cheap source made it exact for each dead record —
+            # tells us which source could safely drive a fast path.
+            rt_a = r[:rt_after]
+            if r[:annotation_rt] == rt_a && r[:annotation_rt] != TypeRef::VOID
+              eb_dead_by_source["annotation"] += 1
+            end
+            if r[:cached_rt] == rt_a && r[:cached_rt] != TypeRef::VOID
+              eb_dead_by_source["cached"] += 1
+            end
+            if r[:well_known_rt] == rt_a && r[:well_known_rt] != TypeRef::VOID
+              eb_dead_by_source["well_known"] += 1
+            end
+            if r[:inferred_rt] == rt_a && r[:inferred_rt] != TypeRef::VOID
+              eb_dead_by_source["inferred"] += 1
+            end
+          end
+        end
+
+        STDERR.puts "[FORCE_LOWER_ATTR][EXACT+BODY] any_exact_match && body_emitted records: #{eb_total}"
+        STDERR.puts "[FORCE_LOWER_ATTR][EXACT+BODY] downstream classification:"
+        STDERR.puts "    directly_called:               #{eb_directly_called} (#{(eb_directly_called * 100.0 / eb_total).round(1)}%)  [MUST NOT skip body]"
+        STDERR.puts "    virtual_target_live_signature: #{eb_virtual_live_sig} (#{(eb_virtual_live_sig * 100.0 / eb_total).round(1)}%)  [MUST NOT skip body]"
+        STDERR.puts "    virtual_target_live_method:    #{eb_virtual_live_method} (#{(eb_virtual_live_method * 100.0 / eb_total).round(1)}%)  [likely must keep]"
+        STDERR.puts "    init_allocator_layout:         #{eb_init_allocator} (#{(eb_init_allocator * 100.0 / eb_total).round(1)}%)"
+        STDERR.puts "    no_observed_reference (DEAD):  #{eb_no_reference} (#{(eb_no_reference * 100.0 / eb_total).round(1)}%)  [safe prune candidate]"
+
+        # Dead-by-source: which cheap source would a fast path have relied on?
+        unless eb_dead_by_source.empty?
+          STDERR.puts "[FORCE_LOWER_ATTR][EXACT+BODY] DEAD records by matching cheap source (a record can match multiple):"
+          eb_dead_by_source.to_a.sort_by { |_, c| -c }.each do |src, c|
+            STDERR.puts "    #{src}: #{c}"
+          end
+        end
+
+        # Top targets in the DEAD subset — the concrete prune list.
+        dead_target_hist = Hash(String, Int32).new(0)
+        dead_requester_hist = Hash(String, Int32).new(0)
+        exact_body_records.each do |r|
+          outcome = classify_body_liveness.call(r[:name])
+          next unless outcome == "no_observed_reference"
+          dead_target_hist[r[:name]] += 1
+          dead_requester_hist[r[:requester]] += 1
+        end
+        unless dead_target_hist.empty?
+          STDERR.puts "[FORCE_LOWER_ATTR][EXACT+BODY] top DEAD targets (top 20):"
+          dead_target_hist.to_a.sort_by { |_, c| -c }.first(20).each do |name, c|
+            STDERR.puts "    #{name}: #{c}"
+          end
+          STDERR.puts "[FORCE_LOWER_ATTR][EXACT+BODY] top DEAD requesters (top 15):"
+          dead_requester_hist.to_a.sort_by { |_, c| -c }.first(15).each do |r, c|
+            STDERR.puts "    #{r}: #{c}"
+          end
+        end
+
+        unless eb_dead_samples.empty?
+          STDERR.puts "[FORCE_LOWER_ATTR][EXACT+BODY] DEAD samples:"
+          eb_dead_samples.each { |s| STDERR.puts "    #{s}" }
         end
       end
     end
