@@ -3037,6 +3037,12 @@ module Crystal::HIR
     # Histogram of nested_defer requester->requested (gated).
     @nested_defer_requester : Hash(String, Int32) = Hash(String, Int32).new(0)
     @nested_defer_sub_counts : Hash(String, Int32) = Hash(String, Int32).new(0)
+    # Per-deferred-body first-caller trace: when a function is first
+    # transitioned to Pending via the nested_defer path, store the caller
+    # name (stack top) so the NOR deep dive can surface the actual requester
+    # chain for each no_observed_reference body. Only the first transition
+    # wins; subsequent deferrals of the same body do not overwrite.
+    @nested_defer_first_requester : Hash(String, String) = {} of String => String
 
     # Deep attribution for force_lower_function_for_return_type. Gated on
     # DEBUG_FORCE_LOWER_ATTRIBUTION. Records actual TypeRef candidates from
@@ -43492,6 +43498,13 @@ module Crystal::HIR
         unreferenced_bodies.each do |name|
           reasons = @function_lowering_reasons[name]?
           pr = primary_reason_for(reasons)
+          # Apply the same gen_path resolution the main EMITTED-BODY view uses:
+          # unlabeled bodies often have a generation-path tag stored separately.
+          if pr == "no_reason"
+            if tag = @generation_path_reasons[name]?
+              pr = "gen_path:#{tag}"
+            end
+          end
           nor_primary[pr] += 1
           if reasons.nil? || reasons.empty?
             nor_no_reason += 1
@@ -43563,6 +43576,11 @@ module Crystal::HIR
         unreferenced_bodies.each do |name|
           reasons = @function_lowering_reasons[name]?
           pr = primary_reason_for(reasons)
+          if pr == "no_reason"
+            if tag = @generation_path_reasons[name]?
+              pr = "gen_path:#{tag}"
+            end
+          end
           owner = strip_generic_args(method_owner_from_name(name))
           nor_cross[{pr, owner}] += 1
         end
@@ -43600,6 +43618,51 @@ module Crystal::HIR
           STDERR.puts "[LOWER_REASONS][NOR] nested_defer sub-reason counts (NOR subset):"
           nor_nd_sub.to_a.sort_by { |_, c| -c }.each do |sub, c|
             STDERR.puts "  #{sub}: #{c}"
+          end
+
+          # First-requester chain: for each NOR body in the nested_defer subset,
+          # surface the caller that first triggered the deferral. Aggregate by
+          # requester to reveal which callers pull the most dead bodies through
+          # the defer pipeline.
+          nor_first_req_hist = Hash(String, Int32).new(0)
+          nor_first_req_owner_hist = Hash(String, Int32).new(0)
+          nor_no_first_req = 0
+          nor_nested_defer_bodies.each do |name|
+            if caller = @nested_defer_first_requester[name]?
+              nor_first_req_hist[caller] += 1
+              nor_first_req_owner_hist[strip_generic_args(method_owner_from_name(caller))] += 1
+            else
+              nor_no_first_req += 1
+            end
+          end
+          STDERR.puts "[LOWER_REASONS][NOR] nested_defer first-requester coverage: #{nor_nested_defer_bodies.size - nor_no_first_req}/#{nor_nested_defer_bodies.size} have recorded caller"
+          unless nor_first_req_hist.empty?
+            STDERR.puts "[LOWER_REASONS][NOR] nested_defer top first-requesters (top 30):"
+            nor_first_req_hist.to_a.sort_by { |_, c| -c }.first(30).each do |caller, c|
+              STDERR.puts "  #{caller}: #{c}"
+            end
+            STDERR.puts "[LOWER_REASONS][NOR] nested_defer first-requester owner bases (top 15):"
+            nor_first_req_owner_hist.to_a.sort_by { |_, c| -c }.first(15).each do |owner, c|
+              STDERR.puts "  #{owner}: #{c}"
+            end
+          end
+
+          # Requester × body-owner cross-tab — pinpoints which caller pulls
+          # which target family. E.g. if a single dispatch function in
+          # Channel or Fiber is the first-requester for every Tuple#includes?
+          # body, that's the concentration GPT asked us to find.
+          nor_req_body_cross = Hash({String, String}, Int32).new(0)
+          nor_nested_defer_bodies.each do |name|
+            if caller = @nested_defer_first_requester[name]?
+              body_owner = strip_generic_args(method_owner_from_name(name))
+              nor_req_body_cross[{caller, body_owner}] += 1
+            end
+          end
+          unless nor_req_body_cross.empty?
+            STDERR.puts "[LOWER_REASONS][NOR] first-requester × body-owner cross-tab (top 30 cells):"
+            nor_req_body_cross.to_a.sort_by { |_, c| -c }.first(30).each do |(caller, body_owner), c|
+              STDERR.puts "  #{caller} → #{body_owner}: #{c}"
+            end
           end
         end
       end
@@ -58054,6 +58117,7 @@ module Crystal::HIR
             record_lower_reason(name, "nested_defer:#{sub}")
             if caller_name = @lowering_function_stack.last?
               @nested_defer_requester[caller_name] += 1
+              @nested_defer_first_requester[name] = caller_name unless @nested_defer_first_requester.has_key?(name)
             end
             @nested_defer_sub_counts[sub] += 1
           end
