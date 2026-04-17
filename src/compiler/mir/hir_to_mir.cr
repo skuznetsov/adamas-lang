@@ -114,6 +114,11 @@ module Crystal
       # Built by interprocedural analysis tracing return values back to Allocate instructions.
       @owned_return_funcs : ::Set(String) = ::Set(String).new
 
+      # Per-function cache: HIR value id → defining block's scope id.
+      # Populated in lower_function_body during value-type indexing pass.
+      # Replaces an O(N) linear scan that made lexical-scope lookup O(N²) on large functions.
+      @hir_value_block_scope : ::Hash(HIR::ValueId, UInt32) = {} of HIR::ValueId => UInt32
+
       @[AlwaysInline]
       private def mir_setup_trace? : Bool
         ENV.has_key?("CRYSTAL_V2_MIR_SETUP_TRACE") || ENV.has_key?("CRYSTAL2_MIR_SETUP_TRACE")
@@ -940,13 +945,9 @@ module Crystal
       end
 
       private def hir_effective_lexical_scope_for_debug(hir_func : HIR::Function, hir_id : HIR::ValueId) : UInt32?
-        hir_func.blocks.each do |blk|
-          blk.instructions.each do |inst|
-            next unless inst.id == hir_id
-            unless hir_func.get_scope(blk.scope).kind == HIR::ScopeKind::Function
-              return blk.scope
-            end
-            break
+        if blk_scope = @hir_value_block_scope[hir_id]?
+          unless hir_func.get_scope(blk_scope).kind == HIR::ScopeKind::Function
+            return blk_scope
           end
         end
         loc = hir_func.value_location(hir_id) || return nil
@@ -1030,6 +1031,10 @@ module Crystal
         @builder.not_nil!.current_block = 0_u32
         STDERR.puts "[MIR_LOWER] builder ready entry=#{mir_func.entry_block}" if mir_lower_trace?
 
+        # Reset per-function caches BEFORE params loop — params invoke
+        # record_mir_value_location which reads @hir_value_block_scope.
+        @hir_value_block_scope = {} of HIR::ValueId => UInt32
+
         # Map HIR params to MIR params (already added in stub)
         hir_func.params.each_with_index do |param, idx|
           # MIR params are value IDs starting from 0
@@ -1044,8 +1049,10 @@ module Crystal
           @hir_value_types[param.id] = param.type
         end
         hir_func.blocks.each do |hir_block|
+          blk_scope = hir_block.scope
           hir_block.instructions.each do |inst|
             @hir_value_types[inst.id] = inst.type
+            @hir_value_block_scope[inst.id] = blk_scope
             # Track constants (Literal) — these are static data, not heap-allocated
             if inst.is_a?(HIR::Literal)
               @hir_constant_values << inst.id
