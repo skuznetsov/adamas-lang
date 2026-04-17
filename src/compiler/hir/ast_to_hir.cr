@@ -61987,7 +61987,11 @@ module Crystal::HIR
           end
         end
         # For non-Tuple struct collections, try direct static call to includes?
-        if collection_type_name != "" && !collection_type_name.starts_with?("Nil")
+        # Skip bare `Tuple`: `Object#in?(*values : Object)`'s splat body calls
+        # `in?(values)` with arity-erased abstract Tuple, which otherwise
+        # emits `Tuple#includes?$<X>` for every reachable receiver X (NOR burst).
+        # Concrete `Tuple(...)` is handled by the inline branch above.
+        if collection_type_name != "" && !collection_type_name.starts_with?("Nil") && !collection_type_name.starts_with?("Tuple")
           is_struct_type = @class_info[collection_type_name]?.try(&.is_struct)
           if is_struct_type
             includes_method = "#{collection_type_name}#includes?"
