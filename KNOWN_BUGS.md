@@ -5,13 +5,19 @@ reducer path and (where possible) the relevant file/line so the next pass
 doesn't have to re-derive context.
 
 ## In?(Array) — STUB on `Int32#in?$Array(Int32)` at runtime
-- **Reducer**: `/tmp/cv2_nor/reducers/in_array_range.cr`
-  ```crystal
-  a = [1, 2, 3]
-  puts 2.in?(a)
-  r = 1..3
-  puts 2.in?(r)
-  ```
+- **Status**: known-red, separate follow-up. Not fixed by the bare-Tuple
+  `in?` fallback guard (commit `28036d5c`, 2026-04-16) — that fix closed an
+  HIR bloat path, this is a distinct RTA/lowering gap.
+- **Reducer (committed)**: `regression_tests/in_array_stub_repro.sh`
+  - Stable command: `regression_tests/in_array_stub_repro.sh bin/crystal_v2`
+  - Exits 0 while the bug reproduces (STUB observed), exits 1 once fixed.
+  - Self-contained source (also embedded in the script):
+    ```crystal
+    a = [1, 2, 3]
+    puts 2.in?(a)
+    r = 1..3
+    puts 2.in?(r)
+    ```
 - **Symptom**: runtime abort
   ```
   STUB CALLED: Int32$Hin$Q$$Array$LInt32$R
@@ -29,4 +35,3 @@ doesn't have to re-derive context.
   with an RTA tracking gap for local-bound `Array`.
 - **Regression tests (combined suite)** likely exercising this path fail
   with the same STUB signature — see `regression_tests/combined/` output.
-- **Status**: not caused by the bare-Tuple guard fix; separate follow-up.
