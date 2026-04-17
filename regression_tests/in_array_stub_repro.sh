@@ -1,8 +1,17 @@
 #!/usr/bin/env bash
 # Known-red reducer for: Int32#in?$Array(Int32) → STUB CALLED runtime abort.
-# Documented in ../KNOWN_BUGS.md. Exits 0 when the bug reproduces
-# (STUB CALLED in stderr), exits 1 if the bug has been fixed.
+# Documented in ../KNOWN_BUGS.md.
+#
+# Exit contract:
+#   0 — reproduced: the EXACT expected STUB signature was observed.
+#   1 — not reproduced: binary ran cleanly (bug likely fixed).
+#   2 — invalid invocation (missing compiler arg).
+#   >2 — unexpected failure (compile error, different STUB, segfault, timeout,
+#        etc.). These are NOT treated as reproductions — they flag a distinct
+#        bug that shouldn't be masked by this known-red guard.
 set -euo pipefail
+
+EXPECTED_STUB='STUB CALLED: Int32$Hin$Q$$Array$LInt32$R'
 
 if [[ $# -lt 1 ]]; then
   echo "Usage: $0 <compiler>" >&2
@@ -41,9 +50,9 @@ compile_status=$?
 set -e
 
 if [[ $compile_status -ne 0 ]]; then
-  echo "reproduced: compile failed with status=$compile_status"
-  tail -20 "$TMP_DIR/compile.out"
-  exit 0
+  echo "unexpected: compile failed with status=$compile_status" >&2
+  tail -20 "$TMP_DIR/compile.out" >&2
+  exit 3
 fi
 
 set +e
@@ -51,18 +60,19 @@ set +e
 run_status=$?
 set -e
 
-if grep -q "STUB CALLED" "$RUN_LOG"; then
-  echo "reproduced: STUB CALLED observed"
-  grep "STUB CALLED" "$RUN_LOG" | head -3
+if grep -qF "$EXPECTED_STUB" "$RUN_LOG"; then
+  echo "reproduced: $EXPECTED_STUB"
   exit 0
 fi
 
 if [[ $run_status -eq 0 ]]; then
-  echo "not reproduced: ran cleanly with exit 0"
+  echo "not reproduced: ran cleanly with exit 0 (bug likely fixed)"
   cat "$RUN_LOG"
   exit 1
 fi
 
-echo "reproduced: abnormal exit ($run_status)"
-tail -10 "$RUN_LOG"
-exit 0
+echo "unexpected: abnormal exit ($run_status) without expected STUB" >&2
+echo "expected signature: $EXPECTED_STUB" >&2
+echo "--- run log tail ---" >&2
+tail -20 "$RUN_LOG" >&2
+exit 4
