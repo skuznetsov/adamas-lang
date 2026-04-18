@@ -1,0 +1,32 @@
+neg=-7
+Hello, world! Age: 42
+string_interp_done
+15
+closure_done
+I=123 U8=123 U16=123 U32=123 U64=123
+float_pow_var_ok
+7
+50
+proc_test_done
+84
+yield_done
+3
+10
+20
+30
+4
+true
+false
+array_simple_done
+42
+nested_macro_record_ok
+15
+5
+2
+4
+6
+8
+10
+2
+blocks_done
+all_tiny_primitives_ok

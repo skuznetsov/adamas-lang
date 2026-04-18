@@ -79,6 +79,7 @@ regression_tests/**
 !regression_tests/**/*.sh
 !regression_tests/**/*.out
 !regression_tests/**/*.md
+!regression_tests/combined/superseded_originals.txt
 spec/compiler/**
 !spec/compiler/**/
 !spec/compiler/**/*.cr

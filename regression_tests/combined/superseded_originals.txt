@@ -1,0 +1,19 @@
+# Originals superseded by combined bundles (one path per line, # comments allowed).
+# Entries here are SKIPPED by regression_tests/run_all.sh — they are still compiled
+# and run through the corresponding combined bundle in regression_tests/combined/.
+# Each entry must be an exact path from repo root, no globs.
+# Remove an entry to re-run the original alongside the combined form (e.g. for
+# bisecting an RTA context-sensitivity regression).
+#
+# Superseded by: regression_tests/combined/test_tiny_primitives_bundle.cr
+regression_tests/test_negative_int32_puts.cr
+regression_tests/test_string_interp.cr
+regression_tests/test_closure.cr
+regression_tests/test_string_to_u64.cr
+regression_tests/test_float_pow_var.cr
+regression_tests/test_proc_basic.cr
+regression_tests/test_yield.cr
+regression_tests/test_array_simple.cr
+regression_tests/test_closure_ref.cr
+regression_tests/test_nested_macro_record.cr
+regression_tests/test_blocks.cr

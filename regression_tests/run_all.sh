@@ -73,8 +73,43 @@ run_one_test() {
 export -f run_one_test
 export COMPILER TIMEOUT MAX_MEM BIN_DIR
 
-# Run tests in parallel using xargs
+# Filter out originals that are superseded by a combined bundle.
+# Manifest: regression_tests/combined/superseded_originals.txt (one exact path per line,
+# # comments allowed). Skipping here avoids compiling the same source twice per suite run.
+# Kept bash-3.2-compatible (no associative arrays) because macOS /bin/bash is 3.2.
 SOURCES=(regression_tests/*.cr)
+SUPERSEDED_MANIFEST="regression_tests/combined/superseded_originals.txt"
+if [ -f "$SUPERSEDED_MANIFEST" ]; then
+  # Build a newline-delimited list of manifest paths for fixed-string grep.
+  SUPERSEDED_LIST=""
+  while IFS= read -r line; do
+    path="${line%%#*}"
+    # Trim leading/trailing whitespace.
+    path="${path#"${path%%[![:space:]]*}"}"
+    path="${path%"${path##*[![:space:]]}"}"
+    [ -z "$path" ] && continue
+    SUPERSEDED_LIST="${SUPERSEDED_LIST}${path}"$'\n'
+  done < "$SUPERSEDED_MANIFEST"
+
+  FILTERED=()
+  SKIPPED=()
+  for src in "${SOURCES[@]}"; do
+    # Exact whole-line match against the manifest list.
+    if [ -n "$SUPERSEDED_LIST" ] && printf '%s' "$SUPERSEDED_LIST" | grep -Fxq -- "$src"; then
+      SKIPPED+=("$src")
+    else
+      FILTERED+=("$src")
+    fi
+  done
+  SOURCES=("${FILTERED[@]}")
+  if [ "${#SKIPPED[@]}" -gt 0 ]; then
+    echo "Skipping ${#SKIPPED[@]} originals superseded by combined bundles:"
+    printf '  %s\n' "${SKIPPED[@]}"
+    echo ""
+  fi
+fi
+
+# Run tests in parallel using xargs
 printf '%s\n' "${SOURCES[@]}" | xargs -P "$JOBS" -I {} bash -c 'run_one_test "$@"' _ {}
 
 # Collect results (sorted order)
