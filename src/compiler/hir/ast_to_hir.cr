@@ -66717,34 +66717,22 @@ module Crystal::HIR
             if elem_count > 0
               found_match_block = ctx.create_block
               no_match_block = ctx.create_block
+              # Compute aligned offsets for all tuple elements using the shared
+              # helper so reads match the MIR tuple layout written by
+              # register_tuple_types / lower_allocate.
+              tuple_elems = if params = vd.type_params
+                              params.to_a
+                            else
+                              [] of TypeRef
+                            end
+              tuple_offsets = hir_tuple_element_offsets(tuple_elems)
               (0...elem_count).each do |ei|
-                elem_type = if vd.type_params && ei < vd.type_params.not_nil!.size
-                              tp = vd.type_params.not_nil![ei]
-                              tp
+                elem_type = if ei < tuple_elems.size
+                              tuple_elems[ei]
                             else
                               TypeRef::VOID
                             end
-                # Compute byte offset for this tuple element
-                elem_byte_offset = 0
-                if vd.type_params
-                  (0...ei).each do |pi|
-                    pt = vd.type_params.not_nil![pi]
-                    pt_desc = @module.get_type_descriptor(pt)
-                    is_prim = pt_desc && (pt_desc.kind == TypeKind::Primitive)
-                    pt_size = if is_prim
-                                case get_type_name_from_ref(pt)
-                                when "Bool", "Int8", "UInt8"              then 1
-                                when "Int16", "UInt16"                    then 2
-                                when "Int32", "UInt32", "Float32", "Char" then 4
-                                when "Int64", "UInt64", "Float64"         then 8
-                                else                                           8
-                                end
-                              else
-                                8 # pointer size
-                              end
-                    elem_byte_offset += pt_size
-                  end
-                end
+                elem_byte_offset = ei < tuple_offsets.size ? tuple_offsets[ei] : 0
                 elem_get = FieldGet.new(ctx.next_id, elem_type, uw.id, "@__#{ei}", elem_byte_offset)
                 ctx.emit(elem_get); ctx.register_type(elem_get.id, elem_type)
                 # Compare element with target using primitive equality
@@ -67628,11 +67616,14 @@ module Crystal::HIR
       return nil unless any_differ
 
       # Extract each element from source tuple, coerce to target element type,
-      # and build a new tuple with the target type.
+      # and build a new tuple with the target type. Offsets must mirror the
+      # MIR tuple layout (register_tuple_types / lower_allocate): element
+      # alignment drives padding, not just raw element sizes.
       coerced_elements = [] of ValueId
-      elem_byte_offset = 0
+      source_offsets = hir_tuple_element_offsets(source_params)
       source_params.each_with_index do |sp, i|
         tp = target_params[i]
+        elem_byte_offset = i < source_offsets.size ? source_offsets[i] : 0
         # Extract element from source tuple
         elem_get = FieldGet.new(ctx.next_id, sp, value_id, "@__#{i}", elem_byte_offset)
         ctx.emit(elem_get)
@@ -67645,9 +67636,6 @@ module Crystal::HIR
                          elem_get.id
                        end
         coerced_elements << coerced_elem
-
-        # Advance byte offset using source element size
-        elem_byte_offset += hir_element_byte_size(sp)
       end
 
       # Create new tuple with target type and coerced elements
@@ -67681,11 +67669,68 @@ module Crystal::HIR
           end
           # tag (4 bytes) + payload (aligned to 4 bytes, minimum 4 bytes)
           payload_size = max_payload < 4 ? 4 : ((max_payload + 3) & ~3)
-          return 4 + payload_size
+          total = 4 + payload_size
+          # Mirror MIR register_tuple_types: unions with size > 8 are inlined,
+          # otherwise they are stored as a pointer-sized slot.
+          return total > 8 ? total : 8
+        end
+        if desc.kind == TypeKind::Primitive
+          # Enums are registered as Primitive; resolve their base-type size.
+          if base = enum_base_type_by_name?(desc.name)
+            return hir_element_byte_size(base)
+          end
         end
       end
       # Default: pointer size for reference types, structs, etc.
       8
+    end
+
+    # Mirror MIR register_tuple_types alignment rules.
+    # Primitive/enum elements align to their natural width; union elements
+    # stored inline (size > 8) and all other types (reference/struct/tuple/
+    # array/pointer) align to pointer-word (8 bytes).
+    private def hir_element_byte_align(type_ref : TypeRef) : Int32
+      case type_ref
+      when TypeRef::BOOL, TypeRef::INT8, TypeRef::UINT8 then return 1
+      when TypeRef::INT16, TypeRef::UINT16              then return 2
+      when TypeRef::INT32, TypeRef::UINT32,
+           TypeRef::FLOAT32, TypeRef::CHAR              then return 4
+      when TypeRef::INT64, TypeRef::UINT64,
+           TypeRef::FLOAT64                             then return 8
+      end
+      desc = @module.get_type_descriptor(type_ref)
+      if desc && desc.kind == TypeKind::Primitive
+        if base = enum_base_type_by_name?(desc.name)
+          return hir_element_byte_align(base)
+        end
+      end
+      # Unions (inline or pointer) and all non-primitive types align to
+      # pointer-word, matching MIR register_tuple_types.
+      8
+    end
+
+    # Compute aligned byte offsets for tuple elements. Shared between
+    # Object#in? tuple-union compare and try_coerce_tuple_to_tuple so that
+    # HIR reads match the MIR write layout in register_tuple_types /
+    # lower_allocate. Must mirror those MIR offsets exactly.
+    private def hir_tuple_element_offsets(element_types : Array(TypeRef)) : Array(Int32)
+      offsets = [] of Int32
+      current = 0
+      element_types.each do |et|
+        a = hir_element_byte_align(et)
+        current = (current + a - 1) & ~(a - 1)
+        offsets << current
+        current += hir_element_byte_size(et)
+      end
+      offsets
+    end
+
+    private def enum_base_type_by_name?(name : String) : TypeRef?
+      return nil if name.empty?
+      if (cache = @enum_base_types) && (base = cache[name]?)
+        return base
+      end
+      nil
     end
 
     private def union_type_cached?(type : TypeRef) : Bool
