@@ -69,9 +69,10 @@ Additive scaffold now present:
 - `LoweringContext#entry_box_required?(name)` is the future binding-site guard.
 - `collect_proc_literal_box_requirements(body, candidate_names)` finds proc literals nested in a body that reference candidate locals. It is intentionally dormant until P1 wires the two-stage flow:
   pre-scan owner body → mark requirements → hoist at local declaration / first assignment with the real initial value.
+- `seed_entry_box_requirements_for_body` is wired behind `CRYSTAL_V2_SEED_ENTRY_BOX_REQUIREMENTS=1`; it seeds the requirement set but still does not change reads/writes because no binding site consumes it yet.
 
 Next implementation unit should be additive or explicitly WIP:
 
-1. Seed entry-box requirements before lowering the owning function/proc body.
-2. Wire local declaration / first assignment lowering to call `hoist_box_for_local(ctx, name, payload_type, initial_value)` while still in entry-block lowering.
-3. Make `lower_proc_literal` / `lower_block_to_proc` require an existing `BoxedLocal` for boxed captures instead of late-hoisting.
+1. Wire local declaration / first assignment lowering to call `hoist_box_for_local(ctx, name, payload_type, initial_value)` when `ctx.entry_box_required?(name)` and the binding still occurs in the function entry block.
+2. Make `lower_proc_literal` / `lower_block_to_proc` require an existing `BoxedLocal` for boxed captures instead of late-hoisting.
+3. Only then start the atomic MakeClosure/MakeProc ABI flip.

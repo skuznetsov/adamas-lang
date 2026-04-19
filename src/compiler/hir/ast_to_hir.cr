@@ -42655,6 +42655,9 @@ module Crystal::HIR
       last_value : ValueId? = nil
       begin
         if body = node.body
+          if env_has?("CRYSTAL_V2_SEED_ENTRY_BOX_REQUIREMENTS")
+            seed_entry_box_requirements_for_body(ctx, body, @arena)
+          end
           body_proc = -> {
             def_arena = @arena
             i = 0
@@ -79456,6 +79459,35 @@ module Crystal::HIR
         required
       ensure
         @arena = saved_arena
+      end
+    end
+
+    private def entry_box_candidate_names(
+      ctx : LoweringContext,
+      body : Array(ExprId),
+    ) : Set(String)
+      names = collect_assigned_vars(body).to_set
+      ctx.function.params.each do |param|
+        names.add(param.name) unless param.name.empty?
+      end
+      names.delete("self")
+      names
+    end
+
+    # Optional P1 pre-scan seed. Default-off to keep current lowering
+    # behavior and compiler throughput unchanged before the atomic ABI flip.
+    private def seed_entry_box_requirements_for_body(
+      ctx : LoweringContext,
+      body : Array(ExprId),
+      arena : CrystalV2::Compiler::Frontend::ArenaLike,
+    ) : Nil
+      candidates = entry_box_candidate_names(ctx, body)
+      required = collect_proc_literal_box_requirements(body, candidates, arena)
+      required.each do |name|
+        ctx.require_entry_box_for_local(name)
+      end
+      if env_has?("DEBUG_ENTRY_BOX_REQUIREMENTS") && !required.empty?
+        STDERR.puts "[ENTRY_BOX_REQUIREMENTS] func=#{ctx.function.name} names=#{required.to_a.sort.join(",")}"
       end
     end
 

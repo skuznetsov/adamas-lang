@@ -244,7 +244,7 @@ P1 must preserve every invariant below. Violation → revert.
 | I11 | (added) Every captured local that is written from inside any closure over it, OR has `CapturedVar#by_reference == true`, is hoisted to a per-lexical-activation heap Box. All reads/writes (including parent-scope) go through that Box. Multiple closures over the same variable share the same Box pointer. |
 | I12 | (added) `HIR::FuncPointer` is typed as `TypeRef::POINTER` and is never the user-visible Proc value. The only producer of Proc-typed values is `HIR::MakeProc(fn_ptr, env_ptr)`. |
 | I13 | (added, round 3) Every `CapturedVar` on a `MakeClosure` has `env_slot_type`, `payload_type`, `boxed` set at HIR emission such that: `boxed ⇒ env_slot_type == POINTER`, `!boxed ⇒ env_slot_type == payload_type`, and `boxed == (by_reference || written_captures.includes?(name))`. MIR `lower_closure` must not recompute these — it reads them straight off the `CapturedVar`. |
-| I14 | (added, round 3; revised 2026-04-19) `LoweringContext.lookup_local` signature is unchanged (`ValueId?`). Boxed-local state is carried in a parallel map `@boxed_locals : Hash(String, BoxedLocal)` with `{box_ptr, payload_type}` entries. **I14-monotonic (revised):** `@boxed_locals` is append-only within a function scope; dominance is enforced at the hoist site, not via snapshot/restore. `LoweringContext#require_entry_box_for_local` records name-only pre-scan requirements before branch/case/loop lowering; `hoist_box_for_local(ctx, name, payload_type, initial_value)` emits the `PointerMalloc` into `ctx.function.entry_block`, seeds the box from the current local value at the original binding site, and rejects late invocation outside the entry block. Therefore P1 must predeclare/hoist boxes at local declaration or first assignment before branch/case/loop lowering, not discover and hoist an already-initialized parent local from a proc literal lowered inside a branch. `save_locals` returns a `LocalsSnapshot` that carries `{locals, boxed_locals, debug_locals}`; `restore_locals(snap)` restores `@locals` and `@debug_local_ids` but **does not rewind `@boxed_locals`** — rewinding would re-hide a still-dominating box. `restore_locals(Hash)` likewise preserves `@boxed_locals`. `push_scope`/`pop_scope` continue to snapshot `@boxed_locals` because they cross function-scope boundaries (nested proc literal body, block-to-proc body). |
+| I14 | (added, round 3; revised 2026-04-19) `LoweringContext.lookup_local` signature is unchanged (`ValueId?`). Boxed-local state is carried in a parallel map `@boxed_locals : Hash(String, BoxedLocal)` with `{box_ptr, payload_type}` entries. **I14-monotonic (revised):** `@boxed_locals` is append-only within a function scope; dominance is enforced at the hoist site, not via snapshot/restore. `LoweringContext#require_entry_box_for_local` records name-only pre-scan requirements before branch/case/loop lowering; the default-off scaffold hook `seed_entry_box_requirements_for_body` seeds those names when `CRYSTAL_V2_SEED_ENTRY_BOX_REQUIREMENTS=1`. `hoist_box_for_local(ctx, name, payload_type, initial_value)` emits the `PointerMalloc` into `ctx.function.entry_block`, seeds the box from the current local value at the original binding site, and rejects late invocation outside the entry block. Therefore P1 must predeclare/hoist boxes at local declaration or first assignment before branch/case/loop lowering, not discover and hoist an already-initialized parent local from a proc literal lowered inside a branch. `save_locals` returns a `LocalsSnapshot` that carries `{locals, boxed_locals, debug_locals}`; `restore_locals(snap)` restores `@locals` and `@debug_local_ids` but **does not rewind `@boxed_locals`** — rewinding would re-hide a still-dominating box. `restore_locals(Hash)` likewise preserves `@boxed_locals`. `push_scope`/`pop_scope` continue to snapshot `@boxed_locals` because they cross function-scope boundaries (nested proc literal body, block-to-proc body). |
 
 ---
 
@@ -467,9 +467,11 @@ scope. The revised discipline:
    function entry block via `ctx.emit_to_block(entry_block, …)`, so
    `box_ptr` SSA-dominates every use.
 2. `collect_proc_literal_box_requirements` produces the name-only
-   predeclaration set for proc literals nested in a function body; P1
-   will feed those names to `LoweringContext#require_entry_box_for_local`
-   before control-flow lowering starts.
+   predeclaration set for proc literals nested in a function body.
+   `seed_entry_box_requirements_for_body` can feed those names to
+   `LoweringContext#require_entry_box_for_local` before control-flow
+   lowering starts; the hook is default-off until P1 consumes the set at
+   binding sites.
 3. `hoist_box_for_local` also emits a seed `PointerStore` from the
    local's current value at the original binding / first-assignment
    site. The helper rejects invocation when `ctx.current_block` is not
@@ -775,8 +777,9 @@ P1 must know which parent-scope names require boxes. The scaffold now
 contains the concrete name-only mechanism:
 `collect_proc_literal_box_requirements(body, candidate_names)` computes
 the set and `LoweringContext#require_entry_box_for_local(name)` stores it
-until a binding site can hoist with the real initial value. At that site,
-emit:
+until a binding site can hoist with the real initial value. The current
+default-off hook is `CRYSTAL_V2_SEED_ENTRY_BOX_REQUIREMENTS=1`, with
+optional `DEBUG_ENTRY_BOX_REQUIREMENTS=1` logging. At that site, emit:
 
 ```crystal
 value_id = lower_rhs(...)
@@ -1582,9 +1585,11 @@ coverage.
   the `PointerMalloc` into `ctx.function.entry_block` and seeds the
   box from the current local value before branch lowering, so
   allocation and value initialization dominate later reads.
-  `collect_proc_literal_box_requirements` plus
+  `seed_entry_box_requirements_for_body`,
+  `collect_proc_literal_box_requirements`, and
   `LoweringContext#require_entry_box_for_local` are the dormant scaffold
-  for that predeclaration. The helper rejects branch-local invocation;
+  for that predeclaration. The hook is default-off before P1 consumes
+  the requirement set. The helper rejects branch-local invocation;
   P1 must consume those requirements at local binding / first assignment.
   `save_locals` returns a
   `LocalsSnapshot` that is NOT installed back into `@boxed_locals` on
