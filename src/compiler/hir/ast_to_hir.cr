@@ -52,7 +52,8 @@ module Crystal::HIR
     @scope_stack : Array(ScopeId)
     @locals_snapshots : Array(Hash(String, ValueId))
     @debug_local_snapshots : Array(Hash(String, ValueId))
-    @saved_debug_local_snapshots : Array(Hash(String, ValueId))
+    @boxed_locals : Hash(String, BoxedLocal)
+    @boxed_locals_snapshots : Array(Hash(String, BoxedLocal))
 
     # Type cache
     @type_cache : Hash(String, TypeRef)
@@ -77,6 +78,24 @@ module Crystal::HIR
       box_ptr      : ValueId,
       payload_type : TypeRef
 
+    # Exact snapshot of locals + boxed_locals + debug_locals.
+    #
+    # `save_locals` returns this record; `restore_locals` takes it. Coupling
+    # all three maps into one value guarantees that `restore_locals(snap)`
+    # restores the boxed/debug state that was current at the matching
+    # `save_locals` call, independent of call order. This is required
+    # because `save_locals` / `restore_locals` is snapshot-based, not
+    # strictly LIFO (e.g. `if` lowering saves `pre`, restores `pre` at
+    # then-entry, saves `then_locals`, then restores `pre` again at
+    # else-entry — a side-stack pop would return `then_locals`' boxed
+    # state instead of `pre`'s).
+    #
+    # Plan: docs/closure_env_abi_p1_plan.md §5.1.1.b (I14).
+    record LocalsSnapshot,
+      locals       : Hash(String, ValueId),
+      boxed_locals : Hash(String, BoxedLocal),
+      debug_locals : Hash(String, ValueId)
+
     def initialize(@function : Crystal::HIR::Function, @module : Crystal::HIR::Module, @arena)
       @current_block = @function.entry_block
       @current_source_location = nil
@@ -86,7 +105,6 @@ module Crystal::HIR
       @scope_stack = [@function.scopes[0].id] # Function scope
       @locals_snapshots = [] of Hash(String, ValueId)
       @debug_local_snapshots = [] of Hash(String, ValueId)
-      @saved_debug_local_snapshots = [] of Hash(String, ValueId)
       @type_cache = {} of String => TypeRef
       @value_types = {} of ValueId => TypeRef
       @values = {} of ValueId => Value
@@ -321,18 +339,44 @@ module Crystal::HIR
       @boxed_locals.has_key?(name)
     end
 
-    # Save current locals state (for branching)
-    def save_locals : Hash(String, ValueId)
-      @saved_debug_local_snapshots << @debug_local_ids.dup
-      @locals.dup
+    # Save current locals state (for branching).
+    #
+    # Returns a `LocalsSnapshot` carrying `@locals`, `@boxed_locals`, and
+    # `@debug_local_ids` together. `restore_locals(snap)` restores all
+    # three from the same snapshot, guaranteeing exact coupling even when
+    # callers restore older snapshots after newer saves (non-LIFO pattern
+    # used by `if` / `case` lowering).
+    #
+    # Plan: docs/closure_env_abi_p1_plan.md §5.1.1.b (I14).
+    def save_locals : LocalsSnapshot
+      LocalsSnapshot.new(@locals.dup, @boxed_locals.dup, @debug_local_ids.dup)
     end
 
-    # Restore locals state (for else branch)
+    # Restore locals state from a `LocalsSnapshot` (primary path).
+    def restore_locals(saved : LocalsSnapshot)
+      @locals = saved.locals.dup
+      @boxed_locals = saved.boxed_locals.dup
+      @debug_local_ids = saved.debug_locals.dup
+      refresh_self_id
+    end
+
+    # Restore locals state from a bare `Hash(String, ValueId)` (legacy path).
+    #
+    # Used at sites that don't hold a `LocalsSnapshot` — e.g., restoring
+    # caller locals from `@inline_caller_locals_stack` (which tracks only
+    # `Hash(String, ValueId)` for inline-call frame bookkeeping), or
+    # restoring to an empty hash to execute an inline callee body.
+    #
+    # Preserves current `@boxed_locals` / `@debug_local_ids` because these
+    # sites never captured those maps alongside the hash snapshot. The
+    # surrounding `push_scope` / `pop_scope` discipline handles full-state
+    # save/restore at inline scope boundaries separately.
     def restore_locals(saved : Hash(String, ValueId))
       @locals = saved.dup
-      if debug_snapshot = @saved_debug_local_snapshots.pop?
-        @debug_local_ids = debug_snapshot
-      end
+      refresh_self_id
+    end
+
+    private def refresh_self_id : Nil
       if self_id = @locals["self"]?
         @self_id = self_id
       else
@@ -343,6 +387,26 @@ module Crystal::HIR
     # Get all current locals
     def all_locals : Hash(String, ValueId)
       @locals
+    end
+
+    # Scaffold symmetry check: scope-level snapshot stacks (`push_scope` /
+    # `pop_scope`) must stay depth-aligned for locals/debug/boxed. Meant
+    # to be asserted at points where we expect a clean slate — e.g., top
+    # of `lower_function`. No-op unless `CRYSTAL_V2_DEBUG_BOXED_STACK` is
+    # set; production builds pay nothing.
+    #
+    # Branch-level save/restore no longer needs symmetry checking: it's
+    # snapshot-based via `LocalsSnapshot` (see `save_locals` /
+    # `restore_locals`), so there is no side stack to misalign.
+    def assert_boxed_snapshot_symmetry(where : String) : Nil
+      return unless ENV["CRYSTAL_V2_DEBUG_BOXED_STACK"]?
+      scope_locals = @locals_snapshots.size
+      scope_debug = @debug_local_snapshots.size
+      scope_boxed = @boxed_locals_snapshots.size
+      unless scope_locals == scope_debug && scope_debug == scope_boxed
+        STDERR.puts "[BOXED_STACK] symmetry broken @ #{where}: " \
+                    "scope locals=#{scope_locals} debug=#{scope_debug} boxed=#{scope_boxed}"
+      end
     end
 
     # Get or create type ref
@@ -50302,7 +50366,7 @@ module Crystal::HIR
         then_value = unwrap_non_nil_to_block(ctx, ctx.current_block, then_value, then_type)
       end
       then_exit = ctx.current_block
-      then_locals = ctx.save_locals
+      then_locals = ctx.save_locals.locals
       then_block_data = ctx.get_block(ctx.current_block)
       then_has_noreturn = then_block_data.instructions.any? { |inst| inst.is_a?(Raise) }
       then_flows_to_merge = then_block_data.terminator.is_a?(Unreachable) &&
@@ -50322,7 +50386,7 @@ module Crystal::HIR
                      left_id
                    end
       else_exit = ctx.current_block
-      else_locals = ctx.save_locals
+      else_locals = ctx.save_locals.locals
       else_block_data = ctx.get_block(ctx.current_block)
       else_has_noreturn = else_block_data.instructions.any? { |inst| inst.is_a?(Raise) }
       else_flows_to_merge = else_block_data.terminator.is_a?(Unreachable) &&
@@ -50342,7 +50406,7 @@ module Crystal::HIR
       if then_flows_to_merge || else_flows_to_merge
         if then_flows_to_merge && else_flows_to_merge
           # Merge locals and result value
-          merge_branch_locals(ctx, pre_branch_locals, then_locals, else_locals, then_exit, else_exit)
+          merge_branch_locals(ctx, pre_branch_locals.locals, then_locals, else_locals, then_exit, else_exit)
 
           then_type = ctx.type_of(then_value)
           else_type = ctx.type_of(else_value)
@@ -51553,7 +51617,7 @@ module Crystal::HIR
       apply_is_a_narrowing(ctx, is_a_targets)
       then_value = lower_body(ctx, node.then_body)
       then_exit_block = ctx.current_block
-      then_locals = ctx.save_locals
+      then_locals = ctx.save_locals.locals
       then_inline_locals = @inline_caller_locals_stack.map(&.dup)
       ctx.pop_scope
 
@@ -51609,7 +51673,7 @@ module Crystal::HIR
           apply_is_a_narrowing(ctx, elsif_is_a_targets)
           elsif_value = lower_body(ctx, elsif_branch.body)
           elsif_exit_block = ctx.current_block
-          elsif_locals = ctx.save_locals
+          elsif_locals = ctx.save_locals.locals
           elsif_inline_locals = @inline_caller_locals_stack.map(&.dup)
           ctx.pop_scope
 
@@ -51651,7 +51715,7 @@ module Crystal::HIR
                      nil_lit.id
                    end
       else_exit_block = ctx.current_block
-      else_locals = ctx.save_locals
+      else_locals = ctx.save_locals.locals
       else_inline_locals = @inline_caller_locals_stack.map(&.dup)
       ctx.pop_scope
 
@@ -51728,7 +51792,7 @@ module Crystal::HIR
           # Must merge locals even when the if value itself is void/nil,
           # because variables may have been modified in the branches.
           flowing_branch_info = flowing_branches.map { |fb| {fb[0], fb[2]} }
-          merge_if_branch_locals(ctx, pre_branch_locals, flowing_branch_info)
+          merge_if_branch_locals(ctx, pre_branch_locals.locals, flowing_branch_info)
           flowing_inline_info = flowing_branches.map { |fb| {fb[0], fb[4]} }
           merge_inline_caller_locals_after_if(ctx, pre_inline_caller_locals, flowing_inline_info)
           return nil_lit.id
@@ -51768,7 +51832,7 @@ module Crystal::HIR
 
         # Merge local variables from flowing branches.
         flowing_branch_info = flowing_branches.map { |fb| {fb[0], fb[2]} }
-        merge_if_branch_locals(ctx, pre_branch_locals, flowing_branch_info)
+        merge_if_branch_locals(ctx, pre_branch_locals.locals, flowing_branch_info)
         flowing_inline_info = flowing_branches.map { |fb| {fb[0], fb[4]} }
         merge_inline_caller_locals_after_if(ctx, pre_inline_caller_locals, flowing_inline_info)
 
@@ -51814,7 +51878,7 @@ module Crystal::HIR
 
           ctx.restore_locals(pre_locals)
           merge_if_branch_locals(ctx, pre_locals, branch_locals_info)
-          merged_stack[idx] = ctx.save_locals
+          merged_stack[idx] = ctx.save_locals.locals
         end
       ensure
         ctx.restore_locals(saved_ctx_locals)
@@ -51825,16 +51889,16 @@ module Crystal::HIR
 
     private def lower_static_if_branch(
       ctx : LoweringContext,
-      pre_branch_locals : Hash(String, ValueId),
+      pre_branch_locals : LoweringContext::LocalsSnapshot,
       pre_inline_caller_locals : Array(Hash(String, ValueId)),
     ) : ValueId
       value = yield
       exit_block = ctx.current_block
-      branch_locals = ctx.save_locals
+      branch_locals = ctx.save_locals.locals
       branch_inline_locals = @inline_caller_locals_stack.map(&.dup)
       ctx.pop_scope
 
-      merge_if_branch_locals(ctx, pre_branch_locals, [{exit_block, branch_locals}])
+      merge_if_branch_locals(ctx, pre_branch_locals.locals, [{exit_block, branch_locals}])
       merge_inline_caller_locals_after_if(
         ctx,
         pre_inline_caller_locals,
@@ -51867,7 +51931,7 @@ module Crystal::HIR
       begin
         ctx.restore_locals(pre_caller_locals)
         merge_if_branch_locals(ctx, pre_caller_locals, branch_locals_info)
-        @inline_caller_locals_stack[-1] = ctx.save_locals
+        @inline_caller_locals_stack[-1] = ctx.save_locals.locals
         debug_inline_locals_snapshot(ctx, "inline_return:merged", @inline_caller_locals_stack[-1])
       ensure
         ctx.restore_locals(saved_ctx_locals)
@@ -52266,7 +52330,7 @@ module Crystal::HIR
       then_value = lower_body(ctx, node.then_branch)
       then_exit = ctx.current_block
       ctx.pop_scope
-      then_locals = ctx.save_locals
+      then_locals = ctx.save_locals.locals
       then_inline_locals = @inline_caller_locals_stack.map(&.dup)
 
       # Check if then branch flows to merge (not terminated by return/raise)
@@ -52298,7 +52362,7 @@ module Crystal::HIR
                      nil_lit.id
                    end
       else_exit = ctx.current_block
-      else_locals = ctx.save_locals
+      else_locals = ctx.save_locals.locals
       else_inline_locals = @inline_caller_locals_stack.map(&.dup)
       ctx.pop_scope
 
@@ -52323,7 +52387,7 @@ module Crystal::HIR
       if then_flows_to_merge || else_flows_to_merge
         if then_flows_to_merge && else_flows_to_merge
           # Merge locals from both branches
-          merge_branch_locals(ctx, pre_branch_locals, then_locals, else_locals,
+          merge_branch_locals(ctx, pre_branch_locals.locals, then_locals, else_locals,
             then_exit, else_exit)
 
           then_type = ctx.type_of(then_value)
@@ -53224,7 +53288,7 @@ module Crystal::HIR
       return nil unless caller_locals
 
       snapshot = caller_locals.dup
-      current_locals = ctx.save_locals
+      current_locals = ctx.save_locals.locals
       callee_locals = @inline_callee_local_names_stack.last?
       caller_locals.each_key do |name|
         next if name == "self"
@@ -53663,7 +53727,7 @@ module Crystal::HIR
       apply_is_a_narrowing(ctx, is_a_targets)
       then_value = lower_expr(ctx, node.true_branch)
       then_exit = ctx.current_block
-      then_locals = ctx.save_locals
+      then_locals = ctx.save_locals.locals
 
       # Check if then branch flows to merge
       then_block_data = ctx.get_block(ctx.current_block)
@@ -53680,7 +53744,7 @@ module Crystal::HIR
       apply_truthy_narrowing(ctx, falsy_targets)
       else_value = lower_expr(ctx, node.false_branch)
       else_exit = ctx.current_block
-      else_locals = ctx.save_locals
+      else_locals = ctx.save_locals.locals
 
       # Check if else branch flows to merge
       else_block_data = ctx.get_block(ctx.current_block)
@@ -53698,7 +53762,7 @@ module Crystal::HIR
       if then_flows_to_merge || else_flows_to_merge
         if then_flows_to_merge && else_flows_to_merge
           # Merge locals from both branches
-          merge_branch_locals(ctx, pre_branch_locals, then_locals, else_locals,
+          merge_branch_locals(ctx, pre_branch_locals.locals, then_locals, else_locals,
             then_exit, else_exit)
 
           then_type = ctx.type_of(then_value)
@@ -54609,7 +54673,7 @@ module Crystal::HIR
         # Capture branch locals BEFORE pop_scope: pop_scope restores @locals
         # from the snapshot taken at push_scope, which would wipe any mutations
         # performed inside the branch body (e.g. `num += 1`). Matches lower_if.
-        post_when_locals = ctx.save_locals
+        post_when_locals = ctx.save_locals.locals
         ctx.pop_scope
 
         # Only propagate variables the branch actually *assigned* (via AST
@@ -54618,7 +54682,7 @@ module Crystal::HIR
         # would make merge_case_locals try to phi narrowed values of the
         # subject across branches, which confuses downstream type inference.
         assigned_when = collect_assigned_vars(when_branch.body).to_set
-        filtered_when_locals = pre_case_locals.dup
+        filtered_when_locals = pre_case_locals.locals.dup
         assigned_when.each do |name|
           if v = post_when_locals[name]?
             filtered_when_locals[name] = v
@@ -54678,7 +54742,7 @@ module Crystal::HIR
                     end
       else_exit = ctx.current_block
       # Capture before pop_scope (mirrors when-branch handling above).
-      post_else_locals = ctx.save_locals
+      post_else_locals = ctx.save_locals.locals
       ctx.pop_scope
 
       # Filter else branch locals to only the variables it assigned.
@@ -54687,7 +54751,7 @@ module Crystal::HIR
                       else
                         Set(String).new
                       end
-      filtered_else_locals = pre_case_locals.dup
+      filtered_else_locals = pre_case_locals.locals.dup
       assigned_else.each do |name|
         if v = post_else_locals[name]?
           filtered_else_locals[name] = v
@@ -54720,7 +54784,7 @@ module Crystal::HIR
       end
 
       # Merge locals from branches that flow to merge
-      merge_case_locals(ctx, pre_case_locals, branch_locals)
+      merge_case_locals(ctx, pre_case_locals.locals, branch_locals)
 
       value_types = incoming.map { |(_, val)| ctx.type_of(val) }.reject { |t| t == TypeRef::VOID }.uniq
       phi_type = value_types.first? || TypeRef::VOID
@@ -55247,7 +55311,7 @@ module Crystal::HIR
       exit_block = ctx.create_block
 
       # Track locals for rescue merging (only when no else/ensure).
-      pre_locals : Hash(String, ValueId)? = has_rescue ? ctx.save_locals : nil
+      pre_locals : Hash(String, ValueId)? = has_rescue ? ctx.save_locals.locals : nil
       body_locals : Hash(String, ValueId)? = nil
       rescue_locals : Hash(String, ValueId)? = nil
       body_exit_block : BlockId? = nil
@@ -55296,7 +55360,7 @@ module Crystal::HIR
 
       # Snapshot locals after body for rescue-merge.
       if has_rescue
-        body_locals = ctx.save_locals
+        body_locals = ctx.save_locals.locals
       end
 
       # Capture actual current block (may differ from body_block due to nested control flow)
@@ -55440,7 +55504,7 @@ module Crystal::HIR
         end
 
         # Snapshot locals after rescue for rescue-merge.
-        rescue_locals = ctx.save_locals
+        rescue_locals = ctx.save_locals.locals
 
         # Capture rescue value block (rescue_done_block is where rescue values arrive)
         # Only set if at least one clause flows to rescue_done_block
@@ -73408,7 +73472,7 @@ module Crystal::HIR
       @arena = callee_arena
 
       # Isolate callee locals from caller locals, but keep caller locals available for block bodies.
-      caller_locals = ctx.save_locals
+      caller_locals = ctx.save_locals.locals
       callee_local_names = inline_callee_local_names(func_def, callee_arena)
       @inline_caller_locals_stack << caller_locals
       @inline_caller_function_id_stack << ctx.function.id
@@ -73986,7 +74050,7 @@ module Crystal::HIR
         result = if caller_locals = @inline_caller_locals_stack[caller_locals_index]?
                    use_stack_caller_locals = !cross_function_owner
                    if cross_function_owner
-                     caller_locals = ctx.save_locals
+                     caller_locals = ctx.save_locals.locals
                    elsif refreshed = snapshot_active_inline_caller_locals(ctx, caller_locals_index)
                      # Block bodies belong to the caller lexical scope, but caller locals can
                      # keep evolving while the callee itself is being inlined (for example
@@ -74027,7 +74091,7 @@ module Crystal::HIR
                        @inline_active_caller_locals_index_stack << caller_locals_index
                      end
                      begin
-                       caller_locals_before_params = ctx.save_locals
+                       caller_locals_before_params = ctx.save_locals.locals
                        param_names = [] of String
                        if params = block.params
                          each_param(params) do |param|
@@ -74137,9 +74201,9 @@ module Crystal::HIR
                        end
 
                        caller_locals_after = if use_stack_caller_locals && control_flow_dead_block?(ctx, ctx.current_block)
-                                               (@inline_caller_locals_stack[caller_locals_index]? || ctx.save_locals).dup
+                                               (@inline_caller_locals_stack[caller_locals_index]? || ctx.save_locals.locals).dup
                                              else
-                                               ctx.save_locals
+                                               ctx.save_locals.locals
                                              end
                        # Block parameters must not leak outside the block.
                        param_names.each do |name|
@@ -79001,7 +79065,7 @@ module Crystal::HIR
       end
       # Save locals before lowering block body - block-local vars shouldn't leak
       saved_locals = ctx.save_locals
-      if self_id = saved_locals["self"]?
+      if self_id = saved_locals.locals["self"]?
         @block_owner_self_ids[node.object_id] = self_id
       end
       assigned_vars = collect_assigned_vars(node.body).to_set
@@ -79061,7 +79125,7 @@ module Crystal::HIR
       last_value = lower_body(ctx, node.body)
       ctx.pop_scope
 
-      @block_captures[body_block] = compute_block_captures(ctx, closure_scope, saved_locals, assigned_vars)
+      @block_captures[body_block] = compute_block_captures(ctx, closure_scope, saved_locals.locals, assigned_vars)
 
       # Implicit return from block
       if ctx.get_block(ctx.current_block).terminator.is_a?(Unreachable)
@@ -79151,7 +79215,7 @@ module Crystal::HIR
         ctx.terminate(Return.new(call.id))
       end
 
-      @block_captures[body_block] = compute_block_captures(ctx, closure_scope, saved_locals, assigned_vars)
+      @block_captures[body_block] = compute_block_captures(ctx, closure_scope, saved_locals.locals, assigned_vars)
 
       ctx.current_block = saved_block
       ctx.restore_locals(saved_locals)
@@ -79575,7 +79639,7 @@ module Crystal::HIR
 
       # Detect captures: scan proc body for identifiers that reference parent locals
       referenced_names = collect_proc_body_identifiers(node.body)
-      parent_locals = ctx.save_locals             # {name => ValueId}
+      parent_locals = ctx.save_locals.locals      # {name => ValueId}
       # Also include function parameters that may not yet be registered as locals.
       ctx.function.params.each do |param|
         unless parent_locals.has_key?(param.name)
@@ -79946,7 +80010,7 @@ module Crystal::HIR
       end
       @arena = saved_arena
 
-      parent_locals = ctx.save_locals
+      parent_locals = ctx.save_locals.locals
       # Also include function parameters that may not yet be registered as locals.
       # Block procs compiled inside standalone yield-functions (e.g. Enumerable#join)
       # need access to the enclosing function's params (io, separator, etc.), but
