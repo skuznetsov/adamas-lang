@@ -707,13 +707,35 @@ module Crystal::HIR
   # Closures
   # ─────────────────────────────────────────────────────────────────────────────
 
-  # Captured variable in a closure
+  # Captured variable in a closure.
+  #
+  # P1 extension (additive; see docs/closure_env_abi_p1_plan.md §5.1.1.a):
+  # `env_slot_type`, `payload_type`, `boxed` describe the env layout the
+  # subsequent MIR `lower_closure` uses. Defaults (POINTER/POINTER/false)
+  # preserve pre-P1 behaviour for the single current constructor call
+  # (direct-yield path at ast_to_hir.cr compute_block_captures) whose
+  # consumer ignores these fields.
+  #
+  # Invariants (enforced at construction when boxed/slot/payload are
+  # explicitly supplied):
+  #   boxed  ⇒ env_slot_type == TypeRef::POINTER
+  #   !boxed ⇒ env_slot_type == payload_type
   struct CapturedVar
-    getter value_id : ValueId
-    getter name : String
-    getter by_reference : Bool
+    getter value_id      : ValueId
+    getter name          : String
+    getter by_reference  : Bool
+    getter env_slot_type : TypeRef
+    getter payload_type  : TypeRef
+    getter boxed         : Bool
 
-    def initialize(@value_id : ValueId, @name : String, @by_reference : Bool = true)
+    def initialize(
+      @value_id      : ValueId,
+      @name          : String,
+      @by_reference  : Bool    = true,
+      @env_slot_type : TypeRef = TypeRef::POINTER,
+      @payload_type  : TypeRef = TypeRef::POINTER,
+      @boxed         : Bool    = false,
+    )
     end
   end
 
@@ -752,6 +774,33 @@ module Crystal::HIR
 
     def to_s(io : IO) : Nil
       io << "%" << @id << " = func_pointer @" << @func_name << " : " << @type.id
+    end
+  end
+
+  # Materialize a user-visible Proc value. Returns a pointer to a heap
+  # Proc object laid out as { fn_ptr @0, env_ptr @proc_env_offset }.
+  #
+  # fn_ptr is typically a `FuncPointer` (raw ptr to the body fn symbol);
+  # env_ptr is typically the result of a `MakeClosure` (env builder),
+  # or a null pointer literal for zero-capture procs.
+  #
+  # See docs/closure_env_abi_p1_plan.md §5.1.2.5 (invariants I2, I12).
+  # Currently unused (additive P1 scaffolding); will be emitted by
+  # lower_proc_literal / lower_block_to_proc in Commit P1.
+  class MakeProc < Value
+    getter fn_ptr  : ValueId
+    getter env_ptr : ValueId
+
+    def initialize(id : ValueId, type : TypeRef, @fn_ptr : ValueId, @env_ptr : ValueId)
+      super(id, type)
+      # Proc objects are on the heap (reachable from fibers, channels,
+      # closures over closures, etc.).
+      @lifetime = LifetimeTag::HeapEscape
+    end
+
+    def to_s(io : IO) : Nil
+      io << "%" << @id << " = make_proc fn=%" << @fn_ptr
+      io << " env=%" << @env_ptr << " : " << @type.id
     end
   end
 

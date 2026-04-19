@@ -66,6 +66,17 @@ module Crystal::HIR
     # These should be converted to String when used as call arguments.
     @dot_class_literals : Set(ValueId)
 
+    # P1 scaffolding (see docs/closure_env_abi_p1_plan.md §5.1.1.b).
+    # Parallel "boxed locals" map: locals that have been hoisted to a
+    # per-activation heap Box because they're captured by a closure that
+    # writes them (or whose `CapturedVar#by_reference == true`). Empty
+    # pre-P1; populated by the P1 emission sites. `lookup_local` signature
+    # stays unchanged; box-awareness lives in `local_boxed?` /
+    # `lookup_boxed_local`.
+    record BoxedLocal,
+      box_ptr      : ValueId,
+      payload_type : TypeRef
+
     def initialize(@function : Crystal::HIR::Function, @module : Crystal::HIR::Module, @arena)
       @current_block = @function.entry_block
       @current_source_location = nil
@@ -82,6 +93,8 @@ module Crystal::HIR
       @value_blocks = {} of ValueId => BlockId
       @type_literal_values = Set(ValueId).new
       @dot_class_literals = Set(ValueId).new
+      @boxed_locals = {} of String => BoxedLocal
+      @boxed_locals_snapshots = [] of Hash(String, BoxedLocal)
     end
 
     def mark_dot_class_literal(id : ValueId)
@@ -101,6 +114,7 @@ module Crystal::HIR
     def push_scope(kind : ScopeKind) : ScopeId
       @locals_snapshots << @locals.dup
       @debug_local_snapshots << @debug_local_ids.dup
+      @boxed_locals_snapshots << @boxed_locals.dup
       scope_id = @function.create_scope(kind, current_scope)
       unless kind == ScopeKind::Function
         if loc = @current_source_location
@@ -138,6 +152,9 @@ module Crystal::HIR
       end
       if debug_snapshot = @debug_local_snapshots.pop?
         @debug_local_ids = debug_snapshot
+      end
+      if boxed_snapshot = @boxed_locals_snapshots.pop?
+        @boxed_locals = boxed_snapshot
       end
       if self_id = @locals["self"]?
         @self_id = self_id
@@ -286,6 +303,22 @@ module Crystal::HIR
         end
       end
       @locals[name]?
+    end
+
+    # P1 scaffolding: boxed-local helpers. Parent-scope reads/writes of
+    # a hoisted local branch on `local_boxed?` and fetch the Box ptr via
+    # `lookup_boxed_local`; see docs/closure_env_abi_p1_plan.md §5.1.1.b.
+
+    def register_boxed_local(name : String, box_ptr : ValueId, payload_type : TypeRef) : Nil
+      @boxed_locals[name] = BoxedLocal.new(box_ptr, payload_type)
+    end
+
+    def lookup_boxed_local(name : String) : BoxedLocal?
+      @boxed_locals[name]?
+    end
+
+    def local_boxed?(name : String) : Bool
+      @boxed_locals.has_key?(name)
     end
 
     # Save current locals state (for branching)
