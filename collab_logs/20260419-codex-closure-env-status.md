@@ -423,3 +423,61 @@ Recommended next local frontier:
 - Start with one reduced `run_all.sh` failure, not combined. The most adjacent
   to the just-landed work is `test_nilable_struct_union_layout`; the most
   isolated abort-stub candidate is `test_byteformat_decode_u32`.
+
+## 2026-04-19 Codex checkpoint: nilable struct/union layout run_all frontier closed
+
+Status: `test_nilable_struct_union_layout` is green after a bounded HIR
+allocator/initializer forwarding fix.
+
+Root cause:
+
+- `NodeWithNilableStructs` has untyped shorthand ivar params in `initialize`,
+  but declared nilable field types via getters (`Array(Int32)?`,
+  `Slice(UInt8)?`, `Bool?`).
+- The stored init params were already correct, but allocator lowering used the
+  concrete callsite arg types to lower the shared `initialize$arity7` body.
+- The first non-nil constructor call therefore specialized the initializer
+  params as non-nil `Array/Slice/Bool`; the later nil constructor overload
+  passed `Nil` into those slots, and the initializer body wrapped nil arguments
+  as non-nil union variants before crashing.
+
+Fix:
+
+- `src/compiler/hir/ast_to_hir.cr` now computes an explicit initializer
+  signature for allocator forwarding from stored declared init params.
+- Concrete `.new$...` overload params stay callsite-shaped, but forwarded args
+  are coerced into the initializer signature before the `initialize` call.
+- This keeps `initialize$arity7` typed with nilable union params while preserving
+  existing specialized constructor overload names.
+
+Verification:
+
+- `crystal build src/crystal_v2.cr -o bin/crystal_v2 --error-trace` — green,
+  only the known `Random::DEFAULT` warning.
+- Focused HIR for `regression_tests/test_nilable_struct_union_layout.cr` —
+  `NodeWithNilableStructs#initialize$arity7` now accepts union params and both
+  nil/non-nil constructor overloads emit `union_wrap` before the initializer
+  call.
+- `LIBRARY_PATH=/opt/homebrew/lib bin/crystal_v2 regression_tests/test_nilable_struct_union_layout.cr -o /tmp/test_nilable_struct_union_layout && scripts/run_safe.sh /tmp/test_nilable_struct_union_layout 8 512`
+  — prints `layout_ok`.
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/stage2_nilable_struct_union_overflow_repro.sh bin/crystal_v2`
+  — fixed-state `not reproduced: nilable struct union layout is correct`.
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_combined.sh bin/crystal_v2 4`
+  — still `31 passed, 0 failed out of 31`.
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_all.sh bin/crystal_v2`
+  — `141 passed, 4 failed out of 145`.
+
+Remaining `run_all.sh` frontiers:
+
+- `sprintf_float_precision` — output failure; runtime raises `case6`.
+- `test_3mod` — abort stub `STUB CALLED: Type#name`.
+- `test_byteformat_decode_u32` — abort stub
+  `IO::ByteFormat::LittleEndian#==(IO::ByteFormat::LittleEndian)`.
+- `test_closure_ref` — exits `138` without expected `42`.
+
+Separate adjacent frontier:
+
+- `regression_tests/complex/test_nilable_struct_union.cr` still fails
+  `count_non_nil`; HIR shows the `count += 1 unless item.nil?` branch computes
+  the increment but the loop-back phi keeps the old count. Treat as a
+  block/loop local writeback issue, not part of the allocator/initializer fix.

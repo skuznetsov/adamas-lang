@@ -1,6 +1,43 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-14)
 
 ## Current Status
+- **Fresh nilable initializer union checkpoint (2026-04-19, current
+  session)**:
+  - trustworthy setup:
+    - `src/compiler/hir/ast_to_hir.cr`
+      - synthesized allocator wrappers now compute the `initialize` signature
+        from stored declared initializer params, preserving nilable ivar-param
+        union types such as `Array(Int32)?`, `Slice(UInt8)?`, and `Bool?`
+      - concrete `.new$...` overload params remain callsite-shaped, but wrapper
+        args are coerced into the initializer signature before forwarding
+      - this prevents the first non-nil constructor call from specializing a
+        shared untyped `initialize(@ivar, ...)` body and later mis-wrapping nil
+        arguments as non-nil union variants
+  - decisive evidence:
+    - `crystal build src/crystal_v2.cr -o bin/crystal_v2 --error-trace`
+      - result: success with only the known host stdlib `Random::DEFAULT`
+        warning
+    - focused HIR for `regression_tests/test_nilable_struct_union_layout.cr`
+      - result: `NodeWithNilableStructs#initialize$arity7` now accepts union
+        params for nilable fields, and both nil/non-nil constructor overloads
+        emit `union_wrap` before the initializer call
+    - `LIBRARY_PATH=/opt/homebrew/lib bin/crystal_v2 regression_tests/test_nilable_struct_union_layout.cr -o /tmp/test_nilable_struct_union_layout && scripts/run_safe.sh /tmp/test_nilable_struct_union_layout 8 512`
+      - result: prints `layout_ok`
+    - `LIBRARY_PATH=/opt/homebrew/lib regression_tests/stage2_nilable_struct_union_overflow_repro.sh bin/crystal_v2`
+      - result: fixed-state `not reproduced: nilable struct union layout is
+        correct`
+    - `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_combined.sh bin/crystal_v2 4`
+      - result: still `31 passed, 0 failed out of 31`
+    - `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_all.sh bin/crystal_v2`
+      - result: `141 passed, 4 failed out of 145`; `test_nilable_struct_union_layout`
+        is now green
+  - practical boundary:
+    - this closes the broader-suite nilable struct/union constructor crash
+    - remaining `run_all.sh` failures are `sprintf_float_precision`,
+      `test_3mod`, `test_byteformat_decode_u32`, and `test_closure_ref`
+    - `regression_tests/complex/test_nilable_struct_union.cr` still exposes a
+      separate loop/block local writeback issue: the `count += 1 unless ...`
+      branch computes the increment but the loop-back phi keeps the old count
 - **Fresh generics/unions combined checkpoint (2026-04-19, current session)**:
   - trustworthy setup:
     - `src/compiler/hir/ast_to_hir.cr`

@@ -24906,13 +24906,9 @@ module Crystal::HIR
         unless @allocator_layout_prelower_in_progress.includes?(class_name)
           @allocator_layout_prelower_in_progress << class_name
           begin
-            init_param_types = allocator_params.map { |_, t| t }
+            init_param_types = allocator_initializer_param_types(class_name, allocator_params, call_arg_types)
             init_name = mangle_function_name(init_base_name, init_param_types)
-            callsite_init_types = if call_arg_types && call_arg_types.any? { |t| t != TypeRef::VOID }
-                                    call_arg_types
-                                  else
-                                    init_param_types
-                                  end
+            callsite_init_types = init_param_types
             lower_allocator_initializer_body(class_name, class_info, init_base_name, init_name, callsite_init_types)
             if latest = @class_info[class_name]?
               class_info = latest
@@ -25131,13 +25127,9 @@ module Crystal::HIR
       init_base_name = resolve_method_with_inheritance(class_name, "initialize")
       if init_base_name
         # Mangle the initialize call with parameter types
-        init_param_types = allocator_params.map { |_, t| t }
+        init_param_types = allocator_initializer_param_types(class_name, allocator_params, call_arg_types)
         init_name = mangle_function_name(init_base_name, init_param_types)
-        callsite_init_types = if call_arg_types && call_arg_types.any? { |t| t != TypeRef::VOID }
-                                call_arg_types
-                              else
-                                init_param_types
-                              end
+        callsite_init_types = init_param_types
         remember_callsite_arg_types(init_name, callsite_init_types) unless callsite_init_types.empty?
         lower_function_if_needed(init_name)
         # If the init def wasn't lowered (e.g., pending callsite got consumed),
@@ -25161,7 +25153,8 @@ module Crystal::HIR
             end
           end
         end
-        init_call = Call.new(ctx.next_id, TypeRef::VOID, alloc.id, init_name, param_ids)
+        init_call_args = coerce_args_to_types(ctx, param_ids, init_param_types)
+        init_call = Call.new(ctx.next_id, TypeRef::VOID, alloc.id, init_name, init_call_args)
         ctx.emit(init_call)
 
         # V2 BOOTSTRAP: Re-store union-typed fields after initialize.
@@ -25572,9 +25565,9 @@ module Crystal::HIR
 
       init_base_name = resolve_method_with_inheritance(class_name, "initialize")
       if init_base_name
-        init_param_types = allocator_params.map { |_, t| t }
+        init_param_types = allocator_initializer_param_types(class_name, allocator_params, call_arg_types)
         init_name = matched_init_name || mangle_function_name(init_base_name, init_param_types, call_has_block)
-        remember_callsite_arg_types(init_name, call_arg_types, nil, nil, call_has_block) unless call_arg_types.empty?
+        remember_callsite_arg_types(init_name, init_param_types, nil, nil, call_has_block) unless init_param_types.empty?
         lower_function_if_needed(init_name)
         if !@module.has_function?(init_name) &&
            !function_state(init_name).in_progress? &&
@@ -25593,7 +25586,7 @@ module Crystal::HIR
           if init_def
             init_arena = @function_def_arenas[init_def_name]? || @function_def_arenas[init_base_name]?
             init_arena ||= resolve_arena_for_def(init_def, @arena)
-            callsite_types = call_arg_types.empty? ? nil : call_arg_types
+            callsite_types = init_param_types.empty? ? nil : init_param_types
             with_arena(init_arena) do
               lower_method(class_name, class_info, init_def, callsite_types, nil, nil, init_name)
             end
@@ -25613,11 +25606,60 @@ module Crystal::HIR
           alloc.id
         )
         init_call_args << block_param_id.not_nil! if block_param_id
+        init_call_args = coerce_args_to_types(ctx, init_call_args, init_param_types)
         init_call = Call.new(ctx.next_id, TypeRef::VOID, alloc.id, init_name, init_call_args)
         ctx.emit(init_call)
       end
 
       ctx.terminate(Return.new(alloc.id))
+    end
+
+    private def allocator_initializer_param_types(
+      class_name : String,
+      allocator_params : Array({String, TypeRef}),
+      call_arg_types : Array(TypeRef)?,
+    ) : Array(TypeRef)
+      init_param_types = allocator_params.map { |_, t| t }
+      declared_params = @init_params[class_name]? || [] of {String, TypeRef}
+      return init_param_types unless declared_params.size == allocator_params.size
+
+      declared_params.each_with_index do |(decl_name, decl_type), idx|
+        next if decl_type == TypeRef::VOID
+        next unless idx < allocator_params.size
+        param_name, param_type = allocator_params[idx]
+        next unless param_name == decl_name
+
+        call_type = if call_arg_types && idx < call_arg_types.size
+                      call_arg_types[idx]
+                    else
+                      param_type
+                    end
+
+        if is_union_or_nilable_type?(decl_type)
+          if param_type == decl_type || call_type == decl_type || get_union_variant_id(decl_type, call_type) >= 0
+            init_param_types[idx] = decl_type
+          end
+        elsif param_type == TypeRef::VOID
+          init_param_types[idx] = decl_type
+        end
+      end
+
+      init_param_types
+    end
+
+    private def coerce_args_to_types(
+      ctx : LoweringContext,
+      args : Array(ValueId),
+      target_types : Array(TypeRef),
+    ) : Array(ValueId)
+      return args if target_types.empty?
+
+      coerced = [] of ValueId
+      args.each_with_index do |arg_id, idx|
+        target_type = idx < target_types.size ? target_types[idx] : TypeRef::VOID
+        coerced << coerce_value_to_type(ctx, arg_id, target_type)
+      end
+      coerced
     end
 
     private def allocator_supported?(class_name : String) : Bool
