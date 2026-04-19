@@ -49185,9 +49185,13 @@ module Crystal::HIR
                                      else
                                        nil
                                      end
-            if found = find_module_def_recursive(module_base, method_name, args.size, visited, typed_lookup_arg_types)
+            if found = find_module_def_recursive_with_owner(module_base, method_name, args.size, visited, typed_lookup_arg_types)
               actual_func_def = found[0]
               def_arena = found[1]
+              actual_module_base = found[2]
+              if skip_mod = @current_super_source_module
+                next if actual_module_base == skip_mod || module_base == skip_mod
+              end
               if params = actual_func_def.params
                 param_count = count_params(params) { |p| !p.is_block && !named_only_separator?(p) }
                 if param_count > args.size
@@ -49215,7 +49219,7 @@ module Crystal::HIR
               unless @module.has_function?(super_name)
                 receiver_map = type_param_map_for_receiver_name("#{class_name}##{method_name}")
                 old_super_source = @current_super_source_module
-                @current_super_source_module = module_base
+                @current_super_source_module = actual_module_base
                 # Resolve the correct arena for the DefNode's body.
                 # def_arena is the module's outer body arena, but the DefNode's
                 # own body expressions may live in a different arena (same file,
@@ -49240,6 +49244,64 @@ module Crystal::HIR
               return call.id
             end
           end
+        end
+      end
+
+      if source_module = @current_super_source_module
+        class_info_for_super = class_info
+        typed_lookup_arg_types = if NILABLE_QUERY_METHODS.includes?(method_name) && !arg_types.empty?
+                                   arg_types
+                                 else
+                                   nil
+                                 end
+        visited = Set(String).new
+        if class_info_for_super && (found = find_module_super_def_recursive(source_module, method_name, args.size, visited, typed_lookup_arg_types))
+          actual_func_def = found[0]
+          def_arena = found[1]
+          module_owner = found[2]
+          if params = actual_func_def.params
+            param_count = count_params(params) { |p| !p.is_block && !named_only_separator?(p) }
+            if param_count > args.size
+              param_idx = 0
+              each_param(params) do |param|
+                next if param.is_block || named_only_separator?(param)
+                if param_idx >= args.size
+                  if default_val = param.default_value
+                    default_id = lower_expr(ctx, default_val)
+                    args << default_id
+                  else
+                    nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
+                    ctx.emit(nil_lit)
+                    ctx.register_type(nil_lit.id, TypeRef::NIL)
+                    args << nil_lit.id
+                  end
+                end
+                param_idx += 1
+              end
+            end
+          end
+          arg_types = args.map { |arg| ctx.type_of(arg) }
+          owner_fragment = module_super_name_fragment(module_owner)
+          super_base = "#{class_name}##{method_name}_super_from_#{owner_fragment}"
+          super_name = mangle_function_name(super_base, arg_types)
+          unless @module.has_function?(super_name)
+            receiver_map = type_param_map_for_receiver_name("#{class_name}##{method_name}")
+            old_super_source = @current_super_source_module
+            @current_super_source_module = module_owner
+            resolved_def_arena = resolve_arena_for_def(actual_func_def, def_arena)
+            with_arena(resolved_def_arena) do
+              with_type_param_map(receiver_map) do
+                lower_method(class_name, class_info_for_super, actual_func_def, arg_types, nil, nil, super_name, force_class_method: @current_method_is_class)
+              end
+            end
+            @current_super_source_module = old_super_source
+          end
+          return_type = @function_types[super_name]? || TypeRef::VOID
+          self_id = emit_self(ctx)
+          call = Call.new(ctx.next_id, return_type, self_id, super_name, args)
+          ctx.emit(call)
+          ctx.register_type(call.id, return_type)
+          return call.id
         end
       end
 
@@ -56757,6 +56819,171 @@ module Crystal::HIR
 
       @module_def_lookup_cache[cache_key] = nil
       nil
+    end
+
+    private def find_module_def_recursive_with_owner(
+      module_name : String,
+      method_base : String,
+      expected_param_count : Int32,
+      visited : Set(String),
+      call_arg_types : Array(TypeRef)? = nil,
+      expects_block : Bool? = nil,
+    ) : Tuple(CrystalV2::Compiler::Frontend::DefNode, CrystalV2::Compiler::Frontend::ArenaLike, String)?
+      ensure_module_def_lookup_cache
+      ensure_module_defs_stripped_lookup
+      return nil if visited.includes?(module_name)
+      visited << module_name
+
+      mod_defs = @module_defs[module_name]?
+      if generic_key = @module_defs_stripped_lookup[module_name]?
+        if generic_defs = @module_defs[generic_key]?
+          mod_defs = mod_defs ? mod_defs + generic_defs : generic_defs
+          module_name = generic_key
+        end
+      end
+
+      unless mod_defs
+        resolved_mod = resolve_alias_in_module_path(module_name)
+        if resolved_mod != module_name
+          mod_defs = @module_defs[resolved_mod]?
+          module_name = resolved_mod if mod_defs
+        end
+      end
+      return nil unless mod_defs
+
+      mod_defs.each do |mod_node, mod_arena|
+        with_arena(mod_arena) do
+          body = mod_node.body
+          next unless body
+
+          body.each do |expr_id|
+            member = unwrap_visibility_member(@arena[expr_id])
+            case member
+            when CrystalV2::Compiler::Frontend::DefNode
+              next if (recv = member.receiver) && (safe_slice_to_string(recv) || "") == "self"
+              next if member.is_abstract
+              member_name = (safe_slice_to_string(member.name) || "")
+              next unless member_name == method_base
+
+              actual_param_count = 0
+              required_param_count = 0
+              member_has_block = false
+              has_splat_param = false
+              if params = member.params
+                each_param(params) do |param|
+                  if param.is_block
+                    member_has_block = true
+                    next
+                  end
+                  if param.is_splat
+                    has_splat_param = true
+                    actual_param_count += 1
+                    next
+                  end
+                  next if param.is_double_splat || named_only_separator?(param)
+                  actual_param_count += 1
+                  required_param_count += 1 if param.default_value.nil?
+                end
+              end
+
+              unless expects_block.nil?
+                if expects_block
+                  next unless member_has_block || def_contains_yield?(member, mod_arena)
+                else
+                  next if member_has_block
+                  next if def_contains_yield?(member, mod_arena)
+                end
+              end
+
+              arity_match = if expected_param_count == 0
+                              true
+                            else
+                              expected_param_count >= required_param_count &&
+                                (has_splat_param || expected_param_count <= actual_param_count)
+                            end
+              if arity_match
+                if call_arg_types
+                  next unless params_compatible_with_args?(member, call_arg_types, module_name)
+                end
+                return {member, mod_arena, strip_generic_args(module_name)}
+              end
+            end
+          end
+        end
+      end
+
+      mod_defs.each do |mod_node, mod_arena|
+        with_arena(mod_arena) do
+          body = mod_node.body
+          next unless body
+
+          body.each do |expr_id|
+            member = unwrap_visibility_member(@arena[expr_id])
+            case member
+            when CrystalV2::Compiler::Frontend::IncludeNode
+              include_name = resolve_path_like_name(member.target)
+              next unless include_name
+              if found = find_module_def_recursive_with_owner(include_name, method_base, expected_param_count, visited, call_arg_types, expects_block)
+                return found
+              end
+            end
+          end
+        end
+      end
+
+      nil
+    end
+
+    private def find_module_super_def_recursive(
+      source_module : String,
+      method_base : String,
+      expected_param_count : Int32,
+      visited : Set(String),
+      call_arg_types : Array(TypeRef)? = nil,
+      expects_block : Bool? = nil,
+    ) : Tuple(CrystalV2::Compiler::Frontend::DefNode, CrystalV2::Compiler::Frontend::ArenaLike, String)?
+      ensure_module_defs_stripped_lookup
+      mod_defs = @module_defs[source_module]?
+      lookup_name = source_module
+      if generic_key = @module_defs_stripped_lookup[source_module]?
+        if generic_defs = @module_defs[generic_key]?
+          mod_defs = mod_defs ? mod_defs + generic_defs : generic_defs
+          lookup_name = generic_key
+        end
+      end
+      return nil unless mod_defs
+
+      mod_defs.each do |mod_node, mod_arena|
+        with_arena(mod_arena) do
+          body = mod_node.body
+          next unless body
+
+          body.each do |expr_id|
+            member = unwrap_visibility_member(@arena[expr_id])
+            case member
+            when CrystalV2::Compiler::Frontend::IncludeNode
+              include_name = resolve_path_like_name(member.target)
+              next unless include_name
+              if found = find_module_def_recursive_with_owner(include_name, method_base, expected_param_count, visited, call_arg_types, expects_block)
+                found_owner = found[2]
+                next if found_owner == strip_generic_args(lookup_name)
+                return found
+              end
+            end
+          end
+        end
+      end
+
+      nil
+    end
+
+    private def module_super_name_fragment(module_name : String) : String
+      strip_generic_args(module_name)
+        .gsub("::", "_")
+        .gsub("(", "_")
+        .gsub(")", "_")
+        .gsub(",", "_")
+        .gsub(" ", "_")
     end
 
     # Resolve type aliases in a module path.

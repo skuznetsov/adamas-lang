@@ -272,3 +272,43 @@ Remaining frontier:
   `test_edge_hash_complex` are now closed. The remaining combined failures are
   expected to be in separate generic dispatch, generics/unions, and strings/join
   families.
+
+## 2026-04-19 Codex checkpoint: module-super join frontier closed
+
+Status: `test_strings_join` is green after a HIR super-resolution fix.
+
+Root cause:
+
+- `Array(Bool)#join` uses `Indexable#join`; its `super(separator)` should reach
+  `Enumerable#join`.
+- V2 tracked the direct include wrapper `Indexable::Mutable` instead of the
+  actual method-owner module `Indexable` for recursive module lookup.
+- The next `super` therefore skipped the wrong layer and fell through to the
+  class parent chain, emitting an unlowered `Reference#join(String)_super` abort
+  stub.
+
+Fix:
+
+- `src/compiler/hir/ast_to_hir.cr` now has owner-aware recursive module lookup.
+- Module-body `super` can walk the actual source module's include chain and emit
+  a distinct wrapper such as `Array(Bool)#join_super_from_Enumerable$String`.
+- Added `regression_tests/array_bool_join_module_super_repro.sh` for the reduced
+  `Array(Bool)#join("|")` route.
+
+Verification:
+
+- `crystal build src/crystal_v2.cr -o bin/crystal_v2 --error-trace` — green,
+  only the known `Random::DEFAULT` warning.
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/array_bool_join_module_super_repro.sh bin/crystal_v2` — green, prints `array_bool_join_module_super_ok`.
+- `regression_tests/combined/test_strings_join.cr` — green, prints
+  `strings_join_all_ok`.
+- Focused HIR for `/tmp/bool_join.cr` now shows
+  `Array(Bool)#join_super$String -> Array(Bool)#join_super_from_Enumerable$String`,
+  not `Reference#join(String)_super`.
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_combined.sh bin/crystal_v2 4`
+  — `29 passed, 2 failed out of 31`.
+
+Remaining combined frontiers:
+
+- `test_complex_generic_dispatch` — `Pointer#width` abort stub.
+- `test_generics_unions` — segfault after several `unknown` outputs.

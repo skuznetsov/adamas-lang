@@ -3,6 +3,22 @@
 Updated: 2026-04-11
 Context: compiler/bootstrap/stage2-stability
 
+[LM-459|verified]: `Array(Bool)#join("|")` exposed a module-super owner bug,
+not a string runtime issue. `Array#join` is supplied by `Indexable#join`; when
+that body executed `super(separator)`, V2 tracked the directly included wrapper
+`Indexable::Mutable` instead of the actual owner module `Indexable`, so the next
+super lookup skipped the wrong layer and fell through the class parent chain to
+an unlowered `Reference#join(String)_super` abort stub. The HIR fix records the
+actual module owner for recursive module method lookup and, for `super` inside a
+module body, walks that module owner's own include chain with a distinct wrapper
+name such as `Array(Bool)#join_super_from_Enumerable$String`. Regression
+`regression_tests/array_bool_join_module_super_repro.sh` is green, focused
+`combined/test_strings_join.cr` prints `strings_join_all_ok`, and combined with
+`LIBRARY_PATH=/opt/homebrew/lib` improves to 29/31. Boundary: this closes the
+join/module super family only; the remaining combined failures are
+`test_complex_generic_dispatch` (`Pointer#width` stub) and
+`test_generics_unions` (segfault). {F/G/R: 0.92/0.62/0.94} [verified]
+
 [LM-458|verified]: `Hash#each` caller-local writes in the dynamic hash intrinsic
 were being lost because `lower_hash_each_dynamic` captured updated mutable
 locals after `ctx.pop_scope`, when block-local assignment state had already

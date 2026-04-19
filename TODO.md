@@ -1,6 +1,37 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-14)
 
 ## Current Status
+- **Fresh module-super join checkpoint (2026-04-19, current session)**:
+  - trustworthy setup:
+    - `src/compiler/hir/ast_to_hir.cr`
+      - module method `super` resolution now tracks the actual module owner
+        that provided the current body, not only the directly included wrapper
+        module
+      - nested module-super calls can walk the owner module's include chain
+        with a distinct wrapper name, so `Indexable#join` on `Array(Bool)` can
+        reach `Enumerable#join` instead of falling through to `Reference#join`
+    - `regression_tests/array_bool_join_module_super_repro.sh`
+      - covers `Array(Bool)#join("|")`, the reduced route behind the previous
+        `Reference#join(String)_super` abort stub
+  - decisive evidence:
+    - `crystal build src/crystal_v2.cr -o bin/crystal_v2 --error-trace`
+      - result: success with only the known host stdlib `Random::DEFAULT`
+        warning
+    - `LIBRARY_PATH=/opt/homebrew/lib regression_tests/array_bool_join_module_super_repro.sh bin/crystal_v2`
+      - result: fixed marker `array_bool_join_module_super_ok`
+    - focused HIR for `/tmp/bool_join.cr`
+      - result: `Array(Bool)#join_super$String` now calls
+        `Array(Bool)#join_super_from_Enumerable$String`, with no
+        `Reference#join(String)_super` call on the reduced path
+    - `regression_tests/combined/test_strings_join.cr`
+      - result: prints `strings_join_all_ok` and exits `0`
+    - `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_combined.sh bin/crystal_v2 4`
+      - result: `29 passed, 2 failed out of 31`; `test_strings_join` is now
+        green
+  - practical boundary:
+    - this fixes the `test_strings_join` module-super/join frontier
+    - remaining combined-suite frontiers are separate generic dispatch and
+      generics/unions issues
 - **Fresh post-Hash#each constructor return-type checkpoint (2026-04-19,
   current session)**:
   - trustworthy setup:
@@ -36,8 +67,8 @@
   - practical boundary:
     - this fixes the `test_edge_hash_complex` segfault frontier exposed after
       the Hash#each writeback fix
-    - remaining combined-suite frontiers are separate generic dispatch,
-      generics/unions, and strings/join issues
+    - remaining combined-suite frontiers at this checkpoint were separate
+      generic dispatch, generics/unions, and strings/join issues
 - **Fresh Hash#each block-writeback checkpoint (2026-04-19, current session)**:
   - trustworthy setup:
     - `src/compiler/hir/ast_to_hir.cr`
