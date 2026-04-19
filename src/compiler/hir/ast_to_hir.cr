@@ -51578,6 +51578,16 @@ module Crystal::HIR
         right_name = right_type == TypeRef::VOID ? "Void" : get_type_name_from_ref(right_type)
         STDERR.puts "[COMPARE_OR_RAISE] op=#{op} left=#{left_name} right=#{right_name} current=#{@current_class || ""}##{@current_method || ""}"
       end
+      if (op == "==" || op == "!=" || op == "===") &&
+         ((ctx.type_literal?(left) || module_type_ref?(left_type)) &&
+         (ctx.type_literal?(right) || module_type_ref?(right_type)))
+        same_type = left_type == right_type
+        result = op == "!=" ? !same_type : same_type
+        lit = Literal.new(ctx.next_id, TypeRef::BOOL, result ? 1_i64 : 0_i64)
+        ctx.emit(lit)
+        ctx.register_type(lit.id, TypeRef::BOOL)
+        return lit.id
+      end
       # Special case: Object#<=> always returns nil (Object is not Comparable).
       # This matches the optimization in emit_call_expr.
       if op == "<=>"
@@ -62280,6 +62290,22 @@ module Crystal::HIR
         prepack_arg_enum_names = names if names.any?
       end
 
+      if receiver_id && args.size == 1 &&
+         (method_name == "==" || method_name == "!=" || method_name == "===")
+        receiver_type = ctx.type_of(receiver_id)
+        arg_type = prepack_arg_types[0]
+        receiver_type_literal = ctx.type_literal?(receiver_id) || module_type_ref?(receiver_type)
+        arg_type_literal = prepack_arg_literals[0] || module_type_ref?(arg_type)
+        if receiver_type_literal && arg_type_literal
+          same_type = receiver_type == arg_type
+          result = method_name == "!=" ? !same_type : same_type
+          lit = Literal.new(ctx.next_id, TypeRef::BOOL, result ? 1_i64 : 0_i64)
+          ctx.emit(lit)
+          ctx.register_type(lit.id, TypeRef::BOOL)
+          return lit.id
+        end
+      end
+
       # Post-lowering puts/print interception for primitive types.
       # This catches cases where the AST-level inference failed (e.g., top-level locals,
       # enum .value calls, comparison results). For primitive types (int/float/bool),
@@ -65041,6 +65067,18 @@ module Crystal::HIR
       # When calling methods like Int32#+ on primitive types, emit BinaryOperation instead of Call
       if receiver_id && args.size == 1
         receiver_type = ctx.type_of(receiver_id)
+        arg_type = ctx.type_of(args[0])
+        receiver_type_literal = ctx.type_literal?(receiver_id) || module_type_ref?(receiver_type)
+        arg_type_literal = ctx.type_literal?(args[0]) || module_type_ref?(arg_type)
+        if receiver_type_literal && arg_type_literal &&
+           (method_name == "==" || method_name == "!=" || method_name == "===")
+          same_type = receiver_type == arg_type
+          result = method_name == "!=" ? !same_type : same_type
+          lit = Literal.new(ctx.next_id, TypeRef::BOOL, result ? 1_i64 : 0_i64)
+          ctx.emit(lit)
+          ctx.register_type(lit.id, TypeRef::BOOL)
+          return lit.id
+        end
         # Also treat enum-typed receivers as numeric for binary ops (==, !=, <, etc.)
         is_enum_receiver = false
         if !numeric_primitive?(receiver_type)

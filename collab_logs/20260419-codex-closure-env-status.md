@@ -481,3 +481,63 @@ Separate adjacent frontier:
   `count_non_nil`; HIR shows the `count += 1 unless item.nil?` branch computes
   the increment but the loop-back phi keeps the old count. Treat as a
   block/loop local writeback issue, not part of the allocator/initializer fix.
+
+## 2026-04-19 Codex checkpoint: byteformat decode run_all frontier closed
+
+Status: `test_byteformat_decode_u32` is green after a stacked HIR/MIR/LLVM
+boundary fix.
+
+Root cause stack:
+
+- HIR lowered `IO::ByteFormat::LittleEndian == self` as a normal instance call
+  and reached the missing
+  `IO::ByteFormat::LittleEndian#==(IO::ByteFormat::LittleEndian)` stub.
+- After the endian branch was fixed, `__vdispatch__IO#read(Slice)` passed a
+  union storage pointer into concrete `IO::Memory#read(Slice(UInt8))`, so the
+  callee interpreted the union header as a `Slice(UInt8)`.
+- After the union-payload call boundary was fixed, stdlib
+  `IO#read_fully(Slice(UInt8))` exposed the current HIR loop pollution path
+  around `slice += read_bytes`, which can turn the loop value into
+  `Int32 | Slice(UInt8)` and call `Int32#size`.
+
+Fix:
+
+- `src/compiler/hir/ast_to_hir.cr` folds `==`, `!=`, and `===` for type/module
+  literal operands before method dispatch.
+- `src/compiler/mir/llvm_backend.cr` unwraps a union payload when a call
+  parameter is concrete pointer-shaped, while keeping full union storage when
+  the callee parameter is a union.
+- `src/compiler/mir/llvm_backend.cr` has a localized
+  `IO#read_fully(Slice(UInt8))` loop override and registers the synthesized
+  callees so missing vdispatch bodies go through the existing late-emit/stub
+  path instead of producing invalid LLVM IR.
+
+Verification:
+
+- `crystal build src/crystal_v2.cr -o bin/crystal_v2 --error-trace` — green,
+  only the known `Random::DEFAULT` warning.
+- Focused HIR for `regression_tests/test_byteformat_decode_u32.cr` — endian
+  checks emit `literal true : Bool`; no relevant
+  `ByteFormat::LittleEndian#==` call remains.
+- `LIBRARY_PATH=/opt/homebrew/lib bin/crystal_v2 regression_tests/test_byteformat_decode_u32.cr -o /tmp/test_byteformat_decode_u32 && scripts/run_safe.sh /tmp/test_byteformat_decode_u32 5 512`
+  — prints `byteformat_u32_ok`.
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_mini_oracles.sh bin/crystal_v2`
+  — `Mini-oracles: 6 passed, 0 failed out of 6 tests`.
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_combined.sh bin/crystal_v2 4`
+  — `31 passed, 0 failed out of 31`.
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_all.sh bin/crystal_v2`
+  — `142 passed, 3 failed out of 145`.
+
+Remaining `run_all.sh` frontiers:
+
+- `sprintf_float_precision` — output failure; runtime raises `case6`.
+- `test_3mod` — abort stub `STUB CALLED: Type#name`.
+- `test_closure_ref` — exits `138` without expected `42`.
+
+Note for Claude/Codex continuation:
+
+- The closure-env ABI branch remains untouched by this checkpoint.
+- The `IO#read_fully(Slice(UInt8))` override is intentionally localized
+  bootstrap glue. A future broader HIR fix for `slice += read_bytes` loop
+  pollution can remove it, but the current change is verified against the full
+  regression suite baseline.

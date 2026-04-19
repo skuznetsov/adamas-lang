@@ -1,6 +1,45 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-14)
 
 ## Current Status
+- **Fresh byteformat decode checkpoint (2026-04-19, current session)**:
+  - trustworthy setup:
+    - `src/compiler/hir/ast_to_hir.cr`
+      - type/module literal equality now folds `==`, `!=`, and `===` before
+        falling through to normal method dispatch
+      - this prevents `IO::ByteFormat::LittleEndian == self` in endian
+        protocol bodies from lowering to the missing instance method
+        `IO::ByteFormat::LittleEndian#==`
+    - `src/compiler/mir/llvm_backend.cr`
+      - union values passed to concrete pointer-shaped parameters now unwrap
+        the payload pointer unless the callee parameter is itself union
+        storage
+      - `IO#read_fully(Slice(UInt8))` has a direct loop override that rebuilds
+        a remaining-slice value and dispatches through `IO#read(Slice(UInt8))`,
+        avoiding the current HIR `slice += read_bytes` union pollution path
+      - synthetic callees from that override are registered so compile units
+        without the vdispatch body still get the normal late-emit/stub path
+        instead of invalid LLVM IR
+  - decisive evidence:
+    - `crystal build src/crystal_v2.cr -o bin/crystal_v2 --error-trace`
+      - result: success with only the known host stdlib `Random::DEFAULT`
+        warning
+    - focused HIR for `regression_tests/test_byteformat_decode_u32.cr`
+      - result: `IO::ByteFormat::LittleEndian` endian checks now emit
+        `literal true : Bool`, with no `ByteFormat::LittleEndian#==` call
+    - `LIBRARY_PATH=/opt/homebrew/lib bin/crystal_v2 regression_tests/test_byteformat_decode_u32.cr -o /tmp/test_byteformat_decode_u32 && scripts/run_safe.sh /tmp/test_byteformat_decode_u32 5 512`
+      - result: prints `byteformat_u32_ok`
+    - `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_mini_oracles.sh bin/crystal_v2`
+      - result: `Mini-oracles: 6 passed, 0 failed out of 6 tests`
+    - `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_combined.sh bin/crystal_v2 4`
+      - result: still `31 passed, 0 failed out of 31`
+    - `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_all.sh bin/crystal_v2`
+      - result: `142 passed, 3 failed out of 145`; `test_byteformat_decode_u32`
+        is now green
+  - practical boundary:
+    - this closes the byteformat endian decode/runtime path, not the remaining
+      formatter precision, `Type#name`, or closure-cell fronts
+    - remaining `run_all.sh` failures are `sprintf_float_precision`,
+      `test_3mod`, and `test_closure_ref`
 - **Fresh nilable initializer union checkpoint (2026-04-19, current
   session)**:
   - trustworthy setup:
