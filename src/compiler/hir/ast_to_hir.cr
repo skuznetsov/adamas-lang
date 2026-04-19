@@ -74,21 +74,43 @@ module Crystal::HIR
     # pre-P1; populated by the P1 emission sites. `lookup_local` signature
     # stays unchanged; box-awareness lives in `local_boxed?` /
     # `lookup_boxed_local`.
+    #
+    # INVARIANT I14-monotonic: `@boxed_locals` is MONOTONIC within a
+    # LoweringContext's function scope. Boxes must be hoisted to the
+    # function entry block (before any branch split) by
+    # `ensure_box_for_local`, so `@boxed_locals` only GROWS during a
+    # function's lowering — it is never shrunk by branch/case/inline
+    # merge.  Consequently:
+    #   - `.locals` truncation into a bare `Hash(String, ValueId)` at
+    #     merge sites is SAFE: boxed state is invariant across branch
+    #     boundaries and needs no phi/merge policy.
+    #   - `restore_locals(LocalsSnapshot)` and `restore_locals(Hash)`
+    #     DO NOT rewind `@boxed_locals` — doing so would re-hide a box
+    #     that still dominates the current block.
+    #   - Cross-function scope transitions (nested proc literal body,
+    #     block-to-proc body) push/pop `@boxed_locals` via
+    #     `push_scope` / `pop_scope`; see scope mgmt below.
     record BoxedLocal,
       box_ptr      : ValueId,
       payload_type : TypeRef
 
     # Exact snapshot of locals + boxed_locals + debug_locals.
     #
-    # `save_locals` returns this record; `restore_locals` takes it. Coupling
-    # all three maps into one value guarantees that `restore_locals(snap)`
-    # restores the boxed/debug state that was current at the matching
-    # `save_locals` call, independent of call order. This is required
-    # because `save_locals` / `restore_locals` is snapshot-based, not
-    # strictly LIFO (e.g. `if` lowering saves `pre`, restores `pre` at
-    # then-entry, saves `then_locals`, then restores `pre` again at
-    # else-entry — a side-stack pop would return `then_locals`' boxed
-    # state instead of `pre`'s).
+    # `save_locals` returns this record; `restore_locals(snap)` restores
+    # `@locals` and `@debug_local_ids`. It does NOT restore `@boxed_locals`
+    # (see I14-monotonic above). The `boxed_locals` field on the snapshot
+    # is retained as a forward-compat / debugging hook (e.g., assertions
+    # that the monotonic invariant isn't silently violated) — it is never
+    # installed back into the context.
+    #
+    # Coupling locals + debug into one value guarantees that
+    # `restore_locals(snap)` restores the debug state that was current
+    # at the matching `save_locals` call, independent of call order.
+    # This is required because `save_locals` / `restore_locals` is
+    # snapshot-based, not strictly LIFO (e.g. `if` lowering saves `pre`,
+    # restores `pre` at then-entry, saves `then_locals`, then restores
+    # `pre` again at else-entry — a side-stack pop would return
+    # `then_locals`' debug state instead of `pre`'s).
     #
     # Plan: docs/closure_env_abi_p1_plan.md §5.1.1.b (I14).
     record LocalsSnapshot,
@@ -342,10 +364,9 @@ module Crystal::HIR
     # Save current locals state (for branching).
     #
     # Returns a `LocalsSnapshot` carrying `@locals`, `@boxed_locals`, and
-    # `@debug_local_ids` together. `restore_locals(snap)` restores all
-    # three from the same snapshot, guaranteeing exact coupling even when
-    # callers restore older snapshots after newer saves (non-LIFO pattern
-    # used by `if` / `case` lowering).
+    # `@debug_local_ids`. `restore_locals(snap)` restores `@locals` and
+    # `@debug_local_ids` from the snapshot; `@boxed_locals` is left
+    # untouched (see I14-monotonic at `BoxedLocal` definition).
     #
     # Plan: docs/closure_env_abi_p1_plan.md §5.1.1.b (I14).
     def save_locals : LocalsSnapshot
@@ -353,9 +374,14 @@ module Crystal::HIR
     end
 
     # Restore locals state from a `LocalsSnapshot` (primary path).
+    #
+    # Restores `@locals` and `@debug_local_ids`. Does NOT restore
+    # `@boxed_locals` — that map is monotonic within a function scope
+    # (see I14-monotonic). Boxes allocated since `save_locals` was
+    # called still dominate the current block, so rewinding
+    # `@boxed_locals` would re-hide them and break subsequent reads.
     def restore_locals(saved : LocalsSnapshot)
       @locals = saved.locals.dup
-      @boxed_locals = saved.boxed_locals.dup
       @debug_local_ids = saved.debug_locals.dup
       refresh_self_id
     end
@@ -367,10 +393,12 @@ module Crystal::HIR
     # `Hash(String, ValueId)` for inline-call frame bookkeeping), or
     # restoring to an empty hash to execute an inline callee body.
     #
-    # Preserves current `@boxed_locals` / `@debug_local_ids` because these
-    # sites never captured those maps alongside the hash snapshot. The
-    # surrounding `push_scope` / `pop_scope` discipline handles full-state
-    # save/restore at inline scope boundaries separately.
+    # Preserves current `@boxed_locals` and `@debug_local_ids`. For
+    # `@boxed_locals` this is required by the monotonic invariant
+    # (I14-monotonic). For `@debug_local_ids` it matches pre-P1 behavior:
+    # these sites never captured the debug map alongside the hash
+    # snapshot; inline scope boundaries use `push_scope` / `pop_scope`
+    # for full-state save/restore.
     def restore_locals(saved : Hash(String, ValueId))
       @locals = saved.dup
       refresh_self_id
@@ -79564,6 +79592,16 @@ module Crystal::HIR
     # Idempotent: returns the existing box_ptr if `name` is already boxed,
     # otherwise allocates a fresh box via `emit_capture_box`, seeds it with
     # `initial_value` (PointerStore), and registers the binding.
+    #
+    # CALLER INVARIANT (I14-monotonic): callers MUST invoke this before
+    # any branch/case/rescue split that the boxed local outlives, so the
+    # box allocation dominates every subsequent read/write. Practically
+    # this means the atomic P1 rewrite of lower_proc_literal /
+    # lower_block_to_proc computes the capture set for the surrounding
+    # function (or emits hoists at parent-scope binding sites) before the
+    # proc body is lowered. A box introduced inside one branch of an
+    # `if` would not dominate the merge point — this function does not
+    # detect or correct that; the caller is responsible.
     #
     # Currently UNUSED — wired in the atomic final P1 commit by the rewrite
     # of lower_proc_literal / lower_block_to_proc (steps 8-9 of
