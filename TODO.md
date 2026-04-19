@@ -1,6 +1,36 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-14)
 
 ## Current Status
+- **Fresh small-Hash linear-scan checkpoint (2026-04-19, current session)**:
+  - trustworthy setup:
+    - `src/compiler/mir/llvm_backend.cr`
+      - small `Hash(String, V)` / `Hash(Int32, V)` `find_entry_with_index_linear_scan`
+        and `update_linear_scan` now use a direct backend override instead of
+        relying on stdlib block non-local returns through `each_entry_with_index`
+      - Proc ABI behavior remains unchanged; this is a bootstrap workaround for
+        the small-table hash path only
+    - `regression_tests/hash_small_linear_scan_repro.sh`
+      - covers inserted-but-unfindable `Hash(String, Int32)` entries and repeated
+        `Hash(Int32, Int32)` assignment that previously duplicated entries
+  - decisive evidence:
+    - `crystal build src/crystal_v2.cr -o bin/crystal_v2 --error-trace`
+      - result: success with only the known host stdlib `Random::DEFAULT` warning
+    - `regression_tests/hash_small_linear_scan_repro.sh bin/crystal_v2`
+      - result: fixed marker `hash_small_linear_scan_ok`
+    - focused `/tmp/hash_string_probe.cr`
+      - result: `size=1`, both `has_key?` probes true, `[]` returns `1`
+    - focused `/tmp/hash_int_probe.cr`
+      - result: `has_key?` true, overwrite keeps `size=1`, value becomes `9`
+    - `regression_tests/spawn_capture_block_param_repro.sh bin/crystal_v2`
+      - result: fixed-state exit `1`, both Proc capture probes print `_ok`
+    - `regression_tests/run_combined.sh bin/crystal_v2 4`
+      - result: `27 passed, 4 failed out of 31`; `test_collections` is now green
+  - practical boundary:
+    - `combined/test_edge_hash_complex.cr` now passes the original missing-key
+      site but later segfaults after `h.each { |k, v| total += v }`; that is a
+      separate block-write/iteration frontier, not part of this hash scan fix
+    - remaining combined failures are `test_complex_generic_dispatch`,
+      `test_edge_hash_complex`, `test_generics_unions`, and `test_strings_join`
 - **Fresh closure-env Proc ABI checkpoint: spawn/fiber fanout captures now use
   per-instance heap Proc envs instead of shared/global closure cells (2026-04-19,
   current session)**:

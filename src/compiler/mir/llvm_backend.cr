@@ -9686,6 +9686,10 @@ module Crystal::MIR
         return true
       end
 
+      if emit_hash_string_linear_scan_override(func, mangled)
+        return true
+      end
+
       # Hash#key_hash for concrete value keys — bypass broken generic Object#hash dispatch.
       # Self-hosted stage2 still routes wrapper/struct keys (Bytes, tuple keys, etc.)
       # through Object#hash, which crashes or loops in compiler/runtime hot paths.
@@ -10964,6 +10968,267 @@ module Crystal::MIR
       end
 
       false
+    end
+
+    private def emit_hash_string_linear_scan_override(func : Function, mangled : String) : Bool
+      if split = mangled.split("$Hfind_entry_with_index_linear_scan$$", 2)
+        if split.size == 2
+          hash_prefix = split[0]
+          return emit_hash_linear_find_entry_with_index_override(func, mangled, hash_prefix) if hash_linear_scan_layout(hash_prefix)
+        end
+      end
+
+      if split = mangled.split("$Hupdate_linear_scan$$", 2)
+        if split.size == 2
+          hash_prefix = split[0]
+          return emit_hash_linear_update_override(func, mangled, hash_prefix) if hash_linear_scan_layout(hash_prefix)
+        end
+      end
+
+      false
+    end
+
+    private def hash_linear_scan_layout(hash_prefix : String) : {String, String, Int32, Int32, String, String, Int32, Int32}?
+      key_suffix = nil
+      value_suffix = nil
+
+      {"String", "Int32"}.each do |candidate|
+        prefix = "Hash$L#{candidate}$C$_"
+        if hash_prefix.starts_with?(prefix) && hash_prefix.ends_with?("$R")
+          key_suffix = candidate
+          value_suffix = hash_prefix[prefix.size, hash_prefix.size - prefix.size - 2]
+          break
+        end
+      end
+
+      return nil unless key_suffix && value_suffix
+
+      key_llvm_type, key_size, key_align = case key_suffix
+                                           when "String"
+                                             {"ptr", 8, 8}
+                                           when "Int32"
+                                             {"i32", 4, 4}
+                                           else
+                                             return nil
+                                           end
+
+      value_llvm_type, value_size, value_align = hash_value_field_layout(value_suffix.not_nil!)
+      value_offset = align_i32(key_size, value_align)
+      hash_offset = align_i32(value_offset + value_size, 4)
+
+      {
+        key_suffix.not_nil!,
+        key_llvm_type,
+        key_size,
+        key_align,
+        value_suffix.not_nil!,
+        value_llvm_type,
+        value_offset,
+        hash_offset,
+      }
+    end
+
+    private def hash_value_field_layout(value_suffix : String) : {String, Int32, Int32}
+      case value_suffix
+      when "Bool", "UInt8", "Int8"
+        {"i8", 1, 1}
+      when "Int16", "UInt16"
+        {"i16", 2, 2}
+      when "Int32", "UInt32", "Char"
+        {"i32", 4, 4}
+      when "Int64", "UInt64"
+        {"i64", 8, 8}
+      when "Float32"
+        {"float", 4, 4}
+      when "Float64"
+        {"double", 8, 8}
+      when "Nil", "Void"
+        {"ptr", 0, 1}
+      else
+        {"ptr", 8, 8}
+      end
+    end
+
+    private def align_i32(offset : Int32, alignment : Int32) : Int32
+      return offset if alignment <= 1
+      (offset + alignment - 1) & ~(alignment - 1)
+    end
+
+    private def nullable_non_nil_variant_id(type_ref : TypeRef) : Int32?
+      descriptor = @module.get_union_descriptor(type_ref)
+      return nil unless descriptor
+
+      variant = descriptor.variants.find { |candidate| candidate.type_ref != TypeRef::NIL }
+      variant.try(&.type_id)
+    end
+
+    private def emit_hash_key_match(key_suffix : String, key_llvm_type : String, entry_key_name : String, result_name : String) : Nil
+      case key_suffix
+      when "String"
+        @called_crystal_functions["String$H$EQ$$String"] ||= {"i1", 2, ["ptr", "ptr"] of String}
+        emit_raw "  %#{result_name}.entry_key_null = icmp eq ptr #{entry_key_name}, null\n"
+        emit_raw "  %#{result_name}.key_null = icmp eq ptr %key, null\n"
+        emit_raw "  %#{result_name}.any_null = or i1 %#{result_name}.entry_key_null, %#{result_name}.key_null\n"
+        emit_raw "  br i1 %#{result_name}.any_null, label %#{result_name}_null, label %#{result_name}_string\n"
+        emit_raw "#{result_name}_null:\n"
+        emit_raw "  %#{result_name}.both_null = and i1 %#{result_name}.entry_key_null, %#{result_name}.key_null\n"
+        emit_raw "  br label %#{result_name}_done\n"
+        emit_raw "#{result_name}_string:\n"
+        emit_raw "  %#{result_name}.string_eq = call i1 @String$H$EQ$$String(ptr #{entry_key_name}, ptr %key)\n"
+        emit_raw "  br label %#{result_name}_done\n"
+        emit_raw "#{result_name}_done:\n"
+        emit_raw "  %#{result_name} = phi i1 [%#{result_name}.both_null, %#{result_name}_null], [%#{result_name}.string_eq, %#{result_name}_string]\n"
+      when "Int32"
+        emit_raw "  %#{result_name} = icmp eq #{key_llvm_type} #{entry_key_name}, %key\n"
+      else
+        emit_raw "  %#{result_name} = icmp eq #{key_llvm_type} #{entry_key_name}, %key\n"
+      end
+    end
+
+    private def emit_hash_linear_find_entry_with_index_override(func : Function, mangled : String, hash_prefix : String) : Bool
+      layout = hash_linear_scan_layout(hash_prefix)
+      return false unless layout
+      key_suffix, key_llvm_type, _key_size, _key_align, _value_suffix, _value_llvm_type, _value_offset, hash_offset = layout
+
+      return false unless key_suffix == "String" || key_suffix == "Int32"
+      return false unless variant_id = nullable_non_nil_variant_id(func.return_type)
+
+      ret_llvm_type = @type_mapper.llvm_type(func.return_type)
+      emit_raw "; #{mangled} — direct small Hash linear scan (block non-local return workaround)\n"
+      emit_raw "define #{ret_llvm_type} @#{mangled}(ptr %self, #{key_llvm_type} %key) {\n"
+      emit_raw "entry:\n"
+      emit_raw "  %size_ptr = getelementptr i8, ptr %self, i32 24\n"
+      emit_raw "  %size = load i32, ptr %size_ptr\n"
+      emit_raw "  %deleted_ptr = getelementptr i8, ptr %self, i32 28\n"
+      emit_raw "  %deleted = load i32, ptr %deleted_ptr\n"
+      emit_raw "  %entries_size = add i32 %size, %deleted\n"
+      emit_raw "  %empty = icmp sle i32 %entries_size, 0\n"
+      emit_raw "  br i1 %empty, label %not_found, label %loop_init\n"
+      emit_raw "loop_init:\n"
+      emit_raw "  %first_ptr = getelementptr i8, ptr %self, i32 4\n"
+      emit_raw "  %first = load i32, ptr %first_ptr\n"
+      emit_raw "  br label %loop\n"
+      emit_raw "loop:\n"
+      emit_raw "  %i = phi i32 [%first, %loop_init], [%next_i, %continue]\n"
+      emit_raw "  %done = icmp sge i32 %i, %entries_size\n"
+      emit_raw "  br i1 %done, label %not_found, label %load_entry\n"
+      emit_raw "load_entry:\n"
+      emit_raw "  %entries_ptr = getelementptr i8, ptr %self, i32 8\n"
+      emit_raw "  %entries = load ptr, ptr %entries_ptr\n"
+      emit_raw "  %idx64 = sext i32 %i to i64\n"
+      emit_raw "  %slot = getelementptr ptr, ptr %entries, i64 %idx64\n"
+      emit_raw "  %entry_obj = load ptr, ptr %slot\n"
+      emit_raw "  %entry_null = icmp eq ptr %entry_obj, null\n"
+      emit_raw "  br i1 %entry_null, label %continue, label %check_deleted\n"
+      emit_raw "check_deleted:\n"
+      emit_raw "  %hash_ptr = getelementptr i8, ptr %entry_obj, i32 #{hash_offset}\n"
+      emit_raw "  %entry_hash = load i32, ptr %hash_ptr\n"
+      emit_raw "  %is_deleted = icmp eq i32 %entry_hash, 0\n"
+      emit_raw "  br i1 %is_deleted, label %continue, label %compare_key\n"
+      emit_raw "compare_key:\n"
+      emit_raw "  %entry_key_ptr = getelementptr i8, ptr %entry_obj, i32 0\n"
+      if key_llvm_type == "ptr"
+        emit_raw "  %entry_key = load ptr, ptr %entry_key_ptr\n"
+      else
+        emit_raw "  %entry_key = load #{key_llvm_type}, ptr %entry_key_ptr\n"
+      end
+      emit_hash_key_match(key_suffix, key_llvm_type, "%entry_key", "key_match")
+      emit_raw "  br i1 %key_match, label %found, label %continue\n"
+      emit_raw "continue:\n"
+      emit_raw "  %next_i = add i32 %i, 1\n"
+      emit_raw "  br label %loop\n"
+      emit_raw "found:\n"
+      emit_raw "  %tuple.raw = call ptr @__crystal_v2_malloc64(i64 24)\n"
+      emit_raw "  store i64 1, ptr %tuple.raw, align 8\n"
+      emit_raw "  %tuple = getelementptr i8, ptr %tuple.raw, i64 8\n"
+      emit_raw "  %tuple.entry = getelementptr i8, ptr %tuple, i32 0\n"
+      emit_raw "  store ptr %entry_obj, ptr %tuple.entry\n"
+      emit_raw "  %tuple.index = getelementptr i8, ptr %tuple, i32 8\n"
+      emit_raw "  store i32 %i, ptr %tuple.index\n"
+      emit_raw "  %result.ptr = alloca #{ret_llvm_type}, align 8\n"
+      emit_raw "  store #{ret_llvm_type} zeroinitializer, ptr %result.ptr\n"
+      emit_raw "  %result.tid = getelementptr #{ret_llvm_type}, ptr %result.ptr, i32 0, i32 0\n"
+      emit_raw "  store i32 #{variant_id}, ptr %result.tid\n"
+      emit_raw "  %result.payload = getelementptr #{ret_llvm_type}, ptr %result.ptr, i32 0, i32 1\n"
+      emit_raw "  store ptr %tuple, ptr %result.payload, align 4\n"
+      emit_raw "  %result = load #{ret_llvm_type}, ptr %result.ptr\n"
+      emit_raw "  ret #{ret_llvm_type} %result\n"
+      emit_raw "not_found:\n"
+      emit_raw "  ret #{ret_llvm_type} zeroinitializer\n"
+      emit_raw "}\n\n"
+      true
+    end
+
+    private def emit_hash_linear_update_override(func : Function, mangled : String, hash_prefix : String) : Bool
+      layout = hash_linear_scan_layout(hash_prefix)
+      return false unless layout
+      key_suffix, key_llvm_type, _key_size, _key_align, _value_suffix, value_llvm_type, value_offset, hash_offset = layout
+
+      return false unless key_suffix == "String" || key_suffix == "Int32"
+      return false unless func.params.size >= 4
+      return false unless variant_id = nullable_non_nil_variant_id(func.return_type)
+
+      ret_llvm_type = @type_mapper.llvm_type(func.return_type)
+      emit_raw "; #{mangled} — direct small Hash update scan (block non-local return workaround)\n"
+      emit_raw "define #{ret_llvm_type} @#{mangled}(ptr %self, #{key_llvm_type} %key, #{value_llvm_type} %value, i32 %hash) {\n"
+      emit_raw "entry:\n"
+      emit_raw "  %size_ptr = getelementptr i8, ptr %self, i32 24\n"
+      emit_raw "  %size = load i32, ptr %size_ptr\n"
+      emit_raw "  %deleted_ptr = getelementptr i8, ptr %self, i32 28\n"
+      emit_raw "  %deleted = load i32, ptr %deleted_ptr\n"
+      emit_raw "  %entries_size = add i32 %size, %deleted\n"
+      emit_raw "  %empty = icmp sle i32 %entries_size, 0\n"
+      emit_raw "  br i1 %empty, label %not_found, label %loop_init\n"
+      emit_raw "loop_init:\n"
+      emit_raw "  %first_ptr = getelementptr i8, ptr %self, i32 4\n"
+      emit_raw "  %first = load i32, ptr %first_ptr\n"
+      emit_raw "  br label %loop\n"
+      emit_raw "loop:\n"
+      emit_raw "  %i = phi i32 [%first, %loop_init], [%next_i, %continue]\n"
+      emit_raw "  %done = icmp sge i32 %i, %entries_size\n"
+      emit_raw "  br i1 %done, label %not_found, label %load_entry\n"
+      emit_raw "load_entry:\n"
+      emit_raw "  %entries_ptr = getelementptr i8, ptr %self, i32 8\n"
+      emit_raw "  %entries = load ptr, ptr %entries_ptr\n"
+      emit_raw "  %idx64 = sext i32 %i to i64\n"
+      emit_raw "  %slot = getelementptr ptr, ptr %entries, i64 %idx64\n"
+      emit_raw "  %entry_obj = load ptr, ptr %slot\n"
+      emit_raw "  %entry_null = icmp eq ptr %entry_obj, null\n"
+      emit_raw "  br i1 %entry_null, label %continue, label %check_hash\n"
+      emit_raw "check_hash:\n"
+      emit_raw "  %hash_ptr = getelementptr i8, ptr %entry_obj, i32 #{hash_offset}\n"
+      emit_raw "  %entry_hash = load i32, ptr %hash_ptr\n"
+      emit_raw "  %hash_match = icmp eq i32 %entry_hash, %hash\n"
+      emit_raw "  br i1 %hash_match, label %compare_key, label %continue\n"
+      emit_raw "compare_key:\n"
+      emit_raw "  %entry_key_ptr = getelementptr i8, ptr %entry_obj, i32 0\n"
+      if key_llvm_type == "ptr"
+        emit_raw "  %entry_key = load ptr, ptr %entry_key_ptr\n"
+      else
+        emit_raw "  %entry_key = load #{key_llvm_type}, ptr %entry_key_ptr\n"
+      end
+      emit_hash_key_match(key_suffix, key_llvm_type, "%entry_key", "key_match")
+      emit_raw "  br i1 %key_match, label %found, label %continue\n"
+      emit_raw "continue:\n"
+      emit_raw "  %next_i = add i32 %i, 1\n"
+      emit_raw "  br label %loop\n"
+      emit_raw "found:\n"
+      if value_offset >= 0
+        emit_raw "  %value_ptr = getelementptr i8, ptr %entry_obj, i32 #{value_offset}\n"
+        emit_raw "  store #{value_llvm_type} %value, ptr %value_ptr\n"
+      end
+      emit_raw "  %result.ptr = alloca #{ret_llvm_type}, align 8\n"
+      emit_raw "  store #{ret_llvm_type} zeroinitializer, ptr %result.ptr\n"
+      emit_raw "  %result.tid = getelementptr #{ret_llvm_type}, ptr %result.ptr, i32 0, i32 0\n"
+      emit_raw "  store i32 #{variant_id}, ptr %result.tid\n"
+      emit_raw "  %result.payload = getelementptr #{ret_llvm_type}, ptr %result.ptr, i32 0, i32 1\n"
+      emit_raw "  store ptr %entry_obj, ptr %result.payload, align 4\n"
+      emit_raw "  %result = load #{ret_llvm_type}, ptr %result.ptr\n"
+      emit_raw "  ret #{ret_llvm_type} %result\n"
+      emit_raw "not_found:\n"
+      emit_raw "  ret #{ret_llvm_type} zeroinitializer\n"
+      emit_raw "}\n\n"
+      true
     end
 
     private def direct_integer_hash_llvm_type?(llvm_type : String) : Bool

@@ -134,3 +134,53 @@ Important caveat for Claude/Codex continuation:
   to `spawn`/`Fiber` block arguments and `->` proc literals.
 - Before committing, run `git diff --check`, inspect the final diff, and run at
   least the same verification matrix above.
+
+## 2026-04-19 Codex baseline hash checkpoint
+
+Status: one baseline combined failure family is partially reduced and fixed as
+a separate logical change after the Proc ABI commit.
+
+Key finding:
+
+- The first `test_collections` / `test_edge_hash_complex` failure was not
+  caused by Proc ABI. It was the stdlib small-Hash linear-scan path:
+  entries were stored and visible through iteration, but
+  `find_entry_with_index_linear_scan` always fell through to nil because V2
+  lowered `return entry, index if ...` inside `each_entry_with_index` as a
+  block-local return.
+
+Implementation:
+
+- `src/compiler/mir/llvm_backend.cr` now emits direct backend overrides for
+  small `Hash(String, V)` / `Hash(Int32, V)`:
+  `find_entry_with_index_linear_scan` and `update_linear_scan`.
+- `regression_tests/hash_small_linear_scan_repro.sh` covers:
+  String-key lookup after insert, String-key overwrite without size growth, and
+  Int32-key overwrite without duplicated entries.
+
+Verification:
+
+- `crystal build src/crystal_v2.cr -o bin/crystal_v2 --error-trace` — green,
+  only the known `Random::DEFAULT` warning.
+- `regression_tests/hash_small_linear_scan_repro.sh bin/crystal_v2` — green,
+  prints `hash_small_linear_scan_ok`.
+- Focused `/tmp/hash_string_probe.cr` — prints `1 / true / true / 1`.
+- Focused `/tmp/hash_int_probe.cr` — prints `true / 1 / 9`.
+- `regression_tests/spawn_capture_block_param_repro.sh bin/crystal_v2` —
+  fixed-state exit `1`, both probes print `_ok`.
+- `git diff --check` — clean.
+- `regression_tests/run_combined.sh bin/crystal_v2 4` — `27 passed, 4 failed
+  out of 31`; `test_collections` is now green.
+
+Remaining frontier:
+
+- `combined/test_edge_hash_complex.cr` now moves past the original missing-key
+  site, but later segfaults after `h.each { |k, v| total += v }`; a reduced
+  probe showed `total` remains `0` and the next independent Hash loop can
+  segfault. Treat this as a block-write/iteration/capture frontier, not part of
+  the small-Hash scan fix.
+- Remaining combined failures after this checkpoint:
+  `test_complex_generic_dispatch` (`Pointer#width` stub),
+  `test_edge_hash_complex` (block-write/iteration segfault),
+  `test_generics_unions` (segfault), and
+  `test_strings_join` (`Reference#join(String)_super` stub).

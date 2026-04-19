@@ -3,6 +3,26 @@
 Updated: 2026-04-11
 Context: compiler/bootstrap/stage2-stability
 
+[LM-457|verified]: Small `Hash(String, V)` / `Hash(Int32, V)` tables exposed a
+stdlib block non-local return gap rather than a storage corruption bug. The
+decisive reducer inserted one `Hash(String, Int32)` entry and showed `keys`
+iteration could print the stored key while `has_key?("one")` and `h["one"]`
+failed. Generated LLVM for `Hash#find_entry_with_index_linear_scan` called
+`each_entry_with_index` and then always reached the nil return path, so the
+`return entry, index if ...` inside the stdlib block was block-local in V2.
+The bounded backend workaround in `src/compiler/mir/llvm_backend.cr` emits
+direct small-table scan overrides for `find_entry_with_index_linear_scan` and
+`update_linear_scan` for String/Int32 keys, comparing String keys via
+`String#==` and mutating existing entry values in place. Regression
+`regression_tests/hash_small_linear_scan_repro.sh` is green; focused String and
+Int32 reducers pass; `run_combined.sh bin/crystal_v2 4` improved from 26/31 to
+27/31 with `test_collections` now green; compiler build is green with only the
+known `Random::DEFAULT` warning; and the Proc capture guard remains in its
+fixed state. Boundary: `combined/test_edge_hash_complex.cr` now moves past the
+original missing-key site but later segfaults after `h.each { |k, v| total += v
+}`, which is a separate block-write/iteration frontier. {F/G/R: 0.90/0.60/0.92}
+[verified]
+
 [LM-456|verified]: The spawn/fiber fanout capture bug was a real Proc ABI
 carrier issue in V2, but the verified bounded fix is heap-backed Proc values
 rather than by-value `%__crystal_proc` storage or a Fiber side channel. Proc
