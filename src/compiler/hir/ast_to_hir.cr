@@ -79449,6 +79449,29 @@ module Crystal::HIR
       ctx.register_type(set.id, cap_type)
     end
 
+    # P1 helper: allocate a per-lexical-activation heap Box holding a single
+    # payload of `payload_type`. Replaces the global class-var cell path for
+    # captures that are written or shared across fibers. Returns the Box
+    # pointer ValueId (pointer-to-payload_type), registered as POINTER in
+    # the LoweringContext so later read/write sites can GEP/load through it.
+    #
+    # Implementation: emit Literal(Int32, 1) + PointerMalloc(payload_type,
+    # count=1). No constructor args — the box payload is written separately
+    # via PointerStore at the assignment / init site.
+    #
+    # Currently UNUSED — ensure_box_for_local will wire it in the atomic
+    # final P1 commit (step 8+ of closure_env_abi_p1_state.md).
+    private def emit_capture_box(ctx : LoweringContext, payload_type : TypeRef) : ValueId
+      count = Literal.new(ctx.next_id, TypeRef::INT32, 1_i64)
+      ctx.emit(count)
+      ctx.register_type(count.id, TypeRef::INT32)
+
+      malloc = PointerMalloc.new(ctx.next_id, TypeRef::POINTER, payload_type, count.id)
+      ctx.emit(malloc)
+      ctx.register_type(malloc.id, TypeRef::POINTER)
+      malloc.id
+    end
+
     private def lower_proc_literal(
       ctx : LoweringContext,
       node : CrystalV2::Compiler::Frontend::ProcLiteralNode,
