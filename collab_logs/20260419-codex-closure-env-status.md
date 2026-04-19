@@ -393,3 +393,33 @@ Verification:
 Remaining combined frontier:
 
 - None observed. `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_combined.sh bin/crystal_v2 4` reports `31 passed, 0 failed out of 31`.
+
+## 2026-04-19 Codex checkpoint: broader run_all frontier after combined green
+
+Status: combined is closed; broader `run_all.sh` still has five known-red
+frontiers.
+
+Verification:
+
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_all.sh bin/crystal_v2`
+  — `140 passed, 5 failed out of 145`.
+
+Failures outside combined:
+
+- `sprintf_float_precision` — output failure; runtime raises `case6`.
+- `test_3mod` — abort stub `STUB CALLED: Type#name`.
+- `test_byteformat_decode_u32` — abort stub
+  `IO::ByteFormat::LittleEndian#==(IO::ByteFormat::LittleEndian)`.
+- `test_closure_ref` — exits `138` without expected `42`.
+- `test_nilable_struct_union_layout` — segfault.
+
+Current clean commits after Claude handoff:
+
+- `e664295e fix(hir): lower array sum blocks directly`
+- `9e4ac156 fix(union): preserve pointer stores and owned wraps`
+
+Recommended next local frontier:
+
+- Start with one reduced `run_all.sh` failure, not combined. The most adjacent
+  to the just-landed work is `test_nilable_struct_union_layout`; the most
+  isolated abort-stub candidate is `test_byteformat_decode_u32`.
