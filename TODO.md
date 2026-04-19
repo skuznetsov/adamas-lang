@@ -1,6 +1,38 @@
-# Crystal V2 Bootstrap — TODO (Updated 2026-04-14)
+# Crystal V2 Bootstrap — TODO (Updated 2026-04-19)
 
 ## Current Status
+- **Fresh unless branch local writeback checkpoint (2026-04-19, current
+  session)**:
+  - trustworthy setup:
+    - `src/compiler/hir/ast_to_hir.cr`
+      - `lower_unless` now captures then-branch locals before popping the
+        branch scope, matching the already-correct else-branch order
+      - this preserves local mutations such as `index &+= 1` in an `unless`
+        body before the merge block and loop-back phi
+    - `regression_tests/unless_branch_local_writeback.cr`
+      - guards both normal `+=` and wrapping `&+=` writes through an `unless`
+        branch
+  - decisive evidence:
+    - `crystal build src/crystal_v2.cr -o bin/crystal_v2 --error-trace`
+      - result: success with only the known host stdlib `Random::DEFAULT`
+        warning
+    - `LIBRARY_PATH=/opt/homebrew/lib bin/crystal_v2 regression_tests/unless_branch_local_writeback.cr -o /tmp/unless_branch_local_writeback && scripts/run_safe.sh /tmp/unless_branch_local_writeback 5 512`
+      - result: prints `unless_branch_local_writeback_ok`
+    - `LIBRARY_PATH=/opt/homebrew/lib bin/crystal_v2 regression_tests/sprintf_float_precision.cr -o /tmp/sprintf_float_precision && scripts/run_safe.sh /tmp/sprintf_float_precision 5 512`
+      - result: prints `sprintf_float_precision_ok`
+    - direct Ryu `d2fixed_buffered_n(0.1_f64, 5)` probe
+      - result: prints `0.10000` instead of the previous `.10000`
+    - `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_mini_oracles.sh bin/crystal_v2`
+      - result: `Mini-oracles: 6 passed, 0 failed out of 6 tests`
+    - `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_combined.sh bin/crystal_v2 4`
+      - result: still `31 passed, 0 failed out of 31`
+    - `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_all.sh bin/crystal_v2`
+      - result: `144 passed, 2 failed out of 146`; `sprintf_float_precision`
+        and the new `unless_branch_local_writeback` are green
+  - practical boundary:
+    - this closes the `unless` local-writeback/Ryu leading-zero corridor, not
+      the remaining type-name or closure-cell fronts
+    - remaining `run_all.sh` failures are `test_3mod` and `test_closure_ref`
 - **Fresh byteformat decode checkpoint (2026-04-19, current session)**:
   - trustworthy setup:
     - `src/compiler/hir/ast_to_hir.cr`

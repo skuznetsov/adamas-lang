@@ -541,3 +541,55 @@ Note for Claude/Codex continuation:
   bootstrap glue. A future broader HIR fix for `slice += read_bytes` loop
   pollution can remove it, but the current change is verified against the full
   regression suite baseline.
+
+## 2026-04-19 Codex checkpoint: sprintf precision / unless writeback frontier closed
+
+Status: `sprintf_float_precision` is green after a bounded HIR `lower_unless`
+local-writeback fix.
+
+Root cause:
+
+- The focused `sprintf("%.5f", 0.1_f64)` path printed `.10000` instead of
+  `0.10000`.
+- A direct `Float::Printer::RyuPrintf.d2fixed_buffered_n(0.1_f64, 5, buf)`
+  probe produced the same malformed prefix, isolating the issue below
+  `sprintf` formatting dispatch.
+- Emitted HIR for `d2fixed_buffered_n` showed the `unless nonzero` branch wrote
+  the leading `'0'` and computed `index &+= 1`, but the merge block kept the
+  pre-branch index, so the following decimal-point write overwrote the zero.
+- Source cause: `lower_unless` saved then-branch locals after `ctx.pop_scope`;
+  the else branch already saved before pop.
+
+Fix:
+
+- `src/compiler/hir/ast_to_hir.cr` now saves `then_locals` and
+  `then_inline_locals` before popping the then-branch scope in `lower_unless`.
+- Added `regression_tests/unless_branch_local_writeback.cr` to guard both
+  normal `+=` and wrapping `&+=` local writes through an `unless` branch.
+
+Verification:
+
+- `crystal build src/crystal_v2.cr -o bin/crystal_v2 --error-trace` — green,
+  only the known `Random::DEFAULT` warning.
+- `LIBRARY_PATH=/opt/homebrew/lib bin/crystal_v2 regression_tests/unless_branch_local_writeback.cr -o /tmp/unless_branch_local_writeback && scripts/run_safe.sh /tmp/unless_branch_local_writeback 5 512`
+  — prints `unless_branch_local_writeback_ok`.
+- `LIBRARY_PATH=/opt/homebrew/lib bin/crystal_v2 regression_tests/sprintf_float_precision.cr -o /tmp/sprintf_float_precision && scripts/run_safe.sh /tmp/sprintf_float_precision 5 512`
+  — prints `sprintf_float_precision_ok`.
+- Direct Ryu probe under `scripts/run_safe.sh` — prints `0.10000`.
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_mini_oracles.sh bin/crystal_v2`
+  — `Mini-oracles: 6 passed, 0 failed out of 6 tests`.
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_combined.sh bin/crystal_v2 4`
+  — `31 passed, 0 failed out of 31`.
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_all.sh bin/crystal_v2`
+  — `144 passed, 2 failed out of 146`.
+
+Remaining `run_all.sh` frontiers:
+
+- `test_3mod` — abort stub `STUB CALLED: Type#name`.
+- `test_closure_ref` — exits `138` without expected `42`.
+
+Note for Claude/Codex continuation:
+
+- The closure-env ABI branch remains untouched by this checkpoint.
+- The next deterministic full-suite frontier is `test_3mod`; `test_closure_ref`
+  is still the closure-cell/ABI-adjacent known-red.

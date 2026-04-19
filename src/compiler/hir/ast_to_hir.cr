@@ -52549,9 +52549,9 @@ module Crystal::HIR
       apply_truthy_narrowing(ctx, falsy_targets)
       then_value = lower_body(ctx, node.then_branch)
       then_exit = ctx.current_block
-      ctx.pop_scope
       then_locals = ctx.save_locals.locals
       then_inline_locals = @inline_caller_locals_stack.map(&.dup)
+      ctx.pop_scope
 
       # Check if then branch flows to merge (not terminated by return/raise)
       then_block_data = ctx.get_block(ctx.current_block)
