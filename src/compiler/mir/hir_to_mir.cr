@@ -706,8 +706,8 @@ module Crystal
       # pointer-sized pointer to a Proc OBJECT on the heap.
       # Proc OBJECT layout is { fn_ptr @0, env_ptr @proc_env_offset }.
       #
-      # These helpers are additive and currently unused; they will be wired
-      # in Commit P1.
+      # Used by heap-backed Proc/env lowering; generic Proc values remain
+      # pointer-sized while env/proc objects use explicit byte layouts.
       # ─────────────────────────────────────────────────────────────────────
 
       @[AlwaysInline]
@@ -767,18 +767,75 @@ module Crystal
         obj_ptr
       end
 
-      # P1 — lower HIR::MakeProc to a 16-byte heap Proc object via
+      # Lower HIR::MakeProc to a 16-byte heap Proc object via
       # allocate_proc_object. Dispatched from the main lower_instruction
-      # case. Currently only emitted by HIR after P1 lower_proc_literal /
-      # lower_block_to_proc rewrite; while additive it stays dead code,
-      # which is safe — no HIR site creates MakeProc yet.
+      # case and emitted by HIR proc literals / selected heap block-proc
+      # conversions.
       private def lower_make_proc(mp : HIR::MakeProc) : ValueId
         fn_ptr_val  = get_value(mp.fn_ptr)
         env_ptr_val = get_value(mp.env_ptr)
         allocate_proc_object(fn_ptr_val, env_ptr_val)
       end
 
-      # Capture-env layout helpers (P1) — mirror HIR closure_env_offsets/
+      private def load_proc_fn_ptr(proc_obj : ValueId) : ValueId
+        builder = @builder.not_nil!
+        fn_slot = builder.gep(proc_obj, [proc_fn_offset.to_u32], TypeRef::POINTER)
+        builder.load(fn_slot, TypeRef::POINTER)
+      end
+
+      private def load_proc_env_ptr(proc_obj : ValueId) : ValueId
+        builder = @builder.not_nil!
+        env_slot = builder.gep(proc_obj, [proc_env_offset.to_u32], TypeRef::POINTER)
+        builder.load(env_slot, TypeRef::POINTER)
+      end
+
+      private def proc_env_present(proc_obj : ValueId) : ValueId
+        builder = @builder.not_nil!
+        env_ptr = load_proc_env_ptr(proc_obj)
+        nil_ptr = builder.const_nil_typed(TypeRef::POINTER)
+        builder.ne(env_ptr, nil_ptr)
+      end
+
+      private def call_heap_proc(proc_obj : ValueId, user_args : Array(ValueId), return_type : TypeRef) : ValueId
+        builder = @builder.not_nil!
+        fn_ptr = load_proc_fn_ptr(proc_obj)
+        env_ptr = load_proc_env_ptr(proc_obj)
+        nil_ptr = builder.const_nil_typed(TypeRef::POINTER)
+        env_is_null = builder.eq(env_ptr, nil_ptr)
+
+        raw_block = builder.function.create_block
+        env_block = builder.function.create_block
+        merge_block = builder.function.create_block
+        builder.branch(env_is_null, raw_block, env_block)
+
+        builder.current_block = raw_block
+        raw_result = builder.call_indirect(fn_ptr, user_args, return_type)
+        builder.jump(merge_block)
+
+        builder.current_block = env_block
+        env_result = builder.call_indirect(fn_ptr, [env_ptr] + user_args, return_type)
+        builder.jump(merge_block)
+
+        builder.current_block = merge_block
+        if return_type == TypeRef::VOID
+          builder.const_nil_typed(TypeRef::VOID)
+        else
+          phi = builder.phi(return_type)
+          phi.add_incoming(from: raw_block, value: raw_result)
+          phi.add_incoming(from: env_block, value: env_result)
+          phi.id
+        end
+      end
+
+      private def proc_call_return_type(recv_desc : HIR::TypeDescriptor, fallback : HIR::TypeRef) : TypeRef
+        if ret_hir_type = recv_desc.type_params.last?
+          convert_type(ret_hir_type)
+        else
+          convert_type(fallback)
+        end
+      end
+
+      # Capture-env layout helpers mirror HIR closure_env_offsets/
       # closure_env_size so MIR lower_closure and MIR lower_make_proc agree
       # with HIR on field offsets and total env size. Enforces invariant I10
       # (§10 plan): one authoritative layout across HIR and MIR.
@@ -2941,11 +2998,11 @@ module Crystal
           if method_suffix = extract_method_suffix_loose(call.method_name)
             case method_suffix
             when "pointer"
-              return args[0]
+              return load_proc_fn_ptr(args[0])
             when "closure_data"
-              return builder.const_nil_typed(TypeRef::POINTER)
+              return load_proc_env_ptr(args[0])
             when "closure?"
-              return builder.const_bool(false)
+              return proc_env_present(args[0])
             end
           end
         end
@@ -2972,10 +3029,9 @@ module Crystal
           recv_desc = recv_type ? @hir_module.get_type_descriptor(recv_type) : nil
           if recv_type
             if recv_desc && (recv_desc.kind == HIR::TypeKind::Proc || recv_desc.name == "Proc" || recv_desc.name.starts_with?("Proc("))
-              # Proc is a function pointer - emit indirect call
-              # args[0] = receiver (func ptr), args[1..] = actual arguments
+              # Proc values are pointers to heap Proc objects. Load {fn, env}
+              # from the object, then call fn(env, user_args...).
               filtered_args = [] of ValueId
-              filtered_args << args[0]
               call.args.each_with_index do |arg_id, idx|
                 arg_type = @hir_value_types[arg_id]?
                 in_map = @value_map.has_key?(arg_id)
@@ -2983,7 +3039,8 @@ module Crystal
                 next unless in_map
                 filtered_args << args[idx + 1]
               end
-              return builder.call_indirect(filtered_args[0], filtered_args[1..].to_a, convert_type(call.type))
+              return_type = proc_call_return_type(recv_desc, call.type)
+              return call_heap_proc(args[0], filtered_args, return_type)
             end
           end
         end
@@ -5249,9 +5306,7 @@ module Crystal
       private def lower_closure(closure : HIR::MakeClosure) : ValueId
         builder = @builder.not_nil!
 
-        # Closures become:
-        # 1. Struct containing captured variables
-        # 2. Function pointer to closure body
+        return builder.const_nil_typed(TypeRef::POINTER) if closure.captures.empty?
 
         # Determine memory strategy based on taints:
         # - ThreadShared closure → AtomicARC (for thread-safe RC)
@@ -5262,8 +5317,12 @@ module Crystal
                      MemoryStrategy::ARC
                    end
 
-        # Allocate environment struct
-        env_ptr = builder.alloc(strategy, TypeRef::POINTER)
+        capture_types = closure.captures.map { |cap| convert_type(cap.env_slot_type) }
+        offsets = closure_env_offsets(capture_types)
+        env_size = closure_env_size(capture_types)
+
+        # Allocate byte-addressed environment object with naturally aligned slots.
+        env_ptr = builder.alloc(strategy, TypeRef::POINTER, env_size.to_u64, pointer_word_align_u32)
 
         # Insert RC increment based on strategy
         if strategy == MemoryStrategy::AtomicARC
@@ -5275,7 +5334,7 @@ module Crystal
         # Store captured values in environment
         closure.captures.each_with_index do |cap, idx|
           cap_value = get_value(cap.value_id)
-          field_ptr = builder.gep(env_ptr, [idx.to_u32], TypeRef::POINTER)
+          field_ptr = builder.gep(env_ptr, [offsets[idx].to_u32], TypeRef::POINTER)
           builder.store(field_ptr, cap_value)
         end
 

@@ -61,18 +61,74 @@ Both expect `12\n12` from `counter = 5; p.call(7); puts counter`. This catches t
 
 ## Next safe step
 
-Do not start the atomic Proc ABI flip until boxed-capture predeclaration is consumed at binding sites and verified.
+Superseded by the 2026-04-19 Codex P1 WIP below.
 
-Additive scaffold now present:
+## 2026-04-19 Codex P1 WIP update
 
-- `LoweringContext#require_entry_box_for_local(name)` stores function-scope, name-only entry-box requirements.
-- `LoweringContext#entry_box_required?(name)` is the future binding-site guard.
-- `collect_proc_literal_box_requirements(body, candidate_names)` finds proc literals nested in a body that reference candidate locals. It is intentionally dormant until P1 wires the two-stage flow:
-  pre-scan owner body → mark requirements → hoist at local declaration / first assignment with the real initial value.
-- `seed_entry_box_requirements_for_body` is wired behind `CRYSTAL_V2_SEED_ENTRY_BOX_REQUIREMENTS=1`; it seeds the requirement set but still does not change reads/writes because no binding site consumes it yet.
+Status: atomic Proc ABI flip is implemented locally and under verification. It
+is not committed in this log entry until the final guard set passes.
 
-Next implementation unit should be additive or explicitly WIP:
+Key implementation changes now in the working tree:
 
-1. Wire local declaration / first assignment lowering to call `hoist_box_for_local(ctx, name, payload_type, initial_value)` when `ctx.entry_box_required?(name)` and the binding still occurs in the function entry block.
-2. Make `lower_proc_literal` / `lower_block_to_proc` require an existing `BoxedLocal` for boxed captures instead of late-hoisting.
-3. Only then start the atomic MakeClosure/MakeProc ABI flip.
+- `lower_proc_literal` now emits user-visible `HIR::MakeProc(fn_ptr, env_ptr)`.
+- Captured proc literals receive a hidden `__closure_env` param; zero-capture
+  proc literals keep the raw signature so `Proc#pointer` remains usable for
+  runtime callbacks such as `Fiber#makecontext`.
+- MIR `Proc#call` loads `fn/env` from the heap Proc object and dispatches as:
+  `env == null ? fn(args...) : fn(env, args...)`.
+- MIR `Proc#call` infers its concrete return type from the receiver
+  `Proc(...)` descriptor (`type_params.last`) instead of the generic
+  `Proc#call` placeholder `R`. This fixed the no-arg closure return crash in
+  `test_complex_closures_capture`.
+- MIR Proc accessors now load from heap Proc object fields:
+  `pointer -> fn@0`, `closure_data -> env@8`, `closure? -> env != null`.
+- `lower_closure` allocates a byte-sized env object using capture slot offsets
+  rather than the old zero-sized/index-GEP placeholder.
+- `spawn` and `Fiber` block arguments are materialized as heap Proc objects;
+  generic runtime-yield block callbacks remain raw function pointers to avoid
+  breaking stdlib callback ABI.
+- Box allocation is split:
+  - entry-required parent locals use entry allocation plus binding-site seed;
+  - loop/block-param captures use current-block allocation so each iteration /
+    invocation gets a fresh box.
+
+Verification so far:
+
+- `crystal build src/crystal_v2.cr -o bin/crystal_v2 --error-trace` — green,
+  only the known `Random::DEFAULT` warning.
+- `regression_tests/spawn_capture_block_param_repro.sh bin/crystal_v2` — exit 1,
+  both probes print `_ok`; original known-red is fixed.
+- `regression_tests/conditional_closure_capture_repro.sh bin/crystal_v2` — exit 1,
+  correct `12/12`.
+- `regression_tests/escaping_branch_closure_capture_repro.sh bin/crystal_v2` —
+  exit 1, correct `12/12`.
+- `bin/crystal_v2 regression_tests/test_proc_basic.cr -o /tmp/test_proc_basic &&
+  scripts/run_safe.sh /tmp/test_proc_basic 5 512` — prints `7`, `50`,
+  `proc_test_done`.
+- `bin/crystal_v2 regression_tests/test_blocks.cr -o /tmp/test_blocks &&
+  scripts/run_safe.sh /tmp/test_blocks 5 512` — prints `blocks_done`.
+- `bin/crystal_v2 regression_tests/channel_ping_pong_repro.cr -o
+  /tmp/channel_ping_pong_repro && scripts/run_safe.sh /tmp/channel_ping_pong_repro
+  5 512` — prints `channel_ping_pong_ok`.
+- `bin/crystal_v2 regression_tests/tuple_int32_int64_layout.cr -o
+  /tmp/tuple_int32_int64_layout && scripts/run_safe.sh
+  /tmp/tuple_int32_int64_layout 5 512` — prints both tuple layout ok markers.
+- `bin/crystal_v2 regression_tests/combined/test_complex_closures_capture.cr -o
+  /tmp/test_complex_closures_capture && scripts/run_safe.sh
+  /tmp/test_complex_closures_capture 5 512` — prints `closures_capture_all_ok`
+  after the `Proc#call` return-type fix.
+- `regression_tests/run_combined.sh bin/crystal_v2 4` was attempted after
+  cleaning old result files. The runner/session did not return a usable final
+  aggregate in Codex tooling; generated partial results showed existing
+  non-Proc mismatches in `test_collections`, `test_edge_hash_complex`, and
+  `test_complex_generic_dispatch`. The Proc/capture combined file above was
+  rerun directly and passes.
+
+Important caveat for Claude/Codex continuation:
+
+- This is narrower than the original fully-uniform block Proc ABI. Generic
+  `lower_block_to_proc` remains raw by default because making every block thunk
+  heap-backed broke stdlib runtime-yield callbacks. The heap path is targeted
+  to `spawn`/`Fiber` block arguments and `->` proc literals.
+- Before committing, run `git diff --check`, inspect the final diff, and run at
+  least the same verification matrix above.

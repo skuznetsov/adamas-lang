@@ -32978,8 +32978,8 @@ module Crystal::HIR
     # pointer-sized pointer to a Proc OBJECT on the heap.
     # Proc OBJECT layout is { fn_ptr @0, env_ptr @proc_env_offset }.
     #
-    # These helpers are additive and currently unused; they will be wired
-    # in Commit P1.
+    # Used by heap-backed Proc/env lowering; generic Proc values remain
+    # pointer-sized while env/proc objects use explicit byte layouts.
     # ─────────────────────────────────────────────────────────────────────────
 
     @[AlwaysInline]
@@ -42655,8 +42655,14 @@ module Crystal::HIR
       last_value : ValueId? = nil
       begin
         if body = node.body
-          if env_has?("CRYSTAL_V2_SEED_ENTRY_BOX_REQUIREMENTS")
-            seed_entry_box_requirements_for_body(ctx, body, @arena)
+          seed_entry_box_requirements_for_body(ctx, body, @arena)
+          ctx.entry_box_requirements.each do |name|
+            next if name.empty?
+            next if ctx.lookup_boxed_local(name)
+            if local_id = ctx.lookup_local(name)
+              local_type = ctx.type_of(local_id)
+              hoist_box_for_local(ctx, name, local_type, local_id) unless local_type == TypeRef::VOID
+            end
           end
           body_proc = -> {
             def_arena = @arena
@@ -42936,6 +42942,7 @@ module Crystal::HIR
       if ordered_arenas.empty?
         ordered_arenas = [@arena] of CrystalV2::Compiler::Frontend::ArenaLike
       end
+      seed_entry_box_requirements_for_main(ctx, main_exprs, ordered_arenas)
       main_exprs.each_with_index do |packed_expr_ref, idx|
         arena_index = (packed_expr_ref >> 32).to_i32
         expr_index = (packed_expr_ref & 0xFFFF_FFFF_u64).to_i32
@@ -44395,6 +44402,9 @@ module Crystal::HIR
         # Register as local variable
         ctx.register_local(var_name, value)
         value_type = ctx.type_of(value)
+        if ctx.entry_box_required?(var_name) && !ctx.lookup_boxed_local(var_name)
+          hoist_box_for_local(ctx, var_name, value_type, value) unless value_type == TypeRef::VOID
+        end
         # If the declared type is module-like and the initializer is concrete,
         # keep the concrete type for call resolution to avoid includer heuristics.
         if module_like_type_name?(type_name) && value_type != TypeRef::VOID
@@ -44425,6 +44435,9 @@ module Crystal::HIR
         ctx.emit(lit)
         ctx.register_local(var_name, lit.id)
         ctx.register_type(lit.id, type_ref)
+        if ctx.entry_box_required?(var_name) && !ctx.lookup_boxed_local(var_name)
+          hoist_box_for_local(ctx, var_name, type_ref, lit.id) unless type_ref == TypeRef::VOID
+        end
         update_typeof_local(var_name, type_ref)
         update_typeof_local_name(var_name, type_name)
         lit.id
@@ -66668,7 +66681,12 @@ module Crystal::HIR
           if block_id
             owner_arena = call_arena
             block_arena_for_proc = @block_node_arenas[blk_node.object_id]? || resolve_arena_for_block(blk_node, owner_arena) || owner_arena
-            proc_id = lower_block_to_proc(ctx, blk_node, block_param_types_for_proc, block_arena_for_proc)
+            heap_block_proc = mangled_method_name.includes?("Fiber") ||
+                              base_method_name.includes?("Fiber") ||
+                              method_name == "spawn" ||
+                              base_method_name.starts_with?("spawn") ||
+                              mangled_method_name.starts_with?("spawn")
+            proc_id = lower_block_to_proc(ctx, blk_node, block_param_types_for_proc, block_arena_for_proc, heap_block_proc)
             args << proc_id
             if env_get("DEBUG_WITH_BRACE_CALL") && (method_name == "with_brace_newlines_skipped" || base_method_name.includes?("with_brace_newlines_skipped") || mangled_method_name.includes?("with_brace_newlines_skipped"))
               STDERR.puts "[WITH_BRACE_FALLBACK] stage=proc_appended method=#{method_name} base=#{base_method_name} mangled=#{mangled_method_name} block_id=#{block_id} args=#{args.size}"
@@ -73347,7 +73365,8 @@ module Crystal::HIR
         # Heuristic param-count checks are insufficient because hidden block-callback plumbing
         # is not reliably represented in lowered function params for all yield paths.
         block_arena_for_proc = @block_node_arenas[block.object_id]? || resolve_arena_for_block(block, caller_arena) || caller_arena
-        proc_id = lower_block_to_proc(ctx, block, block_param_types, block_arena_for_proc)
+        heap_block_proc = inline_key.includes?("Fiber") || base_inline_name.includes?("Fiber")
+        proc_id = lower_block_to_proc(ctx, block, block_param_types, block_arena_for_proc, heap_block_proc)
         fallback_args << proc_id
         # `inline_key` can still be a bare `Owner#m` when the yield inline path bails out early.
         # The lowered def is registered only under the `def ... &` overload key (`$..._block`).
@@ -73771,7 +73790,8 @@ module Crystal::HIR
                   # while materializing the Proc so capture detection sees outer writes.
                   saved_inline_locals = ctx.save_locals
                   ctx.restore_locals(caller_locals)
-                  proc_id = lower_block_to_proc(ctx, block, block_param_types, block_arena_for_proc)
+                  heap_block_proc = (inline_key.includes?("Fiber") || base_inline_name.includes?("Fiber")) && param_name == "proc"
+                  proc_id = lower_block_to_proc(ctx, block, block_param_types, block_arena_for_proc, heap_block_proc)
                   ctx.restore_locals(saved_inline_locals)
                   ctx.register_local(param_name, proc_id)
                   ctx.register_type(proc_id, ctx.type_of(proc_id))
@@ -77690,6 +77710,9 @@ module Crystal::HIR
               update_typeof_local_name(name, concrete_name)
             end
           end
+          if ctx.entry_box_required?(name) && !ctx.lookup_boxed_local(name)
+            hoist_box_for_local(ctx, name, value_type, copy.id) unless value_type == TypeRef::VOID
+          end
           copy.id
         else
           # New variable
@@ -77722,6 +77745,9 @@ module Crystal::HIR
           update_typeof_local(name, value_type)
           if concrete_name = concrete_type_name_for(value_type)
             update_typeof_local_name(name, concrete_name)
+          end
+          if ctx.entry_box_required?(name) && !ctx.lookup_boxed_local(name)
+            hoist_box_for_local(ctx, name, value_type, copy.id) unless value_type == TypeRef::VOID
           end
           copy.id
         end
@@ -79491,6 +79517,52 @@ module Crystal::HIR
       end
     end
 
+    private def seed_entry_box_requirements_for_main(
+      ctx : LoweringContext,
+      main_exprs : Array(UInt64),
+      ordered_arenas : Array(CrystalV2::Compiler::Frontend::ArenaLike),
+    ) : Nil
+      candidates = Set(String).new
+      main_exprs.each do |packed_expr_ref|
+        arena_index = (packed_expr_ref >> 32).to_i32
+        expr_index = (packed_expr_ref & 0xFFFF_FFFF_u64).to_i32
+        expr_id = CrystalV2::Compiler::Frontend::ExprId.new(expr_index)
+        arena = if arena_index >= 0 && arena_index < ordered_arenas.size
+                  ordered_arenas[arena_index]
+                else
+                  @arena
+                end
+        saved_arena = @arena
+        @arena = arena
+        collect_assigned_vars([expr_id]).each { |name| candidates.add(name) }
+        @arena = saved_arena
+      end
+      candidates.delete("self")
+
+      required = Set(String).new
+      main_exprs.each do |packed_expr_ref|
+        arena_index = (packed_expr_ref >> 32).to_i32
+        expr_index = (packed_expr_ref & 0xFFFF_FFFF_u64).to_i32
+        expr_id = CrystalV2::Compiler::Frontend::ExprId.new(expr_index)
+        arena = if arena_index >= 0 && arena_index < ordered_arenas.size
+                  ordered_arenas[arena_index]
+                else
+                  @arena
+                end
+        saved_arena = @arena
+        @arena = arena
+        collect_proc_literal_box_requirements_walk(expr_id, candidates, required)
+        @arena = saved_arena
+      end
+
+      required.each do |name|
+        ctx.require_entry_box_for_local(name)
+      end
+      if env_has?("DEBUG_ENTRY_BOX_REQUIREMENTS") && !required.empty?
+        STDERR.puts "[ENTRY_BOX_REQUIREMENTS] func=#{ctx.function.name} names=#{required.to_a.sort.join(",")}"
+      end
+    end
+
     private def collect_proc_literal_box_requirements_walk(
       expr_id : ExprId,
       candidate_names : Set(String),
@@ -79872,6 +79944,107 @@ module Crystal::HIR
       get.id
     end
 
+    private def bind_env_captured_yield_target(
+      proc_ctx : LoweringContext,
+      capture : {String, ValueId, TypeRef}?,
+    ) : ValueId?
+      return nil unless capture
+      cap_name, _, cap_type = capture
+      if box_info = proc_ctx.lookup_boxed_local(cap_name)
+        load = PointerLoad.new(proc_ctx.next_id, box_info.payload_type, box_info.box_ptr)
+        proc_ctx.emit(load)
+        proc_ctx.register_type(load.id, box_info.payload_type)
+        return load.id
+      end
+      proc_ctx.lookup_local(cap_name)
+    end
+
+    private def capture_var_for_env(
+      ctx : LoweringContext,
+      cap_name : String,
+      parent_vid : ValueId,
+      cap_type : TypeRef,
+      written : Bool,
+    ) : CapturedVar
+      if cap_name == "self"
+        return CapturedVar.new(
+          parent_vid,
+          cap_name,
+          by_reference: false,
+          env_slot_type: cap_type,
+          payload_type: cap_type,
+          boxed: false
+        )
+      end
+
+      box_ptr = if box_info = ctx.lookup_boxed_local(cap_name)
+                  box_info.box_ptr
+                else
+                  hoist_box_for_local(ctx, cap_name, cap_type, parent_vid)
+                end
+
+      CapturedVar.new(
+        box_ptr,
+        cap_name,
+        by_reference: true,
+        env_slot_type: TypeRef::POINTER,
+        payload_type: cap_type,
+        boxed: true
+      )
+    end
+
+    private def materialize_env_captures(
+      proc_ctx : LoweringContext,
+      env_param_id : ValueId,
+      captures : Array(CapturedVar),
+    ) : Nil
+      offsets = closure_env_offsets(captures.map(&.env_slot_type))
+      captures.each_with_index do |cap, idx|
+        get = FieldGet.new(
+          proc_ctx.next_id,
+          cap.env_slot_type,
+          env_param_id,
+          "__closure_env_#{cap.name}",
+          offsets[idx]
+        )
+        proc_ctx.emit(get)
+        proc_ctx.register_type(get.id, cap.env_slot_type)
+        proc_ctx.register_local(cap.name, get.id)
+        if cap.boxed
+          proc_ctx.register_boxed_local(cap.name, get.id, cap.payload_type)
+        end
+      end
+    end
+
+    private def emit_make_proc_value(
+      ctx : LoweringContext,
+      proc_type : TypeRef,
+      proc_func_name : String,
+      proc_func : Function,
+      captures : Array(CapturedVar),
+    ) : ValueId
+      fp = FuncPointer.new(ctx.next_id, TypeRef::POINTER, proc_func_name)
+      ctx.emit(fp)
+      ctx.register_type(fp.id, TypeRef::POINTER)
+
+      env_id = if captures.empty?
+                 nil_env = Literal.new(ctx.next_id, TypeRef::POINTER, nil)
+                 ctx.emit(nil_env)
+                 ctx.register_type(nil_env.id, TypeRef::POINTER)
+                 nil_env.id
+               else
+                 closure = MakeClosure.new(ctx.next_id, TypeRef::POINTER, proc_func.entry_block, captures)
+                 ctx.emit(closure)
+                 ctx.register_type(closure.id, TypeRef::POINTER)
+                 closure.id
+               end
+
+      make_proc = MakeProc.new(ctx.next_id, proc_type, fp.id, env_id)
+      ctx.emit(make_proc)
+      ctx.register_type(make_proc.id, proc_type)
+      make_proc.id
+    end
+
     private def emit_capture_cell_init(
       ctx : LoweringContext,
       class_name : String,
@@ -79888,7 +80061,7 @@ module Crystal::HIR
       ctx.register_type(set.id, cap_type)
     end
 
-    # P1 helper: allocate a per-lexical-activation heap Box holding a
+    # Allocate a per-lexical-activation heap Box holding a
     # single payload of `payload_type`. Replaces the global class-var
     # cell path for captures that are written or shared across fibers.
     # Returns the Box pointer ValueId (pointer-to-payload_type),
@@ -79899,8 +80072,8 @@ module Crystal::HIR
     # block dominates every other block in the function, so `box_ptr`
     # dominates every subsequent use.
     #
-    # Currently UNUSED — `hoist_box_for_local` wires it in the atomic
-    # final P1 commit (step 8+ of closure_env_abi_p1_state.md).
+    # Used for parent locals that were predeclared as needing an
+    # entry-dominating capture box.
     private def emit_capture_box(ctx : LoweringContext, payload_type : TypeRef) : ValueId
       entry_block = ctx.function.entry_block
 
@@ -79914,31 +80087,31 @@ module Crystal::HIR
       malloc.id
     end
 
+    private def emit_capture_box_current(ctx : LoweringContext, payload_type : TypeRef) : ValueId
+      count = Literal.new(ctx.next_id, TypeRef::INT32, 1_i64)
+      ctx.emit(count)
+      ctx.register_type(count.id, TypeRef::INT32)
+
+      malloc = PointerMalloc.new(ctx.next_id, TypeRef::POINTER, payload_type, count.id)
+      ctx.emit(malloc)
+      ctx.register_type(malloc.id, TypeRef::POINTER)
+      malloc.id
+    end
+
+    # Allocate a capture box at the current insertion point. This is used
+    # for loop/block parameters where each invocation needs a fresh box
+    # rather than one function-entry box shared by all iterations.
     # Hoist `name` to a per-activation heap Box and register it in
     # `@boxed_locals` so later read/write sites through the name route
     # via PointerLoad/PointerStore (see lower_identifier / lower_assign
     # branches, plan §5.1.1.b).
     #
     # Idempotent: returns the existing box_ptr if `name` is already
-    # boxed, otherwise allocates a fresh box via `emit_capture_box`,
-    # seeds it from `initial_value`, and registers the binding. Box
-    # allocation is emitted into the function entry block (see
-    # `emit_capture_box`); the seed store is emitted at the original
-    # local binding site, which must still be in the entry block.
-    #
-    # INVARIANT ENFORCEMENT (I14-monotonic): allocation dominance is
-    # enforced by emitting `box_ptr` in the entry block. Value
-    # dominance is enforced by rejecting late branch-local hoists:
-    # callers must invoke this at the captured local's declaration /
-    # first assignment site before branch lowering. A proc literal
-    # lowered inside a branch must not discover and hoist an already
-    # initialized parent local at that point.
-    #
-    # Currently UNUSED — wired in the atomic final P1 commit by the
-    # rewrite of lower_proc_literal / lower_block_to_proc (steps 8-9 of
-    # closure_env_abi_p1_state.md). Until then `@boxed_locals` stays
-    # empty and the box-gated branches in lower_identifier / lower_assign
-    # are dormant.
+    # boxed, otherwise allocates a fresh box, seeds it from
+    # `initial_value`, and registers the binding. Parent locals marked by
+    # entry-box seeding use an entry-block allocation; loop/block
+    # parameters use a current-block allocation so each dynamic
+    # invocation gets its own box.
     private def hoist_box_for_local(
       ctx : LoweringContext,
       name : String,
@@ -79949,12 +80122,11 @@ module Crystal::HIR
         return existing.box_ptr
       end
 
-      unless ctx.current_block == ctx.function.entry_block
-        raise "hoist_box_for_local for #{name} must run in the function entry block; " \
-              "P1 must predeclare captured boxes before branch/case/loop lowering"
-      end
-
-      box_ptr = emit_capture_box(ctx, payload_type)
+      box_ptr = if ctx.entry_box_required?(name)
+                  emit_capture_box(ctx, payload_type)
+                else
+                  emit_capture_box_current(ctx, payload_type)
+                end
       seed = PointerStore.new(ctx.next_id, payload_type, box_ptr, initial_value)
       ctx.emit(seed)
       ctx.register_type(seed.id, payload_type)
@@ -80042,7 +80214,7 @@ module Crystal::HIR
         end
         parent_self_id = parent_self_param.try(&.id)
       end
-      if parent_self = parent_self_id
+      if referenced_names.includes?("self") && (parent_self = parent_self_id)
         parent_self_type = ctx.type_of(parent_self)
         if parent_self_type != TypeRef::VOID && !captures.any? { |name, _, _| name == "self" }
           captures << {"self", parent_self, parent_self_type}
@@ -80066,48 +80238,15 @@ module Crystal::HIR
       # enclosing scope reads them back through the closure cell (not stale locals).
       capture_names = captures.map { |name, _, _| name }.to_set
       written_captures = detect_written_captures(node.body, capture_names, @arena)
-      previous_capture_cells = {} of String => {String, String, TypeRef}
-      new_capture_cells = Set(String).new
-      previous_prefer_cell = {} of String => Bool
-
-      # Proc literals that escape their defining function currently lose hidden
-      # capture args at call-sites (ABI mismatch: function expects captures but
-      # Proc#call invokes with runtime args only). Until full closure-data ABI is
-      # implemented, route captured locals through closure cells so proc bodies
-      # have stable access without hidden parameters.
-      captures.each do |cap_name, parent_vid, cap_type|
-        previous_prefer_cell[cap_name] = @closure_ref_prefer_cell.includes?(cap_name)
-        if existing = @closure_ref_cells[cap_name]?
-          # Reuse existing alias cell for this local if already established.
-          # This keeps multiple procs over the same local consistent.
-          previous_capture_cells[cap_name] = existing
-          existing_type = existing[2]
-          if existing_type != cap_type
-            # Type mismatch is unexpected for one lexical local name, but keep
-            # lowering resilient by overriding to the latest observed type.
-            @closure_ref_cells[cap_name] = {existing[0], existing[1], cap_type}
-          end
-        else
-          new_capture_cells.add(cap_name)
-          cell_name = "__closure_cell_#{@closure_cell_counter}"
-          @closure_cell_counter += 1
-          class_name = "__closure"
-          emit_capture_cell_init(ctx, class_name, cell_name, cap_type, parent_vid)
-          @closure_ref_cells[cap_name] = {class_name, cell_name, cap_type}
-        end
-        @closure_ref_prefer_cell.add(cap_name) if written_captures.includes?(cap_name)
+      captured_vars = captures.map do |cap_name, parent_vid, cap_type|
+        capture_var_for_env(ctx, cap_name, parent_vid, cap_type, written_captures.includes?(cap_name))
       end
 
-      # Bind captured lexical `self` into the proc context so implicit receiver
-      # calls inside the proc resolve as instance calls, not bare extern calls.
-      if captures.any? { |name, _, _| name == "self" }
-        if self_cell = @closure_ref_cells["self"]?
-          cell_class, cell_name, cell_type = self_cell
-          self_get = ClassVarGet.new(proc_ctx.next_id, cell_type, cell_class, cell_name)
-          proc_ctx.emit(self_get)
-          proc_ctx.register_type(self_get.id, cell_type)
-          proc_ctx.register_local("self", self_get.id)
-        end
+      unless captured_vars.empty?
+        env_param = proc_func.add_param("__closure_env", TypeRef::POINTER)
+        proc_ctx.register_local("__closure_env", env_param.id)
+        proc_ctx.register_type(env_param.id, TypeRef::POINTER)
+        materialize_env_captures(proc_ctx, env_param.id, captured_vars)
       end
 
       # Add parameters to the standalone function
@@ -80163,7 +80302,7 @@ module Crystal::HIR
       @loop_break_value_stack = [] of Array({BlockId, ValueId})
 
       @inline_yield_proc_depth += 1
-      explicit_yield_target_id = bind_captured_yield_target(proc_ctx, explicit_yield_target)
+      explicit_yield_target_id = bind_env_captured_yield_target(proc_ctx, explicit_yield_target)
       pushed_explicit_yield_target = false
       if explicit_yield_target_id
         if env_get("DEBUG_EXPLICIT_YIELD_TARGET")
@@ -80175,23 +80314,6 @@ module Crystal::HIR
       last_value = begin
         lower_body(proc_ctx, node.body)
       ensure
-        # Restore closure cell state: keep written captures in prefer_cell so
-        # the enclosing scope reads them through the cell, not stale locals.
-        captures.each do |cap_name, _, _|
-          next if written_captures.includes?(cap_name)
-          if previous = previous_capture_cells[cap_name]?
-            @closure_ref_cells[cap_name] = previous
-          elsif new_capture_cells.includes?(cap_name)
-            @closure_ref_cells.delete(cap_name)
-          end
-          if prev_prefer = previous_prefer_cell[cap_name]?
-            if prev_prefer
-              @closure_ref_prefer_cell.add(cap_name)
-            else
-              @closure_ref_prefer_cell.delete(cap_name)
-            end
-          end
-        end
         @explicit_yield_target_stack.pop? if pushed_explicit_yield_target
         @inline_yield_proc_depth -= 1
         @inline_yield_return_stack = saved_return_stack_pl
@@ -80228,12 +80350,7 @@ module Crystal::HIR
       # Compute proc type (user-visible, does NOT include captures)
       proc_type = @module.intern_type(TypeDescriptor.new(TypeKind::Proc, "Proc", proc_param_types + [proc_return_type]))
 
-      # Return FuncPointer in caller's context, registered with Proc type
-      fp = FuncPointer.new(ctx.next_id, proc_type, proc_func_name)
-      ctx.emit(fp)
-      ctx.register_type(fp.id, proc_type)
-
-      fp.id
+      emit_make_proc_value(ctx, proc_type, proc_func_name, proc_func, captured_vars)
     end
 
     # Convert a BlockNode into a Proc (FuncPointer). This is used when a method
@@ -80244,6 +80361,7 @@ module Crystal::HIR
       block_node : CrystalV2::Compiler::Frontend::BlockNode,
       param_types : Array(TypeRef)?,
       block_arena : CrystalV2::Compiler::Frontend::ArenaLike,
+      heap_proc : Bool = false,
     ) : ValueId
       debug_trace_each = env_get("DEBUG_TRACE_EACH_WITH_INDEX") &&
                          ctx.function.name.includes?("each_with_index")
@@ -80455,38 +80573,56 @@ module Crystal::HIR
       previous_capture_cells = {} of String => {String, String, TypeRef}
       new_capture_cells = Set(String).new
       previous_prefer_cell = {} of String => Bool
+      captured_vars = [] of CapturedVar
 
-      # Block procs are invoked by runtime yield dispatch with only explicit
-      # block args. Hidden capture params would break ABI at call sites.
-      # Route captured locals through closure cells instead.
-      captures.each do |cap_name, parent_vid, cap_type|
-        previous_prefer_cell[cap_name] = @closure_ref_prefer_cell.includes?(cap_name)
-        if existing = @closure_ref_cells[cap_name]?
-          previous_capture_cells[cap_name] = existing
-        else
-          new_capture_cells.add(cap_name)
+      if heap_proc
+        captured_vars = captures.map do |cap_name, parent_vid, cap_type|
+          capture_var_for_env(ctx, cap_name, parent_vid, cap_type, written_captures.includes?(cap_name))
         end
-        cell_name = "__closure_cell_#{@closure_cell_counter}"
-        @closure_cell_counter += 1
-        class_name = "__closure"
-        emit_capture_cell_init(ctx, class_name, cell_name, cap_type, parent_vid)
-        @closure_ref_cells[cap_name] = {class_name, cell_name, cap_type}
-        @closure_ref_prefer_cell.add(cap_name) if written_captures.includes?(cap_name)
+
+        unless captured_vars.empty?
+          env_param = proc_func.add_param("__closure_env", TypeRef::POINTER)
+          proc_ctx.register_local("__closure_env", env_param.id)
+          proc_ctx.register_type(env_param.id, TypeRef::POINTER)
+          materialize_env_captures(proc_ctx, env_param.id, captured_vars)
+        end
+      else
+        # Runtime-yield block callbacks are still raw function pointers. Keep the
+        # legacy closure-cell path here; heap Proc object materialization is used
+        # by proc literals and targeted Proc values, not by every raw block thunk.
+        captures.each do |cap_name, parent_vid, cap_type|
+          previous_prefer_cell[cap_name] = @closure_ref_prefer_cell.includes?(cap_name)
+          if existing = @closure_ref_cells[cap_name]?
+            previous_capture_cells[cap_name] = existing
+          else
+            new_capture_cells.add(cap_name)
+          end
+          cell_name = "__closure_cell_#{@closure_cell_counter}"
+          @closure_cell_counter += 1
+          class_name = "__closure"
+          emit_capture_cell_init(ctx, class_name, cell_name, cap_type, parent_vid)
+          @closure_ref_cells[cap_name] = {class_name, cell_name, cap_type}
+          @closure_ref_prefer_cell.add(cap_name) if written_captures.includes?(cap_name)
+        end
+
+        # Bind captured lexical `self` into the proc context so implicit receiver
+        # calls inside the block resolve as instance calls, not bare extern calls.
+        if captures.any? { |name, _, _| name == "self" }
+          if self_cell = @closure_ref_cells["self"]?
+            cell_class, cell_name, cell_type = self_cell
+            self_get = ClassVarGet.new(proc_ctx.next_id, cell_type, cell_class, cell_name)
+            proc_ctx.emit(self_get)
+            proc_ctx.register_type(self_get.id, cell_type)
+            proc_ctx.register_local("self", self_get.id)
+          end
+        end
       end
 
-      # Bind captured lexical `self` into the proc context so implicit receiver
-      # calls inside the block resolve as instance calls, not bare extern calls.
-      if captures.any? { |name, _, _| name == "self" }
-        if self_cell = @closure_ref_cells["self"]?
-          cell_class, cell_name, cell_type = self_cell
-          self_get = ClassVarGet.new(proc_ctx.next_id, cell_type, cell_class, cell_name)
-          proc_ctx.emit(self_get)
-          proc_ctx.register_type(self_get.id, cell_type)
-          proc_ctx.register_local("self", self_get.id)
-        end
-      end
-
-      explicit_yield_target_id = bind_captured_yield_target(proc_ctx, explicit_yield_target)
+      explicit_yield_target_id = if heap_proc
+                                   bind_env_captured_yield_target(proc_ctx, explicit_yield_target)
+                                 else
+                                   bind_captured_yield_target(proc_ctx, explicit_yield_target)
+                                 end
       if explicit_yield_target_id && env_get("DEBUG_EXPLICIT_YIELD_TARGET")
         STDERR.puts "[EXPLICIT_YIELD_TARGET] block_proc bind=#{proc_func.name} target=%#{explicit_yield_target_id} type=#{get_type_name_from_ref(proc_ctx.type_of(explicit_yield_target_id))}"
       end
@@ -80634,18 +80770,20 @@ module Crystal::HIR
       last_value = begin
         lower_body(proc_ctx, block_node.body)
       ensure
-        captures.each do |cap_name, _, _|
-          next if written_captures.includes?(cap_name)
-          if previous = previous_capture_cells[cap_name]?
-            @closure_ref_cells[cap_name] = previous
-          elsif new_capture_cells.includes?(cap_name)
-            @closure_ref_cells.delete(cap_name)
-          end
-          if prev_prefer = previous_prefer_cell[cap_name]?
-            if prev_prefer
-              @closure_ref_prefer_cell.add(cap_name)
-            else
-              @closure_ref_prefer_cell.delete(cap_name)
+        unless heap_proc
+          captures.each do |cap_name, _, _|
+            next if written_captures.includes?(cap_name)
+            if previous = previous_capture_cells[cap_name]?
+              @closure_ref_cells[cap_name] = previous
+            elsif new_capture_cells.includes?(cap_name)
+              @closure_ref_cells.delete(cap_name)
+            end
+            if prev_prefer = previous_prefer_cell[cap_name]?
+              if prev_prefer
+                @closure_ref_prefer_cell.add(cap_name)
+              else
+                @closure_ref_prefer_cell.delete(cap_name)
+              end
             end
           end
         end
@@ -80693,7 +80831,11 @@ module Crystal::HIR
       # Compute proc type (does NOT include captures)
       proc_type = @module.intern_type(TypeDescriptor.new(TypeKind::Proc, "Proc", proc_param_types + [proc_return_type]))
 
-      # Return FuncPointer in caller's context
+      if heap_proc
+        return emit_make_proc_value(ctx, proc_type, proc_func_name, proc_func, captured_vars)
+      end
+
+      # Raw block callback path: return a bare function pointer typed as Proc.
       fp = FuncPointer.new(ctx.next_id, proc_type, proc_func_name)
       ctx.emit(fp)
       ctx.register_type(fp.id, proc_type)
