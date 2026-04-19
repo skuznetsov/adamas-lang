@@ -120,6 +120,12 @@ module Crystal::HIR
       boxed_locals : Hash(String, BoxedLocal),
       debug_locals : Hash(String, ValueId)
 
+    # Debug gates: env lookups hoisted to ctor so per-value emit paths avoid
+    # ENV.has_key? / ENV[]? on every instruction (was a hot path — see
+    # trace_shovel_types? and DEBUG_TYPE_LITERAL usages below).
+    @trace_shovel_types_enabled : Bool
+    @debug_type_literal_enabled : Bool
+
     def initialize(@function : Crystal::HIR::Function, @module : Crystal::HIR::Module, @arena)
       @current_block = @function.entry_block
       @current_source_location = nil
@@ -137,6 +143,19 @@ module Crystal::HIR
       @dot_class_literals = Set(ValueId).new
       @boxed_locals = {} of String => BoxedLocal
       @boxed_locals_snapshots = [] of Hash(String, BoxedLocal)
+      @trace_shovel_types_enabled =
+        ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_SHOVEL_TYPES") &&
+          @function.name == "Crystal::HIR::Function#add_param$String_Crystal::HIR::TypeRef"
+      @debug_type_literal_enabled =
+        ::CrystalV2::Compiler::BootstrapEnv.enabled?("DEBUG_TYPE_LITERAL")
+    end
+
+    def trace_shovel_types_enabled? : Bool
+      @trace_shovel_types_enabled
+    end
+
+    def debug_type_literal_enabled? : Bool
+      @debug_type_literal_enabled
     end
 
     def mark_dot_class_literal(id : ValueId)
@@ -237,12 +256,12 @@ module Crystal::HIR
           @function.record_value_location(value.id, location)
         end
       end
-      if trace_shovel_types?
+      if @trace_shovel_types_enabled
         STDERR.puts "[SHOVEL_TYPES] phase=emit func=#{@function.name} id=#{value.id} value=#{value.class.name} type=#{value.type.id}"
       end
       if value.is_a?(Literal) && value.value.is_a?(Nil) && value.type.id >= TypeRef::FIRST_USER_TYPE
         @type_literal_values.add(value.id)
-        STDERR.puts "[TYPE_LITERAL] id=#{value.id} type=#{value.type.id}" if ENV["DEBUG_TYPE_LITERAL"]?
+        STDERR.puts "[TYPE_LITERAL] id=#{value.id} type=#{value.type.id}" if @debug_type_literal_enabled
       end
       value
     end
@@ -262,12 +281,12 @@ module Crystal::HIR
           @function.record_value_location(value.id, location)
         end
       end
-      if trace_shovel_types?
+      if @trace_shovel_types_enabled
         STDERR.puts "[SHOVEL_TYPES] phase=emit_to_block func=#{@function.name} block=#{block_id} id=#{value.id} value=#{value.class.name} type=#{value.type.id}"
       end
       if value.is_a?(Literal) && value.value.is_a?(Nil) && value.type.id >= TypeRef::FIRST_USER_TYPE
         @type_literal_values.add(value.id)
-        STDERR.puts "[TYPE_LITERAL] id=#{value.id} type=#{value.type.id}" if ENV["DEBUG_TYPE_LITERAL"]?
+        STDERR.puts "[TYPE_LITERAL] id=#{value.id} type=#{value.type.id}" if @debug_type_literal_enabled
       end
       value
     end
@@ -275,7 +294,7 @@ module Crystal::HIR
     # Look up the type of a value by ID
     def type_of(id : ValueId) : TypeRef
       type = @value_types[id]? || TypeRef::VOID
-      if trace_shovel_types?
+      if @trace_shovel_types_enabled
         STDERR.puts "[SHOVEL_TYPES] phase=type_of func=#{@function.name} id=#{id} type=#{type.id}"
       end
       type
@@ -284,7 +303,7 @@ module Crystal::HIR
     # Register type for a value (used for params not emitted via emit)
     def register_type(id : ValueId, type : TypeRef)
       @value_types[id] = type
-      if trace_shovel_types?
+      if @trace_shovel_types_enabled
         STDERR.puts "[SHOVEL_TYPES] phase=register_type func=#{@function.name} id=#{id} type=#{type.id}"
       end
     end
@@ -333,8 +352,7 @@ module Crystal::HIR
     end
 
     private def trace_shovel_types? : Bool
-      ENV.has_key?("CRYSTAL_V2_TRACE_SHOVEL_TYPES") &&
-        @function.name == "Crystal::HIR::Function#add_param$String_Crystal::HIR::TypeRef"
+      @trace_shovel_types_enabled
     end
 
     # Lookup local variable
@@ -2888,6 +2906,13 @@ module Crystal::HIR
     @debug_infer_guard_enabled : Bool
     @infer_guard_hits : Int32
     @infer_guard_last_report : Time::Instant?
+    # Hoisted ENV gates — avoid per-call ENV.has_key?/env_has? on hot paths.
+    # Init at ctor from BootstrapEnv; guard hot-path debug prints.
+    @trace_shovel_types_ast_enabled : Bool
+    @debug_bypass_generic_split_cache : Bool
+    # Negative env cache: avoid repeated getenv for keys that are unset.
+    # Paired with @env_cache (which only stores set values).
+    @env_missing_cache : Set(String)
     # Optional lowering timing stack (only used when DEBUG_LOWER_METHOD_TIME is set).
     @lower_method_time_stack : Array(LowerMethodTiming)
     @lower_method_stats_stack : Array(LowerMethodStats)
@@ -3270,7 +3295,10 @@ module Crystal::HIR
       # Self-hosted stage2 can miss inline-default ivar initialization. Ensure
       # the ENV cache exists before the first env_has?/env_get call below.
       @env_cache = {} of String => String
+      @env_missing_cache = Set(String).new
       @debug_infer_guard_enabled = env_has?("DEBUG_INFER_GUARD")
+      @trace_shovel_types_ast_enabled = env_has?("CRYSTAL_V2_TRACE_SHOVEL_TYPES")
+      @debug_bypass_generic_split_cache = env_has?("CRYSTAL2_DEBUG_BYPASS_GENERIC_SPLIT_CACHE")
       @infer_guard_hits = 0
       @infer_guard_last_report = nil
       @lower_method_time_stack = [] of LowerMethodTiming
@@ -3568,6 +3596,7 @@ module Crystal::HIR
       @split_union_last_output = nil.as(Array(String)?)
       # Env cache
       @env_cache = {} of String => String
+      @env_missing_cache = Set(String).new
       # Block lookup caches
       @block_lookup_cache = {} of BlockLookupKey => Tuple(String, CrystalV2::Compiler::Frontend::DefNode)?
       @block_lookup_cache_size = 0
@@ -3802,6 +3831,7 @@ module Crystal::HIR
       if cached = @env_cache[key]?
         return cached
       end
+      return nil if @env_missing_cache.includes?(key)
 
       # V2 BOOTSTRAP: ENV module constant access crashes V2-compiled binaries.
       # Use BootstrapEnv which has a safe wrapper.
@@ -3810,6 +3840,7 @@ module Crystal::HIR
         return val
       end
 
+      @env_missing_cache << key
       nil
     end
 
@@ -5438,7 +5469,7 @@ module Crystal::HIR
       enum_name : String,
       target_type : TypeRef? = nil,
     ) : Nil
-      return unless ENV.has_key?("CRYSTAL_V2_TRACE_SHOVEL_TYPES")
+      return unless @trace_shovel_types_ast_enabled
       return unless owner_name == "Crystal::HIR::Function"
       return unless ivar_name == "@parameter_list"
 
@@ -5463,7 +5494,7 @@ module Crystal::HIR
           return enum_name if value_type == base_type
           return enum_name if enum_metadata_target_compatible?(value_type, enum_name)
 
-          if ENV.has_key?("CRYSTAL_V2_TRACE_SHOVEL_TYPES") &&
+          if @trace_shovel_types_ast_enabled &&
              ctx.function.name == "Crystal::HIR::Function#add_param$String_Crystal::HIR::TypeRef"
             STDERR.puts "[SHOVEL_TYPES] phase=drop_stale_enum value_id=#{probe_id} enum=#{enum_name} raw=#{value_type.id}:#{get_type_name_from_ref(value_type)} base=#{base_type.id}:#{get_type_name_from_ref(base_type)}"
           end
@@ -38382,7 +38413,7 @@ module Crystal::HIR
       return nil if name.unsafe_as(UInt64) == 0_u64
       name = strip_ascii_edge_whitespace(name)
       return nil if name.bytesize == 0
-      bypass_cache = env_has?("CRYSTAL2_DEBUG_BYPASS_GENERIC_SPLIT_CACHE")
+      bypass_cache = @debug_bypass_generic_split_cache
       name_has_trailing_rparen = name.byte_at(name.bytesize - 1) == ')'.ord.to_u8
 
       unless bypass_cache
@@ -49936,7 +49967,7 @@ module Crystal::HIR
         end
         if %enum_name
           %base = enum_base_type(%enum_name)
-          if ENV.has_key?("CRYSTAL_V2_TRACE_SHOVEL_TYPES") &&
+          if @trace_shovel_types_ast_enabled &&
              ctx.function.name == "Crystal::HIR::Function#add_param$String_Crystal::HIR::TypeRef" &&
              op_str == "<<"
             STDERR.puts "[SHOVEL_TYPES] phase=enum_coerce side={{side.id}} value_id=#{ {{side.id}}_id } enum=#{%enum_name} raw=#{%type.id}:#{get_type_name_from_ref(%type)} base=#{%base.id}:#{get_type_name_from_ref(%base)}"
@@ -50080,7 +50111,7 @@ module Crystal::HIR
       # This handles io << value and arr << elem, which are NOT bit-shift but append
       is_integer_type = (left_type.id >= TypeRef::INT8.id && left_type.id <= TypeRef::INT128.id) ||
                         (left_type.id >= TypeRef::UINT8.id && left_type.id <= TypeRef::UINT128.id)
-      if ENV.has_key?("CRYSTAL_V2_TRACE_SHOVEL_TYPES") &&
+      if @trace_shovel_types_ast_enabled &&
          ctx.function.name == "Crystal::HIR::Function#add_param$String_Crystal::HIR::TypeRef" &&
          op_str == "<<"
         left_name = get_type_name_from_ref(left_type)
