@@ -76,9 +76,11 @@ module Crystal::HIR
     # `lookup_boxed_local`.
     #
     # INVARIANT I14-monotonic: `@boxed_locals` is MONOTONIC within a
-    # LoweringContext's function scope. Boxes must be hoisted to the
+    # LoweringContext's function scope. Boxes are hoisted to the
     # function entry block (before any branch split) by
-    # `ensure_box_for_local`, so `@boxed_locals` only GROWS during a
+    # `hoist_box_for_local` — the helper enforces this by always
+    # emitting into `ctx.function.entry_block` regardless of the
+    # caller's `current_block`. `@boxed_locals` only GROWS during a
     # function's lowering — it is never shrunk by branch/case/inline
     # merge.  Consequently:
     #   - `.locals` truncation into a bare `Hash(String, ValueId)` at
@@ -48493,7 +48495,7 @@ module Crystal::HIR
       # by-ref capture and must be read via closure cell.
       if local_id = ctx.lookup_local(name)
         # P1: boxed locals are read via PointerLoad through the box ptr.
-        # This path is dormant until ensure_box_for_local / parent-scope
+        # This path is dormant until hoist_box_for_local / parent-scope
         # hoisting populates @boxed_locals in the atomic final commit
         # (step 8+). @boxed_locals is currently empty → no behavior change.
         if box_info = ctx.lookup_boxed_local(name)
@@ -79561,68 +79563,76 @@ module Crystal::HIR
       ctx.register_type(set.id, cap_type)
     end
 
-    # P1 helper: allocate a per-lexical-activation heap Box holding a single
-    # payload of `payload_type`. Replaces the global class-var cell path for
-    # captures that are written or shared across fibers. Returns the Box
-    # pointer ValueId (pointer-to-payload_type), registered as POINTER in
-    # the LoweringContext so later read/write sites can GEP/load through it.
+    # P1 helper: allocate a per-lexical-activation heap Box holding a
+    # single payload of `payload_type`. Replaces the global class-var
+    # cell path for captures that are written or shared across fibers.
+    # Returns the Box pointer ValueId (pointer-to-payload_type),
+    # registered as POINTER in the LoweringContext.
     #
-    # Implementation: emit Literal(Int32, 1) + PointerMalloc(payload_type,
-    # count=1). No constructor args — the box payload is written separately
-    # via PointerStore at the assignment / init site.
+    # DOMINANCE ENFORCEMENT (I14-monotonic): emits both the count literal
+    # and the PointerMalloc into the function's ENTRY block, regardless
+    # of where `ctx.current_block` currently points. The entry block
+    # dominates every other block in the function, so `box_ptr` is
+    # guaranteed to dominate every subsequent use — including uses in
+    # branch-only paths that never flow through the call site that
+    # triggered the hoist.
     #
-    # Currently UNUSED — ensure_box_for_local will wire it in the atomic
+    # No initial-value seeding: `PointerMalloc` lowers through
+    # `GC_malloc` / `PointerMalloc` builder path which zero-initializes
+    # the allocation, matching LLVM `alloca` + zero-fill semantics. The
+    # first user assignment (e.g. `counter = 0`) emits a PointerStore
+    # through the box at its original source site; subsequent reads
+    # PointerLoad. This avoids the seed-dominance problem (an initial
+    # store at a branch-local site would not dominate the other branch).
+    #
+    # Currently UNUSED — `hoist_box_for_local` wires it in the atomic
     # final P1 commit (step 8+ of closure_env_abi_p1_state.md).
     private def emit_capture_box(ctx : LoweringContext, payload_type : TypeRef) : ValueId
+      entry_block = ctx.function.entry_block
+
       count = Literal.new(ctx.next_id, TypeRef::INT32, 1_i64)
-      ctx.emit(count)
+      ctx.emit_to_block(entry_block, count)
       ctx.register_type(count.id, TypeRef::INT32)
 
       malloc = PointerMalloc.new(ctx.next_id, TypeRef::POINTER, payload_type, count.id)
-      ctx.emit(malloc)
+      ctx.emit_to_block(entry_block, malloc)
       ctx.register_type(malloc.id, TypeRef::POINTER)
       malloc.id
     end
 
     # Hoist `name` to a per-activation heap Box and register it in
-    # `@boxed_locals` so later read/write sites through the name route via
-    # PointerLoad/PointerStore (see lower_identifier / lower_assign branches,
-    # plan §5.1.1.b).
+    # `@boxed_locals` so later read/write sites through the name route
+    # via PointerLoad/PointerStore (see lower_identifier / lower_assign
+    # branches, plan §5.1.1.b).
     #
-    # Idempotent: returns the existing box_ptr if `name` is already boxed,
-    # otherwise allocates a fresh box via `emit_capture_box`, seeds it with
-    # `initial_value` (PointerStore), and registers the binding.
+    # Idempotent: returns the existing box_ptr if `name` is already
+    # boxed, otherwise allocates a fresh box via `emit_capture_box` and
+    # registers the binding. Box allocation is emitted into the function
+    # entry block (see `emit_capture_box`); no initial-value seeding.
     #
-    # CALLER INVARIANT (I14-monotonic): callers MUST invoke this before
-    # any branch/case/rescue split that the boxed local outlives, so the
-    # box allocation dominates every subsequent read/write. Practically
-    # this means the atomic P1 rewrite of lower_proc_literal /
-    # lower_block_to_proc computes the capture set for the surrounding
-    # function (or emits hoists at parent-scope binding sites) before the
-    # proc body is lowered. A box introduced inside one branch of an
-    # `if` would not dominate the merge point — this function does not
-    # detect or correct that; the caller is responsible.
+    # INVARIANT ENFORCEMENT (I14-monotonic): dominance is enforced by
+    # the helper itself, not by the caller — `box_ptr` is always
+    # emitted in the entry block regardless of `ctx.current_block` at
+    # call time. This means the helper is SAFE to invoke from inside a
+    # branch (e.g., a proc literal lowered inside an `if` body). Values
+    # in the box before any user-level assignment are zeroed by
+    # GC_malloc.
     #
-    # Currently UNUSED — wired in the atomic final P1 commit by the rewrite
-    # of lower_proc_literal / lower_block_to_proc (steps 8-9 of
-    # closure_env_abi_p1_state.md). Until then `@boxed_locals` stays empty
-    # and the box-gated branches in lower_identifier/lower_assign are
-    # dormant.
-    private def ensure_box_for_local(
+    # Currently UNUSED — wired in the atomic final P1 commit by the
+    # rewrite of lower_proc_literal / lower_block_to_proc (steps 8-9 of
+    # closure_env_abi_p1_state.md). Until then `@boxed_locals` stays
+    # empty and the box-gated branches in lower_identifier / lower_assign
+    # are dormant.
+    private def hoist_box_for_local(
       ctx : LoweringContext,
       name : String,
       payload_type : TypeRef,
-      initial_value : ValueId,
     ) : ValueId
       if existing = ctx.lookup_boxed_local(name)
         return existing.box_ptr
       end
 
       box_ptr = emit_capture_box(ctx, payload_type)
-      store = PointerStore.new(ctx.next_id, payload_type, box_ptr, initial_value)
-      ctx.emit(store)
-      ctx.register_type(store.id, payload_type)
-
       ctx.register_boxed_local(name, box_ptr, payload_type)
       box_ptr
     end
