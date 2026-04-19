@@ -1,6 +1,37 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-19)
 
 ## Current Status
+- **Fresh abstract module self-dispatch checkpoint (2026-04-19, current
+  session)**:
+  - trustworthy setup:
+    - `src/compiler/hir/ast_to_hir.cr`
+      - receiverless identifier lowering inside instance methods now treats
+        zero-arg calls to abstract methods declared by included modules as
+        virtual self calls
+      - this covers methods like `Type#describe` calling `name` and
+        `byte_size` through `Named`/`Sized` abstract module contracts while
+        preserving the narrow static path for ordinary concrete self calls
+    - no stdlib edits and no broad call-path virtual-dispatch rewrite
+  - decisive evidence:
+    - `crystal build src/crystal_v2.cr -o bin/crystal_v2 --error-trace`
+      - result: success with only the known host stdlib `Random::DEFAULT`
+        warning
+    - `LIBRARY_PATH=/opt/homebrew/lib bin/crystal_v2 regression_tests/test_3mod.cr -o /tmp/test_3mod && scripts/run_safe.sh /tmp/test_3mod 5 512`
+      - result: prints `Int32(4)`, `Ptr(Int32)(8)`, `Arr(Int32)(24)`,
+        `done`
+    - adjacent module/class smokes:
+      - `test_6_classes`, `test_module`, and `test_complex_hierarchy` all
+        compile and run under `scripts/run_safe.sh`
+    - `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_mini_oracles.sh bin/crystal_v2`
+      - result: `Mini-oracles: 6 passed, 0 failed out of 6 tests`
+    - `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_combined.sh bin/crystal_v2 4`
+      - result: still `31 passed, 0 failed out of 31`
+    - `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_all.sh bin/crystal_v2`
+      - result: `145 passed, 1 failed out of 146`; `test_3mod` is green
+  - practical boundary:
+    - this closes the abstract-module implicit-self dispatch corridor, not the
+      remaining closure-cell front
+    - remaining `run_all.sh` failure is `test_closure_ref`
 - **Fresh unless branch local writeback checkpoint (2026-04-19, current
   session)**:
   - trustworthy setup:

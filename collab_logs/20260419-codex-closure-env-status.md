@@ -593,3 +593,53 @@ Note for Claude/Codex continuation:
 - The closure-env ABI branch remains untouched by this checkpoint.
 - The next deterministic full-suite frontier is `test_3mod`; `test_closure_ref`
   is still the closure-cell/ABI-adjacent known-red.
+
+## 2026-04-19 Codex checkpoint: abstract module self-dispatch frontier closed
+
+Status: `test_3mod` is green after a narrow HIR receiverless self-dispatch fix.
+
+Root cause:
+
+- `Type#describe` calls `name` and `byte_size` without an explicit receiver.
+- Those methods are abstract contracts declared by included modules
+  `Named`/`Sized`, then implemented by concrete subclasses.
+- HIR lowered the receiverless identifiers as static calls to
+  `Type#name` / `Type#byte_size`.
+- MIR preserved that static shape and emitted `extern_call @Type#name`, so
+  runtime reached the abstract stub instead of subclass dispatch.
+
+Fix:
+
+- `src/compiler/hir/ast_to_hir.cr` now recognizes the narrow shape in
+  `lower_identifier`: non-class, non-struct instance method; zero args;
+  identifier name matches an abstract def on a module included by the current
+  class.
+- That shape is emitted as a virtual self call, with concrete subclass targets
+  lowered and return type inferred through the existing virtual target helper.
+- The broad common-call virtual-dispatch path remains untouched.
+
+Verification:
+
+- `crystal build src/crystal_v2.cr -o bin/crystal_v2 --error-trace` — green,
+  only the known `Random::DEFAULT` warning.
+- `LIBRARY_PATH=/opt/homebrew/lib bin/crystal_v2 regression_tests/test_3mod.cr -o /tmp/test_3mod && scripts/run_safe.sh /tmp/test_3mod 5 512`
+  — prints `Int32(4)`, `Ptr(Int32)(8)`, `Arr(Int32)(24)`, `done`.
+- Adjacent smokes `test_6_classes`, `test_module`, and
+  `test_complex_hierarchy` compile and run under `scripts/run_safe.sh`.
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_mini_oracles.sh bin/crystal_v2`
+  — `Mini-oracles: 6 passed, 0 failed out of 6 tests`.
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_combined.sh bin/crystal_v2 4`
+  — `31 passed, 0 failed out of 31`.
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_all.sh bin/crystal_v2`
+  — `145 passed, 1 failed out of 146`.
+
+Remaining `run_all.sh` frontier:
+
+- `test_closure_ref` — exits `138` without expected `42`; still the
+  closure-cell/ABI-adjacent front.
+
+Note for Claude/Codex continuation:
+
+- The closure-env ABI branch remains untouched by this checkpoint.
+- The next deterministic full-suite frontier is now exactly
+  `test_closure_ref`.

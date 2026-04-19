@@ -48745,7 +48745,53 @@ module Crystal::HIR
               return_type = get_function_return_type(class_method_base)
             end
           end
-          call = Call.new(ctx.next_id, return_type, self_id, full_name, [] of ValueId)
+          call_virtual = false
+          if !@current_method_is_class && !@class_info[current_class]?.try(&.is_struct)
+            module_abstract_self_target = false
+            if included_modules = @class_included_modules[current_class]?
+              included_modules.each do |module_name|
+                if abstract_def?("#{module_name}##{name}")
+                  module_abstract_self_target = true
+                  break
+                end
+              end
+            end
+            call_virtual = module_abstract_self_target
+            if call_virtual
+              arg_types = [] of TypeRef
+              inferred_virtual_return = infer_virtual_return_type_from_class_targets(
+                current_class, name, arg_types, false, false
+              )
+              if inferred_virtual_return != TypeRef::VOID
+                return_type = inferred_virtual_return
+                set_function_type_entry(full_name, inferred_virtual_return)
+              end
+
+              ah = arg_types_hash(arg_types)
+              vf = vdispatch_flags(false)
+              key = {current_class, name, ah, vf}
+              unless @virtual_targets_lowered.includes?(key)
+                @virtual_targets_lowered.add(key)
+                record_virtual_target(current_class, name, arg_types, false, false)
+                owners = [current_class]
+                collect_subclasses_cached(current_class).each do |owner|
+                  if @lazy_rta_active
+                    next unless rta_live_owner?(owner)
+                  end
+                  owners << owner
+                end
+                ensure_method_index_built
+                owners.each do |owner|
+                  base_owner = strip_generic_args(owner)
+                  unless @method_index[base_owner]?.try(&.has_key?(name))
+                    next unless @class_info.has_key?(owner)
+                  end
+                  lower_virtual_target_owner(owner, name, arg_types, false, false)
+                end
+              end
+            end
+          end
+          call = Call.new(ctx.next_id, return_type, self_id, full_name, [] of ValueId, nil, call_virtual)
           ctx.emit(call)
           ctx.register_type(call.id, return_type)
           if function_returns_type_literal?(full_name, class_method_base)
