@@ -79492,6 +79492,39 @@ module Crystal::HIR
       malloc.id
     end
 
+    # Hoist `name` to a per-activation heap Box and register it in
+    # `@boxed_locals` so later read/write sites through the name route via
+    # PointerLoad/PointerStore (see lower_identifier / lower_assign branches,
+    # plan §5.1.1.b).
+    #
+    # Idempotent: returns the existing box_ptr if `name` is already boxed,
+    # otherwise allocates a fresh box via `emit_capture_box`, seeds it with
+    # `initial_value` (PointerStore), and registers the binding.
+    #
+    # Currently UNUSED — wired in the atomic final P1 commit by the rewrite
+    # of lower_proc_literal / lower_block_to_proc (steps 8-9 of
+    # closure_env_abi_p1_state.md). Until then `@boxed_locals` stays empty
+    # and the box-gated branches in lower_identifier/lower_assign are
+    # dormant.
+    private def ensure_box_for_local(
+      ctx : LoweringContext,
+      name : String,
+      payload_type : TypeRef,
+      initial_value : ValueId,
+    ) : ValueId
+      if existing = ctx.lookup_boxed_local(name)
+        return existing.box_ptr
+      end
+
+      box_ptr = emit_capture_box(ctx, payload_type)
+      store = PointerStore.new(ctx.next_id, payload_type, box_ptr, initial_value)
+      ctx.emit(store)
+      ctx.register_type(store.id, payload_type)
+
+      ctx.register_boxed_local(name, box_ptr, payload_type)
+      box_ptr
+    end
+
     private def lower_proc_literal(
       ctx : LoweringContext,
       node : CrystalV2::Compiler::Frontend::ProcLiteralNode,
