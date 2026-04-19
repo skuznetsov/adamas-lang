@@ -752,6 +752,61 @@ module Crystal
         raise "allocate_proc_object: not wired yet (see docs/closure_env_abi_design.md §10)"
       end
 
+      # Capture-env layout helpers (P1) — mirror HIR closure_env_offsets/
+      # closure_env_size so MIR lower_closure and MIR lower_make_proc agree
+      # with HIR on field offsets and total env size. Enforces invariant I10
+      # (§10 plan): one authoritative layout across HIR and MIR.
+      #
+      # Given the ordered capture TypeRefs, compute each field's byte offset
+      # under natural alignment, and the total env object size. Fields use
+      # the same sizing rules as tuple elements in register_tuple_types:
+      # inline primitives/enums use their native size+align; unions wider
+      # than a pointer use their full tagged size; everything else is a
+      # pointer slot (pointer_word_bytes).
+      private def closure_env_offsets(capture_types : ::Array(TypeRef)) : ::Array(Int32)
+        offsets = ::Array(Int32).new(capture_types.size)
+        current = 0_u64
+        capture_types.each do |elem_ref|
+          elem_size, elem_align = closure_env_slot_layout(elem_ref)
+          current = align_u64(current, elem_align)
+          offsets << current.to_i32
+          current += elem_size
+        end
+        offsets
+      end
+
+      private def closure_env_size(capture_types : ::Array(TypeRef)) : Int32
+        return 0 if capture_types.empty?
+        current = 0_u64
+        max_align = 1_u32
+        capture_types.each do |elem_ref|
+          elem_size, elem_align = closure_env_slot_layout(elem_ref)
+          current = align_u64(current, elem_align)
+          current += elem_size
+          max_align = elem_align if elem_align > max_align
+        end
+        align_u64(current, max_align).to_i32
+      end
+
+      private def closure_env_slot_layout(elem_ref : TypeRef) : {UInt64, UInt32}
+        elem_type = @mir_module.type_registry.get(elem_ref)
+        elem_kind = elem_type.try(&.kind)
+        is_inline = elem_kind && (elem_kind.primitive? || elem_kind.enum?)
+        elem_size = if is_inline && elem_type && elem_type.size > 0
+                      elem_type.size
+                    elsif elem_kind && elem_kind.union? && elem_type && elem_type.size > 8
+                      elem_type.size
+                    else
+                      pointer_word_bytes_u64
+                    end
+        elem_align = if is_inline && elem_type && elem_type.alignment > 0
+                       elem_type.alignment
+                     else
+                       pointer_word_align_u32
+                     end
+        {elem_size, elem_align}
+      end
+
       private def all_ref_union_descriptor?(descriptor : UnionDescriptor) : Bool
         descriptor.variants.all? do |variant|
           next true if variant.type_ref == TypeRef::NIL || variant.type_ref == TypeRef::VOID
