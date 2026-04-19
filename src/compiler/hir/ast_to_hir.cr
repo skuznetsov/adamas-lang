@@ -54,6 +54,7 @@ module Crystal::HIR
     @debug_local_snapshots : Array(Hash(String, ValueId))
     @boxed_locals : Hash(String, BoxedLocal)
     @boxed_locals_snapshots : Array(Hash(String, BoxedLocal))
+    @entry_box_required_locals : Set(String)
 
     # Type cache
     @type_cache : Hash(String, TypeRef)
@@ -96,6 +97,17 @@ module Crystal::HIR
     record BoxedLocal,
       box_ptr      : ValueId,
       payload_type : TypeRef
+
+    # Function-scope predeclaration set for P1 boxed captures.
+    #
+    # This is intentionally separate from `@boxed_locals`: requirements are
+    # discovered before lowering branch/case/loop bodies, then binding sites
+    # decide whether to call `hoist_box_for_local` once the local's initial
+    # value and payload type are known. Keeping this as a name-only set avoids
+    # inventing placeholder values or zero-initialized boxes during pre-scan.
+    #
+    # Currently dormant: no lowering path consumes this set until the atomic
+    # closure-env ABI flip wires binding-site hoists.
 
     # Exact snapshot of locals + boxed_locals + debug_locals.
     #
@@ -144,6 +156,7 @@ module Crystal::HIR
       @dot_class_literals = Set(ValueId).new
       @boxed_locals = {} of String => BoxedLocal
       @boxed_locals_snapshots = [] of Hash(String, BoxedLocal)
+      @entry_box_required_locals = Set(String).new
       @trace_shovel_types_enabled =
         ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_SHOVEL_TYPES") &&
           @function.name == "Crystal::HIR::Function#add_param$String_Crystal::HIR::TypeRef"
@@ -380,6 +393,21 @@ module Crystal::HIR
 
     def local_boxed?(name : String) : Bool
       @boxed_locals.has_key?(name)
+    end
+
+    def require_entry_box_for_local(name : String) : Nil
+      return if name.empty?
+      return if name == "self"
+
+      @entry_box_required_locals.add(name)
+    end
+
+    def entry_box_required?(name : String) : Bool
+      @entry_box_required_locals.includes?(name)
+    end
+
+    def entry_box_requirements : Set(String)
+      @entry_box_required_locals
     end
 
     # Save current locals state (for branching).
@@ -79388,6 +79416,239 @@ module Crystal::HIR
       names = Set(String).new
       body.each { |eid| collect_proc_body_ident_walk(eid, names) }
       names
+    end
+
+    private def parameter_name_set(params : Array(CrystalV2::Compiler::Frontend::Parameter)?) : Set(String)
+      names = Set(String).new
+      return names unless params
+
+      each_param(params) do |param|
+        if param_name = param.name
+          names.add((safe_slice_to_string(param_name) || ""))
+        end
+      end
+      names
+    end
+
+    # Pre-scan helper for P1 boxed-capture dominance.
+    #
+    # Given a set of names that can be bound in the owning function, find proc
+    # literals nested in `body` that reference those names. The caller will use
+    # this result to seed `LoweringContext#require_entry_box_for_local` before
+    # branch/case/loop lowering starts, so the eventual `hoist_box_for_local`
+    # call happens at the local's declaration / first assignment site.
+    #
+    # Deliberately dormant until the atomic P1 flip wires the two-stage flow:
+    #   1. pre-scan owner body -> entry-box requirements by name
+    #   2. local binding site -> seeded `hoist_box_for_local`
+    private def collect_proc_literal_box_requirements(
+      body : Array(ExprId),
+      candidate_names : Set(String),
+      arena : CrystalV2::Compiler::Frontend::ArenaLike = @arena,
+    ) : Set(String)
+      saved_arena = @arena
+      @arena = arena
+      required = Set(String).new
+      begin
+        body.each do |eid|
+          collect_proc_literal_box_requirements_walk(eid, candidate_names, required)
+        end
+        required
+      ensure
+        @arena = saved_arena
+      end
+    end
+
+    private def collect_proc_literal_box_requirements_walk(
+      expr_id : ExprId,
+      candidate_names : Set(String),
+      required : Set(String),
+    ) : Nil
+      return if expr_id.index < 0 || expr_id.index >= @arena.size
+
+      node = @arena[expr_id]
+      case node
+      when CrystalV2::Compiler::Frontend::ProcLiteralNode
+        param_names = parameter_name_set(node.params)
+        refs = collect_proc_body_identifiers(node.body)
+        refs.each do |name|
+          next if name.empty?
+          next if name == "self"
+          next if param_names.includes?(name)
+          required.add(name) if candidate_names.includes?(name)
+        end
+        # Also scan nested proc literals so requirements are visible before
+        # lowering the owning function body.
+        node.body.each do |child|
+          collect_proc_literal_box_requirements_walk(child, candidate_names, required)
+        end
+      when CrystalV2::Compiler::Frontend::BlockNode
+        node.body.each do |child|
+          collect_proc_literal_box_requirements_walk(child, candidate_names, required)
+        end
+      when CrystalV2::Compiler::Frontend::CallNode
+        collect_proc_literal_box_requirements_walk(node.callee, candidate_names, required)
+        node.args.each do |arg|
+          collect_proc_literal_box_requirements_walk(arg, candidate_names, required)
+        end
+        if block = node.block
+          collect_proc_literal_box_requirements_walk(block, candidate_names, required)
+        end
+      when CrystalV2::Compiler::Frontend::AssignNode
+        collect_proc_literal_box_requirements_walk(node.target, candidate_names, required)
+        collect_proc_literal_box_requirements_walk(node.value, candidate_names, required)
+      when CrystalV2::Compiler::Frontend::MultipleAssignNode
+        node.targets.each do |target|
+          collect_proc_literal_box_requirements_walk(target, candidate_names, required)
+        end
+        collect_proc_literal_box_requirements_walk(node.value, candidate_names, required)
+      when CrystalV2::Compiler::Frontend::TypeDeclarationNode
+        if value = node.value
+          collect_proc_literal_box_requirements_walk(value, candidate_names, required)
+        end
+      when CrystalV2::Compiler::Frontend::IfNode
+        collect_proc_literal_box_requirements_walk(node.condition, candidate_names, required)
+        node.then_body.each do |child|
+          collect_proc_literal_box_requirements_walk(child, candidate_names, required)
+        end
+        if elsifs = node.elsifs
+          elsifs.each do |branch|
+            collect_proc_literal_box_requirements_walk(branch.condition, candidate_names, required)
+            branch.body.each do |child|
+              collect_proc_literal_box_requirements_walk(child, candidate_names, required)
+            end
+          end
+        end
+        if else_body = node.else_body
+          else_body.each do |child|
+            collect_proc_literal_box_requirements_walk(child, candidate_names, required)
+          end
+        end
+      when CrystalV2::Compiler::Frontend::UnlessNode
+        collect_proc_literal_box_requirements_walk(node.condition, candidate_names, required)
+        node.then_branch.each do |child|
+          collect_proc_literal_box_requirements_walk(child, candidate_names, required)
+        end
+        if else_branch = node.else_branch
+          else_branch.each do |child|
+            collect_proc_literal_box_requirements_walk(child, candidate_names, required)
+          end
+        end
+      when CrystalV2::Compiler::Frontend::CaseNode
+        if value = node.value
+          collect_proc_literal_box_requirements_walk(value, candidate_names, required)
+        end
+        node.when_branches.each do |branch|
+          branch.conditions.each do |condition|
+            collect_proc_literal_box_requirements_walk(condition, candidate_names, required)
+          end
+          branch.body.each do |child|
+            collect_proc_literal_box_requirements_walk(child, candidate_names, required)
+          end
+        end
+        if else_branch = node.else_branch
+          else_branch.each do |child|
+            collect_proc_literal_box_requirements_walk(child, candidate_names, required)
+          end
+        end
+        if in_branches = node.in_branches
+          in_branches.each do |branch|
+            branch.conditions.each do |condition|
+              collect_proc_literal_box_requirements_walk(condition, candidate_names, required)
+            end
+            branch.body.each do |child|
+              collect_proc_literal_box_requirements_walk(child, candidate_names, required)
+            end
+          end
+        end
+      when CrystalV2::Compiler::Frontend::WhileNode
+        collect_proc_literal_box_requirements_walk(node.condition, candidate_names, required)
+        node.body.each do |child|
+          collect_proc_literal_box_requirements_walk(child, candidate_names, required)
+        end
+      when CrystalV2::Compiler::Frontend::UntilNode
+        collect_proc_literal_box_requirements_walk(node.condition, candidate_names, required)
+        node.body.each do |child|
+          collect_proc_literal_box_requirements_walk(child, candidate_names, required)
+        end
+      when CrystalV2::Compiler::Frontend::LoopNode
+        node.body.each do |child|
+          collect_proc_literal_box_requirements_walk(child, candidate_names, required)
+        end
+      when CrystalV2::Compiler::Frontend::ForNode
+        node.body.each do |child|
+          collect_proc_literal_box_requirements_walk(child, candidate_names, required)
+        end
+      when CrystalV2::Compiler::Frontend::BeginNode
+        node.body.each do |child|
+          collect_proc_literal_box_requirements_walk(child, candidate_names, required)
+        end
+        if clauses = node.rescue_clauses
+          clauses.each do |clause|
+            clause.body.each do |child|
+              collect_proc_literal_box_requirements_walk(child, candidate_names, required)
+            end
+          end
+        end
+        if else_body = node.else_body
+          else_body.each do |child|
+            collect_proc_literal_box_requirements_walk(child, candidate_names, required)
+          end
+        end
+        if ensure_body = node.ensure_body
+          ensure_body.each do |child|
+            collect_proc_literal_box_requirements_walk(child, candidate_names, required)
+          end
+        end
+      when CrystalV2::Compiler::Frontend::BinaryNode
+        collect_proc_literal_box_requirements_walk(node.left, candidate_names, required)
+        collect_proc_literal_box_requirements_walk(node.right, candidate_names, required)
+      when CrystalV2::Compiler::Frontend::UnaryNode
+        collect_proc_literal_box_requirements_walk(node.operand, candidate_names, required)
+      when CrystalV2::Compiler::Frontend::TernaryNode
+        collect_proc_literal_box_requirements_walk(node.condition, candidate_names, required)
+        collect_proc_literal_box_requirements_walk(node.true_branch, candidate_names, required)
+        collect_proc_literal_box_requirements_walk(node.false_branch, candidate_names, required)
+      when CrystalV2::Compiler::Frontend::MemberAccessNode
+        collect_proc_literal_box_requirements_walk(node.object, candidate_names, required)
+      when CrystalV2::Compiler::Frontend::IndexNode
+        collect_proc_literal_box_requirements_walk(node.object, candidate_names, required)
+        node.indexes.each do |idx|
+          collect_proc_literal_box_requirements_walk(idx, candidate_names, required)
+        end
+      when CrystalV2::Compiler::Frontend::ArrayLiteralNode
+        node.elements.each do |element|
+          collect_proc_literal_box_requirements_walk(element, candidate_names, required)
+        end
+      when CrystalV2::Compiler::Frontend::TupleLiteralNode
+        node.elements.each do |element|
+          collect_proc_literal_box_requirements_walk(element, candidate_names, required)
+        end
+      when CrystalV2::Compiler::Frontend::HashLiteralNode
+        node.entries.each do |entry|
+          collect_proc_literal_box_requirements_walk(entry.key, candidate_names, required)
+          collect_proc_literal_box_requirements_walk(entry.value, candidate_names, required)
+        end
+      when CrystalV2::Compiler::Frontend::StringInterpolationNode
+        node.pieces.each do |piece|
+          if child = piece.expr
+            collect_proc_literal_box_requirements_walk(child, candidate_names, required)
+          end
+        end
+      when CrystalV2::Compiler::Frontend::ReturnNode
+        if value = node.value
+          collect_proc_literal_box_requirements_walk(value, candidate_names, required)
+        end
+      when CrystalV2::Compiler::Frontend::YieldNode
+        if args = node.args
+          args.each do |arg|
+            collect_proc_literal_box_requirements_walk(arg, candidate_names, required)
+          end
+        end
+      when CrystalV2::Compiler::Frontend::RangeNode
+        collect_proc_literal_box_requirements_walk(node.begin_expr, candidate_names, required) if node.begin_expr.index >= 0
+        collect_proc_literal_box_requirements_walk(node.end_expr, candidate_names, required) if node.end_expr.index >= 0
+      end
     end
 
     private def collect_proc_body_ident_walk(expr_id : ExprId, names : Set(String))

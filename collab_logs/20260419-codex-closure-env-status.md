@@ -5,6 +5,11 @@ Branch: `closure-env-abi-p1-wip`
 
 ## Current HEAD
 
+- This status file is maintained as a handoff log; inspect `git log --oneline`
+  for the exact latest commit hash after each Codex update.
+- Latest Codex update in this file: entry-box requirement scaffold for boxed
+  capture predeclaration.
+- `a1fcb5fd docs: add closure env ABI handoff status`
 - `85c39c79 scaffold(proc-abi): require seeded entry hoists for boxed locals`
 - `cc4d0f31 perf(hir): cache debug env lookups`
 - Parent context: `31878cbd` introduced I14-monotonic dominance by entry-block allocation.
@@ -56,11 +61,17 @@ Both expect `12\n12` from `counter = 5; p.call(7); puts counter`. This catches t
 
 ## Next safe step
 
-Do not start the atomic Proc ABI flip until boxed-capture predeclaration is designed/implemented.
+Do not start the atomic Proc ABI flip until boxed-capture predeclaration is consumed at binding sites and verified.
+
+Additive scaffold now present:
+
+- `LoweringContext#require_entry_box_for_local(name)` stores function-scope, name-only entry-box requirements.
+- `LoweringContext#entry_box_required?(name)` is the future binding-site guard.
+- `collect_proc_literal_box_requirements(body, candidate_names)` finds proc literals nested in a body that reference candidate locals. It is intentionally dormant until P1 wires the two-stage flow:
+  pre-scan owner body → mark requirements → hoist at local declaration / first assignment with the real initial value.
 
 Next implementation unit should be additive or explicitly WIP:
 
-1. Add a pre-scan or equivalent capture planning pass that determines which names require Boxes before lowering the owning body.
+1. Seed entry-box requirements before lowering the owning function/proc body.
 2. Wire local declaration / first assignment lowering to call `hoist_box_for_local(ctx, name, payload_type, initial_value)` while still in entry-block lowering.
 3. Make `lower_proc_literal` / `lower_block_to_proc` require an existing `BoxedLocal` for boxed captures instead of late-hoisting.
-
