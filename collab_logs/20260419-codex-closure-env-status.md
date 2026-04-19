@@ -312,3 +312,42 @@ Remaining combined frontiers:
 
 - `test_complex_generic_dispatch` — `Pointer#width` abort stub.
 - `test_generics_unions` — segfault after several `unknown` outputs.
+
+## 2026-04-19 Codex checkpoint: abstract Array#sum generic dispatch frontier closed
+
+Status: `test_complex_generic_dispatch` is green after a bounded HIR Array#sum
+intrinsic.
+
+Root cause:
+
+- `Container#width` executes `@children.sum { |c| c.width }` where `@children`
+  is `Array(Widget)`.
+- The previous lowering went through the current dynamic Array#reduce intrinsic,
+  which hardcoded the element type to `Pointer`.
+- The block body therefore emitted `Pointer#width` instead of virtual
+  `Widget#width`, producing the abort stub `STUB CALLED: Pointer#width`.
+
+Fix:
+
+- `src/compiler/hir/ast_to_hir.cr` now intercepts `Array#sum { }` for
+  non-primitive element arrays and lowers a direct Int32 accumulator loop.
+- The block parameter type comes from `array_element_type_for_value`, preserving
+  `Widget` for `Array(Widget)` and allowing normal virtual dispatch.
+- Added `regression_tests/array_widget_sum_block_repro.sh` for the reduced
+  `Array(Widget)#sum { |item| item.width }` route.
+
+Verification:
+
+- `crystal build src/crystal_v2.cr -o bin/crystal_v2 --error-trace` — green,
+  only the known `Random::DEFAULT` warning.
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/array_widget_sum_block_repro.sh bin/crystal_v2` — green, prints `array_widget_sum_block_ok`.
+- `regression_tests/combined/test_complex_generic_dispatch.cr` — green, prints
+  `generic_dispatch_all_ok` under `scripts/run_safe.sh`.
+- Focused HIR for `Container#width` now shows `index_get ... : Widget` followed
+  by virtual `Widget#width()`, not `Pointer#width`.
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_combined.sh bin/crystal_v2 4`
+  — `30 passed, 1 failed out of 31`.
+
+Remaining combined frontier:
+
+- `test_generics_unions` — still segfaults after several `unknown` outputs.

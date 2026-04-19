@@ -1,7 +1,25 @@
 # LANDMARKS
 
-Updated: 2026-04-11
+Updated: 2026-04-19
 Context: compiler/bootstrap/stage2-stability
+
+[LM-460|verified]: `combined/test_complex_generic_dispatch.cr` exposed an
+`Array#sum { }` lowering/type-preservation bug, not a virtual dispatch table
+bug. In `Container#width`, the stdlib `Enumerable#sum` route lowered through
+the current dynamic `Array#reduce` intrinsic, whose element type was hardcoded
+to `Pointer`; the block therefore emitted `Pointer#width` instead of virtual
+`Widget#width`. The bounded HIR fix adds a direct `Array#sum { |elem| ... }`
+intrinsic for non-primitive element arrays and keeps the block parameter typed
+from `array_element_type_for_value`. Regression
+`regression_tests/array_widget_sum_block_repro.sh` is green, focused
+`combined/test_complex_generic_dispatch.cr` prints `generic_dispatch_all_ok`,
+and focused HIR for `Container#width` now shows `index_get ... : Widget`
+followed by virtual `Widget#width()`, with no `Pointer#width` call on the
+reduced path. Combined with `LIBRARY_PATH=/opt/homebrew/lib` improves to
+30/31; the remaining combined failure is `test_generics_unions`. Boundary:
+this is an Int32-producing bootstrap sum intrinsic for reference-like arrays,
+not a complete replacement for Crystal's generic `Enumerable#sum` semantics.
+{F/G/R: 0.90/0.54/0.93} [verified]
 
 [LM-459|verified]: `Array(Bool)#join("|")` exposed a module-super owner bug,
 not a string runtime issue. `Array#join` is supplied by `Indexable#join`; when

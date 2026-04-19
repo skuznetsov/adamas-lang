@@ -1,6 +1,39 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-14)
 
 ## Current Status
+- **Fresh Array#sum abstract-element checkpoint (2026-04-19, current
+  session)**:
+  - trustworthy setup:
+    - `src/compiler/hir/ast_to_hir.cr`
+      - `Array#sum { |x| expr }` over reference-like array elements now has a
+        direct HIR intrinsic instead of routing through the current stdlib
+        `Enumerable#sum` / `reduce` path
+      - the intrinsic preserves the array element type for the block parameter,
+        so `Array(Widget)#sum { |item| item.width }` dispatches through
+        virtual `Widget#width` instead of emitting `Pointer#width`
+      - the override is intentionally limited to non-primitive element arrays
+        and currently targets Int32-producing bootstrap sums
+    - `regression_tests/array_widget_sum_block_repro.sh`
+      - covers the reduced abstract/base-class element sum route behind the
+        previous `Pointer#width` abort stub
+  - decisive evidence:
+    - `crystal build src/crystal_v2.cr -o bin/crystal_v2 --error-trace`
+      - result: success with only the known host stdlib `Random::DEFAULT`
+        warning
+    - `LIBRARY_PATH=/opt/homebrew/lib regression_tests/array_widget_sum_block_repro.sh bin/crystal_v2`
+      - result: fixed marker `array_widget_sum_block_ok`
+    - `regression_tests/combined/test_complex_generic_dispatch.cr`
+      - result: prints `generic_dispatch_all_ok` and exits `0`
+    - focused HIR for `Container#width`
+      - result: `index_get` yields `Widget`, and the block body calls
+        `Widget#width()` virtually; no `Pointer#width` call remains on the
+        reduced path
+    - `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_combined.sh bin/crystal_v2 4`
+      - result: `30 passed, 1 failed out of 31`; `test_complex_generic_dispatch`
+        is now green
+  - practical boundary:
+    - this fixes the generic-dispatch/abstract-array `sum` frontier
+    - remaining combined-suite frontier is `test_generics_unions`
 - **Fresh module-super join checkpoint (2026-04-19, current session)**:
   - trustworthy setup:
     - `src/compiler/hir/ast_to_hir.cr`

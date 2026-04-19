@@ -62807,6 +62807,21 @@ module Crystal::HIR
         end
       end
 
+      # Handle Array#sum { |x| expr } intrinsic for reference-like arrays.
+      # This avoids the stdlib `typeof(yield Enumerable.element_type(self))`
+      # path, which can degrade block element receivers to Pointer in V2.
+      if method_name == "sum" && receiver_id && args.empty?
+        if blk_expr = block_expr
+          blk_node = @arena[blk_expr]
+          if blk_node.is_a?(CrystalV2::Compiler::Frontend::BlockNode)
+            if array_intrinsic_receiver?(ctx, receiver_id)
+              element_type = array_element_type_for_value(ctx, receiver_id, TypeRef::POINTER)
+              return lower_array_sum_block_dynamic(ctx, receiver_id, blk_node) unless element_type.primitive?
+            end
+          end
+        end
+      end
+
       # Handle Array#map_with_index { |elem, idx| expr } intrinsic
       if method_name == "map_with_index"
         if receiver_id
@@ -72696,7 +72711,80 @@ module Crystal::HIR
       not_result.id
     end
 
-    # Lower Array#reduce { |acc, elem| ... } intrinsic
+    # Lower Array#sum { |elem| ... } intrinsic for Int32-producing blocks.
+    private def lower_array_sum_block_dynamic(
+      ctx : LoweringContext,
+      array_id : ValueId,
+      block : CrystalV2::Compiler::Frontend::BlockNode,
+    ) : ValueId
+      param_name = block.params.try(&.first?).try(&.name).try { |n| String.new(n) } || "__sum_elem"
+
+      entry_block = ctx.current_block
+      zero = Literal.new(ctx.next_id, TypeRef::INT32, 0_i64)
+      ctx.emit(zero)
+      one = Literal.new(ctx.next_id, TypeRef::INT32, 1_i64)
+      ctx.emit(one)
+      size_val = ArraySize.new(ctx.next_id, TypeRef::INT32, array_id)
+      ctx.emit(size_val)
+
+      cond_block = ctx.create_block
+      body_block = ctx.create_block
+      exit_block = ctx.create_block
+
+      ctx.terminate(Jump.new(cond_block))
+
+      ctx.current_block = cond_block
+      index_phi = Phi.new(ctx.next_id, TypeRef::INT32)
+      index_phi.add_incoming(entry_block, zero.id)
+      ctx.emit(index_phi)
+
+      acc_phi = Phi.new(ctx.next_id, TypeRef::INT32)
+      acc_phi.add_incoming(entry_block, zero.id)
+      ctx.emit(acc_phi)
+      ctx.register_type(acc_phi.id, TypeRef::INT32)
+
+      cmp = BinaryOperation.new(ctx.next_id, TypeRef::BOOL, BinaryOp::Lt, index_phi.id, size_val.id)
+      ctx.emit(cmp)
+      ctx.terminate(Branch.new(cmp.id, body_block, exit_block))
+
+      ctx.current_block = body_block
+      ctx.push_scope(ScopeKind::Block)
+
+      element_type = array_element_type_for_value(ctx, array_id, TypeRef::POINTER)
+      index_get = IndexGet.new(ctx.next_id, element_type, array_id, index_phi.id)
+      ctx.emit(index_get)
+      ctx.register_type(index_get.id, element_type)
+      ctx.register_local(param_name, index_get.id)
+
+      yielded = lower_body(ctx, block.body)
+      body_exit_block = ctx.current_block
+      ctx.pop_scope
+
+      term = ctx.get_block(body_exit_block).terminator
+      unless term.is_a?(Unreachable)
+        return acc_phi.id
+      end
+
+      addend = yielded || zero.id
+      if ctx.type_of(addend) != TypeRef::INT32
+        cast = Cast.new(ctx.next_id, TypeRef::INT32, addend, TypeRef::INT32)
+        ctx.emit(cast)
+        ctx.register_type(cast.id, TypeRef::INT32)
+        addend = cast.id
+      end
+      new_acc = BinaryOperation.new(ctx.next_id, TypeRef::INT32, BinaryOp::Add, acc_phi.id, addend)
+      ctx.emit(new_acc)
+      new_i = BinaryOperation.new(ctx.next_id, TypeRef::INT32, BinaryOp::Add, index_phi.id, one.id)
+      ctx.emit(new_i)
+      index_phi.add_incoming(body_exit_block, new_i.id)
+      acc_phi.add_incoming(body_exit_block, new_acc.id)
+      ctx.terminate(Jump.new(cond_block))
+
+      ctx.current_block = exit_block
+      ctx.register_type(acc_phi.id, TypeRef::INT32)
+      acc_phi.id
+    end
+
     # Reduces array to single value by iterating with accumulator
     private def lower_array_reduce_dynamic(
       ctx : LoweringContext,
