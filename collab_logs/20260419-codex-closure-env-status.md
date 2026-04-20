@@ -944,3 +944,34 @@ Boundary:
 
 - Legacy `@closure_ref_cells` and the dual-mode `lower_block_to_proc` path
   remain live. Removing those is still behavior-changing ABI cleanup work.
+
+## 2026-04-19 Codex checkpoint: raw callback shape guard added
+
+Status: additive regression guard only. No compiler behavior changed.
+
+Applied:
+
+- Added `regression_tests/p1_raw_callback_shape_check.sh`.
+- The guard compiles and runs a focused direct-`yield` callback fixture:
+  `def each_once(&block : Int32 ->); yield 3; end`, with a mutable captured
+  `sum`.
+- It asserts:
+  - runtime output is `4`;
+  - focused HIR initializes a `__closure_cell_N`;
+  - focused HIR creates a bare `func_pointer @__crystal_block_proc_N`;
+  - focused HIR does not materialize `make_proc` / `make_closure`;
+  - the raw block function reads and writes the same closure cell and does not
+    use `@__closure_env`.
+
+Verification:
+
+- `bash -n regression_tests/p1_raw_callback_shape_check.sh`
+  — clean.
+- `regression_tests/p1_raw_callback_shape_check.sh bin/crystal_v2; echo RAW_RC:$?`
+  — `p1_raw_callback_shape_ok block_fn=__crystal_block_proc_1 cell=__closure_cell_2`, `RAW_RC:0`.
+
+Boundary:
+
+- This pins the currently intentional legacy raw callback shape. It should be
+  updated only when the remaining closure-env ABI cleanup deliberately replaces
+  that shape.
