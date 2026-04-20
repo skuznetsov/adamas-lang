@@ -2,9 +2,9 @@
 # No-prelude guard that forces a non-inlined HIR::Yield and verifies MIR
 # lower_yield reaches the explicit Proc carrier trace path.
 #
-# This is intentionally not a behavior test for heap Proc dispatch. The current
-# P1 scaffold records producer provenance only, so a block parameter yield target
-# is expected to trace as ProcCarrier::Unknown.
+# This is intentionally not a behavior test for heap Proc dispatch. Runtime
+# yield block params are still raw function pointers, so the inferred yield
+# target is expected to trace as ProcCarrier::RawFnptrCallback.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -50,7 +50,7 @@ fi
 CRYSTAL_V2_DISABLE_INLINE_YIELD=1 CRYSTAL_V2_PROC_CARRIER_TRACE=1 \
   "$COMPILER" "$SRC" --no-prelude -o "$BIN" >"$TRACE_LOG" 2>&1
 
-if ! grep -Eq '\[PROC_CARRIER\] yield func=reducer target=[0-9]+ carrier=Unknown' "$TRACE_LOG"; then
+if ! grep -Eq '\[PROC_CARRIER\] yield func=reducer target=[0-9]+ carrier=RawFnptrCallback' "$TRACE_LOG"; then
   echo "p1 no-prelude yield carrier regression: lower_yield carrier trace missing" >&2
   tail -20 "$TRACE_LOG" >&2
   exit 1

@@ -1220,6 +1220,12 @@ module Crystal
         @value_map = {} of HIR::ValueId => ValueId
         @hir_value_types = {} of HIR::ValueId => HIR::TypeRef
         @hir_value_carriers = {} of HIR::ValueId => ProcCarrier
+        # Runtime yield callbacks are still raw function pointers. Mark only
+        # the inferred yield block parameter; future heap-yield dispatch needs
+        # callsite carrier propagation instead of a type-only Proc heuristic.
+        if block_param_id = @current_block_param_id
+          @hir_value_carriers[block_param_id] = ProcCarrier::RawFnptrCallback
+        end
         @hir_constant_values = ::Set(HIR::ValueId).new
         @block_map = [] of BlockId?
         @pending_phis = [] of Tuple(Phi, HIR::Phi)
