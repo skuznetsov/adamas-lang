@@ -394,6 +394,10 @@
       - result: fixed-state exit `1`; reports `result=12, counter=12`
     - `regression_tests/escaping_branch_closure_capture_repro.sh bin/crystal_v2`
       - result: fixed-state exit `1`; reports branch-local proc escaped and mutated boxed counter
+    - `regression_tests/p1_ir_shape_check.sh bin/crystal_v2`
+      - result: `p1_ir_shape_ok`; HIR/LLVM shape still matches the current
+        hybrid boundary (`make_closure` metadata, `make_proc`, pointer-shaped
+        Proc values, env-first captured block body)
     - `scripts/run_safe.sh` checks are green for:
       - `regression_tests/test_proc_basic.cr`
       - `regression_tests/test_blocks.cr`

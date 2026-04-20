@@ -816,3 +816,45 @@ Verification:
   — correct `12/12`, `CONDITIONAL_RC:1`.
 - `regression_tests/escaping_branch_closure_capture_repro.sh bin/crystal_v2; echo ESCAPING_RC:$?`
   — correct branch-local escape output, `ESCAPING_RC:1`.
+
+## 2026-04-19 Codex checkpoint: P1 shape guard added
+
+Status: additive regression guard only. No compiler behavior changed.
+
+Applied:
+
+- Added `regression_tests/p1_ir_shape_check.sh`.
+- The script builds a focused fixture, emits HIR and LLVM IR, dynamically
+  extracts the captured block proc symbol from HIR, and checks the current
+  hybrid P1 boundary:
+  - HIR has boxed capture metadata in `make_closure` dumps.
+  - User-visible Proc values are materialized by `make_proc`.
+  - The focused heap block `Proc#call` does not carry hidden capture args.
+  - LLVM does not use `%__crystal_proc` as a by-value Proc representation.
+  - The captured block function receives `ptr %__closure_env` and reads through
+    it, not through closure-cell globals.
+  - The heap Proc object stores `fn@0` and `env@8`, then dispatch passes env to
+    the loaded function pointer.
+
+Verification:
+
+- `bash -n regression_tests/p1_ir_shape_check.sh`
+  — clean.
+- `regression_tests/p1_ir_shape_check.sh bin/crystal_v2; echo P1_SHAPE_RC:$?`
+  — `p1_ir_shape_ok captured_fn=__crystal_block_proc_1`, `P1_SHAPE_RC:0`.
+- `regression_tests/spawn_capture_block_param_repro.sh bin/crystal_v2`
+  — fixed-state exit `1`; both `_ok` markers.
+- `regression_tests/conditional_closure_capture_repro.sh bin/crystal_v2`
+  — fixed-state exit `1`; correct `12/12`.
+- `regression_tests/escaping_branch_closure_capture_repro.sh bin/crystal_v2`
+  — fixed-state exit `1`; correct branch-local escape output.
+- `git diff --check`
+  — clean.
+
+Boundary:
+
+- This guard intentionally documents the current hybrid boundary. It does not
+  claim the larger closure-env ABI cleanup is complete.
+- `@proc_captures_by_value`, `@closure_ref_cells`, and the dual-mode
+  `lower_block_to_proc` legacy path remain live and should not be removed
+  outside a coupled ABI cleanup.
