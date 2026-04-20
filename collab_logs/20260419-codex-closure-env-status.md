@@ -1001,3 +1001,39 @@ Conclusion:
   specific env-sensitive block callsites to the existing heap Proc path, while
   leaving direct-`yield` raw callbacks unchanged until a coupled ABI change is
   planned.
+
+## 2026-04-19 Codex checkpoint: MIR Yield type-only heap dispatch rejected
+
+Status: local experiment reverted; no source behavior change committed.
+
+Experiment:
+
+- Patched MIR `lower_yield` to call existing `call_heap_proc(block_val, args,
+  return_type)` whenever `block_val`'s HIR type descriptor had
+  `TypeKind::Proc`.
+- This was intended as a narrow defense-in-depth guard for Proc-typed yield
+  targets, while leaving `TypeRef::POINTER` raw callbacks unchanged.
+
+Result:
+
+- Rejected. The combined suite regressed badly under the candidate binary,
+  proving that some raw callback carriers are still Proc-typed in HIR while the
+  actual ABI value is a bare function pointer.
+- After reverting the source and rebuilding `bin/crystal_v2`, the broad red was
+  gone. A repeated combined run reached `30 passed, 1 failed`; the single
+  failure was `test_edge_string_prefix_suffix` linking with `library 'gc' not
+  found`.
+- Focused rerun with the same `LIBRARY_PATH=/opt/homebrew/lib` compiled,
+  linked, and ran `test_edge_string_prefix_suffix` successfully, printing
+  `edge_sb_prefix_ok`.
+
+Conclusion:
+
+- `TypeKind::Proc` is not a safe MIR `Yield` carrier discriminator in the
+  current hybrid ABI.
+- Any future yield rewrite needs an explicit HIR/MIR carrier marker or value
+  provenance check that distinguishes heap `MakeProc` objects from raw callback
+  function pointers.
+- Process note: after reverting source from a candidate, rebuild
+  `bin/crystal_v2` before rerunning suites; otherwise the runner tests a stale
+  candidate binary.

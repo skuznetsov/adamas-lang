@@ -49,6 +49,13 @@ hidden env pointer as a local cleanup because call sites pass only one callback
 value and MIR `Yield` lowering dispatches `call_indirect(block_val, args, ...)`.
 Replacing this path requires a coupled carrier/signature/yield-dispatch change.
 
+MIR `Yield` discriminator checkpoint (2026-04-19): a local experiment that
+switched `lower_yield` to `call_heap_proc(...)` whenever `block_val` had a
+`TypeKind::Proc` descriptor was rejected. Combined-suite block/yield tests
+regressed because some raw callback carriers are still Proc-typed in HIR while
+the ABI value is a bare function pointer. Any future yield rewrite needs an
+explicit carrier/provenance marker, not a type-only `Proc` heuristic.
+
 Before editing, re-run `rg -n` for these symbols; exact line numbers are
 expected to drift.
 

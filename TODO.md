@@ -420,6 +420,9 @@
     - this is not yet a universal heap-backed block callback ABI; raw runtime-yield callbacks are intentionally preserved
     - raw callbacks cannot get hidden env as a local cleanup; replacing
       `@closure_ref_cells` there requires coupled carrier/signature/yield-dispatch work
+    - do not key MIR `Yield` heap dispatch on `TypeKind::Proc` alone: a
+      2026-04-19 local experiment showed raw callback carriers can still be
+      Proc-typed in HIR while ABI-carried as bare function pointers
     - remaining combined failures are separate hash/generic/join frontiers
 - **Fresh HIR int-iterator checkpoint: fixed-format float printing now emits the integer prefix for Ryu `d2fixed_buffered_n` instead of skipping the `Int#downto` block body (2026-04-14, current session)**:
   - trustworthy setup:
