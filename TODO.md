@@ -9,9 +9,9 @@
       - `def_contains_block_call?` keeps its AST scan and adds a bounded
         source-span fallback for direct `block.call` bodies that the current
         AST traversal can miss
-      - boxed locals remain monotonic across same-function scopes, so a box
-        created while materializing a block Proc is still visible to parent
-        reads after inline block-argument binding restores locals
+      - boxed locals are owner-aware: a box created while materializing a
+        block Proc stays visible to the owning parent local, but same-name
+        locals in later lexical scopes do not read the stale box
     - no stdlib edits and no broad Proc ABI flip
   - decisive evidence:
     - `LIBRARY_PATH=/opt/homebrew/lib bin/crystal_v2 regression_tests/test_closure_ref.cr -o /tmp/test_closure_ref && scripts/run_safe.sh /tmp/test_closure_ref 5 512`
@@ -28,11 +28,14 @@
         clean repeated combined run both passed
     - `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_all.sh bin/crystal_v2`
       - result: `146 passed, 0 failed out of 146`
+    - `regression_tests/spawn_capture_block_param_repro.sh bin/crystal_v2`
+      - result: both spawn probes now print `_ok`; script exits `1`, which is
+        its forward-guard "bug fixed" status
   - practical boundary:
     - this closes the current full-suite red `test_closure_ref` without
       claiming the broader closure-env ABI is complete
-    - next frontier returns to the tracked closure-env ABI/P1 work and the
-      known-red guards outside `run_all.sh`
+    - next frontier returns to the tracked closure-env ABI/P1 work; the
+      previous two-probe spawn capture guard is no longer known-red
 - **Fresh abstract module self-dispatch checkpoint (2026-04-19, current
   session)**:
   - trustworthy setup:

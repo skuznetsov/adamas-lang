@@ -669,9 +669,9 @@ Fix:
   source-span fallback for direct `block.call` bodies.
 - Late call lowering, inline-yield fallback, and inline block-param binding all
   use the same predicate.
-- `LoweringContext#pop_scope` keeps `@boxed_locals` monotonic across
-  same-function scopes; nested proc/block bodies already use separate
-  `LoweringContext` instances.
+- Boxed locals stay visible to their owning lexical binding across
+  same-function scope restores; same-name locals in later scopes are rejected
+  by owner-aware lookup.
 
 Verification:
 
@@ -716,7 +716,7 @@ Applied:
   `lower_make_proc`, `call_heap_proc`, and `lower_closure`.
 - The plan explicitly marks the old control-flow map as historical and
   re-anchor-before-edit.
-- I14-monotonic text now matches code: `restore_locals` does not rewind
+- I14-monotonic text matched code at that checkpoint: `restore_locals` does not rewind
   `@boxed_locals`; `push_scope` records a snapshot only for symmetry/debugging,
   and `pop_scope` discards it.
 - `regression_tests/conditional_closure_capture_repro.sh` now runs the compiled
@@ -742,3 +742,49 @@ Still behavior-changing / not split:
   legacy closure cells for other block-proc paths.
 - Removing those paths must stay coupled with the ABI cleanup so no mixed
   hidden-arg/env-first calling state is committed.
+
+## 2026-04-19 Codex checkpoint: owner-aware boxed locals close spawn guard
+
+Status: bounded behavior fix on top of the heap Proc block-argument checkpoint.
+This is still not the full closure-env ABI cleanup.
+
+Finding:
+
+- The old `spawn_capture_block_param_repro.sh` became partial after
+  `test_closure_ref` was fixed: probe A printed `_ok`, but probe B still used
+  the stale final value from probe A.
+- A split two-probe LLVM check showed the second `4.times do |i|` passed the
+  first probe's boxed `i` into `send_id`, because `@boxed_locals` was keyed only
+  by name and preserved across same-function scopes.
+
+Applied:
+
+- `LoweringContext::BoxedLocal` now records `owner_local`.
+- Boxed reads, writes, and `capture_var_for_env` reuse a box only when the
+  current lexical binding matches `owner_local`, or when the entry is env-bound
+  / entry-required.
+- `hoist_box_for_local` records the owning `initial_value` when it creates a
+  box, so current-block boxes for loop/block parameters do not leak to later
+  same-name block parameters.
+- The P1 plan now names this I14-owner-aware, replacing the too-broad
+  append-only wording.
+
+Verification:
+
+- `regression_tests/spawn_capture_block_param_repro.sh bin/crystal_v2; echo SPAWN_RC:$?`
+  — both probes print `_ok`; script exits `1` (fixed forward-guard status).
+- `bin/crystal_v2 regression_tests/test_closure_ref.cr -o /tmp/test_closure_ref && scripts/run_safe.sh /tmp/test_closure_ref 5 512`
+  — prints `42`.
+- Manual two-probe file prints `a=6` and `b=6`.
+- `regression_tests/test_proc_basic.cr`, `test_blocks.cr`, and
+  `test_blocks_closures.cr` compile and run under `scripts/run_safe.sh`.
+- `regression_tests/run_mini_oracles.sh bin/crystal_v2`
+  — `6 passed, 0 failed out of 6`.
+- `regression_tests/run_combined.sh bin/crystal_v2 4`
+  — `31 passed, 0 failed out of 31`.
+
+Boundary:
+
+- `@proc_captures_by_value` and legacy `@closure_ref_cells` are still live.
+- The remaining ABI cleanup must still be atomic; this checkpoint only fixes
+  the stale same-name boxed-local aliasing exposed by the spawn guard.

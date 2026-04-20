@@ -269,7 +269,7 @@ P1 must preserve every invariant below. Violation → revert.
 | I11 | (added) Every captured local that is written from inside any closure over it, OR has `CapturedVar#by_reference == true`, is hoisted to a per-lexical-activation heap Box. All reads/writes (including parent-scope) go through that Box. Multiple closures over the same variable share the same Box pointer. |
 | I12 | (added) `HIR::FuncPointer` is typed as `TypeRef::POINTER` and is never the user-visible Proc value. The only producer of Proc-typed values is `HIR::MakeProc(fn_ptr, env_ptr)`. |
 | I13 | (added, round 3) Every `CapturedVar` on a `MakeClosure` has `env_slot_type`, `payload_type`, `boxed` set at HIR emission such that: `boxed ⇒ env_slot_type == POINTER`, `!boxed ⇒ env_slot_type == payload_type`, and `boxed == (by_reference || written_captures.includes?(name))`. MIR `lower_closure` must not recompute these — it reads them straight off the `CapturedVar`. |
-| I14 | (added, round 3; revised 2026-04-19) `LoweringContext.lookup_local` signature is unchanged (`ValueId?`). Boxed-local state is carried in a parallel map `@boxed_locals : Hash(String, BoxedLocal)` with `{box_ptr, payload_type}` entries. **I14-monotonic (revised):** `@boxed_locals` is append-only within a function scope; dominance is enforced at the hoist site, not via snapshot/restore. `LoweringContext#require_entry_box_for_local` records name-only pre-scan requirements before branch/case/loop lowering, and `seed_entry_box_requirements_for_body` / `seed_entry_box_requirements_for_main` seed those names before owner-body lowering. `hoist_box_for_local(ctx, name, payload_type, initial_value)` emits an entry-block allocation when the name was predeclared as entry-box-required, then seeds the box from the current local value at the original binding site. Loop/block parameters that are not entry-box-required may still use a current-block allocation so each dynamic invocation gets its own box. Therefore P1 must predeclare/hoist parent-scope boxes at local declaration or first assignment before branch/case/loop lowering, not discover and hoist an already-initialized parent local from a proc literal lowered inside a branch. `save_locals` returns a `LocalsSnapshot` that carries `{locals, boxed_locals, debug_locals}`; `restore_locals(snap)` restores `@locals` and `@debug_local_ids` but **does not rewind `@boxed_locals`** — rewinding would re-hide a still-dominating box. `restore_locals(Hash)` likewise preserves `@boxed_locals`. `push_scope` records a boxed-local snapshot for symmetry/debugging, but `pop_scope` only discards that snapshot and does not install it back; nested proc/block bodies use separate `LoweringContext` instances. |
+| I14 | (added, round 3; revised 2026-04-19) `LoweringContext.lookup_local` signature is unchanged (`ValueId?`). Boxed-local state is carried in a parallel map `@boxed_locals : Hash(String, BoxedLocal)` with `{box_ptr, payload_type, owner_local}` entries. **I14-owner-aware:** `@boxed_locals` is not a plain name-only append log. A boxed entry may be reused only when it is env-bound (`owner_local == nil`), when its `owner_local` matches the current `lookup_local(name)` result, or when the name is entry-box-required for the owning function. This preserves a box for a still-visible parent local after inline scope restore, while preventing a same-name block parameter in a later lexical scope from reading the stale box. `LoweringContext#require_entry_box_for_local` records name-only pre-scan requirements before branch/case/loop lowering, and `seed_entry_box_requirements_for_body` / `seed_entry_box_requirements_for_main` seed those names before owner-body lowering. `hoist_box_for_local(ctx, name, payload_type, initial_value)` emits an entry-block allocation when the name was predeclared as entry-box-required, otherwise a current-block allocation for loop/block parameters; it records `owner_local = initial_value` so reuse is binding-aware. `save_locals` returns a `LocalsSnapshot` that carries `{locals, boxed_locals, debug_locals}`; `restore_locals(snap)` restores `@locals` and `@debug_local_ids` but does not reinstall `@boxed_locals` wholesale. `restore_locals(Hash)` likewise preserves `@boxed_locals`. `push_scope` records a boxed-local snapshot for symmetry/debugging, but `pop_scope` only discards that snapshot and does not install it back; nested proc/block bodies use separate `LoweringContext` instances. |
 
 ---
 
@@ -422,20 +422,29 @@ hoisted to a Box:
 
 record BoxedLocal,
   box_ptr      : ValueId,   # the heap Box allocation
-  payload_type : TypeRef    # type stored at Box.payload @0
+  payload_type : TypeRef,   # type stored at Box.payload @0
+  owner_local  : ValueId? = nil
 ```
 
 New LoweringContext helpers:
 
 ```crystal
-def register_boxed_local(name : String, box_ptr : ValueId, payload_type : TypeRef) : Nil
-  @boxed_locals[name] = BoxedLocal.new(box_ptr, payload_type)
+def register_boxed_local(name : String, box_ptr : ValueId, payload_type : TypeRef, owner_local : ValueId? = nil) : Nil
+  @boxed_locals[name] = BoxedLocal.new(box_ptr, payload_type, owner_local)
   # @locals[name] retains the current ValueId for source-order compatibility;
   # callers that need raw storage must prefer the Box path (see below).
 end
 
 def lookup_boxed_local(name : String) : BoxedLocal?
   @boxed_locals[name]?
+end
+
+def lookup_boxed_local_for_local(name : String, local_id : ValueId) : BoxedLocal?
+  return nil unless boxed = @boxed_locals[name]?
+  return boxed if boxed.owner_local.nil?
+  return boxed if boxed.owner_local == local_id
+  return boxed if entry_box_required?(name)
+  nil
 end
 
 def local_boxed?(name : String) : Bool
@@ -449,12 +458,18 @@ intermediate "latest payload" register that may be stale between loads;
 callers that emit reads of a local's *current* value must branch:
 
 ```crystal
-if bl = ctx.lookup_boxed_local(name)
+if local_id = ctx.lookup_local(name)
+  if bl = ctx.lookup_boxed_local_for_local(name, local_id)
+    slot = emit_field_get(bl.box_ptr, 0, bl.payload_type)
+    use(slot.id)
+  else
+    use(local_id)
+  end
+elsif bl = ctx.lookup_boxed_local(name)
   slot = emit_field_get(bl.box_ptr, 0, bl.payload_type)
   use(slot.id)
 else
-  vid = ctx.lookup_local(name) || error
-  use(vid)
+  error
 end
 ```
 
@@ -469,25 +484,25 @@ else
 end
 ```
 
-**Snapshot/restore discipline (revised 2026-04-19, I14-monotonic).**
+**Snapshot/restore discipline (revised 2026-04-19, I14-owner-aware).**
 Round-3 of the plan called for extending every save/restore site to
 cover `@boxed_locals`. Audit of the ~26 `ctx.save_locals.locals`
 truncation sites plus `restore_locals(Hash)` consumers (inline caller
 stack, proc-literal / block-to-proc `parent_locals`, branch/case merge
 helpers) showed that threading `LocalsSnapshot` through every merge
 structure is more invasive than the alternative: enforce dominance at
-the hoist site and make `@boxed_locals` append-only within a function
-scope. The revised discipline:
+the hoist site and make boxed-local reuse owner-aware. The revised
+discipline:
 
 | # | Site | File:Line | Discipline |
 |---|---|---|---|
 | SR1 | `push_scope` | ast_to_hir.cr:132 | snapshot `@boxed_locals` for symmetry/debugging. |
 | SR2 | `pop_scope` | ast_to_hir.cr:159 | pop and discard the boxed snapshot; do **not** install it back into `@boxed_locals`. Nested proc/block bodies use separate `LoweringContext` instances, not push/pop state transfer. |
-| SR3 | `save_locals` | ast_to_hir.cr:351 | returns `LocalsSnapshot{locals, boxed_locals, debug_locals}`. The `boxed_locals` field is retained as a forward-compat / debugging hook but is NEVER installed back. |
-| SR4 | `restore_locals(LocalsSnapshot)` | ast_to_hir.cr:361 | restores `@locals` and `@debug_local_ids`; does NOT rewind `@boxed_locals`. |
-| SR5 | `restore_locals(Hash)` | ast_to_hir.cr:385 | legacy overload for `@inline_caller_locals_stack` and empty-hash callee isolation. Preserves `@boxed_locals` (matches monotonic invariant). |
+| SR3 | `save_locals` | ast_to_hir.cr:351 | returns `LocalsSnapshot{locals, boxed_locals, debug_locals}`. The `boxed_locals` field is retained for assertions/debugging, but is not installed wholesale on restore. |
+| SR4 | `restore_locals(LocalsSnapshot)` | ast_to_hir.cr:361 | restores `@locals` and `@debug_local_ids`; preserves current `@boxed_locals` and relies on owner-aware lookup to reject stale same-name boxes. |
+| SR5 | `restore_locals(Hash)` | ast_to_hir.cr:385 | legacy overload for `@inline_caller_locals_stack` and empty-hash callee isolation. Preserves `@boxed_locals`; owner-aware lookup prevents stale name reuse. |
 
-**Why this is safe.** Under monotonic `@boxed_locals`:
+**Why this is safe.** Under owner-aware `@boxed_locals`:
 
 1. `hoist_box_for_local` emits parent-scope boxes that were predeclared
    by the owner-body scan into the function entry block via
@@ -506,9 +521,12 @@ scope. The revised discipline:
    branch-local proc literal. Loop/block parameters that are not
    entry-box-required may use current-block allocation for per-invocation
    boxes.
-4. `@boxed_locals` only GROWS during a function's lowering. `.locals`
-   truncation at merge sites is consequently safe — boxed state is
-   invariant across branch boundaries, so there is nothing to phi-merge.
+4. `@boxed_locals` may retain boxes after scope restore, but each entry
+   carries `owner_local`. Reads/writes/reuse go through a box only when
+   the current local binding matches that owner, when the entry is
+   env-bound, or when the name is entry-box-required. Therefore a later
+   block parameter named `i` does not read a stale box created for an
+   earlier block parameter also named `i`.
 5. The two reducers `regression_tests/conditional_closure_capture_repro.sh`
    and `regression_tests/escaping_branch_closure_capture_repro.sh` are
    forward guards: they exercise branch-local hoist + outer read and
@@ -1414,7 +1432,7 @@ If no `by_val` captures exist in the P1 corpus, the rule
 but the emission code is still exercised by a synthetic unit test
 exercising `CapturedVar.new` with `boxed: false`.
 
-### 6.15 Boxed-local dominance coverage (I14-monotonic, revised 2026-04-19)
+### 6.15 Boxed-local dominance and owner coverage (I14-owner-aware, revised 2026-04-19)
 
 Dominance is enforced structurally: `hoist_box_for_local` emits the
 box allocation into `ctx.function.entry_block` (see §5.1.1.b and the
@@ -1422,9 +1440,9 @@ ast_to_hir.cr helper docstring), and emits the seed store at the
 captured local's original binding / first-assignment site before
 branch lowering. The helper rejects branch-local invocation, so P1
 must predeclare boxes before control-flow splitting. There is no
-snapshot-depth assertion because `@boxed_locals` is append-only within
-a function scope — stack-depth mismatch is not a failure mode under
-the revised invariant.
+snapshot-depth assertion because `@boxed_locals` is not reinstalled
+from snapshots. Instead, boxed entries are owner-aware: a same-name
+local in a later lexical scope must not match the old `owner_local`.
 
 CI-grade checks:
 
@@ -1435,7 +1453,11 @@ CI-grade checks:
    `regression_tests/escaping_branch_closure_capture_repro.sh` both
    invoke the verifier indirectly by compiling + running the produced
    binary.
-2. **Entry-block assertion (optional, debug only).** At implementation
+2. **Same-name block parameter guard.** `regression_tests/spawn_capture_block_param_repro.sh`
+   has two probes in one compile unit. The second probe reuses block
+   parameter name `i`; it must print `_ok`, proving it did not read the
+   stale box from the first probe.
+3. **Entry-block assertion (optional, debug only).** At implementation
    time a gated check (`CLOSURE_BOX_ENTRY_DEBUG=1`) can walk
    `ctx.function.entry_block.instructions` after a hoist and assert
    the `PointerMalloc` was emitted there. Flag is not shipped.
@@ -1562,7 +1584,7 @@ approval.
 ## 10. Summary (carrier conclusion + unresolved blockers)
 
 **Amended 2026-04-18 after three review rounds, revised 2026-04-19
-(I14-monotonic).** Initial plan had three gaps (MIR Proc#call bypass,
+(I14-owner-aware).** Initial plan had three gaps (MIR Proc#call bypass,
 Proc accessor shortcuts, MIR env helpers); those were addressed in
 round 2. Round 2 added two further items — concrete HIR op for Proc
 materialisation and mutable/shared capture semantics. Round 3 pinned
@@ -1571,10 +1593,11 @@ triple (`env_slot_type` / `payload_type` / `boxed`), the parallel
 `@boxed_locals` map in `LoweringContext` (keeping `lookup_local`
 untouched), and the full snapshot/restore site list (SR1–SR4). The
 2026-04-19 revision replaces SR3/SR4 restore-both-halves with the
-**I14-monotonic** invariant: `@boxed_locals` is append-only within a
-function scope, dominance is enforced by `hoist_box_for_local`
-emitting into `ctx.function.entry_block`, and `.locals` truncation at
-merge sites is safe because boxed state is invariant across branches.
+**I14-owner-aware** invariant: boxed entries are preserved across
+snapshot restore, but each non-env entry records its owning local
+binding. A later same-name lexical binding cannot accidentally read a
+stale box, while a still-visible parent local can keep using its box
+after inline scope restore.
 See §5.1.1.b for the revised discipline and §6.15 for verifier-based
 coverage.
 
@@ -1607,12 +1630,12 @@ coverage.
 - **CapturedVar carries the env-layout triple** (§5.1.1.a, I13):
   `env_slot_type`, `payload_type`, `boxed`. MIR `lower_closure` reads
   these directly; nothing downstream re-derives capture policy.
-- **Boxed-local tracking is a parallel map with a monotonic
-  invariant** (§5.1.1.b, I14 revised 2026-04-19): `@boxed_locals` is
-  append-only within a function scope; `hoist_box_for_local` emits
-  the `PointerMalloc` into `ctx.function.entry_block` and seeds the
-  box from the current local value before branch lowering, so
-  allocation and value initialization dominate later reads.
+- **Boxed-local tracking is a parallel owner-aware map** (§5.1.1.b,
+  I14 revised 2026-04-19): each entry stores `{box_ptr, payload_type,
+  owner_local}`. `hoist_box_for_local` emits the `PointerMalloc` into
+  `ctx.function.entry_block` for entry-required parent locals, or into
+  the current block for per-invocation loop/block parameter boxes, and
+  seeds the box from the current local value.
   `seed_entry_box_requirements_for_body`,
   `collect_proc_literal_box_requirements`, and
   `LoweringContext#require_entry_box_for_local` provide that
@@ -1620,11 +1643,9 @@ coverage.
   binding / first assignment; loop/block parameters that are not
   entry-box-required may use current-block allocation for per-invocation
   boxes.
-  `save_locals` returns a
-  `LocalsSnapshot` that is NOT installed back into `@boxed_locals` on
-  restore — that map is preserved across branch/case/inline merge.
-  `push_scope` / `pop_scope` still snapshot `@boxed_locals` for nested
-  function-scope transitions (proc literal body, block-to-proc body).
+  `save_locals` returns a `LocalsSnapshot` that is not installed back
+  into `@boxed_locals` wholesale on restore. Instead, read/write/reuse
+  paths require an owner match (or env-bound / entry-required status).
   `lookup_local` stays `ValueId?` — no broad API change.
 - **No stop-condition triggered at plan time.** All remaining items in §9
   are implementation-time questions, not architectural blockers.

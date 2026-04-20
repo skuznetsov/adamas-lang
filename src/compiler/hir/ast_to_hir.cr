@@ -76,26 +76,18 @@ module Crystal::HIR
     # stays unchanged; box-awareness lives in `local_boxed?` /
     # `lookup_boxed_local`.
     #
-    # INVARIANT I14-monotonic: `@boxed_locals` is MONOTONIC within a
-    # LoweringContext's function scope. Boxes are allocated in the
-    # function entry block before any branch split, and the current
-    # local value is seeded into the box at the original binding site.
-    # The helper enforces the conservative scaffold rule: it may only be
-    # invoked while `current_block == function.entry_block`; invoking it
-    # from a branch is a P1 implementation bug that must stop the flip.
-    # `@boxed_locals` only GROWS during a function's lowering — it is
-    # never shrunk by branch/case/inline merge.  Consequently:
-    #   - `.locals` truncation into a bare `Hash(String, ValueId)` at
-    #     merge sites is SAFE: boxed state is invariant across branch
-    #     boundaries and needs no phi/merge policy.
-    #   - `restore_locals(LocalsSnapshot)` and `restore_locals(Hash)`
-    #     DO NOT rewind `@boxed_locals` — doing so would re-hide a box
-    #     whose allocation and seed dominate the current block.
-    #   - Nested proc/block bodies use separate LoweringContext instances,
-    #     so boxed-local state does not cross function boundaries.
+    # INVARIANT I14-owner-aware: boxed-local state is kept in a
+    # same-function side map, but reuse is tied to the lexical local
+    # binding that created the box. This preserves a box for a
+    # still-visible parent local after inline scope restore, while
+    # preventing a later same-name block parameter from reading the stale
+    # box. Env-bound entries use `owner_local: nil`; entry-required
+    # parent captures are accepted by name because their boxes dominate
+    # the function body.
     record BoxedLocal,
       box_ptr      : ValueId,
-      payload_type : TypeRef
+      payload_type : TypeRef,
+      owner_local  : ValueId? = nil
 
     # Function-scope predeclaration set for P1 boxed captures.
     #
@@ -112,10 +104,9 @@ module Crystal::HIR
     #
     # `save_locals` returns this record; `restore_locals(snap)` restores
     # `@locals` and `@debug_local_ids`. It does NOT restore `@boxed_locals`
-    # (see I14-monotonic above). The `boxed_locals` field on the snapshot
-    # is retained as a forward-compat / debugging hook (e.g., assertions
-    # that the monotonic invariant isn't silently violated) — it is never
-    # installed back into the context.
+    # (see I14-owner-aware above). The `boxed_locals` field on the
+    # snapshot is retained as a forward-compat / debugging hook and is
+    # never installed back into the context.
     #
     # Coupling locals + debug into one value guarantees that
     # `restore_locals(snap)` restores the debug state that was current
@@ -380,12 +371,25 @@ module Crystal::HIR
     # a hoisted local branch on `local_boxed?` and fetch the Box ptr via
     # `lookup_boxed_local`; see docs/closure_env_abi_p1_plan.md §5.1.1.b.
 
-    def register_boxed_local(name : String, box_ptr : ValueId, payload_type : TypeRef) : Nil
-      @boxed_locals[name] = BoxedLocal.new(box_ptr, payload_type)
+    def register_boxed_local(
+      name : String,
+      box_ptr : ValueId,
+      payload_type : TypeRef,
+      owner_local : ValueId? = nil,
+    ) : Nil
+      @boxed_locals[name] = BoxedLocal.new(box_ptr, payload_type, owner_local)
     end
 
     def lookup_boxed_local(name : String) : BoxedLocal?
       @boxed_locals[name]?
+    end
+
+    def lookup_boxed_local_for_local(name : String, local_id : ValueId) : BoxedLocal?
+      return nil unless boxed = @boxed_locals[name]?
+      return boxed if boxed.owner_local.nil?
+      return boxed if boxed.owner_local == local_id
+      return boxed if entry_box_required?(name)
+      nil
     end
 
     def local_boxed?(name : String) : Bool
@@ -412,7 +416,8 @@ module Crystal::HIR
     # Returns a `LocalsSnapshot` carrying `@locals`, `@boxed_locals`, and
     # `@debug_local_ids`. `restore_locals(snap)` restores `@locals` and
     # `@debug_local_ids` from the snapshot; `@boxed_locals` is left
-    # untouched (see I14-monotonic at `BoxedLocal` definition).
+    # untouched and validated at lookup time via owner matching (see
+    # I14-owner-aware at `BoxedLocal` definition).
     #
     # Plan: docs/closure_env_abi_p1_plan.md §5.1.1.b (I14).
     def save_locals : LocalsSnapshot
@@ -422,10 +427,9 @@ module Crystal::HIR
     # Restore locals state from a `LocalsSnapshot` (primary path).
     #
     # Restores `@locals` and `@debug_local_ids`. Does NOT restore
-    # `@boxed_locals` — that map is monotonic within a function scope
-    # (see I14-monotonic). Boxes allocated since `save_locals` was
-    # called still dominate the current block, so rewinding
-    # `@boxed_locals` would re-hide them and break subsequent reads.
+    # `@boxed_locals`; rewinding that map would re-hide boxes for
+    # still-visible parent locals. Stale same-name entries are rejected
+    # at lookup time through `owner_local`.
     def restore_locals(saved : LocalsSnapshot)
       @locals = saved.locals.dup
       @debug_local_ids = saved.debug_locals.dup
@@ -440,8 +444,8 @@ module Crystal::HIR
     # restoring to an empty hash to execute an inline callee body.
     #
     # Preserves current `@boxed_locals` and `@debug_local_ids`. For
-    # `@boxed_locals` this is required by the monotonic invariant
-    # (I14-monotonic). For `@debug_local_ids` it matches pre-P1 behavior:
+    # `@boxed_locals` this is required by I14-owner-aware. For
+    # `@debug_local_ids` it matches pre-P1 behavior:
     # these sites never captured the debug map alongside the hash
     # snapshot; inline scope boundaries use `push_scope` / `pop_scope`
     # for full-state save/restore.
@@ -48651,10 +48655,9 @@ module Crystal::HIR
       # by-ref capture and must be read via closure cell.
       if local_id = ctx.lookup_local(name)
         # P1: boxed locals are read via PointerLoad through the box ptr.
-        # This path is dormant until hoist_box_for_local / parent-scope
-        # hoisting populates @boxed_locals in the atomic final commit
-        # (step 8+). @boxed_locals is currently empty → no behavior change.
-        if box_info = ctx.lookup_boxed_local(name)
+        # Lookup is owner-aware so same-name locals in later lexical scopes
+        # do not read a stale box.
+        if box_info = ctx.lookup_boxed_local_for_local(name, local_id)
           load = PointerLoad.new(ctx.next_id, box_info.payload_type, box_info.box_ptr)
           ctx.emit(load)
           ctx.register_type(load.id, box_info.payload_type)
@@ -78127,9 +78130,16 @@ module Crystal::HIR
         name = (safe_slice_to_string(target_ident.name) || "")
         value_type = assignment_value_type(ctx, value_id, name)
         # P1: boxed locals write through PointerStore to the box ptr.
-        # Dormant until @boxed_locals is populated in the atomic final
-        # commit (step 8+). Lookup is empty currently → no behavior change.
-        if box_info = ctx.lookup_boxed_local(name)
+        # Lookup is owner-aware so assignments to same-name shadow locals
+        # do not mutate a stale box.
+        if current_local = ctx.lookup_local(name)
+          if box_info = ctx.lookup_boxed_local_for_local(name, current_local)
+            store = PointerStore.new(ctx.next_id, box_info.payload_type, box_info.box_ptr, value_id)
+            ctx.emit(store)
+            ctx.register_type(store.id, box_info.payload_type)
+            return store.id
+          end
+        elsif box_info = ctx.lookup_boxed_local(name)
           store = PointerStore.new(ctx.next_id, box_info.payload_type, box_info.box_ptr, value_id)
           ctx.emit(store)
           ctx.register_type(store.id, box_info.payload_type)
@@ -80474,7 +80484,7 @@ module Crystal::HIR
         )
       end
 
-      box_ptr = if box_info = ctx.lookup_boxed_local(cap_name)
+      box_ptr = if box_info = ctx.lookup_boxed_local_for_local(cap_name, parent_vid)
                   box_info.box_ptr
                 else
                   hoist_box_for_local(ctx, cap_name, cap_type, parent_vid)
@@ -80564,7 +80574,7 @@ module Crystal::HIR
     # Returns the Box pointer ValueId (pointer-to-payload_type),
     # registered as POINTER in the LoweringContext.
     #
-    # DOMINANCE ENFORCEMENT (I14-monotonic): emits both the count literal
+    # DOMINANCE ENFORCEMENT (I14-owner-aware): emits both the count literal
     # and the PointerMalloc into the function's ENTRY block. The entry
     # block dominates every other block in the function, so `box_ptr`
     # dominates every subsequent use.
@@ -80615,7 +80625,11 @@ module Crystal::HIR
       payload_type : TypeRef,
       initial_value : ValueId,
     ) : ValueId
-      if existing = ctx.lookup_boxed_local(name)
+      if local_id = ctx.lookup_local(name)
+        if existing = ctx.lookup_boxed_local_for_local(name, local_id)
+          return existing.box_ptr
+        end
+      elsif existing = ctx.lookup_boxed_local(name)
         return existing.box_ptr
       end
 
@@ -80627,7 +80641,7 @@ module Crystal::HIR
       seed = PointerStore.new(ctx.next_id, payload_type, box_ptr, initial_value)
       ctx.emit(seed)
       ctx.register_type(seed.id, payload_type)
-      ctx.register_boxed_local(name, box_ptr, payload_type)
+      ctx.register_boxed_local(name, box_ptr, payload_type, initial_value)
       box_ptr
     end
 
