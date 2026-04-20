@@ -418,6 +418,8 @@
       - all five failures reproduce on pre-fix `ede53ed8`, so they are baseline issues, not regressions from this Proc ABI change
   - practical boundary:
     - this is not yet a universal heap-backed block callback ABI; raw runtime-yield callbacks are intentionally preserved
+    - raw callbacks cannot get hidden env as a local cleanup; replacing
+      `@closure_ref_cells` there requires coupled carrier/signature/yield-dispatch work
     - remaining combined failures are separate hash/generic/join frontiers
 - **Fresh HIR int-iterator checkpoint: fixed-format float printing now emits the integer prefix for Ryu `d2fixed_buffered_n` instead of skipping the `Int#downto` block body (2026-04-14, current session)**:
   - trustworthy setup:

@@ -975,3 +975,29 @@ Boundary:
 - This pins the currently intentional legacy raw callback shape. It should be
   updated only when the remaining closure-env ABI cleanup deliberately replaces
   that shape.
+
+## 2026-04-19 Codex/Spark checkpoint: raw callback env carrier conclusion
+
+Status: read-only architecture conclusion. No code changed.
+
+Finding:
+
+- Raw callback lowering cannot gain a hidden env pointer as a local cleanup.
+- `lower_block_to_proc` is explicitly dual-mode:
+  - heap path: captures become env slots and the value returns through
+    `emit_make_proc_value(...)`;
+  - raw path: captures still use `@closure_ref_cells`, and the returned value
+    is a bare `FuncPointer`.
+- Call sites append only that single callback value to arguments.
+- MIR `Yield` lowering calls `builder.call_indirect(block_val, args, ...)`;
+  it does not prepend or recover an env value.
+
+Conclusion:
+
+- Replacing `@closure_ref_cells` for raw callbacks requires changing the raw
+  callback carrier, callback function signature, and MIR yield dispatch
+  together.
+- The safe incremental knob is still `block_arg_requires_heap_proc?`: move only
+  specific env-sensitive block callsites to the existing heap Proc path, while
+  leaving direct-`yield` raw callbacks unchanged until a coupled ABI change is
+  planned.

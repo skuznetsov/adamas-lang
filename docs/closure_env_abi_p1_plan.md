@@ -43,6 +43,12 @@ These anchors supersede the historical line ranges in the original plan below:
 | MIR heap Proc call | `src/compiler/mir/hir_to_mir.cr:799`, `:3010` | Proc receivers load `fn`/`env` and dispatch through `call_heap_proc` |
 | MIR closure env lowering | `src/compiler/mir/hir_to_mir.cr:5306` | `MakeClosure` allocates env object and stores captures by byte offsets |
 
+Raw callback carrier checkpoint (2026-04-19): direct-`yield` callbacks still
+use a bare `FuncPointer` plus legacy closure cells. They cannot receive a
+hidden env pointer as a local cleanup because call sites pass only one callback
+value and MIR `Yield` lowering dispatches `call_indirect(block_val, args, ...)`.
+Replacing this path requires a coupled carrier/signature/yield-dispatch change.
+
 Before editing, re-run `rg -n` for these symbols; exact line numbers are
 expected to drift.
 
