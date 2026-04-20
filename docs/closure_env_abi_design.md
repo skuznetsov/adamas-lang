@@ -1,9 +1,25 @@
 # Design Note — Per-Instance Closure Env ABI for Spawn Captures (Phase 1)
 
-Branch: `runtime-fiber-fanout-correctness` @ 2fd0cead
-Scope: design only, no code changes. Stop after this document for review.
+Original branch: `runtime-fiber-fanout-correctness` @ 2fd0cead
+Current branch context: `closure-env-abi-p1-wip`
+Scope: historical design rationale. Current implementation status is tracked
+in `docs/closure_env_abi_p1_plan.md` §0.1.
 
-All line numbers below are in the present working tree at 2fd0cead.
+Status as of 2026-04-19: this document is superseded as an implementation
+plan. The spawn-only Option A path, inline 16-byte Proc value shape, and
+"block-to-proc always emits bare FuncPointer" assumptions are historical.
+Current V2 uses pointer-sized Proc values that point to heap Proc objects
+`{fn_ptr, env_ptr}` for Proc literals and selected block-to-proc conversions.
+`lower_block_to_proc` is intentionally dual-mode: heap path uses
+`MakeClosure`/`MakeProc`, while raw direct-yield callbacks remain
+`FuncPointer` + legacy closure cells. MIR `lower_yield` is explicitly
+`raw_fnptr_only`; do not switch it to heap Proc dispatch by `TypeKind::Proc`
+alone.
+
+All original line numbers below were in the working tree at 2fd0cead unless a
+section explicitly says otherwise. Re-anchor against current source before
+editing code. §10 invariants remain useful; use `docs/closure_env_abi_p1_plan.md`
+§0.1 and §3 as the live implementation reference.
 
 ---
 
@@ -256,6 +272,10 @@ to `load ptr, load ptr; call fn_ptr(closure_data)`.
 
 ### 4.4 Minimal blast-radius choke points
 
+**SUPERSEDED:** this section compares pre-implementation alternatives. The
+current branch chose A1.ii heap-backed Proc objects via `HIR::MakeProc`; no
+spawn-only runtime intrinsic was landed.
+
 Two candidate integration points for env threading:
 
 - **V2-internal Proc layout change**: make `Proc(*T, R)` a 16-byte value
@@ -277,6 +297,10 @@ Two candidate integration points for env threading:
 ## 5. Implementation plans
 
 ### 5.1 Option A — Spawn-only per-instance env (narrow)
+
+**SUPERSEDED:** the spawn-only thunk/intrinsic path was not taken. The current
+carrier is the general heap Proc object produced by `HIR::MakeProc`, with
+spawn/Fiber reaching the generic `Proc#call` lowering.
 
 Scope: fix only `spawn { ... }` captures. Leave `->{ ... }.call` on current path.
 
@@ -364,6 +388,10 @@ Verification:
 - Full `regression_tests/run_all.sh` + `run_combined.sh` — no delta expected.
 
 ### 5.2 Option B — General Proc {fn_ptr, env_ptr} ABI
+
+**HISTORICAL:** this describes the broad inline-value version of the Proc ABI.
+The implemented path is A1.ii: pointer-sized Proc values that point to a
+16-byte heap Proc object.
 
 Scope: change V2's Proc value representation everywhere to a 16-byte
 `{fn_ptr, env_ptr}` struct, matching Crystal's real Proc closure layout.
@@ -505,6 +533,9 @@ must introduce an explicit per-fiber carrier.
   on for A2/A3 without new compiler-side plumbing.
 
 ### 8.3 Carriers evaluated
+
+**HISTORICAL:** these carrier alternatives document the design search. A1.ii
+won; A2/A3/A4 and spawn-only Option A are no longer live implementation plans.
 
 #### A1. Real Proc `{fn_ptr, env_ptr}` layout (= original Option B)
 
@@ -753,6 +784,11 @@ Confirmed by audit:
 | `llvm_backend.cr:5500` `%__crystal_proc = type { ptr, ptr }` | Typedef emitted but nothing uses it. |
 | `llvm_backend.cr:1685` `storage_size_bits`   | Registry lookup fails → llvm_type returns `"ptr"` → falls to `pointer_size_bits` (=64). |
 
+**HISTORICAL:** the audit table above captured the pre-P0/P1 state and stale
+line numbers. Current anchors are in `docs/closure_env_abi_p1_plan.md` §0.1:
+`HIR::MakeProc` is live, MIR `Proc#call` uses `call_heap_proc`, accessors load
+from the heap Proc object, and `llvm_backend.cr` maps Proc values to `"ptr"`.
+
 **Conclusion**: today Proc is 8 bytes end-to-end. The LLVM `%__crystal_proc`
 typedef is purely cosmetic — no Proc value is ever stored or loaded as a
 16-byte struct.
@@ -821,6 +857,10 @@ today. Adding it just for Proc is a separate architectural change that
 dominates the fix and multiplies blast radius.
 
 ### 9.5 Storage-size propagation plan (corrected)
+
+**MOSTLY CURRENT INVARIANT, HISTORICAL LINE NUMBERS:** the value/object split
+below remains authoritative, but the implementation is already staged. Use
+`docs/closure_env_abi_p1_plan.md` §0.1 for current file/line anchors.
 
 **Critical invariant (A1.ii):**
 - **Proc VALUE** (what lives in a variable, param, return slot, ivar,
@@ -910,6 +950,11 @@ compile a minimal `spawn { ... }` example, dump `.hir` and `.ll`, assert:
 - Non-capturing proc passes `null` through the env slot.
 
 ### 9.6 Revised Phase 2 commit plan (amendment 2)
+
+**HISTORICAL:** this commit plan predates the staged P0/P1 implementation.
+Current committed checkpoints and verification are recorded in
+`docs/closure_env_abi_p1_plan.md`, `TODO.md`, and
+`collab_logs/20260419-codex-closure-env-status.md`.
 
 Do **not** promise four atomic green commits. Revised split:
 
@@ -1034,6 +1079,10 @@ Awaiting A1.ii approval before Commit P0.
 
 Locked after Phase 1d review. Any change to these requires a new design
 round — not a casual edit during implementation.
+
+Current implementation has extended invariants I10-I14 in
+`docs/closure_env_abi_p1_plan.md` §3. Treat this section as the stable
+value/object ABI foundation and the P1 plan as the live checkpoint.
 
 **I1. Proc value vs. Proc object are distinct.**
 - Proc VALUE: pointer-sized (8 bytes, align 8). Lives in variables,
