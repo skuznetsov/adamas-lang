@@ -56,6 +56,18 @@ regressed because some raw callback carriers are still Proc-typed in HIR while
 the ABI value is a bare function pointer. Any future yield rewrite needs an
 explicit carrier/provenance marker, not a type-only `Proc` heuristic.
 
+Yield carrier metadata checkpoint (2026-04-20): HIR now preserves the AST
+`&block` marker on `HIR::Parameter#is_block` and dumps block params with
+`[block]`. The two user-def lowering paths forward `param.is_block` into
+`Function#add_param`, and MIR `infer_block_param_id` prefers that explicit HIR
+metadata before the older `TypeKind::Proc` / last-pointer fallback. Direct
+`yield` lowering is still `MIR_YIELD_DISPATCH_MODE: raw_fnptr_only`; the new
+metadata only prevents non-block Proc parameters from stealing the raw callback
+carrier. Guards: `p1_no_prelude_yield_carrier_trace.sh` checks the basic
+`&block` trace, `p1_mixed_proc_block_yield_carrier.sh` checks a non-block Proc
+parameter before `&block`, and `p1_hybrid_boundary_guard.sh` checks that
+`infer_block_param_id` consults `param.is_block` before `TypeKind::Proc`.
+
 Before editing, re-run `rg -n` for these symbols; exact line numbers are
 expected to drift.
 

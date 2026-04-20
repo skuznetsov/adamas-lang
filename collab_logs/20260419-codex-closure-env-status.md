@@ -1086,3 +1086,54 @@ Conclusion:
 - The current actionable closure-env boundary remains unchanged: do not rewrite
   MIR `Yield` based on Proc type alone; future raw callback ABI work needs an
   explicit carrier/provenance marker.
+
+## 2026-04-20 Codex checkpoint: HIR block metadata drives Yield carrier inference
+
+Status: additive scaffold and regression guards landed; no heap-yield dispatch
+behavior changed.
+
+Applied:
+
+- `HIR::Parameter` now stores `is_block` and HIR function dumps render block
+  callback params with `[block]`.
+- The two user-def lowering paths in `ast_to_hir.cr` forward AST
+  `param.is_block` into HIR params.
+- MIR `infer_block_param_id` now prefers explicit HIR block metadata before
+  the older `TypeKind::Proc` / last-pointer fallback.
+- `lower_yield` remains `MIR_YIELD_DISPATCH_MODE: raw_fnptr_only`; it still
+  dispatches raw callbacks with `builder.call_indirect(...)`.
+
+Guards:
+
+- `regression_tests/p1_no_prelude_yield_carrier_trace.sh` checks a basic
+  no-prelude `def reducer(&); yield; end` shape and the
+  `RawFnptrCallback` trace.
+- `regression_tests/p1_mixed_proc_block_yield_carrier.sh` checks that a
+  non-block `Proc` parameter before `&block` does not steal the yield target.
+- `regression_tests/p1_hybrid_boundary_guard.sh` checks that
+  `infer_block_param_id` consults `param.is_block` before `TypeKind::Proc` and
+  that `lower_yield` does not call `call_heap_proc`.
+
+Verification:
+
+- `crystal build src/crystal_v2.cr -o bin/crystal_v2 --error-trace` — green,
+  known `Random::DEFAULT` warning only.
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/p1_no_prelude_yield_carrier_trace.sh bin/crystal_v2`
+  — `p1_no_prelude_yield_carrier_ok`.
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/p1_mixed_proc_block_yield_carrier.sh bin/crystal_v2`
+  — `p1_mixed_proc_block_yield_carrier_ok`.
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/p1_hybrid_boundary_guard.sh bin/crystal_v2`
+  — `p1_hybrid_boundary_ok`.
+- `crystal spec spec/mir/hir_to_mir_debug_spec.cr --error-trace` — `2
+  examples, 0 failures`.
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_mini_oracles.sh bin/crystal_v2`
+  — `6 passed, 0 failed out of 6 tests`.
+
+Boundary:
+
+- This checkpoint fixes yield target provenance for raw callback tracing and
+  future dispatch planning only. It does not make direct `yield` use heap Proc
+  carriers.
+- The synthetic allocator block-param site remains a metadata consistency
+  follow-up, not a current semantic blocker, because those generated allocator
+  functions do not contain HIR `Yield`.

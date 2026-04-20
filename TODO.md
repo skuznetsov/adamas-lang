@@ -1,6 +1,42 @@
-# Crystal V2 Bootstrap — TODO (Updated 2026-04-19)
+# Crystal V2 Bootstrap — TODO (Updated 2026-04-20)
 
 ## Current Status
+- **Fresh P1 yield-carrier metadata checkpoint (2026-04-20, current session)**:
+  - trustworthy setup:
+    - `src/compiler/hir/hir.cr`
+      - `HIR::Parameter` now carries `is_block` metadata and HIR dumps mark
+        block callback params with `[block]`
+    - `src/compiler/hir/ast_to_hir.cr`
+      - both user-def parameter lowering paths forward AST `param.is_block`
+        into `Function#add_param`
+    - `src/compiler/mir/hir_to_mir.cr`
+      - `infer_block_param_id` prefers explicit `param.is_block` before the
+        older `TypeKind::Proc` / last-pointer fallback
+      - `lower_yield` remains `MIR_YIELD_DISPATCH_MODE: raw_fnptr_only`
+  - decisive evidence:
+    - `crystal build src/crystal_v2.cr -o bin/crystal_v2 --error-trace`
+      - result: success with only the known host stdlib `Random::DEFAULT`
+        warning
+    - `LIBRARY_PATH=/opt/homebrew/lib regression_tests/p1_no_prelude_yield_carrier_trace.sh bin/crystal_v2`
+      - result: `p1_no_prelude_yield_carrier_ok`
+    - `LIBRARY_PATH=/opt/homebrew/lib regression_tests/p1_mixed_proc_block_yield_carrier.sh bin/crystal_v2`
+      - result: `p1_mixed_proc_block_yield_carrier_ok`; a non-block Proc
+        parameter before `&block` no longer steals the yield target
+    - `LIBRARY_PATH=/opt/homebrew/lib regression_tests/p1_hybrid_boundary_guard.sh bin/crystal_v2`
+      - result: `p1_hybrid_boundary_ok`; source guard still rejects
+        `TypeKind::Proc`-before-`is_block` yield inference and heap dispatch
+        inside `lower_yield`
+    - `crystal spec spec/mir/hir_to_mir_debug_spec.cr --error-trace`
+      - result: `2 examples, 0 failures`
+    - `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_mini_oracles.sh bin/crystal_v2`
+      - result: `Mini-oracles: 6 passed, 0 failed out of 6 tests`
+  - practical boundary:
+    - this is still not heap-backed MIR `Yield` dispatch; direct-yield
+      callbacks are raw function pointers until a coupled raw-callback ABI
+      rewrite is planned
+    - the synthetic allocator block argument at `ast_to_hir.cr` remains a
+      metadata consistency follow-up only; it does not contain HIR `Yield` and
+      does not hit `infer_block_param_id` today
 - **Fresh closure-ref heap Proc checkpoint (2026-04-19, current session)**:
   - trustworthy setup:
     - `src/compiler/hir/ast_to_hir.cr`
