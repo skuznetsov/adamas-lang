@@ -3112,8 +3112,6 @@ module Crystal::HIR
     @explicit_yield_target_stack : Array(ValueId) = [] of ValueId
     # Counter for generating unique proc function names
     @proc_function_counter : Int32 = 0
-    # Track captured values for proc closures: FuncPointer ValueId → Array of parent ValueIds
-    @proc_captures_by_value = {} of ValueId => Array(ValueId)
     # Closure by-reference cells: var_name → {classvar_class, classvar_name, type}
     # When set, reads/writes to this var go through ClassVarGet/ClassVarSet (global cell)
     @closure_ref_cells = {} of String => {String, String, TypeRef}
@@ -48682,10 +48680,6 @@ module Crystal::HIR
           enum_map = @enum_value_types ||= {} of ValueId => String
           enum_map[copy.id] = enum_name
         end
-        # Propagate proc captures through copies
-        if caps = @proc_captures_by_value[local_id]?
-          @proc_captures_by_value[copy.id] = caps
-        end
         return copy.id
       else
         # Non-local identifier: captured values are resolved through closure cells.
@@ -60600,10 +60594,6 @@ module Crystal::HIR
             if proc_recv_desc.kind == TypeKind::Proc || proc_recv_desc.name == "Proc" || proc_recv_desc.name.starts_with?("Proc(")
               # Lower each arg individually
               proc_call_args = call_args.map { |arg_expr| lower_expr(ctx, arg_expr) }
-              # Append captured values as hidden extra args
-              if capture_ids = @proc_captures_by_value[proc_recv_id]?
-                proc_call_args.concat(capture_ids)
-              end
               # Extract return type from Proc type_params (last element)
               proc_call_return = TypeRef::VOID
               if proc_recv_desc.type_params.size > 0
@@ -76203,10 +76193,6 @@ module Crystal::HIR
         if proc_recv_desc = @module.get_type_descriptor(proc_recv_type)
           if proc_recv_desc.kind == TypeKind::Proc || proc_recv_desc.name == "Proc" || proc_recv_desc.name.starts_with?("Proc(")
             proc_call_args = [] of ValueId
-            # Append captured values as hidden extra args
-            if capture_ids = @proc_captures_by_value[proc_recv_id]?
-              proc_call_args.concat(capture_ids)
-            end
             # Extract return type from Proc type_params (last element)
             proc_call_return = TypeRef::VOID
             if proc_recv_desc.type_params.size > 0
@@ -78194,10 +78180,6 @@ module Crystal::HIR
             enum_map = @enum_value_types ||= {} of ValueId => String
             enum_map[copy.id] = enum_name
           end
-          # Propagate proc captures through reassignment copies
-          if caps = @proc_captures_by_value[value_id]?
-            @proc_captures_by_value[copy.id] = caps
-          end
           # Propagate as? nullable marking through copies
           if @as_question_results.includes?(value_id)
             @as_question_results.add(copy.id)
@@ -78232,10 +78214,6 @@ module Crystal::HIR
             enum_map = @enum_value_types ||= {} of ValueId => String
             enum_map[local.id] = enum_name
             enum_map[copy.id] = enum_name
-          end
-          # Propagate proc captures through assignment copies
-          if caps = @proc_captures_by_value[value_id]?
-            @proc_captures_by_value[copy.id] = caps
           end
           # Propagate as? nullable marking through copies
           if @as_question_results.includes?(value_id)

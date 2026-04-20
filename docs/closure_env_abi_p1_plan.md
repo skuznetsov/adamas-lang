@@ -38,7 +38,7 @@ These anchors supersede the historical line ranges in the original plan below:
 | HIR proc literals | `src/compiler/hir/ast_to_hir.cr:80634` | env-param/capture path wired; returns `MakeProc` |
 | HIR block-to-proc | `src/compiler/hir/ast_to_hir.cr:80856` | dual-mode; heap path uses env/`MakeProc`, non-heap path still uses legacy closure cells |
 | Legacy closure cells | `src/compiler/hir/ast_to_hir.cr:3115`, `:48665`, `:78139`, `:81101` | still active; behavior-changing removal remains coupled to ABI cleanup |
-| Legacy Proc hidden captures | `src/compiler/hir/ast_to_hir.cr:3112`, `:60591`, `:76196` | still active; behavior-changing removal remains coupled to call-shape cleanup |
+| Legacy Proc hidden captures | removed by dead-code cleanup | removed as dead no-op; `rg @proc_captures_by_value src/compiler/hir/ast_to_hir.cr` must stay empty |
 | MIR Proc object allocation | `src/compiler/mir/hir_to_mir.cr:774` | `HIR::MakeProc` lowers through `allocate_proc_object` |
 | MIR heap Proc call | `src/compiler/mir/hir_to_mir.cr:799`, `:3010` | Proc receivers load `fn`/`env` and dispatch through `call_heap_proc` |
 | MIR closure env lowering | `src/compiler/mir/hir_to_mir.cr:5306` | `MakeClosure` allocates env object and stores captures by byte offsets |

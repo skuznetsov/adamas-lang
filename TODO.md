@@ -401,6 +401,9 @@
     - `regression_tests/p1_hybrid_boundary_guard.sh`
       - result: `p1_hybrid_boundary_ok`; source-level guard confirms the
         intentional pre-cleanup anchors are still present and documented
+    - `@proc_captures_by_value`
+      - removed as dead no-op: search showed no producer assignments, only
+        copy-propagation and hidden-arg consumers
     - `scripts/run_safe.sh` checks are green for:
       - `regression_tests/test_proc_basic.cr`
       - `regression_tests/test_blocks.cr`

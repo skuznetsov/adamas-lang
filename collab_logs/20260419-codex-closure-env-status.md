@@ -892,3 +892,53 @@ Boundary:
   paths are correct.
 - When the coupled closure-env ABI cleanup intentionally removes these anchors,
   this guard and the status docs must be updated in the same commit.
+
+## 2026-04-19 Codex checkpoint: dead Proc hidden-capture map removed
+
+Status: narrow dead-code cleanup. No semantic behavior change intended.
+
+Finding:
+
+- `@proc_captures_by_value` had no producer assignment in the current branch.
+- The only writes were copy-propagation writes that could only copy an existing
+  entry.
+- The only consumers were hidden-arg append checks in the HIR `Proc#call`
+  intercepts.
+
+Applied:
+
+- Removed `@proc_captures_by_value`.
+- Removed the dead copy-propagation sites.
+- Removed the dead hidden-arg append checks from both HIR `Proc#call`
+  intercepts.
+- Updated `regression_tests/p1_hybrid_boundary_guard.sh` so it now rejects
+  reintroducing `@proc_captures_by_value` while still guarding the live
+  `@closure_ref_cells` and dual-mode `lower_block_to_proc` anchors.
+
+Verification:
+
+- `rg -n "@proc_captures_by_value" src/compiler/hir/ast_to_hir.cr; echo RG_SRC_RC:$?`
+  — no matches, `RG_SRC_RC:1`.
+- `crystal build src/crystal_v2.cr -o bin/crystal_v2 --error-trace`
+  — green with only the known `Random::DEFAULT` warning.
+- `regression_tests/p1_hybrid_boundary_guard.sh`
+  — `p1_hybrid_boundary_ok`.
+- `regression_tests/p1_ir_shape_check.sh bin/crystal_v2`
+  — `p1_ir_shape_ok captured_fn=__crystal_block_proc_1`.
+- `regression_tests/spawn_capture_block_param_repro.sh bin/crystal_v2`
+  — fixed-state exit `1`; both `_ok` markers.
+- `regression_tests/conditional_closure_capture_repro.sh bin/crystal_v2`
+  — fixed-state exit `1`; correct `12/12`.
+- `regression_tests/escaping_branch_closure_capture_repro.sh bin/crystal_v2`
+  — fixed-state exit `1`; correct branch-local escape output.
+- `regression_tests/run_mini_oracles.sh bin/crystal_v2`
+  — `6 passed, 0 failed out of 6`.
+- `regression_tests/run_combined.sh bin/crystal_v2 4`
+  — `31 passed, 0 failed out of 31`.
+- `git diff --check`
+  — clean.
+
+Boundary:
+
+- Legacy `@closure_ref_cells` and the dual-mode `lower_block_to_proc` path
+  remain live. Removing those is still behavior-changing ABI cleanup work.
