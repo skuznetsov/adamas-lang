@@ -935,6 +935,8 @@ Verification:
   — `6 passed, 0 failed out of 6`.
 - `regression_tests/run_combined.sh bin/crystal_v2 4`
   — `31 passed, 0 failed out of 31`.
+- `regression_tests/run_all.sh bin/crystal_v2 4`
+  — `146 passed, 0 failed out of 146`.
 - `git diff --check`
   — clean.
 
