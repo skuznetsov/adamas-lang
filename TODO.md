@@ -1,6 +1,22 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-20)
 
 ## Current Status
+- **Current bootstrap blocker (2026-04-20, current session)**:
+  - smallest real ladder attempt:
+    - `BOOTSTRAP_STAGE_OUT=/tmp/cv2_bs_s2 BOOTSTRAP_CHAIN_STAGES=2 BOOTSTRAP_TIMEOUT_SEC=300 BOOTSTRAP_MEM_MB=4096 scripts/build_bootstrap_stages.sh --stages 2 --out /tmp/cv2_bs_s2`
+  - result:
+    - `s1_bootstrap` built successfully with host Crystal
+    - stage1 smoke plain and smoke no-prelude both passed
+    - `s2b` did not finish; `scripts/run_safe.sh` killed the self-host build
+      on timeout:
+      - `[KILL] Timeout after 300s (FDs: 12, RSS: 2281984KB)`
+      - `/tmp/cv2_bs_s2/cv2_s2` was not produced
+      - last stage2 trace reached `lower_main: exprs=30`
+  - practical boundary:
+    - this is a timeout/no-progress blocker, not an OOM or crash signature
+    - do not run `s3b+` until the stage2 full-compiler build gets past this
+      point or a smaller focused no-prelude/full-prelude reducer explains the
+      `lower_main` stall
 - **Bootstrap semantic-equivalence scaffold (2026-04-20, current session)**:
   - trustworthy setup:
     - `scripts/build_bootstrap_stages.sh`

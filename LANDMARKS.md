@@ -3,6 +3,18 @@
 Updated: 2026-04-20
 Context: compiler/bootstrap/stage2-stability
 
+[LM-463|verified]: The first real use of the bootstrap semantic gate stops at
+`s1 -> s2b`, before any HIR/MIR/LLVM comparison is possible. Command:
+`BOOTSTRAP_STAGE_OUT=/tmp/cv2_bs_s2 BOOTSTRAP_CHAIN_STAGES=2
+BOOTSTRAP_TIMEOUT_SEC=300 BOOTSTRAP_MEM_MB=4096 scripts/build_bootstrap_stages.sh
+--stages 2 --out /tmp/cv2_bs_s2`. Stage1 built with host Crystal and both
+plain/no-prelude smokes passed. Stage2 self-host build was killed by
+`scripts/run_safe.sh`: `[KILL] Timeout after 300s (FDs: 12, RSS:
+2281984KB)`, no `/tmp/cv2_bs_s2/cv2_s2` was produced, and the last stage2
+trace reached `lower_main: exprs=30`. Boundary: this is a timeout/no-progress
+blocker rather than an OOM/crash signature; do not advance to `s3b+` until this
+stage2 stall is explained. {F/G/R: 0.93/0.50/0.95} [verified]
+
 [LM-462|verified]: Bootstrap semantic-equivalence scaffolding now exists as a
 thin scripts-only layer over the existing bootstrap ladder. `scripts/build_bootstrap_stages.sh`
 wraps `scripts/bootstrap_chain.sh` and exposes stable names
