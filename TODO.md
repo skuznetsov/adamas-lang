@@ -1,6 +1,37 @@
 # Crystal V2 Bootstrap — TODO (Updated 2026-04-20)
 
 ## Current Status
+- **Bootstrap semantic-equivalence scaffold (2026-04-20, current session)**:
+  - trustworthy setup:
+    - `scripts/build_bootstrap_stages.sh`
+      - thin wrapper over `scripts/bootstrap_chain.sh`; preserves existing
+        build semantics and adds stable artifact aliases:
+        `s1_bootstrap`, `s2b`, `s3b`, `s4b`, `s5b`
+    - `scripts/emit_bootstrap_ir.sh`
+      - emits HIR, MIR, and LLVM IR for one compiler/corpus pair under
+        `scripts/run_safe.sh`
+    - `scripts/normalize_bootstrap_ir.sh`
+      - strips only known non-semantic noise such as ids, temp suffixes,
+        absolute tmp paths, and generated stub-name hashes
+    - `scripts/compare_bootstrap_stages.sh`
+      - emits, normalizes, and diffs HIR/MIR/LLVM IR across S1..S5
+    - `regression_tests/bootstrap_semantic_corpus.cr`
+      - small no-prelude corpus for stage-stable lowering comparisons
+  - decisive evidence:
+    - `bash -n scripts/build_bootstrap_stages.sh scripts/emit_bootstrap_ir.sh scripts/normalize_bootstrap_ir.sh scripts/compare_bootstrap_stages.sh`
+      - result: success
+    - `scripts/emit_bootstrap_ir.sh bin/crystal_v2 regression_tests/bootstrap_semantic_corpus.cr /tmp/bootstrap_emit_smoke/corpus`
+      - result: `emit_bootstrap_ir_ok`; generated `.hir`, `.mir`, and `.ll`
+        through `scripts/run_safe.sh`
+    - synthetic five-stage compare where all stage names point at the same
+      `bin/crystal_v2`:
+      - `scripts/compare_bootstrap_stages.sh /tmp/bootstrap_compare_same regression_tests/bootstrap_semantic_corpus.cr /tmp/bootstrap_compare_same_ir`
+      - result: `SEMANTIC_EQ: S1..S5 ok`
+  - practical boundary:
+    - this is scaffold only; it does not prove the real
+      `original -> stage1 -> s2b -> s3b -> s4b -> s5b` chain is green
+    - the real readiness gate remains a full bootstrap ladder plus normalized
+      HIR/MIR/LLVM semantic equality for S1..S5
 - **Fresh P1 yield-carrier metadata checkpoint (2026-04-20, current session)**:
   - trustworthy setup:
     - `src/compiler/hir/hir.cr`

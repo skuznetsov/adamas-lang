@@ -1,7 +1,22 @@
 # LANDMARKS
 
-Updated: 2026-04-19
+Updated: 2026-04-20
 Context: compiler/bootstrap/stage2-stability
+
+[LM-462|verified]: Bootstrap semantic-equivalence scaffolding now exists as a
+thin scripts-only layer over the existing bootstrap ladder. `scripts/build_bootstrap_stages.sh`
+wraps `scripts/bootstrap_chain.sh` and exposes stable names
+`s1_bootstrap`..`s5b`; `scripts/emit_bootstrap_ir.sh` emits HIR/MIR/LLVM for a
+compiler/corpus pair under `scripts/run_safe.sh`; `scripts/normalize_bootstrap_ir.sh`
+strips known non-semantic ids, tmp paths, temp suffixes, and stub-name hashes;
+`scripts/compare_bootstrap_stages.sh` diffs normalized S1..S5 dumps against
+the fixed no-prelude `regression_tests/bootstrap_semantic_corpus.cr`. Evidence:
+`bash -n` is green, one emit smoke with `bin/crystal_v2` produced all three
+artifacts, and a synthetic five-stage directory where all stage names point at
+the same compiler prints `SEMANTIC_EQ: S1..S5 ok`. Boundary: this is only the
+gate scaffold; it does not prove the real
+`original -> stage1 -> s2b -> s3b -> s4b -> s5b` chain is green. {F/G/R:
+0.90/0.58/0.92} [verified]
 
 [LM-461|verified]: `combined/test_generics_unions.cr` split into two union ABI
 defects. First, `Array(Int32 | String)#push$Int32/String` wrote bare variant
