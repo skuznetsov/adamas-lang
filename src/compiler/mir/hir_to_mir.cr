@@ -31,12 +31,24 @@ module Crystal
         dispatch_class: String? # for nested class dispatch
       )
 
+      # Explicit provenance for Proc-shaped HIR values. TypeKind::Proc alone is
+      # not a safe dispatch discriminator: raw yield callbacks and heap Proc
+      # objects can both be typed as Proc in HIR.
+      private enum ProcCarrier : UInt8
+        Unknown
+        RawFnptrCallback
+        HeapProcObject
+      end
+
       # Mapping from HIR ValueId to MIR ValueId per function
       @value_map : ::Hash(HIR::ValueId, ValueId)
 
       # Mapping from HIR ValueId to HIR TypeRef per function
       # (needed to lower HIR::Cast into correct MIR::CastKind)
       @hir_value_types : ::Hash(HIR::ValueId, HIR::TypeRef)
+
+      # Mapping from HIR ValueId to explicit Proc carrier provenance per function.
+      @hir_value_carriers : ::Hash(HIR::ValueId, ProcCarrier)
 
       # HIR values that are compile-time constants (Literal, GlobalRef) — no rc_inc/rc_dec needed
       @hir_constant_values : ::Set(HIR::ValueId)
@@ -139,6 +151,7 @@ module Crystal
         @value_map = {} of HIR::ValueId => ValueId
         STDERR.puts "[MIR_INIT] value_map" if trace
         @hir_value_types = {} of HIR::ValueId => HIR::TypeRef
+        @hir_value_carriers = {} of HIR::ValueId => ProcCarrier
         @hir_constant_values = ::Set(HIR::ValueId).new
         STDERR.puts "[MIR_INIT] hir_value_types" if trace
         @block_map = [] of BlockId?
@@ -1206,6 +1219,7 @@ module Crystal
         # Reinitialize per-function lowering maps instead of mutating in place.
         @value_map = {} of HIR::ValueId => ValueId
         @hir_value_types = {} of HIR::ValueId => HIR::TypeRef
+        @hir_value_carriers = {} of HIR::ValueId => ProcCarrier
         @hir_constant_values = ::Set(HIR::ValueId).new
         @block_map = [] of BlockId?
         @pending_phis = [] of Tuple(Phi, HIR::Phi)
@@ -1245,6 +1259,12 @@ module Crystal
           hir_block.instructions.each do |inst|
             @hir_value_types[inst.id] = inst.type
             @hir_value_block_scope[inst.id] = blk_scope
+            case inst
+            when HIR::MakeProc
+              @hir_value_carriers[inst.id] = ProcCarrier::HeapProcObject
+            when HIR::FuncPointer
+              @hir_value_carriers[inst.id] = ProcCarrier::RawFnptrCallback
+            end
             # Track constants (Literal) — these are static data, not heap-allocated
             if inst.is_a?(HIR::Literal)
               @hir_constant_values << inst.id
@@ -5361,6 +5381,10 @@ module Crystal
         end
         unless block_param_id
           return builder.const_nil
+        end
+        yield_carrier = @hir_value_carriers[block_param_id]? || ProcCarrier::Unknown
+        if ENV.has_key?("CRYSTAL_V2_PROC_CARRIER_TRACE")
+          STDERR.puts "[PROC_CARRIER] yield func=#{@current_lowering_func_name} target=#{block_param_id} carrier=#{yield_carrier}"
         end
         # MIR_YIELD_DISPATCH_MODE: raw_fnptr_only
         # Runtime-yield callbacks are still bare function pointers in the

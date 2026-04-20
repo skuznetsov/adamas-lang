@@ -101,6 +101,17 @@ require_window_pattern \
   'MIR_YIELD_DISPATCH_MODE: raw_fnptr_only' \
   "$MIR"
 
+require_pattern "MIR Proc carrier enum" 'private enum ProcCarrier' "$MIR"
+require_pattern "MIR Proc carrier side map" '@hir_value_carriers : ::Hash\(HIR::ValueId, ProcCarrier\)' "$MIR"
+require_pattern "MIR heap Proc carrier marker" 'ProcCarrier::HeapProcObject' "$MIR"
+require_pattern "MIR raw callback carrier marker" 'ProcCarrier::RawFnptrCallback' "$MIR"
+require_window_pattern \
+  "MIR Yield reads explicit Proc carrier marker" \
+  'private def lower_yield[(]' \
+  'private def infer_yield_type_from_users' \
+  'yield_carrier = @hir_value_carriers' \
+  "$MIR"
+
 if awk '
   /private def lower_yield[(]/ { in_window = 1 }
   in_window && /call_heap_proc/ { found = 1 }
