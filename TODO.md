@@ -55,6 +55,26 @@
         - `[PENDING_EXPLOSION] ... current=Object#inspect ... name=Array(Array(Array(Tuple(UInt32, Array(Hash(String, UInt32))))))#inspect$IO`
       - the same log also shows early broad `Reference#object_id` replay over
         many Array/Hash compiler-internal shapes
+    - bounded replay-gate experiment was intentionally left uncommitted because
+      it did not satisfy DoD:
+      - guard A (`record_virtual_target` skips immediate `Object`/`Reference`
+        replay while `@lazy_rta_active == false`) reduced the first deep
+        enqueue queue from `12325` to `9866`, but `[PENDING_EXPLOSION]` still
+        appeared and the 120s run still timed out
+      - extended guard A2 (also skipping broad ancestors in
+        `replay_virtual_targets_for_registered_class` and the local
+        call/member replay loops before lazy RTA) removed the first
+        `[PENDING_EXPLOSION]` line in focused runs, but the full
+        `STOP_AFTER_HIR` 300s gate still timed out:
+        - `process_pending` completed only after about `248224ms`
+        - it lowered `61454` functions and grew HIR functions
+          `3088 -> 64182`
+        - then a second pending/safety-net pass started from about `2300`
+          queued functions and the process hit the 300s timeout
+      - conclusion: broad virtual-target replay is a contributor and good
+        localization signal, but the failing gate is now broader
+        supply-driven pending/safety-net expansion; do not land the broad
+        replay guard alone
   - practical boundary:
     - this is a timeout/no-progress blocker, not an OOM or crash signature
     - the current root corridor is no longer `lower_main` expr 30; it is the
@@ -63,10 +83,10 @@
     - do not run `s3b+` until the stage2 full-compiler build gets past this
       point or a smaller focused no-prelude/full-prelude reducer explains the
       pending queue explosion
-    - next work should not add broader diagnostics by default; the next useful
-      step is a read-only bounded-fix audit of `record_virtual_target` /
-      `lower_virtual_targets_for_child` replay semantics for broad parents
-      (`Object`, `Reference`) before changing any replay gate
+    - next work should inspect `emit_all_tracked_signatures`,
+      `lower_missing_call_targets`, `@pending_arg_types`, and the sources that
+      seed `#inspect/#to_s/#object_id/#to_json` signatures; broad replay
+      gating alone is a refuted fix candidate
 - **Bootstrap semantic-equivalence scaffold (2026-04-20, current session)**:
   - trustworthy setup:
     - `scripts/build_bootstrap_stages.sh`

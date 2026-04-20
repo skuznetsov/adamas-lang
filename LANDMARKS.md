@@ -64,6 +64,24 @@ broad parents, not an unknown `Object#inspect` body issue; any fix must be
 audited against vdispatch-table completeness before changing replay gates.
 {F/G/R: 0.94/0.62/0.95} [verified]
 
+[LM-467|refuted]: Broad virtual-target replay gating alone is not a sufficient
+fix for the stage2 `STOP_AFTER_HIR` timeout. Two uncommitted experiments were
+run and then reverted. Guard A skipped immediate `Object`/`Reference` replay in
+`record_virtual_target` while `@lazy_rta_active == false`; it lowered the first
+deep `#inspect` queue from `12325` to `9866`, but `[PENDING_EXPLOSION]` still
+appeared and the 120s diagnostic still timed out. Extended guard A2 also
+skipped broad ancestors in `replay_virtual_targets_for_registered_class` and
+the local call/member replay loops before lazy RTA; it removed the first
+`[PENDING_EXPLOSION]` line, but the 300s `STOP_AFTER_HIR` run still timed out:
+`process_pending` took `248224.0ms`, lowered `61454` functions, grew HIR
+functions `3088 -> 64182`, then began another pending/safety-net pass from
+about `2300` queued functions and hit `[KILL] Timeout after 300s`. Boundary:
+do not land broad replay gating as the fix by itself; the next root corridor is
+the broader supply-driven expansion in `emit_all_tracked_signatures`,
+`lower_missing_call_targets`, `@pending_arg_types`, and the paths seeding
+universal `#inspect/#to_s/#object_id/#to_json` signatures. {F/G/R:
+0.95/0.60/0.95} [verified]
+
 [LM-463|verified]: The first real use of the bootstrap semantic gate stops at
 `s1 -> s2b`, before any HIR/MIR/LLVM comparison is possible. Command:
 `BOOTSTRAP_STAGE_OUT=/tmp/cv2_bs_s2 BOOTSTRAP_CHAIN_STAGES=2
