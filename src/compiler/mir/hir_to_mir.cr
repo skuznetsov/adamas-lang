@@ -5362,8 +5362,10 @@ module Crystal
         unless block_param_id
           return builder.const_nil
         end
-        # Yield becomes indirect call through block parameter.
-        # We treat the block param as a Proc value and emit an indirect call.
+        # MIR_YIELD_DISPATCH_MODE: raw_fnptr_only
+        # Runtime-yield callbacks are still bare function pointers in the
+        # hybrid closure ABI. Do not switch this to heap Proc dispatch without
+        # a coupled raw callback carrier/signature/yield rewrite.
         args = [] of ValueId
         yld.args.each do |arg|
           arg_type = @hir_value_types[arg]?

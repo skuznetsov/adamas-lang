@@ -15,6 +15,7 @@ set -u
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HIR="$ROOT_DIR/src/compiler/hir/ast_to_hir.cr"
+MIR="$ROOT_DIR/src/compiler/mir/hir_to_mir.cr"
 PLAN="$ROOT_DIR/docs/closure_env_abi_p1_plan.md"
 TODO="$ROOT_DIR/TODO.md"
 LOG="$ROOT_DIR/collab_logs/20260419-codex-closure-env-status.md"
@@ -53,6 +54,7 @@ require_window_pattern() {
 }
 
 require_file "$HIR"
+require_file "$MIR"
 require_file "$PLAN"
 require_file "$TODO"
 require_file "$LOG"
@@ -85,10 +87,36 @@ require_window_pattern \
   'FuncPointer[.]new[(]ctx[.]next_id, proc_type, proc_func_name[)]' \
   "$HIR"
 
+require_window_pattern \
+  "MIR Yield raw callback dispatch" \
+  'private def lower_yield[(]' \
+  'private def infer_yield_type_from_users' \
+  'builder[.]call_indirect[(]block_val, args, convert_type[(]yield_type[)][)]' \
+  "$MIR"
+
+require_window_pattern \
+  "MIR Yield raw callback mode marker" \
+  'private def lower_yield[(]' \
+  'private def infer_yield_type_from_users' \
+  'MIR_YIELD_DISPATCH_MODE: raw_fnptr_only' \
+  "$MIR"
+
+if awk '
+  /private def lower_yield[(]/ { in_window = 1 }
+  in_window && /call_heap_proc/ { found = 1 }
+  in_window && /private def infer_yield_type_from_users/ { exit }
+  END { exit found ? 0 : 1 }
+' "$MIR"; then
+  fail "MIR lower_yield reintroduced type-only heap Proc dispatch"
+fi
+
 require_pattern "plan records proc capture tracking is removed" 'Legacy Proc hidden captures.*removed as dead no-op' "$PLAN"
 require_pattern "plan records closure_ref_cells replacement is future work" '@closure_ref_cells.*replacement' "$PLAN"
 require_pattern "plan records dual-mode block-to-proc checkpoint" 'dual-mode; heap path uses env/`MakeProc`, non-heap path still uses legacy closure cells' "$PLAN"
+require_pattern "plan records type-only Yield dispatch refutation" 'explicit carrier/provenance marker, not a type-only `Proc` heuristic' "$PLAN"
 require_pattern "TODO records current hybrid boundary" 'not yet a universal heap-backed block callback ABI' "$TODO"
+require_pattern "TODO records type-only Yield dispatch refutation" 'do not key MIR `Yield` heap dispatch on `TypeKind::Proc` alone' "$TODO"
 require_pattern "collab log records live closure-cell anchors" '@closure_ref_cells` and the dual-mode' "$LOG"
+require_pattern "collab log records type-only Yield dispatch refutation" 'TypeKind::Proc` is not a safe MIR `Yield` carrier discriminator' "$LOG"
 
 echo "p1_hybrid_boundary_ok"
