@@ -43,6 +43,18 @@
       - this means the first observed deep container inspect is enqueued while
         lowering `Object#inspect`, before the later `RelatedSpan` deep inspect
         appears in the pending queue
+    - virtual-target replay diagnostic confirmed the enqueue source:
+      - command:
+        `CRYSTAL_V2_PENDING_EXPLOSION_TRACE=1 CRYSTAL_V2_VIRTUAL_TARGET_REPLAY_STATS=1 DEBUG_VIRTUAL_TARGETS=1 DEBUG_MAIN=1 DEBUG_MAIN_PROGRESS_EVERY=1 CRYSTAL_V2_STOP_AFTER_HIR=1 CRYSTAL_V2_PHASE_STATS=1 CRYSTAL_V2_LOWER_PROGRESS=1 scripts/run_safe.sh /tmp/cv2_pending_trace_ctx 120 4096 src/crystal_v2.cr -o /tmp/cv2_s2_vtarget_diag`
+      - result: expected timeout, with huge `DEBUG_VIRTUAL_TARGETS` output
+      - decisive sequence in `/tmp/cv2_s2_vtarget_diag.log`:
+        - `record parent=Object method=to_s args=[405]`
+        - `lower child=Array(Array(Array(Tuple(UInt32, Array(Hash(String, UInt32)))))) parent=Object targets=1`
+        - `record parent=Object method=inspect args=[405]`
+        - `lower child=Array(Array(Array(Tuple(UInt32, Array(Hash(String, UInt32)))))) parent=Object targets=2`
+        - `[PENDING_EXPLOSION] ... current=Object#inspect ... name=Array(Array(Array(Tuple(UInt32, Array(Hash(String, UInt32))))))#inspect$IO`
+      - the same log also shows early broad `Reference#object_id` replay over
+        many Array/Hash compiler-internal shapes
   - practical boundary:
     - this is a timeout/no-progress blocker, not an OOM or crash signature
     - the current root corridor is no longer `lower_main` expr 30; it is the
@@ -51,10 +63,10 @@
     - do not run `s3b+` until the stage2 full-compiler build gets past this
       point or a smaller focused no-prelude/full-prelude reducer explains the
       pending queue explosion
-    - next diagnostics should inspect why `Object#inspect` / `Array#inspect`
-      fallback lowering admits deep compiler-container `#inspect/#to_s`
-      instantiations under self-hosted stage1, before considering any bounded
-      safety-net filter
+    - next work should not add broader diagnostics by default; the next useful
+      step is a read-only bounded-fix audit of `record_virtual_target` /
+      `lower_virtual_targets_for_child` replay semantics for broad parents
+      (`Object`, `Reference`) before changing any replay gate
 - **Bootstrap semantic-equivalence scaffold (2026-04-20, current session)**:
   - trustworthy setup:
     - `scripts/build_bootstrap_stages.sh`

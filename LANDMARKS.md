@@ -44,6 +44,26 @@ not the later `RelatedSpan` symptom; next work should inspect why
 under the self-hosted stage1 safety-net path. {F/G/R: 0.92/0.52/0.94}
 [verified]
 
+[LM-466|verified]: Existing virtual-target diagnostics confirm that the deep
+Array `#inspect` enqueue is caused by eager virtual-target replay from broad
+`Object` targets. Command:
+`CRYSTAL_V2_PENDING_EXPLOSION_TRACE=1 CRYSTAL_V2_VIRTUAL_TARGET_REPLAY_STATS=1
+DEBUG_VIRTUAL_TARGETS=1 DEBUG_MAIN=1 DEBUG_MAIN_PROGRESS_EVERY=1
+CRYSTAL_V2_STOP_AFTER_HIR=1 CRYSTAL_V2_PHASE_STATS=1
+CRYSTAL_V2_LOWER_PROGRESS=1 scripts/run_safe.sh /tmp/cv2_pending_trace_ctx 120
+4096 src/crystal_v2.cr -o /tmp/cv2_s2_vtarget_diag` timed out as expected, but
+logged `record parent=Object method=to_s args=[405]`, then replayed the deep
+`Array(Array(Array(Tuple(UInt32, Array(Hash(String, UInt32))))))` child under
+`Object`, then logged `record parent=Object method=inspect args=[405]`,
+replayed the same child under `Object targets=2`, and immediately emitted
+`[PENDING_EXPLOSION] ... current=Object#inspect ... name=...#inspect$IO`.
+The same log also shows broad early `Reference#object_id` replay over many
+compiler-internal Array/Hash shapes. Boundary: the root corridor is now
+`record_virtual_target` / `lower_virtual_targets_for_child` eager fan-out for
+broad parents, not an unknown `Object#inspect` body issue; any fix must be
+audited against vdispatch-table completeness before changing replay gates.
+{F/G/R: 0.94/0.62/0.95} [verified]
+
 [LM-463|verified]: The first real use of the bootstrap semantic gate stops at
 `s1 -> s2b`, before any HIR/MIR/LLVM comparison is possible. Command:
 `BOOTSTRAP_STAGE_OUT=/tmp/cv2_bs_s2 BOOTSTRAP_CHAIN_STAGES=2
