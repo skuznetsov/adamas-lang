@@ -34,6 +34,13 @@
     - this is still not heap-backed MIR `Yield` dispatch; direct-yield
       callbacks are raw function pointers until a coupled raw-callback ABI
       rewrite is planned
+    - `CRYSTAL_V2_BLOCK_CALL_DIAGNOSTIC=1` now emits a non-fatal
+      `[CLOSURE_ABI]` diagnostic for implicit untyped `&block` params whose
+      body contains direct `block.call`; this is documentation/trace only and
+      does not change codegen
+    - alias forms such as `x = block; x.call(...)` remain untracked because
+      `contains_block_call_in_expr?` has no dataflow/alias map; supporting
+      them requires an explicit raw-vs-heap block carrier contract
     - the synthetic allocator block argument at `ast_to_hir.cr` remains a
       metadata consistency follow-up only; it does not contain HIR `Yield` and
       does not hit `infer_block_param_id` today

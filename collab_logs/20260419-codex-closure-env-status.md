@@ -1137,3 +1137,45 @@ Boundary:
 - The synthetic allocator block-param site remains a metadata consistency
   follow-up, not a current semantic blocker, because those generated allocator
   functions do not contain HIR `Yield`.
+
+## 2026-04-20 Codex checkpoint: implicit block.call diagnostic
+
+Status: opt-in diagnostic only; no codegen or runtime behavior changed.
+
+Applied:
+
+- `CRYSTAL_V2_BLOCK_CALL_DIAGNOSTIC=1` now emits a non-fatal
+  `[CLOSURE_ABI]` diagnostic for implicit untyped `&block` params whose body
+  contains direct `block.call`.
+- `regression_tests/p1_block_call_diagnostic.sh` verifies that the diagnostic
+  is quiet by default, appears under the opt-in env var, and still leaves the
+  heap Proc caller shape visible in HIR.
+
+Boundary:
+
+- Alias forms such as `x = block; x.call(...)` are intentionally not tracked by
+  this diagnostic. The current AST scanner detects direct `block.call` only and
+  does not build a dataflow/alias map.
+- Making alias `.call` work as heap Proc behavior requires a real carrier
+  contract for `is_block` params. A caller-only `heap_proc=true` decision is
+  insufficient: the callee still sees an implicit block param as a pointer and
+  can lower the call as `Pointer#call`.
+
+Verification:
+
+- `crystal build src/crystal_v2.cr -o bin/crystal_v2 --error-trace` — green,
+  known `Random::DEFAULT` warning only.
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/p1_block_call_diagnostic.sh bin/crystal_v2`
+  — `p1_block_call_diagnostic_ok`.
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/p1_ir_shape_check.sh bin/crystal_v2`
+  — `p1_ir_shape_ok`.
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/p1_no_prelude_yield_carrier_trace.sh bin/crystal_v2`
+  — `p1_no_prelude_yield_carrier_ok`.
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/p1_mixed_proc_block_yield_carrier.sh bin/crystal_v2`
+  — `p1_mixed_proc_block_yield_carrier_ok`.
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/p1_hybrid_boundary_guard.sh bin/crystal_v2`
+  — `p1_hybrid_boundary_ok`.
+- `crystal spec spec/mir/hir_to_mir_debug_spec.cr --error-trace` — `2
+  examples, 0 failures`.
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_mini_oracles.sh bin/crystal_v2`
+  — `6 passed, 0 failed out of 6 tests`.
