@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
-# Known-red reducer for: spawn { ... } captures block param / helper method arg
-# via a GLOBAL class var (@__closure__classvar____closure_cell_N) instead of a
-# per-instance heap env. Loop-spawned fibers therefore clobber each other and
-# all read the last-written capture.
+# Forward guard for: spawn { ... } captures block param / helper method arg.
+# The historical bug used a GLOBAL class var
+# (@__closure__classvar____closure_cell_N) instead of a per-instance heap env.
+# Loop-spawned fibers clobbered each other and all read the last-written capture.
 #
 # Documented in memory/closure_capture_via_global_cells_bug.md. Behind Part 6
 # of examples/bench_comprehensive.cr (Fibers total=799980000 expected).
 #
 # Exit contract:
-#   0 — reproduced: BOTH expected FAIL strings observed with exact sums.
-#   1 — not reproduced: both probes printed the _ok markers (bug fixed).
+#   0 — reproduced: BOTH expected historical FAIL strings observed with exact sums.
+#   1 — fixed: both probes printed the _ok markers.
 #   2 — invalid invocation (missing compiler arg).
 #   >2 — unexpected failure (compile error, partial reproduction with different
 #        sums, segfault, timeout, etc.). These flag a distinct bug that
-#        shouldn't be masked by this known-red guard.
+#        should not be masked by this forward guard.
 set -euo pipefail
 
 EXPECTED_A='probe_block_param_FAIL sum=16'
@@ -114,7 +114,7 @@ if [[ $have_a_fail -eq 1 && $have_b_fail -eq 1 ]]; then
 fi
 
 if [[ $have_a_ok -eq 1 && $have_b_ok -eq 1 ]]; then
-  echo "not reproduced: both probes printed _ok markers (bug likely fixed)"
+  echo "fixed: both probes printed _ok markers"
   cat "$RUN_LOG"
   exit 1
 fi

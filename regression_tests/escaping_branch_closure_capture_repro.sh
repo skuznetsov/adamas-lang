@@ -1,5 +1,5 @@
 #!/bin/bash
-# Falsifier reducer for P1 I14-monotonic dominance (escaping capture).
+# Forward guard for P1 I14-owner-aware boxed-local dominance (escaping capture).
 #
 # Specifically covers GPT's fourth DoD item from the P1 audit:
 #   outer local captured by a closure constructed INSIDE ONE BRANCH,
@@ -22,9 +22,9 @@
 #      "entry allocation + zero-init is enough" shortcut. The box must
 #      be seeded from the local's current value before branch lowering.
 #   4. Outer call site `p.call(7)` and outer read `puts counter` are
-#      after the branch merge. Under I14-monotonic, `counter` is
-#      boxed from the hoist point onward; the box alloc+seed MUST be
-#      emitted in blocks that dominate the outer call/read.
+#      after the branch merge. Under I14-owner-aware, `counter` keeps
+#      using the box owned by the parent local binding after scope restore;
+#      the box alloc+seed MUST dominate the outer call/read.
 #   5. Re-entrance: the second `if` (checking ARGV.size again) is a
 #      guard that prevents compile-time constant folding from
 #      eliminating the branch.
@@ -37,8 +37,8 @@
 #   exit 0 — REPRODUCED: wrong output, runtime crash, verifier fail.
 #   exit 2 — INCONCLUSIVE: compile failure.
 #
-# Status: PASSES pre-P1 via globals-based capture. Forward guard:
-# must continue to exit 1 after the atomic P1 flip.
+# Status: this is a FORWARD guard. It must continue to exit 1 as closure-env
+# cleanup removes legacy class-var capture paths.
 
 set -u
 
@@ -53,6 +53,7 @@ trap 'rm -rf "$TMPDIR"' EXIT
 
 SRC="$TMPDIR/escaping_branch_closure_capture.cr"
 BIN="$TMPDIR/escaping_branch_closure_capture"
+RUN_LOG="$TMPDIR/run.log"
 
 cat > "$SRC" <<'EOF'
 counter = 5
@@ -73,13 +74,23 @@ if ! "$COMPILER" "$SRC" -o "$BIN" >"$TMPDIR/compile.log" 2>&1; then
   exit 2
 fi
 
-OUT=$("$BIN" 2>&1)
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+set +e
+"$ROOT_DIR/scripts/run_safe.sh" "$BIN" 5 512 >"$RUN_LOG" 2>&1
 RC=$?
+set -e
 
 if [[ $RC -ne 0 ]]; then
-  echo "reproduced: runtime failure (rc=$RC): $OUT"
+  echo "reproduced: runtime failure (rc=$RC)"
+  tail -20 "$RUN_LOG"
   exit 0
 fi
+
+OUT=$(awk '
+  /^=== STDOUT ===$/ { in_stdout = 1; next }
+  /^=== STDERR ===$/ { in_stdout = 0 }
+  in_stdout { print }
+' "$RUN_LOG")
 
 # ARGV.size == 0 at the runner-level invocation, so capture proc runs
 # and mutates counter. Expected "12\n12".
@@ -89,4 +100,5 @@ if [[ "$OUT" == "12"$'\n'"12" ]]; then
 fi
 
 echo "reproduced: expected '12\\n12', got: $(printf '%q' "$OUT")"
+tail -20 "$RUN_LOG"
 exit 0

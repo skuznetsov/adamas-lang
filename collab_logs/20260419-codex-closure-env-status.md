@@ -788,3 +788,31 @@ Boundary:
 - `@proc_captures_by_value` and legacy `@closure_ref_cells` are still live.
 - The remaining ABI cleanup must still be atomic; this checkpoint only fixes
   the stale same-name boxed-local aliasing exposed by the spawn guard.
+
+## 2026-04-19 Codex checkpoint: closure guard hygiene
+
+Status: behavior-neutral regression-script/doc hygiene after `b85e55a5`.
+
+Applied:
+
+- `regression_tests/spawn_capture_block_param_repro.sh` is no longer labelled
+  known-red. Exit `1` is now documented as the fixed forward-guard state, and
+  the fixed message says `fixed: both probes printed _ok markers`.
+- `regression_tests/conditional_closure_capture_repro.sh` and
+  `regression_tests/escaping_branch_closure_capture_repro.sh` now refer to
+  I14-owner-aware boxed-local dominance instead of the old I14-monotonic name.
+- `escaping_branch_closure_capture_repro.sh` now runs its compiled binary via
+  `scripts/run_safe.sh`, matching the project Safe Testing Protocol.
+- `docs/closure_env_abi_p1_plan.md` no longer says R9 flips the known-red
+  guard; R2/R9 are documented as keeping the historical spawn/fanout bug fixed.
+
+Verification:
+
+- `bash -n regression_tests/spawn_capture_block_param_repro.sh regression_tests/conditional_closure_capture_repro.sh regression_tests/escaping_branch_closure_capture_repro.sh`
+  — clean.
+- `regression_tests/spawn_capture_block_param_repro.sh bin/crystal_v2; echo SPAWN_RC:$?`
+  — both probes `_ok`, `SPAWN_RC:1`.
+- `regression_tests/conditional_closure_capture_repro.sh bin/crystal_v2; echo CONDITIONAL_RC:$?`
+  — correct `12/12`, `CONDITIONAL_RC:1`.
+- `regression_tests/escaping_branch_closure_capture_repro.sh bin/crystal_v2; echo ESCAPING_RC:$?`
+  — correct branch-local escape output, `ESCAPING_RC:1`.

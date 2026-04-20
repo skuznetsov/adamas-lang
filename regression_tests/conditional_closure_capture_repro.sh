@@ -1,12 +1,10 @@
 #!/bin/bash
-# Falsifier reducer for P1 I14-monotonic dominance (basic shape).
+# Forward guard for P1 I14-owner-aware boxed-local dominance (basic shape).
 #
-# Motivation: under I14-monotonic (see ast_to_hir.cr BoxedLocal docs),
-# `.locals` truncation at branch/case merge sites is safe ONLY IF the
-# box allocation dominates every subsequent read/write of the local.
-# `hoist_box_for_local` must enforce this by emitting the allocation
-# into the function entry block, regardless of the branch context at
-# hoist time.
+# Motivation: branch/case merge sites restore local snapshots, while boxed
+# captures live in a side map keyed by name + owning local binding. Correct
+# lowering must keep the owning parent box visible after the branch merge and
+# must not late-hoist a branch-local replacement for the same parent capture.
 #
 # Shape: a mutable parent-scope local (`counter`) is captured by a
 # proc literal. The proc is re-assigned in BOTH branches of an `if`
@@ -40,9 +38,8 @@
 #   exit 2 — INCONCLUSIVE: compile failure, runner error. Does NOT
 #            claim bug reproduction.
 #
-# Status: currently PASSES (exit 1) because pre-P1 globals-based
-# capture path shares `counter`. This is a FORWARD guard: it must
-# continue to exit 1 after the P1 atomic flip.
+# Status: this is a FORWARD guard. It must continue to exit 1 as closure-env
+# cleanup removes legacy class-var capture paths.
 
 set -u
 

@@ -312,8 +312,7 @@ Development order (local WIP only):
      presence; otherwise remove class registration too.
 8. **IR-shape assertions (§6).** Run the verification grep suite; any hit is
    a stop condition.
-9. **DoD matrix (§7).** Run every listed test; every cell must be green
-   (with the known-red guard flipping).
+9. **DoD matrix (§7).** Run every listed test; every cell must be green.
 10. **Commit.** Only once every assertion and test passes. No partial landing.
 
 Rollback points during development:
@@ -530,7 +529,7 @@ discipline:
 5. The two reducers `regression_tests/conditional_closure_capture_repro.sh`
    and `regression_tests/escaping_branch_closure_capture_repro.sh` are
    forward guards: they exercise branch-local hoist + outer read and
-   must continue to exit 1 after the atomic P1 flip.
+   must continue to exit 1 as legacy capture paths are removed.
 
 **Rationale for parallel map over `lookup_local` signature change.**
 `lookup_local` has many call sites across the lowering layer (identifier
@@ -1472,7 +1471,7 @@ Every row must be green before commit. All binaries run via
 | # | Command | Expected |
 |---|---|---|
 | R1 | `crystal build src/crystal_v2.cr -o bin/crystal_v2 --error-trace` | exit 0, only Random warning |
-| R2 | `regression_tests/spawn_capture_block_param_repro.sh bin/crystal_v2` | **exit 1** (probes print ok — bug fixed) |
+| R2 | `regression_tests/spawn_capture_block_param_repro.sh bin/crystal_v2` | **exit 1** (both probes print `_ok`; historical bug stays fixed) |
 | R3 | `bin/crystal_v2 regression_tests/tuple_int32_int64_layout.cr -o /tmp/p1_tup && scripts/run_safe.sh /tmp/p1_tup 5 512` | stdout contains `tuple_int32_int64_layout_ok` and `..._big_ok` |
 | R4 | `bin/crystal_v2 regression_tests/channel_ping_pong_repro.cr -o /tmp/p1_ch && scripts/run_safe.sh /tmp/p1_ch 5 512` | stdout `channel_ping_pong_ok` |
 | R5 | `bash regression_tests/object_in_splat_broadcast_hir_count.sh bin/crystal_v2` | `ok: fix intact` |
@@ -1495,7 +1494,9 @@ the same atomic P1 commit (source `.cr` + runner shell where applicable,
 following the pattern of existing reducers). Expected outputs above must
 match exactly.
 
-R9 specifically flips the known-red guard R2. R10 guarantees the ABI invariants hold structurally, independent of specific test outcomes.
+R9 overlaps R2 and keeps the historical spawn/fiber fan-out capture guard in
+fixed state. R10 guarantees the ABI invariants hold structurally, independent
+of specific test outcomes.
 
 ---
 
