@@ -57,6 +57,7 @@ trap 'rm -rf "$TMPDIR"' EXIT
 
 SRC="$TMPDIR/conditional_closure_capture.cr"
 BIN="$TMPDIR/conditional_closure_capture"
+RUN_LOG="$TMPDIR/run.log"
 
 cat > "$SRC" <<'EOF'
 counter = 5
@@ -78,13 +79,23 @@ if ! "$COMPILER" "$SRC" -o "$BIN" >"$TMPDIR/compile.log" 2>&1; then
   exit 2
 fi
 
-OUT=$("$BIN" 2>&1)
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+set +e
+"$ROOT_DIR/scripts/run_safe.sh" "$BIN" 5 512 >"$RUN_LOG" 2>&1
 RC=$?
+set -e
 
 if [[ $RC -ne 0 ]]; then
-  echo "reproduced: runtime failure (rc=$RC): $OUT"
+  echo "reproduced: runtime failure (rc=$RC)"
+  tail -20 "$RUN_LOG"
   exit 0
 fi
+
+OUT=$(awk '
+  /^=== STDOUT ===$/ { in_stdout = 1; next }
+  /^=== STDERR ===$/ { in_stdout = 0 }
+  in_stdout { print }
+' "$RUN_LOG")
 
 if [[ "$OUT" == "12"$'\n'"12" ]]; then
   echo "correct: proc.call(7) -> result=12, counter=12"
@@ -92,4 +103,5 @@ if [[ "$OUT" == "12"$'\n'"12" ]]; then
 fi
 
 echo "reproduced: expected '12\\n12', got: $(printf '%q' "$OUT")"
+tail -20 "$RUN_LOG"
 exit 0

@@ -1,7 +1,7 @@
 # Closure Env ABI — P1 Implementation Plan
 
-Status: **plan-only, no code changes committed**
-Scope: atomic ABI flip from global closure cells to per-instance heap env
+Status: **implementation checkpoint, not plan-only**
+Scope: staged ABI migration from global closure cells to per-instance heap env
 Depends on: P0 preparatory helpers committed as `db7d9c6b`
 Design reference: `docs/closure_env_abi_design.md` (A1.ii, §10 invariants I1–I9)
 
@@ -13,9 +13,12 @@ P1 replaces the documented-workaround mechanism in which captured locals are
 stored in **global** `@__closure__classvar____closure_cell_N` class vars with a
 **per-instance heap env** carried by the Proc value itself.
 
-A single unified change is required because Proc VALUE representation, Proc
-OBJECT shape, body-function ABI, and `Proc#call` dispatch are interlocked. The
-commit must be atomic.
+The original plan required one unified change because Proc VALUE
+representation, Proc OBJECT shape, body-function ABI, and `Proc#call` dispatch
+are interlocked. The current branch has already staged part of that migration:
+`MakeProc`, heap Proc object allocation, env-object lowering, Proc accessors,
+and the MIR `Proc#call` intercept are wired. The remaining interlocked work is
+legacy-path cleanup and unifying the still-dual block/proc capture paths.
 
 Carrier conclusion (§2): `Fiber#run` reaches the generic `Proc#call` lowering
 through `@proc.call` — no Fiber-specific carrier is needed. P1 wires the heap
@@ -23,9 +26,31 @@ env through the already-unified `Proc#call` path.
 
 ---
 
-## 1. Exact current control-flow map
+## 0.1 Current implementation checkpoint (2026-04-19)
 
-All line anchors were verified against working tree at commit `db7d9c6b`.
+These anchors supersede the historical line ranges in the original plan below:
+
+| Area | Current anchor | Status |
+|---|---|---|
+| `CapturedVar` layout metadata | `src/compiler/hir/hir.cr:719` | constructor invariants enforced; dumps expose `boxed` / `by_val`, slot, payload, by-ref |
+| `HIR::MakeProc` | `src/compiler/hir/hir.cr:806` | live; emitted by proc literals and selected block-to-proc conversions |
+| HIR Proc object emission | `src/compiler/hir/ast_to_hir.cr:80516` | `emit_make_proc_value` emits `FuncPointer`, optional `MakeClosure`, then `MakeProc` |
+| HIR proc literals | `src/compiler/hir/ast_to_hir.cr:80634` | env-param/capture path wired; returns `MakeProc` |
+| HIR block-to-proc | `src/compiler/hir/ast_to_hir.cr:80856` | dual-mode; heap path uses env/`MakeProc`, non-heap path still uses legacy closure cells |
+| Legacy closure cells | `src/compiler/hir/ast_to_hir.cr:3115`, `:48665`, `:78139`, `:81101` | still active; behavior-changing removal remains coupled to ABI cleanup |
+| Legacy Proc hidden captures | `src/compiler/hir/ast_to_hir.cr:3112`, `:60591`, `:76196` | still active; behavior-changing removal remains coupled to call-shape cleanup |
+| MIR Proc object allocation | `src/compiler/mir/hir_to_mir.cr:774` | `HIR::MakeProc` lowers through `allocate_proc_object` |
+| MIR heap Proc call | `src/compiler/mir/hir_to_mir.cr:799`, `:3010` | Proc receivers load `fn`/`env` and dispatch through `call_heap_proc` |
+| MIR closure env lowering | `src/compiler/mir/hir_to_mir.cr:5306` | `MakeClosure` allocates env object and stores captures by byte offsets |
+
+Before editing, re-run `rg -n` for these symbols; exact line numbers are
+expected to drift.
+
+## 1. Historical control-flow map (re-anchor before edits)
+
+The following map was originally verified against commit `db7d9c6b`. It is kept
+as rationale and as a checklist of surfaces, but it is not an authoritative
+current-state map after the staged implementation commits.
 
 ### 1.1 Closure-cell store sites (documented workaround)
 
@@ -244,7 +269,7 @@ P1 must preserve every invariant below. Violation → revert.
 | I11 | (added) Every captured local that is written from inside any closure over it, OR has `CapturedVar#by_reference == true`, is hoisted to a per-lexical-activation heap Box. All reads/writes (including parent-scope) go through that Box. Multiple closures over the same variable share the same Box pointer. |
 | I12 | (added) `HIR::FuncPointer` is typed as `TypeRef::POINTER` and is never the user-visible Proc value. The only producer of Proc-typed values is `HIR::MakeProc(fn_ptr, env_ptr)`. |
 | I13 | (added, round 3) Every `CapturedVar` on a `MakeClosure` has `env_slot_type`, `payload_type`, `boxed` set at HIR emission such that: `boxed ⇒ env_slot_type == POINTER`, `!boxed ⇒ env_slot_type == payload_type`, and `boxed == (by_reference || written_captures.includes?(name))`. MIR `lower_closure` must not recompute these — it reads them straight off the `CapturedVar`. |
-| I14 | (added, round 3; revised 2026-04-19) `LoweringContext.lookup_local` signature is unchanged (`ValueId?`). Boxed-local state is carried in a parallel map `@boxed_locals : Hash(String, BoxedLocal)` with `{box_ptr, payload_type}` entries. **I14-monotonic (revised):** `@boxed_locals` is append-only within a function scope; dominance is enforced at the hoist site, not via snapshot/restore. `LoweringContext#require_entry_box_for_local` records name-only pre-scan requirements before branch/case/loop lowering; the default-off scaffold hook `seed_entry_box_requirements_for_body` seeds those names when `CRYSTAL_V2_SEED_ENTRY_BOX_REQUIREMENTS=1`. `hoist_box_for_local(ctx, name, payload_type, initial_value)` emits the `PointerMalloc` into `ctx.function.entry_block`, seeds the box from the current local value at the original binding site, and rejects late invocation outside the entry block. Therefore P1 must predeclare/hoist boxes at local declaration or first assignment before branch/case/loop lowering, not discover and hoist an already-initialized parent local from a proc literal lowered inside a branch. `save_locals` returns a `LocalsSnapshot` that carries `{locals, boxed_locals, debug_locals}`; `restore_locals(snap)` restores `@locals` and `@debug_local_ids` but **does not rewind `@boxed_locals`** — rewinding would re-hide a still-dominating box. `restore_locals(Hash)` likewise preserves `@boxed_locals`. `push_scope`/`pop_scope` continue to snapshot `@boxed_locals` because they cross function-scope boundaries (nested proc literal body, block-to-proc body). |
+| I14 | (added, round 3; revised 2026-04-19) `LoweringContext.lookup_local` signature is unchanged (`ValueId?`). Boxed-local state is carried in a parallel map `@boxed_locals : Hash(String, BoxedLocal)` with `{box_ptr, payload_type}` entries. **I14-monotonic (revised):** `@boxed_locals` is append-only within a function scope; dominance is enforced at the hoist site, not via snapshot/restore. `LoweringContext#require_entry_box_for_local` records name-only pre-scan requirements before branch/case/loop lowering, and `seed_entry_box_requirements_for_body` / `seed_entry_box_requirements_for_main` seed those names before owner-body lowering. `hoist_box_for_local(ctx, name, payload_type, initial_value)` emits an entry-block allocation when the name was predeclared as entry-box-required, then seeds the box from the current local value at the original binding site. Loop/block parameters that are not entry-box-required may still use a current-block allocation so each dynamic invocation gets its own box. Therefore P1 must predeclare/hoist parent-scope boxes at local declaration or first assignment before branch/case/loop lowering, not discover and hoist an already-initialized parent local from a proc literal lowered inside a branch. `save_locals` returns a `LocalsSnapshot` that carries `{locals, boxed_locals, debug_locals}`; `restore_locals(snap)` restores `@locals` and `@debug_local_ids` but **does not rewind `@boxed_locals`** — rewinding would re-hide a still-dominating box. `restore_locals(Hash)` likewise preserves `@boxed_locals`. `push_scope` records a boxed-local snapshot for symmetry/debugging, but `pop_scope` only discards that snapshot and does not install it back; nested proc/block bodies use separate `LoweringContext` instances. |
 
 ---
 
@@ -279,9 +304,10 @@ Development order (local WIP only):
    path reduces to `Proc#call`. Verify by IR inspection (§6).
 7. **Remove dead paths.**
    - Delete / no-op `emit_capture_cell_init`.
-   - Remove `@proc_captures_by_value` and its users at ast_to_hir.cr:48389,
-     60024, 75490, 77465, 77501.
-   - Drop cell-name generation at ast_to_hir.cr:79544, :79923.
+   - Remove `@proc_captures_by_value` and its current users around
+     ast_to_hir.cr:48683, :60601, :76196, :78188, :78227.
+   - Drop current closure-cell fallback generation around
+     ast_to_hir.cr:81092–81101 after the heap path is universal.
    - Keep the `__closure` class stub only if any test oracle depends on its
      presence; otherwise remove class registration too.
 8. **IR-shape assertions (§6).** Run the verification grep suite; any hit is
@@ -455,29 +481,31 @@ scope. The revised discipline:
 
 | # | Site | File:Line | Discipline |
 |---|---|---|---|
-| SR1 | `push_scope` | ast_to_hir.cr:132 | snapshot `@boxed_locals` (kept — function-scope boundary for nested proc/block bodies). |
-| SR2 | `pop_scope` | ast_to_hir.cr:159 | restore from snapshot (kept — same reason). |
+| SR1 | `push_scope` | ast_to_hir.cr:132 | snapshot `@boxed_locals` for symmetry/debugging. |
+| SR2 | `pop_scope` | ast_to_hir.cr:159 | pop and discard the boxed snapshot; do **not** install it back into `@boxed_locals`. Nested proc/block bodies use separate `LoweringContext` instances, not push/pop state transfer. |
 | SR3 | `save_locals` | ast_to_hir.cr:351 | returns `LocalsSnapshot{locals, boxed_locals, debug_locals}`. The `boxed_locals` field is retained as a forward-compat / debugging hook but is NEVER installed back. |
 | SR4 | `restore_locals(LocalsSnapshot)` | ast_to_hir.cr:361 | restores `@locals` and `@debug_local_ids`; does NOT rewind `@boxed_locals`. |
 | SR5 | `restore_locals(Hash)` | ast_to_hir.cr:385 | legacy overload for `@inline_caller_locals_stack` and empty-hash callee isolation. Preserves `@boxed_locals` (matches monotonic invariant). |
 
 **Why this is safe.** Under monotonic `@boxed_locals`:
 
-1. `hoist_box_for_local` always emits the `PointerMalloc` into the
-   function entry block via `ctx.emit_to_block(entry_block, …)`, so
-   `box_ptr` SSA-dominates every use.
+1. `hoist_box_for_local` emits parent-scope boxes that were predeclared
+   by the owner-body scan into the function entry block via
+   `ctx.emit_to_block(entry_block, …)`, so `box_ptr` SSA-dominates every
+   use that follows the binding-site seed.
 2. `collect_proc_literal_box_requirements` produces the name-only
    predeclaration set for proc literals nested in a function body.
-   `seed_entry_box_requirements_for_body` can feed those names to
-   `LoweringContext#require_entry_box_for_local` before control-flow
-   lowering starts; the hook is default-off until P1 consumes the set at
-   binding sites.
+   `seed_entry_box_requirements_for_body` and
+   `seed_entry_box_requirements_for_main` feed those names to
+   `LoweringContext#require_entry_box_for_local` before owner-body
+   lowering starts.
 3. `hoist_box_for_local` also emits a seed `PointerStore` from the
    local's current value at the original binding / first-assignment
-   site. The helper rejects invocation when `ctx.current_block` is not
-   the function entry block. This deliberately forces P1 to predeclare
-   boxes before branch/case/loop lowering instead of discovering them
-   late from a branch-local proc literal.
+   site. Parent-scope boxes must therefore be predeclared before
+   branch/case/loop lowering instead of discovered late from a
+   branch-local proc literal. Loop/block parameters that are not
+   entry-box-required may use current-block allocation for per-invocation
+   boxes.
 4. `@boxed_locals` only GROWS during a function's lowering. `.locals`
    truncation at merge sites is consequently safe — boxed state is
    invariant across branch boundaries, so there is nothing to phi-merge.
@@ -773,13 +801,13 @@ end
   boxed names before lowering the relevant branch/case/loop bodies.
 
 **Predeclaration requirement.** Before lowering a function/proc body,
-P1 must know which parent-scope names require boxes. The scaffold now
+P1 must know which parent-scope names require boxes. The implementation
 contains the concrete name-only mechanism:
 `collect_proc_literal_box_requirements(body, candidate_names)` computes
 the set and `LoweringContext#require_entry_box_for_local(name)` stores it
-until a binding site can hoist with the real initial value. The current
-default-off hook is `CRYSTAL_V2_SEED_ENTRY_BOX_REQUIREMENTS=1`, with
-optional `DEBUG_ENTRY_BOX_REQUIREMENTS=1` logging. At that site, emit:
+until a binding site can hoist with the real initial value. The owner-body
+seeding calls are active; `DEBUG_ENTRY_BOX_REQUIREMENTS=1` only controls
+optional logging. At the binding site, emit:
 
 ```crystal
 value_id = lower_rhs(...)
@@ -1587,10 +1615,11 @@ coverage.
   allocation and value initialization dominate later reads.
   `seed_entry_box_requirements_for_body`,
   `collect_proc_literal_box_requirements`, and
-  `LoweringContext#require_entry_box_for_local` are the dormant scaffold
-  for that predeclaration. The hook is default-off before P1 consumes
-  the requirement set. The helper rejects branch-local invocation;
-  P1 must consume those requirements at local binding / first assignment.
+  `LoweringContext#require_entry_box_for_local` provide that
+  predeclaration. P1 must consume parent-scope requirements at local
+  binding / first assignment; loop/block parameters that are not
+  entry-box-required may use current-block allocation for per-invocation
+  boxes.
   `save_locals` returns a
   `LocalsSnapshot` that is NOT installed back into `@boxed_locals` on
   restore — that map is preserved across branch/case/inline merge.

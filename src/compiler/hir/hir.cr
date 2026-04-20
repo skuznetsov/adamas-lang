@@ -801,8 +801,8 @@ module Crystal::HIR
   # or a null pointer literal for zero-capture procs.
   #
   # See docs/closure_env_abi_p1_plan.md §5.1.2.5 (invariants I2, I12).
-  # Currently unused (additive P1 scaffolding); will be emitted by
-  # lower_proc_literal / lower_block_to_proc in Commit P1.
+  # Emitted by proc literals and by block-to-proc conversions that require
+  # heap Proc carrier semantics.
   class MakeProc < Value
     getter fn_ptr  : ValueId
     getter env_ptr : ValueId

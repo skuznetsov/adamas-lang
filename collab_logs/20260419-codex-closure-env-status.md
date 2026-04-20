@@ -701,3 +701,44 @@ Boundary:
 - Next shared frontier is to resume the tracked closure-env ABI/P1 work from
   the current green baseline, preserving the known-red guards outside
   `run_all.sh`.
+
+## 2026-04-19 Codex checkpoint: P1 scaffold hygiene after full-green baseline
+
+Status: additive hygiene only; no compiler behavior changed after the
+`test_closure_ref` fix.
+
+Applied:
+
+- `docs/closure_env_abi_p1_plan.md` now states the real status:
+  implementation checkpoint, not plan-only.
+- The plan now has a current-anchor table for the already-wired pieces:
+  `CapturedVar` metadata, `MakeProc`, HIR `emit_make_proc_value`, MIR
+  `lower_make_proc`, `call_heap_proc`, and `lower_closure`.
+- The plan explicitly marks the old control-flow map as historical and
+  re-anchor-before-edit.
+- I14-monotonic text now matches code: `restore_locals` does not rewind
+  `@boxed_locals`; `push_scope` records a snapshot only for symmetry/debugging,
+  and `pop_scope` discards it.
+- `regression_tests/conditional_closure_capture_repro.sh` now runs the compiled
+  binary through `scripts/run_safe.sh` and keeps its forward-guard contract:
+  exit `1` means correct/fixed, exit `0` means reproduced, exit `2` means
+  inconclusive compile/setup failure.
+- `HIR::MakeProc` source comments no longer claim it is unused.
+
+Verification:
+
+- `git diff --check` — clean.
+- `bash -n regression_tests/conditional_closure_capture_repro.sh` — clean.
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/conditional_closure_capture_repro.sh bin/crystal_v2; echo SCRIPT_RC:$?`
+  — prints `correct: proc.call(7) -> result=12, counter=12` and
+  `SCRIPT_RC:1`.
+
+Still behavior-changing / not split:
+
+- `@proc_captures_by_value` remains live and feeds hidden-arg paths.
+- Legacy `@closure_ref_cells` remains live for reads/writes and the non-heap
+  `lower_block_to_proc` fallback.
+- `lower_block_to_proc` remains dual-mode: heap Proc for called blocks,
+  legacy closure cells for other block-proc paths.
+- Removing those paths must stay coupled with the ABI cleanup so no mixed
+  hidden-arg/env-first calling state is committed.
