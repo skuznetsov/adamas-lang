@@ -24,6 +24,26 @@ Many visible entries are broad compiler container `#inspect`, `#to_s`, and
 work should localize which safety-net/lazy-RTA path admits the pending queue
 explosion before any `s3b+` attempt. {F/G/R: 0.94/0.55/0.96} [verified]
 
+[LM-465|verified]: A focused env-gated diagnostic now identifies the first
+observed deep Array `#inspect` enqueue during the stage2 pending explosion.
+`CRYSTAL_V2_PENDING_EXPLOSION_TRACE=1` logs once from the pending enqueue paths
+without changing default behavior. Evidence: `crystal build
+src/crystal_v2.cr -o /tmp/cv2_pending_trace_ctx --error-trace` succeeded with
+only the known `Random::DEFAULT` warning, then
+`CRYSTAL_V2_PENDING_EXPLOSION_TRACE=1 CRYSTAL_V2_STOP_AFTER_HIR=1
+CRYSTAL_V2_PHASE_STATS=1 CRYSTAL_V2_LOWER_PROGRESS=1 DEBUG_MAIN=1
+DEBUG_MAIN_PROGRESS_EVERY=1 scripts/run_safe.sh /tmp/cv2_pending_trace_ctx 120
+4096 src/crystal_v2.cr -o /tmp/cv2_s2_pending_trace_ctx` timed out as expected
+but emitted `[PENDING_EXPLOSION] first deep Array inspect enqueued source=defer
+current=Object#inspect depth=1 queue=12325
+name=Array(Array(Array(Tuple(UInt32, Array(Hash(String, UInt32))))))#inspect$IO`
+before `[MAIN] expr 30/30`. Boundary: the first observed trigger is
+`Object#inspect` fallback lowering on a deep compiler-container Array shape,
+not the later `RelatedSpan` symptom; next work should inspect why
+`Object#inspect` / `Array#inspect` fallback lowering is admitted so broadly
+under the self-hosted stage1 safety-net path. {F/G/R: 0.92/0.52/0.94}
+[verified]
+
 [LM-463|verified]: The first real use of the bootstrap semantic gate stops at
 `s1 -> s2b`, before any HIR/MIR/LLVM comparison is possible. Command:
 `BOOTSTRAP_STAGE_OUT=/tmp/cv2_bs_s2 BOOTSTRAP_CHAIN_STAGES=2

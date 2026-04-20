@@ -32,6 +32,17 @@
       - many visible pending entries are broad `#inspect`, `#to_s`, and
         `#object_id` instantiations over compiler/frontend/HIR/MIR container
         types
+    - diagnostic instrumentation added behind
+      `CRYSTAL_V2_PENDING_EXPLOSION_TRACE=1` in `ast_to_hir.cr` records the
+      first deep Array `#inspect` enqueue without changing default behavior:
+      - `crystal build src/crystal_v2.cr -o /tmp/cv2_pending_trace_ctx --error-trace`
+        succeeded with only the known `Random::DEFAULT` warning
+      - `CRYSTAL_V2_PENDING_EXPLOSION_TRACE=1 CRYSTAL_V2_STOP_AFTER_HIR=1 CRYSTAL_V2_PHASE_STATS=1 CRYSTAL_V2_LOWER_PROGRESS=1 DEBUG_MAIN=1 DEBUG_MAIN_PROGRESS_EVERY=1 scripts/run_safe.sh /tmp/cv2_pending_trace_ctx 120 4096 src/crystal_v2.cr -o /tmp/cv2_s2_pending_trace_ctx`
+        timed out as expected and emitted:
+        `[PENDING_EXPLOSION] first deep Array inspect enqueued source=defer current=Object#inspect depth=1 queue=12325 name=Array(Array(Array(Tuple(UInt32, Array(Hash(String, UInt32))))))#inspect$IO`
+      - this means the first observed deep container inspect is enqueued while
+        lowering `Object#inspect`, before the later `RelatedSpan` deep inspect
+        appears in the pending queue
   - practical boundary:
     - this is a timeout/no-progress blocker, not an OOM or crash signature
     - the current root corridor is no longer `lower_main` expr 30; it is the
@@ -40,9 +51,10 @@
     - do not run `s3b+` until the stage2 full-compiler build gets past this
       point or a smaller focused no-prelude/full-prelude reducer explains the
       pending queue explosion
-    - next no-edit diagnostics should inspect why safety-net/lazy-RTA
-      lowering admits so many `#inspect/#to_s/#object_id` instantiations under
-      self-hosted stage1
+    - next diagnostics should inspect why `Object#inspect` / `Array#inspect`
+      fallback lowering admits deep compiler-container `#inspect/#to_s`
+      instantiations under self-hosted stage1, before considering any bounded
+      safety-net filter
 - **Bootstrap semantic-equivalence scaffold (2026-04-20, current session)**:
   - trustworthy setup:
     - `scripts/build_bootstrap_stages.sh`

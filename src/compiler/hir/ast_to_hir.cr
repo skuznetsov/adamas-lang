@@ -2252,6 +2252,7 @@ module Crystal::HIR
                          end
         if should_undefer
           @rta_deferred_set.delete(name)
+          maybe_log_pending_explosion(name, "rta_undefer")
           @pending_function_queue << name
           count += 1
           true
@@ -2277,6 +2278,7 @@ module Crystal::HIR
     @phase0_pending_queue_max : Int32 = 0
     @phase0_safety_net_functions : Int32 = 0
     @phase0_lower_def_counts : Hash(String, Int32) = Hash(String, Int32).new(0)
+    @pending_explosion_logged : Bool = false
     # Separate counter for return-type body inference (infer_concrete_return_type_from_body).
     # This walks method bodies to infer return types WITHOUT full lower_def.
     # Keyed by canonical DefIdentity{arena_id, expr_index} after final arena resolution.
@@ -57500,6 +57502,25 @@ module Crystal::HIR
       !stats.has_block
     end
 
+    private def maybe_log_pending_explosion(name : String, source : String) : Nil
+      return unless env_has?("CRYSTAL_V2_PENDING_EXPLOSION_TRACE")
+      return if @pending_explosion_logged
+      return unless name.includes?("#inspect")
+
+      array_depth = 0
+      offset = 0
+      while idx = name.index("Array(", offset)
+        array_depth += 1
+        break if array_depth >= 4
+        offset = idx + 6
+      end
+      return if array_depth < 4
+
+      current = "#{@current_class || "(nil)"}##{@current_method || "(nil)"}"
+      STDERR.puts "[PENDING_EXPLOSION] first deep Array inspect enqueued source=#{source} current=#{current} depth=#{@lowering_depth} queue=#{@pending_function_queue.size} name=#{name[0, 180]}"
+      @pending_explosion_logged = true
+    end
+
     private def lower_function_if_needed_impl(name : String) : Nil
       return if name.empty?
       is_math_min_debug = env_get("DEBUG_MATH_MIN") && name.includes?("Math") && (name.includes?("min") || name.includes?("max"))
@@ -57598,6 +57619,7 @@ module Crystal::HIR
         end
         unless function_state(name).pending?
           @function_lowering_states[name] = FunctionLoweringState::Pending
+          maybe_log_pending_explosion(name, "defer")
           @pending_function_queue << name
           # Keep AST reachability filter aligned for deferred functions.
           if @ast_filter_active
