@@ -156,6 +156,16 @@ expected but showed `Array#to_s` samples enqueued from `Object#to_s`,
 bounded fix/reducer should target broad universal fallback adapter replay, not
 deep-container name guards. {F/G/R: 0.94/0.58/0.94} [verified]
 
+[LM-474|verified]: Virtual-target context logging confirms the earliest
+broad-parent replay callsites. In the 45s diagnostic,
+`record parent=Reference method=object_id args=[] ... current=Reference#same?`
+immediately replayed `Array(Float64)` under `Reference`, and
+`record parent=Object method=to_s args=[405] ... current=Object#to_s`
+immediately replayed `Array(Float64)` under `Object`. Boundary: the next
+candidate fix should consider self-calls inside root fallback methods as
+current-owner static/demand-local operations, not global subclass replay.
+{F/G/R: 0.94/0.60/0.94} [verified]
+
 ## Active Strategy
 
 - Main fast loop: `--no-prelude` oracles and focused STOP_AFTER_HIR budget

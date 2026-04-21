@@ -4749,7 +4749,8 @@ module Crystal::HIR
       (@virtual_targets_by_parent[parent_name] ||= [] of VirtualTarget) << entry
       if env_get("DEBUG_VIRTUAL_TARGETS")
         type_ids = arg_types.map(&.id).join(",")
-        STDERR.puts "[VIRTUAL_TARGET] record parent=#{parent_name} method=#{method_name} args=[#{type_ids}] block=#{has_block ? 1 : 0} splat=#{has_splat ? 1 : 0}"
+        current = "#{@current_class || "(nil)"}##{@current_method || "(nil)"}"
+        STDERR.puts "[VIRTUAL_TARGET] record parent=#{parent_name} method=#{method_name} args=[#{type_ids}] block=#{has_block ? 1 : 0} splat=#{has_splat ? 1 : 0} current=#{current}"
       end
 
       # If descendants are already known, lower the recorded target for them
@@ -4769,7 +4770,8 @@ module Crystal::HIR
       targets = @virtual_targets_by_parent[parent_name]?
       return unless targets
       if env_get("DEBUG_VIRTUAL_TARGETS")
-        STDERR.puts "[VIRTUAL_TARGET] lower child=#{child_name} parent=#{parent_name} targets=#{targets.size}"
+        current = "#{@current_class || "(nil)"}##{@current_method || "(nil)"}"
+        STDERR.puts "[VIRTUAL_TARGET] lower child=#{child_name} parent=#{parent_name} targets=#{targets.size} current=#{current}"
       end
 
       targets.each do |target|

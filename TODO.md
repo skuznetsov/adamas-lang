@@ -75,6 +75,12 @@ Important refined facts:
   - `Hash#to_s` samples are enqueued from `Object#to_s`
   - `Hash#inspect` samples are enqueued from `Object#inspect`
   - `Hash#each` samples are enqueued from `Dir::Globber#glob`
+- `DEBUG_VIRTUAL_TARGETS=1` with current-context logging confirmed the earliest
+  broad-parent replay sites:
+  - `record parent=Reference method=object_id args=[] ... current=Reference#same?`
+  - `lower child=Array(Float64) parent=Reference ... current=Reference#same?`
+  - `record parent=Object method=to_s args=[405] ... current=Object#to_s`
+  - `lower child=Array(Float64) parent=Object ... current=Object#to_s`
 
 ## Refuted Fix Branches
 
@@ -117,12 +123,11 @@ Important boundary:
 
 ## Next Work
 
-1. Build a fast reducer/oracle for broad `Object#to_s` / `Object#inspect` /
-   `Reference#same?` replay on generic containers before changing compiler
-   behavior.
-2. Inspect whether `Object#to_s` and `Object#inspect` are being handled as
-   virtual replay demands when their bodies are just universal fallback
-   adapters.
+1. Build a fast reducer/oracle for broad self-replay in `Object#to_s` and
+   `Reference#same?` before changing compiler behavior.
+2. Inspect whether calls on `self` inside broad root methods should be statically
+   constrained to the current owner instead of replaying every subclass/generic
+   instantiation.
 3. Only then attempt a bounded fix. Candidate direction: prevent universal
    fallback adapters from replaying every generic container owner unless a real
    runtime formatting/equality call requires the concrete owner.
