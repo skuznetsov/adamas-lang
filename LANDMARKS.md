@@ -82,6 +82,24 @@ the broader supply-driven expansion in `emit_all_tracked_signatures`,
 universal `#inspect/#to_s/#object_id/#to_json` signatures. {F/G/R:
 0.95/0.60/0.95} [verified]
 
+[LM-468|refuted]: Emit-only pruning, and the replay+emit combination, are not
+the next sufficient fix either. Two more uncommitted experiments were run and
+reverted. First, a bounded `emit_all_tracked_signatures` guard skipped
+universal `inspect/to_s/object_id/to_json` safety-net signatures on deep
+generic container owners unless the exact owner was already reachable; the
+resulting `/tmp/cv2_emit_a` run still timed out at the original frontier, with
+the same first `[PENDING_EXPLOSION]` under `Object#inspect` and no observable
+advance into `emit_tracked_sigs`. Second, the combined patch (broad replay
+gating + emit pruning) removed neither the main cost nor the timeout:
+`/tmp/cv2_s2_combo_emit_replay.log` still showed `process_pending` lowering
+`61454` functions, HIR functions growing `3088 -> 64185`, and
+`[PHASE_STATS] process_pending: ... in 260147.0ms`, followed by a 300s timeout.
+Boundary: do not retry replay/emit heuristics alone; the next root corridor is
+the supply-driven growth inside `process_pending_lower_functions` itself and
+its still-active producers (`remember_callsite_arg_types`, remaining replay
+paths, and families like `#hash`, `#to_json`, `#to_i`, `#inspect`). {F/G/R:
+0.94/0.58/0.95} [verified]
+
 [LM-463|verified]: The first real use of the bootstrap semantic gate stops at
 `s1 -> s2b`, before any HIR/MIR/LLVM comparison is possible. Command:
 `BOOTSTRAP_STAGE_OUT=/tmp/cv2_bs_s2 BOOTSTRAP_CHAIN_STAGES=2

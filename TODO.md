@@ -75,6 +75,24 @@
         localization signal, but the failing gate is now broader
         supply-driven pending/safety-net expansion; do not land the broad
         replay guard alone
+    - bounded emit-safety-net experiment was also intentionally left
+      uncommitted because it did not affect the active blocker:
+      - targeted `emit_all_tracked_signatures` pruning for universal
+        `inspect/to_s/object_id/to_json` on deep generic container owners
+        (`/tmp/cv2_emit_a`) still timed out exactly at the old frontier:
+        first `[PENDING_EXPLOSION]` remained at
+        `current=Object#inspect queue=12325`, and the 300s run never reached
+        `emit_tracked_sigs`
+      - combined experiment (broad replay gating + emit pruning,
+        `/tmp/cv2_combo_emit_replay`) also timed out:
+        - `process_pending` still lowered `61454` functions
+        - HIR functions still grew `3088 -> 64185`
+        - runtime was about `260147ms` before timeout
+      - conclusion: the next root corridor is not "emit-only" and not the
+        replay+emit combo; the live blocker remains the huge
+        `process_pending_lower_functions` expansion itself, with current head
+        families such as `#hash`, `#to_json`, `#to_i`, and late `#inspect`
+        on compiler-internal containers and helpers
   - practical boundary:
     - this is a timeout/no-progress blocker, not an OOM or crash signature
     - the current root corridor is no longer `lower_main` expr 30; it is the
@@ -83,10 +101,11 @@
     - do not run `s3b+` until the stage2 full-compiler build gets past this
       point or a smaller focused no-prelude/full-prelude reducer explains the
       pending queue explosion
-    - next work should inspect `emit_all_tracked_signatures`,
-      `lower_missing_call_targets`, `@pending_arg_types`, and the sources that
-      seed `#inspect/#to_s/#object_id/#to_json` signatures; broad replay
-      gating alone is a refuted fix candidate
+    - next work should inspect why `process_pending_lower_functions` itself is
+      still supply-driven enough to lower about `61k` functions before the
+      safety-net phase even begins; focus on pending queue producers,
+      `remember_callsite_arg_types`, virtual/owner replay that still remains,
+      and the current top families `#hash/#to_json/#to_i/#inspect`
 - **Bootstrap semantic-equivalence scaffold (2026-04-20, current session)**:
   - trustworthy setup:
     - `scripts/build_bootstrap_stages.sh`
