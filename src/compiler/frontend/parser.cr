@@ -1106,11 +1106,7 @@ module CrystalV2
               member_node = left_node.as(MemberAccessNode)
 
               # Create setter method name by appending "="
-              setter_name = String.build do |io|
-                io.write(member_node.member)
-                io << "="
-              end
-              setter_slice = intern_retained_text(setter_name)
+              setter_slice = intern_retained_text(String.new(member_node.member) + "=")
 
               # Create setter member access node: obj.prop=
               setter_member = @arena.add_typed(MemberAccessNode.new(
@@ -2096,11 +2092,7 @@ module CrystalV2
               # Support setter-like macro names foo=
               if current_token.kind == Token::Kind::Eq
                 advance
-                setter_name = String.build do |io|
-                  io.write(macro_name_slice)
-                  io.write_byte('='.ord.to_u8)
-                end
-                macro_name_slice = intern_retained_text(setter_name)
+                macro_name_slice = intern_retained_text(String.new(macro_name_slice) + "=")
               end
             elsif is_keyword_identifier?(name_token)
               macro_name_slice = name_token.slice
@@ -2122,11 +2114,7 @@ module CrystalV2
               # Support setter-like macro names foo=
               if current_token.kind == Token::Kind::Eq
                 advance
-                setter_name = String.build do |io|
-                  io.write(macro_name_slice)
-                  io.write_byte('='.ord.to_u8)
-                end
-                macro_name_slice = intern_retained_text(setter_name)
+                macro_name_slice = intern_retained_text(String.new(macro_name_slice) + "=")
               end
             else
               # Use case on token kind for non-identifier names
@@ -2278,35 +2266,61 @@ module CrystalV2
             skip_whitespace_and_optional_newlines
             receiver
           when Token::Kind::Identifier, Token::Kind::ColonColon
-            receiver_text = String.build do |io|
-              if current_token.kind == Token::Kind::ColonColon
-                io << "::"
-                advance
-                skip_trivia
-              end
+            absolute = false
+            parts = [] of Slice(UInt8)
+            if current_token.kind == Token::Kind::ColonColon
+              absolute = true
+              advance
+              skip_trivia
+            end
+
+            token = current_token
+            unless token.kind == Token::Kind::Identifier || is_keyword_identifier?(token)
+              return nil
+            end
+            parts << token.slice
+            advance
+            skip_trivia
+
+            while current_token.kind == Token::Kind::ColonColon
+              advance
+              skip_trivia
 
               token = current_token
               unless token.kind == Token::Kind::Identifier || is_keyword_identifier?(token)
                 return nil
               end
-              io.write token.slice
+              parts << token.slice
               advance
               skip_trivia
-
-              while current_token.kind == Token::Kind::ColonColon
-                io << "::"
-                advance
-                skip_trivia
-
-                token = current_token
-                unless token.kind == Token::Kind::Identifier || is_keyword_identifier?(token)
-                  return nil
-                end
-                io.write token.slice
-                advance
-                skip_trivia
-              end
             end
+
+            total = absolute ? 2 : 0
+            parts.each_with_index do |part, idx|
+              total += 2 if idx > 0
+              total += part.size
+            end
+            bytes = Bytes.new(total)
+            pos = 0
+            if absolute
+              bytes.to_unsafe[pos] = ':'.ord.to_u8
+              bytes.to_unsafe[pos + 1] = ':'.ord.to_u8
+              pos += 2
+            end
+            parts.each_with_index do |part, idx|
+              if idx > 0
+                bytes.to_unsafe[pos] = ':'.ord.to_u8
+                bytes.to_unsafe[pos + 1] = ':'.ord.to_u8
+                pos += 2
+              end
+              i = 0
+              while i < part.size
+                bytes.to_unsafe[pos + i] = part[i]
+                i += 1
+              end
+              pos += part.size
+            end
+            receiver_text = String.new(bytes)
             intern_retained_text(receiver_text)
           else
             nil
@@ -2345,11 +2359,7 @@ module CrystalV2
             if current_token.kind == Token::Kind::Eq
               advance # consume '='
               # Combine "foo" + "=" into "foo=" via string pool
-              setter_name = String.build do |io|
-                io.write(method_name_slice)
-                io.write_byte('='.ord.to_u8)
-              end
-              method_name_slice = intern_retained_text(setter_name)
+              method_name_slice = intern_retained_text(String.new(method_name_slice) + "=")
             end
           when Token::Kind::LBracket
             # [] / []= / []? / []?= operator method names
@@ -2426,11 +2436,7 @@ module CrystalV2
                 # Support setter-like keywords: def private=(...)
                 if current_token.kind == Token::Kind::Eq
                   advance
-                  setter_name = String.build do |io|
-                    io.write(method_name_slice)
-                    io.write_byte('='.ord.to_u8)
-                  end
-                  method_name_slice = intern_retained_text(setter_name)
+                  method_name_slice = intern_retained_text(String.new(method_name_slice) + "=")
                 end
               else
                 emit_unexpected(name_token)
@@ -10873,9 +10879,10 @@ module CrystalV2
           # The pattern is: % [optional type letter] <delimiter>
           idx = 1
           if slice.size > idx
-            char = slice[idx].chr
             # If there's a type letter (w, i, q, Q, etc.), skip it
-            if char.ascii_letter?
+            byte = slice[idx]
+            if (byte >= 'a'.ord.to_u8 && byte <= 'z'.ord.to_u8) ||
+               (byte >= 'A'.ord.to_u8 && byte <= 'Z'.ord.to_u8)
               idx += 1
             end
           end
@@ -10883,11 +10890,11 @@ module CrystalV2
           # At this point, idx should point to the opening delimiter
           # Valid delimiters: ( ) [ ] { } < > | and any other char (but typically punctuation)
           return false if slice.size <= idx
-          delimiter_char = slice[idx].chr
+          delimiter = slice[idx]
 
           # Valid percent literal delimiters
-          delimiter_char == '(' || delimiter_char == '[' || delimiter_char == '{' ||
-            delimiter_char == '<' || delimiter_char == '|'
+          delimiter == '('.ord.to_u8 || delimiter == '['.ord.to_u8 || delimiter == '{'.ord.to_u8 ||
+            delimiter == '<'.ord.to_u8 || delimiter == '|'.ord.to_u8
         end
 
         private def parse_percent_literal(token : Token) : ExprId
@@ -12176,13 +12183,13 @@ module CrystalV2
         private def bytes_window_to_string(content : Slice(UInt8), start : Int32, length : Int32) : String
           return "" if length <= 0
 
-          String.build do |io|
-            idx = 0
-            while idx < length
-              io.write_byte(content[start + idx])
-              idx += 1
-            end
+          bytes = Bytes.new(length)
+          idx = 0
+          while idx < length
+            bytes.to_unsafe[idx] = content[start + idx]
+            idx += 1
           end
+          String.new(bytes)
         end
 
         # Phase 72: Parse method call with arguments (positional and/or named)
@@ -15120,18 +15127,16 @@ current_token.kind == Token::Kind::Identifier &&
           anchor = phantom_span_at(token.span)
 
           pieces = [] of MacroPiece
-          text_buf = IO::Memory.new
+          text_start = 0
 
           i = 0
           while i < source_slice.size
             b = source_slice.unsafe_fetch(i)
 
-            # Handle backslash escapes: \{%, \{{, \{ → emit literal bytes.
+            # Escaped directives stay part of the surrounding source window.
             if b == '\\'.ord.to_u8 && i + 2 < source_slice.size && source_slice.unsafe_fetch(i + 1) == '{'.ord.to_u8
               nb2 = source_slice.unsafe_fetch(i + 2)
               if nb2 == '%'.ord.to_u8 || nb2 == '{'.ord.to_u8
-                text_buf.write_byte(source_slice.unsafe_fetch(i + 1))
-                text_buf.write_byte(nb2)
                 i += 3
                 next
               end
@@ -15142,39 +15147,32 @@ current_token.kind == Token::Kind::Identifier &&
               is_control = nb == '%'.ord.to_u8
               is_expr = nb == '{'.ord.to_u8
               if is_control || is_expr
-                if text_buf.size > 0
+                if i > text_start
                   pieces << MacroPiece.text(
-                    bytes_window_to_string(text_buf.to_slice, 0, text_buf.size),
+                    bytes_window_to_string(source_slice, text_start, i - text_start),
                     anchor
                   )
-                  text_buf = IO::Memory.new
                 end
 
                 directive_end = find_embedded_macro_directive_end(source_slice, i, is_control)
                 return nil unless directive_end
                 directive_len = directive_end - i
-                directive_str = String.build do |io|
-                  k = 0
-                  while k < directive_len
-                    io.write_byte(source_slice.unsafe_fetch(i + k))
-                    k += 1
-                  end
-                end
+                directive_str = bytes_window_to_string(source_slice, i, directive_len)
                 sub_pieces = sub_parse_embedded_macro_directive(directive_str)
                 return nil unless sub_pieces
                 sub_pieces.each { |p| pieces << rebind_macro_piece_span(p, anchor) }
                 i = directive_end
+                text_start = i
                 next
               end
             end
 
-            text_buf.write_byte(b)
             i += 1
           end
 
-          if text_buf.size > 0
+          if source_slice.size > text_start
             pieces << MacroPiece.text(
-              bytes_window_to_string(text_buf.to_slice, 0, text_buf.size),
+              bytes_window_to_string(source_slice, text_start, source_slice.size - text_start),
               anchor
             )
           end
@@ -16713,10 +16711,7 @@ current_token.kind == Token::Kind::Identifier &&
             when MemberAccessNode
               base = call_expr_node.object
               name_slice = call_expr_node.member
-              setter_name_slice = String.build do |io|
-                io.write(name_slice)
-                io << '='
-              end
+              setter_name_slice = String.new(name_slice) + "="
               setter_callee = @arena.add_typed(
                 MemberAccessNode.new(
                   call_expr_node.span,

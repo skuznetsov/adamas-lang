@@ -1368,14 +1368,19 @@ module Crystal::HIR
       result = [] of Parameter
       i = 0
       while i < @param_ids.size
+        param_id = @param_ids.unsafe_fetch(i)
+        param_type = TypeRef.new(@param_type_ids.unsafe_fetch(i))
+        param_name = @param_names.unsafe_fetch(i)
+        param_default_literal = @param_default_literals.unsafe_fetch(i)
+        param_is_block = @param_is_blocks.unsafe_fetch(i)
         param = Parameter.new(
-          @param_ids.unsafe_fetch(i),
-          TypeRef.new(@param_type_ids.unsafe_fetch(i)),
+          param_id,
+          param_type,
           i,
-          @param_names.unsafe_fetch(i),
-          @param_is_blocks[i]? || false
+          param_name,
+          param_is_block
         )
-        if default_literal = @param_default_literals.unsafe_fetch(i)
+        if default_literal = param_default_literal
           param.default_literal = default_literal
         end
         result << param
@@ -1516,7 +1521,7 @@ module Crystal::HIR
       @functions_by_name = {} of String => Function
       @functions_by_base_name = {} of String => Array(Function)
       @types = [] of TypeDescriptor
-      @type_intern = {} of String => TypeRef
+      @type_intern = {} of String => Array(Tuple(UInt8, Array(TypeRef), TypeRef))
       @strings = [] of String
       @string_intern = {} of String => StringId
       @link_libraries = [] of String
@@ -1548,7 +1553,7 @@ module Crystal::HIR
       @functions_by_name = {} of String => Function
       @functions_by_base_name = {} of String => Array(Function)
       @types = [] of TypeDescriptor
-      @type_intern = {} of String => TypeRef
+      @type_intern = {} of String => Array(Tuple(UInt8, Array(TypeRef), TypeRef))
       @strings = [] of String
       @string_intern = {} of String => StringId
       @link_libraries = [] of String
@@ -2240,6 +2245,37 @@ module Crystal::HIR
       end
     end
 
+    private def type_kind_key(kind : TypeKind) : UInt8
+      case kind
+      when TypeKind::Primitive
+        0_u8
+      when TypeKind::Class
+        1_u8
+      when TypeKind::Struct
+        2_u8
+      when TypeKind::Module
+        3_u8
+      when TypeKind::Union
+        4_u8
+      when TypeKind::Tuple
+        5_u8
+      when TypeKind::NamedTuple
+        6_u8
+      when TypeKind::Proc
+        7_u8
+      when TypeKind::Array
+        8_u8
+      when TypeKind::Hash
+        9_u8
+      when TypeKind::Pointer
+        10_u8
+      when TypeKind::Generic
+        11_u8
+      else
+        255_u8
+      end
+    end
+
     def intern_type(desc : TypeDescriptor) : TypeRef
       if ENV["DEBUG_MALFORMED_TYPE"]? && desc.name.includes?(",") && !desc.name.includes?("(") && !desc.name.includes?("->")
         STDERR.puts "[MALFORMED_TYPE] kind=#{desc.kind} name=#{desc.name}"
@@ -2247,20 +2283,24 @@ module Crystal::HIR
           caller.each { |line| STDERR.puts "  #{line}" }
         end
       end
-      # O(1) hash lookup instead of O(N) linear scan
-      key = String.build do |io|
-        io << desc.kind.value << ':' << desc.name
-        desc.type_params.each { |t| io << ',' << t.id }
+      # Bucket by existing type name and compare compact metadata in-place.
+      # This avoids building a compound String key in self-hosted binaries,
+      # where String::Builder is still an active bootstrap crash surface.
+      kind_key = type_kind_key(desc.kind)
+      bucket = @type_intern[desc.name]? || begin
+        created = [] of Tuple(UInt8, Array(TypeRef), TypeRef)
+        @type_intern[desc.name] = created
+        created
       end
-      if existing_ref = @type_intern[key]?
-        return existing_ref
+      bucket.each do |entry|
+        return entry[2] if entry[0] == kind_key && entry[1] == desc.type_params
       end
       # Add new type
       id = @next_type_id
       @next_type_id += 1
       @types << desc
       ref = TypeRef.new(id)
-      @type_intern[key] = ref
+      bucket << {kind_key, desc.type_params.dup, ref}
       ref
     end
 

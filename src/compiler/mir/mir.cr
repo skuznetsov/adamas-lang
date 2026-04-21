@@ -194,9 +194,13 @@ module Crystal::MIR
   class TypeRegistry
     getter types : Array(Type)
     @next_type_id : TypeId
+    @types_by_id : Hash(TypeId, Type)
+    @types_by_name : Hash(String, Type)
 
     def initialize
       @types = [] of Type
+      @types_by_id = {} of TypeId => Type
+      @types_by_name = {} of String => Type
       @next_type_id = 100_u32  # Reserve 0-99 for primitive types
 
       # Register primitive types
@@ -223,14 +227,14 @@ module Crystal::MIR
 
     private def register_primitive(ref : TypeRef, kind : TypeKind, name : String, size : UInt64, alignment : UInt32)
       type = Type.new(ref.id, kind, name, size, alignment)
-      @types << type
+      register_type(type)
     end
 
     def create_type(kind : TypeKind, name : String, size : UInt64, alignment : UInt32) : Type
       id = @next_type_id
       @next_type_id += 1
       type = Type.new(id, kind, name, size, alignment)
-      @types << type
+      register_type(type)
       type
     end
 
@@ -242,15 +246,12 @@ module Crystal::MIR
         return existing
       end
       type = Type.new(id, kind, name, size, alignment)
-      @types << type
+      register_type(type)
       type
     end
 
     def get(id : TypeId) : Type?
-      @types.each do |type|
-        return type if type.id == id
-      end
-      nil
+      @types_by_id[id]?
     end
 
     def get(ref : TypeRef) : Type?
@@ -258,13 +259,15 @@ module Crystal::MIR
     end
 
     def get_by_name(name : String) : Type?
-      i = @types.size - 1
-      while i >= 0
-        type = @types.unsafe_fetch(i)
-        return type if type.name == name
-        i -= 1
-      end
-      nil
+      @types_by_name[name]?
+    end
+
+    private def register_type(type : Type) : Nil
+      @types << type
+      @types_by_id[type.id] = type
+      # Preserve the old reverse-scan get_by_name semantics: later type
+      # registrations with the same name shadow earlier ones.
+      @types_by_name[type.name] = type
     end
 
     # Human-readable layout snapshot for ABI sanity checks.
@@ -1929,10 +1932,28 @@ module Crystal::MIR
     end
 
     def get_block(id : BlockId) : BasicBlock
+      if id < @blocks.size
+        block = @blocks.unsafe_fetch(id)
+        return block if block.id == id
+      end
+
+      @blocks.each do |block|
+        return block if block.id == id
+      end
+
       @block_map[id]
     end
 
     def get_block?(id : BlockId) : BasicBlock?
+      if id < @blocks.size
+        block = @blocks.unsafe_fetch(id)
+        return block if block.id == id
+      end
+
+      @blocks.each do |block|
+        return block if block.id == id
+      end
+
       @block_map[id]?
     end
 

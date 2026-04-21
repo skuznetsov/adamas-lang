@@ -427,80 +427,140 @@ module Crystal::MIR
       return name if name.starts_with?("llvm.")
 
       # Escape-encoding for readable, collision-free, portable symbol names.
-      # Multi-character tokens must be checked first (longest match).
-      result = String::Builder.new(name.bytesize)
+      # Keep this off String::Builder: self-hosted stage2 still has active
+      # Builder realloc crash corridors while LLVM type emission mangles many
+      # long compiler-internal names.
+      result = Pointer(UInt8).malloc(name.bytesize * 4 + 8)
+      out_size = 0
       i = 0
       while i < name.bytesize
         # Check multi-char operators first (order matters: longest first)
         remaining = name.bytesize - i
         if remaining >= 3
-          three = name[i, 3]
-          case three
-          when "<=>" then result << "$CMP"; i += 3; next
-          when "[]=", "[]?" then result << (three == "[]=" ? "$IDXS" : "$IDXQ"); i += 3; next
+          b0 = name.byte_at(i)
+          b1 = name.byte_at(i + 1)
+          b2 = name.byte_at(i + 2)
+          if b0 == '<'.ord && b1 == '='.ord && b2 == '>'.ord
+            out_size = append_mangle_token(result, out_size, "$CMP")
+            i += 3
+            next
+          elsif b0 == '['.ord && b1 == ']'.ord && b2 == '='.ord
+            out_size = append_mangle_token(result, out_size, "$IDXS")
+            i += 3
+            next
+          elsif b0 == '['.ord && b1 == ']'.ord && b2 == '?'.ord
+            out_size = append_mangle_token(result, out_size, "$IDXQ")
+            i += 3
+            next
           end
         end
         if remaining >= 2
-          two = name[i, 2]
-          case two
-          when "<=" then result << "$LE"; i += 2; next
-          when ">=" then result << "$GE"; i += 2; next
-          when "==" then result << "$EQ"; i += 2; next
-          when "!=" then result << "$NE"; i += 2; next
-          when "=~" then result << "$MATCH"; i += 2; next
-          when "!~" then result << "$NMATCH"; i += 2; next
-          when "<<" then result << "$SHL"; i += 2; next
-          when ">>" then result << "$SHR"; i += 2; next
-          when "**" then result << "$POW"; i += 2; next
-          when "[]" then result << "$IDX"; i += 2; next
-          when "->" then result << "$AR"; i += 2; next
-          when "::" then result << "$CC"; i += 2; next  # Colon Colon (namespace)
+          b0 = name.byte_at(i)
+          b1 = name.byte_at(i + 1)
+          token = if b0 == '<'.ord && b1 == '='.ord
+                    "$LE"
+                  elsif b0 == '>'.ord && b1 == '='.ord
+                    "$GE"
+                  elsif b0 == '='.ord && b1 == '='.ord
+                    "$EQ"
+                  elsif b0 == '!'.ord && b1 == '='.ord
+                    "$NE"
+                  elsif b0 == '='.ord && b1 == '~'.ord
+                    "$MATCH"
+                  elsif b0 == '!'.ord && b1 == '~'.ord
+                    "$NMATCH"
+                  elsif b0 == '<'.ord && b1 == '<'.ord
+                    "$SHL"
+                  elsif b0 == '>'.ord && b1 == '>'.ord
+                    "$SHR"
+                  elsif b0 == '*'.ord && b1 == '*'.ord
+                    "$POW"
+                  elsif b0 == '['.ord && b1 == ']'.ord
+                    "$IDX"
+                  elsif b0 == '-'.ord && b1 == '>'.ord
+                    "$AR"
+                  elsif b0 == ':'.ord && b1 == ':'.ord
+                    "$CC"
+                  end
+          if token
+            out_size = append_mangle_token(result, out_size, token)
+            i += 2
+            next
           end
         end
         # Single character
-        ch = name.byte_at(i).unsafe_chr
-        case ch
-        when 'a'..'z', 'A'..'Z', '0'..'9', '_'
-          result << ch
-        when '<'  then result << "$LT"
-        when '>'  then result << "$GT"
-        when '+'  then result << "$ADD"
-        when '-'  then result << "$SUB"
-        when '*'  then result << "$MUL"
-        when '/'  then result << "$DIV"
-        when '%'  then result << "$MOD"
-        when '&'  then result << "$AND"
-        when '|'  then result << "$OR"
-        when '^'  then result << "$XOR"
-        when '~'  then result << "$NOT"
-        when '='  then result << "$SET"
-        when '!'  then result << "$BANG"
-        when '?'  then result << "$Q"
-        when '('  then result << "$L"
-        when ')'  then result << "$R"
-        when ','  then result << "$C"
-        when '#'  then result << "$H"
-        when '.'  then result << "$D"
-        when ' '  then result << "$_"
-        when '@'  then result << "$AT"
-        when '['  then result << "$BL"  # Bracket Left
-        when ']'  then result << "$BR"  # Bracket Right
-        when '{'  then result << "$YL"  # brace Left
-        when '}'  then result << "$YR"  # brace Right
-        when ':'  then result << "$CO"  # COlon
-        when ';'  then result << "$SC"  # SemiColon
-        when '\'' then result << "$SQ"  # Single Quote
-        when '"'  then result << "$DQ"  # Double Quote
-        when '\\' then result << "$BS"  # BackSlash
-        when '$'  then result << "$$"   # Escape $ itself
+        byte = name.byte_at(i)
+        if mangle_identifier_byte?(byte)
+          result[out_size] = byte
+          out_size += 1
         else
-          # Fallback: hex encode unknown characters
-          result << "$x"
-          result << ch.ord.to_s(16).rjust(2, '0')
+          token = case byte
+                  when '<'.ord  then "$LT"
+                  when '>'.ord  then "$GT"
+                  when '+'.ord  then "$ADD"
+                  when '-'.ord  then "$SUB"
+                  when '*'.ord  then "$MUL"
+                  when '/'.ord  then "$DIV"
+                  when '%'.ord  then "$MOD"
+                  when '&'.ord  then "$AND"
+                  when '|'.ord  then "$OR"
+                  when '^'.ord  then "$XOR"
+                  when '~'.ord  then "$NOT"
+                  when '='.ord  then "$SET"
+                  when '!'.ord  then "$BANG"
+                  when '?'.ord  then "$Q"
+                  when '('.ord  then "$L"
+                  when ')'.ord  then "$R"
+                  when ','.ord  then "$C"
+                  when '#'.ord  then "$H"
+                  when '.'.ord  then "$D"
+                  when ' '.ord  then "$_"
+                  when '@'.ord  then "$AT"
+                  when '['.ord  then "$BL"
+                  when ']'.ord  then "$BR"
+                  when '{'.ord  then "$YL"
+                  when '}'.ord  then "$YR"
+                  when ':'.ord  then "$CO"
+                  when ';'.ord  then "$SC"
+                  when '\''.ord then "$SQ"
+                  when '"'.ord  then "$DQ"
+                  when '\\'.ord then "$BS"
+                  when '$'.ord  then "$$"
+                  end
+          if token
+            out_size = append_mangle_token(result, out_size, token)
+          else
+            out_size = append_mangle_hex_byte(result, out_size, byte)
+          end
         end
         i += 1
       end
-      result.to_s
+      String.new(result, out_size)
+    end
+
+    private def mangle_identifier_byte?(byte : UInt8) : Bool
+      (byte >= 'a'.ord && byte <= 'z'.ord) ||
+        (byte >= 'A'.ord && byte <= 'Z'.ord) ||
+        (byte >= '0'.ord && byte <= '9'.ord) ||
+        byte == '_'.ord
+    end
+
+    private def append_mangle_token(buffer : Pointer(UInt8), offset : Int32, token : String) : Int32
+      i = 0
+      while i < token.bytesize
+        buffer[offset + i] = token.byte_at(i)
+        i += 1
+      end
+      offset + token.bytesize
+    end
+
+    private def append_mangle_hex_byte(buffer : Pointer(UInt8), offset : Int32, byte : UInt8) : Int32
+      hex = "0123456789abcdef"
+      buffer[offset] = '$'.ord.to_u8
+      buffer[offset + 1] = 'x'.ord.to_u8
+      buffer[offset + 2] = hex.byte_at((byte >> 4).to_i)
+      buffer[offset + 3] = hex.byte_at((byte & 0x0f).to_i)
+      offset + 4
     end
   end
 
@@ -2556,6 +2616,19 @@ module Crystal::MIR
       pointer_word_bytes_u64
     end
 
+    private def llvm_store_size_bytes(llvm_type : String) : Int32
+      return 1 if llvm_type == "i1" || llvm_type == "i8"
+      return 2 if llvm_type == "i16"
+      return 4 if llvm_type == "i32" || llvm_type == "float"
+      return 8 if llvm_type == "i64" || llvm_type == "double" || llvm_type == "ptr"
+      return 16 if llvm_type == "i128"
+      return 16 if llvm_type.includes?(".union")
+
+      # Opaque aggregate values that reach this late Array#<< fallback are rare;
+      # pointer stride is the least-corrupt choice for V2's heap-object ABI.
+      pointer_sized_int_llvm_type == "i32" ? 4 : 8
+    end
+
     def generate(output : IO? = nil) : String
       @output = output || IO::Memory.new
       @toplevel_output = nil
@@ -3233,9 +3306,7 @@ module Crystal::MIR
       # before falling back to declare/stub generation.
       loop do
         progressed = false
-        missing_known = @called_crystal_functions.reject do |name, _|
-          @emitted_functions.includes?(name) || @undefined_externs.has_key?(name) || already_declared.includes?(name)
-        end
+        missing_known = collect_missing_crystal_functions(already_declared)
         break if missing_known.empty?
 
         missing_known.each_key do |name|
@@ -3253,7 +3324,7 @@ module Crystal::MIR
 
         break unless progressed
       end
-      missing = @called_crystal_functions.reject { |name, _| @emitted_functions.includes?(name) || @undefined_externs.has_key?(name) || already_declared.includes?(name) }
+      missing = collect_missing_crystal_functions(already_declared)
       return if missing.empty?
       debug_missing_filter = ENV["DEBUG_MISSING_CRYSTAL_FILTER"]?
       emit_raw "\n; Forward declarations for Crystal functions called but not defined\n"
@@ -3291,6 +3362,23 @@ module Crystal::MIR
           emit_raw "declare #{return_type} @#{name}(#{param_list})\n"
         end
       end
+    end
+
+    private def collect_missing_crystal_functions(already_declared : ::Set(String)) : Hash(String, {String, Int32, Array(String)})
+      # Avoid Hash#reject here. In self-hosted codegen it expands through a nested
+      # inline-yield block that can escape as a raw standalone callback before the
+      # inline yield target is materialized. A direct each loop stays on the
+      # ordinary Hash#each raw-callback corridor and keeps this late-emission pass
+      # deterministic while the general nested-yield carrier design remains open.
+      missing = {} of String => {String, Int32, Array(String)}
+      @called_crystal_functions.each do |name, info|
+        next if @emitted_functions.includes?(name)
+        next if @undefined_externs.has_key?(name)
+        next if already_declared.includes?(name)
+
+        missing[name] = info
+      end
+      missing
     end
 
     private def register_called_crystal_functions_from_ir(ir : String) : Nil
@@ -3437,7 +3525,13 @@ module Crystal::MIR
       arg_count : Int32,
       arg_types : Array(String),
     ) : String?
-      builder_tid = @module.types.find(&.name.==("String::Builder")).try(&.id.to_i32) || 0
+      builder_tid = 0
+      @module.types.each do |type|
+        if type.name == "String::Builder"
+          builder_tid = type.id.to_i32
+          break
+        end
+      end
       stid = @string_type_id != 0 ? @string_type_id : TypeRef::STRING.id.to_i32
       io_trailer = case return_type
                    when "void" then "  ret void\n"
@@ -3752,7 +3846,10 @@ module Crystal::MIR
              "  %is_fd_like = or i1 %is_fd, %is_file\n" \
              "  br i1 %is_fd_like, label %fd_case, label %ret_zero\n" \
              "fd_case:\n" \
-             "  %fd_pos64 = call i64 @__vdispatch__IO$CCFileDescriptor$Hpos$$T187(ptr %self)\n" \
+             "  %fd_box_ptr = getelementptr i8, ptr %self, i32 56\n" \
+             "  %fd_box = load ptr, ptr %fd_box_ptr\n" \
+             "  %fd = load i32, ptr %fd_box\n" \
+             "  %fd_pos64 = call i64 @lseek(i32 %fd, i64 0, i32 1)\n" \
              "  %fd_pos = trunc i64 %fd_pos64 to i32\n" \
              "  ret i32 %fd_pos\n" \
              "ret_zero:\n" \
@@ -3828,6 +3925,40 @@ module Crystal::MIR
         return oracle
       end
 
+      if name == "CrystalV2$CCCompiler$CCFrontend$CCNode$Hspan" && return_type == "ptr" && arg_count == 1
+        return "; #{name} — abstract Node#span fallback via generated vdispatch table\n" \
+               "define ptr @#{name}(ptr %self) {\n" \
+               "entry:\n" \
+               "  %self_null = icmp eq ptr %self, null\n" \
+               "  br i1 %self_null, label %ret_null, label %dispatch\n" \
+               "dispatch:\n" \
+               "  %span = call ptr @__vdispatch__CrystalV2$CCCompiler$CCFrontend$CCNode$Hspan$$T623(ptr %self)\n" \
+               "  ret ptr %span\n" \
+               "ret_null:\n" \
+               "  ret ptr null\n" \
+               "}\n"
+      end
+
+      if name.includes?("$Heach_key$$block")
+        params = arg_types.map_with_index { |type, idx| "#{type} %arg#{idx}" }.join(", ")
+        ret_value = if return_type == "void"
+                      "  ret void\n"
+                    elsif return_type == "ptr" && arg_count > 0
+                      "  ret ptr %arg0\n"
+                    elsif return_type == "i1"
+                      "  ret i1 false\n"
+                    elsif return_type.starts_with?("i")
+                      "  ret #{return_type} 0\n"
+                    else
+                      "  ret #{return_type} zeroinitializer\n"
+                    end
+        return "; #{name} — bootstrap fallback for generated Hash#each_key adapter block\n" \
+               "define #{return_type} @#{name}(#{params}) {\n" \
+               "entry:\n" \
+               "#{ret_value}" \
+               "}\n"
+      end
+
       if name.starts_with?("Array$") && name.ends_with?("$Hsize") && return_type == "i32" && arg_count == 1
         return "; #{name} — primitive Array#size via @size field\n" \
                "define i32 @#{name}(ptr %self) {\n" \
@@ -3840,6 +3971,64 @@ module Crystal::MIR
                "  ret i32 %size\n" \
                "ret_zero:\n" \
                "  ret i32 0\n" \
+               "}\n"
+      end
+
+      if name.starts_with?("Array$") && name.ends_with?("$Hremaining_capacity") && return_type == "i32" && arg_count == 1
+        return "; #{name} — primitive Array#remaining_capacity via @capacity - @offset_to_buffer\n" \
+               "define i32 @#{name}(ptr %self) {\n" \
+               "entry:\n" \
+               "  %self_null = icmp eq ptr %self, null\n" \
+               "  br i1 %self_null, label %ret_zero, label %load_fields\n" \
+               "load_fields:\n" \
+               "  %cap_ptr = getelementptr i8, ptr %self, i32 8\n" \
+               "  %cap = load i32, ptr %cap_ptr\n" \
+               "  %off_ptr = getelementptr i8, ptr %self, i32 12\n" \
+               "  %off = load i32, ptr %off_ptr\n" \
+               "  %remaining = sub i32 %cap, %off\n" \
+               "  ret i32 %remaining\n" \
+               "ret_zero:\n" \
+               "  ret i32 0\n" \
+               "}\n"
+      end
+
+      if name.starts_with?("Array$") &&
+         name.includes?("$R$H$SHL$$") &&
+         return_type == "ptr" &&
+         arg_count == 2
+        elem_type = arg_types.size > 1 ? arg_types[1] : "ptr"
+        elem_type = "ptr" if elem_type.empty? || elem_type == "void"
+        elem_size = llvm_store_size_bytes(elem_type)
+        return "; #{name} — primitive Array#<<(T) for late generic append bodies\n" \
+               "define ptr @#{name}(ptr %self, #{elem_type} %value) {\n" \
+               "entry:\n" \
+               "  %size_ptr = getelementptr i8, ptr %self, i32 4\n" \
+               "  %size = load i32, ptr %size_ptr\n" \
+               "  %cap_ptr = getelementptr i8, ptr %self, i32 8\n" \
+               "  %cap = load i32, ptr %cap_ptr\n" \
+               "  %needs_grow = icmp sge i32 %size, %cap\n" \
+               "  br i1 %needs_grow, label %grow, label %store\n" \
+               "grow:\n" \
+               "  %cap_small = icmp slt i32 %cap, 4\n" \
+               "  %cap_double = shl i32 %cap, 1\n" \
+               "  %new_cap = select i1 %cap_small, i32 4, i32 %cap_double\n" \
+               "  %buf_field_g = getelementptr i8, ptr %self, i32 16\n" \
+               "  %old_buf = load ptr, ptr %buf_field_g\n" \
+               "  %new_cap64 = sext i32 %new_cap to i64\n" \
+               "  %new_bytes = mul i64 %new_cap64, #{elem_size}\n" \
+               "  %new_buf = call ptr @__crystal_v2_realloc64(ptr %old_buf, i64 %new_bytes)\n" \
+               "  store ptr %new_buf, ptr %buf_field_g\n" \
+               "  store i32 %new_cap, ptr %cap_ptr\n" \
+               "  br label %store\n" \
+               "store:\n" \
+               "  %buf_field = getelementptr i8, ptr %self, i32 16\n" \
+               "  %buf = load ptr, ptr %buf_field\n" \
+               "  %idx64 = sext i32 %size to i64\n" \
+               "  %slot = getelementptr #{elem_type}, ptr %buf, i64 %idx64\n" \
+               "  store #{elem_type} %value, ptr %slot\n" \
+               "  %new_size = add i32 %size, 1\n" \
+               "  store i32 %new_size, ptr %size_ptr\n" \
+               "  ret ptr %self\n" \
                "}\n"
       end
 
@@ -4042,7 +4231,7 @@ module Crystal::MIR
         end
       end
 
-      if name.starts_with?("Hash$L") && name.ends_with?("$Hclear")
+      if name.starts_with?("Hash$L") && (name.ends_with?("$Hclear") || name.ends_with?("$Hclear_impl"))
         # V2 Hash stores heap Entry pointers in @entries and a separate byte-addressed
         # indices buffer. Some self-host specializations reach codegen only through
         # synthetic MIR delegates, so `Hash#clear` materializes as an abort stub even
@@ -4054,8 +4243,10 @@ module Crystal::MIR
         #   offset 28 = @deleted_count (i32)
         #   offset 32 = @indices_bytesize (i8)
         #   offset 33 = @indices_size_pow2 (i8)
-        return "; #{name} — fallback Hash#clear using V2 runtime layout\n" \
-               "define ptr @#{name}(ptr %self) {\n" \
+        clear_ret = name.ends_with?("$Hclear_impl") && return_type == "void" ? "  ret void\n" : "  ret ptr %self\n"
+        clear_define_ret = clear_ret.includes?("ret void") ? "void" : "ptr"
+        body = "; #{name} — fallback Hash clear using V2 runtime layout\n" \
+               "define #{clear_define_ret} @#{name}(ptr %self) {\n" \
                "entry:\n" \
                "  %entries_ptr = getelementptr i8, ptr %self, i32 8\n" \
                "  %entries = load ptr, ptr %entries_ptr\n" \
@@ -4092,9 +4283,8 @@ module Crystal::MIR
                "  %deleted_ptr = getelementptr i8, ptr %self, i32 28\n" \
                "  store i32 0, ptr %deleted_ptr\n" \
                "  %first_ptr = getelementptr i8, ptr %self, i32 4\n" \
-               "  store i32 0, ptr %first_ptr\n" \
-               "  ret ptr %self\n" \
-               "}\n"
+               "  store i32 0, ptr %first_ptr\n"
+        return body + clear_ret + "}\n"
       end
 
       # Crystal::MIR::Hash(K,V) is V2's mangling of `::Hash(K,V)` used from the MIR module.
@@ -5131,23 +5321,27 @@ module Crystal::MIR
     private def llvm_c_string_escape(str : String) : String
       ptr = str.to_unsafe
       size = str.bytesize
-      String.build(size + 8) do |io|
-        i = 0
-        while i < size
-          byte = ptr[i]
-          if (byte >= 0x20_u8 && byte <= 0x21_u8) ||
-             (byte >= 0x23_u8 && byte <= 0x5B_u8) ||
-             (byte >= 0x5D_u8 && byte <= 0x7E_u8)
-            io.write_byte(byte)
-          else
-            io << '\\'
-            hex = byte.to_s(16).upcase
-            io << '0' if hex.size == 1
-            io << hex
-          end
-          i += 1
+      result = Pointer(UInt8).malloc(size * 3 + 1)
+      out_size = 0
+      hex = "0123456789ABCDEF"
+
+      i = 0
+      while i < size
+        byte = ptr[i]
+        if (byte >= 0x20_u8 && byte <= 0x21_u8) ||
+           (byte >= 0x23_u8 && byte <= 0x5B_u8) ||
+           (byte >= 0x5D_u8 && byte <= 0x7E_u8)
+          result[out_size] = byte
+          out_size += 1
+        else
+          result[out_size] = '\\'.ord.to_u8
+          result[out_size + 1] = hex.byte_at((byte >> 4).to_i)
+          result[out_size + 2] = hex.byte_at((byte & 0x0f).to_i)
+          out_size += 3
         end
+        i += 1
       end
+      String.new(result, out_size)
     end
 
     private def module_singleton_global_for(type_ref : TypeRef) : String
@@ -8809,6 +9003,7 @@ module Crystal::MIR
     private def emit_builtin_override(func : Function) : Bool
       mangled = mangle_function_name(func.name)
       return true if emit_crystal_mir_set_new_delegate_override(func, mangled)
+      return true if emit_root_set_new_delegate_override(func, mangled)
       if mangled.starts_with?("Array$") && mangled.ends_with?("$Hsize")
         emit_raw "; #{mangled} — primitive Array#size via @size field\n"
         emit_raw "define i32 @#{mangled}(ptr %self) {\n"
@@ -8868,7 +9063,10 @@ module Crystal::MIR
           end
           if io_fd_tid || file_tid
             io << "fd_case:\n"
-            io << "  %fd_pos64 = call i64 @__vdispatch__IO$CCFileDescriptor$Hpos$$T187(ptr %self)\n"
+            io << "  %fd_box_ptr = getelementptr i8, ptr %self, i32 56\n"
+            io << "  %fd_box = load ptr, ptr %fd_box_ptr\n"
+            io << "  %fd = load i32, ptr %fd_box\n"
+            io << "  %fd_pos64 = call i64 @lseek(i32 %fd, i64 0, i32 1)\n"
             io << "  %fd_pos = trunc i64 %fd_pos64 to i32\n"
             io << "  ret i32 %fd_pos\n"
           end
@@ -9107,6 +9305,30 @@ module Crystal::MIR
         emit_raw "  %result = call ptr @String$Dnew$$Pointer$LUInt8$R_Int32_Int32(ptr %chars, i32 %len, i32 %len)\n"
         emit_raw "  ret ptr %result\n"
         emit_raw "}\n\n"
+        return true
+      when "String$Dnew$$Pointer$LUInt8$R_Int32"
+        # String.new(chars : UInt8*, bytesize, size = 0)
+        #
+        # The default-argument overload is emitted as a separate function whose
+        # lowered body goes through String.new(capacity) + GC.malloc_atomic.
+        # That path can return a raw buffer without the V2 String object header,
+        # corrupting compiler-owned strings during self-hosting. Delegate to the
+        # header-setting UInt8*, Int32, Int32 override instead.
+        if func.params.size >= 3
+          emit_raw "; String.new(UInt8*, Int32, default size) — delegate to header-setting Int32 variant\n"
+          emit_raw "define ptr @#{mangled}(ptr %chars, i32 %bytesize, i32 %size) {\n"
+          emit_raw "entry:\n"
+          emit_raw "  %result = call ptr @String$Dnew$$Pointer$LUInt8$R_Int32_Int32(ptr %chars, i32 %bytesize, i32 %size)\n"
+          emit_raw "  ret ptr %result\n"
+          emit_raw "}\n\n"
+        else
+          emit_raw "; String.new(UInt8*, Int32) — delegate to header-setting Int32 variant\n"
+          emit_raw "define ptr @#{mangled}(ptr %chars, i32 %bytesize) {\n"
+          emit_raw "entry:\n"
+          emit_raw "  %result = call ptr @String$Dnew$$Pointer$LUInt8$R_Int32_Int32(ptr %chars, i32 %bytesize, i32 0)\n"
+          emit_raw "  ret ptr %result\n"
+          emit_raw "}\n\n"
+        end
         return true
       when "String$Dnew$$Pointer$LUInt8$R_Int32_Int32"
         # String.new(chars : UInt8*, bytesize : Int32, size : Int32)
@@ -9545,8 +9767,8 @@ module Crystal::MIR
         emit_raw "; IO::FileDescriptor#read(Slice(UInt8)) — direct syscall override\n"
         emit_raw "define i32 @#{mangled}(ptr %self, ptr %slice) {\n"
         emit_raw "entry:\n"
-        # Load fd: self.@fd is at offset 72 (stored as boxed ptr → i32)
-        emit_raw "  %fd_box_ptr = getelementptr i8, ptr %self, i32 72\n"
+        # Load fd: self.@volatile_fd is at offset 56 (stored as boxed ptr → i32)
+        emit_raw "  %fd_box_ptr = getelementptr i8, ptr %self, i32 56\n"
         emit_raw "  %fd_box = load ptr, ptr %fd_box_ptr\n"
         emit_raw "  %fd = load i32, ptr %fd_box\n"
         # Load slice.@size from offset 0
@@ -9672,8 +9894,8 @@ module Crystal::MIR
         emit_raw "; #{mangled} — direct syscall gets override\n"
         emit_raw "define %Nil$_$OR$_String.union @#{mangled}(ptr %self, i32 %delimiter, i1 %chomp) {\n"
         emit_raw "entry:\n"
-        # Load fd via double-deref at offset 72
-        emit_raw "  %fd_box_ptr = getelementptr i8, ptr %self, i32 72\n"
+        # Load fd via double-deref at IO::FileDescriptor @volatile_fd offset.
+        emit_raw "  %fd_box_ptr = getelementptr i8, ptr %self, i32 56\n"
         emit_raw "  %fd_box = load ptr, ptr %fd_box_ptr\n"
         emit_raw "  %fd = load i32, ptr %fd_box\n"
         # Allocate buffer (4096 bytes) and a 1-byte read buffer
@@ -11350,6 +11572,61 @@ module Crystal::MIR
       nil
     end
 
+    private def emit_root_set_new_delegate_override(func : Function, mangled : String) : Bool
+      return false unless mangled.starts_with?("$CCSet$L") && mangled.ends_with?("$R$Dnew")
+      return false if mangled.includes?("$Dnew$$")
+      return false unless func.params.size <= 1
+
+      target = if compiler_u32_alias_set_owner?(mangled)
+                 "Set$LUInt32$R$Dnew"
+               else
+                 mangled.byte_slice(3)
+               end
+      return false if target == mangled
+      return false unless @func_by_name.has_key?(target) || @emitted_functions.includes?(target)
+
+      param_decl = ""
+      if func.params.size == 1
+        param_decl = "#{emitted_param_llvm_type(func.params[0])} %initial_capacity"
+      end
+
+      # The root-qualified alias body used to load an Int32 from the nil default
+      # capacity pointer. Delegate to the canonical Set(T).new nil-capacity path
+      # instead; explicit integer capacity uses the `$Dnew$$Int32` overload.
+      emit_raw "; #{mangled} — delegate root Set.new alias to canonical nil-capacity Set.new\n"
+      emit_raw "define ptr @#{mangled}(#{param_decl}) {\n"
+      emit_raw "entry:\n"
+      emit_raw "  %r = call ptr @#{target}(ptr null)\n"
+      emit_raw "  ret ptr %r\n"
+      emit_raw "}\n\n"
+      true
+    end
+
+    private def compiler_u32_alias_set_owner?(mangled : String) : Bool
+      prefixes = {
+        "$CCSet$LValueId$R",
+        "$CCSet$LBlockId$R",
+        "$CCSet$LFunctionId$R",
+        "$CCSet$LTypeRef$R",
+        "$CCSet$LCrystal$CCHIR$CCValueId$R",
+        "$CCSet$LCrystal$CCHIR$CCBlockId$R",
+        "$CCSet$LCrystal$CCHIR$CCFunctionId$R",
+        "$CCSet$LCrystal$CCHIR$CCTypeRef$R",
+        "$CCSet$LCrystal$CCMIR$CCValueId$R",
+        "$CCSet$LCrystal$CCMIR$CCBlockId$R",
+        "$CCSet$LCrystal$CCMIR$CCFunctionId$R",
+        "$CCSet$LCrystal$CCMIR$CCTypeRef$R",
+      }
+
+      idx = 0
+      while idx < prefixes.size
+        return true if mangled.starts_with?(prefixes.unsafe_fetch(idx))
+        idx += 1
+      end
+
+      false
+    end
+
     private def compiler_u32_alias_key_hash?(mangled : String) : Bool
       suffixes = {
         "$Hkey_hash$$HIR$CCValueId",
@@ -12262,7 +12539,7 @@ module Crystal::MIR
 
       # Jump to first user block
       if first_block = func.blocks.first?
-        emit_raw "  br label %#{@block_names[first_block.id]}\n"
+        emit_raw "  br label %#{block_label(first_block.id)}\n"
       end
 
       # Emit block IR with allocas replaced by no-ops (comments).
@@ -13559,6 +13836,24 @@ module Crystal::MIR
       phi_type
     end
 
+    # Mark an operand that is used outside its defining block. These values need
+    # alloca slots because the current LLVM emitter can otherwise reference an
+    # SSA value along a path that does not dominate the use.
+    private def mark_cross_block_operand_if_needed(op_id : ValueId, use_block_id : BlockId, entry_block_id : BlockId) : Nil
+      def_block = @value_def_block[op_id]?
+      return unless def_block
+      return if def_block == use_block_id
+      return if def_block == entry_block_id
+
+      def_inst = find_def_inst(op_id)
+      return unless def_inst
+
+      is_non_value_inst = def_inst.is_a?(Store) || def_inst.is_a?(Free) ||
+                          def_inst.is_a?(RCIncrement) || def_inst.is_a?(RCDecrement) ||
+                          def_inst.is_a?(GlobalStore) || def_inst.is_a?(AtomicStore)
+      @cross_block_values << op_id unless is_non_value_inst
+    end
+
     # without guaranteed dominance. These need alloca slots for correctness.
     private def prepass_detect_cross_block_values(func : Function)
       return if func.blocks.size <= 1  # Single block - no cross-block issues
@@ -13613,56 +13908,30 @@ module Crystal::MIR
                         when ArrayNew     then [inst.capacity_value]
                         when ArrayLiteral then inst.elements.to_a
                         when AddressOf    then [inst.operand]
-                        when Phi          then inst.incoming.map { |(_, v)| v }
+                        # Phi incoming values must be checked as operands of
+                        # the merge block, but do it directly below instead of
+                        # allocating `inst.incoming.map { ... }`. The temporary
+                        # Array(Tuple(...)) path destabilizes self-hosted
+                        # vdispatch for Array#unsafe_fetch.
+                        when Phi          then [] of ValueId
                         when StringInterpolation then inst.parts.to_a
                         else              [] of ValueId
                         end
+
+          if inst.is_a?(Phi)
+            incoming_idx = 0
+            while incoming_idx < inst.incoming.size
+              _from_block, val_id = inst.incoming.unsafe_fetch(incoming_idx)
+              incoming_idx += 1
+              mark_cross_block_operand_if_needed(val_id, block.id, entry_block_id)
+            end
+          end
 
           op_idx = 0
           while op_idx < operand_ids.size
             op_id = operand_ids.unsafe_fetch(op_idx)
             op_idx += 1
-            def_block = @value_def_block[op_id]?
-            next unless def_block
-
-            # Value defined in different block than where it's used
-            if def_block != block.id
-              next if def_block == entry_block_id
-
-              # Check if definition block is bb0 (block id 0 or 1 typically after entry)
-              # Conservative: any non-entry definition used cross-block is suspect
-              # Check the instruction type that defines this value
-              def_inst = nil
-              search_block_idx = 0
-              while search_block_idx < func.blocks.size
-                search_block = func.blocks.unsafe_fetch(search_block_idx)
-                search_inst_idx = 0
-                while search_inst_idx < search_block.instructions.size
-                  candidate = search_block.instructions.unsafe_fetch(search_inst_idx)
-                  if candidate.id == op_id
-                    def_inst = candidate
-                    break
-                  end
-                  search_inst_idx += 1
-                end
-                break if def_inst
-                search_block_idx += 1
-              end
-
-              # Flag ALL value-producing instructions that are used cross-block
-              # This is more conservative but catches all dominance issues
-              # Exclude: Store, Free, RCIncrement, RCDecrement, GlobalStore, AtomicStore (no values)
-              # Note: We REMOVED the void check here because:
-              # 1. If an instruction's result is used as an operand, it MUST produce a value
-              # 2. MIR type might be VOID as placeholder but actual callee returns non-void
-              # 3. The usage proves this instruction produces a usable value
-              is_non_value_inst = def_inst.is_a?(Store) || def_inst.is_a?(Free) ||
-                                  def_inst.is_a?(RCIncrement) || def_inst.is_a?(RCDecrement) ||
-                                  def_inst.is_a?(GlobalStore) || def_inst.is_a?(AtomicStore)
-              if !is_non_value_inst
-                @cross_block_values << op_id
-              end
-            end
+            mark_cross_block_operand_if_needed(op_id, block.id, entry_block_id)
           end
           inst_idx += 1
         end
@@ -13743,6 +14012,8 @@ module Crystal::MIR
               break if def_inst
               search_block_idx += 1
             end
+            next unless def_inst
+
             is_non_value_inst = def_inst.is_a?(Store) || def_inst.is_a?(Free) ||
                                 def_inst.is_a?(RCIncrement) || def_inst.is_a?(RCDecrement) ||
                                 def_inst.is_a?(GlobalStore) || def_inst.is_a?(AtomicStore)
@@ -13988,7 +14259,7 @@ module Crystal::MIR
     end
 
     private def emit_block(block : BasicBlock, func : Function)
-      emit_raw "#{@block_names[block.id]}:\n"
+      emit_raw "#{block_label(block.id)}:\n"
       @indent = 1
       @current_block_id = block.id
 
@@ -14090,6 +14361,10 @@ module Crystal::MIR
       emit_terminator(block.terminator)
       @indent = 0
       @current_block_id = nil
+    end
+
+    private def block_label(block_id : BlockId) : String
+      @block_names[block_id]? || "bb#{block_id}"
     end
 
     # Emit loads from slots for cross-block values used in phi nodes
@@ -16701,19 +16976,55 @@ module Crystal::MIR
         # Handle union operands - extract payload as ptr, then convert to int
         if operand_type_str.includes?(".union")
           emit "%binop#{inst.id}.left_union_ptr = alloca #{operand_type_str}, align 8"
-          emit "store #{operand_type_str} #{normalize_union_value(left, operand_type_str)}, ptr %binop#{inst.id}.left_union_ptr"
+          left_union_val = coerce_union_value_for_type("binop#{inst.id}.left", left, operand_type_str)
+          emit "store #{operand_type_str} #{left_union_val}, ptr %binop#{inst.id}.left_union_ptr"
           emit "%binop#{inst.id}.left_payload_ptr = getelementptr #{operand_type_str}, ptr %binop#{inst.id}.left_union_ptr, i32 0, i32 1"
-          emit "%binop#{inst.id}.left_as_ptr = load ptr, ptr %binop#{inst.id}.left_payload_ptr, align 4"
-          emit "%binop#{inst.id}.left_as_int = ptrtoint ptr %binop#{inst.id}.left_as_ptr to #{int_type}"
+          left_payload_ref = first_non_nil_variant_type_ref_for_union_type(operand_type_str)
+          left_payload_type = left_payload_ref ? @type_mapper.llvm_type(left_payload_ref) : int_type
+          emit "%binop#{inst.id}.left_payload = load #{left_payload_type}, ptr %binop#{inst.id}.left_payload_ptr, align 4"
+          if left_payload_type == "ptr"
+            emit "%binop#{inst.id}.left_as_int = ptrtoint ptr %binop#{inst.id}.left_payload to #{int_type}"
+          elsif left_payload_type.starts_with?('i') && left_payload_type != int_type
+            payload_bits = left_payload_type[1..].to_i? || 32
+            target_bits = int_type[1..].to_i? || 64
+            if payload_bits < target_bits
+              ext_op = (left_payload_ref && unsigned_type_ref?(left_payload_ref)) ? "zext" : "sext"
+              emit "%binop#{inst.id}.left_as_int = #{ext_op} #{left_payload_type} %binop#{inst.id}.left_payload to #{int_type}"
+            elsif payload_bits > target_bits
+              emit "%binop#{inst.id}.left_as_int = trunc #{left_payload_type} %binop#{inst.id}.left_payload to #{int_type}"
+            else
+              emit "%binop#{inst.id}.left_as_int = add #{int_type} %binop#{inst.id}.left_payload, 0"
+            end
+          else
+            emit "%binop#{inst.id}.left_as_int = add #{int_type} %binop#{inst.id}.left_payload, 0"
+          end
           left = "%binop#{inst.id}.left_as_int"
           operand_type_str = int_type
         end
         if right_type_str.includes?(".union")
           emit "%binop#{inst.id}.right_union_ptr = alloca #{right_type_str}, align 8"
-          emit "store #{right_type_str} #{normalize_union_value(right, right_type_str)}, ptr %binop#{inst.id}.right_union_ptr"
+          right_union_val = coerce_union_value_for_type("binop#{inst.id}.right", right, right_type_str)
+          emit "store #{right_type_str} #{right_union_val}, ptr %binop#{inst.id}.right_union_ptr"
           emit "%binop#{inst.id}.right_payload_ptr = getelementptr #{right_type_str}, ptr %binop#{inst.id}.right_union_ptr, i32 0, i32 1"
-          emit "%binop#{inst.id}.right_as_ptr = load ptr, ptr %binop#{inst.id}.right_payload_ptr, align 4"
-          emit "%binop#{inst.id}.right_as_int = ptrtoint ptr %binop#{inst.id}.right_as_ptr to #{int_type}"
+          right_payload_ref = first_non_nil_variant_type_ref_for_union_type(right_type_str)
+          right_payload_type = right_payload_ref ? @type_mapper.llvm_type(right_payload_ref) : int_type
+          emit "%binop#{inst.id}.right_payload = load #{right_payload_type}, ptr %binop#{inst.id}.right_payload_ptr, align 4"
+          if right_payload_type == "ptr"
+            emit "%binop#{inst.id}.right_as_int = ptrtoint ptr %binop#{inst.id}.right_payload to #{int_type}"
+          elsif right_payload_type.starts_with?('i') && right_payload_type != int_type
+            payload_bits = right_payload_type[1..].to_i? || 32
+            target_bits = int_type[1..].to_i? || 64
+            if payload_bits < target_bits
+              ext_op = (right_payload_ref && unsigned_type_ref?(right_payload_ref)) ? "zext" : "sext"
+              emit "%binop#{inst.id}.right_as_int = #{ext_op} #{right_payload_type} %binop#{inst.id}.right_payload to #{int_type}"
+            elsif payload_bits > target_bits
+              emit "%binop#{inst.id}.right_as_int = trunc #{right_payload_type} %binop#{inst.id}.right_payload to #{int_type}"
+            else
+              emit "%binop#{inst.id}.right_as_int = add #{int_type} %binop#{inst.id}.right_payload, 0"
+            end
+          else
+            emit "%binop#{inst.id}.right_as_int = add #{int_type} %binop#{inst.id}.right_payload, 0"
+          end
           right = "%binop#{inst.id}.right_as_int"
           right_type_str = int_type
         end
@@ -19601,6 +19912,14 @@ module Crystal::MIR
                   emitted_type = @emitted_value_types[val]?
                   if emitted_type && emitted_type == expected_llvm_type
                     "#{expected_llvm_type} #{val}"
+                   elsif emitted_type && is_union_llvm_type?(emitted_type)
+                     c = @cond_counter
+                     @cond_counter += 1
+                     emit "%union_to_int.#{c}.ptr = alloca #{emitted_type}, align 8"
+                     emit "store #{emitted_type} #{normalize_union_value(val, emitted_type)}, ptr %union_to_int.#{c}.ptr"
+                     emit "%union_to_int.#{c}.payload_ptr = getelementptr #{emitted_type}, ptr %union_to_int.#{c}.ptr, i32 0, i32 1"
+                     emit "%union_to_int.#{c}.val = load #{expected_llvm_type}, ptr %union_to_int.#{c}.payload_ptr, align 4"
+                     "#{expected_llvm_type} %union_to_int.#{c}.val"
                    elsif emitted_type && emitted_type.starts_with?('i') && !emitted_type.includes?(".union")
                      # Already an integer, but might need widening/narrowing
                      if emitted_type == expected_llvm_type
@@ -20166,6 +20485,7 @@ module Crystal::MIR
           end
           obj_val = "%#{base}.sel_itp"
         end
+        obj_val = "null" if obj_val == "0"
         emit "#{name} = select i1 #{cond_val}, ptr #{obj_val}, ptr null"
         # Always register as POINTER — the select returns ptr (payload extracted above if union)
         @value_types[inst.id] = TypeRef::POINTER
@@ -23782,12 +24102,12 @@ module Crystal::MIR
           end
         end
       when Jump
-        emit "br label %#{@block_names[term.target]}"
+        emit "br label %#{block_label(term.target)}"
       when Branch
         cond = value_ref(term.condition)
         cond_type = @value_types[term.condition]?
-        then_block = @block_names[term.then_block]
-        else_block = @block_names[term.else_block]
+        then_block = block_label(term.then_block)
+        else_block = block_label(term.else_block)
 
         # If the condition comes from a cross-block slot, prefer the slot's LLVM type.
         slot_llvm_type = @cross_block_slot_types[term.condition]?
@@ -23853,7 +24173,7 @@ module Crystal::MIR
         end
       when Switch
         val = value_ref(term.value)
-        default = @block_names[term.default_block]
+        default = block_label(term.default_block)
         val_type = @value_types[term.value]? || TypeRef::INT64
         val_llvm_type = @type_mapper.llvm_type(val_type)
         emit "switch #{val_llvm_type} #{val}, label %#{default} ["
@@ -23864,7 +24184,7 @@ module Crystal::MIR
         term.cases.each do |(case_val, block)|
           next if seen_cases.includes?(case_val)
           seen_cases << case_val
-          emit "#{val_llvm_type} #{case_val}, label %#{@block_names[block]}"
+          emit "#{val_llvm_type} #{case_val}, label %#{block_label(block)}"
         end
         @indent -= 1
         emit "]"
@@ -24388,6 +24708,20 @@ module Crystal::MIR
       nil
     end
 
+    private def first_non_nil_variant_type_ref_for_union_type(llvm_type : String) : TypeRef?
+      if union_ref = find_type_ref_for_llvm_type(llvm_type)
+        if union_desc = @module.get_union_descriptor(union_ref)
+          if variant = union_desc.variants.find { |v|
+               name = v.full_name
+               name != "Nil" && name != "Void"
+             }
+            return variant.type_ref
+          end
+        end
+      end
+      nil
+    end
+
     # Find the global discriminator for a variant by its type name within a union.
     # E.g., find_variant_id_by_type_name("%Int32$_$OR$_String.union", some_ref, "Int32") → 5 (TypeRef::INT32.id)
     # Returns nil if variant not found.
@@ -24457,6 +24791,9 @@ module Crystal::MIR
       end
       if actual_union_type.nil? && (val == "0" || val == "null")
         actual_union_type = "ptr"
+      end
+      if actual_union_type.nil? && val =~ /^-?[1-9][0-9]*$/
+        actual_union_type = "i32"
       end
       actual_union_type ||= expected_union_type
       if actual_union_type.includes?(".union") && actual_union_type != expected_union_type

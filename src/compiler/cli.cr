@@ -2108,21 +2108,22 @@ module CrystalV2
         if main_exprs.size > 0
           hir_converter.lower_main(main_exprs)
         else
-          main_def : Tuple(Frontend::DefNode, Frontend::ArenaLike)? = nil
+          main_def_index = -1
           i = 0
           while i < def_nodes.size
             candidate = def_nodes.unsafe_fetch(i)
             n = candidate[0]
             is_fun_receiver = n.receiver.try { |recv| String.new(recv) == HIR::AstToHir::FUN_DEF_RECEIVER } || false
             if String.new(n.name) == "main" && !is_fun_receiver
-              main_def = candidate
+              main_def_index = i
               break
             end
             i += 1
           end
-          if main_def
-          hir_converter.arena = main_def[1]
-          hir_converter.lower_main_from_def(main_def[0])
+          if main_def_index >= 0
+            main_def = def_nodes.unsafe_fetch(main_def_index)
+            hir_converter.arena = main_def[1]
+            hir_converter.lower_main_from_def(main_def[0])
           else
             # Keep runtime contract stable: Crystal.main_user_code always expects
             # __crystal_main(argc, argv), even when user code has no top-level
@@ -2154,19 +2155,20 @@ module CrystalV2
 
         # Ensure top-level `fun main` is lowered as a real entrypoint (C ABI).
         did_flush = false
-        fun_main : Tuple(Frontend::DefNode, Frontend::ArenaLike)? = nil
+        fun_main_index = -1
         i = 0
         while i < def_nodes.size
           candidate = def_nodes.unsafe_fetch(i)
           n = candidate[0]
           is_fun_receiver = n.receiver.try { |recv| String.new(recv) == HIR::AstToHir::FUN_DEF_RECEIVER } || false
           if is_fun_receiver && String.new(n.name) == "main"
-            fun_main = candidate
+            fun_main_index = i
             break
           end
           i += 1
         end
-        if fun_main
+        if fun_main_index >= 0
+          fun_main = def_nodes.unsafe_fetch(fun_main_index)
           hir_converter.arena = fun_main[1]
           hir_converter.lower_def(fun_main[0])
           # Process any pending functions from fun main lowering (e.g., Crystal.init_runtime)
@@ -5378,9 +5380,14 @@ module CrystalV2
       private def copied_string_window(text : String, start : Int32, length : Int32) : String
         return "" if length <= 0
 
-        String.build do |io|
-          append_string_window(io, text, start, length)
+        src = text.to_slice
+        bytes = Bytes.new(length)
+        idx = 0
+        while idx < length
+          bytes.to_unsafe[idx] = src[start + idx]
+          idx += 1
         end
+        String.new(bytes)
       end
 
       private def append_string_window(io : IO, text : String, start : Int32, length : Int32) : Nil

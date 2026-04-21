@@ -4174,16 +4174,20 @@ module CrystalV2
       class AstArena
         getter extra_sources : Array(String)
         @node_slots : Array(NodeSlot)
+        @debug_arena_add : String?
+        @debug_arena_fetch : String?
 
         def initialize(capacity : Int32 = 0)
           @node_slots = [] of NodeSlot
           @extra_sources = [] of String
+          @debug_arena_add = ENV["DEBUG_ARENA_ADD"]?
+          @debug_arena_fetch = ENV["DEBUG_ARENA_FETCH"]?
         end
 
         @[AlwaysInline]
         def add(node) : ExprId
           id = ExprId.new(@node_slots.size)
-          debug_store = if filter = ENV["DEBUG_ARENA_ADD"]?
+          debug_store = if filter = @debug_arena_add
                           filter == "1" || node.class.name.includes?(filter)
                         else
                           false
@@ -4241,7 +4245,7 @@ module CrystalV2
             return @node_slots[0].node # Return first node as sentinel (caller should check)
           end
           slot = @node_slots[id.index]
-          if debug_fetch = ENV["DEBUG_ARENA_FETCH"]?
+          if debug_fetch = @debug_arena_fetch
             if debug_fetch == "1" || debug_fetch == id.index.to_s
               raw_ident = slot.raw_identifier_state || "nil"
               typed_ident = slot.typed_identifier_state || "nil"

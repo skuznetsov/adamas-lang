@@ -130,6 +130,8 @@ module Crystal
       # Populated in lower_function_body during value-type indexing pass.
       # Replaces an O(N) linear scan that made lexical-scope lookup O(N²) on large functions.
       @hir_value_block_scope : ::Hash(HIR::ValueId, UInt32) = {} of HIR::ValueId => UInt32
+      @hir_scope_depth_cache : ::Hash(UInt32, Int32) = {} of UInt32 => Int32
+      @hir_line_scope_cache : ::Hash({String, Int32}, UInt32) = {} of {String, Int32} => UInt32
 
       @[AlwaysInline]
       private def mir_setup_trace? : Bool
@@ -1122,16 +1124,26 @@ module Crystal
       end
 
       private def hir_scope_depth(hir_func : HIR::Function, sid : UInt32) : Int32
+        if cached = @hir_scope_depth_cache[sid]?
+          return cached
+        end
         depth = 0
         cur : HIR::ScopeId? = sid
         while id = cur
           depth += 1
           cur = hir_func.get_scope(id).parent
         end
+        @hir_scope_depth_cache[sid] = depth
         depth
       end
 
       private def hir_innermost_scope_for_source_line(hir_func : HIR::Function, loc : HIR::SourceLocation) : UInt32?
+        cache_key = {loc.path, loc.line}
+        if cached = @hir_line_scope_cache[cache_key]?
+          return nil if cached == UInt32::MAX
+          return cached
+        end
+
         best : UInt32? = nil
         best_depth = -1
         hir_func.scopes.each do |scope|
@@ -1146,6 +1158,7 @@ module Crystal
             best = scope.id
           end
         end
+        @hir_line_scope_cache[cache_key] = best || UInt32::MAX
         best
       end
 
@@ -1246,6 +1259,8 @@ module Crystal
         # Reset per-function caches BEFORE params loop — params invoke
         # record_mir_value_location which reads @hir_value_block_scope.
         @hir_value_block_scope = {} of HIR::ValueId => UInt32
+        @hir_scope_depth_cache.clear
+        @hir_line_scope_cache.clear
 
         # Map HIR params to MIR params (already added in stub)
         hir_func.params.each_with_index do |param, idx|
@@ -1537,14 +1552,32 @@ module Crystal
         # the inline body blocks (which define the PHI). The entry block
         # must always be first.
         entry_block_id = hir_func.entry_block
-        ordered.sort_by! do |block|
-          if block.id == entry_block_id
-            # Entry block always first
-            {0_u32, 0_u32}
-          else
-            min_id = block.instructions.first?.try(&.id) || UInt32::MAX
-            {1_u32, min_id}
+        # Keep this explicit: self-hosted stage2 still cannot rely on generic
+        # stdlib block-sort wrappers being materialized for compiler-internal
+        # Array(Tuple(...)) paths.
+        i = 1
+        while i < ordered.size
+          j = i
+          while j > 0
+            left = ordered[j - 1]
+            right = ordered[j]
+            left_entry = left.id == entry_block_id
+            right_entry = right.id == entry_block_id
+            should_swap = false
+
+            if right_entry && !left_entry
+              should_swap = true
+            elsif !left_entry && !right_entry
+              left_min = left.instructions.first?.try(&.id) || UInt32::MAX
+              right_min = right.instructions.first?.try(&.id) || UInt32::MAX
+              should_swap = left_min > right_min
+            end
+
+            break unless should_swap
+            ordered[j - 1], ordered[j] = ordered[j], ordered[j - 1]
+            j -= 1
           end
+          i += 1
         end
 
         ordered
@@ -3155,7 +3188,17 @@ module Crystal
                   f_dollar && f.name[(f_dollar + 1)..] == suffix
                 }
               end
-              # Fall back to first overload if no suffix match
+              # Unsuffixed calls to untyped generic methods should bind to the
+              # owner-correct arity specialization. Falling back to the first
+              # overload can select a typed specialization from another
+              # monomorphized owner with the same method base.
+              unless func
+                source_arg_count = call.receiver ? args.size - 1 : args.size
+                arity_name = "#{base_name}$arity#{source_arg_count}"
+                func = all_overloads.find { |f| f.name == arity_name }
+              end
+
+              # Fall back to first overload if no suffix/arity match
               func = all_overloads.first? unless func
             else
               # O(1) lookup via pre-computed index (legacy fallback)
@@ -3712,8 +3755,22 @@ module Crystal
           dispatch_func.get_block(end_block).terminator = Return.new(nil)
         end
 
-        # 7. Default block is unreachable
-        dispatch_func.get_block(default_block).terminator = Unreachable.new
+        # 7. Default block. Some broad inherited Reference helpers can reach a
+        # dispatch table before every subtype has been materialized. Falling
+        # back to Reference's own implementation is correct for inherited
+        # object identity and avoids trapping on ordinary subclasses like String.
+        if kind.class? &&
+           method_suffix == "object_id" &&
+           (default_func = @mir_module.get_function("Reference#object_id"))
+          dispatch_builder.current_block = default_block
+          call_val = dispatch_builder.call(default_func.id, param_values[0, default_func.params.size], dispatch_func.return_type)
+          if phi && call_val != 0_u32
+            phi.add_incoming(from: default_block, value: call_val)
+          end
+          dispatch_func.get_block(default_block).terminator = Jump.new(end_block)
+        else
+          dispatch_func.get_block(default_block).terminator = Unreachable.new
+        end
 
         phi
       end

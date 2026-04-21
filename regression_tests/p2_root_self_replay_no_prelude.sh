@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Tier-1 no-prelude reducer for broad root-method virtual replay.
+# Tier-1 no-prelude reducer for broad root-method virtual replay suppression.
 #
 # This isolates the bootstrap fanout shape where root fallback methods
-# (`Object#to_s`, `Object#inspect`, `Reference#same?`) replay universal helper
-# targets over generic descendants. It is a bounded oracle: it must exercise the
-# corridor, but it must stay far below the full self-host pending explosion.
+# (`Object#to_s`, `Object#inspect`, `Reference#same?`) used to replay universal
+# helper targets over generic descendants while lazy RTA was inactive. The
+# demand-driven contract is that these records are preserved, but immediate
+# broad-root replay is suppressed until lazy RTA can filter to live owners.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -14,8 +15,8 @@ TIMEOUT_SEC="${P2_ROOT_REPLAY_TIMEOUT_SEC:-30}"
 MEM_MB="${P2_ROOT_REPLAY_MEM_MB:-2048}"
 PROCESS_DELTA_LIMIT="${P2_ROOT_REPLAY_PROCESS_DELTA_LIMIT:-120}"
 TOTAL_FUNCTION_LIMIT="${P2_ROOT_REPLAY_TOTAL_FUNCTION_LIMIT:-180}"
-OBJECT_REPLAY_LIMIT="${P2_ROOT_REPLAY_OBJECT_LIMIT:-120}"
-REFERENCE_REPLAY_LIMIT="${P2_ROOT_REPLAY_REFERENCE_LIMIT:-80}"
+OBJECT_REPLAY_LIMIT="${P2_ROOT_REPLAY_OBJECT_LIMIT:-0}"
+REFERENCE_REPLAY_LIMIT="${P2_ROOT_REPLAY_REFERENCE_LIMIT:-0}"
 
 if [[ ! -x "$COMPILER" ]]; then
   echo "ERROR: compiler not found: $COMPILER" >&2
@@ -103,7 +104,6 @@ object_records="$(grep -c '\[VIRTUAL_TARGET\] record parent=Object method=\(to_s
 reference_records="$(grep -c '\[VIRTUAL_TARGET\] record parent=Reference method=object_id' "$LOG" || true)"
 object_replays="$(grep -c '\[VIRTUAL_TARGET\] lower child=.* parent=Object' "$LOG" || true)"
 reference_replays="$(grep -c '\[VIRTUAL_TARGET\] lower child=.* parent=Reference' "$LOG" || true)"
-deep_owner_replays="$(grep -c 'Box(Box(Box(Pair' "$LOG" || true)"
 
 fail=0
 if (( object_records < 2 )); then
@@ -112,10 +112,6 @@ if (( object_records < 2 )); then
 fi
 if (( reference_records < 1 )); then
   echo "p2 root self-replay oracle did not exercise Reference#object_id record" >&2
-  fail=1
-fi
-if (( deep_owner_replays < 1 )); then
-  echo "p2 root self-replay oracle did not replay a deep generic owner" >&2
   fail=1
 fi
 if (( process_delta > PROCESS_DELTA_LIMIT )); then
@@ -140,4 +136,4 @@ if (( fail != 0 )); then
   exit 1
 fi
 
-echo "p2_root_self_replay_no_prelude_ok process_delta=${process_delta} total=${total_functions} object_replays=${object_replays} reference_replays=${reference_replays} deep_owner_replays=${deep_owner_replays}"
+echo "p2_root_self_replay_no_prelude_ok process_delta=${process_delta} total=${total_functions} object_records=${object_records} reference_records=${reference_records} object_replays=${object_replays} reference_replays=${reference_replays}"

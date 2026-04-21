@@ -1922,12 +1922,283 @@ module Crystal::HIR
       added
     end
 
-    # A callee queued from inside an active lowering pass is already proven
-    # reachable by the current reachable caller. Record it as a call target so
-    # lazy RTA does not immediately re-defer the exact same function later.
+    # Most callees queued from inside an active lowering pass are only
+    # structurally visible, not demanded. Mark only narrow internal runtime
+    # helper corridors known to be required by emitted container/time paths;
+    # broad exact marking re-materializes the compiler's deep helper graph.
     private def record_pending_callee_for_rta(name : String) : Nil
-      return if name.empty?
+      return unless internal_container_helper_exact_demand?(name) ||
+                    direct_mutating_container_helper_exact_demand?(name) ||
+                    hir_scalar_helper_exact_demand?(name) ||
+                    frontend_ast_node_helper_exact_demand?(name) ||
+                    frontend_lexer_helper_exact_demand?(name) ||
+                    frontend_parser_helper_exact_demand?(name) ||
+                    ast_to_hir_helper_exact_demand?(name) ||
+                    llvm_backend_helper_exact_demand?(name) ||
+                    ast_to_hir_lookup_key_helper_exact_demand?(name) ||
+                    time_location_runtime_getter_exact_demand?(name)
       @rta_called_methods << name
+    end
+
+    private def frontend_ast_node_helper_exact_demand?(name : String) : Bool
+      owner = method_owner_from_name(name)
+      return false unless owner.starts_with?("CrystalV2::Compiler::Frontend::") &&
+                          owner.ends_with?("Node")
+
+      method = method_short_from_name(name)
+      method == "span" || method == "node_kind"
+    end
+
+    private def frontend_lexer_helper_exact_demand?(name : String) : Bool
+      current_class = @current_class
+      return false unless current_class == "CrystalV2::Compiler::Frontend::Lexer"
+
+      owner = method_owner_from_name(name)
+      owner == current_class && !!method_short_from_name(name)
+    end
+
+    private def frontend_parser_helper_exact_demand?(name : String) : Bool
+      current_class = @current_class
+      return false unless current_class == "CrystalV2::Compiler::Frontend::Parser"
+
+      owner = method_owner_from_name(name)
+      owner == current_class && !!method_short_from_name(name)
+    end
+
+    private def ast_to_hir_helper_exact_demand?(name : String) : Bool
+      current_class = @current_class
+      return false unless current_class == "Crystal::HIR::AstToHir"
+
+      owner = method_owner_from_name(name)
+      return false unless owner == current_class
+
+      method = method_short_from_name(name)
+      method == "current_type_name_context_key" ||
+        method == "lower_args_with_expected_types" ||
+        method == "yield_function_name_for_uncached" ||
+        method == "receiver_type_param_map_cache_get" ||
+        method == "receiver_type_param_map_cache_set" ||
+        method == "force_pending_call_targets_for_return_type" ||
+        ast_to_hir_rta_helper_method?(method)
+    end
+
+    private def ast_to_hir_rta_helper_method?(method : String?) : Bool
+      return false unless method
+      return true if method.starts_with?("rta_")
+
+      method == "initialize_lazy_rta" ||
+        method == "mark_live_type" ||
+        method == "record_pending_callee_for_rta" ||
+        method == "scan_hir_function_for_live_types" ||
+        method == "scan_new_functions_for_live_types" ||
+        method == "scan_new_type_descriptors_for_live_types" ||
+        method == "undefer_rta_functions" ||
+        method == "extract_owner_base_for_rta" ||
+        method == "extract_method_part_for_rta"
+    end
+
+    private def llvm_backend_helper_exact_demand?(name : String) : Bool
+      current_class = @current_class
+      return false unless current_class == "Crystal::MIR::LLVMIRGenerator"
+
+      owner = method_owner_from_name(name)
+      return false unless owner == current_class
+
+      method = method_short_from_name(name)
+      !!method
+    end
+
+    private def ast_to_hir_lookup_key_helper_exact_demand?(name : String) : Bool
+      owner = method_owner_from_name(name)
+      return false unless owner.starts_with?("Crystal::HIR::AstToHir::")
+      return false unless owner.ends_with?("LookupKey") ||
+                          owner.ends_with?("TypeNameContextKey") ||
+                          owner.ends_with?("CallSignature")
+
+      method = method_short_from_name(name)
+      method == "hash" || method == "=="
+    end
+
+    private def hir_scalar_helper_exact_demand?(name : String) : Bool
+      owner = method_owner_from_name(name)
+      return false unless owner.in?(
+                            "Crystal::HIR::LifetimeTag",
+                            "Crystal::HIR::Taint",
+                            "Crystal::HIR::BinaryOp",
+                            "Crystal::HIR::UnaryOp",
+                            "Crystal::HIR::ScopeKind",
+                            "Crystal::HIR::TypeKind"
+                          )
+
+      method = method_short_from_name(name)
+      method == "value" ||
+        method == "includes?" ||
+        method == "escapes_more_than?" ||
+        method == "merge" ||
+        method == "stack_local?" ||
+        method == "thread_shared?" ||
+        method == "ffi_exposed?" ||
+        method == "cyclic?" ||
+        method == "mutable?"
+    end
+
+    private def time_location_runtime_getter_exact_demand?(name : String) : Bool
+      current_class = @current_class
+      return false unless current_class
+      return false unless strip_generic_args(current_class) == "Time::Location"
+
+      owner = method_owner_from_name(name)
+      return false unless strip_generic_args(owner) == "Time::Location"
+
+      method = method_short_from_name(name)
+      method == "name" || method == "zones" || method == "transitions"
+    end
+
+    private def internal_container_helper_exact_demand?(name : String) : Bool
+      current_class = @current_class
+      return false unless current_class
+      current_base = strip_generic_args(current_class)
+
+      owner = method_owner_from_name(name)
+      owner_base = strip_generic_args(owner)
+      return false unless owner_base == current_base
+
+      method = method_short_from_name(name)
+      case owner_base
+      when "Array"
+        method == "check_needs_resize" ||
+          method == "check_needs_resize_for_unshift" ||
+          method == "needs_resize?" ||
+          method == "increase_capacity" ||
+          method == "remaining_capacity" ||
+          method == "reset_buffer_to_root_buffer" ||
+          method == "resize_to_capacity" ||
+          method == "resize_to_capacity_for_unshift" ||
+          method == "resize_if_cant_insert" ||
+          method == "root_buffer" ||
+          method == "unsafe_fetch" ||
+          method == "fetch" ||
+          method == "empty?"
+      when "Hash"
+        method == "[]" ||
+          method == "[]?" ||
+          method == "entries" ||
+          method == "entries_size" ||
+          method == "entries_capacity" ||
+          method == "entries_full?" ||
+          method == "indices_size" ||
+          method == "double_indices_size" ||
+          method == "resize" ||
+          method == "do_compaction" ||
+          method == "clear_indices" ||
+          method == "clear_entries" ||
+          method == "indices_malloc_size" ||
+          method == "get_entry" ||
+          method == "set_entry" ||
+          method == "index_for_entry_index" ||
+          method == "add_entry_and_increment_size" ||
+          method == "delete_impl" ||
+          method == "delete_entry" ||
+          method == "delete_entry_and_update_counts" ||
+          method == "each_entry_with_index" ||
+          method == "each_key" ||
+          method == "next_index" ||
+          method == "fit_in_indices" ||
+          method == "key_hash" ||
+          method == "entry_matches?" ||
+          method == "fetch" ||
+          method == "find_entry" ||
+          method == "find_entry_with_index" ||
+          method == "find_entry_with_index_linear_scan"
+      when "Slice"
+        method == "unsafe_fetch"
+      when "Deque"
+        method == "unsafe_fetch" ||
+          method == "unsafe_put" ||
+          method == "calculate_new_capacity" ||
+          method == "resize_if_cant_insert" ||
+          method == "resize_to_capacity"
+      else
+        false
+      end
+    end
+
+    private def direct_mutating_container_helper_exact_demand?(name : String) : Bool
+      owner = method_owner_from_name(name)
+      owner_base = strip_generic_args(owner)
+      method = method_short_from_name(name)
+
+      (owner_base == "Hash" && method == "[]=") ||
+        (owner_base == "Array" && method == "<<") ||
+        (owner_base == "Set" && (method == "add" || method == "add?" || method == "<<"))
+    end
+
+    private def speculative_root_fallback_helper_mark?(name : String) : Bool
+      current_class = @current_class
+      current_method = @current_method
+      return false unless current_class && current_method
+      return false unless (current_class == "Object" &&
+                           (current_method == "to_s" ||
+                            current_method == "inspect" ||
+                            current_method == "hash" ||
+                            current_method == "to_json")) ||
+                          (current_class == "Reference" &&
+                           (current_method == "same?" ||
+                            current_method == "inspect"))
+
+      method = method_short_from_name(name)
+      return false unless method == "to_s" ||
+                          method == "inspect" ||
+                          method == "object_id" ||
+                          method == "exec_recursive" ||
+                          method == "hash" ||
+                          method == "to_json" ||
+                          method == "to_json_object_key" ||
+                          method == "to_i" ||
+                          method == "same?" ||
+                          method == "includes?" ||
+                          method == "in?"
+
+      owner = method_owner_from_name(name)
+      owner_base = strip_generic_args(owner)
+      !owner.empty? && owner_base != current_class
+    end
+
+    private def recursive_formatting_helper_defer?(name : String) : Bool
+      current_class = @current_class
+      current_method = @current_method
+      return false unless current_class && current_method
+      return false unless current_method == "to_s" ||
+                          current_method == "inspect" ||
+                          current_method == "same?" ||
+                          current_method == "hash" ||
+                          current_method == "to_json" ||
+                          current_method == "initialize" ||
+                          current_method == "each" ||
+                          current_method == "next" ||
+                          current_method == "run" ||
+                          current_method == "clear"
+
+      method = method_short_from_name(name)
+      return false unless method == "to_s" ||
+                          method == "inspect" ||
+                          method == "object_id" ||
+                          method == "exec_recursive" ||
+                          method == "hash" ||
+                          method == "to_json" ||
+                          method == "to_json_object_key" ||
+                          method == "to_i" ||
+                          method == "same?" ||
+                          method == "includes?" ||
+                          method == "in?"
+
+      owner = method_owner_from_name(name)
+      return false if owner.empty?
+      owner_base = strip_generic_args(owner)
+      current_base = strip_generic_args(current_class)
+      return false unless owner_base == current_base
+
+      owner.includes?('(') || current_class.includes?('(')
     end
 
     # Strip generics: "Array(Int32)" → "Array"
@@ -1991,6 +2262,9 @@ module Crystal::HIR
       receivers = @rta_virtual_receivers[mpart]?
       return true unless receivers  # No receiver info → conservative, keep
       return true if receivers.includes?(owner_base)
+      if broad_root_universal_helper_receiver?(mpart, receivers)
+        return false
+      end
       # Walk up class hierarchy: if any parent is a receiver, keep
       current = owner_base
       10.times do
@@ -2008,6 +2282,78 @@ module Crystal::HIR
         end
       end
       false
+    end
+
+    private def broad_root_universal_helper_receiver?(mpart : String, receivers : Set(String)) : Bool
+      method = if idx = mpart.index('$')
+                 mpart[0, idx]
+               else
+                 mpart
+               end
+      return false unless method == "to_s" ||
+                          method == "inspect" ||
+                          method == "object_id" ||
+                          method == "exec_recursive" ||
+                          method == "hash" ||
+                          method == "to_json" ||
+                          method == "to_json_object_key" ||
+                          method == "to_i" ||
+                          method == "same?" ||
+                          method == "includes?" ||
+                          method == "in?"
+      receivers.includes?("Object") || receivers.includes?("Reference")
+    end
+
+    private def synthetic_numeric_conversion_lower_target?(name : String) : Bool
+      return false unless has_method_separator?(name)
+      method = method_short_from_name(name)
+      return false unless method && numeric_conversion_method_name?(method)
+
+      owner = method_owner_from_name(name)
+      owner_base = strip_generic_args(owner)
+      owner_base == "Array" ||
+        owner_base == "Hash" ||
+        owner_base == "Hash::Entry" ||
+        owner_base == "Pointer" ||
+        owner_base == "Set" ||
+        owner_base == "Tuple"
+    end
+
+    private def rta_exact_helper_suppressed?(name : String) : Bool
+      return false unless has_method_separator?(name)
+
+      method = method_short_from_name(name)
+      return false unless method
+      helper = method == "to_s" ||
+               method == "inspect" ||
+               method == "to_json" ||
+               method == "object_id" ||
+               method == "exec_recursive" ||
+               method == "hash" ||
+               method == "to_json_object_key" ||
+               method == "same?" ||
+               method == "includes?" ||
+               method == "in?" ||
+               numeric_conversion_method_name?(method)
+      return false unless helper
+
+      owner = method_owner_from_name(name)
+      owner_base = strip_generic_args(owner)
+      return false if owner_base == "String" && numeric_conversion_method_name?(method)
+
+      owner.includes?('(') ||
+        owner.includes?("Crystal::HIR") ||
+        owner.includes?("Crystal::MIR") ||
+        owner.includes?("CrystalV2::Compiler") ||
+        owner_base == "Array" ||
+        owner_base == "Hash" ||
+        owner_base == "Hash::Entry" ||
+        owner_base == "Hash::EntryIterator" ||
+        owner_base == "Hash::KeyIterator" ||
+        owner_base == "Iterator::WithIndexIterator" ||
+        owner_base == "Pointer" ||
+        owner_base == "Set" ||
+        owner_base == "Tuple"
     end
 
     @[AlwaysInline]
@@ -2124,8 +2470,11 @@ module Crystal::HIR
             new_types = true if mark_live_type("String")
           when Crystal::HIR::Call
             mname = inst.method_name
-            # Method-level RTA: record this call target (exact name for non-virtual)
-            @rta_called_methods << mname
+            # RTA scans observe already-emitted HIR. Treat them as live-type and
+            # virtual-receiver discovery, not as a demand to recursively lower
+            # every direct callee during this pending pass. Truly demanded direct
+            # calls are recovered by `lower_missing_call_targets` after the lazy
+            # pending pass, while virtual calls still record method parts below.
             # For virtual calls, also record method part for cross-type dispatch matching
             # AND track which owner types are valid receivers
             if inst.virtual
@@ -2675,7 +3024,7 @@ module Crystal::HIR
       # IO#puts(obj : _) is chosen over IO#puts(string : String) when the subclass
       # calls puts with an Int32.
       expected_arity = suffix ? suffix_param_count(suffix) : 0
-      wants_block = suffix == "block" || (suffix && suffix.ends_with?("_block"))
+      wants_block = suffix ? suffix_has_block_flag?(suffix) : false
       best_untyped : ParentLookupResult? = nil
       best_untyped_splat : ParentLookupResult? = nil
       best_arity_match : ParentLookupResult? = nil
@@ -2685,7 +3034,7 @@ module Crystal::HIR
         candidate_parts = parse_method_name(candidate_name)
         next unless candidate_parts.owner == parent || strip_generic_args(candidate_parts.owner) == base_parent
         candidate_suffix = candidate_parts.suffix
-        candidate_has_block = candidate_suffix == "block" || (candidate_suffix && candidate_suffix.ends_with?("_block"))
+        candidate_has_block = candidate_suffix ? suffix_has_block_flag?(candidate_suffix) : false
         next if wants_block && !candidate_has_block
         next if !wants_block && candidate_has_block
         if def_node = @function_defs[candidate_name]?
@@ -2877,12 +3226,12 @@ module Crystal::HIR
     @pending_arg_types : Hash(String, CallsiteArgs)
     @pending_arg_types_by_arity : Hash(String, Hash(Int32, Array(CallsiteArgs)))
     @pending_arg_type_base_keys_by_method : Hash(String, Set(String))
-    @pending_arg_types_seen_by_arity : Hash(String, Hash(Int32, Set(String)))
+    @pending_arg_types_seen_by_arity : Hash(String, Hash(Int32, Set(UInt64)))
     @pending_arg_types_by_signature : Hash(CallSignature, Array(CallsiteArgs))
     @function_def_has_splat : Hash(String, Bool)
     @function_def_has_double_splat : Hash(String, Bool)
     @recorded_arg_types_by_signature : Hash(CallSignature, Array(CallsiteArgs))
-    @recorded_arg_types_seen_by_signature : Hash(CallSignature, Set(String))
+    @recorded_arg_types_seen_by_signature : Hash(CallSignature, Set(UInt64))
     # Call-site type parameter bindings for lazily lowered functions (mangled name -> map).
     @pending_type_param_maps : Hash(String, Hash(String, String))
     # Captured type parameter bindings for module methods copied into concrete classes.
@@ -3034,7 +3383,8 @@ module Crystal::HIR
     @type_cache_keys_by_component : Hash(String, Array(String))
     @type_cache_keys_by_generic_prefix : Hash(String, Array(String))
     @type_param_like_cache : Hash(String, Bool)
-    @receiver_type_param_map_cache : Hash(Int32, Hash(String, String))
+    @receiver_type_param_map_cache_ids : Array(Int32)
+    @receiver_type_param_map_cache_values : Array(Hash(String, String))
     @specialized_type_with_receiver_cache : Hash({Int32, Int32}, TypeRef)
     @array_type_for_element_cache : Hash(TypeRef, TypeRef)
     @array_type_for_element_nil_cache : Set(TypeRef)
@@ -3384,12 +3734,12 @@ module Crystal::HIR
       @pending_arg_types = {} of String => CallsiteArgs
       @pending_arg_types_by_arity = {} of String => Hash(Int32, Array(CallsiteArgs))
       @pending_arg_type_base_keys_by_method = {} of String => Set(String)
-      @pending_arg_types_seen_by_arity = {} of String => Hash(Int32, Set(String))
+      @pending_arg_types_seen_by_arity = {} of String => Hash(Int32, Set(UInt64))
       @pending_arg_types_by_signature = {} of CallSignature => Array(CallsiteArgs)
       @function_def_has_splat = {} of String => Bool
       @function_def_has_double_splat = {} of String => Bool
       @recorded_arg_types_by_signature = {} of CallSignature => Array(CallsiteArgs)
-      @recorded_arg_types_seen_by_signature = {} of CallSignature => Set(String)
+      @recorded_arg_types_seen_by_signature = {} of CallSignature => Set(UInt64)
       @pending_type_param_maps = Hash(String, Hash(String, String)).new(initial_capacity: 4096)
       @function_type_param_maps = Hash(String, Hash(String, String)).new(initial_capacity: function_type_aux_capacity)
       @function_namespace_overrides = Hash(String, String).new(initial_capacity: 4096)
@@ -3462,7 +3812,8 @@ module Crystal::HIR
       @type_cache_keys_by_component = {} of String => Array(String)
       @type_cache_keys_by_generic_prefix = {} of String => Array(String)
       @type_param_like_cache = {} of String => Bool
-      @receiver_type_param_map_cache = {} of Int32 => Hash(String, String)
+      @receiver_type_param_map_cache_ids = [] of Int32
+      @receiver_type_param_map_cache_values = [] of Hash(String, String)
       @specialized_type_with_receiver_cache = {} of {Int32, Int32} => TypeRef
       @resolved_enum_name_cache = {} of String => String
       @resolved_enum_name_negative_cache = Set(String).new
@@ -4217,6 +4568,7 @@ module Crystal::HIR
     # Resolve type aliases for module names like Engine::MatchData -> Regex::PCRE::MatchData
     private def resolve_module_alias_for_include(module_name : String) : String
       return module_name if module_name.empty?
+      return module_name if @module_defs.has_key?(module_name)
 
       cache_key = {module_name, @current_class, @module_defs_cache_version}
       if cached = @module_include_alias_cache[cache_key]?
@@ -4777,14 +5129,16 @@ module Crystal::HIR
       end
 
       # If descendants are already known, lower the recorded target for them
-      # immediately. Direct-children-only replay misses generic instantiations
-      # like Array(Point) when an Object target is recorded after the child was
-      # already registered under Reference.
-      collect_subclasses_cached(parent_name).each do |child_name|
-        if @lazy_rta_active
-          next unless rta_live_owner?(child_name)
+      # immediately. For broad roots, only do this while lazy RTA can filter to
+      # live owners; otherwise late repair/force-lower paths replay Object or
+      # Reference targets across every generic helper seen by the compiler.
+      unless (parent_name == "Object" || parent_name == "Reference") && !@lazy_rta_active
+        collect_subclasses_cached(parent_name).each do |child_name|
+          if @lazy_rta_active
+            next unless rta_live_owner?(child_name)
+          end
+          lower_virtual_targets_for_child(child_name, parent_name)
         end
-        lower_virtual_targets_for_child(child_name, parent_name)
       end
     end
 
@@ -10538,6 +10892,12 @@ module Crystal::HIR
       ctx.function.record_value_location(value_id, location)
     end
 
+    private def record_hir_value_source_location(ctx, value_id, arena, node) : Nil
+      return unless path = source_path_for(arena)
+      span = node.span
+      ctx.function.record_value_location(value_id, SourceLocation.new(path, span.start_line, span.start_column))
+    end
+
     private def set_function_definition_location(
       function : HIR::Function,
       arena : CrystalV2::Compiler::Frontend::ArenaLike,
@@ -13930,10 +14290,10 @@ module Crystal::HIR
                     if body = member.body
                       contains_yield = def_contains_yield?(member, member_arena)
                       if !contains_yield && @yield_functions.includes?(full_name)
-                        @yield_functions.delete(full_name)
+                        delete_yield_function(full_name)
                         debug_hook("yield.unregister", full_name)
                       elsif contains_yield
-                        @yield_functions.add(full_name)
+                        add_yield_function(full_name)
                         if env_get("DEBUG_EACH_REGISTER") && method_name == "each" && class_name.includes?("Slice(")
                           STDERR.puts "[EACH_REGISTER] yield=#{full_name}"
                         end
@@ -16690,7 +17050,9 @@ module Crystal::HIR
         if left_type && right_type
           pointer_like = ->(t : TypeRef) do
             return false if t == TypeRef::VOID
-            return true if @module.get_type_descriptor(t).try(&.kind) == TypeKind::Pointer
+            if desc = @module.get_type_descriptor(t)
+              return true if desc.not_nil!.kind == TypeKind::Pointer
+            end
             name = get_type_name_from_ref(t)
             name.starts_with?("Pointer(")
           end
@@ -17432,7 +17794,8 @@ module Crystal::HIR
     @[AlwaysInline]
     private def clear_receiver_specialization_caches : Nil
       @type_param_like_cache.clear
-      @receiver_type_param_map_cache.clear
+      @receiver_type_param_map_cache_ids.clear
+      @receiver_type_param_map_cache_values.clear
       @specialized_type_with_receiver_cache.clear
     end
 
@@ -17974,7 +18337,7 @@ module Crystal::HIR
 
                 # Track yield-functions for inline expansion (module methods).
                 if def_contains_yield?(member, member_arena)
-                  @yield_functions.add(full_name)
+                  add_yield_function(full_name)
                   debug_hook("yield.register", full_name)
                   if !has_block && !@function_defs.has_key?(base_name)
                     set_function_def_entry(base_name, member)
@@ -18938,7 +19301,7 @@ module Crystal::HIR
         end
         if @function_defs.has_key?(full_name)
           if def_contains_yield?(member, @arena)
-            @yield_functions.add(full_name)
+            add_yield_function(full_name)
             debug_hook("yield.register", full_name)
           end
           if env_has?("DEBUG_DUP_FUNCTION")
@@ -18963,7 +19326,7 @@ module Crystal::HIR
 
         # Track yield-functions for inline expansion
         if def_contains_yield?(member, member_arena)
-          @yield_functions.add(full_name)
+          add_yield_function(full_name)
           debug_hook("yield.register", full_name)
           if !has_block && !@function_defs.has_key?(base_name)
             set_function_def_entry(base_name, member)
@@ -19677,7 +20040,7 @@ module Crystal::HIR
       if body = effective_member.body
         contains_yield = detect_method_yield(effective_member, member_arena, prefer_source_yield_scan) if contains_yield.nil?
         if contains_yield
-          @yield_functions.add(full_name)
+          add_yield_function(full_name)
           debug_hook("yield.register", full_name)
           # Don't let yield-based block overloads claim the bare base name.
           # This avoids routing no-block calls to block-only defs.
@@ -20838,7 +21201,7 @@ module Crystal::HIR
 
               # Track yield-functions for inline expansion (nested module methods).
               if def_contains_yield?(effective_member, member_arena)
-                @yield_functions.add(full_method_name)
+                add_yield_function(full_method_name)
                 debug_hook("yield.register", full_method_name)
                 unless @function_defs.has_key?(base_name)
                   set_function_def_entry(base_name, effective_member)
@@ -22837,7 +23200,7 @@ module Crystal::HIR
               # Note: MIR lowering removes yield-containing functions (inline-only), so we must inline
               # them at call sites. We key by both base and mangled names so resolution can find them.
               if contains_yield
-                @yield_functions.add(full_name)
+                add_yield_function(full_name)
                 debug_hook("yield.register", full_name)
                 if !has_block && !@function_defs.has_key?(base_name)
                   set_function_def_entry(base_name, member)
@@ -22846,7 +23209,7 @@ module Crystal::HIR
                 set_function_def_entry(full_name, member)
                 set_function_def_arena(full_name, member_arena)
                 if alias_full_name
-                  @yield_functions.add(alias_full_name)
+                  add_yield_function(alias_full_name)
                   debug_hook("yield.register", alias_full_name)
                   if alias_base && !has_block && !@function_defs.has_key?(alias_base)
                     set_function_def_entry(alias_base, member)
@@ -23847,7 +24210,7 @@ module Crystal::HIR
         next unless @module.remove_function(name)
         @function_lowering_states.delete(name)
         @pending_function_queue.delete(name)
-        @yield_functions.delete(name)
+        delete_yield_function(name)
         @yield_return_functions.delete(name)
         @yield_return_checked.delete(name)
         invalidated += 1
@@ -28883,6 +29246,9 @@ module Crystal::HIR
         next unless variant.starts_with?("Pointer")
         variant_type = type_ref_for_name(variant)
         elem_type = pointer_element_type(variant)
+        if variant_type == TypeRef::VOID && elem_type != TypeRef::VOID
+          variant_type = @module.intern_type(TypeDescriptor.new(TypeKind::Pointer, variant, [elem_type]))
+        end
         if value_type
           next if elem_type == TypeRef::VOID
           if elem_type == value_type
@@ -28914,6 +29280,12 @@ module Crystal::HIR
       ctx.emit(unwrap)
       ctx.register_type(unwrap.id, best_type)
       {unwrap.id, best_type}
+    end
+
+    private def pointer_union_type?(desc : TypeDescriptor?) : Bool
+      return false unless desc && desc.kind == TypeKind::Union
+
+      split_union_type_name(desc.name).any? { |variant| variant.starts_with?("Pointer") }
     end
 
     # Mangle function name with parameter types for overloading.
@@ -29853,10 +30225,6 @@ module Crystal::HIR
           @method_resolution_cache.clear
           @method_resolution_cache_scope_hash = scope_hash
         end
-        cache_key = method_resolution_cache_key(receiver_type, method_name, arg_types, receiver_is_type_literal, has_block_call, enum_type_name)
-        if cached = @method_resolution_cache[cache_key]?
-          return cached
-        end
       end
 
       # Get the class name from the type descriptor
@@ -29865,7 +30233,7 @@ module Crystal::HIR
       if enum_type_name.nil? && !ref_type_name.empty? && ref_type_name != "Void" && ref_type_name != "Unknown"
         class_name = ref_type_name
       end
-      if enum_type_name.nil?
+      if enum_type_name.nil? && !(type_desc && type_desc.kind == TypeKind::Union)
         if info = @class_info_by_type_id[receiver_type.id]?
           info_name = info.name
           class_name = info_name unless info_name.empty?
@@ -29905,6 +30273,16 @@ module Crystal::HIR
           if preferred_desc = @module.get_type_descriptor(type_ref_for_name(class_name))
             type_desc = preferred_desc
           end
+        end
+      end
+      if @method_resolution_cache
+        # Receiver TypeRef can be POINTER/VOID for ivar and synthetic values even
+        # when the resolved owner is a concrete generic type. Include the owner
+        # name to avoid reusing e.g. Hash(String, Nil)#has_key? for
+        # Hash(UInt32, TypeRef)#has_key?.
+        cache_key = method_resolution_cache_key(receiver_type, method_name, arg_types, receiver_is_type_literal, has_block_call, class_name)
+        if cached = @method_resolution_cache[cache_key]?
+          return cached
         end
       end
       if env_get("DEBUG_TUPLE_CALLS") && class_name == "Tuple"
@@ -29973,7 +30351,7 @@ module Crystal::HIR
           end
         end
       end
-      type_is_module = type_desc.try(&.kind) == TypeKind::Module
+      type_is_module = type_desc ? type_desc.not_nil!.kind == TypeKind::Module : false
       if arg_types.all? { |t| t == TypeRef::VOID } && !type_is_module
         if has_function_base?(base_method_name)
           if resolved = resolve_untyped_overload(base_method_name, effective_arg_count, has_block_call, call_has_named_args)
@@ -30429,8 +30807,8 @@ module Crystal::HIR
 
     private def function_def_has_splat?(base_name : String) : Bool
       rebuild_function_def_overloads if @function_defs_cache_size != @function_defs.size
-      if cached = @function_def_has_splat[base_name]?
-        return cached
+      if @function_def_has_splat.has_key?(base_name)
+        return @function_def_has_splat[base_name]
       end
       if base_name.includes?('#') || base_name.includes?('.')
         parts = parse_method_name_compact(base_name)
@@ -30448,18 +30826,20 @@ module Crystal::HIR
       end
       stripped = @function_def_overloads_stripped_by_base[base_name]? || strip_generic_receiver_from_base_name(base_name)
       if stripped != base_name
-        if cached = @function_def_has_splat[stripped]?
-          @function_def_has_splat[base_name] = cached
-          return cached
+        if @function_def_has_splat.has_key?(stripped)
+          value = @function_def_has_splat[stripped]
+          @function_def_has_splat[base_name] = value
+          return value
         end
       end
+      @function_def_has_splat[base_name] = false
       false
     end
 
     private def function_def_has_double_splat?(base_name : String) : Bool
       rebuild_function_def_overloads if @function_defs_cache_size != @function_defs.size
-      if cached = @function_def_has_double_splat[base_name]?
-        return cached
+      if @function_def_has_double_splat.has_key?(base_name)
+        return @function_def_has_double_splat[base_name]
       end
       if base_name.includes?('#') || base_name.includes?('.')
         parts = parse_method_name_compact(base_name)
@@ -30477,11 +30857,13 @@ module Crystal::HIR
       end
       stripped = @function_def_overloads_stripped_by_base[base_name]? || strip_generic_receiver_from_base_name(base_name)
       if stripped != base_name
-        if cached = @function_def_has_double_splat[stripped]?
-          @function_def_has_double_splat[base_name] = cached
-          return cached
+        if @function_def_has_double_splat.has_key?(stripped)
+          value = @function_def_has_double_splat[stripped]
+          @function_def_has_double_splat[base_name] = value
+          return value
         end
       end
+      @function_def_has_double_splat[base_name] = false
       false
     end
 
@@ -31058,6 +31440,32 @@ module Crystal::HIR
       best_score = Int32::MIN
 
       overload_keys = function_def_overloads(base_method_name)
+      if base_method_name.includes?('#') || base_method_name.includes?('.')
+        parts = parse_method_name_compact(base_method_name)
+        if parts.separator && parts.owner.includes?('(')
+          owner_prefix = "#{parts.owner}#{parts.separator}"
+          owner_overloads = overload_keys.select { |name| name.starts_with?(owner_prefix) }
+          if owner_overloads.empty?
+            # The stripped overload pool may contain only already-materialized
+            # concrete owners, not the generic template name itself. Use those
+            # entries only to prove arity/block compatibility; never return one
+            # as the call target for a different concrete generic owner.
+            if compatible_non_named_overload_exists_for_call?(
+                 overload_keys,
+                 arg_count,
+                 has_block_call,
+                 nil,
+                 call_has_named_args,
+                 true,
+               )
+              return "#{base_method_name}$arity#{arg_count}"
+            end
+            overload_keys = [] of String
+          else
+            overload_keys = owner_overloads
+          end
+        end
+      end
       prefer_non_named = false
       unless call_has_named_args
         prefer_non_named = compatible_non_named_overload_exists_for_call?(
@@ -31164,7 +31572,21 @@ module Crystal::HIR
       return resolved_name if arg_types.all? { |t| t == TypeRef::VOID }
 
       callsite = mangle_function_name(base_method_name, arg_types, has_block_call)
-      callsite.empty? ? resolved_name : callsite
+      return resolved_name if callsite.empty?
+
+      callsite_available = @module.has_function?(callsite) ||
+                           @function_defs.has_key?(callsite) ||
+                           @function_types.has_key?(callsite) ||
+                           function_state(callsite).pending? ||
+                           function_state(callsite).in_progress? ||
+                           function_state(callsite).completed?
+      return callsite if callsite_available
+
+      # Untyped arity-specialized generic defs still carry the concrete call
+      # parameter types in their lowered signature. Rewriting to an unavailable
+      # typed suffix can make later fuzzy lookup bind the call to the same method
+      # on a different generic owner.
+      resolved_name
     end
 
     @[AlwaysInline]
@@ -31330,7 +31752,7 @@ module Crystal::HIR
         next if name == base_method_name
         suffix = method_suffix(name) || ""
         next if suffix.empty?
-        has_block_suffix = suffix.ends_with?("_block")
+        has_block_suffix = suffix_has_block_flag?(suffix)
         next if has_block_call != has_block_suffix
         clean_suffix = strip_mangled_suffix_flags(suffix)
         next if clean_suffix.empty?
@@ -31716,9 +32138,11 @@ module Crystal::HIR
 
     private def repair_stale_call_return_types : Nil
       repaired = 0
+      propagated = 0
 
       @module.functions.each do |func|
         value_types = collect_function_value_types(func)
+        repaired_value_types = {} of ValueId => TypeRef
         func.blocks.each do |block|
           block.instructions.each_with_index do |inst, idx|
             next unless inst.is_a?(Call)
@@ -31736,13 +32160,41 @@ module Crystal::HIR
 
             block.instructions[idx] = Call.new(inst.id, resolved_type, inst.receiver, inst.method_name, inst.args, inst.block, inst.virtual)
             value_types[inst.id] = resolved_type
+            repaired_value_types[inst.id] = resolved_type
             repaired += 1
+          end
+        end
+
+        next if repaired_value_types.empty?
+
+        changed = true
+        while changed
+          changed = false
+          func.blocks.each do |block|
+            block.instructions.each_with_index do |inst, idx|
+              next unless inst.is_a?(Copy)
+              next unless repaired_type = repaired_value_types[inst.source]?
+              next if repaired_type == TypeRef::VOID || repaired_type == inst.type
+
+              if idx > 0
+                if local = block.instructions[idx - 1].as?(Local)
+                  if local.type != repaired_type
+                    block.instructions[idx - 1] = Local.new(local.id, repaired_type, local.name, local.scope, local.mutable)
+                  end
+                end
+              end
+              block.instructions[idx] = Copy.new(inst.id, repaired_type, inst.source)
+              value_types[inst.id] = repaired_type
+              repaired_value_types[inst.id] = repaired_type
+              propagated += 1
+              changed = true
+            end
           end
         end
       end
 
       if repaired > 0 && env_has?("DEBUG_CALL_REPAIR")
-        STDERR.puts "[CALL_REPAIR] repaired=#{repaired}"
+        STDERR.puts "[CALL_REPAIR] repaired=#{repaired} propagated_copies=#{propagated}"
       end
     end
 
@@ -31767,8 +32219,27 @@ module Crystal::HIR
 
       @module.functions.each do |func|
         value_types = collect_function_value_types(func)
+        repaired_value_types = {} of ValueId => TypeRef
         func.blocks.each do |block|
           block.instructions.each_with_index do |inst, idx|
+            if inst.is_a?(Copy)
+              if repaired_type = repaired_value_types[inst.source]?
+                if repaired_type != TypeRef::VOID && repaired_type != inst.type
+                  if idx > 0
+                    if local = block.instructions[idx - 1].as?(Local)
+                      if local.type != repaired_type
+                        block.instructions[idx - 1] = Local.new(local.id, repaired_type, local.name, local.scope, local.mutable)
+                      end
+                    end
+                  end
+                  block.instructions[idx] = Copy.new(inst.id, repaired_type, inst.source)
+                  value_types[inst.id] = repaired_type
+                  repaired_value_types[inst.id] = repaired_type
+                end
+              end
+              next
+            end
+
             next unless inst.is_a?(Call)
             # Normally virtual calls are lowered via vdispatch and skip this repair.
             # Block/proc call sites may still carry a bare `Owner#m` in HIR while the only
@@ -31779,8 +32250,15 @@ module Crystal::HIR
             # name matches the block-overload the vdispatch shim forwards to. True dynamic
             # dispatch with different block overloads across a class hierarchy is not modeled
             # here; such calls should already carry a typed `$..._block` symbol from lowering.
+            virtual_union_repair = false
             if inst.virtual
-              unless !inst.method_name.includes?('$') && !inst.block.nil?
+              if recv = inst.receiver
+                receiver_type = value_types[recv]? || TypeRef::VOID
+                if receiver_desc = @module.get_type_descriptor(receiver_type)
+                  virtual_union_repair = receiver_desc.kind == TypeKind::Union
+                end
+              end
+              unless (!inst.method_name.includes?('$') && !inst.block.nil?) || virtual_union_repair
                 next
               end
             end
@@ -31795,6 +32273,7 @@ module Crystal::HIR
 
             receiver_type = value_types[recv]? || TypeRef::VOID
             next if receiver_type == TypeRef::VOID || receiver_type == TypeRef::POINTER
+            receiver_desc = @module.get_type_descriptor(receiver_type)
 
             base_name = strip_type_suffix(inst.method_name)
             method_name = method_short_from_name(base_name) || demangle_type_fragment(base_name)
@@ -31810,7 +32289,7 @@ module Crystal::HIR
                             end
             current_owner_base = strip_generic_args(current_owner)
             receiver_base = strip_generic_args(receiver_name)
-            if !current_owner.empty? && current_owner_base == receiver_base
+            if !virtual_union_repair && !current_owner.empty? && current_owner_base == receiver_base
               # Receiver matches the textual owner in `inst.method_name`. If a real body is
               # already registered under this exact symbol, nothing to do.
               if @module.has_function_with_body?(inst.method_name) || @module.has_function_with_body?(base_name)
@@ -31827,15 +32306,27 @@ module Crystal::HIR
               end
             end
 
-            resolved_base = resolve_method_with_inheritance(receiver_name, method_name)
-            if resolved_base.nil? && receiver_base != receiver_name
-              resolved_base = resolve_method_with_inheritance(receiver_base, method_name)
-            end
-            next unless resolved_base
-
             arg_types = inst.args.map { |arg| value_types[arg]? || TypeRef::VOID }
             has_block_call = !inst.block.nil?
             recv_for_block = strip_generic_args(receiver_name)
+
+            resolved_base = nil.as(String?)
+            corrected_name = nil.as(String?)
+            if receiver_desc && receiver_desc.kind == TypeKind::Union
+              union_name = normalize_union_type_name(receiver_desc.name)
+              if resolved_union = resolve_union_method_call(union_name, method_name, arg_types, has_block_call)
+                corrected_name = resolved_union
+                resolved_base = strip_type_suffix(resolved_union)
+              end
+            end
+            if resolved_base.nil?
+              resolved_base = resolve_method_with_inheritance(receiver_name, method_name)
+              if resolved_base.nil? && receiver_base != receiver_name
+                resolved_base = resolve_method_with_inheritance(receiver_base, method_name)
+              end
+            end
+            next unless resolved_base
+
             # Only drop the trailing arg when it is the materialized Proc for `&`, not when
             # all values are real positional arguments (e.g. `foo(a, b) { }`).
             if has_block_call && materialized_trailing_block_proc_arg?(arg_types)
@@ -31844,7 +32335,8 @@ module Crystal::HIR
                 arg_types = trimmed
               end
             end
-            corrected_name = resolved_base
+
+            corrected_name ||= resolved_base
             if entry = lookup_function_def_for_call(resolved_base, arg_types.size, has_block_call, arg_types)
               corrected_name = entry[0]
             else
@@ -31865,12 +32357,24 @@ module Crystal::HIR
             # Example: IO#<<$Char (concrete) → IO#<<$arity1 (wildcard) is wrong.
             inst_has_concrete_type = inst.method_name.includes?("$") && !inst.method_name.includes?("$arity")
             corrected_introduces_arity = corrected_name.includes?("$arity")
-            if inst_has_concrete_type && corrected_introduces_arity
+            corrected_base = strip_type_suffix(corrected_name)
+            corrected_owner = if has_method_separator?(corrected_base)
+                                normalize_method_owner_name(method_owner(corrected_base))
+                              else
+                                ""
+                              end
+            corrected_owner_base = strip_generic_args(corrected_owner)
+            same_owner_arity_downgrade = !current_owner.empty? &&
+              !corrected_owner.empty? &&
+              (current_owner == corrected_owner ||
+               (!current_owner.includes?('(') &&
+                !corrected_owner.includes?('(') &&
+                current_owner_base == corrected_owner_base))
+            if inst_has_concrete_type && corrected_introduces_arity && same_owner_arity_downgrade
               targets_to_lower << inst.method_name unless @module.has_function_with_body?(inst.method_name)
               next
             end
 
-            corrected_base = strip_type_suffix(corrected_name)
             needs_materialization = !@module.has_function_with_body?(corrected_name) &&
               !@module.has_function_with_body?(corrected_base)
             if corrected_name == inst.method_name
@@ -31891,6 +32395,7 @@ module Crystal::HIR
 
             block.instructions[idx] = Call.new(inst.id, return_type, recv, corrected_name, inst.args, inst.block, inst.virtual)
             value_types[inst.id] = return_type
+            repaired_value_types[inst.id] = return_type
             targets_to_lower << corrected_name
             targets_to_lower << resolved_base unless corrected_name == resolved_base
             repaired += 1
@@ -33581,7 +34086,7 @@ module Crystal::HIR
 
       # Check if function contains yield
       if def_contains_yield?(node, @arena)
-        @yield_functions.add(full_name)
+        add_yield_function(full_name)
         debug_hook("yield.register", full_name)
       end
       STDERR.puts "[REGISTER_DEF_RAW] phase=after_final_yield_scan" if debug_register_raw
@@ -34258,6 +34763,29 @@ module Crystal::HIR
       end
     end
 
+    private def add_yield_function(name : String) : Nil
+      return if name.empty?
+      return if @yield_functions.includes?(name)
+
+      @yield_functions.add(name)
+      add_yield_function_stripped_entry(name)
+      @yield_functions_stripped_map_size = @yield_functions.size
+    end
+
+    private def delete_yield_function(name : String) : Nil
+      return unless @yield_functions.delete(name)
+
+      # Removal can make a stripped alias point at a stale function. Rebuild lazily.
+      @yield_functions_stripped_map.clear
+      @yield_functions_stripped_map_size = 0
+    end
+
+    private def add_yield_function_stripped_entry(name : String) : Nil
+      parts = parse_method_name_compact(name)
+      stripped = strip_generic_receiver_from_base_name(parts.base)
+      @yield_functions_stripped_map[stripped] = name unless @yield_functions_stripped_map.has_key?(stripped)
+    end
+
     private def yield_function_name_for_uncached(method_name : String) : String?
       return method_name if @yield_functions.includes?(method_name)
 
@@ -34362,7 +34890,7 @@ module Crystal::HIR
                 if inc_def = @function_defs[inc_method]?
                   inc_arena = @function_def_arenas[inc_method]? || @arena
                   if def_contains_yield?(inc_def, inc_arena)
-                    @yield_functions.add(inc_method)
+                    add_yield_function(inc_method)
                     return inc_method
                   end
                 end
@@ -34375,7 +34903,7 @@ module Crystal::HIR
                 if inc_def = @function_defs[inc_block]?
                   inc_arena = @function_def_arenas[inc_block]? || @arena
                   if def_contains_yield?(inc_def, inc_arena)
-                    @yield_functions.add(inc_block)
+                    add_yield_function(inc_block)
                     return inc_block
                   end
                 end
@@ -34389,12 +34917,9 @@ module Crystal::HIR
     end
 
     private def rebuild_yield_functions_stripped_map : Nil
-      map = @yield_functions_stripped_map
-      map.clear
+      @yield_functions_stripped_map.clear
       @yield_functions.each do |name|
-        parts = parse_method_name_compact(name)
-        stripped = strip_generic_receiver_from_base_name(parts.base)
-        map[stripped] = name unless map.has_key?(stripped)
+        add_yield_function_stripped_entry(name)
       end
       @yield_functions_stripped_map_size = @yield_functions.size
     end
@@ -38923,18 +39448,16 @@ module Crystal::HIR
       if arrow_index = find_top_level_arrow(stripped)
         left = stripped[0, arrow_index].strip
         return [] of String if left.empty?
-        # Support explicitly braced proc inputs to avoid ambiguity inside generic
-        # argument lists (e.g. `Hash(String, {String, _} ->)`).
-        #
-        # If the arrow's RHS is empty, we interpret `{A, B} ->` as:
-        # inputs=[A] return=B  (so `{String, _} ->` means `String -> _`).
+        # Braced proc inputs are tuple types in Crystal syntax. For example
+        # `Hash#each(& : {K, V} ->)` yields one tuple argument, not two
+        # independent block parameters and not `K -> V`.
         if left.starts_with?('{') && left.ends_with?('}')
           inner = left[1, left.size - 2].strip
           parts = inner.empty? ? ([] of String) : split_proc_type_inputs(inner)
           right = stripped[arrow_index + 2, stripped.size - arrow_index - 2].strip
           if right.empty?
-            return parts if parts.size <= 1
-            return parts[0...-1]
+            return [] of String if parts.empty?
+            return ["Tuple(#{parts.join(", ")})"]
           end
           return parts
         end
@@ -39192,6 +39715,30 @@ module Crystal::HIR
       type_param_map_for_generic_type_name(receiver)
     end
 
+    private def receiver_type_param_map_cache_get(type_id : Int32) : Hash(String, String)?
+      i = 0
+      while i < @receiver_type_param_map_cache_ids.size
+        if @receiver_type_param_map_cache_ids.unsafe_fetch(i) == type_id
+          return @receiver_type_param_map_cache_values.unsafe_fetch(i)
+        end
+        i += 1
+      end
+      nil
+    end
+
+    private def receiver_type_param_map_cache_set(type_id : Int32, mapping : Hash(String, String)) : Nil
+      i = 0
+      while i < @receiver_type_param_map_cache_ids.size
+        if @receiver_type_param_map_cache_ids.unsafe_fetch(i) == type_id
+          @receiver_type_param_map_cache_values[i] = mapping
+          return
+        end
+        i += 1
+      end
+      @receiver_type_param_map_cache_ids << type_id
+      @receiver_type_param_map_cache_values << mapping
+    end
+
     private def type_param_map_for_generic_type_name(type_name : String) : Hash(String, String)
       return {} of String => String if type_name.empty?
 
@@ -39255,7 +39802,7 @@ module Crystal::HIR
 
     private def type_param_map_for_receiver_type(receiver_type : TypeRef) : Hash(String, String)
       receiver_type_id = receiver_type.id.to_i32
-      if cached = @receiver_type_param_map_cache[receiver_type_id]?
+      if cached = receiver_type_param_map_cache_get(receiver_type_id)
         return cached
       end
 
@@ -39273,7 +39820,7 @@ module Crystal::HIR
           "T"        => names.join(" | "),
           "T__tuple" => names.join(", "),
         }
-        @receiver_type_param_map_cache[receiver_type_id] = mapping
+        receiver_type_param_map_cache_set(receiver_type_id, mapping)
         return mapping
       end
 
@@ -39295,7 +39842,7 @@ module Crystal::HIR
         mapping["U"] ||= second_arg
         mapping["V2"] ||= second_arg
       end
-      @receiver_type_param_map_cache[receiver_type_id] = mapping
+      receiver_type_param_map_cache_set(receiver_type_id, mapping)
       mapping
     end
 
@@ -40246,6 +40793,16 @@ module Crystal::HIR
         end
       end
 
+      # String#calc_excess_left/right yield Char to shorthand block passes such
+      # as `calc_excess_left &.whitespace?`. Without this hint the block proc is
+      # emitted with VOID parameters and degenerates to a bare `whitespace?` call.
+      if resolved_base == "String#calc_excess_left" ||
+         resolved_base == "String#calc_excess_right" ||
+         resolved_base.ends_with?("String#calc_excess_left") ||
+         resolved_base.ends_with?("String#calc_excess_right")
+        return [TypeRef::CHAR]
+      end
+
       return fallback_block_param_types(resolved_base, receiver_type) unless func_def
 
       # Hot-path: internal_to_s yields (Pointer(UInt8), Int32, Bool)
@@ -40585,7 +41142,14 @@ module Crystal::HIR
                else
                  base_method_name
                end
-      return nil unless method == "each_entry" || method == "each_entry_with_index"
+      if dollar = method.index('$')
+        method = method[0, dollar]
+      end
+      return nil unless method == "each" ||
+                        method == "each_key" ||
+                        method == "each_value" ||
+                        method == "each_entry" ||
+                        method == "each_entry_with_index"
 
       recv_name = @module.get_type_descriptor(receiver_type).try(&.name) || get_type_name_from_ref(receiver_type)
       info = split_generic_base_and_args(recv_name)
@@ -40593,6 +41157,20 @@ module Crystal::HIR
 
       args = split_generic_type_args(info.args).map(&.strip)
       return nil unless args.size >= 2
+
+      if method == "each"
+        tuple_ref = type_ref_for_name("Tuple(#{args[0]}, #{args[1]})")
+        return nil if tuple_ref == TypeRef::VOID
+        return [tuple_ref]
+      elsif method == "each_key"
+        key_ref = type_ref_for_name(args[0])
+        return nil if key_ref == TypeRef::VOID
+        return [key_ref]
+      elsif method == "each_value"
+        value_ref = type_ref_for_name(args[1])
+        return nil if value_ref == TypeRef::VOID
+        return [value_ref]
+      end
 
       entry_ref = type_ref_for_name("Hash::Entry(#{args[0]}, #{args[1]})")
       return nil if entry_ref == TypeRef::VOID
@@ -43353,6 +43931,18 @@ module Crystal::HIR
         process_pending_lower_functions
         deferred_allocator_passes += 1
       end
+      # The repair/deferred-allocator passes can lower new bodies after the
+      # first safety net scan. Iterate the concrete-call sweep to a small fixed
+      # point so calls introduced by the final pending pass (for example
+      # SmallVec#push -> Array#<<) do not survive as LLVM abort stubs.
+      final_missing_passes = 0
+      loop do
+        before_final_missing = @module.function_count
+        lower_missing_call_targets
+        process_pending_lower_functions
+        final_missing_passes += 1
+        break if @module.function_count == before_final_missing || final_missing_passes >= 4
+      end
 
       if phase_stats
         after3 = @module.function_count
@@ -43664,16 +44254,31 @@ module Crystal::HIR
       while iteration < max_iterations
         missing = [] of String
         @module.functions.each do |func|
+          value_types = Hash(ValueId, TypeRef).new
+          func.params.each { |param| value_types[param.id] = param.type }
+          func.blocks.each do |type_block|
+            type_block.instructions.each do |type_inst|
+              value_types[type_inst.id] = type_inst.type
+            end
+          end
+
           func.blocks.each do |block|
-            block.instructions.each do |inst|
+            inst_idx = 0
+            while inst_idx < block.instructions.size
+              inst = block.instructions.unsafe_fetch(inst_idx)
+              inst_idx += 1
               next unless inst.is_a?(Call)
+              if rewrite_hash_do_compaction_default_call(func, block, inst_idx - 1, inst)
+                # Skip over the call after inserting the default literal before it.
+                inst_idx += 1
+              end
               name = inst.method_name
               if parts = parse_method_name_compact(name)
                 owner = parts.owner
                 method = parts.method
                 if owner && method && union_type_name?(owner)
                   union_name = normalize_union_type_name(owner)
-                  arg_types = inst.args.map { TypeRef::VOID }
+                  arg_types = inst.args.map { |arg_id| value_types[arg_id]? || TypeRef::VOID }
                   has_block_call = !!inst.block
                   if env_get("DEBUG_UNION_REWRITE")
                     STDERR.puts "[UNION_REWRITE] call=#{name} union=#{union_name} method=#{method} args=#{arg_types.size}"
@@ -43710,7 +44315,12 @@ module Crystal::HIR
               end
               next if name.empty?
               next if @module.has_function_with_body?(name)
-              next unless ast_filter_allows_safety_net_name?(name, ast_method_names, ast_owner_types, ast_method_bases)
+              arg_types = inst.args.map { |arg_id| value_types[arg_id]? || TypeRef::VOID }
+              remember_callsite_arg_types(name, arg_types, nil, nil, !!inst.block)
+              # A call instruction already emitted into HIR is concrete demand:
+              # leaving it filtered here produces LLVM abort stubs. The queued
+              # pending pass below still applies lazy RTA, so this does not
+              # recursively force every syntactically known method.
               if function_state(name).completed?
                 # Some flows mark completed without emitting a function body.
                 # Clear the completed state to allow a re-lower pass.
@@ -43730,7 +44340,16 @@ module Crystal::HIR
 
         before = @module.functions.size
         missing.each do |name|
-          lower_function_if_needed(name)
+          next if @module.has_function_with_body?(name)
+          next if function_state(name).in_progress?
+          @rta_called_methods << name
+          unless function_state(name).pending?
+            @function_lowering_states[name] = FunctionLoweringState::Pending
+            @pending_function_queue << name
+          end
+        end
+        process_pending_lower_functions
+        missing.each do |name|
           # If the missing call is a module/class method and still unresolved,
           # attempt a direct module-method lower against the recorded def.
           # This handles cases where untyped module methods were registered
@@ -43739,10 +44358,30 @@ module Crystal::HIR
             force_lower_module_method_by_name(name)
           end
         end
-        process_pending_lower_functions
         iteration += 1
         break if @module.functions.size == before
       end
+    end
+
+    private def rewrite_hash_do_compaction_default_call(func : Function, block : Block, inst_idx : Int32, call : Call) : Bool
+      return false unless call.args.empty?
+      return false unless call.block.nil?
+      parts = parse_method_name_compact(call.method_name)
+      owner = parts.owner
+      method = parts.method
+      return false unless owner && method == "do_compaction"
+      return false unless strip_generic_args(owner) == "Hash"
+
+      base_name = strip_type_suffix(call.method_name)
+      target_name = mangle_function_name(base_name, [TypeRef::BOOL], false)
+      return false if target_name == call.method_name
+
+      default_rehash = Literal.new(func.next_value_id, TypeRef::BOOL, false)
+      block.instructions.insert(inst_idx, default_rehash)
+      call.args << default_rehash.id
+      call.method_name = target_name
+      @rta_called_methods << target_name
+      true
     end
 
     @[AlwaysInline]
@@ -49923,19 +50562,21 @@ module Crystal::HIR
         return self_id
       end
 
-      params = ctx.function.params
       param : Crystal::HIR::Parameter? = nil
-      i = 0
-      while i < params.size
-        candidate = params.unsafe_fetch(i)
-        if candidate.name == "self"
-          param = candidate
-          break
+      if ctx.function.name.includes?('#')
+        params = ctx.function.params
+        i = 0
+        while i < params.size
+          candidate = params.unsafe_fetch(i)
+          if candidate.name == "self"
+            param = candidate
+            break
+          end
+          i += 1
         end
-        i += 1
-      end
-      if param.nil? && ctx.function.name.includes?('#') && params.size > 0
-        param = params.unsafe_fetch(0)
+        if param.nil? && params.size > 0
+          param = params.unsafe_fetch(0)
+        end
       end
       if param
         ctx.register_local("self", param.id)
@@ -50289,6 +50930,12 @@ module Crystal::HIR
       # Check for pointer arithmetic: ptr + n or ptr - n
       left_type = ctx.type_of(left_id)
       left_desc = @module.get_type_descriptor(left_type)
+      if left_desc && left_desc.kind == TypeKind::Union && (op_str == "+" || op_str == "-")
+        if unwrapped = unwrap_pointer_union(ctx, left_id, left_type)
+          left_id, left_type = unwrapped
+          left_desc = @module.get_type_descriptor(left_type)
+        end
+      end
       is_pointer_type = left_type == TypeRef::POINTER || (left_desc && left_desc.kind == TypeKind::Pointer)
       # Fallback: check type name for pointer unions like "Pointer | Pointer(T)"
       unless is_pointer_type
@@ -50299,7 +50946,40 @@ module Crystal::HIR
       end
       right_type = ctx.type_of(right_id)
       right_desc = @module.get_type_descriptor(right_type)
+      if right_desc && right_desc.kind == TypeKind::Union && op_str == "-"
+        if unwrapped = unwrap_pointer_union(ctx, right_id, right_type)
+          right_id, right_type = unwrapped
+          right_desc = @module.get_type_descriptor(right_type)
+        end
+      end
       right_is_pointer = right_type == TypeRef::POINTER || (right_desc && right_desc.kind == TypeKind::Pointer)
+
+      if is_comparison_op?(op_str)
+        if left_desc && left_desc.kind == TypeKind::Union && (right_is_pointer || pointer_union_type?(right_desc))
+          if unwrapped = unwrap_pointer_union(ctx, left_id, left_type)
+            left_id, left_type = unwrapped
+            left_desc = @module.get_type_descriptor(left_type)
+            is_pointer_type = left_type == TypeRef::POINTER || (left_desc && left_desc.kind == TypeKind::Pointer)
+          end
+        end
+
+        if right_desc && right_desc.kind == TypeKind::Union && (is_pointer_type || pointer_union_type?(left_desc))
+          if unwrapped = unwrap_pointer_union(ctx, right_id, right_type)
+            right_id, right_type = unwrapped
+            right_desc = @module.get_type_descriptor(right_type)
+            right_is_pointer = right_type == TypeRef::POINTER || (right_desc && right_desc.kind == TypeKind::Pointer)
+          end
+        end
+
+        if is_pointer_type && right_is_pointer
+          if bin_op = primitive_binary_op_for(op_str)
+            cmp = BinaryOperation.new(ctx.next_id, TypeRef::BOOL, bin_op, left_id, right_id)
+            ctx.emit(cmp)
+            ctx.register_type(cmp.id, TypeRef::BOOL)
+            return cmp.id
+          end
+        end
+      end
 
       # Pointer difference: ptr - ptr -> element count
       if is_pointer_type && right_is_pointer && op_str == "-"
@@ -51292,6 +51972,21 @@ module Crystal::HIR
         local_type = ctx.type_of(local_id)
         next if local_type == target_type
 
+        # Union subjects must be narrowed before generic/parent no-op checks.
+        # `case v = @u; when String` otherwise sees the broad union as
+        # statically compatible with String and leaves `v` wide, which can
+        # store a tagged union into pointer-backed `String?` fields.
+        if is_union_type?(local_type)
+          variant_id = get_union_member_variant_id(local_type, target_type)
+          if variant_id >= 0
+            unwrap = UnionUnwrap.new(ctx.next_id, target_type, local_id, variant_id, false)
+            ctx.emit(unwrap)
+            ctx.register_type(unwrap.id, target_type)
+            ctx.register_local(name, unwrap.id)
+            next
+          end
+        end
+
         # Skip narrowing when the value is already a generic instantiation of the
         # target (e.g., Array(Int32) is already an Array). Casting would create a new
         # object of the bare generic type, losing the original data.
@@ -51306,17 +52001,6 @@ module Crystal::HIR
           end
           # Also skip if target is a parent class (is_a narrowing to a wider type is a no-op)
           if statically_is_a_type?(local_type, target_type) == true
-            next
-          end
-        end
-
-        if is_union_type?(local_type)
-          variant_id = get_union_member_variant_id(local_type, target_type)
-          if variant_id >= 0
-            unwrap = UnionUnwrap.new(ctx.next_id, target_type, local_id, variant_id, false)
-            ctx.emit(unwrap)
-            ctx.register_type(unwrap.id, target_type)
-            ctx.register_local(name, unwrap.id)
             next
           end
         end
@@ -52915,7 +53599,12 @@ module Crystal::HIR
             end
           end
           if inferred = assigned_var_types[var_name]?
-            pointer_type = var_type == TypeRef::POINTER || @module.get_type_descriptor(var_type).try(&.kind) == TypeKind::Pointer
+            pointer_type = var_type == TypeRef::POINTER
+            unless pointer_type
+              if desc = @module.get_type_descriptor(var_type)
+                pointer_type = desc.not_nil!.kind == TypeKind::Pointer
+              end
+            end
             # For compound assignments like `slice += n`, infer_local_type_from_body may
             # return the RHS type (Int32) instead of the method return type (Slice).
             # Avoid widening pointer or struct/class phis to unrelated primitive types.
@@ -53250,7 +53939,12 @@ module Crystal::HIR
             end
           end
           if inferred = assigned_var_types[var_name]?
-            pointer_type = var_type == TypeRef::POINTER || @module.get_type_descriptor(var_type).try(&.kind) == TypeKind::Pointer
+            pointer_type = var_type == TypeRef::POINTER
+            unless pointer_type
+              if desc = @module.get_type_descriptor(var_type)
+                pointer_type = desc.not_nil!.kind == TypeKind::Pointer
+              end
+            end
             var_desc_l = @module.get_type_descriptor(var_type)
             struct_or_class_l = var_desc_l && (var_desc_l.kind == TypeKind::Struct || var_desc_l.kind == TypeKind::Class)
             if (pointer_type || struct_or_class_l) && numeric_primitive?(inferred)
@@ -53884,7 +54578,12 @@ module Crystal::HIR
             end
           end
           if inferred = assigned_var_types[var_name]?
-            pointer_type = var_type == TypeRef::POINTER || @module.get_type_descriptor(var_type).try(&.kind) == TypeKind::Pointer
+            pointer_type = var_type == TypeRef::POINTER
+            unless pointer_type
+              if desc = @module.get_type_descriptor(var_type)
+                pointer_type = desc.not_nil!.kind == TypeKind::Pointer
+              end
+            end
             var_desc_u = @module.get_type_descriptor(var_type)
             struct_or_class_u = var_desc_u && (var_desc_u.kind == TypeKind::Struct || var_desc_u.kind == TypeKind::Class)
             if (pointer_type || struct_or_class_u) && numeric_primitive?(inferred)
@@ -54859,6 +55558,27 @@ module Crystal::HIR
         ["Int32", "Int64", "String", "Bool", "Nil", "Float64"].includes?(name)
     end
 
+    private def case_subject_var_name(expr_id : ExprId) : String?
+      return nil if expr_id.invalid?
+
+      node = node_for_expr(expr_id)
+      case node
+      when CrystalV2::Compiler::Frontend::IdentifierNode
+        safe_slice_to_string(node.name) || ""
+      when CrystalV2::Compiler::Frontend::AssignNode
+        target_node = node_for_expr(node.target)
+        if target_node.is_a?(CrystalV2::Compiler::Frontend::IdentifierNode)
+          safe_slice_to_string(target_node.name) || ""
+        end
+      when CrystalV2::Compiler::Frontend::TypeDeclarationNode
+        safe_slice_to_string(node.name) || ""
+      when CrystalV2::Compiler::Frontend::GroupingNode
+        case_subject_var_name(node.expression)
+      when CrystalV2::Compiler::Frontend::MacroExpressionNode
+        case_subject_var_name(node.expression)
+      end
+    end
+
     private def lower_case(ctx : LoweringContext, node : CrystalV2::Compiler::Frontend::CaseNode) : ValueId
       # Save locals state before case for proper phi merging
       pre_case_locals = ctx.save_locals
@@ -54882,15 +55602,7 @@ module Crystal::HIR
       # Handles both `case x` (IdentifierNode) and `case x = expr` (AssignNode).
       subject_var_name : String? = nil
       if subj = node.value
-        subj_node = @arena[subj]
-        if subj_node.is_a?(CrystalV2::Compiler::Frontend::IdentifierNode)
-          subject_var_name = (safe_slice_to_string(subj_node.name) || "")
-        elsif subj_node.is_a?(CrystalV2::Compiler::Frontend::AssignNode)
-          target_node = @arena[subj_node.target]
-          if target_node.is_a?(CrystalV2::Compiler::Frontend::IdentifierNode)
-            subject_var_name = (safe_slice_to_string(target_node.name) || "")
-          end
-        end
+        subject_var_name = case_subject_var_name(subj)
       end
 
       merge_block = ctx.create_block
@@ -54956,23 +55668,17 @@ module Crystal::HIR
             when_branch.conditions.each do |cond_expr|
               cond_node = @arena[cond_expr]
               type_name = case_condition_type_name(cond_node)
+              if type_name.nil? && cond_node.is_a?(CrystalV2::Compiler::Frontend::ConstantNode)
+                const_name = (safe_slice_to_string(cond_node.name) || "")
+                type_name = const_name if is_type_name?(const_name)
+              elsif type_name.nil? && cond_node.is_a?(CrystalV2::Compiler::Frontend::IdentifierNode)
+                ident_name = (safe_slice_to_string(cond_node.name) || "")
+                type_name = ident_name if is_type_name?(ident_name)
+              end
               if type_name
                 target_ref = type_ref_for_name(type_name)
-                target_desc = @module.get_type_descriptor(target_ref)
-                is_known_primitive = target_ref == TypeRef::INT32 ||
-                                     target_ref == TypeRef::INT64 ||
-                                     target_ref == TypeRef::FLOAT32 ||
-                                     target_ref == TypeRef::FLOAT64 ||
-                                     target_ref == TypeRef::BOOL ||
-                                     target_ref == TypeRef::CHAR ||
-                                     target_ref == TypeRef::UINT8 ||
-                                     target_ref == TypeRef::UINT32 ||
-                                     target_ref == TypeRef::UINT64 ||
-                                     target_ref == TypeRef::NIL
                 should_narrow = if subj_is_union
-                                  is_known_primitive ||
-                                    (target_desc && (target_desc.kind == HIR::TypeKind::Class ||
-                                      target_desc.kind == HIR::TypeKind::Primitive))
+                                  get_union_member_variant_id(subj_type, target_ref) >= 0
                                 else
                                   true
                                 end
@@ -56086,6 +56792,35 @@ module Crystal::HIR
       call_signature_for_base(base, param_count, has_block)
     end
 
+    private def callsite_args_fingerprint(
+      arg_types : Array(TypeRef),
+      arg_literals : Array(Bool)?,
+      has_block : Bool,
+      has_named_args : Bool,
+      named_arg_names : Array(String)?,
+    ) : UInt64
+      h = 1469598103934665603_u64
+      arg_types.each do |type_ref|
+        h = (h ^ type_ref.id.to_u64) &* 1099511628211_u64
+      end
+      h = (h ^ 0xff_u64) &* 1099511628211_u64
+      if literals = arg_literals
+        literals.each do |flag|
+          h = (h ^ (flag ? 1_u64 : 2_u64)) &* 1099511628211_u64
+        end
+      else
+        h = (h ^ 3_u64) &* 1099511628211_u64
+      end
+      h = (h ^ (has_block ? 5_u64 : 7_u64)) &* 1099511628211_u64
+      h = (h ^ (has_named_args ? 11_u64 : 13_u64)) &* 1099511628211_u64
+      if names = named_arg_names
+        names.each do |arg_name|
+          h = (h ^ arg_name.object_id.to_u64) &* 1099511628211_u64
+        end
+      end
+      h
+    end
+
     private def remember_callsite_arg_types(
       name : String,
       arg_types : Array(TypeRef),
@@ -56096,6 +56831,7 @@ module Crystal::HIR
       named_arg_names : Array(String)? = nil,
     ) : Nil
       return if name.empty?
+      return if name.to_unsafe[0] == '$'.ord
       base_key = base_callsite_key(name)
       # Avoid per-receiver callsite tracking for Object#in? (defined only on Object),
       # which otherwise causes massive monomorphization explosions.
@@ -56111,23 +56847,17 @@ module Crystal::HIR
       )
       @pending_arg_types[name] = callsite
       return if base_key.empty?
-      literal_key = if arg_literals
-                      arg_literals.map { |flag| flag ? '1' : '0' }.join
-                    else
-                      "-"
-                    end
+      callsite_key = callsite_args_fingerprint(arg_types, arg_literals, has_block, has_named_args, canonical_names)
       seen_by_arity = @pending_arg_types_seen_by_arity[base_key]? || begin
-        new_map = {} of Int32 => Set(String)
+        new_map = {} of Int32 => Set(UInt64)
         @pending_arg_types_seen_by_arity[base_key] = new_map
         new_map
       end
       seen_bucket = seen_by_arity[arg_types.size]? || begin
-        new_set = Set(String).new
+        new_set = Set(UInt64).new
         seen_by_arity[arg_types.size] = new_set
         new_set
       end
-      named_key = canonical_names ? canonical_names.join(",") : "-"
-      callsite_key = "#{arg_types.map(&.id).join(",")}|#{literal_key}|#{has_block ? 1 : 0}|#{has_named_args ? 1 : 0}|#{named_key}"
       return if seen_bucket.includes?(callsite_key)
       seen_bucket.add(callsite_key)
       by_arity = @pending_arg_types_by_arity[base_key]? || begin
@@ -56140,24 +56870,10 @@ module Crystal::HIR
       by_arity[arg_types.size] = bucket
       track_pending_base_key_for_method(base_key)
       if debug_hook_filter_match?(name)
-        literal_payload = arg_literals ? arg_literals.join(",") : "nil"
+        named_count = canonical_names ? canonical_names.size : 0
         debug_hook(
           "callsite.args",
-          "name=#{name} types=#{arg_types.map(&.id).join(",")} literals=#{literal_payload} named=#{has_named_args} names=#{named_key}"
-        )
-      end
-      if debug_hook_filter_match?(name)
-        literal_payload = arg_literals ? arg_literals.join(",") : "nil"
-        debug_hook(
-          "callsite.args",
-          "name=#{name} types=#{arg_types.map(&.id).join(",")} literals=#{literal_payload} named=#{has_named_args} names=#{named_key}"
-        )
-      end
-      if debug_hook_filter_match?(name)
-        literal_payload = arg_literals ? arg_literals.join(",") : "nil"
-        debug_hook(
-          "callsite.args",
-          "name=#{name} types=#{arg_types.map(&.id).join(",")} literals=#{literal_payload} named=#{has_named_args} names=#{named_key}"
+          "name=#{name} argc=#{arg_types.size} key=#{callsite_key} named=#{has_named_args} named_count=#{named_count}"
         )
       end
       if env_get("DEBUG_FROM_IO_CALLSITE") && name.includes?("from_io")
@@ -56169,7 +56885,7 @@ module Crystal::HIR
         @pending_arg_types_by_signature[signature] = sig_bucket
 
         recorded_seen = @recorded_arg_types_seen_by_signature[signature]? || begin
-          new_set = Set(String).new
+          new_set = Set(UInt64).new
           @recorded_arg_types_seen_by_signature[signature] = new_set
           new_set
         end
@@ -56184,8 +56900,18 @@ module Crystal::HIR
 
     private def base_callsite_key(name : String) : String
       return "" if name.empty?
-      base = strip_type_suffix(name)
-      base = base.sub(/_(double_)?splat$/, "")
+      dollar = name.index('$')
+      return name if dollar == 0
+      base = dollar ? name.byte_slice(0, dollar) : name
+      if base.ends_with?("_double_splat")
+        new_size = base.bytesize - "_double_splat".bytesize
+        return base if new_size <= 0
+        return base.byte_slice(0, new_size)
+      elsif base.ends_with?("_splat")
+        new_size = base.bytesize - "_splat".bytesize
+        return base if new_size <= 0
+        return base.byte_slice(0, new_size)
+      end
       base
     end
 
@@ -57435,15 +58161,16 @@ module Crystal::HIR
       lower_function_if_needed_impl(name)
     end
 
-    private def force_pending_call_targets_for_return_type(*names : String?) : Bool
+    private def force_pending_call_targets_for_return_type(name1 : String?, name2 : String? = nil, name3 : String? = nil) : Bool
       forced = false
-      names.each do |name|
-        next unless name
-        next if name.empty?
-        next if @module.has_function_with_body?(name)
-        if force_lower_function_for_return_type(name)
-          forced = true
-        end
+      if name = name1
+        forced = true if !name.empty? && !@module.has_function_with_body?(name) && force_lower_function_for_return_type(name)
+      end
+      if name = name2
+        forced = true if !name.empty? && !@module.has_function_with_body?(name) && force_lower_function_for_return_type(name)
+      end
+      if name = name3
+        forced = true if !name.empty? && !@module.has_function_with_body?(name) && force_lower_function_for_return_type(name)
       end
       forced
     end
@@ -57467,6 +58194,9 @@ module Crystal::HIR
     # recurse through a yield-bearing callee unchecked.
     private def force_lower_function_for_return_type(name : String, bypass_inline_yield : Bool = false) : Bool
       return false if @suppress_force_lower_return_type_depth > 0
+      return false if speculative_root_fallback_helper_mark?(name) ||
+                      recursive_formatting_helper_defer?(name) ||
+                      (inside_lowering? && rta_exact_helper_suppressed?(name))
 
       in_inline_yield = @inline_yield_function_depth > 0 ||
                         @inline_yield_block_body_depth > 0 ||
@@ -57607,6 +58337,7 @@ module Crystal::HIR
 
     private def lower_function_if_needed_impl(name : String) : Nil
       return if name.empty?
+      return if synthetic_numeric_conversion_lower_target?(name)
       is_math_min_debug = env_get("DEBUG_MATH_MIN") && name.includes?("Math") && (name.includes?("min") || name.includes?("max"))
       if is_math_min_debug
         base = strip_type_suffix(name)
@@ -57687,6 +58418,9 @@ module Crystal::HIR
       # WORK QUEUE: If we're already inside lowering, defer this function
       # to prevent stack overflow from deep recursive lowering chains.
       if inside_lowering?
+        return if speculative_root_fallback_helper_mark?(name) ||
+                  recursive_formatting_helper_defer?(name) ||
+                  rta_exact_helper_suppressed?(name)
         record_pending_callee_for_rta(name)
         if !@type_param_map.empty? && @current_class
           current = @current_class.not_nil!
@@ -57788,7 +58522,7 @@ module Crystal::HIR
       lookup_suffix = name_parts.suffix
       lookup_expected_param_count = lookup_suffix ? suffix_param_count(lookup_suffix) : 0
       lookup_expect_block = if suffix = lookup_suffix
-                              suffix == "block" || suffix.ends_with?("_block")
+                              suffix_has_block_flag?(suffix)
                             else
                               false
                             end
@@ -57998,7 +58732,7 @@ module Crystal::HIR
           allow_base_fallback = !name.includes?('$')
           if !allow_base_fallback
             if suffix = name_parts.suffix
-              if suffix == "block" || suffix.ends_with?("_block")
+              if suffix_has_block_flag?(suffix)
                 # Guard: if this base already has explicit block overloads, do NOT
                 # collapse a requested block-specialized name back to base_name.
                 # Otherwise block and non-block specializations can alias to one target
@@ -58085,7 +58819,7 @@ module Crystal::HIR
                   else
                     parsed_suffix = strip_mangled_suffix_flags(suffix)
                     parsed_types = parse_types_from_suffix(parsed_suffix)
-                    suffix_has_block = suffix == "block" || suffix.ends_with?("_block")
+                    suffix_has_block = suffix_has_block_flag?(suffix)
                     suffix_has_splat = suffix.ends_with?("_splat") || suffix.ends_with?("_double_splat")
                     if entry = lookup_function_def_for_call(
                          template_base,
@@ -58176,7 +58910,7 @@ module Crystal::HIR
           if name.includes?('$')
             if callsite = @pending_arg_types[name]? || @pending_arg_types[target_name]?
               suffix = name_parts.suffix
-              has_block = suffix == "block" || (suffix && suffix.ends_with?("_block")) || name.ends_with?("$block")
+              has_block = suffix ? suffix_has_block_flag?(suffix) : name.ends_with?("$block")
               call_has_splat = name.ends_with?("_splat") || name.ends_with?("_double_splat")
               if entry = lookup_function_def_for_call(base_name, callsite.types.size, has_block, callsite.types, call_has_splat, callsite.has_named_args, callsite.named_arg_names)
                 resolved_entry_name = entry[0]
@@ -58219,7 +58953,7 @@ module Crystal::HIR
             stripped = strip_mangled_suffix_flags(suffix)
             parsed_types = parse_types_from_suffix(stripped)
             unless parsed_types.empty?
-              has_block = suffix == "block" || suffix.ends_with?("_block")
+              has_block = suffix_has_block_flag?(suffix)
               call_has_splat = suffix.ends_with?("_splat") || suffix.ends_with?("_double_splat")
               if entry = lookup_function_def_for_call(base_name, parsed_types.size, has_block, parsed_types, call_has_splat)
                 resolved_entry_name = entry[0]
@@ -58494,7 +59228,7 @@ module Crystal::HIR
               included = all_included
               method_base = method_part
               expected_param_count = suffix ? suffix_param_count(suffix) : 0
-              expects_block = suffix == "block" || (suffix && suffix.ends_with?("_block"))
+              expects_block = suffix ? suffix_has_block_flag?(suffix) : false
               if expected_param_count == 0
                 if callsite = @pending_arg_types[name]? || @pending_arg_types[target_name]?
                   expected_param_count = callsite.types.size
@@ -58592,7 +59326,7 @@ module Crystal::HIR
             parsed_call_arg_types : Array(TypeRef)? = nil
             if method_part
               if (suffix = name_parts.suffix)
-                if suffix == "block"
+                if suffix_has_block_flag?(suffix)
                   expected_param_count = 0
                 else
                   parsed_call_arg_types = parse_types_from_suffix(strip_mangled_suffix_flags(suffix))
@@ -58974,6 +59708,13 @@ module Crystal::HIR
         overloads = function_def_overloads(base_name)
         STDERR.puts "[LOWER_FUNC_MISS] overloads=#{overloads.join(",")}"
       end
+      unless func_def
+        if maybe_generate_accessor_for_name(target_name) ||
+           maybe_generate_accessor_for_name(name) ||
+           maybe_generate_accessor_for_name(base_name)
+          return
+        end
+      end
       return unless func_def
       prime_param_caches_for_discovered_def(target_name, base_name, func_def)
       if env_has?("DEBUG_YIELD_SKIP") && target_name.includes?("byte_range")
@@ -58985,6 +59726,12 @@ module Crystal::HIR
       end
       return if is_lowering_target
       if func_def.is_abstract
+        if target_name != name && maybe_generate_accessor_for_name(name)
+          return
+        end
+        if base_name != name && maybe_generate_accessor_for_name(base_name)
+          return
+        end
         @function_lowering_states[target_name] = FunctionLoweringState::InProgress
         return
       end
@@ -59041,8 +59788,7 @@ module Crystal::HIR
       # (e.g., Indexable#index! with `&` replacing Indexable#index!(obj, offset)).
       if func_def && effective_call_arg_types && effective_call_arg_types.size > 0
         target_suffix = method_suffix(target_name)
-        target_has_block_suffix = target_suffix == "block" ||
-                                  (target_suffix && target_suffix.ends_with?("_block"))
+        target_has_block_suffix = target_suffix ? suffix_has_block_flag?(target_suffix) : false
         unless target_has_block_suffix
           current_stats = function_param_stats(target_name, func_def)
           if current_stats.has_block
@@ -59462,7 +60208,12 @@ module Crystal::HIR
         end
       end
 
-      has_in_module = @module.has_function?(resolved_target_name)
+      # A function entry can exist as a declaration-only placeholder after a
+      # call target was referenced before the body was materialized.  Treat only
+      # functions with emitted bodies as complete; otherwise late materialization
+      # can be skipped and LLVM has to synthesize an abort stub for a concrete
+      # call target.
+      has_in_module = @module.has_function_with_body?(resolved_target_name)
       is_lowering_resolved = function_state(resolved_target_name).in_progress?
       if debug_env_filter_match?("DEBUG_DEFERRED", name, resolved_target_name)
         STDERR.puts "[DEFERRED_FINAL] resolved=#{resolved_target_name} has_in_module=#{has_in_module} is_lowering=#{is_lowering_resolved}"
@@ -59638,7 +60389,7 @@ module Crystal::HIR
                 has_call_types = call_arg_types && call_arg_types.any? { |t| t != TypeRef::VOID }
                 expects_block_new = false
                 if suffix = method_suffix(target_for_lower)
-                  expects_block_new = suffix == "block" || suffix.ends_with?("_block")
+                  expects_block_new = suffix_has_block_flag?(suffix)
                 end
                 if owner == "File" && env_get("DBG_FILE_NEW")
                   arg_strs = call_arg_types.try(&.map { |t| t.id.to_s }) || [] of String
@@ -62013,7 +62764,9 @@ module Crystal::HIR
           end
           if receiver_type.id > 0
             # Look up class name from type, then resolve method with inheritance
-            if info = @class_info_by_type_id[receiver_type.id]?
+            receiver_type_desc = @module.get_type_descriptor(receiver_type)
+            if (info = @class_info_by_type_id[receiver_type.id]?) &&
+               !(receiver_type_desc && receiver_type_desc.kind == TypeKind::Union)
               name = info.name
               if env_get("DEBUG_CLASS_INFO_RESOLVE") && (method_name == "leap_year?" || method_name == "month_week_date" || method_name == "join" || method_name == "basename")
                 desc2 = @module.get_type_descriptor(receiver_type)
@@ -62093,7 +62846,7 @@ module Crystal::HIR
             # Fallback: if not found in class_info, try type descriptor name
             # This handles records, generic structs, and module types
             unless full_method_name
-              type_desc = @module.get_type_descriptor(receiver_type)
+              type_desc = receiver_type_desc || @module.get_type_descriptor(receiver_type)
               type_name = type_desc ? normalize_method_owner_name(type_desc.name) : ""
               if type_name.empty?
                 if primitive_name = primitive_class_name(receiver_type)
@@ -62455,6 +63208,7 @@ module Crystal::HIR
         call_args.any? { |arg_id| @arena[arg_id].is_a?(CrystalV2::Compiler::Frontend::SplatNode) }
       end
       arg_binding_full_method_name = constructor_arg_binding_name || full_method_name
+      arg_lowering_arena : CrystalV2::Compiler::Frontend::ArenaLike = call_arena || @arena
       args = with_arena(call_arena) do
         if DebugHooks::ENABLED && block_pass_expr
           kind = CrystalV2::Compiler::Frontend.node_kind(@arena[block_pass_expr])
@@ -62471,7 +63225,7 @@ module Crystal::HIR
                       elsif has_splat
                         expand_splat_args(ctx, call_args, call_arena)
                       else
-                        lower_args_with_expected_types(ctx, call_args, method_name, arg_binding_full_method_name, has_block_call, call_arena)
+                        lower_args_with_expected_types(ctx, call_args, method_name, arg_binding_full_method_name, has_block_call, arg_lowering_arena)
                       end
         if debug_env_filter_match?("DEBUG_CALL_TRACE", method_name, method_name, full_method_name || "")
           STDERR.puts "[CALL_TRACE] stage=with_arena_done method=#{method_name} args=#{args_result.size} receiver=#{!!receiver_id} full=#{full_method_name || ""}"
@@ -62486,6 +63240,47 @@ module Crystal::HIR
       if debug_env_filter_match?("DEBUG_CALL_TRACE", method_name, method_name, full_method_name || "")
         STDERR.puts "[CALL_TRACE] stage=after_defaults method=#{method_name} args=#{args.size} receiver=#{!!receiver_id} full=#{full_method_name || ""}"
       end
+
+      # Resolve pointer arithmetic before overload resolution can bind the
+      # numeric variant of an imprecise Pointer(T) | Int32 phi. This is the
+      # source of corrupt rolling pointers in String#index/byte_index.
+      if receiver_id && (method_name == "+" || method_name == "-") && args.size == 1
+        ptr_receiver_id = receiver_id.not_nil!
+        ptr_receiver_type = ctx.type_of(ptr_receiver_id)
+        ptr_receiver_desc = @module.get_type_descriptor(ptr_receiver_type)
+        if ptr_receiver_desc && ptr_receiver_desc.kind == TypeKind::Union
+          if unwrapped = unwrap_pointer_union(ctx, ptr_receiver_id, ptr_receiver_type)
+            ptr_receiver_id, ptr_receiver_type = unwrapped
+            ptr_receiver_desc = @module.get_type_descriptor(ptr_receiver_type)
+          end
+        end
+        is_pointer_arithmetic = ptr_receiver_type == TypeRef::POINTER ||
+                                (ptr_receiver_desc && ptr_receiver_desc.kind == TypeKind::Pointer)
+        if is_pointer_arithmetic
+          offset_id = args[0]
+          if method_name == "-"
+            neg_one = Literal.new(ctx.next_id, TypeRef::INT32, -1_i64)
+            ctx.emit(neg_one)
+            ctx.register_type(neg_one.id, TypeRef::INT32)
+            neg_offset = BinaryOperation.new(ctx.next_id, TypeRef::INT32, BinaryOp::Mul, offset_id, neg_one.id)
+            ctx.emit(neg_offset)
+            ctx.register_type(neg_offset.id, TypeRef::INT32)
+            offset_id = neg_offset.id
+          end
+          element_type = if ptr_receiver_desc && ptr_receiver_desc.name.starts_with?("Pointer(")
+                           pointer_element_type(ptr_receiver_desc.name)
+                         else
+                           TypeRef::UINT8
+                         end
+          element_type = TypeRef::UINT8 if element_type == TypeRef::VOID
+          result_type = ptr_receiver_type == TypeRef::VOID ? TypeRef::POINTER : ptr_receiver_type
+          add_node = PointerAdd.new(ctx.next_id, result_type, ptr_receiver_id, offset_id, element_type)
+          ctx.emit(add_node)
+          ctx.register_type(add_node.id, result_type)
+          return add_node.id
+        end
+      end
+
       prepack_arg_types = args.map { |arg_id| ctx.type_of(arg_id) }
       prepack_arg_literals = args.map { |arg_id| ctx.type_literal?(arg_id) }
       prepack_arg_enum_names = nil
@@ -63623,6 +64418,10 @@ module Crystal::HIR
             base_method_name = resolved
             mangled_method_name = mangle_function_name(base_method_name, arg_types, has_block_call)
           end
+          # Union resolution has selected a concrete owner. Keep the downstream
+          # lookup on that owner instead of reusing an earlier broad/full method
+          # name that can point at a different materialized generic overload.
+          full_method_name = base_method_name
         end
       end
 
@@ -64135,6 +64934,26 @@ module Crystal::HIR
         end
       end
       primary_mangled_name = mangled_method_name
+      if receiver_id &&
+         method_name == "do_compaction" &&
+         args.empty? &&
+         !has_block_call &&
+         block_expr.nil? &&
+         block_pass_expr.nil?
+        owner = method_owner(base_method_name) || ""
+        if strip_generic_args(owner) == "Hash"
+          default_rehash = Literal.new(ctx.next_id, TypeRef::BOOL, false)
+          ctx.emit(default_rehash)
+          ctx.register_type(default_rehash.id, TypeRef::BOOL)
+          args << default_rehash.id
+          arg_types << TypeRef::BOOL
+          callsite_arg_types = arg_types.dup
+          callsite_arg_literals = args.map { |arg_id| ctx.type_literal?(arg_id) }
+          callsite_arg_enum_names = nil
+          mangled_method_name = mangle_function_name(base_method_name, arg_types, false)
+          primary_mangled_name = mangled_method_name
+        end
+      end
       receiver_name = ""
       if receiver_id
         if desc = @module.get_type_descriptor(ctx.type_of(receiver_id))
@@ -64434,7 +65253,7 @@ module Crystal::HIR
                                         if arity_def = @function_defs[arity_variant]?
                                           arity_arena = @function_def_arenas[arity_variant]? || @arena
                                           if def_contains_yield?(arity_def, arity_arena)
-                                            @yield_functions.add(arity_variant)
+                                            add_yield_function(arity_variant)
                                             found_arity = arity_variant
                                           end
                                         end
@@ -64603,7 +65422,7 @@ module Crystal::HIR
               callee_has_yield = callee_in_yield_set || def_contains_yield?(yield_def, callee_arena)
               callee_has_block_call = def_contains_block_call?(yield_def, callee_arena)
               if callee_has_yield || callee_has_block_call
-                @yield_functions.add(yield_name) if callee_has_yield
+                add_yield_function(yield_name) if callee_has_yield
                 debug_hook("call.inline.yield", "callee=#{yield_name} current=#{@current_class || ""}")
                 return inline_yield_function(ctx, yield_def, yield_name, receiver_id, call_arg_values, block_cast, block_param_types_inline, callee_arena)
               end
@@ -64712,7 +65531,7 @@ module Crystal::HIR
               end
             end
             if !skip_late_inline && (force_inline_non_local || callee_has_yield || callee_has_block_call)
-              @yield_functions.add(yield_name) if callee_has_yield
+              add_yield_function(yield_name) if callee_has_yield
               return inline_yield_function(
                 ctx,
                 yield_def,
@@ -66596,35 +67415,37 @@ module Crystal::HIR
             end
           elsif type_desc.kind == TypeKind::Union
             union_name = normalize_union_type_name(type_desc.name)
-            ah = arg_types_hash(arg_types)
-            vf = vdispatch_flags(has_block_call, is_union: true)
-            key = {union_name, method_name, ah, vf}
-            unless @virtual_targets_lowered.includes?(key)
-              @virtual_targets_lowered.add(key)
-              split_union_type_name(union_name).each do |variant|
-                next if variant == "Nil"
-                resolved_variant = resolve_type_alias_chain(variant)
-                expanded = [] of String
-                [resolved_variant, variant].uniq.each do |owner|
-                  if owner.includes?('|')
-                    split_union_type_name(owner).each { |entry| expanded << entry }
-                  else
-                    expanded << owner
-                  end
-                end
-                expanded.uniq.each do |owner|
-                  owners = [owner]
-                  if class_has_subclasses?(owner)
-                    collect_subclasses_cached(owner).each do |entry|
-                      if @lazy_rta_active
-                        next unless rta_live_owner?(entry)
-                      end
-                      owners << entry
+            unless numeric_conversion_method_name?(method_name)
+              ah = arg_types_hash(arg_types)
+              vf = vdispatch_flags(has_block_call, is_union: true)
+              key = {union_name, method_name, ah, vf}
+              unless @virtual_targets_lowered.includes?(key)
+                @virtual_targets_lowered.add(key)
+                split_union_type_name(union_name).each do |variant|
+                  next if variant == "Nil"
+                  resolved_variant = resolve_type_alias_chain(variant)
+                  expanded = [] of String
+                  [resolved_variant, variant].uniq.each do |owner|
+                    if owner.includes?('|')
+                      split_union_type_name(owner).each { |entry| expanded << entry }
+                    else
+                      expanded << owner
                     end
                   end
-                  record_virtual_target(owner, method_name, arg_types, has_block_call, has_splat)
-                  owners.uniq.each do |resolved_owner|
-                    lower_virtual_target_resolved(resolved_owner, method_name, arg_types, has_block_call, has_splat)
+                  expanded.uniq.each do |owner|
+                    owners = [owner]
+                    if class_has_subclasses?(owner)
+                      collect_subclasses_cached(owner).each do |entry|
+                        if @lazy_rta_active
+                          next unless rta_live_owner?(entry)
+                        end
+                        owners << entry
+                      end
+                    end
+                    record_virtual_target(owner, method_name, arg_types, has_block_call, has_splat)
+                    owners.uniq.each do |resolved_owner|
+                      lower_virtual_target_resolved(resolved_owner, method_name, arg_types, has_block_call, has_splat)
+                    end
                   end
                 end
               end
@@ -67328,6 +68149,16 @@ module Crystal::HIR
           mangled_method_name = resolved_emit
           primary_mangled_name = resolved_emit
           lower_function_if_needed(resolved_emit)
+        end
+      end
+
+      # Concrete collection lookups carry their result type on the receiver,
+      # even when the callee body was not lowered far enough to publish it.
+      # Freezing these calls as VOID corrupts later field/getter dispatch
+      # (for example Array(TypeInfoEntry)#unsafe_fetch -> UInt64#type_id).
+      if receiver_id && (return_type == TypeRef::VOID || return_type == TypeRef::NIL)
+        if inferred = infer_unannotated_search_return_type(method_name, ctx.type_of(receiver_id))
+          return_type = inferred unless inferred == TypeRef::VOID || inferred == TypeRef::NIL
         end
       end
 
@@ -69525,6 +70356,17 @@ module Crystal::HIR
     end
 
     private def lower_args_with_expected_types(
+      ctx : LoweringContext,
+      positional_args : Array(ExprId),
+      method_name : String,
+      full_method_name : String?,
+      has_block_call : Bool,
+      call_arena : CrystalV2::Compiler::Frontend::ArenaLike,
+    ) : Array(ValueId)
+      lower_args_with_expected_types_impl(ctx, positional_args, method_name, full_method_name, has_block_call, call_arena)
+    end
+
+    private def lower_args_with_expected_types_impl(
       ctx : LoweringContext,
       positional_args : Array(ExprId),
       method_name : String,
@@ -74970,7 +75812,10 @@ module Crystal::HIR
 
                          prev_type = ctx.type_of(prev)
                          prev_desc = @module.get_type_descriptor(prev_type)
-                         prev_pointer_like = prev_type == TypeRef::POINTER || prev_desc.try(&.kind) == TypeKind::Pointer
+                         prev_pointer_like = prev_type == TypeRef::POINTER
+                         unless prev_pointer_like
+                           prev_pointer_like = prev_desc ? prev_desc.not_nil!.kind == TypeKind::Pointer : false
+                         end
                          prev_struct_or_class = prev_desc && (prev_desc.kind == TypeKind::Struct || prev_desc.kind == TypeKind::Class)
                          if numeric_primitive?(prev_type) || prev_pointer_like || prev_struct_or_class
                            caller_locals_after[name] = prev
@@ -76582,9 +77427,12 @@ module Crystal::HIR
           var_name = (safe_slice_to_string(inner_obj_node.name) || "")
           if local_id = ctx.lookup_local(var_name)
             local_type = ctx.type_of(local_id)
-            if local_type == TypeRef::POINTER ||
-               (@module.get_type_descriptor(local_type).try(&.kind) == TypeKind::Pointer)
+            if local_type == TypeRef::POINTER
               is_safe_to_lower = true
+            elsif desc = @module.get_type_descriptor(local_type)
+              if desc.not_nil!.kind == TypeKind::Pointer
+                is_safe_to_lower = true
+              end
             end
           end
         end
@@ -79627,6 +80475,20 @@ module Crystal::HIR
 
     private def assignment_value_type(ctx : LoweringContext, value_id : ValueId, local_name : String? = nil) : TypeRef
       value_type = ctx.type_of(value_id)
+      if value = ctx.value_for(value_id)
+        concrete_type = value.type
+        if local_name && env_get("DEBUG_ASSIGN_VAR") == local_name
+          STDERR.puts "[ASSIGN_VAR_DETAIL] scope=#{@current_class || ""}##{@current_method || ""} name=#{local_name} value=%#{value_id} cache=#{get_type_name_from_ref(value_type)} instr=#{get_type_name_from_ref(concrete_type)} instr_class=#{value.class.name}"
+        end
+        # The instruction's own type is the canonical RHS type for local
+        # binding. The side cache can be stale after speculative call-target
+        # registration; using it here creates locals whose type disagrees with
+        # their source value and sends later member dispatch to the wrong owner.
+        if concrete_type != TypeRef::VOID && concrete_type != value_type
+          ctx.register_type(value_id, concrete_type)
+          value_type = concrete_type
+        end
+      end
       if value_type == TypeRef::VOID
         if value = ctx.value_for(value_id)
           concrete_type = value.type
@@ -82410,6 +83272,10 @@ module Crystal::HIR
     end
 
     private def type_name_cache_depends_on_context?(name : String) : Bool
+      type_name_cache_depends_on_context?(name, Set(String).new)
+    end
+
+    private def type_name_cache_depends_on_context?(name : String, seen : Set(String)) : Bool
       normalized = normalize_missing_generic_parens(name.strip)
       return false if normalized.empty?
 
@@ -82418,17 +83284,20 @@ module Crystal::HIR
         return false if normalized.empty?
       end
 
+      return false if seen.includes?(normalized)
+      seen << normalized
+
       return true if normalized == "self"
       return true if normalized.includes?("typeof(")
 
       if normalized.includes?('|')
         parts = split_union_type_name(normalized)
-        return parts.any? { |part| type_name_cache_depends_on_context?(part) } if parts.size > 1
+        return parts.any? { |part| type_name_cache_depends_on_context?(part, seen) } if parts.size > 1
       end
 
       if normalized.ends_with?('?')
         base = normalized[0, normalized.size - 1]
-        return type_name_cache_depends_on_context?(base)
+        return type_name_cache_depends_on_context?(base, seen)
       end
 
       if normalized.ends_with?('*')
@@ -82437,18 +83306,18 @@ module Crystal::HIR
           base = base[0...-1]
         end
         base = base.strip
-        return !base.empty? && type_name_cache_depends_on_context?(base)
+        return !base.empty? && type_name_cache_depends_on_context?(base, seen)
       end
 
       if normalized.starts_with?('{') && normalized.ends_with?('}')
         inner = normalized[1, normalized.size - 2].strip
         return false if inner.empty?
-        return split_generic_type_args(inner).any? { |arg| type_name_cache_depends_on_context?(arg) }
+        return split_generic_type_args(inner).any? { |arg| type_name_cache_depends_on_context?(arg, seen) }
       end
 
       if info = split_generic_base_and_args(normalized)
-        return true if type_name_cache_depends_on_context?(info.base)
-        return split_generic_type_args(info.args).any? { |arg| type_name_cache_depends_on_context?(arg) }
+        return true if type_name_cache_depends_on_context?(info.base, seen)
+        return split_generic_type_args(info.args).any? { |arg| type_name_cache_depends_on_context?(arg, seen) }
       end
 
       return false if value_literal_name?(normalized)
@@ -82558,21 +83427,39 @@ module Crystal::HIR
     end
 
     # Fast helper to get last component of a namespace path (e.g., "Foo::Bar::Baz" -> "Baz")
-    # Avoids allocating an array like split("::").last would
+    # Avoids stdlib String#rindex/split: self-hosted stage2 can hit this helper
+    # before those String specializations are stable.
     @[AlwaysInline]
     private def last_namespace_component(name : String) : String
-      if idx = name.rindex("::")
-        name[(idx + 2)..]
-      else
-        name
+      i = name.bytesize - 2
+      while i >= 0
+        if name.to_unsafe[i] == ':'.ord && name.to_unsafe[i + 1] == ':'.ord
+          start = i + 2
+          return "" if start >= name.bytesize
+          return name.byte_slice(start, name.bytesize - start)
+        end
+        i -= 1
       end
+      name
+    end
+
+    @[AlwaysInline]
+    private def last_namespace_separator_index(name : String) : Int32?
+      i = name.bytesize - 2
+      while i >= 0
+        return i if name.to_unsafe[i] == ':'.ord && name.to_unsafe[i + 1] == ':'.ord
+        i -= 1
+      end
+      nil
     end
 
     # Returns last component only if name contains "::", otherwise nil
     @[AlwaysInline]
     private def last_namespace_component_if_nested(name : String) : String?
-      if idx = name.rindex("::")
-        name[(idx + 2)..]
+      if idx = last_namespace_separator_index(name)
+        start = idx + 2
+        return "" if start >= name.bytesize
+        name.byte_slice(start, name.bytesize - start)
       else
         nil
       end
@@ -82818,57 +83705,81 @@ module Crystal::HIR
       end
     end
 
+    private def unmangle_suffix_type_part(part : String) : String
+      i = 0
+      needs_copy = false
+      while i + 1 < part.bytesize
+        if part.to_unsafe[i] == '_'.ord && part.to_unsafe[i + 1] == '_'.ord
+          needs_copy = true
+          break
+        end
+        i += 1
+      end
+      return part unless needs_copy
+
+      bytes = Bytes.new(part.bytesize)
+      i = 0
+      while i < part.bytesize
+        if i + 1 < part.bytesize && part.to_unsafe[i] == '_'.ord && part.to_unsafe[i + 1] == '_'.ord
+          bytes[i] = ':'.ord.to_u8
+          bytes[i + 1] = ':'.ord.to_u8
+          i += 2
+        else
+          bytes[i] = part.to_unsafe[i].to_u8
+          i += 1
+        end
+      end
+      String.new(bytes)
+    end
+
+    private def append_type_from_suffix_part(result : Array(TypeRef), part : String) : Nil
+      return if part.empty?
+        # Skip mangling markers that are not types (block/named/splat/arity/super).
+      return if part == "block" || part == "named" || part == "splat" || part == "double" || part == "double_splat" || part == "super"
+      return if part.starts_with?("arity")
+        # Strip $arityN that may be embedded in the last type component
+        # (defense-in-depth for strip_mangled_suffix_flags).
+      if (arity_pos = suffix_marker_last_index(part, "$arity")) && arity_pos > 0
+        rest_start = arity_pos + 6
+        if decimal_suffix_from?(part, rest_start)
+          part = part[0, arity_pos]
+        end
+      end
+        # Convert mangled type name back to Crystal type name
+        # e.g., "Pointer(LibC::Kevent)" stays as is
+        # e.g., "LibC__Kevent" -> "LibC::Kevent"
+      type_name = unmangle_suffix_type_part(part)
+      type_ref = type_ref_for_name(type_name)
+      result << type_ref if type_ref != TypeRef::VOID
+    end
+
     # Parse types from mangled name suffix (e.g., "Pointer(LibC::Kevent)_Int32" -> [Pointer(LibC::Kevent), Int32])
     private def parse_types_from_suffix(suffix : String) : Array(TypeRef)
       result = [] of TypeRef
       return result if suffix.empty?
 
-      # Split on underscores, but handle parentheses for generic types
-      parts = [] of String
-      current = String::Builder.new
+      # Split on underscores, but handle parentheses for generic types.
+      start = 0
+      idx = 0
       paren_depth = 0
-
-      suffix.each_char do |ch|
-        case ch
-        when '('
+      while idx < suffix.bytesize
+        byte = suffix.to_unsafe[idx]
+        if byte == '('.ord
           paren_depth += 1
-          current << ch
-        when ')'
+        elsif byte == ')'.ord
           paren_depth -= 1
-          current << ch
-        when '_'
-          if paren_depth > 0
-            current << ch
-          else
-            part = current.to_s
-            parts << part unless part.empty?
-            current = String::Builder.new
+        elsif byte == '_'.ord && paren_depth <= 0
+          part_size = idx - start
+          if part_size > 0
+            append_type_from_suffix_part(result, suffix.byte_slice(start, part_size))
           end
-        else
-          current << ch
+          start = idx + 1
         end
+        idx += 1
       end
-      final_part = current.to_s
-      parts << final_part unless final_part.empty?
-
-      parts.each do |part|
-        # Skip mangling markers that are not types (block/named/splat/arity/super).
-        next if part == "block" || part == "named" || part == "splat" || part == "double" || part == "double_splat" || part == "super"
-        next if part.starts_with?("arity")
-        # Strip $arityN that may be embedded in the last type component
-        # (defense-in-depth for strip_mangled_suffix_flags).
-        if (arity_pos = part.index("$arity")) && arity_pos > 0
-          after = part[(arity_pos + 6)..]
-          if after.empty? || after.each_char.all?(&.ascii_number?)
-            part = part[0, arity_pos]
-          end
-        end
-        # Convert mangled type name back to Crystal type name
-        # e.g., "Pointer(LibC::Kevent)" stays as is
-        # e.g., "LibC__Kevent" -> "LibC::Kevent"
-        type_name = part.gsub("__", "::")
-        type_ref = type_ref_for_name(type_name)
-        result << type_ref if type_ref != TypeRef::VOID
+      final_size = suffix.bytesize - start
+      if final_size > 0
+        append_type_from_suffix_part(result, suffix.byte_slice(start, final_size))
       end
 
       result
@@ -83129,6 +84040,37 @@ module Crystal::HIR
       false
     end
 
+    private def suffix_marker_last_index(name : String, marker : String) : Int32?
+      marker_size = marker.bytesize
+      return nil if marker_size == 0 || name.bytesize < marker_size
+      i = name.bytesize - marker_size
+      while i >= 0
+        matched = true
+        j = 0
+        while j < marker_size
+          if name.to_unsafe[i + j] != marker.to_unsafe[j]
+            matched = false
+            break
+          end
+          j += 1
+        end
+        return i if matched
+        i -= 1
+      end
+      nil
+    end
+
+    private def decimal_suffix_from?(name : String, start : Int32) : Bool
+      return true if start >= name.bytesize
+      i = start
+      while i < name.bytesize
+        byte = name.to_unsafe[i]
+        return false unless byte >= '0'.ord && byte <= '9'.ord
+        i += 1
+      end
+      true
+    end
+
     private def strip_mangled_suffix_flags(suffix : String) : String
       stripped = suffix
       flags = ["_block", "_named", "_splat", "_double_splat", "_super"]
@@ -83145,9 +84087,9 @@ module Crystal::HIR
       end
       # Strip $arityN function discriminator — it encodes overload arity,
       # not type information, and must not leak into type name extraction.
-      if (arity_idx = stripped.rindex("$arity"))
-        rest = stripped[(arity_idx + 6)..]
-        if rest.empty? || rest.each_char.all?(&.ascii_number?)
+      if arity_idx = suffix_marker_last_index(stripped, "$arity")
+        rest_start = arity_idx + 6
+        if decimal_suffix_from?(stripped, rest_start)
           stripped = stripped[0, arity_idx]
         end
       end
@@ -83158,6 +84100,7 @@ module Crystal::HIR
       return true if suffix == "block"
       return true if suffix.ends_with?("_block")
       return true if suffix.includes?("_block_")
+      return true if strip_mangled_suffix_flags(suffix) == "block"
       false
     end
 
