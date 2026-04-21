@@ -93,6 +93,18 @@
         `process_pending_lower_functions` expansion itself, with current head
         families such as `#hash`, `#to_json`, `#to_i`, and late `#inspect`
         on compiler-internal containers and helpers
+    - bounded defer/enqueue helper-family experiment was also intentionally
+      left uncommitted because it did not affect the active blocker:
+      - targeted `lower_function_if_needed_impl` guard for universal
+        `hash/to_json/to_i/inspect/to_s/object_id` helpers on deep
+        generic/compiler-internal owners unless demanded by RTA/AST reachability
+      - focused 300s diagnostic still showed the old frontier:
+        - first `[PENDING_EXPLOSION]` under `Object#inspect` at queue `12325`
+        - `[LOWER] p0 #9600 idx=9877/78012`
+        - broad helper-family entries around the same queue positions
+      - conclusion: do not retry name-family enqueue guards without better
+        producer provenance; the next useful instrumentation should count
+        enqueue producers by `source -> family -> owner-base -> current`
   - practical boundary:
     - this is a timeout/no-progress blocker, not an OOM or crash signature
     - the current root corridor is no longer `lower_main` expr 30; it is the
@@ -106,6 +118,31 @@
       safety-net phase even begins; focus on pending queue producers,
       `remember_callsite_arg_types`, virtual/owner replay that still remains,
       and the current top families `#hash/#to_json/#to_i/#inspect`
+- **Fast no-prelude oracle tier (2026-04-20, current session)**:
+  - added focused guards so normal development does not use the 300s bootstrap
+    attempt as the first falsifier:
+    - `regression_tests/p2_pending_budget_no_prelude.sh`
+      - compiles `src/compiler/hir/ast_to_hir.cr --no-prelude --emit hir`
+        under `CRYSTAL_V2_STOP_AFTER_HIR=1 CRYSTAL_V2_PHASE_STATS=1
+        CRYSTAL_V2_LOWER_PROGRESS=1`
+      - fails if `process_pending`, `emit_tracked_sigs`, `lower_missing`, total
+        functions, or observed queue size exceed conservative budgets
+      - current signal:
+        `p2_pending_budget_no_prelude_ok process_delta=25 emit_delta=7 lower_missing_delta=30 total=103 max_queue=57`
+    - `regression_tests/p2_universal_helper_fanout_no_prelude.sh`
+      - same no-prelude source, with `CRYSTAL_V2_PENDING_EXPLOSION_TRACE=1`
+      - fails on `[PENDING_EXPLOSION]` or deep generic universal helper lowers
+      - current signal:
+        `p2_universal_helper_fanout_no_prelude_ok deep_helpers=0`
+    - `regression_tests/p2_bootstrap_semantic_emit_oracle.sh`
+      - emits HIR/MIR/LLVM for `regression_tests/bootstrap_semantic_corpus.cr`
+        through `scripts/emit_bootstrap_ir.sh`
+      - current signal: `p2_bootstrap_semantic_emit_oracle_ok`
+  - adversary note:
+    - `src/crystal_v2.cr --no-prelude` is not yet a good green oracle; it
+      currently exits `11` in an inline-yield recursion/force-return path before
+      reaching the pending budget gate
+    - keep this as a separate future reducer, not as the first p2 budget guard
 - **Bootstrap semantic-equivalence scaffold (2026-04-20, current session)**:
   - trustworthy setup:
     - `scripts/build_bootstrap_stages.sh`
