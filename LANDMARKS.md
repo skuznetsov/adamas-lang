@@ -147,6 +147,15 @@ out as expected but printed `[PENDING_SOURCES]` snapshots at queue
 target the source of recursive formatting demand, not another isolated
 `Object#inspect` guard. {F/G/R: 0.93/0.55/0.94} [verified]
 
+[LM-473|verified]: Context-enhanced pending-source samples identify the current
+dominant source contexts. With sample context enabled, the 80s run timed out as
+expected but showed `Array#to_s` samples enqueued from `Object#to_s`,
+`Array#inspect` from `Object#inspect`, `Array#object_id` from
+`Reference#same?`, `Hash#to_s` from `Object#to_s`, `Hash#inspect` from
+`Object#inspect`, and `Hash#each` from `Dir::Globber#glob`. Boundary: the next
+bounded fix/reducer should target broad universal fallback adapter replay, not
+deep-container name guards. {F/G/R: 0.94/0.58/0.94} [verified]
+
 ## Active Strategy
 
 - Main fast loop: `--no-prelude` oracles and focused STOP_AFTER_HIR budget

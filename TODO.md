@@ -68,6 +68,13 @@ Important refined facts:
   - `Hash#to_s: 812`
   - `Hash#inspect: 810`
   - `Hash#exec_recursive: 798`
+- Context-enhanced samples showed the dominant source contexts:
+  - `Array#to_s` samples are enqueued from `Object#to_s`
+  - `Array#inspect` samples are enqueued from `Object#inspect`
+  - `Array#object_id` samples are enqueued from `Reference#same?`
+  - `Hash#to_s` samples are enqueued from `Object#to_s`
+  - `Hash#inspect` samples are enqueued from `Object#inspect`
+  - `Hash#each` samples are enqueued from `Dir::Globber#glob`
 
 ## Refuted Fix Branches
 
@@ -110,13 +117,15 @@ Important boundary:
 
 ## Next Work
 
-1. Use the new pending-source diagnostic to identify the earliest producer for
-   `Array#exec_recursive` and paired `Array#to_s/#inspect`.
-2. Build a fast reducer/oracle for that producer before changing compiler
+1. Build a fast reducer/oracle for broad `Object#to_s` / `Object#inspect` /
+   `Reference#same?` replay on generic containers before changing compiler
    behavior.
+2. Inspect whether `Object#to_s` and `Object#inspect` are being handled as
+   virtual replay demands when their bodies are just universal fallback
+   adapters.
 3. Only then attempt a bounded fix. Candidate direction: prevent universal
-   recursive formatting helpers from becoming demand tokens unless a real
-   runtime formatting call requires them.
+   fallback adapters from replaying every generic container owner unless a real
+   runtime formatting/equality call requires the concrete owner.
 4. After a bounded fix passes fast oracles, run the smallest integration gate:
 
 ```bash

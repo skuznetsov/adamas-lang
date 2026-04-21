@@ -57677,8 +57677,10 @@ module Crystal::HIR
             @pending_source_counts[stripped] = (@pending_source_counts[stripped]? || 0) + 1
             if env_get("DEBUG_PENDING_SOURCES_SAMPLES")
               samples = @pending_source_samples[stripped]? || [] of String
-              if samples.size < 3 && !samples.includes?(name)
-                samples << name
+              current = "#{@current_class || "(nil)"}##{@current_method || "(nil)"}"
+              sample = "#{name} @ #{current}"
+              if samples.size < 3 && !samples.includes?(sample)
+                samples << sample
                 @pending_source_samples[stripped] = samples
               end
             end
