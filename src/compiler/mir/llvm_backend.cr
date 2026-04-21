@@ -9973,6 +9973,17 @@ module Crystal::MIR
       if mangled.includes?("$Hkey_hash$$") && mangled.includes?("Hash$L") && func.params.size >= 2
         key_type_ref = func.params[1].type
         key_llvm_type = @type_mapper.llvm_type(key_type_ref)
+        if nilable_integer = nilable_integer_key_hash_payload_llvm_type(mangled)
+          emit_direct_nilable_integer_key_hash_override(
+            mangled,
+            key_llvm_type,
+            nilable_integer[0],
+            signed: nilable_integer[1],
+            note: "direct nilable integer hash override (bypass null Hasher union dispatch)"
+          )
+          return true
+        end
+
         if target = concrete_value_key_hash_delegate_target(mangled, key_type_ref)
           emit_concrete_key_hash_delegate_override(
             mangled,
@@ -11512,6 +11523,24 @@ module Crystal::MIR
       llvm_type.starts_with?('i') && !llvm_type.includes?(".")
     end
 
+    private def nilable_integer_key_hash_payload_llvm_type(mangled : String) : {String, Bool}?
+      suffix = mangled.split("$Hkey_hash$$", 2)[1]?
+      return nil unless suffix
+
+      case suffix
+      when "Nil$_$OR$_Int32", "Int32$_$OR$_Nil"
+        {"i32", true}
+      when "Nil$_$OR$_UInt32", "UInt32$_$OR$_Nil"
+        {"i32", false}
+      when "Nil$_$OR$_Int64", "Int64$_$OR$_Nil"
+        {"i64", true}
+      when "Nil$_$OR$_UInt64", "UInt64$_$OR$_Nil"
+        {"i64", false}
+      else
+        nil
+      end
+    end
+
     private def emitted_param_llvm_type(param) : String
       llvm_type = @type_mapper.llvm_type(param.type)
       llvm_type == "void" ? "ptr" : llvm_type
@@ -11777,6 +11806,38 @@ module Crystal::MIR
         emit_raw "  %key64 = trunc #{key_llvm_type} %key to i64\n"
       else
         emit_raw "  %key64 = add i64 %key, 0\n"
+      end
+      emit_raw "  %hasher2 = call ptr @Crystal$CCHasher$Hpermute$$UInt64(ptr %hasher, i64 %key64)\n"
+      emit_inline_hasher_result("hasher2", "hash64")
+      emit_raw "  %hash32 = trunc i64 %hash64 to i32\n"
+      emit_raw "  %is_zero = icmp eq i32 %hash32, 0\n"
+      emit_raw "  br i1 %is_zero, label %ret_max, label %ret_hash\n"
+      emit_raw "ret_max:\n"
+      emit_raw "  ret i32 -1\n"
+      emit_raw "ret_hash:\n"
+      emit_raw "  ret i32 %hash32\n"
+      emit_raw "}\n\n"
+    end
+
+    private def emit_direct_nilable_integer_key_hash_override(mangled : String, key_llvm_type : String, payload_llvm_type : String, *, signed : Bool, note : String) : Nil
+      emit_raw "; #{mangled} — #{note}\n"
+      emit_raw "define i32 @#{mangled}(ptr %self, #{key_llvm_type} %key) {\n"
+      emit_raw "entry:\n"
+      emit_raw "  %key.slot = alloca #{key_llvm_type}, align 8\n"
+      emit_raw "  store #{key_llvm_type} %key, ptr %key.slot\n"
+      emit_raw "  %tag.ptr = getelementptr #{key_llvm_type}, ptr %key.slot, i32 0, i32 0\n"
+      emit_raw "  %tag = load i32, ptr %tag.ptr\n"
+      emit_raw "  %is_nil = icmp eq i32 %tag, 0\n"
+      emit_raw "  br i1 %is_nil, label %ret_max, label %value\n"
+      emit_raw "value:\n"
+      emit_raw "  %payload.ptr = getelementptr #{key_llvm_type}, ptr %key.slot, i32 0, i32 1\n"
+      emit_raw "  %payload = load #{payload_llvm_type}, ptr %payload.ptr, align 4\n"
+      emit_inline_zeroed_hasher_allocation("hasher")
+      if payload_llvm_type == "i64"
+        emit_raw "  %key64 = add i64 %payload, 0\n"
+      else
+        cast_op = signed ? "sext" : "zext"
+        emit_raw "  %key64 = #{cast_op} #{payload_llvm_type} %payload to i64\n"
       end
       emit_raw "  %hasher2 = call ptr @Crystal$CCHasher$Hpermute$$UInt64(ptr %hasher, i64 %key64)\n"
       emit_inline_hasher_result("hasher2", "hash64")
