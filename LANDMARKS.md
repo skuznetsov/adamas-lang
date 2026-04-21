@@ -121,6 +121,32 @@ fast `--no-prelude` oracle coverage plus enqueue-provenance accounting by
 `source -> family -> owner-base -> current function`. {F/G/R: 0.65/0.55/0.70}
 [hypothesis]
 
+[LM-471|verified]: Fast p2 no-prelude sentinels now protect the bootstrap
+debug loop from using full `s1 -> s2b` as the first falsifier. Evidence:
+`regression_tests/p2_pending_budget_no_prelude.sh /tmp/cv2_pending_sources`
+prints `p2_pending_budget_no_prelude_ok process_delta=25 emit_delta=7
+lower_missing_delta=30 total=103 max_queue=57`;
+`regression_tests/p2_universal_helper_fanout_no_prelude.sh
+/tmp/cv2_pending_sources` prints
+`p2_universal_helper_fanout_no_prelude_ok deep_helpers=0`;
+`regression_tests/p2_bootstrap_semantic_emit_oracle.sh /tmp/cv2_pending_sources`
+prints `p2_bootstrap_semantic_emit_oracle_ok`. Boundary: these are fast
+sentinels, not bootstrap proof. {F/G/R: 0.92/0.45/0.94} [verified]
+
+[LM-472|verified]: Periodic pending-source diagnostics now expose the dominant
+producer families before the 120s timeout. With
+`DEBUG_PENDING_SOURCES=1 DEBUG_PENDING_SOURCES_SAMPLES=1
+DEBUG_PENDING_SOURCES_EVERY=5000 DEBUG_PENDING_SOURCES_TOP=15
+CRYSTAL_V2_PENDING_EXPLOSION_TRACE=1 CRYSTAL_V2_STOP_AFTER_HIR=1
+CRYSTAL_V2_PHASE_STATS=1 CRYSTAL_V2_LOWER_PROGRESS=1`, the focused run timed
+out as expected but printed `[PENDING_SOURCES]` snapshots at queue
+`5000..35000`. At queue `35000`, the dominant families were `Array#to_s: 5479`,
+`Array#inspect: 5476`, `Array#exec_recursive: 5448`, `Array#object_id: 2741`,
+`Hash::Entry#to_s: 1221`, `Hash::Entry#inspect: 814`, `Hash#to_s: 812`,
+`Hash#inspect: 810`, and `Hash#exec_recursive: 798`. Boundary: next work should
+target the source of recursive formatting demand, not another isolated
+`Object#inspect` guard. {F/G/R: 0.93/0.55/0.94} [verified]
+
 ## Active Strategy
 
 - Main fast loop: `--no-prelude` oracles and focused STOP_AFTER_HIR budget

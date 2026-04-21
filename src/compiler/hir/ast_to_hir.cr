@@ -1809,6 +1809,8 @@ module Crystal::HIR
     @pending_source_counts : Hash(String, Int32) = {} of String => Int32
     # Pending queue sample names (debug only): stripped base name → sample full names.
     @pending_source_samples : Hash(String, Array(String)) = {} of String => Array(String)
+    # Pending source periodic reporter watermark (debug only).
+    @pending_source_next_report : Int32 = 0
     # Monomorphization counters (debug only): base name → count.
     @mono_source_counts : Hash(String, Int32) = {} of String => Int32
     # Monomorphization samples (debug only): base name → specialized names.
@@ -3658,6 +3660,7 @@ module Crystal::HIR
       @pending_queue_remove_set = Set(String).new
       @pending_source_counts = {} of String => Int32
       @pending_source_samples = {} of String => Array(String)
+      @pending_source_next_report = 0
       @mono_source_counts = {} of String => Int32
       @mono_source_samples = {} of String => Array(String)
       @mono_sources_reported = false
@@ -43391,6 +43394,10 @@ module Crystal::HIR
         @mono_sources_reported = true
       end
 
+      if env_get("DEBUG_PENDING_SOURCES") && !@pending_source_counts.empty?
+        report_pending_sources("flush_done", @pending_function_queue.size)
+      end
+
       if env_has?("DEBUG_ARENA_RESOLVE_STATS")
         STDERR.puts "[ARENA_STATS] resolve_arena_for_def calls: #{@arena_stats_resolve_calls}"
         STDERR.puts "[ARENA_STATS] cache hits: #{@arena_stats_cache_hits}"
@@ -57521,6 +57528,35 @@ module Crystal::HIR
       @pending_explosion_logged = true
     end
 
+    private def maybe_report_pending_sources(reason : String) : Nil
+      every = env_get("DEBUG_PENDING_SOURCES_EVERY").try(&.to_i?) || 0
+      return if every <= 0
+      if @pending_source_next_report <= 0
+        @pending_source_next_report = every
+      end
+      qsize = @pending_function_queue.size
+      return if qsize < @pending_source_next_report
+      @pending_source_next_report = qsize + every
+      report_pending_sources(reason, qsize)
+    end
+
+    private def report_pending_sources(reason : String, qsize : Int32) : Nil
+      return if @pending_source_counts.empty?
+      top_n = env_get("DEBUG_PENDING_SOURCES_TOP").try(&.to_i?) || 12
+      STDERR.puts "[PENDING_SOURCES] reason=#{reason} queue=#{qsize} unique=#{@pending_source_counts.size} top=#{top_n}"
+      @pending_source_counts.to_a
+        .sort_by { |entry| -entry[1] }
+        .first(top_n)
+        .each do |name, count|
+          STDERR.puts "  #{name}: #{count}"
+          if env_get("DEBUG_PENDING_SOURCES_SAMPLES")
+            if samples = @pending_source_samples[name]?
+              samples.each { |sample| STDERR.puts "    - #{sample[0, 180]}" }
+            end
+          end
+        end
+    end
+
     private def lower_function_if_needed_impl(name : String) : Nil
       return if name.empty?
       is_math_min_debug = env_get("DEBUG_MATH_MIN") && name.includes?("Math") && (name.includes?("min") || name.includes?("max"))
@@ -57646,6 +57682,7 @@ module Crystal::HIR
                 @pending_source_samples[stripped] = samples
               end
             end
+            maybe_report_pending_sources("enqueue")
           end
         end
         return
