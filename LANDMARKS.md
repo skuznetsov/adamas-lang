@@ -166,6 +166,16 @@ candidate fix should consider self-calls inside root fallback methods as
 current-owner static/demand-local operations, not global subclass replay.
 {F/G/R: 0.94/0.60/0.94} [verified]
 
+[LM-475|refuted]: Suppressing exact RTA-called marking during speculative
+virtual-target replay is not sufficient. The uncommitted experiment added a
+replay-depth guard around `lower_virtual_target_owner` and made
+`record_pending_callee_for_rta` ignore functions enqueued inside that depth.
+Fast p2 guards stayed green, but the 120s full diagnostic still timed out with
+the same first `[PENDING_EXPLOSION]` at queue `12325` and `[PENDING_SOURCES]`
+snapshots through queue `35000`. The patch was reverted. Boundary: the active
+fanout is not explained by exact `@rta_called_methods` marking alone.
+{F/G/R: 0.90/0.50/0.92} [verified]
+
 ## Active Strategy
 
 - Main fast loop: `--no-prelude` oracles and focused STOP_AFTER_HIR budget
