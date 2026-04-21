@@ -73,6 +73,7 @@ Run before expensive bootstrap attempts:
 ```bash
 regression_tests/p2_bootstrap_semantic_emit_oracle.sh bin/crystal_v2
 regression_tests/p2_pending_budget_no_prelude.sh bin/crystal_v2
+regression_tests/p2_root_self_replay_no_prelude.sh bin/crystal_v2
 regression_tests/p2_universal_helper_fanout_no_prelude.sh bin/crystal_v2
 ```
 
@@ -80,6 +81,7 @@ Expected current signals:
 
 - `p2_bootstrap_semantic_emit_oracle_ok`
 - `p2_pending_budget_no_prelude_ok ... total=103 max_queue=57`
+- `p2_root_self_replay_no_prelude_ok process_delta=20 total=47 ...`
 - `p2_universal_helper_fanout_no_prelude_ok deep_helpers=0`
 
 Boundary: `src/crystal_v2.cr --no-prelude` still exits `11` in an
@@ -88,14 +90,13 @@ pending-budget oracle.
 
 ## Next Work
 
-1. Build a fast reducer/oracle for broad self-replay in `Object#to_s`,
-   `Object#inspect`, and `Reference#same?`.
-2. Verify whether calls on `self` inside root fallback methods should be
+1. Verify whether calls on `self` inside root fallback methods should be
    constrained to the current owner instead of replaying every subclass/generic
    instantiation.
-3. Only then attempt a bounded behavior fix.
-4. After fast oracles pass, run the `s1 -> s2b` integration gate.
-5. If `s2b` is produced, compare `s1_bootstrap` and `s2b` on the fixed corpus
+2. Attempt a bounded behavior fix only after the root self-replay oracle and
+   existing p2 guards define the expected movement.
+3. After fast oracles pass, run the `s1 -> s2b` integration gate.
+4. If `s2b` is produced, compare `s1_bootstrap` and `s2b` on the fixed corpus
    before trying `s3b+`.
 
 ## Stop Conditions

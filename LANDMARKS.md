@@ -176,6 +176,16 @@ snapshots through queue `35000`. The patch was reverted. Boundary: the active
 fanout is not explained by exact `@rta_called_methods` marking alone.
 {F/G/R: 0.90/0.50/0.92} [verified]
 
+[LM-476|obj]: `regression_tests/p2_root_self_replay_no_prelude.sh` is the
+small synthetic oracle for the broad-root replay corridor. It defines
+`Object#to_s`, `Object#inspect`, `Reference#same?`, and nested `Box(T)` /
+`Pair(A, B)` owners under `--no-prelude`; current baseline:
+`process_delta=20`, `total=47`, `object_replays=28`,
+`reference_replays=21`, `deep_owner_replays=12`. This proves the corridor is
+exercised without full-prelude bootstrap and gives future fixes a fast movement
+signal before `s1 -> s2b`.
+{F/G/R: 0.93/0.55/0.94} [verified]
+
 ## Active Strategy
 
 - Main fast loop: `--no-prelude` oracles and focused STOP_AFTER_HIR budget
