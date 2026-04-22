@@ -41,7 +41,8 @@ regression_tests/p2_selfhost_hir_emit_no_prelude.sh /tmp/cv2_s2_hir_emit_stop
 
 Verified signal: `p2_selfhost_hir_emit_no_prelude_ok`.
 
-The full wrapper gate remains the integration command:
+The full wrapper gate now reaches the generated stage2 compiler, then stops on
+the generated-compiler smoke:
 
 ```bash
 BOOTSTRAP_STAGE_OUT=/tmp/cv2_bs_s2 \
@@ -50,6 +51,12 @@ BOOTSTRAP_TIMEOUT_SEC=300 \
 BOOTSTRAP_MEM_MB=4096 \
   scripts/build_bootstrap_stages.sh --stages 2 --out /tmp/cv2_bs_s2
 ```
+
+Current signal: stage1 build + plain/no-prelude smokes pass; stage2 build
+passes (`293s`, peak RSS about `3.44GB`, artifact `/tmp/cv2_bs_s2/cv2_s2`);
+stage2 plain `puts 42` smoke times out after `60s`. The first generated-stage
+runtime/compiler-smoke blocker is therefore after `s2b` is produced, not in the
+stage2 self-host build itself.
 
 Current diagnosis / recently fixed roots:
 

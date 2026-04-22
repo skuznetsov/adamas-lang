@@ -326,6 +326,20 @@ after parse on minimal no-prelude; latest sample is hot in
 `__crystal_v2_string_eq`, which is the next root target. {F/G/R:
 0.92/0.55/0.93} [verified]
 
+[LM-487|verified]: The full `s1 -> s2b` wrapper gate now produces the stage2
+compiler but fails at the generated-compiler smoke. Command:
+`BOOTSTRAP_STAGE_OUT=/tmp/cv2_bs_s2 BOOTSTRAP_CHAIN_STAGES=2
+BOOTSTRAP_TIMEOUT_SEC=300 BOOTSTRAP_MEM_MB=4096
+scripts/build_bootstrap_stages.sh --stages 2 --out /tmp/cv2_bs_s2`. Stage1
+build and both stage1 smokes passed; stage2 self-host build passed in
+`293.23s` with peak RSS about `3437.70MB`, producing
+`/tmp/cv2_bs_s2/cv2_s2`; stage2 plain `puts 42` smoke timed out after `60s`.
+A `run_safe.sh` safety-harness defect was found at the same boundary: wedged
+child processes can block `lsof` / `wait`, so the wrapper parent may not return
+even after writing the timeout marker. Boundary: next compiler work should
+debug the generated `s2b` smoke/no-prelude timeout, not the stage2 self-host
+build. {F/G/R: 0.93/0.55/0.94} [verified]
+
 ## Active Strategy
 
 - Main fast loop: `--no-prelude` oracles and focused STOP_AFTER_HIR budget
