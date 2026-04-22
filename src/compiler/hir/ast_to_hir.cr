@@ -75163,6 +75163,10 @@ module Crystal::HIR
         # can recursively call themselves and repeatedly re-pack the splat tuple.
         call_target = inline_key
         if receiver_id && (!call_target.includes?('$') || call_target.ends_with?("_splat") || call_target == ctx.function.name)
+          splat_fallback_target = call_target.ends_with?("_splat") || call_target == ctx.function.name
+          first_call_arg_type = callsite_arg_types.first?
+          first_arg_is_collection = first_call_arg_type &&
+            (is_tuple_type_ref?(first_call_arg_type) || concrete_collection_type_ref?(first_call_arg_type))
           recv_desc_fb = @module.get_type_descriptor(ctx.type_of(receiver_id))
           recv_base_fb = unless recv_desc_fb && recv_desc_fb.name.includes?('(')
                              yield_receiver_base_name(ctx.type_of(receiver_id))
@@ -75170,10 +75174,13 @@ module Crystal::HIR
           if block_entry = lookup_block_function_def_for_call(base_inline_name, call_args.size, callsite_arg_types, recv_base_fb)
             block_entry_name = block_entry[0]
             if block_entry_name.ends_with?("_splat")
-              if typed_entry = lookup_function_def_for_call(base_inline_name, call_args.size, true, callsite_arg_types)
+              if first_arg_is_collection &&
+                 (typed_entry = lookup_function_def_for_call(base_inline_name, call_args.size, true, callsite_arg_types))
                 typed_entry_name = typed_entry[0]
                 block_entry_name = typed_entry_name unless typed_entry_name.ends_with?("_splat")
               end
+            elsif splat_fallback_target && !first_arg_is_collection
+              block_entry_name = call_target
             end
             call_target = block_entry_name
           elsif count_distinct_block_overloads_arity_only(base_inline_name, call_args.size, recv_base_fb) == 1

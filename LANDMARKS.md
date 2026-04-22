@@ -361,6 +361,29 @@ smokes still fail: plain prelude smoke hits `STUB CALLED: String$Heach$$block`,
 and no-prelude smoke times out after `puts$String`. {F/G/R: 0.94/0.58/0.94}
 [verified]
 
+[LM-489|verified]: The inline-yield fallback correction must not de-splat
+scalar splat-wrapper calls. The regression from LM-488 was that a scalar
+`Dir.glob("pattern", &block)` fallback could be over-corrected from the
+`Path | String ... _block_splat` wrapper to the `Enumerable` overload, making
+the generated stage2 compiler dispatch `String#each$block` inside
+`Dir.glob$Enumerable...`. The fix only prefers a typed non-splat block target
+when the first call argument is already a tuple/collection; scalar calls keep
+the `_block_splat` wrapper so the wrapper performs tuple packing before
+forwarding. Evidence: `crystal build src/crystal_v2.cr -o
+/tmp/cv2_dirglob_scalar_guard --error-trace` exited 0; a mini scalar
+`Dir.glob` HIR emit showed the wrapper calling `Dir.glob$Enumerable...` with a
+tuple local and no `String#each$block`; full
+`CRYSTAL_V2_STOP_AFTER_HIR=1 ... src/crystal_v2.cr --emit hir --no-link`
+exited 0 after about `187s`; `regression_tests/p2_bootstrap_semantic_emit_oracle.sh
+/tmp/cv2_dirglob_scalar_guard` and
+`regression_tests/p2_selfhost_stage2_shape_guard.sh /tmp/cv2_dirglob_scalar_guard`
+both passed. The full `s1 -> s2b` wrapper built stage2 in `295.29s` with peak
+RSS about `3315.53MB`; generated-stage2 smokes still fail later, now as
+timeouts in prelude loading and after `puts$String`, not as
+`String#each$block`. Boundary: do not treat this as a green generated-stage2
+compiler; the next root is the generated compiler timeout frontier.
+{F/G/R: 0.94/0.58/0.94} [verified]
+
 ## Active Strategy
 
 - Main fast loop: `--no-prelude` oracles and focused STOP_AFTER_HIR budget

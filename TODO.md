@@ -52,12 +52,14 @@ BOOTSTRAP_MEM_MB=4096 \
   scripts/build_bootstrap_stages.sh --stages 2 --out /tmp/cv2_bs_s2
 ```
 
-Current signal after the inline-yield fallback target fix: stage1 build +
-plain/no-prelude smokes pass; stage2 build passes (`295s`, peak RSS about
-`3.34GB`, artifact `/tmp/cv2_bs_s2_dirglob_fix/cv2_s2`); generated stage2
-plain smoke now fails with `STUB CALLED: String$Heach$$block`, and generated
-stage2 no-prelude smoke times out after `puts$String`. The first generated-stage
-blocker is therefore after `s2b` is produced, not in the stage2 self-host build.
+Current signal after the scalar splat fallback correction: stage1 build +
+plain/no-prelude smokes pass; stage2 build passes (`295.29s`, peak RSS about
+`3.32GB`, artifact `/tmp/cv2_bs_s2_scalar_guard/cv2_s2`); generated stage2
+plain smoke now times out in the prelude loading branch after confirming the
+prelude exists, and generated stage2 no-prelude smoke times out after
+`[TYPE_LITERAL_CALL] recv=0 type_literal=false name=puts$String`. The first
+generated-stage blocker is therefore after `s2b` is produced, not in the
+stage2 self-host build.
 
 Current diagnosis / recently fixed roots:
 
@@ -77,6 +79,10 @@ Current diagnosis / recently fixed roots:
     lowered `_block_splat` wrapper. The fallback now resolves splat/block
     targets through the block-overload table and records the corrected call
     target without eagerly forcing the callee body.
+  - scalar splat fallback targets now keep their `_block_splat` wrapper instead
+    of being over-corrected to the `Enumerable` overload. This keeps
+    `Dir.glob("pattern", &block)` from dispatching `String#each$block` inside
+    `Dir.glob$Enumerable...`.
 - Nilable query calls on concrete containers can now materialize inherited
   included-module implementations instead of falling back to the first fuzzy
   overload. This keeps `Array(Nil | Array(ExprId))#[]?$Int32` on the
@@ -119,10 +125,10 @@ Current diagnosis / recently fixed roots:
 
 Remaining risk:
 
-- The current generated stage2 plain smoke fails in prelude loading with
-  `STUB CALLED: String$Heach$$block`. The current generated stage2 no-prelude
-  smoke times out after lowering reaches `puts$String`. Treat these as the next
-  root-cause targets before any `s3b+` attempt.
+- The current generated stage2 plain smoke times out in prelude loading after
+  `prelude exists`. The current generated stage2 no-prelude smoke times out
+  after lowering reaches `puts$String`. Treat these as the next root-cause
+  targets before any `s3b+` attempt.
 - Stage2 still has a separate generic module block corridor around
   `Enumerable(T)#any?$$block`. A no-prelude function-definition HIR emit and a
   full `puts 42` smoke can still hang/abort there under the generated s2
