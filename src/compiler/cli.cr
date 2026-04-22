@@ -2266,12 +2266,30 @@ module CrystalV2
 
         if options.emit_hir
           hir_file = options.output + ".hir"
-          File.write(hir_file, hir_module.to_s)
+          LibC.unlink(hir_file.to_unsafe)
+          fd = LibC.open(hir_file.to_unsafe, LibC::O_WRONLY | LibC::O_CREAT | LibC::O_TRUNC, 0o644)
+          if fd < 0
+            err_io.puts "Failed to open #{hir_file} for writing"
+            return 1
+          end
+          hir_io = IO::FileDescriptor.new(fd)
+          begin
+            hir_module.to_s(hir_io)
+            hir_io.flush
+          ensure
+            LibC.close(fd)
+          end
           log(options, out_io, "  Wrote: #{hir_file}")
         end
 
         if BootstrapEnv.enabled?("CRYSTAL_V2_STOP_AFTER_HIR")
           log(options, out_io, "  Stop after HIR (CRYSTAL_V2_STOP_AFTER_HIR)")
+          emit_timings(options, out_io, timings, total_start)
+          return 0
+        end
+
+        if options.emit_hir && !options.emit_mir && !options.emit_llvm && !options.link
+          log(options, out_io, "  Stop after HIR (--emit hir --no-link)")
           emit_timings(options, out_io, timings, total_start)
           return 0
         end

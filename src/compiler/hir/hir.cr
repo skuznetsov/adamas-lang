@@ -30,6 +30,24 @@ module Crystal::HIR
   # Unique ID for interned strings
   alias StringId = UInt32
 
+  def self.write_value_id_list(io : IO, ids : Array(ValueId), separator : String = ", ") : Nil
+    first = true
+    ids.each do |id|
+      io << separator unless first
+      io << "%" << id
+      first = false
+    end
+  end
+
+  def self.write_type_ref_id_list(io : IO, refs : Array(TypeRef), separator : String = ", ") : Nil
+    first = true
+    refs.each do |ref|
+      io << separator unless first
+      io << ref.id
+      first = false
+    end
+  end
+
   # ═══════════════════════════════════════════════════════════════════════════
   # LIFETIME & TAINTS
   # ═══════════════════════════════════════════════════════════════════════════
@@ -284,7 +302,7 @@ module Crystal::HIR
 
     def to_s(io : IO) : Nil
       io << "%" << @id << " = array_literal ["
-      @elements.join(io, ", ") { |e, o| o << "%" << e }
+      Crystal::HIR.write_value_id_list(io, @elements)
       io << "] : " << @element_type.id
     end
   end
@@ -301,7 +319,7 @@ module Crystal::HIR
 
     def to_s(io : IO) : Nil
       io << "%" << @id << " = string_interpolation ["
-      @parts.join(io, ", ") { |p, o| o << "%" << p }
+      Crystal::HIR.write_value_id_list(io, @parts)
       io << "]"
     end
   end
@@ -370,7 +388,7 @@ module Crystal::HIR
       io << " " << @type.id
       unless @constructor_args.empty?
         io << "("
-        @constructor_args.join(io, ", ") { |arg, o| o << "%" << arg }
+        Crystal::HIR.write_value_id_list(io, @constructor_args)
         io << ")"
       end
     end
@@ -648,7 +666,7 @@ module Crystal::HIR
         io << "%" << recv << "."
       end
       io << @method_name << "("
-      @args.join(io, ", ") { |arg, o| o << "%" << arg }
+      Crystal::HIR.write_value_id_list(io, @args)
       io << ")"
       io << " : " << @type.id
       io << " [virtual]" if @virtual
@@ -676,7 +694,7 @@ module Crystal::HIR
 
     def to_s(io : IO) : Nil
       io << "%" << @id << " = extern_call @" << @extern_name << "("
-      @args.join(io, ", ") { |arg, o| o << "%" << arg }
+      Crystal::HIR.write_value_id_list(io, @args)
       io << ")"
       io << " : " << @type.id
       io << " [varargs]" if @varargs
@@ -699,7 +717,7 @@ module Crystal::HIR
       end
       unless @args.empty?
         io << " "
-        @args.join(io, ", ") { |arg, o| o << "%" << arg }
+        Crystal::HIR.write_value_id_list(io, @args)
       end
       io << " : " << @type.id
     end
@@ -769,12 +787,15 @@ module Crystal::HIR
       io << "%" << @id << " = make_closure block." << @body_block
       unless @captures.empty?
         io << ", captures=["
-        @captures.join(io, ", ") do |cap, o|
-          o << "%" << cap.value_id
-          o << ' ' << (cap.boxed ? "boxed" : "by_val")
-          o << " slot=" << cap.env_slot_type.id
-          o << " payload=" << cap.payload_type.id
-          o << " by_ref" if cap.by_reference
+        first = true
+        @captures.each do |cap|
+          io << ", " unless first
+          io << "%" << cap.value_id
+          io << ' ' << (cap.boxed ? "boxed" : "by_val")
+          io << " slot=" << cap.env_slot_type.id
+          io << " payload=" << cap.payload_type.id
+          io << " by_ref" if cap.by_reference
+          first = false
         end
         io << "]"
       end
@@ -935,8 +956,11 @@ module Crystal::HIR
 
     def to_s(io : IO) : Nil
       io << "%" << @id << " = phi "
-      @incoming.join(io, ", ") do |(blk, val), o|
-        o << "[block." << blk << ": %" << val << "]"
+      first = true
+      @incoming.each do |(blk, val)|
+        io << ", " unless first
+        io << "[block." << blk << ": %" << val << "]"
+        first = false
       end
       io << " : " << @type.id
     end
@@ -1166,8 +1190,11 @@ module Crystal::HIR
 
     def to_s(io : IO) : Nil
       io << "switch %" << @value << " ["
-      @cases.join(io, ", ") do |(val, blk), o|
-        o << "%" << val << " -> block." << blk
+      first = true
+      @cases.each do |(val, blk)|
+        io << ", " unless first
+        io << "%" << val << " -> block." << blk
+        first = false
       end
       io << "], default block." << @default
     end
@@ -1273,7 +1300,7 @@ module Crystal::HIR
       end
       unless @locals.empty?
         io << " locals=["
-        @locals.join(io, ", ") { |l, o| o << "%" << l }
+        Crystal::HIR.write_value_id_list(io, @locals)
         io << "]"
       end
     end
@@ -2493,7 +2520,7 @@ module Crystal::HIR
       io << kind_name(@kind) << " " << @name
       unless @type_params.empty?
         io << "("
-        @type_params.join(io, ", ") { |t, o| o << t.id }
+        Crystal::HIR.write_type_ref_id_list(io, @type_params)
         io << ")"
       end
     end

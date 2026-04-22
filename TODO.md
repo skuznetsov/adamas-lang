@@ -1,6 +1,6 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-04-20
+Updated: 2026-04-22
 Branch: `codegen`
 
 This is the active working backlog only. Historical detail is in git history,
@@ -20,11 +20,28 @@ Working policy:
 - Use `s1 -> s2b` as the main integration gate.
 - Run `s1 -> s5b` rarely, after `s1 -> s2b` is clean.
 
-## Active Blocker
+## Current Checkpoint
 
-`s1 -> s2b` still times out before producing `s2b`.
+Direct `s1 -> s2` now produces a stage2 compiler in the focused gate:
 
-Baseline integration command:
+```bash
+crystal build src/crystal_v2.cr -o /tmp/cv2_hir_emit_stop --error-trace
+CRYSTAL_V2_PHASE_STATS=1 \
+  scripts/run_safe.sh /tmp/cv2_hir_emit_stop 300 4096 \
+    src/crystal_v2.cr -o /tmp/cv2_s2_hir_emit_stop
+```
+
+Verified signal: `[EXIT: 0] after ~265s`, produced `/tmp/cv2_s2_hir_emit_stop`.
+
+Fast stage2 HIR emit also passes:
+
+```bash
+regression_tests/p2_selfhost_hir_emit_no_prelude.sh /tmp/cv2_s2_hir_emit_stop
+```
+
+Verified signal: `p2_selfhost_hir_emit_no_prelude_ok`.
+
+The full wrapper gate remains the integration command:
 
 ```bash
 BOOTSTRAP_STAGE_OUT=/tmp/cv2_bs_s2 \
@@ -34,12 +51,29 @@ BOOTSTRAP_MEM_MB=4096 \
   scripts/build_bootstrap_stages.sh --stages 2 --out /tmp/cv2_bs_s2
 ```
 
-Current diagnosis:
+Current diagnosis / recently fixed roots:
 
-- `lower_main` is exonerated: all 30 top-level expressions start and return.
-- The live failure is `process_pending_lower_functions` fanout.
-- The decisive pass reaches about `78k` queued functions, lowers about `61k`,
-  and grows HIR from about `3k` to `64k` functions before timeout.
+- `Hash(String, Nil).new(block, initial_capacity:)` no longer resolves to the
+  `default_value : V` overload. Generic overload matching now evaluates
+  annotations in the requested concrete owner context, so `V` is `Nil` for
+  `Hash(String, Nil)` instead of a wildcard.
+- Exact-demand helper bodies invalidated by layout repair are requeued and can
+  be processed again in the same pending pass. This removed late abort stubs for
+  `Array(String)#increase_capacity` and `Array(Crystal::HIR::TypeRef)#to_unsafe`.
+- HIR-only emit no longer depends on backend/runtime weak spots:
+  - `--emit hir --no-link` stops after writing HIR when MIR/LLVM emit is not
+    requested.
+  - HIR pretty-printers avoid `Enumerable#join(io, ...)`, which pulled
+    `IO::FileDescriptor#tell`.
+  - CLI HIR output uses the same `LibC.open` / `LibC.close` pattern as LLVM
+    output instead of `File.open` / `IO::FileDescriptor#system_close`.
+
+Remaining risk:
+
+- `lower_missing` still grows HIR heavily during full self-compile
+  (`~25k -> ~54k` functions in the latest focused s2 build). This no longer
+  blocks producing s2 in the current gate, but it remains the main demand-driven
+  cleanup target.
 - Dominant families are broad fallback helpers on compiler-internal containers:
   `Array#to_s`, `Array#inspect`, `Array#exec_recursive`,
   `Array#object_id`, `Hash#to_s`, `Hash#inspect`,
@@ -88,6 +122,7 @@ Run before expensive bootstrap attempts:
 
 ```bash
 regression_tests/p2_bootstrap_semantic_emit_oracle.sh bin/crystal_v2
+regression_tests/p2_selfhost_hir_emit_no_prelude.sh bin/crystal_v2
 regression_tests/p2_pending_budget_no_prelude.sh bin/crystal_v2
 regression_tests/p2_root_self_replay_no_prelude.sh bin/crystal_v2
 regression_tests/p2_universal_helper_fanout_no_prelude.sh bin/crystal_v2
@@ -96,6 +131,7 @@ regression_tests/p2_universal_helper_fanout_no_prelude.sh bin/crystal_v2
 Expected current signals:
 
 - `p2_bootstrap_semantic_emit_oracle_ok`
+- `p2_selfhost_hir_emit_no_prelude_ok`
 - `p2_pending_budget_no_prelude_ok ... total=103 max_queue=57`
 - `p2_root_self_replay_no_prelude_ok process_delta=20 total=47 ...`
 - `p2_universal_helper_fanout_no_prelude_ok deep_helpers=0`
@@ -106,18 +142,21 @@ pending-budget oracle.
 
 ## Next Work
 
-1. Add/inspect exact-called provenance for `record_pending_callee_for_rta` so
-   the source of `keep:exact_called Array#to_s` / `Hash#to_s` is explicit.
-2. Verify whether broad fallback self-calls should mark exact concrete wrapper
+1. Run the full `scripts/build_bootstrap_stages.sh --stages 2` wrapper gate and
+   confirm it produces the same s2 result as the direct command above.
+2. Compare `s1_bootstrap` and `s2b` on the fixed no-prelude corpus before
+   trying `s3b+`.
+3. Add/inspect exact-called provenance for `record_pending_callee_for_rta` so
+   the source of remaining `keep:exact_called Array#to_s` / `Hash#to_s` demand
+   is explicit.
+4. Verify whether broad fallback self-calls should mark exact concrete wrapper
    names as demanded, or whether they should remain virtual/demand-local until a
    real callsite asks for that concrete owner.
-3. After fast oracles pass, run the `s1 -> s2b` integration gate.
-4. If `s2b` is produced, compare `s1_bootstrap` and `s2b` on the fixed corpus
-   before trying `s3b+`.
 
 ## Stop Conditions
 
-- Do not run `s3b+` while `s1 -> s2b` cannot produce `s2b`.
+- Do not run `s3b+` until the wrapper `s1 -> s2b` gate and normalized corpus
+  comparison are green.
 - Do not increase timeout or memory to hide pending expansion.
 - Do not modify stdlib/runtime.
 - Do not land another name-family guard unless it measurably reduces the
