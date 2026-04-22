@@ -2070,6 +2070,7 @@ module Crystal::HIR
           method == "check_needs_resize_for_unshift" ||
           method == "needs_resize?" ||
           method == "increase_capacity" ||
+          method == "increase_capacity_for_unshift" ||
           method == "remaining_capacity" ||
           method == "reset_buffer_to_root_buffer" ||
           method == "resize_to_capacity" ||
