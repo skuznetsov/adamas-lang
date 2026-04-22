@@ -70178,7 +70178,7 @@ module Crystal::HIR
         # argument. In that shape a non-block lookup can miss and recurse into
         # the same wrapper. Retry once as block-call with trailing Proc removed.
         if !has_block && !call_has_splat && arg_count > 0 && base_name.ends_with?(".new")
-          if call_arg_types = arg_types
+          if (call_arg_types = arg_types) && call_arg_types.size >= arg_count
             trailing_arg_type = call_arg_types[arg_count - 1]
             trailing_is_proc = false
             if trailing_desc = @module.get_type_descriptor(trailing_arg_type)
