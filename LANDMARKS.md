@@ -340,10 +340,31 @@ even after writing the timeout marker. Boundary: next compiler work should
 debug the generated `s2b` smoke/no-prelude timeout, not the stage2 self-host
 build. {F/G/R: 0.93/0.55/0.94} [verified]
 
+[LM-488|verified]: Nested inline-yield fallback must not emit a call back to
+the currently lowered splat/block wrapper. The root cause was
+`inline_yield_fallback_call` preserving an `inline_key` that already contained
+`$..._block_splat`; because the old correction ran only for bare names, a depth
+or repeat guard inside `Dir.glob(*patterns, &block)` emitted a self-call that
+repacked the splat tuple indefinitely in generated stage2. The fix resolves
+bare, `_splat`, and current-function fallback targets through the block overload
+table, prefers a typed non-splat block target when available, and does not
+eagerly force the corrected callee body during fallback. Evidence:
+`crystal build src/crystal_v2.cr -o /tmp/cv2_dirglob_rootfix3 --error-trace`
+exited 0; mini `Dir.glob` HIR emit under `scripts/run_safe.sh` no longer
+contains `Dir.glob$Path | String_File::MatchOptions_Bool_block_splat`; full
+`CRYSTAL_V2_STOP_AFTER_HIR=1 ... src/crystal_v2.cr --emit hir --no-link`
+exited 0 after about `189s`; `regression_tests/p2_bootstrap_semantic_emit_oracle.sh
+/tmp/cv2_dirglob_rootfix3` and
+`regression_tests/p2_selfhost_stage2_shape_guard.sh /tmp/cv2_dirglob_rootfix3`
+both passed. Boundary: `s1 -> s2b` now builds `cv2_s2`, but generated-stage2
+smokes still fail: plain prelude smoke hits `STUB CALLED: String$Heach$$block`,
+and no-prelude smoke times out after `puts$String`. {F/G/R: 0.94/0.58/0.94}
+[verified]
+
 ## Active Strategy
 
 - Main fast loop: `--no-prelude` oracles and focused STOP_AFTER_HIR budget
   checks.
 - Integration gate: `s1 -> s2b` only after fast oracles are green.
 - Rare full gate: `s1 -> s5b` plus normalized HIR/MIR/LL equality.
-- Do not run `s3b+` while `s1 -> s2b` cannot produce `s2b`.
+- Do not run `s3b+` while generated `s2b` cannot pass plain/no-prelude smokes.

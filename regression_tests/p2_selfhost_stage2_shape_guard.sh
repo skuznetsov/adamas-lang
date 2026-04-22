@@ -108,6 +108,9 @@ require_in_function 'func @Dir\.glob\$Path \| String_File::MatchOptions_Bool_blo
 reject_in_function 'func @Dir\.glob\$Path \| String_File::MatchOptions_Bool_block_splat' \
   'call @[0-9]+[(]%0, %1, %2' \
   'self-recursive Dir.glob block_splat call'
+reject_in_function 'func @Dir\.glob\$Path \| String_File::MatchOptions_Bool_block_splat' \
+  'call .*_block_splat' \
+  'self-recursive Dir.glob block_splat call after tuple rewrap'
 
 require_in_function 'func @CrystalV2::Compiler::Semantic::TypeInferenceEngine#primitive_metaclass\?\$CrystalV2::Compiler::Semantic::Type' \
   'bitcast %[0-9]+ : Type#[0-9]+' \

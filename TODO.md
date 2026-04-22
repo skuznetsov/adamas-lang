@@ -52,11 +52,12 @@ BOOTSTRAP_MEM_MB=4096 \
   scripts/build_bootstrap_stages.sh --stages 2 --out /tmp/cv2_bs_s2
 ```
 
-Current signal: stage1 build + plain/no-prelude smokes pass; stage2 build
-passes (`293s`, peak RSS about `3.44GB`, artifact `/tmp/cv2_bs_s2/cv2_s2`);
-stage2 plain `puts 42` smoke times out after `60s`. The first generated-stage
-runtime/compiler-smoke blocker is therefore after `s2b` is produced, not in the
-stage2 self-host build itself.
+Current signal after the inline-yield fallback target fix: stage1 build +
+plain/no-prelude smokes pass; stage2 build passes (`295s`, peak RSS about
+`3.34GB`, artifact `/tmp/cv2_bs_s2_dirglob_fix/cv2_s2`); generated stage2
+plain smoke now fails with `STUB CALLED: String$Heach$$block`, and generated
+stage2 no-prelude smoke times out after `puts$String`. The first generated-stage
+blocker is therefore after `s2b` is produced, not in the stage2 self-host build.
 
 Current diagnosis / recently fixed roots:
 
@@ -72,6 +73,10 @@ Current diagnosis / recently fixed roots:
   - splat parameters are rebound to tuple locals in the method body, so
     `Dir.glob(*patterns, &block)` no longer self-recurses through its
     `_block_splat` wrapper.
+  - nested inline-yield fallback no longer emits a call back to the currently
+    lowered `_block_splat` wrapper. The fallback now resolves splat/block
+    targets through the block-overload table and records the corrected call
+    target without eagerly forcing the callee body.
 - Nilable query calls on concrete containers can now materialize inherited
   included-module implementations instead of falling back to the first fuzzy
   overload. This keeps `Array(Nil | Array(ExprId))#[]?$Int32` on the
@@ -114,13 +119,10 @@ Current diagnosis / recently fixed roots:
 
 Remaining risk:
 
-- The current generated stage2 still times out on a minimal no-prelude compile
-  after `parse_file_recursive parse ok`. The latest sample points at
-  `__crystal_v2_string_eq`; earlier blockers in this corridor were
-  `Array(...ExprId)#[]?$Range`, `Object#hash`, and stale
-  `Hash(...HIR::Value)#ends_with?`, all now moved forward. Treat
-  `__crystal_v2_string_eq` as the next root-cause target before any `s3b+`
-  attempt.
+- The current generated stage2 plain smoke fails in prelude loading with
+  `STUB CALLED: String$Heach$$block`. The current generated stage2 no-prelude
+  smoke times out after lowering reaches `puts$String`. Treat these as the next
+  root-cause targets before any `s3b+` attempt.
 - Stage2 still has a separate generic module block corridor around
   `Enumerable(T)#any?$$block`. A no-prelude function-definition HIR emit and a
   full `puts 42` smoke can still hang/abort there under the generated s2
@@ -200,10 +202,10 @@ pending-budget oracle.
 
 ## Next Work
 
-1. Run the full `scripts/build_bootstrap_stages.sh --stages 2` wrapper gate and
-   confirm it produces the same s2 result as the direct command above.
-2. Fix the current generated-stage2 no-prelude hang around string/range
-   primitives before treating the produced s2 as usable for corpus comparison.
+1. Add a fast no-prelude oracle for the generated-stage2 `puts$String` hang, or
+   reduce it to the smallest HIR/MIR shape that reproduces without full wrapper
+   bootstrap.
+2. Fix the generated-stage2 `String#each(&)` block stub in prelude loading.
 3. Compare `s1_bootstrap` and `s2b` on the fixed no-prelude corpus before
    trying `s3b+`.
 4. Add/inspect exact-called provenance for `record_pending_callee_for_rta` so
@@ -215,8 +217,8 @@ pending-budget oracle.
 
 ## Stop Conditions
 
-- Do not run `s3b+` until the wrapper `s1 -> s2b` gate and normalized corpus
-  comparison are green.
+- Do not run `s3b+` until generated `s2b` passes plain/no-prelude smokes and
+  normalized corpus comparison is green.
 - Do not increase timeout or memory to hide pending expansion.
 - Do not modify stdlib/runtime.
 - Do not land another name-family guard unless it measurably reduces the

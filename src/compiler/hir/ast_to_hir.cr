@@ -75156,16 +75156,26 @@ module Crystal::HIR
         heap_block_proc = block_arg_requires_heap_proc?(inline_key, base_inline_name)
         proc_id = lower_block_to_proc(ctx, block, block_param_types, block_arena_for_proc, heap_block_proc)
         fallback_args << proc_id
-        # `inline_key` can still be a bare `Owner#m` when the yield inline path bails out early.
-        # The lowered def is registered only under the `def ... &` overload key (`$..._block`).
+        # `inline_key` can still be a bare `Owner#m` when the yield inline path bails out early,
+        # or it can be the currently-lowered splat wrapper when a nested inline fallback hits a
+        # depth/repeat guard. In both cases, resolve through the block overload table before
+        # freezing the fallback call target. Otherwise wrappers like `Dir.glob(*patterns, &block)`
+        # can recursively call themselves and repeatedly re-pack the splat tuple.
         call_target = inline_key
-        if receiver_id && !call_target.includes?('$')
+        if receiver_id && (!call_target.includes?('$') || call_target.ends_with?("_splat") || call_target == ctx.function.name)
           recv_desc_fb = @module.get_type_descriptor(ctx.type_of(receiver_id))
           recv_base_fb = unless recv_desc_fb && recv_desc_fb.name.includes?('(')
                              yield_receiver_base_name(ctx.type_of(receiver_id))
                            end
           if block_entry = lookup_block_function_def_for_call(base_inline_name, call_args.size, callsite_arg_types, recv_base_fb)
-            call_target = block_entry[0]
+            block_entry_name = block_entry[0]
+            if block_entry_name.ends_with?("_splat")
+              if typed_entry = lookup_function_def_for_call(base_inline_name, call_args.size, true, callsite_arg_types)
+                typed_entry_name = typed_entry[0]
+                block_entry_name = typed_entry_name unless typed_entry_name.ends_with?("_splat")
+              end
+            end
+            call_target = block_entry_name
           elsif count_distinct_block_overloads_arity_only(base_inline_name, call_args.size, recv_base_fb) == 1
             if block_entry = lookup_block_function_def_for_call(base_inline_name, call_args.size, nil, recv_base_fb)
               call_target = block_entry[0]
@@ -75177,7 +75187,6 @@ module Crystal::HIR
               call_target = typed_b
             end
           end
-          lower_function_if_needed(call_target) if call_target != inline_key
         end
         call = Call.new(ctx.next_id, return_type, receiver_id, call_target, fallback_args, block_id)
         ctx.emit(call)
