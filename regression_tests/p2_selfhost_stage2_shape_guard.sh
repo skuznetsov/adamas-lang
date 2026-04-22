@@ -128,5 +128,7 @@ reject_pattern 'T#lookup_macro\$String' \
   'generic T#lookup_macro target in self-host MIR'
 reject_pattern 'NameResolver#(current_owner_symbol|in_method_body\?|current_method_is_class_method\?|top_level_scope\?|type_expression_context\?)' \
   'unmaterialized NameResolver zero-arg helper target in self-host MIR'
+require_pattern 'func @CrystalV2::Compiler::Semantic::TypeInferenceEngine#guard_watchdog!' \
+  'materialized TypeInferenceEngine guard_watchdog! helper in self-host MIR'
 
 echo "p2_selfhost_stage2_shape_guard_ok"

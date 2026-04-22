@@ -413,6 +413,27 @@ Boundary: next root is the demand/materialization issue for
 `TypeInferenceEngine#guard_watchdog!`, not the already-moved helper cluster.
 {F/G/R: 0.91/0.52/0.92} [verified]
 
+[LM-491|verified]: `TypeInferenceEngine#guard_watchdog!` was a stale deferred
+leaf-helper target, not a missing def registration. The def was registered
+early, but calls emitted during `TypeInferenceEngine` lowering deferred the
+zero-arg helper into the work queue; later lazy-RTA/safety-net passes could
+leave a concrete call target without a materialized body, so LLVM generated
+`STUB CALLED: CrystalV2::Compiler::Semantic::TypeInferenceEngine#guard_watchdog!`.
+The safe fix is not a broad stale-Pending requeue: that was tested and rejected
+because it reopens the deep generic formatting/iterator fan-out and times out.
+Instead, this specific leaf guard bypasses nested deferral and is lowered
+immediately. Evidence: `crystal build src/crystal_v2.cr -o /tmp/cv2_guardleaf
+--error-trace` exited 0; `CRYSTAL_V2_STOP_AFTER_HIR=1 scripts/run_safe.sh
+/tmp/cv2_guardleaf 300 4096 src/crystal_v2.cr -o /tmp/cv2_guardleaf_stop`
+exited 0 after about `197s`; `--emit hir --no-link` produced a HIR body
+`func @CrystalV2::Compiler::Semantic::TypeInferenceEngine#guard_watchdog!`
+that calls `Frontend::Watchdog.check!`; `regression_tests/p2_selfhost_stage2_shape_guard.sh
+/tmp/cv2_guardleaf` and `regression_tests/p2_bootstrap_semantic_emit_oracle.sh
+/tmp/cv2_guardleaf` both passed. Boundary: a direct full `s1` codegen attempt
+still timed out at 300s in later lowering, so the next frontier must be
+re-measured from a fresh generated `s2b` rather than assumed green.
+{F/G/R: 0.92/0.48/0.91} [verified]
+
 ## Active Strategy
 
 - Main fast loop: `--no-prelude` oracles and focused STOP_AFTER_HIR budget

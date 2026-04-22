@@ -2204,6 +2204,10 @@ module Crystal::HIR
         (owner_base == "Set" && (method == "add" || method == "add?" || method == "<<"))
     end
 
+    private def immediate_leaf_guard_lower_target?(name : String) : Bool
+      strip_type_suffix(name) == "CrystalV2::Compiler::Semantic::TypeInferenceEngine#guard_watchdog!"
+    end
+
     private def speculative_root_fallback_helper_mark?(name : String) : Bool
       current_class = @current_class
       current_method = @current_method
@@ -58679,7 +58683,7 @@ module Crystal::HIR
 
       # WORK QUEUE: If we're already inside lowering, defer this function
       # to prevent stack overflow from deep recursive lowering chains.
-      if inside_lowering?
+      if inside_lowering? && !immediate_leaf_guard_lower_target?(name)
         return if speculative_root_fallback_helper_mark?(name) ||
                   recursive_formatting_helper_defer?(name) ||
                   rta_exact_helper_suppressed?(name)

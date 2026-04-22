@@ -57,11 +57,15 @@ plain/no-prelude smokes pass; stage2 build passes (latest accepted wrapper:
 `309.04s` wall, `run_safe` child `[EXIT: 0] after ~237s`, peak RSS about
 `3.43GB`, artifact `/tmp/cv2_bs_s2_semantic_helpers/cv2_s2`); generated stage2
 plain smoke still times out in the prelude loading branch after confirming the
-prelude exists. The generated stage2 no-codegen no-prelude smoke has moved from
-`T#lookup_macro` / `NameResolver#current_owner_symbol` to
-`STUB CALLED: CrystalV2::Compiler::Semantic::TypeInferenceEngine#guard_watchdog!`.
-The first generated-stage blocker is therefore after `s2b` is produced, not in
-the stage2 self-host build.
+prelude exists. The generated stage2 no-codegen no-prelude smoke moved from
+`T#lookup_macro` / `NameResolver#current_owner_symbol` to the
+`TypeInferenceEngine#guard_watchdog!` stub; the HIR/MIR shape root is now fixed:
+`guard_watchdog!` is materialized immediately as a leaf guard instead of being
+left in a stale deferred queue. The next generated-stage blocker must be
+re-measured from a fresh `s2b`; direct `s1` full codegen still timed out under
+the 300s sandbox gate during later lowering, while `STOP_AFTER_HIR` and p2
+shape oracles pass. The first generated-stage blocker is therefore still after
+HIR self-host materialization, not in the initial stage1 host build.
 
 Current diagnosis / recently fixed roots:
 
@@ -93,6 +97,11 @@ Current diagnosis / recently fixed roots:
     compiler call targets; their bodies are inlined at source call sites, moving
     generated no-prelude smoke past the `current_owner_symbol` helper stub
     cluster.
+  - `TypeInferenceEngine#guard_watchdog!` now bypasses deferred work-queue
+    lowering as a leaf guard, so self-host HIR/MIR contains the helper body
+    instead of leaving a concrete call target for LLVM to synthesize as an abort
+    stub. A broad stale-Pending requeue was tested and rejected because it
+    reopens the deep generic helper fan-out that lazy RTA intentionally prunes.
 - Nilable query calls on concrete containers can now materialize inherited
   included-module implementations instead of falling back to the first fuzzy
   overload. This keeps `Array(Nil | Array(ExprId))#[]?$Int32` on the
