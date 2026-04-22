@@ -319,7 +319,7 @@ module CrystalV2
               debug("[NameResolver] matched macro #{name}")
               @identifier_symbols[node_id] = macro_symbol
             else
-              if type_expression_context? && type_expression_identifier_name?(name)
+              if @type_expression_depth > 0 && type_expression_identifier_name?(name)
                 return
               end
               if special_symbol = resolve_special_identifier(node_id, name)
@@ -332,7 +332,7 @@ module CrystalV2
               end
             end
           else
-            if type_expression_context? && type_expression_identifier_name?(name)
+            if @type_expression_depth > 0 && type_expression_identifier_name?(name)
               return
             end
             # Report undefined identifiers in all scopes, not just top-level
@@ -836,7 +836,7 @@ module CrystalV2
             end
           if symbol
             @identifier_symbols[node_id] = symbol
-          elsif top_level_scope?
+          elsif @current_table.same?(@root_table)
             @diagnostics << Diagnostic.new("uninitialized constant #{segments.join("::")}", node.span, node_id)
           end
         end
@@ -1037,7 +1037,7 @@ module CrystalV2
         end
 
         private def resolve_self(node_id : ExprId)
-          if owner = current_owner_symbol
+          if owner = @namespace_stack.last?
             @identifier_symbols[node_id] = owner
           end
         end
@@ -1055,7 +1055,7 @@ module CrystalV2
         end
 
         private def suppress_unresolved_callee_diagnostic?(name : String, node_id : ExprId) : Bool
-          return false unless in_method_body?
+          return false unless !@current_method_is_class_method_stack.empty?
           return false if name.empty? || constant_like_name?(name)
           return false unless @defer_method_body_receiverless_candidates
           return false if @generated_overlay.generated_node?(node_id)
@@ -1077,7 +1077,7 @@ module CrystalV2
         end
 
         private def push_bare_statement_candidate(expr_id : ExprId) : Nil
-          return unless in_method_body?
+          return unless !@current_method_is_class_method_stack.empty?
           return if expr_id.invalid?
           return unless @arena[expr_id].is_a?(Frontend::IdentifierNode)
 
@@ -1092,12 +1092,13 @@ module CrystalV2
         end
 
         private def lookup_implicit_self_symbol(name : String) : Symbol?
-          owner = current_owner_symbol
+          owner = @namespace_stack.last?
           return nil unless owner
 
           case owner
           when ClassSymbol
-            if symbol = lookup_in_class_hierarchy(owner, name, class_methods: current_method_is_class_method?)
+            class_method = @current_method_is_class_method_stack.last? || false
+            if symbol = lookup_in_class_hierarchy(owner, name, class_methods: class_method)
               return symbol
             end
           when ModuleSymbol
@@ -1121,7 +1122,7 @@ module CrystalV2
             return symbol
           end
 
-          owner = current_owner_symbol
+          owner = @namespace_stack.last?
           return nil unless owner.is_a?(ClassSymbol)
 
           lookup_macro_in_class_hierarchy(owner, name)
@@ -1217,7 +1218,7 @@ module CrystalV2
         names = filter.split(',').map(&.strip).reject(&.empty?)
         return unless names.includes?(name)
 
-        owner = current_owner_symbol
+        owner = @namespace_stack.last?
         owner_desc = case owner
                      when ClassSymbol
                        "ClassSymbol(#{owner.name})"

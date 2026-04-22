@@ -384,6 +384,35 @@ timeouts in prelude loading and after `puts$String`, not as
 compiler; the next root is the generated compiler timeout frontier.
 {F/G/R: 0.94/0.58/0.94} [verified]
 
+[LM-490|verified]: Generated-stage2 semantic helper stubs can come from
+source-level helper calls whose HIR call targets are emitted but whose bodies
+are not materialized by the current demand pipeline. Two adjacent roots were
+moved. First, `SymbolCollector#@table_stack` inferred as
+`Array(SymbolTable) | Array(String)`, so `current_table` called generic
+`Array#last() -> T` and the generated compiler hit `T#lookup_macro$String`.
+Adding `@table_stack : Array(SymbolTable)` makes `current_table` return
+`SymbolTable` and removes `T#lookup_macro` from HIR/MIR. Second, trivial
+`NameResolver` zero-arg helpers (`current_owner_symbol`, `in_method_body?`,
+`current_method_is_class_method?`, `top_level_scope?`,
+`type_expression_context?`) were present as calls but not materialized as
+bodies; inlining their simple stack/depth checks at source call sites removes
+that abort-stub cluster. Evidence: `crystal build src/crystal_v2.cr -o
+/tmp/cv2_semantic_helper_commit --error-trace` exited 0;
+`regression_tests/p2_bootstrap_semantic_emit_oracle.sh
+/tmp/cv2_semantic_helper_commit` and
+`regression_tests/p2_selfhost_stage2_shape_guard.sh
+/tmp/cv2_semantic_helper_commit` both passed; the full `s1 -> s2b` wrapper
+built stage2 at `/tmp/cv2_bs_s2_semantic_helpers/cv2_s2`, and generated
+no-codegen no-prelude smoke moved past `T#lookup_macro` and
+`NameResolver#current_owner_symbol` to
+`TypeInferenceEngine#guard_watchdog!`. Refuted: direct replacement of
+`guard_watchdog!` with `Frontend::Watchdog.check!` removes the stub but
+duplicates watchdog lowering and fails the stage2 build envelope; changing
+`guard_watchdog!` visibility to public still leaves calls without a body in HIR.
+Boundary: next root is the demand/materialization issue for
+`TypeInferenceEngine#guard_watchdog!`, not the already-moved helper cluster.
+{F/G/R: 0.91/0.52/0.92} [verified]
+
 ## Active Strategy
 
 - Main fast loop: `--no-prelude` oracles and focused STOP_AFTER_HIR budget

@@ -52,14 +52,16 @@ BOOTSTRAP_MEM_MB=4096 \
   scripts/build_bootstrap_stages.sh --stages 2 --out /tmp/cv2_bs_s2
 ```
 
-Current signal after the scalar splat fallback correction: stage1 build +
-plain/no-prelude smokes pass; stage2 build passes (`295.29s`, peak RSS about
-`3.32GB`, artifact `/tmp/cv2_bs_s2_scalar_guard/cv2_s2`); generated stage2
-plain smoke now times out in the prelude loading branch after confirming the
-prelude exists, and generated stage2 no-prelude smoke times out after
-`[TYPE_LITERAL_CALL] recv=0 type_literal=false name=puts$String`. The first
-generated-stage blocker is therefore after `s2b` is produced, not in the
-stage2 self-host build.
+Current signal after the semantic helper materialization fixes: stage1 build +
+plain/no-prelude smokes pass; stage2 build passes (latest accepted wrapper:
+`309.04s` wall, `run_safe` child `[EXIT: 0] after ~237s`, peak RSS about
+`3.43GB`, artifact `/tmp/cv2_bs_s2_semantic_helpers/cv2_s2`); generated stage2
+plain smoke still times out in the prelude loading branch after confirming the
+prelude exists. The generated stage2 no-codegen no-prelude smoke has moved from
+`T#lookup_macro` / `NameResolver#current_owner_symbol` to
+`STUB CALLED: CrystalV2::Compiler::Semantic::TypeInferenceEngine#guard_watchdog!`.
+The first generated-stage blocker is therefore after `s2b` is produced, not in
+the stage2 self-host build.
 
 Current diagnosis / recently fixed roots:
 
@@ -83,6 +85,14 @@ Current diagnosis / recently fixed roots:
     of being over-corrected to the `Enumerable` overload. This keeps
     `Dir.glob("pattern", &block)` from dispatching `String#each$block` inside
     `Dir.glob$Enumerable...`.
+  - `SymbolCollector#@table_stack` is explicitly typed as
+    `Array(SymbolTable)`, preventing V2 from widening it to
+    `Array(SymbolTable) | Array(String)` and routing `current_table.lookup_macro`
+    through `T#lookup_macro`.
+  - trivial `NameResolver` zero-arg helpers are no longer required as generated
+    compiler call targets; their bodies are inlined at source call sites, moving
+    generated no-prelude smoke past the `current_owner_symbol` helper stub
+    cluster.
 - Nilable query calls on concrete containers can now materialize inherited
   included-module implementations instead of falling back to the first fuzzy
   overload. This keeps `Array(Nil | Array(ExprId))#[]?$Int32` on the
@@ -126,9 +136,10 @@ Current diagnosis / recently fixed roots:
 Remaining risk:
 
 - The current generated stage2 plain smoke times out in prelude loading after
-  `prelude exists`. The current generated stage2 no-prelude smoke times out
-  after lowering reaches `puts$String`. Treat these as the next root-cause
-  targets before any `s3b+` attempt.
+  `prelude exists`. The current generated stage2 no-codegen no-prelude smoke
+  times out after `STUB CALLED:
+  CrystalV2::Compiler::Semantic::TypeInferenceEngine#guard_watchdog!`.
+  Treat these as the next root-cause targets before any `s3b+` attempt.
 - Stage2 still has a separate generic module block corridor around
   `Enumerable(T)#any?$$block`. A no-prelude function-definition HIR emit and a
   full `puts 42` smoke can still hang/abort there under the generated s2
@@ -176,6 +187,13 @@ Do not retry without new evidence:
   - 120s `STOP_AFTER_HIR` diagnostic still timed out, with queue reaching `40k`
     and the same helper families (`Array#to_json`, `Array#inspect`,
     `Array#to_s`, `Array#exec_recursive`, `Array#hash`, `Hash#...`).
+- Replacing `TypeInferenceEngine#guard_watchdog!` calls with direct
+  `Frontend::Watchdog.check!` calls.
+  - It removes the helper stub but duplicates watchdog lowering at every call
+    site and fails the stage2 build envelope before producing `cv2_s2`.
+- Changing `guard_watchdog!` visibility from private to public.
+  - HIR still contains calls to `guard_watchdog!` but no function body; the
+    missing-helper root is not method visibility.
 
 Common lesson: name-family containment can remove individual symptoms but has
 not yet removed the underlying broad fallback demand leak.

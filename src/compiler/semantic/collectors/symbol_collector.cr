@@ -21,6 +21,7 @@ module CrystalV2
         getter generated_root_origins : Hash(Int32, Frontend::ExprId)
         getter generated_root_macro_defs : Hash(Int32, Frontend::ExprId)
         @virtual_arena : Frontend::VirtualArena?
+        @table_stack : Array(SymbolTable)
 
       def initialize(@program : Program, context : Context, @node_file_path_provider : Proc(Frontend::ExprId, String?)? = nil, @source_for_path_provider : Proc(String, String?)? = nil)
         program_arena = @program.arena

@@ -124,5 +124,9 @@ reject_in_function 'func @CrystalV2::Compiler::Semantic::TypeInferenceEngine#pri
 
 reject_pattern 'Tuple#includes\?\$String' \
   'generic Tuple#includes?$String target in self-host MIR'
+reject_pattern 'T#lookup_macro\$String' \
+  'generic T#lookup_macro target in self-host MIR'
+reject_pattern 'NameResolver#(current_owner_symbol|in_method_body\?|current_method_is_class_method\?|top_level_scope\?|type_expression_context\?)' \
+  'unmaterialized NameResolver zero-arg helper target in self-host MIR'
 
 echo "p2_selfhost_stage2_shape_guard_ok"
