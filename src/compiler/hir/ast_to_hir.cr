@@ -1928,6 +1928,7 @@ module Crystal::HIR
     # broad exact marking re-materializes the compiler's deep helper graph.
     private def record_pending_callee_for_rta(name : String) : Nil
       return unless internal_container_helper_exact_demand?(name) ||
+                    internal_container_helper_name_exact_demand?(name) ||
                     direct_mutating_container_helper_exact_demand?(name) ||
                     hir_scalar_helper_exact_demand?(name) ||
                     frontend_ast_node_helper_exact_demand?(name) ||
@@ -1936,6 +1937,7 @@ module Crystal::HIR
                     ast_to_hir_helper_exact_demand?(name) ||
                     llvm_backend_helper_exact_demand?(name) ||
                     ast_to_hir_lookup_key_helper_exact_demand?(name) ||
+                    hir_dump_exact_demand?(name) ||
                     time_location_runtime_getter_exact_demand?(name)
       @rta_called_methods << name
     end
@@ -2077,7 +2079,75 @@ module Crystal::HIR
           method == "resize_to_capacity_for_unshift" ||
           method == "resize_if_cant_insert" ||
           method == "root_buffer" ||
+          method == "to_unsafe" ||
           method == "unsafe_fetch" ||
+          method == "unsafe_put" ||
+          method == "fetch" ||
+          method == "empty?"
+      when "Hash"
+        method == "[]" ||
+          method == "[]?" ||
+          method == "entries" ||
+          method == "entries_size" ||
+          method == "entries_capacity" ||
+          method == "entries_full?" ||
+          method == "indices_size" ||
+          method == "double_indices_size" ||
+          method == "resize" ||
+          method == "do_compaction" ||
+          method == "clear_indices" ||
+          method == "clear_entries" ||
+          method == "indices_malloc_size" ||
+          method == "get_entry" ||
+          method == "set_entry" ||
+          method == "index_for_entry_index" ||
+          method == "add_entry_and_increment_size" ||
+          method == "delete_impl" ||
+          method == "delete_entry" ||
+          method == "delete_entry_and_update_counts" ||
+          method == "each_entry_with_index" ||
+          method == "each_key" ||
+          method == "next_index" ||
+          method == "fit_in_indices" ||
+          method == "key_hash" ||
+          method == "entry_matches?" ||
+          method == "fetch" ||
+          method == "find_entry" ||
+          method == "find_entry_with_index" ||
+          method == "find_entry_with_index_linear_scan"
+      when "Slice"
+        method == "unsafe_fetch"
+      when "Deque"
+        method == "unsafe_fetch" ||
+          method == "unsafe_put" ||
+          method == "calculate_new_capacity" ||
+          method == "resize_if_cant_insert" ||
+          method == "resize_to_capacity"
+      else
+        false
+      end
+    end
+
+    private def internal_container_helper_name_exact_demand?(name : String) : Bool
+      owner = method_owner_from_name(name)
+      owner_base = strip_generic_args(owner)
+      method = method_short_from_name(name)
+      case owner_base
+      when "Array"
+        method == "check_needs_resize" ||
+          method == "check_needs_resize_for_unshift" ||
+          method == "needs_resize?" ||
+          method == "increase_capacity" ||
+          method == "increase_capacity_for_unshift" ||
+          method == "remaining_capacity" ||
+          method == "reset_buffer_to_root_buffer" ||
+          method == "resize_to_capacity" ||
+          method == "resize_to_capacity_for_unshift" ||
+          method == "resize_if_cant_insert" ||
+          method == "root_buffer" ||
+          method == "to_unsafe" ||
+          method == "unsafe_fetch" ||
+          method == "unsafe_put" ||
           method == "fetch" ||
           method == "empty?"
       when "Hash"
@@ -2322,6 +2392,7 @@ module Crystal::HIR
 
     private def rta_exact_helper_suppressed?(name : String) : Bool
       return false unless has_method_separator?(name)
+      return false if hir_dump_exact_demand?(name)
 
       method = method_short_from_name(name)
       return false unless method
@@ -2355,6 +2426,21 @@ module Crystal::HIR
         owner_base == "Pointer" ||
         owner_base == "Set" ||
         owner_base == "Tuple"
+    end
+
+    private def hir_dump_exact_demand?(name : String) : Bool
+      current_class = @current_class
+      current_method = @current_method
+      return false unless current_class && current_method == "to_s"
+
+      owner = method_owner_from_name(name)
+      return false unless owner.starts_with?("Crystal::HIR::")
+      return false if owner.includes?('(')
+
+      return true if current_class == "Crystal::HIR::Block" && method_short_from_name(name) == "to_s"
+      return true if owner == current_class
+
+      false
     end
 
     @[AlwaysInline]
@@ -24208,9 +24294,14 @@ module Crystal::HIR
         owner_stripped = strip_generic_args(owner)
         next unless owner == class_name || owner == owner_base || owner_stripped == class_name || owner_stripped == owner_base
 
+        requeue_exact_demand = @rta_called_methods.includes?(name)
         next unless @module.remove_function(name)
         @function_lowering_states.delete(name)
         @pending_function_queue.delete(name)
+        if requeue_exact_demand
+          @function_lowering_states[name] = FunctionLoweringState::Pending
+          @pending_function_queue << name
+        end
         delete_yield_function(name)
         @yield_return_functions.delete(name)
         @yield_return_checked.delete(name)
@@ -32749,6 +32840,12 @@ module Crystal::HIR
 
         if param_type != TypeRef::VOID && arg_type != TypeRef::VOID
           if param_type != arg_type && !needs_union_coercion?(arg_type, param_type)
+            if enum_name = resolve_enum_name(param_resolved_name)
+              if enum_base_type(enum_name) == arg_type
+                arg_idx += 1
+                next
+              end
+            end
             if numeric_compatible?(arg_type, param_type)
               arg_idx += 1
               next
@@ -32943,6 +33040,13 @@ module Crystal::HIR
               end
             end
           else
+            if enum_name = resolve_enum_name(resolved_name)
+              if enum_base_type(enum_name) == arg_type
+                score += 4
+                arg_idx += 1
+                next
+              end
+            end
             # Module-like type annotations (Enumerable, Indexable, etc.)
             # don't have concrete type refs. Give a score bonus when the
             # arg is a Tuple/Array passed to an Enumerable/Indexable param,
@@ -37943,6 +38047,17 @@ module Crystal::HIR
       sep = parts.separator
       return nil unless sep == '#' || sep == '.'
       parts.owner
+    end
+
+    private def function_context_for_lookup_candidate(lookup_name : String, candidate_name : String) : String?
+      candidate_context = function_context_from_name(candidate_name)
+      lookup_context = function_context_from_name(lookup_name)
+      return candidate_context unless candidate_context && lookup_context
+      return candidate_context unless lookup_context.includes?('(')
+
+      candidate_base = strip_generic_args(candidate_context)
+      lookup_base = strip_generic_args(lookup_context)
+      candidate_base == lookup_base ? lookup_context : candidate_context
     end
 
     # Forked stdlib `System::` is shorthand for `Crystal::System::` only under nested `Crystal::*`
@@ -43941,10 +44056,15 @@ module Crystal::HIR
       final_missing_passes = 0
       loop do
         before_final_missing = @module.function_count
+        before_final_missing_bodies = hir_function_body_count
         lower_missing_call_targets
         process_pending_lower_functions
         final_missing_passes += 1
-        break if @module.function_count == before_final_missing || final_missing_passes >= 4
+        after_final_missing_bodies = hir_function_body_count
+        break if (@module.function_count == before_final_missing &&
+                  after_final_missing_bodies == before_final_missing_bodies &&
+                  @pending_function_queue.empty?) ||
+                 final_missing_passes >= 4
       end
 
       if phase_stats
@@ -44556,8 +44676,13 @@ module Crystal::HIR
             end
           end
 
-          # Skip already processed/lowered
-          next if processed.includes?(name)
+          # Skip already processed names unless layout invalidation requeued
+          # the exact same function after removing its body.  In that case the
+          # pending state is intentional and must be honored before the queue is
+          # cleared, otherwise late HIR calls survive to LLVM as abort stubs.
+          if processed.includes?(name)
+            next unless function_state(name).pending? && !@module.has_function_with_body?(name)
+          end
           processed << name
           next if @module.has_function_with_body?(name)
           next if function_state(name).completed?
@@ -44659,6 +44784,14 @@ module Crystal::HIR
       if @pending_function_queue.size > 0
         STDERR.puts "[WARNING] process_pending_lower_functions: #{@pending_function_queue.size} functions remaining after #{pass} passes"
       end
+    end
+
+    private def hir_function_body_count : Int32
+      count = 0
+      @module.functions.each do |func|
+        count += 1 if func.blocks.any? { |block| block.instructions.size > 0 }
+      end
+      count
     end
 
     # Lower a single expression, returns ValueId of result
@@ -57714,7 +57847,7 @@ module Crystal::HIR
                 end
               end
 
-              arity_match = if expected_param_count == 0
+              arity_match = if expected_param_count < 0
                               true
                             else
                               expected_param_count >= required_param_count &&
@@ -57832,7 +57965,7 @@ module Crystal::HIR
                 end
               end
 
-              arity_match = if expected_param_count == 0
+              arity_match = if expected_param_count < 0
                               true
                             else
                               expected_param_count >= required_param_count &&
@@ -58994,6 +59127,7 @@ module Crystal::HIR
           best_name : String? = nil
           best_param_count = Int32::MAX
           best_score = Int32::MIN
+          requested_arity = lookup_callsite ? lookup_callsite.types.size : (name_parts.suffix ? suffix_param_count(name_parts.suffix.not_nil!) : nil)
           if callsite_by_arity && !callsite_by_arity.empty?
             overload_keys.each do |key|
               next unless key.starts_with?(mangled_prefix)
@@ -59011,6 +59145,7 @@ module Crystal::HIR
               block_penalty = params.any?(&.is_block) ? 1 : 0
 
               callsite_by_arity.each do |arity, call_entries|
+                next if requested_arity && arity != requested_arity
                 next if arity < required
                 next if arity > param_count && !has_splat && !has_double_splat
                 void_only = call_entries.all? { |entry| entry.types.all? { |t| t == TypeRef::VOID } }
@@ -59030,7 +59165,7 @@ module Crystal::HIR
                     call_arg_types = entry.types
                     next if call_arg_types.all? { |t| t == TypeRef::VOID }
 
-                    func_context = function_context_from_name(key)
+                    func_context = function_context_for_lookup_candidate(base_name, key)
                     next unless named_args_compatible_with_def?(def_node, entry.named_arg_names)
                     next unless params_compatible_with_args?(def_node, call_arg_types, func_context)
                     score = params_match_score(def_node, call_arg_types, func_context)
@@ -59071,7 +59206,7 @@ module Crystal::HIR
             # may coerce arguments to wrong types (e.g., Math.min(Int32,Int32) -> Float32)
             best_untyped_key : String? = nil
             first_key : String? = nil
-            expected_arity = name_parts.suffix ? suffix_param_count(name_parts.suffix.not_nil!) : 0
+            expected_arity = requested_arity || 0
             overload_keys.each do |key|
               # Check keys that start with mangled_prefix OR the base name itself (generic)
               unless key.starts_with?(mangled_prefix) || key == base_name
@@ -59079,10 +59214,16 @@ module Crystal::HIR
               end
               def_node = @function_defs[key]?
               next unless def_node
-              # Arity guard: don't pick a 0-param method for a call that expects args
-              # e.g., Type#hash (0 params) should not match Type#hash$Crystal::Hasher (1 param)
-              candidate_arity = count_non_block_params(def_node)
-              if expected_arity > 0 && candidate_arity < expected_arity
+              if params = def_node.params
+                candidate_arity = count_params(params) { |p| !p.is_block && !named_only_separator?(p) }
+                required_arity = params.count do |p|
+                  !p.is_block && !named_only_separator?(p) && p.default_value.nil? && !p.is_splat && !p.is_double_splat
+                end
+                has_splat_param = any_param?(params) { |p| p.is_splat && !named_only_separator?(p) }
+                has_double_splat_param = any_param?(params) { |p| p.is_double_splat }
+                next if expected_arity < required_arity
+                next if expected_arity > candidate_arity && !has_splat_param && !has_double_splat_param
+              elsif expected_arity != 0
                 next
               end
               first_key ||= key
@@ -60225,6 +60366,7 @@ module Crystal::HIR
       return if is_lowering_resolved
 
       target_name = resolved_target_name
+      record_pending_callee_for_rta(target_name)
       # Re-parse resolved target name once for use in the rest of this function
       resolved_parts = parse_method_name(target_name)
       @function_lowering_states[target_name] = FunctionLoweringState::InProgress
@@ -69798,7 +69940,7 @@ module Crystal::HIR
         score = 0
         compatible = true
         if arg_types && !unknown_args
-          func_context = function_context_from_name(name)
+          func_context = function_context_for_lookup_candidate(func_name, name)
           compatible = params_compatible_with_args?(def_node, arg_types, func_context)
           if compatible
             score = params_match_score(def_node, arg_types, func_context)
@@ -69837,9 +69979,12 @@ module Crystal::HIR
         end
 
         if arg_types && !unknown_args
-          # For typed calls, prioritize type-match score first.
-          # Arity is only a tie-breaker (needed for default-arg overloads like
-          # [](Int32, count = ...) vs [](Range)).
+          score += 2 if param_count == arg_count
+          score += 1 if required == arg_count
+          # For typed calls, prioritize type-match score first, but keep a
+          # small exact-arity bonus so a weak broad match with defaults (for
+          # example Number#round(digits, base=..., mode=...)) does not beat a
+          # direct overload whose enum type is represented by its Int32 backing.
           if debug_join_lookup
             STDERR.puts "[JOIN_LOOKUP] cand=#{name} compat=#{compatible} score=#{score} param_count=#{param_count} required=#{required} splat=#{has_splat} dsplat=#{has_double_splat} untyped=#{untyped_candidate}"
           end
@@ -70045,7 +70190,7 @@ module Crystal::HIR
 
         score = 0
         if arg_types
-          func_context = function_context_from_name(name)
+          func_context = function_context_for_lookup_candidate(func_name, name)
           compatible = params_compatible_with_args?(def_node, arg_types, func_context)
           if debug_lookup && !compatible
             STDERR.puts "[LOOKUP_BLOCK]   SKIP: params_compatible=false arg_types=#{arg_types.map(&.id).join(",")}"
@@ -70114,7 +70259,7 @@ module Crystal::HIR
 
           score = 0
           if arg_types
-            func_context = function_context_from_name(name)
+            func_context = function_context_for_lookup_candidate(func_name, name)
             next unless params_compatible_with_args?(def_node, arg_types, func_context)
             score = params_match_score(def_node, arg_types, func_context)
           end
@@ -84252,7 +84397,7 @@ module Crystal::HIR
         next if arg_count < required
         next if arg_count > param_count && !has_splat && !has_double_splat
 
-        func_context = function_context_from_name(name)
+        func_context = function_context_for_lookup_candidate(func_name, name)
         next unless params_compatible_with_args?(def_node, arg_types, func_context)
 
         score = params_match_score(def_node, arg_types, func_context)
