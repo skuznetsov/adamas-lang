@@ -133,7 +133,10 @@ Current diagnosis / recently fixed roots:
   layouts as a workaround, but nested tuple/aggregate block parameters are a
   real language/runtime invariant: add a separate no-prelude oracle for
   blocks yielding nested tuples/arrays and verify HIR/MIR/LL layout parity
-  instead of treating flattening as a general solution.
+  instead of treating flattening as a general solution. Do not assume only
+  shallow tuple payloads: real block-yield values may contain arbitrarily
+  nested tuples/arrays/hashes, so the eventual fix must preserve aggregate
+  layout recursively instead of special-casing the current flat snapshot.
 - Stage2 shape guard now protects four self-host codegen roots in one MIR
   gate (`regression_tests/p2_selfhost_stage2_shape_guard.sh`):
   - stale cache-only call return repair no longer rewrites
