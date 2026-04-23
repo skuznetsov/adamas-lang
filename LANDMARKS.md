@@ -519,6 +519,28 @@ Boundary: top-level `puts` semantic parity is fixed, but runtime no-prelude
 `puts` still falls into a tuple/block lowering corridor in generated stage2.
 {F/G/R: 0.94/0.60/0.94} [verified]
 
+[LM-496|verified]: The generated-stage2 `Tuple$Heach$$block` abort for
+no-prelude `puts 7` was a compile-mode tracking bug in HIR print fallback
+selection, not a real tuple root cause. `s1` already compiled the tiny
+`puts 7 --no-prelude` repro to a direct `call void @__crystal_v2_print_int32_ln`
+shape, but generated `s2b` still disabled `emit_runtime_print_fallback`
+because `prelude_io_print_available?` inferred availability from ambient
+`IO` method tables instead of the actual `--no-prelude` option. That let the
+generated compiler drift back into the ordinary variadic `puts(*objects)` path,
+which iterates the implicit tuple and hit `Tuple#each(&block)` in self-host
+mode. The fix threads `options.no_prelude` into `HIR::AstToHir` and makes
+`prelude_io_print_available?` return false under `--no-prelude`, so supported
+primitive/string/bool print calls always take the runtime fallback corridor in
+that mode. Evidence: `CRYSTAL_CACHE_DIR=/tmp/crystal_cache_v2_noprel_printfix
+crystal build src/crystal_v2.cr -o /tmp/cv2_noprel_printfix --error-trace`
+exited 0; `regression_tests/stage2_no_prelude_puts_runtime_repro.sh
+/tmp/cv2_noprel_printfix` returned `not reproduced`; and
+`regression_tests/p2_generated_stage2_no_prelude_interp.sh
+/tmp/cv2_noprel_printfix` remained green. Boundary: this proves the
+no-prelude print-mode decision must depend on compile options, but the next
+generated-stage2 frontier still needs fresh measurement after this fix.
+{F/G/R: 0.95/0.66/0.95} [verified]
+
 ## Active Strategy
 
 - Main fast loop: `--no-prelude` oracles and focused STOP_AFTER_HIR budget

@@ -1530,6 +1530,7 @@ module CrystalV2
         # the mutable bootstrap state through the narrower recovery helpers.
         hir_converter = HIR::AstToHir.new(first_arena, input_file)
         bootstrap_trace_puts "[S2_HIR_SETUP] phase=converter_new"; STDERR.flush
+        hir_converter.no_prelude = options.no_prelude
         hir_converter.bootstrap_bind_core_state(first_arena, hir_mod)
         hir_converter.bootstrap_bind_source_maps(sources_by_arena, paths_by_arena)
         hir_converter.bootstrap_bind_main_arenas(main_arenas)

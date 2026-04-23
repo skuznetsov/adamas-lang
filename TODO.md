@@ -238,6 +238,18 @@ Latest generated-stage2 frontier:
   `Printer$Dshortest$$Float32_IO`, and the top-level no-prelude `puts`
   semantic error. `regression_tests/p2_generated_stage2_no_prelude_interp.sh
   /tmp/cv2_puts` is now green.
+- Generated `s2b` no longer aborts on `STUB CALLED: Tuple$Heach$$block`
+  for the tiny no-prelude runtime repro `puts 7`. The root cause was that
+  `AstToHir#emit_runtime_print_fallback` inferred "prelude IO print is
+  available" from ambient method tables instead of the actual compile mode.
+  In generated stage2 that drift disabled the runtime no-prelude print path
+  and let `puts` fall back into the variadic tuple corridor. `AstToHir` now
+  receives `options.no_prelude` from CLI and treats `--no-prelude` as a
+  hard gate for runtime print fallback selection. Evidence:
+  `regression_tests/stage2_no_prelude_puts_runtime_repro.sh
+  /tmp/cv2_noprel_printfix` -> `not reproduced`, while
+  `regression_tests/p2_generated_stage2_no_prelude_interp.sh
+  /tmp/cv2_noprel_printfix` stays green.
 - Root moved: type-literal `crystal_type_id`/`crystal_instance_type_id`
   must lower to an `Int32` type-id literal before both `lower_call` and
   `lower_member_access` rewrite type literals to static `Class.*` targets.
@@ -251,10 +263,10 @@ Latest generated-stage2 frontier:
   semantic inference now also treats top-level `puts`/`print` as builtins,
   matching the HIR lowering corridor.
 
-- Next measured blocker: generated `s2b` still aborts on
-  `STUB CALLED: Tuple$Heach$$block` when compiling a tiny no-prelude runtime
-  `puts 7` program. Repro:
-  `regression_tests/stage2_no_prelude_puts_runtime_repro.sh /tmp/cv2_puts_s2_full`.
+- Next frontier: re-measure the first failing generated-stage2 corridor after
+  the no-prelude print-mode fix. The previous `Tuple$Heach$$block` repro is now
+  green, so the next blocker must be rediscovered from the updated generated
+  compiler rather than assumed from stale notes.
 
 Boundary: `src/crystal_v2.cr --no-prelude` still exits `11` in an
 inline-yield recursion / force-return corridor before it can serve as a green
@@ -262,8 +274,9 @@ pending-budget oracle.
 
 ## Next Work
 
-1. Localize and fix the generated-stage2 `Tuple#each(&block)` stub reached by
-   `regression_tests/stage2_no_prelude_puts_runtime_repro.sh`.
+1. Re-measure the next generated-stage2 failure after the no-prelude print-mode
+   fix, starting from the fast no-prelude runtime/oracle corpus instead of full
+   bootstrap.
 2. Add a fast no-prelude oracle for the generated-stage2 `puts$String` hang, or
    reduce it to the smallest HIR/MIR shape that reproduces without full wrapper
    bootstrap.

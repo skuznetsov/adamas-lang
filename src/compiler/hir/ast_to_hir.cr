@@ -599,6 +599,8 @@ module Crystal::HIR
 
   # Main AST to HIR converter
   class AstToHir
+    property no_prelude : Bool
+
     private def bootstrap_trace_puts(value = "") : Nil
       text = value.to_s
       LibC.write(2, text.to_unsafe, text.bytesize)
@@ -3820,6 +3822,7 @@ module Crystal::HIR
       @yield_return_checked = Set(String).new
       @as_question_results = Set(ValueId).new
       @regex_match_results = Set(ValueId).new
+      @no_prelude = false
       # Note: @lowered_functions and @lowering_functions removed.
       # Use @function_lowering_states with FunctionLoweringState enum instead.
       @pending_arg_types = {} of String => CallsiteArgs
@@ -61103,6 +61106,7 @@ module Crystal::HIR
     end
 
     private def prelude_io_print_available?(method_name : String) : Bool
+      return false if @no_prelude
       !resolve_method_with_inheritance("IO", method_name).nil?
     end
 
