@@ -112,10 +112,28 @@ Current diagnosis / recently fixed roots:
   /tmp/cv2_emitblock_fix` now checks the `Array(String)#each_index` callback
   shape, and `regression_tests/p2_generated_stage2_no_prelude_puts_guard.sh
   /tmp/cv2_emitblock_fix` reports
-  `frontier=hash_each_entry_with_index_null_block`. The current generated
-  no-prelude blocker is a null block callback in
-  `Hash(String, Tuple(String, Int32, Crystal::MIR::Array(String)))#each_entry_with_index$block`
-  from `Crystal::MIR::LLVMIRGenerator#emit_missing_crystal_function_stubs`.
+  `frontier=hash_each_entry_with_index_null_block`. The next root was a
+  two-part HIR/backend issue in
+  `Crystal::MIR::LLVMIRGenerator#emit_missing_crystal_function_stubs`: the
+  late pass re-walked a temporary `Hash` via `each`/`each_key`, which lowered
+  through `Hash#each_entry_with_index` and exposed the still-open nested raw
+  block callback ABI; switching that pass to an `Array` snapshot removes the
+  artificial Hash iterator. The snapshot must stay flat (`name, return_type,
+  arg_count, arg_types`) because nested tuple elements in generated-stage2
+  currently still expose aggregate layout bugs. Separately,
+  `block_param_types_for_call` did not normalize compiler collection aliases
+  such as `Crystal::MIR::Array(T)` before element inference, so
+  `Array(T)#each` blocks could be emitted as `Void ->`; the fix reuses
+  `normalize_compiler_collection_owner_name` for element/hash block-param
+  inference. Fresh self-host HIR now gives the late-emission Array block a
+  real `Tuple(String, String, Int32, Crystal::MIR::Array(String))`-shaped
+  parameter, not `Void`, and the generated no-prelude `puts 7` frontier moves
+  to `STUB CALLED: IO$CCFileDescriptor$Hsystem_pos`.
+  The late-emission snapshot must avoid introducing artificial nested tuple
+  layouts as a workaround, but nested tuple/aggregate block parameters are a
+  real language/runtime invariant: add a separate no-prelude oracle for
+  blocks yielding nested tuples/arrays and verify HIR/MIR/LL layout parity
+  instead of treating flattening as a general solution.
 - Stage2 shape guard now protects four self-host codegen roots in one MIR
   gate (`regression_tests/p2_selfhost_stage2_shape_guard.sh`):
   - stale cache-only call return repair no longer rewrites

@@ -3309,7 +3309,8 @@ module Crystal::MIR
         missing_known = collect_missing_crystal_functions(already_declared)
         break if missing_known.empty?
 
-        missing_known.each_key do |name|
+        missing_known.each do |entry|
+          name = entry[0]
           next unless func = @func_by_name[name]?
           next if @emitted_functions.includes?(name)
           begin
@@ -3328,10 +3329,14 @@ module Crystal::MIR
       return if missing.empty?
       debug_missing_filter = ENV["DEBUG_MISSING_CRYSTAL_FILTER"]?
       emit_raw "\n; Forward declarations for Crystal functions called but not defined\n"
-      missing.each do |name, info|
-        return_type = info[0]
-        arg_count = info[1]
-        arg_types = info[2]
+      # Walk a snapshot array here, not a Hash iterator. Hash#each / each_key
+      # lower through each_entry_with_index and can synthesize a nested raw
+      # callback while compiling the generated stage2 compiler itself.
+      missing.each do |entry|
+        name = entry[0]
+        return_type = entry[1]
+        arg_count = entry[2]
+        arg_types = entry[3]
         if debug_missing_filter && name.includes?(debug_missing_filter)
           suffix = if idx = name.index("$H")
                      name.byte_slice(idx)
@@ -3364,19 +3369,19 @@ module Crystal::MIR
       end
     end
 
-    private def collect_missing_crystal_functions(already_declared : ::Set(String)) : Hash(String, {String, Int32, Array(String)})
+    private def collect_missing_crystal_functions(already_declared : ::Set(String)) : Array({String, String, Int32, Array(String)})
       # Avoid Hash#reject here. In self-hosted codegen it expands through a nested
       # inline-yield block that can escape as a raw standalone callback before the
-      # inline yield target is materialized. A direct each loop stays on the
-      # ordinary Hash#each raw-callback corridor and keeps this late-emission pass
-      # deterministic while the general nested-yield carrier design remains open.
-      missing = {} of String => {String, Int32, Array(String)}
+      # inline yield target is materialized. Return an Array snapshot so callers
+      # can avoid a second Hash iterator in this late-emission pass while the
+      # general nested-yield carrier design remains open.
+      missing = [] of {String, String, Int32, Array(String)}
       @called_crystal_functions.each do |name, info|
         next if @emitted_functions.includes?(name)
         next if @undefined_externs.has_key?(name)
         next if already_declared.includes?(name)
 
-        missing[name] = info
+        missing << {name, info[0], info[1], info[2]}
       end
       missing
     end

@@ -115,13 +115,20 @@ if grep -q 'Segmentation fault: 11' "$COMPILE_LOG"; then
 fi
 
 if [[ $compile_status -eq 133 ]] && grep -q 'Trace/BPT trap: 5' "$COMPILE_LOG"; then
-  echo "p2_generated_stage2_no_prelude_puts_guard_ok frontier=hash_each_entry_with_index_null_block"
+  echo "p2_generated_stage2_no_prelude_puts_guard_failed: old hash late-emission null callback frontier regressed" >&2
+  tail -120 "$COMPILE_LOG" >&2 || true
+  exit 1
+fi
+
+if grep -q 'STUB CALLED: IO\$CCFileDescriptor\$Hsystem_pos' "$COMPILE_LOG"; then
+  echo "p2_generated_stage2_no_prelude_puts_guard_ok frontier=io_filedescriptor_system_pos"
   exit 0
 fi
 
 if [[ $compile_status -ne 0 ]]; then
-  echo "p2_generated_stage2_no_prelude_puts_guard_ok frontier=post_inherited_puts_runtime"
-  exit 0
+  echo "p2_generated_stage2_no_prelude_puts_guard_failed: unexpected generated stage2 compile frontier" >&2
+  tail -120 "$COMPILE_LOG" >&2 || true
+  exit 1
 fi
 
 echo "p2_generated_stage2_no_prelude_puts_guard_failed: unexpected generated stage2 compile failure" >&2

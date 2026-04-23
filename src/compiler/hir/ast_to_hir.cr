@@ -10071,7 +10071,7 @@ module Crystal::HIR
     end
 
     private def element_type_for_type_name(type_name : String) : String?
-      name = type_name.strip
+      name = normalize_compiler_collection_owner_name(type_name.strip)
       if name.includes?('|')
         variants = split_union_type_name(name).map(&.strip)
         return nil unless variants.size > 1
@@ -41418,6 +41418,7 @@ module Crystal::HIR
                         method == "each_entry_with_index"
 
       recv_name = @module.get_type_descriptor(receiver_type).try(&.name) || get_type_name_from_ref(receiver_type)
+      recv_name = normalize_compiler_collection_owner_name(recv_name)
       info = split_generic_base_and_args(recv_name)
       return nil unless info && info.base == "Hash"
 
@@ -41455,7 +41456,7 @@ module Crystal::HIR
       return nil unless receiver_type && receiver_type != TypeRef::VOID
       recv_desc = @module.get_type_descriptor(receiver_type)
       return nil unless recv_desc
-      recv_name = recv_desc.name
+      recv_name = normalize_compiler_collection_owner_name(recv_desc.name)
       method = if hash = base_method_name.rindex('#')
                  base_method_name[(hash + 1)..]
                elsif dot = base_method_name.rindex('.')

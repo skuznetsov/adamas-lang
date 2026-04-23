@@ -608,6 +608,32 @@ no-prelude print-mode decision must depend on compile options, but the next
 generated-stage2 frontier still needs fresh measurement after this fix.
 {F/G/R: 0.95/0.66/0.95} [verified]
 
+[LM-497|verified]: The generated-stage2 no-prelude `puts 7` frontier moved
+past the late backend Hash iterator / block-param-shape corridor. Root chain:
+`Crystal::MIR::LLVMIRGenerator#emit_missing_crystal_function_stubs` built a
+temporary missing-function `Hash` and then re-walked it via `Hash#each` or
+`each_key`; both lower through `Hash#each_entry_with_index`, which exposed the
+open nested raw callback ABI and crashed in a null block callback. Returning a
+flat `Array({name, return_type, arg_count, arg_types})` snapshot from
+`collect_missing_crystal_functions` removes that artificial Hash iterator from
+the late emission pass. The first Array snapshot attempt used a nested tuple
+payload and exposed a separate generated-stage2 aggregate-layout bug, so the
+snapshot is intentionally flat; nested tuple/aggregate block params remain a
+real follow-up oracle, not a general flattening policy. A second root in the
+same path was block-param inference for compiler collection aliases:
+`Crystal::MIR::Array(T)` was not normalized before element inference, so
+`Array(T)#each` block procs could be emitted as `Void ->`. Reusing
+`normalize_compiler_collection_owner_name` in element/hash block-param
+inference changes the self-host HIR for the late-emission Array loop from a
+`Void` block param to a real tuple param. Evidence:
+`crystal build src/crystal_v2.cr -o /tmp/cv2_flat_missing --error-trace`
+passed; `scripts/run_safe.sh /tmp/cv2_flat_missing 420 4096 src/crystal_v2.cr
+-o /tmp/cv2_flat_missing_s2` exited 0; `scripts/run_safe.sh
+/tmp/cv2_flat_missing_s2 120 1024 /tmp/repro_puts7.cr --no-prelude -o
+/tmp/repro_puts7_bin` moved to `STUB CALLED:
+IO$CCFileDescriptor$Hsystem_pos` instead of the old null callback / tuple
+segfault frontiers. {F/G/R: 0.94/0.67/0.93} [verified]
+
 ## Active Strategy
 
 - Main fast loop: `--no-prelude` oracles and focused STOP_AFTER_HIR budget
