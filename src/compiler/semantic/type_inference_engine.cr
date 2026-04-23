@@ -224,7 +224,7 @@ module CrystalV2
         end
 
         # Debug helper
-        private def debug(msg : String)
+        private def emit_debug_message(msg : String)
           STDERR.puts "[TYPE_INFERENCE_DEBUG] #{msg}" if @debug_enabled
           debug_hook("infer.debug", msg)
         end
@@ -237,9 +237,20 @@ module CrystalV2
           names.includes?(name)
         end
 
-        private def debug_type_trace(name : String, message : String)
-          return unless debug_type_trace_name?(name)
+        private def emit_debug_type_trace_message(message : String)
           STDERR.puts "[TYPE_TRACE] #{message}"
+        end
+
+        macro debug(msg)
+          if @debug_enabled || DebugHooks::ENABLED
+            emit_debug_message({{msg}})
+          end
+        end
+
+        macro debug_type_trace(name, message)
+          if debug_type_trace_name?({{name}})
+            emit_debug_type_trace_message({{message}})
+          end
         end
 
         # Centralized watchdog guard to ensure we don't miss deadlines inside

@@ -474,6 +474,30 @@ one missing primitive predicate, but the generated-stage2 compiler is still
 not green.
 {F/G/R: 0.92/0.45/0.92} [verified]
 
+[LM-494|verified]: The generated-stage2 `Printer$Dshortest$$Float32_IO` abort
+was caused by eager debug string interpolation inside
+`Semantic::TypeInferenceEngine`, not by missing float-print helpers in user
+code. `infer_identifier` eagerly built debug strings such as
+`receiver=#{@receiver_type_context.try(&.to_s)}` before checking
+`@debug_enabled`, and `debug_hook` is a compile-time no-op in normal builds.
+That forced `Object#to_s(io)` on compiler-internal objects during semantic
+inference, which reached `Float32#to_s(io)` and the unlowered
+`Printer.shortest(self, io)` corridor. The fix replaces eager `debug` and
+`debug_type_trace` methods with runtime-gated macros in
+`type_inference_engine.cr`, so interpolated strings are only built when
+debugging is actually enabled. Evidence:
+`crystal build src/crystal_v2.cr -o /tmp/cv2_printerfix --error-trace` exited
+0; `regression_tests/p2_bootstrap_semantic_emit_oracle.sh /tmp/cv2_printerfix`
+and `regression_tests/p2_selfhost_stage2_shape_guard.sh /tmp/cv2_printerfix`
+passed; fresh `scripts/run_safe.sh /tmp/cv2_printerfix 420 4096
+src/crystal_v2.cr -o /tmp/cv2_printerfix_s2_full` exited 0 after about `242s`;
+generated `s2b` no-prelude no-codegen smoke moved past
+`Printer$Dshortest$$Float32_IO` and now reaches semantic checking with
+`error[E3001]: Function 'puts' not found`. Boundary: this fixes the eager debug
+formatting root cause in semantic inference, but no-prelude top-level `puts`
+resolution is still missing.
+{F/G/R: 0.93/0.58/0.93} [verified]
+
 ## Active Strategy
 
 - Main fast loop: `--no-prelude` oracles and focused STOP_AFTER_HIR budget

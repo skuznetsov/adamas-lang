@@ -231,17 +231,22 @@ Expected current signals:
 
 Latest generated-stage2 frontier:
 
-- `s1 -> s2b` builds with `/tmp/cv2_charctl_final` in about `252s`.
+- `s1 -> s2b` builds with `/tmp/cv2_printerfix` in about `242s`.
 - Generated `s2b` no-prelude no-codegen smoke moved past
-  `Class$Dcrystal_type_id` and `Char$Hascii_control$Q`, and now aborts at
-  `STUB CALLED: Printer$Dshortest$$Float32_IO`.
+  `Class$Dcrystal_type_id`, `Char$Hascii_control$Q`, and
+  `Printer$Dshortest$$Float32_IO`. It now reaches semantic checking and stops
+  with `error[E3001]: Function 'puts' not found` on the top-level no-prelude
+  input.
 - Root moved: type-literal `crystal_type_id`/`crystal_instance_type_id`
   must lower to an `Int32` type-id literal before both `lower_call` and
   `lower_member_access` rewrite type literals to static `Class.*` targets.
   `Char#ascii_control?` is a leaf predicate on the raw `Char` codepoint and
   now lowers inline as `self < 0x20 || self == 0x7f`. The shape guard rejects
   both stale `Class.crystal_type_id` / `Class#crystal_type_id` and
-  `Char#ascii_control?` self-host MIR targets.
+  `Char#ascii_control?` self-host MIR targets. Separately, `TypeInferenceEngine`
+  debug strings now evaluate lazily, so disabled debug hooks no longer trigger
+  `Object#to_s(io)` on compiler-internal objects and accidentally materialize
+  float-printing stubs during generated-stage2 semantic inference.
 
 Boundary: `src/crystal_v2.cr --no-prelude` still exits `11` in an
 inline-yield recursion / force-return corridor before it can serve as a green
@@ -249,9 +254,9 @@ pending-budget oracle.
 
 ## Next Work
 
-1. Localize and fix the generated-stage2 `Printer.shortest(Float32, IO)` stub reached by
-   `regression_tests/combined/test_no_prelude_interpolation.cr --no-prelude
-   --no-codegen`.
+1. Localize and fix the generated-stage2 no-prelude top-level `puts` resolution
+   error reached by `regression_tests/combined/test_no_prelude_interpolation.cr
+   --no-prelude --no-codegen`.
 2. Add a fast no-prelude oracle for the generated-stage2 `puts$String` hang, or
    reduce it to the smallest HIR/MIR shape that reproduces without full wrapper
    bootstrap.
