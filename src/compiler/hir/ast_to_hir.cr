@@ -61685,7 +61685,9 @@ module Crystal::HIR
           top_level_exists = @function_defs.has_key?(method_name) ||
                              @function_types.has_key?(method_name) ||
                              has_function_base?(method_name)
-          unless top_level_exists
+          unless top_level_exists ||
+                 method_name == "puts" || method_name == "print" ||
+                 method_name == "p" || method_name == "pp"
             object_owner = "Object"
             resolved = resolve_method_with_inheritance(object_owner, method_name)
             object_method_name = resolved || "#{object_owner}##{method_name}"

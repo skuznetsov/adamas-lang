@@ -1,6 +1,6 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-04-22
+Updated: 2026-04-23
 Branch: `codegen`
 
 This is the active working backlog only. Historical detail is in git history,
@@ -69,6 +69,21 @@ HIR self-host materialization, not in the initial stage1 host build.
 
 Current diagnosis / recently fixed roots:
 
+- Bare receiverless `puts/print/p/pp` no longer fall through the late
+  `Object#...` implicit-receiver fallback in `AstToHir#lower_call`. That
+  fallback was missing the same builtin exemption already present in the
+  earlier self-resolution branches, so fresh generated `s2b` no-prelude
+  compiles could drift into receiver-call resolution and die in the helper
+  tuple-iteration corridor (`Tuple$Heach$$block`) before the direct runtime
+  print fallback had a chance to run. Evidence:
+  `regression_tests/stage2_no_prelude_puts_runtime_repro.sh /tmp/cv2_puts_receiverfix`
+  -> `not reproduced`;
+  `regression_tests/p2_generated_stage2_no_prelude_interp.sh /tmp/cv2_puts_receiverfix`
+  -> `p2_generated_stage2_no_prelude_interp_ok`;
+  `regression_tests/p2_generated_stage2_no_prelude_puts_guard.sh /tmp/cv2_puts_receiverfix`
+  -> `p2_generated_stage2_no_prelude_puts_guard_ok frontier=missing___crystal_main`.
+  The old generated-stage2 no-prelude `Tuple$Heach$$block` frontier is removed;
+  the new first compile blocker is `error: Missing hash key: __crystal_main`.
 - Stage2 shape guard now protects four self-host codegen roots in one MIR
   gate (`regression_tests/p2_selfhost_stage2_shape_guard.sh`):
   - stale cache-only call return repair no longer rewrites

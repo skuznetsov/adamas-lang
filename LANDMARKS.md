@@ -1,6 +1,6 @@
 # LANDMARKS
 
-Updated: 2026-04-22
+Updated: 2026-04-23
 Context: compiler/bootstrap/stage2-stability
 
 This file is the active working set only. Historical landmarks before this
@@ -111,6 +111,27 @@ reverted. Boundary: do not retry name-family enqueue guards without better
 provenance accounting. {F/G/R: 0.88/0.48/0.90} [verified]
 
 ## Active Working Hypothesis
+
+[LM-475|verified]: The generated-stage2 no-prelude `Tuple$Heach$$block`
+frontier was a receiverless-call resolution bug, not a print-runtime bug.
+IR for the fresh self-host artifact (`/tmp/cv2_puts_stringfix_s2_ir.ll`) showed
+the crashing `Tuple$Heach$$block` call came from `lower_call`'s
+`explicit_call_target_known` helper over `{primary_mangled_name,
+mangled_method_name}`, not from the runtime print fallback. The enabling source
+bug was the final bare-call `Object` fallback in `AstToHir#lower_call`: unlike
+the earlier self-resolution branches, it did not exempt `puts/print/p/pp`, so
+generated `s2b` could incorrectly bind bare no-prelude `puts` to receiver-call
+resolution and die before the direct runtime print corridor. Adding the missing
+builtin exemption removes the old frontier. Evidence:
+`regression_tests/stage2_no_prelude_puts_runtime_repro.sh /tmp/cv2_puts_receiverfix`
+=> `not reproduced`;
+`regression_tests/p2_generated_stage2_no_prelude_interp.sh /tmp/cv2_puts_receiverfix`
+=> `p2_generated_stage2_no_prelude_interp_ok`;
+`regression_tests/p2_generated_stage2_no_prelude_puts_guard.sh /tmp/cv2_puts_receiverfix`
+=> `p2_generated_stage2_no_prelude_puts_guard_ok frontier=missing___crystal_main`.
+Boundary: this does not make generated no-prelude codegen fully green; the next
+blocker is `error: Missing hash key: __crystal_main`. {F/G/R: 0.92/0.70/0.93}
+[verified]
 
 [LM-470|hypothesis]: The current bootstrap blocker is not one universal-method
 family but missing demand provenance. Multiple producers can turn potential
