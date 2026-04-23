@@ -94,12 +94,16 @@ Current diagnosis / recently fixed roots:
   IO$CCFileDescriptor$Htell' /tmp/cv2_tell_fix_s2` shows a real delegate body
   calling `IO$CCFileDescriptor$Hpos`, and
   `regression_tests/p2_generated_stage2_no_prelude_puts_guard.sh
-  /tmp/cv2_tell_fix` prints
-  `p2_generated_stage2_no_prelude_puts_guard_ok frontier=post_tell_runtime`.
-  The next generated-stage2 no-prelude blocker is no longer `tell`; current
-  frontier is an early runtime crash in `String#bytesize` during `puts 7`
-  compilation (top frame from `lldb --batch -o 'run ...' -o 'bt 20'
-  /tmp/cv2_tell_fix_s2`).
+  /tmp/cv2_puts_fix2` now confirms two invariants together: `tell` still
+  delegates to `IO::FileDescriptor#pos`, and nilary
+  `IO::FileDescriptor#puts` no longer reuses the `puts(String)` body.
+  Full self-host MIR emitted by `/tmp/cv2_puts_fix2` now contains
+  `func @IO::FileDescriptor#puts(%0: Type#204) -> Nil` with `print(Char '\n')`
+  while `func @IO::FileDescriptor#puts$String` stays separate. The old
+  generated-stage2 `String#bytesize` crash from newline handling is gone.
+  The next generated no-prelude blocker is earlier in HIR lowering again:
+  fresh `/tmp/cv2_puts_fix2_s2` still crashes after `lower_main: exprs=1`,
+  but no longer in the inherited `puts` corridor.
 - Stage2 shape guard now protects four self-host codegen roots in one MIR
   gate (`regression_tests/p2_selfhost_stage2_shape_guard.sh`):
   - stale cache-only call return repair no longer rewrites

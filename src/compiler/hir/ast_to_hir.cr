@@ -58842,7 +58842,51 @@ module Crystal::HIR
                             else
                               false
                             end
-      lookup_callsite = @pending_arg_types[name]? || @pending_arg_types[target_name]? || @pending_arg_types[base_name]?
+      explicit_lookup_callsite = @pending_arg_types[name]? || @pending_arg_types[target_name]?
+      bare_inherited_exact_name = nil.as(String?)
+      bare_inherited_exact_def = nil.as(CrystalV2::Compiler::Frontend::DefNode?)
+      # Bare inherited instance wrappers must not reuse the "last seen" typed
+      # callsite from the shared base key. In overload families like `IO#puts`,
+      # the String callsite is often recorded last; if we reuse it for a bare
+      # child request (`IO::FileDescriptor#puts`), the nilary wrapper gets
+      # materialized with the sibling `puts(String)` body/signature.
+      if lookup_suffix.nil? && name_parts.is_instance
+        owner = name_parts.owner
+        method = name_parts.method
+        if method && !owner.empty?
+          get_ancestor_chain(owner).each_with_index do |ancestor, idx|
+            next if idx == 0
+            inherited_base = "#{ancestor}##{method}"
+            inherited_def = @function_defs[inherited_base]?
+            next unless inherited_def
+            stats = function_param_stats(inherited_base, inherited_def)
+            next unless stats.param_count == 0 && stats.required == 0 && !stats.has_block
+            bare_inherited_exact_name = inherited_base
+            bare_inherited_exact_def = inherited_def
+            break
+          end
+        end
+      end
+      if bare_inherited_exact_name && explicit_lookup_callsite && !explicit_lookup_callsite.types.empty?
+        zero_callsite = nil.as(CallsiteArgs?)
+        if by_arity = @pending_arg_types_by_arity[base_callsite_key(name)]?
+          if zero_bucket = by_arity[0]?
+            zero_callsite = zero_bucket.find { |entry| !entry.has_block } || zero_bucket.first?
+          end
+        end
+        explicit_lookup_callsite = zero_callsite
+      end
+      if !func_def && bare_inherited_exact_name && bare_inherited_exact_def && explicit_lookup_callsite.nil?
+        func_def = bare_inherited_exact_def
+        arena = @function_def_arenas[bare_inherited_exact_name]? || arena
+        target_name = bare_inherited_exact_name
+        lookup_branch = "inherited_bare_exact"
+      end
+      lookup_callsite = if bare_inherited_exact_name
+                          explicit_lookup_callsite
+                        else
+                          explicit_lookup_callsite || @pending_arg_types[base_name]?
+                        end
       lookup_arg_types = lookup_callsite.try(&.types)
       if lookup_expected_param_count == 0
         if callsite = lookup_callsite

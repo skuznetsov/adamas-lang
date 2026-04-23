@@ -11,6 +11,7 @@ BUILD_LOG="$TMP_DIR/build.log"
 COMPILE_LOG="$TMP_DIR/compile.log"
 RUN_LOG="$TMP_DIR/run.log"
 TELL_DISASM="$TMP_DIR/tell.disasm"
+PUTS_DISASM="$TMP_DIR/puts.disasm"
 
 cleanup() {
   if [[ "${KEEP_TMP:-0}" != "1" ]]; then
@@ -40,6 +41,7 @@ if [[ ! -x "$GENERATED_S2" ]]; then
 fi
 
 lldb --batch -o 'disassemble -n IO$CCFileDescriptor$Htell' "$GENERATED_S2" >"$TELL_DISASM" 2>&1
+lldb --batch -o 'disassemble -n IO$CCFileDescriptor$Hputs' "$GENERATED_S2" >"$PUTS_DISASM" 2>&1
 
 if grep -Eq 'dprintf|abort' "$TELL_DISASM"; then
   echo "p2_generated_stage2_no_prelude_puts_guard_failed: tell still lowered to abort stub" >&2
@@ -50,6 +52,18 @@ fi
 if ! grep -q 'IO\$CCFileDescriptor\$Hpos' "$TELL_DISASM"; then
   echo "p2_generated_stage2_no_prelude_puts_guard_failed: tell no longer delegates to file-descriptor pos" >&2
   cat "$TELL_DISASM" >&2
+  exit 1
+fi
+
+if grep -Eq '__vdispatch__IO\$H\$SHL\$\$String|String\$Hends_with\$Q\$\$Char' "$PUTS_DISASM"; then
+  echo "p2_generated_stage2_no_prelude_puts_guard_failed: nilary puts regressed to string-overload body" >&2
+  cat "$PUTS_DISASM" >&2
+  exit 1
+fi
+
+if ! grep -q '__vdispatch__IO\$Hprint\$\$Char' "$PUTS_DISASM"; then
+  echo "p2_generated_stage2_no_prelude_puts_guard_failed: nilary puts no longer delegates to print(Char)" >&2
+  cat "$PUTS_DISASM" >&2
   exit 1
 fi
 
@@ -95,7 +109,7 @@ if grep -q 'STUB CALLED: IO\$CCFileDescriptor\$Htell' "$COMPILE_LOG"; then
 fi
 
 if [[ $compile_status -ne 0 ]]; then
-  echo "p2_generated_stage2_no_prelude_puts_guard_ok frontier=post_tell_runtime"
+  echo "p2_generated_stage2_no_prelude_puts_guard_ok frontier=post_inherited_puts_runtime"
   exit 0
 fi
 

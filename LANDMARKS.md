@@ -153,11 +153,15 @@ only `IO#tell` (`rg -n "func @IO::FileDescriptor#tell|func @IO#tell"
 IO$CCFileDescriptor$Htell' /tmp/cv2_tell_fix_s2` shows a real delegate body
 calling `IO$CCFileDescriptor$Hpos`, not an abort stub; and
 `regression_tests/p2_generated_stage2_no_prelude_puts_guard.sh
-/tmp/cv2_tell_fix` prints
-`p2_generated_stage2_no_prelude_puts_guard_ok frontier=post_tell_runtime`.
-Boundary: this removes the `tell` frontier but does not make generated no-prelude
-stage2 green; the next blocker is a runtime crash with top frame
-`String$Hbytesize`. {F/G/R: 0.93/0.72/0.93} [verified]
+/tmp/cv2_puts_fix2` now also disassembles `IO$CCFileDescriptor$Hputs` and
+verifies the nilary wrapper delegates to `print(Char)` instead of reusing the
+string-overload body. Full self-host MIR emitted by `/tmp/cv2_puts_fix2`
+contains `func @IO::FileDescriptor#puts(%0: Type#204) -> Nil` and a separate
+`func @IO::FileDescriptor#puts$String(%0: Type#204, %1: String) -> Nil`; the
+old generated-stage2 newline crash in `String$Hbytesize` is gone. Boundary:
+generated no-prelude stage2 still is not green; the next blocker moved earlier
+to a fresh crash right after `lower_main: exprs=1`. {F/G/R: 0.94/0.75/0.93}
+[verified]
 
 [LM-470|hypothesis]: The current bootstrap blocker is not one universal-method
 family but missing demand provenance. Multiple producers can turn potential
