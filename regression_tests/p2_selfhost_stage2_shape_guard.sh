@@ -88,8 +88,44 @@ require_in_function() {
   }
 }
 
+require_array_string_each_index_callback_shape() {
+  awk '
+    $0 ~ /^func @Array\(String\)#each\$block/ {
+      in_array_each = 1
+      next
+    }
+    $0 ~ /^func @/ && in_array_each {
+      in_array_each = 0
+    }
+    in_array_each && $0 ~ /func_pointer @__crystal_block_proc_[0-9]+/ {
+      proc = $0
+      sub(/^.*func_pointer @/, "", proc)
+      sub(/ .*/, "", proc)
+    }
+    proc != "" && $0 ~ ("^func @" proc "\\(") {
+      found = 1
+      if ($0 !~ /: Int32\)/) {
+        print "p2_selfhost_stage2_shape_guard_failed: Array(String)#each_index callback is not Int32-shaped: " $0 > "/dev/stderr"
+        exit 42
+      }
+    }
+    END {
+      if (proc == "" || !found) exit 43
+    }
+  ' "$MIR" || {
+    status=$?
+    if [[ "$status" == "42" || "$status" == "43" ]]; then
+      echo "p2_selfhost_stage2_shape_guard_failed: missing Int32-shaped Array(String)#each_index callback" >&2
+      exit 1
+    fi
+    exit "$status"
+  }
+}
+
 require_pattern 'global_load @CrystalV2::Compiler__classvar__CRYSTAL_SRC_PATH : String' \
   'typed CRYSTAL_SRC_PATH global load'
+
+require_array_string_each_index_callback_shape
 
 require_in_function 'func @CrystalV2::Compiler::Frontend::Parser#is_constant_name\?\$Slice\(UInt8\)' \
   'zext %[0-9]+ : Char' \

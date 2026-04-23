@@ -108,6 +108,17 @@ if grep -q 'STUB CALLED: IO\$CCFileDescriptor\$Htell' "$COMPILE_LOG"; then
   exit 1
 fi
 
+if grep -q 'Segmentation fault: 11' "$COMPILE_LOG"; then
+  echo "p2_generated_stage2_no_prelude_puts_guard_failed: old Array(String)#each_index callback segfault regressed" >&2
+  tail -120 "$COMPILE_LOG" >&2 || true
+  exit 1
+fi
+
+if [[ $compile_status -eq 133 ]] && grep -q 'Trace/BPT trap: 5' "$COMPILE_LOG"; then
+  echo "p2_generated_stage2_no_prelude_puts_guard_ok frontier=hash_each_entry_with_index_null_block"
+  exit 0
+fi
+
 if [[ $compile_status -ne 0 ]]; then
   echo "p2_generated_stage2_no_prelude_puts_guard_ok frontier=post_inherited_puts_runtime"
   exit 0

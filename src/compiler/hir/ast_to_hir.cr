@@ -41463,6 +41463,8 @@ module Crystal::HIR
                else
                  base_method_name
                end
+      return [TypeRef::INT32] if method == "each_index"
+
       elem_ref = nil
       if recv_name == "String"
         case method
@@ -65823,11 +65825,7 @@ module Crystal::HIR
 
           # Fallback: resolve the def node by arity/signature and inline if it yields,
           # even if @yield_functions didn't capture the mangled name.
-          receiver_base = nil
-          if receiver_id
-            receiver_desc = @module.get_type_descriptor(ctx.type_of(receiver_id))
-            receiver_base = yield_receiver_base_name(ctx.type_of(receiver_id)) unless receiver_desc && receiver_desc.name.includes?('(')
-          end
+          receiver_base = receiver_id ? yield_receiver_base_name(ctx.type_of(receiver_id)) : nil
 
           if env_has?("DEBUG_YIELD_INLINE") && (method_name == "trace" || mangled_method_name.includes?("trace"))
             overloads = function_def_overloads(base_method_name)
@@ -66046,19 +66044,28 @@ module Crystal::HIR
                                  else
                                    arg_types
                                  end
-        if block_entry = lookup_block_function_def_for_call(base_method_name, call_args.size, block_target_arg_types, receiver_base_for_block_target)
-          mangled_method_name = if receiver_id
-                                  preserve_static_value_receiver_target(
-                                    ctx.type_of(receiver_id),
-                                    base_method_name,
-                                    block_entry[0],
-                                    block_target_arg_types,
-                                    true
-                                  )
-                                else
-                                  block_entry[0]
-                                end
-          primary_mangled_name = mangled_method_name
+        # For instance calls on union/unknown receivers, `yield_receiver_base_name`
+        # returns nil. Falling back to ownerless block lookup in that state lets
+        # `lookup_block_function_def_for_call` pick an unrelated `#each$block`
+        # from any owner with the same short name/arity (for example
+        # `Crystal::DWARF::Info#each$block` for a `Nil | Array(String) | String#each` call).
+        # Keep the already-resolved union/static target unless we can constrain the
+        # lookup to a real receiver owner.
+        if !receiver_id || receiver_base_for_block_target
+          if block_entry = lookup_block_function_def_for_call(base_method_name, call_args.size, block_target_arg_types, receiver_base_for_block_target)
+            mangled_method_name = if receiver_id
+                                    preserve_static_value_receiver_target(
+                                      ctx.type_of(receiver_id),
+                                      base_method_name,
+                                      block_entry[0],
+                                      block_target_arg_types,
+                                      true
+                                    )
+                                  else
+                                    block_entry[0]
+                                  end
+            primary_mangled_name = mangled_method_name
+          end
         end
         if callsite_arg_types.any? { |t| t != TypeRef::VOID }
           remember_callsite_arg_types(mangled_method_name, callsite_arg_types, callsite_arg_literals, callsite_arg_enum_names, has_block_call, has_named_args, call_named_arg_names)
@@ -66233,34 +66240,40 @@ module Crystal::HIR
         if receiver_id
           receiver_base_for_canon = yield_receiver_base_name(ctx.type_of(receiver_id))
         end
-        typed_canon = lookup_block_function_def_for_call(base_method_name, call_args.size, arg_types, receiver_base_for_canon)
-        if typed_canon
-          mangled_method_name = if receiver_id
-                                  preserve_static_value_receiver_target(
-                                    ctx.type_of(receiver_id),
-                                    base_method_name,
-                                    typed_canon[0],
-                                    arg_types,
-                                    true
-                                  )
-                                else
-                                  typed_canon[0]
-                                end
-          primary_mangled_name = mangled_method_name
-        elsif count_distinct_block_overloads_arity_only(base_method_name, call_args.size, receiver_base_for_canon) == 1
-          if fallback_canon = lookup_block_function_def_for_call(base_method_name, call_args.size, nil, receiver_base_for_canon)
+        # Union/unknown instance receivers have no stable owner base here.
+        # Re-running block canonicalization without an owner constraint can
+        # retarget a valid union dispatch key (for example `Nil | Array(String) | String#each$block`)
+        # to an unrelated owner with the same short name/arity.
+        if !receiver_id || receiver_base_for_canon
+          typed_canon = lookup_block_function_def_for_call(base_method_name, call_args.size, arg_types, receiver_base_for_canon)
+          if typed_canon
             mangled_method_name = if receiver_id
                                     preserve_static_value_receiver_target(
                                       ctx.type_of(receiver_id),
                                       base_method_name,
-                                      fallback_canon[0],
+                                      typed_canon[0],
                                       arg_types,
                                       true
                                     )
                                   else
-                                    fallback_canon[0]
+                                    typed_canon[0]
                                   end
             primary_mangled_name = mangled_method_name
+          elsif count_distinct_block_overloads_arity_only(base_method_name, call_args.size, receiver_base_for_canon) == 1
+            if fallback_canon = lookup_block_function_def_for_call(base_method_name, call_args.size, nil, receiver_base_for_canon)
+              mangled_method_name = if receiver_id
+                                      preserve_static_value_receiver_target(
+                                        ctx.type_of(receiver_id),
+                                        base_method_name,
+                                        fallback_canon[0],
+                                        arg_types,
+                                        true
+                                      )
+                                    else
+                                      fallback_canon[0]
+                                    end
+              primary_mangled_name = mangled_method_name
+            end
           end
         end
       end
@@ -75309,10 +75322,7 @@ module Crystal::HIR
           first_call_arg_type = callsite_arg_types.first?
           first_arg_is_collection = first_call_arg_type &&
             (is_tuple_type_ref?(first_call_arg_type) || concrete_collection_type_ref?(first_call_arg_type))
-          recv_desc_fb = @module.get_type_descriptor(ctx.type_of(receiver_id))
-          recv_base_fb = unless recv_desc_fb && recv_desc_fb.name.includes?('(')
-                             yield_receiver_base_name(ctx.type_of(receiver_id))
-                           end
+          recv_base_fb = yield_receiver_base_name(ctx.type_of(receiver_id))
           if block_entry = lookup_block_function_def_for_call(base_inline_name, call_args.size, callsite_arg_types, recv_base_fb)
             block_entry_name = block_entry[0]
             if block_entry_name.ends_with?("_splat")

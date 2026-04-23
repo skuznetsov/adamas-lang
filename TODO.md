@@ -101,9 +101,21 @@ Current diagnosis / recently fixed roots:
   `func @IO::FileDescriptor#puts(%0: Type#204) -> Nil` with `print(Char '\n')`
   while `func @IO::FileDescriptor#puts$String` stays separate. The old
   generated-stage2 `String#bytesize` crash from newline handling is gone.
-  The next generated no-prelude blocker is earlier in HIR lowering again:
-  fresh `/tmp/cv2_puts_fix2_s2` still crashes after `lower_main: exprs=1`,
-  but no longer in the inherited `puts` corridor.
+  The next generated no-prelude blocker then moved to the HIR/codegen boundary:
+  `Array(String)#each$block` materialized its nested `each_index` callback as
+  `String ->` because fallback block-param inference treated `each_index` like
+  element-yielding `each`. The fix teaches `fallback_block_param_types` that
+  `each_index` yields `Int32`; fresh self-host HIR now contains
+  `func @__crystal_block_proc_291(%2: 4)` and calls
+  `Array(String)#unsafe_fetch$Int32`, not `unsafe_fetch` with a String-shaped
+  callback argument. `regression_tests/p2_selfhost_stage2_shape_guard.sh
+  /tmp/cv2_emitblock_fix` now checks the `Array(String)#each_index` callback
+  shape, and `regression_tests/p2_generated_stage2_no_prelude_puts_guard.sh
+  /tmp/cv2_emitblock_fix` reports
+  `frontier=hash_each_entry_with_index_null_block`. The current generated
+  no-prelude blocker is a null block callback in
+  `Hash(String, Tuple(String, Int32, Crystal::MIR::Array(String)))#each_entry_with_index$block`
+  from `Crystal::MIR::LLVMIRGenerator#emit_missing_crystal_function_stubs`.
 - Stage2 shape guard now protects four self-host codegen roots in one MIR
   gate (`regression_tests/p2_selfhost_stage2_shape_guard.sh`):
   - stale cache-only call return repair no longer rewrites

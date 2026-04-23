@@ -163,6 +163,22 @@ generated no-prelude stage2 still is not green; the next blocker moved earlier
 to a fresh crash right after `lower_main: exprs=1`. {F/G/R: 0.94/0.75/0.93}
 [verified]
 
+[LM-471|verified]: `Array(String)#each_index` fallback block-param inference
+must yield `Int32`, not the element type. The generated-stage2 crash after
+`lower_main: exprs=1` was reproduced as a segfault in
+`__crystal_block_proc_291` because `Array(String)#each$block` passed an Int32
+index to a callback materialized as `String ->`; host HIR/MIR showed
+`func @__crystal_block_proc_291(%0: String)`. The root was
+`fallback_block_param_types`, which only handled `*_with_index` as index-aware
+and treated bare `each_index` like element-yielding `each`. After the fix,
+fresh self-host HIR has `func @__crystal_block_proc_291(%2: 4)` and
+`Array(String)#unsafe_fetch$Int32`; `regression_tests/p2_selfhost_stage2_shape_guard.sh
+/tmp/cv2_emitblock_fix` passes and
+`regression_tests/p2_generated_stage2_no_prelude_puts_guard.sh
+/tmp/cv2_emitblock_fix` moves the frontier to
+`hash_each_entry_with_index_null_block`. {F/G/R: 0.93/0.70/0.92}
+[verified]
+
 [LM-470|hypothesis]: The current bootstrap blocker is not one universal-method
 family but missing demand provenance. Multiple producers can turn potential
 targets into pending work: virtual replay, `lower_virtual_target_owner`,
