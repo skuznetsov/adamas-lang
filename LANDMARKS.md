@@ -455,6 +455,25 @@ this is a root fix for type-id primitive dispatch, not a green generated-stage2
 compiler; the next frontier is `Char#ascii_control?` materialization.
 {F/G/R: 0.93/0.55/0.93} [verified]
 
+[LM-493|verified]: The generated-stage2 `Char$Hascii_control$Q` abort was a
+leaf primitive materialization hole, not a demand-queue root cause.
+`Char#control?` calls `ascii_control?` after `ascii?`, but generated `s2b`
+still emitted an abort stub for the raw `Char` predicate. The fix lowers
+implicit self, explicit call, and no-parens member-access forms of
+`Char#ascii_control?` inline as `self < 0x20 || self == 0x7f`, matching
+`src/stdlib/char.cr` without touching stdlib/runtime. Evidence:
+`crystal build src/crystal_v2.cr -o /tmp/cv2_charctl_final --error-trace`
+exited 0; `regression_tests/p2_bootstrap_semantic_emit_oracle.sh
+/tmp/cv2_charctl_final` and `regression_tests/p2_selfhost_stage2_shape_guard.sh
+/tmp/cv2_charctl_final` passed; fresh `scripts/run_safe.sh
+/tmp/cv2_charctl_final 420 4096 src/crystal_v2.cr -o
+/tmp/cv2_charctl_final_s2_full` exited 0 after about `252s`; generated `s2b`
+no-prelude no-codegen smoke moved past `Char$Hascii_control$Q` to
+`STUB CALLED: Printer$Dshortest$$Float32_IO`. Boundary: this is a root fix for
+one missing primitive predicate, but the generated-stage2 compiler is still
+not green.
+{F/G/R: 0.92/0.45/0.92} [verified]
+
 ## Active Strategy
 
 - Main fast loop: `--no-prelude` oracles and focused STOP_AFTER_HIR budget

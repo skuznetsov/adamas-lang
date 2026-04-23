@@ -231,15 +231,17 @@ Expected current signals:
 
 Latest generated-stage2 frontier:
 
-- `s1 -> s2b` builds with `/tmp/cv2_typeid3` in about `248s`.
+- `s1 -> s2b` builds with `/tmp/cv2_charctl_final` in about `252s`.
 - Generated `s2b` no-prelude no-codegen smoke moved past
-  `Class$Dcrystal_type_id` and now aborts at `STUB CALLED:
-  Char$Hascii_control$Q`.
+  `Class$Dcrystal_type_id` and `Char$Hascii_control$Q`, and now aborts at
+  `STUB CALLED: Printer$Dshortest$$Float32_IO`.
 - Root moved: type-literal `crystal_type_id`/`crystal_instance_type_id`
   must lower to an `Int32` type-id literal before both `lower_call` and
   `lower_member_access` rewrite type literals to static `Class.*` targets.
-  The shape guard now rejects `Class.crystal_type_id` / `Class#crystal_type_id`
-  in self-host MIR.
+  `Char#ascii_control?` is a leaf predicate on the raw `Char` codepoint and
+  now lowers inline as `self < 0x20 || self == 0x7f`. The shape guard rejects
+  both stale `Class.crystal_type_id` / `Class#crystal_type_id` and
+  `Char#ascii_control?` self-host MIR targets.
 
 Boundary: `src/crystal_v2.cr --no-prelude` still exits `11` in an
 inline-yield recursion / force-return corridor before it can serve as a green
@@ -247,7 +249,7 @@ pending-budget oracle.
 
 ## Next Work
 
-1. Localize and fix the generated-stage2 `Char#ascii_control?` stub reached by
+1. Localize and fix the generated-stage2 `Printer.shortest(Float32, IO)` stub reached by
    `regression_tests/combined/test_no_prelude_interpolation.cr --no-prelude
    --no-codegen`.
 2. Add a fast no-prelude oracle for the generated-stage2 `puts$String` hang, or

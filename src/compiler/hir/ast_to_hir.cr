@@ -28977,6 +28977,30 @@ module Crystal::HIR
       type_id_lit.id
     end
 
+    private def lower_char_ascii_control_predicate(
+      ctx : LoweringContext,
+      receiver_id : ValueId,
+    ) : ValueId
+      low_limit = Literal.new(ctx.next_id, TypeRef::CHAR, 0x20_i64)
+      ctx.emit(low_limit)
+      ctx.register_type(low_limit.id, TypeRef::CHAR)
+      low_cmp = BinaryOperation.new(ctx.next_id, TypeRef::BOOL, BinaryOp::Lt, receiver_id, low_limit.id)
+      ctx.emit(low_cmp)
+      ctx.register_type(low_cmp.id, TypeRef::BOOL)
+
+      del_char = Literal.new(ctx.next_id, TypeRef::CHAR, 0x7F_i64)
+      ctx.emit(del_char)
+      ctx.register_type(del_char.id, TypeRef::CHAR)
+      del_cmp = BinaryOperation.new(ctx.next_id, TypeRef::BOOL, BinaryOp::Eq, receiver_id, del_char.id)
+      ctx.emit(del_cmp)
+      ctx.register_type(del_cmp.id, TypeRef::BOOL)
+
+      result = BinaryOperation.new(ctx.next_id, TypeRef::BOOL, BinaryOp::Or, low_cmp.id, del_cmp.id)
+      ctx.emit(result)
+      ctx.register_type(result.id, TypeRef::BOOL)
+      result.id
+    end
+
     private def lower_primitive_object_id(
       ctx : LoweringContext,
       receiver_id : ValueId?,
@@ -49729,6 +49753,9 @@ module Crystal::HIR
           ctx.register_type(cast.id, TypeRef::INT32)
           return cast.id
         end
+        if name == "ascii_control?" && current_class == "Char"
+          return lower_char_ascii_control_predicate(ctx, emit_self(ctx))
+        end
 
         if name == "unsafe_chr"
           case current_class
@@ -66564,6 +66591,11 @@ module Crystal::HIR
         end
       end
 
+      if receiver_id && method_name == "ascii_control?" && args.empty?
+        receiver_type = ctx.type_of(receiver_id)
+        return lower_char_ascii_control_predicate(ctx, receiver_id) if receiver_type == TypeRef::CHAR
+      end
+
       if receiver_id && method_name == "unsafe_chr" && args.empty?
         receiver_type = ctx.type_of(receiver_id)
         if receiver_type == TypeRef::VOID
@@ -78382,6 +78414,9 @@ module Crystal::HIR
         ctx.emit(cast)
         ctx.register_type(cast.id, TypeRef::INT32)
         return cast.id
+      end
+      if receiver_type == TypeRef::CHAR && member_name == "ascii_control?"
+        return lower_char_ascii_control_predicate(ctx, object_id)
       end
 
       # Int32#chr → Char (identity, since both are i32 internally)

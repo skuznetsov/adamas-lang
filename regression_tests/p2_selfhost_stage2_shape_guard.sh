@@ -132,5 +132,7 @@ require_pattern 'func @CrystalV2::Compiler::Semantic::TypeInferenceEngine#guard_
   'materialized TypeInferenceEngine guard_watchdog! helper in self-host MIR'
 reject_pattern 'Class\.crystal_type_id|Class#crystal_type_id' \
   'Class.crystal_type_id stub target in self-host MIR'
+reject_pattern 'Char#ascii_control\?|Char\.ascii_control\?' \
+  'Char#ascii_control? stub target in self-host MIR'
 
 echo "p2_selfhost_stage2_shape_guard_ok"
