@@ -136,6 +136,29 @@ for: __crystal_main`) are removed by the function-name fallback fix in MIR
 owned-return/stub lookup. {F/G/R: 0.92/0.70/0.93}
 [verified]
 
+[LM-480|verified]: The generated-stage2 `IO::FileDescriptor#tell` abort was a
+HIR inherited-wrapper materialization bug, not a missing runtime helper. The
+front-end resolved `IO::FileDescriptor#tell` to ancestor `IO#tell`, but
+`lower_function_if_needed_impl` treated the ancestor body as sufficient and
+skipped materializing the requested child symbol. The bounded fix switches the
+"already lowered" gate and lowering state bookkeeping to the actual
+materialized symbol, and lowers inherited instance wrappers under the requested
+owner when the callsite needs a concrete child method body. Evidence:
+`crystal build src/crystal_v2.cr -o /tmp/cv2_tell_fix --error-trace` succeeded;
+plain `File.open { |f| f.tell }` HIR emitted by `/tmp/cv2_tell_fix` contains
+only `IO#tell` (`rg -n "func @IO::FileDescriptor#tell|func @IO#tell"
+/tmp/io_tell_probe_plain_fix.hir` => only `func @IO#tell`);
+`scripts/run_safe.sh /tmp/cv2_tell_fix 420 4096 src/crystal_v2.cr -o
+/tmp/cv2_tell_fix_s2` succeeded; `lldb --batch -o 'disassemble -n
+IO$CCFileDescriptor$Htell' /tmp/cv2_tell_fix_s2` shows a real delegate body
+calling `IO$CCFileDescriptor$Hpos`, not an abort stub; and
+`regression_tests/p2_generated_stage2_no_prelude_puts_guard.sh
+/tmp/cv2_tell_fix` prints
+`p2_generated_stage2_no_prelude_puts_guard_ok frontier=post_tell_runtime`.
+Boundary: this removes the `tell` frontier but does not make generated no-prelude
+stage2 green; the next blocker is a runtime crash with top frame
+`String$Hbytesize`. {F/G/R: 0.93/0.72/0.93} [verified]
+
 [LM-470|hypothesis]: The current bootstrap blocker is not one universal-method
 family but missing demand provenance. Multiple producers can turn potential
 targets into pending work: virtual replay, `lower_virtual_target_owner`,

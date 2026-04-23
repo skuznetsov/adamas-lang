@@ -85,7 +85,21 @@ Current diagnosis / recently fixed roots:
   The old generated-stage2 no-prelude `Tuple$Heach$$block` frontier is removed;
   the old synthetic-main MIR blockers (`Missing hash key: __crystal_main` and
   `MIR function stub not found for: __crystal_main`) are removed. Generated
-  `s2b` now reaches `STUB CALLED: IO::FileDescriptor#tell`.
+  `s2b` used to reach `STUB CALLED: IO::FileDescriptor#tell`.
+- Inherited instance-method materialization now lowers child wrappers as real
+  bodies instead of short-circuiting on an already-lowered ancestor target.
+  That root-fix removes the generated-stage2 `IO::FileDescriptor#tell` abort
+  stub corridor without any LLVM hardcode: plain `File.open { |f| f.tell }`
+  HIR now contains only `IO#tell`, `lldb --batch -o 'disassemble -n
+  IO$CCFileDescriptor$Htell' /tmp/cv2_tell_fix_s2` shows a real delegate body
+  calling `IO$CCFileDescriptor$Hpos`, and
+  `regression_tests/p2_generated_stage2_no_prelude_puts_guard.sh
+  /tmp/cv2_tell_fix` prints
+  `p2_generated_stage2_no_prelude_puts_guard_ok frontier=post_tell_runtime`.
+  The next generated-stage2 no-prelude blocker is no longer `tell`; current
+  frontier is an early runtime crash in `String#bytesize` during `puts 7`
+  compilation (top frame from `lldb --batch -o 'run ...' -o 'bt 20'
+  /tmp/cv2_tell_fix_s2`).
 - Stage2 shape guard now protects four self-host codegen roots in one MIR
   gate (`regression_tests/p2_selfhost_stage2_shape_guard.sh`):
   - stale cache-only call return repair no longer rewrites

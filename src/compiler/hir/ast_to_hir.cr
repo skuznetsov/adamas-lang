@@ -60433,7 +60433,6 @@ module Crystal::HIR
           end
         end
       end
-
       if registered_params = function_type_param_map_for(target_name, base_target_name, name)
         if debug_hook_filter_match?(base_target_name)
           params_str = registered_params.map { |k, v| "#{k}=#{v}" }.join(",")
@@ -60532,15 +60531,35 @@ module Crystal::HIR
         end
       end
 
+      requested_parts = parse_method_name(name)
+      requested_owner = requested_parts.owner
+      materialize_requested_instance_wrapper =
+        name != resolved_target_name &&
+        requested_parts.is_instance &&
+        target_parts.is_instance &&
+        !requested_owner.empty? &&
+        requested_owner != target_parts.owner
+
+      if materialize_requested_instance_wrapper
+        if info = generic_owner_info(requested_owner)
+          requested_owner = info.owner
+          extra_type_params = extra_type_params ? info.map.merge(extra_type_params) : info.map.dup
+          if !@class_info.has_key?(info.owner) && !@monomorphized.includes?(info.owner) && concrete_type_args?(info.args)
+            monomorphize_generic_class(info.base, info.args, info.owner)
+          end
+        end
+      end
+
+      materialized_name = materialize_requested_instance_wrapper ? name : resolved_target_name
+
       # A function entry can exist as a declaration-only placeholder after a
-      # call target was referenced before the body was materialized.  Treat only
-      # functions with emitted bodies as complete; otherwise late materialization
-      # can be skipped and LLVM has to synthesize an abort stub for a concrete
-      # call target.
-      has_in_module = @module.has_function_with_body?(resolved_target_name)
-      is_lowering_resolved = function_state(resolved_target_name).in_progress?
+      # call target was referenced before the body was materialized. Treat only
+      # the symbol we actually need to materialize as complete; inherited child
+      # wrappers still need their own bodies even when the ancestor target exists.
+      has_in_module = @module.has_function_with_body?(materialized_name)
+      is_lowering_resolved = function_state(materialized_name).in_progress?
       if debug_env_filter_match?("DEBUG_DEFERRED", name, resolved_target_name)
-        STDERR.puts "[DEFERRED_FINAL] resolved=#{resolved_target_name} has_in_module=#{has_in_module} is_lowering=#{is_lowering_resolved}"
+        STDERR.puts "[DEFERRED_FINAL] resolved=#{resolved_target_name} materialized=#{materialized_name} has_in_module=#{has_in_module} is_lowering=#{is_lowering_resolved}"
       end
       return if has_in_module
       return if is_lowering_resolved
@@ -60549,12 +60568,12 @@ module Crystal::HIR
       record_pending_callee_for_rta(target_name)
       # Re-parse resolved target name once for use in the rest of this function
       resolved_parts = parse_method_name(target_name)
-      @function_lowering_states[target_name] = FunctionLoweringState::InProgress
+      @function_lowering_states[materialized_name] = FunctionLoweringState::InProgress
 
       # WORK QUEUE: Track that we're inside lowering to defer nested calls
       @lowering_depth += 1
 
-      debug_hook("function.lower.start", "name=#{target_name} requested=#{name}")
+      debug_hook("function.lower.start", "name=#{materialized_name} requested=#{name}")
       if debug_env_filter_match?("DEBUG_CLASS_MODULES", target_name, name)
         modules = @class_included_modules[resolved_parts.owner]?
         STDERR.puts "[CLASS_MODULES] target=#{target_name} owner=#{resolved_parts.owner} modules=#{modules ? modules.to_a.join(",") : "nil"}"
@@ -60577,7 +60596,11 @@ module Crystal::HIR
       begin
         with_arena(arena || @arena) do
           if resolved_parts.is_instance
-            owner = resolved_owner || resolved_parts.owner
+            owner = if materialize_requested_instance_wrapper
+                      requested_owner
+                    else
+                      resolved_owner || resolved_parts.owner
+                    end
             if owner == "Tuple"
               if tuple_list = extra_type_params.try(&.["T__tuple"]?) || @type_param_map["T__tuple"]?
                 specialized_owner = "Tuple(#{tuple_list})"
@@ -60608,7 +60631,9 @@ module Crystal::HIR
               # Use the resolved target by default. Keep the caller's requested
               # mangled name only for deferred/untyped cases that rely on
               # callsite-driven specialization.
-              override = if deferred_lookup_used || def_has_untyped_regular_param?(func_def)
+              override = if materialize_requested_instance_wrapper
+                           name
+                         elsif deferred_lookup_used || def_has_untyped_regular_param?(func_def)
                            name
                          else
                            target_name
@@ -60829,8 +60854,8 @@ module Crystal::HIR
       ensure
         # WORK QUEUE: Restore previous inside_lowering state
         @lowering_depth -= 1
-        @function_lowering_states[target_name] = FunctionLoweringState::Completed
-        debug_hook("function.lower.done", "name=#{target_name}")
+        @function_lowering_states[materialized_name] = FunctionLoweringState::Completed
+        debug_hook("function.lower.done", "name=#{materialized_name}")
         if start_time
           elapsed_ms = (Time.instant - start_time).total_milliseconds
           entry = @lower_method_time_stack.pop?
@@ -79413,7 +79438,6 @@ module Crystal::HIR
                        actual_name
                      end
       actual_name = prefer_concrete_primitive_template_target(actual_name, primary_name, ctx.type_of(object_id))
-
       if (desc = @module.get_type_descriptor(receiver_type))
         if desc.kind == TypeKind::Tuple || desc.name.starts_with?("Tuple(")
           union_parts = desc.type_params.map { |ref| get_type_name_from_ref(ref) }.reject(&.empty?)

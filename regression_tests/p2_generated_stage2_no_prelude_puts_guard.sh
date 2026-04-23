@@ -10,6 +10,7 @@ OUT_BIN="$TMP_DIR/repro_bin"
 BUILD_LOG="$TMP_DIR/build.log"
 COMPILE_LOG="$TMP_DIR/compile.log"
 RUN_LOG="$TMP_DIR/run.log"
+TELL_DISASM="$TMP_DIR/tell.disasm"
 
 cleanup() {
   if [[ "${KEEP_TMP:-0}" != "1" ]]; then
@@ -35,6 +36,20 @@ CR
 if [[ ! -x "$GENERATED_S2" ]]; then
   echo "p2_generated_stage2_no_prelude_puts_guard_failed: missing generated stage2 compiler" >&2
   tail -80 "$BUILD_LOG" >&2 || true
+  exit 1
+fi
+
+lldb --batch -o 'disassemble -n IO$CCFileDescriptor$Htell' "$GENERATED_S2" >"$TELL_DISASM" 2>&1
+
+if grep -Eq 'dprintf|abort' "$TELL_DISASM"; then
+  echo "p2_generated_stage2_no_prelude_puts_guard_failed: tell still lowered to abort stub" >&2
+  cat "$TELL_DISASM" >&2
+  exit 1
+fi
+
+if ! grep -q 'IO\$CCFileDescriptor\$Hpos' "$TELL_DISASM"; then
+  echo "p2_generated_stage2_no_prelude_puts_guard_failed: tell no longer delegates to file-descriptor pos" >&2
+  cat "$TELL_DISASM" >&2
   exit 1
 fi
 
@@ -74,7 +89,13 @@ if grep -q 'MIR function stub not found for: __crystal_main' "$COMPILE_LOG"; the
 fi
 
 if grep -q 'STUB CALLED: IO\$CCFileDescriptor\$Htell' "$COMPILE_LOG"; then
-  echo "p2_generated_stage2_no_prelude_puts_guard_ok frontier=io_filedescriptor_tell"
+  echo "p2_generated_stage2_no_prelude_puts_guard_failed: old io_filedescriptor_tell frontier regressed" >&2
+  tail -120 "$COMPILE_LOG" >&2 || true
+  exit 1
+fi
+
+if [[ $compile_status -ne 0 ]]; then
+  echo "p2_generated_stage2_no_prelude_puts_guard_ok frontier=post_tell_runtime"
   exit 0
 fi
 
