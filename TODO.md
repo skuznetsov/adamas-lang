@@ -52,23 +52,56 @@ BOOTSTRAP_MEM_MB=4096 \
   scripts/build_bootstrap_stages.sh --stages 2 --out /tmp/cv2_bs_s2
 ```
 
-Current signal after the semantic helper materialization fixes: stage1 build +
-plain/no-prelude smokes pass; stage2 build passes (latest accepted wrapper:
-`309.04s` wall, `run_safe` child `[EXIT: 0] after ~237s`, peak RSS about
-`3.43GB`, artifact `/tmp/cv2_bs_s2_semantic_helpers/cv2_s2`); generated stage2
-plain smoke still times out in the prelude loading branch after confirming the
-prelude exists. The generated stage2 no-codegen no-prelude smoke moved from
-`T#lookup_macro` / `NameResolver#current_owner_symbol` to the
-`TypeInferenceEngine#guard_watchdog!` stub; the HIR/MIR shape root is now fixed:
-`guard_watchdog!` is materialized immediately as a leaf guard instead of being
-left in a stale deferred queue. The next generated-stage blocker must be
-re-measured from a fresh `s2b`; direct `s1` full codegen still timed out under
-the 300s sandbox gate during later lowering, while `STOP_AFTER_HIR` and p2
-shape oracles pass. The first generated-stage blocker is therefore still after
-HIR self-host materialization, not in the initial stage1 host build.
+Current signal after the latest generated-stage2 guard pass: stage1 build and
+generated `s2b` build still pass, and the generated-stage2 no-prelude `puts 7`
+guard now moves past the old `IO::FileDescriptor#system_pos`,
+`Crystal::System::Kqueue.set`, and `File#file_descriptor_close` recursion
+frontiers. The accepted guard signal is:
+
+```bash
+regression_tests/p2_generated_stage2_no_prelude_puts_guard.sh /tmp/cv2_inherited_owner
+```
+
+Verified signal: `p2_generated_stage2_no_prelude_puts_guard_ok
+frontier=string_null_byte`.
+
+The next measured generated-stage blocker is now a `String contains null byte`
+error from generated `s2b` while compiling the one-expression no-prelude repro.
+This is consistent with the existing bootstrap comments in `src/compiler/cli.cr`
+that `String#byte_index(0)` falsely reports null bytes in stage2 and forced
+temporary `LibC` file-operation workarounds. Do not add more callsite
+workarounds for `check_no_null_byte`; fix the `String#byte_index(0)` / string
+search root cause and cover it with a no-prelude oracle.
 
 Current diagnosis / recently fixed roots:
 
+- Generated-stage2 no-prelude `puts 7` moved through three backend/runtime
+  helper frontiers in one root-fix cluster. Same-owner system and class helper
+  calls are now recorded as exact RTA demand, so concrete helpers such as
+  `IO::FileDescriptor#system_pos` and stage2 class helpers are materialized
+  instead of synthesized as abort stubs. Overload matching now treats raw
+  `Pointer` values as compatible with typed `Pointer(T)` parameters, which
+  lets generated stage2 select the real
+  `Crystal::System::Kqueue.set(Pointer(LibC::Kevent), Int32, Pointer(LibC::Kevent), Int32, Timespec*)`
+  helper instead of falling through to a stub. The later bus-error frontier
+  was an inherited-wrapper root cause: `File#file_descriptor_close` was
+  materialized by lowering the ancestor `IO::FileDescriptor` body under
+  `@current_class = File`, so implicit calls inside the ancestor body resolved
+  back to the child wrapper and recursed. The fix preserves requested wrapper
+  owner only for value/primitive/generic specialization cases; normal
+  reference-class inherited wrappers lower the resolved ancestor body while
+  still materializing the requested symbol for dispatch. HIR evidence after the
+  fix: `File#file_descriptor_close` calls
+  `IO::FileDescriptor#file_descriptor_close$block`, not itself. Guard evidence:
+  `p2_generated_stage2_no_prelude_puts_guard.sh /tmp/cv2_inherited_owner` ->
+  `frontier=string_null_byte`. `IO#pos` is now accepted as a valid runtime
+  dispatch-helper shape for `IO::FileDescriptor#tell`; reject only aborting
+  `tell`/`pos` stubs, not this dispatch helper. The self-host shape guard no
+  longer requires a tuple allocation inside `Dir.glob(...block_splat)` because
+  the current correct HIR forwards directly to the `Enumerable` overload; it
+  now checks the real invariant instead: the forwarding block proc remains
+  `String`-shaped and the old `_block_splat` / `String#each$block` regressions
+  remain absent.
 - Bare receiverless `puts/print/p/pp` no longer fall through the late
   `Object#...` implicit-receiver fallback in `AstToHir#lower_call`. That
   fallback was missing the same builtin exemption already present in the

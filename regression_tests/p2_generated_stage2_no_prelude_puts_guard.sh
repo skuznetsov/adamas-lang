@@ -49,8 +49,8 @@ if grep -Eq 'dprintf|abort' "$TELL_DISASM"; then
   exit 1
 fi
 
-if ! grep -q 'IO\$CCFileDescriptor\$Hpos' "$TELL_DISASM"; then
-  echo "p2_generated_stage2_no_prelude_puts_guard_failed: tell no longer delegates to file-descriptor pos" >&2
+if ! grep -Eq 'IO\$CCFileDescriptor\$Hpos|IO\$Hpos' "$TELL_DISASM"; then
+  echo "p2_generated_stage2_no_prelude_puts_guard_failed: tell no longer delegates to file-descriptor/runtime pos" >&2
   cat "$TELL_DISASM" >&2
   exit 1
 fi
@@ -122,6 +122,17 @@ fi
 
 if grep -q 'STUB CALLED: IO\$CCFileDescriptor\$Hsystem_pos' "$COMPILE_LOG"; then
   echo "p2_generated_stage2_no_prelude_puts_guard_ok frontier=io_filedescriptor_system_pos"
+  exit 0
+fi
+
+if grep -q 'STUB CALLED: Crystal\$CCSystem\$CCKqueue\$Dset' "$COMPILE_LOG"; then
+  echo "p2_generated_stage2_no_prelude_puts_guard_failed: old Kqueue.set pointer-overload frontier regressed" >&2
+  tail -120 "$COMPILE_LOG" >&2 || true
+  exit 1
+fi
+
+if grep -q 'String contains null byte' "$COMPILE_LOG"; then
+  echo "p2_generated_stage2_no_prelude_puts_guard_ok frontier=string_null_byte"
   exit 0
 fi
 

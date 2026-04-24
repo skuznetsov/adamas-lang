@@ -1929,7 +1929,9 @@ module Crystal::HIR
     # helper corridors known to be required by emitted container/time paths;
     # broad exact marking re-materializes the compiler's deep helper graph.
     private def record_pending_callee_for_rta(name : String) : Nil
-      return unless internal_container_helper_exact_demand?(name) ||
+      return unless same_owner_class_method_exact_demand?(name) ||
+                    same_owner_system_helper_exact_demand?(name) ||
+                    internal_container_helper_exact_demand?(name) ||
                     internal_container_helper_name_exact_demand?(name) ||
                     direct_mutating_container_helper_exact_demand?(name) ||
                     hir_scalar_helper_exact_demand?(name) ||
@@ -1942,6 +1944,33 @@ module Crystal::HIR
                     hir_dump_exact_demand?(name) ||
                     time_location_runtime_getter_exact_demand?(name)
       @rta_called_methods << name
+    end
+
+    private def same_owner_class_method_exact_demand?(name : String) : Bool
+      current_class = @current_class
+      return false unless current_class
+
+      parts = parse_method_name_compact(name)
+      return false unless parts.separator == '.'
+      method = parts.method
+      return false unless method
+      return false unless strip_generic_args(parts.owner) == strip_generic_args(current_class)
+
+      base_name = "#{parts.owner}.#{method}"
+      class_method_defined?(base_name)
+    end
+
+    private def same_owner_system_helper_exact_demand?(name : String) : Bool
+      current_class = @current_class
+      return false unless current_class
+
+      owner = method_owner_from_name(name)
+      return false if owner.empty?
+      return false if owner.includes?('(') || current_class.includes?('(')
+      return false unless strip_generic_args(owner) == strip_generic_args(current_class)
+
+      method = method_short_from_name(name)
+      !!method && method.starts_with?("system_")
     end
 
     private def frontend_ast_node_helper_exact_demand?(name : String) : Bool
@@ -32967,6 +32996,10 @@ module Crystal::HIR
               arg_idx += 1
               next
             end
+            if pointer_erased_compatible?(arg_type, param_type, param_resolved_name)
+              arg_idx += 1
+              next
+            end
             if !param_type_name.empty?
               if numeric_param_target_type(param_type_name, arg_type)
                 arg_idx += 1
@@ -33041,6 +33074,30 @@ module Crystal::HIR
       end
 
       true
+    end
+
+    private def pointer_erased_compatible?(
+      arg_type : TypeRef,
+      param_type : TypeRef,
+      param_resolved_name : String,
+    ) : Bool
+      return true if arg_type == TypeRef::POINTER && pointer_type_ref_or_name?(param_type, param_resolved_name)
+      return false unless param_type == TypeRef::POINTER
+
+      if arg_desc = @module.get_type_descriptor(arg_type)
+        return arg_desc.kind == TypeKind::Pointer || arg_desc.name.starts_with?("Pointer(")
+      end
+      false
+    end
+
+    private def pointer_type_ref_or_name?(type_ref : TypeRef, type_name : String) : Bool
+      return true if type_ref == TypeRef::POINTER
+      return true if type_name == "Pointer" || type_name.starts_with?("Pointer(")
+      if desc = @module.get_type_descriptor(type_ref)
+        return true if desc.kind == TypeKind::Pointer
+        return true if desc.name == "Pointer" || desc.name.starts_with?("Pointer(")
+      end
+      false
     end
 
     @[AlwaysInline]
@@ -33129,6 +33186,8 @@ module Crystal::HIR
             elsif needs_union_coercion?(arg_type, param_type)
               score += 1
             elsif numeric_compatible?(arg_type, param_type)
+              score += 1
+            elsif pointer_erased_compatible?(arg_type, param_type, resolved_name)
               score += 1
             else
               numeric_target = numeric_param_target_type(param_type_name, arg_type)
@@ -44594,6 +44653,9 @@ module Crystal::HIR
               end
               next if name.empty?
               next if @module.has_function_with_body?(name)
+              if debug_env_filter_match?("DEBUG_MISSING_TARGET", name)
+                STDERR.puts "[MISSING_TARGET] seen name=#{name} func=#{func.name} body=#{@module.has_function_with_body?(name)} state=#{function_state(name)}"
+              end
               arg_types = inst.args.map { |arg_id| value_types[arg_id]? || TypeRef::VOID }
               remember_callsite_arg_types(name, arg_types, nil, nil, !!inst.block)
               # A call instruction already emitted into HIR is concrete demand:
@@ -44622,6 +44684,9 @@ module Crystal::HIR
           next if @module.has_function_with_body?(name)
           next if function_state(name).in_progress?
           @rta_called_methods << name
+          if debug_env_filter_match?("DEBUG_MISSING_TARGET", name)
+            STDERR.puts "[MISSING_TARGET] queue name=#{name} state=#{function_state(name)} funcs=#{@module.functions.size}"
+          end
           unless function_state(name).pending?
             @function_lowering_states[name] = FunctionLoweringState::Pending
             @pending_function_queue << name
@@ -44629,6 +44694,9 @@ module Crystal::HIR
         end
         process_pending_lower_functions
         missing.each do |name|
+          if debug_env_filter_match?("DEBUG_MISSING_TARGET", name)
+            STDERR.puts "[MISSING_TARGET] after_process name=#{name} body=#{@module.has_function_with_body?(name)} state=#{function_state(name)} funcs=#{@module.functions.size}"
+          end
           # If the missing call is a module/class method and still unresolved,
           # attempt a direct module-method lower against the recorded def.
           # This handles cases where untyped module methods were registered
@@ -58671,6 +58739,11 @@ module Crystal::HIR
         STDERR.puts "[LOWER_FUNC] name=#{name} base=#{base} state=#{function_state(name)} has_func=#{@module.has_function?(name)} has_def_full=#{@function_defs.has_key?(name)} has_def_base=#{@function_defs.has_key?(base)}"
       end
       debug_lookup_name = env_get("DEBUG_LOOKUP_NAME")
+      debug_lower_func = debug_env_filter_match?("DEBUG_LOWER_FUNC", name)
+      if debug_lower_func
+        base = strip_type_suffix(name)
+        STDERR.puts "[LOWER_FUNC_TRACE] enter name=#{name} base=#{base} state=#{function_state(name)} has_body=#{@module.has_function_with_body?(name)} has_func=#{@module.has_function?(name)} has_def_name=#{@function_defs.has_key?(name)} has_def_base=#{@function_defs.has_key?(base)} depth=#{@lowering_depth}"
+      end
       if env_get("DEBUG_VDISPATCH_UNION") && name.includes?("next_power_of_two")
         STDERR.puts "[VDISPATCH_UNION_HIR] lower_function_if_needed name=#{name}"
       end
@@ -58682,6 +58755,7 @@ module Crystal::HIR
         STDERR.puts "[YIELD_SKIP] name=#{name} is_yield=#{is_yield}"
       end
       if function_state(name).in_progress?
+        STDERR.puts "[LOWER_FUNC_TRACE] early=in_progress name=#{name}" if debug_lower_func
         if debug_env_filter_match?("DEBUG_FROM_CHARS", name)
           STDERR.puts "[DEBUG_FROM_CHARS] skip already lowering name=#{name}"
         end
@@ -58691,12 +58765,14 @@ module Crystal::HIR
         return
       end
       if @module.has_function_with_body?(name)
+        STDERR.puts "[LOWER_FUNC_TRACE] early=has_body name=#{name}" if debug_lower_func
         if is_math_min_debug
           STDERR.puts "[MATH_MIN_LOWER_FUNC] EARLY_RETURN: already_exists name=#{name}"
         end
         return
       end
       if function_state(name).completed?
+        STDERR.puts "[LOWER_FUNC_TRACE] early=completed name=#{name}" if debug_lower_func
         if is_math_min_debug
           STDERR.puts "[MATH_MIN_LOWER_FUNC] EARLY_RETURN: completed name=#{name}"
         end
@@ -58717,6 +58793,7 @@ module Crystal::HIR
           if method && !method_names.includes?(method)
             # Method name was never seen in any reachable code path — skip
             unless auto_generated
+              STDERR.puts "[LOWER_FUNC_TRACE] early=ast_method_filter name=#{name} method=#{method}" if debug_lower_func
               STDERR.puts "[AST_FILTER] filtered: #{name} (method=#{method})" if env_has?("CRYSTAL_V2_AST_FILTER_LOG")
               return
             end
@@ -58727,6 +58804,7 @@ module Crystal::HIR
             owner = method_owner_from_name(name)
             owner_base = strip_generic_args(owner)
             if !owner_types.includes?(owner) && !owner_types.includes?(owner_base)
+              STDERR.puts "[LOWER_FUNC_TRACE] early=ast_owner_filter name=#{name} owner=#{owner}" if debug_lower_func
               STDERR.puts "[AST_FILTER] filtered owner: #{name} (owner=#{owner})" if env_has?("CRYSTAL_V2_AST_FILTER_LOG")
               return
             end
@@ -58737,9 +58815,18 @@ module Crystal::HIR
       # WORK QUEUE: If we're already inside lowering, defer this function
       # to prevent stack overflow from deep recursive lowering chains.
       if inside_lowering? && !immediate_leaf_guard_lower_target?(name)
-        return if speculative_root_fallback_helper_mark?(name) ||
-                  recursive_formatting_helper_defer?(name) ||
-                  rta_exact_helper_suppressed?(name)
+        if speculative_root_fallback_helper_mark?(name)
+          STDERR.puts "[LOWER_FUNC_TRACE] early=speculative_root_fallback_helper name=#{name}" if debug_lower_func
+          return
+        end
+        if recursive_formatting_helper_defer?(name)
+          STDERR.puts "[LOWER_FUNC_TRACE] early=recursive_formatting_helper name=#{name}" if debug_lower_func
+          return
+        end
+        if rta_exact_helper_suppressed?(name)
+          STDERR.puts "[LOWER_FUNC_TRACE] early=rta_exact_helper_suppressed name=#{name}" if debug_lower_func
+          return
+        end
         record_pending_callee_for_rta(name)
         if !@type_param_map.empty? && @current_class
           current = @current_class.not_nil!
@@ -58758,6 +58845,7 @@ module Crystal::HIR
           @function_lowering_states[name] = FunctionLoweringState::Pending
           maybe_log_pending_explosion(name, "defer")
           @pending_function_queue << name
+          STDERR.puts "[LOWER_FUNC_TRACE] queued name=#{name} queue=#{@pending_function_queue.size}" if debug_lower_func
           # Keep AST reachability filter aligned for deferred functions.
           if @ast_filter_active
             if method_names = @ast_reachable_method_names
@@ -58788,6 +58876,7 @@ module Crystal::HIR
             maybe_report_pending_sources("enqueue")
           end
         end
+        STDERR.puts "[LOWER_FUNC_TRACE] early=inside_lowering name=#{name} state=#{function_state(name)}" if debug_lower_func
         return
       end
 
@@ -60042,6 +60131,7 @@ module Crystal::HIR
       end
 
       if func_def
+        STDERR.puts "[LOWER_FUNC_TRACE] lookup=hit name=#{name} target=#{target_name} branch=#{lookup_branch || "unknown"}" if debug_lower_func
         data = "name=#{name} target=#{target_name} branch=#{lookup_branch || "unknown"}"
         if callsite = @debug_callsite
           data += " callsite=#{callsite}"
@@ -60055,6 +60145,7 @@ module Crystal::HIR
           STDERR.puts "[HASH_DELETE_LOWER] hit name=#{name} target=#{target_name} branch=#{lookup_branch || "unknown"} stats_block=#{stats.has_block}"
         end
       else
+        STDERR.puts "[LOWER_FUNC_TRACE] lookup=miss name=#{name} target=#{target_name} base=#{base_name}" if debug_lower_func
         data = "name=#{name}"
         if callsite = @debug_callsite
           data += " callsite=#{callsite}"
@@ -60095,6 +60186,7 @@ module Crystal::HIR
       if debug_env_filter_match?("DEBUG_DEFERRED", name, target_name)
         STDERR.puts "[DEFERRED_CHECK] is_lowering=#{is_lowering_target}"
       end
+      STDERR.puts "[LOWER_FUNC_TRACE] early=target_in_progress name=#{name} target=#{target_name}" if debug_lower_func && is_lowering_target
       return if is_lowering_target
       if func_def.is_abstract
         if target_name != name && maybe_generate_accessor_for_name(name)
@@ -60586,8 +60678,11 @@ module Crystal::HIR
         target_parts.is_instance &&
         !requested_owner.empty? &&
         requested_owner != target_parts.owner
+      preserve_requested_wrapper_owner =
+        materialize_requested_instance_wrapper &&
+        preserve_requested_value_owner_specialization?(name, resolved_target_name)
 
-      if materialize_requested_instance_wrapper
+      if preserve_requested_wrapper_owner
         if info = generic_owner_info(requested_owner)
           requested_owner = info.owner
           extra_type_params = extra_type_params ? info.map.merge(extra_type_params) : info.map.dup
@@ -60643,7 +60738,7 @@ module Crystal::HIR
       begin
         with_arena(arena || @arena) do
           if resolved_parts.is_instance
-            owner = if materialize_requested_instance_wrapper
+            owner = if preserve_requested_wrapper_owner
                       requested_owner
                     else
                       resolved_owner || resolved_parts.owner
@@ -68559,7 +68654,23 @@ module Crystal::HIR
                              arg_types
                            end
         resolved_emit = emit_method_name
-        if block_entry = lookup_block_function_def_for_call(base_method_name, call_args.size, lookup_arg_types, recv_base_for_emit)
+        if direct_block_entry = lookup_function_def_for_call(
+             base_method_name,
+             call_args.size,
+             true,
+             lookup_arg_types,
+             false,
+             has_named_args,
+             call_named_arg_names
+           )
+          resolved_emit = preserve_static_value_receiver_target(
+            ctx.type_of(receiver_id),
+            base_method_name,
+            direct_block_entry[0],
+            lookup_arg_types,
+            true
+          )
+        elsif block_entry = lookup_block_function_def_for_call(base_method_name, call_args.size, lookup_arg_types, recv_base_for_emit)
           resolved_emit = preserve_static_value_receiver_target(
             ctx.type_of(receiver_id),
             base_method_name,
@@ -68606,7 +68717,7 @@ module Crystal::HIR
       if env_get("DEBUG_BLOCK_CALL_ABI") && has_block_call
         block_dbg = block_id ? block_id.to_s : "nil"
         recv_dbg = receiver_id ? get_type_name_from_ref(ctx.type_of(receiver_id)) : "nil"
-        STDERR.puts "[BLOCK_CALL_ABI] caller=#{ctx.function.name} method=#{method_name} base=#{base_method_name} mangled=#{mangled_method_name} recv=#{recv_dbg} block_expr=#{!block_expr.nil?} block_pass=#{!block_pass_expr.nil?} block_id=#{block_dbg} args=#{args.size} call_virtual=#{call_virtual}"
+        STDERR.puts "[BLOCK_CALL_ABI] caller=#{ctx.function.name} method=#{method_name} base=#{base_method_name} mangled=#{mangled_method_name} emit=#{emit_method_name} recv=#{recv_dbg} block_expr=#{!block_expr.nil?} block_pass=#{!block_pass_expr.nil?} block_id=#{block_dbg} args=#{args.size} call_virtual=#{call_virtual}"
       end
       if env_get("DEBUG_WITH_BRACE_CALL") && (method_name == "with_brace_newlines_skipped" || base_method_name.includes?("with_brace_newlines_skipped") || mangled_method_name.includes?("with_brace_newlines_skipped"))
         arg_types_dbg = args.map { |arg_id| get_type_name_from_ref(ctx.type_of(arg_id)) }

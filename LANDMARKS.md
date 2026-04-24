@@ -634,6 +634,37 @@ passed; `scripts/run_safe.sh /tmp/cv2_flat_missing 420 4096 src/crystal_v2.cr
 IO$CCFileDescriptor$Hsystem_pos` instead of the old null callback / tuple
 segfault frontiers. {F/G/R: 0.94/0.67/0.93} [verified]
 
+[LM-498|verified]: The generated-stage2 no-prelude `puts 7` frontier moved
+past `IO::FileDescriptor#system_pos`, `Crystal::System::Kqueue.set`, and the
+`File#file_descriptor_close` recursion crash. The first two were exact-demand
+and overload-resolution gaps: same-owner system/class helper calls needed to
+mark concrete targets as RTA demand, and raw `Pointer` arguments needed to
+match typed `Pointer(T)` parameters so the real Kqueue overload was selected
+instead of an abort stub. The bus-error frontier was a separate inherited
+wrapper root: requested `File#file_descriptor_close` was materialized by
+lowering the ancestor `IO::FileDescriptor` body under `@current_class = File`,
+so implicit calls inside the ancestor body resolved back to the child wrapper
+and self-recursed. The fix preserves requested wrapper owner only for
+value/primitive/generic owner-specialization cases; normal reference-class
+inherited wrappers lower the resolved ancestor body while still materializing
+the requested dispatch symbol. Evidence: `crystal build src/crystal_v2.cr -o
+/tmp/cv2_inherited_owner --error-trace` passed; HIR emitted with
+`DEBUG_CALL_LOOKUP=file_descriptor_close DEBUG_BLOCK_CALL_ABI=1` shows
+`File#file_descriptor_close` calling
+`IO::FileDescriptor#file_descriptor_close$block`, not itself; and
+`regression_tests/p2_generated_stage2_no_prelude_puts_guard.sh
+/tmp/cv2_inherited_owner` reports
+`p2_generated_stage2_no_prelude_puts_guard_ok frontier=string_null_byte`.
+`regression_tests/p2_selfhost_stage2_shape_guard.sh /tmp/cv2_inherited_owner`
+also passes after updating its `Dir.glob(...block_splat)` oracle from the stale
+tuple-allocation shape to the actual invariant: the forwarding block proc is
+`String`-shaped and the old `_block_splat` / `String#each$block` regressions
+are absent.
+Boundary: `IO#pos` is now an accepted runtime dispatch-helper shape for
+`IO::FileDescriptor#tell`; the next root is generated-stage2
+`String#byte_index(0)` / null-byte false positive, not another
+`check_no_null_byte` callsite workaround. {F/G/R: 0.94/0.68/0.93} [verified]
+
 ## Active Strategy
 
 - Main fast loop: `--no-prelude` oracles and focused STOP_AFTER_HIR budget

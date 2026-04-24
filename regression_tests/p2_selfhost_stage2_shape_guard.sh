@@ -122,6 +122,41 @@ require_array_string_each_index_callback_shape() {
   }
 }
 
+require_dir_glob_splat_wrapper_shape() {
+  awk '
+    $0 ~ /^func @Dir\.glob\$Path \| String_File::MatchOptions_Bool_block_splat/ {
+      in_glob = 1
+      proc = ""
+      next
+    }
+    $0 ~ /^func @/ && in_glob {
+      in_glob = 0
+    }
+    in_glob && $0 ~ /func_pointer @__crystal_block_proc_[0-9]+/ {
+      proc = $0
+      sub(/^.*func_pointer @/, "", proc)
+      sub(/ .*/, "", proc)
+    }
+    proc != "" && $0 ~ ("^func @" proc "\\(") {
+      found = 1
+      if ($0 !~ /: String\)/) {
+        print "p2_selfhost_stage2_shape_guard_failed: Dir.glob block_splat forwarding callback is not String-shaped: " $0 > "/dev/stderr"
+        exit 42
+      }
+    }
+    END {
+      if (proc == "" || !found) exit 43
+    }
+  ' "$MIR" || {
+    status=$?
+    if [[ "$status" == "42" || "$status" == "43" ]]; then
+      echo "p2_selfhost_stage2_shape_guard_failed: missing String-shaped Dir.glob block_splat forwarding callback" >&2
+      exit 1
+    fi
+    exit "$status"
+  }
+}
+
 require_pattern 'global_load @CrystalV2::Compiler__classvar__CRYSTAL_SRC_PATH : String' \
   'typed CRYSTAL_SRC_PATH global load'
 
@@ -138,12 +173,7 @@ reject_in_function 'func @String#byte_index\$Int32_Int32' \
   '^  ret$' \
   'bare return in nilable String#byte_index'
 
-require_in_function 'func @Dir\.glob\$Path \| String_File::MatchOptions_Bool_block_splat' \
-  'alloc .*Type#[0-9]+' \
-  'tuple allocation for splat-local patterns'
-reject_in_function 'func @Dir\.glob\$Path \| String_File::MatchOptions_Bool_block_splat' \
-  'call @[0-9]+[(]%0, %1, %2' \
-  'self-recursive Dir.glob block_splat call'
+require_dir_glob_splat_wrapper_shape
 reject_in_function 'func @Dir\.glob\$Path \| String_File::MatchOptions_Bool_block_splat' \
   'call .*_block_splat' \
   'self-recursive Dir.glob block_splat call after tuple rewrap'
