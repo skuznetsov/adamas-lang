@@ -63,7 +63,8 @@ regression_tests/p2_generated_stage2_no_prelude_puts_guard.sh /tmp/cv2_inherited
 ```
 
 Verified signal: `p2_generated_stage2_no_prelude_puts_guard_ok
-frontier=array_check_index_oob_stub` (after div/rem signedness root fix).
+frontier=nocodegen_clean_full_codegen_hang` (after the LM-500 lazy-RTA
+allowlist root fix).
 
 The previous `String contains null byte` frontier was resolved as a div/rem
 signedness bug in `llvm_backend`, not a `String#byte_index(0)` search bug.
@@ -75,12 +76,26 @@ values into negative remainders and corrupts hex digits into bytes containing
 (`t1.signed? ? srem : urem`): div/rem signedness now follows the dividend
 only. See LM-499 and `regression_tests/p2_u64_to_s_base16_no_null.sh`.
 
-The next measured generated-stage blocker is
-`STUB CALLED: Array(Nil | Array(Crystal::Compiler::Frontend::ExprId))#check_index_out_of_bounds$Int32_block`
-under `--no-codegen`. Full codegen times out in `Crystal::RWLock#write_lock`
-reached from `Process.fork`, which is likely a downstream symptom of the same
-missing-body corridor. Do not add a universal bounds-check body shim; find
-the demand/materialization root for this concrete nilable-Array wrapper.
+The `check_index_out_of_bounds` ABORT-stub frontier was then cleared by
+LM-500 as a lazy-RTA allowlist gap, not a virtual-dispatch or receiver-set
+bug. `Indexable#fetch(index : Int, &)` calls the private helper
+`check_index_out_of_bounds`, which is never virtually dispatched, so its
+method-part carries no concrete receiver in `@rta_virtual_receivers` and
+`rta_method_part_matches_owner?` returns false for every live container.
+The existing allowlist mechanism
+(`internal_container_helper_exact_demand?` /
+`internal_container_helper_name_exact_demand?` in `ast_to_hir.cr`) already
+carries peers like `unsafe_fetch`, `fetch`, and `increase_capacity`; the fix
+adds `check_index_out_of_bounds` to the `Array`, `Slice`, and `Deque` arms
+in both functions. Evidence: `generated_s2.ll` now has 78 real
+`check_index_out_of_bounds` definitions with 0 `abort_stub` lines; the
+nocodegen probe exits clean; zero regression suite delta. See LM-500.
+
+The next measured generated-stage blocker is the full-codegen hang after
+`lower_main: exprs=1` on `--no-prelude puts 7`, which remains the
+`Crystal::RWLock#write_lock` / `Process.fork` corridor previously noted on
+LM-499. The `--no-codegen` front end now runs to completion on the same
+source.
 
 Current diagnosis / recently fixed roots:
 

@@ -693,6 +693,40 @@ full codegen times out in `Crystal::RWLock#write_lock` reached from
 fix; the next frontier is the new `check_index_out_of_bounds` stub on a
 deep nilable-Array container. {F/G/R: 0.94/0.70/0.94} [verified]
 
+[LM-500|verified]: The generated-stage2 `check_index_out_of_bounds` ABORT-stub
+frontier was a lazy-RTA allowlist gap, not a virtual-dispatch or receiver-set
+bug. Root chain: `Indexable#fetch(index : Int, &)` calls the private helper
+`check_index_out_of_bounds(index) { return yield }`. The private helper is
+visible only through the fetch body (not through any virtual dispatch site), so
+under lazy RTA its method-part is tracked in `@rta_called_method_parts` but its
+virtual-receiver set never includes concrete container types. In
+`process_pending_lower_functions`, `should_keep` walks
+`@rta_called_methods` (exact) → `rta_live_owner?` (owner liveness) →
+`rta_method_part_matches_owner?` (virtual-dispatch receiver match). All three
+miss for private Indexable helpers on live container types, so the function is
+deferred and later emitted as an ABORT stub by `llvm_backend.cr`. The existing
+mechanism for this class of helper is
+`internal_container_helper_exact_demand?` /
+`internal_container_helper_name_exact_demand?` in `ast_to_hir.cr`, which
+allowlists private helpers so `record_pending_callee_for_rta` adds them to
+`@rta_called_methods` exactly. The allowlist already contained `unsafe_fetch`,
+`fetch`, `increase_capacity`, etc., but `check_index_out_of_bounds` was missing
+for Array, Slice, and Deque. The fix adds `check_index_out_of_bounds` to the
+Array, Slice, and Deque arms of both allowlists. Evidence: targeted
+`[CIOOB_TRACE]` instrumentation at the defer decision showed
+`reason=defer:method_part owner_live=true mpart_matches=false` for 6 affected
+types before the fix; after the fix `generated_s2.ll` contains 78 real
+`check_index_out_of_bounds` function definitions and 0 `abort_stub` lines; the
+`--no-codegen` probe now exits 0 with no `STUB CALLED`, advancing the
+`p2_generated_stage2_no_prelude_puts_guard.sh` recorded frontier from
+`array_check_index_oob_stub` to `nocodegen_clean_full_codegen_hang`; full
+regression suite delta vs baseline on the same branch is zero (original 147:
+133-134/13-14 with `bootstrap_semantic_corpus` flaking equally on both; combined
+31: 23/8 identical). Boundary: the next frontier for the full-codegen
+`puts 7 --no-prelude` corridor is the 60s hang after `lower_main: exprs=1`,
+likely still the `Crystal::RWLock#write_lock` / `Process.fork` corridor noted
+in LM-499. {F/G/R: 0.92/0.72/0.94} [verified]
+
 ## Active Strategy
 
 - Main fast loop: `--no-prelude` oracles and focused STOP_AFTER_HIR budget

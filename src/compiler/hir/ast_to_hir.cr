@@ -2114,7 +2114,8 @@ module Crystal::HIR
           method == "unsafe_fetch" ||
           method == "unsafe_put" ||
           method == "fetch" ||
-          method == "empty?"
+          method == "empty?" ||
+          method == "check_index_out_of_bounds"
       when "Hash"
         method == "[]" ||
           method == "[]?" ||
@@ -2147,13 +2148,15 @@ module Crystal::HIR
           method == "find_entry_with_index" ||
           method == "find_entry_with_index_linear_scan"
       when "Slice"
-        method == "unsafe_fetch"
+        method == "unsafe_fetch" ||
+          method == "check_index_out_of_bounds"
       when "Deque"
         method == "unsafe_fetch" ||
           method == "unsafe_put" ||
           method == "calculate_new_capacity" ||
           method == "resize_if_cant_insert" ||
-          method == "resize_to_capacity"
+          method == "resize_to_capacity" ||
+          method == "check_index_out_of_bounds"
       else
         false
       end
@@ -2180,7 +2183,8 @@ module Crystal::HIR
           method == "unsafe_fetch" ||
           method == "unsafe_put" ||
           method == "fetch" ||
-          method == "empty?"
+          method == "empty?" ||
+          method == "check_index_out_of_bounds"
       when "Hash"
         method == "[]" ||
           method == "[]?" ||
@@ -2213,13 +2217,15 @@ module Crystal::HIR
           method == "find_entry_with_index" ||
           method == "find_entry_with_index_linear_scan"
       when "Slice"
-        method == "unsafe_fetch"
+        method == "unsafe_fetch" ||
+          method == "check_index_out_of_bounds"
       when "Deque"
         method == "unsafe_fetch" ||
           method == "unsafe_put" ||
           method == "calculate_new_capacity" ||
           method == "resize_if_cant_insert" ||
-          method == "resize_to_capacity"
+          method == "resize_to_capacity" ||
+          method == "check_index_out_of_bounds"
       else
         false
       end

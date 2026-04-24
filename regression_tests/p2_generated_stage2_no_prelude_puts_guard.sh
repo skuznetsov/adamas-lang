@@ -137,17 +137,34 @@ if grep -q 'String contains null byte' "$COMPILE_LOG"; then
   exit 1
 fi
 
-# Fall back to a secondary probe with --no-codegen; if the front-end only
-# frontier is the nilable-Array check_index_out_of_bounds stub, accept as the
-# current recorded frontier instead of the full-codegen linker/fork timeout.
+# Fall back to a secondary probe with --no-codegen. The previous recorded
+# frontier (nilable-Array `check_index_out_of_bounds` ABORT stub) was cleared
+# by LM-500: the private Indexable helper is now in the lazy-RTA allowlist, so
+# `--no-codegen` front-end runs complete cleanly. Accept a clean nocodegen
+# exit as the new recorded state; the full-codegen corridor still hangs in
+# `Crystal::RWLock#write_lock` reached from `Process.fork`, which is tracked
+# as a separate frontier.
 NOCODEGEN_LOG="$TMP_DIR/compile_nocodegen.log"
 set +e
 "$ROOT_DIR/scripts/run_safe.sh" "$GENERATED_S2" 60 1024 \
   "$SOURCE" --no-prelude --no-codegen >"$NOCODEGEN_LOG" 2>&1
+nocodegen_status=$?
 set -e
 
 if grep -q 'STUB CALLED: Array\$LNil\$_\$OR\$_Array\$LCrystalV2\$CCCompiler\$CCFrontend\$CCExprId\$R\$R\$Hcheck_index_out_of_bounds' "$NOCODEGEN_LOG"; then
-  echo "p2_generated_stage2_no_prelude_puts_guard_ok frontier=array_check_index_oob_stub"
+  echo "p2_generated_stage2_no_prelude_puts_guard_failed: LM-500 regressed — check_index_out_of_bounds ABORT returned" >&2
+  tail -120 "$NOCODEGEN_LOG" >&2 || true
+  exit 1
+fi
+
+if grep -q 'STUB CALLED' "$NOCODEGEN_LOG"; then
+  echo "p2_generated_stage2_no_prelude_puts_guard_failed: nocodegen hit unrecorded ABORT stub" >&2
+  grep 'STUB CALLED' "$NOCODEGEN_LOG" >&2 || true
+  exit 1
+fi
+
+if [[ $nocodegen_status -eq 0 ]]; then
+  echo "p2_generated_stage2_no_prelude_puts_guard_ok frontier=nocodegen_clean_full_codegen_hang"
   exit 0
 fi
 
