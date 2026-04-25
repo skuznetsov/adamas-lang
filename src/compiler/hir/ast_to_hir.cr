@@ -58713,10 +58713,16 @@ module Crystal::HIR
       @phase0_forced_lower_count += 1
       @phase0_forced_lower_names << name
 
-      # Clear pending state if set (we'll handle it now)
+      # Clear pending state if set (we'll handle it now). Do NOT mutate
+      # @pending_function_queue here: it is iterated by index in
+      # process_pending_lower_functions, and `Array#delete` shifts later
+      # entries down, which can skip undeferred items at higher indices
+      # (e.g. virtual subtype targets pushed by undefer_rta_functions).
+      # The loop already skips already-lowered names via has_function_with_body?
+      # and function_state(name).completed?, so leaving stale entries in
+      # the queue is safe.
       if function_state(name).pending?
         @function_lowering_states.delete(name)
-        @pending_function_queue.delete(name)
       end
 
       saved_depth = @lowering_depth
