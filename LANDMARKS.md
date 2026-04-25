@@ -765,6 +765,44 @@ zero (original and combined counts unchanged; the first combined 21/10 run
 was a flake reproduced back to 23/8 on isolated rerun). {F/G/R: 0.92/0.55/0.92}
 [verified]
 
+[LM-502|verified]: The `Crystal::System::Process.@@rwlock` classvar staying
+`null` after LM-501 (so `Process.fork`'s `lock_write { LibC.fork }` faulted
+on entry to `write_lock(NULL)` at offset +24) was a deferred-init recording
+gap, not an RTA / lowering issue. `Crystal::System::Process` reopens with
+`@@rwlock = Crystal::RWLock.new` under a `{% else %}` Darwin branch, so the
+`AssignNode` target reaches HIR through a macro-branch expansion. The four
+class-body / macro-expansion iteration loops in `ast_to_hir.cr` (sites
+~20448, ~20519, ~20590, ~20656) all matched `when AssignNode` but only
+forwarded to `record_constant_definition` when `target.is_a?(ConstantNode)`;
+`ClassVarNode` targets were silently dropped, so `@deferred_classvar_inits`
+never received the rwlock entry and no `__classvar_init__Crystal$$CCSystem$$CCProcess__rwlock`
+function was emitted. Fix: extracted helper `register_class_assign_from_expansion`
+that preserves the existing `ConstantNode` recording and additionally pushes
+`{expr_id, @arena, class_name}` onto `@deferred_classvar_inits` for
+`ClassVarNode` targets; the four existing AssignNode call sites now route
+through this helper. The deepest macro-literal inner loop (no prior
+ConstantNode/AssignNode arm) was deliberately left untouched: an exploratory
+addition there flipped `String::Formatter::HAS_RYU_PRINTF` macro branches
+during constant rediscovery and stubbed
+`String::Formatter(Tuple(Float64))#current_char`, so the fix is intentionally
+narrow. Evidence: `lower_main: lazy classvar recording` count rises from 20
+to 21 on full-prelude `puts 7`; the fork test IR contains
+`define void @__classvar_init__Crystal$$CCSystem$$CCProcess__rwlock()` whose
+body executes `%r3 = call ptr @Crystal$CCRWLock$Dnew()` and
+`store ptr %r3, ptr @Crystal$CCSystem$CCProcess__classvar__rwlock`, with
+matching call sites at every `@@rwlock` read; `--no-codegen` probe still
+exits 0; `p2_generated_stage2_no_prelude_puts_guard.sh` reports
+`frontier=nocodegen_clean_full_codegen_hang` (LM-500 boundary preserved);
+sprintf_float_fixed_prefix_repro still fails with
+`STUB CALLED: String$CCFormatter$LTuple$LFloat64$R$R$Hcurrent_char` on both
+fix and freshly-rebuilt baseline (deterministic isolated repro 3/3 each),
+confirming it is a pre-existing failure that was masked as `PASS` by a
+parallel-run flake in the baseline regression log. Boundary: with the
+classvar populated, `Process.fork`'s parent path no longer NULL-derefs, but
+the post-fork child now hangs in `Crystal::System::Signal.after_fork`'s
+`@@pipe.each` block (offset +68 in the disassembly) — that is the next
+frontier. {F/G/R: 0.85/0.55/0.85} [verified]
+
 ## Active Strategy
 
 - Main fast loop: `--no-prelude` oracles and focused STOP_AFTER_HIR budget

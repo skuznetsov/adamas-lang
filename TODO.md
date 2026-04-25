@@ -102,13 +102,21 @@ therefore stored `AtomicOrdering::Acquire = 4` into `@writer` instead of
 instead of `mov w9, #0x4`. The puts-guard now carries a positive-shape
 regression check for both invariants. See LM-501.
 
-The next measured generated-stage blocker is LM-502 candidate: with the
-Atomic args bug gone, `write_lock` still faults because the
-`Crystal::System::Process.@@rwlock` classvar remains `null` —
-`Crystal::RWLock.new` is never lowered by RTA as an initializer for the
-classvar. This is a similar-shaped allowlist / lowering-demand gap to
-LM-500 but for struct-classvar initialization constructors. The
-`--no-codegen` front end still runs to completion on the same source.
+LM-502 then closed the `Process.@@rwlock = null` corridor. The four
+class-body / macro-expansion iteration loops in `ast_to_hir.cr` recognised
+`when AssignNode` but only registered `ConstantNode` targets; the
+Darwin-only `@@rwlock = Crystal::RWLock.new` lives under a `{% else %}`
+branch with a `ClassVarNode` target, so it never reached
+`@deferred_classvar_inits` and no `__classvar_init__` function was emitted.
+A new helper `register_class_assign_from_expansion` now records both
+`ConstantNode` and `ClassVarNode` AssignNode targets at all four sites; the
+deepest macro-literal inner loop is left untouched (an exploratory addition
+there flipped `String::Formatter::HAS_RYU_PRINTF` macro branches and stubbed
+`current_char`). Lazy classvar count goes from 20 to 21; fork-test IR now
+contains a real `__classvar_init__Crystal$$CCSystem$$CCProcess__rwlock`
+calling `Crystal$CCRWLock$Dnew()`. The next generated-stage frontier is the
+post-fork child hang in `Crystal::System::Signal.after_fork`'s
+`@@pipe.each` block (sample shows `Signal.after_fork + 68`). See LM-502.
 
 Current diagnosis / recently fixed roots:
 

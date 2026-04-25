@@ -20370,6 +20370,28 @@ module Crystal::HIR
       end
     end
 
+    # LM-502: AssignNodes nested inside macro branches (e.g. `@@rwlock =
+    # Crystal::RWLock.new` under `{% else %}`) must still populate
+    # `@deferred_classvar_inits` for ClassVarNode targets — otherwise the
+    # classvar global stays `null` at runtime (Process.fork → write_lock(NULL)).
+    private def register_class_assign_from_expansion(
+      expr_id : CrystalV2::Compiler::Frontend::ExprId,
+      assign : CrystalV2::Compiler::Frontend::AssignNode,
+      class_name : String,
+    )
+      target = @arena[assign.target]
+      case target
+      when CrystalV2::Compiler::Frontend::ConstantNode
+        record_constant_definition(class_name, (safe_slice_to_string(target.name) || ""), assign.value, @arena)
+      when CrystalV2::Compiler::Frontend::ClassVarNode
+        @deferred_classvar_inits << {expr_id, @arena, class_name}
+        if env_has?("DEBUG_DEFERRED_CLASSVAR")
+          cvar_name = (safe_slice_to_string(target.name) || "").lstrip('@')
+          STDERR.puts "[DEFERRED_CLASSVAR] Added from macro expansion: class=#{class_name} cvar=#{cvar_name}"
+        end
+      end
+    end
+
     private def process_macro_if_in_class(
       node : CrystalV2::Compiler::Frontend::MacroIfNode,
       class_name : String,
@@ -20426,10 +20448,7 @@ module Crystal::HIR
                   when CrystalV2::Compiler::Frontend::ConstantNode
                     record_constant_definition(class_name, expr_node, @arena)
                   when CrystalV2::Compiler::Frontend::AssignNode
-                    target = @arena[expr_node.target]
-                    if target.is_a?(CrystalV2::Compiler::Frontend::ConstantNode)
-                      record_constant_definition(class_name, (safe_slice_to_string(target.name) || ""), expr_node.value, @arena)
-                    end
+                    register_class_assign_from_expansion(expr_id, expr_node, class_name)
                   when CrystalV2::Compiler::Frontend::CallNode
                     register_class_members_from_expansion(
                       class_name,
@@ -20500,10 +20519,7 @@ module Crystal::HIR
       when CrystalV2::Compiler::Frontend::ConstantNode
         record_constant_definition(class_name, body_node, @arena)
       when CrystalV2::Compiler::Frontend::AssignNode
-        target = @arena[body_node.target]
-        if target.is_a?(CrystalV2::Compiler::Frontend::ConstantNode)
-          record_constant_definition(class_name, (safe_slice_to_string(target.name) || ""), body_node.value, @arena)
-        end
+        register_class_assign_from_expansion(body_id, body_node, class_name)
       when CrystalV2::Compiler::Frontend::CallNode
         register_class_members_from_expansion(
           class_name,
@@ -20574,10 +20590,7 @@ module Crystal::HIR
               when CrystalV2::Compiler::Frontend::ConstantNode
                 record_constant_definition(class_name, expr_node, @arena)
               when CrystalV2::Compiler::Frontend::AssignNode
-                target = @arena[expr_node.target]
-                if target.is_a?(CrystalV2::Compiler::Frontend::ConstantNode)
-                  record_constant_definition(class_name, (safe_slice_to_string(target.name) || ""), expr_node.value, @arena)
-                end
+                register_class_assign_from_expansion(expr_id, expr_node, class_name)
               when CrystalV2::Compiler::Frontend::CallNode
                 register_class_members_from_expansion(
                   class_name,
@@ -20643,10 +20656,7 @@ module Crystal::HIR
             when CrystalV2::Compiler::Frontend::ConstantNode
               record_constant_definition(class_name, expr_node, @arena)
             when CrystalV2::Compiler::Frontend::AssignNode
-              target = @arena[expr_node.target]
-              if target.is_a?(CrystalV2::Compiler::Frontend::ConstantNode)
-                record_constant_definition(class_name, (safe_slice_to_string(target.name) || ""), expr_node.value, @arena)
-              end
+              register_class_assign_from_expansion(expr_id, expr_node, class_name)
             when CrystalV2::Compiler::Frontend::CallNode
               register_class_members_from_expansion(
                 class_name,
