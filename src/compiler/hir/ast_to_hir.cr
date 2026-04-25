@@ -52867,9 +52867,19 @@ module Crystal::HIR
     end
 
     private def lower_unary(ctx : LoweringContext, node : CrystalV2::Compiler::Frontend::UnaryNode) : ValueId
+      op_str = unary_operator_text(node)
+
+      # Method-pointer shorthand `->Foo.bar` is parsed as UnaryNode("->", Call(...)).
+      # Lowering the operand in the OUTER context would call the method eagerly
+      # (root cause of LM-504: Process.after_fork_child_callbacks emitting direct
+      # calls to Signal.after_fork etc.). Instead, synthesize a thunk function
+      # whose body invokes the target method, and emit MakeProc wrapping it.
+      if op_str == "->"
+        return lower_method_pointer(ctx, node)
+      end
+
       operand_id = lower_expr(ctx, node.operand)
 
-      op_str = unary_operator_text(node)
       op = case op_str
            when "-" then UnaryOp::Neg
            when "&-" then UnaryOp::Neg
@@ -52930,6 +52940,72 @@ module Crystal::HIR
       end
 
       safe_unary_operator_string(node)
+    end
+
+    # Lower the method-pointer shorthand `->Foo.bar` (and `->obj.method`).
+    # The operand is a method-call expression that we wrap in a synthesized
+    # thunk function so it isn't invoked eagerly in the outer context.
+    # The resulting Proc has the method's return type and (currently) no
+    # parameters — sufficient for the 0-arity callbacks used by stdlib (e.g.
+    # Process.after_fork_child_callbacks).
+    private def lower_method_pointer(
+      ctx : LoweringContext,
+      node : CrystalV2::Compiler::Frontend::UnaryNode,
+    ) : ValueId
+      proc_func_name = "__crystal_method_ptr_#{@proc_function_counter}"
+      @proc_function_counter += 1
+
+      # Create the thunk function (return type is updated after lowering)
+      proc_func = @module.create_function(proc_func_name, TypeRef::VOID)
+      proc_ctx = LoweringContext.new(proc_func, @module, @arena)
+
+      # Save and isolate inline-yield/loop state — thunk body is its own function.
+      saved_return_stack = @inline_yield_return_stack
+      saved_override_stack = @inline_yield_return_override_stack
+      saved_block_body_depth = @inline_yield_block_body_depth
+      @inline_yield_return_stack = [] of InlineReturnContext
+      @inline_yield_return_override_stack = [] of InlineReturnOverride
+      @inline_yield_block_body_depth = 0
+
+      saved_loop_exit_stack = @loop_exit_stack
+      saved_loop_cond_stack = @loop_cond_stack
+      saved_loop_phi_stack = @loop_phi_stack
+      saved_loop_break_info_stack = @loop_break_info_stack
+      saved_loop_break_value_stack = @loop_break_value_stack
+      @loop_exit_stack = [] of BlockId
+      @loop_cond_stack = [] of BlockId
+      @loop_phi_stack = [] of Hash(String, Phi)
+      @loop_break_info_stack = [] of Array({BlockId, Hash(String, ValueId)})
+      @loop_break_value_stack = [] of Array({BlockId, ValueId})
+
+      # Lower the operand (method call) inside the thunk's context.
+      call_value_id = lower_expr(proc_ctx, node.operand)
+      return_type = proc_ctx.type_of(call_value_id)
+
+      if return_type != TypeRef::VOID
+        proc_func.return_type = return_type
+      end
+
+      # Restore outer state.
+      @inline_yield_return_stack = saved_return_stack
+      @inline_yield_return_override_stack = saved_override_stack
+      @inline_yield_block_body_depth = saved_block_body_depth
+      @loop_exit_stack = saved_loop_exit_stack
+      @loop_cond_stack = saved_loop_cond_stack
+      @loop_phi_stack = saved_loop_phi_stack
+      @loop_break_info_stack = saved_loop_break_info_stack
+      @loop_break_value_stack = saved_loop_break_value_stack
+
+      # Terminate the thunk with `return <call_value>`.
+      block = proc_func.get_block(proc_ctx.current_block)
+      unless block.terminator.is_a?(Return)
+        proc_ctx.terminate(Return.new(call_value_id))
+      end
+
+      # Proc type is `Proc(ReturnType)` — no parameters for the 0-arity case.
+      proc_type = @module.intern_type(TypeDescriptor.new(TypeKind::Proc, "Proc", [return_type]))
+
+      emit_make_proc_value(ctx, proc_type, proc_func_name, proc_func, [] of CapturedVar)
     end
 
     # ═══════════════════════════════════════════════════════════════════════

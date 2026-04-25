@@ -849,6 +849,62 @@ on the bootstrap critical path; TODO.md frontiers are
 `lower_missing` growth — all independent. {F/G/R: 0.55/0.40/0.65}
 [parked]
 
+[LM-504|verified]: The generated-stage2 `puts 7 --no-prelude` full-codegen
+hang (guard script recorded frontier `nocodegen_clean_full_codegen_hang`)
+had a different root cause than the LM-501/LM-502 RWLock corridor: HIR
+`lower_unary` always lowered `node.operand` *first*, and then matched
+the operator text. For `->Module.method` (parsed as
+`UnaryNode("->", Call(...))`), that evaluated the target method
+eagerly at the literal site. In stage2's prelude, the line
+
+    class_property after_fork_child_callbacks = [
+      ->Crystal::System::Signal.after_fork,
+      ->Crystal::System::SignalChildHandler.after_fork,
+      -> { Random::DEFAULT.new_seed },
+    ]
+
+was compiled as three direct method calls at `__crystal_main` time,
+before signal pipes / channels were initialised. `Signal.after_fork`
+iterated a nil `@@pipe` and spun. The fix adds a prefix check on
+`op_str == "->"` in `ast_to_hir.cr:52877` that dispatches to a new
+`lower_method_pointer` helper. The helper synthesises a
+`__crystal_method_ptr_N` thunk function, lowers the operand inside the
+thunk's own `LoweringContext` (saving/restoring outer inline-yield and
+loop stacks), terminates the thunk with `Return(call_value)`, and emits
+`emit_make_proc_value` with a null environment for the outer context.
+The proc type is `Proc(ReturnType)` with no parameters (sufficient for
+the 0-arity `after_fork_child_callbacks` shape).
+
+Evidence:
+
+- Probe `/tmp/lm504/probe3.cr` (`->Foo.bar.call`) now prints `42` and
+  HIR contains `func_pointer @__crystal_method_ptr_0 + make_proc`
+  instead of `call Foo.bar()` at the literal site.
+- Stage2 LLVM IR contains thunks numbered 1889, 1890, 1891 matching
+  the three `->...` call sites in `Process.after_fork_child_callbacks`.
+- Regression suite: 22 → 23 passing out of 31 combined (pre-fix
+  baseline `/tmp/cv2_lm502_built` vs fixed `bin/crystal_v2`); no new
+  failures. Remaining 8 failures are pre-existing RTA STUB gaps
+  (`Permissions$Hvalue`, `UInt8$Hremainder`, etc.) unrelated to
+  proc-pointer paths.
+- Generated-stage2 `puts 7 --no-prelude` no longer hangs — it now
+  exits in ~0s with `STUB CALLED: Crystal$CCEventLoop$Hafter_fork`
+  followed by `llc failed` (ABORT stub emitted for the abstract
+  `EventLoop#after_fork` because RTA never discovered the virtual
+  dispatch reached via `Proc.call` in the child iteration).
+
+The new frontier — RTA discovery gap for `Crystal::EventLoop#after_fork`
+called through the `Process.after_fork_child_callbacks` proc chain —
+is recorded for follow-up as a sibling to LM-503(B) (which is the
+same pattern for `after_fork_before_exec`). The existing guard script
+`p2_generated_stage2_no_prelude_puts_guard.sh` does not yet recognise
+this shape; it still falls through to the historical
+`nocodegen_clean_full_codegen_hang` label because no earlier shape
+check matches `STUB CALLED: Crystal$CCEventLoop$Hafter_fork`.
+
+Regression: `regression_tests/proc_pointer_module_method.cr`
+(EXPECT: ok). {F/G/R: 0.9/0.6/0.9} [verified]
+
 ## Active Strategy
 
 - Main fast loop: `--no-prelude` oracles and focused STOP_AFTER_HIR budget
