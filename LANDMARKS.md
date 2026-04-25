@@ -803,6 +803,52 @@ the post-fork child now hangs in `Crystal::System::Signal.after_fork`'s
 `@@pipe.each` block (offset +68 in the disassembly) — that is the next
 frontier. {F/G/R: 0.85/0.55/0.85} [verified]
 
+[LM-503|investigation][parked]: Re-running the LM-502 fork verification
+script (`/tmp/lm502/fork_test.cr`) now exposes two distinct V2 bugs that
+sit *behind* `Process.fork` but are off the bootstrap critical path. They
+are recorded so future work doesn't rediscover them.
+
+(A) **Method overload conflation** — `Crystal::System::Process.fork` has
+two overloads: `def self.fork(*, will_exec = false)` (keyword) and
+`def self.fork(&)` (block). RTA lowered only ONE function symbol
+`Crystal$CCSystem$CCProcess$Dfork$block(ptr %will_exec)`: the body
+belongs to the keyword overload, but the signature carries the block
+overload's `$block` mangling and accepts the block proc as a single ptr
+parameter. At the call site the block proc address is passed as
+`will_exec`, the if-test becomes `icmp ne ptr null` (always true), and
+control flows down the will_exec=true branch. Cannot reduce to an
+isolated repro — 9+ minimal tests with surface-similar shapes
+(`fork_overload.cr`, `fork_ov2.cr`, `fork_ov3.cr`,
+`fork_close_overload.cr`, `inner_lib.cr` … `inner_lib5.cr`) all emit
+both `$arity1` and `$block` overloads correctly. The bug needs more
+context — likely macro guards on the keyword overload's body (the
+`{% if SOCK_CLOEXEC %}{% else %}` block at process.cr:146-173) plus the
+specific suffix-flag combinatorics in `strip_mangled_suffix_flags`
+(`ast_to_hir.cr` ~84768) interact with `resolve_method_call`
+(~30393+) in a way that the synthetic tests don't trigger.
+
+(B) **`Crystal::EventLoop#after_fork_before_exec` never lowered** —
+abstract base at `event_loop.cr:1` (no method); subclasses define it
+(`libevent.cr:15`, `kqueue.cr:31-43`, `polling.cr:112-114`,
+`epoll.cr` similarly). `fork_run.ll` contains an ABORT-stub for
+`Crystal$CCEventLoop$Hafter_fork_before_exec` (lines 222701-222703) and
+no subclass overrides — but the *sibling* method `after_fork` is fully
+emitted (definition at line 138629, vdispatch at 147572). The
+counter-intuitive part: `after_fork` lives inside
+`{% unless flag?(:preview_mt) %} … {% end %}` macro guards in every
+subclass, while `after_fork_before_exec` does NOT. So this is the
+opposite of LM-502's macro-guard skipping pattern. Likely an RTA
+discovery gap specific to the sites that *call*
+`after_fork_before_exec` (only `Crystal::System::Process.fork`'s
+keyword overload at process.cr:196), which never gets exercised
+because of bug (A).
+
+Strategic decision: park. `Process.fork` is legacy/deprecated and not
+on the bootstrap critical path; TODO.md frontiers are
+`guard_watchdog!`, prelude load timeout, `Enumerable(T)#any?$block`,
+`lower_missing` growth — all independent. {F/G/R: 0.55/0.40/0.65}
+[parked]
+
 ## Active Strategy
 
 - Main fast loop: `--no-prelude` oracles and focused STOP_AFTER_HIR budget
