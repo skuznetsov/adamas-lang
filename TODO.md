@@ -63,8 +63,13 @@ regression_tests/p2_generated_stage2_no_prelude_puts_guard.sh /tmp/cv2_inherited
 ```
 
 Verified signal: `p2_generated_stage2_no_prelude_puts_guard_ok
-frontier=nocodegen_clean_full_codegen_hang` (after the LM-500 lazy-RTA
-allowlist root fix).
+frontier=eventloop_after_fork_rta_gap` (after LM-504 cleared the
+`->Module.method` eager-call bug that was feeding bogus Procs into
+`Process.after_fork_child_callbacks`). The next root is an RTA
+discovery gap for `Crystal::EventLoop#after_fork` — the abstract base
+emits an ABORT stub because the virtual dispatch reached through
+`Proc.call` in the child fork iteration is not discovered by RTA.
+This is the sibling pattern to LM-503(B) for `after_fork_before_exec`.
 
 The previous `String contains null byte` frontier was resolved as a div/rem
 signedness bug in `llvm_backend`, not a `String#byte_index(0)` search bug.
