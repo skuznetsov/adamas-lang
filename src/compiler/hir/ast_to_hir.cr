@@ -85051,6 +85051,23 @@ module Crystal::HIR
         if type_name = param.type_annotation
           return true if type_name == "_"
           return true if type_param_like?(type_name) && !@type_param_map.has_key?(type_name) && short_type_param_name?(type_name)
+          # Pointer-shaped generic annotations like `T*` carry an unresolved
+          # type variable. Without callsite specialization the partial-typed
+          # `$arityN` body is selected over the concrete `$Pointer(X)_..` mono
+          # (e.g. GC.realloc(pointer : T*, size : Int) forall T).
+          # Note: do NOT consult @type_param_map here. Crystal stdlib has no
+          # concrete type literally named `T*`; the inner T is always a forall
+          # variable. The caller's @type_param_map can leak from unrelated
+          # lowerings (e.g. Hash's T/K bindings while lowering Builder), which
+          # would spuriously suppress callsite specialization.
+          if type_name.ends_with?('*')
+            inner = type_name.rstrip('*').strip
+            if !inner.empty? &&
+               type_param_like?(inner) &&
+               short_type_param_name?(inner)
+              return true
+            end
+          end
         else
           return true
         end
