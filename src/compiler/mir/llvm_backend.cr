@@ -23665,7 +23665,7 @@ module Crystal::MIR
 
       emit "#{name} = load atomic #{type}, ptr #{ptr} #{ordering}, align 8"
 
-      if @emit_tsan && inst.ordering.acquire? || inst.ordering.acq_rel? || inst.ordering.seq_cst?
+      if @emit_tsan && (inst.ordering.acquire? || inst.ordering.acq_rel? || inst.ordering.seq_cst?)
         emit "call void @__tsan_acquire(ptr #{ptr})"
       end
     end
@@ -23673,10 +23673,11 @@ module Crystal::MIR
     private def emit_atomic_store(inst : AtomicStore, name : String)
       ptr = value_ref(inst.ptr)
       val = value_ref(inst.value)
-      type = @value_types[inst.value]? || "i64"
+      val_type_ref = @value_types[inst.value]?
+      type = val_type_ref ? @type_mapper.llvm_type(val_type_ref) : "i64"
       ordering = llvm_ordering(inst.ordering)
 
-      if @emit_tsan && inst.ordering.release? || inst.ordering.acq_rel? || inst.ordering.seq_cst?
+      if @emit_tsan && (inst.ordering.release? || inst.ordering.acq_rel? || inst.ordering.seq_cst?)
         emit "call void @__tsan_release(ptr #{ptr})"
       end
 
