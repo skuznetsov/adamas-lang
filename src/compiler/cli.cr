@@ -3221,7 +3221,7 @@ module CrystalV2
           when "pkg_config"
             next if value.empty?
             pkg_args = ["pkg-config", "--libs", value] of String
-            output, ok = run_command_capture_output(pkg_args, "/tmp/crystal_v2_pkg_config_#{digest_string(value)}.log")
+            output, ok = run_command_capture_output(pkg_args, "/tmp/crystal_v2_pkg_config_#{digest_string(value)}_#{Process.pid}.log")
             output = output.strip
             if ok && !output.empty?
               output.split.each do |flag|
@@ -3254,7 +3254,7 @@ module CrystalV2
             expanded = if value.starts_with?("`") && value.ends_with?("`")
                          cmd = value[1..-2]
                          shell_args = ["sh", "-c", cmd] of String
-                         shell_output, shell_ok = run_command_capture_output(shell_args, "/tmp/crystal_v2_ldflags_#{digest_string(cmd)}.log")
+                         shell_output, shell_ok = run_command_capture_output(shell_args, "/tmp/crystal_v2_ldflags_#{digest_string(cmd)}_#{Process.pid}.log")
                          shell_ok ? shell_output.strip : ""
                        else
                          value
