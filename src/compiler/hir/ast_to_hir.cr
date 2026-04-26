@@ -16214,6 +16214,16 @@ module Crystal::HIR
         return infer_type_from_expr(expr_node.expression, self_type_name)
       when CrystalV2::Compiler::Frontend::MacroExpressionNode
         return infer_type_from_expr(expr_node.expression, self_type_name)
+      when CrystalV2::Compiler::Frontend::PointerofNode
+        if inner = expr_node.args.first?
+          if inner_type = infer_type_from_expr(inner, self_type_name)
+            inner_name = get_type_name_from_ref(inner_type)
+            if !inner_name.empty? && inner_name != "Void" && inner_name != "Unknown"
+              return type_ref_for_name("Pointer(#{inner_name})")
+            end
+          end
+        end
+        return TypeRef::POINTER
       when CrystalV2::Compiler::Frontend::AsNode
         return type_ref_for_name((safe_slice_to_string(expr_node.target_type) || ""))
       when CrystalV2::Compiler::Frontend::MemberAccessNode
