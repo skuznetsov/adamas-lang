@@ -19959,6 +19959,37 @@ module Crystal::HIR
       type_name
     end
 
+    # True when both `DefNode` references describe the same logical method
+    # definition (either same AST reference or same source span). Used to
+    # avoid the `_previous` re-registration when the same def is processed
+    # multiple times (e.g., reached by both class member walk and macro-if
+    # expansion which re-parses the same source). Without this guard the
+    # existing `Class#method$arity0` entry is moved to
+    # `Class#method$arity0_previous` while the same body is also restored as
+    # `Class#method$arity0`, so a `super` lowering that targets `_previous`
+    # recurses into itself (Kqueue#after_fork super hang during
+    # `Process.fork`).
+    #
+    # Macro-if re-expansion produces NEW `DefNode` objects (different
+    # `object_id`) because parsing creates fresh arena entries, but the source
+    # `Span` is preserved across re-parses. Legitimate `previous_def`
+    # (user-written method override at a different source location) yields
+    # spans that differ in `start_line`/`start_offset`, so the `_previous`
+    # path still fires for the real `previous_def` use case.
+    private def same_def_node?(
+      a : CrystalV2::Compiler::Frontend::DefNode,
+      b : CrystalV2::Compiler::Frontend::DefNode,
+    ) : Bool
+      return true if a.same?(b)
+      a_span = a.span
+      b_span = b.span
+      a_span.start_line == b_span.start_line &&
+        a_span.start_column == b_span.start_column &&
+        a_span.end_line == b_span.end_line &&
+        a_span.end_column == b_span.end_column &&
+        a.name == b.name
+    end
+
     private def register_type_method_from_def(
       member : CrystalV2::Compiler::Frontend::DefNode,
       type_name : String,
@@ -20117,7 +20148,7 @@ module Crystal::HIR
           @function_enum_return_names[alias_base] = enum_return_name
         end
       end
-      if existing_def = @function_defs[full_name]?
+      if (existing_def = @function_defs[full_name]?) && !same_def_node?(existing_def, effective_member)
         previous_base = "#{base_name}_previous"
         previous_full = function_full_name_for_def(previous_base, param_types, effective_member.params, has_block)
         if prev_return = @function_types[full_name]?
