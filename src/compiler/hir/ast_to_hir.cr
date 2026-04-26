@@ -6748,6 +6748,18 @@ module Crystal::HIR
         return entry
       end
 
+      # Generic instantiations (e.g. `Atomic(Int32)`) are not stored in
+      # `@macro_defs` — generic classes register their macros under the bare
+      # type name ("Atomic"). When lowering a method body of an instantiation
+      # we must also try the stripped name so that private macros declared in
+      # the generic template are found at the call site.
+      stripped_scope = strip_generic_args(scope_name)
+      if stripped_scope != scope_name
+        if entry = lookup_macro_entry(method_name, stripped_scope)
+          return entry
+        end
+      end
+
       visited = Set(String).new
       current = scope_name
       while current && !visited.includes?(current)
@@ -6760,11 +6772,20 @@ module Crystal::HIR
           end
         end
 
-        parent = @class_info[current]?.try(&.parent_name) || @module.class_parents[current]?
+        parent = @class_info[current]?.try(&.parent_name) ||
+                 @module.class_parents[current]? ||
+                 @class_info[stripped_scope]?.try(&.parent_name) ||
+                 @module.class_parents[stripped_scope]?
         break unless parent
 
         if entry = lookup_macro_entry(method_name, parent)
           return entry
+        end
+        parent_stripped = strip_generic_args(parent)
+        if parent_stripped != parent
+          if entry = lookup_macro_entry(method_name, parent_stripped)
+            return entry
+          end
         end
         current = parent
       end
