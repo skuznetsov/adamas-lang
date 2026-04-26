@@ -9800,61 +9800,6 @@ module Crystal::MIR
         return true
       end
 
-      if mangled == "IO$Hread_fully$$Slice$LUInt8$R"
-        slice_tid = @module.type_registry.get_by_name("Slice(UInt8)").try(&.id.to_i32)
-        return false unless slice_tid
-        arg_union = "%Int32$_$OR$_Slice$LUInt8$R.union"
-        ret_union = "%Int32$_$OR$_NoReturn$_$OR$_String.union"
-        @called_crystal_functions["__vdispatch__IO$Hread$$Slice$LUInt8$R$$T166"] ||= {ret_union, 2, ["ptr", arg_union] of String}
-        @called_crystal_functions["IO$CCEOFError$Dnew"] ||= {"ptr", 1, ["ptr"] of String}
-        emit_raw "; IO#read_fully(Slice(UInt8)) — direct loop override avoiding HIR slice+= union pollution\n"
-        emit_raw "define i32 @#{mangled}(ptr %self, ptr %slice) {\n"
-        emit_raw "entry:\n"
-        emit_raw "  %orig_size = load i32, ptr %slice\n"
-        emit_raw "  %orig_ptr_addr = getelementptr i8, ptr %slice, i32 8\n"
-        emit_raw "  %orig_ptr = load ptr, ptr %orig_ptr_addr\n"
-        emit_raw "  br label %loop\n"
-        emit_raw "loop:\n"
-        emit_raw "  %done_count = phi i32 [0, %entry], [%next_done, %read_ok]\n"
-        emit_raw "  %remaining = sub i32 %orig_size, %done_count\n"
-        emit_raw "  %complete = icmp sle i32 %remaining, 0\n"
-        emit_raw "  br i1 %complete, label %ret_done, label %do_read\n"
-        emit_raw "do_read:\n"
-        emit_raw "  %cur_ptr = getelementptr i8, ptr %orig_ptr, i32 %done_count\n"
-        emit_raw "  %tmp_slice = alloca [16 x i8], align 8\n"
-        emit_raw "  %tmp_size = getelementptr i8, ptr %tmp_slice, i32 0\n"
-        emit_raw "  store i32 %remaining, ptr %tmp_size\n"
-        emit_raw "  %tmp_ro = getelementptr i8, ptr %tmp_slice, i32 4\n"
-        emit_raw "  store i1 0, ptr %tmp_ro\n"
-        emit_raw "  %tmp_ptr_addr = getelementptr i8, ptr %tmp_slice, i32 8\n"
-        emit_raw "  store ptr %cur_ptr, ptr %tmp_ptr_addr\n"
-        emit_raw "  %arg = alloca #{arg_union}, align 8\n"
-        emit_raw "  store #{arg_union} zeroinitializer, ptr %arg\n"
-        emit_raw "  %arg_tid = getelementptr #{arg_union}, ptr %arg, i32 0, i32 0\n"
-        emit_raw "  store i32 #{slice_tid}, ptr %arg_tid\n"
-        emit_raw "  %arg_pay = getelementptr #{arg_union}, ptr %arg, i32 0, i32 1\n"
-        emit_raw "  store ptr %tmp_slice, ptr %arg_pay, align 4\n"
-        emit_raw "  %arg_val = load #{arg_union}, ptr %arg\n"
-        emit_raw "  %read_union = call #{ret_union} @__vdispatch__IO$Hread$$Slice$LUInt8$R$$T166(ptr %self, #{arg_union} %arg_val)\n"
-        emit_raw "  %read_slot = alloca #{ret_union}, align 8\n"
-        emit_raw "  store #{ret_union} %read_union, ptr %read_slot\n"
-        emit_raw "  %read_pay = getelementptr #{ret_union}, ptr %read_slot, i32 0, i32 1\n"
-        emit_raw "  %read_count = load i32, ptr %read_pay, align 4\n"
-        emit_raw "  %eof = icmp eq i32 %read_count, 0\n"
-        emit_raw "  br i1 %eof, label %raise_eof, label %read_ok\n"
-        emit_raw "read_ok:\n"
-        emit_raw "  %next_done = add i32 %done_count, %read_count\n"
-        emit_raw "  br label %loop\n"
-        emit_raw "ret_done:\n"
-        emit_raw "  ret i32 %orig_size\n"
-        emit_raw "raise_eof:\n"
-        emit_raw "  %err = call ptr @IO$CCEOFError$Dnew(ptr @.str.empty)\n"
-        emit_raw "  call void @__crystal_v2_raise(ptr %err)\n"
-        emit_raw "  unreachable\n"
-        emit_raw "}\n\n"
-        return true
-      end
-
       # IO::FileDescriptor#system_write(Slice(UInt8)) / File#system_write(Slice(UInt8))
       # Bypass the broken event-loop write dispatch in self-hosted stage2.
       if mangled == "IO$CCFileDescriptor$Hsystem_write$$Slice$LUInt8$R" ||

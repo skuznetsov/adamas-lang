@@ -17842,23 +17842,14 @@ module Crystal::HIR
       when CrystalV2::Compiler::Frontend::ForNode
         expr_node.body.each { |child| collect_local_assignment_types(child, name, self_type_name, output, body, visited) }
       when CrystalV2::Compiler::Frontend::BinaryNode
-        # Infer variable type from the other operand of a binary expression.
-        # Skip << (push/append) — it doesn't relate the types of its operands.
-        op_str = (safe_slice_to_string(expr_node.operator) || "")
-        unless op_str == "<<"
-          left = node_for_expr(expr_node.left)
-          right = node_for_expr(expr_node.right)
-          if left.is_a?(CrystalV2::Compiler::Frontend::IdentifierNode) && (safe_slice_to_string(left.name) || "") == name
-            if inferred = infer_type_from_expr(expr_node.right, self_type_name)
-              output << inferred if inferred != TypeRef::VOID
-            end
-          end
-          if right.is_a?(CrystalV2::Compiler::Frontend::IdentifierNode) && (safe_slice_to_string(right.name) || "") == name
-            if inferred = infer_type_from_expr(expr_node.left, self_type_name)
-              output << inferred if inferred != TypeRef::VOID
-            end
-          end
-        end
+        # BinaryNodes are NOT assignments — they produce new values. Inferring an
+        # operand's type from the OTHER operand is unsound for asymmetric ops:
+        # Slice + Int = Slice, Pointer + Int = Pointer, String * Int = String.
+        # Comparisons like `x == nil` are also not assignments to x.
+        # Walk operands so nested AssignNodes inside are still discovered, but
+        # do not synthesize a type from operand pairing.
+        collect_local_assignment_types(expr_node.left, name, self_type_name, output, body, visited)
+        collect_local_assignment_types(expr_node.right, name, self_type_name, output, body, visited)
       when CrystalV2::Compiler::Frontend::ReturnNode
         if value = expr_node.value
           collect_local_assignment_types(value, name, self_type_name, output, body, visited)
