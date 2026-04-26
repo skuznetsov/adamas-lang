@@ -44780,10 +44780,16 @@ module Crystal::HIR
           if debug_env_filter_match?("DEBUG_MISSING_TARGET", name)
             STDERR.puts "[MISSING_TARGET] queue name=#{name} state=#{function_state(name)} funcs=#{@module.functions.size}"
           end
-          unless function_state(name).pending?
-            @function_lowering_states[name] = FunctionLoweringState::Pending
-            @pending_function_queue << name
-          end
+          # Always (re-)enqueue when the body is missing.
+          # A function may have state=Pending but no longer be in the queue:
+          # process_pending_lower_functions clears @pending_function_queue at
+          # end of pass while leaving lazy-RTA-deferred functions' state as
+          # Pending. Without re-queuing, demand from this missing-target sweep
+          # would never be satisfied — even though @rta_called_methods now
+          # records the demand. process_pending_lower_functions deduplicates
+          # via its `processed` Set, so a duplicate enqueue is benign.
+          @function_lowering_states[name] = FunctionLoweringState::Pending
+          @pending_function_queue << name
         end
         process_pending_lower_functions
         missing.each do |name|
