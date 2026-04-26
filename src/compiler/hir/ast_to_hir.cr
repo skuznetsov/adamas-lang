@@ -44762,6 +44762,26 @@ module Crystal::HIR
               end
               next if function_state(name).in_progress?
               missing << name
+              # Path-4 super tagging (lower_super line ~50752) emits Call("X_super")
+              # where the actual function lives at "X" (the parent's method body).
+              # Lazy RTA may have deferred "X" because its owner class isn't live
+              # (the subclass is). The MIR strip-super logic resolves "X_super" to
+              # "X" only if "X_super" itself has no body; if a stub gets emitted
+              # for "X_super" first, the strip-skip fires and runtime aborts.
+              # Queue the un-suffixed actual method so its body lowers, which lets
+              # lower_super path 2 materialize the included-module super body too.
+              if name.ends_with?("_super")
+                un_super = name[0, name.size - 6]
+                unless un_super.empty? || @module.has_function_with_body?(un_super) ||
+                       function_state(un_super).in_progress?
+                  if @function_defs.has_key?(un_super) || @function_defs.has_key?(strip_type_suffix(un_super))
+                    if function_state(un_super).completed?
+                      @function_lowering_states.delete(un_super)
+                    end
+                    missing << un_super
+                  end
+                end
+              end
             end
           end
         end
@@ -50513,7 +50533,14 @@ module Crystal::HIR
                 end
               end
               arg_types = args.map { |arg| ctx.type_of(arg) }
-              super_base = "#{class_name}##{method_name}_super"
+              # Disambiguate the included-module super wrapper with `_from_<module>` so it
+              # doesn't collide with the path-4 `_super` strip-tag emitted by parent-class
+              # super calls (e.g. `Leaf2#stringify` calling super to `Mid2#stringify` would
+              # otherwise produce the same `Mid2#stringify_super` name as Mid2's own super
+              # to its included Stringifiable). MIR strips bare `_super` only when no body
+              # exists; the disambiguated name keeps the included-module body intact.
+              owner_fragment = module_super_name_fragment(actual_module_base)
+              super_base = "#{class_name}##{method_name}_super_from_#{owner_fragment}"
               super_name = mangle_function_name(super_base, arg_types)
               unless @module.has_function?(super_name)
                 receiver_map = type_param_map_for_receiver_name("#{class_name}##{method_name}")
