@@ -71146,7 +71146,12 @@ module Crystal::HIR
       end
       # If any argument type is unknown, avoid pinning to a specific overload.
       # This prevents premature coercions that can lock in the wrong overload.
-      if arg_types.any? { |t| t == TypeRef::VOID }
+      # Exception: Atomic::Ops.* calls need symbol→enum conversion for ordering
+      # args even when ptr/value types are unknown (as_pointer/cast_to return
+      # void at call sites). The atomic primitive interception in MIR matches
+      # by exact mangled name, so passing through the unmangled args here is
+      # safe — only the symbol literals will get converted to enum integers.
+      if arg_types.any? { |t| t == TypeRef::VOID } && !func_name.starts_with?("Atomic::Ops.")
         return positional_args.map { |arg| lower_expr(ctx, arg) }
       end
       func_entry = lookup_function_def_for_call(func_name, positional_args.size, has_block_call, arg_types)
