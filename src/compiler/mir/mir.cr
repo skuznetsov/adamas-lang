@@ -2238,6 +2238,21 @@ module Crystal::MIR
       emit(Fence.new(@function.next_value_id, ordering))
     end
 
+    # Resolve a ValueId to its integer constant value if it was produced by a
+    # Constant instruction. Returns nil for non-constant values. Used by atomic
+    # primitive lowering to extract LLVM enum values (op, ordering) from i32
+    # literals produced by HIR-level symbol→enum conversion.
+    def find_constant_int(id : ValueId) : Int64?
+      @function.blocks.each do |blk|
+        blk.instructions.each do |inst|
+          if inst.id == id
+            return inst.is_a?(Constant) ? inst.int_value : nil
+          end
+        end
+      end
+      nil
+    end
+
     def mutex_lock(mutex_ptr : ValueId) : ValueId
       emit(MutexLock.new(@function.next_value_id, mutex_ptr))
     end

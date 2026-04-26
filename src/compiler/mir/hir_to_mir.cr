@@ -3052,6 +3052,79 @@ module Crystal
           end
         end
 
+        # Atomic::Ops primitives: lower @[Primitive] class methods on Atomic::Ops to
+        # MIR atomic instructions. The macro `Atomic#add` etc. expands to
+        # `Ops.atomicrmw(:add, pointerof(@value), val, :seq_cst, false)`. HIR-level
+        # symbol→enum conversion turns the symbols into i32 LLVM enum values, which
+        # we decode here to pick the right MIR op/ordering.
+        if call.method_name.starts_with?("Atomic::Ops.") || call.method_name.starts_with?("Atomic$CCOps$D")
+          ops_method = call.method_name.split("$").first
+          ops_method = ops_method.sub("Atomic::Ops.", "").sub("Atomic$CCOps$D", "")
+
+          case ops_method
+          when "atomicrmw"
+            # Ops.atomicrmw(op : LLVM::AtomicRMWBinOp, ptr : Pointer(T), val : T,
+            #               ordering : LLVM::AtomicOrdering, singlethread : Bool) : T
+            ret_hir_type = call.type
+            val_hir_type = @hir_value_types[call.args[2]]?
+            if ret_hir_type != HIR::TypeRef::VOID && val_hir_type && val_hir_type != HIR::TypeRef::VOID
+              op_val = builder.find_constant_int(args[0]) || 0_i64
+              ptr = args[1]
+              value = args[2]
+              ord_val = builder.find_constant_int(args[3]) || 7_i64
+              mir_op = llvm_rmw_to_mir_op(op_val)
+              mir_ord = llvm_ordering_to_mir(ord_val)
+              return builder.atomic_rmw(mir_op, ptr, value, convert_type(ret_hir_type), mir_ord)
+            end
+          when "cmpxchg"
+            # Ops.cmpxchg(ptr : Pointer(T), cmp : T, new : T,
+            #             success_ordering : LLVM::AtomicOrdering,
+            #             failure_ordering : LLVM::AtomicOrdering) : {T, Bool}
+            cmp_hir_type = @hir_value_types[call.args[1]]?
+            ptr_hir_type = @hir_value_types[call.args[0]]?
+            # Fall through to extern call if operand types are unknown — emitting
+            # cmpxchg with void operands would produce malformed IR.
+            if cmp_hir_type && ptr_hir_type && cmp_hir_type != HIR::TypeRef::VOID && ptr_hir_type != HIR::TypeRef::VOID
+              ptr = args[0]
+              cmp = args[1]
+              new_val = args[2]
+              succ_val = builder.find_constant_int(args[3]) || 7_i64
+              fail_val = builder.find_constant_int(args[4]) || 7_i64
+              succ_ord = llvm_ordering_to_mir(succ_val)
+              fail_ord = llvm_ordering_to_mir(fail_val)
+              cmp_type = convert_type(cmp_hir_type)
+              return builder.atomic_cas(ptr, cmp, new_val, cmp_type, succ_ord, fail_ord)
+            end
+          when "load"
+            # Ops.load(ptr : Pointer(T), ordering : LLVM::AtomicOrdering, volatile : Bool) : T
+            ret_hir_type = call.type
+            ptr_hir_type = @hir_value_types[call.args[0]]?
+            if ret_hir_type != HIR::TypeRef::VOID && ptr_hir_type && ptr_hir_type != HIR::TypeRef::VOID
+              ptr = args[0]
+              ord_val = builder.find_constant_int(args[1]) || 7_i64
+              mir_ord = llvm_ordering_to_mir(ord_val)
+              return builder.atomic_load(ptr, convert_type(ret_hir_type), mir_ord)
+            end
+          when "store"
+            # Ops.store(ptr : Pointer(T), value : T, ordering : LLVM::AtomicOrdering, volatile : Bool) : Nil
+            val_hir_type = @hir_value_types[call.args[1]]?
+            ptr_hir_type = @hir_value_types[call.args[0]]?
+            if val_hir_type && val_hir_type != HIR::TypeRef::VOID && ptr_hir_type && ptr_hir_type != HIR::TypeRef::VOID
+              ptr = args[0]
+              value = args[1]
+              ord_val = builder.find_constant_int(args[2]) || 7_i64
+              mir_ord = llvm_ordering_to_mir(ord_val)
+              builder.atomic_store(ptr, value, mir_ord)
+              return value
+            end
+          when "fence"
+            # Ops.fence(ordering : LLVM::AtomicOrdering, singlethread : Bool) : Nil
+            ord_val = builder.find_constant_int(args[0]) || 7_i64
+            mir_ord = llvm_ordering_to_mir(ord_val)
+            return builder.fence(mir_ord)
+          end
+        end
+
         # Intercept unsafe_as calls: when HIR-level interception failed (stringify_type_expr
         # returned nil), the call arrives here as e.g. "UInt32#unsafe_as" / "Pointer(UInt8)#unsafe_as".
         # Lower it as a reinterpret cast instead of a broken method call.
@@ -6314,6 +6387,37 @@ module Crystal
           end
         end
         false
+      end
+
+      # LLVM::AtomicRMWBinOp (stdlib enum) → MIR AtomicRMWOp.
+      # Nand(4)/Fadd(11)/Fsub(12) have no MIR equivalent — fall back to Xchg.
+      private def llvm_rmw_to_mir_op(value : Int64) : AtomicRMWOp
+        case value
+        when 0  then AtomicRMWOp::Xchg
+        when 1  then AtomicRMWOp::Add
+        when 2  then AtomicRMWOp::Sub
+        when 3  then AtomicRMWOp::And
+        when 5  then AtomicRMWOp::Or
+        when 6  then AtomicRMWOp::Xor
+        when 7  then AtomicRMWOp::Max
+        when 8  then AtomicRMWOp::Min
+        when 9  then AtomicRMWOp::UMax
+        when 10 then AtomicRMWOp::UMin
+        else         AtomicRMWOp::Xchg
+        end
+      end
+
+      # LLVM::AtomicOrdering (stdlib enum) → MIR MemoryOrdering.
+      # NotAtomic(0)/Unordered(1)/Monotonic(2) all map to Relaxed.
+      private def llvm_ordering_to_mir(value : Int64) : MemoryOrdering
+        case value
+        when 0, 1, 2 then MemoryOrdering::Relaxed
+        when 4       then MemoryOrdering::Acquire
+        when 5       then MemoryOrdering::Release
+        when 6       then MemoryOrdering::AcqRel
+        when 7       then MemoryOrdering::SeqCst
+        else              MemoryOrdering::SeqCst
+        end
       end
 
       private def convert_type(hir_type : HIR::TypeRef) : TypeRef
