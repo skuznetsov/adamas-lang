@@ -28954,12 +28954,17 @@ module Crystal::HIR
       end
       offset_id = args[0]
       if method_name == "-"
-        neg_one = Literal.new(ctx.next_id, TypeRef::INT32, -1_i64)
+        # Negate at Int64 width — see comment in resolve_method_call's
+        # pointer-arith shortcut.
+        offset_i64 = Cast.new(ctx.next_id, TypeRef::INT64, offset_id, TypeRef::INT64)
+        ctx.emit(offset_i64)
+        ctx.register_type(offset_i64.id, TypeRef::INT64)
+        neg_one = Literal.new(ctx.next_id, TypeRef::INT64, -1_i64)
         ctx.emit(neg_one)
-        ctx.register_type(neg_one.id, TypeRef::INT32)
-        neg_offset = BinaryOperation.new(ctx.next_id, TypeRef::INT32, BinaryOp::Mul, offset_id, neg_one.id)
+        ctx.register_type(neg_one.id, TypeRef::INT64)
+        neg_offset = BinaryOperation.new(ctx.next_id, TypeRef::INT64, BinaryOp::Mul, offset_i64.id, neg_one.id)
         ctx.emit(neg_offset)
-        ctx.register_type(neg_offset.id, TypeRef::INT32)
+        ctx.register_type(neg_offset.id, TypeRef::INT64)
         offset_id = neg_offset.id
       end
       element_type = if recv_desc && recv_desc.name.starts_with?("Pointer(")
@@ -51504,12 +51509,17 @@ module Crystal::HIR
         offset_id = right_id
         # For subtraction, negate the offset
         if op_str == "-"
-          neg_one = Literal.new(ctx.next_id, TypeRef::INT32, -1_i64)
+          # Negate at Int64 width — see comment in resolve_method_call's
+          # pointer-arith shortcut.
+          offset_i64 = Cast.new(ctx.next_id, TypeRef::INT64, offset_id, TypeRef::INT64)
+          ctx.emit(offset_i64)
+          ctx.register_type(offset_i64.id, TypeRef::INT64)
+          neg_one = Literal.new(ctx.next_id, TypeRef::INT64, -1_i64)
           ctx.emit(neg_one)
-          ctx.register_type(neg_one.id, TypeRef::INT32)
-          neg_offset = BinaryOperation.new(ctx.next_id, TypeRef::INT32, BinaryOp::Mul, offset_id, neg_one.id)
+          ctx.register_type(neg_one.id, TypeRef::INT64)
+          neg_offset = BinaryOperation.new(ctx.next_id, TypeRef::INT64, BinaryOp::Mul, offset_i64.id, neg_one.id)
           ctx.emit(neg_offset)
-          ctx.register_type(neg_offset.id, TypeRef::INT32)
+          ctx.register_type(neg_offset.id, TypeRef::INT64)
           offset_id = neg_offset.id
         end
         element_type = if left_desc && left_desc.kind == TypeKind::Pointer
@@ -63972,12 +63982,20 @@ module Crystal::HIR
         if is_pointer_arithmetic
           offset_id = args[0]
           if method_name == "-"
-            neg_one = Literal.new(ctx.next_id, TypeRef::INT32, -1_i64)
+            # Negate at Int64 width to mirror stdlib `self + (-offset.to_i64)`.
+            # Negating at i32 width with an unsigned operand makes the prepass
+            # mark the BinaryOp result as UInt32, which makes the GEP use ZEXT
+            # on the negative offset and corrupts the address. Casting to Int64
+            # first preserves signedness through the multiplication.
+            offset_i64 = Cast.new(ctx.next_id, TypeRef::INT64, offset_id, TypeRef::INT64)
+            ctx.emit(offset_i64)
+            ctx.register_type(offset_i64.id, TypeRef::INT64)
+            neg_one = Literal.new(ctx.next_id, TypeRef::INT64, -1_i64)
             ctx.emit(neg_one)
-            ctx.register_type(neg_one.id, TypeRef::INT32)
-            neg_offset = BinaryOperation.new(ctx.next_id, TypeRef::INT32, BinaryOp::Mul, offset_id, neg_one.id)
+            ctx.register_type(neg_one.id, TypeRef::INT64)
+            neg_offset = BinaryOperation.new(ctx.next_id, TypeRef::INT64, BinaryOp::Mul, offset_i64.id, neg_one.id)
             ctx.emit(neg_offset)
-            ctx.register_type(neg_offset.id, TypeRef::INT32)
+            ctx.register_type(neg_offset.id, TypeRef::INT64)
             offset_id = neg_offset.id
           end
           element_type = if ptr_receiver_desc && ptr_receiver_desc.name.starts_with?("Pointer(")
@@ -67644,14 +67662,19 @@ module Crystal::HIR
                           (recv_type_desc && recv_type_desc.kind == TypeKind::Pointer)
         if is_pointer_type
           offset_id = args[0]
-          # For subtraction, negate the offset
+          # For subtraction, negate the offset.
+          # Negate at Int64 width — see comment in resolve_method_call's
+          # pointer-arith shortcut.
           if method_name == "-"
-            neg_one = Literal.new(ctx.next_id, TypeRef::INT32, -1_i64)
+            offset_i64 = Cast.new(ctx.next_id, TypeRef::INT64, offset_id, TypeRef::INT64)
+            ctx.emit(offset_i64)
+            ctx.register_type(offset_i64.id, TypeRef::INT64)
+            neg_one = Literal.new(ctx.next_id, TypeRef::INT64, -1_i64)
             ctx.emit(neg_one)
-            ctx.register_type(neg_one.id, TypeRef::INT32)
-            neg_offset = BinaryOperation.new(ctx.next_id, TypeRef::INT32, BinaryOp::Mul, offset_id, neg_one.id)
+            ctx.register_type(neg_one.id, TypeRef::INT64)
+            neg_offset = BinaryOperation.new(ctx.next_id, TypeRef::INT64, BinaryOp::Mul, offset_i64.id, neg_one.id)
             ctx.emit(neg_offset)
-            ctx.register_type(neg_offset.id, TypeRef::INT32)
+            ctx.register_type(neg_offset.id, TypeRef::INT64)
             offset_id = neg_offset.id
           end
           element_type = if recv_type_desc && recv_type_desc.name.starts_with?("Pointer(")
