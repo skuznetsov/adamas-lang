@@ -33080,6 +33080,26 @@ module Crystal::HIR
           param_resolved_name = resolved_name
           if module_like_type_name?(resolved_name) || collection_module_type_name?(resolved_name)
             return false if primitive_type?(arg_type)
+            # Concrete collections (Tuple/Array/Slice/StaticArray) match
+            # any Enumerable/Indexable/Iterable param. For other types,
+            # require explicit module inclusion to avoid binding scalar
+            # references like String to `patterns : Enumerable` (String
+            # does NOT include Enumerable in stdlib).
+            unless concrete_collection_type_ref?(arg_type)
+              if collection_module_type_name?(resolved_name)
+                arg_class_name = nil
+                if arg_desc = @module.get_type_descriptor(arg_type)
+                  arg_class_name = arg_desc.name
+                end
+                arg_class_name ||= get_type_name_from_ref(arg_type)
+                module_base = strip_generics_simple(resolved_name)
+                arg_base = strip_generics_simple(arg_class_name)
+                unless class_includes_module?(arg_class_name, module_base) ||
+                       (arg_base != arg_class_name && class_includes_module?(arg_base, module_base))
+                  return false
+                end
+              end
+            end
             arg_idx += 1
             next
           end
