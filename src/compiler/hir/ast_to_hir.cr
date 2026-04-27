@@ -43595,12 +43595,24 @@ module Crystal::HIR
         remaining = [] of TypeRef
         if !call_types.empty?
           remaining = call_types[call_index..-1]? || [] of TypeRef
-          splat_type = tuple_type_from_arg_types(remaining, allow_void: true)
+          # Avoid re-wrapping: if single remaining arg is already a Tuple
+          # (e.g. pack_splat_args_for_call already packed the call site), use
+          # it directly so `*items : T` does not become Tuple(Tuple(T, ...)).
+          if remaining.size == 1 && is_tuple_type_ref?(remaining[0])
+            splat_type = remaining[0]
+          else
+            splat_type = tuple_type_from_arg_types(remaining, allow_void: true)
+          end
         end
         if splat_type == TypeRef::VOID && !remaining.empty?
           if elem_type = param_type_map[splat_param_name.not_nil!]?
             if elem_type != TypeRef::VOID
-              splat_type = tuple_type_from_arg_types([elem_type], allow_void: true)
+              # Avoid re-wrapping: if elem_type is already a Tuple, use it directly
+              if is_tuple_type_ref?(elem_type)
+                splat_type = elem_type
+              else
+                splat_type = tuple_type_from_arg_types([elem_type], allow_void: true)
+              end
             end
           end
         end
