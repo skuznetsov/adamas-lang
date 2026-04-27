@@ -2524,6 +2524,7 @@ module CrystalV2
                            end
           mir_lower_start = options.stats ? Time.instant : nil
           mir_lowering.lower_all_bodies(options.progress)
+          mir_lowering.synthesize_abstract_method_dispatchers(options.progress)
           mir_lower_ms = if start = mir_lower_start
                            (Time.instant - start).total_milliseconds
                          else

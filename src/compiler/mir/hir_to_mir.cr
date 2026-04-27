@@ -307,9 +307,132 @@ module Crystal
         end
       end
 
+      # Synthesize dispatch bodies for abstract methods on classes that have
+      # subclass overriders. After lower_all_bodies, a class C may have no MIR
+      # function for "<C>#<method>" (because the HIR method is abstract and has
+      # no body) while subclasses define "<Sub>#<method>". Direct callers of
+      # "<C>#<method>" would then link to a stub fabricated by the LLVM backend
+      # with no way to enumerate subtype overriders. By materializing a real
+      # dispatch function here — switching on the runtime type_id and calling
+      # the appropriate "<Sub>#<method>" — those callers transparently route to
+      # the correct concrete implementation. This pass runs once, after every
+      # subclass override has been lowered, so all overriders are visible.
+      # Methods whose body the LLVM backend always synthesizes from a primitive
+      # template keyed on the function name (Reference#object_id is `ptrtoint
+      # ptr %self to i64`, etc.). Materializing a MIR dispatch body for these
+      # is harmful: the LLVM emitter will overwrite the body with its primitive
+      # template that hard-codes `%self`, leaving our `%recv` parameter dangling
+      # and producing invalid IR. The primitive templates are correct for any
+      # receiver — including abstract base classes — so dispatch is unnecessary.
+      PRIMITIVE_OVERRIDE_METHOD_SUFFIXES = ::Set(String).new({
+        "object_id",
+        "address",
+        "crystal_type_id",
+        "set_crystal_type_id",
+      })
+
+      def synthesize_abstract_method_dispatchers(progress : Bool = false) : Nil
+        # Build inverted index: method_suffix -> [{owner_class, mir_func}, ...]
+        # Only canonical names (no "$" arity/type-suffix) are considered, so an
+        # abstract symbol like "Node#span" is matched against subclass canonical
+        # functions like "MacroIfNode#span".
+        method_owners = {} of String => ::Array(::Tuple(String, Crystal::MIR::Function))
+        @mir_module.functions.each do |f|
+          name = f.name
+          hash_idx = name.index('#')
+          next unless hash_idx
+          method_part = name.byte_slice(hash_idx + 1, name.bytesize - hash_idx - 1)
+          next if method_part.empty?
+          next if method_part.includes?('$')
+          next if PRIMITIVE_OVERRIDE_METHOD_SUFFIXES.includes?(method_part)
+          owner = name.byte_slice(0, hash_idx)
+          next if owner.empty?
+          (method_owners[method_part] ||= [] of ::Tuple(String, Crystal::MIR::Function)) << {owner, f}
+        end
+
+        generated = 0
+        @class_children.each do |class_name, _direct_children|
+          descendants = subclasses_for(class_name)
+          next if descendants.empty?
+          descendant_set = ::Set(String).new(descendants)
+
+          method_owners.each do |_method_suffix, owners|
+            # Skip if the class itself already has a canonical implementation.
+            next if owners.any? { |o| o[0] == class_name }
+            # Keep only descendants of class_name as dispatch candidates.
+            candidate_funcs = owners.select { |o| descendant_set.includes?(o[0]) }
+            next if candidate_funcs.empty?
+
+            generated += 1 if synthesize_class_dispatch_for_abstract(class_name, _method_suffix, candidate_funcs)
+          end
+        end
+
+        STDERR.puts "    Pass 3: synthesized #{generated} abstract dispatchers" if progress && generated > 0
+      end
+
+      private def synthesize_class_dispatch_for_abstract(
+        class_name : String,
+        method_suffix : String,
+        candidates : ::Array(::Tuple(String, Crystal::MIR::Function))
+      ) : Crystal::MIR::Function?
+        func_name = "#{class_name}##{method_suffix}"
+        return nil if @mir_module.get_function(func_name)
+
+        template = candidates.first[1]
+        return nil if template.params.empty?
+
+        # Use the receiver's reference TypeRef for the dispatch parameter so
+        # downstream consumers see the abstract base type, not a concrete sub.
+        recv_mir_type = @mir_module.type_registry.get_by_name(class_name)
+        receiver_type = recv_mir_type ? TypeRef.new(recv_mir_type.id) : template.params[0].type
+        ret_type = template.return_type
+        arg_params = template.params[1..]
+
+        vd_candidates = [] of VDispatchCandidate
+        candidates.each do |sub_name, sub_func|
+          sub_type = @mir_module.type_registry.get_by_name(sub_name)
+          next unless sub_type
+          next if sub_type.is_value_type?
+          # Strict arity match — overrides should mirror the abstract signature.
+          next unless sub_func.params.size == template.params.size
+          vd_candidates << VDispatchCandidate.new(
+            type_id: sub_type.id.to_i32,
+            func: sub_func,
+            type_ref: nil,
+            variant_id: nil,
+            dispatch_class: nil,
+          )
+        end
+        return nil if vd_candidates.empty?
+
+        dispatch_func = @mir_module.create_function(func_name, ret_type)
+        param_values = [] of ValueId
+        dispatch_func.add_param("recv", receiver_type)
+        param_values << 0_u32
+        arg_params.each_with_index do |p, i|
+          dispatch_func.add_param("arg#{i}", p.type)
+          param_values << (i + 1).to_u32
+        end
+
+        dispatch_builder = Builder.new(dispatch_func)
+
+        generate_vdispatch_body(
+          dispatch_func,
+          dispatch_builder,
+          param_values,
+          vd_candidates,
+          VDispatchKind::Class,
+          nil,
+          nil,
+        )
+
+        dispatch_func
+      end
+
       def lower(progress : Bool = false) : Crystal::MIR::Module
         prepare(progress)
         lower_all_bodies(progress)
+        synthesize_abstract_method_dispatchers(progress)
         @mir_module
       end
 

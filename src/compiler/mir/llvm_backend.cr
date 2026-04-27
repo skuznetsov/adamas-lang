@@ -3930,20 +3930,6 @@ module Crystal::MIR
         return oracle
       end
 
-      if name == "CrystalV2$CCCompiler$CCFrontend$CCNode$Hspan" && return_type == "ptr" && arg_count == 1
-        return "; #{name} — abstract Node#span fallback via generated vdispatch table\n" \
-               "define ptr @#{name}(ptr %self) {\n" \
-               "entry:\n" \
-               "  %self_null = icmp eq ptr %self, null\n" \
-               "  br i1 %self_null, label %ret_null, label %dispatch\n" \
-               "dispatch:\n" \
-               "  %span = call ptr @__vdispatch__CrystalV2$CCCompiler$CCFrontend$CCNode$Hspan$$T623(ptr %self)\n" \
-               "  ret ptr %span\n" \
-               "ret_null:\n" \
-               "  ret ptr null\n" \
-               "}\n"
-      end
-
       if name.includes?("$Heach_key$$block")
         params = arg_types.map_with_index { |type, idx| "#{type} %arg#{idx}" }.join(", ")
         ret_value = if return_type == "void"
