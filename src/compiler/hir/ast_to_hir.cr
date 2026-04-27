@@ -24423,6 +24423,17 @@ module Crystal::HIR
         owner_stripped = strip_generic_args(owner)
         next unless owner == class_name || owner == owner_base || owner_stripped == class_name || owner_stripped == owner_base
 
+        # Class methods don't access ivars and their compiled body does not
+        # depend on instance layout. Re-lowering them after invalidation can
+        # pick a different overload (lookup state evolves with new callsites)
+        # and overwrite a correct body with a wrong one — observed for
+        # Dir.glob$String_File::MatchOptions_Bool where the line-47 def's body
+        # was clobbered by the line-111 deprecated &block overload after a
+        # later layout bump on Dir.
+        if parsed = parse_method_name_compact(name)
+          next if parsed.separator == '.'
+        end
+
         requeue_exact_demand = @rta_called_methods.includes?(name)
         next unless @module.remove_function(name)
         @function_lowering_states.delete(name)
