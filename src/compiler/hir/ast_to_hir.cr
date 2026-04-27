@@ -32474,7 +32474,12 @@ module Crystal::HIR
         func.blocks.each do |block|
           block.instructions.each_with_index do |inst, idx|
             next unless inst.is_a?(Call)
-            next if inst.virtual
+            # Class-method calls (separator '.') resolve to a single implementation even when
+            # marked virtual; skip only true instance-method virtual dispatch where return
+            # types may genuinely differ across overrides.
+            if inst.virtual
+              next unless inst.method_name.includes?('.')
+            end
 
             resolved_type = resolved_call_return_type_for_repair(inst, value_types)
             next if resolved_type == TypeRef::VOID || resolved_type == TypeRef::NIL
