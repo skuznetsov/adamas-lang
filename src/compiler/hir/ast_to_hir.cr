@@ -68848,7 +68848,7 @@ module Crystal::HIR
             owner_arena = call_arena
             block_arena_for_proc = @block_node_arenas[blk_node.object_id]? || resolve_arena_for_block(blk_node, owner_arena) || owner_arena
             heap_block_proc = block_arg_requires_heap_proc?(mangled_method_name, base_method_name, method_name)
-            hint_return_type = ctx.function.return_type
+            hint_return_type = proc_materialize_hint_return_type(ctx)
             proc_id = lower_block_to_proc(ctx, blk_node, block_param_types_for_proc, block_arena_for_proc, heap_block_proc, hint_return_type)
             args << proc_id
             if env_get("DEBUG_WITH_BRACE_CALL") && (method_name == "with_brace_newlines_skipped" || base_method_name.includes?("with_brace_newlines_skipped") || mangled_method_name.includes?("with_brace_newlines_skipped"))
@@ -75693,12 +75693,14 @@ module Crystal::HIR
         heap_block_proc = block_arg_requires_heap_proc?(inline_key, base_inline_name)
         # Hint: prefer the block's inferred return type when the inline-yield path
         # already computed it (block_return_name resolved); else fall back to the
-        # caller's return type for yield-forwarding procs.
+        # parent function's __block_return__ (set by an outer caller that lowered
+        # `parent` with a known block return), then to the caller's return type
+        # for yield-forwarding procs.
         hint_return_type = if block_return_name
                              tref = type_ref_for_name(block_return_name)
-                             tref == TypeRef::VOID ? ctx.function.return_type : tref
+                             tref == TypeRef::VOID ? proc_materialize_hint_return_type(ctx) : tref
                            else
-                             ctx.function.return_type
+                             proc_materialize_hint_return_type(ctx)
                            end
         proc_id = lower_block_to_proc(ctx, block, block_param_types, block_arena_for_proc, heap_block_proc, hint_return_type)
         fallback_args << proc_id
@@ -75856,12 +75858,20 @@ module Crystal::HIR
             if receiver_type_map.empty?
               STDERR.puts "[WITH_BRACE_INLINE] stage=unresolved_generic_receiver callee=#{inline_key} caller=#{ctx.function.name}" if debug_with_brace
               debug_hook("inline.yield.skip", "callee=#{inline_key} receiver=#{receiver} reason=unresolved_generic")
-              return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, block_param_types)
+              if fallback_allowed
+                return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, block_param_types)
+              end
+              # Block has non-local return — proc materialization cannot represent it.
+              # Force inline despite unresolved generic receiver.
+              debug_hook("inline.yield.force_inline_for_return", "callee=#{inline_key} reason=unresolved_generic_receiver_with_return")
             end
           else
             STDERR.puts "[WITH_BRACE_INLINE] stage=missing_receiver_for_generic callee=#{inline_key} caller=#{ctx.function.name}" if debug_with_brace
             debug_hook("inline.yield.skip", "callee=#{inline_key} receiver=#{receiver} reason=unresolved_generic")
-            return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, block_param_types)
+            if fallback_allowed
+              return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, block_param_types)
+            end
+            debug_hook("inline.yield.force_inline_for_return", "callee=#{inline_key} reason=missing_receiver_for_generic_with_return")
           end
         end
       end
@@ -75880,7 +75890,13 @@ module Crystal::HIR
       unless block_arena
         STDERR.puts "[WITH_BRACE_INLINE] stage=block_arena_missing callee=#{inline_key} caller=#{ctx.function.name}" if debug_with_brace
         debug_hook("inline.yield.block_arena_missing", "callee=#{inline_key} caller=#{ctx.function.name}")
-        return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, block_param_types)
+        if fallback_allowed
+          return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, block_param_types)
+        end
+        # Block has non-local return — proc materialization cannot represent it.
+        # Use caller_arena as a fallback to allow inline lowering.
+        block_arena = caller_arena
+        debug_hook("inline.yield.force_inline_for_return", "callee=#{inline_key} reason=block_arena_missing_with_return")
       end
       @block_node_arenas[block.object_id] = block_arena
       unless block.body.empty?
@@ -75891,14 +75907,23 @@ module Crystal::HIR
             "callee=#{inline_key} max=#{max_index} arena=#{block_arena.size}"
           )
           STDERR.puts "[WITH_BRACE_INLINE] stage=block_arena_mismatch callee=#{inline_key} caller=#{ctx.function.name} max=#{max_index} arena=#{block_arena.size}" if debug_with_brace
-          return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, block_param_types)
+          if fallback_allowed
+            return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, block_param_types)
+          end
+          # Block has non-local return — proceed with inline despite arena mismatch.
+          debug_hook("inline.yield.force_inline_for_return", "callee=#{inline_key} reason=block_arena_mismatch_with_return")
         end
       end
       if contains_next?(block.body)
         if !force_inline_with_next
           STDERR.puts "[WITH_BRACE_INLINE] stage=block_contains_next callee=#{inline_key} caller=#{ctx.function.name}" if debug_with_brace
           debug_hook("inline.yield.skip", "callee=#{inline_key} reason=block_contains_next")
-          return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, block_param_types)
+          if fallback_allowed
+            return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, block_param_types)
+          end
+          # Block has non-local return — proc materialization cannot represent it.
+          # Force inline despite the next inside body.
+          debug_hook("inline.yield.force_inline_for_return", "callee=#{inline_key} reason=block_contains_next_with_return")
         elsif debug_with_brace
           STDERR.puts "[WITH_BRACE_INLINE] stage=block_contains_next_force_inline callee=#{inline_key} caller=#{ctx.function.name}"
         end
@@ -75913,7 +75938,11 @@ module Crystal::HIR
           if max_index < 0 || max_index >= callee_arena.size
             STDERR.puts "[WITH_BRACE_INLINE] stage=callee_arena_mismatch callee=#{inline_key} caller=#{ctx.function.name} max=#{max_index} arena=#{callee_arena.size}" if debug_with_brace
             debug_hook("inline.yield.arena_mismatch", "callee=#{inline_key} max=#{max_index} arena=#{callee_arena.size}")
-            return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, block_param_types)
+            if fallback_allowed
+              return inline_yield_fallback_call(ctx, inline_key, receiver_id, call_args, block, block_param_types)
+            end
+            # Block has non-local return — proceed with inline despite callee arena mismatch.
+            debug_hook("inline.yield.force_inline_for_return", "callee=#{inline_key} reason=callee_arena_mismatch_with_return")
           end
         end
       end
@@ -76143,7 +76172,7 @@ module Crystal::HIR
                   # erased. The forwarder typically returns whatever the enclosing
                   # function returns (e.g., Array#fetch's inner block forwards the
                   # caller's default to `check_index_out_of_bounds`).
-                  hint_return_type = ctx.function.return_type
+                  hint_return_type = proc_materialize_hint_return_type(ctx)
                   proc_id = lower_block_to_proc(ctx, block, block_param_types, block_arena_for_proc, heap_block_proc, hint_return_type)
                   ctx.restore_locals(saved_inline_locals)
                   ctx.register_local(param_name, proc_id)
@@ -82735,6 +82764,32 @@ module Crystal::HIR
       proc_type = @module.intern_type(TypeDescriptor.new(TypeKind::Proc, "Proc", proc_param_types + [proc_return_type]))
 
       emit_make_proc_value(ctx, proc_type, proc_func_name, proc_func, captured_vars)
+    end
+
+    # Hint return type for a Proc materialized inside `ctx.function`. Useful when
+    # the proc body is a yield-forwarding shape whose captured target is bound as
+    # POINTER (Proc TypeDescriptor erased). Prefers the parent function's own
+    # `__block_return__` map entry — recorded by callers that lowered with a
+    # known block-return — over `ctx.function.return_type`, which can still be
+    # VOID at proc-materialization time due to the forward-reference inference
+    # pattern at `lower_function`.
+    private def proc_materialize_hint_return_type(ctx : LoweringContext) : TypeRef
+      base = ctx.function.return_type
+      func_name = ctx.function.name
+      stripped = strip_type_suffix(func_name)
+      return base if base != TypeRef::VOID && base != TypeRef::NIL
+
+      if br = @function_type_param_maps.dig?(func_name, "__block_return__")
+        candidate = type_ref_for_name(br)
+        return candidate if candidate != TypeRef::VOID && candidate != TypeRef::NIL
+      end
+      if stripped != func_name
+        if br = @function_type_param_maps.dig?(stripped, "__block_return__")
+          candidate = type_ref_for_name(br)
+          return candidate if candidate != TypeRef::VOID && candidate != TypeRef::NIL
+        end
+      end
+      base
     end
 
     # Convert a BlockNode into a Proc (FuncPointer). This is used when a method
