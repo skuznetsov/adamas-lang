@@ -35145,9 +35145,17 @@ module Crystal::HIR
       return if name.empty?
       return if @yield_functions.includes?(name)
 
+      # Preserve the stripped_map invariant: the size token equals @yield_functions.size
+      # only when the map is fully in sync. After delete_yield_function clears the map,
+      # incremental updates add only the new entry — so the map stays stale until a
+      # lazy rebuild in yield_function_name_for_uncached. Bumping the token blindly here
+      # hides that staleness and the rebuild never fires.
+      prev_size = @yield_functions.size
       @yield_functions.add(name)
-      add_yield_function_stripped_entry(name)
-      @yield_functions_stripped_map_size = @yield_functions.size
+      if @yield_functions_stripped_map_size == prev_size
+        add_yield_function_stripped_entry(name)
+        @yield_functions_stripped_map_size = @yield_functions.size
+      end
     end
 
     private def delete_yield_function(name : String) : Nil
