@@ -68582,12 +68582,21 @@ module Crystal::HIR
           STDERR.puts "[FORCE_LOWER] check method=#{method_name} mangled=#{mangled_method_name} primary=#{primary_mangled_name} base=#{base_method_name}"
           STDERR.puts "[FORCE_LOWER] pending=#{pending_functions.select { |n| n.includes?("get_cache") }.join(",")}"
         end
+        # When emitting calls inside an inline-yield body, the regular force-lower
+        # path bails to avoid recursion into yield-bearing callees. For callees
+        # that are provably yield-free, bypass that guard so dependent return
+        # types resolve before the outer body is finalised; otherwise downstream
+        # dispatches (e.g. `sequences.each` on the call's result) silently drop.
+        in_inline_yield_now = @inline_yield_function_depth > 0 ||
+                              @inline_yield_block_body_depth > 0 ||
+                              @inline_yield_proc_depth > 0 ||
+                              !@inline_yield_name_stack.empty?
         # Try primary name first
         if function_state(primary_mangled_name).pending?
           if debug_force
             STDERR.puts "[FORCE_LOWER] trying primary_mangled=#{primary_mangled_name}"
           end
-          if force_lower_function_for_return_type(primary_mangled_name)
+          if force_lower_function_for_return_type(primary_mangled_name, bypass_inline_yield: in_inline_yield_now)
             force_lowered = true
             return_type = get_function_return_type(primary_mangled_name)
             if debug_force
@@ -68602,7 +68611,7 @@ module Crystal::HIR
             if debug_force
               STDERR.puts "[FORCE_LOWER] trying mangled=#{mangled_method_name}"
             end
-            if force_lower_function_for_return_type(mangled_method_name)
+            if force_lower_function_for_return_type(mangled_method_name, bypass_inline_yield: in_inline_yield_now)
               force_lowered = true
               return_type = get_function_return_type(mangled_method_name)
               if debug_force
@@ -68618,7 +68627,7 @@ module Crystal::HIR
             if debug_force
               STDERR.puts "[FORCE_LOWER] trying base=#{base_method_name}"
             end
-            if force_lower_function_for_return_type(base_method_name)
+            if force_lower_function_for_return_type(base_method_name, bypass_inline_yield: in_inline_yield_now)
               force_lowered = true
               return_type = get_function_return_type(base_method_name)
               if debug_force
