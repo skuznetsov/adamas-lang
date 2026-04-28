@@ -53161,6 +53161,16 @@ module Crystal::HIR
           return nil_lit.id
         end
       end
+      # Primitive binary fast path: Char/Int/Float operators have @[Primitive(:binary)]
+      # bodies that are empty in stdlib. Falling through to a regular Call would
+      # monomorphize an empty body that returns false. Emit BinaryOperation directly
+      # when both operands are numeric primitives of the same type.
+      if numeric_primitive?(left_type) && numeric_primitive?(right_type) &&
+         (left_type == right_type) && binary_op_for_method(op)
+        if prim = lower_primitive_binary(ctx, op, left, [right], TypeRef::VOID)
+          return prim
+        end
+      end
       # Nilable-arg dispatch for `==`/`!=`: when right is `Nil | T` and the
       # receiver type has no `==(Nil|T)` overload, the regular call falls
       # through to a STUB. Synthesize: union_is(right, Nil) ? <op-nil-result>
@@ -83903,6 +83913,7 @@ module Crystal::HIR
       tuple_type : TypeRef,
       needle_id : ValueId,
     ) : ValueId?
+      return nil if is_union_or_nilable_type?(tuple_type)
       tuple_name = get_type_name_from_ref(tuple_type)
       return nil unless tuple_name.starts_with?("Tuple(")
       tuple_size = tuple_size_from_type_name(tuple_name)
