@@ -42872,6 +42872,19 @@ module Crystal::HIR
         else
           member_name
         end
+      when CrystalV2::Compiler::Frontend::BinaryNode
+        # Type-union pattern in case/in: `B | C | D` parses as a left-associated
+        # BinaryNode with operator `|`. Recover the union type name so
+        # case_condition_type_name routes through emit_is_a_check, which expands
+        # to per-variant is_a? checks combined with OR.
+        op = (safe_slice_to_string(node.operator) || "")
+        if op == "|"
+          left_name = extract_type_name_from_node(@arena[node.left])
+          right_name = extract_type_name_from_node(@arena[node.right])
+          if left_name && right_name
+            "#{left_name} | #{right_name}"
+          end
+        end
       else
         nil
       end
@@ -52724,8 +52737,17 @@ module Crystal::HIR
 
     private def emit_is_a_check_for_type(ctx : LoweringContext, value_id : ValueId, check_type : TypeRef) : ValueId
       if is_union_type?(check_type)
-        if type_desc = @module.get_type_descriptor(check_type)
-          checks = type_desc.type_params.map { |variant| emit_is_a_check_for_type(ctx, value_id, variant) }
+        # Union TypeDescriptor.type_params is empty in V2; variants live in
+        # @union_descriptors. Iterate the descriptor's variants instead of
+        # type_params so multi-variant patterns like `B | C | D` in case-in
+        # expand to per-variant is_a? checks combined with OR.
+        ensure_union_descriptor_for_type_ref(check_type)
+        mir_check_ref = hir_to_mir_type_ref(check_type)
+        if descriptor = @union_descriptors[mir_check_ref]?
+          checks = descriptor.variants.map do |variant|
+            hir_variant = mir_to_hir_type_ref(variant.type_ref)
+            emit_is_a_check_for_type(ctx, value_id, hir_variant)
+          end
           return combine_boolean_checks(ctx, checks)
         end
       end
