@@ -1,6 +1,6 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-04-24
+Updated: 2026-04-28
 Branch: `codegen`
 
 This is the active working backlog only. Historical detail is in git history,
@@ -38,12 +38,16 @@ by `lower_def` before named/default parameters after `*args` are assigned.
 Otherwise a signature like `buffered(message, *args, exception = nil)` can type
 `exception` as the packed splat tuple and supply-drive bogus
 `Tuple/Array#inspect_with_backtrace` targets. Covered by
-`regression_tests/named_arg_after_splat_type_alignment.sh`. A broader dead-branch
-frontier remains: wrappers with `exception = nil` can still emit dead
-`Nil#inspect_with_backtrace` in unreachable `if exception` branches; a first
-attempt to prune bare nil locals during `static_nil_condition_value` exposed an
-arena-resolution failure during full self-host lowering, so that needs a
-separate root-cause pass.
+`regression_tests/named_arg_after_splat_type_alignment.sh`.
+
+Dead nil branch checkpoint (2026-04-28): wrappers with `exception = nil` used
+to emit dead `Nil#inspect_with_backtrace` in unreachable `if exception`
+branches because `lower_if` only learned the constant false condition after
+lowering the condition to a Bool literal, after both branches had already been
+lowered. `static_nil_condition_value` now treats a bare local whose current HIR
+type is exactly `Nil` as statically false. Covered by
+`regression_tests/dead_nil_branch_after_splat_repro.sh`. This is a correctness
+and demand-source fix, but not the main `lower_missing` growth fix.
 
 Direct `s1 -> s2` now produces a stage2 compiler in the focused gate:
 
@@ -336,7 +340,7 @@ Remaining risk:
   compiler. A broader implicit-self block receiver experiment was refuted
   because it caused an early `Index out of bounds` in self-host HIR lowering.
 - `lower_missing` still grows HIR heavily during full self-compile
-  (`~25k -> ~54k` functions in the latest focused s2 build). This no longer
+  (`17775 -> 46442`, `+28667`, in the latest focused STOP_AFTER_HIR gate). This no longer
   blocks producing s2 in the current gate, but it remains the main demand-driven
   cleanup target.
 - Dominant families are broad fallback helpers on compiler-internal containers:

@@ -52603,6 +52603,11 @@ module Crystal::HIR
         return nil unless op == "!"
         inner = static_nil_condition_value(ctx, node.operand)
         inner.nil? ? nil : !inner
+      when CrystalV2::Compiler::Frontend::IdentifierNode
+        local_id = ctx.lookup_local((safe_slice_to_string(node.name) || ""))
+        return nil unless local_id
+        return false if ctx.type_of(local_id) == TypeRef::NIL
+        nil
       when CrystalV2::Compiler::Frontend::CallNode
         callee_node = @arena[node.callee]
         if callee_node.is_a?(CrystalV2::Compiler::Frontend::MemberAccessNode) &&

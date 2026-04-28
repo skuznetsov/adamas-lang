@@ -905,6 +905,40 @@ check matches `STUB CALLED: Crystal$CCEventLoop$Hafter_fork`.
 Regression: `regression_tests/proc_pointer_module_method.cr`
 (EXPECT: ok). {F/G/R: 0.9/0.6/0.9} [verified]
 
+[LM-505|verified]: Dead `exception = nil` branches were still creating
+concrete `Nil#inspect_with_backtrace$IO` demand after the packed-splat
+alignment fix. Minimal no-prelude repro:
+
+    def buffered(message : String, *args, exception = nil)
+      if exception
+        exception.inspect_with_backtrace(IO.new)
+      end
+    end
+
+called through a wrapper as `buffered(message, *args, exception: exception)`
+with the wrapper defaulting `exception` to nil. HIR before the fix already had
+`branch false`, but both branches had been lowered first, so the dead then-body
+still contained `%5.Nil#inspect_with_backtrace$IO`. Root cause: `lower_if`
+asked `static_nil_condition_value` before lowering the condition, but that
+static evaluator understood `nil?`/`null?` checks and literal forms, not a bare
+IdentifierNode whose current HIR local type was exactly `Nil`. The fix adds only
+that narrow source-semantics case (`local : Nil => if local` is statically
+false), avoiding broader "non-nil type => true" pruning because current runtime
+null-check safeguards for reference/pointer-like values are separate.
+
+Evidence:
+
+- `regression_tests/dead_nil_branch_after_splat_repro.sh /tmp/cv2_nil_branch_fix`
+  -> `dead_nil_branch_after_splat_ok`
+- `regression_tests/named_arg_after_splat_type_alignment.sh /tmp/cv2_nil_branch_fix`
+  -> `named_arg_after_splat_type_alignment_ok`
+- `CRYSTAL_V2_STOP_AFTER_HIR=1 CRYSTAL_V2_PHASE_STATS=1
+  DEBUG_PENDING_SOURCES=1 ... scripts/run_safe.sh /tmp/cv2_nil_branch_fix 300
+  4096 src/crystal_v2.cr -o /tmp/cv2_nil_branch_stop_hir` -> `[EXIT: 0]`;
+  `lower_missing` remains large (`17775 -> 46442`, `+28667`), proving this
+  closes a real dead-demand bug but does not solve the broader formatting
+  helper explosion. {F/G/R: 0.9/0.55/0.9} [verified]
+
 ## Active Strategy
 
 - Main fast loop: `--no-prelude` oracles and focused STOP_AFTER_HIR budget
