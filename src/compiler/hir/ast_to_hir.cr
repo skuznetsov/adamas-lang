@@ -34291,8 +34291,31 @@ module Crystal::HIR
       when TypeRef::VOID, TypeRef::NIL
         1 # Zero-sized types have minimal alignment
       else
+        if c_context
+          type_name = get_type_name_from_ref(type)
+          if type_name.starts_with?("StaticArray(")
+            if elem_align = static_array_element_alignment(type_name, c_context)
+              return elem_align
+            end
+          end
+        end
         pointer_word_bytes_i32 # Pointer/reference types align to pointer size
       end
+    end
+
+    # Compute alignment of a StaticArray's element type (used in C ABI context).
+    # In `lib` blocks, StaticArray(Char, N) must follow C `char[]` alignment of 1,
+    # not Crystal's Char alignment of 4. Without this, C structs with trailing
+    # char arrays (e.g. dirent.d_name) would be padded incorrectly.
+    private def static_array_element_alignment(type_name : String, c_context : Bool) : Int32?
+      paren_start = type_name.index('(')
+      return nil unless paren_start
+      inner = type_name[(paren_start + 1)..-2]
+      last_comma = inner.rindex(',')
+      return nil unless last_comma
+      elem_type_name = inner[0, last_comma].strip
+      elem_type_ref = type_ref_for_name(elem_type_name)
+      type_alignment(elem_type_ref, c_context)
     end
 
     # Helper for field storage bytes (Nil still needs pointer-sized slot)
