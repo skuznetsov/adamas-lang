@@ -69978,6 +69978,32 @@ module Crystal::HIR
       return {args, false} if splat_args.empty?
 
       splat_types = splat_args.map { |arg_id| ctx.type_of(arg_id) }
+
+      # When the splat parameter has a union formal type (e.g.
+      # `*patterns : Path | String`), each splat arg must be coerced into
+      # that union before packing. Otherwise the Tuple element layout
+      # uses concrete types (8B ptr per element) but consumers iterating
+      # via the formal Enumerable-typed signature read 16B union slots,
+      # producing garbage reads. Only override when the formal is a union
+      # — concrete formals already match concrete args.
+      splat_param = params.find { |p| p.is_splat && !p.is_double_splat }
+      if splat_param && (formal_ta = splat_param.type_annotation)
+        formal_name = formal_ta
+        if !formal_name.empty? && (formal_context = function_context_from_name(func_name))
+          formal_name = normalize_declared_type_name(formal_name, formal_context)
+        end
+        unless formal_name.empty? || formal_name == "_" || unresolved_type_param_annotation?(formal_name)
+          resolved_formal = resolve_type_alias_chain(formal_name)
+          unless unresolved_type_param_annotation?(resolved_formal)
+            formal_type = type_ref_for_name(resolved_formal)
+            if formal_type != TypeRef::VOID && is_union_type?(formal_type)
+              splat_args = splat_args.map { |arg_id| coerce_value_to_type(ctx, arg_id, formal_type) }
+              splat_types = [formal_type] * splat_args.size
+            end
+          end
+        end
+      end
+
       if env_get("DEBUG_SPLAT_PACK")
         type_names = splat_types.map { |t| type_name_for_mangling(t) }
         STDERR.puts "[SPLAT_PACK] fn=#{ctx.function.name} method=#{method_name} types=#{type_names.join(", ")} trailing=#{trailing_positional_count}"
