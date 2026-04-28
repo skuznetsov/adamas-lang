@@ -22202,7 +22202,12 @@ module Crystal::HIR
           end
         end
         if splat_type == TypeRef::VOID
-          fallback = type_ref_for_name("Tuple")
+          # Empty splat: prefer the empty-tuple type `Tuple()` (kind=Tuple)
+          # over bare `Tuple` (kind=Struct). Bare Tuple is a single-element
+          # struct that downstream splat unpacking misreads as having one
+          # phantom element, producing index_get parts[0] over an empty splat.
+          fallback = type_ref_for_name("Tuple()")
+          fallback = type_ref_for_name("Tuple") if fallback == TypeRef::VOID
           splat_type = fallback if fallback != TypeRef::VOID
         end
         if splat_type != TypeRef::VOID
@@ -27505,7 +27510,8 @@ module Crystal::HIR
           end
         end
         if splat_type == TypeRef::VOID
-          fallback = type_ref_for_name("Tuple")
+          fallback = type_ref_for_name("Tuple()")
+          fallback = type_ref_for_name("Tuple") if fallback == TypeRef::VOID
           splat_type = fallback if fallback != TypeRef::VOID
         end
         if splat_type != TypeRef::VOID
@@ -43739,7 +43745,8 @@ module Crystal::HIR
           end
         end
         if splat_type == TypeRef::VOID
-          fallback = type_ref_for_name("Tuple")
+          fallback = type_ref_for_name("Tuple()")
+          fallback = type_ref_for_name("Tuple") if fallback == TypeRef::VOID
           splat_type = fallback if fallback != TypeRef::VOID
         end
         if splat_type != TypeRef::VOID
