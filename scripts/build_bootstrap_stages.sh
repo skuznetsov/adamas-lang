@@ -51,7 +51,11 @@ done
 
 mkdir -p "$OUT_DIR"
 
-"$ROOT_DIR/scripts/bootstrap_chain.sh" --out "$OUT_DIR" --stages "$STAGES" "${CHAIN_ARGS[@]}"
+if [[ ${#CHAIN_ARGS[@]} -gt 0 ]]; then
+  "$ROOT_DIR/scripts/bootstrap_chain.sh" --out "$OUT_DIR" --stages "$STAGES" "${CHAIN_ARGS[@]}"
+else
+  "$ROOT_DIR/scripts/bootstrap_chain.sh" --out "$OUT_DIR" --stages "$STAGES"
+fi
 
 names=(s1_bootstrap s2b s3b s4b s5b)
 for ((i = 1; i <= STAGES && i <= ${#names[@]}; i++)); do

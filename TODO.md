@@ -56,7 +56,7 @@ root-typed calls such as `exception : Object; exception.inspect_with_backtrace`,
 but avoids materializing unrelated live owners that cannot answer the method.
 Covered by `regression_tests/rta_root_virtual_method_replay_guard.sh`.
 
-Direct `s1 -> s2` now produces a stage2 compiler in the focused gate:
+Direct `s1 -> s2` previously produced a stage2 compiler in the focused gate:
 
 ```bash
 crystal build src/crystal_v2.cr -o /tmp/cv2_hir_emit_stop --error-trace
@@ -66,6 +66,15 @@ CRYSTAL_V2_PHASE_STATS=1 \
 ```
 
 Verified signal: `[EXIT: 0] after ~265s`, produced `/tmp/cv2_s2_hir_emit_stop`.
+
+Current canonical wrapper checkpoint (2026-04-28): `scripts/build_bootstrap_stages.sh`
+needed a Bash 3.2 / `set -u` fix for empty `CHAIN_ARGS`; after that fix the
+wrapper reaches the real stage2 build. With `--stages 2`, 300s, and 4096MB,
+stage1 builds and both smokes pass, but stage2 times out after writing a 189MB
+`cv2_s2.ll` (3,930,328 lines, 39,112 LLVM `define`s, 338 stub markers) and
+after `[ALLOC_FLUSH] Generated 98 deferred allocators`. Treat the old direct
+success as stale for the canonical bootstrap gate until the IR over-materialized
+helper graph is reduced.
 
 Fast stage2 HIR emit also passes:
 
@@ -347,9 +356,10 @@ Remaining risk:
   compiler. A broader implicit-self block receiver experiment was refuted
   because it caused an early `Index out of bounds` in self-host HIR lowering.
 - `lower_missing` still grows HIR heavily during full self-compile
-  (`17769 -> 43471`, `+25702`, in the latest focused STOP_AFTER_HIR gate). This no longer
-  blocks producing s2 in the current gate, but it remains the main demand-driven
-  cleanup target.
+  (`17769 -> 43471`, `+25702`, in the latest focused STOP_AFTER_HIR gate). The
+  STOP_AFTER_HIR gate exits 0 in ~209s, but the canonical full stage2 build
+  still times out at 300s after emitting a 189MB `.ll`; this remains the main
+  demand-driven cleanup target before `s2 -> s3`.
 - Dominant families are broad fallback helpers on compiler-internal containers:
   `Array#to_s`, `Array#inspect`, `Array#exec_recursive`,
   `Array#object_id`, `Hash#to_s`, `Hash#inspect`,

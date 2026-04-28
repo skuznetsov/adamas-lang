@@ -972,10 +972,36 @@ Evidence:
   broader `lower_missing`/container-helper materialization corridor.
   {F/G/R: 0.9/0.65/0.9} [verified]
 
+[LM-507|verified]: The canonical bootstrap-stage wrapper had an infrastructure
+bug independent of compiler codegen. On macOS Bash 3.2 with `set -u`, invoking
+`scripts/build_bootstrap_stages.sh --stages 2 --out ...` with no extra
+bootstrap-chain arguments failed immediately at `"${CHAIN_ARGS[@]}"` with
+`CHAIN_ARGS[@]: unbound variable`. The fix branches on
+`${#CHAIN_ARGS[@]}` and calls `bootstrap_chain.sh` without expanding the empty
+array when no passthrough arguments exist.
+
+Evidence:
+
+- `bash -n scripts/build_bootstrap_stages.sh` -> exit 0.
+- `scripts/build_bootstrap_stages.sh --help` -> prints usage.
+- Re-running `BOOTSTRAP_TIMEOUT_SEC=300 BOOTSTRAP_MEM_MB=4096
+  scripts/build_bootstrap_stages.sh --stages 2 --out /tmp/cv2_bs_current_s2`
+  no longer fails in the wrapper; it builds stage1, passes both stage1 smokes,
+  then reaches the real stage2 compiler build.
+
+Boundary: the real canonical `s1 -> s2b` gate still fails at stage2 timeout
+after emitting `/tmp/cv2_bs_current_s2/cv2_s2.ll` (189MB, 3,930,328 lines,
+39,112 LLVM `define`s, 338 stub markers) and after
+`[ALLOC_FLUSH] Generated 98 deferred allocators`. This points back to the
+over-materialized helper graph / large-IR corridor, not to the wrapper.
+{F/G/R: 0.96/0.8/0.95} [verified]
+
 ## Active Strategy
 
 - Main fast loop: `--no-prelude` oracles and focused STOP_AFTER_HIR budget
   checks.
-- Integration gate: `s1 -> s2b` only after fast oracles are green.
+- Integration gate: canonical `s1 -> s2b` must pass before any `s2 -> s3`
+  attempt. Current failure is stage2 full-codegen timeout after oversized `.ll`
+  emission, despite STOP_AFTER_HIR passing.
 - Rare full gate: `s1 -> s5b` plus normalized HIR/MIR/LL equality.
 - Do not run `s3b+` while generated `s2b` cannot pass plain/no-prelude smokes.
