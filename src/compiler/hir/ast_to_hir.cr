@@ -41489,12 +41489,25 @@ module Crystal::HIR
                        else
                          input_names.map { |name| substitute_type_params(name, param_map.not_nil!) }
                        end
-      # Resolve `self` type in block parameter annotations (e.g., Int32#upto(&block : self ->))
+      # Resolve `self` type in block parameter annotations (e.g., Int32#upto(&block : self ->),
+      # Dir.open(path, & : self ->)). For class/module methods called without an instance
+      # receiver, receiver_type is nil — recover the owner from the method name so `self`
+      # binds to the callee's owner, not the caller's @current_class (which would
+      # otherwise leak through type_ref_for_name → resolve_type_name_in_context).
+      self_target_name : String? = nil
       if receiver_type && receiver_type != TypeRef::VOID
         recv_name = get_type_name_from_ref(receiver_type)
         if recv_name != "Void" && recv_name != "Unknown"
-          resolved_names = resolved_names.map { |name| name == "self" ? recv_name : name }
+          self_target_name = recv_name
         end
+      end
+      if self_target_name.nil? && resolved_names.any? { |n| n == "self" }
+        if owner = receiver_name_from_method_name(resolved_base)
+          self_target_name = owner unless owner.empty?
+        end
+      end
+      if target = self_target_name
+        resolved_names = resolved_names.map { |name| name == "self" ? target : name }
       end
       if receiver_type && receiver_type != TypeRef::VOID
         if recv_desc = @module.get_type_descriptor(receiver_type)
