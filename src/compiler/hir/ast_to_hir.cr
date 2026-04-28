@@ -17108,6 +17108,30 @@ module Crystal::HIR
               end
               return ret_type if ret_type != TypeRef::VOID
             end
+            # Class-method form: `def self.foo` registers as `Class.foo`, but the
+            # bare-identifier resolution above only checks instance form `Class#foo`.
+            # When a class method calls another class method bare (e.g. `each_child`
+            # invoking `read_entry(dir)` inside `Dir::Globber`), we need the `.` form.
+            if class_base = resolve_class_method_with_inheritance(self_type_name, method_name)
+              if ret_type = @function_base_return_types[class_base]?
+                return ret_type if ret_type != TypeRef::VOID
+              end
+              if ret_type = @function_types[class_base]?
+                return ret_type if ret_type != TypeRef::VOID
+              end
+              if def_node = @function_defs[class_base]? || @function_defs[strip_type_suffix(class_base)]?
+                owner_name = function_context_from_name(class_base)
+                unless @infer_body_context
+                  if inferred = infer_return_type_from_body_without_callsite(def_node, owner_name)
+                    if inferred != TypeRef::VOID
+                      set_function_type_entry(class_base, inferred)
+                      @function_base_return_types[strip_type_suffix(class_base)] = inferred
+                      return inferred
+                    end
+                  end
+                end
+              end
+            end
           end
           if ret_type = @function_types[method_name]?
             return ret_type if ret_type != TypeRef::VOID
