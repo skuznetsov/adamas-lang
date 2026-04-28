@@ -52614,6 +52614,44 @@ module Crystal::HIR
       end
     end
 
+    # Inverse of apply_is_a_narrowing for the else branch of `if x.is_a?(T)`.
+    # When `x` was a union and `T` is one variant, the else branch narrows
+    # `x` to `union - T`. Conservatively narrows only when a single variant
+    # remains, since multi-variant remainders need a different runtime
+    # representation that we don't have a clean abstraction for here.
+    private def apply_is_a_else_narrowing(ctx : LoweringContext, targets : Array(Tuple(String, TypeRef))) : Nil
+      return if targets.empty?
+
+      inverse = [] of Tuple(String, TypeRef)
+      targets.each do |(name, target_type)|
+        next if target_type == TypeRef::VOID
+        local_id = ctx.lookup_local(name)
+        next unless local_id
+        local_type = ctx.type_of(local_id)
+        next if local_type == target_type
+        next unless is_union_type?(local_type)
+
+        type_desc = @module.get_type_descriptor(local_type)
+        next unless type_desc
+        target_desc = @module.get_type_descriptor(target_type)
+        next unless target_desc
+        target_name = target_desc.name
+
+        variants = split_union_type_name(type_desc.name)
+        remaining = variants.reject { |variant_name| variant_name == target_name }
+        # Conservative: only narrow when a single concrete variant remains.
+        # Multi-variant remainders (e.g., A|B|C minus A → B|C) need a smaller
+        # union representation; skip rather than risk wrong unwrap.
+        next unless remaining.size == 1
+        remaining_ref = type_ref_for_name(remaining.first)
+        next if remaining_ref == TypeRef::VOID
+        next if remaining_ref == local_type
+
+        inverse << {name, remaining_ref}
+      end
+      apply_is_a_narrowing(ctx, inverse)
+    end
+
     private def emit_is_a_check(ctx : LoweringContext, value_id : ValueId, type_name : String) : ValueId
       resolved = resolve_typeof_in_type_string(type_name)
       if resolved.includes?('|')
@@ -53255,6 +53293,7 @@ module Crystal::HIR
 
         ctx.push_scope(ScopeKind::Block)
         apply_truthy_narrowing(ctx, falsy_targets)
+        apply_is_a_else_narrowing(ctx, is_a_targets)
         return lower_static_if_branch(ctx, pre_branch_locals, pre_inline_caller_locals) do
           if else_body = node.else_body
             if else_body.empty?
@@ -53438,6 +53477,7 @@ module Crystal::HIR
       ctx.current_block = next_test_block
       ctx.push_scope(ScopeKind::Block)
       apply_truthy_narrowing(ctx, accumulated_falsy_targets)
+      apply_is_a_else_narrowing(ctx, is_a_targets) unless has_elsifs
       else_value = if else_body = node.else_body
                      if else_body.empty?
                        nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
