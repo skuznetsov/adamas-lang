@@ -2066,6 +2066,11 @@ module Crystal::MIR
     @emitted_allocas : ::Set(ValueId) = ::Set(ValueId).new  # Track pre-emitted allocas
     @alloc_types : Hash(ValueId, TypeRef) = {} of ValueId => TypeRef  # Track original alloc_type for enum detection
     @inttoptr_value_ids : ::Set(ValueId) = ::Set(ValueId).new  # Track values created by inttoptr (packed scalars)
+    # Buffer slots that hold pointers to heap-allocated aggregates (e.g. Pointer(Tuple)#[idx]).
+    # The slot itself is a `ptr`-stride GEP, and the value stored in that slot is a heap pointer
+    # to the tuple bytes. Loading from such a slot must dereference (`load ptr`), not alias.
+    # FieldGet on inline-storage struct fields uses gep+0 alias instead (the field IS the bytes).
+    @ptr_aggregate_buffer_slots : ::Set(ValueId) = ::Set(ValueId).new
     # When a ptrtoint from a heap pointer to a small int (<64 bits) would truncate
     # the address, we skip emitting the ptrtoint and alias the result to the original
     # ptr. Downstream zext/inttoptr chain is also skipped. Maps ValueId → "ptr %name".
@@ -16167,7 +16172,17 @@ module Crystal::MIR
       end
 
       if inline_pointer_aggregate_type?(inst.type)
-        emit "#{name} = getelementptr i8, ptr #{ptr}, i32 0"
+        # Two ABIs collide here:
+        #  (a) Pointer(Tuple) buffer slot: PointerArith produced a ptr-stride slot whose
+        #      value is a heap pointer to the aggregate. Must dereference (`load ptr`).
+        #  (b) Inline struct field (e.g. `String::Formatter#@args`) or local stack tuple:
+        #      the source ptr already points at the inline bytes — alias as `gep+0`.
+        # @ptr_aggregate_buffer_slots is populated by emit_gep_dynamic for case (a).
+        if @ptr_aggregate_buffer_slots.includes?(inst.ptr)
+          emit "#{name} = load ptr, ptr #{ptr}"
+        else
+          emit "#{name} = getelementptr i8, ptr #{ptr}, i32 0"
+        end
         record_emitted_type(name, "ptr")
         return
       end
@@ -16493,16 +16508,21 @@ module Crystal::MIR
         element_type = "i8"
       end
 
-      # For tuple element types that map to "ptr" in our ABI, GEP would step
-      # by sizeof(ptr)=8 instead of sizeof(tuple). Use byte-level GEP instead.
-      # NOTE: Structs are heap-allocated in our ABI — Pointer(Struct) buffers
-      # store 8-byte heap pointers, so GEP with ptr stride (8) is correct.
-      # Only tuples need the size override since they're stored inline.
+      # V2 ABI: tuples are heap-allocated and represented as `ptr`. Pointer(Tuple)
+      # buffers store 8-byte heap pointers, so GEP must use ptr stride (sizeof(ptr)=8),
+      # NOT the tuple's inline byte size. Force struct_elem_size = 0 (which yields
+      # `getelementptr ptr, ptr base, i64 idx`) for tuple element types, even if HIR
+      # set element_byte_size to the inline size (e.g. 12 for Tuple(Int32,Int32,Int32)).
+      # Structs follow the same rule (heap-allocated, ptr-sized in array buffers).
       struct_elem_size = inst.element_byte_size  # Explicit size from HIR (for generic structs)
-      if struct_elem_size == 0 && element_type == "ptr" && inst.element_type.id > TypeRef::POINTER.id
+      if element_type == "ptr" && inst.element_type.id > TypeRef::POINTER.id
         if mir_type = @module.type_registry.get(inst.element_type)
           if mir_type.kind.tuple?
-            struct_elem_size = mir_type.size
+            struct_elem_size = 0
+            # Mark this slot so emit_load knows to dereference the ptr (load ptr) rather
+            # than alias as gep+0. Inline tuple struct fields use FieldGet, not GEP, so
+            # this is specifically the Pointer(Tuple) buffer-slot case.
+            @ptr_aggregate_buffer_slots << inst.id
           end
         end
       end
