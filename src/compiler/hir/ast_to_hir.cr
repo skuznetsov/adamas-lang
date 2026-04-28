@@ -53161,6 +53161,47 @@ module Crystal::HIR
           return nil_lit.id
         end
       end
+      # Nilable-arg dispatch for `==`/`!=`: when right is `Nil | T` and the
+      # receiver type has no `==(Nil|T)` overload, the regular call falls
+      # through to a STUB. Synthesize: union_is(right, Nil) ? <op-nil-result>
+      # : (left OP unwrap(right)). The recursive call lands on left.OP(T) which
+      # has a real overload. Covers Tuple#includes? when needle is `@name[0]?`.
+      if (op == "==" || op == "!=") && right_type != TypeRef::VOID
+        if rd = @module.get_type_descriptor(right_type)
+          if rd.kind == TypeKind::Union
+            variants = split_union_type_name(rd.name)
+            non_nil_variants = variants.reject { |v| v == "Nil" }
+            if variants.includes?("Nil") && non_nil_variants.size == 1
+              non_nil_name = non_nil_variants.first
+              non_nil_type = type_ref_for_name(non_nil_name)
+              nil_vid = get_union_variant_id(right_type, TypeRef::NIL)
+              non_nil_vid = get_union_variant_id(right_type, non_nil_type)
+              if non_nil_type != TypeRef::VOID && nil_vid >= 0 && non_nil_vid >= 0
+                uis = UnionIs.new(ctx.next_id, right, nil_vid)
+                ctx.emit(uis); ctx.register_type(uis.id, TypeRef::BOOL)
+                pb = ctx.save_locals
+                tb = ctx.create_block; eb = ctx.create_block; mb = ctx.create_block
+                ctx.terminate(Branch.new(uis.id, tb, eb))
+                # Nil branch: == is false, != is true
+                ctx.current_block = tb; ctx.restore_locals(pb)
+                nil_result = Literal.new(ctx.next_id, TypeRef::BOOL, op == "!=" ? 1_i64 : 0_i64)
+                ctx.emit(nil_result); ctx.register_type(nil_result.id, TypeRef::BOOL)
+                tb_end = ctx.current_block; ctx.terminate(Jump.new(mb))
+                # Non-nil branch: unwrap and recurse on the non-Nil variant
+                ctx.current_block = eb; ctx.restore_locals(pb)
+                uw = UnionUnwrap.new(ctx.next_id, non_nil_type, right, non_nil_vid, false)
+                ctx.emit(uw); ctx.register_type(uw.id, non_nil_type)
+                inner = emit_binary_call(ctx, left, op, uw.id)
+                eb_end = ctx.current_block; ctx.terminate(Jump.new(mb))
+                ctx.current_block = mb
+                phi = Phi.new(ctx.next_id, TypeRef::BOOL, [{tb_end, nil_result.id}, {eb_end, inner}])
+                ctx.emit(phi); ctx.register_type(phi.id, TypeRef::BOOL)
+                return phi.id
+              end
+            end
+          end
+        end
+      end
       ensure_monomorphized_type(left_type) unless left_type == TypeRef::VOID
       type_desc = @module.get_type_descriptor(left_type)
       class_name = type_desc.try(&.name) || ""
