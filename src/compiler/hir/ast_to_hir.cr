@@ -9328,6 +9328,14 @@ module Crystal::HIR
           local_type_name = get_type_name_from_ref(local_ref)
           return local_type_name unless local_type_name.empty? || local_type_name == "Void" || local_type_name == "Unknown"
         end
+        # V2 parser stores complex type-annotation expressions (e.g. "Union(*T)",
+        # "StaticArray(Union(*T), 1)") as a single IdentifierNode rather than
+        # wrapping them in GenericNode/SplatNode (parser.cr:14094 - "Don't wrap
+        # in GenericNode"). Route non-simple names through the substitution
+        # helper so type params (T) and splats (*T) expand recursively.
+        if name.includes?('(') || name.includes?('*') || name.includes?('|')
+          return substitute_type_params_in_type_name(name)
+        end
         mapped = @type_param_map[name]?
         if mapped.nil?
           if fallback = fallback_type_param_map_for_current
@@ -39915,8 +39923,50 @@ module Crystal::HIR
 
         if info = split_generic_base_and_args(name)
           args = split_generic_type_args(info.args)
-          new_args = args.map do |arg|
-            normalize_tuple_literal_type_name(substitute_type_params_in_type_name(arg.strip))
+          new_args = [] of String
+          args.each do |raw_arg|
+            arg = raw_arg.strip
+            # Splat type-param: `*T` splices T's tuple-element types in place.
+            # Tuple class is declared `class Tuple(*T)` so T binds to a tuple of
+            # element types; `Union(*T)` inside Tuple#to_static_array etc. must
+            # expand to `Union(elem1, elem2, ...)` before lowering.
+            if arg.bytesize > 1 && arg.byte_at(0) == '*'.ord.to_u8
+              param_name = arg.byte_slice(1, arg.bytesize - 1).strip
+              splat_binding : String? = nil
+              if allow_param_subst && simple_identifier_token?(param_name)
+                splat_binding = type_param_map[param_name]?
+                if splat_binding.nil?
+                  unless fallback_map_loaded
+                    fallback_map = current_class_type_param_map
+                    fallback_map_loaded = true
+                  end
+                  if fmap = fallback_map
+                    splat_binding = fmap[param_name]?
+                  end
+                end
+              end
+              if binding = splat_binding
+                expanded = false
+                if binding_info = split_generic_base_and_args(binding)
+                  if binding_info.base == "Tuple"
+                    tuple_args = split_generic_type_args(binding_info.args)
+                    tuple_args.each do |t|
+                      new_args << normalize_tuple_literal_type_name(substitute_type_params_in_type_name(t.strip))
+                    end
+                    expanded = true
+                  end
+                end
+                unless expanded
+                  new_args << normalize_tuple_literal_type_name(substitute_type_params_in_type_name(binding))
+                end
+                next
+              end
+            end
+            new_args << normalize_tuple_literal_type_name(substitute_type_params_in_type_name(arg))
+          end
+          # Union(X) collapses to X — matches stringify_type_expr GenericNode.
+          if info.base == "Union" && new_args.size == 1
+            return scope_cache[name] = new_args.first
           end
           return scope_cache[name] = "#{info.base}(#{new_args.join(", ")})"
         end
@@ -43640,6 +43690,17 @@ module Crystal::HIR
                                   else
                                     TypeRef::VOID
                                   end
+            if param.is_splat && call_index < call_types.size
+              # Call lowering packs splat arguments into a Tuple value. Consume
+              # that packed slot here so named/default parameters after `*args`
+              # line up with their own call-site types instead of inheriting the
+              # splat tuple type.
+              packed_splat_type = call_types[call_index]
+              if is_tuple_type_ref?(packed_splat_type)
+                param_type = packed_splat_type
+                call_type_for_param = packed_splat_type
+              end
+            end
             if param_type == TypeRef::VOID && base_name == "hash" && param_name == "hasher"
               inferred = type_ref_for_name("Crystal::Hasher")
               param_type = inferred if inferred != TypeRef::VOID
@@ -43755,6 +43816,7 @@ module Crystal::HIR
                 splat_param_info_index = param_infos.size - 1
                 splat_param_types_index = param_types.size
                 splat_param_name = param_name
+                call_index += 1 if call_type_for_param != TypeRef::VOID && is_tuple_type_ref?(call_type_for_param)
               elsif !param.is_double_splat
                 call_index += 1
               end

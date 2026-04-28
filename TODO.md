@@ -22,6 +22,29 @@ Working policy:
 
 ## Current Checkpoint
 
+Dirty review note (2026-04-28): the in-progress `Union(*T)` / `StaticArray`
+annotation substitution fix is currently verified only for the narrow
+`Tuple(Char)#to_static_array` null-buffer corridor. Hostile adversary repros
+with real multi-element and nested tuples (`{1, 'a', true}.to_static_array`,
+`{{1, 'b'}, 2}.to_static_array`) no longer hit the original null allocation
+shape, but still expose a separate StaticArray-of-Union load/unwrap boundary:
+direct equality prints false and explicit `as(Int32)` returns the union
+type-id-like value (`5`) instead of the payload. Do not claim full
+`Tuple#to_static_array` correctness until StaticArray(Union(...), N)
+store/load plus union unwrap semantics are covered by a run-safe regression.
+
+Hostile review note (2026-04-28): packed splat call-site types must be consumed
+by `lower_def` before named/default parameters after `*args` are assigned.
+Otherwise a signature like `buffered(message, *args, exception = nil)` can type
+`exception` as the packed splat tuple and supply-drive bogus
+`Tuple/Array#inspect_with_backtrace` targets. Covered by
+`regression_tests/named_arg_after_splat_type_alignment.sh`. A broader dead-branch
+frontier remains: wrappers with `exception = nil` can still emit dead
+`Nil#inspect_with_backtrace` in unreachable `if exception` branches; a first
+attempt to prune bare nil locals during `static_nil_condition_value` exposed an
+arena-resolution failure during full self-host lowering, so that needs a
+separate root-cause pass.
+
 Direct `s1 -> s2` now produces a stage2 compiler in the focused gate:
 
 ```bash
