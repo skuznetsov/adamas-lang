@@ -33047,9 +33047,39 @@ module Crystal::HIR
               unless unresolved_type_param_annotation?(splat_resolved_name)
                 splat_type = type_ref_for_name(splat_resolved_name)
                 splat_variants = splat_resolved_name.includes?('|') ? split_union_type_name(splat_resolved_name) : nil
+
+                # Packed-splat unpacking: when the call passes a single Tuple at the
+                # splat slot (produced by empty-splat padding or pack_splat_args_for_call),
+                # compare the splat formal against the Tuple's element types, not the
+                # Tuple itself. Skip unpacking when the splat formal is itself Tuple-typed
+                # (e.g. `def foo(*x : Tuple)`), since the Tuple arg is intentional there.
+                splat_check_args = arg_types
+                if arg_idx + 1 == arg_types.size
+                  packed_arg = arg_types[arg_idx]
+                  if packed_arg != TypeRef::VOID
+                    packed_desc = @module.get_type_descriptor(packed_arg)
+                    if packed_desc && (packed_desc.kind == TypeKind::Tuple || packed_desc.name.starts_with?("Tuple("))
+                      splat_formal_is_tuple = false
+                      if splat_variants
+                        splat_formal_is_tuple = splat_variants.any? do |variant_name|
+                          variant_name == "Tuple" || variant_name.starts_with?("Tuple(")
+                        end
+                      else
+                        splat_formal_is_tuple = splat_resolved_name == "Tuple" || splat_resolved_name.starts_with?("Tuple(")
+                      end
+                      unless splat_formal_is_tuple
+                        unpacked = packed_desc.type_params.reject { |t| t == TypeRef::VOID }
+                        new_args = arg_types[0, arg_idx]
+                        new_args.concat(unpacked)
+                        splat_check_args = new_args
+                      end
+                    end
+                  end
+                end
+
                 check_idx = arg_idx
-                while check_idx < arg_types.size
-                  splat_arg_type = arg_types[check_idx]
+                while check_idx < splat_check_args.size
+                  splat_arg_type = splat_check_args[check_idx]
                   return false if splat_arg_type == TypeRef::VOID
                   if module_like_type_name?(splat_resolved_name) || collection_module_type_name?(splat_resolved_name)
                     return false if primitive_type?(splat_arg_type)
