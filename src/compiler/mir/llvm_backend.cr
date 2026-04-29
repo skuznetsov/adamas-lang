@@ -14984,55 +14984,60 @@ module Crystal::MIR
       # Store to cross-block slot if this value is used across blocks
       # This centralizes the logic that was previously only in emit_load
       # When in phi block, defer EVERYTHING (including wrapping) to after all phis
-        if @in_phi_block && produces_value && (slot_name = @cross_block_slots[inst.id]?)
-          @deferred_phi_store_op_ids << inst.id
-          @deferred_phi_store_op_values << name
-          @deferred_phi_store_op_slots << slot_name
-        elsif produces_value && (slot_name = @cross_block_slots[inst.id]?)
-          # Nil/Void casts do not materialize an SSA register. They still need
-          # an explicit per-edge default store when their value crosses blocks.
-          if @void_values.includes?(inst.id)
-            emit_cross_block_slot_default_store(inst.id, slot_name)
-          elsif @constant_values.has_key?(inst.id) || @emitted_value_names.includes?(name) || @emitted_value_types.has_key?(name)
-            emit_cross_block_slot_store(inst.id, name, slot_name)
-          else
-            if ENV["CRYSTAL2_STAGE2_DEBUG"]? == "1" || ENV["STAGE2_BOOTSTRAP_TRACE"]?
-              STDERR.puts "[LLVM_MISSING_VALUE] func=#{@current_func_name} inst=#{inst.class.name} id=#{inst.id} slot=%#{slot_name}"
-            end
-            emit_cross_block_slot_default_store(inst.id, slot_name)
-          end
-        end
-      end
-
-      private def emit_cross_block_slot_default_store(inst_id : ValueId, slot_name : String)
-        slot_llvm_type = @cross_block_slot_types[inst_id]? ||
-                         begin
-                           if val_type = @value_types[inst_id]?
-                             @type_mapper.llvm_type(val_type)
-                           else
-                             "ptr"
-                           end
-                         end
-        slot_llvm_type = "ptr" if slot_llvm_type == "void"
-
-        if slot_llvm_type.includes?(".union")
-          base = "r#{inst_id}.slot_default"
-          emit "%#{base}.ptr = alloca #{slot_llvm_type}, align 8"
-          emit "store #{slot_llvm_type} zeroinitializer, ptr %#{base}.ptr"
-          emit "%#{base}.val = load #{slot_llvm_type}, ptr %#{base}.ptr"
-          emit "store #{slot_llvm_type} %#{base}.val, ptr %#{slot_name}"
-        elsif slot_llvm_type == "ptr"
-          emit "store ptr null, ptr %#{slot_name}"
-        elsif slot_llvm_type == "float" || slot_llvm_type == "double"
-          emit "store #{slot_llvm_type} 0.0, ptr %#{slot_name}"
+      # Key presence is the slot-map invariant. Do not use `hash[key]?` as the
+      # branch condition here: generated stage2 once treated a missing nilable
+      # String lookup as an empty local and emitted `store ..., ptr %`.
+      if @in_phi_block && produces_value && @cross_block_slots.has_key?(inst.id)
+        slot_name = @cross_block_slots[inst.id]
+        @deferred_phi_store_op_ids << inst.id
+        @deferred_phi_store_op_values << name
+        @deferred_phi_store_op_slots << slot_name
+      elsif produces_value && @cross_block_slots.has_key?(inst.id)
+        slot_name = @cross_block_slots[inst.id]
+        # Nil/Void casts do not materialize an SSA register. They still need
+        # an explicit per-edge default store when their value crosses blocks.
+        if @void_values.includes?(inst.id)
+          emit_cross_block_slot_default_store(inst.id, slot_name)
+        elsif @constant_values.has_key?(inst.id) || @emitted_value_names.includes?(name) || @emitted_value_types.has_key?(name)
+          emit_cross_block_slot_store(inst.id, name, slot_name)
         else
-          emit "store #{slot_llvm_type} 0, ptr %#{slot_name}"
+          if ENV["CRYSTAL2_STAGE2_DEBUG"]? == "1" || ENV["STAGE2_BOOTSTRAP_TRACE"]?
+            STDERR.puts "[LLVM_MISSING_VALUE] func=#{@current_func_name} inst=#{inst.class.name} id=#{inst.id} slot=%#{slot_name}"
+          end
+          emit_cross_block_slot_default_store(inst.id, slot_name)
         end
       end
+    end
 
-      private def emit_cross_block_slot_store(inst_id : ValueId, name : String, slot_name : String)
-        val_type = @value_types[inst_id]?
-        return unless val_type
+    private def emit_cross_block_slot_default_store(inst_id : ValueId, slot_name : String)
+      slot_llvm_type = @cross_block_slot_types[inst_id]? ||
+                       begin
+                         if val_type = @value_types[inst_id]?
+                           @type_mapper.llvm_type(val_type)
+                         else
+                           "ptr"
+                         end
+                       end
+      slot_llvm_type = "ptr" if slot_llvm_type == "void"
+
+      if slot_llvm_type.includes?(".union")
+        base = "r#{inst_id}.slot_default"
+        emit "%#{base}.ptr = alloca #{slot_llvm_type}, align 8"
+        emit "store #{slot_llvm_type} zeroinitializer, ptr %#{base}.ptr"
+        emit "%#{base}.val = load #{slot_llvm_type}, ptr %#{base}.ptr"
+        emit "store #{slot_llvm_type} %#{base}.val, ptr %#{slot_name}"
+      elsif slot_llvm_type == "ptr"
+        emit "store ptr null, ptr %#{slot_name}"
+      elsif slot_llvm_type == "float" || slot_llvm_type == "double"
+        emit "store #{slot_llvm_type} 0.0, ptr %#{slot_name}"
+      else
+        emit "store #{slot_llvm_type} 0, ptr %#{slot_name}"
+      end
+    end
+
+    private def emit_cross_block_slot_store(inst_id : ValueId, name : String, slot_name : String)
+      val_type = @value_types[inst_id]?
+      return unless val_type
       llvm_type = @type_mapper.llvm_type(val_type)
       llvm_type = "ptr" if llvm_type == "void"
       # Check actual emitted type — the value may have been emitted with a different

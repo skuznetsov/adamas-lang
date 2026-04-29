@@ -1,6 +1,6 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-04-28
+Updated: 2026-04-29
 Branch: `codegen`
 
 This is the active working backlog only. Historical detail is in git history,
@@ -37,7 +37,25 @@ Evidence: `crystal build src/crystal_v2.cr -o /tmp/cv2_safe_commit
 `p2_pending_budget_no_prelude.sh`, and
 `p2_generated_stage2_no_prelude_puts_guard.sh` all passed. The generated-stage2
 guard now fails closed on any unrecorded `STUB CALLED` before accepting the
-current `nocodegen_clean_full_codegen_hang` frontier.
+current full-codegen frontier.
+
+Cross-block slot checkpoint (2026-04-29): generated stage2 no longer emits
+malformed empty-slot LLVM for the no-prelude `puts 7` smoke. The root was the
+LLVM backend consuming `@cross_block_slots` via `hash[key]?` inside an
+assignment-in-condition; generated stage2 could enter the branch for a missing
+slot and bind an empty local string, producing `store ptr null, ptr %`. The
+backend now gates slot consumption by `has_key?` before indexing. Falsifier:
+an attempted `Hash#clear` real-function override made generated `Hash#clear`
+bodies layout-safe but did not remove the malformed `%`, so stale Hash storage
+was not the root. Evidence: `crystal build src/crystal_v2.cr -o
+/tmp/cv2_slot_haskey_only --error-trace`,
+`p2_bootstrap_semantic_emit_oracle.sh`, `p2_pending_budget_no_prelude.sh`,
+`bash -n regression_tests/p2_generated_stage2_no_prelude_puts_guard.sh`,
+`git diff --check`, and
+`p2_generated_stage2_no_prelude_puts_guard.sh /tmp/cv2_slot_haskey_only` ->
+`frontier=extern_puts_arg_type_codegen_gap`. The next root is extern-call
+argument typing in generated stage2: the emitted IR calls
+`__crystal_v2_print_int32_ln(ptr null)` instead of `i32 7`.
 
 Observed but not landed (2026-04-29): `SystemError#included` expands to a
 `BeginNode` containing `extend ::SystemError::ClassMethods`; processing that

@@ -1221,6 +1221,57 @@ getter field inlining. It does not implement general `SystemError#included`
 BeginNode expansion, full codegen hang diagnosis, or general nested tuple/block
 payload lowering. {F/G/R: 0.92/0.70/0.92} [verified]
 
+[LM-513|verified]: The generated-stage2 no-prelude `puts 7` malformed LLVM
+frontier was an LLVM backend slot-map consumption bug, not stale Hash storage.
+
+Findings:
+
+- Generated stage2 emitted invalid IR:
+  `store ptr null, ptr %` inside `__crystal_main`.
+- A temporary clear-check showed `@cross_block_slots.size == 0`,
+  `has_key?(3_u32) == false`, and `@cross_block_slots[3_u32]? == nil` at
+  function entry in generated stage2, so the map was not retaining stale keys.
+- A falsifier that routed real `Hash#clear` functions through the existing V2
+  layout-safe clear body did materialize those bodies in `generated_s2.ll`, but
+  the empty `%` stores still reproduced. That refuted the stale-Hash-clear
+  hypothesis for this frontier.
+- The surviving source pattern was the backend's use of
+  `@cross_block_slots[inst.id]?` directly in assignment-in-condition. In the
+  generated compiler this could enter the slot-store branch for a missing key
+  and bind an empty local string. The backend invariant is stricter: cross-block
+  slot stores are legal only when the slot map contains the key.
+
+Fix:
+
+- `emit_instruction` now gates cross-block slot consumption with
+  `@cross_block_slots.has_key?(inst.id)` and indexes only after that guard.
+- The generated-stage2 guard now treats the old `store ptr null, ptr %` shape
+  as a hard regression and records the next frontier precisely as
+  `extern_puts_arg_type_codegen_gap`.
+
+Evidence:
+
+- `crystal build src/crystal_v2.cr -o /tmp/cv2_slot_haskey_only --error-trace`
+  -> exit 0, only the known `Random::DEFAULT` warning.
+- `regression_tests/p2_generated_stage2_no_prelude_puts_guard.sh
+  /tmp/cv2_slot_haskey_only` ->
+  `p2_generated_stage2_no_prelude_puts_guard_ok
+  frontier=extern_puts_arg_type_codegen_gap`; saved IR no longer contains
+  `store ptr null, ptr %`.
+- `regression_tests/p2_bootstrap_semantic_emit_oracle.sh
+  /tmp/cv2_slot_haskey_only` -> `p2_bootstrap_semantic_emit_oracle_ok`.
+- `regression_tests/p2_pending_budget_no_prelude.sh
+  /tmp/cv2_slot_haskey_only` ->
+  `p2_pending_budget_no_prelude_ok process_delta=3 emit_delta=4
+  lower_missing_delta=44 total=92 max_queue=57`.
+- `bash -n regression_tests/p2_generated_stage2_no_prelude_puts_guard.sh` and
+  `git diff --check` -> exit 0.
+
+Boundary: this fixes the empty cross-block slot malformed-LLVM class. It does
+not fix the next generated-stage2 semantic codegen bug: `puts 7` currently
+lowers to duplicate `__crystal_v2_print_int32_ln(ptr null)` calls instead of a
+single `i32 7` extern call. {F/G/R: 0.92/0.62/0.91} [verified]
+
 ## Active Strategy
 
 - Main fast loop: `--no-prelude` oracles and focused STOP_AFTER_HIR budget

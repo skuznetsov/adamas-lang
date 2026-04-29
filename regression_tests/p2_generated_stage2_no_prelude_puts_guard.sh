@@ -128,6 +128,27 @@ if grep -q 'STUB CALLED: IO\$CCFileDescriptor\$Htell' "$COMPILE_LOG"; then
   exit 1
 fi
 
+# 2026-04-29: generated stage2 once emitted an empty cross-block alloca slot
+# (`store ptr null, ptr %`) while compiling this one-line no-prelude program.
+# Root cause: LLVM backend consumed @cross_block_slots through `hash[key]?`
+# assignment-in-condition; the generated compiler could enter that branch with a
+# nil lookup and an empty local string. The backend must gate slot use by
+# has_key? before indexing, so malformed empty-slot LLVM is a hard regression.
+if [[ -f "$OUT_BIN.ll" ]] && grep -q 'store ptr null, ptr %$' "$OUT_BIN.ll"; then
+  echo "p2_generated_stage2_no_prelude_puts_guard_failed: old empty cross-block slot malformed LLVM regressed" >&2
+  grep -n 'store ptr null, ptr %$' "$OUT_BIN.ll" >&2 || true
+  exit 1
+fi
+
+# After the empty-slot fix, the next recorded full-codegen frontier is the
+# no-prelude `puts 7` extern argument shape: generated stage2 reaches LLVM
+# emission but passes ptr null to the Int32 print helper. Keep this distinct
+# from generic full-codegen hangs so the next reducer has a precise target.
+if [[ -f "$OUT_BIN.ll" ]] && grep -q 'call void @__crystal_v2_print_int32_ln(ptr null)' "$OUT_BIN.ll"; then
+  echo "p2_generated_stage2_no_prelude_puts_guard_ok frontier=extern_puts_arg_type_codegen_gap"
+  exit 0
+fi
+
 if grep -q 'Segmentation fault: 11' "$COMPILE_LOG"; then
   echo "p2_generated_stage2_no_prelude_puts_guard_failed: old Array(String)#each_index callback segfault regressed" >&2
   tail -120 "$COMPILE_LOG" >&2 || true
