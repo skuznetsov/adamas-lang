@@ -131,7 +131,7 @@ module Crystal
       # Replaces an O(N) linear scan that made lexical-scope lookup O(N²) on large functions.
       @hir_value_block_scope : ::Hash(HIR::ValueId, UInt32) = {} of HIR::ValueId => UInt32
       @hir_scope_depth_cache : ::Hash(UInt32, Int32) = {} of UInt32 => Int32
-      @hir_line_scope_cache : ::Hash({String, Int32}, UInt32) = {} of {String, Int32} => UInt32
+      @hir_line_scope_cache : ::Hash(String, ::Hash(Int32, UInt32)) = {} of String => ::Hash(Int32, UInt32)
 
       @[AlwaysInline]
       private def mir_setup_trace? : Bool
@@ -1261,10 +1261,11 @@ module Crystal
       end
 
       private def hir_innermost_scope_for_source_line(hir_func : HIR::Function, loc : HIR::SourceLocation) : UInt32?
-        cache_key = {loc.path, loc.line}
-        if cached = @hir_line_scope_cache[cache_key]?
-          return nil if cached == UInt32::MAX
-          return cached
+        if line_cache = @hir_line_scope_cache[loc.path]?
+          if cached = line_cache[loc.line]?
+            return nil if cached == UInt32::MAX
+            return cached
+          end
         end
 
         best : UInt32? = nil
@@ -1281,7 +1282,12 @@ module Crystal
             best = scope.id
           end
         end
-        @hir_line_scope_cache[cache_key] = best || UInt32::MAX
+        line_cache = @hir_line_scope_cache[loc.path]?
+        unless line_cache
+          line_cache = {} of Int32 => UInt32
+          @hir_line_scope_cache[loc.path] = line_cache
+        end
+        line_cache[loc.line] = best || UInt32::MAX
         best
       end
 
@@ -1392,8 +1398,8 @@ module Crystal
         # Reset per-function caches BEFORE params loop — params invoke
         # record_mir_value_location which reads @hir_value_block_scope.
         @hir_value_block_scope = {} of HIR::ValueId => UInt32
-        @hir_scope_depth_cache.clear
-        @hir_line_scope_cache.clear
+        @hir_scope_depth_cache = {} of UInt32 => Int32
+        @hir_line_scope_cache = {} of String => ::Hash(Int32, UInt32)
 
         # Map HIR params to MIR params (already added in stub)
         hir_func.params.each_with_index do |param, idx|

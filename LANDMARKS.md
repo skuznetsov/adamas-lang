@@ -12,6 +12,32 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-524|verified]: MIR debug line-scope caching must avoid tuple keys under
+self-hosted stage2. After the class-method nested-yield fix, generated `cv2_s2`
+still built, but the no-prelude smoke segfaulted after `lower_main: exprs=5`.
+LLDB stopped in `__crystal_v2_string_eq` through
+`Tuple(String, Int32)#== -> Hash(Tuple(String, Int32), UInt32)#fetch ->
+HIRToMIRLowering#hir_innermost_scope_for_source_line ->
+propagate_debug_local_bindings -> lower_function_body`; registers showed
+invalid String pointers (`-1` / small integer) reaching the equality helper.
+Reinitializing the cache instead of `.clear` was insufficient, refuting plain
+Hash reuse as the full cause. The root was the compiler-internal
+`@hir_line_scope_cache` using `{loc.path, loc.line}` tuple keys in generated
+stage2. The fix rewrites it to `Hash(String, Hash(Int32, UInt32))` and
+reinitializes both scope caches per function, preserving the existing
+stage2-sensitive lowering-map invariant while removing the tuple-key Hash
+surface from this hot debug path. Evidence: `crystal build
+src/crystal_v2.cr -o /tmp/cv2_scope_cache_nested --error-trace`;
+`p2_class_method_nested_yield_block_param_no_prelude.sh`,
+`p2_loop_block_proc_capture_no_prelude.sh`,
+`p2_bootstrap_semantic_emit_oracle.sh`, and `p2_pending_budget_no_prelude.sh`
+pass with `/tmp/cv2_scope_cache_nested`; canonical `s1 -> s2` builds `cv2_s2`
+in about 227s, and fresh LLDB now stops later in
+`Crystal::MIR::LLVMIRGenerator#value_ref(UInt32)` from `emit_extern_call`,
+not in `__crystal_v2_string_eq`. Boundary: general tuple-key Hash safety is
+still tracked separately; this fixes the compiler debug-cache root, not every
+possible tuple-key user program. {F/G/R: 0.91/0.58/0.92} [verified]
+
 [LM-523|verified]: Class-method block-yield inference must bind `self` to the
 callee owner, not the caller context. After the loop-capture fix, the generated
 stage2 smoke reached `CLI#file_sha256` but lowered

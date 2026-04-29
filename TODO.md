@@ -30,6 +30,24 @@ Working policy:
 
 ## Current Checkpoint
 
+Debug line-scope cache checkpoint (2026-04-29): the generated `cv2_s2`
+no-prelude smoke no longer crashes in `__crystal_v2_string_eq` through
+`Hash(Tuple(String, Int32), UInt32)#fetch ->
+HIRToMIRLowering#hir_innermost_scope_for_source_line`. The root was a
+compiler-internal MIR debug cache using `{loc.path, loc.line}` tuple keys in
+self-hosted stage2, where tuple-key Hash lookup can hand invalid String fields
+to `Tuple#==`. The fix changes the cache to `Hash(String, Hash(Int32, UInt32))`
+and reinitializes the per-function scope caches instead of mutating them with
+`clear`, preserving the local stage2 invariant already used for other lowering
+maps. Evidence: `crystal build src/crystal_v2.cr -o /tmp/cv2_scope_cache_nested
+--error-trace`; `p2_class_method_nested_yield_block_param_no_prelude.sh`,
+`p2_loop_block_proc_capture_no_prelude.sh`,
+`p2_bootstrap_semantic_emit_oracle.sh`, and `p2_pending_budget_no_prelude.sh`
+all pass with `/tmp/cv2_scope_cache_nested`; canonical `s1 -> s2` still builds
+`cv2_s2` in about 227s. Boundary: generated `cv2_s2` smoke still fails, but
+LLDB now stops later in `Crystal::MIR::LLVMIRGenerator#value_ref(UInt32)` from
+`emit_extern_call`, not in the old debug-cache `string_eq` path.
+
 Class-method nested-yield block-param checkpoint (2026-04-29): the current
 root after the loop-capture fix was not `Pointer#read` itself. `File.open`'s
 lowered HIR already creates a concrete `File` and yields it, but the AST-level

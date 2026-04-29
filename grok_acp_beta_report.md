@@ -254,3 +254,32 @@ full-prelude `File.open` HIR reducer confirms the real frontier moved from
 Keep using ACP for narrow read-only audits; prefer local smallest-falsifier
 reduction before accepting suggested implementation shape.
 **Cost saved:** ~1-2k Codex tokens on source routing and hypothesis ranking.
+
+### Session 14 — 2026-04-29 — debug scope Tuple(String, Int32) cache crash
+**Task:** read-only audit the generated `cv2_s2` no-prelude segfault after the
+File.open block-param fix. LLDB stopped in `__crystal_v2_string_eq` through
+`Tuple(String, Int32)#== -> Hash(Tuple(String, Int32), UInt32)#fetch ->
+HIRToMIRLowering#hir_innermost_scope_for_source_line`.
+**Brief size:** ~11 lines, ~1.1 KB, file
+`/tmp/grok_string_eq_frontier/task.txt`.
+**Latency:** produced a useful final answer while local source inspection was
+running.
+**Output quality:** useful root routing, incomplete first patch. Grok correctly
+identified the exact debug cache, the tuple-key Hash surface, and the local
+stage2-sensitive invariant that lowering maps should be reinitialized instead
+of cleared. Its minimal patch (`.clear` -> fresh hash) was locally falsified:
+the generated `cv2_s2` still crashed in the same `string_eq`/tuple-key lookup.
+**What worked:** the source anchors and failure classification were accurate
+and saved search time. The important signal was not "string_eq is broken", but
+"this compiler-internal cache does not need a tuple key at all".
+**What did not:** the proposed 2-line patch treated `Hash#clear` reuse as the
+whole root. Local Adversary required the stronger representation fix:
+`Hash(String, Hash(Int32, UInt32))` plus per-function reinit.
+**Adversary check:** canonical `s1 -> s2` with the final nested-cache patch
+still builds `cv2_s2`; the old `__crystal_v2_string_eq` crash disappears and
+fresh LLDB stops later in `LLVMIRGenerator#value_ref(UInt32)` from
+`emit_extern_call`. The stage is not green yet, but the previous root is
+removed.
+**Verdict:** useful as a sidecar root router; local falsification was necessary
+to avoid committing an insufficient symptom fix.
+**Cost saved:** ~1-2k Codex tokens on source routing and hypothesis ranking.
