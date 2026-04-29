@@ -92,6 +92,15 @@ to prevent dead/unneeded serialization/formatting/hash bodies from entering HIR
 before `lower_missing`, not to filter concrete missing calls blindly. Guard:
 `regression_tests/p2_ast_filter_demand_no_prelude.sh`.
 
+LLVM reachability checkpoint (2026-04-28): backend function reachability is now
+available only under `CRYSTAL_V2_LLVM_REACHABILITY=1`; the default remains the
+previous emit-all behavior. On the full compiler, opt-in backend RTA prunes
+`9959` MIR functions (`37792` total -> `27833` emitted) and reduces the
+progress-run `.ll` artifact from the previous `189MB` shape to `146MB`, but
+the 300s gate still times out later in LLVM finalization/undefined-extern
+declaration emission. This is a useful lever, not a complete bootstrap fix.
+Guard: `regression_tests/p2_llvm_reachability_no_prelude.sh`.
+
 Fast stage2 HIR emit also passes:
 
 ```bash

@@ -233,6 +233,18 @@ by default or filter `lower_missing` blindly; the next root target is why
 serialization/formatting/hash bodies enter HIR before the concrete missing-call
 sweep. {F/G/R: 0.91/0.58/0.93} [verified]
 
+[LM-509|verified]: LLVM backend reachability pruning is now exposed behind
+`CRYSTAL_V2_LLVM_REACHABILITY=1` but remains default-off. Evidence:
+`regression_tests/p2_llvm_reachability_no_prelude.sh /tmp/cv2_llvm_reach`
+prints `p2_llvm_reachability_no_prelude_ok ... emitting 5 functions`;
+full compiler progress run with the env enabled reaches backend RTA and emits
+`27833 functions (37792 total, 9959 pruned)` with a `146MB` `.ll` artifact,
+versus the previous `37711` emit-all / `189MB` canonical timeout shape. Boundary:
+this does not complete the 300s `s1 -> s2b` gate; the run still times out after
+function emission while emitting LLVM tail declarations/finalization, so the
+next root target is remaining huge-IR tail cost and missing backend reachability
+edges, not flipping this env on by default. {F/G/R: 0.92/0.60/0.93} [verified]
+
 [LM-473|verified]: Context-enhanced pending-source samples identify the current
 dominant source contexts. With sample context enabled, the 80s run timed out as
 expected but showed `Array#to_s` samples enqueued from `Object#to_s`,

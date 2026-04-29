@@ -2620,7 +2620,7 @@ module CrystalV2
         llvm_gen.emit_debug_info = debug_info_enabled
         llvm_gen.progress = options.progress
         bootstrap_trace_puts "[STAGE2_TRACE] step5: flags3"; STDERR.flush
-        llvm_gen.reachability = false  # DISABLED for debugging PC=0 crash
+        llvm_gen.reachability = BootstrapEnv.enabled?("CRYSTAL_V2_LLVM_REACHABILITY")
         bootstrap_trace_puts "[STAGE2_TRACE] step5: flags4"; STDERR.flush
         llvm_gen.no_prelude = options.no_prelude
         bootstrap_trace_puts "[STAGE2_TRACE] step5: flags5"; STDERR.flush
