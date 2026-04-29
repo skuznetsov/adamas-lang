@@ -73,18 +73,22 @@ fi
 # emitted `mov w9, #0x4` (AtomicOrdering::Acquire = 4) into the @writer slot
 # instead of `LOCKED = 1`. Guard the positive shape of write_lock so this bug
 # cannot regress silently.
-lldb --batch -o 'disassemble -n Crystal$CCRWLock$Hwrite_lock' "$GENERATED_S2" >"$WRITE_LOCK_DISASM" 2>&1
+lldb --batch -o 'disassemble -n Crystal$CCRWLock$Hwrite_lock' "$GENERATED_S2" >"$WRITE_LOCK_DISASM" 2>&1 || true
 
-if grep -Eq 'mov[[:space:]]+w[0-9]+,[[:space:]]+#0x4($|[^0-9a-fx])' "$WRITE_LOCK_DISASM"; then
-  echo "p2_generated_stage2_no_prelude_puts_guard_failed: LM-501 regressed — write_lock emits raw #0x4 instead of loading LOCKED classvar" >&2
-  cat "$WRITE_LOCK_DISASM" >&2
-  exit 1
-fi
+if grep -q 'Unable to find symbol' "$WRITE_LOCK_DISASM"; then
+  : # demand-driven builds may not materialize this helper
+else
+  if grep -Eq 'mov[[:space:]]+w[0-9]+,[[:space:]]+#0x4($|[^0-9a-fx])' "$WRITE_LOCK_DISASM"; then
+    echo "p2_generated_stage2_no_prelude_puts_guard_failed: LM-501 regressed — write_lock emits raw #0x4 instead of loading LOCKED classvar" >&2
+    cat "$WRITE_LOCK_DISASM" >&2
+    exit 1
+  fi
 
-if ! grep -q 'Crystal\$CCRWLock__classvar__LOCKED' "$WRITE_LOCK_DISASM"; then
-  echo "p2_generated_stage2_no_prelude_puts_guard_failed: LM-501 regressed — write_lock no longer references the LOCKED classvar global" >&2
-  cat "$WRITE_LOCK_DISASM" >&2
-  exit 1
+  if ! grep -q 'Crystal\$CCRWLock__classvar__LOCKED' "$WRITE_LOCK_DISASM"; then
+    echo "p2_generated_stage2_no_prelude_puts_guard_failed: LM-501 regressed — materialized write_lock no longer references the LOCKED classvar global" >&2
+    cat "$WRITE_LOCK_DISASM" >&2
+    exit 1
+  fi
 fi
 
 set +e

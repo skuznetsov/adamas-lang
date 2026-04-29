@@ -104,3 +104,25 @@
 **Adversary check:** после Grok review guard переписан на двухпроходный AWK для order-independent проверки, добавлен focused no-prelude oracle `p2_each_index_block_param_no_prelude.sh`, затем локально прогнаны `p2_each_index_block_param_no_prelude_ok` and `p2_selfhost_stage2_shape_guard_ok`.
 **Verdict:** годится как быстрый reviewer для shell-oracle fragility. Особенно полезен на adversarial check stage.
 **Cost saved:** ~2-4k Codex-токенов на поиск order-dependence в awk/MIR dump.
+
+### Session 4 — 2026-04-29 — generated-stage2 CLI tail frontier
+**Задача:** read-only review kept artifacts for `p2_generated_stage2_no_prelude_puts_guard.sh`: generated stage2 emitted `.ll` and `.o.cmdtmp` but produced no final executable.
+**Brief size:** ~31 строка, ~2.4 KB, файл `/tmp/grok_task_link_frontier.md`.
+**Latency:** ~130с, exit 0.
+**Output quality:** ⚠ partially useful. Grok correctly routed attention away from HIR/MIR/LLVM body generation and toward the CLI temp-output/link tail, but it recommended mostly defensive post-object/post-link existence checks.
+**Что было хорошо:** быстро подтвердил, что `.o.cmdtmp` means the failure is in the command/rename/link tail, not in frontend lowering of the tiny no-prelude program.
+**Что было плохо:** пропустил фактический root chain: generated stage2 parent process was exec'ing `llc` because `Crystal::System::Process.fork` was mis-lowered; after that, `waitpid(..., out status, ...)` decoded pointer garbage; then runtime-stub freshness pulled `Time#<=>`; then LLVM cache/FileUtils copy needed fail-closed treatment. Его guard-only suggestion would have made the failure louder but would not have fixed the root.
+**Adversary check:** local IR inspection and lldb contradicted the guard-only framing: old generated `run_command_capture_output` had no parent/child branch before `execvp`, manual `llc` succeeded on the same `.ll`, and `CRYSTAL_V2_LLVM_CACHE=0` plus raw fork/wait fixes produced and ran a no-prelude `puts 7` binary.
+**Verdict:** годится as a cheap routing sidecar, not as final fix authority. Useful signal: “look at CLI tail”; insufficient signal: exact root and safe patch design.
+**Cost saved:** ~1-2k Codex-токенов on search direction, but the decisive evidence came from local IR/lldb/runtime probes.
+
+### Session 5 — 2026-04-29 — CLI tail hostile diff review
+**Задача:** hostile review текущего unstaged diff in `src/compiler/cli.cr` and `p2_generated_stage2_no_prelude_puts_guard.sh` after the raw fork/wait/cache-tail fix.
+**Brief size:** ~25 строк, ~1.8 KB, файл `/tmp/grok_task_cli_tail_review.md`.
+**Latency:** 220с timeout, exit 124.
+**Output quality:** ⏳ timeout. Grok issued many tool calls and wrote a large `last.ndjson`, but produced no final transcript before `[grok-timeout]`.
+**Что было хорошо:** ACP process stayed stable and continued tool use against the repo.
+**Что было плохо:** no final answer, so it could not serve as a pre-commit reviewer. For hostile review of a medium diff, the current timeout/prompt envelope is still too small.
+**Adversary check:** local review found and fixed one issue before verification (`copy_file_raw` now closes fds in `ensure` and unlinks partial destinations only when the destination was opened). The actual commit gate used local build + p2 guards, not Grok.
+**Verdict:** not useful for this commit except as beta evidence. Retry only with a narrower question or longer timeout.
+**Cost saved:** none; cost increased slightly due timeout handling.

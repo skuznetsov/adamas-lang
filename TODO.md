@@ -619,15 +619,30 @@ Latest generated-stage2 frontier:
   exact-demanded for lazy RTA, and MIR permits typed-suffix arity fallback only
   when the same-method/arity candidate is unique. The old abstract
   `Crystal$CCEventLoop$Hclose$$IO$CCFileDescriptor` stub is now a regression.
-  Current generated-stage2 guard frontier is
-  `frontier=nocodegen_clean_full_codegen_hang`.
+- The generated-stage2 no-prelude `puts 7` full-codegen/link corridor is now
+  cleared. The kept artifacts proved the HIR/MIR/LLVM body was already good:
+  the old generated compiler emitted `.ll` and a valid Mach-O object but left
+  only `.o.cmdtmp` and no final executable. Root chain:
+  `Crystal::System::Process.fork` was mis-lowered in the generated compiler as
+  a plain `Int32` contract, so the parent compiler also entered the child
+  `execvp(llc)` path and skipped the rename/link tail; after switching to raw
+  `LibC.fork`, `LibC.waitpid(..., out status, ...)` exposed a second bootstrap
+  lowering bug where status storage decoded pointer garbage; the runtime-stub
+  freshness check pulled an unlowered `Time#<=>` stub; and the LLVM cache path
+  accepted stale/empty artifacts through `File.exists?` + `FileUtils.cp`.
+  The CLI tail now uses raw `LibC.fork`, explicit `pointerof(status)`, avoids
+  Time ordering in the stub freshness gate, requires non-empty LLVM cache
+  artifacts, and copies cache files through a small LibC read/write helper.
+  `p2_generated_stage2_no_prelude_puts_guard.sh` now ends with plain
+  `p2_generated_stage2_no_prelude_puts_guard_ok`.
 
-- Next frontier: reduce the full-codegen-only generated-stage2 hang/frontier
-  after the no-codegen probe exits cleanly. The previous `Tuple$Heach$$block`,
+- Next frontier: run the generated `s2b` against the broader no-prelude corpus
+  and normalized `s1_bootstrap` vs `s2b` semantic emit gate before attempting
+  `s3b+`. The previous `Tuple$Heach$$block`,
   `debug_env_filter_match?..._splat`,
-  `Tuple(String, Crystal::MIR::Type)#join(IO, String, &block)`, and
-  `Crystal::EventLoop#close(IO::FileDescriptor)` repros are now
-  green/regression-guarded.
+  `Tuple(String, Crystal::MIR::Type)#join(IO, String, &block)`,
+  `Crystal::EventLoop#close(IO::FileDescriptor)`, and generated-stage2
+  no-prelude `puts 7` full-codegen/link repros are now green/regression-guarded.
 
 Boundary: `src/crystal_v2.cr --no-prelude` still exits `11` in an
 inline-yield recursion / force-return corridor before it can serve as a green
@@ -635,20 +650,17 @@ pending-budget oracle.
 
 ## Next Work
 
-1. Re-measure the next generated-stage2 failure after the no-prelude print-mode
-   fix, starting from the fast no-prelude runtime/oracle corpus instead of full
-   bootstrap.
-2. Reduce the generated-stage2 full-codegen-only hang/frontier now that
-   `--no-codegen` and the EventLoop close vdispatch corridor are clean.
+1. Run the generated-stage2 compiler on the broader fixed no-prelude corpus and
+   add focused oracles for any new first failure.
+2. Compare `s1_bootstrap` and `s2b` on the fixed no-prelude corpus before
+   trying `s3b+`.
 3. Audit remaining compiler hot paths that use tuple block destructuring or
    block `join` formatting; keep the general tuple-block fix as an explicit
    follow-up rather than hiding it with one-off stubs.
-4. Compare `s1_bootstrap` and `s2b` on the fixed no-prelude corpus before
-   trying `s3b+`.
-5. Add/inspect exact-called provenance for `record_pending_callee_for_rta` so
+4. Add/inspect exact-called provenance for `record_pending_callee_for_rta` so
    the source of remaining `keep:exact_called Array#to_s` / `Hash#to_s` demand
    is explicit.
-6. Verify whether broad fallback self-calls should mark exact concrete wrapper
+5. Verify whether broad fallback self-calls should mark exact concrete wrapper
    names as demanded, or whether they should remain virtual/demand-local until a
    real callsite asks for that concrete owner.
 

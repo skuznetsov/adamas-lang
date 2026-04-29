@@ -1441,12 +1441,63 @@ direct `Dir.glob` focused oracle; that remains covered indirectly by the
 existing self-host gate when the wrapper is materialized. {F/G/R:
 0.93/0.62/0.92} [verified]
 
+[LM-517|verified]: The generated-stage2 no-prelude `puts 7` full-codegen/link
+frontier is cleared by fixing the bootstrap CLI command tail, not by changing
+HIR/MIR/LLVM code generation for the program body.
+
+Findings:
+
+- Preserved artifacts showed the generated compiler emitted `repro_bin.ll` and
+  a valid Mach-O object, but left only `repro_bin.o.cmdtmp` and exited without a
+  final executable. The first root was in `CLI#run_command_capture_output`:
+  generated stage2 mis-lowered `Crystal::System::Process.fork`'s nilable
+  parent/child contract as a plain `Int32`, so the parent compiler process also
+  entered the child `execvp(llc)` path and skipped the rename/link tail.
+- After switching that path to raw `LibC.fork`, the next root was
+  `LibC.waitpid(pid, out status, 0)`: generated stage2 mis-lowered the `out`
+  storage and decoded pointer garbage as the wait status. Explicit
+  `pointerof(status)` observes the real tool status.
+- The next no-prelude link tail pulled an unlowered `Time#<=>` through the
+  runtime-stub freshness check, and the LLVM cache path could treat stale or
+  empty artifacts as hits. The tail now avoids Time ordering for the stub, gates
+  LLVM cache hits with `command_output_ready?`, and copies cache artifacts via a
+  small LibC read/write helper instead of bootstrap-hot `FileUtils.cp`.
+- The `p2_generated_stage2_no_prelude_puts_guard.sh` RWLock sentinel is now
+  demand-aware: if `Crystal::RWLock#write_lock` is emitted, it must still load
+  `LOCKED`; if the demand-driven generated compiler does not materialize it,
+  the guard no longer fails on absence alone.
+
+Evidence:
+
+- `crystal build src/crystal_v2.cr -o /tmp/cv2_runner_rawcopy_check
+  --error-trace` -> exit 0, only the known `ld64.lld` stack-size warning.
+- `regression_tests/p2_generated_stage2_no_prelude_puts_guard.sh
+  /tmp/cv2_runner_rawcopy_check` ->
+  `p2_generated_stage2_no_prelude_puts_guard_ok`.
+- `regression_tests/p2_pending_budget_no_prelude.sh
+  /tmp/cv2_runner_rawcopy_check` ->
+  `p2_pending_budget_no_prelude_ok process_delta=3 emit_delta=4
+  lower_missing_delta=44 total=92 max_queue=57`.
+- `regression_tests/p2_bootstrap_semantic_emit_oracle.sh
+  /tmp/cv2_runner_rawcopy_check` -> `p2_bootstrap_semantic_emit_oracle_ok`.
+- `regression_tests/p2_each_index_block_param_no_prelude.sh
+  /tmp/cv2_runner_rawcopy_check` -> `p2_each_index_block_param_no_prelude_ok`.
+- `bash -n regression_tests/p2_generated_stage2_no_prelude_puts_guard.sh`
+  and `git diff --check` -> exit 0.
+
+Boundary: this is a root fix for the bootstrap-critical CLI command/link tail.
+It is not a general fix for all nilable-return lowering, all `out` arg
+lowering, `Time#<=>`, or `FileUtils.cp` in arbitrary code. Those remain
+separate compiler/runtime follow-ups if they appear outside this tail.
+{F/G/R: 0.94/0.62/0.94} [verified]
+
 ## Active Strategy
 
 - Main fast loop: `--no-prelude` oracles and focused STOP_AFTER_HIR budget
   checks.
 - Integration gate: canonical `s1 -> s2b` must pass before any `s2 -> s3`
-  attempt. Current failure is stage2 full-codegen timeout after oversized `.ll`
-  emission, despite STOP_AFTER_HIR passing.
+  attempt. The generated-stage2 no-prelude `puts 7` full-codegen/link guard is
+  now green; next gate is broader no-prelude corpus emission/comparison.
 - Rare full gate: `s1 -> s5b` plus normalized HIR/MIR/LL equality.
-- Do not run `s3b+` while generated `s2b` cannot pass plain/no-prelude smokes.
+- Do not run `s3b+` until generated `s2b` passes the fixed no-prelude corpus and
+  normalized `s1_bootstrap` vs `s2b` semantic comparison.

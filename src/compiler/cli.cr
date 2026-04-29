@@ -606,6 +606,40 @@ module CrystalV2
         end
       end
 
+      private def copy_file_raw(src : String, dst : String) : Bool
+        in_fd = -1
+        out_fd = -1
+        opened_dst = false
+        ok = false
+
+        begin
+          in_fd = LibC.open(src.to_unsafe, LibC::O_RDONLY)
+          return false if in_fd < 0
+
+          out_fd = LibC.open(dst.to_unsafe, LibC::O_WRONLY | LibC::O_CREAT | LibC::O_TRUNC, 0o644)
+          return false if out_fd < 0
+          opened_dst = true
+
+          buf = Bytes.new(64 * 1024)
+          loop do
+            read_count = LibC.read(in_fd, buf.to_unsafe, buf.size)
+            return false if read_count < 0
+            break if read_count == 0
+
+            write_all_fd(out_fd, buf[0, read_count.to_i])
+          end
+
+          ok = true
+          true
+        rescue
+          false
+        ensure
+          LibC.close(in_fd) if in_fd >= 0
+          LibC.close(out_fd) if out_fd >= 0
+          LibC.unlink(dst.to_unsafe) if opened_dst && !ok
+        end
+      end
+
       private def write_text(io : IO, text : String, newline : Bool = false) : Nil
         if fd_io = io.as?(IO::FileDescriptor)
           write_all_fd(fd_io.fd, text.to_slice)
@@ -1491,7 +1525,7 @@ module CrystalV2
           pipeline_cache_libs_file = pipeline_cache_file + ".libs"
           if File.exists?(pipeline_cache_file) && File.exists?(pipeline_cache_libs_file)
             pipeline_cache_hit = true
-            FileUtils.cp(pipeline_cache_file, ll_file)
+            copy_file_raw(pipeline_cache_file, ll_file)
             options.link_libraries = File.read_lines(pipeline_cache_libs_file).reject(&.empty?)
             @pipeline_cache_hits += 1
             log(options, out_io, "  Pipeline cache HIT (#{pipeline_hash_str[0, 12]})")
@@ -2741,7 +2775,7 @@ module CrystalV2
             # Child: save cache and exit
             begin
               safe_mkdir_p(safe_dirname(pipeline_cache_file))
-              FileUtils.cp(ll_file, pipeline_cache_file)
+              copy_file_raw(ll_file, pipeline_cache_file)
               File.write(pipeline_cache_file + ".libs", options.link_libraries.join("\n") + "\n")
             rescue
             end
@@ -2752,7 +2786,7 @@ module CrystalV2
           else
             # Fork failed — save synchronously
             safe_mkdir_p(safe_dirname(pipeline_cache_file))
-            FileUtils.cp(ll_file, pipeline_cache_file)
+            copy_file_raw(ll_file, pipeline_cache_file)
             File.write(pipeline_cache_file + ".libs", options.link_libraries.join("\n") + "\n")
             @pipeline_cache_misses += 1
             log(options, out_io, "  Pipeline cache MISS → saved")
@@ -2868,8 +2902,13 @@ module CrystalV2
         fd = LibC.open(log_file.to_unsafe, LibC::O_WRONLY | LibC::O_CREAT | LibC::O_TRUNC, 0o644)
         return {"open log failed: #{log_file}", false} if fd < 0
 
-        pid = Crystal::System::Process.fork
-        if !pid
+        # Use raw fork here instead of Crystal::System::Process.fork. The
+        # bootstrap compiler has previously mis-lowered that helper's nilable
+        # parent/child contract as a plain Int32, causing the parent compiler
+        # process to exec the tool command (for example `llc`) and skip the
+        # temp-output rename/link tail entirely.
+        pid = LibC.fork
+        if pid == 0
           LibC.dup2(fd, 1)
           LibC.dup2(fd, 2)
           LibC.close(fd)
@@ -2885,9 +2924,18 @@ module CrystalV2
           LibC.execvp(command_args.unsafe_fetch(0).to_unsafe, argv.to_unsafe)
           LibC._exit(127)
         end
+        if pid < 0
+          LibC.close(fd)
+          return {"fork failed for #{command_args_display(command_args)}", false}
+        end
 
         LibC.close(fd)
-        ret = LibC.waitpid(pid, out status, 0)
+        # Avoid `out status` here for the bootstrap compiler: self-hosted
+        # lowering has miscompiled that out-arg into a nil pointer and then
+        # decoded pointer garbage as the wait status. Keep the status storage
+        # explicit so the parent observes the real tool exit code.
+        status = uninitialized Int32
+        ret = LibC.waitpid(pid, pointerof(status), 0)
         output = File.exists?(log_file) ? File.read(log_file) : ""
         File.delete(log_file) if File.exists?(log_file)
         if ret == -1
@@ -3010,8 +3058,7 @@ module CrystalV2
           opt_ll_file = "#{ll_file}.opt.bc"
           bootstrap_trace_puts "[LLVM_TAIL] phase=opt_path path=#{opt_ll_file}" if trace_llvm_tail
           opt_start = Time.instant
-          if options.llvm_cache && File.exists?(opt_cache_file)
-            FileUtils.cp(opt_cache_file, opt_ll_file)
+          if options.llvm_cache && command_output_ready?(opt_cache_file) && copy_file_raw(opt_cache_file, opt_ll_file)
             @llvm_cache_hits += 1
           else
             # Keep optimized IR in bitcode form to avoid expensive text print/parse
@@ -3033,8 +3080,7 @@ module CrystalV2
               return 1
             end
             if options.llvm_cache
-              FileUtils.cp(opt_ll_file, opt_cache_file)
-              @llvm_cache_misses += 1
+              @llvm_cache_misses += 1 if copy_file_raw(opt_ll_file, opt_cache_file)
             end
           end
           timings["opt"] = (Time.instant - opt_start).total_milliseconds if options.stats
@@ -3049,8 +3095,7 @@ module CrystalV2
         llc_start = Time.instant
         unless use_clang_link
           bootstrap_trace_puts "[LLVM_TAIL] phase=llc_enter opt_ll=#{opt_ll_file} obj=#{obj_file}" if trace_llvm_tail
-          if options.llvm_cache && File.exists?(obj_cache_file)
-            FileUtils.cp(obj_cache_file, obj_file)
+          if options.llvm_cache && command_output_ready?(obj_cache_file) && copy_file_raw(obj_cache_file, obj_file)
             @llvm_cache_hits += 1
             timings["llc"] = (Time.instant - llc_start).total_milliseconds if options.stats
           else
@@ -3109,8 +3154,7 @@ module CrystalV2
               end
             end
             if options.llvm_cache && !llc_used_fallback
-              FileUtils.cp(obj_file, obj_cache_file)
-              @llvm_cache_misses += 1
+              @llvm_cache_misses += 1 if copy_file_raw(obj_file, obj_cache_file)
             end
             timings["llc"] = (Time.instant - llc_start).total_milliseconds if options.stats
           end
@@ -3122,9 +3166,11 @@ module CrystalV2
         runtime_src = replace_suffix_if_present(runtime_stub, ".o", ".c")
         bootstrap_trace_puts "[LLVM_TAIL] phase=runtime_stub stub=#{runtime_stub} src=#{runtime_src}" if trace_llvm_tail
 
-        # Compile runtime stub if needed
-        if File.exists?(runtime_src) && (!File.exists?(runtime_stub) ||
-           File.info(runtime_src).modification_time > File.info(runtime_stub).modification_time)
+        # Compile runtime stub if missing. Avoid File::Info#modification_time
+        # comparisons in this bootstrap-critical tail: generated stage2 may not
+        # have Time#<=> lowered yet, and a freshness check must not pull Time
+        # ordering into every no-prelude object/link command.
+        if File.exists?(runtime_src) && !File.exists?(runtime_stub)
           runtime_tmp = temp_command_output_path(runtime_stub)
           runtime_args = ["cc", "-c", runtime_src, "-o", runtime_tmp] of String
           runtime_result, runtime_success = run_command_to_temp_output(runtime_args, runtime_tmp, runtime_stub)
