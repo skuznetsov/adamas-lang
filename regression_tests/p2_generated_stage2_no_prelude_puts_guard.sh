@@ -144,7 +144,7 @@ fi
 # no-prelude `puts 7` extern argument shape: generated stage2 reaches LLVM
 # emission but passes ptr null to the Int32 print helper. Keep this distinct
 # from generic full-codegen hangs so the next reducer has a precise target.
-if [[ -f "$OUT_BIN.ll" ]] && grep -q 'call void @__crystal_v2_print_int32_ln(ptr null)' "$OUT_BIN.ll"; then
+if [[ -f "$OUT_BIN.ll" ]] && grep -Eq 'call void @__crystal_v2_print_int32_ln\(ptr (null|[-]?[0-9]+|%[^)]*)\)' "$OUT_BIN.ll"; then
   echo "p2_generated_stage2_no_prelude_puts_guard_ok frontier=extern_puts_arg_type_codegen_gap"
   exit 0
 fi

@@ -20695,7 +20695,11 @@ module Crystal::MIR
       }
 
       arg_entries = inst.args.map do |arg_id|
-        arg_type_ref = @value_types[arg_id]? || TypeRef::POINTER
+        arg_type_ref = if @value_types.has_key?(arg_id)
+                         @value_types[arg_id]
+                       else
+                         TypeRef::POINTER
+                       end
         arg_type = @type_mapper.llvm_type(arg_type_ref)
 
         if arg_type == "void"
@@ -21317,8 +21321,11 @@ module Crystal::MIR
       # This catches ExternCall targets that exist in @module.functions (so NOT added
       # to @undefined_externs) but whose bodies were never emitted by RTA.
       extern_arg_types = inst.args.map do |a|
-        at = @value_types[a]?
-        at ? @type_mapper.llvm_type(at) : "ptr"
+        if @value_types.has_key?(a)
+          @type_mapper.llvm_type(@value_types[a])
+        else
+          "ptr"
+        end
       end.reject { |t| t == "void" }
       @called_crystal_functions[mangled_extern_name] = {(return_type == "void" ? "ptr" : return_type), extern_arg_types.size, extern_arg_types}
     end
@@ -24317,7 +24324,8 @@ module Crystal::MIR
 
     private def value_ref(id : ValueId) : String
       # Check if it's a constant (inline the value)
-      if const_val = @constant_values[id]?
+      if @constant_values.has_key?(id)
+        const_val = @constant_values[id]
         # If this constant was made addressable via pointerof() and the alloca has been
         # initialized, the value may have been modified through the pointer (e.g.,
         # copy_from writes into the alloca). Load from the alloca to get current value.
@@ -24353,10 +24361,12 @@ module Crystal::MIR
       # For cross-block values in phi mode, use direct value reference.
       # Phi nodes are specifically designed to handle values from different paths.
       # Only load from slot for non-phi uses (when @in_phi_mode is false).
-      if slot_name = @cross_block_slots[id]?
+      if @cross_block_slots.has_key?(id)
+        slot_name = @cross_block_slots[id]
         if @in_phi_mode
           # In phi mode, use the direct value if it was emitted
-          if name = @value_names[id]?
+          if @value_names.has_key?(id)
+            name = @value_names[id]
             return track_value_ref_dynamic("%#{name}")
           end
           # Value not emitted yet (forward reference from loop back-edge)
@@ -24464,7 +24474,8 @@ module Crystal::MIR
         return track_value_ref_dynamic(temp_name)
       end
         # Otherwise reference by name
-        if name = @value_names[id]?
+        if @value_names.has_key?(id)
+          name = @value_names[id]
           ref_name = "%#{name}"
           # A value name may exist even when the defining instruction wasn't
           # materialized (for example, it was rewritten away during MIR passes).

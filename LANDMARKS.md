@@ -1272,6 +1272,67 @@ not fix the next generated-stage2 semantic codegen bug: `puts 7` currently
 lowers to duplicate `__crystal_v2_print_int32_ln(ptr null)` calls instead of a
 single `i32 7` extern call. {F/G/R: 0.92/0.62/0.91} [verified]
 
+[LM-514|verified]: The generated-stage2 no-prelude `puts 7` extern-call ABI
+frontier was two backend key-presence failures, not a HIR runtime-print fallback
+bug.
+
+Findings:
+
+- Generated HIR for the repro already contained one extern call:
+  `extern_call @__crystal_v2_print_int32_ln(%2)`, with `%2` as `Int32`.
+- Generated MIR lowering first duplicated that one HIR block:
+  `[MIR_LOWER] function=__crystal_main blocks=1`, followed by
+  `ordered blocks count=2` and two emitted extern calls. The source was
+  `order_blocks_for` using `Set(HIR::BlockId)`, which is backed by
+  `Hash(BlockId, Nil)`; generated stage2 mis-deduped the single-entry function.
+- After block ordering was made deterministic with a linear visited list, the
+  backend still emitted `call void @__crystal_v2_print_int32_ln(ptr 7)`.
+  That refuted the earlier "ptr null only" formulation and exposed the second
+  root: extern-call arg typing used `@value_types[arg_id]? || TypeRef::POINTER`
+  even though the Int32 type entry was present.
+- The same generated-stage2 hazard had already appeared in slot lookup: nilable
+  `hash[key]?` in critical codegen maps can conflate missing keys with present
+  values or enter the wrong branch. The backend invariant is key-presence first,
+  then indexing.
+
+Fix:
+
+- `HIRToMIR#order_blocks_for` uses a small linear `Array(HIR::BlockId)` visited
+  list instead of `Set(HIR::BlockId)` for this tiny traversal.
+- `LLVMIRGenerator#emit_extern_call` gates `@value_types` argument lookups and
+  called-function signature tracking with `has_key?` before indexing.
+- `LLVMIRGenerator#value_ref` applies the same key-presence invariant for
+  constants, cross-block slots, and value names.
+- `p2_generated_stage2_no_prelude_puts_guard.sh` now classifies any
+  `__crystal_v2_print_int32_ln(ptr ...)` call as the extern arg type frontier,
+  so `ptr 7` cannot be hidden as a generic full-codegen frontier again.
+
+Evidence:
+
+- `crystal build src/crystal_v2.cr -o /tmp/cv2_extern_arg_type_fix
+  --error-trace` -> exit 0, only the known `Random::DEFAULT` warning.
+- `regression_tests/p2_generated_stage2_no_prelude_puts_guard.sh
+  /tmp/cv2_extern_arg_type_fix` ->
+  `p2_generated_stage2_no_prelude_puts_guard_ok
+  frontier=nocodegen_clean_full_codegen_hang`.
+- Raw kept IR from that guard shows exactly:
+  `call void @__crystal_v2_print_int32_ln(i32 7)`.
+- `regression_tests/p2_bootstrap_semantic_emit_oracle.sh
+  /tmp/cv2_extern_arg_type_fix` -> `p2_bootstrap_semantic_emit_oracle_ok`.
+- `regression_tests/p2_pending_budget_no_prelude.sh
+  /tmp/cv2_extern_arg_type_fix` ->
+  `p2_pending_budget_no_prelude_ok process_delta=3 emit_delta=4
+  lower_missing_delta=44 total=92 max_queue=57`.
+- `bash -n regression_tests/p2_generated_stage2_no_prelude_puts_guard.sh` and
+  `git diff --check` -> exit 0.
+
+Boundary: no-prelude extern-call ABI for this reducer is fixed, but generated
+stage2 still does not produce a runnable binary in the full-codegen path. The
+recorded next frontier remains `nocodegen_clean_full_codegen_hang`: the same
+generated compiler exits cleanly under `--no-codegen`, and the full path emits
+a valid-looking `.ll`/object but leaves no executable. {F/G/R: 0.93/0.65/0.92}
+[verified]
+
 ## Active Strategy
 
 - Main fast loop: `--no-prelude` oracles and focused STOP_AFTER_HIR budget

@@ -1654,18 +1654,21 @@ module Crystal
         by_id = ::Hash(HIR::BlockId, HIR::Block).new(initial_capacity: hir_func.blocks.size)
         hir_func.blocks.each { |block| by_id[block.id] = block }
 
-        visited = ::Set(HIR::BlockId).new(initial_capacity: hir_func.blocks.size)
+        # Keep this as a small linear list instead of Set(BlockId). Set is backed
+        # by Hash(BlockId, Nil); generated stage2 has mis-deduped a single-entry
+        # function here and lowered the entry block twice.
+        visited = [] of HIR::BlockId
         ordered = [] of HIR::Block
         stack = [] of HIR::BlockId
         stack << hir_func.entry_block
 
         while block_id = stack.pop?
           unless block = by_id[block_id]?
-            visited.add(block_id)
+            visited << block_id unless visited.includes?(block_id)
             next
           end
           next if visited.includes?(block_id)
-          visited.add(block_id)
+          visited << block_id
           ordered << block
 
           successors = block_successors(block)

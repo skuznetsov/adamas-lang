@@ -57,6 +57,27 @@ was not the root. Evidence: `crystal build src/crystal_v2.cr -o
 argument typing in generated stage2: the emitted IR calls
 `__crystal_v2_print_int32_ln(ptr null)` instead of `i32 7`.
 
+Extern arg type checkpoint (2026-04-29): generated stage2 now emits a single
+no-prelude `puts 7` extern call with the correct scalar ABI shape:
+`call void @__crystal_v2_print_int32_ln(i32 7)`. The root had two backend
+pieces. MIR block ordering used `Set(HIR::BlockId)`; generated stage2
+mis-deduped a one-block function and lowered the entry block twice, so the
+ordering pass now uses a small linear visited list. LLVM extern-call argument
+typing then read `@value_types[arg_id]?` with a pointer fallback; generated
+stage2 could miss the present Int32 entry and print `ptr 7`, so extern-call
+arg typing and called-function signature tracking now gate by `has_key?` before
+indexing. The same key-presence invariant was applied to `value_ref` lookups
+for constants, cross-block slots, and emitted value names. Evidence:
+`crystal build src/crystal_v2.cr -o /tmp/cv2_extern_arg_type_fix --error-trace`,
+`git diff --check`, `bash -n
+regression_tests/p2_generated_stage2_no_prelude_puts_guard.sh`,
+`p2_generated_stage2_no_prelude_puts_guard.sh /tmp/cv2_extern_arg_type_fix` ->
+`frontier=nocodegen_clean_full_codegen_hang`, raw IR inspection of the kept
+tmp artifact shows `i32 7`, and the fast p2 semantic/pending oracles pass. The
+next root is no longer no-prelude extern-call ABI; it is the full-codegen-only
+frontier where `--no-codegen` exits cleanly but the full path does not produce
+the executable.
+
 Observed but not landed (2026-04-29): `SystemError#included` expands to a
 `BeginNode` containing `extend ::SystemError::ClassMethods`; processing that
 `BeginNode` would expose the right root for `RuntimeError.from_errno` stubs, but
