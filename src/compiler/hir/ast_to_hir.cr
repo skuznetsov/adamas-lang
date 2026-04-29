@@ -36357,6 +36357,10 @@ module Crystal::HIR
 
     # Compute set of function def names and method names reachable from main expressions via BFS
     def compute_ast_reachable_functions(main_exprs : Array(UInt64)) : NamedTuple(defs: Set(String), method_names: Set(String), owner_types: Set(String), method_bases: Set(String))
+      if env_has?("CRYSTAL_V2_AST_FILTER_DEMAND")
+        return compute_ast_demand_reachable_functions(main_exprs)
+      end
+
       _ = main_exprs # conservative mode: keep API stable, skip AST BFS prepass
       t0 = Time.instant
       log_filter = ENV.has_key?("CRYSTAL_V2_AST_FILTER_LOG")
@@ -36415,6 +36419,117 @@ module Crystal::HIR
       end
 
       {defs: reachable, method_names: method_names, owner_types: owner_types, method_bases: method_bases}
+    end
+
+    private def compute_ast_demand_reachable_functions(main_exprs : Array(UInt64)) : NamedTuple(defs: Set(String), method_names: Set(String), owner_types: Set(String), method_bases: Set(String))
+      t0 = Time.instant
+      log_filter = ENV.has_key?("CRYSTAL_V2_AST_FILTER_LOG")
+
+      reachable = Set(String).new(initial_capacity: 4096)
+      method_names = Set(String).new(initial_capacity: 4096)
+      owner_types = Set(String).new(initial_capacity: ALWAYS_REACHABLE_TYPES.size + 4096)
+      method_bases = Set(String).new(initial_capacity: 4096)
+      constructed_types = Set(String).new(initial_capacity: ALWAYS_REACHABLE_TYPES.size + 512)
+
+      ALWAYS_REACHABLE_TYPES.each do |name|
+        owner_types << name
+        constructed_types << name
+      end
+
+      root_info = scan_packed_main_exprs(main_exprs)
+      root_info.method_names.each { |name| method_names << name unless name.empty? }
+      root_info.type_constructors.each do |name|
+        next if name.empty?
+        owner_types << name
+        constructed_types << name
+      end
+
+      method_index = build_method_reverse_index
+      worklist = method_names.to_a
+      seen_methods = Set(String).new(worklist.size)
+
+      while method = worklist.shift?
+        next if method.empty? || seen_methods.includes?(method)
+        seen_methods << method
+        candidates = method_index[method]?
+        next unless candidates
+
+        candidates.each do |full_name|
+          next if reachable.includes?(full_name)
+          owner = has_method_separator?(full_name) ? method_owner_from_name(full_name) : ""
+          owner_base = owner.empty? ? "" : strip_generic_args(owner)
+          next unless owner.empty? || should_include_owner?(owner, owner_base, constructed_types)
+
+          record_ast_reachable_function(full_name, reachable, owner_types, method_bases)
+          if info = scan_def_body(full_name)
+            info.method_names.each do |callee_method|
+              next if callee_method.empty?
+              unless method_names.includes?(callee_method)
+                method_names << callee_method
+                worklist << callee_method
+              end
+            end
+            info.type_constructors.each do |type_name|
+              next if type_name.empty?
+              owner_types << type_name
+              constructed_types << type_name
+            end
+          end
+        end
+      end
+
+      if ENV.has_key?("CRYSTAL_V2_PHASE_STATS") || log_filter
+        elapsed = (Time.instant - t0).total_milliseconds
+        STDERR.puts "[AST_FILTER] demand: #{reachable.size} reachable / #{@function_defs.size} total defs, #{method_names.size} method names in #{elapsed.round(1)}ms"
+      end
+
+      {defs: reachable, method_names: method_names, owner_types: owner_types, method_bases: method_bases}
+    end
+
+    private def scan_packed_main_exprs(main_exprs : Array(UInt64)) : ASTCallInfo
+      info = ASTCallInfo.new
+      ordered_arenas = @main_arenas
+      if ordered_arenas.empty?
+        ordered_arenas = [@arena] of CrystalV2::Compiler::Frontend::ArenaLike
+      end
+
+      main_exprs.each do |packed_expr_ref|
+        arena_index = (packed_expr_ref >> 32).to_i32
+        expr_index = (packed_expr_ref & 0xFFFF_FFFF_u64).to_i32
+        expr_id = CrystalV2::Compiler::Frontend::ExprId.new(expr_index)
+        arena = if arena_index >= 0 && arena_index < ordered_arenas.size
+                  ordered_arenas[arena_index]
+                else
+                  @arena
+                end
+        next if expr_id.invalid? || expr_id.index >= arena.size
+        scan_ast_calls_iterative([expr_id], arena, info)
+      end
+
+      info
+    end
+
+    private def record_ast_reachable_function(full_name : String, reachable : Set(String), owner_types : Set(String), method_bases : Set(String)) : Nil
+      reachable << full_name
+      return unless has_method_separator?(full_name)
+
+      owner = method_owner_from_name(full_name)
+      unless owner.empty?
+        owner_types << owner
+        owner_base = strip_generic_args(owner)
+        owner_types << owner_base unless owner_base.empty?
+      end
+
+      parts = parse_method_name_compact(full_name)
+      method = parts.method
+      sep = parts.separator
+      return unless method && sep
+
+      method_bases << "#{parts.owner}#{sep}#{method}"
+      owner_base = strip_generic_args(parts.owner)
+      if owner_base != parts.owner
+        method_bases << "#{owner_base}#{sep}#{method}"
+      end
     end
 
     # Check if an owner type should be included based on constructed types
@@ -45041,10 +45156,16 @@ module Crystal::HIR
       ast_method_names = @ast_reachable_method_names
       ast_owner_types = @ast_reachable_owner_types
       ast_method_bases = @ast_reachable_method_bases
-      STDERR.puts "[MISSING_LOWER] start" if env_get("DEBUG_MISSING_LOWER")
+      debug_missing = env_get("DEBUG_MISSING_LOWER")
+      debug_missing_summary = env_get("DEBUG_MISSING_SUMMARY")
+      debug_missing_samples = env_get("DEBUG_MISSING_SAMPLES")
+      debug_missing_top = env_get("DEBUG_MISSING_TOP").try(&.to_i?) || 20
+      STDERR.puts "[MISSING_LOWER] start" if debug_missing
 
       while iteration < max_iterations
         missing = [] of String
+        missing_summary = Hash(String, Int32).new(0) if debug_missing_summary
+        missing_samples = Hash(String, Array(String)).new if debug_missing_samples
         @module.functions.each do |func|
           value_types = Hash(ValueId, TypeRef).new
           func.params.each { |param| value_types[param.id] = param.type }
@@ -45123,6 +45244,22 @@ module Crystal::HIR
               end
               next if function_state(name).in_progress?
               missing << name
+              if summary = missing_summary
+                parts3 = parse_method_name_compact(name)
+                owner3 = parts3.owner || "(top-level)"
+                method3 = parts3.method || name
+                owner_base3 = strip_generic_args(owner3)
+                key3 = "#{owner_base3}##{method3}"
+                summary[key3] += 1
+                if samples = missing_samples
+                  bucket = samples[key3]? || begin
+                    new_bucket = [] of String
+                    samples[key3] = new_bucket
+                    new_bucket
+                  end
+                  bucket << "#{name} from #{func.name}" if bucket.size < 3
+                end
+              end
               # Path-4 super tagging (lower_super line ~50752) emits Call("X_super")
               # where the actual function lives at "X" (the parent's method body).
               # Lazy RTA may have deferred "X" because its owner class isn't live
@@ -45148,6 +45285,22 @@ module Crystal::HIR
         end
         missing.uniq!
         break if missing.empty?
+
+        if summary = missing_summary
+          STDERR.puts "[MISSING_SUMMARY] iter=#{iteration} unique=#{missing.size} top=#{debug_missing_top}"
+          summary.to_a
+            .sort_by { |entry| -entry[1] }
+            .first(debug_missing_top)
+            .each do |entry|
+              key, count = entry
+              STDERR.puts "  #{key}: #{count}"
+              if samples = missing_samples
+                if bucket = samples[key]?
+                  bucket.each { |sample| STDERR.puts "    - #{sample}" }
+                end
+              end
+            end
+        end
 
         if budget > 0 && missing.size > budget
           missing = missing.first(budget)

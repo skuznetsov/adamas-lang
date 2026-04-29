@@ -76,6 +76,22 @@ after `[ALLOC_FLUSH] Generated 98 deferred allocators`. Treat the old direct
 success as stale for the canonical bootstrap gate until the IR over-materialized
 helper graph is reduced.
 
+AST demand-filter checkpoint (2026-04-28): the default AST reachability path is
+still conservative/all-defs unless `CRYSTAL_V2_AST_FILTER_DEMAND=1` is set.
+The opt-in demand scanner now walks packed `main_exprs`, builds a method-name
+worklist, gates candidate owners by constructed/always-reachable types, and
+feeds the existing AST filter. It is a diagnostic scaffold, not the default
+bootstrap fix. Evidence on a full `src/crystal_v2.cr` `STOP_AFTER_HIR` run:
+`process_pending` drops from `+14371` to `+4148`, but `lower_missing` grows
+from `+25702` to `+35210`, leaving total HIR functions nearly unchanged
+(`43471` -> `43091`). `DEBUG_MISSING_SUMMARY=1` shows the compensating demand
+comes from concrete calls already emitted into HIR (`IO#<<`,
+`__crystal_v2_string_eq`, `Array#root_buffer`, `Hash` internals,
+`JSON::Builder`, and `Hash::Entry#inspect/to_s`). Next root work is therefore
+to prevent dead/unneeded serialization/formatting/hash bodies from entering HIR
+before `lower_missing`, not to filter concrete missing calls blindly. Guard:
+`regression_tests/p2_ast_filter_demand_no_prelude.sh`.
+
 Fast stage2 HIR emit also passes:
 
 ```bash

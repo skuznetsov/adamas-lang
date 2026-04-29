@@ -214,6 +214,25 @@ out as expected but printed `[PENDING_SOURCES]` snapshots at queue
 target the source of recursive formatting demand, not another isolated
 `Object#inspect` guard. {F/G/R: 0.93/0.55/0.94} [verified]
 
+[LM-508|verified]: The opt-in AST demand reachability filter reduces the early
+all-defs supply phase but does not yet fix the canonical bootstrap graph size.
+Patch state: default `compute_ast_reachable_functions` remains conservative
+unless `CRYSTAL_V2_AST_FILTER_DEMAND=1`; the opt-in path scans packed
+`main_exprs`, walks reachable method names, gates candidate owners by
+constructed/always-reachable types, and feeds the existing AST filter. Evidence:
+`regression_tests/p2_ast_filter_demand_no_prelude.sh /tmp/cv2_ast_demand2`
+prints `p2_ast_filter_demand_no_prelude_ok process_delta=2
+lower_missing_delta=45 total=92`; full `STOP_AFTER_HIR` with
+`CRYSTAL_V2_AST_FILTER=1 CRYSTAL_V2_AST_FILTER_DEMAND=1` exits 0 and shifts
+phase stats from baseline `process_pending +14371, lower_missing +25702,
+43471 total` to `process_pending +4148, lower_missing +35210, 43091 total`.
+`DEBUG_MISSING_SUMMARY=1` identifies the compensating concrete-call demand as
+`IO#<<`, `__crystal_v2_string_eq`, `Array#root_buffer`, Hash internals,
+`JSON::Builder`, and `Hash::Entry#inspect/to_s`. Boundary: do not enable this
+by default or filter `lower_missing` blindly; the next root target is why
+serialization/formatting/hash bodies enter HIR before the concrete missing-call
+sweep. {F/G/R: 0.91/0.58/0.93} [verified]
+
 [LM-473|verified]: Context-enhanced pending-source samples identify the current
 dominant source contexts. With sample context enabled, the 80s run timed out as
 expected but showed `Array#to_s` samples enqueued from `Object#to_s`,
