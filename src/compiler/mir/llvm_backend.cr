@@ -2796,14 +2796,21 @@ module Crystal::MIR
       # Pre-register symbol name strings so they get included in string constants
       @module.symbol_names.each { |name| get_or_create_string_global(name) }
 
+      tail_stats = bootstrap_env_enabled?("CRYSTAL_V2_LLVM_TAIL_STATS")
+
       # Emit string constants at end (LLVM allows globals anywhere)
       STDERR.puts "  [LLVM] emit_string_constants..." if @progress
+      tail_t0 = Time.instant if tail_stats
       emit_string_constants
+      if tail_stats
+        bootstrap_trace_puts "[LLVM_TAIL_GEN] phase=string_constants ms=#{(Time.instant - tail_t0.not_nil!).total_milliseconds.round(1)} out=#{@output.pos} strings=#{@string_constants.size} aliases=#{@string_aliases.size}"
+      end
 
       # Emit duplicate string constants for worker names that collided with existing names.
       # Workers may create @.str.100000 for a string that parent already has as @.str.42.
       # We need to emit the same constant under the worker's name so references resolve.
       unless @string_aliases.empty?
+        tail_t0 = Time.instant if tail_stats
         emit_raw "\n; Duplicate string constants from parallel workers\n"
         # Build reverse lookup: canonical_name -> string_value
         canonical_to_value = {} of String => String
@@ -2813,22 +2820,41 @@ module Crystal::MIR
             emit_crystal_string_constant(worker_name, str_val)
           end
         end
+        if tail_stats
+          bootstrap_trace_puts "[LLVM_TAIL_GEN] phase=string_aliases ms=#{(Time.instant - tail_t0.not_nil!).total_milliseconds.round(1)} out=#{@output.pos} aliases=#{@string_aliases.size}"
+        end
       end
 
       # Emit symbol table for symbol_to_s (after string constants so globals are defined)
+      tail_t0 = Time.instant if tail_stats
       emit_symbol_table
+      if tail_stats
+        bootstrap_trace_puts "[LLVM_TAIL_GEN] phase=symbol_table ms=#{(Time.instant - tail_t0.not_nil!).total_milliseconds.round(1)} out=#{@output.pos} symbols=#{@module.symbol_names.size}"
+      end
 
       # Emit varargs stubs for bare iterator methods not already defined
+      tail_t0 = Time.instant if tail_stats
       emit_bare_iterator_stubs
+      if tail_stats
+        bootstrap_trace_puts "[LLVM_TAIL_GEN] phase=bare_iterator_stubs ms=#{(Time.instant - tail_t0.not_nil!).total_milliseconds.round(1)} out=#{@output.pos}"
+      end
 
       # Emit declarations for undefined extern calls
       STDERR.puts "  [LLVM] emit_undefined_extern_declarations..." if @progress
+      tail_t0 = Time.instant if tail_stats
       emit_undefined_extern_declarations
+      if tail_stats
+        bootstrap_trace_puts "[LLVM_TAIL_GEN] phase=undefined_externs ms=#{(Time.instant - tail_t0.not_nil!).total_milliseconds.round(1)} out=#{@output.pos} undef=#{@undefined_externs.size}"
+      end
 
       # Emit stubs for any Crystal functions called but not defined.
       # This catches functions that exist in MIR but were skipped during emission
       # (e.g., due to unresolved type patterns or transitive skip propagation).
+      tail_t0 = Time.instant if tail_stats
       emit_missing_crystal_function_stubs
+      if tail_stats
+        bootstrap_trace_puts "[LLVM_TAIL_GEN] phase=missing_crystal_stubs ms=#{(Time.instant - tail_t0.not_nil!).total_milliseconds.round(1)} out=#{@output.pos} called=#{@called_crystal_functions.size} emitted=#{@emitted_functions.size}"
+      end
 
       if @emit_type_metadata
         # Metadata is debug DX only. For large stage2 builds IR can approach the
@@ -2889,12 +2915,21 @@ module Crystal::MIR
 
       # Always emit type name table (needed for self.class at runtime)
       STDERR.puts "  [LLVM] emit_type_name_table..." if @progress
+      tail_t0 = Time.instant if tail_stats
       emit_type_name_table
+      if tail_stats
+        bootstrap_trace_puts "[LLVM_TAIL_GEN] phase=type_name_table ms=#{(Time.instant - tail_t0.not_nil!).total_milliseconds.round(1)} out=#{@output.pos} types=#{@type_info_entries.size}"
+      end
 
       # DWARF: emit debug metadata at end of module
+      tail_t0 = Time.instant if tail_stats
       emit_dwarf_metadata
+      if tail_stats
+        bootstrap_trace_puts "[LLVM_TAIL_GEN] phase=dwarf_metadata ms=#{(Time.instant - tail_t0.not_nil!).total_milliseconds.round(1)} out=#{@output.pos}"
+      end
 
       STDERR.puts "  [LLVM] finalizing output..." if @progress
+      bootstrap_trace_puts "[LLVM_TAIL_GEN] phase=finalize_enter out=#{@output.pos}" if tail_stats
       if generated_in_memory
         @output.as(IO::Memory).to_s
       else

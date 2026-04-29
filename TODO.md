@@ -445,6 +445,7 @@ regression_tests/p2_pending_budget_no_prelude.sh bin/crystal_v2
 regression_tests/p2_root_self_replay_no_prelude.sh bin/crystal_v2
 regression_tests/p2_universal_helper_fanout_no_prelude.sh bin/crystal_v2
 regression_tests/p2_selfhost_stage2_shape_guard.sh bin/crystal_v2
+regression_tests/p2_llvm_tail_stats_no_prelude.sh bin/crystal_v2
 ```
 
 Expected current signals:
@@ -455,11 +456,21 @@ Expected current signals:
 - `p2_root_self_replay_no_prelude_ok process_delta=20 total=47 ...`
 - `p2_universal_helper_fanout_no_prelude_ok deep_helpers=0`
 - `p2_selfhost_stage2_shape_guard_ok`
+- `p2_llvm_tail_stats_no_prelude_ok phase=type_name_table ...`
 - `p2_generated_stage2_no_prelude_interp_ok`
 
 Latest generated-stage2 frontier:
 
 - `s1 -> s2b` builds with `/tmp/cv2_puts` in about `241s`.
+- Opt-in LLVM tail diagnostics (`CRYSTAL_V2_TRACE_STDERR=1
+  CRYSTAL_V2_LLVM_REACHABILITY=1 CRYSTAL_V2_LLVM_TAIL_STATS=1`) show that
+  the backend tail helpers are not the current timeout root: on the full
+  compiler build, `generate(io)` reaches `finalize_enter` after emitting about
+  `180.6MB` of LLVM IR. `emit_type_name_table` is the largest tail-size jump
+  (`~27.8MB`, `21694` types) but only costs about `166ms`; the 300s timeout
+  happens after IR generation has completed and before the produced stage2
+  binary can be linked. Treat the active frontier as total generated-IR volume
+  and pre-llc budget, not a single slow tail helper.
 - Generated `s2b` no-prelude no-codegen smoke moved past
   `Class$Dcrystal_type_id`, `Char$Hascii_control$Q`,
   `Printer$Dshortest$$Float32_IO`, and the top-level no-prelude `puts`

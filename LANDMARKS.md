@@ -1027,6 +1027,36 @@ after emitting `/tmp/cv2_bs_current_s2/cv2_s2.ll` (189MB, 3,930,328 lines,
 over-materialized helper graph / large-IR corridor, not to the wrapper.
 {F/G/R: 0.96/0.8/0.95} [verified]
 
+[LM-508|verified]: The late LLVM backend timeout hypothesis was narrowed by
+opt-in tail-generation timing. `CRYSTAL_V2_LLVM_TAIL_STATS=1` is intentionally
+paired with `CRYSTAL_V2_TRACE_STDERR=1` because the probes use
+`bootstrap_trace_puts`; without the trace env the diagnostic remains silent.
+On the full compiler stage2 attempt with LLVM reachability enabled, backend
+generation reported `RTA kept: 27806 (pruned 9921)` from `37727` MIR functions,
+then completed `generate(io)` and reached `[LLVM_TAIL_GEN] phase=finalize_enter
+out=180584919` before `run_safe` killed the overall compile at 300s. The
+tail helpers themselves were fast: string constants about `50ms`, undefined
+extern declarations about `98ms`, missing Crystal stubs about `21ms`, and
+`emit_type_name_table` about `166ms` while adding the largest tail payload
+(`~27.8MB` for `21694` type names).
+
+Evidence:
+
+- `crystal build src/crystal_v2.cr -o /tmp/cv2_tail_stats --error-trace`
+  -> exit 0.
+- `regression_tests/p2_llvm_tail_stats_no_prelude.sh /tmp/cv2_tail_stats`
+  -> `p2_llvm_tail_stats_no_prelude_ok phase=type_name_table ...`.
+- `CRYSTAL_V2_TRACE_STDERR=1 CRYSTAL_V2_LLVM_REACHABILITY=1
+  CRYSTAL_V2_LLVM_TAIL_STATS=1 scripts/run_safe.sh /tmp/cv2_tail_stats 300
+  4096 src/crystal_v2.cr -o /tmp/cv2_tail_stats_trace_s2` -> expected
+  timeout, but the log contains `[STAGE2_TRACE] step5: generate done` before
+  `[KILL] Timeout`.
+
+Boundary: this is diagnostic only. It refutes "one slow backend tail helper" as
+the current root and moves the frontier to total generated-IR volume / pre-llc
+budget. It does not make `s1 -> s2b` green and does not justify increasing
+timeouts. {F/G/R: 0.9/0.65/0.9} [verified]
+
 ## Active Strategy
 
 - Main fast loop: `--no-prelude` oracles and focused STOP_AFTER_HIR budget
