@@ -40,9 +40,19 @@ for the currently modeled constants. Evidence:
 guard remains at `frontier=nocodegen_clean_full_codegen_hang`. The new guard extracts
 `Kqueue#after_fork` HIR and requires `LibC.@@EVFILT_USER` while rejecting
 `Crystal::System::FileDescriptor.system_pipe` / `LibC.@@EVFILT_READ` inside
-that function. Boundary: `p2_selfhost_stage2_shape_guard.sh` currently fails
-an older `Array(String)#each` callback-shape sentinel on this checkout, so it
-was not used as evidence for this macro-control fix.
+that function.
+
+Shape-oracle maintenance checkpoint (2026-04-29):
+`p2_selfhost_stage2_shape_guard.sh` is green again after making two historical
+callback-shape sentinels demand-aware. `Array(String)#each_index` and
+`Dir.glob(..._block_splat)` are still checked when their nested proc wrappers
+are materialized, but their absence is no longer a failure because recent
+demand/RTA and macro-control fixes removed the old incidental materialization
+paths. The `each_index` root invariant now has a direct fast no-prelude guard:
+`p2_each_index_block_param_no_prelude.sh` forces `["x"].each_index { |i| i }`
+and requires an Int32-shaped block proc in HIR. Evidence:
+`p2_each_index_block_param_no_prelude.sh /tmp/cv2_shape_guard_check` and
+`p2_selfhost_stage2_shape_guard.sh /tmp/cv2_shape_guard_check` passed.
 
 Getter/proc-shape checkpoint (2026-04-29): `of -> Nil` type annotations now
 stringify as `Proc(Void)` so registration-time inference for

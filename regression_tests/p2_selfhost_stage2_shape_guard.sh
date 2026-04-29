@@ -89,30 +89,48 @@ require_in_function() {
 }
 
 require_array_string_each_index_callback_shape() {
+  # The old Array(String)#each_index regression only exists when Array#each is
+  # materialized via a nested each_index callback. Some frontiers no longer
+  # demand that wrapper, so absence of the nested proc is not a shape failure.
   awk '
-    $0 ~ /^func @Array\(String\)#each\$block/ {
+    FNR == NR && $0 ~ /^func @Array\(String\)#each\$block/ {
       in_array_each = 1
       next
     }
-    $0 ~ /^func @/ && in_array_each {
+    FNR == NR && $0 ~ /^func @/ && in_array_each {
       in_array_each = 0
     }
-    in_array_each && $0 ~ /func_pointer @__crystal_block_proc_[0-9]+/ {
+    FNR == NR && in_array_each && $0 ~ /func_pointer @__crystal_block_proc_[0-9]+/ {
       proc = $0
       sub(/^.*func_pointer @/, "", proc)
       sub(/ .*/, "", proc)
+      procs[proc] = 1
+      next
     }
-    proc != "" && $0 ~ ("^func @" proc "\\(") {
-      found = 1
-      if ($0 !~ /: Int32\)/) {
-        print "p2_selfhost_stage2_shape_guard_failed: Array(String)#each_index callback is not Int32-shaped: " $0 > "/dev/stderr"
-        exit 42
+    FNR == NR { next }
+    $0 ~ /^func @__crystal_block_proc_[0-9]+\(/ {
+      name = $0
+      sub(/^func @/, "", name)
+      sub(/\(.*/, "", name)
+      if (name in procs) {
+        found[name] = 1
+        if ($0 !~ /\(%[0-9]+: Int32\)/) {
+          print "p2_selfhost_stage2_shape_guard_failed: Array(String)#each_index callback is not Int32-shaped: " $0 > "/dev/stderr"
+          exit 42
+        }
       }
     }
     END {
-      if (proc == "" || !found) exit 43
+      for (proc in procs) {
+        if (!(proc in found)) {
+          missing = 1
+        }
+      }
+      if (missing) {
+        exit 43
+      }
     }
-  ' "$MIR" || {
+  ' "$MIR" "$MIR" || {
     status=$?
     if [[ "$status" == "42" || "$status" == "43" ]]; then
       echo "p2_selfhost_stage2_shape_guard_failed: missing Int32-shaped Array(String)#each_index callback" >&2
@@ -123,31 +141,48 @@ require_array_string_each_index_callback_shape() {
 }
 
 require_dir_glob_splat_wrapper_shape() {
+  # The Dir.glob splat wrapper is also demand-sensitive: later root fixes may
+  # avoid materializing it in this self-host MIR. If it is present, keep the old
+  # invariant that its forwarding callback is String-shaped.
   awk '
-    $0 ~ /^func @Dir\.glob\$Path \| String_File::MatchOptions_Bool_block_splat/ {
+    FNR == NR && $0 ~ /^func @Dir\.glob\$Path \| String_File::MatchOptions_Bool_block_splat/ {
       in_glob = 1
-      proc = ""
       next
     }
-    $0 ~ /^func @/ && in_glob {
+    FNR == NR && $0 ~ /^func @/ && in_glob {
       in_glob = 0
     }
-    in_glob && $0 ~ /func_pointer @__crystal_block_proc_[0-9]+/ {
+    FNR == NR && in_glob && $0 ~ /func_pointer @__crystal_block_proc_[0-9]+/ {
       proc = $0
       sub(/^.*func_pointer @/, "", proc)
       sub(/ .*/, "", proc)
+      procs[proc] = 1
+      next
     }
-    proc != "" && $0 ~ ("^func @" proc "\\(") {
-      found = 1
-      if ($0 !~ /: String\)/) {
-        print "p2_selfhost_stage2_shape_guard_failed: Dir.glob block_splat forwarding callback is not String-shaped: " $0 > "/dev/stderr"
-        exit 42
+    FNR == NR { next }
+    $0 ~ /^func @__crystal_block_proc_[0-9]+\(/ {
+      name = $0
+      sub(/^func @/, "", name)
+      sub(/\(.*/, "", name)
+      if (name in procs) {
+        found[name] = 1
+        if ($0 !~ /\(%[0-9]+: String\)/) {
+          print "p2_selfhost_stage2_shape_guard_failed: Dir.glob block_splat forwarding callback is not String-shaped: " $0 > "/dev/stderr"
+          exit 42
+        }
       }
     }
     END {
-      if (proc == "" || !found) exit 43
+      for (proc in procs) {
+        if (!(proc in found)) {
+          missing = 1
+        }
+      }
+      if (missing) {
+        exit 43
+      }
     }
-  ' "$MIR" || {
+  ' "$MIR" "$MIR" || {
     status=$?
     if [[ "$status" == "42" || "$status" == "43" ]]; then
       echo "p2_selfhost_stage2_shape_guard_failed: missing String-shaped Dir.glob block_splat forwarding callback" >&2
@@ -157,10 +192,15 @@ require_dir_glob_splat_wrapper_shape() {
   }
 }
 
+require_legacy_shape_targets_absent_or_well_typed() {
+  require_array_string_each_index_callback_shape
+  require_dir_glob_splat_wrapper_shape
+}
+
 require_pattern 'global_load @CrystalV2::Compiler__classvar__CRYSTAL_SRC_PATH : String' \
   'typed CRYSTAL_SRC_PATH global load'
 
-require_array_string_each_index_callback_shape
+require_legacy_shape_targets_absent_or_well_typed
 
 require_in_function 'func @CrystalV2::Compiler::Frontend::Parser#is_constant_name\?\$Slice\(UInt8\)' \
   'zext %[0-9]+ : Char' \
@@ -173,7 +213,6 @@ reject_in_function 'func @String#byte_index\$Int32_Int32' \
   '^  ret$' \
   'bare return in nilable String#byte_index'
 
-require_dir_glob_splat_wrapper_shape
 reject_in_function 'func @Dir\.glob\$Path \| String_File::MatchOptions_Bool_block_splat' \
   'call .*_block_splat' \
   'self-recursive Dir.glob block_splat call after tuple rewrap'

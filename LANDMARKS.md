@@ -1387,10 +1387,59 @@ Evidence:
   `git diff --check` -> exit 0.
 
 Boundary: this proves the Kqueue `after_fork` branch leak is removed on the
-local Darwin target. It does not prove cross-target macro semantics, and
-`p2_selfhost_stage2_shape_guard.sh` currently fails an older
-`Array(String)#each` callback-shape sentinel on this checkout, so that guard is
-not evidence for this checkpoint. {F/G/R: 0.91/0.58/0.90} [verified]
+local Darwin target. It does not prove cross-target macro semantics. A later
+test-oracle maintenance pass restored `p2_selfhost_stage2_shape_guard.sh` by
+making stale demand-tied callback sentinels demand-aware; see LM-516.
+{F/G/R: 0.91/0.58/0.90} [verified]
+
+[LM-516|verified]: `p2_selfhost_stage2_shape_guard.sh` needed demand-aware
+callback sentinels after recent demand/RTA and macro-control fixes removed two
+incidental old materialization paths.
+
+Findings:
+
+- The LM-471 `Array(String)#each_index` bug was real, but the self-host MIR
+  gate was requiring a historical side effect: `Array(String)#each$block`
+  happened to contain a nested `each_index` callback under an older generated
+  stage2 frontier. Current self-host MIR may not materialize that wrapper at
+  all, so absence of the nested proc is not a shape regression.
+- The `Dir.glob(..._block_splat)` callback-shape check had the same issue:
+  earlier fixes deliberately moved or removed the old wrapper demand while
+  preserving the invariant that, if the forwarding proc is emitted, it must be
+  `String`-shaped and must not self-recurse.
+- A one-pass AWK check was order-fragile because MIR function definitions can
+  be printed before the function that references their `func_pointer`. The
+  guard now scans the MIR twice: first to collect nested callback proc names
+  from the wrapper body, then to validate the referenced proc definitions.
+
+Fix:
+
+- Make the `Array(String)#each_index` and `Dir.glob(..._block_splat)` shape
+  sentinels demand-aware: if the nested proc is present, its signature is
+  enforced; if the wrapper/proc is absent, the self-host MIR gate does not fail.
+- Add `regression_tests/p2_each_index_block_param_no_prelude.sh`, a direct fast
+  no-prelude HIR oracle for the actual LM-471 invariant. It compiles
+  `["x"].each_index { |i| i }`, requires the `Array(String)#each_index$block`
+  call, and rejects a `String`-shaped block proc.
+
+Evidence:
+
+- `crystal build src/crystal_v2.cr -o /tmp/cv2_shape_guard_check
+  --error-trace` -> exit 0, only the known `Random::DEFAULT` warning.
+- `regression_tests/p2_each_index_block_param_no_prelude.sh
+  /tmp/cv2_shape_guard_check` -> `p2_each_index_block_param_no_prelude_ok`.
+- `regression_tests/p2_selfhost_stage2_shape_guard.sh
+  /tmp/cv2_shape_guard_check` -> `p2_selfhost_stage2_shape_guard_ok`.
+- `bash -n regression_tests/p2_each_index_block_param_no_prelude.sh
+  regression_tests/p2_selfhost_stage2_shape_guard.sh` and `git diff --check`
+  -> exit 0.
+
+Boundary: this is test-oracle maintenance, not a compiler behavior change. It
+keeps the old shape checks active when the old wrappers are emitted and moves
+the `each_index` root invariant to a direct no-prelude guard. It does not add a
+direct `Dir.glob` focused oracle; that remains covered indirectly by the
+existing self-host gate when the wrapper is materialized. {F/G/R:
+0.93/0.62/0.92} [verified]
 
 ## Active Strategy
 

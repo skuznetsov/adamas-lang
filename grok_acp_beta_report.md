@@ -93,3 +93,14 @@
 **Adversary check:** список divergence проверен локально через `rg`/file reads; после ответа синхронизированы HIR `evaluate_has_constant` и semantic `platform_lib_constant?` для `NOTE_NSECONDS`, `SIGRTMIN`, `SOCK_CLOEXEC`, `IOURING_SETUP_SQPOLL`, `IORING_ENTER_GETEVENTS`.
 **Verdict:** годится как быстрый hostile reviewer для bounded diff. Нужна локальная проверка каждого вывода, но cost/benefit положительный.
 **Cost saved:** ~3-5k Codex-токенов на повторный source-audit platform constants / guard risks.
+
+### Session 3 — 2026-04-29 — shape-guard stale oracle review
+**Задача:** read-only hostile review правки `p2_selfhost_stage2_shape_guard.sh`: сделать `Array(String)#each_index` callback sentinel demand-aware после macro-control/demand fixes.
+**Brief size:** 21 строка, ~1.6 KB, файл `/tmp/grok_task_shape_guard_review.md`.
+**Latency:** ~60с, exit 0.
+**Output quality:** ✓ useful. Grok подтвердил, что это stale-oracle adjustment, но нашёл слабость первоначальной AWK-версии: однопроходная проверка зависела от порядка MIR dump и могла не увидеть callback def, если он напечатан раньше referencing wrapper.
+**Что было хорошо:** быстро отделил compiler regression от oracle drift, дал точные anchors на `fallback_block_param_types`, old LM-471, and puts guard.
+**Что было плохо:** финальная рекомендация “puts guard недостаточно, нужен focused oracle” была правильной, но её пришлось реализовывать локально; Grok не предложил готовую минимальную no-prelude форму.
+**Adversary check:** после Grok review guard переписан на двухпроходный AWK для order-independent проверки, добавлен focused no-prelude oracle `p2_each_index_block_param_no_prelude.sh`, затем локально прогнаны `p2_each_index_block_param_no_prelude_ok` and `p2_selfhost_stage2_shape_guard_ok`.
+**Verdict:** годится как быстрый reviewer для shell-oracle fragility. Особенно полезен на adversarial check stage.
+**Cost saved:** ~2-4k Codex-токенов на поиск order-dependence в awk/MIR dump.
