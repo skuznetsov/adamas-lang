@@ -60126,6 +60126,15 @@ module Crystal::HIR
             end
           end
           exact_arg_types = lookup_arg_types || [] of TypeRef
+          # A concrete getter/property accessor is registered in @function_types
+          # but has no DefNode. If we run inherited lookup first, a concrete
+          # request such as `LiteralNode#span` can resolve to the abstract
+          # parent `Node#span`, leaving the generated accessor unmaterialized.
+          if registered_generated_accessor_request?(name, base_name) &&
+             maybe_generate_accessor_for_name(name)
+            debug_hook("function.lookup.generated", "name=#{name} kind=ivar_accessor_pre_lookup")
+            return
+          end
           if entry = lookup_function_def_for_call(
                base_name,
                lookup_expected_param_count,
@@ -62229,6 +62238,13 @@ module Crystal::HIR
       end
 
       false
+    end
+
+    private def registered_generated_accessor_request?(name : String, base_name : String) : Bool
+      return false unless has_method_separator?(base_name)
+      return false if @function_defs.has_key?(name) || @function_defs.has_key?(base_name)
+
+      @function_types.has_key?(name) || @function_types.has_key?(base_name)
     end
 
     private def register_class_accessor_entry(

@@ -12,6 +12,28 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-521|verified]: Generated concrete accessors must materialize before
+inherited abstract lookup for virtual dispatch targets. A concrete getter such
+as `Frontend::LiteralNode#span` is registered in `@function_types` but has no
+`DefNode`; `lower_function_if_needed_impl` previously ran
+`lookup_function_def_for_call` first, so a concrete `LiteralNode#span` request
+could resolve to inherited abstract `Node#span`, leaving the generated
+accessor unmaterialized and linking generated stage2 smoke paths to a backend
+stub. The fix preempts inherited lookup only for registered generated-accessor
+requests with no `DefNode`, then lets `maybe_generate_accessor_for_name` emit
+the concrete body. Evidence: `p2_abstract_getter_vdispatch_no_prelude.sh`
+rejects `Node#span` stubs and requires both `LiteralNode#span` and
+`__vdispatch__Node#span`; a full-prelude optional-getter reducer prints `7`
+through `scripts/run_safe.sh`; `abstract_class_method_dispatch_synth.sh`,
+`test_vdispatch_struct_return`, `p2_bootstrap_semantic_emit_oracle.sh`,
+`p2_pending_budget_no_prelude.sh`, and
+`p2_universal_helper_fanout_no_prelude.sh` pass; canonical `s1 -> s2` now
+builds `cv2_s2` and moves past the previous `Frontend::Node#span` smoke abort.
+New frontier: generated `cv2_s2` no-prelude smoke aborts later at
+`Hash(String, Array(Tuple(String, Crystal::MIR::Function)))#read(Slice(UInt8))`
+from `CrystalV2::Compiler::CLI#file_sha256`. {F/G/R: 0.94/0.64/0.94}
+[verified]
+
 [LM-520|verified]: Return-type force-lowering must be demand-gated by whether
 the call's current return type still needs exact resolution. The old
 `lower_call` / `lower_member_access` path called

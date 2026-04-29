@@ -30,6 +30,29 @@ Working policy:
 
 ## Current Checkpoint
 
+Abstract generated-getter vdispatch checkpoint (2026-04-29): generated stage2
+still builds successfully, and the previous smoke abort at
+`STUB CALLED: CrystalV2$CCCompiler$CCFrontend$CCNode$Hspan` is resolved. The
+root was not `Node#span` itself: concrete getter/property accessors such as
+`LiteralNode#span` are registered in `@function_types` but have no `DefNode`
+until generated on demand. `lower_function_if_needed_impl` previously ran
+inherited lookup first, so an exact concrete request could resolve back to the
+abstract parent `Node#span`, leaving `maybe_generate_accessor_for_name` no
+chance to materialize the concrete accessor. The fix preempts inherited lookup
+only for registered generated-accessor requests with no `DefNode`, then emits
+the real concrete getter body. Evidence: `crystal build src/crystal_v2.cr -o
+/tmp/cv2_abstract_getter_fix --error-trace`,
+`regression_tests/p2_abstract_getter_vdispatch_no_prelude.sh
+/tmp/cv2_abstract_getter_fix`,
+`regression_tests/abstract_class_method_dispatch_synth.sh
+/tmp/cv2_abstract_getter_fix`, `regression_tests/complex/test_vdispatch_struct_return.cr`
+compiled and run through `scripts/run_safe.sh`, the fast p2 bootstrap semantic
+oracles, and canonical `s1 -> s2` building `cv2_s2` under the 300s/4GB gate.
+New frontier: generated `cv2_s2` smoke no-prelude now reaches LLVM emission
+and aborts later at
+`STUB CALLED: Hash$LString$C$_Array$LTuple$LString$C$_Crystal$CCMIR$CCFunction$R$R$R$Hread$$Slice$LUInt8$R`
+from `CrystalV2::Compiler::CLI#file_sha256 -> compile_llvm_ir`.
+
 Call-argument known-emitted-type checkpoint (2026-04-29): generated stage2
 now builds successfully. The immediate `llc` frontier after the return-type
 force-lower fix was an invalid call-argument adaptation:
@@ -43,8 +66,10 @@ the only available evidence. Evidence: `crystal build src/crystal_v2.cr -o
 /tmp/cv2_arg_fp_known_type --error-trace`, fast p1/p2 guards, and canonical
 `BOOTSTRAP_CHAIN_STAGES=2 ... scripts/build_bootstrap_stages.sh --stages 2`
 all passed through the previous LLVM verifier/llc error. The new current
-frontier is generated `s2` smoke aborting immediately in parser setup with
-`STUB CALLED: CrystalV2$CCCompiler$CCFrontend$CCNode$Hspan`.
+frontier after this checkpoint was generated `s2` smoke aborting immediately
+in parser setup with `STUB CALLED: CrystalV2$CCCompiler$CCFrontend$CCNode$Hspan`;
+that follow-up is resolved by the abstract generated-getter vdispatch
+checkpoint above.
 
 Return-type force-lower checkpoint (2026-04-29): call lowering now force-lowers
 pending call targets only when the current return type is still `VOID`, a
