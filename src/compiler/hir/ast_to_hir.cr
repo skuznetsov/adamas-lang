@@ -9542,9 +9542,18 @@ module Crystal::HIR
         end
         nil
       when CrystalV2::Compiler::Frontend::UnaryNode
+        op = unary_operator_text(node)
+        if op == "->"
+          ret = stringify_type_expr(node.operand) || "Void"
+          ret = normalize_declared_type_name(ret)
+          # HIR represents nilary callback bodies that don't produce a consumed
+          # value as Void. Keep `of -> Nil` aligned with emitted MakeProc types
+          # so registration-time return inference doesn't seed Array(String).
+          ret = "Void" if ret == "Nil"
+          return "Proc(#{ret})"
+        end
         base = stringify_type_expr(node.operand)
         return nil unless base
-        op = unary_operator_text(node)
         case op
         when "?"
           "#{base}?"
@@ -10306,8 +10315,25 @@ module Crystal::HIR
       array_id : ValueId,
       default_type : TypeRef,
     ) : TypeRef
-      element_type = ctx.type_of(array_id)
-      if type_desc = @module.get_type_descriptor(element_type)
+      registered_type = ctx.type_of(array_id)
+      candidate_types = [] of TypeRef
+      if value = ctx.value_for(array_id)
+        value_type = value.type
+        if value_type != TypeRef::VOID
+          if value_desc = @module.get_type_descriptor(value_type)
+            # Prefer the instruction's own container descriptor when the
+            # lowering context type map drifted. This keeps Array(Proc(...))
+            # element access callable instead of falling back to a stale type.
+            candidate_types << value_type if value_desc.kind == TypeKind::Array
+          end
+        end
+      end
+      candidate_types << registered_type unless candidate_types.includes?(registered_type)
+
+      candidate_types.each do |element_type|
+        next if element_type == TypeRef::VOID
+        type_desc = @module.get_type_descriptor(element_type)
+        next unless type_desc
         # Prefer type_params: the descriptor for Array(T) stores T's TypeRef directly.
         # This avoids name-based lookup which fails when names have full namespaces.
         if type_desc.kind == TypeKind::Array && !type_desc.type_params.empty?
@@ -10328,8 +10354,8 @@ module Crystal::HIR
           end
         end
       end
-      return default_type if element_type == TypeRef::VOID
-      element_type
+      return default_type if registered_type == TypeRef::VOID
+      registered_type
     end
 
     private def apply_index_to_type_name(type_name : String, index : Int32?) : String
@@ -34159,6 +34185,7 @@ module Crystal::HIR
       # Resolve the correct arena for this DefNode (may differ from @arena
       # when called via lower_super with a parent class's DefNode)
       def_arena = resolve_arena_for_def(node, @arena)
+      return nil if first_expr.index < 0 || first_expr.index >= def_arena.size
 
       # Single expression in body - check if it's an ivar access
       body_node = def_arena[first_expr]
@@ -34170,6 +34197,21 @@ module Crystal::HIR
         return ivar_info.type if ivar_info && ivar_info.type != TypeRef::VOID
       end
       nil
+    end
+
+    private def inlineable_getter_field?(
+      owner_name : String,
+      member_name : String,
+      ivar_info : IVarInfo,
+      ivars : Array(IVarInfo),
+    ) : Bool
+      method_base = "#{owner_name}##{member_name}"
+      if def_node = @function_defs[method_base]?
+        inferred = infer_getter_return_type(def_node, ivars)
+        return inferred == ivar_info.type
+      end
+
+      @function_types.has_key?(method_base) || has_function_base?(method_base)
     end
 
     @[AlwaysInline]
@@ -79572,8 +79614,11 @@ module Crystal::HIR
         end
       end
 
-      # Struct getter field access - getters like `entry.hash` should inline as FieldGet
-      # when the struct has an @ivar matching the getter name
+      # Getter field access - inline only when the target method body is proven
+      # to be the trivial `@ivar` getter. A zero-arg method can share an ivar
+      # name while still having side effects (for example HIR Function#next_value_id
+      # increments @next_value_id); inlining such methods as FieldGet corrupts
+      # self-hosted lowering state.
       recv_type_name = get_type_name_from_ref(receiver_type)
       if env_get("DEBUG_STRUCT_GETTER") && member_name == "hash"
         STDERR.puts "[STRUCT_GETTER_LOWERING] recv=#{recv_type_name} method=#{@current_method || "nil"} class=#{@current_class || "nil"}"
@@ -79582,9 +79627,7 @@ module Crystal::HIR
         if info.is_struct || info.name.starts_with?("Crystal::HIR::")
           # Check for @member_name ivar
           if ivar_info = info.ivars.find { |iv| iv.name == "@#{member_name}" }
-            # Verify this is actually a getter (the struct has a method with this name)
-            method_base = "#{info.name}##{member_name}"
-            if @function_types.has_key?(method_base) || has_function_base?(method_base)
+            if inlineable_getter_field?(info.name, member_name, ivar_info, info.ivars)
               if env_get("DEBUG_STRUCT_GETTER")
                 STDERR.puts "[STRUCT_GETTER] Inlining #{info.name}##{member_name} as FieldGet type=#{get_type_name_from_ref(ivar_info.type)}"
               end
@@ -84122,7 +84165,7 @@ module Crystal::HIR
         return cached
       end
 
-      element_type_name = get_type_name_from_ref(element_type)
+      element_type_name = generic_param_type_name_from_ref(element_type)
       if element_type_name == "Unknown" || element_type_name == "Void"
         @array_type_for_element_nil_cache.add(element_type)
         return nil
@@ -84235,8 +84278,8 @@ module Crystal::HIR
         return cached
       end
 
-      key_name = get_type_name_from_ref(key_type)
-      value_name = get_type_name_from_ref(value_type)
+      key_name = generic_param_type_name_from_ref(key_type)
+      value_name = generic_param_type_name_from_ref(value_type)
       hash_type_name = "Hash(#{key_name}, #{value_name})"
       hash_type = type_ref_for_name(hash_type_name)
       info = HashTypeInfo.new(type: hash_type, name: hash_type_name)
@@ -86813,11 +86856,11 @@ module Crystal::HIR
         end
         canonical_generic_name = if named_tuple_entries
                                    entry_names = named_tuple_entries.not_nil!.each_with_index.map do |entry, idx|
-                                     "#{entry[0]}: #{get_type_name_from_ref(type_params[idx.not_nil!])}"
+                                     "#{entry[0]}: #{generic_param_type_name_from_ref(type_params[idx.not_nil!])}"
                                    end
                                    "#{base_name}(#{entry_names.join(", ")})"
                                  elsif BUILTIN_GENERIC_BASES.includes?(base_name)
-                                   param_names = type_params.map { |tp| get_type_name_from_ref(tp) }
+                                   param_names = type_params.map { |tp| generic_param_type_name_from_ref(tp) }
                                    "#{base_name}(#{param_names.join(", ")})"
                                  else
                                    substituted_name
@@ -87243,6 +87286,20 @@ module Crystal::HIR
       desc = @module.get_type_descriptor(type_ref)
       return false unless desc
       desc.kind == TypeKind::Tuple
+    end
+
+    # Generic containers need the full callable shape for Proc parameters.
+    # `get_type_name_from_ref` intentionally returns the descriptor name ("Proc")
+    # for display and owner lookup, but `Array(Proc)` loses the Proc signature
+    # needed by element access and later `.call` lowering.
+    private def generic_param_type_name_from_ref(type_ref : TypeRef) : String
+      if desc = @module.get_type_descriptor(type_ref)
+        if desc.kind == TypeKind::Proc && !desc.type_params.empty?
+          param_names = desc.type_params.map { |param| generic_param_type_name_from_ref(param) }
+          return "Proc(#{param_names.join(", ")})"
+        end
+      end
+      get_type_name_from_ref(type_ref)
     end
 
     # Get the type name from a TypeRef

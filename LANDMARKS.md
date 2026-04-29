@@ -1164,6 +1164,63 @@ fallback and does not implement unresolved block/tuple lowering families.
 Current generated-stage2 guard frontier is the full-codegen-only
 `nocodegen_clean_full_codegen_hang` state. {F/G/R: 0.92/0.68/0.92} [verified]
 
+[LM-512|verified]: The generated-stage2 `String#call` / duplicate-HIR-id
+frontier was two independent HIR registration/lowering bugs, not a Nil
+call-argument ABI bug.
+
+Findings:
+
+- `of -> Nil` was stringified without preserving the nilary proc shape, so
+  registration-time inference for `Process.after_fork_child_callbacks` seeded
+  `Array(String)`. That later lowered callback elements as `String#call`.
+- Generic container names that used `get_type_name_from_ref` collapsed
+  `Proc(...)` to the display name `Proc`, losing callable type parameters for
+  Array/Hash/NamedTuple specialization and element access.
+- Struct/HIR getter inlining treated any zero-arg method sharing an ivar name as
+  a field getter. In generated stage2 this inlined
+  `HIR::Function#next_value_id` as a raw `@next_value_id` field load, skipping
+  the increment and causing duplicate HIR ids such as repeated `%2`.
+- A failed alternate branch showed `SystemError#included` expands to a
+  `BeginNode` containing `extend ::SystemError::ClassMethods`, but naive
+  recursive processing currently reintroduces a stage2 `lower_main` timeout.
+  Keep that as a separate CAUTION root task; it is not part of this verified
+  slice.
+
+Fix:
+
+- `stringify_type_expr` handles unary `->` as `Proc(Return)`, mapping
+  nilary `-> Nil` to `Proc(Void)` to match emitted callback bodies.
+- Generic container canonicalization now preserves full Proc parameter shape via
+  `generic_param_type_name_from_ref`.
+- Array element typing checks the value's own Array descriptor before trusting a
+  stale lowering-context type map.
+- Getter field inlining is proof-based: only a DefNode whose body is the
+  trivial `@ivar` getter can inline; out-of-arena getter body ExprIds return
+  "not proven getter" instead of raising.
+- `p2_generated_stage2_no_prelude_puts_guard.sh` now fails closed on any
+  unrecorded `STUB CALLED` before accepting the current no-codegen-clean/full
+  codegen frontier.
+
+Evidence:
+
+- `crystal build src/crystal_v2.cr -o /tmp/cv2_safe_commit --error-trace` ->
+  exit 0, only the known `Random::DEFAULT` warning.
+- `regression_tests/p2_bootstrap_semantic_emit_oracle.sh /tmp/cv2_safe_commit`
+  -> `p2_bootstrap_semantic_emit_oracle_ok`.
+- `regression_tests/p2_pending_budget_no_prelude.sh /tmp/cv2_safe_commit` ->
+  `p2_pending_budget_no_prelude_ok process_delta=3 emit_delta=4
+  lower_missing_delta=44 total=92 max_queue=57`.
+- `bash -n regression_tests/p2_generated_stage2_no_prelude_puts_guard.sh` and
+  `git diff --check` -> exit 0.
+- `regression_tests/p2_generated_stage2_no_prelude_puts_guard.sh
+  /tmp/cv2_safe_commit` -> `p2_generated_stage2_no_prelude_puts_guard_ok
+  frontier=nocodegen_clean_full_codegen_hang`.
+
+Boundary: this is a root fix for proc-shaped type registration and proven
+getter field inlining. It does not implement general `SystemError#included`
+BeginNode expansion, full codegen hang diagnosis, or general nested tuple/block
+payload lowering. {F/G/R: 0.92/0.70/0.92} [verified]
+
 ## Active Strategy
 
 - Main fast loop: `--no-prelude` oracles and focused STOP_AFTER_HIR budget

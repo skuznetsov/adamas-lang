@@ -191,6 +191,15 @@ if grep -q 'STUB CALLED: Crystal\$CCEventLoop\$Hclose\$\$IO\$CCFileDescriptor' "
   exit 1
 fi
 
+# Do not let a clean --no-codegen fallback hide a new full-codegen ABORT stub.
+# Known recorded stubs are classified above; anything left here is a real new
+# frontier and must be reduced instead of reported as a generic hang.
+if grep -q 'STUB CALLED' "$COMPILE_LOG"; then
+  echo "p2_generated_stage2_no_prelude_puts_guard_failed: full-codegen hit unrecorded ABORT stub" >&2
+  grep 'STUB CALLED' "$COMPILE_LOG" >&2 || true
+  exit 1
+fi
+
 # Fall back to a secondary probe with --no-codegen. The front-end/no-codegen
 # corridor is clean; if full codegen still fails without a known ABORT frontier,
 # keep the recorded state as a full-codegen-only hang/frontier.

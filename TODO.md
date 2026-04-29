@@ -22,6 +22,30 @@ Working policy:
 
 ## Current Checkpoint
 
+Getter/proc-shape checkpoint (2026-04-29): `of -> Nil` type annotations now
+stringify as `Proc(Void)` so registration-time inference for
+`Process.after_fork_child_callbacks` does not seed `Array(String)` and later
+lower `String#call`. Generic container canonicalization preserves full
+`Proc(...)` parameter shapes, and array element typing prefers the value's own
+Array descriptor when the lowering context map is stale. Getter field inlining
+is now proof-based: only a source method whose body is the trivial `@ivar`
+getter can inline as `FieldGet`; methods sharing an ivar name but having side
+effects (for example `Function#next_value_id`) stay as calls. The getter proof
+also treats out-of-arena body ExprIds as "not proven getter" instead of raising.
+Evidence: `crystal build src/crystal_v2.cr -o /tmp/cv2_safe_commit
+--error-trace`, `p2_bootstrap_semantic_emit_oracle.sh`,
+`p2_pending_budget_no_prelude.sh`, and
+`p2_generated_stage2_no_prelude_puts_guard.sh` all passed. The generated-stage2
+guard now fails closed on any unrecorded `STUB CALLED` before accepting the
+current `nocodegen_clean_full_codegen_hang` frontier.
+
+Observed but not landed (2026-04-29): `SystemError#included` expands to a
+`BeginNode` containing `extend ::SystemError::ClassMethods`; processing that
+`BeginNode` would expose the right root for `RuntimeError.from_errno` stubs, but
+the naive recursive expansion branch currently reintroduces a long stage2
+`lower_main` timeout. Revisit as a separate CAUTION change with a no-prelude
+oracle before landing.
+
 Dirty review note (2026-04-28): the in-progress `Union(*T)` / `StaticArray`
 annotation substitution fix is currently verified only for the narrow
 `Tuple(Char)#to_static_array` null-buffer corridor. Hostile adversary repros
