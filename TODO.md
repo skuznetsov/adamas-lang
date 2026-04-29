@@ -75,6 +75,25 @@ not the final `lower_missing.initial` fix; the next supplier is now dominated
 by virtual/abstract calls such as `IO#<<`, `Proc#call`, hash key helpers, and
 formatting/object-id corridors.
 
+Static truthiness checkpoint (2026-04-29): HIR branch lowering now prunes
+branch bodies whose condition has already lowered to a constant truthiness
+value, including RHS branches of short-circuit conditions. The root was that
+`responds_to?` can lower to a Bool literal after expression lowering while
+`lower_if` still materialized both pre-created body blocks; dead calls such as
+`Int32#object_id` then entered `lower_missing_call_targets` as concrete source
+demand. The fix preserves condition side effects, converts constant condition
+branches to jumps, and for no-`elsif` `if` expressions lowers only the CFG
+reachable body after condition lowering. Evidence:
+`crystal build src/crystal_v2.cr -o /tmp/cv2_static_truthy_if --error-trace`,
+`p2_static_truthy_dead_branch_no_prelude.sh`, `p2_pending_budget_no_prelude.sh`,
+`p2_bootstrap_semantic_emit_oracle.sh`, `p2_backend_intrinsic_boundary_no_prelude.sh`,
+`p2_each_index_block_param_no_prelude.sh`, and `p1_ir_shape_check.sh` passed.
+Full-source `STOP_AFTER_HIR` remains green and improves only modestly
+(`lower_missing: 17404 -> 42732 (+25328)`), so this is a real root fix for
+static dead-branch demand but not the final Hash/object-id corridor fix. The
+next frontier is the remaining `Hash#entry_matches?` / union call-shape demand
+that still produces value-type `object_id` missing targets.
+
 Macro control checkpoint (2026-04-29): full-prelude Kqueue HIR no longer
 registers both sides of the Darwin `LibC.has_constant?(:EVFILT_USER)` macro
 inside `Crystal::EventLoop::Kqueue#after_fork`. The root was registration

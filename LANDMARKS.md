@@ -1584,6 +1584,60 @@ lowering, `Time#<=>`, or `FileUtils.cp` in arbitrary code. Those remain
 separate compiler/runtime follow-ups if they appear outside this tail.
 {F/G/R: 0.94/0.62/0.94} [verified]
 
+[LM-518|verified]: Lowered constant truthiness must prune dead branch bodies,
+not just emit a constant branch terminator.
+
+Findings:
+
+- `responds_to?` can become a Bool literal only after expression lowering.
+  The previous `lower_if` static path only handled AST-literal conditions, and
+  `lower_condition_branch` always emitted a `Branch` even when the lowered
+  condition was a constant Bool.
+- The first fix converted constant lowered conditions to direct `Jump`, but a
+  hostile no-prelude oracle still failed for `dynamic && x.responds_to?(:object_id)`:
+  `lower_if` had already created `then_block` and unconditionally lowered the
+  then body, leaving an unreachable `Int32#object_id` call in HIR.
+- The root fix is to preserve condition side effects, compute CFG reachability
+  after condition lowering, and for no-`elsif` `if` expressions lower only the
+  reachable body when exactly one body block is reachable. This keeps dead
+  `responds_to?` branches from becoming source demand.
+- A refuted adjacent experiment: treating exact `Proc#call` as backend-owned
+  removed that name from the top missing summary but changed full-source
+  `lower_missing.initial` by only one function (`+25104` -> `+25103`) and was
+  reverted. It is not the current lower-missing root.
+
+Evidence:
+
+- `crystal build src/crystal_v2.cr -o /tmp/cv2_static_truthy_if
+  --error-trace` -> exit 0.
+- `regression_tests/p2_static_truthy_dead_branch_no_prelude.sh
+  /tmp/cv2_static_truthy_if` ->
+  `p2_static_truthy_dead_branch_no_prelude_ok lower_missing_delta=0`.
+- The focused HIR for `dynamic && x.responds_to?(:object_id)` has no
+  `Int32#object_id` call; it emits a dynamic branch to the RHS block, the RHS
+  lowers `responds_to?` to `false`, and jumps to the else block.
+- `regression_tests/p2_pending_budget_no_prelude.sh
+  /tmp/cv2_static_truthy_if`,
+  `regression_tests/p2_bootstrap_semantic_emit_oracle.sh
+  /tmp/cv2_static_truthy_if`,
+  `regression_tests/p2_backend_intrinsic_boundary_no_prelude.sh
+  /tmp/cv2_static_truthy_if`,
+  `regression_tests/p2_each_index_block_param_no_prelude.sh
+  /tmp/cv2_static_truthy_if`, and
+  `regression_tests/p1_ir_shape_check.sh /tmp/cv2_static_truthy_if` all
+  passed.
+- Full-source `STOP_AFTER_HIR` exited 0 with
+  `process_pending: 3146 -> 17177 (+14031)`,
+  `emit_tracked_sigs: 17177 -> 17404 (+227)`,
+  `lower_missing.initial: 17404 -> 42402 (+24998)`, and
+  `lower_missing: 17404 -> 42732 (+25328)`.
+
+Boundary: this is a verified root fix for lowered-constant dead-branch demand,
+but not the final Hash/object-id corridor. Full-source logs still show
+`Hash#entry_matches?` / union call-shape demand producing value-type
+`object_id` missing targets; that is the next separate root to localize.
+{F/G/R: 0.91/0.56/0.90} [verified]
+
 ## Active Strategy
 
 - Main fast loop: `--no-prelude` oracles and focused STOP_AFTER_HIR budget

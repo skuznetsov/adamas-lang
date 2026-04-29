@@ -52946,6 +52946,12 @@ module Crystal::HIR
       cond_id = lower_expr(ctx, expr_id)
       cond_type = ctx.type_of(cond_id)
       cond_bool = lower_truthy_check(ctx, cond_id, cond_type)
+      static_val = static_truthy_value(ctx, cond_bool)
+      static_val = static_truthy_value(ctx, cond_id) if static_val.nil?
+      unless static_val.nil?
+        ctx.terminate(Jump.new(static_val ? then_block : else_block))
+        return
+      end
       ctx.terminate(Branch.new(cond_bool, then_block, else_block))
     end
 
@@ -54015,9 +54021,12 @@ module Crystal::HIR
         cond_id = lower_expr(ctx, node.condition)
         cond_type = ctx.type_of(cond_id)
         cond_bool = lower_truthy_check(ctx, cond_id, cond_type)
-        # If the condition is constant, don't build both branches (this avoids
-        # emitting unreachable code like beginless range iterators).
-        static_val = static_literal_condition_value(node.condition)
+        # If the lowered condition is constant, don't build both branches.
+        # This preserves side effects from the condition itself while preventing
+        # dead `responds_to?` / truthiness branches from becoming HIR call demand.
+        static_val = static_truthy_value(ctx, cond_bool)
+        static_val = static_truthy_value(ctx, cond_id) if static_val.nil?
+        static_val = static_literal_condition_value(node.condition) if static_val.nil?
         if !has_elsifs && !static_val.nil?
           pre_branch_locals = ctx.save_locals
           pre_inline_caller_locals = @inline_caller_locals_stack.map(&.dup)
@@ -54049,6 +54058,49 @@ module Crystal::HIR
           end
         end
         ctx.terminate(Branch.new(cond_bool, then_block, next_test_block))
+      end
+
+      if !has_elsifs
+        reachable_after_condition = Set(BlockId).new
+        reachable_blocks(ctx.function).each { |block| reachable_after_condition.add(block.id) }
+        then_reachable = reachable_after_condition.includes?(then_block)
+        else_reachable = reachable_after_condition.includes?(next_test_block)
+        if then_reachable != else_reachable
+          pre_branch_locals = ctx.save_locals
+          pre_inline_caller_locals = @inline_caller_locals_stack.map(&.dup)
+
+          if then_reachable
+            @inline_caller_locals_stack = pre_inline_caller_locals.map(&.dup)
+            ctx.current_block = then_block
+            ctx.push_scope(ScopeKind::Block)
+            apply_truthy_narrowing(ctx, truthy_targets)
+            apply_is_a_narrowing(ctx, is_a_targets)
+            return lower_static_if_branch(ctx, pre_branch_locals, pre_inline_caller_locals) do
+              lower_body(ctx, node.then_body)
+            end
+          end
+
+          @inline_caller_locals_stack = pre_inline_caller_locals.map(&.dup)
+          ctx.current_block = next_test_block
+          ctx.push_scope(ScopeKind::Block)
+          apply_truthy_narrowing(ctx, falsy_targets)
+          apply_is_a_else_narrowing(ctx, is_a_targets)
+          return lower_static_if_branch(ctx, pre_branch_locals, pre_inline_caller_locals) do
+            if else_body = node.else_body
+              if else_body.empty?
+                nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
+                ctx.emit(nil_lit)
+                nil_lit.id
+              else
+                lower_body(ctx, else_body)
+              end
+            else
+              nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
+              ctx.emit(nil_lit)
+              nil_lit.id
+            end
+          end
+        end
       end
 
       # Save locals state AFTER condition evaluation to preserve 'out' parameters

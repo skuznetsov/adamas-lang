@@ -159,3 +159,14 @@
 **Adversary check:** local source reads confirmed `HIR::Call` carries `virtual`, MIR lowers virtual calls via `lower_virtual_dispatch` before direct lookup, and `lower_missing_call_targets` currently treats every `Call` as concrete body demand. This is now the next separate hypothesis, not bundled with the macro JSON fix.
 **Verdict:** useful as a cheap hypothesis router for the next branch. Continue using it for bounded read-only audits; keep local fixed-point and no-prelude verification as the commit gate.
 **Cost saved:** ~2-3k Codex tokens on source routing and hypothesis ranking.
+
+### Session 9 — 2026-04-29 — exact Proc#call backend-owned audit
+**Task:** read-only audit whether exact `Proc#call` should be treated as a backend-owned runtime intrinsic for missing-target demand, after a local falsifier showed it was not the current lower-missing root.
+**Brief size:** ~16 lines, ~1.1 KB, file `/tmp/grok_proc_call_backend/task.txt`.
+**Latency:** still no actionable final output when the local branch reached a verified result; ACP output remained at startup only.
+**Output quality:** no usable answer for this commit.
+**What worked:** the ACP launch itself did not block local work.
+**What did not:** no streamed findings or final transcript arrived in time to affect the decision. This is a poor fit for fast falsifier loops unless the prompt is smaller or the timeout/follow-up path is better managed.
+**Adversary check:** local verification refuted the exact `Proc#call` change for this frontier: it removed `Proc#call` from the missing summary but changed full-source `lower_missing.initial` by only one function (`+25104` -> `+25103`) and made the run slower, so the experiment was reverted.
+**Verdict:** no value for this commit. Use Grok again for narrower read-only source audits, not as a blocking gate for quick root-cause falsifiers.
+**Cost saved:** none.
