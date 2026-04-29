@@ -1638,6 +1638,56 @@ but not the final Hash/object-id corridor. Full-source logs still show
 `object_id` missing targets; that is the next separate root to localize.
 {F/G/R: 0.91/0.56/0.90} [verified]
 
+[LM-519|verified]: `responds_to?(:object_id)` must be answered from the
+Reference/value type hierarchy, not from the mutable function registry.
+
+Findings:
+
+- Full-source HIR after LM-518 still showed value-type `object_id` demand.
+  Inspecting the dump found functions where `UInt32.responds_to?(:object_id)`
+  had lowered to `literal true`, for example in `Hash(UInt32, Int32)#key_hash`.
+- Focused minimal Hash programs were clean, which ruled out the source
+  `Hash#key_hash` logic itself as the only root. The full compiler run had
+  polluted the function registry with synthetic value-type `object_id`
+  specializations; later `type_responds_to_method?` calls used
+  `has_function_base?` and treated those synthetic entries as real method
+  availability.
+- `object_id` is a Reference primitive in Crystal. Value types such as
+  `UInt32`, `Int32`, and `Tuple` must answer false regardless of whether a
+  previous lowering pass has created a synthetic `Type#object_id` function.
+
+Fix:
+
+- `type_responds_to_method?` now handles instance `object_id` through the class
+  parent chain: `Reference` and descendants answer true; `Object`/value
+  hierarchies answer false. Other methods keep the existing lookup path.
+- Added `p2_object_id_responds_to_semantics.sh`, which checks that
+  `UInt32.responds_to?(:object_id)` lowers to false and emits no
+  `UInt32#object_id`, while `String.responds_to?(:object_id)` still preserves
+  the `Reference#object_id` path.
+
+Evidence:
+
+- `crystal build src/crystal_v2.cr -o /tmp/cv2_object_id_semantics
+  --error-trace` -> exit 0.
+- `regression_tests/p2_object_id_responds_to_semantics.sh
+  /tmp/cv2_object_id_semantics` -> `p2_object_id_responds_to_semantics_ok`.
+- `regression_tests/p2_static_truthy_dead_branch_no_prelude.sh`,
+  `p2_pending_budget_no_prelude.sh`, `p2_bootstrap_semantic_emit_oracle.sh`,
+  `p2_backend_intrinsic_boundary_no_prelude.sh`,
+  `p2_each_index_block_param_no_prelude.sh`, and `p1_ir_shape_check.sh` all
+  passed with `/tmp/cv2_object_id_semantics`.
+- Full-source `STOP_AFTER_HIR` exited 0; value-type `object_id` dropped out of
+  the top missing summary. Phase stats were essentially unchanged:
+  `lower_missing.initial: 17404 -> 42403 (+24999)` and
+  `lower_missing: 17404 -> 42733 (+25329)`.
+
+Boundary: this is a correctness/root fix for `responds_to?(:object_id)`
+semantic pollution, not a bootstrap-volume fix. The next volume roots are now
+visible as `Indexable#new`, `Proc#call`, HIR/MIR value initializers, and debug
+helper demand in the initial missing-target sweep.
+{F/G/R: 0.92/0.58/0.90} [verified]
+
 ## Active Strategy
 
 - Main fast loop: `--no-prelude` oracles and focused STOP_AFTER_HIR budget

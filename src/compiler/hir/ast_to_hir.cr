@@ -84782,6 +84782,7 @@ module Crystal::HIR
     private def type_responds_to_method?(type_name : String, method_name : String, class_method : Bool) : Bool
       normalized = normalize_method_owner_name(type_name)
       return false if normalized.empty? || normalized == "Void" || normalized == "Unknown"
+      return type_responds_to_object_id?(normalized) if !class_method && method_name == "object_id"
 
       if class_method
         return true if resolve_class_method_with_inheritance(normalized, method_name)
@@ -84806,6 +84807,19 @@ module Crystal::HIR
       end
 
       false
+    end
+
+    private def type_responds_to_object_id?(type_name : String) : Bool
+      normalized = normalize_method_owner_name(type_name)
+      return false if normalized.empty? || normalized == "Void" || normalized == "Unknown"
+      return true if normalized == "Reference"
+
+      base = strip_generic_args(normalized)
+      return true if base == "Reference"
+      return false if normalized == "Object" || base == "Object"
+
+      get_ancestor_chain(normalized).includes?("Reference") ||
+        (base != normalized && get_ancestor_chain(base).includes?("Reference"))
     end
 
     # ═══════════════════════════════════════════════════════════════════════

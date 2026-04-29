@@ -94,6 +94,21 @@ static dead-branch demand but not the final Hash/object-id corridor fix. The
 next frontier is the remaining `Hash#entry_matches?` / union call-shape demand
 that still produces value-type `object_id` missing targets.
 
+Object-id responds_to checkpoint (2026-04-29): `responds_to?(:object_id)` now
+uses the Crystal ownership rule for `object_id` (Reference and descendants)
+instead of trusting the mutable function registry. The root was circular
+pollution: once a bogus value-type `UInt32#object_id` / `Tuple#object_id`
+specialization had been admitted anywhere in the run, later `responds_to?`
+queries could see that synthetic function base and lower to `true`. The fix
+answers the `object_id` predicate from the class parent chain and keeps value
+types (`UInt32`, `Tuple`, `Int32`, etc.) false while preserving reference types
+such as `String`. Evidence: `p2_object_id_responds_to_semantics.sh`, the same
+fast p2 guards, `p1_ir_shape_check.sh`, and full-source `STOP_AFTER_HIR` all
+passed. Boundary: this removes value-type `object_id` from the top missing
+summary but does not materially shrink `lower_missing` (`+25329`), so the next
+bootstrap root is still the broader initial missing-target demand volume
+(`Indexable#new`, `Proc#call`, value initializers, debug helpers).
+
 Macro control checkpoint (2026-04-29): full-prelude Kqueue HIR no longer
 registers both sides of the Darwin `LibC.has_constant?(:EVFILT_USER)` macro
 inside `Crystal::EventLoop::Kqueue#after_fork`. The root was registration
