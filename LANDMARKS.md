@@ -1969,3 +1969,63 @@ moved. Full-prelude smoke now hits
 `CLI#debug_cli_root_block_state(String, AstArena, Array(ExprId))`. No `s3+`
 attempt yet.
 {F/G/R: 0.93/0.66/0.92} [verified]
+
+[LM-523|verified]: NamedTuple generic annotation keys must be preserved before
+generic type-parameter resolution.
+
+Findings:
+
+- Generated `s2` full-prelude smoke aborted in an unlowered
+  `NamedTuple(Span, ExprId, ExprId)#[](Symbol)` stub while compiling parser
+  macro-if branch handling.
+- The source shape is keyed:
+  `Array(NamedTuple(span: Span, condition: ExprId, body: ExprId))`, followed by
+  `branch[:condition]`.
+- `type_ref_for_name_inner` split `NamedTuple(span: Span, condition: ExprId,
+  body: ExprId)` into raw generic parameters, then resolved the whole
+  `key: Type` entry as a type name before the NamedTuple-specific parser ran.
+  For namespaced value types this erased the keys and materialized positional
+  `NamedTuple(Span, ExprId, ExprId)`.
+
+Fix:
+
+- Added a shared generic-parameter resolver for ordinary type arguments.
+- For `NamedTuple`, parse each `key: Type` entry first, resolve only the value
+  type, then rebuild `key: resolved_type` before descriptor materialization.
+- Added `p2_named_tuple_annotation_keys_no_prelude.sh`, a no-prelude reducer
+  with namespaced `Span`/`ExprId` that rejects keyless
+  `NamedTuple(...Span, ...ExprId...)#[](Symbol)` HIR and requires `index_get`.
+
+Evidence:
+
+- `crystal build src/crystal_v2.cr -o /private/tmp/cv2_namedtuple_keys
+  --error-trace` passed.
+- `regression_tests/p2_named_tuple_annotation_keys_no_prelude.sh
+  /private/tmp/cv2_namedtuple_keys` passed.
+- Negative control against `/tmp/cv2_alias_suffix` failed as expected with the
+  old keyless `NamedTuple(...Span, ...ExprId...)#[](Symbol)` call.
+- `regression_tests/p2_file_open_tuple_handle_alias_shape.sh
+  /private/tmp/cv2_namedtuple_keys`,
+  `regression_tests/p2_bootstrap_semantic_emit_oracle.sh
+  /private/tmp/cv2_namedtuple_keys`,
+  `regression_tests/p2_pending_budget_no_prelude.sh
+  /private/tmp/cv2_namedtuple_keys`,
+  `regression_tests/p2_universal_helper_fanout_no_prelude.sh
+  /private/tmp/cv2_namedtuple_keys`, and
+  `regression_tests/p1_ir_shape_check.sh /private/tmp/cv2_namedtuple_keys`
+  passed.
+- Canonical `s1 -> s2`:
+  `CRYSTAL_CACHE_DIR=/private/tmp/crystal_cache_v2_nt_boot
+  BOOTSTRAP_STAGE_OUT=/private/tmp/cv2_bs_s2_namedtuple_keys
+  BOOTSTRAP_CHAIN_STAGES=2 BOOTSTRAP_TIMEOUT_SEC=300 BOOTSTRAP_MEM_MB=4096
+  scripts/build_bootstrap_stages.sh --stages 2 --out
+  /private/tmp/cv2_bs_s2_namedtuple_keys` built stage2 successfully:
+  `STAGE 2 BUILD: ok wall=214.41s peak_rss≈2380.64MB`.
+- The generated `/private/tmp/cv2_bs_s2_namedtuple_keys/cv2_s2.ll` no longer
+  contains the keyless parser-branch NamedTuple `#[](Symbol)` stub.
+
+Boundary: generated `s2` smoke tests still abort immediately, but both
+full-prelude and no-prelude now hit
+`CLI#debug_cli_root_block_state(String, AstArena, Array(ExprId))`. No `s3+`
+attempt yet.
+{F/G/R: 0.94/0.66/0.93} [verified]

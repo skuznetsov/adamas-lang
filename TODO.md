@@ -912,12 +912,25 @@ Latest generated-stage2 frontier:
   `File.new_internal` loads the fd tuple element as `i32` and calls
   `File.new(String, Int32, String, Bool, Nil, Nil)`.
 
-- Next frontier: generated `s2b` now builds, but smoke tests abort immediately
-  in stub dispatch: full-prelude smoke hits
-  `NamedTuple(Span, ExprId, ExprId)#[](Symbol)`, while no-prelude smoke hits
+- The generated-stage2 `NamedTuple(Span, ExprId, ExprId)#[](Symbol)` smoke
+  stub is cleared. Root cause: generic type materialization resolved the full
+  `NamedTuple(name: Type)` entries as ordinary generic parameters before the
+  NamedTuple-specific parser ran. For namespaced value types such as
+  `CrystalV2::Compiler::Frontend::Span`, this erased field names and
+  materialized a positional `NamedTuple(Span, ExprId, ExprId)`, so
+  `branch[:condition]` lowered to a runtime `NamedTuple#[](Symbol)` call
+  instead of a static `index_get`. `NamedTuple` generic args are now parsed
+  before generic substitution; only the value side is resolved and the original
+  keys are rebuilt. The regression
+  `p2_named_tuple_annotation_keys_no_prelude.sh` negative-checks the old
+  keyless HIR shape and requires `index_get`.
+
+- Next frontier: generated `s2b` still builds, but both smoke tests now abort
+  immediately in
   `CLI#debug_cli_root_block_state(String, AstArena, Array(ExprId))`. Do not
-  attempt `s3b+` until these generated-stage2 smoke stubs are root-caused and
-  guarded. The previous `Tuple$Heach$$block`,
+  attempt `s3b+` until this generated-stage2 debug-helper stub is root-caused
+  and guarded. The previous `NamedTuple(Span, ExprId, ExprId)#[](Symbol)`,
+  `Tuple$Heach$$block`,
   `debug_env_filter_match?..._splat`,
   `Tuple(String, Crystal::MIR::Type)#join(IO, String, &block)`,
   `Crystal::EventLoop#close(IO::FileDescriptor)`, and generated-stage2

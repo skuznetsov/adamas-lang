@@ -315,3 +315,27 @@ frontier to stub dispatch.
 cause. Keep Grok sidecars narrow and non-blocking.
 **Cost saved:** small; mostly confidence/Adversary value rather than direct
 implementation time.
+
+### Session 16 — 2026-04-29 — NamedTuple annotation key-preservation review
+**Task:** read-only hostile review of the uncommitted `NamedTuple` generic
+key-preservation patch and the no-prelude regression guard.
+**Brief size:** one inline ACP prompt, ~0.9 KB, focused on
+`src/compiler/hir/ast_to_hir.cr` diff and
+`regression_tests/p2_named_tuple_annotation_keys_no_prelude.sh`.
+**Latency:** timed out after 180s waiting for stdout.
+**Output quality:** no final answer. The transcript shows Grok issued many
+read-only file/grep tool calls, but it did not produce actionable findings
+before timeout.
+**What worked:** the sidecar ran non-blocking while local verification
+continued, so it did not delay the canonical `s1 -> s2` check.
+**What did not:** no concise adversarial result was returned. This is a beta
+workflow failure mode: a narrow review prompt can still get stuck in source
+reading without a bounded answer.
+**Adversary check:** local verification carried the checkpoint: the new guard
+passes on `/private/tmp/cv2_namedtuple_keys`, fails on the previous
+`/tmp/cv2_alias_suffix` compiler with the old keyless HIR call, and canonical
+`s1 -> s2` moves the frontier to `CLI#debug_cli_root_block_state`.
+**Verdict:** no evidence value from this session. Keep future Grok prompts
+stricter: require a hard timebox, "return partial findings after N files", and
+avoid waiting for completion when local falsifiers are already running.
+**Cost saved:** none; minor token cost only for recording the failed sidecar.

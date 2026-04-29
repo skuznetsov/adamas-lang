@@ -86568,6 +86568,33 @@ module Crystal::HIR
       result
     end
 
+    private def resolve_generic_type_param_name(raw_param : String) : String
+      param = raw_param.strip
+      param = @type_param_map[param]? || param
+      # Resolve type aliases (e.g., Crystal::System::FileDescriptor::Handle → Int32)
+      alias_resolved = resolve_type_alias_chain(param)
+      param = alias_resolved if alias_resolved != param
+      unless type_param_like?(param) && short_type_param_name?(param) && !@type_param_map.has_key?(param)
+        if !param.includes?("::")
+          if override = @current_namespace_override
+            if nested = nested_type_full_name_in_namespace_chain(override, param)
+              param = nested
+            end
+          end
+          if !param.includes?("::")
+            if current = @current_class
+              if nested = nested_type_full_name_in_namespace_chain(current, param)
+                param = nested
+              end
+            end
+          end
+        end
+        resolved_param = resolve_type_name_in_context(param)
+        param = resolved_param if resolved_param != param
+      end
+      normalize_tuple_literal_type_name(param)
+    end
+
     private def type_ref_for_name_inner(name : String) : TypeRef
       name = strip_ascii_edge_whitespace(name)
       trace_type_ref_name = debug_env_filter_match?("DEBUG_TYPE_REF_NAME", name)
@@ -87055,32 +87082,36 @@ module Crystal::HIR
           end
         end
 
-        # Substitute each type parameter
-        substituted_params = raw_params.map do |param|
-          param = param.strip
-          param = @type_param_map[param]? || param
-          # Resolve type aliases (e.g., Crystal::System::FileDescriptor::Handle → Int32)
-          alias_resolved = resolve_type_alias_chain(param)
-          param = alias_resolved if alias_resolved != param
-          unless type_param_like?(param) && short_type_param_name?(param) && !@type_param_map.has_key?(param)
-            if !param.includes?("::")
-              if override = @current_namespace_override
-                if nested = nested_type_full_name_in_namespace_chain(override, param)
-                  param = nested
-                end
-              end
-              if !param.includes?("::")
-                if current = @current_class
-                  if nested = nested_type_full_name_in_namespace_chain(current, param)
-                    param = nested
-                  end
-                end
-              end
+        named_tuple_entries : Array({String, String})? = nil
+
+        # NamedTuple generic args carry field names (`name: Type`). Resolve only
+        # the value side as a type; resolving the full `name: Type` string as a
+        # generic parameter erases the keys and later turns `nt[:key]` into a
+        # runtime `NamedTuple#[](Symbol)` call.
+        substituted_params = [] of String
+        if base_name == "NamedTuple"
+          parsed_entries = [] of {String, String}
+          parsed_ok = true
+          raw_params.each do |param|
+            unless parsed = split_named_tuple_entry(param)
+              parsed_ok = false
+              break
             end
-            resolved_param = resolve_type_name_in_context(param)
-            param = resolved_param if resolved_param != param
+            key = normalize_named_tuple_key_name(parsed[0])
+            value_type_name = resolve_generic_type_param_name(parsed[1])
+            parsed_entries << {key, value_type_name}
           end
-          normalize_tuple_literal_type_name(param)
+          if parsed_ok
+            named_tuple_entries = parsed_entries
+            substituted_params = parsed_entries.map { |entry| "#{entry[0]}: #{entry[1]}" }
+          end
+        end
+
+        if substituted_params.empty?
+          # Substitute each type parameter
+          substituted_params = raw_params.map do |param|
+            resolve_generic_type_param_name(param)
+          end
         end
 
         # Debug: some call sites accidentally create `Hash(Tuple(K, V))` instead of `Hash(K, V)`.
@@ -87101,28 +87132,6 @@ module Crystal::HIR
           result = type_ref_for_name(substituted_name)
           store_type_cache(cache_key, result)
           return result
-        end
-
-        named_tuple_entries : Array({String, String})? = nil
-        if base_name == "NamedTuple"
-          parsed_entries = [] of {String, String}
-          parsed_ok = true
-          substituted_params.each do |param|
-            unless parsed = split_named_tuple_entry(param)
-              parsed_ok = false
-              break
-            end
-            key = normalize_named_tuple_key_name(parsed[0])
-            value_type_name = parsed[1].strip
-            value_type_name = substitute_type_params_in_type_name(value_type_name) if !@type_param_map.empty? || value_type_name.includes?("self")
-            value_type_name = resolve_type_alias_chain(value_type_name)
-            value_type_name = normalize_tuple_literal_type_name(value_type_name)
-            parsed_entries << {key, value_type_name}
-          end
-          if parsed_ok
-            named_tuple_entries = parsed_entries
-            substituted_params = parsed_entries.map { |entry| "#{entry[0]}: #{entry[1]}" }
-          end
         end
 
         params_for_type_resolution = named_tuple_entries ? named_tuple_entries.not_nil!.map(&.[1]) : substituted_params
