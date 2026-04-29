@@ -898,9 +898,26 @@ Latest generated-stage2 frontier:
   `p2_generated_stage2_no_prelude_puts_guard.sh` now ends with plain
   `p2_generated_stage2_no_prelude_puts_guard_ok`.
 
-- Next frontier: run the generated `s2b` against the broader no-prelude corpus
-  and normalized `s1_bootstrap` vs `s2b` semantic emit gate before attempting
-  `s3b+`. The previous `Tuple$Heach$$block`,
+- The generated-stage2 `File.new_internal` crash is cleared. Root cause:
+  tuple element type recovery only indexed leaf alias suffixes like `Handle`,
+  so a full-prelude tuple element observed as `File::FileDescriptor::Handle`
+  did not resolve through the canonical
+  `Crystal::System::FileDescriptor::Handle => Int32` alias. HIR then typed
+  `File.open(...)[0]` as a pointer-shaped handle and LLVM emitted
+  `load ptr` from the tuple slot followed by `load i32` from that fd value.
+  Alias registration now indexes compound suffixes such as
+  `FileDescriptor::Handle`, and qualified alias-chain fallback uses only
+  compound suffixes (not broad leaf-only matches). The regression
+  `p2_file_open_tuple_handle_alias_shape.sh` asserts that
+  `File.new_internal` loads the fd tuple element as `i32` and calls
+  `File.new(String, Int32, String, Bool, Nil, Nil)`.
+
+- Next frontier: generated `s2b` now builds, but smoke tests abort immediately
+  in stub dispatch: full-prelude smoke hits
+  `NamedTuple(Span, ExprId, ExprId)#[](Symbol)`, while no-prelude smoke hits
+  `CLI#debug_cli_root_block_state(String, AstArena, Array(ExprId))`. Do not
+  attempt `s3b+` until these generated-stage2 smoke stubs are root-caused and
+  guarded. The previous `Tuple$Heach$$block`,
   `debug_env_filter_match?..._splat`,
   `Tuple(String, Crystal::MIR::Type)#join(IO, String, &block)`,
   `Crystal::EventLoop#close(IO::FileDescriptor)`, and generated-stage2

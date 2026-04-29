@@ -7628,13 +7628,16 @@ module Crystal::HIR
 
     @[AlwaysInline]
     private def index_type_alias_suffix(alias_name : String) : Nil
-      return unless sep = alias_name.rindex("::")
-      suffix_start = sep + 2
-      suffix_len = alias_name.bytesize - suffix_start
-      return if suffix_len <= 0
-      suffix = alias_name.byte_slice(suffix_start, suffix_len)
-      suffix_entries = (@type_alias_keys_by_suffix[suffix] ||= [] of String)
-      suffix_entries << alias_name unless suffix_entries.includes?(alias_name)
+      sep = alias_name.index("::")
+      while sep
+        suffix_start = sep + 2
+        suffix_len = alias_name.bytesize - suffix_start
+        break if suffix_len <= 0
+        suffix = alias_name.byte_slice(suffix_start, suffix_len)
+        suffix_entries = (@type_alias_keys_by_suffix[suffix] ||= [] of String)
+        suffix_entries << alias_name unless suffix_entries.includes?(alias_name)
+        sep = alias_name.index("::", suffix_start)
+      end
     end
 
     private def register_type_alias(alias_name : String, target_name : String)
@@ -39658,6 +39661,11 @@ module Crystal::HIR
       end
 
       resolved = resolve_type_alias_chain_no_context(seed)
+      if resolved == seed && !contextual
+        if suffix_target = resolve_type_alias_by_qualified_suffix(seed)
+          resolved = resolve_type_alias_chain_no_context(suffix_target)
+        end
+      end
 
       @resolved_type_alias_cache[cache_key] = resolved
       resolved
@@ -39705,6 +39713,34 @@ module Crystal::HIR
 
     private def resolve_type_alias_by_suffix_context(matches : Array(String), name : String) : String?
       resolve_contextual_alias_key(matches, name)
+    end
+
+    private def resolve_type_alias_by_qualified_suffix(name : String) : String?
+      return nil if name.empty? || !name.includes?("::")
+
+      sep = name.index("::")
+      while sep
+        suffix_start = sep + 2
+        suffix_len = name.bytesize - suffix_start
+        break if suffix_len <= 0
+        suffix = name.byte_slice(suffix_start, suffix_len)
+        # Avoid broad leaf-only fallback for qualified names. `Foo::Handle`
+        # must not bind to an unrelated platform alias just because the leaf
+        # name is unique in a particular compilation.
+        if suffix.includes?("::")
+          if matches = @type_alias_keys_by_suffix[suffix]?
+            if matches.size == 1
+              return @type_aliases[matches[0]]?
+            end
+            if contextual = resolve_type_alias_by_suffix_context(matches, suffix)
+              return @type_aliases[contextual]?
+            end
+          end
+        end
+        sep = name.index("::", suffix_start)
+      end
+
+      nil
     end
 
     private def resolve_contextual_alias_key(matches : Array(String), name : String) : String?

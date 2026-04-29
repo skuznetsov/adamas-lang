@@ -1915,3 +1915,57 @@ during parser setup with
 `STUB CALLED: CrystalV2$CCCompiler$CCFrontend$CCNode$Hspan`. That is the next
 runtime/vdispatch frontier; no `s2 -> s3` attempt yet.
 {F/G/R: 0.92/0.62/0.91} [verified]
+
+[LM-522|verified]: qualified alias-chain fallback must resolve compound alias
+suffixes before tuple elements choose scalar vs pointer lowering.
+
+Findings:
+
+- The generated `s2` `File.new_internal` smoke crash was caused by tuple
+  element zero from `Crystal::System::File.open` being observed as
+  `File::FileDescriptor::Handle` instead of `Int32`.
+- Alias registration only indexed the final leaf suffix (`Handle`), and
+  contextual alias lookup rejected names containing `::`. As a result,
+  `resolve_type_alias_chain("File::FileDescriptor::Handle")` returned the
+  unresolved qualified name even though the canonical registered alias was
+  `Crystal::System::FileDescriptor::Handle => Int32`.
+- LLVM then treated the tuple element as pointer-shaped and emitted `load ptr`
+  from the tuple slot followed by `load i32` from the fd value. The actual tuple
+  producer stored `{i32 fd, i1 close_on_finalize}`, so the generated compiler
+  dereferenced small fd integers as pointers.
+
+Fix:
+
+- `register_type_alias` now indexes every proper trailing suffix, including
+  compound keys such as `FileDescriptor::Handle`.
+- Qualified alias-chain fallback now checks compound suffix aliases only. It
+  deliberately avoids leaf-only fallback for qualified names so `Foo::Handle`
+  cannot bind to an unrelated unique platform handle alias.
+- Added `p2_file_open_tuple_handle_alias_shape.sh`, a full-prelude compile-only
+  LLVM shape guard for `File.new_internal`.
+
+Evidence:
+
+- `crystal build src/crystal_v2.cr -o /tmp/cv2_alias_suffix --error-trace`
+  passed.
+- `regression_tests/p2_file_open_tuple_handle_alias_shape.sh
+  /tmp/cv2_alias_suffix` passed and showed scalar `load i32` in
+  `File.new_internal`.
+- `regression_tests/p2_bootstrap_semantic_emit_oracle.sh
+  /tmp/cv2_alias_suffix`, `regression_tests/p2_pending_budget_no_prelude.sh
+  /tmp/cv2_alias_suffix`, `regression_tests/p2_universal_helper_fanout_no_prelude.sh
+  /tmp/cv2_alias_suffix`, and `regression_tests/p1_ir_shape_check.sh
+  /tmp/cv2_alias_suffix` passed.
+- Canonical `s1 -> s2`:
+  `BOOTSTRAP_STAGE_OUT=/tmp/cv2_bs_s2_alias_suffix
+  BOOTSTRAP_CHAIN_STAGES=2 BOOTSTRAP_TIMEOUT_SEC=300 BOOTSTRAP_MEM_MB=4096
+  scripts/build_bootstrap_stages.sh --stages 2 --out
+  /tmp/cv2_bs_s2_alias_suffix` built stage2 successfully:
+  `STAGE 2 BUILD: ok wall=225.41s peak_rss≈2385.45MB`.
+
+Boundary: generated `s2` smoke tests still abort immediately, but the frontier
+moved. Full-prelude smoke now hits
+`NamedTuple(Span, ExprId, ExprId)#[](Symbol)`; no-prelude smoke hits
+`CLI#debug_cli_root_block_state(String, AstArena, Array(ExprId))`. No `s3+`
+attempt yet.
+{F/G/R: 0.93/0.66/0.92} [verified]

@@ -283,3 +283,35 @@ removed.
 **Verdict:** useful as a sidecar root router; local falsification was necessary
 to avoid committing an insufficient symptom fix.
 **Cost saved:** ~1-2k Codex tokens on source routing and hypothesis ranking.
+
+### Session 15 — 2026-04-29 — FileDescriptor::Handle compound alias audit
+**Task:** read-only audit the generated `cv2_s2` `File.new_internal` crash:
+tuple element zero from `Crystal::System::File.open` was HIR-typed as
+`File::FileDescriptor::Handle`, causing LLVM to emit `load ptr` from the tuple
+slot and then dereference the fd as `i32`.
+**Brief size:** ~7 lines, ~0.8 KB, temporary task file
+`/tmp/grok_tuple_alias.*.md`.
+**Latency:** useful final answer arrived after the local patch was already
+implemented and fast guards were running.
+**Output quality:** useful and aligned with local evidence. Grok independently
+identified the same root: `@type_alias_keys_by_suffix` only indexed leaf
+suffixes like `Handle`, contextual alias lookup rejected names containing
+`::`, and `resolve_type_alias_chain("File::FileDescriptor::Handle")` therefore
+missed the canonical `Crystal::System::FileDescriptor::Handle => Int32` alias.
+It also called out the existing `File::FileDescriptor::Handle` string special
+case as a symptom.
+**What worked:** the suggested root-fix shape matched the local implementation:
+index proper trailing compound suffixes and use a qualified alias fallback that
+does not rely on broad leaf-only matches.
+**What did not:** Grok arrived late for the implementation loop, so it did not
+save wall-clock time on this checkpoint. It also suggested optionally deleting
+older symptom guards immediately; local choice was to keep unrelated cleanup out
+of the bugfix commit.
+**Adversary check:** local verification did not depend on Grok. The committed
+guard is full-prelude compile-only and checks the actual `File.new_internal`
+LLVM shape; canonical `s1 -> s2` now builds generated stage2 and moves the
+frontier to stub dispatch.
+**Verdict:** useful as independent hostile confirmation of the alias-layer root
+cause. Keep Grok sidecars narrow and non-blocking.
+**Cost saved:** small; mostly confidence/Adversary value rather than direct
+implementation time.
