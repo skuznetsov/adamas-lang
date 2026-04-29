@@ -1057,6 +1057,36 @@ the current root and moves the frontier to total generated-IR volume / pre-llc
 budget. It does not make `s1 -> s2b` green and does not justify increasing
 timeouts. {F/G/R: 0.9/0.65/0.9} [verified]
 
+[LM-509|verified]: Generated stage2 no-prelude `puts 7` exposed that
+bootstrap-hot debug helpers must not depend on variadic tuple splats. Before
+the fix, the generated compiler aborted during pass3 setup with:
+
+    STUB CALLED: Crystal$CCHIR$CCAstToHir$Hdebug_env_filter_match$Q$$String_Tuple$LString$R_splat
+
+The root was not `puts` lowering. `debug_env_filter_match?(env_key, *texts)`,
+`debug_hook_filter_match?(*texts)`, and `debug_class_repair_enabled_for?(*texts)`
+generated tuple-splat helper calls throughout the compiler, but generated
+stage2 had ABORT stubs for those helper bodies. The fix changes those helpers
+to fixed optional text slots (current callsites use at most four texts) and
+keeps the matching logic local, preserving debug-env behavior without requiring
+Tuple splat lowering in the bootstrap-hot path.
+
+Evidence:
+
+- `crystal build src/crystal_v2.cr -o /tmp/cv2_debug_filter_fix --error-trace`
+  -> exit 0.
+- `regression_tests/p2_generated_stage2_no_prelude_puts_guard.sh
+  /tmp/cv2_debug_filter_fix` -> `p2_generated_stage2_no_prelude_puts_guard_ok
+  frontier=nocodegen_clean_full_codegen_hang`.
+- The fresh full-codegen compile log no longer mentions
+  `debug_env_filter_match`; it now stops at
+  `Tuple$LString$C$_Crystal$CCMIR$CCType$R$Hjoin$$IO_String_block`, while the
+  secondary `--no-codegen` probe exits 0.
+
+Boundary: this is a root fix for debug helper splat usage, not a general tuple
+block lowering fix. The next generated-stage2 root is the tuple `join` block
+stub family. {F/G/R: 0.9/0.65/0.9} [verified]
+
 ## Active Strategy
 
 - Main fast loop: `--no-prelude` oracles and focused STOP_AFTER_HIR budget

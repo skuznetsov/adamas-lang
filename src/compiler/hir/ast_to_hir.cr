@@ -4482,20 +4482,45 @@ module Crystal::HIR
       value != "0" && value != "false"
     end
 
-    private def debug_env_filter_match?(env_key : String, *texts : String) : Bool
-      value = env_get(env_key)
-      return false unless value
+    private def env_filter_match_texts?(
+      value : String,
+      text1 : String? = nil,
+      text2 : String? = nil,
+      text3 : String? = nil,
+      text4 : String? = nil
+    ) : Bool
       return true if value.empty? || value == "1" || value == "true"
       tokens = value.split(',').map(&.strip).reject(&.empty?)
       return true if tokens.empty?
-      texts.any? do |text|
-        tokens.any? { |token| text.includes?(token) }
+
+      tokens.any? do |token|
+        (!text1.nil? && text1.includes?(token)) ||
+          (!text2.nil? && text2.includes?(token)) ||
+          (!text3.nil? && text3.includes?(token)) ||
+          (!text4.nil? && text4.includes?(token))
       end
     end
 
-    private def debug_hook_filter_match?(*texts : String) : Bool
+    private def debug_env_filter_match?(
+      env_key : String,
+      text1 : String? = nil,
+      text2 : String? = nil,
+      text3 : String? = nil,
+      text4 : String? = nil
+    ) : Bool
+      value = env_get(env_key)
+      return false unless value
+      env_filter_match_texts?(value, text1, text2, text3, text4)
+    end
+
+    private def debug_hook_filter_match?(
+      text1 : String? = nil,
+      text2 : String? = nil,
+      text3 : String? = nil,
+      text4 : String? = nil
+    ) : Bool
       return false unless DebugHooks::ENABLED
-      debug_env_filter_match?("DEBUG_HOOK_FILTER", *texts)
+      debug_env_filter_match?("DEBUG_HOOK_FILTER", text1, text2, text3, text4)
     end
 
     @[AlwaysInline]
@@ -12770,10 +12795,18 @@ module Crystal::HIR
       end
     end
 
-    private def debug_class_repair_enabled_for?(*texts : String) : Bool
+    private def debug_class_repair_enabled_for?(
+      text1 : String? = nil,
+      text2 : String? = nil,
+      text3 : String? = nil,
+      text4 : String? = nil
+    ) : Bool
       if filter = env_get("DEBUG_CLASS_REPAIR")
         return true if filter == "1" || filter == "true"
-        texts.any? { |text| text.includes?(filter) }
+        (!text1.nil? && text1.includes?(filter)) ||
+          (!text2.nil? && text2.includes?(filter)) ||
+          (!text3.nil? && text3.includes?(filter)) ||
+          (!text4.nil? && text4.includes?(filter))
       else
         false
       end

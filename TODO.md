@@ -446,6 +446,7 @@ regression_tests/p2_root_self_replay_no_prelude.sh bin/crystal_v2
 regression_tests/p2_universal_helper_fanout_no_prelude.sh bin/crystal_v2
 regression_tests/p2_selfhost_stage2_shape_guard.sh bin/crystal_v2
 regression_tests/p2_llvm_tail_stats_no_prelude.sh bin/crystal_v2
+regression_tests/p2_debug_filter_no_variadic_splat.sh
 ```
 
 Expected current signals:
@@ -457,6 +458,7 @@ Expected current signals:
 - `p2_universal_helper_fanout_no_prelude_ok deep_helpers=0`
 - `p2_selfhost_stage2_shape_guard_ok`
 - `p2_llvm_tail_stats_no_prelude_ok phase=type_name_table ...`
+- `p2_debug_filter_no_variadic_splat_ok`
 - `p2_generated_stage2_no_prelude_interp_ok`
 
 Latest generated-stage2 frontier:
@@ -500,11 +502,21 @@ Latest generated-stage2 frontier:
   float-printing stubs during generated-stage2 semantic inference. Receiverless
   semantic inference now also treats top-level `puts`/`print` as builtins,
   matching the HIR lowering corridor.
+- Generated `s2b` also moved past the debug-filter tuple-splat abort:
+  `debug_env_filter_match?`, `debug_hook_filter_match?`, and
+  `debug_class_repair_enabled_for?` are fixed-arity helpers now. The root was
+  bootstrap-hot debug support depending on variadic `*texts`, which generated
+  calls to unlowered `Tuple(String)#..._splat` helper bodies before actual
+  compile work could proceed. Current `puts 7 --no-prelude` full-codegen
+  frontier is now `STUB CALLED:
+  Tuple$LString$C$_Crystal$CCMIR$CCType$R$Hjoin$$IO_String_block`, while
+  `--no-codegen` stays clean.
 
-- Next frontier: re-measure the first failing generated-stage2 corridor after
-  the no-prelude print-mode fix. The previous `Tuple$Heach$$block` repro is now
-  green, so the next blocker must be rediscovered from the updated generated
-  compiler rather than assumed from stale notes.
+- Next frontier: reduce the tuple `join` block-stub shape from the updated
+  generated compiler. The previous `Tuple$Heach$$block` and
+  `debug_env_filter_match?..._splat` repros are now green/regression-guarded,
+  so the next blocker should be derived from
+  `Tuple(String, Crystal::MIR::Type)#join(IO, String, &block)`.
 
 Boundary: `src/crystal_v2.cr --no-prelude` still exits `11` in an
 inline-yield recursion / force-return corridor before it can serve as a green
@@ -515,10 +527,10 @@ pending-budget oracle.
 1. Re-measure the next generated-stage2 failure after the no-prelude print-mode
    fix, starting from the fast no-prelude runtime/oracle corpus instead of full
    bootstrap.
-2. Add a fast no-prelude oracle for the generated-stage2 `puts$String` hang, or
-   reduce it to the smallest HIR/MIR shape that reproduces without full wrapper
-   bootstrap.
-3. Fix the generated-stage2 `String#each(&)` block stub in prelude loading.
+2. Reduce the generated-stage2 `Tuple(String, Crystal::MIR::Type)#join`
+   block-stub frontier to the smallest no-prelude HIR/MIR shape.
+3. Fix the generated-stage2 `String#each(&)` / tuple block-stub family in
+   prelude loading only after the reduced shape proves the root.
 4. Compare `s1_bootstrap` and `s2b` on the fixed no-prelude corpus before
    trying `s3b+`.
 5. Add/inspect exact-called provenance for `record_pending_callee_for_rta` so

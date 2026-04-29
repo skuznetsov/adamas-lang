@@ -615,14 +615,24 @@ module CrystalV2
         end
       end
 
-      private def debug_env_filter_match?(env_key : String, *texts : String) : Bool
+      private def debug_env_filter_match?(
+        env_key : String,
+        text1 : String? = nil,
+        text2 : String? = nil,
+        text3 : String? = nil,
+        text4 : String? = nil
+      ) : Bool
         value = env_get(env_key)
         return false unless value
         return true if value.empty? || value == "1" || value == "true"
         tokens = value.split(',').map(&.strip).reject(&.empty?)
         return true if tokens.empty?
-        texts.any? do |text|
-          tokens.any? { |token| text.includes?(token) }
+
+        tokens.any? do |token|
+          (!text1.nil? && text1.includes?(token)) ||
+            (!text2.nil? && text2.includes?(token)) ||
+            (!text3.nil? && text3.includes?(token)) ||
+            (!text4.nil? && text4.includes?(token))
         end
       end
 
