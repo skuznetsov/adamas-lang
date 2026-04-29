@@ -511,12 +511,18 @@ Latest generated-stage2 frontier:
   frontier is now `STUB CALLED:
   Tuple$LString$C$_Crystal$CCMIR$CCType$R$Hjoin$$IO_String_block`, while
   `--no-codegen` stays clean.
+- The tuple `join` frontier was localized with lldb to
+  `LLVMIRGenerator#emit_extern_call`: `arg_entries.map { |(t, v, _)| ... }`
+  forced tuple formatting in generated stage2. That formatter is now an inline
+  indexed builder. The next full-codegen frontier is
+  `STUB CALLED: Crystal$CCEventLoop$Hclose$$IO$CCFileDescriptor`; the
+  `--no-codegen` probe remains clean.
 
-- Next frontier: reduce the tuple `join` block-stub shape from the updated
-  generated compiler. The previous `Tuple$Heach$$block` and
-  `debug_env_filter_match?..._splat` repros are now green/regression-guarded,
-  so the next blocker should be derived from
-  `Tuple(String, Crystal::MIR::Type)#join(IO, String, &block)`.
+- Next frontier: reduce the `Crystal::EventLoop#close(IO::FileDescriptor)`
+  full-codegen RTA gap from the updated generated compiler. The previous
+  `Tuple$Heach$$block`, `debug_env_filter_match?..._splat`, and
+  `Tuple(String, Crystal::MIR::Type)#join(IO, String, &block)` repros are now
+  green/regression-guarded.
 
 Boundary: `src/crystal_v2.cr --no-prelude` still exits `11` in an
 inline-yield recursion / force-return corridor before it can serve as a green
@@ -527,10 +533,11 @@ pending-budget oracle.
 1. Re-measure the next generated-stage2 failure after the no-prelude print-mode
    fix, starting from the fast no-prelude runtime/oracle corpus instead of full
    bootstrap.
-2. Reduce the generated-stage2 `Tuple(String, Crystal::MIR::Type)#join`
-   block-stub frontier to the smallest no-prelude HIR/MIR shape.
-3. Fix the generated-stage2 `String#each(&)` / tuple block-stub family in
-   prelude loading only after the reduced shape proves the root.
+2. Reduce the generated-stage2 `Crystal::EventLoop#close(IO::FileDescriptor)`
+   RTA gap to the smallest no-prelude HIR/MIR shape.
+3. Audit remaining compiler hot paths that use tuple block destructuring or
+   block `join` formatting; keep the general tuple-block fix as an explicit
+   follow-up rather than hiding it with one-off stubs.
 4. Compare `s1_bootstrap` and `s2b` on the fixed no-prelude corpus before
    trying `s3b+`.
 5. Add/inspect exact-called provenance for `record_pending_callee_for_rta` so

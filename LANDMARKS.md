@@ -1087,6 +1087,37 @@ Boundary: this is a root fix for debug helper splat usage, not a general tuple
 block lowering fix. The next generated-stage2 root is the tuple `join` block
 stub family. {F/G/R: 0.9/0.65/0.9} [verified]
 
+[LM-510|verified]: The tuple `join` generated-stage2 frontier was localized to
+backend extern-call argument formatting, not user `puts` semantics. An lldb
+abort backtrace for generated `puts 7 --no-prelude` showed:
+
+    Tuple(String, Crystal::MIR::Type)#join(IO, String, &block)
+    Tuple#to_s(IO)
+    Tuple#to_s
+    Crystal::MIR::LLVMIRGenerator#emit_extern_call
+
+The triggering source was `args = arg_entries.map { |(t, v, _)| "#{t} #{v}" }
+.join(", ")` in `emit_extern_call`. In generated stage2, that block
+destructuring / interpolation path could format the tuple itself and reach the
+unlowered tuple `join` block stub. The accepted fix keeps the formatting inline
+and indexed (`entry[0]`, `entry[1]`) so no new helper method must be discovered
+by RTA and no tuple `to_s`/block-join body is needed in this bootstrap-hot path.
+
+Evidence:
+
+- `crystal build src/crystal_v2.cr -o /tmp/cv2_extern_join_inline
+  --error-trace` -> exit 0.
+- `regression_tests/p2_bootstrap_semantic_emit_oracle.sh
+  /tmp/cv2_extern_join_inline` -> `p2_bootstrap_semantic_emit_oracle_ok`.
+- `regression_tests/p2_generated_stage2_no_prelude_puts_guard.sh
+  /tmp/cv2_extern_join_inline` -> `p2_generated_stage2_no_prelude_puts_guard_ok
+  frontier=eventloop_close_fd_rta_gap`.
+
+Boundary: this is a root fix for the current backend formatter dependency on
+tuple block formatting, not a general tuple block/destructuring implementation.
+The next generated-stage2 root is `Crystal::EventLoop#close(IO::FileDescriptor)`
+RTA/lowering discovery. {F/G/R: 0.9/0.62/0.9} [verified]
+
 ## Active Strategy
 
 - Main fast loop: `--no-prelude` oracles and focused STOP_AFTER_HIR budget

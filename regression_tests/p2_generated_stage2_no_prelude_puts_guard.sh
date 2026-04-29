@@ -182,6 +182,14 @@ if grep -q 'STUB CALLED: Atomic\$L.*\$R\$Hatomicrmw' "$COMPILE_LOG"; then
   exit 0
 fi
 
+# 2026-04-28: fixed backend extern-call argument formatting no longer reaches
+# Tuple#join / Tuple#to_s in generated stage2. The next full-codegen frontier
+# is an unlowered EventLoop close overload reached while compiling `puts 7`.
+if grep -q 'STUB CALLED: Crystal\$CCEventLoop\$Hclose\$\$IO\$CCFileDescriptor' "$COMPILE_LOG"; then
+  echo "p2_generated_stage2_no_prelude_puts_guard_ok frontier=eventloop_close_fd_rta_gap"
+  exit 0
+fi
+
 # Fall back to a secondary probe with --no-codegen. The previous recorded
 # frontier (nilable-Array `check_index_out_of_bounds` ABORT stub) was cleared
 # by LM-500: the private Indexable helper is now in the lazy-RTA allowlist, so

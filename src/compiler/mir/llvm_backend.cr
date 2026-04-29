@@ -21228,7 +21228,17 @@ module Crystal::MIR
         end
       end
 
-      args = arg_entries.map { |(t, v, _)| "#{t} #{v}" }.join(", ")
+      args = String.build do |io|
+        first_arg = true
+        arg_entries.each do |entry|
+          if first_arg
+            first_arg = false
+          else
+            io << ", "
+          end
+          io << entry[0] << " " << entry[1]
+        end
+      end
       @extern_call_arg_join_calls += 1
       @extern_call_arg_join_items += arg_entries.size
       @extern_call_arg_join_bytes += args.bytesize
