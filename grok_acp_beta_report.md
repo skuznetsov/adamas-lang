@@ -148,3 +148,14 @@
 **Adversary check:** local phase-split instrumentation showed the real breakdown: `lower_missing.initial` alone adds `+25290` functions in `144271.9ms`; stale-call repair, receiver repair, allocator flush, and final missing add only about 400 functions. The correct next target is demand admitted by the initial concrete-call sweep, not scan order.
 **Verdict:** useful as a routing sidecar, not sufficient as patch authority. For optimization/demand-model work, Grok's recommended code shape needs a local fixed-point equivalence check before acceptance.
 **Cost saved:** ~2-4k Codex-токенов on source routing; cost increased slightly from implementing and reverting the unsafe delta-scan experiment.
+
+### Session 8 — 2026-04-29 — post-macro-JSON lower_missing follow-up
+**Task:** read-only audit after replacing `MacroExpander` diagnostic `Hash#to_json` with a scalar JSONL writer; identify the next likely `lower_missing.initial` supplier without broad filtering.
+**Brief size:** ~12 lines, ~1.3 KB, file `/tmp/grok_macro_json_followup/task.txt`.
+**Latency:** ran in parallel with the local `DEBUG_MISSING_SUMMARY` full-source pass; produced a final answer before local triage continued.
+**Output quality:** useful routing. Grok correctly shifted attention from generic `to_json` to the RTA/tracked-callsite/lower-missing boundary and highlighted that virtual calls are recorded as method parts but not live owners during RTA scanning.
+**What worked:** concise root-chain across `scan_hir_function_for_live_types`, `emit_all_tracked_signatures`, and `lower_missing_call_targets`; the suggested highest-probability supplier matched the local missing summary after `JSON::Builder` disappeared (`IO#<<`, `Proc#call`, hash/object-id helpers).
+**What did not:** still framed some effects too broadly (`VOID` signature skip / AST filter) without proving they dominate this run. The actionable patch must be locally falsified against `Call#virtual` semantics and MIR vdispatch, not adopted directly.
+**Adversary check:** local source reads confirmed `HIR::Call` carries `virtual`, MIR lowers virtual calls via `lower_virtual_dispatch` before direct lookup, and `lower_missing_call_targets` currently treats every `Call` as concrete body demand. This is now the next separate hypothesis, not bundled with the macro JSON fix.
+**Verdict:** useful as a cheap hypothesis router for the next branch. Continue using it for bounded read-only audits; keep local fixed-point and no-prelude verification as the commit gate.
+**Cost saved:** ~2-3k Codex tokens on source routing and hypothesis ranking.

@@ -1,5 +1,4 @@
 require "set"
-require "json"
 require "semantic_version"
 require "../frontend/ast"
 require "../frontend/lexer"
@@ -12,6 +11,68 @@ require "./macro_value"
 module CrystalV2
   module Compiler
     module Semantic
+      # Small JSONL writer for macro-expansion diagnostics.
+      #
+      # Keep this local and scalar-only: using Hash#to_json here pulls generic
+      # JSON container serialization into the compiler's own bootstrap demand
+      # graph even when the diagnostic branch is runtime-disabled.
+      module MacroDiagJson
+        def self.write_string(io : IO, value : String) : Nil
+          io << '"'
+          value.each_byte do |byte|
+            case byte
+            when 34 # "
+              io << "\\\""
+            when 92 # \
+              io << "\\\\"
+            when 8
+              io << "\\b"
+            when 12
+              io << "\\f"
+            when 10
+              io << "\\n"
+            when 13
+              io << "\\r"
+            when 9
+              io << "\\t"
+            else
+              if byte < 0x20
+                hex = byte.to_s(16)
+                io << "\\u00"
+                io << '0' if hex.bytesize == 1
+                io << hex
+              else
+                io.write_byte(byte)
+              end
+            end
+          end
+          io << '"'
+        end
+
+        def self.write_sep(io : IO, first : Bool) : Nil
+          io << ',' unless first
+        end
+
+        def self.write_string_field(io : IO, key : String, value : String, first : Bool = false) : Nil
+          write_sep(io, first)
+          write_string(io, key)
+          io << ':'
+          write_string(io, value)
+        end
+
+        def self.write_int_field(io : IO, key : String, value : Int, first : Bool = false) : Nil
+          write_sep(io, first)
+          write_string(io, key)
+          io << ':' << value
+        end
+
+        def self.write_float_field(io : IO, key : String, value : Float64, first : Bool = false) : Nil
+          write_sep(io, first)
+          write_string(io, key)
+          io << ':' << value
+        end
+      end
+
       # :nodoc:
       # Env CRYSTAL_V2_MACRO_BODY_OUTPUT_STATS_DUMP=1: one JSON object per macro body key at process exit
       # (global aggregate across all MacroExpander instances). Sorted by cumulative_bytes desc, then key fields.
@@ -77,18 +138,20 @@ module CrystalV2
             end
             rows.each do |r|
               avg = r.cumulative_bytes.to_f / r.call_count.to_f
-              STDERR.puts({
-                "macro_file"        => r.macro_file,
-                "body_id"           => r.body_id,
-                "span_start_line"   => r.span_start,
-                "span_end_line"     => r.span_end,
-                "pieces_count"      => r.pieces_count,
-                "call_count"        => r.call_count,
-                "cumulative_bytes"  => r.cumulative_bytes,
-                "single_bytes_max"  => r.single_bytes_max,
-                "single_bytes_last" => r.single_bytes_last,
-                "avg_bytes"         => avg,
-              }.to_json)
+              STDERR.puts(String.build do |io|
+                io << '{'
+                MacroDiagJson.write_string_field(io, "macro_file", r.macro_file, first: true)
+                MacroDiagJson.write_int_field(io, "body_id", r.body_id)
+                MacroDiagJson.write_int_field(io, "span_start_line", r.span_start)
+                MacroDiagJson.write_int_field(io, "span_end_line", r.span_end)
+                MacroDiagJson.write_int_field(io, "pieces_count", r.pieces_count)
+                MacroDiagJson.write_int_field(io, "call_count", r.call_count)
+                MacroDiagJson.write_int_field(io, "cumulative_bytes", r.cumulative_bytes)
+                MacroDiagJson.write_int_field(io, "single_bytes_max", r.single_bytes_max)
+                MacroDiagJson.write_int_field(io, "single_bytes_last", r.single_bytes_last)
+                MacroDiagJson.write_float_field(io, "avg_bytes", avg)
+                io << '}'
+              end)
             end
           end
         end
@@ -1446,16 +1509,18 @@ module CrystalV2
           end
 
           if @macro_body_giant_diag && (sz >= @macro_body_giant_single_bytes || cum >= @macro_body_giant_cumulative_bytes)
-            STDERR.puts({
-              "kind"             => "macro_body_giant",
-              "macro_file"       => path,
-              "span_start_line"  => span.start_line,
-              "span_end_line"    => span.end_line,
-              "pieces_count"     => pieces_count,
-              "single_bytes"     => sz,
-              "cumulative_bytes" => cum,
-              "call_count"       => calls,
-            }.to_json)
+            STDERR.puts(String.build do |io|
+              io << '{'
+              MacroDiagJson.write_string_field(io, "kind", "macro_body_giant", first: true)
+              MacroDiagJson.write_string_field(io, "macro_file", path)
+              MacroDiagJson.write_int_field(io, "span_start_line", span.start_line)
+              MacroDiagJson.write_int_field(io, "span_end_line", span.end_line)
+              MacroDiagJson.write_int_field(io, "pieces_count", pieces_count)
+              MacroDiagJson.write_int_field(io, "single_bytes", sz)
+              MacroDiagJson.write_int_field(io, "cumulative_bytes", cum)
+              MacroDiagJson.write_int_field(io, "call_count", calls)
+              io << '}'
+            end)
           end
         end
 

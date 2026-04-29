@@ -86,6 +86,25 @@ and grew the HIR set to 47120 functions. Next work should reduce concrete-call
 demand admitted by `lower_missing.initial`, not optimize allocator flush first.
 {F/G/R: 0.93/0.58/0.93} [verified]
 
+[LM-518|verified]: Env-gated macro-body diagnostics were a real but partial
+source-demand leak because `MacroExpander` imported `json` solely for
+diagnostic output and used `Hash#to_json` inside runtime-disabled branches. HIR
+still lowers whole method bodies, so those branches pulled generic
+`Array/Hash/Set#to_json` and `JSON::Builder` into the compiler bootstrap graph.
+The root fix replaced the two diagnostic `.to_json` calls with a local
+scalar-only `MacroDiagJson` writer and removed `require "json"` from
+`src/compiler/semantic/macro_expander.cr`. Evidence:
+`crystal build src/crystal_v2.cr -o /tmp/cv2_macro_json_free --error-trace`;
+`regression_tests/p2_pending_budget_no_prelude.sh /tmp/cv2_macro_json_free`
+printed `process_delta=2 emit_delta=4 lower_missing_delta=0 total=40
+max_queue=29`; the p2 semantic emit, backend-intrinsic, and each-index
+no-prelude guards passed; full-source `STOP_AFTER_HIR` exited in about 201s
+with `42859` functions and no `JSON::Builder`/generic `to_json` top supplier in
+the fresh missing summary. Boundary: the remaining `lower_missing.initial`
+volume is still about `+25104`, now dominated by virtual/abstract calls
+(`IO#<<`, `Proc#call`) and hash/object-id helper corridors, so this is not the
+final bootstrap fix. {F/G/R: 0.94/0.58/0.94} [verified]
+
 [LM-462|verified]: Bootstrap semantic-equivalence scaffolding exists as a thin
 scripts-only layer over the current bootstrap ladder. `scripts/build_bootstrap_stages.sh`
 wraps `scripts/bootstrap_chain.sh` and exposes stable names

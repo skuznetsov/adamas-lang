@@ -56,6 +56,25 @@ lowering `Body 20001/35221`, so the next root is the concrete-call demand
 volume created by the initial missing-target sweep; MIR/allocator symptoms are
 secondary until that reachable HIR set shrinks.
 
+Macro diagnostic JSON checkpoint (2026-04-29): one confirmed supply leak was
+`src/compiler/semantic/macro_expander.cr` importing `json` only for env-gated
+macro-body diagnostics and using `Hash#to_json` inside diagnostic branches. HIR
+lowers whole method bodies, so the runtime-disabled branches still pulled
+generic `Array/Hash/Set#to_json` and `JSON::Builder` into the compiler's own
+demand graph. The fix removes the `json` require from `MacroExpander` and uses
+a scalar-only `MacroDiagJson` JSONL writer. Evidence:
+`crystal build src/crystal_v2.cr -o /tmp/cv2_macro_json_free --error-trace`,
+`p2_pending_budget_no_prelude.sh` -> `total=40 lower_missing_delta=0`,
+`p2_bootstrap_semantic_emit_oracle.sh`,
+`p2_backend_intrinsic_boundary_no_prelude.sh`, and
+`p2_each_index_block_param_no_prelude.sh` all passed. Full-source
+`STOP_AFTER_HIR` improves modestly (`42859` functions, exit ~201s), and the
+fresh missing summary no longer shows `JSON::Builder`/generic `to_json` in the
+top suppliers. Boundary: this is a real root fix for diagnostic JSON demand,
+not the final `lower_missing.initial` fix; the next supplier is now dominated
+by virtual/abstract calls such as `IO#<<`, `Proc#call`, hash key helpers, and
+formatting/object-id corridors.
+
 Macro control checkpoint (2026-04-29): full-prelude Kqueue HIR no longer
 registers both sides of the Darwin `LibC.has_constant?(:EVFILT_USER)` macro
 inside `Crystal::EventLoop::Kqueue#after_fork`. The root was registration
