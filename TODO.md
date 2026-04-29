@@ -30,6 +30,24 @@ Working policy:
 
 ## Current Checkpoint
 
+LLVM value-lookup iterator checkpoint (2026-04-29): after removing the
+debug-cache tuple key, generated `cv2_s2` reached LLVM emission for the
+no-prelude smoke and crashed inside `LLVMIRGenerator#value_ref(UInt32)` from
+`emit_extern_call`. The first bounded attempt only replaced
+`@current_func_params.any? { |p| p.index == id }`, which moved the crash into
+`find_def_inst` at `block.instructions.find { |inst| inst.id == id }`. The
+root pattern is the same: this backend materialization path does not need
+closure/Enumerable helpers, and generated stage2 is still fragile around block
+iterator helpers in this hot lookup corridor. The fix uses direct while loops
+for both parameter-index lookup and definition lookup. Evidence:
+`crystal build src/crystal_v2.cr -o /tmp/cv2_value_ref_def_loop --error-trace`;
+`p2_bootstrap_semantic_emit_oracle.sh`, `p2_pending_budget_no_prelude.sh`,
+`p2_universal_helper_fanout_no_prelude.sh`, and `p1_ir_shape_check.sh` pass
+with `/tmp/cv2_value_ref_def_loop`; canonical `s1 -> s2` still builds `cv2_s2`
+in about 229s. Boundary: generated `cv2_s2` smoke still fails, but ASLR-enabled
+LLDB now stops later in `File.new_internal -> File.open -> CLI#file_sha256`,
+not in `LLVMIRGenerator#value_ref` or `find_def_inst`.
+
 Debug line-scope cache checkpoint (2026-04-29): the generated `cv2_s2`
 no-prelude smoke no longer crashes in `__crystal_v2_string_eq` through
 `Hash(Tuple(String, Int32), UInt32)#fetch ->

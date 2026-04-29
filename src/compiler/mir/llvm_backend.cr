@@ -2560,6 +2560,18 @@ module Crystal::MIR
     end
 
     @[AlwaysInline]
+    private def current_func_param_index?(id : ValueId) : Bool
+      i = 0
+      while i < @current_func_params.size
+        if param = @current_func_params[i]?
+          return true if param.index == id
+        end
+        i += 1
+      end
+      false
+    end
+
+    @[AlwaysInline]
     private def posix_open_flag_creat : Int32
       # Linux/Android use O_CREAT=64, Darwin/BSD use O_CREAT=0x200.
       if @target_triple.includes?("linux") || @target_triple.includes?("android")
@@ -24486,7 +24498,7 @@ module Crystal::MIR
               @constant_values.has_key?(id) ||
               @cross_block_slots.has_key?(id) ||
               @emitted_allocas.includes?(id) ||
-              @current_func_params.any? { |p| p.index == id } ||
+              current_func_param_index?(id) ||
               @emitted_value_types.has_key?(ref_name)
             unless has_materialized_ref
               # Keep named SSA values when MIR still has a concrete definition.
@@ -24544,7 +24556,14 @@ module Crystal::MIR
     private def find_def_inst(id : ValueId)
       if block_id = @value_def_block[id]?
         if block = @current_func_blocks[block_id]?
-          return block.instructions.find { |inst| inst.id == id }
+          instructions = block.instructions
+          i = 0
+          while i < instructions.size
+            if inst = instructions[i]?
+              return inst if inst.id == id
+            end
+            i += 1
+          end
         end
       end
       nil

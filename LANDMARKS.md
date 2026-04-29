@@ -12,6 +12,28 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-525|verified]: LLVM value lookup in the generated-stage2 backend must avoid
+block iterator helpers in the materialization predicate. After LM-524 removed
+the debug-cache tuple-key crash, generated `cv2_s2` crashed in
+`LLVMIRGenerator#value_ref(UInt32)` from `emit_extern_call`. LLDB disassembly
+localized the first stop to
+`@current_func_params.any? { |p| p.index == id }`; replacing only that iterator
+with a direct loop moved the crash into
+`find_def_inst` at `block.instructions.find { |inst| inst.id == id }`. The root
+pattern is not a missing default value: this hot backend lookup corridor was
+using closure/Enumerable helpers while generated stage2 still has fragile block
+helper ABI paths. The fix replaces both predicates with direct while loops,
+preserving the same lookup semantics without invoking block iterators.
+Evidence: `crystal build src/crystal_v2.cr -o /tmp/cv2_value_ref_def_loop
+--error-trace`; `p2_bootstrap_semantic_emit_oracle.sh`,
+`p2_pending_budget_no_prelude.sh`, `p2_universal_helper_fanout_no_prelude.sh`,
+and `p1_ir_shape_check.sh` pass with `/tmp/cv2_value_ref_def_loop`; canonical
+`s1 -> s2` builds `cv2_s2` in about 229s. ASLR-enabled LLDB now stops later in
+`File.new_internal -> File.open -> CLI#file_sha256`, not in
+`LLVMIRGenerator#value_ref` or `find_def_inst`. Boundary: this is a backend
+self-host hot-path hardening, not a general block ABI fix; block/proc carrier
+work remains tracked separately. {F/G/R: 0.90/0.56/0.91} [verified]
+
 [LM-524|verified]: MIR debug line-scope caching must avoid tuple keys under
 self-hosted stage2. After the class-method nested-yield fix, generated `cv2_s2`
 still built, but the no-prelude smoke segfaulted after `lower_main: exprs=5`.
