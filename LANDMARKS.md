@@ -1737,3 +1737,61 @@ helper demand in the initial missing-target sweep.
 - Rare full gate: `s1 -> s5b` plus normalized HIR/MIR/LL equality.
 - Do not run `s3b+` until generated `s2b` passes the fixed no-prelude corpus and
   normalized `s1_bootstrap` vs `s2b` semantic comparison.
+
+[LM-521|verified]: known emitted LLVM SSA type must dominate stale MIR/def type
+hints when adapting call arguments.
+
+Findings:
+
+- After LM-520, canonical `s1 -> s2` no longer timed out but `llc` rejected
+  the generated stage2 LLVM IR: `%eq_ptr_to_fp.158.bits64 = ptrtoint ptr %r685
+  to i64` while `%r685` was defined as `double`.
+- The failing instruction came from the call-argument formatter's
+  `eq_ptr_to_fp` path, not from the generic `BinaryOp` comparison lowering.
+  In the `expected_llvm_type == actual_llvm_type` branch, `value_ref(a)` can
+  return an SSA value whose actual emitted LLVM type is already recorded in
+  `@emitted_value_types`.
+- The bug was an evidence ordering problem: an older `find_def_inst(a).type`
+  hint still said `ptr`, and the formatter used that stale fact to force a
+  packed-scalar `ptrtoint` decode even when the newer emitted-type fact said
+  the actual SSA value was already `double`.
+
+Fix:
+
+- Split `known_emitted_actual` from the fallback `emitted_actual`.
+- Decode packed pointer scalar bits for float/double arguments only when the
+  known emitted SSA type is `ptr`, or when no emitted-type fact exists and the
+  stale def-type hint is the only available evidence.
+- This preserves the existing packed scalar ABI path while preventing
+  `ptrtoint ptr` from being emitted against known `float`/`double` SSA values.
+
+Evidence:
+
+- `crystal build src/crystal_v2.cr -o /tmp/cv2_arg_fp_known_type
+  --error-trace` -> exit 0.
+- `regression_tests/p2_bootstrap_semantic_emit_oracle.sh
+  /tmp/cv2_arg_fp_known_type`,
+  `regression_tests/p2_nested_generic_new_inference.sh
+  /tmp/cv2_arg_fp_known_type`,
+  `regression_tests/p2_backend_intrinsic_boundary_no_prelude.sh
+  /tmp/cv2_arg_fp_known_type`,
+  `regression_tests/p2_pending_budget_no_prelude.sh
+  /tmp/cv2_arg_fp_known_type`,
+  `regression_tests/p2_universal_helper_fanout_no_prelude.sh
+  /tmp/cv2_arg_fp_known_type`,
+  `regression_tests/p2_object_id_responds_to_semantics.sh
+  /tmp/cv2_arg_fp_known_type`,
+  `regression_tests/p1_ir_shape_check.sh /tmp/cv2_arg_fp_known_type`, and
+  `regression_tests/abstract_class_method_dispatch_synth.sh` all passed.
+- Canonical `s1 -> s2`:
+  `BOOTSTRAP_STAGE_OUT=/tmp/cv2_bs_s2_arg_fp_known
+  BOOTSTRAP_CHAIN_STAGES=2 BOOTSTRAP_TIMEOUT_SEC=300 BOOTSTRAP_MEM_MB=4096
+  scripts/build_bootstrap_stages.sh --stages 2 --out
+  /tmp/cv2_bs_s2_arg_fp_known` built stage2 successfully:
+  `STAGE 2 BUILD: ok wall=215.71s peak_rss≈2342.52MB`.
+
+Boundary: generated `s2` now builds, but both smoke tests abort immediately
+during parser setup with
+`STUB CALLED: CrystalV2$CCCompiler$CCFrontend$CCNode$Hspan`. That is the next
+runtime/vdispatch frontier; no `s2 -> s3` attempt yet.
+{F/G/R: 0.92/0.62/0.91} [verified]

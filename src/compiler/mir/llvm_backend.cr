@@ -19651,14 +19651,15 @@ module Crystal::MIR
                  elsif expected_llvm_type == actual_llvm_type
                    val = value_ref(a)
                    val_key = val.starts_with?('%') ? val[1..] : val
-                   emitted_actual = @emitted_value_types[val]? || @emitted_value_types[val_key]? || actual_llvm_type
+                   known_emitted_actual = @emitted_value_types[val]? || @emitted_value_types[val_key]?
+                   emitted_actual = known_emitted_actual || actual_llvm_type
                    def_actual_llvm = if def_inst = find_def_inst(a)
                                        @type_mapper.llvm_type(def_inst.type)
                                      else
                                        actual_llvm_type
                                      end
                    if (expected_llvm_type == "float" || expected_llvm_type == "double") &&
-                      (emitted_actual == "ptr" || def_actual_llvm == "ptr")
+                      (known_emitted_actual == "ptr" || (known_emitted_actual.nil? && def_actual_llvm == "ptr"))
                      # value_ref can return a ptr SSA even when MIR says float/double.
                      # Decode packed scalar bits before passing to the callee.
                      c = @cond_counter

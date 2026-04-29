@@ -30,6 +30,22 @@ Working policy:
 
 ## Current Checkpoint
 
+Call-argument known-emitted-type checkpoint (2026-04-29): generated stage2
+now builds successfully. The immediate `llc` frontier after the return-type
+force-lower fix was an invalid call-argument adaptation:
+`%eq_ptr_to_fp.* = ptrtoint ptr %r685 to i64` even though `%r685` had already
+been emitted as `double`. The root was that the call formatter trusted an old
+`find_def_inst(a).type == ptr` hint after `value_ref(a)` had produced an SSA
+value with a newer `@emitted_value_types` entry. The fix preserves the packed
+scalar decode path, but only when the known emitted SSA type is actually `ptr`
+or when there is no emitted-type fact and the older definition type is still
+the only available evidence. Evidence: `crystal build src/crystal_v2.cr -o
+/tmp/cv2_arg_fp_known_type --error-trace`, fast p1/p2 guards, and canonical
+`BOOTSTRAP_CHAIN_STAGES=2 ... scripts/build_bootstrap_stages.sh --stages 2`
+all passed through the previous LLVM verifier/llc error. The new current
+frontier is generated `s2` smoke aborting immediately in parser setup with
+`STUB CALLED: CrystalV2$CCCompiler$CCFrontend$CCNode$Hspan`.
+
 Return-type force-lower checkpoint (2026-04-29): call lowering now force-lowers
 pending call targets only when the current return type is still `VOID`, a
 union that needs exact variant shape, or an unresolved generic placeholder. The
@@ -43,10 +59,9 @@ in `Crystal::System::Dir.current` (`File.info?` union PHI mismatch), so unions
 remain force-refreshed. Evidence: full-source `STOP_AFTER_HIR` now reports
 `process_pending: 316 -> 588 (+272)` and exits in about 137s instead of the
 previous `process_pending +14225` / about 234s; canonical `s1 -> s2` no longer
-times out and now reaches `llc` after about 166s. Boundary: `lower_missing`
-still materializes about 35k functions, and the current bootstrap frontier is
-an LLVM type-emission error:
-`ptrtoint ptr %r685` where `%r685` is `double` in `cv2_s2.ll`.
+times out and reached `llc` after about 166s. Boundary: `lower_missing` still
+materializes about 35k functions; the resulting `ptrtoint`/`double` LLVM
+frontier is resolved by the call-argument known-emitted-type checkpoint above.
 
 Nested generic namespace checkpoint (2026-04-29): method/overload lookup now
 strips generic arguments per namespace segment instead of truncating the owner

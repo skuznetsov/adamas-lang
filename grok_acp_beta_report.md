@@ -192,3 +192,31 @@
 **Adversary check:** local evidence did not depend on Grok. `timeout_sample_lldb.sh` found the previous root in `force_pending_call_targets_for_return_type`; the new frontier was reproduced by canonical `scripts/build_bootstrap_stages.sh --stages 2`, which now reaches `llc` after about 166s and fails on the `double`/`ptrtoint` mismatch.
 **Verdict:** no value for this checkpoint. Keep Grok optional and non-blocking; record failures so the ACP/headless workflow can be improved later.
 **Cost saved:** none.
+
+### Session 12 — 2026-04-29 — generated s2 Node#span smoke frontier
+**Task:** read-only audit the new frontier after the local `ptrtoint`/`double`
+fix: canonical `s1 -> s2` now builds generated stage2, but both smoke tests
+abort in parser setup with `STUB CALLED:
+CrystalV2$CCCompiler$CCFrontend$CCNode$Hspan`.
+**Brief size:** ~10 lines, ~0.9 KB, file
+`/tmp/grok_node_span_frontier/task.txt`.
+**Latency:** produced only initialization output before local checkpoint/docs
+were ready.
+**Output quality:** not useful. The captured output again contained startup
+warnings only: corrupted researcher persona TOML, plugin collision warnings,
+untrusted hooks warning, and MCP handshake failures for playwright and
+cogniformerus. No source findings or patch proposal were emitted.
+**What worked:** the sidecar stayed isolated and did not block the canonical
+bootstrap run or commit preparation.
+**What did not:** headless `grok --prompt-file` remains unreliable in this
+environment for compiler-audit tasks; repeated runs frequently never reach
+actionable source analysis.
+**Adversary check:** local evidence did not depend on Grok. The bootstrap
+result itself proved the old LLVM frontier is resolved and exposed the next
+runtime/vdispatch frontier. `abstract_class_method_dispatch_synth.sh` also
+passed, so the new `Node#span` abort is not the old hardcoded vdispatch symbol
+regression.
+**Verdict:** no value for this checkpoint. Continue treating Grok as a
+non-blocking beta sidecar; consider a dedicated wrapper/skill that strips noisy
+plugin/MCP startup or uses a simpler prompt channel.
+**Cost saved:** none.
