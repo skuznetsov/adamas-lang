@@ -1771,8 +1771,9 @@ module CrystalV2
 
         getter specs : Array(AccessorSpec)
         getter? is_class : Bool # true for class_getter, false for getter
+        getter visibility : Visibility?
 
-        def initialize(@span : Span, @specs : Array(AccessorSpec), @is_class : Bool = false)
+        def initialize(@span : Span, @specs : Array(AccessorSpec), @is_class : Bool = false, @visibility : Visibility? = nil)
         end
       end
 
@@ -1785,8 +1786,9 @@ module CrystalV2
 
         getter specs : Array(AccessorSpec)
         getter? is_class : Bool # true for class_setter, false for setter
+        getter visibility : Visibility?
 
-        def initialize(@span : Span, @specs : Array(AccessorSpec), @is_class : Bool = false)
+        def initialize(@span : Span, @specs : Array(AccessorSpec), @is_class : Bool = false, @visibility : Visibility? = nil)
         end
       end
 
@@ -1799,8 +1801,9 @@ module CrystalV2
 
         getter specs : Array(AccessorSpec)
         getter? is_class : Bool # true for class_property, false for property
+        getter visibility : Visibility?
 
-        def initialize(@span : Span, @specs : Array(AccessorSpec), @is_class : Bool = false)
+        def initialize(@span : Span, @specs : Array(AccessorSpec), @is_class : Bool = false, @visibility : Visibility? = nil)
         end
       end
 
@@ -3216,6 +3219,22 @@ module CrystalV2
       end
 
       def self.node_accessor_specs(node : TypedNode)
+        nil
+      end
+
+      def self.node_accessor_visibility(node : GetterNode)
+        node.visibility
+      end
+
+      def self.node_accessor_visibility(node : SetterNode)
+        node.visibility
+      end
+
+      def self.node_accessor_visibility(node : PropertyNode)
+        node.visibility
+      end
+
+      def self.node_accessor_visibility(node : TypedNode)
         nil
       end
 

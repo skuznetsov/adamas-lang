@@ -30,6 +30,20 @@ Working policy:
 
 ## Current Checkpoint
 
+Visibility accessor checkpoint (2026-04-29): parser/HIR now preserve
+`private`/`protected` on accessor macros instead of dropping the modifier at
+`private getter` / `protected property` parse time. Accessor nodes carry
+visibility through LSP AST cache, generated accessor registrations mirror it
+into HIR method metadata, and both normal call lowering and property-style
+member access reject explicit non-self calls to private accessors. Evidence:
+`crystal spec spec/parser/parser_visibility_spec.cr --error-trace`,
+`crystal build src/crystal_v2.cr -o /private/tmp/cv2_visibility --error-trace`,
+`regression_tests/p2_visibility_private_accessor_no_prelude.sh
+/private/tmp/cv2_visibility`, and `bash -n
+regression_tests/p2_visibility_private_accessor_no_prelude.sh`. Boundary:
+broader top-level visibility semantics for constants/types/macros are not yet
+fully aligned with original Crystal's top-level visitor.
+
 LLVM value-lookup iterator checkpoint (2026-04-29): after removing the
 debug-cache tuple key, generated `cv2_s2` reached LLVM emission for the
 no-prelude smoke and crashed inside `LLVMIRGenerator#value_ref(UInt32)` from

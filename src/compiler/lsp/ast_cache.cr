@@ -961,6 +961,7 @@ module CrystalV2
             write_span(io, getter_node.span)
             write_accessor_specs(io, getter_node.specs, string_table)
             io.write_byte(getter_node.is_class? ? 1_u8 : 0_u8)
+            write_optional_visibility(io, getter_node.visibility)
 
           when Frontend::NodeKind::Setter
             setter_node = node.as(Frontend::SetterNode)
@@ -968,6 +969,7 @@ module CrystalV2
             write_span(io, setter_node.span)
             write_accessor_specs(io, setter_node.specs, string_table)
             io.write_byte(setter_node.is_class? ? 1_u8 : 0_u8)
+            write_optional_visibility(io, setter_node.visibility)
 
           when Frontend::NodeKind::Property
             prop_node = node.as(Frontend::PropertyNode)
@@ -975,6 +977,7 @@ module CrystalV2
             write_span(io, prop_node.span)
             write_accessor_specs(io, prop_node.specs, string_table)
             io.write_byte(prop_node.is_class? ? 1_u8 : 0_u8)
+            write_optional_visibility(io, prop_node.visibility)
 
           when Frontend::NodeKind::Require
             req_node = node.as(Frontend::RequireNode)
@@ -1835,19 +1838,22 @@ module CrystalV2
             span = read_span(io)
             specs = read_accessor_specs(io, strings, pool)
             is_class = io.read_byte.not_nil! == 1_u8
-            Frontend::GetterNode.new(span, specs, is_class)
+            visibility = read_optional_visibility(io)
+            Frontend::GetterNode.new(span, specs, is_class, visibility)
 
           when .setter_node?
             span = read_span(io)
             specs = read_accessor_specs(io, strings, pool)
             is_class = io.read_byte.not_nil! == 1_u8
-            Frontend::SetterNode.new(span, specs, is_class)
+            visibility = read_optional_visibility(io)
+            Frontend::SetterNode.new(span, specs, is_class, visibility)
 
           when .property_node?
             span = read_span(io)
             specs = read_accessor_specs(io, strings, pool)
             is_class = io.read_byte.not_nil! == 1_u8
-            Frontend::PropertyNode.new(span, specs, is_class)
+            visibility = read_optional_visibility(io)
+            Frontend::PropertyNode.new(span, specs, is_class, visibility)
 
           when .require_node?
             span = read_span(io)

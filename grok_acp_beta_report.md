@@ -339,3 +339,28 @@ passes on `/private/tmp/cv2_namedtuple_keys`, fails on the previous
 stricter: require a hard timebox, "return partial findings after N files", and
 avoid waiting for completion when local falsifiers are already running.
 **Cost saved:** none; minor token cost only for recording the failed sidecar.
+
+### Session 17 — 2026-04-29 — VisibilityModifier/accessor review
+**Task:** read-only audit of parser/HIR visibility handling around
+`VisibilityModifierNode`, accessor macros, and repeated class/module body
+unwrapping paths.
+**Brief size:** one inline ACP prompt, focused on
+`src/compiler/frontend/parser.cr`, `src/compiler/frontend/ast.cr`, and
+`src/compiler/hir/ast_to_hir.cr`.
+**Latency:** timed out after 180s waiting for stdout.
+**Output quality:** no usable final answer. The saved transcript was stale and
+unrelated to the requested visibility audit, apparently from an older union
+alias investigation.
+**What worked:** nothing actionable for this checkpoint; local source review
+and no-prelude regression drove the fix.
+**What did not:** ACP state/transcript reuse appears unsafe after timeout. The
+sidecar can return or preserve stale content that does not match the current
+prompt, so local verification must treat missing/final-less Grok output as no
+evidence.
+**Adversary check:** local findings were independently verified against
+original Crystal's visibility handling and with a no-prelude private accessor
+oracle.
+**Verdict:** failed sidecar session. For future visibility-scale audits, use a
+fresh Grok 4.1 Fast structured-function flow if available, or require the ACP
+wrapper to include prompt/session ids in the returned transcript.
+**Cost saved:** none.

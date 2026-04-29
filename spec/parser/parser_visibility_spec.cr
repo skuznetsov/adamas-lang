@@ -52,6 +52,44 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       CrystalV2::Compiler::Frontend.node_def_visibility(method_node).should eq(CrystalV2::Compiler::Frontend::Visibility::Protected)
     end
 
+    it "preserves private accessor macro visibility" do
+      source = <<-CRYSTAL
+      class MyClass
+        private getter secret : Int32
+      end
+      CRYSTAL
+
+      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      program = parser.parse_program
+
+      arena = program.arena
+      class_node = arena[program.roots.first]
+      class_body = CrystalV2::Compiler::Frontend.node_class_body(class_node).not_nil!
+      getter_node = arena[class_body[0]]
+
+      CrystalV2::Compiler::Frontend.node_kind(getter_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Getter)
+      CrystalV2::Compiler::Frontend.node_accessor_visibility(getter_node).should eq(CrystalV2::Compiler::Frontend::Visibility::Private)
+    end
+
+    it "preserves protected accessor macro visibility" do
+      source = <<-CRYSTAL
+      class MyClass
+        protected property value : Int32
+      end
+      CRYSTAL
+
+      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      program = parser.parse_program
+
+      arena = program.arena
+      class_node = arena[program.roots.first]
+      class_body = CrystalV2::Compiler::Frontend.node_class_body(class_node).not_nil!
+      property_node = arena[class_body[0]]
+
+      CrystalV2::Compiler::Frontend.node_kind(property_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Property)
+      CrystalV2::Compiler::Frontend.node_accessor_visibility(property_node).should eq(CrystalV2::Compiler::Frontend::Visibility::Protected)
+    end
+
     it "parses public method (default)" do
       source = <<-CRYSTAL
       class MyClass

@@ -566,7 +566,8 @@ module Crystal::HIR
     owner : String,
     spec : CrystalV2::Compiler::Frontend::AccessorSpec,
     arena : CrystalV2::Compiler::Frontend::ArenaLike,
-    kind : Symbol
+    kind : Symbol,
+    visibility : CrystalV2::Compiler::Frontend::Visibility? = nil
 
   # Generic class template (not yet specialized)
   record GenericClassTemplate,
@@ -1597,6 +1598,7 @@ module Crystal::HIR
 
     # AST of function definitions for inline expansion
     @function_defs : Hash(String, CrystalV2::Compiler::Frontend::DefNode)
+    @function_visibilities : Hash(String, CrystalV2::Compiler::Frontend::Visibility)
     @function_def_arenas : Hash(String, CrystalV2::Compiler::Frontend::ArenaLike)
     @function_def_overloads : Hash(String, Array(String))
     @function_defs_cache_size : Int32
@@ -2988,6 +2990,7 @@ module Crystal::HIR
       end
       if is_new
         @function_defs[name] = def_node
+        set_function_visibility(name, def_node.visibility)
         STDERR.puts "[SET_FDEF] phase=after_map_write name=#{name}" if env_has?("DEBUG_REGISTER_DEF_RAW")
         seed_function_param_caches(name, def_node)
         STDERR.puts "[SET_FDEF] phase=after_seed_param_caches name=#{name}" if env_has?("DEBUG_REGISTER_DEF_RAW")
@@ -3038,6 +3041,7 @@ module Crystal::HIR
           end
         end
         @function_defs[name] = def_node
+        set_function_visibility(name, def_node.visibility)
         if env_has?("DEBUG_SET_FDEF_STEPS")
           if filter = env_get("DEBUG_SET_FDEF")
             if name.includes?(filter)
@@ -3055,8 +3059,39 @@ module Crystal::HIR
         end
       elsif !is_new
         @function_defs[name] = def_node
+        set_function_visibility(name, def_node.visibility)
         seed_function_param_caches(name, def_node)
       end
+    end
+
+    private def set_function_visibility(
+      name : String,
+      visibility : CrystalV2::Compiler::Frontend::Visibility?,
+    ) : Nil
+      if visibility
+        @function_visibilities[name] = visibility
+      else
+        @function_visibilities.delete(name)
+      end
+    end
+
+    private def set_accessor_visibility(
+      name : String,
+      visibility : CrystalV2::Compiler::Frontend::Visibility?,
+    ) : Nil
+      set_function_visibility(name, visibility)
+      base = strip_type_suffix(name)
+      set_function_visibility(base, visibility) if base != name
+    end
+
+    private def function_visibility(name : String) : CrystalV2::Compiler::Frontend::Visibility?
+      if visibility = @function_visibilities[name]?
+        return visibility
+      end
+
+      base = strip_type_suffix(name)
+      return nil if base == name
+      @function_visibilities[base]?
     end
 
     # Centralized write path so type-key indexes can process only newly-added keys.
@@ -3963,6 +3998,7 @@ module Crystal::HIR
       @lower_method_stats_stack = [] of LowerMethodStats
       @union_descriptors = {} of MIR::TypeRef => MIR::UnionDescriptor
       @function_defs = Hash(String, CrystalV2::Compiler::Frontend::DefNode).new(initial_capacity: 32768)
+      @function_visibilities = Hash(String, CrystalV2::Compiler::Frontend::Visibility).new(initial_capacity: 4096)
       @function_def_arenas = Hash(String, CrystalV2::Compiler::Frontend::ArenaLike).new(initial_capacity: 32768)
       @function_def_overloads = Hash(String, Array(String)).new(initial_capacity: 8192)
       @function_defs_cache_size = 0
@@ -5535,6 +5571,39 @@ module Crystal::HIR
       # Use cached ancestor chain to avoid repeated hash lookups
       chain = get_ancestor_chain(child_name)
       chain.includes?(parent_name)
+    end
+
+    private def validate_call_visibility!(
+      ctx : LoweringContext,
+      node : CrystalV2::Compiler::Frontend::Node,
+      callee_node : CrystalV2::Compiler::Frontend::Node,
+      receiver_id : ValueId?,
+      method_name : String,
+      target_name : String,
+      explicit_self_receiver : Bool,
+    ) : Nil
+      return unless receiver_id
+      return unless callee_node.is_a?(CrystalV2::Compiler::Frontend::MemberAccessNode)
+      return if explicit_self_receiver
+
+      visibility = function_visibility(target_name)
+      return unless visibility
+
+      target_base = strip_type_suffix(target_name)
+      owner_name = method_owner_from_name(target_base)
+      return if owner_name.empty? || owner_name == target_base
+
+      case visibility
+      when CrystalV2::Compiler::Frontend::Visibility::Private
+        receiver_type = get_type_name_from_ref(ctx.type_of(receiver_id.not_nil!))
+        raise LoweringError.new("private method '#{method_name}' called for #{receiver_type}", node)
+      when CrystalV2::Compiler::Frontend::Visibility::Protected
+        if current = @current_class
+          return if class_inherits_from?(current, owner_name) || class_inherits_from?(owner_name, current)
+        end
+        receiver_type = get_type_name_from_ref(ctx.type_of(receiver_id.not_nil!))
+        raise LoweringError.new("protected method '#{method_name}' called for #{receiver_type}", node)
+      end
     end
 
     private def collect_subclasses(parents : Array(String)) : Array(String)
@@ -13958,6 +14027,7 @@ module Crystal::HIR
       is_struct : Bool,
       include_getter : Bool,
       include_setter : Bool,
+      visibility : CrystalV2::Compiler::Frontend::Visibility? = nil,
     ) : Int32
       storage_name = accessor_storage_name(spec)
       getter_name = accessor_method_name(spec)
@@ -14013,6 +14083,7 @@ module Crystal::HIR
         unless defined_full_names.includes?(getter_full)
           register_function_type(getter_full, ivar_type)
         end
+        set_accessor_visibility(getter_full, visibility)
       end
 
       if include_setter
@@ -14022,6 +14093,7 @@ module Crystal::HIR
           setter_return = is_struct ? TypeRef::VOID : ivar_type
           register_function_type(setter_full, setter_return)
         end
+        set_accessor_visibility(setter_full, visibility)
       end
 
       offset
@@ -14675,7 +14747,8 @@ module Crystal::HIR
                         defined_full_names,
                         is_struct,
                         true,
-                        false
+                        false,
+                        member.visibility
                       )
                     end
                   when CrystalV2::Compiler::Frontend::SetterNode
@@ -14688,7 +14761,8 @@ module Crystal::HIR
                         defined_full_names,
                         is_struct,
                         false,
-                        true
+                        true,
+                        member.visibility
                       )
                     end
                   when CrystalV2::Compiler::Frontend::PropertyNode
@@ -14701,7 +14775,8 @@ module Crystal::HIR
                         defined_full_names,
                         is_struct,
                         true,
-                        true
+                        true,
+                        member.visibility
                       )
                     end
                   end
@@ -18736,18 +18811,18 @@ module Crystal::HIR
             when CrystalV2::Compiler::Frontend::GetterNode
               next unless member.is_class?
               member.specs.each do |spec|
-                register_class_accessor_entry(module_name, spec, :getter)
+                register_class_accessor_entry(module_name, spec, :getter, member.visibility)
               end
             when CrystalV2::Compiler::Frontend::SetterNode
               next unless member.is_class?
               member.specs.each do |spec|
-                register_class_accessor_entry(module_name, spec, :setter)
+                register_class_accessor_entry(module_name, spec, :setter, member.visibility)
               end
             when CrystalV2::Compiler::Frontend::PropertyNode
               next unless member.is_class?
               member.specs.each do |spec|
-                register_class_accessor_entry(module_name, spec, :getter)
-                register_class_accessor_entry(module_name, spec, :setter)
+                register_class_accessor_entry(module_name, spec, :getter, member.visibility)
+                register_class_accessor_entry(module_name, spec, :setter, member.visibility)
               end
             when CrystalV2::Compiler::Frontend::ClassNode
               class_name = class_name_from_node(member) || ""
@@ -21215,13 +21290,13 @@ module Crystal::HIR
         if member.is_class?
           case member
           when CrystalV2::Compiler::Frontend::GetterNode
-            member.specs.each { |spec| register_class_accessor_entry(class_name, spec, :getter) }
+            member.specs.each { |spec| register_class_accessor_entry(class_name, spec, :getter, member.visibility) }
           when CrystalV2::Compiler::Frontend::SetterNode
-            member.specs.each { |spec| register_class_accessor_entry(class_name, spec, :setter) }
+            member.specs.each { |spec| register_class_accessor_entry(class_name, spec, :setter, member.visibility) }
           when CrystalV2::Compiler::Frontend::PropertyNode
             member.specs.each do |spec|
-              register_class_accessor_entry(class_name, spec, :getter)
-              register_class_accessor_entry(class_name, spec, :setter)
+              register_class_accessor_entry(class_name, spec, :getter, member.visibility)
+              register_class_accessor_entry(class_name, spec, :setter, member.visibility)
             end
           end
           return
@@ -21251,6 +21326,7 @@ module Crystal::HIR
             getter_base = "#{class_name}##{getter_name}"
             full_name = mangle_function_name(getter_base, [] of TypeRef)
             register_function_type(full_name, ivar_type)
+            set_accessor_visibility(full_name, member.visibility)
           end
         when CrystalV2::Compiler::Frontend::SetterNode
           member.specs.each do |spec|
@@ -21274,6 +21350,7 @@ module Crystal::HIR
             setter_name = "#{class_name}##{storage_name}="
             full_name = mangle_function_name(setter_name, [ivar_type])
             register_function_type(full_name, ivar_type)
+            set_accessor_visibility(full_name, member.visibility)
           end
         when CrystalV2::Compiler::Frontend::PropertyNode
           member.specs.each do |spec|
@@ -21307,9 +21384,11 @@ module Crystal::HIR
             getter_base = "#{class_name}##{getter_name}"
             getter_full = mangle_function_name(getter_base, [] of TypeRef)
             register_function_type(getter_full, ivar_type)
+            set_accessor_visibility(getter_full, member.visibility)
             setter_name = "#{class_name}##{storage_name}="
             setter_full = mangle_function_name(setter_name, [ivar_type])
             register_function_type(setter_full, ivar_type)
+            set_accessor_visibility(setter_full, member.visibility)
           end
         end
       ensure
@@ -23798,7 +23877,7 @@ module Crystal::HIR
               # Creates @name ivar and def name; @name; end method
               if member.is_class?
                 member.specs.each do |spec|
-                  register_class_accessor_entry(class_name, spec, :getter)
+                  register_class_accessor_entry(class_name, spec, :getter, member.visibility)
                 end
               else
                 specs = member.specs
@@ -23827,6 +23906,7 @@ module Crystal::HIR
                   getter_base = "#{class_name}##{getter_name}"
                   full_name = mangle_function_name(getter_base, [] of TypeRef)
                   register_function_type(full_name, ivar_type)
+                  set_accessor_visibility(full_name, member.visibility)
                 end
               end
             when CrystalV2::Compiler::Frontend::SetterNode
@@ -23834,7 +23914,7 @@ module Crystal::HIR
               # Creates @name ivar and def name=(value : Type); @name = value; end
               if member.is_class?
                 member.specs.each do |spec|
-                  register_class_accessor_entry(class_name, spec, :setter)
+                  register_class_accessor_entry(class_name, spec, :setter, member.visibility)
                 end
               else
                 specs = member.specs
@@ -23862,6 +23942,7 @@ module Crystal::HIR
                   setter_name = "#{class_name}##{storage_name}="
                   full_name = mangle_function_name(setter_name, [ivar_type])
                   register_function_type(full_name, ivar_type)
+                  set_accessor_visibility(full_name, member.visibility)
                 end
               end
             when CrystalV2::Compiler::Frontend::PropertyNode
@@ -23869,8 +23950,8 @@ module Crystal::HIR
               # Creates both getter and setter
               if member.is_class?
                 member.specs.each do |spec|
-                  register_class_accessor_entry(class_name, spec, :getter)
-                  register_class_accessor_entry(class_name, spec, :setter)
+                  register_class_accessor_entry(class_name, spec, :getter, member.visibility)
+                  register_class_accessor_entry(class_name, spec, :setter, member.visibility)
                 end
               else
                 specs = member.specs
@@ -23899,10 +23980,12 @@ module Crystal::HIR
                   getter_base = "#{class_name}##{getter_name}"
                   getter_full = mangle_function_name(getter_base, [] of TypeRef)
                   register_function_type(getter_full, ivar_type)
+                  set_accessor_visibility(getter_full, member.visibility)
                   # Register setter method
                   setter_name = "#{class_name}##{storage_name}="
                   setter_full = mangle_function_name(setter_name, [ivar_type])
                   register_function_type(setter_full, ivar_type)
+                  set_accessor_visibility(setter_full, member.visibility)
                 end
               end
             when CrystalV2::Compiler::Frontend::AssignNode
@@ -62289,6 +62372,7 @@ module Crystal::HIR
       owner_name : String,
       spec : CrystalV2::Compiler::Frontend::AccessorSpec,
       kind : Symbol,
+      visibility : CrystalV2::Compiler::Frontend::Visibility? = nil,
     ) : Nil
       storage_name = accessor_storage_name(spec)
       method_name = accessor_method_name(spec)
@@ -62317,7 +62401,8 @@ module Crystal::HIR
         base_name = "#{owner_name}.#{method_name}"
         full_name = mangle_function_name(base_name, [] of TypeRef)
         register_function_type(full_name, return_type)
-        entry = ClassAccessorEntry.new(owner_name, spec, @arena, :getter)
+        set_accessor_visibility(full_name, visibility)
+        entry = ClassAccessorEntry.new(owner_name, spec, @arena, :getter, visibility)
         @class_accessor_entries[full_name] = entry
         @class_accessor_entries[base_name] = entry
       when :setter
@@ -62339,7 +62424,8 @@ module Crystal::HIR
         base_name = "#{owner_name}.#{storage_name}="
         full_name = mangle_function_name(base_name, [param_type])
         register_function_type(full_name, param_type)
-        entry = ClassAccessorEntry.new(owner_name, spec, @arena, :setter)
+        set_accessor_visibility(full_name, visibility)
+        entry = ClassAccessorEntry.new(owner_name, spec, @arena, :setter, visibility)
         @class_accessor_entries[full_name] = entry
         @class_accessor_entries[base_name] = entry
       end
@@ -69921,6 +70007,16 @@ module Crystal::HIR
           lower_function_if_needed(resolved_emit)
         end
       end
+
+      validate_call_visibility!(
+        ctx,
+        node,
+        callee_node,
+        receiver_id,
+        method_name,
+        emit_method_name,
+        explicit_self_receiver
+      )
 
       # Concrete collection lookups carry their result type on the receiver,
       # even when the callee body was not lowered far enough to publish it.
@@ -79143,6 +79239,9 @@ module Crystal::HIR
     private def lower_member_access(ctx : LoweringContext, node : CrystalV2::Compiler::Frontend::MemberAccessNode) : ValueId
       obj_node = @arena[node.object]
       member_name = (safe_slice_to_string(node.member) || "")
+      explicit_self_receiver = obj_node.is_a?(CrystalV2::Compiler::Frontend::SelfNode) ||
+                               obj_node.is_a?(CrystalV2::Compiler::Frontend::ImplicitObjNode) ||
+                               (obj_node.is_a?(CrystalV2::Compiler::Frontend::IdentifierNode) && (safe_slice_to_string(obj_node.name) || "") == "self")
       # Proc#call intercept for zero-arg calls (parsed as MemberAccessNode, not CallNode)
       if member_name == "call"
         proc_recv_id = lower_expr(ctx, node.object)
@@ -81042,6 +81141,15 @@ module Crystal::HIR
       if debug_env_filter_match?("DEBUG_CALL_TRACE", member_name, actual_name, primary_name)
         STDERR.puts "[CALL_TRACE] stage=before_emit method=#{member_name} actual=#{actual_name} args=#{args.size}"
       end
+      validate_call_visibility!(
+        ctx,
+        node,
+        node,
+        object_id,
+        member_name,
+        actual_name,
+        explicit_self_receiver
+      )
       if debug_env_filter_match?("DEBUG_MEMBER_CALL", member_name, actual_name)
         STDERR.puts "[MEMBER_CALL] name=#{actual_name} return_id=#{return_type.id} return=#{get_type_name_from_ref(return_type)}"
       end

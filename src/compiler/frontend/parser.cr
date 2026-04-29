@@ -7122,7 +7122,7 @@ module CrystalV2
                      else
                        :property
                      end
-              return parse_accessor_macro(kind, is_class, predicate)
+              return parse_accessor_macro(kind, is_class, predicate, Visibility::Private)
             end
           end
 
@@ -7201,7 +7201,7 @@ module CrystalV2
                      else
                        :property
                      end
-              return parse_accessor_macro(kind, is_class, predicate)
+              return parse_accessor_macro(kind, is_class, predicate, Visibility::Protected)
             end
           end
 
@@ -7836,7 +7836,7 @@ module CrystalV2
         # Grammar: getter name [: Type] [= value] [, name2 [: Type2] [= value2]]
         # Returns GetterNode/SetterNode/PropertyNode
         # is_class: true for class_getter/class_setter/class_property
-        private def parse_accessor_macro(kind : Symbol, is_class : Bool = false, predicate : Bool = false) : ExprId
+        private def parse_accessor_macro(kind : Symbol, is_class : Bool = false, predicate : Bool = false, visibility : Visibility? = nil) : ExprId
           start_token = current_token
           advance # consume getter/setter/property keyword
           skip_trivia
@@ -7916,11 +7916,11 @@ module CrystalV2
           # Create appropriate node based on kind
           node = case kind
                  when :getter
-                   GetterNode.new(overall_span, specs, is_class)
+                   GetterNode.new(overall_span, specs, is_class, visibility)
                  when :setter
-                   SetterNode.new(overall_span, specs, is_class)
+                   SetterNode.new(overall_span, specs, is_class, visibility)
                  when :property
-                   PropertyNode.new(overall_span, specs, is_class)
+                   PropertyNode.new(overall_span, specs, is_class, visibility)
                  else
                    raise "Unknown accessor kind: #{kind}"
                  end
