@@ -41979,6 +41979,8 @@ module Crystal::HIR
 
         self_type_name = if receiver_type && receiver_type != TypeRef::VOID
                            get_type_name_from_ref(receiver_type)
+                         elsif owner_override
+                           owner_override
                          else
                            @current_class
                          end

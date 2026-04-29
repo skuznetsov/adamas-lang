@@ -30,6 +30,33 @@ Working policy:
 
 ## Current Checkpoint
 
+Class-method nested-yield block-param checkpoint (2026-04-29): the current
+root after the loop-capture fix was not `Pointer#read` itself. `File.open`'s
+lowered HIR already creates a concrete `File` and yields it, but the AST-level
+`block_param_types_for_call -> infer_yield_param_types_from_body` path inferred
+the callsite block using the caller's `@current_class` whenever the callee was
+a class method with no instance receiver. For bodies shaped like
+`File.open { open_internal { |file| yield file } }`, the nested
+`open_internal` block-param inference therefore lost the callee owner context
+and the outer user block proc kept `file` as `Pointer`. The fix uses the callee
+owner recovered from the function name (`owner_override`) as `self_type_name`
+before falling back to `@current_class`. Evidence:
+`crystal build src/crystal_v2.cr -o /tmp/cv2_yield_owner_fix --error-trace`,
+the focused `File.open` HIR reducer now emits `%file : File` and
+`File#read(Slice(UInt8))` both inline and in `__crystal_block_proc_0`,
+`regression_tests/p2_class_method_nested_yield_block_param_no_prelude.sh
+/tmp/cv2_yield_owner_fix` guards the no-prelude class-method nested-yield
+shape, and canonical `s1 -> s2` still builds `cv2_s2` in about 230s. Generated
+`cv2_s2.ll` now contains `__crystal_block_proc_720 -> File#read(Slice(UInt8))`,
+not `Pointer#read`. New frontier: generated `cv2_s2` smoke no-prelude segfaults
+after `lower_main: exprs=5`; LLDB shows `EXC_BAD_ACCESS` in
+`__crystal_v2_string_eq` called from
+`Tuple(String, Int32)#== -> Hash(Tuple(String, Int32), UInt32)#fetch ->
+HIRToMIRLowering#hir_innermost_scope_for_source_line ->
+propagate_debug_local_bindings -> lower_function_body`. This is a debug-scope
+hash/string equality crash, separate from the now-resolved `File.open` block
+param precision bug.
+
 Loop block-proc capture checkpoint (2026-04-29): generated stage2 still builds
 successfully, and the previous `file_sha256` smoke abort no longer resolves
 `file.read(buffer)` to the unrelated

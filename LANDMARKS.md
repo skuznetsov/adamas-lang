@@ -12,6 +12,34 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-523|verified]: Class-method block-yield inference must bind `self` to the
+callee owner, not the caller context. After the loop-capture fix, the generated
+stage2 smoke reached `CLI#file_sha256` but lowered
+`File.open { |file| file.read(buffer) }` to `Pointer#read(Slice(UInt8))`.
+Focused HIR evidence showed the lowered `File.open$arity6_block` body already
+created a concrete `File` and yielded it; the loss happened earlier in
+AST-level `block_param_types_for_call -> infer_yield_param_types_from_body`.
+For class methods with no instance receiver, that inference used
+`@current_class` as `self_type_name`, so nested delegation through
+`open_internal { |file| yield file }` ran under the caller owner instead of
+`File`. The fix prefers the callee owner recovered from the function name
+(`owner_override`) before falling back to `@current_class`. Evidence: the
+focused `File.open` HIR reducer now types both the inline block param and
+`__crystal_block_proc_0` param as `File` and dispatches to
+`File#read(Slice(UInt8))`; the no-prelude
+`p2_class_method_nested_yield_block_param_no_prelude.sh` reducer guards the
+same class-method nested-yield shape with `FileLike.open -> open_internal`;
+`crystal build src/crystal_v2.cr -o /tmp/cv2_yield_owner_fix --error-trace`
+passes; canonical `s1 -> s2` builds `cv2_s2` in about 230s, and generated
+`cv2_s2.ll` now contains `__crystal_block_proc_720 -> File#read(Slice(UInt8))`
+instead of the old `Pointer#read` frontier. Boundary: generated `cv2_s2`
+no-prelude smoke now segfaults after `lower_main: exprs=5`; LLDB stops in
+`__crystal_v2_string_eq` through
+`Tuple(String, Int32)#== -> Hash(Tuple(String, Int32), UInt32)#fetch ->
+HIRToMIRLowering#hir_innermost_scope_for_source_line ->
+propagate_debug_local_bindings -> lower_function_body`. {F/G/R:
+0.94/0.66/0.94} [verified]
+
 [LM-522|verified]: Standalone block-proc lowering must use the same capture
 walk and untyped-param defaulting invariants as inline block lowering.
 `CLI#file_sha256` exposed both gaps: the block body is a `LoopNode`, but

@@ -220,3 +220,37 @@ regression.
 non-blocking beta sidecar; consider a dedicated wrapper/skill that strips noisy
 plugin/MCP startup or uses a simpler prompt channel.
 **Cost saved:** none.
+
+### Session 13 — 2026-04-29 — File.open Pointer#read frontier
+**Task:** read-only audit after the loop block-proc capture fix moved generated
+stage2 smoke from `Hash(...MIR::Function)#read(Slice(UInt8))` to
+`Pointer#read(Slice(UInt8))` in
+`__crystal_block_proc_720 -> File.open -> CLI#file_sha256`.
+**Brief size:** ~13 lines, ~1.2 KB, file
+`/tmp/grok_pointer_read_frontier/task.txt`.
+**Latency:** produced a useful final answer while local focused HIR reduction
+was running.
+**Output quality:** useful root routing with one overly broad proposed
+implementation. Grok correctly identified that `File.open` / `open_internal`
+use untyped `&` and that the failing path is
+`block_param_types_for_call -> infer_yield_param_types_from_body`, not
+`Pointer#read` codegen. It also correctly called out nested block-param
+inference and `new_internal`/callee owner context as the likely source.
+**What worked:** the audit matched local evidence: the lowered `File.open`
+body yields a concrete `File`, but the caller block proc was typed as
+`Pointer`; after binding yield-body inference to the callee owner, the focused
+HIR reducer emits `File#read(Slice(UInt8))` both inline and in the standalone
+block proc.
+**What did not:** the patch outline proposed a parent-map / nearest-enclosing
+block mechanism and a usage-based fallback near `lower_block_to_proc`. Local
+evidence found a smaller root fix: use `owner_override` as `self_type_name`
+for class-method yield-body inference before falling back to `@current_class`.
+**Adversary check:** local no-prelude reducer
+`p2_class_method_nested_yield_block_param_no_prelude.sh` guards the
+class-method nested-yield shape without stdlib involvement, and the focused
+full-prelude `File.open` HIR reducer confirms the real frontier moved from
+`Pointer#read` to `File#read`.
+**Verdict:** useful as a hypothesis router, not as direct patch authority.
+Keep using ACP for narrow read-only audits; prefer local smallest-falsifier
+reduction before accepting suggested implementation shape.
+**Cost saved:** ~1-2k Codex tokens on source routing and hypothesis ranking.
