@@ -30,6 +30,24 @@ Working policy:
 
 ## Current Checkpoint
 
+Return-type force-lower checkpoint (2026-04-29): call lowering now force-lowers
+pending call targets only when the current return type is still `VOID`, a
+union that needs exact variant shape, or an unresolved generic placeholder. The
+root was that `lower_call` / `lower_member_access` refreshed every pending
+target before freezing the call instruction type, even when the call already
+had a concrete non-union return type. During self-hosting that bypassed lazy
+RTA and recursively materialized thousands of concrete helper bodies from
+`force_pending_call_targets_for_return_type`. A too-aggressive first guard
+skipped union returns as well and broke the stage1 full-prelude `puts 42` smoke
+in `Crystal::System::Dir.current` (`File.info?` union PHI mismatch), so unions
+remain force-refreshed. Evidence: full-source `STOP_AFTER_HIR` now reports
+`process_pending: 316 -> 588 (+272)` and exits in about 137s instead of the
+previous `process_pending +14225` / about 234s; canonical `s1 -> s2` no longer
+times out and now reaches `llc` after about 166s. Boundary: `lower_missing`
+still materializes about 35k functions, and the current bootstrap frontier is
+an LLVM type-emission error:
+`ptrtoint ptr %r685` where `%r685` is `double` in `cv2_s2.ll`.
+
 Nested generic namespace checkpoint (2026-04-29): method/overload lookup now
 strips generic arguments per namespace segment instead of truncating the owner
 at the first `(`. The root was that owners like

@@ -69387,7 +69387,8 @@ module Crystal::HIR
       # Lazy lowering can defer the callee body while still leaving an early
       # pre-lowering return type in the cache. If the target is still pending,
       # force it now before we freeze the call instruction type.
-      if force_pending_call_targets_for_return_type(primary_mangled_name, mangled_method_name, base_method_name)
+      if (return_type == TypeRef::VOID || is_union_type?(return_type) || unresolved_generic_return_type?(return_type)) &&
+         force_pending_call_targets_for_return_type(primary_mangled_name, mangled_method_name, base_method_name)
         refreshed = get_function_return_type(mangled_method_name)
         if refreshed == TypeRef::VOID && mangled_method_name != base_method_name
           refreshed = get_function_return_type(base_method_name)
@@ -80935,7 +80936,8 @@ module Crystal::HIR
         lower_function_if_needed(actual_name)
       end
 
-      if force_pending_call_targets_for_return_type(actual_name, primary_name, base_method_name)
+      if (return_type == TypeRef::VOID || is_union_type?(return_type) || unresolved_generic_return_type?(return_type)) &&
+         force_pending_call_targets_for_return_type(actual_name, primary_name, base_method_name)
         refreshed = get_function_return_type(actual_name)
         if refreshed == TypeRef::VOID && actual_name != primary_name
           refreshed = get_function_return_type(primary_name)

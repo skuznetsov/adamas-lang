@@ -181,3 +181,14 @@
 **Adversary check:** local evidence found the root independently: `function_def_overloads` and stripped overload lookup used first-paren generic stripping, mapping `Indexable(T)::ItemIterator(...)#each` to `Indexable#each`. A path-aware namespace-generic strip plus a focused regression guard fixed the reducer.
 **Verdict:** no value for this commit; useful beta evidence. Use narrower prompts and the correct headless/ACP wrapper split next time.
 **Cost saved:** none.
+
+### Session 11 — 2026-04-29 — stage2 ptrtoint double frontier
+**Task:** read-only audit the new `s1 -> s2` frontier after the return-type force-lower guard: `llc` rejects `ptrtoint ptr %r685` because `%r685` is `double`.
+**Brief size:** ~8 lines, ~0.8 KB, file `/tmp/grok_ptrtoint_double_audit/task.txt`.
+**Latency:** no actionable final output before the local checkpoint was ready.
+**Output quality:** not useful. The captured output again contained startup warnings only (persona TOML parse warning, plugin collision warnings, MCP handshake warnings) and no source findings.
+**What worked:** the Grok run stayed isolated and did not block local verification or commit preparation.
+**What did not:** headless `grok --prompt-file` remains unreliable for short compiler-audit sidecars in this environment; it frequently emits only initialization warnings.
+**Adversary check:** local evidence did not depend on Grok. `timeout_sample_lldb.sh` found the previous root in `force_pending_call_targets_for_return_type`; the new frontier was reproduced by canonical `scripts/build_bootstrap_stages.sh --stages 2`, which now reaches `llc` after about 166s and fails on the `double`/`ptrtoint` mismatch.
+**Verdict:** no value for this checkpoint. Keep Grok optional and non-blocking; record failures so the ACP/headless workflow can be improved later.
+**Cost saved:** none.

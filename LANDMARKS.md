@@ -12,6 +12,28 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-520|verified]: Return-type force-lowering must be demand-gated by whether
+the call's current return type still needs exact resolution. The old
+`lower_call` / `lower_member_access` path called
+`force_pending_call_targets_for_return_type` for every pending target after
+ordinary lazy lowering, even if the call already had a concrete non-union
+return type. `timeout_sample_lldb.sh` on the canonical `s1 -> s2` gate showed
+the live stack in `lower_missing_call_targets -> process_pending_lower_functions
+-> lower_call -> force_pending_call_targets_for_return_type ->
+force_lower_function_for_return_type`, with large samples in method lookup and
+generic class monomorphization. The fix skips that force-refresh for concrete
+non-union return types while preserving it for `VOID`, union returns, and
+unresolved generic placeholders. A stricter first attempt that skipped unions
+was refuted by a stage1 full-prelude `puts 42` smoke failure in
+`Crystal::System::Dir.current`, where `File.info?` required a widened union PHI.
+Evidence: focused p1/p2 guards passed; full-source `STOP_AFTER_HIR` improved
+from about 234s / `process_pending +14225` / ~50.9k HIR functions to about
+137s / `process_pending +272` / ~35.6k HIR functions; canonical `s1 -> s2`
+now passes stage1 smokes and reaches `llc` after about 166s instead of timing
+out. Boundary: the current frontier is a backend LLVM type mismatch
+(`ptrtoint ptr %r685` with `%r685 : double`) in generated `cv2_s2.ll`, not a
+HIR pending-queue timeout. {F/G/R: 0.94/0.62/0.94} [verified]
+
 [LM-519|verified]: Generic receiver stripping must preserve namespace path
 segments. The old overload/method-index helpers normalized
 `Indexable(T)::ItemIterator(Array(String), String)#each` to `Indexable#each`,
