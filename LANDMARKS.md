@@ -2272,3 +2272,42 @@ Boundary: next work should fix parser constant classification and deferred
 constant initializer ownership together, with a generated-`s2` no-prelude
 oracle for `private VALUE = 1`.
 {F/G/R: 0.86/0.50/0.86} [verified]
+
+[LM-529|verified]: Crystal String payload search helpers must be bounded, not
+`strstr`-based.
+
+Findings:
+
+- Crystal String payloads are length-delimited and not NUL-terminated, but the
+  V2 LLVM backend emitted `String#includes?(String)` and
+  `String#index(String, offset)` helpers that called libc `strstr` on
+  `self + 12` / `search + 12`.
+- Generated `cv2_s2` exposed this during compiler self-host lookup filters
+  searching for `"$$block"`: no-prelude private-class lowering crashed in
+  `lookup_function_def_for_call -> String#includes?` before reaching the
+  actual method/Hash-demand frontier.
+- The backend now emits bytesize-bounded `memcmp` loops for both helpers and
+  returns false/-1 for null operands. Two `lower_call` hot guards also bind
+  `full_method_name` to an explicit local before calling `includes?('#')`,
+  because generated stage2 can still pass a null String receiver through
+  chained nilable guards.
+
+Evidence:
+
+- `crystal build src/crystal_v2.cr -o
+  /private/tmp/cv2_string_nullsafe_candidate --error-trace` passed.
+- `regression_tests/p2_string_bounded_search_runtime_repro.sh
+  /private/tmp/cv2_string_nullsafe_candidate` passed.
+- `regression_tests/p2_visibility_modifier_semantics_no_prelude.sh
+  /private/tmp/cv2_string_nullsafe_candidate` passed.
+- `scripts/run_safe.sh /private/tmp/cv2_string_nullsafe_candidate 300 4096
+  src/crystal_v2.cr -o /private/tmp/cv2_s2_string_nullsafe` built generated
+  stage2.
+
+Boundary: this fixes the unsafe String-search helper root and hardens two
+compiler hot guards, but does not claim the broader nilable short-circuit
+codegen issue is solved. Generated `cv2_s2` now moves the simple
+`String#includes?("$$block")` and `private class Hidden` no-prelude reducers
+past String segfaults and stops at existing Hash stubs (`Hash#each` /
+`Hash(String, Array(Tuple(String, Crystal::MIR::Function)))#<<$String`).
+{F/G/R: 0.89/0.56/0.89} [verified]

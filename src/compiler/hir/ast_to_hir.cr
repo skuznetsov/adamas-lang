@@ -64994,28 +64994,32 @@ module Crystal::HIR
               end
             end
 
-            if receiver_is_type_literal && full_method_name && full_method_name.includes?('#')
-              receiver_type = receiver_id ? ctx.type_of(receiver_id) : TypeRef::VOID
-              unless module_type_ref?(receiver_type)
-                class_name = method_owner(full_method_name)
-                literal_owner = class_name_str
-                if literal_owner.nil? || literal_owner.empty?
-                  if desc = @module.get_type_descriptor(receiver_type)
-                    literal_owner = desc.name unless desc.name.empty?
-                  elsif info = @class_info_by_type_id[receiver_type.id]?
-                    literal_owner = info.name
-                  end
-                end
-                # Only convert instance-method resolution to class-method call when the
-                # owner matches the literal type (avoid rewriting Class#to_s to Class.to_s).
-                if literal_owner && !literal_owner.empty? &&
-                   normalize_method_owner_name(literal_owner) == normalize_method_owner_name(class_name)
-                  full_method_name = "#{class_name}.#{method_name}"
-                  receiver_id = nil
-                  static_class_name = class_name
-                  if method_name == "new"
-                    if class_info = @class_info[class_name]?
-                      generate_allocator(class_name, class_info)
+            if receiver_is_type_literal
+              if fmn = full_method_name
+                if fmn.includes?('#')
+                  receiver_type = receiver_id ? ctx.type_of(receiver_id) : TypeRef::VOID
+                  unless module_type_ref?(receiver_type)
+                    class_name = method_owner(fmn)
+                    literal_owner = class_name_str
+                    if literal_owner.nil? || literal_owner.empty?
+                      if desc = @module.get_type_descriptor(receiver_type)
+                        literal_owner = desc.name unless desc.name.empty?
+                      elsif info = @class_info_by_type_id[receiver_type.id]?
+                        literal_owner = info.name
+                      end
+                    end
+                    # Only convert instance-method resolution to class-method call when the
+                    # owner matches the literal type (avoid rewriting Class#to_s to Class.to_s).
+                    if literal_owner && !literal_owner.empty? &&
+                       normalize_method_owner_name(literal_owner) == normalize_method_owner_name(class_name)
+                      full_method_name = "#{class_name}.#{method_name}"
+                      receiver_id = nil
+                      static_class_name = class_name
+                      if method_name == "new"
+                        if class_info = @class_info[class_name]?
+                          generate_allocator(class_name, class_info)
+                        end
+                      end
                     end
                   end
                 end
@@ -66298,21 +66302,25 @@ module Crystal::HIR
       # Prefer concrete receiver owner for instance calls when available.
       # This avoids resolving to a broad included-module method (e.g. Indexable::Mutable#swap)
       # when a concrete receiver specialization exists (e.g. StaticArray(UInt8, 4)#swap).
-      if receiver_id && full_method_name && full_method_name.includes?('#')
-        receiver_type_name = get_type_name_from_ref(ctx.type_of(receiver_id))
-        if !receiver_type_name.empty? && !receiver_type_name.includes?('|')
-          direct_receiver_method = "#{receiver_type_name}##{method_name}"
-          if direct_receiver_method != full_method_name
-            stripped_direct = direct_receiver_method.includes?('(') ? strip_generic_receiver_for_lookup(direct_receiver_method) : direct_receiver_method
-            direct_overloads = function_def_overloads(direct_receiver_method, stripped_direct)
-            receiver_matches_current = false
-            if current_class_name = @current_class
-              recv_base = strip_generic_args(normalize_method_owner_name(receiver_type_name))
-              cur_base = strip_generic_args(normalize_method_owner_name(current_class_name))
-              receiver_matches_current = recv_base == cur_base
-            end
-            unless direct_overloads.empty? && !receiver_matches_current
-              full_method_name = direct_receiver_method
+      if receiver_id
+        if fmn = full_method_name
+          if fmn.includes?('#')
+            receiver_type_name = get_type_name_from_ref(ctx.type_of(receiver_id))
+            if !receiver_type_name.empty? && !receiver_type_name.includes?('|')
+              direct_receiver_method = "#{receiver_type_name}##{method_name}"
+              if direct_receiver_method != fmn
+                stripped_direct = direct_receiver_method.includes?('(') ? strip_generic_receiver_for_lookup(direct_receiver_method) : direct_receiver_method
+                direct_overloads = function_def_overloads(direct_receiver_method, stripped_direct)
+                receiver_matches_current = false
+                if current_class_name = @current_class
+                  recv_base = strip_generic_args(normalize_method_owner_name(receiver_type_name))
+                  cur_base = strip_generic_args(normalize_method_owner_name(current_class_name))
+                  receiver_matches_current = recv_base == cur_base
+                end
+                unless direct_overloads.empty? && !receiver_matches_current
+                  full_method_name = direct_receiver_method
+                end
+              end
             end
           end
         end

@@ -77,3 +77,12 @@ be verified anchors, not broad opinions.
   an authoritative table, but adjacent tables (`@called_crystal_functions`,
   `@undefined_externs`, worker side-effect merge maps) should be audited before
   assuming they are safe under generated stage2.
+
+- Generated stage2 can still miscompile or mis-narrow chained nilable String
+  guards such as `if receiver_id && full_method_name &&
+  full_method_name.includes?('#')`. Two `lower_call` hot paths now use explicit
+  local binding (`if fmn = full_method_name`) before invoking String helpers,
+  but that is a localized hardening step, not the root fix for nilable
+  short-circuit/codegen correctness. Keep this in mind if another generated
+  compiler crash shows a null String receiver inside `String#includes?` or
+  `String#index`.

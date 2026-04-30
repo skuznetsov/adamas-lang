@@ -30,6 +30,31 @@ Working policy:
 
 ## Current Checkpoint
 
+Stage2 bounded String-search checkpoint (2026-04-30): the generated `cv2_s2`
+`private class Hidden` no-prelude reducer no longer dies in
+`lookup_function_def_for_call -> String#includes?` because the LLVM backend
+now emits bounded `memcmp` loops for `String#includes?(String)` and
+`String#index(String, offset)` instead of passing Crystal's length-delimited,
+non-NUL-terminated payloads to libc `strstr`. The helpers also fail closed on
+null operands so the self-hosted compiler does not crash before exposing the
+real next frontier. Evidence so far: `crystal build src/crystal_v2.cr -o
+/private/tmp/cv2_string_nullsafe_candidate --error-trace`;
+`regression_tests/p2_string_bounded_search_runtime_repro.sh
+/private/tmp/cv2_string_nullsafe_candidate`;
+`regression_tests/p2_visibility_modifier_semantics_no_prelude.sh
+/private/tmp/cv2_string_nullsafe_candidate`; and
+`scripts/run_safe.sh /private/tmp/cv2_string_nullsafe_candidate 300 4096
+src/crystal_v2.cr -o /private/tmp/cv2_s2_string_nullsafe`, which builds the
+next generated compiler. Boundary: this is not a full nilable/short-circuit
+codegen fix. Two `lower_call` hot paths now use explicit local narrowing for
+`full_method_name`, but the broader self-hosted nilable guard issue remains
+open. Generated `cv2_s2` now advances the simple `String#includes?("$$block")`
+and `private class Hidden` no-prelude reducers from String segfaults to
+existing Hash-stub aborts (`Hash#each` and
+`Hash(String, Array(Tuple(String, Crystal::MIR::Function)))#<<$String`).
+Treat those Hash stubs as the next root-cause frontier before attempting
+`s2 -> s3`.
+
 Stage2 self-host visibility/arena frontier update (2026-04-30): the
 `private DIGITS_DOWNCASE` failure is no longer a visibility allowlist problem.
 The parser now recognizes uppercase identifier assignment through a concrete

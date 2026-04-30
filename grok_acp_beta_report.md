@@ -442,3 +442,26 @@ opens a deferred-constant/lower_main frontier.
 structured Grok 4.1 Fast flow or a stricter prompt requiring partial output
 after two file reads.
 **Cost saved:** none.
+
+### Session 21 — 2026-04-30 — String-search crash in generated stage2 lookup
+**Task:** read-only audit of the generated `cv2_s2` no-prelude
+`private class Hidden` crash after visibility/arena fixes, focused on
+`lookup_function_def_for_call -> String#includes?` and whether the crash was a
+method lookup bug, String helper bug, or nilable guard bug.
+**Brief size:** one task file, focused on `src/compiler/hir/ast_to_hir.cr`,
+`src/compiler/mir/llvm_backend.cr`, the LLDB backtrace, and the known
+`"$$block"` lookup filters.
+**Latency:** timed out after 120s waiting for stdout.
+**Output quality:** no final answer. The ACP wrapper produced
+`[grok-timeout] Grok ACP timed out after 120s waiting for stdout`; no claim
+from this run was used as evidence.
+**What worked:** the sidecar launch did not block local work.
+**What did not:** repeated timeout pattern; this task needed a smaller
+question or a different Grok 4.1 Fast structured flow.
+**Adversary check:** local evidence found the actual root independently:
+backend String search helpers used libc `strstr` on non-NUL Crystal String
+payloads. After switching to bounded `memcmp` loops, the generated stage2
+frontier moved past the String segfault to Hash-stub aborts.
+**Verdict:** no evidence value for this commit. Continue treating Grok ACP as
+optional and non-blocking until it reliably returns partial findings.
+**Cost saved:** none.
