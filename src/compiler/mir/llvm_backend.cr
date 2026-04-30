@@ -2059,6 +2059,8 @@ module Crystal::MIR
     @alloc_element_types : Hash(ValueId, TypeRef)  # For GEP element type lookup
     @array_info : Hash(ValueId, {String, Int32})  # Array element_type and size
     @string_constants : Hash(String, String)  # String value -> global name
+    @string_constant_values : Array(String) = [] of String
+    @string_constant_names : Array(String) = [] of String
     @string_aliases : Hash(String, String) = {} of String => String  # worker_name -> canonical_name (for parallel dedup)
     @module_singleton_globals : ::Hash(TypeRef, String)  # Module type -> singleton global name
     @emitted_value_types : Hash(String, String)  # SSA name -> LLVM type (per function)
@@ -2440,6 +2442,8 @@ module Crystal::MIR
       @alloc_element_types = {} of ValueId => TypeRef
       @array_info = {} of ValueId => {String, Int32}
       @string_constants = {} of String => String
+      @string_constant_values = [] of String
+      @string_constant_names = [] of String
       @module_singleton_globals = ::Hash(TypeRef, String).new
       @emitted_value_types = {} of String => String
       bootstrap_trace_puts "[LLVM_INIT] hashes done"
@@ -2520,6 +2524,24 @@ module Crystal::MIR
       end
       @sanitize_output_bytes += result.bytesize
       result
+    end
+
+    # Build a safe base for derived LLVM local names such as `%r10.conv1`.
+    # LLVM numeric locals (`%0`) cannot be extended into `%0.foo`, so prefix
+    # digit-leading names before adding suffixes.
+    private def llvm_local_base_name(name : String) : String
+      base = if !name.empty? && name.to_unsafe[0] == '%'.ord
+               name.byte_slice(1, name.bytesize - 1)
+             else
+               name
+             end
+      return "v" if base.empty?
+      first = base.to_unsafe[0]
+      if first >= '0'.ord && first <= '9'.ord
+        "v#{base}"
+      else
+        base
+      end
     end
 
     # Fast byte-level check for SSA alloca assignment lines.
@@ -2815,7 +2837,7 @@ module Crystal::MIR
       tail_t0 = Time.instant if tail_stats
       emit_string_constants
       if tail_stats
-        bootstrap_trace_puts "[LLVM_TAIL_GEN] phase=string_constants ms=#{(Time.instant - tail_t0.not_nil!).total_milliseconds.round(1)} out=#{@output.pos} strings=#{@string_constants.size} aliases=#{@string_aliases.size}"
+        bootstrap_trace_puts "[LLVM_TAIL_GEN] phase=string_constants ms=#{(Time.instant - tail_t0.not_nil!).total_milliseconds.round(1)} out=#{@output.pos} strings=#{@string_constant_values.size} aliases=#{@string_aliases.size}"
       end
 
       # Emit duplicate string constants for worker names that collided with existing names.
@@ -2826,7 +2848,11 @@ module Crystal::MIR
         emit_raw "\n; Duplicate string constants from parallel workers\n"
         # Build reverse lookup: canonical_name -> string_value
         canonical_to_value = {} of String => String
-        @string_constants.each { |val, name| canonical_to_value[name] = val }
+        i = 0
+        while i < @string_constant_values.size
+          canonical_to_value[@string_constant_names.unsafe_fetch(i)] = @string_constant_values.unsafe_fetch(i)
+          i += 1
+        end
         @string_aliases.each do |worker_name, canonical_name|
           if str_val = canonical_to_value[canonical_name]?
             emit_crystal_string_constant(worker_name, str_val)
@@ -5325,10 +5351,12 @@ module Crystal::MIR
         emit_raw "@.str.dbg_write_label = private unnamed_addr constant [6 x i8] c\"write\\00\", align 1\n"
       end
 
-      return if @string_constants.empty?
+      return if @string_constant_values.empty?
 
-      @string_constants.each do |str, global_name|
-        emit_crystal_string_constant(global_name, str)
+      i = 0
+      while i < @string_constant_values.size
+        emit_crystal_string_constant(@string_constant_names.unsafe_fetch(i), @string_constant_values.unsafe_fetch(i))
+        i += 1
       end
     end
 
@@ -12475,7 +12503,7 @@ module Crystal::MIR
       # Use fn_entry to avoid conflict with parameter names like %entry
       emit_raw "fn_entry:\n"
       STDERR.puts "[EMIT_FUNCTION_TRACE] func=#{func.name} phase=entry_hoisted_allocas" if emit_function_trace
-      emit_hoisted_allocas(func)
+      entry_hoisted_alloca_names = emit_hoisted_allocas(func)
       emit_dwarf_param_debug_values
       emit_dwarf_local_entry_debug_values
       emit_dwarf_local_debug_declares
@@ -12558,7 +12586,13 @@ module Crystal::MIR
             pos += 1
           end
           if pos < bytes.size && bytes[pos] == 37_u8 && !line.byte_index(" = alloca ", pos).nil?
-            hoisted_allocas << line
+            if name = alloca_assignment_name(line, pos)
+              unless entry_hoisted_alloca_names.includes?(name)
+                hoisted_allocas << line
+              end
+            else
+              hoisted_allocas << line
+            end
           else
             processed_block_lines << line
           end
@@ -12576,7 +12610,13 @@ module Crystal::MIR
           pos += 1
         end
         if pos < bytes.size && bytes[pos] == 37_u8 && !line.byte_index(" = alloca ", pos).nil?
-          hoisted_allocas << line
+          if name = alloca_assignment_name(line, pos)
+            unless entry_hoisted_alloca_names.includes?(name)
+              hoisted_allocas << line
+            end
+          else
+            hoisted_allocas << line
+          end
         else
           processed_block_lines << line
         end
@@ -12619,8 +12659,18 @@ module Crystal::MIR
       clear_dwarf_location
     end
 
-    # Emit all Alloc instructions at function entry for dominance
-    private def emit_hoisted_allocas(func : Function)
+    # Extract the SSA destination from an alloca line already recognized by the
+    # block-output splitter.
+    private def alloca_assignment_name(line : String, start_pos : Int32 = 0) : String?
+      eq = line.byte_index(" = alloca ", start_pos)
+      return nil unless eq
+      name = line.byte_slice(start_pos, eq - start_pos)
+      name.empty? ? nil : name
+    end
+
+    # Emit all Alloc instructions at function entry for dominance.
+    private def emit_hoisted_allocas(func : Function) : Array(String)
+      emitted_names = [] of String
       func.blocks.each do |block|
         block.instructions.each do |inst|
           next unless inst.is_a?(Alloc)
@@ -12640,6 +12690,7 @@ module Crystal::MIR
           if type == "ptr"
             emit_raw "  store ptr null, ptr #{name}\n"
           end
+          emitted_names << name
           @emitted_allocas << inst.id
           @value_types[inst.id] = TypeRef::POINTER
           # Track element type for GEP
@@ -12669,6 +12720,7 @@ module Crystal::MIR
           if alloca_type == "ptr"
             emit_raw "  store ptr null, ptr %#{alloca_name}\n"
           end
+          emitted_names << "%#{alloca_name}"
           @addressable_allocas[operand_id] = "%#{alloca_name}"
         end
       end
@@ -12687,6 +12739,7 @@ module Crystal::MIR
             phi_llvm_type = "i64" if phi_llvm_type == "void"
             shared_slot = "%r#{phi_id}.phi_slot"
             emit_raw "  #{shared_slot} = alloca #{phi_llvm_type}, align 8\n"
+            emitted_names << shared_slot
             # Zero-initialize the shared slot
             if phi_llvm_type == "ptr"
               emit_raw "  store ptr null, ptr #{shared_slot}\n"
@@ -12774,6 +12827,7 @@ module Crystal::MIR
         @cross_block_slot_types[val_id] = llvm_type  # Record allocation type for consistent loads
         @cross_block_slot_type_refs[val_id] = val_type
         emit_raw "  #{slot_name} = alloca #{llvm_type}, align 8\n"
+        emitted_names << slot_name
         # Initialize to zero/null to avoid undef on unexecuted paths.
         # For struct-typed pointers, use a global zero-filled sentinel so the slot
         # is never null (V2 heap-allocates structs as pointers — null = crash).
@@ -12800,6 +12854,7 @@ module Crystal::MIR
           emit_raw "  store #{llvm_type} #{init_val}, ptr #{slot_name}\n"
         end
       end
+      emitted_names
     end
 
     # Prepass: identify phi predecessor loads needed for cross-block values
@@ -15390,7 +15445,7 @@ module Crystal::MIR
         io << " ret_types=" << @emitted_function_return_types.size
         io << " called=" << @called_crystal_functions.size
         io << " undef_ext=" << @undefined_externs.size
-        io << " str_consts=" << @string_constants.size
+        io << " str_consts=" << @string_constant_values.size
         io << " str_aliases=" << @string_aliases.size
         io << " global_types=" << @global_declared_types.size
         io << " global_map=" << @global_name_mapping.size
@@ -15425,7 +15480,7 @@ module Crystal::MIR
           io << " func_id_struct=" << @func_by_id.crystal_v2_debug_structural_bytes
           io << " alloc_elem_struct=" << @alloc_element_types.crystal_v2_debug_structural_bytes
           io << " arr_info_struct=" << @array_info.crystal_v2_debug_structural_bytes
-          io << " str_const_struct=" << @string_constants.crystal_v2_debug_structural_bytes
+          io << " str_const_struct=" << string_constant_bytes
           io << " str_alias_struct=" << @string_aliases.crystal_v2_debug_structural_bytes
           io << " singleton_struct=" << @module_singleton_globals.crystal_v2_debug_structural_bytes
           io << " type_ref_struct=" << type_ref_struct
@@ -15676,8 +15731,11 @@ module Crystal::MIR
 
     private def string_constant_bytes : Int64
       total = 0_i64
-      @string_constants.each do |str_val, global_name|
-        total += str_val.bytesize + global_name.bytesize
+      i = 0
+      while i < @string_constant_values.size
+        total += @string_constant_values.unsafe_fetch(i).bytesize
+        total += @string_constant_names.unsafe_fetch(i).bytesize
+        i += 1
       end
       total
     end
@@ -15836,8 +15894,10 @@ module Crystal::MIR
           # Write side-effect data: string constants, zero-struct globals, externs, called functions
           File.open(se_file, "w") do |f|
             # String constants: "STR\tglobal_name\tstring_value_base64"
-            @string_constants.each do |str_val, global_name|
-              f.puts "STR\t#{global_name}\t#{Base64.strict_encode(str_val)}"
+            i = 0
+            while i < @string_constant_values.size
+              f.puts "STR\t#{@string_constant_names.unsafe_fetch(i)}\t#{Base64.strict_encode(@string_constant_values.unsafe_fetch(i))}"
+              i += 1
             end
             # Zero-struct globals
             if @zero_struct_global_decls.pos > 0
@@ -15974,11 +16034,11 @@ module Crystal::MIR
               next if parts.size < 3
               global_name = parts[1]
               str_val = Base64.decode_string(parts[2])
-              if existing = @string_constants[str_val]?
+              if existing = string_constant_name_for(str_val)
                 # String already exists with a different name — need alias
                 @string_aliases[global_name] = existing if global_name != existing
               else
-                @string_constants[str_val] = global_name
+                record_string_constant(str_val, global_name)
               end
             when "ZSG"
               next if parts.size < 2
@@ -16044,14 +16104,29 @@ module Crystal::MIR
     end
 
     private def get_or_create_string_global(str : String) : String
-      if existing = @string_constants[str]?
+      if existing = string_constant_name_for(str)
         return existing
       end
 
       global_name = "@.str.#{@string_counter}"
       @string_counter += 1
-      @string_constants[str] = global_name
+      record_string_constant(str, global_name)
       global_name
+    end
+
+    private def string_constant_name_for(str : String) : String?
+      i = 0
+      while i < @string_constant_values.size
+        return @string_constant_names.unsafe_fetch(i) if @string_constant_values.unsafe_fetch(i) == str
+        i += 1
+      end
+      @string_constants[str]?
+    end
+
+    private def record_string_constant(str : String, global_name : String) : Nil
+      @string_constant_values << str
+      @string_constant_names << global_name
+      @string_constants[str] = global_name
     end
 
     private def emit_alloc(inst : Alloc, name : String)
@@ -23374,7 +23449,7 @@ module Crystal::MIR
     # Lowers HIR StringInterpolation to __crystal_v2_string_* helpers (single alloc for 3+ parts).
     # This is the bedrock interpolation path for --no-prelude; it does not use String::Builder stubs.
     private def emit_string_interpolation(inst : StringInterpolation, name : String)
-      base_name = name.lstrip('%')
+      base_name = llvm_local_base_name(name)
 
       # Convert each part to string ptr, handling type conversion
       string_parts = [] of String

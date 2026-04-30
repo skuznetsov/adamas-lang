@@ -31,3 +31,15 @@ be verified anchors, not broad opinions.
   helper name still says "intrinsic" even though the set includes runtime
   backend call boundaries. Later cleanup should rename/split this helper and
   centralize the contract with MIR's call intercepts.
+
+- `src/compiler/mir/llvm_backend.cr` still contains many direct
+  `name.lstrip('%')` uses for derived LLVM temp names. The string interpolation
+  path now uses `llvm_local_base_name`, but the remaining sites should be
+  audited and migrated when touched. LLVM numeric locals such as `%0` cannot be
+  extended as `%0.foo`.
+
+- The LLVM backend still mixes Hash-backed side-effect tables with
+  stage2-sensitive compiler state. String constants now have parallel arrays as
+  an authoritative table, but adjacent tables (`@called_crystal_functions`,
+  `@undefined_externs`, worker side-effect merge maps) should be audited before
+  assuming they are safe under generated stage2.

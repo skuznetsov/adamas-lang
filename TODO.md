@@ -30,6 +30,33 @@ Working policy:
 
 ## Current Checkpoint
 
+Stage2 no-prelude LLVM smoke checkpoint (2026-04-29): generated `s2b` now
+passes the no-prelude interpolation smoke. Three backend roots were fixed in
+sequence. First, MIR stack `Alloc` slots were emitted by the entry alloca
+prepass and then re-hoisted from buffered block IR; the block-IR splitter now
+skips alloca names already emitted by the entry prepass. Second, derived LLVM
+temporary names used `name.lstrip('%')`, which can produce invalid digit-leading
+names such as `%0.conv1`; string interpolation now uses a local-name helper
+that strips one leading `%` and prefixes numeric bases. Third, generated s2
+discovered string constants during function emission but lost them before tail
+constant emission through Hash-backed bookkeeping; string constants now use
+parallel arrays as the authoritative ordered table, with the Hash retained only
+as a cache. Evidence: `crystal build src/crystal_v2.cr -o
+/private/tmp/cv2_string_table_arrays --error-trace`;
+`regression_tests/p2_no_prelude_unique_alloca_names.sh
+/private/tmp/cv2_string_table_arrays`;
+`regression_tests/p2_bootstrap_semantic_emit_oracle.sh
+/private/tmp/cv2_string_table_arrays`;
+`regression_tests/p2_pending_budget_no_prelude.sh
+/private/tmp/cv2_string_table_arrays`; and
+`BOOTSTRAP_STAGE_OUT=/private/tmp/cv2_bs_s2_string_table_arrays
+BOOTSTRAP_CHAIN_STAGES=2 BOOTSTRAP_TIMEOUT_SEC=300 BOOTSTRAP_MEM_MB=4096
+scripts/build_bootstrap_stages.sh --stages 2 --out
+/private/tmp/cv2_bs_s2_string_table_arrays`, which builds `cv2_s2` in ~235s
+and reports `smoke no-prelude: ok`. Boundary: full-prelude stage2 smoke still
+fails with SIGBUS immediately after `prelude exists`; that is the next
+bootstrap frontier.
+
 Proc#call backend-boundary checkpoint (2026-04-29): HIR intentionally emits
 `Proc#call` as a plain `Call` so MIR can lower heap Proc dispatch through
 `call_heap_proc`, but `lower_missing_call_targets` was also treating that name

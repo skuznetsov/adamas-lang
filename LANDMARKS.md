@@ -2112,3 +2112,48 @@ Boundary: this fix removes a real false demand edge, but it is not the
 remaining bootstrap fanout root. The next root-cause corridor is still the
 supply-driven `Hash` / `Array` / `Hash::Entry` materialization family.
 {F/G/R: 0.92/0.58/0.91} [verified]
+
+[LM-525|verified]: generated `s2b` no-prelude smoke now passes after fixing
+backend alloca/name/string-constant state boundaries.
+
+Findings:
+
+- Generated stage2 first emitted invalid LLVM for the fixed no-prelude
+  interpolation oracle: duplicate `%r3` / `%r5` allocas in `__crystal_main`.
+  Root: `emit_hoisted_allocas` emitted MIR stack `Alloc` slots at `fn_entry`,
+  then the buffered block-IR alloca splitter hoisted the same alloca lines
+  again when generated stage2 missed the `@emitted_allocas` guard.
+- After de-duplicating names already emitted by the entry prepass, the frontier
+  moved to `%0.conv1`, an invalid derived local name. Root: interpolation temp
+  names derived suffixes from `name.lstrip('%')`, which is unsafe for numeric
+  LLVM locals. The string interpolation path now uses a helper that strips one
+  leading percent and prefixes digit-leading bases.
+- After that, the frontier moved to undefined `@.str.0`. Root: generated s2
+  discovered string constants during function emission, but the final tail
+  emission read a Hash-backed table that had lost those entries. String
+  constants now keep parallel arrays as the authoritative ordered table and
+  retain the Hash only as a cache.
+
+Evidence:
+
+- `crystal build src/crystal_v2.cr -o /private/tmp/cv2_string_table_arrays
+  --error-trace` passed.
+- `regression_tests/p2_no_prelude_unique_alloca_names.sh
+  /private/tmp/cv2_string_table_arrays`,
+  `regression_tests/p2_bootstrap_semantic_emit_oracle.sh
+  /private/tmp/cv2_string_table_arrays`, and
+  `regression_tests/p2_pending_budget_no_prelude.sh
+  /private/tmp/cv2_string_table_arrays` passed.
+- Canonical `s1 -> s2`:
+  `BOOTSTRAP_STAGE_OUT=/private/tmp/cv2_bs_s2_string_table_arrays
+  BOOTSTRAP_CHAIN_STAGES=2 BOOTSTRAP_TIMEOUT_SEC=300 BOOTSTRAP_MEM_MB=4096
+  scripts/build_bootstrap_stages.sh --stages 2 --out
+  /private/tmp/cv2_bs_s2_string_table_arrays` built stage2 successfully:
+  `STAGE 2 BUILD: ok wall=234.69s peak_rss≈2421.55MB`, with
+  `smoke no-prelude: ok`.
+- The new guard also passes when run directly against generated
+  `/private/tmp/cv2_bs_s2_string_table_arrays/cv2_s2`.
+
+Boundary: generated `s2b` full-prelude smoke still fails with SIGBUS
+immediately after `prelude exists`; no `s2 -> s3` attempt yet.
+{F/G/R: 0.94/0.68/0.93} [verified]
