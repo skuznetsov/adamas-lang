@@ -1219,25 +1219,30 @@ pending-budget oracle.
   - reparsed macro-body root selection used block-heavy
     `program.roots.map { ... }.find(&.is_a?)` plus unchecked `arena[id]` at a
     boundary already known to be arena-fragile.
-  Current evidence: `crystal build src/crystal_v2.cr -o
-  /tmp/cv2_final_boundary_candidate --error-trace` passed; the STOP_AFTER_HIR
-  falsifier with `DEBUG_CALL_TRACE='to_unsafe,null_ptr'` exits 0 and no longer
-  contains the invalid Hash calls; `scripts/build_bootstrap_stages.sh
-  --stages 2 --out /tmp/cv2_bs_s2_reparsed_roots` builds `s2`, passes
-  no-prelude smoke, and advances plain smoke to a new macro-condition frontier:
-  `MacroNumberValue.numeric_suffix` during `LibC` macro processing.
+- The generated-stage2 full-prelude macro-condition frontier in
+  `MacroNumberValue.numeric_suffix` is cleared. Root cause: the fixed numeric
+  suffix table used `Array#find` with a block. Generated `s2` lowered that into
+  an Array loop with an uninitialized cursor and crashed before the first
+  `String#ends_with?`. A first attempt using `while + unsafe_fetch` was
+  refuted because it still used an Array and regressed s2 build to corrupted
+  `ExprId`; the accepted version keeps the existing hard-coded suffix table
+  semantics but spells it as direct `ends_with?` checks with no Array/block
+  machinery. Current evidence: `crystal build src/crystal_v2.cr -o
+  /tmp/cv2_numeric_suffix_chain_candidate --error-trace` passed;
+  `scripts/build_bootstrap_stages.sh --stages 2 --out
+  /tmp/cv2_bs_s2_numeric_suffix_chain` builds `s2`, passes no-prelude smoke,
+  and advances plain smoke to `resolve_lib_global_decl_from_source(Span,
+  ArenaLike)` during `LibC` registration.
 
 ## Next Work
 
 1. Root-cause the generated-stage2 full-prelude plain-smoke frontier:
-   `MacroNumberValue.numeric_suffix` crashes while evaluating a lib macro
-   condition during `LibC` registration. The obvious rewrite from
-   `Array#find` to `while + unsafe_fetch` was refuted because it regressed s2
-   build to an earlier corrupted `ExprId` lower_main failure. First checks:
-   inspect the generated `numeric_suffix` LL, add a focused no-prelude oracle
-   for fixed-list suffix lookup / block `Array#find`, and decide whether the
-   true root is block carrier lowering, Array literal ABI, or macro condition
-   evaluator arena corruption.
+   `resolve_lib_global_decl_from_source(Span, ArenaLike)` abort stub during
+   `LibC` registration. First checks: inspect whether this is the same concrete
+   vs broad helper signature pattern as the earlier source-backed extern
+   helpers, whether the helper should read `@arena` internally, and whether
+   exact-demand registration includes the concrete `AstArena/PageArena` call
+   symbol emitted by generated `s2`.
 2. Run the generated-stage2 compiler on the broader fixed no-prelude corpus and
    add focused oracles for any new first failure.
 3. Compare `s1_bootstrap` and `s2b` on the fixed no-prelude corpus before

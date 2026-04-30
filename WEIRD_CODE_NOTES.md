@@ -152,3 +152,13 @@ be verified anchors, not broad opinions.
   use `arena.[]?`, and select roots with explicit loops. The broader
   `Array#find`/block carrier issue is still open and should get a focused
   no-prelude oracle instead of being hidden by more one-off rewrites.
+
+- `MacroNumberValue.numeric_suffix` is a fixed semantic suffix table, but the
+  original implementation expressed it as an `Array#find` block. Generated
+  stage2 lowered that block path with an uninitialized loop cursor in the
+  produced `numeric_suffix` function. A `while + unsafe_fetch` rewrite still
+  used an Array and regressed stage2 build, so the current code uses direct
+  `String#ends_with?` checks. Keep this as a warning sign for small
+  compiler-internal fixed-table lookups: if they execute during bootstrap
+  macro evaluation, prefer direct branch code until Array/block lowering is
+  proven by a focused oracle.

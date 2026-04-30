@@ -2517,3 +2517,41 @@ or block-carrier fix. A speculative `numeric_suffix` rewrite from
 `Array#find` to `while + unsafe_fetch` was refuted because it regressed s2
 build to an earlier corrupted `ExprId` failure.
 {F/G/R: 0.92/0.62/0.92} [verified]
+
+[LM-535|verified]: MacroNumberValue numeric suffix lookup must avoid
+Array/block machinery during generated-stage2 macro condition evaluation.
+
+Findings:
+
+- After LM-534, generated `s2` full-prelude plain smoke reached
+  `MacroNumberValue.numeric_suffix` while evaluating a `LibC` macro condition.
+  LLDB showed a null dereference inside `numeric_suffix` before returning to
+  `MacroNumberValue.from_literal`.
+- The generated LL for the original `["_i8", ...].find { |candidate|
+  literal.ends_with?(candidate) }` had already been expanded into an
+  Array(String) loop, but its loop cursor alloca was never initialized before
+  the first load. The crash happened before the first semantic
+  `String#ends_with?` check.
+- A first local rewrite to `while idx < suffixes.size; suffixes.unsafe_fetch`
+  was refuted: it still used an Array and regressed s2 build to an earlier
+  corrupted `ExprId` lower_main failure.
+- The accepted change keeps the same fixed suffix table and precedence, but
+  spells it as direct `return suffix if literal.ends_with?(suffix)` checks.
+  This removes Array allocation, block lowering, and iterator state from this
+  bootstrap macro-evaluator path.
+
+Evidence:
+
+- `crystal build src/crystal_v2.cr -o
+  /tmp/cv2_numeric_suffix_chain_candidate --error-trace` passed.
+- `scripts/build_bootstrap_stages.sh --stages 2 --out
+  /tmp/cv2_bs_s2_numeric_suffix_chain` built `s2` in 235s and passed
+  no-prelude smoke. The previous `MacroNumberValue.numeric_suffix` crash
+  disappeared; plain smoke advanced to
+  `resolve_lib_global_decl_from_source(Span, ArenaLike)` abort stub during
+  `LibC` registration.
+
+Boundary: this is a targeted fixed-table bootstrap hardening, not proof that
+general `Array#find` or block lowering is fixed. Add a focused oracle before
+claiming the broader iterator/block path.
+{F/G/R: 0.90/0.55/0.90} [verified]

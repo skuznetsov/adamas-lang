@@ -148,10 +148,27 @@ module CrystalV2
         end
 
         private def self.numeric_suffix(literal : String) : String?
-          ["_i8", "_i16", "_i32", "_i64", "_u8", "_u16", "_u32", "_u64", "_f32", "_f64",
-           "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64"].find do |candidate|
-            literal.ends_with?(candidate)
-          end
+          return "_i8" if literal.ends_with?("_i8")
+          return "_i16" if literal.ends_with?("_i16")
+          return "_i32" if literal.ends_with?("_i32")
+          return "_i64" if literal.ends_with?("_i64")
+          return "_u8" if literal.ends_with?("_u8")
+          return "_u16" if literal.ends_with?("_u16")
+          return "_u32" if literal.ends_with?("_u32")
+          return "_u64" if literal.ends_with?("_u64")
+          return "_f32" if literal.ends_with?("_f32")
+          return "_f64" if literal.ends_with?("_f64")
+          return "i8" if literal.ends_with?("i8")
+          return "i16" if literal.ends_with?("i16")
+          return "i32" if literal.ends_with?("i32")
+          return "i64" if literal.ends_with?("i64")
+          return "u8" if literal.ends_with?("u8")
+          return "u16" if literal.ends_with?("u16")
+          return "u32" if literal.ends_with?("u32")
+          return "u64" if literal.ends_with?("u64")
+          return "f32" if literal.ends_with?("f32")
+          return "f64" if literal.ends_with?("f64")
+          nil
         end
 
         private def self.unsigned_numeric_suffix?(suffix : String) : Bool
