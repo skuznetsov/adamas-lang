@@ -12,6 +12,28 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-527|verified]: Visibility modifier wrappers must be validated before
+top-level collection or HIR member passes discard them. The first HIR-only
+patch validated `unwrap_visibility_member*` and expression lowering, but the
+new no-prelude guard refuted completeness: `protected class Hidden` still
+compiled because `CLI#collect_top_level_nodes` recursively stripped
+`VisibilityModifierNode` before class registration. The fix adds matching
+validation in the top-level collector and in all HIR visibility unwrap helpers.
+Covered semantics match original Crystal for non-call forms: private
+type/constant/macro wrappers are accepted, protected type/constant/macro
+wrappers raise `can only use 'private' for ...`, and invalid non-call targets
+raise `can't apply visibility modifier`. Evidence: `crystal build
+src/crystal_v2.cr -o /private/tmp/cv2_visibility_modifier_semantics
+--error-trace`; `p2_visibility_modifier_semantics_no_prelude.sh`,
+`p2_visibility_private_accessor_no_prelude.sh`,
+`p2_visibility_protected_namespace_no_prelude.sh`,
+`p2_bootstrap_semantic_emit_oracle.sh`, and
+`p2_named_tuple_annotation_keys_no_prelude.sh` pass with that compiler; parser
+visibility spec remains green. Boundary: wrapped `CallNode` is intentionally
+still allowed as the macro-call escape hatch for `private record`-style forms
+until v2 has a reliable expanded/unexpanded macro-call marker. {F/G/R:
+0.91/0.68/0.91} [verified]
+
 [LM-526|verified]: Owner-context annotation resolution, structural union alias
 resolution, and Crystal-compatible protected namespace access are one
 bootstrap corridor. The first symptom was a stage2 stub for

@@ -374,3 +374,26 @@ oracle.
 fresh Grok 4.1 Fast structured-function flow if available, or require the ACP
 wrapper to include prompt/session ids in the returned transcript.
 **Cost saved:** none.
+
+### Session 18 — 2026-04-29 — VisibilityModifier semantic validation audit
+**Task:** read-only audit for the smallest correct `VisibilityModifierNode`
+semantic fix, asking for exact type-target node classes, unwrap sites that
+must validate, and no-prelude regression snippets.
+**Brief size:** one inline ACP prompt, ~1.2 KB, with original Crystal
+`TopLevelVisitor#visit(VisibilityModifier)` behavior summarized.
+**Latency:** timed out after 240s waiting for stdout.
+**Output quality:** no final answer. The tool stream showed grep/read-file
+activity, but no concise findings were returned before timeout.
+**What worked:** the sidecar was launched non-blocking, so it did not delay the
+local falsifier. Local review found an additional top-level collector root that
+the first HIR-only patch missed.
+**What did not:** no actionable audit result arrived. This reinforces the
+Session 16/17 pattern: ACP Grok can spend the whole time reading without
+returning partial findings unless the prompt enforces a very short answer
+deadline.
+**Adversary check:** local verification caught the missing collector path:
+`protected class` still compiled after the first HIR-only patch, then passed
+after adding top-level collector validation.
+**Verdict:** no evidence value from this run. Keep Grok sidecars strictly
+non-blocking and require partial output after the first few file reads.
+**Cost saved:** none.

@@ -4091,6 +4091,54 @@ module CrystalV2
         end
       end
 
+      private def validate_top_level_visibility_modifier!(
+        modifier_node : Frontend::VisibilityModifierNode,
+        inner : Frontend::Node,
+        arena : Frontend::ArenaLike,
+      ) : Nil
+        visibility = modifier_node.visibility
+
+        case inner
+        when Frontend::DefNode,
+             Frontend::GetterNode,
+             Frontend::SetterNode,
+             Frontend::PropertyNode
+          return
+        when Frontend::ClassNode,
+             Frontend::ModuleNode,
+             Frontend::EnumNode,
+             Frontend::AliasNode,
+             Frontend::LibNode,
+             Frontend::AnnotationDefNode
+          return if visibility == Frontend::Visibility::Private
+          raise HIR::LoweringError.new("can only use 'private' for types", modifier_node)
+        when Frontend::ConstantNode
+          return if visibility == Frontend::Visibility::Private
+          raise HIR::LoweringError.new("can only use 'private' for constants", modifier_node)
+        when Frontend::AssignNode
+          if visibility_constant_assignment_target?(inner, arena)
+            return if visibility == Frontend::Visibility::Private
+            raise HIR::LoweringError.new("can only use 'private' for constants", modifier_node)
+          end
+        when Frontend::MacroDefNode
+          return if visibility == Frontend::Visibility::Private
+          raise HIR::LoweringError.new("can only use 'private' for macros", modifier_node)
+        when Frontend::CallNode
+          # Keep original Crystal's macro-call escape hatch (`private record`, etc.).
+          return
+        end
+
+        raise HIR::LoweringError.new("can't apply visibility modifier", modifier_node)
+      end
+
+      private def visibility_constant_assignment_target?(
+        node : Frontend::AssignNode,
+        arena : Frontend::ArenaLike,
+      ) : Bool
+        target = arena[node.target]
+        target.is_a?(Frontend::PathNode) || target.is_a?(Frontend::ConstantNode)
+      end
+
       private def collect_top_level_nodes(
         arena : Frontend::ArenaLike,
         arena_index : Int32,
@@ -4177,6 +4225,9 @@ module CrystalV2
         when Frontend::MacroExpressionNode
           collect_top_level_nodes(arena, arena_index, node.expression, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs, paths_by_arena)
         when Frontend::VisibilityModifierNode
+          unless node.expression.null_ptr? || node.expression.invalid?
+            validate_top_level_visibility_modifier!(node, arena[node.expression], arena)
+          end
           collect_top_level_nodes(arena, arena_index, node.expression, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, source, macro_origin_path, depth, collect_main_exprs, paths_by_arena)
         when Frontend::MacroIfNode
           condition = evaluate_macro_condition(arena, node.condition, flags)

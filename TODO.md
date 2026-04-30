@@ -30,6 +30,29 @@ Working policy:
 
 ## Current Checkpoint
 
+Visibility modifier semantics checkpoint (2026-04-29): top-level collection
+and HIR member unwrapping now validate `VisibilityModifierNode` before
+discarding the wrapper. This aligns the non-accessor declaration cases with
+Crystal's top-level visitor for the covered forms: `private` type/constant/macro
+wrappers remain valid, `protected` type/constant/macro wrappers now fail with
+the original-style diagnostics, and invalid non-call expressions such as
+`private 1` no longer compile silently. Evidence: `crystal build
+src/crystal_v2.cr -o /private/tmp/cv2_visibility_modifier_semantics
+--error-trace`; `regression_tests/p2_visibility_modifier_semantics_no_prelude.sh
+/private/tmp/cv2_visibility_modifier_semantics`;
+`regression_tests/p2_visibility_private_accessor_no_prelude.sh
+/private/tmp/cv2_visibility_modifier_semantics`;
+`regression_tests/p2_visibility_protected_namespace_no_prelude.sh
+/private/tmp/cv2_visibility_modifier_semantics`; `crystal spec
+spec/parser/parser_visibility_spec.cr --error-trace`;
+`regression_tests/p2_bootstrap_semantic_emit_oracle.sh
+/private/tmp/cv2_visibility_modifier_semantics`; and
+`regression_tests/p2_named_tuple_annotation_keys_no_prelude.sh
+/private/tmp/cv2_visibility_modifier_semantics`. Boundary: visibility-wrapped
+`CallNode` remains allowed as a macro-call escape hatch (`private record`,
+typed macro calls) until v2 has a reliable expanded/unexpanded macro-call
+marker equivalent to original Crystal's MainVisitor check.
+
 Union annotation + protected namespace checkpoint (2026-04-29): stage2
 `STOP_AFTER_HIR` now gets past the former
 `debug_cli_root_block_state(...AstArena...)` stub/miss and the subsequent

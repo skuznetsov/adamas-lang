@@ -7599,9 +7599,61 @@ module Crystal::HIR
       while current.is_a?(CrystalV2::Compiler::Frontend::VisibilityModifierNode)
         expr = current.expression
         break if expr.null_ptr? || expr.invalid?
-        current = arena[expr]
+        inner = arena[expr]
+        validate_visibility_modifier_node!(current, inner, arena)
+        current = inner
       end
       current
+    end
+
+    private def validate_visibility_modifier_node!(
+      modifier_node : CrystalV2::Compiler::Frontend::VisibilityModifierNode,
+      inner : CrystalV2::Compiler::Frontend::Node,
+      arena : CrystalV2::Compiler::Frontend::ArenaLike,
+    ) : Nil
+      visibility = modifier_node.visibility
+
+      case inner
+      when CrystalV2::Compiler::Frontend::DefNode,
+           CrystalV2::Compiler::Frontend::GetterNode,
+           CrystalV2::Compiler::Frontend::SetterNode,
+           CrystalV2::Compiler::Frontend::PropertyNode
+        return
+      when CrystalV2::Compiler::Frontend::ClassNode,
+           CrystalV2::Compiler::Frontend::ModuleNode,
+           CrystalV2::Compiler::Frontend::EnumNode,
+           CrystalV2::Compiler::Frontend::AliasNode,
+           CrystalV2::Compiler::Frontend::LibNode,
+           CrystalV2::Compiler::Frontend::AnnotationDefNode
+        return if visibility == CrystalV2::Compiler::Frontend::Visibility::Private
+        raise LoweringError.new("can only use 'private' for types", modifier_node)
+      when CrystalV2::Compiler::Frontend::ConstantNode
+        return if visibility == CrystalV2::Compiler::Frontend::Visibility::Private
+        raise LoweringError.new("can only use 'private' for constants", modifier_node)
+      when CrystalV2::Compiler::Frontend::AssignNode
+        if visibility_constant_assignment_target?(inner, arena)
+          return if visibility == CrystalV2::Compiler::Frontend::Visibility::Private
+          raise LoweringError.new("can only use 'private' for constants", modifier_node)
+        end
+      when CrystalV2::Compiler::Frontend::MacroDefNode
+        return if visibility == CrystalV2::Compiler::Frontend::Visibility::Private
+        raise LoweringError.new("can only use 'private' for macros", modifier_node)
+      when CrystalV2::Compiler::Frontend::CallNode
+        # Original Crystal defers this case because the call may expand to a macro
+        # declaration such as `private record`. Keep that escape hatch here too.
+        return
+      end
+
+      raise LoweringError.new("can't apply visibility modifier", modifier_node)
+    end
+
+    private def visibility_constant_assignment_target?(
+      node : CrystalV2::Compiler::Frontend::AssignNode,
+      arena : CrystalV2::Compiler::Frontend::ArenaLike,
+    ) : Bool
+      target = arena[node.target]
+      target.is_a?(CrystalV2::Compiler::Frontend::PathNode) ||
+        target.is_a?(CrystalV2::Compiler::Frontend::ConstantNode)
     end
 
     private def extract_macro_params(node : CrystalV2::Compiler::Frontend::MacroDefNode) : Array(MacroParamInfo)
@@ -13701,7 +13753,9 @@ module Crystal::HIR
       while current.is_a?(CrystalV2::Compiler::Frontend::VisibilityModifierNode)
         expr = current.expression
         break if expr.null_ptr? || expr.invalid?
-        current = @arena[expr]
+        inner = @arena[expr]
+        validate_visibility_modifier_node!(current, inner, @arena)
+        current = inner
       end
       current
     end
@@ -21487,12 +21541,7 @@ module Crystal::HIR
         if b = node.body
           b.each do |id|
             next if id.null_ptr? || id.invalid?
-            mem = @arena[id]
-            while mem.is_a?(CrystalV2::Compiler::Frontend::VisibilityModifierNode)
-              expr = mem.expression
-              break if expr.null_ptr? || expr.invalid?
-              mem = @arena[expr]
-            end
+            mem = unwrap_visibility_member(@arena[id])
             if mem.is_a?(CrystalV2::Compiler::Frontend::DefNode)
               param_count = mem.params.try(&.size) || 0
               body_methods << "#{(safe_slice_to_string(mem.name) || "")}(#{param_count})"
@@ -21889,7 +21938,9 @@ module Crystal::HIR
         while raw_node.is_a?(CrystalV2::Compiler::Frontend::VisibilityModifierNode)
           inner_expr_id = raw_node.expression
           break if inner_expr_id.null_ptr? || inner_expr_id.invalid?
-          raw_node = @arena[inner_expr_id]
+          inner_node = @arena[inner_expr_id]
+          validate_visibility_modifier_node!(raw_node, inner_node, @arena)
+          raw_node = inner_node
         end
         member = raw_node
         case member
@@ -46439,7 +46490,8 @@ module Crystal::HIR
         ctx.register_type(const_set.id, value_type)
         value_id
       when CrystalV2::Compiler::Frontend::VisibilityModifierNode
-        # Visibility modifier (private, protected) - just lower the target expression
+        inner = @arena[node.expression]
+        validate_visibility_modifier_node!(node, inner, @arena)
         lower_expr(ctx, node.expression)
       when CrystalV2::Compiler::Frontend::OutNode
         # out x - creates a pointer to a local variable for C functions
@@ -51221,7 +51273,11 @@ module Crystal::HIR
     ) : CrystalV2::Compiler::Frontend::ExprId
       node = arena[expr_id]
       if node.is_a?(CrystalV2::Compiler::Frontend::VisibilityModifierNode)
-        node.expression
+        inner_expr = node.expression
+        unless inner_expr.null_ptr? || inner_expr.invalid?
+          validate_visibility_modifier_node!(node, arena[inner_expr], arena)
+        end
+        inner_expr
       else
         expr_id
       end
@@ -58939,11 +58995,8 @@ module Crystal::HIR
       best_score = Int32::MIN
 
       body.each do |expr_id|
-        member = template.arena[expr_id]
-        # Unwrap visibility modifier using template's arena, not @arena
-        while member.is_a?(CrystalV2::Compiler::Frontend::VisibilityModifierNode)
-          member = template.arena[member.expression]
-        end
+        # Unwrap visibility modifier using template's arena, not @arena.
+        member = unwrap_visibility_member_in_arena(template.arena[expr_id], template.arena)
 
         case member
         when CrystalV2::Compiler::Frontend::DefNode
@@ -59028,10 +59081,7 @@ module Crystal::HIR
       return nil unless body
 
       body.each do |expr_id|
-        member = template.arena[expr_id]
-        while member.is_a?(CrystalV2::Compiler::Frontend::VisibilityModifierNode)
-          member = template.arena[member.expression]
-        end
+        member = unwrap_visibility_member_in_arena(template.arena[expr_id], template.arena)
 
         case member
         when CrystalV2::Compiler::Frontend::GetterNode
@@ -59070,10 +59120,7 @@ module Crystal::HIR
 
       with_arena(template.arena) do
         body.each do |expr_id|
-          member = template.arena[expr_id]
-          while member.is_a?(CrystalV2::Compiler::Frontend::VisibilityModifierNode)
-            member = template.arena[member.expression]
-          end
+          member = unwrap_visibility_member_in_arena(template.arena[expr_id], template.arena)
 
           case member
           when CrystalV2::Compiler::Frontend::GetterNode,
