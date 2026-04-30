@@ -30,6 +30,28 @@ Working policy:
 
 ## Current Checkpoint
 
+Proc#call backend-boundary checkpoint (2026-04-29): HIR intentionally emits
+`Proc#call` as a plain `Call` so MIR can lower heap Proc dispatch through
+`call_heap_proc`, but `lower_missing_call_targets` was also treating that name
+as source demand. This was a wrong boundary even in a tiny no-prelude reducer:
+`p = ->(x : Int32) { x + 1 }; p.call(41)` left `Proc#call` in the HIR and
+also queued it as a missing source function. `Proc#call`, `Proc#call$...`, and
+`Proc#call(...)` are now classified with the other backend-owned HIR call
+names. Evidence: `crystal build src/crystal_v2.cr -o
+/private/tmp/cv2_proc_call_boundary --error-trace`;
+`regression_tests/p2_proc_call_backend_boundary_no_prelude.sh
+/private/tmp/cv2_proc_call_boundary`;
+`regression_tests/p2_backend_intrinsic_boundary_no_prelude.sh
+/private/tmp/cv2_proc_call_boundary`;
+`regression_tests/p2_pending_budget_no_prelude.sh
+/private/tmp/cv2_proc_call_boundary`; and
+`regression_tests/p2_bootstrap_semantic_emit_oracle.sh
+/private/tmp/cv2_proc_call_boundary`. Boundary: this is not the remaining
+full-source fanout root. A fresh `STOP_AFTER_HIR` profile on `src/crystal_v2.cr`
+still reports `lower_missing: 615 -> 35892 (+35277) in 166338.1ms`; the next
+root-cause corridor remains supply-driven `Hash` / `Array` / `Hash::Entry`
+materialization, not `Proc#call`.
+
 Visibility modifier semantics checkpoint (2026-04-29): top-level collection
 and HIR member unwrapping now validate `VisibilityModifierNode` before
 discarding the wrapper. This aligns the non-accessor declaration cases with

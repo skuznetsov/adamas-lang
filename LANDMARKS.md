@@ -2075,3 +2075,40 @@ full-prelude and no-prelude now hit
 `CLI#debug_cli_root_block_state(String, AstArena, Array(ExprId))`. No `s3+`
 attempt yet.
 {F/G/R: 0.94/0.66/0.93} [verified]
+
+[LM-524|verified]: `Proc#call` is backend-owned demand boundary, not a source
+HIR materialization target.
+
+Findings:
+
+- HIR lowers proc receiver calls to explicit `Call(..., "Proc#call", ...)` so
+  MIR can select heap Proc dispatch with `call_heap_proc`.
+- Before the fix, a tiny no-prelude reducer left `Proc#call` in HIR and also
+  reported `Proc#call` in the missing-source demand summary. That is the wrong
+  boundary: the call is intentionally visible for backend lowering, not a
+  request to materialize a source-level stdlib body.
+- The backend-owned runtime-call filter now includes `Proc#call`,
+  `Proc#call$...`, and `Proc#call(...)`, while deliberately not matching
+  arbitrary `#call` methods.
+
+Evidence:
+
+- `crystal build src/crystal_v2.cr -o /private/tmp/cv2_proc_call_boundary
+  --error-trace` passed.
+- `regression_tests/p2_proc_call_backend_boundary_no_prelude.sh
+  /private/tmp/cv2_proc_call_boundary` passed and verifies both sides of the
+  invariant: `Proc#call` remains in HIR and does not appear in the missing
+  source-demand log.
+- `regression_tests/p2_backend_intrinsic_boundary_no_prelude.sh
+  /private/tmp/cv2_proc_call_boundary`,
+  `regression_tests/p2_pending_budget_no_prelude.sh
+  /private/tmp/cv2_proc_call_boundary`, and
+  `regression_tests/p2_bootstrap_semantic_emit_oracle.sh
+  /private/tmp/cv2_proc_call_boundary` passed.
+- Full-source `STOP_AFTER_HIR` measurement with missing summaries still exits
+  0 but reports `lower_missing: 615 -> 35892 (+35277) in 166338.1ms`.
+
+Boundary: this fix removes a real false demand edge, but it is not the
+remaining bootstrap fanout root. The next root-cause corridor is still the
+supply-driven `Hash` / `Array` / `Hash::Entry` materialization family.
+{F/G/R: 0.92/0.58/0.91} [verified]

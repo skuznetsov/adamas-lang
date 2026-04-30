@@ -1,0 +1,33 @@
+# Weird Code Notes
+
+Active notes for code that looked suspicious during root-cause work but was
+not safe or necessary to rewrite in the current bugfix commit. Entries should
+be verified anchors, not broad opinions.
+
+## 2026-04-29
+
+- `VisibilityModifierNode` validation is duplicated in
+  `src/compiler/cli.cr` and `src/compiler/hir/ast_to_hir.cr`. This was kept
+  intentionally in commit `3ffb0927` because top-level collection happens
+  before HIR lowering and can register invalid wrappers too early. Long-term,
+  the legality table should live in one shared semantic/helper layer so the
+  CLI collector and HIR passes cannot drift.
+
+- `src/compiler/hir/ast_to_hir.cr` still has many manual
+  `VisibilityModifierNode` unwrap sites. The central helpers now validate the
+  common paths, but future edits should avoid adding ad-hoc unwrap loops and
+  should route through `unwrap_visibility_member*` unless there is a proven
+  arena-specific reason.
+
+- `src/compiler/hir/ast_to_hir.cr` contains narrow debug/special-case blocks
+  such as the `Float::FastFloat::BinaryFormat` method dump in module
+  registration. These blocks are currently inert, but they make registration
+  code harder to audit. Clean them only in a dedicated cleanup commit with a
+  bootstrap guard, not mixed into semantic fixes.
+
+- Backend-owned HIR calls are currently identified by a name allowlist in
+  `src/compiler/hir/ast_to_hir.cr` (`backend_owned_runtime_intrinsic_call?`).
+  This now includes `Proc#call` because MIR owns heap Proc dispatch, but the
+  helper name still says "intrinsic" even though the set includes runtime
+  backend call boundaries. Later cleanup should rename/split this helper and
+  centralize the contract with MIR's call intercepts.

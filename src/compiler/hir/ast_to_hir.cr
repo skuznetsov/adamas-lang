@@ -1146,6 +1146,8 @@ module Crystal::HIR
     private def backend_owned_runtime_intrinsic_call?(name : String) : Bool
       # These names are emitted as plain HIR Call instructions but are owned by
       # MIR/LLVM runtime lowering, not by source-level HIR def materialization.
+      return true if backend_owned_proc_call?(name)
+
       case name
       when "__crystal_v2_string_eq",
            "__crystal_v2_hash_get_entry_ptr",
@@ -1155,6 +1157,15 @@ module Crystal::HIR
       else
         false
       end
+    end
+
+    @[AlwaysInline]
+    private def backend_owned_proc_call?(name : String) : Bool
+      # HIR emits Proc#call as a normal Call so MIR can lower heap Proc dispatch
+      # through call_heap_proc. It must not be demand-driven as a source def.
+      name == "Proc#call" ||
+        name.starts_with?("Proc#call$") ||
+        name.starts_with?("Proc#call(")
     end
 
     @[AlwaysInline]

@@ -397,3 +397,23 @@ after adding top-level collector validation.
 **Verdict:** no evidence value from this run. Keep Grok sidecars strictly
 non-blocking and require partial output after the first few file reads.
 **Cost saved:** none.
+
+### Session 19 — 2026-04-29 — Proc#call backend-boundary audit
+**Task:** read-only audit of whether `Proc#call`, `Proc#call$...`, and
+`Proc#call(...)` can safely be treated as backend-owned runtime calls instead
+of source-level demand targets.
+**Brief size:** one inline ACP prompt, ~1.0 KB, focused on HIR proc-call
+emission, MIR proc-call lowering, and nearby backend-owned filter anchors.
+**Latency:** timed out after 120s waiting for stdout.
+**Output quality:** no final answer and no actionable partial findings.
+**What worked:** the sidecar was launched while local verification continued,
+so it did not block the critical path.
+**What did not:** Grok again consumed the prompt window without returning a
+bounded audit result. This repeats the Session 16/18 failure pattern.
+**Adversary check:** local verification was sufficient: the new no-prelude
+guard proves `Proc#call` remains visible in HIR while disappearing from the
+missing-source demand log, and the full-source profile confirms this is not
+the remaining broad fanout root.
+**Verdict:** no evidence value from this sidecar run. Future ACP prompts should
+be shorter and should demand a partial answer before any third file read.
+**Cost saved:** none.
