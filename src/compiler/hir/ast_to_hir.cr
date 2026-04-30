@@ -731,6 +731,21 @@ module Crystal::HIR
       has_named_args : Bool = false,
       named_arg_names : Array(String)? = nil
 
+    private struct DeferredConstantInit
+      getter owner : String
+      getter name : String
+      getter value_id : CrystalV2::Compiler::Frontend::ExprId
+      getter arena : CrystalV2::Compiler::Frontend::ArenaLike
+
+      def initialize(
+        @owner : String,
+        @name : String,
+        @value_id : CrystalV2::Compiler::Frontend::ExprId,
+        @arena : CrystalV2::Compiler::Frontend::ArenaLike,
+      )
+      end
+    end
+
     private class InitParamsCapture
       property params : Array({String, TypeRef})
       property source : Symbol
@@ -3938,7 +3953,7 @@ module Crystal::HIR
 
     # Deferred constant initializations (non-numeric constants like string literals).
     # Stores: {owner_name, const_name, value_expr_id, arena}
-    @deferred_constant_inits : Array(Tuple(String, String, Int32, CrystalV2::Compiler::Frontend::ArenaLike))
+    @deferred_constant_inits : Array(DeferredConstantInit)
 
     # Lazy classvar init: maps "Owner::cvar_name" → {expr_id, arena, owner_class}
     @classvar_lazy_init_info = {} of String => Tuple(CrystalV2::Compiler::Frontend::ExprId, CrystalV2::Compiler::Frontend::ArenaLike, String)
@@ -4190,7 +4205,7 @@ module Crystal::HIR
       @debug_callsite = nil
       @pending_def_annotations = [] of Tuple(CrystalV2::Compiler::Frontend::AnnotationNode, CrystalV2::Compiler::Frontend::ArenaLike)
       @deferred_classvar_inits = [] of Tuple(CrystalV2::Compiler::Frontend::ExprId, CrystalV2::Compiler::Frontend::ArenaLike, String)
-      @deferred_constant_inits = [] of Tuple(String, String, Int32, CrystalV2::Compiler::Frontend::ArenaLike)
+      @deferred_constant_inits = [] of DeferredConstantInit
       @pending_offsetof_constants = [] of Tuple(String, CrystalV2::Compiler::Frontend::ExprId, CrystalV2::Compiler::Frontend::ArenaLike, String?)
       @pending_enum_constant_resolutions = [] of Tuple(String, String, String) # (enum_name, member_name, constant_key)
       # Explicit initialization for ivars with inline defaults (V2 may not handle
@@ -4425,7 +4440,7 @@ module Crystal::HIR
       @debug_callsite = nil
       @pending_def_annotations = [] of Tuple(CrystalV2::Compiler::Frontend::AnnotationNode, CrystalV2::Compiler::Frontend::ArenaLike)
       @deferred_classvar_inits = [] of Tuple(CrystalV2::Compiler::Frontend::ExprId, CrystalV2::Compiler::Frontend::ArenaLike, String)
-      @deferred_constant_inits = [] of Tuple(String, String, Int32, CrystalV2::Compiler::Frontend::ArenaLike)
+      @deferred_constant_inits = [] of DeferredConstantInit
       @pending_offsetof_constants = [] of Tuple(String, CrystalV2::Compiler::Frontend::ExprId, CrystalV2::Compiler::Frontend::ArenaLike, String?)
       @pending_enum_constant_resolutions = [] of Tuple(String, String, String)
       if env_has?("DEBUG_AST_TO_HIR_BIND")
@@ -5766,8 +5781,10 @@ module Crystal::HIR
     @class_var_infer_stack : Set(String)
 
     private def source_text_for_arena_or_file(
-      arena : CrystalV2::Compiler::Frontend::ArenaLike,
+      arena : CrystalV2::Compiler::Frontend::ArenaLike?,
     ) : String?
+      return nil unless arena
+      arena = arena.as(CrystalV2::Compiler::Frontend::ArenaLike)
       source = source_for_arena(arena)
       if source.nil?
         if path = source_path_for(arena)
@@ -5874,7 +5891,16 @@ module Crystal::HIR
       header : String,
       prefixes : Array(String),
     ) : String?
-      matched_prefix = prefixes.find { |prefix| header.starts_with?(prefix) }
+      matched_prefix = nil.as(String?)
+      prefix_idx = 0
+      while prefix_idx < prefixes.size
+        prefix = prefixes.unsafe_fetch(prefix_idx)
+        if header.starts_with?(prefix)
+          matched_prefix = prefix
+          break
+        end
+        prefix_idx += 1
+      end
       return nil unless matched_prefix
 
       rest = header.byte_slice(matched_prefix.bytesize, header.bytesize - matched_prefix.bytesize).strip
@@ -5898,7 +5924,16 @@ module Crystal::HIR
       header : String,
       prefixes : Array(String),
     ) : String?
-      matched_prefix = prefixes.find { |prefix| header.starts_with?(prefix) }
+      matched_prefix = nil.as(String?)
+      prefix_idx = 0
+      while prefix_idx < prefixes.size
+        prefix = prefixes.unsafe_fetch(prefix_idx)
+        if header.starts_with?(prefix)
+          matched_prefix = prefix
+          break
+        end
+        prefix_idx += 1
+      end
       return nil unless matched_prefix
 
       rest = header.byte_slice(matched_prefix.bytesize, header.bytesize - matched_prefix.bytesize).strip
@@ -8195,9 +8230,17 @@ module Crystal::HIR
 
       set_source_for_arena(program.arena, snippet)
 
-      class_node = program.roots
-        .map { |expr_id| program.arena[expr_id] }
-        .find(&.is_a?(CrystalV2::Compiler::Frontend::ClassNode))
+      class_node = nil.as(CrystalV2::Compiler::Frontend::Node?)
+      root_idx = 0
+      while root_idx < program.roots.size
+        expr_id = program.roots.unsafe_fetch(root_idx)
+        candidate = program.arena[expr_id]
+        if candidate.is_a?(CrystalV2::Compiler::Frontend::ClassNode)
+          class_node = candidate
+          break
+        end
+        root_idx += 1
+      end
       return nil unless class_node
 
       if debug_repair
@@ -8374,9 +8417,17 @@ module Crystal::HIR
         set_path_for_arena(reparsed_arena, path)
       end
 
-      enum_node = program.roots
-        .map { |expr_id| reparsed_arena[expr_id] }
-        .find(&.is_a?(CrystalV2::Compiler::Frontend::EnumNode))
+      enum_node = nil.as(CrystalV2::Compiler::Frontend::Node?)
+      root_idx = 0
+      while root_idx < program.roots.size
+        expr_id = program.roots.unsafe_fetch(root_idx)
+        candidate = reparsed_arena[expr_id]
+        if candidate.is_a?(CrystalV2::Compiler::Frontend::EnumNode)
+          enum_node = candidate
+          break
+        end
+        root_idx += 1
+      end
       return false unless enum_node
 
       old_arena = @arena
@@ -8412,9 +8463,17 @@ module Crystal::HIR
         set_path_for_arena(reparsed_arena, path)
       end
 
-      module_node = program.roots
-        .map { |expr_id| reparsed_arena[expr_id] }
-        .find(&.is_a?(CrystalV2::Compiler::Frontend::ModuleNode))
+      module_node = nil.as(CrystalV2::Compiler::Frontend::Node?)
+      root_idx = 0
+      while root_idx < program.roots.size
+        expr_id = program.roots.unsafe_fetch(root_idx)
+        candidate = reparsed_arena[expr_id]
+        if candidate.is_a?(CrystalV2::Compiler::Frontend::ModuleNode)
+          module_node = candidate
+          break
+        end
+        root_idx += 1
+      end
       return false unless module_node
 
       old_arena = @arena
@@ -8460,9 +8519,17 @@ module Crystal::HIR
         set_path_for_arena(reparsed_arena, path)
       end
 
-      class_node = program.roots
-        .map { |expr_id| reparsed_arena[expr_id] }
-        .find(&.is_a?(CrystalV2::Compiler::Frontend::ClassNode))
+      class_node = nil.as(CrystalV2::Compiler::Frontend::Node?)
+      root_idx = 0
+      while root_idx < program.roots.size
+        expr_id = program.roots.unsafe_fetch(root_idx)
+        candidate = reparsed_arena[expr_id]
+        if candidate.is_a?(CrystalV2::Compiler::Frontend::ClassNode)
+          class_node = candidate
+          break
+        end
+        root_idx += 1
+      end
       return false unless class_node
       if debug_repair
         class_body = class_node.as(CrystalV2::Compiler::Frontend::ClassNode).body
@@ -12044,8 +12111,10 @@ module Crystal::HIR
 
     private def resolve_arena_for_module_node(
       node : CrystalV2::Compiler::Frontend::ModuleNode,
-      fallback : CrystalV2::Compiler::Frontend::ArenaLike,
+      fallback : CrystalV2::Compiler::Frontend::ArenaLike?,
     ) : CrystalV2::Compiler::Frontend::ArenaLike
+      return @arena unless fallback
+      fallback = fallback.as(CrystalV2::Compiler::Frontend::ArenaLike)
       return fallback if arena_fits_module_node?(fallback, node)
 
       fallback_path = source_path_for(fallback)
@@ -12127,8 +12196,10 @@ module Crystal::HIR
 
     private def resolve_arena_for_class_node(
       node : CrystalV2::Compiler::Frontend::ClassNode,
-      fallback : CrystalV2::Compiler::Frontend::ArenaLike,
+      fallback : CrystalV2::Compiler::Frontend::ArenaLike?,
     ) : CrystalV2::Compiler::Frontend::ArenaLike
+      return @arena unless fallback
+      fallback = fallback.as(CrystalV2::Compiler::Frontend::ArenaLike)
       return fallback if arena_fits_class_node?(fallback, node)
 
       fallback_path = source_path_for(fallback)
@@ -12218,8 +12289,10 @@ module Crystal::HIR
 
     private def resolve_arena_for_enum_node(
       node : CrystalV2::Compiler::Frontend::EnumNode,
-      fallback : CrystalV2::Compiler::Frontend::ArenaLike,
+      fallback : CrystalV2::Compiler::Frontend::ArenaLike?,
     ) : CrystalV2::Compiler::Frontend::ArenaLike
+      return @arena unless fallback
+      fallback = fallback.as(CrystalV2::Compiler::Frontend::ArenaLike)
       return fallback if arena_fits_enum_node?(fallback, node)
 
       fallback_path = source_path_for(fallback)
@@ -13774,9 +13847,10 @@ module Crystal::HIR
     private def collect_defined_instance_method_full_names(
       class_name : String,
       body : Array(ExprId),
-      arena : CrystalV2::Compiler::Frontend::ArenaLike,
+      arena : CrystalV2::Compiler::Frontend::ArenaLike?,
     ) : Set(String)
-      cache_key = {class_name, body.object_id, arena_map_key(arena), @module_defs_cache_version}
+      scan_arena = (arena || @arena).as(CrystalV2::Compiler::Frontend::ArenaLike)
+      cache_key = {class_name, body.object_id, arena_map_key(scan_arena), @module_defs_cache_version}
       if cached = @defined_instance_method_full_names_cache[cache_key]?
         return cached.dup
       end
@@ -13795,9 +13869,9 @@ module Crystal::HIR
       @current_typeof_local_names = nil
       @signature_scan_mode = true
       begin
-        with_arena(arena) do
+        with_arena(scan_arena) do
           body.each do |expr_id|
-            member = unwrap_visibility_member_in_arena(arena[expr_id], arena)
+            member = unwrap_visibility_member_in_arena(scan_arena[expr_id], scan_arena)
             case member
             when CrystalV2::Compiler::Frontend::DefNode
               next if member.is_abstract
@@ -13906,9 +13980,10 @@ module Crystal::HIR
     private def collect_defined_class_method_full_names(
       class_name : String,
       body : Array(ExprId),
-      arena : CrystalV2::Compiler::Frontend::ArenaLike,
+      arena : CrystalV2::Compiler::Frontend::ArenaLike?,
     ) : Set(String)
-      cache_key = {class_name, body.object_id, arena_map_key(arena), @module_defs_cache_version}
+      scan_arena = (arena || @arena).as(CrystalV2::Compiler::Frontend::ArenaLike)
+      cache_key = {class_name, body.object_id, arena_map_key(scan_arena), @module_defs_cache_version}
       if cached = @defined_class_method_full_names_cache[cache_key]?
         return cached.dup
       end
@@ -13927,9 +14002,9 @@ module Crystal::HIR
       @current_typeof_local_names = nil
       @signature_scan_mode = true
       begin
-        with_arena(arena) do
+        with_arena(scan_arena) do
           body.each do |expr_id|
-            member = unwrap_visibility_member_in_arena(arena[expr_id], arena)
+            member = unwrap_visibility_member_in_arena(scan_arena[expr_id], scan_arena)
             case member
             when CrystalV2::Compiler::Frontend::DefNode
               next if member.is_abstract
@@ -20336,9 +20411,17 @@ module Crystal::HIR
 
       set_source_for_arena(program.arena, snippet)
 
-      def_node = program.roots
-        .map { |expr_id| program.arena[expr_id] }
-        .find(&.is_a?(CrystalV2::Compiler::Frontend::DefNode))
+      def_node = nil.as(CrystalV2::Compiler::Frontend::Node?)
+      root_idx = 0
+      while root_idx < program.roots.size
+        expr_id = program.roots.unsafe_fetch(root_idx)
+        candidate = program.arena[expr_id]
+        if candidate.is_a?(CrystalV2::Compiler::Frontend::DefNode)
+          def_node = candidate
+          break
+        end
+        root_idx += 1
+      end
       return nil unless def_node
 
       {def_node.as(CrystalV2::Compiler::Frontend::DefNode), program.arena}
@@ -20346,10 +20429,24 @@ module Crystal::HIR
 
     private def def_explicit_return_type_from_source(
       node : CrystalV2::Compiler::Frontend::DefNode,
+      arena : CrystalV2::Compiler::Frontend::ArenaLike,
+    ) : String?
+      def_explicit_return_type_from_source_in_arena(node, arena)
+    end
+
+    private def def_explicit_return_type_from_source(
+      node : CrystalV2::Compiler::Frontend::DefNode,
       arena : CrystalV2::Compiler::Frontend::ArenaLike?,
     ) : String?
       return nil unless arena
+      arena = arena.as(CrystalV2::Compiler::Frontend::ArenaLike)
+      def_explicit_return_type_from_source_in_arena(node, arena)
+    end
 
+    private def def_explicit_return_type_from_source_in_arena(
+      node : CrystalV2::Compiler::Frontend::DefNode,
+      arena : CrystalV2::Compiler::Frontend::ArenaLike,
+    ) : String?
       source = source_for_arena(arena)
       return nil unless source
 
@@ -37913,18 +38010,17 @@ module Crystal::HIR
       return if @deferred_constant_inits.size <= 1
 
       grouped = {
-        0 => [] of Tuple(String, String, Int32, CrystalV2::Compiler::Frontend::ArenaLike),
-        1 => [] of Tuple(String, String, Int32, CrystalV2::Compiler::Frontend::ArenaLike),
-        2 => [] of Tuple(String, String, Int32, CrystalV2::Compiler::Frontend::ArenaLike),
-        3 => [] of Tuple(String, String, Int32, CrystalV2::Compiler::Frontend::ArenaLike),
+        0 => [] of DeferredConstantInit,
+        1 => [] of DeferredConstantInit,
+        2 => [] of DeferredConstantInit,
+        3 => [] of DeferredConstantInit,
       }
 
       @deferred_constant_inits.each do |entry|
-        owner, const_name, _, _ = entry
-        grouped[deferred_constant_priority(owner, const_name)] << entry
+        grouped[deferred_constant_priority(entry.owner, entry.name)] << entry
       end
 
-      sorted = [] of Tuple(String, String, Int32, CrystalV2::Compiler::Frontend::ArenaLike)
+      sorted = [] of DeferredConstantInit
       4.times do |priority|
         sorted.concat topo_sort_deferred_constant_bucket(grouped[priority])
       end
@@ -37932,18 +38028,17 @@ module Crystal::HIR
     end
 
     private def topo_sort_deferred_constant_bucket(
-      bucket : Array(Tuple(String, String, Int32, CrystalV2::Compiler::Frontend::ArenaLike))
-    ) : Array(Tuple(String, String, Int32, CrystalV2::Compiler::Frontend::ArenaLike))
+      bucket : Array(DeferredConstantInit)
+    ) : Array(DeferredConstantInit)
       return bucket if bucket.size <= 1
 
       original_index = {} of String => Int32
       source_order = {} of String => Tuple(String, Int32, Int32, Int32)
-      entry_by_name = {} of String => Tuple(String, String, Int32, CrystalV2::Compiler::Frontend::ArenaLike)
+      entry_by_name = {} of String => DeferredConstantInit
       bucket.each_with_index do |entry, idx|
-        owner, const_name, value_index, arena = entry
-        full_name = deferred_constant_full_name(owner, const_name)
+        full_name = deferred_constant_full_name(entry.owner, entry.name)
         original_index[full_name] = idx
-        node = arena[CrystalV2::Compiler::Frontend::ExprId.new(value_index)]
+        node = entry.arena[entry.value_id]
         source_order[full_name] = {"", node.span.start_line, node.span.start_column, idx}
         entry_by_name[full_name] = entry
       end
@@ -37951,12 +38046,11 @@ module Crystal::HIR
       indegree = {} of String => Int32
       outgoing = Hash(String, Array(String)).new { |h, k| h[k] = [] of String }
       bucket.each do |entry|
-        owner, const_name, value_index, arena = entry
-        full_name = deferred_constant_full_name(owner, const_name)
+        full_name = deferred_constant_full_name(entry.owner, entry.name)
         deps = deferred_constant_dependencies_for(
-          CrystalV2::Compiler::Frontend::ExprId.new(value_index),
-          arena,
-          owner == "$" ? nil : owner
+          entry.value_id,
+          entry.arena,
+          entry.owner == "$" ? nil : entry.owner
         )
         filtered_deps = deps.select { |dep| dep != full_name && original_index.has_key?(dep) }.to_a.uniq
         indegree[full_name] = filtered_deps.size
@@ -37966,7 +38060,7 @@ module Crystal::HIR
       end
 
       ready = indegree.select { |_, degree| degree == 0 }.keys.sort_by { |name| source_order[name] }
-      result = [] of Tuple(String, String, Int32, CrystalV2::Compiler::Frontend::ArenaLike)
+      result = [] of DeferredConstantInit
       emitted = Set(String).new
 
       until ready.empty?
@@ -37987,12 +38081,10 @@ module Crystal::HIR
 
       if result.size != bucket.size
         bucket.sort_by do |entry|
-          owner, const_name, _, _ = entry
-          full_name = deferred_constant_full_name(owner, const_name)
+          full_name = deferred_constant_full_name(entry.owner, entry.name)
           source_order[full_name]
         end.each do |entry|
-          owner, const_name, _, _ = entry
-          full_name = deferred_constant_full_name(owner, const_name)
+          full_name = deferred_constant_full_name(entry.owner, entry.name)
           next if emitted.includes?(full_name)
           result << entry
         end
@@ -38372,7 +38464,7 @@ module Crystal::HIR
         @arena = old_a2
         if needs_deferred
           owner = owner_name || "$"
-          @deferred_constant_inits << {owner, name, value_id.index, arena}
+          @deferred_constant_inits << DeferredConstantInit.new(owner, name, value_id, arena)
         end
       end
 
@@ -43304,6 +43396,24 @@ module Crystal::HIR
       arena : CrystalV2::Compiler::Frontend::ArenaLike,
       class_name : String,
     ) : Array({String, TypeRef})
+      discover_implicit_ivars_in_body_in_arena(body, arena, class_name)
+    end
+
+    private def discover_implicit_ivars_in_body(
+      body : Array(CrystalV2::Compiler::Frontend::ExprId),
+      arena : CrystalV2::Compiler::Frontend::ArenaLike?,
+      class_name : String,
+    ) : Array({String, TypeRef})
+      return [] of {String, TypeRef} unless arena
+      arena = arena.as(CrystalV2::Compiler::Frontend::ArenaLike)
+      discover_implicit_ivars_in_body_in_arena(body, arena, class_name)
+    end
+
+    private def discover_implicit_ivars_in_body_in_arena(
+      body : Array(CrystalV2::Compiler::Frontend::ExprId),
+      arena : CrystalV2::Compiler::Frontend::ArenaLike,
+      class_name : String,
+    ) : Array({String, TypeRef})
       result = [] of {String, TypeRef}
       seen = Set(String).new
       scan_nodes_for_ivars(body, arena, class_name, result, seen, 0)
@@ -44846,8 +44956,11 @@ module Crystal::HIR
         if env_has?("DEBUG_DEFERRED_CONST")
           STDERR.puts "[DEFERRED_CONST] Processing #{@deferred_constant_inits.size} deferred constants"
         end
-        @deferred_constant_inits.each do |(owner, const_name, value_index, init_arena)|
-          value_id = CrystalV2::Compiler::Frontend::ExprId.new(value_index)
+        @deferred_constant_inits.each do |entry|
+          owner = entry.owner
+          const_name = entry.name
+          value_id = entry.value_id
+          init_arena = entry.arena
           next if value_id.null_ptr? || value_id.invalid?
           @arena = init_arena
           old_class = @current_class
@@ -44921,12 +45034,15 @@ module Crystal::HIR
         sort_deferred_constant_inits!
         if env_has?("DEBUG_DEFERRED_CONST")
           STDERR.puts "[DEFERRED_CONST] Processing #{@deferred_constant_inits.size} deferred constant inits"
-          @deferred_constant_inits.each do |(owner, const_name, _, init_arena)|
-            STDERR.puts "[DEFERRED_CONST]   #{owner}::#{const_name}"
+          @deferred_constant_inits.each do |entry|
+            STDERR.puts "[DEFERRED_CONST]   #{entry.owner}::#{entry.name}"
           end
         end
-        @deferred_constant_inits.each do |(owner, const_name, value_index, init_arena)|
-          value_id = CrystalV2::Compiler::Frontend::ExprId.new(value_index)
+        @deferred_constant_inits.each do |entry|
+          owner = entry.owner
+          const_name = entry.name
+          value_id = entry.value_id
+          init_arena = entry.arena
           next if value_id.null_ptr? || value_id.invalid?
           @arena = init_arena
           old_class = @current_class

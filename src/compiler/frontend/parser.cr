@@ -982,9 +982,7 @@ module CrystalV2
              token.kind == Token::Kind::NilCoalesceEq # Phase 82
             # Phase 35: Check if this is a constant declaration (uppercase identifier + =)
             left_node = @arena[left]
-            if token.kind == Token::Kind::Eq &&
-               Frontend.node_kind(left_node) == Frontend::NodeKind::Identifier &&
-               Frontend.node_literal(left_node) && is_constant_name?(Frontend.node_literal(left_node).not_nil!)
+            if token.kind == Token::Kind::Eq && (constant_name = constant_identifier_name(left_node))
               # This is a constant declaration
               advance # Skip =
               skip_trivia
@@ -995,7 +993,7 @@ module CrystalV2
               return @arena.add_typed(
                 ConstantNode.new(
                   constant_span,
-                  Frontend.node_literal(left_node).not_nil!,
+                  constant_name,
                   value_expr
                 )
               )
@@ -2049,8 +2047,14 @@ module CrystalV2
         # Phase 35: Check if identifier is a constant (uppercase first letter)
         private def is_constant_name?(slice : Slice(UInt8)) : Bool
           return false if slice.empty?
-          first_char = slice[0].chr
-          first_char.uppercase? && first_char.ascii_letter?
+          first = slice[0]
+          first >= 65_u8 && first <= 90_u8
+        end
+
+        private def constant_identifier_name(node : Frontend::Node) : Slice(UInt8)?
+          return unless identifier = node.as?(Frontend::IdentifierNode)
+          name = identifier.name
+          is_constant_name?(name) ? name : nil
         end
 
         private def parse_macro_definition : ExprId
@@ -9193,9 +9197,8 @@ module CrystalV2
 
             # Phase 35: Check if this is a constant declaration (uppercase identifier)
             # Constants are only created for simple assignments (not compound) to identifiers
-            if !is_compound && left_kind == Frontend::NodeKind::Identifier
-              left_literal = Frontend.node_literal(left_node)
-              if left_literal && is_constant_name?(left_literal)
+            if !is_compound
+              if left_literal = constant_identifier_name(left_node)
                 # Create constant node
                 assign_span = left_node.span.cover(@arena[value].span)
                 result = @arena.add_typed(ConstantNode.new(

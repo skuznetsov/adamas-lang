@@ -30,6 +30,42 @@ Working policy:
 
 ## Current Checkpoint
 
+Stage2 self-host visibility/arena frontier update (2026-04-30): the
+`private DIGITS_DOWNCASE` failure is no longer a visibility allowlist problem.
+The parser now recognizes uppercase identifier assignment through a concrete
+`IdentifierNode` path and ASCII byte check, and deferred constant
+initializers now store an arena-stable `ExprId`+arena record instead of a raw
+`Int32` index. Generated `cv2_s2` now compiles the no-prelude reducer
+`private VALUE = 1; VALUE` and registers it as a constant. The next exposed
+family is self-host exact-signature drift around arena helpers: generated
+calls may be `Nil | AstArena | PageArena | VirtualArena` while the intended
+helper contract is `Frontend::ArenaLike`. Several reparsing/class-registration
+helpers now normalize nilable arenas explicitly and avoid `map/find` block
+helpers on reparsed roots. Evidence so far: `crystal build
+src/crystal_v2.cr -o /private/tmp/cv2_cast_candidate --error-trace`;
+`regression_tests/p2_visibility_modifier_semantics_no_prelude.sh
+/private/tmp/cv2_cast_candidate`;
+`regression_tests/p2_visibility_private_accessor_no_prelude.sh
+/private/tmp/cv2_cast_candidate`;
+`regression_tests/p2_splat_default_args_no_prelude.sh
+/private/tmp/cv2_cast_candidate`; and
+`regression_tests/p2_visibility_private_const_module_no_prelude.sh
+/private/tmp/cv2_cast_candidate`; plus the same
+`p2_visibility_private_const_module_no_prelude.sh` run against generated
+`/private/tmp/cv2_bs_s2_cast/cv2_s2`; and
+`BOOTSTRAP_STAGE_OUT=/private/tmp/cv2_bs_s2_cast
+BOOTSTRAP_CHAIN_STAGES=2 BOOTSTRAP_TIMEOUT_SEC=300 BOOTSTRAP_MEM_MB=4096
+scripts/build_bootstrap_stages.sh --stages 2 --out
+/private/tmp/cv2_bs_s2_cast`, which builds generated `cv2_s2` and keeps
+`smoke no-prelude: ok`. Boundary: generated `cv2_s2` now passes no-prelude
+`private module M; end` and `private VALUE = 1`, but
+`private class Hidden; def value; 1; end; end; Hidden.new.value` has advanced
+past registration stubs and now segfaults in `lower_main` through
+`lookup_function_def_for_call -> String#includes?`. Full-prelude `s2` smoke
+still segfaults at `top-level collection walk start`; do not claim full
+visibility-class support until the generated no-prelude `private class` reducer
+is green.
+
 Stage2 full-prelude frontier update (2026-04-30): three root fixes are ready
 as the next green commit, but full-prelude `s2` smoke is still not clean.
 First, default-argument expansion now preserves the actual named-argument

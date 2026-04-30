@@ -6,6 +6,23 @@ be verified anchors, not broad opinions.
 
 ## 2026-04-29
 
+- Generated stage2 currently has exact-signature drift for arena helper calls:
+  call sites can materialize `Nil | AstArena | PageArena | VirtualArena`
+  while the source-level intent is the `Frontend::ArenaLike` alias. Helpers
+  such as `resolve_arena_for_*`, `source_text_for_arena_or_file`,
+  `collect_defined_*_method_full_names`, `def_explicit_return_type_from_source`,
+  and `discover_implicit_ivars_in_body` need explicit normalization/casts or
+  non-recursive overload shims until v2 has reliable subtype/alias/nil
+  narrowing for self-hosted calls.
+
+- Reparse fallback helpers in `src/compiler/hir/ast_to_hir.cr` are
+  stage2-sensitive when they use `program.roots.map { ... }.find(&.is_a?)` or
+  similar block/Enumerable helpers. A generated `cv2_s2` crashed in
+  `definition_leaf_name_from_header_text` and later in
+  `with_reparsed_class_from_current_source` while registering a tiny
+  `private class` reducer. Prefer direct `while` scans in bootstrap hot paths
+  unless a focused guard proves the block helper path is safe.
+
 - `src/compiler/frontend/parser.cr` has multiple assignment parsing corridors
   that can classify uppercase identifiers as constants (`parse_statement`
   fallback code and `parse_op_assign`). During the 2026-04-30 stage2 visibility

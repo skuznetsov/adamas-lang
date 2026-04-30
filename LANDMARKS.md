@@ -12,6 +12,27 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-528|in_progress]: The stage2 `private DIGITS_DOWNCASE` failure split into
+two roots. First, generated `cv2_s2` was not promoting uppercase identifier
+assignment to `ConstantNode`; concrete `IdentifierNode` constant detection plus
+ASCII byte checks makes the no-prelude `private VALUE = 1; VALUE` reducer pass
+on generated `cv2_s2`. Second, making more constants visible exposed fragile
+arena identity and exact-signature boundaries: deferred constants now carry a
+typed `ExprId`+arena record, and several arena/reparse helpers normalize
+`ArenaLike?` with explicit casts and avoid `map/find` block helpers. Evidence:
+host build `/private/tmp/cv2_cast_candidate` passes
+`p2_visibility_modifier_semantics_no_prelude.sh`,
+`p2_visibility_private_accessor_no_prelude.sh`, and
+`p2_splat_default_args_no_prelude.sh`; the focused
+`p2_visibility_private_const_module_no_prelude.sh` passes on both the host-built
+candidate and generated `/private/tmp/cv2_bs_s2_cast/cv2_s2`; `s1 -> s2` builds
+that generated compiler in ~213s with no-prelude smoke green. Boundary:
+`private class Hidden; def value; 1; end; end;
+Hidden.new.value` now gets past registration stubs but still segfaults in
+`lower_main` via `lookup_function_def_for_call -> String#includes?`, and
+full-prelude stage2 smoke still segfaults at top-level collection. {F/G/R:
+0.84/0.48/0.86} [in_progress]
+
 [LM-527|verified]: Visibility modifier wrappers must be validated before
 top-level collection or HIR member passes discard them. The first HIR-only
 patch validated `unwrap_visibility_member*` and expression lowering, but the
