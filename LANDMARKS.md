@@ -2587,3 +2587,37 @@ that all remaining `ArenaLike` helpers should be inlined; each should be
 checked against call count, exact-demand behavior, and whether it can read
 `@arena` internally without changing semantics.
 {F/G/R: 0.90/0.58/0.90} [verified]
+
+[LM-537|verified]: The method-yield wrapper boundary, not yield scanning
+itself, blocked generated-stage2 enum registration.
+
+Findings:
+
+- After LM-536, generated `s2` full-prelude plain smoke passed `LibC`
+  registration and failed during `Errno` enum registration on an abort stub for
+  `AstToHir#detect_method_yield(DefNode, ArenaLike, Bool)`.
+- The wrapper only selected `def_contains_yield_from_source?` when source scan
+  was preferred, then fell back to `def_contains_yield?`. The generated `s2.ll`
+  already contained bodies for both underlying scanners, so the missing body
+  was the wrapper boundary itself.
+- Adding `detect_method_yield` to the AstToHir exact-demand allowlist was
+  refuted: s2 still built, but plain smoke hit the same stub.
+- Inlining the wrapper's source-scan/fallback selection at the three
+  method-registration call sites removed the emitted wrapper symbol while
+  preserving the existing scanner behavior.
+
+Evidence:
+
+- `crystal build src/crystal_v2.cr -o
+  /tmp/cv2_detect_yield_inline_candidate --error-trace` passed.
+- `scripts/build_bootstrap_stages.sh --stages 2 --out
+  /tmp/cv2_bs_s2_detect_yield_inline` built `s2` in 239s and passed
+  no-prelude smoke. Full-prelude plain smoke advanced from
+  `detect_method_yield(DefNode, ArenaLike, Bool)` to
+  `record_phase0_body_infer_walk(DefNode, ArenaLike, ExprId?)` during `Errno`
+  enum registration.
+
+Boundary: this removes one self-host-sensitive wrapper boundary. It does not
+claim all AstToHir wrappers should be inlined; use the same refutation-first
+test before changing broader helper families.
+{F/G/R: 0.90/0.56/0.90} [verified]

@@ -170,3 +170,12 @@ be verified anchors, not broad opinions.
   while inlining the source recovery into `resolve_lib_global_decl` and reading
   `@arena` directly moved the bootstrap frontier. Prefer eliminating these
   one-use ABI boundaries before adding more helper-demand allowlists.
+
+- Tiny AstToHir wrapper helpers can still be worse than duplication when they
+  expose broad compiler-internal signatures to generated stage2. The
+  `detect_method_yield(def, arena, prefer_source_scan)` wrapper only selected
+  between `def_contains_yield_from_source?` and `def_contains_yield?`, both of
+  which were already lowered in generated `s2`; however the wrapper itself was
+  emitted as an abort stub, and an exact-demand allowlist experiment did not
+  help. Keep wrappers on self-host registration paths only when they have a
+  verified lowering/demand path.

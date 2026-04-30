@@ -20599,7 +20599,12 @@ module Crystal::HIR
         end
       end
       unless query_has_block_or_yield
-        query_has_block_or_yield = detect_method_yield(effective_member, member_arena, prefer_source_yield_scan)
+        if prefer_source_yield_scan
+          source_contains_yield = def_contains_yield_from_source?(effective_member, member_arena)
+          query_has_block_or_yield = source_contains_yield.nil? ? def_contains_yield?(effective_member, member_arena) : source_contains_yield
+        else
+          query_has_block_or_yield = def_contains_yield?(effective_member, member_arena)
+        end
       end
       safe_body_infer = arena_fits_def?(member_arena, effective_member)
       return_type = if (rt = effective_member.return_type) && (rt_s = safe_slice_to_string(rt))
@@ -20654,7 +20659,12 @@ module Crystal::HIR
         end
       end
       if !has_block
-        contains_yield = detect_method_yield(effective_member, member_arena, prefer_source_yield_scan)
+        contains_yield = if prefer_source_yield_scan
+                           source_contains_yield = def_contains_yield_from_source?(effective_member, member_arena)
+                           source_contains_yield.nil? ? def_contains_yield?(effective_member, member_arena) : source_contains_yield
+                         else
+                           def_contains_yield?(effective_member, member_arena)
+                         end
         has_block = contains_yield
       end
       full_name = function_full_name_for_def(base_name, param_types, effective_member.params, has_block)
@@ -20733,7 +20743,14 @@ module Crystal::HIR
       end
 
       if body = effective_member.body
-        contains_yield = detect_method_yield(effective_member, member_arena, prefer_source_yield_scan) if contains_yield.nil?
+        if contains_yield.nil?
+          contains_yield = if prefer_source_yield_scan
+                             source_contains_yield = def_contains_yield_from_source?(effective_member, member_arena)
+                             source_contains_yield.nil? ? def_contains_yield?(effective_member, member_arena) : source_contains_yield
+                           else
+                             def_contains_yield?(effective_member, member_arena)
+                           end
+        end
         if contains_yield
           add_yield_function(full_name)
           debug_hook("yield.register", full_name)
@@ -20747,18 +20764,6 @@ module Crystal::HIR
           set_function_def_arena(full_name, member_arena)
         end
       end
-    end
-
-    private def detect_method_yield(
-      node : CrystalV2::Compiler::Frontend::DefNode,
-      arena : CrystalV2::Compiler::Frontend::ArenaLike,
-      prefer_source_scan : Bool,
-    ) : Bool
-      if prefer_source_scan
-        contains_yield = def_contains_yield_from_source?(node, arena)
-        return contains_yield unless contains_yield.nil?
-      end
-      def_contains_yield?(node, arena)
     end
 
     private def def_contains_yield_from_source?(

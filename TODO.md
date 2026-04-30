@@ -1246,15 +1246,27 @@ pending-budget oracle.
   advances plain smoke past full `LibC` registration to
   `detect_method_yield(DefNode, ArenaLike, Bool)` during `Errno` enum
   registration.
+- The generated-stage2 full-prelude method-yield helper stub is cleared.
+  Root cause: `detect_method_yield` was a tiny wrapper around already-lowered
+  yield scanners, but generated `s2` materialized the wrapper's broad
+  `DefNode, ArenaLike, Bool` symbol without lowering its body. Adding it to the
+  exact-demand allowlist was refuted (same stub remained). The accepted fix
+  removes the wrapper boundary and inlines the source-scan/fallback selection
+  at the three method-registration call sites. Current evidence: `crystal
+  build src/crystal_v2.cr -o /tmp/cv2_detect_yield_inline_candidate
+  --error-trace` passed; `scripts/build_bootstrap_stages.sh --stages 2 --out
+  /tmp/cv2_bs_s2_detect_yield_inline` builds `s2`, passes no-prelude smoke, and
+  advances plain smoke to `record_phase0_body_infer_walk(DefNode, ArenaLike,
+  ExprId?)` during `Errno` enum registration.
 
 ## Next Work
 
 1. Root-cause the generated-stage2 full-prelude plain-smoke frontier:
-   `detect_method_yield(DefNode, ArenaLike, Bool)` abort stub during `Errno`
-   enum registration. First checks: inspect call sites at
-   `ast_to_hir.cr:20602/20657/20736`, whether this helper should read
-   `@arena` internally or split source vs arena modes, and whether it is another
-   broad `ArenaLike` helper boundary rather than a missing enum-specific case.
+   `record_phase0_body_infer_walk(DefNode, ArenaLike, ExprId?)` abort stub
+   during `Errno` enum registration. First checks: inspect whether this is a
+   phase0 inference helper that can be inlined, exact-demanded by a broader
+   family, or split to remove `ArenaLike`/nilable start-id from the emitted
+   helper symbol.
 2. Run the generated-stage2 compiler on the broader fixed no-prelude corpus and
    add focused oracles for any new first failure.
 3. Compare `s1_bootstrap` and `s2b` on the fixed no-prelude corpus before
