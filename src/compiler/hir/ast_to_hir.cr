@@ -4208,6 +4208,12 @@ module Crystal::HIR
       @deferred_constant_inits = [] of DeferredConstantInit
       @pending_offsetof_constants = [] of Tuple(String, CrystalV2::Compiler::Frontend::ExprId, CrystalV2::Compiler::Frontend::ArenaLike, String?)
       @pending_enum_constant_resolutions = [] of Tuple(String, String, String) # (enum_name, member_name, constant_key)
+      # Lazy enum discovery state is declared near the enum helpers but must be
+      # explicitly initialized here: generated stage2 can miss inline ivar
+      # defaults on the large AstToHir object.
+      @lazy_enum_searched = [] of String
+      @lazy_enum_indexed_dirs = [] of String
+      @lazy_enum_candidate_files = {} of String => Array(String)
       # Explicit initialization for ivars with inline defaults (V2 may not handle
       # inline default initialization syntax correctly in stage2).
       @function_lookup_cache = Hash(FunctionLookupKey, FunctionLookupEntry).new(initial_capacity: 16384)
@@ -4443,6 +4449,9 @@ module Crystal::HIR
       @deferred_constant_inits = [] of DeferredConstantInit
       @pending_offsetof_constants = [] of Tuple(String, CrystalV2::Compiler::Frontend::ExprId, CrystalV2::Compiler::Frontend::ArenaLike, String?)
       @pending_enum_constant_resolutions = [] of Tuple(String, String, String)
+      @lazy_enum_searched = [] of String
+      @lazy_enum_indexed_dirs = [] of String
+      @lazy_enum_candidate_files = {} of String => Array(String)
       if env_has?("DEBUG_AST_TO_HIR_BIND")
         STDERR.puts "[AST_TO_HIR_BIND] module=#{@module.object_id} arena_main=#{@main_arenas.size} links=#{@link_libraries.size}"
       end
@@ -6855,11 +6864,16 @@ module Crystal::HIR
     # When a type like Crystal::NumberKind is referenced but its enum members
     # aren't registered (because the defining file wasn't in the require chain),
     # search sibling .cr files for the enum definition, parse it, and register it.
-    @lazy_enum_searched = Set(String).new
-    @lazy_enum_indexed_dirs = Set(String).new
+    # Keep these lazy-discovery guards as simple arrays instead of Set ivars.
+    # Generated stage2 has historically exposed Set(@hash) layout corruption
+    # when the Set object is stored in the large AstToHir object, while this
+    # path only needs a small "seen" tracker for rare enum-source recovery.
+    @lazy_enum_searched = [] of String
+    @lazy_enum_indexed_dirs = [] of String
     @lazy_enum_candidate_files = {} of String => Array(String)
 
     private def lazy_discover_enum_from_source(qualified_name : String) : Bool
+      return false if @no_prelude
       return false if @enum_info.try(&.has_key?(qualified_name))
       return false if @lazy_enum_searched.includes?(qualified_name)
       @lazy_enum_searched << qualified_name
@@ -31636,6 +31650,13 @@ module Crystal::HIR
       empty = [] of String
       @function_def_overloads_cache[base_name] = empty
       empty
+    end
+
+    private def function_def_overload_keys(base_name : String, stripped_base : String? = nil) : Array(String)
+      # Keep hot lookup call sites away from the @function_def_overloads ivar
+      # getter name. Generated stage2 can otherwise select the no-arg getter in
+      # a few self-hosted paths and then treat Array(String) locals as Hashes.
+      function_def_overloads(base_name, stripped_base)
     end
 
     private def function_def_has_splat?(base_name : String) : Bool
@@ -71878,7 +71899,7 @@ module Crystal::HIR
                 if found = find_method_in_parent_via_index(found_parent, parent_method, parent_parts.suffix)
                   resolved_name = found[2]
                   parent_base = strip_type_suffix(resolved_name)
-                  overload_keys = function_def_overloads(parent_base)
+                  overload_keys = function_def_overload_keys(parent_base)
                   overload_keys = [resolved_name] if overload_keys.empty?
                 end
               end
@@ -71897,7 +71918,7 @@ module Crystal::HIR
         if dbg_slice_lookup
           STDERR.puts "[SLICE_LOOKUP_FN]   method_index empty, trying function_def_overloads(#{func_name}, #{stripped_func})"
         end
-        overload_keys = function_def_overloads(func_name, stripped_func)
+        overload_keys = function_def_overload_keys(func_name, stripped_func)
         if dbg_slice_lookup && !overload_keys.empty?
           STDERR.puts "[SLICE_LOOKUP_FN]   function_def_overloads → #{overload_keys.join(", ")}"
         end
@@ -71906,7 +71927,7 @@ module Crystal::HIR
           base = strip_type_suffix(func_name)
           if base != func_name
             stripped_base = stripped_func != func_name ? strip_type_suffix(stripped_func) : nil
-            overload_keys = function_def_overloads(base, stripped_base)
+            overload_keys = function_def_overload_keys(base, stripped_base)
             if dbg_slice_lookup && !overload_keys.empty?
               STDERR.puts "[SLICE_LOOKUP_FN]   strip_type fallback → #{overload_keys.join(", ")}"
             end
@@ -71915,7 +71936,7 @@ module Crystal::HIR
         if overload_keys.empty?
           stripped = stripped_func
           if stripped != func_name
-            overload_keys = function_def_overloads(stripped, stripped)
+            overload_keys = function_def_overload_keys(stripped, stripped)
             if dbg_slice_lookup && !overload_keys.empty?
               STDERR.puts "[SLICE_LOOKUP_FN]   stripped fallback → #{overload_keys.join(", ")}"
             end
@@ -86907,11 +86928,11 @@ module Crystal::HIR
       excluded_name : String,
     ) : Tuple(String, CrystalV2::Compiler::Frontend::DefNode)?
       stripped_func = func_name.includes?('(') ? strip_generic_receiver_for_lookup(func_name) : func_name
-      overload_keys = function_def_overloads(func_name, stripped_func)
+      overload_keys = function_def_overload_keys(func_name, stripped_func)
       if overload_keys.empty?
         base = strip_type_suffix(func_name)
         if base != func_name
-          overload_keys = function_def_overloads(base)
+          overload_keys = function_def_overload_keys(base)
         end
       end
       return nil if overload_keys.empty?

@@ -2311,3 +2311,40 @@ codegen issue is solved. Generated `cv2_s2` now moves the simple
 past String segfaults and stops at existing Hash stubs (`Hash#each` /
 `Hash(String, Array(Tuple(String, Crystal::MIR::Function)))#<<$String`).
 {F/G/R: 0.89/0.56/0.89} [verified]
+
+[LM-530|verified]: generated-stage2 overload lookup and lazy enum no-prelude
+frontiers are distinct root causes, not Hash/Set method gaps.
+
+Findings:
+
+- Generated `s2` lowered some hot `lookup_function_def_for_call` fallback
+  calls to the no-arg `@function_def_overloads` ivar getter instead of the
+  two-arg helper, then treated the returned Hash as an `Array(String)` local.
+  This produced `Hash#each` / `Hash(String, Array(...))#<<` abort stubs.
+- Renaming those hot fallback calls through `function_def_overload_keys`
+  removes the helper/getter basename collision from that generated path.
+- The next private-class reducer crash was a nil `@lazy_enum_searched` ivar:
+  the lazy enum trackers were declared with inline defaults but were not part
+  of the explicit AstToHir constructor/reset recovery path that generated
+  stage2 needs for the large AstToHir object.
+- After explicit initialization, the reducer advanced to `Dir.glob` via lazy
+  enum source discovery. That scan is invalid under `--no-prelude`; ordinary
+  classes should not trigger source-sibling enum recovery when no prelude graph
+  is loaded.
+
+Evidence:
+
+- `crystal build src/crystal_v2.cr -o
+  /private/tmp/cv2_lazy_enum_noprelude_candidate --error-trace` passed.
+- `scripts/run_safe.sh /private/tmp/cv2_lazy_enum_noprelude_candidate 300 4096
+  src/crystal_v2.cr -o /private/tmp/cv2_s2_lazy_enum_noprelude` built
+  generated stage2.
+- Generated stage2 compiled both no-prelude reducers:
+  `"Hidden.new".includes?("$$block")` and `private class Hidden; def value :
+  Int32; 1; end; end; Hidden.new.value`.
+
+Boundary: this does not claim the global AstToHir inline-default ivar problem
+is solved. It fixes the lazy enum state that was missing from the existing
+explicit constructor/reset corridor and records the broader pattern in
+`WEIRD_CODE_NOTES.md`.
+{F/G/R: 0.90/0.56/0.90} [verified]

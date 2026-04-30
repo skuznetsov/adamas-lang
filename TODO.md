@@ -1137,6 +1137,24 @@ Boundary: `src/crystal_v2.cr --no-prelude` still exits `11` in an
 inline-yield recursion / force-return corridor before it can serve as a green
 pending-budget oracle.
 
+- The generated-stage2 lookup/lazy-enum no-prelude frontier is cleared. Root
+  causes:
+  - hot `lookup_function_def_for_call` fallback sites called
+    `function_def_overloads(...)`, whose basename collides with the
+    `@function_def_overloads` ivar getter in generated stage2; a wrapper
+    (`function_def_overload_keys`) keeps those hot sites away from the getter
+    overload family, so local `overload_keys` no longer becomes the backing
+    Hash.
+  - lazy enum source-discovery state used inline-default ivars outside the
+    explicit AstToHir constructor/reset corridor. Generated stage2 can leave
+    those inline ivars nil, so the state is now explicitly initialized in both
+    `initialize` and `bootstrap_reset_constructor_tail`.
+  - lazy enum source discovery was running under `--no-prelude`, where there
+    is no prelude sibling graph to recover. That made an ordinary
+    `private class Hidden` reducer scan the temp directory through `Dir.glob`.
+    `lazy_discover_enum_from_source` now returns false in no-prelude mode.
+  Guard: `p2_generated_stage2_lookup_lazy_enum_no_prelude.sh`.
+
 ## Next Work
 
 1. Run the generated-stage2 compiler on the broader fixed no-prelude corpus and

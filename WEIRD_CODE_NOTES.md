@@ -86,3 +86,25 @@ be verified anchors, not broad opinions.
   short-circuit/codegen correctness. Keep this in mind if another generated
   compiler crash shows a null String receiver inside `String#includes?` or
   `String#index`.
+
+- Helper methods in `src/compiler/hir/ast_to_hir.cr` should not share a basename
+  with large internal ivar getters on generated-stage2 hot paths. The
+  `function_def_overloads(...)` helper collided with the auto-generated
+  `@function_def_overloads` getter in `lookup_function_def_for_call`, causing a
+  local `Array(String)` overload-key variable to receive the backing
+  `Hash(String, Array(String))`. Prefer distinct helper names for overloaded
+  map/index accessors in self-host-sensitive code.
+
+- `AstToHir` still has inline-default ivars that are not obviously covered by
+  the explicit constructor/reset recovery corridor. The lazy enum trackers
+  (`@lazy_enum_searched`, `@lazy_enum_indexed_dirs`,
+  `@lazy_enum_candidate_files`) had this exact bug: generated stage2 left them
+  nil until they were added to both `initialize` and
+  `bootstrap_reset_constructor_tail`. Future additions to AstToHir state should
+  be audited against both paths immediately.
+
+- Lazy enum source discovery is a prelude/source-recovery mechanism, not a
+  general answer to every named type. Running it under `--no-prelude` made a
+  trivial private class reducer scan temporary sibling files via `Dir.glob`.
+  Keep filesystem recovery paths out of no-prelude reducers unless the reducer
+  explicitly opts into a source graph.

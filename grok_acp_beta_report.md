@@ -465,3 +465,24 @@ frontier moved past the String segfault to Hash-stub aborts.
 **Verdict:** no evidence value for this commit. Continue treating Grok ACP as
 optional and non-blocking until it reliably returns partial findings.
 **Cost saved:** none.
+
+### Session 22 — 2026-04-30 — overload-key and lazy-enum patch adversary audit
+**Task:** read-only audit of whether the `function_def_overload_keys` wrapper
+and lazy enum Array tracker change were root-aligned or symptom patches.
+**Brief size:** one inline ACP prompt, ~1.2 KB, with exact file/function scope
+and required output shape.
+**Latency:** timed out after 180s waiting for stdout.
+**Output quality:** no final answer. The stream showed several grep/read_file
+calls and one terminal command, but no actionable partial conclusion.
+**What worked:** it ran in parallel while local host/stage2 falsifiers
+continued, so it did not block the critical path.
+**What did not:** same recurring ACP issue: the sidecar reads for the whole
+prompt window and misses the requested concise answer.
+**Adversary check:** local LLDB evidence was stronger. The first lazy-enum
+attempt was refuted as incomplete: replacing Set with Array still crashed
+because `@lazy_enum_searched` itself was nil. The accepted fix explicitly
+initializes lazy enum state in AstToHir constructor/reset paths and disables
+source discovery under `--no-prelude`.
+**Verdict:** no evidence value. For future Grok usage, prefer an external
+Grok 4.1 Fast structured flow or enforce a hard "answer before tools" prompt.
+**Cost saved:** none.
