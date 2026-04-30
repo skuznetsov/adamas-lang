@@ -50,6 +50,11 @@ module Crystal
       # Mapping from HIR ValueId to explicit Proc carrier provenance per function.
       @hir_value_carriers : ::Hash(HIR::ValueId, ProcCarrier)
 
+      # Proc carrier provenance that escapes through class variables. This is
+      # module-scoped because a raw C callback can be stored in one function and
+      # called from a callback thunk lowered earlier/later in function order.
+      @hir_classvar_carriers : ::Hash(String, ProcCarrier)
+
       # HIR values that are compile-time constants (Literal, GlobalRef) — no rc_inc/rc_dec needed
       @hir_constant_values : ::Set(HIR::ValueId)
 
@@ -154,6 +159,7 @@ module Crystal
         STDERR.puts "[MIR_INIT] value_map" if trace
         @hir_value_types = {} of HIR::ValueId => HIR::TypeRef
         @hir_value_carriers = {} of HIR::ValueId => ProcCarrier
+        @hir_classvar_carriers = {} of String => ProcCarrier
         @hir_constant_values = ::Set(HIR::ValueId).new
         STDERR.puts "[MIR_INIT] hir_value_types" if trace
         @block_map = [] of BlockId?
@@ -184,10 +190,65 @@ module Crystal
       # Main Entry Point
       # ─────────────────────────────────────────────────────────────────────────
 
+      private def hir_proc_type?(type : HIR::TypeRef) : Bool
+        desc = @hir_module.get_type_descriptor(type)
+        !!(desc && (desc.kind == HIR::TypeKind::Proc || desc.name == "Proc" || desc.name.starts_with?("Proc(")))
+      end
+
+      private def classvar_carrier_key(class_name : String, var_name : String) : String
+        HIRToMIRLowering.class_var_global_name(class_name, var_name)
+      end
+
+      private def build_proc_carrier_index : Nil
+        @hir_classvar_carriers.clear
+
+        @hir_module.functions.each do |func|
+          local_carriers = {} of HIR::ValueId => ProcCarrier
+          func.params.each do |param|
+            local_carriers[param.id] = ProcCarrier::RawFnptrCallback if param.is_block
+          end
+
+          func.blocks.each do |block|
+            block.instructions.each do |inst|
+              case inst
+              when HIR::ExternCall
+                # C function-pointer callback values use raw fnptr carrier ABI.
+                local_carriers[inst.id] = ProcCarrier::RawFnptrCallback if hir_proc_type?(inst.type)
+              when HIR::FuncPointer
+                local_carriers[inst.id] = ProcCarrier::RawFnptrCallback
+              when HIR::MakeProc
+                local_carriers[inst.id] = ProcCarrier::HeapProcObject
+              when HIR::Copy
+                if carrier = local_carriers[inst.source]?
+                  local_carriers[inst.id] = carrier
+                end
+              when HIR::Cast
+                if carrier = local_carriers[inst.value]?
+                  local_carriers[inst.id] = carrier
+                end
+              when HIR::UnionWrap
+                if carrier = local_carriers[inst.value]?
+                  local_carriers[inst.id] = carrier
+                end
+              when HIR::UnionUnwrap
+                if carrier = local_carriers[inst.union_value]?
+                  local_carriers[inst.id] = carrier
+                end
+              when HIR::ClassVarSet
+                if carrier = local_carriers[inst.value]?
+                  @hir_classvar_carriers[classvar_carrier_key(inst.class_name, inst.var_name)] = carrier
+                end
+              end
+            end
+          end
+        end
+      end
+
       # Prepare stubs and indices for all functions (serial, fast).
       # Call this before lower() or lower_bodies_range().
       def prepare(progress : Bool = false) : Crystal::MIR::Module
         finalize_pointer_backed_union_layouts
+        build_proc_carrier_index
 
         total = @hir_module.functions.size
         STDERR.puts "    Pass 1: Creating #{total} function stubs..." if progress
@@ -1420,10 +1481,36 @@ module Crystal
             @hir_value_types[inst.id] = inst.type
             @hir_value_block_scope[inst.id] = blk_scope
             case inst
+            when HIR::ExternCall
+              @hir_value_carriers[inst.id] = ProcCarrier::RawFnptrCallback if hir_proc_type?(inst.type)
             when HIR::MakeProc
               @hir_value_carriers[inst.id] = ProcCarrier::HeapProcObject
             when HIR::FuncPointer
               @hir_value_carriers[inst.id] = ProcCarrier::RawFnptrCallback
+            when HIR::Copy
+              if carrier = @hir_value_carriers[inst.source]?
+                @hir_value_carriers[inst.id] = carrier
+              end
+            when HIR::Cast
+              if carrier = @hir_value_carriers[inst.value]?
+                @hir_value_carriers[inst.id] = carrier
+              end
+            when HIR::UnionWrap
+              if carrier = @hir_value_carriers[inst.value]?
+                @hir_value_carriers[inst.id] = carrier
+              end
+            when HIR::UnionUnwrap
+              if carrier = @hir_value_carriers[inst.union_value]?
+                @hir_value_carriers[inst.id] = carrier
+              end
+            when HIR::ClassVarGet
+              if carrier = @hir_classvar_carriers[classvar_carrier_key(inst.class_name, inst.var_name)]?
+                @hir_value_carriers[inst.id] = carrier
+              end
+            when HIR::ClassVarSet
+              if carrier = @hir_value_carriers[inst.value]?
+                @hir_classvar_carriers[classvar_carrier_key(inst.class_name, inst.var_name)] = carrier
+              end
             end
             # Track constants (Literal) — these are static data, not heap-allocated
             if inst.is_a?(HIR::Literal)
@@ -3343,8 +3430,6 @@ module Crystal
           recv_desc = recv_type ? @hir_module.get_type_descriptor(recv_type) : nil
           if recv_type
             if recv_desc && (recv_desc.kind == HIR::TypeKind::Proc || recv_desc.name == "Proc" || recv_desc.name.starts_with?("Proc("))
-              # Proc values are pointers to heap Proc objects. Load {fn, env}
-              # from the object, then call fn(env, user_args...).
               filtered_args = [] of ValueId
               call.args.each_with_index do |arg_id, idx|
                 arg_type = @hir_value_types[arg_id]?
@@ -3354,7 +3439,17 @@ module Crystal
                 filtered_args << args[idx + 1]
               end
               return_type = proc_call_return_type(recv_desc, call.type)
-              return call_heap_proc(args[0], filtered_args, return_type)
+              case @hir_value_carriers[call.receiver.not_nil!]?
+              when ProcCarrier::RawFnptrCallback
+                return builder.call_indirect(args[0], filtered_args, return_type)
+              when ProcCarrier::HeapProcObject
+                return call_heap_proc(args[0], filtered_args, return_type)
+              else
+                # Existing fallback: user-visible Proc values are heap objects.
+                # TypeKind::Proc alone is not sufficient to identify raw callback
+                # ABI; raw cases must arrive through explicit carrier provenance.
+                return call_heap_proc(args[0], filtered_args, return_type)
+              end
             end
           end
         end
@@ -5852,7 +5947,11 @@ module Crystal
         extern = @hir_module.get_extern_global(cv.class_name, cv.var_name)
         global_name = extern ? extern.real_name : HIRToMIRLowering.class_var_global_name(cv.class_name, cv.var_name)
         hir_type = (extern && cv.type == HIR::TypeRef::VOID) ? extern.type : cv.type
-        builder.global_load(global_name, convert_type(hir_type))
+        value = builder.global_load(global_name, convert_type(hir_type))
+        if carrier = @hir_classvar_carriers[classvar_carrier_key(cv.class_name, cv.var_name)]?
+          @hir_value_carriers[cv.id] = carrier
+        end
+        value
       end
 
       private def lower_classvar_set(cv : HIR::ClassVarSet) : ValueId
@@ -5862,6 +5961,9 @@ module Crystal
         global_name = extern ? extern.real_name : HIRToMIRLowering.class_var_global_name(cv.class_name, cv.var_name)
         hir_type = (extern && cv.type == HIR::TypeRef::VOID) ? extern.type : cv.type
         builder.global_store(global_name, value, convert_type(hir_type))
+        if carrier = @hir_value_carriers[cv.value]?
+          @hir_classvar_carriers[classvar_carrier_key(cv.class_name, cv.var_name)] = carrier
+        end
 
         # rc_inc for reference-typed values: the class variable now holds a reference.
         # Covers reference types, arrays, and all-ref unions (e.g. Node? = Nil | Node).

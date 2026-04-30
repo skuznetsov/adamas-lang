@@ -26656,7 +26656,7 @@ module Crystal::HIR
         # materialized in the wrapper before the body forwards to `initialize`.
         # If we skip that here, the LLVM backend pads missing args with 0/null and
         # object defaults like `Ctx.new` silently degrade to `ptr null`.
-        init_call_args, _ = apply_default_args(
+        init_call_args, _, _ = apply_default_args(
           ctx,
           param_ids.dup,
           init_base_name,
@@ -65169,7 +65169,7 @@ module Crystal::HIR
       if debug_env_filter_match?("DEBUG_CALL_TRACE", method_name, method_name, full_method_name || "")
         STDERR.puts "[CALL_TRACE] stage=after_args method=#{method_name} args=#{args.size} receiver=#{!!receiver_id} full=#{full_method_name || ""}"
       end
-      args, has_named_args = apply_default_args(ctx, args, method_name, arg_binding_full_method_name, has_block_call, has_named_args, receiver_id)
+      args, has_named_args, default_arg_entry_name = apply_default_args(ctx, args, method_name, arg_binding_full_method_name, has_block_call, has_named_args, receiver_id)
       has_named_args = false if constructor_arg_binding_name
       if debug_env_filter_match?("DEBUG_CALL_TRACE", method_name, method_name, full_method_name || "")
         STDERR.puts "[CALL_TRACE] stage=after_defaults method=#{method_name} args=#{args.size} receiver=#{!!receiver_id} full=#{full_method_name || ""}"
@@ -65536,7 +65536,12 @@ module Crystal::HIR
         end
       end
 
-      pack_result = pack_splat_args_for_call(ctx, args, method_name, full_method_name, has_block_call, has_named_args, receiver_id, has_splat)
+      # Default expansion may have selected a splat overload using the original
+      # positional args. Reuse that entry for packing; re-resolving from the
+      # generic base after defaults can miss because the first scalar arg has not
+      # been packed into the tuple splat slot yet.
+      splat_pack_full_method_name = default_arg_entry_name || full_method_name
+      pack_result = pack_splat_args_for_call(ctx, args, method_name, splat_pack_full_method_name, has_block_call, has_named_args, receiver_id, has_splat)
       args = pack_result[0]
       splat_packed = pack_result[1]
       if debug_env_filter_match?("DEBUG_CALL_TRACE", method_name, method_name, full_method_name || "")
@@ -72859,13 +72864,14 @@ module Crystal::HIR
       has_block_call : Bool,
       call_has_named_args : Bool,
       receiver_id : ValueId? = nil,
-    ) : {Array(ValueId), Bool}
+    ) : {Array(ValueId), Bool, String?}
       func_name = full_method_name || method_name
       arg_types = args.map { |arg_id| ctx.type_of(arg_id) }
-      # Pass call_has_named_args=true to allow matching defs with named-only params
-      # (e.g. `*, precision : Int = 1`). We fill in their defaults ourselves, so
-      # the filter that normally skips named-only defs shouldn't apply here.
-      func_entry = lookup_function_def_for_call(func_name, args.size, has_block_call, arg_types, false, true)
+      # Preserve the actual named-argument signal when choosing an overload for
+      # default expansion. Optional named-only defaults remain callable without
+      # named args via effective_arity_stats_for_call, but required named-only
+      # params must not be matched by a positional call.
+      func_entry = lookup_function_def_for_call(func_name, args.size, has_block_call, arg_types, false, call_has_named_args)
       func_entry_arena : CrystalV2::Compiler::Frontend::ArenaLike? = nil
       # If not found directly, try parent classes (for inherited methods with defaults)
       unless func_entry
@@ -72881,7 +72887,7 @@ module Crystal::HIR
             break if visited.includes?(parent)
             visited << parent
             parent_func = "#{parent}##{method_part}"
-            func_entry = lookup_function_def_for_call(parent_func, args.size, has_block_call, arg_types, false, true)
+            func_entry = lookup_function_def_for_call(parent_func, args.size, has_block_call, arg_types, false, call_has_named_args)
             if debug_da
               result = func_entry ? "FOUND=#{func_entry[0]}" : "not found"
               STDERR.puts "[DEFAULT_ARGS]   parent=#{parent} try=#{parent_func} → #{result}"
@@ -72939,13 +72945,14 @@ module Crystal::HIR
         found_name = func_entry ? func_entry[0] : "nil"
         STDERR.puts "[DEFAULT_ARGS] func_name=#{func_name} args.size=#{args.size} found=#{found_name}"
       end
-      return {args, call_has_named_args} unless func_entry
+      return {args, call_has_named_args, nil} unless func_entry
+      func_entry_name = func_entry[0]
       func_def = func_entry[1]
-      func_context = function_context_from_name(func_entry[0])
+      func_context = function_context_from_name(func_entry_name)
       def_arena = func_entry_arena || @function_def_arenas[func_entry[0]]? || @arena
-      params = function_param_infos(func_entry[0], func_def)
-      return {args, call_has_named_args} if params.empty?
-      func_stats = function_param_stats(func_entry[0], func_def)
+      params = function_param_infos(func_entry_name, func_def)
+      return {args, call_has_named_args, func_entry_name} if params.empty?
+      func_stats = function_param_stats(func_entry_name, func_def)
 
       # When dealing with .new calls, the found def may be a different overload
       # than what reorder_named_args resolved (e.g., Time.new(time, location) vs
@@ -72966,7 +72973,7 @@ module Crystal::HIR
                 next if p.is_block || named_only_separator?(p)
                 real_param_count += 1
               end
-              return {args, call_has_named_args} if real_param_count == args.size
+              return {args, call_has_named_args, func_entry_name} if real_param_count == args.size
             end
           end
         end
@@ -72993,7 +73000,7 @@ module Crystal::HIR
         end
       end
 
-      return {args, call_has_named_args} if args.size >= param_defaults.size
+      return {args, call_has_named_args, func_entry_name} if args.size >= param_defaults.size
 
       # If any missing argument does not have a default expression, this
       # overload is not applicable for default-argument expansion.
@@ -73001,7 +73008,7 @@ module Crystal::HIR
       # and selecting an arity-incompatible overload.
       idx = args.size
       while idx < param_defaults.size
-        return {args, call_has_named_args} if param_defaults[idx].nil?
+        return {args, call_has_named_args, nil} if param_defaults[idx].nil?
         idx += 1
       end
 
@@ -73084,7 +73091,7 @@ module Crystal::HIR
         effective_has_named_args = true
       end
 
-      {args, effective_has_named_args}
+      {args, effective_has_named_args, func_entry_name}
     end
 
     # Intrinsic: n.times { |i| body }
@@ -80870,7 +80877,7 @@ module Crystal::HIR
         end
       end
 
-      args, _ = apply_default_args(ctx, [] of ValueId, member_name, base_method_name, false, false)
+      args, _, _ = apply_default_args(ctx, [] of ValueId, member_name, base_method_name, false, false)
       arg_types = args.map { |arg_id| ctx.type_of(arg_id) }
 
       actual_name = if resolved_method_name
@@ -81959,7 +81966,7 @@ module Crystal::HIR
 
       enum_name = resolve_enum_name(class_name_str) || resolve_enum_name(lookup_class_name)
 
-      args, _ = apply_default_args(ctx, [] of ValueId, member_name, full_method_name, false, false)
+      args, _, _ = apply_default_args(ctx, [] of ValueId, member_name, full_method_name, false, false)
       if enum_name && member_name == "new"
         enum_type = enum_base_type(enum_name)
         if args.size == 1

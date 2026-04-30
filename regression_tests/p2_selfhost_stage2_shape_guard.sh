@@ -219,6 +219,8 @@ reject_in_function 'func @Dir\.glob\$Path \| String_File::MatchOptions_Bool_bloc
 reject_in_function 'func @Dir\.glob\$Enumerable_File::MatchOptions_Bool_block' \
   'String#each\$block' \
   'scalar String#each dispatch inside Dir.glob Enumerable block'
+reject_pattern '^func @Dir\.glob\$String\(' \
+  'scalar Dir.glob$String wrapper after splat default expansion'
 
 require_in_function 'func @CrystalV2::Compiler::Semantic::TypeInferenceEngine#primitive_metaclass\?\$CrystalV2::Compiler::Semantic::Type' \
   'bitcast %[0-9]+ : Type#[0-9]+' \

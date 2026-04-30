@@ -417,3 +417,28 @@ the remaining broad fanout root.
 **Verdict:** no evidence value from this sidecar run. Future ACP prompts should
 be shorter and should demand a partial answer before any third file read.
 **Cost saved:** none.
+
+### Session 20 — 2026-04-30 — Stage2 visibility/private-constant frontier audit
+**Task:** read-only audit of the generated `s2` full-prelude failure
+`can't apply visibility modifier`, focused on `VisibilityModifierNode`
+validation and likely remaining AST shapes.
+**Brief size:** one inline ACP prompt, ~1.1 KB, with exact files and the known
+`s2` smoke symptom.
+**Latency:** timed out after 180s waiting for stdout.
+**Output quality:** no final answer. The tool stream showed many read/grep
+calls and one terminal command, but it produced no concise findings before the
+timeout.
+**What worked:** the sidecar was non-blocking; local diagnostics proceeded and
+identified the failing source as `src/stdlib/int.cr:673`, specifically
+`private DIGITS_DOWNCASE = ...`.
+**What did not:** this repeats the ACP timeout pattern: Grok spends the budget
+reading but does not return partial findings. No claim from this session was
+used as evidence.
+**Adversary check:** local hostile diagnostics showed the first visible error
+was not accessor or abstract-def visibility. Generated `s2` parses private
+uppercase assignments as ordinary identifier assignments; changing recognition
+opens a deferred-constant/lower_main frontier.
+**Verdict:** no evidence value. Future Grok use should be either a different
+structured Grok 4.1 Fast flow or a stricter prompt requiring partial output
+after two file reads.
+**Cost saved:** none.

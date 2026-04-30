@@ -1,6 +1,6 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-04-29
+Updated: 2026-04-30
 Branch: `codegen`
 
 This is the active working backlog only. Historical detail is in git history,
@@ -29,6 +29,33 @@ Working policy:
   demanded deep shapes and remove only proven non-demand/root pollution.
 
 ## Current Checkpoint
+
+Stage2 full-prelude frontier update (2026-04-30): three root fixes are ready
+as the next green commit, but full-prelude `s2` smoke is still not clean.
+First, default-argument expansion now preserves the actual named-argument
+signal and returns the concrete overload selected before defaults; splat packing
+uses that selected overload instead of re-resolving the generic base after
+scalar defaults. This removes bad scalar wrappers such as `Dir.glob$String` and
+`Dir.glob$String_File::MatchOptions_Bool`. Second, MIR now indexes Proc carrier
+provenance across class variables, so raw C function-pointer callbacks returned
+by extern calls and stored in class vars (for example GC push-root callback
+hooks) are not later called as heap Proc objects. Third, `private/protected
+abstract def` now preserves visibility in the parser instead of wrapping the
+abstract modifier and losing the method visibility. Evidence so far:
+`crystal build src/crystal_v2.cr -o /private/tmp/cv2_commit_candidate
+--error-trace`; `regression_tests/p2_splat_default_args_no_prelude.sh
+/private/tmp/cv2_commit_candidate`;
+`regression_tests/p2_selfhost_stage2_shape_guard.sh
+/private/tmp/cv2_commit_candidate`; `regression_tests/p1_mixed_proc_block_yield_carrier.sh
+/private/tmp/cv2_commit_candidate`; and
+`regression_tests/p2_visibility_modifier_semantics_no_prelude.sh
+/private/tmp/cv2_commit_candidate`. Boundary: generated `s2` now moves past the
+old `Dir.glob` MIR shape and GC raw-callback SIGBUS, then fails in full-prelude
+smoke on `private DIGITS_DOWNCASE = ...` from `src/stdlib/int.cr`. A hostile
+diagnostic showed generated `s2` parses uppercase assignments as ordinary
+identifier assignments; treating them as constants exposes a deeper deferred
+constant/lower_main frontier. Do not paper over this with a broad visibility
+allowlist; fix the parser/constant-lowering root.
 
 Stage2 no-prelude LLVM smoke checkpoint (2026-04-29): generated `s2b` now
 passes the no-prelude interpolation smoke. Three backend roots were fixed in

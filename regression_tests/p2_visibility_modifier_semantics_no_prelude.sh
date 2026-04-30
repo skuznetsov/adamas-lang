@@ -80,6 +80,16 @@ private macro hidden
 end
 CR
 
+compile_ok private_protected_abstract_defs <<'CR'
+class Object
+end
+
+abstract class Base
+  private abstract def hidden : Int32
+  protected abstract def visible_to_subtypes : Int32
+end
+CR
+
 compile_fail_with protected_type "can only use 'private' for types" <<'CR'
 class Object
 end

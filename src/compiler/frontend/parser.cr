@@ -7071,7 +7071,7 @@ module CrystalV2
 
         # Phase 36: Parse abstract modifier
         # Grammar: abstract class Name ... end | abstract def method_name
-        private def parse_abstract : ExprId
+        private def parse_abstract(visibility : Visibility? = nil) : ExprId
           abstract_token = current_token
           trace_abstract_char("parse_abstract.enter", abstract_token)
           advance
@@ -7086,7 +7086,7 @@ module CrystalV2
           when Token::Kind::Union
             parse_class(is_union: true, is_abstract: true)
           when Token::Kind::Def
-            parse_def(is_abstract: true)
+            parse_def(is_abstract: true, visibility: visibility)
           else
             emit_unexpected(current_token)
             PREFIX_ERROR
@@ -7129,6 +7129,16 @@ module CrystalV2
           # Special case: private def (definition needs separate handling)
           if current_token.kind == Token::Kind::Def
             return parse_def(visibility: Visibility::Private)
+          end
+
+          if current_token.kind == Token::Kind::Abstract
+            node = parse_abstract(visibility: Visibility::Private)
+            return node if node.invalid?
+            parsed = @arena[node]
+            return node if parsed.is_a?(DefNode)
+
+            full_span = start_span.cover(node_span(node))
+            return @arena.add_typed(VisibilityModifierNode.new(full_span, Visibility::Private, node))
           end
 
           if definition_start?
@@ -7208,6 +7218,16 @@ module CrystalV2
           # Special case: protected def (definition needs separate handling)
           if current_token.kind == Token::Kind::Def
             return parse_def(visibility: Visibility::Protected)
+          end
+
+          if current_token.kind == Token::Kind::Abstract
+            node = parse_abstract(visibility: Visibility::Protected)
+            return node if node.invalid?
+            parsed = @arena[node]
+            return node if parsed.is_a?(DefNode)
+
+            full_span = start_span.cover(node_span(node))
+            return @arena.add_typed(VisibilityModifierNode.new(full_span, Visibility::Protected, node))
           end
 
           if definition_start?

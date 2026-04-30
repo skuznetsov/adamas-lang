@@ -2157,3 +2157,97 @@ Evidence:
 Boundary: generated `s2b` full-prelude smoke still fails with SIGBUS
 immediately after `prelude exists`; no `s2 -> s3` attempt yet.
 {F/G/R: 0.94/0.68/0.93} [verified]
+
+[LM-526|verified]: splat/default overload selection must reuse the
+pre-default concrete entry for packing.
+
+Findings:
+
+- `apply_default_args` forced `call_has_named_args=true`, which let positional
+  calls match overloads with required named-only parameters and also discarded
+  the concrete overload chosen before default expansion.
+- Splat packing then re-resolved from the generic base after defaults were
+  appended, while the first scalar argument had not yet been packed into the
+  tuple splat slot. In self-host MIR this produced wrong scalar wrappers such
+  as `Dir.glob$String` / `Dir.glob$String_File::MatchOptions_Bool`.
+- The fix preserves the real named-argument signal and returns the selected
+  overload name from `apply_default_args`; `pack_splat_args_for_call` receives
+  that name and packs against the same entry.
+
+Evidence:
+
+- `crystal build src/crystal_v2.cr -o /private/tmp/cv2_commit_candidate
+  --error-trace` passed.
+- `regression_tests/p2_splat_default_args_no_prelude.sh
+  /private/tmp/cv2_commit_candidate` passed.
+- The negative control with an older compiler emitted `func @collect$Int32`;
+  the fixed compiler emits `func @collect$Tuple(Int32)_Int32`.
+- `regression_tests/p2_selfhost_stage2_shape_guard.sh
+  /private/tmp/cv2_commit_candidate` passed and rejects the old bad
+  `Dir.glob$String` wrappers.
+
+Boundary: this removes the self-host `Dir.glob` shape bug but does not solve
+the remaining full-prelude private-constant parser/deferred-constant frontier.
+{F/G/R: 0.91/0.62/0.90} [verified]
+
+[LM-527|verified]: raw C callback Proc values need carrier provenance through
+class variables.
+
+Findings:
+
+- `LibGC.get_push_other_roots : ->` returns a raw function pointer callback,
+  but after storing it in `@@prev_push_other_roots`, MIR lost the carrier
+  provenance and lowered `@@prev_push_other_roots.call` as heap Proc dispatch.
+- The generated LLVM loaded a function pointer from offset 0 of the raw code
+  pointer and crashed in the GC push-root callback path with SIGBUS.
+- MIR now builds a Proc carrier index across HIR functions, propagates raw
+  carriers through extern calls, copies/casts/union wraps, and records carrier
+  state for classvar set/get. `Proc#call` uses raw `call_indirect` for
+  `RawFnptrCallback` and keeps heap dispatch for `HeapProcObject`.
+
+Evidence:
+
+- `crystal build src/crystal_v2.cr -o /private/tmp/cv2_commit_candidate
+  --error-trace` passed.
+- `regression_tests/p1_mixed_proc_block_yield_carrier.sh
+  /private/tmp/cv2_commit_candidate` passed.
+- Canonical `s1 -> s2` with the Proc-carrier fix built stage2 and the
+  full-prelude smoke moved past the previous `GC_set_push_other_roots` SIGBUS
+  to a visibility/private-constant validation failure.
+
+Boundary: the carrier propagation is still pragmatic side-map provenance, not
+the full explicit block-carrier contract; alias/dataflow gaps remain tracked in
+the closure carrier plan.
+{F/G/R: 0.88/0.55/0.88} [verified]
+
+[LM-528|verified]: generated `s2` visibility failure is actually an uppercase
+constant parser/deferred-constant frontier.
+
+Findings:
+
+- The full-prelude smoke after the Proc-carrier fix fails on
+  `src/stdlib/int.cr:673`: `private DIGITS_DOWNCASE = ...`.
+- A fast no-prelude generated-`s2` oracle with `private VALUE = 1` reproduces
+  the same `can't apply visibility modifier` failure.
+- Hostile diagnostics showed the visibility wrapper inner expression is an
+  assignment whose target is treated as an identifier in generated `s2`, not a
+  constant. Attempts to force uppercase recognition moved the self-host build
+  into deferred-constant/lower_main failures, so a broad visibility allowlist
+  would be a symptom patch.
+
+Evidence:
+
+- Failing generated-`s2` oracle:
+  `scripts/run_safe.sh /private/tmp/cv2_bs_s2_commit_candidate/cv2_s2
+  10 1024 /private/tmp/cv2_private_const_commit_candidate/private_const.cr --no-prelude
+  --emit hir --no-link ...` reports `can't apply visibility modifier` for
+  `private VALUE = 1`.
+- Detail run identified the full-prelude source:
+  `path=src/stdlib/int.cr span=673:3-673:45 snippet=private DIGITS_DOWNCASE`.
+- Parser constant-name experiments are intentionally not part of the green
+  commit because they expose the next root instead of fixing it.
+
+Boundary: next work should fix parser constant classification and deferred
+constant initializer ownership together, with a generated-`s2` no-prelude
+oracle for `private VALUE = 1`.
+{F/G/R: 0.86/0.50/0.86} [verified]

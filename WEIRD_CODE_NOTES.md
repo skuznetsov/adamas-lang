@@ -6,6 +6,23 @@ be verified anchors, not broad opinions.
 
 ## 2026-04-29
 
+- `src/compiler/frontend/parser.cr` has multiple assignment parsing corridors
+  that can classify uppercase identifiers as constants (`parse_statement`
+  fallback code and `parse_op_assign`). During the 2026-04-30 stage2 visibility
+  frontier, generated `s2` parsed `private VALUE = 1` and
+  `private DIGITS_DOWNCASE = ...` as `AssignNode` targets with
+  `IdentifierNode`, not `ConstantNode`. Attempts to force recognition via
+  byte/string-based `is_constant_name?` moved the compiler into deferred
+  constant/lower_main failures, so this needs a dedicated parser/constant
+  pipeline cleanup rather than a visibility allowlist.
+
+- `src/compiler/hir/ast_to_hir.cr` stores deferred constant initializers as
+  `{owner, name, value_id.index, arena}`. This crosses an arena lifetime and
+  raw index boundary; when more uppercase constants were recognized by the
+  parser, stage2 exposed `ExprId out of bounds` during deferred constant
+  lowering. This should be revisited as an arena-stable `ExprId`+arena record
+  with bounds checks and focused diagnostics, not patched at the call site.
+
 - `VisibilityModifierNode` validation is duplicated in
   `src/compiler/cli.cr` and `src/compiler/hir/ast_to_hir.cr`. This was kept
   intentionally in commit `3ffb0927` because top-level collection happens
