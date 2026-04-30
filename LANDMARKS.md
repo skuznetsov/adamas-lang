@@ -2382,3 +2382,45 @@ Evidence:
 Boundary: this fixes the backend extern/stub ABI root for direct
 `Array(T)#unsafe_fetch(Int32)`, not all collection method materialization gaps.
 {F/G/R: 0.94/0.68/0.94} [verified]
+
+[LM-532|verified]: `elsif` conditions need the same short-circuit condition
+lowering as the main `if` condition.
+
+Findings:
+
+- Generated `s2` crashed in full-prelude smoke before pass1 registration by
+  calling `String#empty?` on a null `name` inside
+  `MacroExpander#resolve_scoped_macro_value`.
+- The generated LLVM for
+  `MacroExpander#evaluate_to_macro_value` showed the source condition
+  `elsif name && constant_like_name?(name)` was lowered as a value-level `&&`;
+  `constant_like_name?` was called and its result was discarded, then
+  `resolve_scoped_macro_value(name, context)` was reached even on the
+  `name == nil` path.
+- The root was an asymmetry in `lower_if`: the main `if` condition routed
+  `&&`/`||` through `lower_short_circuit_condition`, but each `elsif`
+  condition used `lower_expr` plus a later truthiness check.
+- The fix creates the `elsif` body/next blocks before lowering the condition
+  and routes `&&`/`||` through `lower_short_circuit_condition`.
+
+Evidence:
+
+- `crystal build src/crystal_v2.cr -o /tmp/cv2_elsif_sc_candidate
+  --error-trace` passed.
+- `regression_tests/p2_elsif_short_circuit_condition_no_prelude.sh
+  /tmp/cv2_elsif_sc_candidate` passed.
+- `scripts/build_bootstrap_stages.sh --stages 2 --out /tmp/cv2_bs_s2_elsif`
+  built `s2` in 238s and passed no-prelude smoke. The previous
+  `String#empty?` null crash disappeared; plain smoke now advances to the next
+  independent frontier:
+  `AstToHir#extract_alias_name_value_from_source(AliasNode, ArenaLike)` stub
+  during `LibC` registration.
+- New `s2` LLVM for `evaluate_to_macro_value` branches on
+  `constant_like_name?` before calling `resolve_scoped_macro_value`, and the
+  nil path no longer reaches that call.
+
+Boundary: this fixes condition-context lowering for short-circuiting `elsif`
+conditions. It does not claim all value-level nilable `&&`/`||` semantics are
+fully audited; keep adding focused no-prelude oracles when those forms appear
+as runtime values rather than branch conditions.
+{F/G/R: 0.93/0.72/0.93} [verified]

@@ -1166,20 +1166,40 @@ pending-budget oracle.
   `p2_array_struct_unsafe_fetch_return_no_prelude.sh`,
   `p2_bootstrap_semantic_emit_oracle.sh`, and
   `p2_generated_stage2_lookup_lazy_enum_no_prelude.sh`.
+- The generated-stage2 full-prelude `MacroExpander#resolve_scoped_macro_value`
+  null `String#empty?` crash is cleared. Root cause: `lower_if` routed the
+  main `if` condition through condition-context short-circuit lowering, but
+  lowered `elsif` `&&`/`||` conditions as value expressions and then truthy-
+  checked the nil-or-bool result. Generated `s2` miscompiled
+  `elsif name && constant_like_name?(name)` so the nil path still reached
+  `resolve_scoped_macro_value(name, context)`. `elsif` conditions now create
+  their target blocks first and route short-circuit operators through
+  `lower_short_circuit_condition`. Guard:
+  `p2_elsif_short_circuit_condition_no_prelude.sh`. Bootstrap evidence:
+  `scripts/build_bootstrap_stages.sh --stages 2 --out /tmp/cv2_bs_s2_elsif`
+  builds `s2`, passes no-prelude smoke, and advances plain smoke to the next
+  frontier: `AstToHir#extract_alias_name_value_from_source(AliasNode,
+  ArenaLike)` abort stub during `LibC` registration.
 
 ## Next Work
 
-1. Run the generated-stage2 compiler on the broader fixed no-prelude corpus and
+1. Root-cause the generated-stage2 full-prelude plain-smoke frontier:
+   `AstToHir#extract_alias_name_value_from_source(AliasNode, ArenaLike)` stub
+   during `LibC` registration. First checks: inspect whether this helper is
+   missing because it is private/unreachable, because its `ArenaLike` union
+   signature differs, or because alias extraction is being called before its
+   body is demanded.
+2. Run the generated-stage2 compiler on the broader fixed no-prelude corpus and
    add focused oracles for any new first failure.
-2. Compare `s1_bootstrap` and `s2b` on the fixed no-prelude corpus before
+3. Compare `s1_bootstrap` and `s2b` on the fixed no-prelude corpus before
    trying `s3b+`.
-3. Audit remaining compiler hot paths that use tuple block destructuring or
+4. Audit remaining compiler hot paths that use tuple block destructuring or
    block `join` formatting; keep the general tuple-block fix as an explicit
    follow-up rather than hiding it with one-off stubs.
-4. Add/inspect exact-called provenance for `record_pending_callee_for_rta` so
+5. Add/inspect exact-called provenance for `record_pending_callee_for_rta` so
    the source of remaining `keep:exact_called Array#to_s` / `Hash#to_s` demand
    is explicit.
-5. Verify whether broad fallback self-calls should mark exact concrete wrapper
+6. Verify whether broad fallback self-calls should mark exact concrete wrapper
    names as demanded, or whether they should remain virtual/demand-local until a
    real callsite asks for that concrete owner.
 

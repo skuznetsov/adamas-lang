@@ -54579,14 +54579,6 @@ module Crystal::HIR
           ctx.current_block = next_test_block
           apply_truthy_narrowing(ctx, accumulated_falsy_targets)
 
-          # Lower elsif condition
-          elsif_truthy_targets = truthy_narrowing_targets(elsif_branch.condition)
-          elsif_falsy_targets = falsy_narrowing_targets(elsif_branch.condition)
-          elsif_is_a_targets = is_a_narrowing_targets(elsif_branch.condition)
-          elsif_cond_id = lower_expr(ctx, elsif_branch.condition)
-          elsif_cond_type = ctx.type_of(elsif_cond_id)
-          elsif_cond_bool = lower_truthy_check(ctx, elsif_cond_id, elsif_cond_type)
-
           # Create body block and next block
           elsif_body_block = ctx.create_block
           is_last_elsif = (idx == elsifs.size - 1)
@@ -54596,7 +54588,24 @@ module Crystal::HIR
                               ctx.create_block # Next elsif test
                             end
 
-          ctx.terminate(Branch.new(elsif_cond_bool, elsif_body_block, next_test_block))
+          # Lower elsif condition after its target blocks exist. Like the main
+          # `if` condition above, short-circuit operators must be lowered in
+          # condition context; lowering them as value expressions can produce a
+          # nil-or-bool phi and later truthiness can re-enter the RHS with a nil
+          # receiver in self-hosted compiler code.
+          elsif_truthy_targets = truthy_narrowing_targets(elsif_branch.condition)
+          elsif_falsy_targets = falsy_narrowing_targets(elsif_branch.condition)
+          elsif_is_a_targets = is_a_narrowing_targets(elsif_branch.condition)
+          elsif_cond_node = @arena[elsif_branch.condition]
+          if elsif_cond_node.is_a?(CrystalV2::Compiler::Frontend::BinaryNode) &&
+             (elsif_cond_node.operator_string == "&&" || elsif_cond_node.operator_string == "||")
+            lower_short_circuit_condition(ctx, elsif_cond_node, elsif_body_block, next_test_block)
+          else
+            elsif_cond_id = lower_expr(ctx, elsif_branch.condition)
+            elsif_cond_type = ctx.type_of(elsif_cond_id)
+            elsif_cond_bool = lower_truthy_check(ctx, elsif_cond_id, elsif_cond_type)
+            ctx.terminate(Branch.new(elsif_cond_bool, elsif_body_block, next_test_block))
+          end
 
           # Process elsif body
           ctx.current_block = elsif_body_block

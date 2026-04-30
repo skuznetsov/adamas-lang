@@ -117,3 +117,11 @@ be verified anchors, not broad opinions.
   should remove broad suffix ABI inference entirely and route Crystal method
   calls through resolved MIR function signatures or explicit primitive
   contracts.
+
+- `src/compiler/hir/ast_to_hir.cr` has several condition-lowering entry points
+  (`lower_if`, `lower_condition_branch`, value-level `lower_short_circuit`).
+  A bug in the `elsif` path showed why these must not drift: the main `if`
+  condition used condition-context short-circuit lowering, but `elsif` lowered
+  `&&`/`||` as value expressions and then applied a separate truthiness check.
+  Future cleanup should centralize branch-condition lowering so new control-flow
+  forms cannot accidentally bypass `lower_short_circuit_condition`.
