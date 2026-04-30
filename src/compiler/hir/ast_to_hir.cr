@@ -2077,8 +2077,23 @@ module Crystal::HIR
         method == "yield_function_name_for_uncached" ||
         method == "receiver_type_param_map_cache_get" ||
         method == "receiver_type_param_map_cache_set" ||
+        method == "extract_alias_name_value_from_source" ||
+        ast_to_hir_source_extern_helper_method?(method) ||
         method == "force_pending_call_targets_for_return_type" ||
         ast_to_hir_rta_helper_method?(method)
+    end
+
+    private def ast_to_hir_source_extern_helper_method?(method : String?) : Bool
+      return false unless method
+
+      method == "read_extern_identifier" ||
+        method == "extern_fun_names_from_source" ||
+        method == "extern_fun_signature_from_source" ||
+        method == "resolve_extern_fun_signature_from_source" ||
+        method == "resolve_top_level_extern_fun_signature_from_source" ||
+        method == "split_extern_fun_param_types_from_source" ||
+        method == "extern_fun_param_type_from_source" ||
+        method == "register_extern_fun_from_source"
     end
 
     private def ast_to_hir_rta_helper_method?(method : String?) : Bool
@@ -8092,7 +8107,7 @@ module Crystal::HIR
         end
       when CrystalV2::Compiler::Frontend::FunNode
         return unless pass == :externs
-        return if register_extern_fun_from_source(lib_name, node.span, @arena)
+        return if register_extern_fun_from_source(lib_name, node.span)
         register_extern_fun(lib_name, node)
       when CrystalV2::Compiler::Frontend::GlobalVarDeclNode
         return unless pass == :externs
@@ -47131,8 +47146,8 @@ module Crystal::HIR
 
     private def extern_fun_names_from_source(
       span : CrystalV2::Compiler::Frontend::Span,
-      arena : CrystalV2::Compiler::Frontend::ArenaLike
     ) : {String, String}?
+      arena = @arena
       source = source_for_arena(arena)
       return nil unless source
 
@@ -47235,11 +47250,11 @@ module Crystal::HIR
     end
 
     private def resolve_extern_fun_signature_from_source(
-      lib_name : String?,
+      lib_name : String,
       parsed : NamedTuple(params: Array(String), return_type: String?, varargs: Bool),
       span : CrystalV2::Compiler::Frontend::Span,
-      arena : CrystalV2::Compiler::Frontend::ArenaLike,
     ) : {Array(TypeRef), TypeRef}
+      arena = @arena
       if debug = ENV["DEBUG_EXTERN_SIG_SOURCE"]?
         path = source_path_for(arena) || "?"
         snippet = callsite_snippet_for(arena, span) || "nil"
@@ -47265,10 +47280,40 @@ module Crystal::HIR
       end
     end
 
+    private def resolve_top_level_extern_fun_signature_from_source(
+      parsed : NamedTuple(params: Array(String), return_type: String?, varargs: Bool),
+      span : CrystalV2::Compiler::Frontend::Span,
+    ) : {Array(TypeRef), TypeRef}
+      arena = @arena
+      if debug = ENV["DEBUG_EXTERN_SIG_SOURCE"]?
+        path = source_path_for(arena) || "?"
+        snippet = callsite_snippet_for(arena, span) || "nil"
+        if debug == "1" || path.includes?(debug) || snippet.includes?(debug)
+          STDERR.puts "[EXTERN_SIG_SOURCE] parsed=1 path=#{path} span=#{span.start_line}:#{span.start_column}-#{span.end_line}:#{span.end_column} snippet=#{snippet.inspect} params=#{parsed[:params].join(" | ")} return=#{parsed[:return_type] || "Void"} varargs=#{parsed[:varargs] ? 1 : 0}"
+        end
+      end
+
+      old_class = @current_class
+      @current_class = nil
+      begin
+        param_types = Array(TypeRef).new(parsed[:params].size) do |i|
+          type_ref_for_c_type(parsed[:params].unsafe_fetch(i))
+        end
+        return_type = if ret = parsed[:return_type]
+                        type_ref_for_c_type(ret)
+                      else
+                        TypeRef::VOID
+                      end
+        {param_types, return_type}
+      ensure
+        @current_class = old_class
+      end
+    end
+
     private def extern_fun_signature_from_source(
       span : CrystalV2::Compiler::Frontend::Span,
-      arena : CrystalV2::Compiler::Frontend::ArenaLike,
     ) : NamedTuple(params: Array(String), return_type: String?, varargs: Bool)?
+      arena = @arena
       source = source_for_arena(arena)
       if source.nil?
         if path = source_path_for(arena)
@@ -47565,12 +47610,12 @@ module Crystal::HIR
     end
 
     private def register_extern_fun_from_source(
-      lib_name : String?,
+      lib_name : String,
       span : CrystalV2::Compiler::Frontend::Span,
-      arena : CrystalV2::Compiler::Frontend::ArenaLike,
     ) : Bool
-      names = extern_fun_names_from_source(span, arena)
-      parsed = extern_fun_signature_from_source(span, arena)
+      arena = @arena
+      names = extern_fun_names_from_source(span)
+      parsed = extern_fun_signature_from_source(span)
       if debug = ENV["DEBUG_EXTERN_SIG_SOURCE"]?
         path = source_path_for(arena) || "?"
         snippet = callsite_snippet_for(arena, span) || "nil"
@@ -47583,9 +47628,7 @@ module Crystal::HIR
       fun_name = names[0]
       real_name = names[1]
 
-      return true if lib_name.nil? && fun_name == "main"
-
-      param_types, return_type = resolve_extern_fun_signature_from_source(lib_name, parsed, span, arena)
+      param_types, return_type = resolve_extern_fun_signature_from_source(lib_name, parsed, span)
 
       @module.add_extern_function(ExternFunction.new(
         name: fun_name,
@@ -47608,7 +47651,7 @@ module Crystal::HIR
       return_type_slice : Slice(UInt8)?,
       varargs : Bool
     ) : Nil
-      if names = extern_fun_names_from_source(span, @arena)
+      if names = extern_fun_names_from_source(span)
         fun_name = names[0]
         real_name = names[1]
       else
@@ -47629,8 +47672,12 @@ module Crystal::HIR
         return
       end
 
-      if parsed = extern_fun_signature_from_source(span, @arena)
-        param_types, return_type = resolve_extern_fun_signature_from_source(lib_name, parsed, span, @arena)
+      if parsed = extern_fun_signature_from_source(span)
+        if lib_name_value = lib_name
+          param_types, return_type = resolve_extern_fun_signature_from_source(lib_name_value, parsed, span)
+        else
+          param_types, return_type = resolve_top_level_extern_fun_signature_from_source(parsed, span)
+        end
       else
         param_types, return_type = resolve_extern_fun_signature(lib_name, params, return_type_slice)
       end

@@ -125,3 +125,12 @@ be verified anchors, not broad opinions.
   `&&`/`||` as value expressions and then applied a separate truthiness check.
   Future cleanup should centralize branch-condition lowering so new control-flow
   forms cannot accidentally bypass `lower_short_circuit_condition`.
+
+- `src/compiler/hir/ast_to_hir.cr` still has many source-recovery helpers whose
+  signatures expose implementation plumbing (`ArenaLike`, nilable contextual
+  owners) to generated-stage2 call symbols. The source-backed extern signature
+  path was hardened by reading `@arena` internally and by splitting lib
+  (`String` lib name) from top-level (`nil` lib context) resolution. Future
+  source helpers should prefer precise call contracts over broad union
+  parameters; otherwise lowering can materialize only the broader target while
+  emitted calls still reference the concrete requested symbol.

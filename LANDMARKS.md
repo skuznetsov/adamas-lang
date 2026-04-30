@@ -2424,3 +2424,48 @@ conditions. It does not claim all value-level nilable `&&`/`||` semantics are
 fully audited; keep adding focused no-prelude oracles when those forms appear
 as runtime values rather than branch conditions.
 {F/G/R: 0.93/0.72/0.93} [verified]
+
+[LM-533|verified]: Source-backed extern registration must not expose
+stage2 helper calls through redundant `ArenaLike` or mixed nilable lib-name
+specializations.
+
+Findings:
+
+- After the `elsif` fix, generated `s2` full-prelude smoke advanced to
+  `LibC` registration and aborted on
+  `AstToHir#extract_alias_name_value_from_source(AliasNode, ArenaLike)`.
+  Adding that helper to the exact-demand corridor moved the frontier to
+  `register_extern_fun_from_source`.
+- `register_extern_fun_from_source` had a redundant `arena : ArenaLike`
+  parameter even though its only caller passed the current `@arena`. Removing
+  that ABI dimension moved the frontier to
+  `resolve_extern_fun_signature_from_source`.
+- The signature resolver mixed lib and top-level extern contexts via
+  `lib_name : String?`. Generated stage2 emitted a concrete `$String...` call
+  for the lib path, while overload lookup resolved the body to the broader
+  `$Nil | String...` target. Lowering materialized the broader target, leaving
+  the concrete `$String...` symbol as an abort stub.
+- The fix splits lib and top-level source signature resolution: lib externs
+  use a `String`-typed resolver, top-level `fun` declarations use a separate
+  resolver with no `lib_name` parameter, and the source helper family reads
+  `@arena` internally instead of threading `ArenaLike` through generated-stage2
+  helper signatures.
+
+Evidence:
+
+- `crystal build src/crystal_v2.cr -o /tmp/cv2_source_extern_split_candidate
+  --error-trace` passed.
+- `regression_tests/p2_source_extern_signature_no_prelude.sh
+  /tmp/cv2_source_extern_split_candidate` passed.
+- `scripts/build_bootstrap_stages.sh --stages 2 --out
+  /tmp/cv2_bs_s2_source_extern_split` built `s2` in 240s and passed
+  no-prelude smoke. The previous alias/external-source abort stubs disappeared;
+  full-prelude smoke now advances to the next independent frontier:
+  `Hash(String, Hash(UInt32, Crystal::HIR::Value))#to_unsafe` during
+  `LibC` registration.
+
+Boundary: this fixes the source-backed lib extern registration helper ABI and
+the concrete-vs-nilable lib-name specialization mismatch. It does not solve
+the broader rule that a concrete call symbol resolved to a broader typed
+overload may still need an explicit requested-symbol wrapper.
+{F/G/R: 0.91/0.66/0.91} [verified]

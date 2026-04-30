@@ -30,6 +30,34 @@ Working policy:
 
 ## Current Checkpoint
 
+Stage2 source-backed extern registration checkpoint (2026-04-30): generated
+`cv2_s2` now advances past the LibC registration abort stubs for
+`extract_alias_name_value_from_source`, `register_extern_fun_from_source`, and
+`resolve_extern_fun_signature_from_source`. The root was a helper ABI mismatch,
+not a missing LibC case: source-backed extern helpers threaded `ArenaLike`
+through generated-stage2 calls even though all local callers used the current
+`@arena`, and the signature resolver mixed lib and top-level contexts through
+`lib_name : String?`. Generated stage2 then emitted concrete `$String...` calls
+while lowering materialized only broader `$Nil | String...` targets. The fix
+adds the alias/extern source helper family to exact-demand, removes redundant
+`ArenaLike` parameters from the local source extern helpers, and splits lib
+extern signature resolution (`String` lib name) from top-level `fun`
+resolution (no lib-name parameter). Evidence:
+`crystal build src/crystal_v2.cr -o /tmp/cv2_source_extern_split_candidate
+--error-trace`; `regression_tests/p2_source_extern_signature_no_prelude.sh
+/tmp/cv2_source_extern_split_candidate`; and
+`BOOTSTRAP_STAGE_OUT=/tmp/cv2_bs_s2_source_extern_split
+BOOTSTRAP_CHAIN_STAGES=2 BOOTSTRAP_TIMEOUT_SEC=300 BOOTSTRAP_MEM_MB=4096
+scripts/build_bootstrap_stages.sh --stages 2 --out
+/tmp/cv2_bs_s2_source_extern_split`, which builds generated `cv2_s2` and keeps
+`smoke no-prelude: ok`. Boundary: full-prelude `s2` smoke is still not clean;
+the next exposed frontier is
+`Hash(String, Hash(UInt32, Crystal::HIR::Value))#to_unsafe` during LibC
+registration. Also keep the broader requested-symbol-wrapper issue open:
+when a concrete call symbol resolves to a wider typed overload, lowering may
+still need to materialize a requested-name wrapper instead of only the wider
+target.
+
 Stage2 bounded String-search checkpoint (2026-04-30): the generated `cv2_s2`
 `private class Hidden` no-prelude reducer no longer dies in
 `lookup_function_def_for_call -> String#includes?` because the LLVM backend
