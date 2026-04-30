@@ -2469,3 +2469,51 @@ the concrete-vs-nilable lib-name specialization mismatch. It does not solve
 the broader rule that a concrete call symbol resolved to a broader typed
 overload may still need an explicit requested-symbol wrapper.
 {F/G/R: 0.91/0.66/0.91} [verified]
+
+[LM-534|verified]: Stage2 lib registration advanced past invalid
+parser-slice/visibility receiver calls by restoring explicit typed boundaries.
+
+Findings:
+
+- Generated `s2` previously aborted during full-prelude plain smoke with
+  `Hash(String, Hash(UInt32, Crystal::HIR::Value))#to_unsafe` while registering
+  `LibC`. HIR tracing showed the bad call was frozen during stage2 HIR
+  lowering, not only in LLVM.
+- The source site was `safe_str_guard(member.name, ...)` in broad AST
+  registration paths. The macro inlined pointer validation and called
+  `.to_unsafe` at the broad callsite, where generated stage2 had lost
+  branch-local Slice narrowing.
+- Moving validation into `safe_slice_guard?(slice : Slice(UInt8))` preserves a
+  typed helper boundary while leaving the macro responsible only for control
+  flow (`next`/`return`).
+- The next generated `s2` full-prelude smoke exposed
+  `Hash(... )#null_ptr?` in `unwrap_visibility_member_in_arena`. LL showed
+  `current.expression` lowered as virtual `Node#expression` despite the
+  surrounding `is_a?(VisibilityModifierNode)` check. Explicit
+  `current.unsafe_as(VisibilityModifierNode)` after the check forces the
+  concrete accessor and removes the invalid receiver.
+- The following crash in `parse_macro_literal_lib_body` came from
+  `program.roots.map { |id| parsed_arena[id] }.find(&.is_a?(LibNode))`.
+  Reparsed macro helpers now validate root ids, use `arena.[]?`, and select
+  Lib/Class/Def roots with explicit `node_kind` loops instead of block-heavy
+  `map/find` chains.
+
+Evidence:
+
+- `crystal build src/crystal_v2.cr -o /tmp/cv2_final_boundary_candidate
+  --error-trace` passed.
+- `CRYSTAL_V2_STOP_AFTER_HIR=1 DEBUG_CALL_TRACE='to_unsafe,null_ptr'
+  scripts/run_safe.sh /tmp/cv2_final_boundary_candidate 300 4096
+  src/crystal_v2.cr -o /tmp/cv2_final_boundary_s2_hir` exited 0; grep found
+  no `Hash(String, Hash(UInt32, Crystal::HIR::Value))#to_unsafe` or
+  `Hash(String, Hash(UInt32, Crystal::HIR::Value))#null_ptr?`.
+- `scripts/build_bootstrap_stages.sh --stages 2 --out
+  /tmp/cv2_bs_s2_reparsed_roots` built `s2` and passed no-prelude smoke. Plain
+  smoke advanced to a new frontier:
+  `MacroNumberValue.numeric_suffix` during `LibC` macro condition evaluation.
+
+Boundary: this is a compiler-boundary hardening commit, not a general closure
+or block-carrier fix. A speculative `numeric_suffix` rewrite from
+`Array#find` to `while + unsafe_fetch` was refuted because it regressed s2
+build to an earlier corrupted `ExprId` failure.
+{F/G/R: 0.92/0.62/0.92} [verified]

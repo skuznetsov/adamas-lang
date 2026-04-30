@@ -134,3 +134,21 @@ be verified anchors, not broad opinions.
   source helpers should prefer precise call contracts over broad union
   parameters; otherwise lowering can materialize only the broader target while
   emitted calls still reference the concrete requested symbol.
+
+- `src/compiler/hir/ast_to_hir.cr` has self-host-sensitive guard helpers and
+  reparsed-parser boundaries where ordinary Crystal idioms are currently too
+  optimistic for generated stage2. Two concrete patterns were observed:
+  macro-expanded guards at broad `case` sites can lose branch-local narrowing
+  and freeze methods on the wrong receiver (`Hash(... )#to_unsafe`), and
+  `is_a?` narrowing on a broad `Frontend::Node` local can still lower concrete
+  accessor reads as virtual `Node#expression` (`Hash(... )#null_ptr?`). Prefer
+  typed helper boundaries, `node_kind` checks, and explicit `unsafe_as` after
+  a tag check in these compiler-internal hot paths until the underlying
+  branch-narrowing/codegen issue is fixed.
+
+- Reparsed macro-body helpers should not use block-heavy `map/find(&.is_a?)`
+  chains over `program.roots`. These helpers already exist because
+  self-hosted parser/arena state is fragile; they should validate `ExprId`s,
+  use `arena.[]?`, and select roots with explicit loops. The broader
+  `Array#find`/block carrier issue is still open and should get a focused
+  no-prelude oracle instead of being hidden by more one-off rewrites.

@@ -7672,10 +7672,11 @@ module Crystal::HIR
     ) : CrystalV2::Compiler::Frontend::Node
       current = member
       while current.is_a?(CrystalV2::Compiler::Frontend::VisibilityModifierNode)
-        expr = current.expression
+        modifier = current.unsafe_as(CrystalV2::Compiler::Frontend::VisibilityModifierNode)
+        expr = modifier.expression
         break if expr.null_ptr? || expr.invalid?
         inner = arena[expr]
-        validate_visibility_modifier_node!(current, inner, arena)
+        validate_visibility_modifier_node!(modifier, inner, arena)
         current = inner
       end
       current
@@ -11088,47 +11089,40 @@ module Crystal::HIR
     # In V2, Slice is a struct (pointer + size) that may be dangling.
     # Validates the pointer address and size before constructing a String.
     #
-    # safe_str_guard: Inline validation macro. Checks pointer validity and
-    # executes on_fail (next/return) if corrupted. After the guard, String.new
-    # is safe to call. Using a macro avoids function call overhead that causes
-    # massive monomorphization slowdown in V2's self-compilation (~24x).
+    # safe_str_guard: Control-flow wrapper around a typed Slice(UInt8) guard.
+    # Keep the pointer validation in a real method: macro expansion at broad
+    # `case` sites can lose branch-local narrowing and otherwise freeze calls
+    # like `Hash(... )#to_unsafe` when the expression is really a parser slice.
     macro safe_str_guard(slice_expr, on_fail)
-      %slice = {{slice_expr}}
-      %raw = 0_u64
-      %trust = env_has?("CRYSTAL_V2_TRUST_SLICE_ADDR")
+      unless safe_slice_guard?({{slice_expr}})
+        {{on_fail.id}}
+      end
+    end
+
+    @[AlwaysInline]
+    private def safe_slice_guard?(slice : Slice(UInt8)) : Bool
+      raw = 0_u64
+      trust = env_has?("CRYSTAL_V2_TRUST_SLICE_ADDR")
       # In V2, Slice(UInt8) is stored as a pointer (sizeof=8). The pointer
       # itself may be corrupted, so check it BEFORE calling .to_unsafe.
       if sizeof(Slice(UInt8)) <= 8
-        %raw = pointerof(%slice).as(UInt64*).value
-        if %raw == 0_u64 || %raw < 4096_u64 || %raw > 0x0000_7FFF_FFFF_FFFF_u64
-          {{on_fail.id}}
-        end
-        unless %trust || readable_address?(%raw)
-          {{on_fail.id}}
-        end
+        raw = pointerof(slice).as(UInt64*).value
+        return false if raw == 0_u64 || raw < 4096_u64 || raw > 0x0000_7FFF_FFFF_FFFF_u64
+        return false unless trust || readable_address?(raw)
       end
-      %ptr = %slice.to_unsafe
-      %addr = %ptr.address
-      if %addr == 0_u64 || %addr < 4096_u64 || %addr > 0x0000_7FFF_FFFF_FFFF_u64
-        {{on_fail.id}}
-      end
+      ptr = slice.to_unsafe
+      addr = ptr.address
+      return false if addr == 0_u64 || addr < 4096_u64 || addr > 0x0000_7FFF_FFFF_FFFF_u64
       if sizeof(Slice(UInt8)) <= 8
-        unless %trust || readable_address?(%addr)
-          {{on_fail.id}}
-        end
+        return false unless trust || readable_address?(addr)
       end
-      %sz = %slice.size
-      if %sz < 0 || %sz > 10_000_000
-        {{on_fail.id}}
-      end
+      sz = slice.size
+      return false if sz < 0 || sz > 10_000_000
       if sizeof(Slice(UInt8)) <= 8
-        unless %trust || readable_address?(%raw)
-          {{on_fail.id}}
-        end
-        unless %trust || readable_address?(%addr)
-          {{on_fail.id}}
-        end
+        return false unless trust || readable_address?(raw)
+        return false unless trust || readable_address?(addr)
       end
+      true
     end
 
     # Check if a memory address is readable without crashing.
@@ -13864,10 +13858,11 @@ module Crystal::HIR
     ) : CrystalV2::Compiler::Frontend::Node
       current = member
       while current.is_a?(CrystalV2::Compiler::Frontend::VisibilityModifierNode)
-        expr = current.expression
+        modifier = current.unsafe_as(CrystalV2::Compiler::Frontend::VisibilityModifierNode)
+        expr = modifier.expression
         break if expr.null_ptr? || expr.invalid?
         inner = @arena[expr]
-        validate_visibility_modifier_node!(current, inner, @arena)
+        validate_visibility_modifier_node!(modifier, inner, @arena)
         current = inner
       end
       current
@@ -50336,6 +50331,70 @@ module Crystal::HIR
       {parsed_arena, program.roots}
     end
 
+    private def reparsed_root_lib_node(
+      roots : Array(ExprId),
+      arena : CrystalV2::Compiler::Frontend::ArenaLike,
+    ) : CrystalV2::Compiler::Frontend::LibNode?
+      roots.each do |id|
+        next if id.null_ptr? || id.invalid?
+        node = arena.[]?(id)
+        next unless node
+        next unless CrystalV2::Compiler::Frontend.node_kind(node) == CrystalV2::Compiler::Frontend::NodeKind::Lib
+        return node.unsafe_as(CrystalV2::Compiler::Frontend::LibNode)
+      end
+      nil
+    end
+
+    private def reparsed_root_class_node(
+      roots : Array(ExprId),
+      arena : CrystalV2::Compiler::Frontend::ArenaLike,
+    ) : CrystalV2::Compiler::Frontend::ClassNode?
+      roots.each do |id|
+        next if id.null_ptr? || id.invalid?
+        node = arena.[]?(id)
+        next unless node
+        next unless CrystalV2::Compiler::Frontend.node_kind(node) == CrystalV2::Compiler::Frontend::NodeKind::Class
+        return node.unsafe_as(CrystalV2::Compiler::Frontend::ClassNode)
+      end
+      nil
+    end
+
+    private def reparsed_root_def_node(
+      roots : Array(ExprId),
+      arena : CrystalV2::Compiler::Frontend::ArenaLike,
+    ) : CrystalV2::Compiler::Frontend::DefNode?
+      roots.each do |id|
+        next if id.null_ptr? || id.invalid?
+        node = arena.[]?(id)
+        next unless node
+        next unless CrystalV2::Compiler::Frontend.node_kind(node) == CrystalV2::Compiler::Frontend::NodeKind::Def
+        return node.unsafe_as(CrystalV2::Compiler::Frontend::DefNode)
+      end
+      nil
+    end
+
+    private def reparsed_root_kind_summary(
+      roots : Array(ExprId),
+      arena : CrystalV2::Compiler::Frontend::ArenaLike,
+      limit : Int32,
+    ) : String
+      parts = [] of String
+      roots.each do |id|
+        break if parts.size >= limit
+        if id.null_ptr? || id.invalid?
+          parts << "#{id.index}:invalid"
+          next
+        end
+        node = arena.[]?(id)
+        unless node
+          parts << "#{id.index}:missing"
+          next
+        end
+        parts << "#{id.index}:#{CrystalV2::Compiler::Frontend.node_kind(node)}"
+      end
+      parts.join(",")
+    end
+
     # Returns {arena, body} — arena is captured eagerly so self-hosted callers
     # never need to dereference program.arena (which can be corrupted in stage2).
     private def parse_macro_literal_lib_body(code : String) : Tuple(CrystalV2::Compiler::Frontend::ArenaLike, Array(ExprId))?
@@ -50374,18 +50433,17 @@ module Crystal::HIR
       end
       set_source_for_arena(parsed_arena, wrapped)
       if debug_macro_parse
-        root_kinds = program.roots.first(4).map { |id| parsed_arena[id] }.first(4).map { |n| CrystalV2::Compiler::Frontend.node_kind(n).to_s }.join(",")
+        root_kinds = reparsed_root_kind_summary(program.roots, parsed_arena, 4)
         STDERR.puts "[LIB_MACRO_PARSE] roots=#{program.roots.size} root_kinds=#{root_kinds}"
       end
 
-      lib_node = program.roots.map { |id| parsed_arena[id] }
-        .find(&.is_a?(CrystalV2::Compiler::Frontend::LibNode))
+      lib_node = reparsed_root_lib_node(program.roots, parsed_arena)
       unless lib_node
         STDERR.puts "[LIB_MACRO_PARSE] reason=no_lib_root" if debug_macro_parse
         return nil
       end
 
-      body = lib_node.as(CrystalV2::Compiler::Frontend::LibNode).body
+      body = lib_node.body
       unless body
         STDERR.puts "[LIB_MACRO_PARSE] reason=body_nil" if debug_macro_parse
         return nil
@@ -50442,22 +50500,15 @@ module Crystal::HIR
       return nil if parsed_arena.size == 0
       set_source_for_arena(parsed_arena, wrapped)
 
-      class_node = program.roots.map { |id| parsed_arena[id] }
-        .find(&.is_a?(CrystalV2::Compiler::Frontend::ClassNode))
+      class_node = reparsed_root_class_node(program.roots, parsed_arena)
       return nil unless class_node
 
-      body = class_node.as(CrystalV2::Compiler::Frontend::ClassNode).body
+      body = class_node.body
       return nil unless body
 
       if env_has?("DEBUG_MACRO_CLASS_PARSE")
-        root_desc = program.roots.map { |id|
-          node = parsed_arena[id]
-          "#{id.index}:#{node.class.name.split("::").last}/#{CrystalV2::Compiler::Frontend.node_kind(node)}"
-        }.join(", ")
-        child_desc = body.map { |id|
-          node = parsed_arena[id]
-          "#{id.index}:#{node.class.name.split("::").last}/#{CrystalV2::Compiler::Frontend.node_kind(node)}"
-        }.join(", ")
+        root_desc = reparsed_root_kind_summary(program.roots, parsed_arena, program.roots.size)
+        child_desc = reparsed_root_kind_summary(body, parsed_arena, body.size)
         STDERR.puts "[MACRO_CLASS_PARSE] roots=#{root_desc}"
         STDERR.puts "[MACRO_CLASS_PARSE] body=#{child_desc}"
       end
@@ -50481,11 +50532,10 @@ module Crystal::HIR
       return nil if parsed_arena.size == 0
       set_source_for_arena(parsed_arena, wrapped)
 
-      def_node = program.roots.map { |id| parsed_arena[id] }
-        .find(&.is_a?(CrystalV2::Compiler::Frontend::DefNode))
+      def_node = reparsed_root_def_node(program.roots, parsed_arena)
       return nil unless def_node
 
-      body = def_node.as(CrystalV2::Compiler::Frontend::DefNode).body
+      body = def_node.body
       return nil unless body
 
       {parsed_arena, body}

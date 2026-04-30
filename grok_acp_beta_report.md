@@ -508,3 +508,29 @@ guard and generated-stage2 lookup guard pass.
 **Verdict:** no evidence value for this commit. Future prompts need a hard
 partial-answer deadline before tool exploration.
 **Cost saved:** none.
+
+### Session 24 — 2026-04-30 — Hash to_unsafe stage2 receiver audit
+**Task:** read-only audit of the generated `cv2_s2` full-prelude plain-smoke
+frontier where `LibC` registration aborted on
+`Hash(String, Hash(UInt32, Crystal::HIR::Value))#to_unsafe`.
+**Brief size:** one task file, focused on `src/compiler/hir/ast_to_hir.cr`,
+the `safe_str_guard` macro, `register_concrete_class`, and the LL/HIR trace
+evidence for the bad receiver.
+**Latency:** timed out after 120s waiting for stdout.
+**Output quality:** no final answer. The ACP wrapper produced
+`[grok-timeout] Grok ACP timed out after 120s waiting for stdout`; no Grok
+claim was used as evidence.
+**What worked:** the sidecar was non-blocking while local HIR tracing and LLDB
+continued.
+**What did not:** the same beta failure mode repeated: it consumed the prompt
+window without returning partial findings. This was a narrow enough question
+that the current ACP flow should have answered before tool exploration.
+**Adversary check:** local evidence independently found the root. Macro
+expansion at broad AST registration sites froze `Hash(... )#to_unsafe`; moving
+pointer validation behind a typed `Slice(UInt8)` helper removed that call. A
+subsequent visibility unwrap invalid receiver was fixed by explicit
+`VisibilityModifierNode` casting after tag checks, and reparsed macro roots
+were hardened against block-heavy `map/find` plus unchecked arena access.
+**Verdict:** no evidence value for this commit. For future Grok use, require a
+two-phase prompt: first answer from provided anchors, then optional tool audit.
+**Cost saved:** none.

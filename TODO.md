@@ -1203,20 +1203,41 @@ pending-budget oracle.
   `resolve_scoped_macro_value(name, context)`. `elsif` conditions now create
   their target blocks first and route short-circuit operators through
   `lower_short_circuit_condition`. Guard:
-  `p2_elsif_short_circuit_condition_no_prelude.sh`. Bootstrap evidence:
-  `scripts/build_bootstrap_stages.sh --stages 2 --out /tmp/cv2_bs_s2_elsif`
-  builds `s2`, passes no-prelude smoke, and advances plain smoke to the next
-  frontier: `AstToHir#extract_alias_name_value_from_source(AliasNode,
-  ArenaLike)` abort stub during `LibC` registration.
+  `p2_elsif_short_circuit_condition_no_prelude.sh`.
+- The generated-stage2 full-prelude lib-registration frontier has moved past
+  the source-backed extern helper stubs and the invalid parser-slice helper
+  calls. Root causes cleared in this corridor:
+  - source-backed extern registration exposed redundant `ArenaLike` and mixed
+    nilable/concrete lib-name helper signatures, so generated stage2 emitted
+    concrete symbols whose bodies were registered under broader overloads;
+  - `safe_str_guard` inlined pointer validation at broad `case` sites, losing
+    branch-local Slice narrowing and freezing
+    `Hash(String, Hash(UInt32, Crystal::HIR::Value))#to_unsafe`;
+  - visibility unwrap helpers relied on `current.is_a?` narrowing for a broad
+    `Frontend::Node` local, so generated stage2 emitted virtual
+    `Node#expression` and then `Hash(... )#null_ptr?`;
+  - reparsed macro-body root selection used block-heavy
+    `program.roots.map { ... }.find(&.is_a?)` plus unchecked `arena[id]` at a
+    boundary already known to be arena-fragile.
+  Current evidence: `crystal build src/crystal_v2.cr -o
+  /tmp/cv2_final_boundary_candidate --error-trace` passed; the STOP_AFTER_HIR
+  falsifier with `DEBUG_CALL_TRACE='to_unsafe,null_ptr'` exits 0 and no longer
+  contains the invalid Hash calls; `scripts/build_bootstrap_stages.sh
+  --stages 2 --out /tmp/cv2_bs_s2_reparsed_roots` builds `s2`, passes
+  no-prelude smoke, and advances plain smoke to a new macro-condition frontier:
+  `MacroNumberValue.numeric_suffix` during `LibC` macro processing.
 
 ## Next Work
 
 1. Root-cause the generated-stage2 full-prelude plain-smoke frontier:
-   `AstToHir#extract_alias_name_value_from_source(AliasNode, ArenaLike)` stub
-   during `LibC` registration. First checks: inspect whether this helper is
-   missing because it is private/unreachable, because its `ArenaLike` union
-   signature differs, or because alias extraction is being called before its
-   body is demanded.
+   `MacroNumberValue.numeric_suffix` crashes while evaluating a lib macro
+   condition during `LibC` registration. The obvious rewrite from
+   `Array#find` to `while + unsafe_fetch` was refuted because it regressed s2
+   build to an earlier corrupted `ExprId` lower_main failure. First checks:
+   inspect the generated `numeric_suffix` LL, add a focused no-prelude oracle
+   for fixed-list suffix lookup / block `Array#find`, and decide whether the
+   true root is block carrier lowering, Array literal ABI, or macro condition
+   evaluator arena corruption.
 2. Run the generated-stage2 compiler on the broader fixed no-prelude corpus and
    add focused oracles for any new first failure.
 3. Compare `s1_bootstrap` and `s2b` on the fixed no-prelude corpus before
