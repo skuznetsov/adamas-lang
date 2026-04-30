@@ -179,3 +179,11 @@ be verified anchors, not broad opinions.
   emitted as an abort stub, and an exact-demand allowlist experiment did not
   help. Keep wrappers on self-host registration paths only when they have a
   verified lowering/demand path.
+
+- Phase0/identity diagnostic bookkeeping should stay opt-in on bootstrap hot
+  paths. The body-inference metric identity chain was diagnostic-only, but
+  default generated stage2 still executed it and exposed broad helper symbols
+  (`record_phase0_body_infer_walk`, then `canonical_def_identity_for_body_infer`).
+  Gate canonical identity work on `CRYSTAL_V2_PHASE0_METRICS` or
+  `CRYSTAL_V2_IDENTITY_DRY_RUN`; otherwise diagnostics become bootstrap
+  dependencies.

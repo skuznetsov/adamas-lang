@@ -11905,17 +11905,6 @@ module Crystal::HIR
       CrystalV2::Compiler::Semantic::DefIdentity.new(canonical_arena.object_id.to_u64, expr_index)
     end
 
-    private def record_phase0_body_infer_walk(
-      node : CrystalV2::Compiler::Frontend::DefNode,
-      resolved_arena : CrystalV2::Compiler::Frontend::ArenaLike,
-      node_expr_id : CrystalV2::Compiler::Frontend::ExprId? = nil,
-    ) : CrystalV2::Compiler::Semantic::DefIdentity?
-      def_identity = canonical_def_identity_for_body_infer(node, resolved_arena, node_expr_id)
-      return nil unless def_identity
-      @phase0_body_infer_counts[def_identity] = (@phase0_body_infer_counts[def_identity]? || 0) + 1
-      def_identity
-    end
-
     private def arena_fits_body_ids?(
       arena : CrystalV2::Compiler::Frontend::ArenaLike,
       body : Array(ExprId)?,
@@ -15904,7 +15893,14 @@ module Crystal::HIR
       # Phase 0 metric: count ACTUAL body inference walks (past body-presence guard),
       # but key by canonical DefIdentity after arena resolution instead of the
       # caller-local DefNode heap identity.
-      body_infer_identity = record_phase0_body_infer_walk(node, resolved_arena, node_expr_id)
+      body_infer_identity : CrystalV2::Compiler::Semantic::DefIdentity? = nil
+      phase0_metrics_enabled = env_has?("CRYSTAL_V2_PHASE0_METRICS")
+      if phase0_metrics_enabled || @identity_tracker
+        body_infer_identity = canonical_def_identity_for_body_infer(node, resolved_arena, node_expr_id)
+        if phase0_metrics_enabled && body_infer_identity
+          @phase0_body_infer_counts[body_infer_identity] = (@phase0_body_infer_counts[body_infer_identity]? || 0) + 1
+        end
+      end
 
       # Phase 1.5: identity dry-run — AFTER final arena resolution so the key
       # uses the same canonical def identity that the actual body-walk metric uses.

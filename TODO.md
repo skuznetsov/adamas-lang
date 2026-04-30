@@ -1258,15 +1258,30 @@ pending-budget oracle.
   /tmp/cv2_bs_s2_detect_yield_inline` builds `s2`, passes no-prelude smoke, and
   advances plain smoke to `record_phase0_body_infer_walk(DefNode, ArenaLike,
   ExprId?)` during `Errno` enum registration.
+- The default generated-stage2 phase0 body-inference metric helper frontier is
+  cleared. Root cause: `record_phase0_body_infer_walk` and the canonical
+  identity helper chain are diagnostic/identity bookkeeping, but default
+  bootstrap smoke executed them unconditionally and exposed broad
+  `ArenaLike`/nilable helper symbols. Inlining only the first wrapper moved the
+  stub one layer deeper to `canonical_def_identity_for_body_infer`; the accepted
+  fix gates canonical identity calculation behind `CRYSTAL_V2_PHASE0_METRICS`
+  or `CRYSTAL_V2_IDENTITY_DRY_RUN`, preserving opt-in metrics/dry-run while
+  removing default nonsemantic work. Current evidence: `crystal build
+  src/crystal_v2.cr -o /tmp/cv2_phase0_gated_candidate --error-trace` passed;
+  `scripts/build_bootstrap_stages.sh --stages 2 --out
+  /tmp/cv2_bs_s2_phase0_gated` builds `s2`, passes no-prelude smoke, and
+  advances plain smoke to semantic body inference:
+  `infer_concrete_return_type_from_body_inner(Array(ExprId), String, String,
+  ArenaLike, Bool)`.
 
 ## Next Work
 
 1. Root-cause the generated-stage2 full-prelude plain-smoke frontier:
-   `record_phase0_body_infer_walk(DefNode, ArenaLike, ExprId?)` abort stub
-   during `Errno` enum registration. First checks: inspect whether this is a
-   phase0 inference helper that can be inlined, exact-demanded by a broader
-   family, or split to remove `ArenaLike`/nilable start-id from the emitted
-   helper symbol.
+   `infer_concrete_return_type_from_body_inner(Array(ExprId), String, String,
+   ArenaLike, Bool)` abort stub during `Errno` enum registration. First checks:
+   inspect whether method registration should force this helper body, whether
+   it is another broad `ArenaLike` helper boundary, or whether enum method
+   return inference should avoid eager body inference for this path.
 2. Run the generated-stage2 compiler on the broader fixed no-prelude corpus and
    add focused oracles for any new first failure.
 3. Compare `s1_bootstrap` and `s2b` on the fixed no-prelude corpus before

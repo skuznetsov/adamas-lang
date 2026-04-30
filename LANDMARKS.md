@@ -2621,3 +2621,38 @@ Boundary: this removes one self-host-sensitive wrapper boundary. It does not
 claim all AstToHir wrappers should be inlined; use the same refutation-first
 test before changing broader helper families.
 {F/G/R: 0.90/0.56/0.90} [verified]
+
+[LM-538|verified]: Phase0 body-inference identity metrics must be opt-in on
+default bootstrap paths.
+
+Findings:
+
+- After LM-537, generated `s2` full-prelude plain smoke failed during `Errno`
+  enum registration on `record_phase0_body_infer_walk(DefNode, ArenaLike,
+  ExprId?)`.
+- Inlining that metric wrapper was only partial progress: the next run moved
+  to `canonical_def_identity_for_body_infer(DefNode, ArenaLike, ExprId?)`.
+  This showed the exposed helper chain was diagnostic bookkeeping, not the
+  semantic body-inference root.
+- `@phase0_body_infer_counts` is only emitted when
+  `CRYSTAL_V2_PHASE0_METRICS` is enabled, and the identity tracker exists only
+  under `CRYSTAL_V2_IDENTITY_DRY_RUN`. Default bootstrap smoke needs neither.
+- The fix computes canonical body-inference identity only when phase0 metrics
+  or identity dry-run is enabled. Default compilation still infers return
+  types, but no longer pays the diagnostic identity-helper cost.
+
+Evidence:
+
+- `crystal build src/crystal_v2.cr -o /tmp/cv2_phase0_gated_candidate
+  --error-trace` passed.
+- `scripts/build_bootstrap_stages.sh --stages 2 --out
+  /tmp/cv2_bs_s2_phase0_gated` built `s2` in 224s and passed no-prelude smoke.
+  Full-prelude plain smoke advanced from the phase0 identity helper chain to
+  the semantic body-inference frontier:
+  `infer_concrete_return_type_from_body_inner(Array(ExprId), String, String,
+  ArenaLike, Bool)`.
+
+Boundary: opt-in `CRYSTAL_V2_PHASE0_METRICS` and
+`CRYSTAL_V2_IDENTITY_DRY_RUN` paths still need their own targeted verification
+before relying on body-inference identity counts under generated stage2.
+{F/G/R: 0.91/0.62/0.90} [verified]
