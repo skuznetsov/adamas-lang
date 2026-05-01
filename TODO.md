@@ -54,16 +54,15 @@ regression_tests/combined/test_no_prelude_interpolation.cr --no-prelude -o
 /tmp/cv2_gep_selfref_candidate 120 4096
 regression_tests/complex/test_array_map_select_chain.cr -o
 /tmp/cv2_gep_selfref_plain_smoke`; and
-`BOOTSTRAP_STAGE_OUT=/tmp/cv2_bs_s2_gep_name BOOTSTRAP_CHAIN_STAGES=2
+`BOOTSTRAP_STAGE_OUT=/tmp/cv2_bs_s2_post_7d99340f BOOTSTRAP_CHAIN_STAGES=2
 BOOTSTRAP_TIMEOUT_SEC=300 BOOTSTRAP_MEM_MB=4096
-scripts/build_bootstrap_stages.sh --stages 2 --out /tmp/cv2_bs_s2_gep_name`,
-which builds generated `cv2_s2` in ~218s but still fails both smoke tests.
+scripts/build_bootstrap_stages.sh --stages 2 --out /tmp/cv2_bs_s2_post_7d99340f`,
+which builds generated `cv2_s2` in ~219s and now passes `smoke no-prelude`.
 Boundaries: `s2` plain smoke still segfaults during nested module registration;
-the latest lldb trace showed a stack-overflow-shaped `with_reparsed_module_from_current_source
--> register_nested_module` recursion through `parse_type_annotation`.
-`s2` no-prelude interpolation still needs rechecking on a newly generated `s2`
-after the self-reference guard; prior generated `s2` showed
-`%r8.idx64_ext = sext i32 %r8.idx64_ext to i64`. Stochastic stage2 build OOBs
+the latest lldb trace on `/tmp/cv2_bs_s2_post_7d99340f/cv2_s2` shows stack
+overflow in `GC_clear_stack_inner`, reached through repeated
+`with_reparsed_module_from_current_source -> register_nested_module` recursion
+while parsing a generic type annotation in a nested module. Stochastic stage2 build OOBs
 with ASCII-like ExprId payloads (`[S2_`, `shad`) were observed in wrapper runs
 but not reproduced under direct `run_safe` with `DEBUG_EXPR_OOB=1`; treat them
 as suspected memory corruption, not verified root cause yet.
