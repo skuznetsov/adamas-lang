@@ -1,6 +1,6 @@
 # LANDMARKS
 
-Updated: 2026-04-29
+Updated: 2026-05-01
 Context: compiler/bootstrap/stage2-stability
 
 This file is the active working set only. Historical landmarks before this
@@ -11,6 +11,29 @@ checkpoint remain recoverable from git history, especially:
   `d43826fdcc2277b6075026244764a84d0069d1a30b675642b603f3511b14a1e5`
 
 ## Active Bootstrap Gate
+
+[LM-529|in_progress]: The current `codegen` bootstrap frontier is past the
+focused stage2 no-prelude semantic corpus, but not yet proven through
+`s2 -> s3`. The latest local checkpoint builds a host-built compiler, uses it
+to build generated `cv2_s2`, and that generated compiler compiles and runs
+`regression_tests/bootstrap_semantic_corpus.cr --no-prelude`. Current root-cause
+patterns are: generated-stage2 nilable/small-struct slot drift; arena
+identity/lifetime drift when `ExprId` is separated from its arena; V2
+over-lowering through safety nets/RTA/missing-target scans instead of original
+Crystal-style exact demand; compiler hot paths re-entering fragile stdlib
+generic/block helpers (`map`, `each`, `find`, splats) while self-hosted; and
+MIR/LLVM backend type-state drift around pointer/int/union coercions. Visibility
+modifier findings from the hostile review are largely addressed in current
+source: parser accessor macros now preserve visibility metadata, CLI/HIR
+validate `VisibilityModifierNode` before unwrapping, and function/accessor
+visibility is propagated into HIR lookup. Boundary: this is a source-verified
+and no-prelude-S2 checkpoint, not a fresh `s2 -> s3` proof; the next robust
+move is to add no-prelude oracles for visibility/accessors plus the recent
+inline-yield, proc-literal, phi/switch, and pointer-return corridors, then run
+the smallest `s2 -> s3` bootstrap attempt under `scripts/run_safe.sh`.
+Project-memory note: `/Users/sergey/bin/cfmem` was unavailable on 2026-05-01
+because `libggml.0.dylib` was missing, so this landmark is the durable
+checkpoint until cfmem is repaired. {F/G/R: 0.78/0.55/0.86} [in_progress]
 
 [LM-528|in_progress]: The stage2 `private DIGITS_DOWNCASE` failure split into
 two roots. First, generated `cv2_s2` was not promoting uppercase identifier
