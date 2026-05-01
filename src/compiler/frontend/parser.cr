@@ -2457,6 +2457,18 @@ module CrystalV2
           end
           params = parse_method_params
           return PREFIX_ERROR if params.is_a?(ExprId) # Phase 71: Handle error from default value parsing
+          if filter = ENV["DEBUG_PARSE_DEF_PARAMS"]?
+            method_debug_name = String.new(method_name_slice)
+            if filter == "1" || method_debug_name.includes?(filter)
+              typed_count = 0
+              block_count = 0
+              params.each do |param|
+                typed_count += 1 if param.type_annotation
+                block_count += 1 if param.is_block
+              end
+              STDERR.puts "[PARSE_DEF_PARAMS] name=#{method_debug_name} count=#{params.size} typed=#{typed_count} blocks=#{block_count}"
+            end
+          end
           if false && ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_DEF_STATE")
             STDERR.puts "[DEF_STATE] phase=params line=#{def_token.span.start_line + 1} name=#{String.new(method_name_slice)} paren=#{@paren_depth} no_type=#{@no_type_declaration} call_args=#{@parsing_call_args} macro_mode=#{@macro_mode}"
           end
@@ -3293,21 +3305,40 @@ module CrystalV2
                              param_start_span
                            end
 
-              params_b << Parameter.new(
-                param_name,
-                external_name, # Phase 103K: External parameter name
-                type_annotation,
-                default_value,
-                param_span,
-                param_name_span,
-                external_name_span, # Phase 103K: External name span
-                param_type_span,
-                default_value_span,
-                is_splat,
-                is_double_splat,
-                is_block,       # Phase 103: block parameter flag
-                is_instance_var # Instance variable parameter shorthand: @value : T
-              )
+              param = if type_annotation
+                        Parameter.new(
+                          param_name,
+                          external_name, # Phase 103K: External parameter name
+                          type_annotation.not_nil!,
+                          default_value,
+                          param_span,
+                          param_name_span,
+                          external_name_span, # Phase 103K: External name span
+                          param_type_span,
+                          default_value_span,
+                          is_splat,
+                          is_double_splat,
+                          is_block,       # Phase 103: block parameter flag
+                          is_instance_var # Instance variable parameter shorthand: @value : T
+                        )
+                      else
+                        Parameter.new(
+                          param_name,
+                          external_name, # Phase 103K: External parameter name
+                          nil,
+                          default_value,
+                          param_span,
+                          param_name_span,
+                          external_name_span, # Phase 103K: External name span
+                          param_type_span,
+                          default_value_span,
+                          is_splat,
+                          is_double_splat,
+                          is_block,       # Phase 103: block parameter flag
+                          is_instance_var # Instance variable parameter shorthand: @value : T
+                        )
+                      end
+              params_b << param
 
               if operator_token?(current_token, Token::Kind::Comma)
                 advance

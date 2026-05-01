@@ -183,39 +183,211 @@ module CrystalV2
       # Examples:
       #   def foo(x)           → Parameter("x", nil, span, name_span, nil)
       #   def foo(x : Int32)   → Parameter("x", "Int32", span, name_span, type_span)
-      struct Parameter
-        getter name : Slice(UInt8)?          # Phase BLOCK_CAPTURE: nil for anonymous block (&)
-        getter external_name : Slice(UInt8)? # Phase 103K: External parameter name (e.g., "to" in "def foo(to limit)")
-        getter type_annotation : Slice(UInt8)?
-        getter default_value : ExprId?    # Phase 71: default parameter value
-        getter span : Span                # Full "x : Int32 = 5" span
-        getter name_span : Span?          # Phase BLOCK_CAPTURE: nil for anonymous block
-        getter external_name_span : Span? # Phase 103K: External name span for navigation
-        getter type_span : Span?          # Just "Int32" for hover (optional)
-        getter default_span : Span?       # Phase 71: Just default value span
-        getter is_splat : Bool            # Phase 68: *args (single splat)
-        getter is_double_splat : Bool     # Phase 68: **kwargs (double splat)
-        getter is_block : Bool            # Phase 103: &block (block parameter)
-        getter is_instance_var : Bool     # Instance variable parameter shorthand: @value : T
+      class Parameter
+        @name_storage : Slice(UInt8)
+        @has_name : Bool
+        @external_name_storage : Slice(UInt8)
+        @has_external_name : Bool
+        @type_annotation_storage : Slice(UInt8)
+        @has_type_annotation : Bool
+        @default_value_storage : ExprId
+        @has_default_value : Bool
+        getter span : Span # Full "x : Int32 = 5" span
+        @name_span_storage : Span
+        @has_name_span : Bool
+        @external_name_span_storage : Span
+        @has_external_name_span : Bool
+        @type_span_storage : Span
+        @has_type_span : Bool
+        @default_span_storage : Span
+        @has_default_span : Bool
+        getter is_splat : Bool        # Phase 68: *args (single splat)
+        getter is_double_splat : Bool # Phase 68: **kwargs (double splat)
+        getter is_block : Bool        # Phase 103: &block (block parameter)
+        getter is_instance_var : Bool # Instance variable parameter shorthand: @value : T
 
         def initialize(
-          @name : Slice(UInt8)?,                # Phase BLOCK_CAPTURE: optional for anonymous block
-          @external_name : Slice(UInt8)? = nil, # Phase 103K: External parameter name
-          @type_annotation : Slice(UInt8)? = nil,
-          @default_value : ExprId? = nil,
+          name : Slice(UInt8)?,                # Phase BLOCK_CAPTURE: optional for anonymous block
+          external_name : Slice(UInt8)? = nil, # Phase 103K: External parameter name
+          type_annotation : Slice(UInt8)? = nil,
+          default_value : ExprId? = nil,
           @span : Span = Span.zero,
-          @name_span : Span? = nil,          # Phase BLOCK_CAPTURE: optional
-          @external_name_span : Span? = nil, # Phase 103K: External name span
-          @type_span : Span? = nil,
-          @default_span : Span? = nil,
+          name_span : Span? = nil,          # Phase BLOCK_CAPTURE: optional
+          external_name_span : Span? = nil, # Phase 103K: External name span
+          type_span : Span? = nil,
+          default_span : Span? = nil,
           @is_splat : Bool = false,
           @is_double_splat : Bool = false,
           @is_block : Bool = false,
           @is_instance_var : Bool = false,
         )
-          if !@is_block && @name.nil? && @type_annotation.nil? && !@is_splat && !@is_double_splat
+          if name
+            @name_storage = name
+            @has_name = true
+          else
+            @name_storage = Slice(UInt8).empty
+            @has_name = false
+          end
+          if external_name
+            @external_name_storage = external_name
+            @has_external_name = true
+          else
+            @external_name_storage = Slice(UInt8).empty
+            @has_external_name = false
+          end
+          if type_annotation
+            @type_annotation_storage = type_annotation
+            @has_type_annotation = true
+          else
+            @type_annotation_storage = Slice(UInt8).empty
+            @has_type_annotation = false
+          end
+          if default_value
+            @default_value_storage = default_value
+            @has_default_value = true
+          else
+            @default_value_storage = ExprId.new(-1)
+            @has_default_value = false
+          end
+          if name_span
+            @name_span_storage = name_span
+            @has_name_span = true
+          else
+            @name_span_storage = Span.zero
+            @has_name_span = false
+          end
+          if external_name_span
+            @external_name_span_storage = external_name_span
+            @has_external_name_span = true
+          else
+            @external_name_span_storage = Span.zero
+            @has_external_name_span = false
+          end
+          if type_span
+            @type_span_storage = type_span
+            @has_type_span = true
+          else
+            @type_span_storage = Span.zero
+            @has_type_span = false
+          end
+          if default_span
+            @default_span_storage = default_span
+            @has_default_span = true
+          else
+            @default_span_storage = Span.zero
+            @has_default_span = false
+          end
+          if !@is_block && !@has_name && !@has_type_annotation && !@is_splat && !@is_double_splat
             @is_block = true
           end
+        end
+
+        def initialize(
+          name : Slice(UInt8)?,
+          external_name : Slice(UInt8)?,
+          type_annotation : Slice(UInt8),
+          default_value : ExprId? = nil,
+          @span : Span = Span.zero,
+          name_span : Span? = nil,
+          external_name_span : Span? = nil,
+          type_span : Span? = nil,
+          default_span : Span? = nil,
+          @is_splat : Bool = false,
+          @is_double_splat : Bool = false,
+          @is_block : Bool = false,
+          @is_instance_var : Bool = false,
+        )
+          if name
+            @name_storage = name
+            @has_name = true
+          else
+            @name_storage = Slice(UInt8).empty
+            @has_name = false
+          end
+          if external_name
+            @external_name_storage = external_name
+            @has_external_name = true
+          else
+            @external_name_storage = Slice(UInt8).empty
+            @has_external_name = false
+          end
+          @type_annotation_storage = type_annotation
+          @has_type_annotation = true
+          if default_value
+            @default_value_storage = default_value
+            @has_default_value = true
+          else
+            @default_value_storage = ExprId.new(-1)
+            @has_default_value = false
+          end
+          if name_span
+            @name_span_storage = name_span
+            @has_name_span = true
+          else
+            @name_span_storage = Span.zero
+            @has_name_span = false
+          end
+          if external_name_span
+            @external_name_span_storage = external_name_span
+            @has_external_name_span = true
+          else
+            @external_name_span_storage = Span.zero
+            @has_external_name_span = false
+          end
+          if type_span
+            @type_span_storage = type_span
+            @has_type_span = true
+          else
+            @type_span_storage = Span.zero
+            @has_type_span = false
+          end
+          if default_span
+            @default_span_storage = default_span
+            @has_default_span = true
+          else
+            @default_span_storage = Span.zero
+            @has_default_span = false
+          end
+        end
+
+        def name : Slice(UInt8)?
+          return nil unless @has_name
+          @name_storage
+        end
+
+        def external_name : Slice(UInt8)?
+          return nil unless @has_external_name
+          @external_name_storage
+        end
+
+        def type_annotation : Slice(UInt8)?
+          return nil unless @has_type_annotation
+          @type_annotation_storage
+        end
+
+        def default_value : ExprId?
+          return nil unless @has_default_value
+          @default_value_storage
+        end
+
+        def name_span : Span?
+          return nil unless @has_name_span
+          @name_span_storage
+        end
+
+        def external_name_span : Span?
+          return nil unless @has_external_name_span
+          @external_name_span_storage
+        end
+
+        def type_span : Span?
+          return nil unless @has_type_span
+          @type_span_storage
+        end
+
+        def default_span : Span?
+          return nil unless @has_default_span
+          @default_span_storage
         end
       end
 
@@ -1545,32 +1717,56 @@ module CrystalV2
         @receiver_storage : Slice(UInt8)
         @has_receiver : Bool # Phase PERCENT_LITERALS: self or object name for class/singleton methods
 
-        def initialize(@span : Span, @name : Slice(UInt8), @params : Array(Parameter)?,
-                       @return_type : Slice(UInt8)?, @body : Array(ExprId)?,
+        def initialize(@span : Span, @name : Slice(UInt8), params : Array(Parameter),
+                       return_type : Slice(UInt8)?, body : Array(ExprId)?,
                        @is_abstract : Bool? = nil, @visibility : Visibility? = nil,
-                       @receiver : Slice(UInt8)? = nil)
-          if params = @params
-            @params_storage = params
-            @has_params = true
-          else
-            @params_storage = [] of Parameter
-            @has_params = false
-          end
-          if return_type = @return_type
+                       receiver : Slice(UInt8)? = nil)
+          @params_storage = params
+          @has_params = true
+          if return_type
             @return_type_storage = return_type
             @has_return_type = true
           else
             @return_type_storage = Slice(UInt8).empty
             @has_return_type = false
           end
-          if body = @body
+          if body
             @body_storage = body
             @has_body = true
           else
             @body_storage = [] of ExprId
             @has_body = false
           end
-          if receiver = @receiver
+          if receiver
+            @receiver_storage = receiver
+            @has_receiver = true
+          else
+            @receiver_storage = Slice(UInt8).empty
+            @has_receiver = false
+          end
+        end
+
+        def initialize(@span : Span, @name : Slice(UInt8), params : Nil,
+                       return_type : Slice(UInt8)?, body : Array(ExprId)?,
+                       @is_abstract : Bool? = nil, @visibility : Visibility? = nil,
+                       receiver : Slice(UInt8)? = nil)
+          @params_storage = [] of Parameter
+          @has_params = false
+          if return_type
+            @return_type_storage = return_type
+            @has_return_type = true
+          else
+            @return_type_storage = Slice(UInt8).empty
+            @has_return_type = false
+          end
+          if body
+            @body_storage = body
+            @has_body = true
+          else
+            @body_storage = [] of ExprId
+            @has_body = false
+          end
+          if receiver
             @receiver_storage = receiver
             @has_receiver = true
           else
@@ -1580,12 +1776,19 @@ module CrystalV2
         end
 
         def params : Array(Parameter)?
-          return nil unless @has_params
+          @params_storage
+        end
+
+        def params_storage : Array(Parameter)
           @params_storage
         end
 
         def return_type : Slice(UInt8)?
           return nil unless @has_return_type
+          @return_type_storage
+        end
+
+        def return_type_storage : Slice(UInt8)
           @return_type_storage
         end
 
@@ -2792,6 +2995,32 @@ module CrystalV2
 
       def self.node_literal(node : IdentifierNode) : Slice(UInt8)?
         node.name
+      end
+
+      def self.node_identifier_name_string(node : TypedNode) : String?
+        return nil unless node_kind(node) == NodeKind::Identifier
+        ident = node.unsafe_as(IdentifierNode)
+        name = ident.name
+        return nil if name.empty?
+        String.new(name)
+      end
+
+      def self.node_def_name_string(node : TypedNode) : String?
+        return nil unless node_kind(node) == NodeKind::Def
+        def_node = node.unsafe_as(DefNode)
+        name = def_node.name
+        return nil if name.empty?
+        String.new(name)
+      end
+
+      def self.node_def_params_storage(node : TypedNode) : Array(Parameter)
+        return [] of Parameter unless node_kind(node) == NodeKind::Def
+        node.unsafe_as(DefNode).params_storage
+      end
+
+      def self.node_def_return_type_storage(node : TypedNode) : Slice(UInt8)
+        return Slice(UInt8).empty unless node_kind(node) == NodeKind::Def
+        node.unsafe_as(DefNode).return_type_storage
       end
 
       def self.node_literal(node : MacroVarNode) : Slice(UInt8)?

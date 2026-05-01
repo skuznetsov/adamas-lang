@@ -1,6 +1,6 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-04-30
+Updated: 2026-05-01
 Branch: `codegen`
 
 This is the active working backlog only. Historical detail is in git history,
@@ -29,6 +29,31 @@ Working policy:
   demanded deep shapes and remove only proven non-demand/root pollution.
 
 ## Current Checkpoint
+
+Stage2 no-prelude semantic-corpus checkpoint (2026-05-01): generated `cv2_s2`
+now compiles and runs `regression_tests/bootstrap_semantic_corpus.cr
+--no-prelude` after the HIR inline-yield/proc-literal corridor and the MIR/LLVM
+backend state were hardened. Root fixes in this checkpoint: inline-yield stack
+ivars are explicitly initialized because generated stage2 can miss inline
+defaults; inline-yield callee arenas are resolved through a non-nil
+`function_def_arena_or_current`; `function_namespace_override_for` uses fixed
+arity overloads instead of a splat helper that stage2 materialized as an abort
+stub; proc-literal capture name/type arrays are built with explicit loops and a
+non-nil arena; unary `&expr` is treated as the parser block/proc-pass marker
+instead of a runtime unary method call; MIR pre-scans avoid stdlib `map/each`
+over `Array(Tuple(ValueId, ValueId))` phi/switch arrays; LLVM backend caches the
+current function's canonical param name/type pairs while emitting the signature;
+and pointer-return emission now passes through already-pointer values instead
+of generating invalid `inttoptr ptr ... to ptr`. Evidence:
+`crystal build src/crystal_v2.cr -o /tmp/cv2_clean_candidate --error-trace`;
+`scripts/run_safe.sh /tmp/cv2_clean_candidate 300 4096 src/crystal_v2.cr -o
+/tmp/cv2_s2_clean`; `scripts/run_safe.sh /tmp/cv2_s2_clean 30 2048
+--no-prelude regression_tests/bootstrap_semantic_corpus.cr -o
+/tmp/cv2_clean_corpus`; and `scripts/run_safe.sh /tmp/cv2_clean_corpus 5 512`.
+Boundary: this is a focused no-prelude oracle, not a full `s2 -> s3` proof.
+Next work should add more fast no-prelude oracles around inline yield, proc
+literal block pass, phi/switch MIR pre-scans, and pointer-return coercion before
+promoting to a wider bootstrap ladder.
 
 Stage2 container/arena/backend checkpoint (2026-05-01): generated `cv2_s2`
 now builds again after several root-cause fixes in the container storage and

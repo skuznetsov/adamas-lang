@@ -2032,6 +2032,8 @@ module Crystal::MIR
     @current_return_type_ref : TypeRef = TypeRef::VOID
     @current_func_name : String = ""
     @current_func_params : Array(Parameter) = [] of Parameter
+    @current_func_param_llvm_names : Array(String) = [] of String
+    @current_func_param_type_refs : Array(TypeRef) = [] of TypeRef
     @current_mir_func : Function? = nil
     @debug_emit_anchors : Bool = false
     @dwarf_debug : DwarfDebugContext
@@ -2574,11 +2576,12 @@ module Crystal::MIR
 
     @[AlwaysInline]
     private def current_func_param_type_by_llvm_name(name : String) : TypeRef?
-      @current_func_params.each do |param|
-        llvm_name = @value_names[param.index]? || sanitize_llvm_local_name(param.name)
-        if llvm_name == name
-          return param.type == TypeRef::VOID ? TypeRef::POINTER : param.type
+      idx = 0
+      while idx < @current_func_param_llvm_names.size
+        if @current_func_param_llvm_names.unsafe_fetch(idx) == name
+          return @current_func_param_type_refs.unsafe_fetch(idx)
         end
+        idx += 1
       end
       nil
     end
@@ -12384,6 +12387,8 @@ module Crystal::MIR
       # Function signature
       # Note: void is not valid for parameters, substitute with ptr
       used_param_names = ::Hash(String, Int32).new(0)
+      @current_func_param_llvm_names = [] of String
+      @current_func_param_type_refs = [] of TypeRef
       param_types = func.params.map do |p|
         llvm_type = @type_mapper.llvm_type(p.type)
         llvm_type = "ptr" if llvm_type == "void"
@@ -12401,6 +12406,8 @@ module Crystal::MIR
 
         # Keep param references consistent with the signature.
         @value_names[p.index] = llvm_name
+        @current_func_param_llvm_names << llvm_name
+        @current_func_param_type_refs << (p.type == TypeRef::VOID ? TypeRef::POINTER : p.type)
 
         # Record parameter LLVM type so emit_union_wrap and other code can
         # determine the actual type (e.g., union struct vs ptr) of parameters.
@@ -24355,6 +24362,8 @@ module Crystal::MIR
             # For ptr returns with int value, use inttoptr
             if @current_return_type == "ptr" && val_ref == "0"
               emit "ret ptr null"
+            elsif @current_return_type == "ptr" && val_llvm_type == "ptr"
+              emit "ret ptr #{val_ref}"
             elsif @current_return_type.starts_with?('i') && val_ref == "null"
               emit "ret #{@current_return_type} 0"
             elsif @current_return_type == "ptr" && val_llvm_type && val_llvm_type.starts_with?('i') && !val_llvm_type.includes?(".union")

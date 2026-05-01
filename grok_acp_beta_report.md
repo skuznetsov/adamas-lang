@@ -608,3 +608,41 @@ frontier moved to a real tuple-key hash crash in `resolve_module_alias_prefix`.
 force a first-pass answer before any tools, or use a different Grok 4.1 Fast
 structured wrapper.
 **Cost saved:** none.
+
+### Session 27 — 2026-05-01 — inline-yield / TypeRef stage2 audit
+**Task:** read-only audit of the generated stage2 no-prelude semantic-corpus
+frontier around inline yield, `TypeRef` array slots, and broad helper stubs.
+**Brief size:** narrow compiler-source prompt with exact current reducer and
+requested root-cause classification.
+**Latency:** timed out after 120s.
+**Output quality:** no final answer before timeout.
+**What worked:** the sidecar was non-blocking; local stage2 falsifiers continued
+and exposed the inline-yield arena/namespace/proc-literal corridor directly.
+**What did not:** the current ACP flow again spent the budget without returning
+a concise first-pass answer.
+**Adversary check:** local evidence drove the fixes: generated stage2 moved
+from `inline_yield_function` arena stubs to namespace-overload stubs, then to
+proc-literal capture/arena issues, then into MIR/LLVM.
+**Verdict:** no evidence value. Future Grok prompts should require a short
+answer before any tool use, or use the proposed Grok 4.1 Fast structured path.
+**Cost saved:** none.
+
+### Session 28 — 2026-05-01 — lower_call receiver-state audit
+**Task:** read-only audit of the `receiver_id : ValueId?` / `lower_call`
+frontier after the no-prelude corpus showed stale receiver state around bare
+top-level calls and receiver-only collection intrinsics.
+**Brief size:** narrow source-audit prompt with exact anchors in
+`src/compiler/hir/ast_to_hir.cr`.
+**Latency:** timed out after 90s after several tool calls.
+**Output quality:** no actionable final result.
+**What worked:** the run confirmed the sidecar can execute tools under the
+updated permissions.
+**What did not:** no concise finding was produced before timeout, so it did not
+help with the active local falsifier.
+**Adversary check:** local evidence found the semantic invariant independently:
+bare top-level identifier calls must be receiverless before receiver-only
+intrinsics probe `receiver_id`; the no-prelude corpus progressed past the HIR
+frontier after that and related inline/proc fixes.
+**Verdict:** no evidence value for this commit. Keep ACP Grok optional and
+non-blocking for this compiler loop.
+**Cost saved:** none.

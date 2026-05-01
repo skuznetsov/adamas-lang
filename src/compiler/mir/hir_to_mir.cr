@@ -1650,16 +1650,26 @@ module Crystal
           hir_func.blocks.each do |hir_block|
             hir_block.instructions.each do |inst|
               next unless escaping_values.includes?(inst.id)
-              sources = case inst
-                        when HIR::Copy then [inst.source]
-                        when HIR::Cast then [inst.value]
-                        when HIR::Phi  then inst.incoming.map { |(_, v)| v }
-                        else                [] of HIR::ValueId
-                        end
-              sources.each do |src|
-                unless escaping_values.includes?(src)
-                  escaping_values << src
+              case inst
+              when HIR::Copy
+                unless escaping_values.includes?(inst.source)
+                  escaping_values << inst.source
                   changed = true
+                end
+              when HIR::Cast
+                unless escaping_values.includes?(inst.value)
+                  escaping_values << inst.value
+                  changed = true
+                end
+              when HIR::Phi
+                incoming_idx = 0
+                while incoming_idx < inst.incoming.size
+                  _from_block, src = inst.incoming.unsafe_fetch(incoming_idx)
+                  incoming_idx += 1
+                  unless escaping_values.includes?(src)
+                    escaping_values << src
+                    changed = true
+                  end
                 end
               end
             end
@@ -1696,7 +1706,12 @@ module Crystal
           # Phi incomings are always cross-block
           hir_block.instructions.each do |inst|
             if inst.is_a?(HIR::Phi)
-              inst.incoming.each { |(_, v)| @cross_block_values << v }
+              incoming_idx = 0
+              while incoming_idx < inst.incoming.size
+                _from_block, value_id = inst.incoming.unsafe_fetch(incoming_idx)
+                incoming_idx += 1
+                @cross_block_values << value_id
+              end
             end
           end
           # Return values must not be cleaned up
@@ -2380,7 +2395,15 @@ module Crystal
         when HIR::Cast                then [inst.value]
         when HIR::IsA                 then [inst.value]
         when HIR::Copy                then [inst.source]
-        when HIR::Phi                 then inst.incoming.map { |(_, v)| v }
+        when HIR::Phi
+          values = [] of HIR::ValueId
+          incoming_idx = 0
+          while incoming_idx < inst.incoming.size
+            _from_block, value_id = inst.incoming.unsafe_fetch(incoming_idx)
+            incoming_idx += 1
+            values << value_id
+          end
+          values
         when HIR::IndexGet            then [inst.object, inst.index]
         when HIR::IndexSet            then [inst.object, inst.index, inst.value]
         when HIR::UnionWrap           then [inst.value]
@@ -2411,7 +2434,15 @@ module Crystal
         case term
         when HIR::Return then term.value ? [term.value.not_nil!] : [] of HIR::ValueId
         when HIR::Branch then [term.condition]
-        when HIR::Switch then [term.value] + term.cases.map { |(v, _)| v }
+        when HIR::Switch
+          values = [term.value]
+          case_idx = 0
+          while case_idx < term.cases.size
+            value_id, _target = term.cases.unsafe_fetch(case_idx)
+            case_idx += 1
+            values << value_id
+          end
+          values
         else                  [] of HIR::ValueId
         end
       end
