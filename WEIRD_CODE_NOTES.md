@@ -171,6 +171,16 @@ be verified anchors, not broad opinions.
   `@arena` directly moved the bootstrap frontier. Prefer eliminating these
   one-use ABI boundaries before adding more helper-demand allowlists.
 
+- Registration hot paths in `AstToHir` are sensitive to passing mutable
+  compiler ivars and branch-narrowed AST nodes directly across helper
+  boundaries. Generated stage2 widened `@arena`/local sets and lost
+  `AnnotationNode` narrowing, producing abort stubs for
+  `resolve_path_like_name_in_arena`, `remember_effect_annotation`, and
+  `register_module_instance_methods_for`. When a registration helper is truly
+  needed, prefer an explicit typed boundary (`ArenaLike`, `Set(String)`,
+  `AnnotationNode`) at the call site; when the helper is diagnostic-only, keep
+  it behind its debug env gate so default bootstrap does not depend on it.
+
 - Tiny AstToHir wrapper helpers can still be worse than duplication when they
   expose broad compiler-internal signatures to generated stage2. The
   `detect_method_yield(def, arena, prefer_source_scan)` wrapper only selected

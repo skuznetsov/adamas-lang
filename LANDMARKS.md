@@ -2788,3 +2788,52 @@ Boundary: this is verified progress, not a green bootstrap. The current
 generated `s2` still fails full-prelude plain smoke; next work is the
 `resolve_path_like_name_in_arena` stub/demand boundary.
 {F/G/R: 0.90/0.62/0.90} [verified]
+
+## LM-542 — Stage2 include-registration helper stubs advanced to alias-prefix tuple-hash crash
+
+Context: compiler/bootstrap/codegen, 2026-04-30, `codegen`.
+
+Verified:
+
+- The `resolve_path_like_name_in_arena(ExprId, ArenaLike | String)` frontier
+  was caused by `collect_nested_type_names` reading mutable `@arena` inside the
+  recursive scanner. Threading an explicit `ArenaLike` from
+  `record_nested_type_names` removed the wide `resolve_path_like_name_in_arena`
+  symbol from generated `cv2_s2`.
+- The next `remember_effect_annotation(...)` abort-stub was the same boundary
+  class in a different form: generated stage2 did not preserve branch-local
+  `AnnotationNode` narrowing at registration call sites. Explicit
+  `unsafe_as(AnnotationNode)` plus `@arena.as(ArenaLike)` removed the wide
+  annotation symbols.
+- The next `debug_probe_include_call_boundary(...)` abort-stub was
+  diagnostic-only work executing on the default path. Gating both include probe
+  calls behind `DEBUG_REG_CONCRETE_PHASE` removed that default dependency.
+- The next `register_module_instance_methods_for(...)` abort-stub came from the
+  include-expansion caller materializing widened `ArenaLike?` / `Set(String)?`
+  locals. Passing exact `ArenaLike` and `Set(String)` contracts produced real
+  bodies for `register_module_instance_methods_for` and `include_type_param_map`.
+
+Evidence:
+
+- `crystal build src/crystal_v2.cr -o /tmp/cv2_include_contract_candidate
+  --error-trace` passed.
+- `regression_tests/p2_yield_body_infer_no_prelude.sh`,
+  `regression_tests/p2_prior_nil_guard_infer_no_prelude.sh`,
+  `regression_tests/p2_source_extern_signature_no_prelude.sh`, and
+  `regression_tests/p2_pending_budget_no_prelude.sh` passed with
+  `/tmp/cv2_include_contract_candidate`.
+- `scripts/build_bootstrap_stages.sh --stages 2 --out
+  /tmp/cv2_bs_s2_include_contract` built `s2` in ~230s and passed
+  no-prelude smoke. `nm` shows exact bodies for
+  `resolve_path_like_name_in_arena`, `remember_effect_annotation`,
+  `register_module_instance_methods_for`, and `include_type_param_map`.
+- Redirected lldb now stops at `EXC_BAD_ACCESS` in
+  `Hash(Tuple(String, Int32), String)#[]?` from
+  `resolve_module_alias_prefix -> resolve_module_alias_for_include ->
+  register_module_instance_methods_for`, not at an abort-stub.
+
+Boundary: this is still not a green generated `s2`; the next root is the
+`@module_alias_prefix_cache` tuple-key/hash crash. The old smoke-log tail can
+still misleadingly stop near enum/lib registration; redirected child stderr and
+lldb are the stronger frontier evidence.
+{F/G/R: 0.91/0.64/0.90} [verified]

@@ -556,3 +556,28 @@ type recording.
 **Verdict:** no evidence value. Keep Grok sidecar optional and do not wait when
 lldb/no-prelude falsifiers are already available.
 **Cost saved:** none.
+
+### Session 26 — 2026-04-30 — include-registration helper boundary audit
+**Task:** read-only audit of the local patch that hardens
+`collect_nested_type_names` and `remember_effect_annotation` boundaries after
+generated stage2 moved from a `resolve_path_like_name_in_arena` broad abort-stub
+to a `remember_effect_annotation` broad abort-stub.
+**Brief size:** one task file, ~1.1 KB, with exact requested outputs: root
+pattern assessment, remaining unsafe callsites, and one no-prelude oracle shape.
+**Latency:** timed out after 120s waiting for stdout.
+**Output quality:** no final answer. The stream showed grep/read_file calls and
+one terminal command, but no concise findings before timeout.
+**What worked:** the sidecar ran non-blocking while local bootstrap/lldb checks
+continued.
+**What did not:** the same ACP beta failure mode repeated: no partial answer was
+returned for a narrow bounded question.
+**Adversary check:** local evidence was stronger. `nm` and redirected `lldb`
+showed the patch removed the wide `resolve_path_like_name_in_arena` and
+`remember_effect_annotation` stubs, then exposed a diagnostic-only
+`debug_probe_include_call_boundary` dependency, then an include-expansion caller
+contract mismatch. After gating debug probes and casting include arguments, the
+frontier moved to a real tuple-key hash crash in `resolve_module_alias_prefix`.
+**Verdict:** no evidence value for this commit. Future Grok ACP prompts should
+force a first-pass answer before any tools, or use a different Grok 4.1 Fast
+structured wrapper.
+**Cost saved:** none.

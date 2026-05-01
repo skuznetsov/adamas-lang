@@ -1285,29 +1285,39 @@ pending-budget oracle.
    a central `infer_concrete_return_type_from_body` guard that refuses to walk
    defs requiring caller block context (`yield` or direct implicit
    `&block.call`). Current evidence:
-   `/tmp/cv2_bs_s2_yield_context_guard` builds `s2` in ~228s and passes
-   no-prelude smoke. Plain smoke still fails, but redirected lldb shows it now
-   advances through `Errno`, `WinError`, `WasiError`, enum resolve, aliases,
-   macros, `Crystal::SpinLock`, and fails next at module register idx=3 with
-   an abort stub for
-   `resolve_path_like_name_in_arena(ExprId, ArenaLike | String)` during
-   `record_nested_type_names -> collect_nested_type_names`.
+   `/tmp/cv2_bs_s2_include_contract` builds `s2` in ~230s and passes
+   no-prelude smoke. Plain smoke still fails, but the wide registration-helper
+   abort-stub corridor is advanced: `record_nested_type_names` now threads an
+   explicit `ArenaLike`, annotation registration call sites explicitly cast
+   proven `AnnotationNode` values, default include debug probes are gated behind
+   `DEBUG_REG_CONCRETE_PHASE`, and the class include expansion call now passes
+   exact `ArenaLike`/`Set(String)` contracts. Redirected lldb shows the new
+   frontier is a real `EXC_BAD_ACCESS` in
+   `Hash(Tuple(String, Int32), String)#[]?` while
+   `resolve_module_alias_prefix` looks up `@module_alias_prefix_cache`, from
+   `register_module_instance_methods_for` at module register idx=3.
    Remaining known root pattern: `next` combined with non-local `return` inside
    nested inlined iterator blocks is still semantically wrong; the attempted
    generic `InlineNextContext` extension fixed neither local-state merging nor
    the reducer, so it was not kept. Add a proper CFG/local-state oracle before
    changing that broad path.
-2. Run the generated-stage2 compiler on the broader fixed no-prelude corpus and
+2. Root-cause the tuple-key/hash alias-prefix cache crash without replacing it
+   with a one-off module-name allowlist. First falsifiers: determine whether the
+   key tuple contains a corrupt `String`, whether tuple equality/hash is wrong
+   for `{String, Int32}`, or whether the hash table stores stale key memory in
+   generated stage2. Add a no-prelude oracle before changing the general tuple
+   path.
+3. Run the generated-stage2 compiler on the broader fixed no-prelude corpus and
    add focused oracles for any new first failure.
-3. Compare `s1_bootstrap` and `s2b` on the fixed no-prelude corpus before
+4. Compare `s1_bootstrap` and `s2b` on the fixed no-prelude corpus before
    trying `s3b+`.
-4. Audit remaining compiler hot paths that use tuple block destructuring or
+5. Audit remaining compiler hot paths that use tuple block destructuring or
    block `join` formatting; keep the general tuple-block fix as an explicit
    follow-up rather than hiding it with one-off stubs.
-5. Add/inspect exact-called provenance for `record_pending_callee_for_rta` so
+6. Add/inspect exact-called provenance for `record_pending_callee_for_rta` so
    the source of remaining `keep:exact_called Array#to_s` / `Hash#to_s` demand
    is explicit.
-6. Verify whether broad fallback self-calls should mark exact concrete wrapper
+7. Verify whether broad fallback self-calls should mark exact concrete wrapper
    names as demanded, or whether they should remain virtual/demand-local until a
    real callsite asks for that concrete owner.
 

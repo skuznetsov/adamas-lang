@@ -7558,9 +7558,10 @@ module Crystal::HIR
         STDERR.puts "[CLASS_ARENA] nested class=#{class_name} arena=#{arena_name}@#{@arena.object_id}:size=#{@arena.size}:path=#{path}:first=#{first_desc}:last=#{last_desc}"
       end
       set = @nested_type_names[class_name]? || Set(String).new
+      current_arena = @arena.as(CrystalV2::Compiler::Frontend::ArenaLike)
       body.each do |expr_id|
         next if expr_id.null_ptr? || expr_id.invalid?
-        collect_nested_type_names(expr_id, set)
+        collect_nested_type_names(expr_id, set, current_arena)
       end
       if debug_env_filter_match?("DEBUG_NESTED_TYPES", class_name)
         STDERR.puts "[NESTED_TYPES] class=#{class_name} names=#{set.to_a.sort.join(",")}"
@@ -7605,28 +7606,29 @@ module Crystal::HIR
     private def collect_nested_type_names(
       expr_id : ExprId,
       set : Set(String),
+      arena : CrystalV2::Compiler::Frontend::ArenaLike,
     ) : Nil
       return if expr_id.null_ptr? || expr_id.invalid?
-      source = source_text_for_arena_or_file(@arena)
-      node = unwrap_visibility_member_in_arena(@arena[expr_id], @arena)
+      source = source_text_for_arena_or_file(arena)
+      node = unwrap_visibility_member_in_arena(arena[expr_id], arena)
       case node
       when CrystalV2::Compiler::Frontend::BlockNode
         node.body.each { |child_id|
           next if child_id.null_ptr? || child_id.invalid?
-          collect_nested_type_names(child_id, set)
+          collect_nested_type_names(child_id, set, arena)
         }
       when CrystalV2::Compiler::Frontend::MacroIfNode
-        collect_nested_type_names(node.then_body, set)
+        collect_nested_type_names(node.then_body, set, arena)
         if else_body = node.else_body
-          collect_nested_type_names(else_body, set)
+          collect_nested_type_names(else_body, set, arena)
         end
       when CrystalV2::Compiler::Frontend::MacroForNode
-        collect_nested_type_names(node.body, set)
+        collect_nested_type_names(node.body, set, arena)
       when CrystalV2::Compiler::Frontend::CallNode
-        callee_name = resolve_path_like_name_in_arena(node.callee, @arena)
+        callee_name = resolve_path_like_name_in_arena(node.callee, arena)
         if callee_name == "record"
           if first_arg = node.args.first?
-            if nested_name = resolve_path_like_name_in_arena(first_arg, @arena)
+            if nested_name = resolve_path_like_name_in_arena(first_arg, arena)
               short = last_namespace_component(nested_name)
               set << short unless short.empty?
             end
@@ -15255,7 +15257,10 @@ module Crystal::HIR
                 body.each do |member_id|
                   member = unwrap_visibility_member(@arena[member_id])
                   if member.is_a?(CrystalV2::Compiler::Frontend::AnnotationNode)
-                    remember_effect_annotation(member, @arena)
+                    remember_effect_annotation(
+                      member.unsafe_as(CrystalV2::Compiler::Frontend::AnnotationNode),
+                      @arena.as(CrystalV2::Compiler::Frontend::ArenaLike)
+                    )
                     next
                   elsif !member.is_a?(CrystalV2::Compiler::Frontend::DefNode)
                     clear_pending_effect_annotations
@@ -15434,7 +15439,10 @@ module Crystal::HIR
                 body.each do |member_id|
                   member = unwrap_visibility_member(@arena[member_id])
                   if member.is_a?(CrystalV2::Compiler::Frontend::AnnotationNode)
-                    remember_effect_annotation(member, @arena)
+                    remember_effect_annotation(
+                      member.unsafe_as(CrystalV2::Compiler::Frontend::AnnotationNode),
+                      @arena.as(CrystalV2::Compiler::Frontend::ArenaLike)
+                    )
                     next
                   elsif !member.is_a?(CrystalV2::Compiler::Frontend::DefNode)
                     clear_pending_effect_annotations
@@ -21860,7 +21868,10 @@ module Crystal::HIR
               # Without this, primitives declared in nested modules (e.g.
               # Atomic::Ops.atomicrmw) are silently treated as ordinary methods
               # with empty bodies → callers receive zero/null at runtime.
-              remember_effect_annotation(member, @arena)
+              remember_effect_annotation(
+                member.unsafe_as(CrystalV2::Compiler::Frontend::AnnotationNode),
+                @arena.as(CrystalV2::Compiler::Frontend::ArenaLike)
+              )
             when CrystalV2::Compiler::Frontend::DefNode
               method_name = (safe_slice_to_string(member.name) || "")
               recv = member.receiver
@@ -22156,7 +22167,10 @@ module Crystal::HIR
           body.each_with_index do |expr_id, idx|
             member = unwrap_visibility_member(@arena[expr_id])
             if member.is_a?(CrystalV2::Compiler::Frontend::AnnotationNode)
-              remember_effect_annotation(member, @arena)
+              remember_effect_annotation(
+                member.unsafe_as(CrystalV2::Compiler::Frontend::AnnotationNode),
+                @arena.as(CrystalV2::Compiler::Frontend::ArenaLike)
+              )
               next
             elsif !member.is_a?(CrystalV2::Compiler::Frontend::DefNode)
               clear_pending_effect_annotations
@@ -22258,7 +22272,10 @@ module Crystal::HIR
           lower_module_body_expr(module_name, child_id)
         end
       when CrystalV2::Compiler::Frontend::AnnotationNode
-        remember_effect_annotation(member, @arena)
+        remember_effect_annotation(
+          member.unsafe_as(CrystalV2::Compiler::Frontend::AnnotationNode),
+          @arena.as(CrystalV2::Compiler::Frontend::ArenaLike)
+        )
       when CrystalV2::Compiler::Frontend::ExtendNode
         mark_module_extend_self(member, module_name)
       when CrystalV2::Compiler::Frontend::DefNode
@@ -23692,7 +23709,10 @@ module Crystal::HIR
             when CrystalV2::Compiler::Frontend::AnnotationNode
               # Scan for @[Primitive(:name)] during registration so demand-driven
               # lowering knows which methods are primitives (skip body compilation).
-              remember_effect_annotation(member, @arena)
+              remember_effect_annotation(
+                member.unsafe_as(CrystalV2::Compiler::Frontend::AnnotationNode),
+                @arena.as(CrystalV2::Compiler::Frontend::ArenaLike)
+              )
             when CrystalV2::Compiler::Frontend::DefNode
               # Register method signature
               if trace_concrete_phase
@@ -24315,42 +24335,44 @@ module Crystal::HIR
             while include_idx < include_nodes.size
               include_target = include_nodes.unsafe_fetch(include_idx)
               STDERR.puts "[REG_CONCRETE_PHASE] class=#{class_name} phase=include_loop idx=#{include_idx} target=#{include_target.index}" if trace_concrete_phase
-              offset = debug_probe_include_call_boundary(
-                class_name,
-                include_target,
-                include_target_arena,
-                defined_instance_method_full_names,
-                defined_class_method_full_names,
-                visited_modules,
-                visited_extends,
-                ivars,
-                offset,
-                is_struct,
-                init_capture
-              )
-              STDERR.puts "[REG_CONCRETE_PHASE] class=#{class_name} phase=include_probe_passed idx=#{include_idx}" if trace_concrete_phase
-              offset = debug_probe_include_prelude_steps(
-                class_name,
-                include_target,
-                include_target_arena,
-                defined_instance_method_full_names,
-                defined_class_method_full_names,
-                visited_modules,
-                visited_extends,
-                ivars,
-                offset,
-                is_struct,
-                init_capture
-              )
-              STDERR.puts "[REG_CONCRETE_PHASE] class=#{class_name} phase=include_probe2_passed idx=#{include_idx}" if trace_concrete_phase
+              if trace_concrete_phase
+                offset = debug_probe_include_call_boundary(
+                  class_name,
+                  include_target,
+                  include_target_arena,
+                  defined_instance_method_full_names,
+                  defined_class_method_full_names,
+                  visited_modules,
+                  visited_extends,
+                  ivars,
+                  offset,
+                  is_struct,
+                  init_capture
+                )
+                STDERR.puts "[REG_CONCRETE_PHASE] class=#{class_name} phase=include_probe_passed idx=#{include_idx}"
+                offset = debug_probe_include_prelude_steps(
+                  class_name,
+                  include_target,
+                  include_target_arena,
+                  defined_instance_method_full_names,
+                  defined_class_method_full_names,
+                  visited_modules,
+                  visited_extends,
+                  ivars,
+                  offset,
+                  is_struct,
+                  init_capture
+                )
+                STDERR.puts "[REG_CONCRETE_PHASE] class=#{class_name} phase=include_probe2_passed idx=#{include_idx}"
+              end
               offset = register_module_instance_methods_for(
                 class_name,
                 include_target,
-                include_target_arena,
-                defined_instance_method_full_names,
-                defined_class_method_full_names,
-                visited_modules,
-                visited_extends,
+                include_target_arena.as(CrystalV2::Compiler::Frontend::ArenaLike),
+                defined_instance_method_full_names.as(Set(String)),
+                defined_class_method_full_names.as(Set(String)),
+                visited_modules.as(Set(String)),
+                visited_extends.as(Set(String)),
                 ivars,
                 offset,
                 is_struct,
@@ -25570,7 +25592,10 @@ module Crystal::HIR
               STDERR.puts "[DEFERRED_CLASSVAR] lower_class_with_name body member: class=#{class_name} member_class=#{member.class.name.split("::").last}"
             end
             if member.is_a?(CrystalV2::Compiler::Frontend::AnnotationNode)
-              remember_effect_annotation(member, @arena)
+              remember_effect_annotation(
+                member.unsafe_as(CrystalV2::Compiler::Frontend::AnnotationNode),
+                @arena.as(CrystalV2::Compiler::Frontend::ArenaLike)
+              )
               next
             elsif !member.is_a?(CrystalV2::Compiler::Frontend::DefNode)
               clear_pending_effect_annotations
@@ -25706,7 +25731,10 @@ module Crystal::HIR
       member = unwrap_visibility_member(@arena[expr_id])
       case member
       when CrystalV2::Compiler::Frontend::AnnotationNode
-        remember_effect_annotation(member, @arena)
+        remember_effect_annotation(
+          member.unsafe_as(CrystalV2::Compiler::Frontend::AnnotationNode),
+          @arena.as(CrystalV2::Compiler::Frontend::ArenaLike)
+        )
       when CrystalV2::Compiler::Frontend::DefNode
         lower_method(class_name, class_info, member)
         add_defined_instance_methods_from_expr(class_name, defined_full_names, expr_id)
@@ -46593,7 +46621,10 @@ module Crystal::HIR
       when CrystalV2::Compiler::Frontend::AnnotationNode
         # Annotations like @[Link("c")] - store for later processing
         # For now, just return nil (annotations are metadata, not values)
-        remember_effect_annotation(node, @arena)
+        remember_effect_annotation(
+          node.unsafe_as(CrystalV2::Compiler::Frontend::AnnotationNode),
+          @arena.as(CrystalV2::Compiler::Frontend::ArenaLike)
+        )
         lower_annotation(ctx, node)
       when CrystalV2::Compiler::Frontend::LibNode
         # lib LibC ... end - C library bindings
