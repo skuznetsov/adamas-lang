@@ -12,6 +12,28 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-530|in_progress]: Generated `cv2_s2` full-prelude smoke currently fails
+before `s3` starts. Canonical `scripts/run_safe.sh` output stops during
+`Errno` registration at `register_type_method_from_def(Errno.value=)`, after
+`after_query_yield` and before `after_return_type`; no-prelude smoke remains
+green. lldb perturbs the failure: the same generated compiler can pass enum
+registration and then crash later in
+`capture_initialize_params -> infer_type_from_expr_inner` while registering
+`Exception::CallStack`/`Path[dir]`. Refuted local branches: source-backed
+class-method receiver detection moves the trace past `Errno.value` but not the
+canonical smoke; tail-parameter return inference plus source-backed parameter
+annotation recovery passes host no-prelude guards but still does not move the
+canonical `run_safe` crash. Current strongest root hypothesis is not
+`Errno`-specific: registration-time inference is still separating `ExprId`,
+`DefNode`, source spans, and value-union `ArenaLike` identity, so cache/source
+lookups can choose a wrong or unstable arena under generated `s2`; Grok ACP
+independently proposed replacing `ArenaLike.object_id`-style keys with stable
+arena ids and registering all reparse/macro arenas before using them. Boundary:
+this is a hypothesis with live traces, not a verified fix; any stable-arena-id
+change is CAUTION-tier and must start with a tiny no-prelude arena identity
+oracle before touching the full bootstrap. {F/G/R: 0.72/0.52/0.78}
+[in_progress]
+
 [LM-529|in_progress]: The current `codegen` bootstrap frontier is past the
 focused stage2 no-prelude semantic corpus, but not yet proven through
 `s2 -> s3`. The latest local checkpoint builds a host-built compiler, uses it

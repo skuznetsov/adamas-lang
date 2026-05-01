@@ -14,6 +14,49 @@
 
 ## Сессии
 
+### Session 2026-05-01 — Errno.value= generated-stage2 crash audit
+**Context:** Crystal V2 `codegen` branch. Generated `cv2_s2` builds and passes
+no-prelude smoke, but full-prelude plain smoke fails under `scripts/run_safe.sh`
+during `Errno` enum registration. Local traces stop at
+`Errno.value= phase=after_query_yield`; lldb perturbs execution and often moves
+the crash later into `capture_initialize_params -> infer_type_from_expr_inner`.
+
+**Task:** Read-only audit: inspect `ast_to_hir.cr` around
+`register_type_method_from_def`, return inference, parameter/default capture,
+and arena/source lookup; explain the run_safe/lldb divergence and propose the
+smallest root-aligned patch outline. No edits.
+
+**Invocation:** direct
+`/Users/sergey/.grok/bin/grok_acp_delegate.py --cwd /Users/sergey/Projects/Crystal/crystal_v2_repo --task-file /tmp/grok_tasks/errno_value_crash_audit.md --out-dir /tmp/grok_errno_audit --prompt-timeout 120 --request-timeout 30`.
+
+**Latency:** ~250s, exit 0.
+
+**Output quality:** ✓ useful as hypothesis, not final authority. Grok produced
+a coherent root-cause model: `ArenaLike` value-union identity and
+`object_id`-style cache/source keys are unstable across reparsed/macro arenas,
+which explains both the `Errno.value=` registration-time inference crash and
+the lldb-shifted `Exception::CallStack`/`Path[dir]` crash. It explicitly rated
+its trust modestly (`{F:0.65,G:0.70,R:0.55}`), which matches local evidence.
+
+**What worked:** It used many focused `grep`/`read_file` calls and returned a
+ranked answer with anchors. The answer connected two symptoms that local traces
+had already shown but not unified.
+
+**What was weak:** It recommended a broad stable-arena-id architecture patch
+without running any live repro. That is likely CAUTION-tier and cannot be
+landed from Grok output alone. Its proposed no-prelude enum oracle used
+`puts`, which is heavier than necessary for this bootstrap corridor.
+
+**Adversary check:** Local evidence agrees on the symptom shape:
+`run_safe` still fails at `Errno.value=` after source-backed receiver and
+parameter-return experiments, while lldb reaches later module registration.
+However, no stable-arena-id implementation has been tested yet, so this is a
+working hypothesis, not a verified root fix.
+
+**Verdict:** useful. Use Grok here for architectural hypothesis compression and
+anchor collection, but require a local tiny oracle plus staged implementation
+before accepting the proposed fix.
+
 ### Session 2026-05-01 — suffix-rewrite audit during bootstrap triage
 **Context:** Crystal V2 `codegen` branch. Stage2 compiler had crashed in
 `String#bytesize -> String#sub` while `AstToHir#function_full_name_for_def`
