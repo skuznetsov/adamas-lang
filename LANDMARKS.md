@@ -3185,3 +3185,83 @@ be attempted yet. The next root is the missing concrete
 `Crystal::MIR::UnionDescriptor#initialize(String, Array(UnionVariantDescriptor),
 Int32, Int32)` lowering/demand corridor, not constructor return inference.
 {F/G/R: 0.93/0.63/0.91} [verified]
+
+## LM-549 — Macro-expanded record params can slice macro source instead of generated output
+
+Context: compiler/bootstrap/codegen, 2026-05-01, `codegen`.
+
+Observed after LM-548:
+
+- The generated `cv2_s2` full-prelude `puts 42` smoke advances past the
+  `Float::Float::Bigint` return-inference frontier and aborts on
+  `STUB CALLED:
+  Crystal$CCMIR$CCUnionDescriptor$Hinitialize$$String_Array$LCrystal$CCMIR$CCUnionVariantDescriptor$R_Int32_Int32`.
+- `Crystal::MIR::UnionDescriptor` is a `record` in
+  `src/compiler/mir/mir.cr`. Its real constructor is macro-generated from
+  `record UnionDescriptor, name : String, variants : Array(UnionVariantDescriptor),
+  total_size : Int32, alignment : Int32, source_file : String? = nil,
+  source_line : Int32? = nil`.
+- `MacroExpander#reparse` reparses macro output into the macro-definition
+  arena and uses `source_sink` to call `store_extra_source(macro_arena, output)`.
+  This retains the generated source as an arena extra source, but
+  `source_for_arena(macro_arena)` still points at the macro source file.
+- `capture_initialize_params` currently recovers parameter names/types via
+  `parameter_name_string` / `parameter_type_annotation_string`. Those helpers
+  prefer span slicing against `source_for_arena`, so macro-expanded params can
+  slice unrelated macro-source text instead of generated output. The diagnostic
+  signal before the WIP source-recovery attempt was:
+  `[INIT_PARAMS_STORE] class=Crystal::MIR::UnionDescriptor source=class
+  params=[Point:Void(0), x=1, @y=2:Void(0), _:Void(0), ...]`.
+
+Fix:
+
+- `parameter_name_string` and `parameter_type_annotation_string` now compute a
+  raw token fallback first, but also try the same parameter span against recent
+  retained `extra_sources_for_arena` macro outputs before trusting the primary
+  arena source. Candidate text is accepted only when it is a plausible
+  single-line parameter name/type slice, avoiding `UnionDescriptor`-specific
+  stubs or stdlib/runtime edits.
+- A first version introduced a new self-host abort-stub frontier because the
+  call used a ternary over `source_arena` and registered
+  `parameter_span_text_from_extra_sources` with a `Nil | ArenaLike` argument.
+  The landed form explicitly narrows `source_arena.as(ArenaLike)` before
+  calling the helper, preserving generated-stage2 demand for the real helper
+  signature.
+
+Evidence:
+
+- `crystal build src/crystal_v2.cr -o /tmp/cv2_macro_param_source_candidate3
+  --error-trace` passed.
+- `regression_tests/p2_macro_extra_source_param_recovery_no_prelude.sh
+  /tmp/cv2_macro_param_source_candidate3` passed. The reducer fails on the
+  prior compiler by emitting `Box#initialize$ass Bo_lize_total_` and bogus
+  fields such as `@@def ini`; it now emits
+  `Box#initialize$String_Int32_Nil | Int32` and proper `@@total_size` /
+  `@@source_line` field sets.
+- Existing guards passed with the same compiler:
+  `p2_initialize_return_void_no_prelude.sh`,
+  `p2_implicit_ivar_param_source_scan_no_prelude.sh`,
+  `p2_bootstrap_semantic_emit_oracle.sh`,
+  `p2_nested_module_registration_no_prelude.sh`,
+  `p2_enum_class_setter_return_infer_no_prelude.sh`, and
+  `p2_visibility_private_accessor_no_prelude.sh`.
+- `DEBUG_INIT_PARAMS=UnionDescriptor CRYSTAL_V2_STOP_AFTER_HIR=1
+  scripts/run_safe.sh /tmp/cv2_macro_param_source_candidate2 300 4096
+  src/crystal_v2.cr -o /tmp/cv2_uniondesc_trace_candidate2/cv2_s2_stop_hir`
+  showed full recovered params:
+  `[name:String, variants:Array(Crystal::MIR::UnionVariantDescriptor),
+  total_size:Int32, alignment:Int32, source_file:Nil | String,
+  source_line:Nil | Int32]`.
+- `scripts/run_safe.sh /tmp/cv2_macro_param_source_candidate3 300 4096
+  src/crystal_v2.cr -o /tmp/cv2_direct_macro_param_source3/cv2_s2` built
+  generated `cv2_s2` in ~153s with `[EXIT: 0]`.
+- The generated `cv2_s2` full-prelude `puts 42` smoke no longer aborts on
+  `UnionDescriptor#initialize` or the helper stub. It now reaches module
+  registration and crashes later with:
+  `[INFER_INDEX] method=unlock self=Exception::Exception::CallStack obj= idxs=1`
+  followed by `Segmentation fault: 11`.
+
+Boundary: generated `s2` plain smoke is still not clean, and `s3b` should not
+be attempted yet. The current frontier is `Exception::CallStack#unlock` during
+module registration, not macro-generated record parameter recovery.
+{F/G/R: 0.92/0.62/0.89} [verified]

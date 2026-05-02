@@ -20820,23 +20820,45 @@ module Crystal::HIR
       arena : CrystalV2::Compiler::Frontend::ArenaLike? = @arena,
       fallback_to_slice : Bool = true,
     ) : String?
-      if span = param.type_span
-        if source = source_text_for_arena_or_file(arena || @arena)
-          if text = slice_source_for_span(span, source)
-            stripped = strip_single_line_comments(text).strip
-            return stripped unless stripped.empty?
-          end
+      raw_text = nil.as(String?)
+      if type_slice = param.type_annotation
+        if text = safe_slice_to_string(type_slice)
+          stripped = text.strip
+          raw_text = stripped unless stripped.empty?
         end
       end
 
-      return nil unless fallback_to_slice
-      return nil unless type_slice = param.type_annotation
-
-      if text = safe_slice_to_string(type_slice)
-        return text unless text.empty?
+      if span = param.type_span
+        source_arena = arena || @arena
+        extra_text = nil.as(String?)
+        if source_arena
+          extra_text = parameter_span_text_from_extra_sources(
+            span,
+            source_arena.as(CrystalV2::Compiler::Frontend::ArenaLike),
+            raw_text,
+            "type"
+          )
+        end
+        return extra_text if extra_text && raw_text.nil?
+        if source = source_text_for_arena_or_file(source_arena)
+          if text = slice_source_for_span(span, source)
+            stripped = strip_single_line_comments(text).strip
+            if raw_text && source_arena && extra_sources_for_arena(source_arena)
+              # Macro expansions are reparsed into the macro definition arena.
+              # Their spans point into retained generated output, while
+              # source_for_arena still points at the macro source file. If the
+              # two disagree, the raw token slice is the generated source.
+              return extra_text if extra_text == raw_text
+              return raw_text if !stripped.empty? && stripped != raw_text
+            end
+            return stripped unless stripped.empty?
+          end
+        end
+        return extra_text if extra_text
       end
 
-      nil
+      return nil unless fallback_to_slice
+      raw_text
     end
 
     private def parameter_name_string(
@@ -20844,23 +20866,115 @@ module Crystal::HIR
       arena : CrystalV2::Compiler::Frontend::ArenaLike? = @arena,
       fallback_to_slice : Bool = true,
     ) : String?
-      if span = param.name_span
-        if source = source_text_for_arena_or_file(arena || @arena)
-          if text = slice_source_for_span(span, source)
-            stripped = strip_single_line_comments(text).strip
-            return stripped unless stripped.empty?
-          end
+      raw_text = nil.as(String?)
+      if name_slice = param.name
+        if text = safe_slice_to_string(name_slice)
+          stripped = text.strip
+          raw_text = stripped unless stripped.empty?
         end
       end
 
-      return nil unless fallback_to_slice
-      return nil unless name_slice = param.name
-
-      if text = safe_slice_to_string(name_slice)
-        return text unless text.empty?
+      if span = param.name_span
+        source_arena = arena || @arena
+        extra_text = nil.as(String?)
+        if source_arena
+          extra_text = parameter_span_text_from_extra_sources(
+            span,
+            source_arena.as(CrystalV2::Compiler::Frontend::ArenaLike),
+            raw_text,
+            "name"
+          )
+        end
+        return extra_text if extra_text && raw_text.nil?
+        if source = source_text_for_arena_or_file(source_arena)
+          if text = slice_source_for_span(span, source)
+            stripped = strip_single_line_comments(text).strip
+            if raw_text && source_arena && extra_sources_for_arena(source_arena)
+              # See parameter_type_annotation_string: macro-expanded params may
+              # have spans into retained generated output, not into macro source.
+              return extra_text if extra_text == raw_text
+              return raw_text if !stripped.empty? && stripped != raw_text
+            end
+            return stripped unless stripped.empty?
+          end
+        end
+        return extra_text if extra_text
       end
 
+      return nil unless fallback_to_slice
+      raw_text
+    end
+
+    private def parameter_span_text_from_extra_sources(
+      span : CrystalV2::Compiler::Frontend::Span,
+      arena : CrystalV2::Compiler::Frontend::ArenaLike,
+      raw_text : String?,
+      kind : String,
+    ) : String?
+      extras = extra_sources_for_arena(arena) || arena.extra_sources
+      return nil if extras.empty?
+
+      remaining = 16
+      extras.reverse_each do |source|
+        break if remaining <= 0
+        if text = slice_source_for_span(span, source)
+          stripped = strip_single_line_comments(text).strip
+          return stripped if parameter_span_text_candidate?(stripped, raw_text, kind)
+        end
+        remaining -= 1
+      end
       nil
+    end
+
+    private def parameter_span_text_candidate?(text : String, raw_text : String?, kind : String) : Bool
+      return false if text.empty?
+      return true if raw_text && text == raw_text
+      return false if text.includes?('\n') || text.includes?('\r')
+
+      if kind == "name"
+        parameter_name_text_candidate?(text)
+      else
+        parameter_type_text_candidate?(text)
+      end
+    end
+
+    private def parameter_name_text_candidate?(text : String) : Bool
+      return true if text == "_" || text == "*" || text == "**"
+      return false if text.includes?(',') || text.includes?('=') || text.includes?('>') || text.includes?('<')
+
+      name = text
+      name = name[2..] || "" if name.starts_with?("**")
+      name = name[1..] || "" if name.starts_with?("*") || name.starts_with?("&") || name.starts_with?("@")
+      return false if name.empty?
+
+      first = name.byte_at(0)
+      return false unless ascii_ident_start?(first)
+
+      idx = 1
+      while idx < name.bytesize
+        return false unless ascii_ident_part?(name.byte_at(idx))
+        idx += 1
+      end
+      true
+    end
+
+    private def parameter_type_text_candidate?(text : String) : Bool
+      return false if text == "_" || text == "*" || text == "**"
+      return false if text.includes?('=') || text.includes?(';')
+      return false if text.starts_with?("@") || text.starts_with?("def ") || text.starts_with?("class ")
+      true
+    end
+
+    @[AlwaysInline]
+    private def ascii_ident_start?(byte : UInt8) : Bool
+      (byte >= 'a'.ord && byte <= 'z'.ord) ||
+        (byte >= 'A'.ord && byte <= 'Z'.ord) ||
+        byte == '_'.ord
+    end
+
+    @[AlwaysInline]
+    private def ascii_ident_part?(byte : UInt8) : Bool
+      ascii_ident_start?(byte) || (byte >= '0'.ord && byte <= '9'.ord)
     end
 
     private def def_explicit_return_type_from_source(

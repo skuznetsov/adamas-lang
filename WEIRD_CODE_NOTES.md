@@ -226,6 +226,24 @@ be verified anchors, not broad opinions.
   "semantic return contract" decisions (constructors, query methods, annotated
   returns, fallback inference) before adding more local exceptions.
 
+- Macro-expanded source recovery currently depends on a side channel:
+  `MacroExpander#reparse` retains generated output as `arena.extra_sources`,
+  while `source_for_arena` still points at the macro source. This forces
+  downstream helpers such as `parameter_name_string` and
+  `parameter_type_annotation_string` to search extra sources when spans belong
+  to generated code. The root cleanup is a source-owned macro reparse model
+  (fresh generated arena or explicit span-to-source mapping), not more local
+  stale-source fallbacks.
+
+- Generated stage2 can materialize abort stubs for helper calls when a nilable
+  local is passed through a ternary even if the helper signature is annotated
+  non-nil. The first macro-source recovery patch called
+  `parameter_span_text_from_extra_sources` through `source_arena ? ... : nil`
+  and produced a `Nil | ArenaLike` helper symbol in `s2`; explicit `if
+  source_arena` plus `.as(ArenaLike)` avoided that specific stub. Treat this as
+  another instance of the broader "do not trust source-level narrowing across
+  hot helper boundaries" pattern.
+
 ## 2026-04-30
 
 - A broad local-inference nil-guard patch is unsafe as a bootstrap shortcut.

@@ -107,6 +107,33 @@ Do not treat this as an `s2 -> s3` unlock yet; next work should localize the
 missing `UnionDescriptor#initialize` demanded symbol rather than changing
 constructor semantics again.
 
+Stage2 macro-expanded parameter source checkpoint (2026-05-01): the
+`UnionDescriptor#initialize` abort was a stale source-recovery bug, not a
+missing constructor feature. `MacroExpander#reparse` retains generated macro
+output as an arena extra source but still reparses into the macro-definition
+arena, so `parameter_name_string` / `parameter_type_annotation_string` could
+slice `src/stdlib/macros.cr` or macro-body text instead of generated output.
+The fix tries recent retained macro outputs for the same parameter span before
+trusting the primary arena source, with bounded name/type candidate checks and
+explicit `ArenaLike` narrowing at the helper callsite to avoid a generated-s2
+nilable-helper abort stub. Evidence: `crystal build src/crystal_v2.cr -o
+/tmp/cv2_macro_param_source_candidate3 --error-trace`;
+`regression_tests/p2_macro_extra_source_param_recovery_no_prelude.sh
+/tmp/cv2_macro_param_source_candidate3`; existing p2 guards
+`p2_initialize_return_void_no_prelude.sh`,
+`p2_implicit_ivar_param_source_scan_no_prelude.sh`,
+`p2_bootstrap_semantic_emit_oracle.sh`,
+`p2_nested_module_registration_no_prelude.sh`,
+`p2_enum_class_setter_return_infer_no_prelude.sh`, and
+`p2_visibility_private_accessor_no_prelude.sh`; and
+`scripts/run_safe.sh /tmp/cv2_macro_param_source_candidate3 300 4096
+src/crystal_v2.cr -o /tmp/cv2_direct_macro_param_source3/cv2_s2`, which builds
+generated `cv2_s2` in ~153s. Boundary: generated `cv2_s2` plain full-prelude
+`puts 42` no longer hits `UnionDescriptor#initialize` or the helper stub; the
+new frontier is `[INFER_INDEX] method=unlock
+self=Exception::Exception::CallStack obj= idxs=1` followed by a segfault during
+module registration. Do not attempt `s3b+` until that frontier is reduced.
+
 Stage2 no-prelude semantic-corpus checkpoint (2026-05-01): generated `cv2_s2`
 now compiles and runs `regression_tests/bootstrap_semantic_corpus.cr
 --no-prelude` after the HIR inline-yield/proc-literal corridor and the MIR/LLVM
