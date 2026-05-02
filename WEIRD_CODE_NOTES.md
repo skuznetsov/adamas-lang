@@ -218,6 +218,14 @@ be verified anchors, not broad opinions.
   avoid relying on generated stage2 to preserve source-level nilable narrowing
   across hot helper boundaries.
 
+- `AstToHir` has several independent method/function lowering corridors with
+  similar implicit-return inference blocks (`lower_method`,
+  `lower_module_method`, and `lower_def`). The `initialize` fix had to be
+  applied to the class-method corridor specifically because registration and
+  actual method lowering had drifted. Future cleanup should centralize
+  "semantic return contract" decisions (constructors, query methods, annotated
+  returns, fallback inference) before adding more local exceptions.
+
 ## 2026-04-30
 
 - A broad local-inference nil-guard patch is unsafe as a bootstrap shortcut.

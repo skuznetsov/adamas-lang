@@ -3138,3 +3138,50 @@ frontier has moved from stale parameter slices to eager return/body inference
 inside the reparsed/generic `Float::FastFloat` nested-class corridor. Do not
 continue patching parameter loops until a new trace points back there.
 {F/G/R: 0.92/0.60/0.90} [verified]
+
+## LM-548 — Class initialize lowering preserves Void instead of body type
+
+Context: compiler/bootstrap/codegen, 2026-05-01, `codegen`.
+
+Verified:
+
+- After LM-547, forcing registration-time `initialize` signatures to `Void`
+  advanced the generated-stage2 frontier past the `Float::Float::Bigint`
+  body-inference crash, but the new no-prelude reducer showed this was
+  incomplete: `lower_method` still inferred a class `initialize` return from
+  the final body expression and emitted `func @Box#initialize$Int32(...) -> 1`
+  when the constructor body ended with a `Bool` helper call.
+- The root invariant is semantic, not bootstrap-specific: Crystal
+  constructors do not return the final expression. The fix applies that
+  invariant in both class registration and actual method lowering:
+  `initialize` gets `TypeRef::VOID` before HIR function creation, skips
+  annotated/implicit return re-inference in `lower_method`, and emits a
+  valueless implicit return terminator for constructor fallthrough.
+
+Evidence:
+
+- `crystal build src/crystal_v2.cr -o /tmp/cv2_initialize_void_candidate
+  --error-trace` passed.
+- `regression_tests/p2_initialize_return_void_no_prelude.sh
+  /tmp/cv2_initialize_void_candidate` passed, proving a constructor whose body
+  ends in `Bool` still dumps as `Box#initialize$Int32(...) -> 0`.
+- Existing p2 guards passed with the same compiler:
+  `p2_enum_class_setter_return_infer_no_prelude.sh`,
+  `p2_nested_module_registration_no_prelude.sh`,
+  `p2_bootstrap_semantic_emit_oracle.sh`,
+  `p2_visibility_private_accessor_no_prelude.sh`, and
+  `p2_implicit_ivar_param_source_scan_no_prelude.sh`.
+- `scripts/run_safe.sh /tmp/cv2_initialize_void_candidate 300 4096
+  src/crystal_v2.cr -o /tmp/cv2_direct_initialize_void/cv2_s2` built generated
+  `cv2_s2` in ~162s with `[EXIT: 0]`.
+- The generated `cv2_s2` full-prelude `puts 42` smoke no longer dies in
+  `Float::Float::Bigint` return/body inference. It now reaches module
+  registration and aborts on a demanded missing symbol:
+  `STUB CALLED:
+  Crystal$CCMIR$CCUnionDescriptor$Hinitialize$$String_Array$LCrystal$CCMIR$CCUnionVariantDescriptor$R_Int32_Int32`.
+
+Boundary: generated `s2` plain smoke is still not clean, and `s3b` should not
+be attempted yet. The next root is the missing concrete
+`Crystal::MIR::UnionDescriptor#initialize(String, Array(UnionVariantDescriptor),
+Int32, Int32)` lowering/demand corridor, not constructor return inference.
+{F/G/R: 0.93/0.63/0.91} [verified]

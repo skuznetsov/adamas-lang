@@ -24197,7 +24197,9 @@ module Crystal::HIR
               unless query_has_block_or_yield
                 query_has_block_or_yield = def_contains_yield?(member, member_arena)
               end
-              return_type = if rt_name = explicit_return_type_name
+              return_type = if method_name == "initialize"
+                              TypeRef::VOID
+                            elsif rt_name = explicit_return_type_name
                               resolved_rt_name = resolve_type_name_in_context(rt_name)
                               STDERR.puts "[REG_METHOD_PHASE] class=#{class_name} method=#{method_name} phase=resolved_return raw=#{rt_name} resolved=#{resolved_rt_name}" if trace_method_phase
                               enum_return_name = resolve_enum_name(resolved_rt_name)
@@ -27924,6 +27926,7 @@ module Crystal::HIR
       force_class_method : Bool = false,
     )
       method_name = (safe_slice_to_string(node.name) || "")
+      is_initialize_method = method_name == "initialize"
       if env_get("DEBUG_MATH_MIN") && (method_name == "min" || method_name == "max") && class_name.includes?("Math")
         call_types = call_arg_types || [] of TypeRef
         call_type_names = call_types.map { |t| get_type_name_from_ref(t) }
@@ -28523,7 +28526,9 @@ module Crystal::HIR
 
       return_type = TypeRef::VOID
       if extra_type_params.empty?
-        return_type = if rt = node.return_type
+        return_type = if is_initialize_method
+                        TypeRef::VOID
+                      elsif rt = node.return_type
                         rt_name = (safe_slice_to_string(rt) || "")
                         # "self" in return type means "the current class type"
                         if rt_name == "self"
@@ -28553,7 +28558,9 @@ module Crystal::HIR
         # significantly cheaper during self-host.
       else
         with_type_param_map(extra_type_params) do
-          return_type = if rt = node.return_type
+          return_type = if is_initialize_method
+                          TypeRef::VOID
+                        elsif rt = node.return_type
                           rt_name = (safe_slice_to_string(rt) || "")
                           # "self" in return type means "the current class type"
                           if rt_name == "self"
@@ -28607,7 +28614,7 @@ module Crystal::HIR
       # Re-resolve annotated return type after type-param map merge.
       # Generic signatures like `: T*` may resolve to VOID before the lazy
       # specialization map is attached.
-      if rt = node.return_type
+      if !is_initialize_method && (rt = node.return_type)
         resolved_return = with_type_param_map(extra_type_params) do
           rt_name = (safe_slice_to_string(rt) || "")
           if rt_name == "self"
@@ -29018,7 +29025,7 @@ module Crystal::HIR
       # Infer return type from all Return terminators + last expression.
       # Functions with explicit `return` inside conditionals (e.g., check_downcase_ascii)
       # may return different types from different paths. We must merge all of them.
-      if node.return_type.nil?
+      if node.return_type.nil? && !is_initialize_method
         inferred_types = [] of TypeRef
 
         # Collect types from all Return terminators
@@ -29068,7 +29075,7 @@ module Crystal::HIR
       block = ctx.get_block(ctx.current_block)
       block_has_raise = block.instructions.any? { |inst| inst.is_a?(Raise) }
       if block.terminator.is_a?(Unreachable) && !block_has_raise && !control_flow_dead_block?(ctx, ctx.current_block)
-        block.terminator = Return.new(last_value)
+        block.terminator = Return.new(is_initialize_method ? nil : last_value)
       end
 
       normalize_function_return_terminators(ctx, return_type)

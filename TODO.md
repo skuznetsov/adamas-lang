@@ -85,6 +85,28 @@ plain full-prelude `puts 42`, but lldb no longer shows `each_param` /
 `infer_type_from_expr_inner -> infer_concrete_return_type_from_body` while
 registering `Float::Float::Bigint`.
 
+Stage2 initialize-return checkpoint (2026-05-01): class `initialize` methods
+now keep the semantic `Void` contract in both registration and actual method
+lowering. Root cause: registration was hardened first, but `lower_method` still
+treated unannotated `initialize` like an ordinary implicit-return method, merged
+the final body expression from Return terminators / `last_value`, and rewrote
+HIR signatures such as `Box#initialize$Int32` to the body type (`Bool` in the
+new no-prelude reducer). The fix makes `initialize` return `TypeRef::VOID`
+before function creation, skips annotated/implicit return re-inference for
+constructors, and emits a valueless implicit return terminator. Evidence:
+`crystal build src/crystal_v2.cr -o /tmp/cv2_initialize_void_candidate
+--error-trace`; `regression_tests/p2_initialize_return_void_no_prelude.sh
+/tmp/cv2_initialize_void_candidate`; the five existing p2 no-prelude guards;
+and `scripts/run_safe.sh /tmp/cv2_initialize_void_candidate 300 4096
+src/crystal_v2.cr -o /tmp/cv2_direct_initialize_void/cv2_s2`, which builds
+generated `cv2_s2` in ~162s. Boundary: generated `cv2_s2` plain full-prelude
+`puts 42` smoke now reaches module registration and aborts on the next frontier,
+`STUB CALLED:
+Crystal$CCMIR$CCUnionDescriptor$Hinitialize$$String_Array$LCrystal$CCMIR$CCUnionVariantDescriptor$R_Int32_Int32`.
+Do not treat this as an `s2 -> s3` unlock yet; next work should localize the
+missing `UnionDescriptor#initialize` demanded symbol rather than changing
+constructor semantics again.
+
 Stage2 no-prelude semantic-corpus checkpoint (2026-05-01): generated `cv2_s2`
 now compiles and runs `regression_tests/bootstrap_semantic_corpus.cr
 --no-prelude` after the HIR inline-yield/proc-literal corridor and the MIR/LLVM
