@@ -14,6 +14,26 @@
 
 ## Сессии
 
+### Session 31 — 2026-05-01 — Qualified module namespace drift audit
+**Task:** read-only audit of why produced `s2` registered
+`Float::FastFloat::ParsedNumberStringT` as `Float::Float::ParsedNumberStringT`.
+**Brief size:** narrow prompt with exact trace, source file, and requested
+root-cause ranking / falsifier / patch risks.
+**Latency:** returned during the local `s2` rebuild window.
+**Output quality:** useful but incomplete. Grok correctly identified the
+`module_name_from_node` source fallback that used
+`definition_name_from_header_text` and truncated `module Float::FastFloat` to
+the first segment. It also pointed at nested registration joins as a risk.
+**What worked:** the first-segment fallback diagnosis matched the local
+produced-compiler reducer and guided the first patch.
+**What did not:** Grok overgeneralized before seeing the produced `s2`
+falsifier. The leaf-only patch exposed a second root invariant violation:
+generated `s2` can return already-qualified child names, so `owner::child`
+joins must be idempotent. Local verification found and fixed that layer.
+**Verdict:** useful as a fast hypothesis generator; not sufficient as proof.
+The decisive evidence was the produced `s2` no-prelude reducer before/after the
+patch.
+
 ### Session 30 — 2026-05-01 — IVarInfo optional lookup audit
 **Task:** read-only audit of a proposed `Array(IVarInfo)` optional lookup guard
 after lldb pointed at `infer_type_from_expr_inner` / `Array(IVarInfo)#size`.

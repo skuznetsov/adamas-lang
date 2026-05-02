@@ -6259,7 +6259,11 @@ module Crystal::HIR
         # path-based class/struct/union/enum forms like `struct Foo::Bar`.
         wrapper_prefixes = ["module ", "class ", "struct ", "union ", "enum "]
         if header = definition_header_text_from_source(node.span, source, wrapper_prefixes)
-          if name = definition_name_from_header_text(header, wrapper_prefixes)
+          # Generated stage2 can lose the parser-provided slice for inner
+          # path-wrapper modules. In that case the shared span still contains
+          # the full header (`module Foo::Bar`), and the nested wrapper needs
+          # the leaf (`Bar`), not the first segment (`Foo`).
+          if name = definition_leaf_name_from_header_text(header, wrapper_prefixes)
             raw_name = name
           end
         end
@@ -6292,6 +6296,22 @@ module Crystal::HIR
         end
         io << ')'
       end
+    end
+
+    private def qualified_nested_type_name(owner_name : String, nested_name : String) : String
+      name = nested_name
+      if name.starts_with?("::")
+        name = name.bytesize > 2 ? name.byte_slice(2, name.bytesize - 2) : ""
+      end
+      return owner_name if name.empty?
+      return name if name == owner_name || name.starts_with?("#{owner_name}::")
+
+      owner_base = strip_generic_args(owner_name)
+      if owner_base != owner_name
+        return name if name == owner_base || name.starts_with?("#{owner_base}::")
+      end
+
+      "#{owner_name}::#{name}"
     end
 
     private def enum_base_type_for_node(node : CrystalV2::Compiler::Frontend::EnumNode) : TypeRef
@@ -18869,11 +18889,11 @@ module Crystal::HIR
                 end
                 bootstrap_trace_puts trace_message
               end
-              full_nested_name = "#{module_name}::#{nested_name}"
+              full_nested_name = qualified_nested_type_name(module_name, nested_name)
               register_nested_module(member, full_nested_name)
             when CrystalV2::Compiler::Frontend::ClassNode
               nested_name = class_name_from_node(member, source) || ""
-              full_nested_name = "#{module_name}::#{nested_name}"
+              full_nested_name = qualified_nested_type_name(module_name, nested_name)
               if debug_env_filter_match?("DEBUG_REG_CONCRETE_PHASE", full_nested_name, source_path_for(@arena) || "")
                 nested_body = member.body || [] of CrystalV2::Compiler::Frontend::ExprId
                 STDERR.puts "[REG_MODULE_NESTED] owner=#{module_name} class=#{full_nested_name} phase=before_register body=#{nested_body.size}"
@@ -18888,7 +18908,7 @@ module Crystal::HIR
               register_class_with_name(member, full_nested_name)
             when CrystalV2::Compiler::Frontend::EnumNode
               nested_name = enum_name_from_node(member, source) || ""
-              full_nested_name = "#{module_name}::#{nested_name}"
+              full_nested_name = qualified_nested_type_name(module_name, nested_name)
               register_enum_with_name(member, full_nested_name)
             when CrystalV2::Compiler::Frontend::AliasNode
               safe_str_guard(member.name, "next")
@@ -18939,15 +18959,15 @@ module Crystal::HIR
           case member
           when CrystalV2::Compiler::Frontend::ClassNode
             nested_name = class_name_from_node(member, source) || ""
-            full_nested_name = "#{module_name}::#{nested_name}"
+            full_nested_name = qualified_nested_type_name(module_name, nested_name)
             register_class_with_name(member, full_nested_name)
           when CrystalV2::Compiler::Frontend::EnumNode
             nested_name = enum_name_from_node(member, source) || ""
-            full_nested_name = "#{module_name}::#{nested_name}"
+            full_nested_name = qualified_nested_type_name(module_name, nested_name)
             register_enum_with_name(member, full_nested_name)
           when CrystalV2::Compiler::Frontend::ModuleNode
             nested_name = module_name_from_node(member, source) || ""
-            full_nested_name = "#{module_name}::#{nested_name}"
+            full_nested_name = qualified_nested_type_name(module_name, nested_name)
             register_nested_module(member, full_nested_name)
           when CrystalV2::Compiler::Frontend::AliasNode
             safe_str_guard(member.name, "next")
@@ -18957,7 +18977,7 @@ module Crystal::HIR
             @current_class = module_name
             target_name = resolve_alias_target((safe_slice_to_string(member.value) || ""), module_name)
             @current_class = old_class
-            full_alias_name = "#{module_name}::#{alias_name}"
+            full_alias_name = qualified_nested_type_name(module_name, alias_name)
             register_type_alias(full_alias_name, target_name)
           end
         end
@@ -19075,7 +19095,7 @@ module Crystal::HIR
             @current_class = module_name
             target_name = resolve_alias_target((safe_slice_to_string(member.value) || ""), module_name)
             @current_class = old_class
-            full_alias_name = "#{module_name}::#{alias_name}"
+            full_alias_name = qualified_nested_type_name(module_name, alias_name)
             register_type_alias(full_alias_name, target_name)
             if env_has?("DEBUG_ALIAS")
               STDERR.puts "[ALIAS] Registered (module): #{full_alias_name} => #{target_name}"
@@ -19083,12 +19103,12 @@ module Crystal::HIR
           elsif member.is_a?(CrystalV2::Compiler::Frontend::ModuleNode)
             # Nested module: Foo::Bar (as module)
             nested_name = module_name_from_node(member) || ""
-            full_nested_name = "#{module_name}::#{nested_name}"
+            full_nested_name = qualified_nested_type_name(module_name, nested_name)
             register_module_with_name(member, full_nested_name)
           elsif member.is_a?(CrystalV2::Compiler::Frontend::ClassNode)
             # Register class/struct type alias and any aliases inside the class
             class_name = class_name_from_node(member) || ""
-            full_class_name = "#{module_name}::#{class_name}"
+            full_class_name = qualified_nested_type_name(module_name, class_name)
             register_type_alias(full_class_name, full_class_name)
             register_class_aliases(member, full_class_name)
           end
@@ -19102,7 +19122,7 @@ module Crystal::HIR
           member = unwrap_visibility_member(@arena[expr_id])
           if member.is_a?(CrystalV2::Compiler::Frontend::EnumNode)
             enum_name = enum_name_from_node(member) || ""
-            full_enum_name = "#{module_name}::#{enum_name}"
+            full_enum_name = qualified_nested_type_name(module_name, enum_name)
             register_enum_with_name(member, full_enum_name)
           end
         end
@@ -22280,12 +22300,12 @@ module Crystal::HIR
           elsif member.is_a?(CrystalV2::Compiler::Frontend::ModuleNode)
             # Recursively register nested module aliases first
             nested_name = module_name_from_node(member) || ""
-            full_nested_name = "#{full_name}::#{nested_name}"
+            full_nested_name = qualified_nested_type_name(full_name, nested_name)
             register_nested_module(member, full_nested_name)
           elsif member.is_a?(CrystalV2::Compiler::Frontend::ClassNode)
             # Register class/struct type alias and any aliases inside the class
             class_name = class_name_from_node(member) || ""
-            full_class_name = "#{full_name}::#{class_name}"
+            full_class_name = qualified_nested_type_name(full_name, class_name)
             register_type_alias(full_class_name, full_class_name)
             register_class_aliases(member, full_class_name)
           end
@@ -22545,11 +22565,11 @@ module Crystal::HIR
               end
             when CrystalV2::Compiler::Frontend::ClassNode
               class_name = class_name_from_node(member) || ""
-              full_class_name = "#{full_name}::#{class_name}"
+              full_class_name = qualified_nested_type_name(full_name, class_name)
               register_class_with_name(member, full_class_name)
             when CrystalV2::Compiler::Frontend::EnumNode
               enum_name = (safe_slice_to_string(member.name) || "")
-              full_enum_name = "#{full_name}::#{enum_name}"
+              full_enum_name = qualified_nested_type_name(full_name, enum_name)
               register_enum_with_name(member, full_enum_name)
             when CrystalV2::Compiler::Frontend::MacroDefNode
               register_macro(member, full_name)
@@ -23966,7 +23986,7 @@ module Crystal::HIR
           case member
           when CrystalV2::Compiler::Frontend::ClassNode
             nested_name = class_name_from_node(member) || ""
-            full_nested_name = "#{nested_prefix}::#{nested_name}"
+            full_nested_name = qualified_nested_type_name(nested_prefix, nested_name)
             register_class_with_name(member, full_nested_name)
             # When parent has active type substitutions and nested type is generic,
             # also monomorphize the nested type with the substituted type args.
@@ -23993,11 +24013,11 @@ module Crystal::HIR
             end
           when CrystalV2::Compiler::Frontend::EnumNode
             enum_name = enum_name_from_node(member) || ""
-            full_enum_name = "#{nested_prefix}::#{enum_name}"
+            full_enum_name = qualified_nested_type_name(nested_prefix, enum_name)
             register_enum_with_name(member, full_enum_name)
           when CrystalV2::Compiler::Frontend::ModuleNode
             nested_name = module_name_from_node(member) || ""
-            full_nested_name = "#{nested_prefix}::#{nested_name}"
+            full_nested_name = qualified_nested_type_name(nested_prefix, nested_name)
             register_nested_module(member, full_nested_name)
           when CrystalV2::Compiler::Frontend::MacroDefNode
             register_macro(member, nested_prefix)

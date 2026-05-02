@@ -3399,3 +3399,65 @@ Current interpretation:
   traces first; do not attempt `s3b` yet.
 
 Trust: {F/G/R: 0.87/0.58/0.86} [in-progress]
+
+## LM-552 — Qualified module wrapper fallback and nested-name joins canonicalized
+
+Context: compiler/bootstrap/codegen, 2026-05-01, `codegen`.
+
+Root cause and fix:
+
+- Generated `s2` reproduced the malformed namespace on a minimal no-prelude
+  reducer:
+  `module Float::FastFloat; struct ParsedNumberStringT(UC); end; end`.
+  Host-built V2 registered `Float::FastFloat::ParsedNumberStringT`, but the
+  produced `s2` registered `Float::Float::ParsedNumberStringT`.
+- The first source-level root was `module_name_from_node` falling back to
+  `definition_name_from_header_text` when generated `s2` lost the parser slice
+  for an inner path-wrapper module. That helper stops at the first `:`, so the
+  full header `module Float::FastFloat` recovers `Float` instead of the wrapper
+  leaf/name needed by registration.
+- Switching the module fallback to `definition_leaf_name_from_header_text`
+  exposed the second invariant violation: generated `s2` can also return
+  already-qualified child names, and registration sites blindly concatenate
+  `owner::child`. The reducer then showed
+  `Float::FastFloat::Float::FastFloat::ParsedNumberStringT`.
+- The root fix adds `qualified_nested_type_name(owner, child)` and uses it in
+  the relevant module/class nested registration joins. The helper preserves
+  already-qualified children under the same owner and only prefixes genuinely
+  relative child names.
+
+Evidence:
+
+- `crystal build src/crystal_v2.cr -o /tmp/cv2_float_ns_fix3 --error-trace`
+  passed.
+- `regression_tests/p2_qualified_module_namespace_no_prelude.sh
+  /tmp/cv2_float_ns_fix3` passed on the host-built compiler.
+- `scripts/run_safe.sh /tmp/cv2_float_ns_fix3 300 4096 src/crystal_v2.cr -o
+  /tmp/cv2_float_ns_fix3_s2/cv2_s2` built generated `s2` in ~148s.
+- `regression_tests/p2_qualified_module_namespace_no_prelude.sh
+  /tmp/cv2_float_ns_fix3_s2/cv2_s2` passed on the produced compiler. This is
+  the decisive falsifier because the same reducer failed on the previous
+  produced `s2`.
+- Existing p2 guards also passed on the host-built compiler:
+  `p2_macro_extra_source_param_recovery_no_prelude.sh`,
+  `p2_implicit_ivar_param_source_scan_no_prelude.sh`,
+  `p2_initialize_return_void_no_prelude.sh`, and
+  `p2_bootstrap_semantic_emit_oracle.sh`.
+- Produced `s2` full-prelude `puts 42` smoke still exits 139, but now reaches
+  the correctly named `Float::FastFloat::ParsedNumberStringT` instead of
+  `Float::Float::*`. The remaining crash is therefore the next frontier, not
+  the namespace-duplication bug.
+
+Quadrumvirate:
+
+- Cassandra: predicted a wrapper/source-fallback failure; verified by produced
+  `s2` reducer, not by host-only evidence.
+- Daedalus: first leaf-only patch was insufficient and shifted the failure to
+  `Float::FastFloat::Float::FastFloat`; the frame shifted from "bad extractor"
+  to "bad extractor plus non-idempotent namespace join".
+- Maieutic: the critical assumption was that child names are always relative;
+  generated `s2` falsified it by returning already-qualified child names.
+- Adversary: host-only reducer would have missed the bug; produced-compiler
+  reducer is now the required guard.
+
+Trust: {F/G/R: 0.91/0.68/0.90} [verified]
