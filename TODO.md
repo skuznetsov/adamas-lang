@@ -1,6 +1,6 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-05-01
+Updated: 2026-05-05
 Branch: `codegen`
 
 This is the active working backlog only. Historical detail is in git history,
@@ -29,6 +29,21 @@ Working policy:
   demanded deep shapes and remove only proven non-demand/root pollution.
 
 ## Current Checkpoint
+
+Stage2 macro-control compare_versions checkpoint (2026-05-05): generated
+`cv2_s2` now folds `compare_versions(Crystal::VERSION, Crystal::VERSION)` in
+macro-control text and records only the active branch without invoking raw macro
+sanitization on inactive branch text. The root fix keeps this registration path
+off fragile generated-stage2 class constants, nilable tuple selected-body
+returns, nilable index helpers, and raw parser slices for reparsed constant
+names. Evidence: `/tmp/cv2_compare_cleanup` host build; new
+`regression_tests/p2_macro_compare_versions_control_no_raw_sanitize.sh` and
+`p2_qualified_module_namespace_no_prelude.sh` pass on both the host compiler
+and produced `/tmp/cv2_compare_cleanup_s2/cv2_s2`; and s1 -> s2 build exits 0
+under `scripts/run_safe.sh`. Boundary: produced full-prelude `puts 42` has moved
+off the old `Float::FastFloat::Powers` raw-sanitize/Float frontier but still
+exits 133 during CLI pre-scan immediately after `pre-scan class/module loops
+start`.
 
 Stage2 source-backed initializer-parameter checkpoint (2026-05-01): class and
 module registration now avoid another stale frontend-slice boundary when

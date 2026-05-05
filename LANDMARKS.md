@@ -1,6 +1,6 @@
 # LANDMARKS
 
-Updated: 2026-05-01
+Updated: 2026-05-05
 Context: compiler/bootstrap/stage2-stability
 
 This file is the active working set only. Historical landmarks before this
@@ -11,6 +11,27 @@ checkpoint remain recoverable from git history, especially:
   `d43826fdcc2277b6075026244764a84d0069d1a30b675642b603f3511b14a1e5`
 
 ## Active Bootstrap Gate
+
+[LM-553|verified]: Generated stage2 macro-control registration now folds
+`compare_versions(Crystal::VERSION, ...)` without falling back to raw macro
+sanitization of inactive branches. Root pattern: produced compiler code cannot
+rely on fragile runtime/class-constant version reads or nilable tuple/index
+helper boundaries while registering macro-expanded text. The fix uses
+macro-expanded version literal methods, source-backed `ConstantNode` definition
+names for reparsed arenas, direct builtin-version operand scanning, and
+in-place branch selection instead of returning `Tuple(Bool, String?)` for
+selected macro-control text. Evidence: `crystal build src/crystal_v2.cr -o
+/tmp/cv2_compare_cleanup --error-trace`;
+`regression_tests/p2_macro_compare_versions_control_no_raw_sanitize.sh
+/tmp/cv2_compare_cleanup`; `regression_tests/p2_qualified_module_namespace_no_prelude.sh
+/tmp/cv2_compare_cleanup`; `scripts/run_safe.sh /tmp/cv2_compare_cleanup 300
+4096 src/crystal_v2.cr -o /tmp/cv2_compare_cleanup_s2/cv2_s2`; and the same
+two guards on `/tmp/cv2_compare_cleanup_s2/cv2_s2`. Boundary: generated
+`cv2_s2` full-prelude `puts 42` no longer emits the old 51KB
+`Float::FastFloat::Powers` raw-sanitize trace under `DEBUG_MACRO_STRIP_HOT=8192`,
+but it still exits 133 at the next frontier during CLI pre-scan immediately
+after `pre-scan class/module loops start`. {F/G/R: 0.88/0.58/0.90}
+[verified]
 
 [LM-532|in_progress]: The next confirmed root pattern is registration-time
 semantic work reading AST slices too early, rather than true demand-driven
