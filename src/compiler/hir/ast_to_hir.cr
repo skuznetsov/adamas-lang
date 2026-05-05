@@ -3949,6 +3949,7 @@ module Crystal::HIR
     @top_level_class_kinds : Hash(String, Bool)
     # Track constant definitions and inferred types for constant resolution.
     @constant_defs : Set(String)
+    @pre_scan_constant_defs : Set(String)
     getter constant_types : Hash(String, TypeRef)
     getter constant_literal_values : Hash(String, CrystalV2::Compiler::Semantic::MacroValue)
     getter global_debug_infos : Hash(String, DebugGlobalInfo)
@@ -4252,6 +4253,7 @@ module Crystal::HIR
       @last_splat_context = nil
       @type_literal_values = Set(ValueId).new
       @constant_defs = Set(String).new
+      @pre_scan_constant_defs = Set(String).new
       @constant_types = {} of String => TypeRef
       @constant_literal_values = {} of String => CrystalV2::Compiler::Semantic::MacroValue
       @global_debug_infos = {} of String => DebugGlobalInfo
@@ -4493,6 +4495,7 @@ module Crystal::HIR
       @last_splat_context = nil
       @type_literal_values = Set(ValueId).new
       @constant_defs = Set(String).new
+      @pre_scan_constant_defs = Set(String).new
       @constant_types = {} of String => TypeRef
       @constant_literal_values = {} of String => CrystalV2::Compiler::Semantic::MacroValue
       @global_debug_infos = {} of String => DebugGlobalInfo
@@ -7219,6 +7222,21 @@ module Crystal::HIR
       owner_name : String? = nil,
     )
       record_constant_definition(owner_name, name, value_id, arena)
+    end
+
+    def pre_scan_constant_name(
+      name : String,
+      owner_name : String? = nil,
+    )
+      full_name = constant_full_name(owner_name, name)
+      @pre_scan_constant_defs.add(full_name)
+    end
+
+    def pre_scan_constant_name(
+      node : CrystalV2::Compiler::Frontend::ConstantNode,
+      owner_name : String? = nil,
+    )
+      pre_scan_constant_name(constant_name_from_node(node, @arena), owner_name)
     end
 
     # Register a macro definition (pass 1)
@@ -39059,7 +39077,7 @@ module Crystal::HIR
     end
 
     private def constant_name_exists?(name : String) : Bool
-      @constant_defs.includes?(name)
+      @constant_defs.includes?(name) || @pre_scan_constant_defs.includes?(name)
     end
 
     private def constant_full_name(owner_name : String?, name : String) : String

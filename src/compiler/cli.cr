@@ -1701,6 +1701,12 @@ module CrystalV2
         # Pre-scan constant definitions so nested classes can resolve outer constants
         # across reopened types (require order interleaves files).
         debug_filter = env_get("DEBUG_PRE_SCAN_CONST")
+        simple_pre_scan_constant = ->(arena : Frontend::AstArena, value_id : Frontend::ExprId) do
+          value_node = arena[value_id]
+          value_node.is_a?(Frontend::NumberNode) ||
+            value_node.is_a?(Frontend::BoolNode) ||
+            value_node.is_a?(Frontend::CharNode)
+        end
         scan_constants_in_body = ->(owner : String, arena : Frontend::AstArena, body : Array(Frontend::ExprId)) do
           stack = [body]
           while current = stack.pop?
@@ -1717,7 +1723,11 @@ module CrystalV2
                   path = paths_by_arena[arena.object_id.to_u64]? || "(unknown)"
                   bootstrap_trace_puts "[PRE_SCAN_CONST] owner=#{owner} name=#{String.new(expr_node.name)} file=#{path}"
                 end
-                hir_converter.register_constant(expr_node, owner)
+                if simple_pre_scan_constant.call(arena, expr_node.value)
+                  hir_converter.register_constant(expr_node, owner)
+                else
+                  hir_converter.pre_scan_constant_name(expr_node, owner)
+                end
               when Frontend::AssignNode
                 target = arena[expr_node.target]
                 if target.is_a?(Frontend::ConstantNode)
@@ -1725,7 +1735,11 @@ module CrystalV2
                     path = paths_by_arena[arena.object_id.to_u64]? || "(unknown)"
                     bootstrap_trace_puts "[PRE_SCAN_CONST] owner=#{owner} name=#{String.new(target.name)} file=#{path}"
                   end
-                  hir_converter.register_constant_value(String.new(target.name), expr_node.value, arena, owner)
+                  if simple_pre_scan_constant.call(arena, expr_node.value)
+                    hir_converter.register_constant_value(String.new(target.name), expr_node.value, arena, owner)
+                  else
+                    hir_converter.pre_scan_constant_name(String.new(target.name), owner)
+                  end
                 end
               end
             end

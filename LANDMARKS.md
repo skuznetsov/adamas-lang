@@ -12,6 +12,34 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-554|verified]: Generated stage2 CLI pre-scan no longer performs full
+constant registration for complex class/module body constants. Root pattern:
+the pre-scan pass exists to make outer constants visible across reopened and
+nested types, but full `register_constant` also performs literal probing, type
+inference, and deferred runtime-init enqueueing at a phase where tuple/proc
+constants such as `Number::SI_PREFIXES` / `Number::SI_PREFIXES_PADDED` can
+crash produced stage2. The fix splits pre-scan visibility from real constant
+registration: scalar Number/Bool/Char constants still use full registration so
+early ivar defaults such as `IO::DEFAULT_BUFFER_SIZE` keep type/literal
+metadata, while complex RHS forms are recorded in a separate pre-scan constant
+index used only by constant-name lookup. Refuted variants: making all pre-scan
+constants name-only, or storing `TypeRef::VOID` in `@constant_types`, both let
+self-build reach invalid LLVM (`store ptr 32768`) because scalar metadata was
+lost. Evidence: `CRYSTAL_CACHE_DIR=/private/tmp/cv2_cache_prescan_final crystal
+build src/crystal_v2.cr -o /private/tmp/cv2_prescan_final --error-trace`;
+`regression_tests/p2_macro_compare_versions_control_no_raw_sanitize.sh
+/private/tmp/cv2_prescan_final`; `regression_tests/p2_qualified_module_namespace_no_prelude.sh
+/private/tmp/cv2_prescan_final`;
+`regression_tests/p2_prescan_complex_constants_frontier.sh
+/private/tmp/cv2_prescan_final`; `scripts/run_safe.sh
+/private/tmp/cv2_prescan_final 300 4096 src/crystal_v2.cr -o
+/private/tmp/cv2_prescan_final_s2/cv2_s2`; and the same three guards on
+`/private/tmp/cv2_prescan_final_s2/cv2_s2`. Boundary: produced full-prelude
+`puts 42` now passes `pre-scan constants done`, then exits 133 later during
+module/generic registration around `Float::FastFloat`; this is a moved
+frontier, not a clean full-prelude smoke. {F/G/R: 0.88/0.56/0.90}
+[verified]
+
 [LM-553|verified]: Generated stage2 macro-control registration now folds
 `compare_versions(Crystal::VERSION, ...)` without falling back to raw macro
 sanitization of inactive branches. Root pattern: produced compiler code cannot

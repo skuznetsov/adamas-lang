@@ -30,20 +30,21 @@ Working policy:
 
 ## Current Checkpoint
 
-Stage2 macro-control compare_versions checkpoint (2026-05-05): generated
-`cv2_s2` now folds `compare_versions(Crystal::VERSION, Crystal::VERSION)` in
-macro-control text and records only the active branch without invoking raw macro
-sanitization on inactive branch text. The root fix keeps this registration path
-off fragile generated-stage2 class constants, nilable tuple selected-body
-returns, nilable index helpers, and raw parser slices for reparsed constant
-names. Evidence: `/tmp/cv2_compare_cleanup` host build; new
-`regression_tests/p2_macro_compare_versions_control_no_raw_sanitize.sh` and
-`p2_qualified_module_namespace_no_prelude.sh` pass on both the host compiler
-and produced `/tmp/cv2_compare_cleanup_s2/cv2_s2`; and s1 -> s2 build exits 0
-under `scripts/run_safe.sh`. Boundary: produced full-prelude `puts 42` has moved
-off the old `Float::FastFloat::Powers` raw-sanitize/Float frontier but still
-exits 133 during CLI pre-scan immediately after `pre-scan class/module loops
-start`.
+Stage2 pre-scan constant frontier checkpoint (2026-05-05): generated `cv2_s2`
+now passes CLI class/module constant pre-scan for full-prelude `puts 42`. Root
+fix: pre-scan keeps complex RHS constants name-visible without performing
+registration-time literal/type/deferred-init work, while scalar Number/Bool/Char
+constants still get full metadata early enough for ivar defaults such as
+`IO::DEFAULT_BUFFER_SIZE`. Evidence: `/private/tmp/cv2_prescan_final` host
+build; `p2_macro_compare_versions_control_no_raw_sanitize.sh`,
+`p2_qualified_module_namespace_no_prelude.sh`, and new
+`p2_prescan_complex_constants_frontier.sh` pass on both the host compiler and
+produced `/private/tmp/cv2_prescan_final_s2/cv2_s2`; and s1 -> s2 build exits 0
+under `scripts/run_safe.sh`. Refuted variants: all name-only pre-scan and
+`TypeRef::VOID` placeholders in `@constant_types` both lead to invalid LLVM
+`store ptr 32768`. Boundary: produced full-prelude `puts 42` still exits 133
+later during module/generic registration around `Float::FastFloat`, after
+`pre-scan constants done`.
 
 Stage2 source-backed initializer-parameter checkpoint (2026-05-01): class and
 module registration now avoid another stale frontend-slice boundary when
