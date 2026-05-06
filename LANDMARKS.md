@@ -12,6 +12,39 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-557|verified]: Generated stage2 semantic no-codegen checks now survive
+ordinary method definitions, typed/untyped parameters, return annotations,
+splat params, and the primitive `Proc#call(*args : *T) : R` signature. Root
+pattern: semantic scope traversal used `Set(SymbolTable)`, which hashes object
+identity through `Reference#hash -> Crystal::Hasher#reference`; produced `s2`
+crashed there while checking a tiny `struct Foo; def call; end; end` reducer.
+After that was removed, the next produced-only reducer crash was
+`SymbolCollector#handle_def -> String.new(Slice(UInt8))` on raw def
+param/return slices, including the `Proc#call` signature. The fix replaces
+semantic `SymbolTable` visited sets with identity arrays, passes source
+providers into single-file `run_check`, and lets `SymbolCollector#handle_def`
+recover method names, param names/types, and return annotations from source
+spans before falling back to guarded raw slices. Refuted variant: reading
+`arena.extra_sources` inside the collector regressed even bare defs because
+that array path is itself fragile in produced `s2`; source must come through
+the file/provider boundary. Evidence: `CRYSTAL_CACHE_DIR=/private/tmp/cv2_cache_symbol_final
+crystal build src/crystal_v2.cr -o /private/tmp/cv2_symbol_final --error-trace`;
+host guards `p2_generated_stage2_no_codegen_def_semantic_frontier.sh`,
+`p2_qualified_module_namespace_no_prelude.sh`,
+`p2_full_prelude_generic_template_namespace_no_pollution.sh`, and
+`p2_self_nested_module_registration_frontier.sh` on `/private/tmp/cv2_symbol_final`;
+`scripts/run_safe.sh /private/tmp/cv2_symbol_final 300 4096 src/crystal_v2.cr
+-o /private/tmp/cv2_symbol_final_s2/cv2_s2`; produced guards
+`p2_generated_stage2_no_codegen_def_semantic_frontier.sh`,
+`p2_generated_stage2_char_macro_for_frontier.sh`,
+`p2_qualified_module_namespace_no_prelude.sh`, and
+`p2_full_prelude_generic_template_namespace_no_pollution.sh` on
+`/private/tmp/cv2_symbol_final_s2/cv2_s2`. Boundary: produced full-prelude
+`puts 42` still exits 139, but now reaches `concrete_after_new Proc`, then
+`Char::Reader`, logs `[INFER_INDEX] method=byte_at self=Char::Reader obj=nil`,
+reaches `concrete_after_new Char::Reader`, and segfaults at the next frontier.
+{F/G/R: 0.86/0.55/0.86} [verified]
+
 [LM-556|verified]: Generated stage2 full-prelude `puts 42` now moves past the
 Char macro-for registration/body-scan trap and reaches the next `Proc`
 class-body frontier. Root pattern: class constant recording was using the full
@@ -3747,3 +3780,69 @@ Refuted variants and boundary:
   longer blocking this specific stdlib Char primitive registration corridor.
 
 Trust: {F/G/R: 0.84/0.48/0.84} [verified]
+
+## LM-557 — Semantic def checks avoid SymbolTable hashing and raw def slices
+
+Context: compiler/bootstrap/codegen, 2026-05-06, `codegen`.
+
+Root cause and fix:
+
+- The first no-prelude reducer was `struct Foo; def call; end; end` under
+  generated `s2 --no-codegen`. It crashed in
+  `TypeInferenceEngine#find_class_symbol_for_scope` while adding a
+  `SymbolTable` to `Set(SymbolTable)`, which called
+  `Reference#hash -> Crystal::Hasher#reference` and dereferenced broken hasher
+  state.
+- Replacing semantic `Set(SymbolTable)` visited guards with small identity
+  arrays moved that reducer to green, but `Proc#call(*args : *T) : R` and any
+  def with params or return annotations still crashed in
+  `SymbolCollector#handle_def -> String.new(Slice(UInt8))`.
+- The final fix keeps semantic scope traversal off hash-backed identity sets,
+  passes the single-file source into `run_check` via Analyzer/Collector source
+  providers, and makes `SymbolCollector#handle_def` read def param names,
+  param types, and return annotations from source spans before falling back to
+  guarded raw slices.
+
+Refuted branch:
+
+- Reading source from `arena.extra_sources` inside `SymbolCollector` was unsafe:
+  produced `s2` crashed in `source_for_span` even on the bare `def call` reducer.
+  Source-backed semantic recovery must use the file/provider boundary, not the
+  same fragile arena-array path it is trying to avoid.
+
+Evidence:
+
+- `CRYSTAL_CACHE_DIR=/private/tmp/cv2_cache_symbol_final crystal build
+  src/crystal_v2.cr -o /private/tmp/cv2_symbol_final --error-trace` passed.
+- Host guards passed:
+  `regression_tests/p2_generated_stage2_no_codegen_def_semantic_frontier.sh
+  /private/tmp/cv2_symbol_final`,
+  `regression_tests/p2_qualified_module_namespace_no_prelude.sh
+  /private/tmp/cv2_symbol_final`,
+  `regression_tests/p2_full_prelude_generic_template_namespace_no_pollution.sh
+  /private/tmp/cv2_symbol_final`, and
+  `regression_tests/p2_self_nested_module_registration_frontier.sh
+  /private/tmp/cv2_symbol_final`.
+- `scripts/run_safe.sh /private/tmp/cv2_symbol_final 300 4096
+  src/crystal_v2.cr -o /private/tmp/cv2_symbol_final_s2/cv2_s2` built produced
+  `s2` with `[EXIT: 0]`.
+- Produced guards passed:
+  `regression_tests/p2_generated_stage2_no_codegen_def_semantic_frontier.sh
+  /private/tmp/cv2_symbol_final_s2/cv2_s2`,
+  `regression_tests/p2_generated_stage2_char_macro_for_frontier.sh
+  /private/tmp/cv2_symbol_final_s2/cv2_s2`,
+  `regression_tests/p2_qualified_module_namespace_no_prelude.sh
+  /private/tmp/cv2_symbol_final_s2/cv2_s2`, and
+  `regression_tests/p2_full_prelude_generic_template_namespace_no_pollution.sh
+  /private/tmp/cv2_symbol_final_s2/cv2_s2`.
+
+Current boundary:
+
+- This is a moved-frontier fix, not a full-prelude unlock. Produced `s2`
+  full-prelude `puts 42` now reaches `concrete_after_new Proc`, then
+  `Char::Reader`, logs
+  `[INFER_INDEX] method=byte_at self=Char::Reader obj=nil obj_kind=Node idxs=1`,
+  reaches `concrete_after_new Char::Reader`, and exits 139 at the next
+  frontier.
+
+Trust: {F/G/R: 0.86/0.55/0.86} [verified]

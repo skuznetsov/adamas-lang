@@ -2271,7 +2271,7 @@ module CrystalV2
           end
 
           return nil unless global_table = @global_table
-          find_class_symbol_for_scope(global_table, target_scope, Set(SymbolTable).new)
+          find_class_symbol_for_scope(global_table, target_scope, [] of SymbolTable)
         end
 
         private def enum_symbol_for_scope(target_scope : SymbolTable?) : EnumSymbol?
@@ -2284,12 +2284,11 @@ module CrystalV2
           end
 
           return nil unless global_table = @global_table
-          find_enum_symbol_for_scope(global_table, target_scope, Set(SymbolTable).new)
+          find_enum_symbol_for_scope(global_table, target_scope, [] of SymbolTable)
         end
 
-        private def find_class_symbol_for_scope(search_scope : SymbolTable, target_scope : SymbolTable, visited : Set(SymbolTable)) : ClassSymbol?
-          return nil if visited.includes?(search_scope)
-          visited << search_scope
+        private def find_class_symbol_for_scope(search_scope : SymbolTable, target_scope : SymbolTable, visited : Array(SymbolTable)) : ClassSymbol?
+          return nil unless mark_visited_symbol_table?(visited, search_scope)
 
           search_scope.each_local_symbol do |_, symbol|
             case symbol
@@ -2317,9 +2316,8 @@ module CrystalV2
           nil
         end
 
-        private def find_enum_symbol_for_scope(search_scope : SymbolTable, target_scope : SymbolTable, visited : Set(SymbolTable)) : EnumSymbol?
-          return nil if visited.includes?(search_scope)
-          visited << search_scope
+        private def find_enum_symbol_for_scope(search_scope : SymbolTable, target_scope : SymbolTable, visited : Array(SymbolTable)) : EnumSymbol?
+          return nil unless mark_visited_symbol_table?(visited, search_scope)
 
           search_scope.each_local_symbol do |_, symbol|
             case symbol
@@ -2437,7 +2435,7 @@ module CrystalV2
           end
 
           if global_table = @global_table
-            if method = find_method_symbol_by_node_id(global_table, name, expr_id, Set(SymbolTable).new)
+            if method = find_method_symbol_by_node_id(global_table, name, expr_id, [] of SymbolTable)
               return method
             end
           end
@@ -2456,9 +2454,8 @@ module CrystalV2
           end
         end
 
-        private def find_method_symbol_by_node_id(search_scope : SymbolTable, name : String, expr_id : ExprId, visited : Set(SymbolTable)) : MethodSymbol?
-          return nil if visited.includes?(search_scope)
-          visited << search_scope
+        private def find_method_symbol_by_node_id(search_scope : SymbolTable, name : String, expr_id : ExprId, visited : Array(SymbolTable)) : MethodSymbol?
+          return nil unless mark_visited_symbol_table?(visited, search_scope)
 
           if method = current_method_symbol_in_scope(search_scope, name, expr_id)
             return method
@@ -2486,6 +2483,12 @@ module CrystalV2
           end
 
           nil
+        end
+
+        private def mark_visited_symbol_table?(visited : Array(SymbolTable), table : SymbolTable) : Bool
+          return false if visited.any? { |entry| entry.same?(table) }
+          visited << table
+          true
         end
 
         # Phase 31: Type inference for include statement
@@ -3475,13 +3478,12 @@ module CrystalV2
           return nil unless suffix
           return nil unless table = @global_table
           queue = [table]
-          visited = Set(SymbolTable).new
+          visited = [] of SymbolTable
           max_nodes = 2000
           nodes_seen = 0
           while current = queue.shift?
             guard_watchdog!
-            next if visited.includes?(current)
-            visited << current
+            next unless mark_visited_symbol_table?(visited, current)
             nodes_seen += 1
             break if nodes_seen > max_nodes
 
@@ -4390,12 +4392,11 @@ module CrystalV2
           return unless table = @global_table
 
           queue = [table] of SymbolTable
-          visited_tables = Set(SymbolTable).new
+          visited_tables = [] of SymbolTable
           visited_classes = Set(String).new
 
           while current = queue.shift?
-            next if visited_tables.includes?(current)
-            visited_tables << current
+            next unless mark_visited_symbol_table?(visited_tables, current)
 
             current.each_local_symbol do |_name, symbol|
               case symbol
@@ -8488,11 +8489,11 @@ module CrystalV2
             return symbol
           end
 
-          lookup_method_symbol_in_included_modules(scope, method_name, Set(SymbolTable).new)
+          lookup_method_symbol_in_included_modules(scope, method_name, [] of SymbolTable)
         end
 
-        private def lookup_method_symbol_in_included_modules(scope : SymbolTable, method_name : String, visited : Set(SymbolTable)) : Symbol?
-          return nil unless visited.add?(scope)
+        private def lookup_method_symbol_in_included_modules(scope : SymbolTable, method_name : String, visited : Array(SymbolTable)) : Symbol?
+          return nil unless mark_visited_symbol_table?(visited, scope)
 
           scope.included_modules.each do |ref|
             included_scope = ref.scope
@@ -8752,7 +8753,7 @@ module CrystalV2
 
           # First, search in included modules (MRO: included modules come before superclass)
           target_scope = class_methods ? class_symbol.class_scope : class_symbol.scope
-          if symbol = lookup_method_symbol_in_included_modules(target_scope, method_name, Set(SymbolTable).new)
+          if symbol = lookup_method_symbol_in_included_modules(target_scope, method_name, [] of SymbolTable)
             append_method_candidates(methods, symbol, class_methods: class_methods ? nil : false)
           end
 
@@ -8893,12 +8894,11 @@ module CrystalV2
         private def find_method_overrides_in_subclasses(base_class : ClassSymbol, method_name : String, table : SymbolTable) : Array(MethodSymbol)
           overrides = [] of MethodSymbol
           queue = [table] of SymbolTable
-          visited_tables = Set(SymbolTable).new
+          visited_tables = [] of SymbolTable
           visited_classes = Set(String).new
 
           while current = queue.shift?
-            next if visited_tables.includes?(current)
-            visited_tables << current
+            next unless mark_visited_symbol_table?(visited_tables, current)
 
             current.each_local_symbol do |_name, symbol|
               case symbol
@@ -11883,9 +11883,9 @@ module CrystalV2
           scope : SymbolTable,
           owner_module : ModuleSymbol,
           current_context : {Array(Type), Array(String)}?,
-          visited : Set(SymbolTable) = Set(SymbolTable).new
+          visited : Array(SymbolTable) = [] of SymbolTable
         ) : Array(Type)?
-          return nil unless visited.add?(scope)
+          return nil unless mark_visited_symbol_table?(visited, scope)
 
           scope.included_modules.each do |ref|
             resolved_args = resolve_included_module_type_args(ref, current_context)

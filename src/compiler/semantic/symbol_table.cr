@@ -44,11 +44,11 @@ module CrystalV2
         end
 
         def lookup(name : String) : Symbol?
-          @symbols[name]? || lookup_included(name, Set(SymbolTable).new) || @parent.try(&.lookup(name))
+          @symbols[name]? || lookup_included(name, [] of SymbolTable) || @parent.try(&.lookup(name))
         end
 
         def lookup_macro(name : String) : MacroSymbol?
-          @macro_symbols[name]? || lookup_macro_included(name, Set(SymbolTable).new) || @parent.try(&.lookup_macro(name))
+          @macro_symbols[name]? || lookup_macro_included(name, [] of SymbolTable) || @parent.try(&.lookup_macro(name))
         end
 
         def local?(name : String) : Bool
@@ -82,7 +82,7 @@ module CrystalV2
         private getter symbols : Hash(String, Symbol)
         private getter macro_symbols : Hash(String, MacroSymbol)
 
-        private def lookup_included(name : String, visited : Set(SymbolTable)) : Symbol?
+        private def lookup_included(name : String, visited : Array(SymbolTable)) : Symbol?
           @included_modules.each do |mod_ref|
             if result = lookup_in_scope(mod_ref.scope, name, visited)
               return result
@@ -91,7 +91,7 @@ module CrystalV2
           nil
         end
 
-        private def lookup_macro_included(name : String, visited : Set(SymbolTable)) : MacroSymbol?
+        private def lookup_macro_included(name : String, visited : Array(SymbolTable)) : MacroSymbol?
           @included_modules.each do |mod_ref|
             if result = lookup_macro_in_scope(mod_ref.scope, name, visited)
               return result
@@ -100,8 +100,8 @@ module CrystalV2
           nil
         end
 
-        private def lookup_in_scope(table : SymbolTable, name : String, visited : Set(SymbolTable)) : Symbol?
-          return nil unless visited.add?(table)
+        private def lookup_in_scope(table : SymbolTable, name : String, visited : Array(SymbolTable)) : Symbol?
+          return nil unless mark_visited_symbol_table?(visited, table)
 
           if symbol = table.lookup_local(name)
             return symbol
@@ -120,8 +120,8 @@ module CrystalV2
           nil
         end
 
-        private def lookup_macro_in_scope(table : SymbolTable, name : String, visited : Set(SymbolTable)) : MacroSymbol?
-          return nil unless visited.add?(table)
+        private def lookup_macro_in_scope(table : SymbolTable, name : String, visited : Array(SymbolTable)) : MacroSymbol?
+          return nil unless mark_visited_symbol_table?(visited, table)
 
           if symbol = table.lookup_local_macro(name)
             return symbol
@@ -138,6 +138,12 @@ module CrystalV2
           end
 
           nil
+        end
+
+        private def mark_visited_symbol_table?(visited : Array(SymbolTable), table : SymbolTable) : Bool
+          return false if visited.any? { |entry| entry.same?(table) }
+          visited << table
+          true
         end
       end
 

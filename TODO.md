@@ -30,22 +30,22 @@ Working policy:
 
 ## Current Checkpoint
 
-Stage2 Proc class-body frontier (2026-05-06): after LM-556, produced
-full-prelude `puts 42` gets past the previous Char macro-for registration trap.
-Root closure: class record-time macro-for handling now reparses only expansion
-text that can define record-time declarations, while the exact stdlib
-`Char`/`op,desc` six-entry comparison primitive macro registers its binary
-primitive signatures directly instead of reparsing generated method text. This
-is intentionally bounded: produced `s2` showed malformed expanded text
-`def (other : Char) : Bool` because the macro iterable key path lost `op.id`,
-so the direct path records the known primitive signatures for that verified
-stdlib macro shape and leaves the broader MacroHash/key corruption as a follow
-up. New guard:
-`p2_generated_stage2_char_macro_for_frontier.sh` requires produced `s2` to
-finish `Char` body scanning and reach `Proc`. Current frontier: produced
-`s2` full-prelude `puts 42` exits 139 after
-`[CLASS_FRONTIER] concrete_before_body_loop Proc`; this is the next root, not a
-clean full-prelude smoke.
+Stage2 Char::Reader post-registration frontier (2026-05-06): after LM-557,
+produced full-prelude `puts 42` gets past the previous `Proc` class-body trap.
+Root closure: semantic check-only traversal no longer stores visited
+`SymbolTable` objects in hash-backed sets, so generated `s2` avoids the fragile
+`Reference#hash -> Crystal::Hasher#reference` path while walking scope graphs.
+The single-file `--no-codegen` semantic corridor now also passes defs with
+params, return annotations, splats, and the primitive `Proc#call(*args : *T) :
+R` signature because `run_check` gives the collector source providers and
+`SymbolCollector#handle_def` recovers method param/return metadata from source
+spans before trusting raw frontend slices. New guard:
+`p2_generated_stage2_no_codegen_def_semantic_frontier.sh`. Current frontier:
+produced `s2` full-prelude `puts 42` still exits 139, but trace now shows
+`concrete_after_new Proc`, reaches `Char::Reader`, logs
+`[INFER_INDEX] method=byte_at self=Char::Reader obj=nil`, reaches
+`concrete_after_new Char::Reader`, then segfaults. This is a moved frontier,
+not a clean full-prelude smoke.
 
 Stage2 nested-method annotation namespace checkpoint (2026-05-05): produced
 `cv2_s2` no longer qualifies top-level/builtin method annotations inside

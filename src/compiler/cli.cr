@@ -1262,7 +1262,10 @@ module CrystalV2
 
         if parser.diagnostics.empty?
           analyzer = Semantic::Analyzer.new(program)
-          analyzer.collect_symbols
+          analyzer.collect_symbols(
+            node_file_path_provider: ->(_node_id : Frontend::ExprId) { path.as(String?) },
+            source_for_path_provider: ->(source_path : String) { source_path == path ? source : nil }
+          )
 
           result = analyzer.resolve_names
           report_collector_diagnostics(analyzer.semantic_diagnostics, source, err_io)

@@ -183,6 +183,24 @@ module CrystalV2
           @string_pool.intern_string(slice)
         end
 
+        private def safe_intern_name(slice : Slice(UInt8)) : String?
+          return nil unless readable_slice?(slice)
+          @string_pool.intern_string(slice)
+        end
+
+        private def readable_slice?(slice : Slice(UInt8)) : Bool
+          raw = Frontend.debug_slice_word0(slice)
+          return true if raw == 0_u64
+          return false if sizeof(Slice(UInt8)) <= 8 && !Frontend.debug_readable_address?(raw)
+
+          ptr = slice.to_unsafe.address
+          size = slice.size
+          return false if size < 0
+          return true if size == 0
+          return false if ptr < 4096_u64 || ptr > 0x0000_7FFF_FFFF_FFFF_u64
+          Frontend.debug_readable_address?(ptr)
+        end
+
         private def sources_for_arena(arena : Frontend::ArenaLike) : Array(String)
           case arena
           when Frontend::AstArena
@@ -200,6 +218,37 @@ module CrystalV2
           sources = sources_for_arena(arena)
           return nil if sources.empty?
           sources.find { |source| span.end_offset <= source.bytesize } || sources.first?
+        end
+
+        private def source_for_node(node_id : Frontend::ExprId) : String?
+          if path = file_path_for(node_id)
+            if cached = @source_cache[path]?
+              return cached
+            end
+            if provider = @source_for_path_provider
+              if source = provider.call(path)
+                @source_cache[path] = source
+                return source
+              end
+            end
+            begin
+              source = File.read(path)
+              @source_cache[path] = source
+              return source
+            rescue
+              return nil
+            end
+          end
+
+          nil
+        end
+
+        private def slice_source_for_span(span : Frontend::Span, source : String) : String?
+          start = span.start_offset
+          finish = span.end_offset
+          return nil if start < 0 || finish <= start || start >= source.bytesize
+          finish = source.bytesize if finish > source.bytesize
+          source.byte_slice(start, finish - start)
         end
 
         private def macro_block_source(block_id : Frontend::ExprId) : String?
@@ -422,17 +471,22 @@ module CrystalV2
           name_slice = node.name
           return unless name_slice
 
-          name = intern_name(name_slice)
+          source = source_for_node(node_id)
+          name = safe_intern_name(name_slice) || def_name_from_source(node, source)
+          return unless name
           params = node.params || [] of Frontend::Parameter
-          return_annotation = node.return_type.try { |slice| intern_name(slice) }
+          return_annotation = def_return_annotation_from_source(node, source) ||
+                              node.return_type.try { |slice| safe_intern_name(slice) }
 
           # Week 1 Day 2: Detect generic type parameters from method signature
-          type_params = detect_generic_type_parameters(params, return_annotation)
+          param_type_annotations = params.compact_map { |param| parameter_type_annotation_name(param, source) }
+          type_params = detect_generic_type_parameters(param_type_annotations, return_annotation)
 
           receiver = node.receiver
           target_table = current_table
           is_class_method = false
-          if receiver && intern_name(receiver) == "self"
+          receiver_name = receiver ? safe_intern_name(receiver) : nil
+          if receiver_name == "self"
             if enum_owner = @enum_stack.last?
               target_table = enum_owner.scope
             else
@@ -457,11 +511,11 @@ module CrystalV2
 
           params.each do |param|
             # Phase BLOCK_CAPTURE: Skip anonymous block parameter (has no name)
-            next unless param_name = param.name
+            param_name_str = parameter_name_string(param, source)
+            next unless param_name_str
 
             # TIER 2.1: Convert Slice(UInt8) to String for symbol table
-            param_name_str = intern_name(param_name)
-            param_type_str = parameter_variable_declared_type(param)
+            param_type_str = parameter_variable_declared_type(param, source)
 
             param_symbol = VariableSymbol.new(param_name_str, node_id, declared_type: param_type_str)
 
@@ -530,11 +584,9 @@ module CrystalV2
           end
         end
 
-        private def parameter_variable_declared_type(param : Frontend::Parameter) : String?
-          type_ann = param.type_annotation
-          return nil unless type_ann
-
-          type_name = intern_name(type_ann)
+        private def parameter_variable_declared_type(param : Frontend::Parameter, source : String? = nil) : String?
+          type_name = parameter_type_annotation_name(param, source)
+          return nil unless type_name
 
           if param.is_splat
             "Array(#{type_name})"
@@ -543,6 +595,107 @@ module CrystalV2
           else
             type_name
           end
+        end
+
+        private def parameter_name_string(param : Frontend::Parameter, source : String? = nil) : String?
+          if span = param.name_span
+            if source
+              if text = slice_source_for_span(span, source)
+                stripped = strip_single_line_comments(text).strip
+                return stripped unless stripped.empty?
+              end
+            end
+          end
+
+          param.name.try { |slice| safe_intern_name(slice) }
+        end
+
+        private def parameter_type_annotation_name(param : Frontend::Parameter, source : String? = nil) : String?
+          if span = param.type_span
+            if source
+              if text = slice_source_for_span(span, source)
+                stripped = strip_single_line_comments(text).strip
+                return stripped unless stripped.empty?
+              end
+            end
+          end
+
+          param.type_annotation.try { |slice| safe_intern_name(slice) }
+        end
+
+        private def def_name_from_source(node : Frontend::DefNode, source : String?) : String?
+          header = def_header_from_source(node, source)
+          return nil unless header
+
+          prefixes = [
+            "private abstract def ",
+            "protected abstract def ",
+            "abstract def ",
+            "private def ",
+            "protected def ",
+            "def ",
+          ]
+          prefix = prefixes.find { |candidate| header.starts_with?(candidate) }
+          return nil unless prefix
+
+          rest = header.byte_slice(prefix.bytesize, header.bytesize - prefix.bytesize).strip
+          rest = rest.byte_slice(5, rest.bytesize - 5).strip if rest.starts_with?("self.")
+
+          name_end = rest.bytesize
+          i = 0
+          while i < rest.bytesize
+            ch = rest.byte_at(i)
+            if ch == '('.ord || ch == ':'.ord || ch == ' '.ord || ch == '\t'.ord
+              name_end = i
+              break
+            end
+            i += 1
+          end
+
+          name = rest.byte_slice(0, name_end).strip
+          name.empty? ? nil : name
+        end
+
+        private def def_return_annotation_from_source(node : Frontend::DefNode, source : String?) : String?
+          header = def_header_from_source(node, source)
+          return nil unless header
+
+          depth = 0
+          colon_idx : Int32? = nil
+          i = 0
+          while i < header.bytesize
+            ch = header.byte_at(i)
+            case ch
+            when '('.ord
+              depth += 1
+            when ')'.ord
+              depth -= 1 if depth > 0
+            when ':'.ord
+              prev = i > 0 ? header.byte_at(i - 1) : -1
+              nxt = i + 1 < header.bytesize ? header.byte_at(i + 1) : -1
+              if depth == 0 && prev != ':'.ord && nxt != ':'.ord
+                colon_idx = i
+              end
+            end
+            i += 1
+          end
+
+          return nil unless idx = colon_idx
+          type_name = header.byte_slice(idx + 1, header.bytesize - idx - 1).strip
+          type_name.empty? ? nil : type_name
+        end
+
+        private def def_header_from_source(node : Frontend::DefNode, source : String?) : String?
+          return nil unless source
+          snippet = slice_source_for_span(node.span, source)
+          return nil unless snippet
+          header_end = snippet.index('\n') || snippet.bytesize
+          strip_single_line_comments(snippet.byte_slice(0, header_end)).strip
+        end
+
+        private def strip_single_line_comments(text : String) : String
+          idx = text.index('#')
+          idx ? text.byte_slice(0, idx) : text
         end
 
         private def handle_class(node_id : Frontend::ExprId, node : Frontend::ClassNode)
@@ -2027,21 +2180,19 @@ module CrystalV2
 
         # Week 1 Day 2: Detect generic type parameters from method signature
         # Returns nil if no generic params, or Array(String) of param names like ["T", "U"]
-        private def detect_generic_type_parameters(params : Array(Frontend::Parameter), return_annotation : String?) : Array(String)?
+        private def detect_generic_type_parameters(param_type_annotations : Array(String), return_annotation : String?) : Array(String)?
           type_param_names = Set(String).new
 
           # Check parameter types
-          params.each do |param|
-            if type_ann = param.type_annotation
-              # Extract generic type parameters from type annotation
-              # Examples: "T" → ["T"], "Box(T)" → ["T"], "Pair(K,V)" → ["K", "V"]
-              extract_type_parameters(type_ann, type_param_names)
-            end
+          param_type_annotations.each do |type_name|
+            # Extract generic type parameters from type annotation
+            # Examples: "T" → ["T"], "Box(T)" → ["T"], "Pair(K,V)" → ["K", "V"]
+            extract_type_parameters_from_name(type_name, type_param_names)
           end
 
           # Check return type annotation
           if ret_ann = return_annotation
-            extract_type_parameters(ret_ann.to_slice, type_param_names)
+            extract_type_parameters_from_name(ret_ann, type_param_names)
           end
 
           type_param_names.empty? ? nil : type_param_names.to_a.sort
