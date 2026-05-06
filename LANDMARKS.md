@@ -3564,3 +3564,64 @@ Current boundary:
   `Float::FastFloat::UInt64`.
 
 Trust: {F/G/R: 0.89/0.60/0.88} [verified]
+
+## LM-554 — Nested module method annotations preserve top-level builtin names
+
+Context: compiler/bootstrap/codegen, 2026-05-05, `codegen`.
+
+Root cause and fix:
+
+- After LM-553, produced `s2` full-prelude `puts 42` no longer trapped in module
+  registration, but `CRYSTAL_V2_TRACE_CLASS_FRONTIER=1` showed polluted
+  `Float::FastFloat.to_f64?` and `to_f32?` signatures:
+  `raw=String resolved=Float::FastFloat::String` and
+  `raw=Bool resolved=Float::FastFloat::Bool`.
+- `DEBUG_TYPE_EXISTS_TRACE=Float::FastFloat::String` showed
+  `type_name_exists?` returning true via `enum_hit=1`, even though
+  `DEBUG_ENUM_ARENA=Float::FastFloat` only showed the legitimate
+  `CharsFormat` and `ParseError` enums. The actionable invariant is therefore
+  not "never resolve nested names", but "method annotations for top-level or
+  builtin short names must not trust registry fallback alone".
+- `qualify_method_annotation_in_namespace` now preserves an unqualified
+  top-level/builtin annotation unless the active namespace chain structurally
+  records that nested type in `@nested_type_names`. Legitimate local nested
+  annotations such as `ParseError`, `Limb`, `Stackvec(Size)`, and
+  `ParsedNumberStringT(UC)` still resolve through the existing nested/alias
+  paths.
+- A read-only Spark audit independently pointed at the same two candidate
+  boundaries: malformed nested-name shadowing and the
+  `nested_type_shadow_in_namespace`/`type_name_exists?` fallback for builtin
+  names.
+
+Evidence:
+
+- `CRYSTAL_CACHE_DIR=/private/tmp/cv2_cache_annot_structural crystal build
+  src/crystal_v2.cr -o /private/tmp/cv2_annot_structural --error-trace` passed.
+- Host guards passed:
+  `regression_tests/p2_qualified_module_namespace_no_prelude.sh
+  /private/tmp/cv2_annot_structural`,
+  `regression_tests/p2_nested_module_registration_no_prelude.sh
+  /private/tmp/cv2_annot_structural`,
+  `regression_tests/p2_self_nested_module_registration_frontier.sh
+  /private/tmp/cv2_annot_structural`, and
+  `regression_tests/p2_full_prelude_generic_template_namespace_no_pollution.sh
+  /private/tmp/cv2_annot_structural`.
+- `scripts/run_safe.sh /private/tmp/cv2_annot_structural 300 4096
+  src/crystal_v2.cr -o /private/tmp/cv2_annot_structural_s2/cv2_s2` built a
+  generated `s2` compiler with `[EXIT: 0]`.
+- Produced `s2` guard passed:
+  `regression_tests/p2_full_prelude_generic_template_namespace_no_pollution.sh
+  /private/tmp/cv2_annot_structural_s2/cv2_s2`.
+- Direct trace evidence on produced `s2` now shows:
+  `raw=String resolved=String type=String` and
+  `raw=Bool resolved=Bool type=Bool` for both `Float::FastFloat.to_f64?` and
+  `Float::FastFloat.to_f32?`.
+
+Current boundary:
+
+- This closes the `Float::FastFloat::String` / `Float::FastFloat::Bool`
+  signature pollution. It does not close the full-prelude `puts 42` compile:
+  without verbose trace, produced `s2` still times out after 420s in class
+  registration after `class register idx=3/104`.
+
+Trust: {F/G/R: 0.88/0.58/0.87} [verified]

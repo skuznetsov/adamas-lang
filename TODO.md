@@ -30,6 +30,28 @@ Working policy:
 
 ## Current Checkpoint
 
+Stage2 nested-method annotation namespace checkpoint (2026-05-05): produced
+`cv2_s2` no longer qualifies top-level/builtin method annotations inside
+`Float::FastFloat` as fake nested types. Root shape: after the self-wrapper fix,
+full-prelude trace showed `Float::FastFloat.to_f64?` and `to_f32?` signatures
+with `raw=String resolved=Float::FastFloat::String` and `raw=Bool
+resolved=Float::FastFloat::Bool`. `DEBUG_TYPE_EXISTS_TRACE` showed the
+candidate existed through an enum table hit, so `qualify_method_annotation...`
+trusted a registry fallback rather than the structural nested-type set. Root
+fix: for unqualified top-level/builtin annotations, keep the top-level name
+unless the active namespace chain structurally records that nested type. Evidence:
+`/private/tmp/cv2_annot_structural` host build; `p2_qualified_module_namespace_no_prelude.sh`,
+`p2_nested_module_registration_no_prelude.sh`,
+`p2_self_nested_module_registration_frontier.sh`, and
+`p2_full_prelude_generic_template_namespace_no_pollution.sh` pass on host;
+`scripts/run_safe.sh /private/tmp/cv2_annot_structural 300 4096
+src/crystal_v2.cr -o /private/tmp/cv2_annot_structural_s2/cv2_s2` exits 0; and
+`p2_full_prelude_generic_template_namespace_no_pollution.sh` passes on produced
+`/private/tmp/cv2_annot_structural_s2/cv2_s2`. Boundary: produced full-prelude
+`puts 42` still times out in class registration after `class register idx=3/104`,
+so the next root is liveness/registration cost past the now-correct
+`Float::FastFloat` signatures, not the `String`/`Bool` annotation pollution.
+
 Stage2 self-nested module wrapper checkpoint (2026-05-05): generated `cv2_s2`
 now passes the module-registration trap that followed the pre-scan fix. Root
 shape: produced `s2` can represent a qualified reopen wrapper as a nested

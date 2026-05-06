@@ -40362,6 +40362,14 @@ module Crystal::HIR
         return "#{resolved_base}(#{resolved_args.join(", ")})"
       end
 
+      if !stripped.includes?("::") &&
+         (safe_set_includes?(@top_level_type_names, stripped) ||
+         @top_level_class_kinds.has_key?(stripped) ||
+         BUILTIN_TYPE_NAMES.includes?(stripped)) &&
+         !namespace_chain_has_nested?(namespace, stripped)
+        return stripped
+      end
+
       qualify_unqualified_type_in_namespace(stripped, namespace)
     end
 
