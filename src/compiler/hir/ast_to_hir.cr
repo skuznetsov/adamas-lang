@@ -7743,10 +7743,60 @@ module Crystal::HIR
         next if expr_id.null_ptr? || expr_id.invalid?
         collect_nested_type_names(expr_id, set, current_arena)
       end
+      set.delete(class_name)
+      set.delete("::#{class_name}")
       if debug_env_filter_match?("DEBUG_NESTED_TYPES", class_name)
         STDERR.puts "[NESTED_TYPES] class=#{class_name} names=#{set.to_a.sort.join(",")}"
       end
       @nested_type_names[class_name] = set unless set.empty?
+    end
+
+    private def self_nested_module_name?(owner_name : String, nested_name : String) : Bool
+      return false if owner_name.empty? || nested_name.empty?
+      nested_name == owner_name || nested_name == "::#{owner_name}"
+    end
+
+    private def register_self_nested_module_members(
+      owner_name : String,
+      node : CrystalV2::Compiler::Frontend::ModuleNode,
+      source : String?,
+    ) : Nil
+      body = node.body
+      return unless body
+
+      body.each do |expr_id|
+        next if expr_id.null_ptr? || expr_id.invalid?
+        member = unwrap_visibility_member(@arena[expr_id])
+        case member
+        when CrystalV2::Compiler::Frontend::ClassNode
+          nested_name = class_name_from_node(member, source) || ""
+          full_nested_name = qualified_nested_type_name(owner_name, nested_name)
+          next if self_nested_module_name?(owner_name, full_nested_name)
+          register_class_with_name(member, full_nested_name)
+        when CrystalV2::Compiler::Frontend::EnumNode
+          nested_name = enum_name_from_node(member, source) || ""
+          full_nested_name = qualified_nested_type_name(owner_name, nested_name)
+          next if self_nested_module_name?(owner_name, full_nested_name)
+          register_enum_with_name(member, full_nested_name)
+        when CrystalV2::Compiler::Frontend::ModuleNode
+          # Self-wrapper module nodes are reopen carriers. Do not route them
+          # back through module registration; doing so can recurse into the
+          # same canonical owner in generated stage2. Direct nested types are
+          # handled by this helper, while ordinary module children are handled
+          # by the regular owner body scans.
+          next
+        when CrystalV2::Compiler::Frontend::AliasNode
+          safe_str_guard(member.name, "next")
+          safe_str_guard(member.value, "next")
+          alias_name = (safe_slice_to_string(member.name) || "")
+          old_class = @current_class
+          @current_class = owner_name
+          target_name = resolve_alias_target((safe_slice_to_string(member.value) || ""), owner_name)
+          @current_class = old_class
+          full_alias_name = qualified_nested_type_name(owner_name, alias_name)
+          register_type_alias(full_alias_name, target_name)
+        end
+      end
     end
 
     private def register_reopened_nested_type_name(full_name : String) : Nil
@@ -18887,7 +18937,9 @@ module Crystal::HIR
       record_nested_type_names(module_name, node.body)
       registered_self_class = false
 
-      if class_like_namespace?(module_name)
+      module_is_class_like = class_like_namespace?(module_name)
+
+      if module_is_class_like
         if @module_defs.delete(module_name)
           bump_module_defs_cache_version
           invalidate_type_cache_for_namespace(module_name)
@@ -18918,6 +18970,10 @@ module Crystal::HIR
                 bootstrap_trace_puts trace_message
               end
               full_nested_name = qualified_nested_type_name(module_name, nested_name)
+              if self_nested_module_name?(module_name, full_nested_name)
+                register_self_nested_module_members(module_name, member, source)
+                next
+              end
               register_nested_module(member, full_nested_name)
             when CrystalV2::Compiler::Frontend::ClassNode
               nested_name = class_name_from_node(member, source) || ""
@@ -19014,6 +19070,10 @@ module Crystal::HIR
           when CrystalV2::Compiler::Frontend::ModuleNode
             nested_name = module_name_from_node(member, source) || ""
             full_nested_name = qualified_nested_type_name(module_name, nested_name)
+            if self_nested_module_name?(module_name, full_nested_name)
+              register_self_nested_module_members(module_name, member, source)
+              next
+            end
             register_nested_module(member, full_nested_name)
           when CrystalV2::Compiler::Frontend::AliasNode
             safe_str_guard(member.name, "next")
@@ -19150,6 +19210,10 @@ module Crystal::HIR
             # Nested module: Foo::Bar (as module)
             nested_name = module_name_from_node(member) || ""
             full_nested_name = qualified_nested_type_name(module_name, nested_name)
+            if self_nested_module_name?(module_name, full_nested_name)
+              register_self_nested_module_members(module_name, member, source)
+              next
+            end
             register_module_with_name(member, full_nested_name)
           elsif member.is_a?(CrystalV2::Compiler::Frontend::ClassNode)
             # Register class/struct type alias and any aliases inside the class
@@ -22373,6 +22437,10 @@ module Crystal::HIR
             # Recursively register nested module aliases first
             nested_name = module_name_from_node(member) || ""
             full_nested_name = qualified_nested_type_name(full_name, nested_name)
+            if self_nested_module_name?(full_name, full_nested_name)
+              register_self_nested_module_members(full_name, member, source_text_for_arena_or_file(@arena))
+              next
+            end
             register_nested_module(member, full_nested_name)
           elsif member.is_a?(CrystalV2::Compiler::Frontend::ClassNode)
             # Register class/struct type alias and any aliases inside the class

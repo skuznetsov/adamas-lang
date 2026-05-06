@@ -3510,3 +3510,57 @@ Quadrumvirate:
   reducer is now the required guard.
 
 Trust: {F/G/R: 0.91/0.68/0.90} [verified]
+
+## LM-553 — Self-nested qualified module wrappers no longer recurse through registration
+
+Context: compiler/bootstrap/codegen, 2026-05-05, `codegen`.
+
+Root cause and fix:
+
+- After LM-552 and the pre-scan constant fix, produced `s2` full-prelude
+  `puts 42` reached a second `module_enter Float::FastFloat` and then trapped
+  before ordinary body pass traces.
+- Phase tracing localized the trap to a nested `ModuleNode` inside
+  `Float::FastFloat` whose recovered child name and canonical joined name were
+  both `Float::FastFloat`. Calling `register_nested_module` on that child sent
+  registration back into the same canonical owner.
+- A simple skip moved the full-prelude frontier but lost the nested
+  `ParsedNumberStringT` struct in the no-prelude namespace reducer. The final
+  fix keeps the non-recursion invariant while preserving wrapper-carried direct
+  nested types/aliases: self-wrapper names are deleted from the nested-name set,
+  recursive self module registration is bypassed, and direct class/enum/alias
+  members under the wrapper are registered under the owner.
+- A broader attempt to recursively flatten self-wrapper module bodies was
+  refuted: it passed host guards but produced `s2` moved back to an early
+  module-register Trace/BPT trap. Do not revive that shape without a smaller
+  invariant.
+
+Evidence:
+
+- `crystal build src/crystal_v2.cr -o /private/tmp/cv2_self_nested_final
+  --error-trace` passed.
+- Host guards passed:
+  `regression_tests/p2_qualified_module_namespace_no_prelude.sh
+  /private/tmp/cv2_self_nested_final`,
+  `regression_tests/p2_nested_module_registration_no_prelude.sh
+  /private/tmp/cv2_self_nested_final`, and
+  `regression_tests/p2_self_nested_module_registration_frontier.sh
+  /private/tmp/cv2_self_nested_final`.
+- `scripts/run_safe.sh /private/tmp/cv2_self_nested_final 300 4096
+  src/crystal_v2.cr -o /private/tmp/cv2_self_nested_final_s2/cv2_s2` built a
+  generated `s2` compiler with `[EXIT: 0]`.
+- Produced `s2` guards passed:
+  `regression_tests/p2_qualified_module_namespace_no_prelude.sh
+  /private/tmp/cv2_self_nested_final_s2/cv2_s2` and
+  `regression_tests/p2_self_nested_module_registration_frontier.sh
+  /private/tmp/cv2_self_nested_final_s2/cv2_s2`.
+
+Current boundary:
+
+- The self-recursive module-registration trap is closed, not the whole
+  full-prelude compile. The next visible root pattern is still type-name
+  pollution in nested module signature registration, e.g.
+  `Float::FastFloat::String`, `Float::FastFloat::Bool`, and earlier
+  `Float::FastFloat::UInt64`.
+
+Trust: {F/G/R: 0.89/0.60/0.88} [verified]

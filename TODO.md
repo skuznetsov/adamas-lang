@@ -30,21 +30,45 @@ Working policy:
 
 ## Current Checkpoint
 
+Stage2 self-nested module wrapper checkpoint (2026-05-05): generated `cv2_s2`
+now passes the module-registration trap that followed the pre-scan fix. Root
+shape: produced `s2` can represent a qualified reopen wrapper as a nested
+`ModuleNode` whose canonical name is the current owner itself
+(`Float::FastFloat -> Float::FastFloat`). Routing that node back through
+ordinary nested-module registration recurses into the same canonical owner and
+hits a Trace/BPT trap during full-prelude `puts 42`. Root fix: self-wrapper
+module names are removed from nested-name visibility, recursive self module
+registration is skipped, and direct nested types/aliases carried by that wrapper
+are still registered under the owner so the `ParsedNumberStringT` namespace
+guard stays intact. Evidence: `/private/tmp/cv2_self_nested_final` host build;
+`p2_qualified_module_namespace_no_prelude.sh`,
+`p2_nested_module_registration_no_prelude.sh`, and new
+`p2_self_nested_module_registration_frontier.sh` pass on the host compiler;
+`scripts/run_safe.sh /private/tmp/cv2_self_nested_final 300 4096
+src/crystal_v2.cr -o /private/tmp/cv2_self_nested_final_s2/cv2_s2` exits 0; and
+`p2_qualified_module_namespace_no_prelude.sh` plus
+`p2_self_nested_module_registration_frontier.sh` pass on the produced compiler.
+Refuted variant: recursively flattening self-wrapper module bodies into the
+owner was too broad and moved produced `s2` back to an early module-register
+Trace/BPT trap. Boundary: produced full-prelude `puts 42` now passes module
+registration under the frontier guard, but the wider clean `puts 42` compile is
+not yet an `s2 -> s3` unlock; suspicious parameter types such as
+`Float::FastFloat::String` / `Float::FastFloat::Bool` remain the next root
+pattern to localize.
+
 Stage2 pre-scan constant frontier checkpoint (2026-05-05): generated `cv2_s2`
-now passes CLI class/module constant pre-scan for full-prelude `puts 42`. Root
-fix: pre-scan keeps complex RHS constants name-visible without performing
+passes CLI class/module constant pre-scan for full-prelude `puts 42`. Root fix:
+pre-scan keeps complex RHS constants name-visible without performing
 registration-time literal/type/deferred-init work, while scalar Number/Bool/Char
 constants still get full metadata early enough for ivar defaults such as
 `IO::DEFAULT_BUFFER_SIZE`. Evidence: `/private/tmp/cv2_prescan_final` host
 build; `p2_macro_compare_versions_control_no_raw_sanitize.sh`,
-`p2_qualified_module_namespace_no_prelude.sh`, and new
+`p2_qualified_module_namespace_no_prelude.sh`, and
 `p2_prescan_complex_constants_frontier.sh` pass on both the host compiler and
 produced `/private/tmp/cv2_prescan_final_s2/cv2_s2`; and s1 -> s2 build exits 0
 under `scripts/run_safe.sh`. Refuted variants: all name-only pre-scan and
 `TypeRef::VOID` placeholders in `@constant_types` both lead to invalid LLVM
-`store ptr 32768`. Boundary: produced full-prelude `puts 42` still exits 133
-later during module/generic registration around `Float::FastFloat`, after
-`pre-scan constants done`.
+`store ptr 32768`.
 
 Stage2 source-backed initializer-parameter checkpoint (2026-05-01): class and
 module registration now avoid another stale frontend-slice boundary when
