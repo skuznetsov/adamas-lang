@@ -33,6 +33,12 @@ only a stale HIR artifact for a static/class method.
 Guard: `regression_tests/p2_stage2_static_call_named_llvm_no_prelude.sh`
 covers `Exception::CallStack.skip("x")`.
 
+The preferred MIR-level guard should emit MIR for the same reducer and verify:
+
+- the call target is the named static function;
+- the argument count matches the callee parameter count;
+- no synthetic receiver argument is inserted before the string argument.
+
 ## 4. Receiver Calls
 
 Receiver calls MUST include the runtime receiver as argument zero. Static calls

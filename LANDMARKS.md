@@ -3980,3 +3980,34 @@ Operational rule:
   falsifier, keep it as `[MISSING-FALSIFIER]` or `[FRONTIER]`, not VERIFIED.
 
 Trust: {F/G/R: 0.82/0.65/0.82} [verified-docs]
+
+## LM-561 — Self-hostile spec review closed first process gaps
+
+Context: compiler/bootstrap/process, 2026-05-08, `codegen`.
+
+Review findings addressed:
+
+- `[MISSING-FALSIFIER]` could become a permanent parking state. The falsifier
+  matrix now requires phase pressure (`current`, `next-touch`, `pre-s2-clean`,
+  or `later`) for each non-refuted row.
+- The original compiler was named as semantic oracle but not operationalized.
+  `00-bootstrap-contract.md` now requires original-vs-stage evidence for
+  language-behavior changes, or a stated semantic-line oracle when no
+  normalizer exists.
+- The active post-LLVM binary-output crash was only a residual note. It now has
+  `docs/specs/06-cli-output-contract.md` and CLI-output rows in the falsifier
+  matrix.
+- Generic identity was too abstract. `02-generic-template-registration.md` now
+  defines recommended `GenericTemplateKey` and `GenericInstanceKey` shapes and
+  rejects empty owner leaves / repeated adjacent owner segments.
+- MIR receiver/static ABI had only an LLVM-level guard. `03-mir-call-abi.md`
+  now records the desired MIR-shape guard for the static-call reducer.
+
+Operational impact:
+
+- Fixes in the current CLI/output frontier must not cite `--emit llvm-ir`
+  success as binary-output evidence.
+- New semantic fixes should include original-vs-stage evidence unless the
+  change is explicitly limited to internal stage parity.
+
+Trust: {F/G/R: 0.84/0.70/0.84} [verified-docs]

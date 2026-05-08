@@ -40,6 +40,13 @@ when fixing new frontiers: every meaningful root fix should either satisfy an
 existing row in `docs/specs/05-falsifier-matrix.md` or add/update a row with a
 small guard.
 
+Self-hostile spec review checkpoint (2026-05-08): after LM-561, the spec layer
+has explicit pressure for `[MISSING-FALSIFIER]` rows, a first original-vs-stage
+semantic oracle rule, a concrete generic template key shape, a MIR static-call
+shape guard brief, and `docs/specs/06-cli-output-contract.md` for the active
+post-LLVM file-output/outer-rescue frontier. Do not treat `--emit llvm-ir`
+success as evidence for normal binary output.
+
 Stage2 static-call LLVM emission checkpoint (2026-05-08): after LM-559,
 produced `s2` no-prelude LLVM IR for `Exception::CallStack.skip("x")` now emits
 the named static callee

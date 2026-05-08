@@ -23,6 +23,7 @@ time.
 | `03-mir-call-abi.md` | Receiver/static call split, function identity, and MIR return ABI. |
 | `04-llvm-emission.md` | LLVM callee naming, return spelling, and backend lookup invariants. |
 | `05-falsifier-matrix.md` | Claim-to-reproducer mapping for the above contracts. |
+| `06-cli-output-contract.md` | CLI compile modes, output side effects, and post-LLVM tail behavior. |
 
 ## Contract Language
 
@@ -41,3 +42,5 @@ Every normative claim should have one of:
 - a `[MISSING-FALSIFIER]` marker in `05-falsifier-matrix.md`.
 
 Claims without a falsifier are design intent, not verified bootstrap contract.
+`[MISSING-FALSIFIER]` rows must name the phase or frontier that needs the guard;
+otherwise the marker is just backlog noise.

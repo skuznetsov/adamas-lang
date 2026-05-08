@@ -49,6 +49,28 @@ String rendering is not identity. Names such as `Iterator::`,
 `Steppable::`, or repeated `Indexable::Indexable::...` are bug signatures, not
 valid canonical identities.
 
+Recommended key shape:
+
+```text
+GenericTemplateKey(
+  owner_name,
+  template_leaf_name,
+  source_def_identity,
+  declared_type_param_names
+)
+
+GenericInstanceKey(
+  template_key,
+  receiver_type_identity,
+  specialization_arg_identities,
+  lexical_context_owner
+)
+```
+
+The rendered display name is derived from the key. It is not the key itself.
+The renderer MUST reject empty owner leaves and repeated adjacent owner
+segments unless the source explicitly declares that nesting.
+
 ## 4. Nested Types in Generic Owners
 
 Nested types inside generic owners MUST be recorded under the canonical owner

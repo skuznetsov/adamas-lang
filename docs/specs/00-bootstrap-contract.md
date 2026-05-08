@@ -48,6 +48,19 @@ Two stage outputs are semantically equivalent when the same Crystal input:
 - produces runtime behavior equivalent to the original compiler for the
   covered feature.
 
+The original compiler is the source semantic oracle. A stage-to-stage guard is
+not enough when a change touches language behavior. Such changes SHOULD include
+an original-vs-stage oracle:
+
+```bash
+crystal <case>.cr --emit llvm-ir --no-link -o /tmp/original_case
+<stage-compiler> <case>.cr --emit llvm-ir --no-link -o /tmp/stage_case
+```
+
+The comparison MUST normalize non-semantic ids and metadata before deciding
+equivalence. If no normalizer exists for the feature, the guard must state the
+specific semantic lines it compares.
+
 ### 3.2 HIR Equivalence
 
 Normalized HIR equivalence ignores:
@@ -97,6 +110,9 @@ Examples:
 - `regression_tests/p2_qualified_module_namespace_no_prelude.sh`
 - `regression_tests/p2_type_literal_name_query_no_stub.sh`
 - `regression_tests/p2_stage2_static_call_named_llvm_no_prelude.sh`
+
+Fast gates that compare stage outputs SHOULD also state whether they compare
+against the original compiler, `stage1`, produced `s2`, or all three.
 
 ### 4.2 Integration Gate
 
