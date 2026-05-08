@@ -82,3 +82,13 @@ Each non-refuted row has a phase pressure:
 | R2 | Caching `node.body` as a broad generic-template registration fix. | Did not move the frontier. | [REFUTED] |
 | R3 | Source-gating generic-template nested-type body scan. | Failed earlier around `Crystal::PointerLinkedList` / trace paths. | [REFUTED] |
 | R4 | Re-enabling source-backed top-level return annotations after LM-558. | Regressed produced `s2` full-prelude `puts 42` to earlier class registration crash around `class register idx=51/104`. | [REFUTED] |
+
+## 9. Bootstrap Investigation Process
+
+| ID | Claim | Source | Smallest Falsifier | Phase | Status |
+|----|-------|--------|--------------------|-------|--------|
+| P1 | Trace absence is not enough to prove a function was not entered. | LM-565 | A tail/root claim relies only on a missing trace line when lldb, breakpoint, or IR control-flow evidence is practical. | current | [FALSIFIABLE] |
+| P2 | Small helpers in self-host critical paths are semantic risk until s1->s2 proves otherwise. | LM-565 | A helper/refactor in compiler bootstrap code is committed with only host or no-prelude evidence after touching a produced-stage path. | current | [FALSIFIABLE] |
+| P3 | Sidecar model output is candidate evidence, not acceptance evidence. | LM-565 | A fix adopts Cursor/Grok/Spark claims without local reproduction or a guard. | current | [FALSIFIABLE] |
+| P4 | Bootstrap cache/IO/hash code is runtime surface, not harmless infrastructure. | LM-564, LM-565 | A cache or filesystem-tail change lacks a produced-stage guard covering the path that consumes the cache/hash result. | next-touch | [FALSIFIABLE] |
+| P5 | A gate-local root fix must name deeper roots that remain open. | LM-564, LM-565 | LANDMARK/TODO wording claims a subsystem is fixed when the evidence only clears a current bootstrap gate. | current | [FALSIFIABLE] |

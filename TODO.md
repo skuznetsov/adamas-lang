@@ -69,6 +69,15 @@ produced `s2`. Boundary: this clears the active no-prelude CLI/output tail; the
 full-prelude generic/template `puts 42` row remains the next `pre-s2-clean`
 gate, not a solved smoke.
 
+Bootstrap investigation process checkpoint (2026-05-08): after LM-565, the
+process specs record the patterns learned from the C2 cycle. Missing trace
+lines are not proof that a function was not entered; use lldb/breakpoints/IR
+when practical. Small helpers in self-host critical paths require fresh
+`s1 -> s2` evidence. Cursor/Grok/Spark output is candidate evidence only.
+Cache/hash/filesystem tails are bootstrap runtime surface, not harmless
+infrastructure. A gate-local root fix must name deeper subsystem roots that
+remain open.
+
 Stage2 static-call LLVM emission checkpoint (2026-05-08): after LM-559,
 produced `s2` no-prelude LLVM IR for `Exception::CallStack.skip("x")` now emits
 the named static callee

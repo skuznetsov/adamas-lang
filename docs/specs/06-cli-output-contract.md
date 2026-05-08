@@ -117,3 +117,27 @@ point and first failing point among:
 
 If a probe changes the frontier, record that as evidence decay and rerun the
 unprobed reducer before claiming the root.
+
+## 8. Investigation Rules
+
+Post-LLVM tail work must treat logs as hints, not proof. If a trace line is
+missing but a debugger or generated IR can cheaply confirm control flow, use
+that stronger anchor before concluding that a function was not entered.
+
+For produced-stage crashes, breakpoint these runtime edges early when relevant:
+
+- `__crystal_v2_raise`
+- `__crystal_v2_raise_msg`
+- `__crystal_v2_reraise`
+- the first function named in the suspected tail, for example `compile_llvm_ir`
+  or `file_sha256`
+
+Any helper or refactor in the bootstrap tail, even if behavior-preserving on
+the host, must be treated as evidence-decaying until `s1 -> s2` passes again.
+Recent evidence: extracting a tiny FNV helper changed the produced-stage call
+graph enough to regress self-build, while the inline form passed.
+
+Sidecar reviews from Cursor/Grok/Spark can propose hypotheses and adversarial
+checks, but they do not upgrade a claim beyond candidate evidence. Local
+reproduction, produced-stage guards, and the current repo state decide
+acceptance.

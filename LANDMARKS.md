@@ -4107,3 +4107,38 @@ Boundary:
   open.
 
 Trust: {F/G/R: 0.88/0.58/0.88} [verified]
+
+## LM-565 — Bootstrap investigation rules from the C2 cycle
+
+Context: compiler/bootstrap/process, 2026-05-08, `codegen`.
+
+Patterns extracted from the C2 CLI-output tail cycle:
+
+- `FRONTIER_MIRAGE`: absence of an expected trace line does not prove that the
+  target function was not entered. In LM-564, the first `DEBUG_LLVM_TAIL` trace
+  did not print, but lldb showed that produced `s2` reached
+  `compile_llvm_ir -> file_sha256` and then crashed in the `File.open`/`Dir.open`
+  corridor.
+- `HELPER_PERTURBS_STAGE2`: small helper/refactor changes can perturb the
+  produced-stage call graph. Extracting a tiny FNV update helper for
+  `file_sha256` regressed self-build with `ExprId out of bounds`, while the
+  inline form passed `s1 -> s2`.
+- `SIDECAR_IS_FALSIFIER_NOT_JUDGE`: Cursor A2A was useful as a hostile review
+  sidecar, especially for pushing on file-close/cache risks, but its output
+  remained candidate evidence until local lldb and produced-stage guards
+  confirmed or refuted it.
+- `CACHE_IS_RUNTIME_SURFACE`: LLVM cache and hash code participates in the
+  bootstrap runtime path. It must be covered by produced-stage evidence when it
+  is touched.
+- `WORKAROUND_SCOPE_DRIFT`: gate-local fixes must avoid wording that claims a
+  deeper subsystem is fixed. LM-564 clears the CLI/cache-tail gate while leaving
+  the nil-exception `Dir.open`/rescue path as a separate risk.
+
+Process updates:
+
+- `docs/specs/05-falsifier-matrix.md` now has process rows P1-P5 for trace,
+  helper, sidecar, cache/IO, and scope-drift checks.
+- `docs/specs/06-cli-output-contract.md` now requires stronger control-flow
+  anchors for tail work when lldb/breakpoints/IR are practical.
+
+Trust: {F/G/R: 0.82/0.68/0.84} [verified-process]
