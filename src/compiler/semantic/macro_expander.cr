@@ -1,5 +1,4 @@
 require "set"
-require "semantic_version"
 require "../frontend/ast"
 require "../frontend/lexer"
 require "../frontend/parser"
@@ -455,8 +454,11 @@ module CrystalV2
         end
 
         def expand_top_level_text(node_id : ExprId, *, variables : Hash(String, MacroValue) = {} of String => MacroValue, owner_type : ClassSymbol? = nil, scope : SymbolTable? = nil) : String
+          debug_top_level = !!ENV["DEBUG_MACRO_TOPLEVEL_PHASE"]?
+          STDERR.puts "[MACRO_TOPLEVEL] phase=enter node=#{node_id.index}" if debug_top_level
           @diagnostics.clear
           @last_output = nil
+          STDERR.puts "[MACRO_TOPLEVEL] phase=after_reset depth=#{@depth}" if debug_top_level
 
           if @depth >= MAX_DEPTH
             emit_error("Macro recursion depth exceeded (#{MAX_DEPTH})", node_id)
@@ -464,9 +466,12 @@ module CrystalV2
           end
 
           @depth += 1
+          STDERR.puts "[MACRO_TOPLEVEL] phase=after_depth_inc depth=#{@depth}" if debug_top_level
           begin
             context = Context.new(variables, {} of String => String, owner_type, @depth, @flags, nil, scope)
+            STDERR.puts "[MACRO_TOPLEVEL] phase=after_context owner=#{owner_type ? 1 : 0} scope=#{scope ? 1 : 0}" if debug_top_level
             output = expand_top_level_node(node_id, context)
+            STDERR.puts "[MACRO_TOPLEVEL] phase=after_expand_node bytes=#{output.bytesize}" if debug_top_level
             @last_output = output
             if (match = ENV["DEBUG_MACRO_OUTPUT_MATCH"]?) && output.includes?(match)
               STDERR.puts "[MACRO_OUTPUT_MATCH] top_level_text match=#{match.inspect} bytes=#{output.bytesize}"
@@ -479,6 +484,7 @@ module CrystalV2
             output
           ensure
             @depth -= 1
+            STDERR.puts "[MACRO_TOPLEVEL] phase=ensure depth=#{@depth}" if debug_top_level
           end
         end
 
@@ -540,30 +546,43 @@ module CrystalV2
               context = Context.new(variables, {} of String => String, owner_type, @depth, @flags, block_id, nil, preserve_unresolved_expressions)
               variables[raw_name] = macro_value_from_default_source(default_source, context, macro_symbol.node_id)
             else
-              variables[raw_name] = MACRO_NIL
+              variables[raw_name] = macro_nil_value
             end
           end
 
           # Provide a truthy `block` variable when macro call includes a block.
-          variables["block"] = block_id ? MacroBoolValue.new(true) : MACRO_NIL
+          variables["block"] = block_id ? MacroBoolValue.new(true) : macro_nil_value
 
           Context.new(variables, {} of String => String, owner_type, @depth, @flags, block_id, nil, preserve_unresolved_expressions)
         end
 
         private def macro_value_from_default_source(source : String, context : Context, location : ExprId) : MacroValue
           expr_id = reparse(source, location)
-          return MACRO_NIL if expr_id.invalid?
+          return macro_nil_value if expr_id.invalid?
           evaluate_to_macro_value(expr_id, context)
         end
 
         private def expand_top_level_node(node_id : ExprId, context : Context) : String
+          debug_top_level = !!ENV["DEBUG_MACRO_TOPLEVEL_PHASE"]?
+          STDERR.puts "[MACRO_TOPLEVEL_NODE] phase=enter node=#{node_id.index}" if debug_top_level
           node = @arena[node_id]
+          STDERR.puts "[MACRO_TOPLEVEL_NODE] phase=after_fetch kind=#{Frontend.node_kind(node).value}" if debug_top_level
 
           case node
           when Frontend::MacroLiteralNode
-            expand_raw_textual_top_level_macro(node, context) || evaluate_macro_body(node_id, context)
+            STDERR.puts "[MACRO_TOPLEVEL_NODE] phase=macro_literal pieces=#{node.pieces.size}" if debug_top_level
+            if raw_output = expand_raw_textual_top_level_macro(node, context)
+              raw_output
+            else
+              STDERR.puts "[MACRO_TOPLEVEL_NODE] phase=macro_literal before_evaluate" if debug_top_level
+              evaluated = evaluate_macro_body(node_id, context)
+              STDERR.puts "[MACRO_TOPLEVEL_NODE] phase=macro_literal after_evaluate bytes=#{evaluated.bytesize}" if debug_top_level
+              evaluated
+            end
           when Frontend::MacroIfNode
+            STDERR.puts "[MACRO_TOPLEVEL_NODE] phase=macro_if before_condition" if debug_top_level
             condition_result, body_context = evaluate_condition(node.condition, context)
+            STDERR.puts "[MACRO_TOPLEVEL_NODE] phase=macro_if after_condition result=#{condition_result ? 1 : 0}" if debug_top_level
             if condition_result
               expand_top_level_node(node.then_body, body_context)
             elsif else_body = node.else_body
@@ -613,18 +632,27 @@ module CrystalV2
           node : Frontend::MacroLiteralNode,
           context : Context
         ) : String?
+          debug_top_level = !!ENV["DEBUG_MACRO_TOPLEVEL_PHASE"]?
+          STDERR.puts "[MACRO_RAW_TOPLEVEL] phase=enter pieces=#{node.pieces.size}" if debug_top_level
           return nil unless node.pieces.size == 1
 
-          piece = node.pieces[0]
+          piece = node.pieces.unsafe_fetch(0)
+          STDERR.puts "[MACRO_RAW_TOPLEVEL] phase=after_piece kind=#{piece.kind.value}" if debug_top_level
           return nil unless piece.kind.text?
 
           text = piece.text
+          STDERR.puts "[MACRO_RAW_TOPLEVEL] phase=after_text has_text=#{text ? 1 : 0} bytes=#{text ? text.not_nil!.bytesize : 0}" if debug_top_level
           return nil unless text && text.includes?("{%")
+          STDERR.puts "[MACRO_RAW_TOPLEVEL] phase=has_control" if debug_top_level
 
           wrapped = "macro __semantic_wrapped__\n#{text}\nend"
+          STDERR.puts "[MACRO_RAW_TOPLEVEL] phase=after_wrap bytes=#{wrapped.bytesize}" if debug_top_level
           lexer = Frontend::Lexer.new(wrapped)
+          STDERR.puts "[MACRO_RAW_TOPLEVEL] phase=after_lexer" if debug_top_level
           parser = Frontend::Parser.new(lexer, recovery_mode: @recovery_mode)
+          STDERR.puts "[MACRO_RAW_TOPLEVEL] phase=after_parser" if debug_top_level
           program = parser.parse_program
+          STDERR.puts "[MACRO_RAW_TOPLEVEL] phase=after_parse diagnostics=#{parser.diagnostics.size}" if debug_top_level
           return nil if parser.diagnostics.any?
 
           root_id = program.roots.first?
@@ -638,8 +666,8 @@ module CrystalV2
 
           wrapped_body = program.arena[body_id]
           if wrapped_body.is_a?(Frontend::MacroLiteralNode)
-            if wrapped_body.pieces.size == 1 && wrapped_body.pieces[0].kind.text?
-              wrapped_text = wrapped_body.pieces[0].text
+            if wrapped_body.pieces.size == 1 && wrapped_body.pieces.unsafe_fetch(0).kind.text?
+              wrapped_text = wrapped_body.pieces.unsafe_fetch(0).text
               return nil if wrapped_text && wrapped_text.includes?("{%")
             end
           end
@@ -656,6 +684,7 @@ module CrystalV2
             source_sink: @source_sink
           )
           expander.macro_source_provider = @macro_source_provider
+          STDERR.puts "[MACRO_RAW_TOPLEVEL] phase=before_nested_expand" if debug_top_level
 
           output = expander.expand_top_level_text(
             body_id,
@@ -663,13 +692,15 @@ module CrystalV2
             owner_type: context.owner_type,
             scope: context.scope
           )
+          STDERR.puts "[MACRO_RAW_TOPLEVEL] phase=after_nested_expand bytes=#{output.bytesize}" if debug_top_level
           expander.diagnostics.each { |entry| @diagnostics << entry }
           output
         end
 
         # Convert expression to string representation (for legacy/simple use)
         private def stringify_expr(expr_id : ExprId) : String
-          node = @arena[expr_id]
+          node = node_for_expr?(expr_id)
+          return "" unless node
 
           case Frontend.node_kind(node)
           when .number?, .string?, .identifier?, .bool?
@@ -686,9 +717,22 @@ module CrystalV2
           MacroNumberValue.from_literal(literal) || MacroNumberValue.new(0_i64, literal)
         end
 
+        private def macro_nil_value : MacroNilValue
+          MacroNilValue.new
+        end
+
+        private def node_for_expr?(expr_id : ExprId) : TypedNode?
+          return nil if expr_id.null_ptr?
+          return nil if expr_id.invalid?
+          idx = expr_id.index
+          return nil if idx < 0 || idx >= @arena.size
+          @arena[expr_id]
+        end
+
         # Convert AST expression to MacroValue (for simple literals only)
         private def expr_to_macro_value(expr_id : ExprId) : MacroValue
-          node = @arena[expr_id]
+          node = node_for_expr?(expr_id)
+          return macro_nil_value unless node
 
           if node.is_a?(Frontend::MacroExpressionNode)
             return expr_to_macro_value(node.expression)
@@ -715,7 +759,7 @@ module CrystalV2
             literal = Frontend.node_literal_string(node)
             MacroBoolValue.new(literal == "true")
           when Frontend::NodeKind::Nil
-            MACRO_NIL
+            macro_nil_value
           when .identifier?, .constant?
             name = Frontend.node_literal_string(node) || ""
             resolve_scoped_macro_value(name, Context.new) || MacroIdValue.new(name)
@@ -756,7 +800,8 @@ module CrystalV2
         # Evaluate expression and return MacroValue (supports complex expressions)
         # Used for annotation access: {% if ann = @type.annotation(Foo) %}
         private def evaluate_to_macro_value(expr_id : ExprId, context : Context) : MacroValue
-          node = @arena[expr_id]
+          node = node_for_expr?(expr_id)
+          return macro_nil_value unless node
 
           # Unwrap MacroExpressionNode
           if node.is_a?(Frontend::MacroExpressionNode)
@@ -795,7 +840,7 @@ module CrystalV2
             literal = Frontend.node_literal_string(node)
             MacroBoolValue.new(literal == "true")
           when Frontend::NodeKind::Nil
-            MACRO_NIL
+            macro_nil_value
           when .identifier?, .constant?
             name = Frontend.node_literal_string(node)
             if name && (macro_val = context.variables[name]?)
@@ -848,7 +893,7 @@ module CrystalV2
                 block_idx = context.block_id.try(&.index) || -1
                 STDERR.puts "[MACRO_YIELD] block_id=#{block_idx} len=#{text.bytesize}"
               end
-              return text.empty? ? MACRO_NIL : MacroIdValue.new(text)
+              return text.empty? ? macro_nil_value : MacroIdValue.new(text)
             elsif node.is_a?(Frontend::IfNode)
               cond_result, cond_ctx = evaluate_condition(node.condition, context)
               if cond_result
@@ -865,7 +910,7 @@ module CrystalV2
               if else_body = node.else_body
                 return evaluate_body_expressions(else_body, context)
               end
-              return MACRO_NIL
+              return macro_nil_value
             elsif node.is_a?(Frontend::TypeDeclarationNode) || node.is_a?(Frontend::AssignNode) || node.is_a?(Frontend::GenericNode)
               return MacroNodeValue.new(expr_id, @arena, @string_pool)
             elsif node.is_a?(Frontend::PathNode)
@@ -873,7 +918,7 @@ module CrystalV2
               if scoped_macro_value = resolve_scoped_macro_value(name, context)
                 return scoped_macro_value
               end
-              return name.empty? ? MACRO_NIL : MacroIdValue.new(name)
+              return name.empty? ? macro_nil_value : MacroIdValue.new(name)
             end
 
             MacroNodeValue.new(expr_id, @arena, @string_pool)
@@ -1021,7 +1066,7 @@ module CrystalV2
           end
 
           fallback = evaluate_member_access_expression(node, context)
-          fallback.empty? ? MACRO_NIL : MacroIdValue.new(fallback)
+          fallback.empty? ? macro_nil_value : MacroIdValue.new(fallback)
         end
 
         private def evaluate_binary_to_macro_value(node : Frontend::BinaryNode, context : Context) : MacroValue
@@ -1051,8 +1096,19 @@ module CrystalV2
         # Supports annotation() calls returning MacroAnnotationValue
         private def evaluate_call_to_macro_value(node : Frontend::CallNode, context : Context) : MacroValue
           callee_id = node.callee
-          return MACRO_NIL unless callee_id
+          return macro_nil_value unless callee_id
           callee = @arena[callee_id]
+          if callee.is_a?(Frontend::IdentifierNode)
+            direct_name = source_backed_literal_string(callee_id, callee)
+            if ENV["DEBUG_MACRO_IF_PHASE"]?
+              STDERR.puts "[MACRO_IF_PHASE] call_direct_name size=#{direct_name ? direct_name.bytesize : -1} text=#{direct_name || ""}"
+            end
+            if ascii_bytes_eq?(direct_name, "flag?") || ascii_bytes_eq?(direct_name, "flag")
+              return MacroBoolValue.new(evaluate_flag_call_bool(node, context))
+            elsif ascii_bytes_eq?(direct_name, "compare_versions")
+              return evaluate_compare_versions_call(node, context)
+            end
+          end
           if ENV["DEBUG_MACRO_CALL"]?
             literal = Frontend.node_literal_string(callee) if callee.is_a?(Frontend::IdentifierNode)
             STDERR.puts "[MACRO_CALL] callee=#{callee.class} literal=#{literal.inspect if literal}"
@@ -1068,13 +1124,6 @@ module CrystalV2
             end
             result = receiver.call_method(member, args, named_arg_values)
             return result unless result.is_a?(MacroNilValue)
-          end
-
-          if callee.is_a?(Frontend::IdentifierNode)
-            case Frontend.node_literal_string(callee)
-            when "compare_versions"
-              return evaluate_compare_versions_call(node, context)
-            end
           end
 
           if callee.is_a?(Frontend::MemberAccessNode)
@@ -1118,7 +1167,7 @@ module CrystalV2
           # Fallback: evaluate as string and wrap
           str_val = evaluate_call_expression(node, context)
           if str_val.empty?
-            MACRO_NIL
+            macro_nil_value
           else
             MacroIdValue.new(str_val)
           end
@@ -1127,20 +1176,189 @@ module CrystalV2
         private def evaluate_compare_versions_call(node : Frontend::CallNode, context : Context) : MacroValue
           if node.args.size != 2
             emit_error("compare_versions expects exactly 2 arguments", node.callee)
-            return MACRO_NIL
+            return macro_nil_value
           end
 
           first = macro_id(evaluate_to_macro_value(node.args[0], context).to_id)
           second = macro_id(evaluate_to_macro_value(node.args[1], context).to_id)
 
-          begin
-            first_version = SemanticVersion.parse(first)
-            second_version = SemanticVersion.parse(second)
-            MacroNumberValue.new((first_version <=> second_version).to_i64)
-          rescue ex
-            emit_error("compare_versions expects valid semantic versions: #{ex.message}", node.callee)
-            MACRO_NIL
+          if cmp = compare_macro_version_strings(first, second)
+            MacroNumberValue.new(cmp)
+          else
+            emit_error("compare_versions expects valid semantic versions", node.callee)
+            macro_nil_value
           end
+        end
+
+        private record MacroSemver, major : Int64, minor : Int64, patch : Int64, prerelease : String?
+
+        private def compare_macro_version_strings(left : String, right : String) : Int64?
+          left_version = parse_macro_semver(left)
+          right_version = parse_macro_semver(right)
+          return nil unless left_version && right_version
+
+          return -1_i64 if left_version.major < right_version.major
+          return 1_i64 if left_version.major > right_version.major
+          return -1_i64 if left_version.minor < right_version.minor
+          return 1_i64 if left_version.minor > right_version.minor
+          return -1_i64 if left_version.patch < right_version.patch
+          return 1_i64 if left_version.patch > right_version.patch
+
+          compare_macro_prerelease(left_version.prerelease, right_version.prerelease)
+        end
+
+        private def parse_macro_semver(text : String) : MacroSemver?
+          index = 0
+          major_part = read_macro_version_number(text, index)
+          return nil unless major_part
+          major, index = major_part
+          return nil unless index < text.bytesize && text.byte_at(index) == '.'.ord.to_u8
+          index += 1
+
+          minor_part = read_macro_version_number(text, index)
+          return nil unless minor_part
+          minor, index = minor_part
+          return nil unless index < text.bytesize && text.byte_at(index) == '.'.ord.to_u8
+          index += 1
+
+          patch_part = read_macro_version_number(text, index)
+          return nil unless patch_part
+          patch, index = patch_part
+
+          prerelease = nil
+          if index < text.bytesize && text.byte_at(index) == '-'.ord.to_u8
+            prerelease_start = index + 1
+            index = prerelease_start
+            while index < text.bytesize && text.byte_at(index) != '+'.ord.to_u8
+              return nil unless macro_semver_identifier_byte?(text.byte_at(index)) || text.byte_at(index) == '.'.ord.to_u8
+              index += 1
+            end
+            return nil if index == prerelease_start
+            prerelease = text.byte_slice(prerelease_start, index - prerelease_start)
+          end
+
+          if index < text.bytesize && text.byte_at(index) == '+'.ord.to_u8
+            index += 1
+            return nil if index >= text.bytesize
+            while index < text.bytesize
+              return nil unless macro_semver_identifier_byte?(text.byte_at(index)) || text.byte_at(index) == '.'.ord.to_u8
+              index += 1
+            end
+          end
+
+          return nil unless index == text.bytesize
+          MacroSemver.new(major, minor, patch, prerelease)
+        end
+
+        private def read_macro_version_number(text : String, start_index : Int32) : Tuple(Int64, Int32)?
+          index = start_index
+          return nil if index >= text.bytesize
+          return nil unless ascii_digit_byte?(text.byte_at(index))
+
+          value = 0_i64
+          while index < text.bytesize && ascii_digit_byte?(text.byte_at(index))
+            value = value * 10 + (text.byte_at(index).to_i64 - '0'.ord.to_i64)
+            index += 1
+          end
+          {value, index}
+        end
+
+        private def compare_macro_prerelease(left : String?, right : String?) : Int64
+          if left
+            return -1_i64 unless right
+          else
+            return right ? 1_i64 : 0_i64
+          end
+
+          left_text = left.not_nil!
+          right_text = right.not_nil!
+          left_index = 0
+          right_index = 0
+
+          loop do
+            left_end = macro_prerelease_identifier_end(left_text, left_index)
+            right_end = macro_prerelease_identifier_end(right_text, right_index)
+            cmp = compare_macro_prerelease_identifier(left_text, left_index, left_end, right_text, right_index, right_end)
+            return cmp unless cmp == 0
+
+            left_done = left_end >= left_text.bytesize
+            right_done = right_end >= right_text.bytesize
+            return 0_i64 if left_done && right_done
+            return -1_i64 if left_done
+            return 1_i64 if right_done
+            left_index = left_end + 1
+            right_index = right_end + 1
+          end
+        end
+
+        private def macro_prerelease_identifier_end(text : String, start_index : Int32) : Int32
+          index = start_index
+          while index < text.bytesize && text.byte_at(index) != '.'.ord.to_u8
+            index += 1
+          end
+          index
+        end
+
+        private def compare_macro_prerelease_identifier(left : String, left_start : Int32, left_end : Int32, right : String, right_start : Int32, right_end : Int32) : Int64
+          left_numeric = macro_prerelease_identifier_numeric?(left, left_start, left_end)
+          right_numeric = macro_prerelease_identifier_numeric?(right, right_start, right_end)
+          if left_numeric && right_numeric
+            left_value = macro_prerelease_identifier_number(left, left_start, left_end)
+            right_value = macro_prerelease_identifier_number(right, right_start, right_end)
+            return -1_i64 if left_value < right_value
+            return 1_i64 if left_value > right_value
+            return 0_i64
+          end
+          return -1_i64 if left_numeric && !right_numeric
+          return 1_i64 if !left_numeric && right_numeric
+          compare_macro_prerelease_identifier_lex(left, left_start, left_end, right, right_start, right_end)
+        end
+
+        private def macro_prerelease_identifier_numeric?(text : String, start_index : Int32, end_index : Int32) : Bool
+          return false if start_index >= end_index
+          index = start_index
+          while index < end_index
+            return false unless ascii_digit_byte?(text.byte_at(index))
+            index += 1
+          end
+          true
+        end
+
+        private def macro_prerelease_identifier_number(text : String, start_index : Int32, end_index : Int32) : Int64
+          value = 0_i64
+          index = start_index
+          while index < end_index
+            value = value * 10 + (text.byte_at(index).to_i64 - '0'.ord.to_i64)
+            index += 1
+          end
+          value
+        end
+
+        private def compare_macro_prerelease_identifier_lex(left : String, left_start : Int32, left_end : Int32, right : String, right_start : Int32, right_end : Int32) : Int64
+          left_index = left_start
+          right_index = right_start
+          while left_index < left_end && right_index < right_end
+            left_byte = left.byte_at(left_index)
+            right_byte = right.byte_at(right_index)
+            return -1_i64 if left_byte < right_byte
+            return 1_i64 if left_byte > right_byte
+            left_index += 1
+            right_index += 1
+          end
+          return -1_i64 if left_index >= left_end && right_index < right_end
+          return 1_i64 if right_index >= right_end && left_index < left_end
+          0_i64
+        end
+
+        private def ascii_digit_byte?(byte : UInt8) : Bool
+          byte >= '0'.ord.to_u8 && byte <= '9'.ord.to_u8
+        end
+
+        private def macro_semver_identifier_byte?(byte : UInt8) : Bool
+          ascii_digit_byte?(byte) ||
+            (byte >= 'a'.ord.to_u8 && byte <= 'z'.ord.to_u8) ||
+            (byte >= 'A'.ord.to_u8 && byte <= 'Z'.ord.to_u8) ||
+            byte == '-'.ord.to_u8
         end
 
         private def evaluate_has_constant_call(symbol : Symbol, node : Frontend::CallNode, context : Context) : MacroValue
@@ -1203,14 +1421,32 @@ module CrystalV2
           node : Frontend::CallNode,
           context : Context
         ) : {MacroValue, String, Array(MacroValue), Hash(String, MacroValue)?, Frontend::BlockNode?}?
+          if ENV["DEBUG_MACRO_IF_PHASE"]?
+            STDERR.puts "[MACRO_IF_PHASE] unwrap enter args=#{node.args.size}"
+          end
           callee = @arena[node.callee]
+          if ENV["DEBUG_MACRO_IF_PHASE"]?
+            STDERR.puts "[MACRO_IF_PHASE] unwrap after_callee kind=#{Frontend.node_kind(callee).value}"
+          end
           return nil unless callee.is_a?(Frontend::IdentifierNode)
           return nil unless node.args.size == 1
 
-          inner_node = @arena[node.args[0]]
+          if ENV["DEBUG_MACRO_IF_PHASE"]?
+            STDERR.puts "[MACRO_IF_PHASE] unwrap before_arg0"
+          end
+          inner_node = @arena[node.args.unsafe_fetch(0)]
+          if ENV["DEBUG_MACRO_IF_PHASE"]?
+            STDERR.puts "[MACRO_IF_PHASE] unwrap after_arg0 kind=#{Frontend.node_kind(inner_node).value}"
+          end
           return nil unless inner_node.is_a?(Frontend::CallNode)
 
+          if ENV["DEBUG_MACRO_IF_PHASE"]?
+            STDERR.puts "[MACRO_IF_PHASE] unwrap before_inner_callee"
+          end
           inner_callee = @arena[inner_node.callee]
+          if ENV["DEBUG_MACRO_IF_PHASE"]?
+            STDERR.puts "[MACRO_IF_PHASE] unwrap after_inner_callee kind=#{Frontend.node_kind(inner_callee).value}"
+          end
           return nil unless inner_callee.is_a?(Frontend::MemberAccessNode)
 
           inner_obj = @arena[inner_callee.object]
@@ -1292,7 +1528,7 @@ module CrystalV2
             end
             return MacroArrayValue.new(results)
           else
-            return MACRO_NIL
+            return macro_nil_value
           end
         end
 
@@ -1305,7 +1541,7 @@ module CrystalV2
           if params = block.params
             params.each_with_index do |param, idx|
               next unless param_name = param.name
-              value = values[idx]? || MACRO_NIL
+              value = values[idx]? || macro_nil_value
               scoped = scoped.with_variable(intern_name(param_name), value)
             end
           end
@@ -1339,7 +1575,7 @@ module CrystalV2
             end
           end
 
-          result = MACRO_NIL
+          result = macro_nil_value
           block.body.each do |expr_id|
             result = evaluate_to_macro_value(expr_id, scoped)
           end
@@ -1347,7 +1583,7 @@ module CrystalV2
         end
 
         private def evaluate_body_expressions(exprs : Array(ExprId), context : Context) : MacroValue
-          result = MACRO_NIL
+          result = macro_nil_value
           exprs.each do |expr_id|
             result = evaluate_to_macro_value(expr_id, context)
           end
@@ -1408,7 +1644,7 @@ module CrystalV2
                   ann_val.arena = @arena
                   return ann_val
                 end
-                return MACRO_NIL
+                return macro_nil_value
               else # annotations
                 arr = matching.map do |ann|
                   ann_val = MacroAnnotationValue.new(ann)
@@ -1418,7 +1654,7 @@ module CrystalV2
                 return MacroArrayValue.new(arr)
               end
             end
-            return MACRO_NIL
+            return macro_nil_value
           end
 
           # ivar.annotation(Foo) where ivar is a macro variable
@@ -1460,7 +1696,7 @@ module CrystalV2
                   ann_val.arena = @arena
                   return ann_val
                 end
-                return MACRO_NIL
+                return macro_nil_value
               else # annotations
                 arr = matching.map do |ann|
                   ann_val = MacroAnnotationValue.new(ann)
@@ -1472,7 +1708,7 @@ module CrystalV2
             end
           end
 
-          MACRO_NIL
+          macro_nil_value
         end
 
         private def maybe_record_macro_body_output(body_id : ExprId, body_node : Frontend::MacroLiteralNode, pieces_count : Int32, output : String) : Nil
@@ -1525,21 +1761,28 @@ module CrystalV2
         end
 
         private def evaluate_macro_body(body_id : ExprId, context : Context) : String
+          debug_macro_body = !!ENV["DEBUG_MACRO_BODY_PHASE"]?
+          STDERR.puts "[MACRO_BODY_PHASE] phase=enter body=#{body_id.index}" if debug_macro_body
           # Get MacroLiteral node (works with typed or legacy nodes)
           body_node = @arena[body_id]
+          STDERR.puts "[MACRO_BODY_PHASE] phase=after_fetch kind=#{Frontend.node_kind(body_node).value}" if debug_macro_body
           return "" unless body_node.is_a?(Frontend::MacroLiteralNode)
           pieces = body_node.pieces
           pieces_count = pieces.size.to_i32
           source = @macro_source
           prev_span_end : Int32? = nil
+          STDERR.puts "[MACRO_BODY_PHASE] phase=before_build pieces=#{pieces_count} source=#{source ? 1 : 0}" if debug_macro_body
 
           # Phase 87B-3: Use indexed loop to handle control flow jumps
           result = String.build do |str|
             index = 0
 
             while index < pieces.size
-              piece = pieces[index]
+              STDERR.puts "[MACRO_BODY_PHASE] phase=loop_entry idx=#{index}" if debug_macro_body
+              piece = pieces.unsafe_fetch(index)
+              STDERR.puts "[MACRO_BODY_PHASE] phase=after_piece idx=#{index} kind=#{piece.kind.value}" if debug_macro_body
               span = source ? piece.span : nil
+              STDERR.puts "[MACRO_BODY_PHASE] phase=after_span idx=#{index} span=#{span ? 1 : 0}" if debug_macro_body
               if source && span && prev_span_end
                 gap = span.start_offset - prev_span_end
                 if gap > 0 && prev_span_end < source.bytesize
@@ -1548,18 +1791,20 @@ module CrystalV2
                     length = source.bytesize - prev_span_end
                   end
                   gap_slice = source.byte_slice(prev_span_end, length)
-                  str << gap_slice if gap_slice.bytes.all? { |byte| byte <= 32 }
+                  str << gap_slice if ascii_whitespace_gap?(gap_slice)
                 end
               end
 
               case piece.kind
               when .text?
+                STDERR.puts "[MACRO_BODY_PHASE] phase=text idx=#{index}" if debug_macro_body
                 # Plain text - append as-is
                 if text = macro_piece_text(piece)
                   str << text
                 end
                 index += 1
               when .expression?
+                STDERR.puts "[MACRO_BODY_PHASE] phase=expression idx=#{index}" if debug_macro_body
                 # {{ expr }} - evaluate and stringify
                 if expr_id = piece.expr
                   value = evaluate_expression(expr_id, context)
@@ -1572,6 +1817,7 @@ module CrystalV2
                 end
                 index += 1
               when .macro_var?
+                STDERR.puts "[MACRO_BODY_PHASE] phase=macro_var idx=#{index}" if debug_macro_body
                 if name = piece.macro_var_name
                   value = context.macro_var(name)
                   unless value
@@ -1583,19 +1829,26 @@ module CrystalV2
                 end
                 index += 1
               when .control_start?
+                STDERR.puts "[MACRO_BODY_PHASE] phase=control idx=#{index} keyword=#{piece.control_keyword || ""}" if debug_macro_body
                 # {% if %}, {% for %}, {% begin %} - delegate to specialized handlers
                 keyword = piece.control_keyword
 
                 if keyword == "if" || keyword == "unless"
+                  STDERR.puts "[MACRO_BODY_PHASE] phase=before_if idx=#{index}" if debug_macro_body
                   output_part, new_index = evaluate_if_block(pieces, index, context)
+                  STDERR.puts "[MACRO_BODY_PHASE] phase=after_if idx=#{index} new=#{new_index} bytes=#{output_part.bytesize}" if debug_macro_body
                   str << output_part
                   index = new_index
                 elsif keyword == "for"
+                  STDERR.puts "[MACRO_BODY_PHASE] phase=before_for idx=#{index}" if debug_macro_body
                   output_part, new_index = evaluate_for_block(pieces, index, context)
+                  STDERR.puts "[MACRO_BODY_PHASE] phase=after_for idx=#{index} new=#{new_index} bytes=#{output_part.bytesize}" if debug_macro_body
                   str << output_part
                   index = new_index
                 elsif keyword == "begin"
+                  STDERR.puts "[MACRO_BODY_PHASE] phase=before_begin idx=#{index}" if debug_macro_body
                   output_part, new_index = evaluate_begin_block(pieces, index, context)
+                  STDERR.puts "[MACRO_BODY_PHASE] phase=after_begin idx=#{index} new=#{new_index} bytes=#{output_part.bytesize}" if debug_macro_body
                   str << output_part
                   index = new_index
                 else
@@ -1604,16 +1857,30 @@ module CrystalV2
                   index += 1
                 end
               else
+                STDERR.puts "[MACRO_BODY_PHASE] phase=other idx=#{index}" if debug_macro_body
                 # Skip standalone control flow markers (elsif, else, end)
                 # These are handled inside evaluate_if_block
                 index += 1
               end
+              STDERR.puts "[MACRO_BODY_PHASE] phase=loop_done idx=#{index}" if debug_macro_body
               prev_span_end = span.end_offset if source && span
             end
           end
 
+          STDERR.puts "[MACRO_BODY_PHASE] phase=after_build bytes=#{result.bytesize}" if debug_macro_body
           maybe_record_macro_body_output(body_id, body_node, pieces_count, result)
+          STDERR.puts "[MACRO_BODY_PHASE] phase=leave" if debug_macro_body
           result
+        end
+
+        private def ascii_whitespace_gap?(text : String) : Bool
+          idx = 0
+          size = text.bytesize
+          while idx < size
+            return false if text.byte_at(idx) > 32
+            idx += 1
+          end
+          true
         end
 
         private def macro_piece_source(piece : MacroPiece) : String?
@@ -1681,6 +1948,27 @@ module CrystalV2
           length = finish - start
           length = source.bytesize - start if start + length > source.bytesize
           source.byte_slice(start, length)
+        end
+
+        private def source_backed_literal_string(node_id : ExprId, node) : String?
+          if text = source_text_for_node(node_id, node.span)
+            return text unless text.empty?
+          end
+
+          Frontend.node_literal_string(node)
+        end
+
+        private def ascii_bytes_eq?(text : String?, literal : String) : Bool
+          return false unless text
+          return false unless text.bytesize == literal.bytesize
+
+          index = 0
+          while index < literal.bytesize
+            return false unless text.byte_at(index) == literal.byte_at(index)
+            index += 1
+          end
+
+          true
         end
 
         private def command_literal?(node_id : ExprId, span : Frontend::Span) : Bool
@@ -1766,7 +2054,8 @@ module CrystalV2
         end
 
         private def evaluate_expression(expr_id : ExprId, context : Context) : String
-          node = @arena[expr_id]
+          node = node_for_expr?(expr_id)
+          return "" unless node
 
           # Unwrap MacroExpressionNode ({{ expr }}) to get inner expression
           if node.is_a?(Frontend::MacroExpressionNode)
@@ -1779,7 +2068,8 @@ module CrystalV2
 
           # Handle assignment in macro expressions: {% var = expr %}
           if node.is_a?(Frontend::AssignNode)
-            target = @arena[node.target]
+            target = node_for_expr?(node.target)
+            return "" unless target
             if target.is_a?(Frontend::IdentifierNode)
               if name = Frontend.node_literal_string(target)
                 context.variables[name] = evaluate_to_macro_value(node.value, context)
@@ -1942,10 +2232,10 @@ module CrystalV2
           end
 
           base_value ||= evaluate_to_macro_value(node.object, context)
-          return MACRO_NIL if base_value.is_a?(MacroNilValue)
+          return macro_nil_value if base_value.is_a?(MacroNilValue)
 
           index_expr_id = node.indexes.first?
-          return MACRO_NIL unless index_expr_id
+          return macro_nil_value unless index_expr_id
 
           index_value = evaluate_to_macro_value(index_expr_id, context)
           base_value.call_method("[]", [index_value], nil)
@@ -2430,8 +2720,8 @@ module CrystalV2
             # Fallback to member access evaluation (handles .id, .stringify, etc.)
             return evaluate_member_access_expression(callee, context)
           elsif callee.is_a?(Frontend::IdentifierNode)
-            name = Frontend.node_literal_string(callee) || ""
-            if name == "flag?"
+            name = source_backed_literal_string(callee_id, callee) || ""
+            if ascii_bytes_eq?(name, "flag?") || ascii_bytes_eq?(name, "flag")
               return evaluate_flag_call(node, context)
             end
           end
@@ -2439,10 +2729,10 @@ module CrystalV2
           ""
         end
 
-        private def evaluate_flag_call(node : Frontend::CallNode, context : Context) : String
-          arg_id = node.args.first?
-          return "" unless arg_id
+        private def evaluate_flag_call_bool(node : Frontend::CallNode, context : Context) : Bool
+          return false if node.args.empty?
 
+          arg_id = node.args.unsafe_fetch(0)
           raw_value = evaluate_expression(arg_id, context)
           flag_name = raw_value.strip
           if flag_name.starts_with?(":")
@@ -2452,7 +2742,11 @@ module CrystalV2
             flag_name = flag_name[1...-1]
           end
 
-          context.flag?(flag_name) ? "true" : ""
+          context.flag?(flag_name)
+        end
+
+        private def evaluate_flag_call(node : Frontend::CallNode, context : Context) : String
+          evaluate_flag_call_bool(node, context) ? "true" : ""
         end
 
         # Build a fully-qualified annotation type name from its expression,
@@ -2527,12 +2821,20 @@ module CrystalV2
         # to Crystal while allowing graceful degradation when we cannot fully
         # interpret an expression.
         private def evaluate_condition(expr_id : ExprId, context : Context) : {Bool, Context}
-          node = @arena[expr_id]
+          if ENV["DEBUG_MACRO_IF_PHASE"]?
+            STDERR.puts "[MACRO_IF_PHASE] condition enter expr=#{expr_id.index}"
+          end
+          node = node_for_expr?(expr_id)
+          return {false, context} unless node
+          if ENV["DEBUG_MACRO_IF_PHASE"]?
+            STDERR.puts "[MACRO_IF_PHASE] condition node expr=#{expr_id.index} kind=#{Frontend.node_kind(node).value}"
+          end
 
           # Handle assignment in condition: {% if ann = expr %}
           # This binds the variable and checks truthiness of the assigned value
           if node.is_a?(Frontend::AssignNode)
-            target = @arena[node.target]
+            target = node_for_expr?(node.target)
+            return {false, context} unless target
             if target.is_a?(Frontend::IdentifierNode)
               var_name = Frontend.node_literal_string(target)
               if var_name
@@ -2580,9 +2882,23 @@ module CrystalV2
               return evaluate_condition(node.right, context)
             else
               # Lightweight numeric comparison support (i > 0, i == 0, etc.).
+              left_number = macro_condition_number_value(node.left, context)
+              right_number = macro_condition_number_value(node.right, context)
+              if left_number && right_number
+                result = case op
+                         when ">"  then left_number > right_number
+                         when ">=" then left_number >= right_number
+                         when "<"  then left_number < right_number
+                         when "<=" then left_number <= right_number
+                         when "==" then left_number == right_number
+                         when "!=" then left_number != right_number
+                         else           false
+                         end
+                return {result, context}
+              end
+
               left_val = evaluate_expression(node.left, context)
               right_val = evaluate_expression(node.right, context)
-
               if (left_int = left_val.to_i?) && (right_int = right_val.to_i?)
                 result = case op
                          when ">"  then left_int > right_int
@@ -2665,6 +2981,52 @@ module CrystalV2
           end
         end
 
+        private def macro_condition_number_value(expr_id : ExprId, context : Context) : Int64?
+          node = node_for_expr?(expr_id)
+          return nil unless node
+          case node
+          when Frontend::MacroExpressionNode
+            macro_condition_number_value(node.expression, context)
+          when Frontend::GroupingNode
+            macro_condition_number_value(node.expression, context)
+          when Frontend::CallNode
+            if cmp = macro_compare_versions_call_value(node, context)
+              return cmp
+            end
+            value = evaluate_to_macro_value(expr_id, context)
+            return value.to_i if value.is_a?(MacroNumberValue)
+            nil
+          when Frontend::IdentifierNode
+            name = Frontend.node_literal_string(node)
+            if name && (value = context.variables[name]?)
+              return value.to_i if value.is_a?(MacroNumberValue)
+            end
+            nil
+          else
+            case Frontend.node_kind(node)
+            when .number?
+              literal = Frontend.node_literal_string(node)
+              literal.try(&.to_i64?)
+            else
+              nil
+            end
+          end
+        end
+
+        private def macro_compare_versions_call_value(node : Frontend::CallNode, context : Context) : Int64?
+          return nil unless node.args.size == 2
+          callee_id = node.callee
+          return nil unless callee_id
+          callee = @arena[callee_id]
+          return nil unless callee.is_a?(Frontend::IdentifierNode)
+          direct_name = source_backed_literal_string(callee_id, callee)
+          return nil unless ascii_bytes_eq?(direct_name, "compare_versions")
+
+          first = macro_id(evaluate_to_macro_value(node.args[0], context).to_id)
+          second = macro_id(evaluate_to_macro_value(node.args[1], context).to_id)
+          compare_macro_version_strings(first, second)
+        end
+
         private def path_to_string(node : Frontend::PathNode) : String
           parts = [] of String
           current = node
@@ -2693,7 +3055,7 @@ module CrystalV2
           index = start_index + 1
 
           while index < pieces.size
-            piece = pieces[index]
+            piece = pieces.unsafe_fetch(index)
 
             case piece.kind
             when .control_start?
@@ -2722,7 +3084,7 @@ module CrystalV2
           index = start
 
           while index <= end_limit
-            piece = pieces[index]
+            piece = pieces.unsafe_fetch(index)
 
             case piece.kind
             when .control_start?
@@ -2754,7 +3116,7 @@ module CrystalV2
             prev_span_end : Int32? = nil
 
             while index <= end_index && index < pieces.size
-              piece = pieces[index]
+              piece = pieces.unsafe_fetch(index)
               span = source ? piece.span : nil
               if source && span && prev_span_end
                 gap = span.start_offset - prev_span_end
@@ -2764,7 +3126,7 @@ module CrystalV2
                     length = source.bytesize - prev_span_end
                   end
                   gap_slice = source.byte_slice(prev_span_end, length)
-                  str << gap_slice if gap_slice.bytes.all? { |byte| byte <= 32 }
+                  str << gap_slice if ascii_whitespace_gap?(gap_slice)
                 end
               end
 
@@ -2838,40 +3200,74 @@ module CrystalV2
           start_index : Int32,
           context : Context,
         ) : {String, Int32}
+          if ENV["DEBUG_MACRO_IF_PHASE"]?
+            STDERR.puts "[MACRO_IF_PHASE] enter start=#{start_index} pieces=#{pieces.size}"
+          end
           # Get condition from start piece
-          start_piece = pieces[start_index]
+          start_piece = pieces.unsafe_fetch(start_index)
+          if ENV["DEBUG_MACRO_IF_PHASE"]?
+            STDERR.puts "[MACRO_IF_PHASE] after_start_piece start=#{start_index} kind=#{start_piece.kind.value} keyword=#{start_piece.control_keyword}"
+          end
           condition_expr = start_piece.expr
+          if ENV["DEBUG_MACRO_IF_PHASE"]?
+            expr_id = condition_expr ? condition_expr.index : -1
+            STDERR.puts "[MACRO_IF_PHASE] condition_expr start=#{start_index} expr=#{expr_id}"
+          end
 
           unless condition_expr
             emit_error("Missing condition in {% if %} block")
             end_index = find_matching_end(pieces, start_index)
+            if ENV["DEBUG_MACRO_IF_PHASE"]?
+              STDERR.puts "[MACRO_IF_PHASE] missing_condition end=#{end_index}"
+            end
             return {"", end_index + 1}
           end
 
           # Evaluate condition (may bind new variables via assignment)
           condition_result, body_context = evaluate_condition(condition_expr, context)
+          if ENV["DEBUG_MACRO_IF_PHASE"]?
+            STDERR.puts "[MACRO_IF_PHASE] after_condition start=#{start_index} result=#{condition_result}"
+          end
           if start_piece.control_keyword == "unless"
             condition_result = !condition_result
+            if ENV["DEBUG_MACRO_IF_PHASE"]?
+              STDERR.puts "[MACRO_IF_PHASE] after_unless_flip start=#{start_index} result=#{condition_result}"
+            end
           end
 
           # Find matching end
           end_index = find_matching_end(pieces, start_index)
+          if ENV["DEBUG_MACRO_IF_PHASE"]?
+            STDERR.puts "[MACRO_IF_PHASE] after_find_end start=#{start_index} end=#{end_index}"
+          end
 
           if condition_result
             # Condition is true - evaluate if body with potentially updated context
             next_branch = find_next_branch_or_end(pieces, start_index + 1, end_index)
+            if ENV["DEBUG_MACRO_IF_PHASE"]?
+              STDERR.puts "[MACRO_IF_PHASE] true_branch start=#{start_index} next=#{next_branch}"
+            end
 
             # Evaluate range [start_index+1, next_branch-1] with body_context
             output = evaluate_pieces_range(pieces, start_index + 1, next_branch - 1, body_context)
+            if ENV["DEBUG_MACRO_IF_PHASE"]?
+              STDERR.puts "[MACRO_IF_PHASE] true_done start=#{start_index} bytes=#{output.bytesize}"
+            end
 
             return {output, end_index + 1}
           else
             # Condition is false - search for {% elsif %} or {% else %}
             current = start_index + 1
             depth = 0
+            if ENV["DEBUG_MACRO_IF_PHASE"]?
+              STDERR.puts "[MACRO_IF_PHASE] false_scan start=#{start_index} current=#{current} end=#{end_index}"
+            end
 
             while current < end_index
-              piece = pieces[current]
+              piece = pieces.unsafe_fetch(current)
+              if ENV["DEBUG_MACRO_IF_PHASE"]?
+                STDERR.puts "[MACRO_IF_PHASE] false_scan_piece current=#{current} kind=#{piece.kind.value} depth=#{depth}"
+              end
 
               case piece.kind
               when .control_start?
@@ -2888,7 +3284,13 @@ module CrystalV2
                     if elsif_result
                       # Found true branch
                       next_branch = find_next_branch_or_end(pieces, current + 1, end_index)
+                      if ENV["DEBUG_MACRO_IF_PHASE"]?
+                        STDERR.puts "[MACRO_IF_PHASE] elsif_true current=#{current} next=#{next_branch}"
+                      end
                       output = evaluate_pieces_range(pieces, current + 1, next_branch - 1, elsif_ctx)
+                      if ENV["DEBUG_MACRO_IF_PHASE"]?
+                        STDERR.puts "[MACRO_IF_PHASE] elsif_done current=#{current} bytes=#{output.bytesize}"
+                      end
                       return {output, end_index + 1}
                     end
                   end
@@ -2896,7 +3298,13 @@ module CrystalV2
               when .control_else?
                 if depth == 0
                   # No conditions matched, use else
+                  if ENV["DEBUG_MACRO_IF_PHASE"]?
+                    STDERR.puts "[MACRO_IF_PHASE] else_branch current=#{current}"
+                  end
                   output = evaluate_pieces_range(pieces, current + 1, end_index - 1, context)
+                  if ENV["DEBUG_MACRO_IF_PHASE"]?
+                    STDERR.puts "[MACRO_IF_PHASE] else_done current=#{current} bytes=#{output.bytesize}"
+                  end
                   return {output, end_index + 1}
                 end
               end
@@ -2905,6 +3313,9 @@ module CrystalV2
             end
 
             # No branch matched, return empty
+            if ENV["DEBUG_MACRO_IF_PHASE"]?
+              STDERR.puts "[MACRO_IF_PHASE] no_branch start=#{start_index}"
+            end
             return {"", end_index + 1}
           end
         end
@@ -2920,7 +3331,7 @@ module CrystalV2
           context : Context,
         ) : {String, Int32}
           # Get loop metadata
-          start_piece = pieces[start_index]
+          start_piece = pieces.unsafe_fetch(start_index)
           iter_vars = start_piece.iter_vars
           iterable_expr = start_piece.iterable
 
@@ -2940,7 +3351,12 @@ module CrystalV2
           end
 
           # Evaluate iterable → get MacroValue elements
-          iterable_node = @arena[iterable_expr]
+          iterable_node = node_for_expr?(iterable_expr)
+          unless iterable_node
+            emit_error("Invalid iterable in {% for %} block")
+            end_index = find_matching_end(pieces, start_index)
+            return {"", end_index + 1}
+          end
           pair_iteration = pair_iteration_iterable?(iterable_node, context)
 
           elem_values = evaluate_iterable_to_macro_values(iterable_node, context, iterable_expr)

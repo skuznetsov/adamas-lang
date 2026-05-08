@@ -1,6 +1,7 @@
 require "option_parser"
 # require "digest/sha256"  # V2 BOOTSTRAP: replaced with FNV-1a
 require "file_utils"
+require "c/dirent"
 require "./frontend/diagnostic_formatter"
 require "./frontend/lexer"
 require "./frontend/parser"
@@ -2121,6 +2122,11 @@ module CrystalV2
           if i < 3 || (i % 100 == 0) || i == def_count - 1
             stage2_debug("[STAGE2_DEBUG] pass2 register_functions idx=#{i + 1}/#{def_count}", err_io)
           end
+          if env_enabled?("DEBUG_PASS2_DEF_NAME")
+            def_name = Frontend.node_def_name_string(n) || "(nil)"
+            def_path = paths_by_arena[a.object_id.to_u64]? || "(unknown)"
+            stage2_debug("[PASS2_DEF] idx=#{i + 1}/#{def_count} name=#{def_name} path=#{def_path}", err_io)
+          end
           if env_enabled?("DEBUG_CLI_PASS2_DEF_BLOCK_STATE")
             if body = n.body
               body.each do |body_expr|
@@ -2164,11 +2170,15 @@ module CrystalV2
         # Only lower top-level expressions; function bodies are lowered on demand.
         stage2_debug("[STAGE2_DEBUG] pass3 lowering setup", err_io)
         log(options, out_io, "  Pass 3: Lowering bodies (lazy)...")
+        stage2_debug("[STAGE2_DEBUG] pass3 after log", err_io)
 
         # Create main function from top-level expressions (or user-defined main)
         bootstrap_trace_puts "  Creating main function..." if options.progress
+        stage2_debug("[STAGE2_DEBUG] pass3 before lower_main branch main=#{main_exprs.size}", err_io)
         if main_exprs.size > 0
+          stage2_debug("[STAGE2_DEBUG] pass3 before lower_main call", err_io)
           hir_converter.lower_main(main_exprs)
+          stage2_debug("[STAGE2_DEBUG] pass3 after lower_main call", err_io)
         else
           main_def_index = -1
           i = 0
@@ -3408,7 +3418,11 @@ module CrystalV2
           out_io.puts "[STAGE2_DEBUG] parse_file_recursive start file_path=#{file_path} size=#{file_path.size} first=#{file_path.byte_at(0)} last=#{file_path.byte_at(file_path.size - 1)}"
         end
         bootstrap_trace_puts "[S2_PARSE] expand_path('#{file_path}')"; STDERR.flush
-        abs_path = File.expand_path(file_path)
+        abs_path = if file_path.bytesize > 0 && file_path.byte_at(0) == '/'.ord.to_u8
+                     file_path
+                   else
+                     File.expand_path(file_path)
+                   end
         bootstrap_trace_puts "[S2_PARSE] abs_path='#{abs_path}'"; STDERR.flush
         if debug_parse && abs_path.size > 0
           out_io.puts "[STAGE2_DEBUG] parse_file_recursive expanded=#{abs_path} size=#{abs_path.size} first=#{abs_path.byte_at(0)} last=#{abs_path.byte_at(abs_path.size - 1)}"
@@ -3799,6 +3813,7 @@ module CrystalV2
                 log(options, out_io, "    [req-resolved] #{resolved}")
               end
               requires_out << resolved
+              append_platform_require_variants(resolved, requires_out, options, out_io)
             when Array
               if options.verbose
                 log(options, out_io, "    [req-resolved] array count=#{resolved.size}")
@@ -3810,7 +3825,20 @@ module CrystalV2
                 requires_out << file
               end
             else
-              log(options, out_io, "  Warning: Could not resolve require '#{req_path}'")
+              if req_path.includes?('*')
+                if glob_files = resolve_wildcard_require(req_path, base_dir)
+                  if options.verbose
+                    log(options, out_io, "    [req-resolved] glob count=#{glob_files.size}")
+                  end
+                  glob_files.each do |file|
+                    requires_out << file
+                  end
+                else
+                  log(options, out_io, "  Warning: Could not resolve require '#{req_path}'")
+                end
+              else
+                log(options, out_io, "  Warning: Could not resolve require '#{req_path}'")
+              end
             end
           end
         when Frontend::MacroIfNode
@@ -3843,6 +3871,7 @@ module CrystalV2
               case resolved
               when String
                 requires_out << resolved
+                append_platform_require_variants(resolved, requires_out, options, out_io)
               when Array
                 resolved.each do |file|
                   requires_out << file
@@ -3851,6 +3880,28 @@ module CrystalV2
             end
           end
         end
+      end
+
+      private def append_platform_require_variants(
+        resolved : String,
+        requires_out : Array(String),
+        options : Options,
+        out_io : IO,
+      ) : Nil
+        return unless resolved.includes?("/crystal/system/")
+        return if resolved.includes?("/unix/") || resolved.includes?("/win32/") || resolved.includes?("/wasi/")
+        return unless resolved.ends_with?(".cr")
+
+        base_size = resolved.bytesize - 3
+        return if base_size <= 0
+        base_path = resolved.byte_slice(0, base_size)
+        unix_path = base_path.gsub("/crystal/system/", "/crystal/system/unix/") + ".cr"
+        return unless File.exists?(unix_path)
+
+        if options.verbose
+          log(options, out_io, "    [req-resolved-platform] #{unix_path}")
+        end
+        requires_out << unix_path
       end
 
       private def scan_requires_from_exprs(
@@ -4191,6 +4242,10 @@ module CrystalV2
         if env_enabled?("CRYSTAL2_COLLECT_TRACE")
           bootstrap_trace_puts "[COLLECT] depth=#{depth} expr=#{expr_id.index} kind=#{Frontend.node_kind(node)} macrodef=#{node.is_a?(Frontend::MacroDefNode)} arena_size=#{arena.size}"
         end
+        if collect_main_exprs && standalone_end_recovery_root?(node, source)
+          pending_annotations.clear
+          return
+        end
         # Stage2 has shown unstable case-dispatch on MacroDefNode in some builds.
         # Guard with direct is_a? so macro definitions never leak into main_exprs.
         if node.is_a?(Frontend::MacroDefNode)
@@ -4200,6 +4255,14 @@ module CrystalV2
         end
         case node
         when Frontend::DefNode
+          if flattened_nested_def_root?(node, source)
+            if env_enabled?("DEBUG_COLLECT_SKIP_NESTED_DEF")
+              def_name = Frontend.node_def_name_string(node) || "(nil)"
+              bootstrap_trace_puts "[COLLECT_SKIP_NESTED_DEF] name=#{def_name} depth=#{depth}"
+            end
+            pending_annotations.clear
+            return
+          end
           def_nodes << {node, arena}
           pending_annotations.clear
         when Frontend::ClassNode
@@ -4221,8 +4284,10 @@ module CrystalV2
           enum_nodes << {node, arena}
           pending_annotations.clear
         when Frontend::ConstantNode
-          constant_exprs << {expr_id, arena}
-          if collect_main_exprs
+          unless flattened_nested_root_line?(node.span, source)
+            constant_exprs << {expr_id, arena}
+          end
+          if collect_main_exprs && !flattened_nested_root_line?(node.span, source)
             packed_main_expr = (arena_index.to_u64 << 32) | expr_id.index.to_u64
             main_exprs << packed_main_expr
           end
@@ -4237,6 +4302,8 @@ module CrystalV2
           pending_annotations.clear
         when Frontend::AnnotationNode
           pending_annotations << node
+        when Frontend::AnnotationDefNode
+          pending_annotations.clear
         when Frontend::RequireNode
           # Skip - already processed
         when Frontend::MacroExpressionNode
@@ -4429,19 +4496,99 @@ module CrystalV2
           expand_top_level_macro_for(node, arena, arena_index, source, macro_origin_path, def_nodes, class_nodes, module_nodes, enum_nodes, macro_nodes, alias_nodes, lib_nodes, constant_exprs, main_exprs, pending_annotations, acyclic_types, top_level_type_names, top_level_class_kinds, flags, sources_by_arena, depth, paths_by_arena)
         when Frontend::AssignNode
           target = arena[node.target]
-          if target.is_a?(Frontend::ConstantNode)
+          nested_root = flattened_nested_root_line?(node.span, source)
+          if target.is_a?(Frontend::ConstantNode) && !nested_root
             constant_exprs << {expr_id, arena}
           end
-          if collect_main_exprs
+          if collect_main_exprs && !nested_root
             packed_main_expr = (arena_index.to_u64 << 32) | expr_id.index.to_u64
             main_exprs << packed_main_expr
           end
         else
-          if collect_main_exprs
+          if collect_main_exprs && !flattened_nested_root_line?(node.span, source)
             packed_main_expr = (arena_index.to_u64 << 32) | expr_id.index.to_u64
             main_exprs << packed_main_expr
           end
         end
+      end
+
+      private def standalone_end_recovery_root?(node : Frontend::Node, source : String) : Bool
+        return false unless Frontend.node_kind(node) == Frontend::NodeKind::Identifier
+        span = node.span
+        start = span.start_offset
+        finish = span.end_offset
+        return false if start < 0 || finish <= start || finish > source.bytesize
+        text = source.byte_slice(start, finish - start).strip
+        text == "end"
+      end
+
+      private def flattened_nested_def_root?(node : Frontend::DefNode, source : String) : Bool
+        return false unless flattened_nested_root_line?(node.span, source)
+        source_has_def_prefix_at?(source, first_code_offset_for_span_line(node.span, source) || -1)
+      end
+
+      private def flattened_nested_root_line?(span : Frontend::Span, source : String) : Bool
+        first_code = first_code_offset_for_span_line(span, source)
+        return false unless first_code
+
+        line_start = line_start_offset_for_span(span, source)
+        return false unless line_start
+        first_code > line_start
+      end
+
+      private def line_start_offset_for_span(span : Frontend::Span, source : String) : Int32?
+        cursor = span.start_offset
+        return nil if cursor < 0 || cursor >= source.bytesize
+
+        line_start = cursor
+        while line_start > 0
+          prev = source.byte_at(line_start - 1)
+          break if prev == '\n'.ord || prev == '\r'.ord
+          line_start -= 1
+        end
+        line_start
+      end
+
+      private def first_code_offset_for_span_line(span : Frontend::Span, source : String) : Int32?
+        cursor = span.start_offset
+        return nil if cursor < 0 || cursor >= source.bytesize
+
+        line_start = line_start_offset_for_span(span, source)
+        return nil unless line_start
+
+        first_code = line_start
+        while first_code < source.bytesize
+          ch = source.byte_at(first_code)
+          break unless ch == ' '.ord || ch == '\t'.ord
+          first_code += 1
+        end
+        first_code
+      end
+
+      private def source_has_def_prefix_at?(source : String, offset : Int32) : Bool
+        prefixes = [
+          "private abstract def ",
+          "protected abstract def ",
+          "abstract def ",
+          "private def ",
+          "protected def ",
+          "def ",
+        ]
+        prefixes.any? do |prefix|
+          source_has_ascii_prefix_at?(source, offset, prefix)
+        end
+      end
+
+      private def source_has_ascii_prefix_at?(source : String, offset : Int32, prefix : String) : Bool
+        return false if offset < 0
+        return false if offset + prefix.bytesize > source.bytesize
+
+        idx = 0
+        while idx < prefix.bytesize
+          return false unless source.byte_at(offset + idx) == prefix.byte_at(idx)
+          idx += 1
+        end
+        true
       end
 
       # Track macro variable assignments from raw text like {% nums = %w(Int8 Int16 ...) %}
@@ -6017,6 +6164,11 @@ module CrystalV2
         return nil if pointerof(req_path).as(Pointer(UInt64)).value == 0_u64
         return nil if pointerof(base_dir).as(Pointer(UInt64)).value == 0_u64
         return nil if req_path.bytesize == 0
+        if req_path.starts_with?("/")
+          result = try_require_path(req_path)
+          return result if result
+        end
+
         # Handle wildcards (/* and /**)
         if req_path.ends_with?("/*") || req_path.ends_with?("/**")
           return resolve_wildcard_require(req_path, base_dir)
@@ -6035,12 +6187,17 @@ module CrystalV2
 
         # Relative paths
         if req_path.starts_with?("./") || req_path.starts_with?("../")
-          full_path = File.expand_path(req_path, base_dir)
+          full_path = if req_path.starts_with?("./")
+                        rel_size = req_path.bytesize - 2
+                        rel_size > 0 ? path_join(base_dir, req_path.byte_slice(2, rel_size)) : base_dir
+                      else
+                        File.expand_path(req_path, base_dir)
+                      end
           result = try_require_path(full_path)
           return result if result
         else
           # Try relative to current file
-          rel_path = File.expand_path(req_path, base_dir)
+          rel_path = path_join(base_dir, req_path)
           result = try_require_path(rel_path)
           return result if result
 
@@ -6048,7 +6205,7 @@ module CrystalV2
           # compile instead of recomputing it on every recursive require step.
           input_dir_ref = pointerof(input_base_dir).as(Pointer(UInt64)).value
           if input_dir_ref != 0_u64
-            input_rel = File.expand_path(req_path, input_base_dir)
+            input_rel = path_join(input_base_dir, req_path)
             result = try_require_path(input_rel)
             return result if result
           end
@@ -6057,7 +6214,7 @@ module CrystalV2
           sl = stdlib_path
           sl_ref = pointerof(sl).as(Pointer(UInt64)).value
           if sl_ref != 0_u64
-            resolved_stdlib = File.expand_path(req_path, sl)
+            resolved_stdlib = path_join(sl, req_path)
             result = try_require_path(resolved_stdlib)
             return result if result
           end
@@ -6066,7 +6223,7 @@ module CrystalV2
           csp = CRYSTAL_SRC_PATH
           csp_ref = pointerof(csp).as(Pointer(UInt64)).value
           if csp_ref != 0_u64 && File.directory?(csp)
-            crystal_src = File.expand_path(req_path, csp)
+            crystal_src = path_join(csp, req_path)
             result = try_require_path(crystal_src)
             return result if result
           end
@@ -6076,7 +6233,7 @@ module CrystalV2
 
       # Try to resolve a require path, handling both files and directories
       # Crystal convention: require "foo" looks for foo.cr, then foo/foo.cr
-      private def try_require_path(path : String) : String | Array(String) | Nil
+      private def try_require_path(path : String) : String | Nil
         # V2 guard: File.expand_path may return corrupted/null string in stage2.
         # path is a reference type (pointer in V2). We use pointerof trick to read
         # the pointer value WITHOUT dereferencing it.
@@ -6086,14 +6243,9 @@ module CrystalV2
         # Try with .cr extension first
         cr_path = path + ".cr"
         if File.exists?(cr_path)
-          # For crystal/system modules, also load the unix variant
-          # (since macro conditionals aren't evaluated, we load all platform files)
-          if path.includes?("/crystal/system/") && !path.includes?("/unix/") && !path.includes?("/win32/") && !path.includes?("/wasi/")
-            unix_path = path.gsub("/crystal/system/", "/crystal/system/unix/") + ".cr"
-            if File.exists?(unix_path)
-              return [cr_path, unix_path]
-            end
-          end
+          # Return the carrier file only. Platform-specific files are loaded by
+          # scanning its active macro-if branch; returning Array(String) here is
+          # a generated-stage2 hazard for ordinary direct requires.
           return cr_path
         end
 
@@ -6103,14 +6255,6 @@ module CrystalV2
         basename = last_sep ? path.byte_slice(last_sep + 1) : path
         inner_path = path_join(path, basename + ".cr")
         if File.exists?(inner_path)
-          # For crystal/system modules, also load the unix variant
-          if path.includes?("/crystal/system/") && !path.includes?("/unix/") && !path.includes?("/win32/") && !path.includes?("/wasi/")
-            unix_path = path.gsub("/crystal/system/", "/crystal/system/unix/")
-            unix_inner = path_join(unix_path, basename + ".cr")
-            if File.exists?(unix_inner)
-              return [inner_path, unix_inner]
-            end
-          end
           return inner_path
         end
 
@@ -6122,14 +6266,35 @@ module CrystalV2
 
       # Resolve wildcard require patterns like ./io/* or ./io/**
       private def resolve_wildcard_require(req_path : String, base_dir : String) : Array(String)?
-        recursive = req_path.ends_with?("/**")
-        pattern = req_path.rchop(recursive ? "/**" : "/*")
+        star_index = -1
+        i = 0
+        size = req_path.bytesize
+        while i < size
+          if req_path.byte_at(i) == '*'.ord.to_u8
+            star_index = i
+            break
+          end
+          i += 1
+        end
+        return nil if star_index < 0
+
+        recursive = star_index + 1 < size && req_path.byte_at(star_index + 1) == '*'.ord.to_u8
+        pattern_size = star_index
+        if pattern_size > 0 && req_path.byte_at(pattern_size - 1) == '/'.ord.to_u8
+          pattern_size -= 1
+        end
+        return nil if pattern_size <= 0
+        pattern = req_path.byte_slice(0, pattern_size)
 
         # Handle relative paths
-        if pattern.starts_with?("./") || pattern.starts_with?("../")
+        if pattern.starts_with?("./")
+          rel_size = pattern.bytesize - 2
+          return nil if rel_size <= 0
+          full_dir = path_join(base_dir, pattern.byte_slice(2, rel_size))
+        elsif pattern.starts_with?("../")
           full_dir = File.expand_path(pattern, base_dir)
         else
-          full_dir = File.expand_path(pattern, stdlib_path)
+          full_dir = path_join(stdlib_path, pattern)
         end
 
         return nil unless Dir.exists?(full_dir)
@@ -6141,13 +6306,24 @@ module CrystalV2
 
       # Gather all .cr files in a directory
       private def gather_crystal_files(dir : String, accumulator : Array(String), recursive : Bool)
-        Dir.each_child(dir) do |entry|
-          full_path = path_join(dir, entry)
-          if File.directory?(full_path)
-            gather_crystal_files(full_path, accumulator, true) if recursive
-          elsif entry.ends_with?(".cr")
-            accumulator << File.expand_path(full_path)
+        dirp = LibC.opendir(dir.to_unsafe)
+        return unless dirp
+
+        begin
+          while entry_ptr = LibC.readdir(dirp)
+            entry = entry_ptr.value
+            name = String.new(entry.d_name.to_unsafe)
+            next if name == "." || name == ".."
+
+            full_path = path_join(dir, name)
+            if entry.d_type == LibC::DT_DIR
+              gather_crystal_files(full_path, accumulator, true) if recursive
+            elsif name.ends_with?(".cr")
+              accumulator << full_path
+            end
           end
+        ensure
+          LibC.closedir(dirp)
         end
       end
 

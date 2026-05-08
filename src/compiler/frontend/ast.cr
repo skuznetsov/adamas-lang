@@ -654,7 +654,7 @@ module CrystalV2
         VisibilityModifier  # Phase 103J: private/protected wrapper
       end
 
-      struct MacroPiece
+      class MacroPiece
         enum Kind
           Text
           Expression

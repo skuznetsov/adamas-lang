@@ -219,6 +219,41 @@ module CrystalV2
             slice_eq?(base, "class_getter") || slice_eq?(base, "class_setter") || slice_eq?(base, "class_property")
         end
 
+        private def accessor_macro_name_text(token : Token) : String?
+          if accessor_macro_name?(token.slice)
+            text = String.new(token.slice)
+            return text unless text.empty?
+          end
+
+          text = token_source_text(token)
+          return nil unless text
+          text = text.strip
+          return nil if text.empty?
+          base = accessor_macro_base_text(text)
+          return nil unless accessor_macro_base_name?(base)
+          text
+        end
+
+        private def accessor_macro_base_text(text : String) : String
+          if text.ends_with?('?') || text.ends_with?('!')
+            return text.byte_slice(0, text.bytesize - 1)
+          end
+          text
+        end
+
+        private def accessor_macro_base_name?(text : String) : Bool
+          text == "getter" || text == "setter" || text == "property" ||
+            text == "class_getter" || text == "class_setter" || text == "class_property"
+        end
+
+        private def token_source_text(token : Token) : String?
+          start = token.span.start_offset
+          finish = token.span.end_offset
+          return nil if start < 0 || finish <= start || start >= @source.bytesize
+          finish = @source.bytesize if finish > @source.bytesize
+          @source.byte_slice(start, finish - start)
+        end
+
         # Recognize macros that accept typed field lists: name : Type [= value]
         private def typed_macro_args_name?(slice : Slice(UInt8)) : Bool
           accessor_macro_name?(slice) || slice_eq?(slice, "record")
@@ -533,14 +568,15 @@ module CrystalV2
           block : ExprId?,
           named_args : Array(NamedArgument)? = nil,
         ) : CallNode
+          has_block = !block.nil?
           if actual_named_args = named_args
-            if actual_block = block
-              CallNode.new(span, callee, args, actual_block, actual_named_args)
+            if has_block
+              CallNode.new(span, callee, args, block.not_nil!, actual_named_args)
             else
               CallNode.new(span, callee, args, nil, actual_named_args)
             end
-          elsif actual_block = block
-            CallNode.new(span, callee, args, actual_block)
+          elsif has_block
+            CallNode.new(span, callee, args, block.not_nil!)
           else
             CallNode.new(span, callee, args, nil)
           end
@@ -6957,20 +6993,15 @@ module CrystalV2
               next_token = peek_next_non_trivia
               is_accessor = (next_token.kind == Token::Kind::Identifier || is_keyword_identifier?(next_token))
 
-              if is_accessor && accessor_macro_name?(token.slice)
-                name = token.slice
-                predicate = name.size > 0 && name[name.size - 1] == '?'.ord.to_u8
+              if is_accessor && (accessor_name = accessor_macro_name_text(token))
+                predicate = accessor_name.ends_with?('?')
                 # Strip ? or ! suffix from name to get base accessor type
-                base = if name.size > 0 && (name[name.size - 1] == '?'.ord.to_u8 || name[name.size - 1] == '!'.ord.to_u8)
-                         Slice.new(name.to_unsafe, name.size - 1)
-                       else
-                         name
-                       end
+                base = accessor_macro_base_text(accessor_name)
                 # Detect if this is a class-level accessor (class_getter, class_setter, class_property)
-                is_class = slice_starts_with?(base, "class_")
-                kind = if slice_eq?(base, "getter") || slice_eq?(base, "class_getter")
+                is_class = base.starts_with?("class_")
+                kind = if base == "getter" || base == "class_getter"
                          :getter
-                       elsif slice_eq?(base, "setter") || slice_eq?(base, "class_setter")
+                       elsif base == "setter" || base == "class_setter"
                          :setter
                        else
                          :property
@@ -7141,18 +7172,13 @@ module CrystalV2
           if current_token.kind == Token::Kind::Identifier
             next_token = peek_next_non_trivia
             is_accessor = (next_token.kind == Token::Kind::Identifier || is_keyword_identifier?(next_token))
-            if is_accessor && accessor_macro_name?(current_token.slice)
-              name = current_token.slice
-              predicate = name.size > 0 && name[name.size - 1] == '?'.ord.to_u8
-              base = if name.size > 0 && name[name.size - 1] == '?'.ord.to_u8
-                       Slice.new(name.to_unsafe, name.size - 1)
-                     else
-                       name
-                     end
-              is_class = slice_starts_with?(base, "class_")
-              kind = if slice_eq?(base, "getter") || slice_eq?(base, "class_getter")
+            if is_accessor && (accessor_name = accessor_macro_name_text(current_token))
+              predicate = accessor_name.ends_with?('?')
+              base = accessor_macro_base_text(accessor_name)
+              is_class = base.starts_with?("class_")
+              kind = if base == "getter" || base == "class_getter"
                        :getter
-                     elsif slice_eq?(base, "setter") || slice_eq?(base, "class_setter")
+                     elsif base == "setter" || base == "class_setter"
                        :setter
                      else
                        :property
@@ -7230,18 +7256,13 @@ module CrystalV2
           if current_token.kind == Token::Kind::Identifier
             next_token = peek_next_non_trivia
             is_accessor = (next_token.kind == Token::Kind::Identifier || is_keyword_identifier?(next_token))
-            if is_accessor && accessor_macro_name?(current_token.slice)
-              name = current_token.slice
-              predicate = name.size > 0 && name[name.size - 1] == '?'.ord.to_u8
-              base = if name.size > 0 && name[name.size - 1] == '?'.ord.to_u8
-                       Slice.new(name.to_unsafe, name.size - 1)
-                     else
-                       name
-                     end
-              is_class = slice_starts_with?(base, "class_")
-              kind = if slice_eq?(base, "getter") || slice_eq?(base, "class_getter")
+            if is_accessor && (accessor_name = accessor_macro_name_text(current_token))
+              predicate = accessor_name.ends_with?('?')
+              base = accessor_macro_base_text(accessor_name)
+              is_class = base.starts_with?("class_")
+              kind = if base == "getter" || base == "class_getter"
                        :getter
-                     elsif slice_eq?(base, "setter") || slice_eq?(base, "class_setter")
+                     elsif base == "setter" || base == "class_setter"
                        :setter
                      else
                        :property
@@ -8095,20 +8116,15 @@ module CrystalV2
               next_token = peek_next_non_trivia
               is_accessor = (next_token.kind == Token::Kind::Identifier || is_keyword_identifier?(next_token))
 
-              if is_accessor && accessor_macro_name?(token.slice)
-                name = token.slice
-                predicate = name.size > 0 && name[name.size - 1] == '?'.ord.to_u8
+              if is_accessor && (accessor_name = accessor_macro_name_text(token))
+                predicate = accessor_name.ends_with?('?')
                 # Strip ? or ! suffix from name to get base accessor type
-                base = if name.size > 0 && (name[name.size - 1] == '?'.ord.to_u8 || name[name.size - 1] == '!'.ord.to_u8)
-                         Slice.new(name.to_unsafe, name.size - 1)
-                       else
-                         name
-                       end
+                base = accessor_macro_base_text(accessor_name)
                 # Detect if this is a class-level accessor (class_getter, class_setter, class_property)
-                is_class = slice_starts_with?(base, "class_")
-                kind = if slice_eq?(base, "getter") || slice_eq?(base, "class_getter")
+                is_class = base.starts_with?("class_")
+                kind = if base == "getter" || base == "class_getter"
                          :getter
-                       elsif slice_eq?(base, "setter") || slice_eq?(base, "class_setter")
+                       elsif base == "setter" || base == "class_setter"
                          :setter
                        else
                          :property

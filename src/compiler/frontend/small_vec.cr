@@ -207,9 +207,13 @@ module CrystalV2
         end
 
         def to_a : Array(MacroPiece)
-          Array(MacroPiece).new(@items.size) do |i|
-            @items.unsafe_fetch(i).value
+          result = Array(MacroPiece).new(@items.size)
+          i = 0
+          while i < @items.size
+            result << @items.unsafe_fetch(i).value
+            i += 1
           end
+          result
         end
       end
     end

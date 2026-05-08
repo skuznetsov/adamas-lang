@@ -1172,11 +1172,6 @@ module CrystalV2
           end
         end
       end
-
-      # Singleton instances for common values
-      MACRO_NIL   = MacroNilValue.new
-      MACRO_TRUE  = MacroBoolValue.new(true)
-      MACRO_FALSE = MacroBoolValue.new(false)
     end
   end
 end

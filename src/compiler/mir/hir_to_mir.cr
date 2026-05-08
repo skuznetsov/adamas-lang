@@ -1438,6 +1438,11 @@ module Crystal
       end
 
       private def record_mir_value_location(hir_func : HIR::Function, hir_id : HIR::ValueId, mir_func : Crystal::MIR::Function, mir_id : ValueId) : Nil
+        # Source locations are debug metadata. Keep them opt-in during
+        # bootstrap because self-hosted stage2 can corrupt Hash-backed debug
+        # metadata even when semantic lowering is otherwise valid.
+        return unless ENV["CRYSTAL_V2_ENABLE_MIR_VALUE_LOCATIONS"]? == "1"
+
         if loc = hir_func.value_location(hir_id)
           if mir_func.value_location(mir_id).nil?
             mir_func.record_value_location(mir_id, to_mir_source_location(loc))
@@ -3285,6 +3290,24 @@ module Crystal
           raise "Index error getting args for call to #{call.method_name}: #{ex.message}"
         end
 
+        if call.receiver &&
+           call.method_name.includes?('.') &&
+           !call.method_name.includes?('#')
+          if exact_static_func = @mir_module.get_function(call.method_name)
+            if exact_static_func.params.size == args.size
+              coerced_args = coerce_call_args(builder, args, call.args, exact_static_func)
+              call_return_type = exact_static_func.return_type
+              hir_call_return_type = convert_type(call.type)
+              if is_union_type?(hir_call_return_type) && !is_union_type?(exact_static_func.return_type)
+                call_return_type = hir_call_return_type
+              elsif call_return_type == TypeRef::VOID && hir_call_return_type != TypeRef::VOID
+                call_return_type = hir_call_return_type
+              end
+              return builder.call(exact_static_func.id, coerced_args, call_return_type)
+            end
+          end
+        end
+
         # Add receiver as first arg if present
         if recv = call.receiver
           args.unshift(get_value(recv))
@@ -3312,6 +3335,23 @@ module Crystal
         # Check if this is an external/runtime call
         if call.method_name.starts_with?("__crystal_v2_")
           return builder.extern_call(call.method_name, args, convert_type(call.type))
+        end
+
+        # Receiverless calls to an already-materialized function are static ABI
+        # calls. Lower them directly before virtual/receiver dispatch heuristics,
+        # which are only relevant once a runtime receiver participates.
+        unless call.receiver
+          if exact_func = @mir_module.get_function(call.method_name)
+            coerced_args = coerce_call_args(builder, args, call.args, exact_func)
+            call_return_type = exact_func.return_type
+            hir_call_return_type = convert_type(call.type)
+            if is_union_type?(hir_call_return_type) && !is_union_type?(exact_func.return_type)
+              call_return_type = hir_call_return_type
+            elsif call_return_type == TypeRef::VOID && hir_call_return_type != TypeRef::VOID
+              call_return_type = hir_call_return_type
+            end
+            return builder.call(exact_func.id, coerced_args, call_return_type)
+          end
         end
 
         # Atomic intrinsics: Atomic(T)#get → load from self+0, Atomic(T)#set → store to self+0
@@ -6847,6 +6887,8 @@ module Crystal
       end
 
       private def convert_type(hir_type : HIR::TypeRef) : TypeRef
+        return TypeRef::VOID if hir_type.null_ptr?
+
         # Map HIR type IDs to MIR type IDs
         # Note: HIR and MIR have DIFFERENT layouts! HIR: BOOL=1, MIR: NIL=1, BOOL=2
         hir_type_id = hir_type.id

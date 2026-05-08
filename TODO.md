@@ -1,6 +1,6 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-05-06
+Updated: 2026-05-08
 Branch: `codegen`
 
 This is the active working backlog only. Historical detail is in git history,
@@ -30,22 +30,40 @@ Working policy:
 
 ## Current Checkpoint
 
+Stage2 static-call LLVM emission checkpoint (2026-05-08): after LM-559,
+produced `s2` no-prelude LLVM IR for `Exception::CallStack.skip("x")` now emits
+the named static callee
+`Exception$CCCallStack$Dskip$$String` with a valid `void` return ABI, not
+fallback `@func1` and not `call  @...`. Root closure: preserve forced static
+class-method names in HIR recovery, lower exact static calls before treating
+stale receiver values as runtime receivers, and use dense FunctionId lookup in
+LLVM emission because self-hosted hash lookup can miss. New guard:
+`p2_stage2_static_call_named_llvm_no_prelude.sh`, passed on host and produced
+`s2` and validated by `llc` when available. Boundary: produced `s2`
+no-prelude binary output for the reducer still exits 139 after LLVM finalizes
+output, so the next root is the separate CLI/file-output tail or outer-rescue
+frontier, not the static-call callee/ABI spelling.
+
+Stage2 type-literal name-query checkpoint (2026-05-06): after LM-558, produced
+`s2` LLVM no longer contains `Bool$Dto_s` / `Bool$Dname` abort stubs. Root
+closure: type-literal receivers such as stdlib `Pointer(T)#to_s` using
+`T.to_s`, and direct `Bool.to_s` / `Bool.name`, now lower to a compile-time
+type-name string unless a real dot-method override exists on the owner/parent
+chain. New guard: `p2_type_literal_name_query_no_stub.sh` now uses a
+no-prelude `NameProbe` type-literal method body, so it checks the name-query
+lowering invariant without mixing in full-prelude registration. Boundary: this
+is a shape/root fix, not a clean full-prelude smoke. Produced `s2` full-prelude
+`puts 42` still exits 139; with the refuted source-backed top-level
+return-annotation experiment reverted, the current untraced frontier reaches
+pass2 `register_functions idx=3/297` and crashes before the next clean phase
+log. Do not reapply the top-level source-return hunk blindly; with the
+type-literal fix it still regressed the smoke to an earlier class-registration
+crash around `class register idx=51/104`.
+
 Stage2 Char::Reader post-registration frontier (2026-05-06): after LM-557,
-produced full-prelude `puts 42` gets past the previous `Proc` class-body trap.
-Root closure: semantic check-only traversal no longer stores visited
-`SymbolTable` objects in hash-backed sets, so generated `s2` avoids the fragile
-`Reference#hash -> Crystal::Hasher#reference` path while walking scope graphs.
-The single-file `--no-codegen` semantic corridor now also passes defs with
-params, return annotations, splats, and the primitive `Proc#call(*args : *T) :
-R` signature because `run_check` gives the collector source providers and
-`SymbolCollector#handle_def` recovers method param/return metadata from source
-spans before trusting raw frontend slices. New guard:
-`p2_generated_stage2_no_codegen_def_semantic_frontier.sh`. Current frontier:
-produced `s2` full-prelude `puts 42` still exits 139, but trace now shows
-`concrete_after_new Proc`, reaches `Char::Reader`, logs
-`[INFER_INDEX] method=byte_at self=Char::Reader obj=nil`, reaches
-`concrete_after_new Char::Reader`, then segfaults. This is a moved frontier,
-not a clean full-prelude smoke.
+produced full-prelude `puts 42` got past the previous `Proc` class-body trap.
+That checkpoint remains useful historical evidence for the semantic
+check-only/source-provider corridor, but LM-558 is the fresher active frontier.
 
 Stage2 nested-method annotation namespace checkpoint (2026-05-05): produced
 `cv2_s2` no longer qualifies top-level/builtin method annotations inside

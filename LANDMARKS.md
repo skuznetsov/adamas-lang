@@ -3846,3 +3846,103 @@ Current boundary:
   frontier.
 
 Trust: {F/G/R: 0.86/0.55/0.86} [verified]
+
+## LM-558 — Type literal name queries no longer materialize Bool.to_s stubs
+
+Context: compiler/bootstrap/codegen, 2026-05-06, `codegen`.
+
+Root cause and fix:
+
+- Produced `s2` LLVM contained `Bool$Dto_s` and `Bool$Dname` abort stubs.
+  The concrete caller was `Pointer(Bool)#to_s(io)` lowering stdlib
+  `io << T.to_s` into a static `Bool.to_s` call instead of a type-literal name
+  query.
+- V2 HIR represents type literals as compile-time values. Calling
+  `Class/Object` meta-methods on the runtime placeholder is wrong; for
+  `to_s`, `inspect`, and `name`, the lowering must emit the type name string
+  unless the type has a real dot-method override.
+- Added `lower_type_literal_name_query` and a strict
+  `type_literal_class_method_override?` check that only preserves real class
+  methods on the owner/parent chain, not broad meta-method fallbacks. Applied
+  this to call lowering, no-parens member access lowering, and the static
+  member-access helper.
+
+Evidence:
+
+- `CRYSTAL_CACHE_DIR=/private/tmp/crystal_cache_v2_type_literal_name_query4
+  crystal build src/crystal_v2.cr -o /private/tmp/cv2_type_literal_name_query4
+  --error-trace` passed.
+- New guard `regression_tests/p2_type_literal_name_query_no_stub.sh` passed
+  and rejects static `NameProbe$Dto_s` / `NameProbe$Dname` stubs in
+  no-prelude LLVM IR while requiring the literal `NameProbe` string.
+- `scripts/run_safe.sh /private/tmp/cv2_type_literal_name_query4 420 4096
+  src/crystal_v2.cr -o /private/tmp/cv2_type_literal_name_query4_s2/cv2_s2`
+  built produced `s2` with `[EXIT: 0]`.
+- Produced `cv2_s2.ll` had no `Bool$Dto_s` or `Bool$Dname`, and
+  `Pointer(Bool)#to_s(io)` emitted the literal `"Bool"` path instead of calling
+  a static Bool method.
+
+Refuted branch:
+
+- Re-enabling source-backed return annotations in top-level `register_function`
+  did not close the current full-prelude frontier. With the type-literal fix it
+  still regressed produced `s2` full-prelude `puts 42` to an earlier class
+  registration crash around `class register idx=51/104`.
+
+Current boundary:
+
+- This is a shape/root fix, not a full-prelude unlock. Produced `s2`
+  full-prelude `puts 42` still exits 139. With the source-return experiment
+  reverted, the current untraced frontier reaches pass2
+  `register_functions idx=3/297` and crashes before the next clean phase log.
+
+Trust: {F/G/R: 0.86/0.50/0.86} [verified]
+
+## LM-559 — Stage2 static call emission uses named callees and valid return ABI
+
+Context: compiler/bootstrap/codegen, 2026-05-08, `codegen`.
+
+Root cause and fix:
+
+- Produced `s2` could lower a source-backed class method call such as
+  `Exception::CallStack.skip("x")` into MIR carrying the right function id, but
+  LLVM emission resolved that id through a self-host-fragile
+  `Hash(FunctionId, Function)` lookup. On miss, the backend emitted fallback
+  names such as `@func1` instead of the named callee.
+- The same frontier exposed empty cached return ABI strings, producing invalid
+  LLVM spellings such as `call  @...`.
+- HIR now preserves the forced full static method name when lowering recovered
+  direct class methods, MIR lowers exact static calls before treating a stale
+  receiver value as a runtime receiver, and the LLVM backend uses dense
+  function-id lookup plus empty-return normalization.
+
+Evidence:
+
+- `crystal build src/crystal_v2.cr -o /private/tmp/cv2_funcid_empty_host
+  --error-trace` passed.
+- `CRYSTAL_CACHE_DIR=/private/tmp/crystal_cache_cv2_funcid_empty
+  scripts/run_safe.sh /private/tmp/cv2_funcid_empty_host 300 4096
+  src/crystal_v2.cr -o /private/tmp/cv2_funcid_empty_s2/cv2_s2` built
+  produced `s2` with `[EXIT: 0]`.
+- New guard `regression_tests/p2_stage2_static_call_named_llvm_no_prelude.sh`
+  passed on both `/private/tmp/cv2_funcid_empty_host` and produced
+  `/private/tmp/cv2_funcid_empty_s2/cv2_s2`. It rejects `@func1`, rejects
+  `call  @`, requires
+  `call void @Exception$CCCallStack$Dskip$$String(ptr @.str.0)`, and runs
+  `llc` on the emitted IR when available.
+- Existing namespace guard
+  `regression_tests/p2_qualified_module_namespace_no_prelude.sh` passed on
+  both compilers, so this did not regress the prior Float/FastFloat namespace
+  frontier.
+
+Current boundary:
+
+- This is a static-call/LLVM-ABI root fix, not a clean no-prelude binary
+  compile. Produced `s2` no-prelude binary output for the reducer still exits
+  139 after LLVM finalizes output, which points at a separate CLI/file-output
+  tail or outer-rescue frontier.
+- Produced `s2` full-prelude `puts 42` now gets past the old Float namespace
+  frontier and crashes later around `Time::Format::Formatter`, so that remains
+  a later generic/template registration frontier.
+
+Trust: {F/G/R: 0.88/0.50/0.88} [verified]

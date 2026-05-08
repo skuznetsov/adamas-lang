@@ -16,8 +16,8 @@ run_compiler() {
   local label="$2"
   local wrapper
   local log
-  wrapper="$(mktemp /tmp/${label}_wrapper.XXXXXX.sh)"
-  log="$(mktemp /tmp/${label}.XXXXXX.log)"
+  wrapper="$(mktemp /tmp/${label}_wrapper_sh.XXXXXX)"
+  log="$(mktemp /tmp/${label}_log.XXXXXX)"
   cat > "$wrapper" <<EOF
 #!/bin/bash
 set -euo pipefail

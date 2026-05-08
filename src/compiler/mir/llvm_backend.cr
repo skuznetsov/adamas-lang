@@ -1220,10 +1220,10 @@ module Crystal::MIR
       return "." if path.empty?
 
       expanded = path
-      unless expanded.starts_with?("/")
-        cwd = Dir.current
-        expanded = cwd.ends_with?("/") ? "#{cwd}#{expanded}" : "#{cwd}/#{expanded}"
-      end
+      # Keep this helper self-host-safe: generated stage2 compilers can reach
+      # debug metadata registration before their buffered File/Dir path is
+      # fully reliable. Relative DIFile paths are acceptable here.
+      absolute = expanded.starts_with?("/")
 
       parts = [] of String
       start = 0
@@ -1241,7 +1241,8 @@ module Crystal::MIR
         start = slash + 1
       end
 
-      "/" + parts.join("/")
+      normalized = parts.join("/")
+      absolute ? "/#{normalized}" : (normalized.empty? ? "." : normalized)
     end
 
     private def safe_metadata_basename(path : String) : String
@@ -2057,7 +2058,7 @@ module Crystal::MIR
     @global_declared_types : Hash(String, String) = {} of String => String  # Global name -> declared LLVM type
     @func_by_name : Hash(String, Function)  # Fast lookup for exact/mangled function names
     @func_by_suffix : Hash(String, Function)  # Fast lookup for namespace suffix matches
-    @func_by_id : Hash(FunctionId, Function)  # Fast lookup by function id for Call lowering/prepass
+    @func_by_id : Array(Function?)  # Dense lookup by function id for Call lowering/prepass
     @alloc_element_types : Hash(ValueId, TypeRef)  # For GEP element type lookup
     @array_info : Hash(ValueId, {String, Int32})  # Array element_type and size
     @array_element_type_refs : Hash(ValueId, TypeRef) # Refined Array(T) storage element type per array SSA value
@@ -2162,7 +2163,11 @@ module Crystal::MIR
       @func_by_id.clear
 
       @module.functions.each do |f|
-        @func_by_id[f.id] = f unless @func_by_id.has_key?(f.id)
+        id_index = f.id.to_i
+        while @func_by_id.size <= id_index
+          @func_by_id << nil
+        end
+        @func_by_id[id_index] ||= f
         mangled = @type_mapper.mangle_name(f.name)
         @func_by_name[mangled] = f unless @func_by_name.has_key?(mangled)
         @func_by_name[f.name] = f unless @func_by_name.has_key?(f.name)
@@ -2175,6 +2180,12 @@ module Crystal::MIR
           search_from = cc_pos + 3
         end
       end
+    end
+
+    private def function_by_id(id : FunctionId) : Function?
+      idx = id.to_i
+      return nil if idx < 0 || idx >= @func_by_id.size
+      @func_by_id.unsafe_fetch(idx)
     end
 
     private def lookup_module_function_for_extern(
@@ -2455,7 +2466,7 @@ module Crystal::MIR
       bootstrap_trace_puts "[LLVM_INIT] set done"
       @func_by_name = {} of String => Function
       @func_by_suffix = {} of String => Function
-      @func_by_id = {} of FunctionId => Function
+      @func_by_id = [] of Function?
       bootstrap_trace_puts "[LLVM_INIT] func indexes about to build"
       build_function_lookup_indexes
       bootstrap_trace_puts "[LLVM_INIT] func indexes done"
@@ -3978,9 +3989,7 @@ module Crystal::MIR
              "  %is_fd_like = or i1 %is_fd, %is_file\n" \
              "  br i1 %is_fd_like, label %fd_case, label %ret_zero\n" \
              "fd_case:\n" \
-             "  %fd_box_ptr = getelementptr i8, ptr %self, i32 56\n" \
-             "  %fd_box = load ptr, ptr %fd_box_ptr\n" \
-             "  %fd = load i32, ptr %fd_box\n" \
+             "  %fd = call i32 @IO$CCFileDescriptor$Hfd(ptr %self)\n" \
              "  %fd_pos64 = call i64 @lseek(i32 %fd, i64 0, i32 1)\n" \
              "  %fd_pos = trunc i64 %fd_pos64 to i32\n" \
              "  ret i32 %fd_pos\n" \
@@ -9242,6 +9251,45 @@ module Crystal::MIR
         return true
       end
       case mangled
+      when "Crystal$CCSystem$CCDir$Dcurrent"
+        emit_raw "; #{mangled} - self-host-safe current directory via getcwd\n"
+        emit_raw "define ptr @#{mangled}() {\n"
+        emit_raw "entry:\n"
+        emit_raw "  %buf = alloca [4096 x i8]\n"
+        emit_raw "  %buf_ptr = getelementptr [4096 x i8], ptr %buf, i32 0, i32 0\n"
+        emit_raw "  %cwd = call ptr @getcwd(ptr %buf_ptr, i64 4096)\n"
+        emit_raw "  %ok = icmp ne ptr %cwd, null\n"
+        emit_raw "  br i1 %ok, label %make_string, label %ret_dot\n"
+        emit_raw "make_string:\n"
+        emit_raw "  %len64 = call i64 @strlen(ptr %buf_ptr)\n"
+        emit_raw "  %len = trunc i64 %len64 to i32\n"
+        emit_raw "  %alloc_i32 = add i32 %len, 13\n"
+        emit_raw "  %alloc64 = sext i32 %alloc_i32 to i64\n"
+        emit_raw "  %str = call ptr @__crystal_v2_malloc64(i64 %alloc64)\n"
+        emit_raw "  store i32 #{@string_type_id}, ptr %str\n"
+        emit_raw "  %bs = getelementptr i8, ptr %str, i32 4\n"
+        emit_raw "  store i32 %len, ptr %bs\n"
+        emit_raw "  %sz = getelementptr i8, ptr %str, i32 8\n"
+        emit_raw "  store i32 %len, ptr %sz\n"
+        emit_raw "  %data = getelementptr i8, ptr %str, i32 12\n"
+        emit_raw "  call void @llvm.memcpy.p0.p0.i64(ptr %data, ptr %buf_ptr, i64 %len64, i1 false)\n"
+        emit_raw "  %nul = getelementptr i8, ptr %data, i32 %len\n"
+        emit_raw "  store i8 0, ptr %nul\n"
+        emit_raw "  ret ptr %str\n"
+        emit_raw "ret_dot:\n"
+        emit_raw "  %dot = call ptr @__crystal_v2_malloc64(i64 14)\n"
+        emit_raw "  store i32 #{@string_type_id}, ptr %dot\n"
+        emit_raw "  %dot_bs = getelementptr i8, ptr %dot, i32 4\n"
+        emit_raw "  store i32 1, ptr %dot_bs\n"
+        emit_raw "  %dot_sz = getelementptr i8, ptr %dot, i32 8\n"
+        emit_raw "  store i32 1, ptr %dot_sz\n"
+        emit_raw "  %dot_data = getelementptr i8, ptr %dot, i32 12\n"
+        emit_raw "  store i8 46, ptr %dot_data\n"
+        emit_raw "  %dot_nul = getelementptr i8, ptr %dot_data, i32 1\n"
+        emit_raw "  store i8 0, ptr %dot_nul\n"
+        emit_raw "  ret ptr %dot\n"
+        emit_raw "}\n\n"
+        return true
       when "IO$Hpos"
         io_memory_tid = @module.type_registry.get_by_name("IO::Memory").try(&.id.to_i32)
         io_fd_tid = @module.type_registry.get_by_name("IO::FileDescriptor").try(&.id.to_i32)
@@ -9281,9 +9329,7 @@ module Crystal::MIR
           end
           if io_fd_tid || file_tid
             io << "fd_case:\n"
-            io << "  %fd_box_ptr = getelementptr i8, ptr %self, i32 56\n"
-            io << "  %fd_box = load ptr, ptr %fd_box_ptr\n"
-            io << "  %fd = load i32, ptr %fd_box\n"
+            io << "  %fd = call i32 @IO$CCFileDescriptor$Hfd(ptr %self)\n"
             io << "  %fd_pos64 = call i64 @lseek(i32 %fd, i64 0, i32 1)\n"
             io << "  %fd_pos = trunc i64 %fd_pos64 to i32\n"
             io << "  ret i32 %fd_pos\n"
@@ -9985,10 +10031,7 @@ module Crystal::MIR
         emit_raw "; IO::FileDescriptor#read(Slice(UInt8)) — direct syscall override\n"
         emit_raw "define i32 @#{mangled}(ptr %self, ptr %slice) {\n"
         emit_raw "entry:\n"
-        # Load fd: self.@volatile_fd is at offset 56 (stored as boxed ptr → i32)
-        emit_raw "  %fd_box_ptr = getelementptr i8, ptr %self, i32 56\n"
-        emit_raw "  %fd_box = load ptr, ptr %fd_box_ptr\n"
-        emit_raw "  %fd = load i32, ptr %fd_box\n"
+        emit_raw "  %fd = call i32 @IO$CCFileDescriptor$Hfd(ptr %self)\n"
         # Load slice.@size from offset 0
         emit_raw "  %size_ptr = getelementptr i8, ptr %slice, i32 0\n"
         emit_raw "  %size = load i32, ptr %size_ptr\n"
@@ -10017,11 +10060,12 @@ module Crystal::MIR
       # Bypass the broken event-loop write dispatch in self-hosted stage2.
       if mangled == "IO$CCFileDescriptor$Hsystem_write$$Slice$LUInt8$R" ||
          mangled == "File$Hsystem_write$$Slice$LUInt8$R"
-        fd_getter = mangled.starts_with?("File$") ? "File$Hfd" : "IO$CCFileDescriptor$Hfd"
         emit_raw "; #{mangled} — direct syscall system_write override\n"
         emit_raw "define i32 @#{mangled}(ptr %self, ptr %slice) {\n"
         emit_raw "entry:\n"
-        emit_raw "  %fd = call i32 @#{fd_getter}(ptr %self)\n"
+        # Use the generated fd getter instead of duplicating layout offsets:
+        # @volatile_fd moves when earlier type registration frontiers are fixed.
+        emit_raw "  %fd = call i32 @IO$CCFileDescriptor$Hfd(ptr %self)\n"
         # Load slice.@size from offset 0
         emit_raw "  %size_ptr = getelementptr i8, ptr %slice, i32 0\n"
         emit_raw "  %size = load i32, ptr %size_ptr\n"
@@ -10057,10 +10101,7 @@ module Crystal::MIR
         emit_raw "; #{mangled} — direct syscall gets override\n"
         emit_raw "define %Nil$_$OR$_String.union @#{mangled}(ptr %self, i32 %delimiter, i1 %chomp) {\n"
         emit_raw "entry:\n"
-        # Load fd via double-deref at IO::FileDescriptor @volatile_fd offset.
-        emit_raw "  %fd_box_ptr = getelementptr i8, ptr %self, i32 56\n"
-        emit_raw "  %fd_box = load ptr, ptr %fd_box_ptr\n"
-        emit_raw "  %fd = load i32, ptr %fd_box\n"
+        emit_raw "  %fd = call i32 @IO$CCFileDescriptor$Hfd(ptr %self)\n"
         # Allocate buffer (4096 bytes) and a 1-byte read buffer
         emit_raw "  %buf = call ptr @__crystal_v2_malloc64(i64 4096)\n"
         emit_raw "  %byte_buf = alloca i8\n"
@@ -12319,7 +12360,7 @@ module Crystal::MIR
         return_type = @type_mapper.llvm_type(func.return_type)
         if return_type == "void"
           if precomputed = @emitted_function_return_types[mangled_name]?
-            return_type = precomputed if precomputed != "void"
+            return_type = precomputed if !precomputed.empty? && precomputed != "void"
           end
         end
         @emitted_function_return_types[mangled_name] = return_type
@@ -12422,7 +12463,7 @@ module Crystal::MIR
       mangled_name = @current_func_name
       if return_type == "void"
         if precomputed = @emitted_function_return_types[mangled_name]?
-          if precomputed != "void"
+          if !precomputed.empty? && precomputed != "void"
             return_type = precomputed
           end
         end
@@ -12926,7 +12967,7 @@ module Crystal::MIR
           # Resolved callee return type wins when MIR still carries a primitive inst.type
           # but the function returns a union (cross-block slot must be union-sized).
           if def_inst.is_a?(Call)
-            if callee = @func_by_id[def_inst.callee]?
+            if callee = function_by_id(def_inst.callee)
               callee_ret = callee.return_type
               callee_ret_llvm = @type_mapper.llvm_type(callee_ret)
               if is_union_llvm_type?(callee_ret_llvm) && !is_union_llvm_type?(def_llvm)
@@ -12959,7 +13000,7 @@ module Crystal::MIR
           if is_union_llvm_type?(call_inst_llvm)
             val_type = di.type
             llvm_type = call_inst_llvm
-          elsif (callee = @func_by_id[di.callee]?)
+          elsif (callee = function_by_id(di.callee))
             ret_llvm = @type_mapper.llvm_type(callee.return_type)
             if is_union_llvm_type?(ret_llvm)
               val_type = callee.return_type
@@ -13368,7 +13409,7 @@ module Crystal::MIR
           elsif inst.is_a?(Call)
             # For Call instructions, check the callee's actual return type
             # If callee returns void, mark as void even if inst.type says otherwise
-            callee_func = @func_by_id[inst.callee]?
+            callee_func = function_by_id(inst.callee)
             if callee_func
               if ENV["DEBUG_SLOT_TYPES"]? && func.name.includes?("Path#basename")
                 inst_type_name = @module.type_registry.get(inst.type).try(&.name) || "unknown"
@@ -13580,7 +13621,7 @@ module Crystal::MIR
           # Skip Call/ExternCall instructions that are truly void
           # These are genuinely void and any usage is a MIR issue we handle with defaults
           if inst.is_a?(Call)
-            callee_func = @func_by_id[inst.callee]?
+            callee_func = function_by_id(inst.callee)
             if callee_func && @type_mapper.llvm_type(callee_func.return_type) == "void"
               next  # Genuinely void, don't infer type
             end
@@ -14338,7 +14379,7 @@ module Crystal::MIR
       func.blocks.each do |block|
         block.instructions.each do |inst|
           next unless inst.is_a?(Call)
-          callee = @func_by_id[inst.callee]?
+          callee = function_by_id(inst.callee)
           next unless callee
           ret_ref = callee.return_type
           callee_ret_llvm = @type_mapper.llvm_type(ret_ref)
@@ -19206,7 +19247,7 @@ module Crystal::MIR
 
     private def emit_call(inst : Call, name : String, func : Function)
       # Look up callee function for name and param types
-      callee_func = @func_by_id[inst.callee]?
+      callee_func = function_by_id(inst.callee)
       callee_name = if callee_func
                       mangle_function_name(callee_func.name)
                     else
@@ -19570,7 +19611,7 @@ module Crystal::MIR
       scalar_to_union_target_type = ""
       needs_union_to_union_wrap = false
       union_to_union_target_type = ""
-      return_type = if emitted_ret && emitted_ret != "void"
+      return_type = if emitted_ret && !emitted_ret.empty? && emitted_ret != "void"
                       # Use the ACTUAL emitted function's return type for ABI correctness
                       emitted_ret
                     elsif callee_func
@@ -20503,6 +20544,7 @@ module Crystal::MIR
       if no_prelude_string_builder_dnew_mangled?(callee_name)
         return_type = "ptr"
       end
+      return_type = "void" if return_type.empty?
 
       if return_type == "void"
         emit "call void @#{callee_name}(#{args})"

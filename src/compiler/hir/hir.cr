@@ -1220,16 +1220,24 @@ module Crystal::HIR
     getter id : BlockId
     getter scope : ScopeId
     getter instructions : Array(Value)
-    property terminator : Terminator
+    getter terminator : Terminator
+    getter body_emitted : Bool
 
     def initialize(@id : BlockId, @scope : ScopeId)
       @instructions = [] of Value
       @terminator = Unreachable.new
+      @body_emitted = false
     end
 
     def add(instruction : Value) : Value
       @instructions << instruction
+      @body_emitted = true
       instruction
+    end
+
+    def terminator=(terminator : Terminator)
+      @terminator = terminator
+      @body_emitted = true
     end
 
     def to_s(io : IO) : Nil
@@ -1809,11 +1817,16 @@ module Crystal::HIR
       @functions_by_name.has_key?(name)
     end
 
-    # Check if a function exists and has at least one emitted instruction.
-    # Function stubs created by create_function can exist with an empty body.
+    # Check if a function exists and lowering emitted either instructions or a
+    # real terminator. Function stubs created by create_function keep the entry
+    # block's initial Unreachable terminator and have body_emitted=false.
     def has_function_with_body?(name : String) : Bool
-      if func = @functions_by_name[name]?
-        func.blocks.any? { |block| block.instructions.size > 0 }
+      if func = function_by_name(name)
+        func.blocks.any? do |block|
+          block.body_emitted ||
+            !block.instructions.empty? ||
+            !block.terminator.is_a?(Unreachable)
+        end
       else
         false
       end
@@ -2345,6 +2358,7 @@ module Crystal::HIR
 
     # Get TypeDescriptor for a TypeRef
     def get_type_descriptor(type_ref : TypeRef) : TypeDescriptor?
+      return nil if type_ref.null_ptr?
       return nil if type_ref.id < TypeRef::FIRST_USER_TYPE
       idx = (type_ref.id - TypeRef::FIRST_USER_TYPE).to_i32
       @types[idx]?
@@ -2521,7 +2535,9 @@ module Crystal::HIR
       end
     end
 
-    def initialize(@kind : TypeKind, @name : String, @type_params : Array(TypeRef) = [] of TypeRef)
+    def initialize(@kind : TypeKind, name : String, type_params : Array(TypeRef) = [] of TypeRef)
+      @name = String.new(name.to_slice)
+      @type_params = type_params.dup
     end
 
     def ==(other : TypeDescriptor) : Bool
