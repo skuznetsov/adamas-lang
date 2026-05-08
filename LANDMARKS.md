@@ -4037,3 +4037,23 @@ Operational impact:
   unprobed.
 
 Trust: {F/G/R: 0.85/0.72/0.85} [verified-docs]
+
+## LM-563 — Final hostile spec review aligned active frontier order
+
+Context: compiler/bootstrap/process, 2026-05-08, `codegen`.
+
+Review finding addressed:
+
+- The falsifier matrix still marked the full-prelude generic/template `puts 42`
+  frontier as `current`, while `06-cli-output-contract.md` and TODO identify
+  the no-prelude post-LLVM CLI/output tail as the next active fix target. This
+  could send agents back into full-prelude generic registration before the
+  no-prelude binary-output crash is localized.
+
+Fix:
+
+- Reclassified matrix row `G5` from `current` to `pre-s2-clean`. It remains a
+  required gate before declaring `s1 -> s2b` clean, but it should not preempt
+  the active CLI/output tail work.
+
+Trust: {F/G/R: 0.86/0.72/0.86} [verified-docs]

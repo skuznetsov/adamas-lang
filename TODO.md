@@ -49,6 +49,9 @@ success as evidence for normal binary output.
 After LM-562, the CLI/output spec also contains the exact static-call reducer,
 adjacent emit-vs-binary commands, and the required localization log points for
 the next post-LLVM tail fix attempt.
+After LM-563, the falsifier matrix no longer marks the full-prelude
+generic/template `puts 42` frontier as the active `current` row; it is a
+`pre-s2-clean` gate behind the no-prelude CLI/output tail.
 
 Stage2 static-call LLVM emission checkpoint (2026-05-08): after LM-559,
 produced `s2` no-prelude LLVM IR for `Exception::CallStack.skip("x")` now emits
