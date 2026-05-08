@@ -3946,3 +3946,37 @@ Current boundary:
   a later generic/template registration frontier.
 
 Trust: {F/G/R: 0.88/0.50/0.88} [verified]
+
+## LM-560 — Bootstrap work now has executable spec contracts
+
+Context: compiler/bootstrap/process, 2026-05-08, `codegen`.
+
+Decision:
+
+- Add `docs/specs/` as the first spec-first contract layer for Crystal V2.
+  The goal is not a full Crystal language standard. The goal is to turn known
+  bootstrap bug families into falsifiable contracts before further
+  implementation work.
+- Initial documents:
+  - `docs/specs/00-bootstrap-contract.md`
+  - `docs/specs/01-hir-name-resolution.md`
+  - `docs/specs/02-generic-template-registration.md`
+  - `docs/specs/03-mir-call-abi.md`
+  - `docs/specs/04-llvm-emission.md`
+  - `docs/specs/05-falsifier-matrix.md`
+
+Why this matters:
+
+- The project has proven that agents can move the compiler by root-cause
+  debugging, but most time is spent discovering edge-case families late.
+- The spec layer changes the default workflow from "frontier first, guard
+  later" to "contract and falsifier first, implementation second" where the
+  contract family is already known.
+
+Operational rule:
+
+- A future meaningful bootstrap fix should satisfy an existing falsifier-matrix
+  row or update the matrix with a new row and guard. If a claim has no narrow
+  falsifier, keep it as `[MISSING-FALSIFIER]` or `[FRONTIER]`, not VERIFIED.
+
+Trust: {F/G/R: 0.82/0.65/0.82} [verified-docs]

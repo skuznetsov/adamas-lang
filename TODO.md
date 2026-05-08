@@ -30,6 +30,16 @@ Working policy:
 
 ## Current Checkpoint
 
+Spec-first bootstrap checkpoint (2026-05-08): `docs/specs/` now contains the
+first executable contract slice for Crystal V2, modeled after the DiamondDB
+spec-first workflow but scoped to compiler bootstrap rather than full language
+standardization. The initial set defines the stage corridor, HIR name/type
+literal invariants, generic-template registration policy, MIR call ABI, LLVM
+emission rules, and a falsifier matrix. Use these specs as the default target
+when fixing new frontiers: every meaningful root fix should either satisfy an
+existing row in `docs/specs/05-falsifier-matrix.md` or add/update a row with a
+small guard.
+
 Stage2 static-call LLVM emission checkpoint (2026-05-08): after LM-559,
 produced `s2` no-prelude LLVM IR for `Exception::CallStack.skip("x")` now emits
 the named static callee
