@@ -167,13 +167,25 @@ module Crystal::HIR
 
   # Base class for all HIR values/instructions
   abstract class Value
+    NO_MUST_ALIAS = UInt32::MAX
+
     getter id : ValueId
     getter type : TypeRef
     property lifetime : LifetimeTag = LifetimeTag::Unknown
     property taints : Taint = Taint::None
-    property must_alias_with : ValueId? = nil
+    @must_alias_with_value : ValueId = NO_MUST_ALIAS
 
     def initialize(@id : ValueId, @type : TypeRef)
+      @must_alias_with_value = NO_MUST_ALIAS
+    end
+
+    def must_alias_with : ValueId?
+      @must_alias_with_value == NO_MUST_ALIAS ? nil : @must_alias_with_value
+    end
+
+    def must_alias_with=(value : ValueId?) : ValueId?
+      @must_alias_with_value = value.nil? ? NO_MUST_ALIAS : value.not_nil!
+      value
     end
 
     # For debug printing
@@ -192,7 +204,8 @@ module Crystal::HIR
     getter int_value : Int64
     getter uint_value : UInt64
     getter float_value : Float64
-    getter str_value : String?
+    @str_value_text : String = ""
+    @has_str_value : Bool = false
 
     property int_value : Int64 = 0_i64
     property uint_value : UInt64 = 0_u64
@@ -202,6 +215,26 @@ module Crystal::HIR
       super(id, type)
       @lifetime = LifetimeTag::StackLocal
       sync_cached_value_fields
+    end
+
+    def initialize(id : ValueId, type : TypeRef, value : String)
+      @value = nil
+      super(id, type)
+      @lifetime = LifetimeTag::StackLocal
+      @str_value_text = value
+      @has_str_value = true
+    end
+
+    def str_value : String?
+      @has_str_value ? @str_value_text : nil
+    end
+
+    def has_str_value? : Bool
+      @has_str_value
+    end
+
+    def str_value_text : String
+      @str_value_text
     end
 
     def to_s(io : IO) : Nil
@@ -219,15 +252,10 @@ module Crystal::HIR
       when TypeRef::UINT8, TypeRef::UINT16, TypeRef::UINT32, TypeRef::UINT64, TypeRef::UINT128
         io << @uint_value
       when TypeRef::STRING, TypeRef::SYMBOL
-        case v = @value
-        when String
-          if @type == TypeRef::SYMBOL
-            io << ":" << v
-          else
-            io << v.inspect
-          end
+        if @type == TypeRef::SYMBOL
+          io << ":" << @str_value_text
         else
-          io << "nil"
+          io << @str_value_text.inspect
         end
       else
         # Integer types: use @int_value directly
@@ -255,7 +283,10 @@ module Crystal::HIR
         @int_value = codepoint
         @uint_value = codepoint.to_u64
       when String, Nil
-        # Keep default cached primitive fields.
+        if v.is_a?(String)
+          @str_value_text = v
+          @has_str_value = true
+        end
       end
     end
 
@@ -642,36 +673,284 @@ module Crystal::HIR
 
   # Method/function call
   class Call < Value
-    getter receiver : ValueId?
+    NO_RECEIVER = UInt32::MAX
+    NO_BLOCK = UInt32::MAX
+
     property method_name : String
-    getter args : Array(ValueId)
-    getter block : BlockId?
+    property args : Array(ValueId)
+    @receiver_value : ValueId = NO_RECEIVER
+    @block_value : BlockId = NO_BLOCK
     getter virtual : Bool
+
+    def self.without_receiver(
+      id : ValueId,
+      type : TypeRef,
+      method_name : String,
+      args : Array(ValueId)
+    ) : Call
+      if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
+        STDERR.puts "[CALL_CTOR_TRACE] factory=without_receiver before id=#{id} method=#{method_name} args=#{args.size}"
+      end
+      call = new(id, type, "")
+      call.configure_without_receiver(method_name, args)
+      if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
+        STDERR.puts "[CALL_CTOR_TRACE] factory=without_receiver after method=#{call.method_name} args=#{call.args.size}"
+      end
+      call
+    end
+
+    def configure_without_receiver(method_name : String, args : Array(ValueId)) : Nil
+      @receiver_value = NO_RECEIVER
+      @method_name = method_name
+      @args = args
+      @block_value = NO_BLOCK
+      @virtual = false
+    end
 
     def initialize(
       id : ValueId,
       type : TypeRef,
-      @receiver : ValueId?,
-      @method_name : String,
-      @args : Array(ValueId) = [] of ValueId,
-      @block : BlockId? = nil,
-      @virtual : Bool = false
+      method_name : String
     )
       super(id, type)
+      @receiver_value = NO_RECEIVER
+      @method_name = method_name
+      @args = [] of ValueId
+      @block_value = NO_BLOCK
+      @virtual = false
+    end
+
+    def initialize(
+      id : ValueId,
+      type : TypeRef,
+      method_name : String,
+      args : Array(ValueId)
+    )
+      super(id, type)
+      if ENV.has_key?("CRYSTAL_V2_TRACE_CALL_CTOR")
+        STDERR.puts "[CALL_CTOR_TRACE_ENV] overload=no_receiver_arity4 before id=#{id} method=#{method_name} args=#{args.size}"
+      end
+      if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
+        STDERR.puts "[CALL_CTOR_TRACE] overload=no_receiver_arity4 before id=#{id} method=#{method_name} args=#{args.size}"
+      end
+      @receiver_value = NO_RECEIVER
+      @method_name = method_name
+      @args = args
+      @block_value = NO_BLOCK
+      @virtual = false
+      if ENV.has_key?("CRYSTAL_V2_TRACE_CALL_CTOR")
+        STDERR.puts "[CALL_CTOR_TRACE_ENV] overload=no_receiver_arity4 after method=#{@method_name} args=#{@args.size} recv=#{@receiver_value} block=#{@block_value} virtual=#{@virtual}"
+      end
+      if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
+        STDERR.puts "[CALL_CTOR_TRACE] overload=no_receiver_arity4 after method=#{@method_name} args=#{@args.size} recv=#{@receiver_value} block=#{@block_value} virtual=#{@virtual}"
+      end
+    end
+
+    def initialize(
+      id : ValueId,
+      type : TypeRef,
+      method_name : String,
+      args : Array(ValueId),
+      virtual : Bool
+    )
+      super(id, type)
+      if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
+        STDERR.puts "[CALL_CTOR_TRACE] overload=no_receiver_arity5 before id=#{id} method=#{method_name} args=#{args.size} virtual=#{virtual}"
+      end
+      @receiver_value = NO_RECEIVER
+      @method_name = method_name
+      @args = args
+      @block_value = NO_BLOCK
+      @virtual = virtual
+      if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
+        STDERR.puts "[CALL_CTOR_TRACE] overload=no_receiver_arity5 after method=#{@method_name} args=#{@args.size} recv=#{@receiver_value} block=#{@block_value} virtual=#{@virtual}"
+      end
+    end
+
+    def initialize(
+      id : ValueId,
+      type : TypeRef,
+      receiver : ValueId,
+      method_name : String,
+      args : Array(ValueId) = [] of ValueId,
+      virtual : Bool = false
+    )
+      super(id, type)
+      if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
+        STDERR.puts "[CALL_CTOR_TRACE] overload=receiver before id=#{id} receiver=#{receiver} method=#{method_name} args=#{args.size} virtual=#{virtual}"
+      end
+      @receiver_value = receiver
+      @method_name = method_name
+      @args = args
+      @block_value = NO_BLOCK
+      @virtual = virtual
+      if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
+        STDERR.puts "[CALL_CTOR_TRACE] overload=receiver after method=#{@method_name} args=#{@args.size} recv=#{@receiver_value} block=#{@block_value} virtual=#{@virtual}"
+      end
+    end
+
+    def initialize(
+      id : ValueId,
+      type : TypeRef,
+      receiver : Nil,
+      method_name : String,
+      args : Array(ValueId) = [] of ValueId,
+      virtual : Bool = false
+    )
+      super(id, type)
+      if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
+        STDERR.puts "[CALL_CTOR_TRACE] overload=nil_receiver before id=#{id} method=#{method_name} args=#{args.size} virtual=#{virtual}"
+      end
+      @receiver_value = NO_RECEIVER
+      @method_name = method_name
+      @args = args
+      @block_value = NO_BLOCK
+      @virtual = virtual
+      if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
+        STDERR.puts "[CALL_CTOR_TRACE] overload=nil_receiver after method=#{@method_name} args=#{@args.size} recv=#{@receiver_value} block=#{@block_value} virtual=#{@virtual}"
+      end
+    end
+
+    def initialize(
+      id : ValueId,
+      type : TypeRef,
+      method_name : String,
+      args : Array(ValueId),
+      block : BlockId,
+      virtual : Bool = false
+    )
+      super(id, type)
+      if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
+        STDERR.puts "[CALL_CTOR_TRACE] overload=block before id=#{id} method=#{method_name} args=#{args.size} block=#{block} virtual=#{virtual}"
+      end
+      @receiver_value = NO_RECEIVER
+      @method_name = method_name
+      @args = args
+      @block_value = block
+      @virtual = virtual
+      if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
+        STDERR.puts "[CALL_CTOR_TRACE] overload=block after method=#{@method_name} args=#{@args.size} recv=#{@receiver_value} block=#{@block_value} virtual=#{@virtual}"
+      end
+    end
+
+    def initialize(
+      id : ValueId,
+      type : TypeRef,
+      receiver : ValueId,
+      method_name : String,
+      args : Array(ValueId),
+      block : BlockId,
+      virtual : Bool = false
+    )
+      super(id, type)
+      if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
+        STDERR.puts "[CALL_CTOR_TRACE] overload=receiver_block before id=#{id} receiver=#{receiver} method=#{method_name} args=#{args.size} block=#{block} virtual=#{virtual}"
+      end
+      @receiver_value = receiver
+      @method_name = method_name
+      @args = args
+      @block_value = block
+      @virtual = virtual
+      if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
+        STDERR.puts "[CALL_CTOR_TRACE] overload=receiver_block after method=#{@method_name} args=#{@args.size} recv=#{@receiver_value} block=#{@block_value} virtual=#{@virtual}"
+      end
+    end
+
+    def initialize(
+      id : ValueId,
+      type : TypeRef,
+      receiver : ValueId,
+      method_name : String,
+      args : Array(ValueId),
+      block : Nil,
+      virtual : Bool = false
+    )
+      super(id, type)
+      @receiver_value = receiver
+      @method_name = method_name
+      @args = args
+      @block_value = NO_BLOCK
+      @virtual = virtual
+    end
+
+    def initialize(
+      id : ValueId,
+      type : TypeRef,
+      receiver : Nil,
+      method_name : String,
+      args : Array(ValueId),
+      block : BlockId,
+      virtual : Bool = false
+    )
+      super(id, type)
+      @receiver_value = NO_RECEIVER
+      @method_name = method_name
+      @args = args
+      @block_value = block
+      @virtual = virtual
+    end
+
+    def initialize(
+      id : ValueId,
+      type : TypeRef,
+      receiver : Nil,
+      method_name : String,
+      args : Array(ValueId),
+      block : Nil,
+      virtual : Bool = false
+    )
+      super(id, type)
+      @receiver_value = NO_RECEIVER
+      @method_name = method_name
+      @args = args
+      @block_value = NO_BLOCK
+      @virtual = virtual
+    end
+
+    def receiver : ValueId?
+      has_receiver? ? @receiver_value : nil
+    end
+
+    def has_receiver? : Bool
+      @receiver_value != NO_RECEIVER
+    end
+
+    def receiver_value : ValueId
+      @receiver_value
+    end
+
+    def block : BlockId?
+      has_block? ? @block_value : nil
+    end
+
+    def has_block? : Bool
+      @block_value != NO_BLOCK
+    end
+
+    def block_value : BlockId
+      @block_value
+    end
+
+    def debug_method_name_direct : String
+      @method_name
+    end
+
+    def debug_args_size_direct : Int32
+      @args.size
     end
 
     def to_s(io : IO) : Nil
       io << "%" << @id << " = call "
-      if recv = @receiver
-        io << "%" << recv << "."
+      if has_receiver?
+        io << "%" << @receiver_value << "."
       end
       io << @method_name << "("
       Crystal::HIR.write_value_id_list(io, @args)
       io << ")"
       io << " : " << @type.id
       io << " [virtual]" if @virtual
-      if blk = @block
-        io << " with_block block." << blk
+      if has_block?
+        io << " with_block block." << @block_value
       end
     end
   end
@@ -1822,11 +2101,17 @@ module Crystal::HIR
     # block's initial Unreachable terminator and have body_emitted=false.
     def has_function_with_body?(name : String) : Bool
       if func = function_by_name(name)
-        func.blocks.any? do |block|
-          block.body_emitted ||
-            !block.instructions.empty? ||
-            !block.terminator.is_a?(Unreachable)
+        idx = 0
+        while idx < func.blocks.size
+          block = func.blocks.unsafe_fetch(idx)
+          if block.body_emitted ||
+             !block.instructions.empty? ||
+             !block.terminator.is_a?(Unreachable)
+            return true
+          end
+          idx += 1
         end
+        false
       else
         false
       end
@@ -2134,7 +2419,8 @@ module Crystal::HIR
               method_base = base_name_for.call(callee)
 
               receiver_root_owners = [] of String
-              if recv_id = inst.receiver
+              if inst.has_receiver?
+                recv_id = inst.receiver_value
                 if recv_type = value_types[recv_id]?
                   if recv_desc = get_type_descriptor(recv_type)
                     if recv_desc.kind == TypeKind::Union

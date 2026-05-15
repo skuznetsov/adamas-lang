@@ -1,6 +1,6 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-05-08
+Updated: 2026-05-15
 Branch: `codegen`
 
 This is the active working backlog only. Historical detail is in git history,
@@ -77,6 +77,20 @@ when practical. Small helpers in self-host critical paths require fresh
 Cache/hash/filesystem tails are bootstrap runtime surface, not harmless
 infrastructure. A gate-local root fix must name deeper subsystem roots that
 remain open.
+
+Stage2 nilable union-wrap codegen checkpoint (2026-05-15): after LM-566,
+produced `s2` passes the focused no-prelude reducer `x : UInt32? = nil; if x;
+1; else; 0; end` and the produced binary runs under `scripts/run_safe.sh`.
+Root closure: ordered union descriptor registrations are carried into MIR, the
+LLVM union-wrap path uses descriptor-backed scalar scans instead of
+stage2-sensitive iterator/string reverse lookups, and union-derived temporary
+names are sanitized with the existing local-name helper. New guard:
+`p2_nilable_union_wrap_codegen_no_prelude.sh`, passed on host and produced
+`s2`. Boundary: this does not clear full-prelude `puts 42`; produced `s2` still
+times out under a 60s adversary check during early registration, and the broader
+nilable short-circuit union-phi reducer remains open on produced `s2`. The
+`s1 -> s2` build also still prints a non-fatal MIR optimizer overflow for
+`CrystalV2::Compiler::CLI#file_sha256$String`.
 
 Stage2 static-call LLVM emission checkpoint (2026-05-08): after LM-559,
 produced `s2` no-prelude LLVM IR for `Exception::CallStack.skip("x")` now emits

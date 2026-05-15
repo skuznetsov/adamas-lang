@@ -1212,14 +1212,31 @@ module Crystal::MIR
     end
 
     def payload_offset : Int32
-      max_align = variants.map(&.alignment).max? || 8
+      max_align = 8
+      idx = 0
+      while idx < variants.size
+        alignment = variants.unsafe_fetch(idx).alignment
+        max_align = alignment if alignment > max_align
+        idx += 1
+      end
       ((header_size + max_align - 1) // max_align) * max_align
     end
 
     def max_payload_size : Int32
-      variants.map(&.size).max? || 0
+      max_size = 0
+      idx = 0
+      while idx < variants.size
+        size = variants.unsafe_fetch(idx).size
+        max_size = size if size > max_size
+        idx += 1
+      end
+      max_size
     end
   end
+
+  record UnionDescriptorEntry,
+    type_ref : TypeRef,
+    descriptor : UnionDescriptor
 
   # Wrap value into union (sets discriminator + stores payload)
   class UnionWrap < Value
@@ -2022,6 +2039,7 @@ module Crystal::MIR
     getter globals : ::Array(GlobalVar)
     getter extern_globals : ::Hash(String, TypeRef)
     getter union_descriptors : ::Hash(TypeRef, UnionDescriptor)
+    getter union_descriptor_entries : ::Array(UnionDescriptorEntry)
     getter module_type_refs : ::Set(TypeRef)
     property source_file : String?
 
@@ -2038,6 +2056,7 @@ module Crystal::MIR
       @globals = [] of GlobalVar
       @extern_globals = {} of String => TypeRef
       @union_descriptors = {} of TypeRef => UnionDescriptor
+      @union_descriptor_entries = [] of UnionDescriptorEntry
       @module_type_refs = ::Set(TypeRef).new
       @symbol_names = [] of String
       @symbol_name_to_id = {} of String => Int32
@@ -2058,6 +2077,16 @@ module Crystal::MIR
     # Register a union type with full descriptor for debug info
     def register_union(type_ref : TypeRef, descriptor : UnionDescriptor)
       @union_descriptors[type_ref] = descriptor
+      idx = 0
+      while idx < @union_descriptor_entries.size
+        entry = @union_descriptor_entries.unsafe_fetch(idx)
+        if entry.type_ref == type_ref
+          @union_descriptor_entries[idx] = UnionDescriptorEntry.new(type_ref, descriptor)
+          return
+        end
+        idx += 1
+      end
+      @union_descriptor_entries << UnionDescriptorEntry.new(type_ref, descriptor)
     end
 
     # Get union descriptor by type ref

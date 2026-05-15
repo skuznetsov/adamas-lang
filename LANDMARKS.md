@@ -4142,3 +4142,59 @@ Process updates:
   anchors for tail work when lldb/breakpoints/IR are practical.
 
 Trust: {F/G/R: 0.82/0.68/0.84} [verified-process]
+
+## LM-566 — Produced stage2 nilable union-wrap codegen clears focused reducer
+
+Context: compiler/bootstrap/MIR-LLVM-union, 2026-05-15, `codegen`.
+
+Verified outcome:
+
+- Produced `s2` now compiles and runs the no-prelude nilable-union reducer:
+  `x : UInt32? = nil; if x; 1; else; 0; end`.
+- The existing qualified nested-module namespace guard still passes on produced
+  `s2`, so the fix does not reopen the LM-552 namespace frontier.
+- The top-level bare function-call no-prelude guard also passes on produced
+  `s2`.
+
+Root evidence:
+
+- Local LLVM `emit_block` tracing localized the produced-stage hang to non-phi
+  instruction id 3 in block 0. MIR showed id 3 was
+  `union_wrap %2 as variant 0`, where `%2` was `nil`.
+- Grok ACP's read-only audit usefully ranked union emission as high risk, but
+  its strongest post-block-helper prediction was falsified by the local trace.
+- The root fix avoids stage2-sensitive iterator/string reverse lookups on the
+  union-wrap path by carrying ordered union descriptor registrations into MIR
+  and using descriptor-backed scalar scans for nil/reference variant lookup.
+- The next exposed failure was invalid LLVM local names such as `%3.ptr` and
+  `%4.union_ptr`; union-derived temporary names now use the existing sanitized
+  local-name base helper.
+
+Evidence:
+
+- `CRYSTAL_CACHE_DIR=/private/tmp/cv2_final_host_cache crystal build
+  src/crystal_v2.cr -o /private/tmp/cv2_final_host --error-trace`
+- `CRYSTAL_CACHE_DIR=/private/tmp/cv2_final_s2_cache scripts/run_safe.sh
+  /private/tmp/cv2_final_host 300 4096 src/crystal_v2.cr -o
+  /private/tmp/cv2_final_s2/cv2_s2`
+- `regression_tests/p2_nilable_union_wrap_codegen_no_prelude.sh
+  /private/tmp/cv2_final_host`
+- `regression_tests/p2_nilable_union_wrap_codegen_no_prelude.sh
+  /private/tmp/cv2_final_s2/cv2_s2`
+- `regression_tests/p2_qualified_module_namespace_no_prelude.sh
+  /private/tmp/cv2_final_s2/cv2_s2`
+- `regression_tests/p2_top_level_bare_function_call_no_prelude.sh
+  /private/tmp/cv2_final_s2/cv2_s2`
+- `git diff --check`
+
+Boundary:
+
+- This is a focused no-prelude reducer/codegen closure, not a full-prelude
+  claim. Produced `s2` full-prelude `puts 42` still does not clear the 60s
+  adversary check; it times out during early registration before reaching the
+  old Float crash frontier. The broader nilable short-circuit union-phi reducer
+  also remains open on produced `s2`.
+- The `s1 -> s2` build still prints a non-fatal MIR optimizer overflow for
+  `CrystalV2::Compiler::CLI#file_sha256$String`; that is not solved here.
+
+Trust: {F/G/R: 0.86/0.56/0.86} [verified]

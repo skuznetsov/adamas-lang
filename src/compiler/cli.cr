@@ -2186,7 +2186,7 @@ module CrystalV2
           while i < def_nodes.size
             candidate = def_nodes.unsafe_fetch(i)
             n = candidate[0]
-            is_fun_receiver = n.receiver.try { |recv| String.new(recv) == HIR::AstToHir::FUN_DEF_RECEIVER } || false
+            is_fun_receiver = n.has_receiver? && String.new(n.receiver_storage) == HIR::AstToHir::FUN_DEF_RECEIVER
             if String.new(n.name) == "main" && !is_fun_receiver
               main_def_index = i
               break
@@ -2233,7 +2233,7 @@ module CrystalV2
         while i < def_nodes.size
           candidate = def_nodes.unsafe_fetch(i)
           n = candidate[0]
-          is_fun_receiver = n.receiver.try { |recv| String.new(recv) == HIR::AstToHir::FUN_DEF_RECEIVER } || false
+          is_fun_receiver = n.has_receiver? && String.new(n.receiver_storage) == HIR::AstToHir::FUN_DEF_RECEIVER
           if is_fun_receiver && String.new(n.name) == "main"
             fun_main_index = i
             break
@@ -2534,8 +2534,8 @@ module CrystalV2
         bootstrap_trace_puts "[MIR_SETUP] register_extern_globals count=#{hir_module.extern_globals.size}" if mir_setup_trace
         mir_lowering.register_extern_globals(hir_module.extern_globals)
         bootstrap_trace_puts "[MIR_SETUP] register_extern_globals done" if mir_setup_trace
-        bootstrap_trace_puts "[MIR_SETUP] register_union_types count=#{hir_converter.union_descriptors.size}" if mir_setup_trace
-        mir_lowering.register_union_types(hir_converter.union_descriptors)
+        bootstrap_trace_puts "[MIR_SETUP] register_union_types count=#{hir_converter.union_descriptor_entries.size}" if mir_setup_trace
+        mir_lowering.register_union_types(hir_converter.union_descriptor_entries)
         bootstrap_trace_puts "[MIR_SETUP] register_union_types done" if mir_setup_trace
         bootstrap_trace_puts "[MIR_SETUP] register_union_type_aliases types=#{hir_module.types.size}" if mir_setup_trace
         mir_lowering.register_union_type_aliases(hir_module.types)

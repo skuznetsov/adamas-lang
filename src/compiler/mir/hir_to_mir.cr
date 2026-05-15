@@ -520,8 +520,12 @@ module Crystal
 
       # Register union types from AstToHir
       # Creates union types in MIR TypeRegistry and stores descriptors for debug info
-      def register_union_types(union_descriptors : ::Hash(MIR::TypeRef, UnionDescriptor))
-        union_descriptors.each do |mir_type_ref, descriptor|
+      def register_union_types(union_descriptors : ::Array(HIR::UnionDescriptorRegistration))
+        union_descriptor_idx = 0
+        while union_descriptor_idx < union_descriptors.size
+          entry = union_descriptors.unsafe_fetch(union_descriptor_idx)
+          mir_type_ref = entry.type_ref
+          descriptor = entry.descriptor
           # Register descriptor in MIR module (for debug info / LLVM metadata)
           @mir_module.register_union(mir_type_ref, descriptor)
 
@@ -531,7 +535,11 @@ module Crystal
           alignment = pointer_word_align_u32
           total_size = pointer_word_bytes_u64
           unless all_ref_union_descriptor?(descriptor)
-            max_variant_size = descriptor.variants.map(&.size).max? || 0
+            max_variant_size = 0
+            descriptor.variants.each do |variant|
+              size = variant.size
+              max_variant_size = size if size > max_variant_size
+            end
             # Ensure payload is at least pointer-sized (8 bytes) to match LLVM type
             # emission and prevent overflow from `store ptr` codegen patterns.
             max_variant_size = {max_variant_size, 8}.max
@@ -544,16 +552,22 @@ module Crystal
 
           # Create union type in TypeRegistry with the SAME TypeRef id
           # so that llvm_type lookup finds it
-          union_type = @mir_module.type_registry.create_type_with_id(
+          @mir_module.type_registry.create_type_with_id(
             mir_type_ref.id,
             TypeKind::Union,
             descriptor.name,
             total_size.to_u64,
             alignment
           )
+          union_type = @mir_module.type_registry.get(mir_type_ref).not_nil!
 
-          # Add each variant as a sub-type
-          descriptor.variants.each do |v|
+          # Add each variant as a sub-type. Keep this as an index loop: generated
+          # stage2 has hit block-iterator epilogue corruption in this bootstrap
+          # registration path.
+          variant_idx = 0
+          variants = descriptor.variants
+          while variant_idx < variants.size
+            v = variants.unsafe_fetch(variant_idx)
             # Get or create variant type from TypeRegistry
             if variant_type = @mir_module.type_registry.get(v.type_ref)
               union_type.add_variant(variant_type)
@@ -563,11 +577,13 @@ module Crystal
                                TypeKind::Tuple
                              else
                                TypeKind::Struct
-                             end
+              end
               prim_type = Type.new(v.type_ref.id, variant_kind, v.full_name, v.size.to_u64, v.alignment.to_u32)
               union_type.add_variant(prim_type)
             end
+            variant_idx += 1
           end
+          union_descriptor_idx += 1
         end
       end
 
@@ -1481,9 +1497,6 @@ module Crystal
       # ─────────────────────────────────────────────────────────────────────────
 
       private def lower_function_body(hir_func : HIR::Function)
-        if mir_lower_trace?
-          STDERR.puts "[MIR_LOWER] function=#{hir_func.name} blocks=#{hir_func.blocks.size} params=#{hir_func.params.size}"
-        end
         # Get the pre-created function stub
         mir_func = @mir_module.get_function(hir_func.name)
         if mir_func.nil?
@@ -1507,7 +1520,6 @@ module Crystal
         @current_block_param_id = function_contains_yield?(hir_func) ? infer_block_param_id(hir_func) : nil
         @current_slab_frame = should_use_slab_frame?(hir_func)
         mir_func.slab_frame = @current_slab_frame
-        STDERR.puts "[MIR_LOWER] setup context done block_param=#{@current_block_param_id.inspect} slab=#{@current_slab_frame}" if mir_lower_trace?
         # Stage2 has shown unstable behavior for Hash/Set#clear in self-hosted mode.
         # Reinitialize per-function lowering maps instead of mutating in place.
         @value_map = {} of HIR::ValueId => ValueId
@@ -1529,12 +1541,10 @@ module Crystal
         @arc_slot_map = {} of HIR::ValueId => ValueId
         @block_arc_temps = [] of {HIR::ValueId, ValueId}
         @cross_block_values = ::Set(HIR::ValueId).new
-        STDERR.puts "[MIR_LOWER] caches reinitialized" if mir_lower_trace?
         @builder = Builder.new(mir_func)
         # In MIR::Function, entry block is created first and is always 0.
         # Setting explicitly avoids stage2 instability on entry_block getter path.
         @builder.not_nil!.current_block = 0_u32
-        STDERR.puts "[MIR_LOWER] builder ready entry=#{mir_func.entry_block}" if mir_lower_trace?
 
         # Reset per-function caches BEFORE params loop — params invoke
         # record_mir_value_location which reads @hir_value_block_scope.
@@ -1549,7 +1559,6 @@ module Crystal
           @value_map[param.id] = mir_id
           record_mir_value_location(hir_func, param.id, mir_func, mir_id)
         end
-        STDERR.puts "[MIR_LOWER] params mapped count=#{hir_func.params.size}" if mir_lower_trace?
 
         # Record HIR value types for cast lowering
         hir_func.params.each do |param|
@@ -1598,20 +1607,15 @@ module Crystal
             end
           end
         end
-        STDERR.puts "[MIR_LOWER] value types indexed blocks=#{hir_func.blocks.size}" if mir_lower_trace?
 
         # Create all blocks first (for forward references)
         hir_func.blocks.each do |hir_block|
           mir_block_id = mir_func.create_block
           set_block_map(hir_block.id, mir_block_id)
         end
-        STDERR.puts "[MIR_LOWER] block map created size=#{@block_map.size}" if mir_lower_trace?
 
         # Fix entry block mapping
-        STDERR.puts "[MIR_LOWER] entry map before hir=#{hir_func.entry_block} mir=#{mir_func.entry_block} size=#{@block_map.size}" if mir_lower_trace?
         set_block_map(hir_func.entry_block, 0_u32)
-        STDERR.puts "[MIR_LOWER] entry map after size=#{@block_map.size}" if mir_lower_trace?
-        STDERR.puts "[MIR_LOWER] entry mapped entry=#{hir_func.entry_block}=>#{mir_func.entry_block}" if mir_lower_trace?
 
         # Pre-scan: allocate ARC cleanup slots in entry block for rc_dec at return.
         # Each ARC allocation gets a stack slot initialized to null. After the actual
@@ -1771,20 +1775,15 @@ module Crystal
 
         # Lower each block (phi incoming resolution is deferred)
         ordered_blocks = order_blocks_for(hir_func)
-        STDERR.puts "[MIR_LOWER] ordered blocks count=#{ordered_blocks.size}" if mir_lower_trace?
         ordered_blocks.each do |hir_block|
-          STDERR.puts "[MIR_LOWER] block=#{hir_block.id} insts=#{hir_block.instructions.size} term=#{hir_block.terminator.class}" if mir_lower_trace?
           lower_block(hir_block)
         end
 
         # Now resolve all phi incoming values (after all blocks are lowered)
-        STDERR.puts "[MIR_LOWER] resolving pending phis count=#{@pending_phis.size}" if mir_lower_trace?
         resolve_pending_phis
 
         # Compute predecessors for phi resolution
-        STDERR.puts "[MIR_LOWER] compute_predecessors start" if mir_lower_trace?
         mir_func.compute_predecessors
-        STDERR.puts "[MIR_LOWER] compute_predecessors done" if mir_lower_trace?
 
         propagate_debug_scope_metadata(hir_func, mir_func)
         propagate_debug_local_bindings(hir_func, mir_func)
@@ -1932,30 +1931,37 @@ module Crystal
         builder.current_block = mir_block_id
 
         # Reset per-block ARC temp tracking
-        @block_arc_temps.clear
-        @moved_values.clear
+        @block_arc_temps = [] of {HIR::ValueId, ValueId}
+        @moved_values = ::Set(HIR::ValueId).new
 
         # Pre-scan: count how many times each HIR value is used as an operand.
         # Used for ownership transfer: last use in a FieldSet → move semantics.
-        @remaining_uses.clear
-        hir_block.instructions.each do |inst|
-          hir_value_operands(inst).each do |op|
+        @remaining_uses = ::Hash(HIR::ValueId, Int32).new(0)
+        instructions = hir_block.instructions
+        inst_idx = 0
+        while inst_idx < instructions.size
+          inst = instructions.unsafe_fetch(inst_idx)
+          operands = hir_value_operands(inst)
+          op_idx = 0
+          while op_idx < operands.size
+            op = operands.unsafe_fetch(op_idx)
             @remaining_uses[op] = (@remaining_uses[op]? || 0) + 1
+            op_idx += 1
           end
+          inst_idx += 1
         end
 
         # Lower each instruction, tracking ownership transfer for Call args
-        hir_block.instructions.each do |inst|
-          # Decrement remaining uses BEFORE lowering
-          hir_value_operands(inst).each do |op|
-            @remaining_uses[op] = (@remaining_uses[op]? || 1) - 1
-          end
+        inst_idx = 0
+        while inst_idx < instructions.size
+          inst = instructions.unsafe_fetch(inst_idx)
 
           # NOTE: Ownership transfer (move semantics) is NOT yet implemented.
           # Requires inter-procedural analysis to skip rc_inc in callee
           # AND rc_dec in caller as a pair. See Quadrumvirate analysis in TODO.md.
 
           lower_value(inst)
+          inst_idx += 1
         end
 
         # Per-block ARC cleanup: rc_dec owned Call results at block end.
@@ -2145,18 +2151,10 @@ module Crystal
         when HIR::TypeRef::BOOL
           builder.const_bool(lit.int_value != 0)
         when HIR::TypeRef::STRING
-          case v = lit.value
-          when String then builder.const_string(v)
-          else             builder.const_nil
-          end
+          builder.const_string(lit.str_value_text)
         when HIR::TypeRef::SYMBOL
-          case v = lit.value
-          when String
-            sym_id = @mir_module.intern_symbol(v)
-            builder.const_int(sym_id.to_i64, TypeRef::SYMBOL)
-          else
-            builder.const_nil
-          end
+          sym_id = @mir_module.intern_symbol(lit.str_value_text)
+          builder.const_int(sym_id.to_i64, TypeRef::SYMBOL)
         when HIR::TypeRef::CHAR
           case v = lit.value
           when Char then builder.const_int(v.ord.to_i64, TypeRef::CHAR)
@@ -2387,8 +2385,8 @@ module Crystal
         case inst
         when HIR::Call
           result = inst.args.dup
-          if recv = inst.receiver
-            result << recv
+          if inst.has_receiver?
+            result << inst.receiver_value
           end
           result
         when HIR::ExternCall          then inst.args.dup
@@ -3043,8 +3041,8 @@ module Crystal
           [inst.object]
         when HIR::Call
           result = inst.args.dup
-          if recv = inst.receiver
-            result << recv
+          if inst.has_receiver?
+            result << inst.receiver_value
           end
           result
         when HIR::ExternCall
@@ -3290,7 +3288,7 @@ module Crystal
           raise "Index error getting args for call to #{call.method_name}: #{ex.message}"
         end
 
-        if call.receiver &&
+        if call.has_receiver? &&
            call.method_name.includes?('.') &&
            !call.method_name.includes?('#')
           if exact_static_func = @mir_module.get_function(call.method_name)
@@ -3309,16 +3307,16 @@ module Crystal
         end
 
         # Add receiver as first arg if present
-        if recv = call.receiver
-          args.unshift(get_value(recv))
+        if call.has_receiver?
+          args.unshift(get_value(call.receiver_value))
         end
         if debug_virtual && call.virtual
-          recv_type = call.receiver ? @hir_value_types[call.receiver.not_nil!]? : nil
+          recv_type = call.has_receiver? ? @hir_value_types[call.receiver_value]? : nil
           recv_type_name = hir_type_name(recv_type)
           STDERR.puts "[VIRTUAL_CALL] method=#{call.method_name} receiver=#{recv_type_name} args=#{call.args.size} func=#{@current_lowering_func_name}"
         end
 
-        recv_type = call.receiver ? @hir_value_types[call.receiver.not_nil!]? : nil
+        recv_type = call.has_receiver? ? @hir_value_types[call.receiver_value]? : nil
         recv_desc = recv_type ? @hir_module.get_type_descriptor(recv_type) : nil
 
         # Union numeric conversions (to_i*, to_u*): inline by extracting payload bytes.
@@ -3340,7 +3338,7 @@ module Crystal
         # Receiverless calls to an already-materialized function are static ABI
         # calls. Lower them directly before virtual/receiver dispatch heuristics,
         # which are only relevant once a runtime receiver participates.
-        unless call.receiver
+        unless call.has_receiver?
           if exact_func = @mir_module.get_function(call.method_name)
             coerced_args = coerce_call_args(builder, args, call.args, exact_func)
             call_return_type = exact_func.return_type
@@ -3357,7 +3355,7 @@ module Crystal
         # Atomic intrinsics: Atomic(T)#get → load from self+0, Atomic(T)#set → store to self+0
         # Original Crystal uses @[Primitive(:load_atomic)] / @[Primitive(:store_atomic)]
         # but our compiler can't lower those primitives, so we inline them here.
-        if call.method_name.includes?("Atomic") && call.receiver
+        if call.method_name.includes?("Atomic") && call.has_receiver?
           method_suffix = call.method_name.rpartition("#").last.split("$").first
           if method_suffix == "get" || method_suffix == "Hget"
             # Atomic#get: load value from self + 0
@@ -3520,7 +3518,7 @@ module Crystal
         if call.method_name.includes?("unsafe_as") || call.method_name.includes?("Hunsafe_as")
           src_val = args[0] # receiver = value to cast
           dst_type = convert_type(call.type)
-          src_hir_type = call.receiver ? @hir_value_types[call.receiver.not_nil!]? : nil
+          src_hir_type = call.has_receiver? ? @hir_value_types[call.receiver_value]? : nil
           dst_hir_type = call.type
 
           # Classify source and destination as primitive-int, primitive-ptr, or object-ptr
@@ -3565,7 +3563,7 @@ module Crystal
         # Proc accessors: V2 ABI represents Proc as a bare function pointer.
         # Avoid lowering through stdlib Proc#internal_representation which
         # expects tuple-backed Proc storage not guaranteed by HIR func_pointer.
-        if call.receiver && recv_desc && (recv_desc.kind == HIR::TypeKind::Proc || recv_desc.name == "Proc" || recv_desc.name.starts_with?("Proc("))
+        if call.has_receiver? && recv_desc && (recv_desc.kind == HIR::TypeKind::Proc || recv_desc.name == "Proc" || recv_desc.name.starts_with?("Proc("))
           if method_suffix = extract_method_suffix_loose(call.method_name)
             case method_suffix
             when "pointer"
@@ -3591,12 +3589,13 @@ module Crystal
                        call.method_name.includes?("#call") || # e.g., "(A, B -> C)#call"
                        call.method_name.includes?("->") && call.method_name.ends_with?("#call")
         if ENV.has_key?("DEBUG_PROC_CALL") && call.method_name.includes?("call")
-          recv_type = call.receiver ? @hir_value_types[call.receiver.not_nil!]? : nil
+          recv_type = call.has_receiver? ? @hir_value_types[call.receiver_value]? : nil
           recv_desc = recv_type ? @hir_module.get_type_descriptor(recv_type) : nil
-          STDERR.puts "[PROC_CALL] func=#{@current_lowering_func_name} method=#{call.method_name} receiver=#{call.receiver} recv_type=#{recv_type.try(&.id)} recv_desc=#{recv_desc.try(&.name)} kind=#{recv_desc.try(&.kind)}"
+          recv_debug = call.has_receiver? ? call.receiver_value.to_s : "nil"
+          STDERR.puts "[PROC_CALL] func=#{@current_lowering_func_name} method=#{call.method_name} receiver=#{recv_debug} recv_type=#{recv_type.try(&.id)} recv_desc=#{recv_desc.try(&.name)} kind=#{recv_desc.try(&.kind)}"
         end
-        if call.receiver && is_proc_call
-          recv_type = @hir_value_types[call.receiver.not_nil!]?
+        if call.has_receiver? && is_proc_call
+          recv_type = @hir_value_types[call.receiver_value]?
           recv_desc = recv_type ? @hir_module.get_type_descriptor(recv_type) : nil
           if recv_type
             if recv_desc && (recv_desc.kind == HIR::TypeKind::Proc || recv_desc.name == "Proc" || recv_desc.name.starts_with?("Proc("))
@@ -3609,7 +3608,7 @@ module Crystal
                 filtered_args << args[idx + 1]
               end
               return_type = proc_call_return_type(recv_desc, call.type)
-              case @hir_value_carriers[call.receiver.not_nil!]?
+              case @hir_value_carriers[call.receiver_value]?
               when ProcCarrier::RawFnptrCallback
                 return builder.call_indirect(args[0], filtered_args, return_type)
               when ProcCarrier::HeapProcObject
@@ -3649,7 +3648,7 @@ module Crystal
         # parent-owned instance method on `self` (e.g. IO::Memory#read_fully ->
         # IO#read_fully?). Treat these as virtual to preserve dynamic dispatch.
         force_virtual_dispatch = false
-        if !call.virtual && call.receiver && recv_desc && recv_desc.kind == HIR::TypeKind::Class
+        if !call.virtual && call.has_receiver? && recv_desc && recv_desc.kind == HIR::TypeKind::Class
           if hash_pos = call.method_name.index('#')
             owner_name = call.method_name.byte_slice(0, hash_pos)
             if owner_name != recv_desc.name && !call.method_name.includes?("_super")
@@ -3713,7 +3712,7 @@ module Crystal
               # overload can select a typed specialization from another
               # monomorphized owner with the same method base.
               unless func
-                source_arg_count = call.receiver ? args.size - 1 : args.size
+                source_arg_count = call.has_receiver? ? args.size - 1 : args.size
                 arity_name = "#{base_name}$arity#{source_arg_count}"
                 func = all_overloads.find { |f| f.name == arity_name }
               end
@@ -3726,8 +3725,8 @@ module Crystal
             end
           else
             # For unqualified method names with a receiver, try to qualify based on receiver type
-            if call.receiver
-              recv_type = @hir_value_types[call.receiver.not_nil!]?
+            if call.has_receiver?
+              recv_type = @hir_value_types[call.receiver_value]?
               if recv_type
                 recv_desc = @hir_module.get_type_descriptor(recv_type)
                 type_name = recv_desc.try(&.name) || hir_type_name(recv_type)
@@ -3757,8 +3756,8 @@ module Crystal
           end
           callee_id = func.id
           # Build hir_args that matches mir_args ordering (receiver first, then explicit args)
-          hir_args_for_coerce = if recv = call.receiver
-                                  [recv] + call.args
+          hir_args_for_coerce = if call.has_receiver?
+                                  [call.receiver_value] + call.args
                                 else
                                   call.args
                                 end
@@ -3768,7 +3767,7 @@ module Crystal
           # argument before coercion to keep call ABI aligned with callee params.
           callee_param_count = func.params.size
           drop_dispatch_receiver = should_drop_dispatch_receiver?(
-            call.receiver,
+            call.has_receiver? ? call.receiver_value : nil,
             method_name_str,
             args,
             func,
@@ -3806,8 +3805,8 @@ module Crystal
             # Get arg type - could be from call.args[0] or from receiver
             arg_type = if call.args.size > 0
                          get_arg_type(call.args[0])
-                       elsif recv_id = call.receiver
-                         get_arg_type(recv_id)
+                       elsif call.has_receiver?
+                         get_arg_type(call.receiver_value)
                        else
                          TypeRef::STRING
                        end
@@ -3836,8 +3835,8 @@ module Crystal
             # Get arg type - could be from call.args[0] or from receiver
             arg_type = if call.args.size > 0
                          get_arg_type(call.args[0])
-                       elsif recv_id = call.receiver
-                         get_arg_type(recv_id)
+                       elsif call.has_receiver?
+                         get_arg_type(call.receiver_value)
                        else
                          TypeRef::INT32
                        end
@@ -3875,7 +3874,7 @@ module Crystal
             @mir_module.functions.each do |mf|
               next unless mf.name.ends_with?(dot_suffix) || mf.name.ends_with?(hash_suffix)
               # Match exact arg count, or (args - 1) for class methods where receiver is extra
-              if mf.params.size == args.size || (call.receiver && mf.params.size == args.size - 1)
+              if mf.params.size == args.size || (call.has_receiver? && mf.params.size == args.size - 1)
                 candidates << mf
               end
             end
@@ -3885,12 +3884,12 @@ module Crystal
           end
           if func
             # Drop receiver arg for class methods (func.params.size < args.size)
-            effective_args = if call.receiver && func.params.size < args.size
+            effective_args = if call.has_receiver? && func.params.size < args.size
                                args[1, func.params.size]
                              else
                                args[0, func.params.size]
                              end
-            hir_args = call.receiver ? [call.receiver.not_nil!] + call.args : call.args
+            hir_args = call.has_receiver? ? [call.receiver_value] + call.args : call.args
             if func.params.size < hir_args.size
               hir_args = hir_args[hir_args.size - func.params.size, func.params.size]
             end
@@ -3904,7 +3903,7 @@ module Crystal
           end
         end
         if ENV.has_key?("CRYSTAL_V2_UNRESOLVED_CALL_TRACE")
-          recv_type = call.receiver ? @hir_value_types[call.receiver.not_nil!]? : nil
+          recv_type = call.has_receiver? ? @hir_value_types[call.receiver_value]? : nil
           recv_name = hir_type_name(recv_type)
           STDERR.puts "[UNRESOLVED_CALL] func=#{@current_lowering_func_name} method=#{call.method_name} base=#{base_method_name} recv=#{recv_name} virtual=#{call.virtual} args=#{call.args.size}"
         elsif ENV.has_key?("DEBUG_CALLS")
@@ -4244,8 +4243,8 @@ module Crystal
             callee_param_count = call_func.params.size
             coerced_args = cand_args
             if hir_call
-              recv_id = hir_call.receiver
-              hir_args_with_receiver = recv_id ? [recv_id] + hir_call.args : hir_call.args
+              recv_id = hir_call.has_receiver? ? hir_call.receiver_value : nil
+              hir_args_with_receiver = hir_call.has_receiver? ? [hir_call.receiver_value] + hir_call.args : hir_call.args
               # Module/class dispatch can route to static methods whose signature
               # does not include receiver `self`. Also guard against leaked
               # dispatch receivers where only shifted arg alignment matches ABI.
@@ -4328,8 +4327,8 @@ module Crystal
       end
 
       private def lower_virtual_dispatch(call : HIR::Call, args : ::Array(ValueId)) : ValueId?
-        recv_id = call.receiver
-        return nil unless recv_id
+        return nil unless call.has_receiver?
+        recv_id = call.receiver_value
 
         recv_type = @hir_value_types[recv_id]? || return nil
         recv_desc = @hir_module.get_type_descriptor(recv_type)
@@ -6162,18 +6161,41 @@ module Crystal
         if descriptor = @mir_module.get_union_descriptor(union_type)
           hir_value_type = @hir_value_types[wrap.value]? || HIR::TypeRef::POINTER
           mir_value_type = convert_type(hir_value_type)
-          if matched_variant = descriptor.variants.find { |variant| variant.type_ref == mir_value_type }
+          matched_variant : UnionVariantDescriptor? = nil
+          variant_idx = 0
+          variants = descriptor.variants
+          while variant_idx < variants.size
+            variant = variants.unsafe_fetch(variant_idx)
+            if variant.type_ref == mir_value_type
+              matched_variant = variant
+              break
+            end
+            variant_idx += 1
+          end
+          if matched_variant
             variant_type_id = matched_variant.type_id
           elsif mir_value_type == TypeRef::POINTER
-            pointer_like = descriptor.variants.select do |variant|
-              next false if variant.type_ref == TypeRef::NIL || variant.type_ref == TypeRef::VOID
-              next true if variant.type_ref == TypeRef::POINTER || variant.type_ref == TypeRef::STRING
-
-              runtime_pointer_like_union_variant?(@mir_module.type_registry.get(variant.type_ref))
+            pointer_like_count = 0
+            pointer_like_type_id = -1
+            variant_idx = 0
+            while variant_idx < variants.size
+              variant = variants.unsafe_fetch(variant_idx)
+              if variant.type_ref != TypeRef::NIL && variant.type_ref != TypeRef::VOID
+                is_pointer_like = if variant.type_ref == TypeRef::POINTER || variant.type_ref == TypeRef::STRING
+                                    true
+                                  else
+                                    runtime_pointer_like_union_variant?(@mir_module.type_registry.get(variant.type_ref))
+                                  end
+                if is_pointer_like
+                  pointer_like_count += 1
+                  pointer_like_type_id = variant.type_id
+                end
+              end
+              variant_idx += 1
             end
 
-            if pointer_like.size == 1
-              variant_type_id = pointer_like.first.type_id
+            if pointer_like_count == 1
+              variant_type_id = pointer_like_type_id
             end
           end
         end
@@ -6198,7 +6220,16 @@ module Crystal
           if value_hir_type = @hir_value_types[wrap.value]?
             if type_needs_rc?(convert_type(value_hir_type)) && union_variant_owns_reference_payload?(union_type, variant_type_id)
               is_last_use = (@remaining_uses[wrap.value]? || 0) <= 0
-              is_owned_temp = @block_arc_temps.any? { |(hid, _)| hid == wrap.value }
+              is_owned_temp = false
+              arc_idx = 0
+              while arc_idx < @block_arc_temps.size
+                hid, _mir_id = @block_arc_temps.unsafe_fetch(arc_idx)
+                if hid == wrap.value
+                  is_owned_temp = true
+                  break
+                end
+                arc_idx += 1
+              end
               if is_last_use && is_owned_temp && !@cross_block_values.includes?(wrap.value)
                 @moved_values << wrap.value
               end
@@ -6215,7 +6246,17 @@ module Crystal
         descriptor = @mir_module.get_union_descriptor(union_type)
         return false unless descriptor
 
-        variant = descriptor.variants.find { |candidate| candidate.type_id == variant_type_id }
+        variant : UnionVariantDescriptor? = nil
+        variant_idx = 0
+        variants = descriptor.variants
+        while variant_idx < variants.size
+          candidate = variants.unsafe_fetch(variant_idx)
+          if candidate.type_id == variant_type_id
+            variant = candidate
+            break
+          end
+          variant_idx += 1
+        end
         return false unless variant
         return true if variant.type_ref == TypeRef::POINTER || variant.type_ref == TypeRef::STRING
 
@@ -6233,10 +6274,32 @@ module Crystal
         if union_hir_type = @hir_value_types[unwrap.union_value]?
           union_mir_type = convert_type(union_hir_type)
           if descriptor = @mir_module.union_descriptors[union_mir_type]?
-            if variant = descriptor.variants.find { |v| v.type_id == unwrap.variant_type_id }
+            variant : UnionVariantDescriptor? = nil
+            variant_idx = 0
+            variants = descriptor.variants
+            while variant_idx < variants.size
+              candidate = variants.unsafe_fetch(variant_idx)
+              if candidate.type_id == unwrap.variant_type_id
+                variant = candidate
+                break
+              end
+              variant_idx += 1
+            end
+            if variant
               result_type = variant.type_ref
               if nested = @mir_module.union_descriptors[result_type]?
-                if nested_variant = nested.variants.find { |v| v.type_ref != TypeRef::NIL && v.type_ref != TypeRef::VOID }
+                nested_variant : UnionVariantDescriptor? = nil
+                nested_idx = 0
+                nested_variants = nested.variants
+                while nested_idx < nested_variants.size
+                  candidate = nested_variants.unsafe_fetch(nested_idx)
+                  if candidate.type_ref != TypeRef::NIL && candidate.type_ref != TypeRef::VOID
+                    nested_variant = candidate
+                    break
+                  end
+                  nested_idx += 1
+                end
+                if nested_variant
                   result_type = nested_variant.type_ref
                 end
               end
@@ -6252,8 +6315,21 @@ module Crystal
         end
         if ENV.has_key?("DEBUG_UNION_UNWRAP")
           if descriptor = @mir_module.union_descriptors[result_type]?
-            variants = descriptor.variants.map { |v| v.type_ref.id }.join(",")
-            STDERR.puts "[UNION_UNWRAP] union_value=#{unwrap.union_value} unwrap_type=#{unwrap.type} result_type=#{result_type.id} has_union=true variants=#{variants}"
+            STDERR.print "[UNION_UNWRAP] union_value="
+            STDERR.print unwrap.union_value
+            STDERR.print " unwrap_type="
+            STDERR.print unwrap.type
+            STDERR.print " result_type="
+            STDERR.print result_type.id
+            STDERR.print " has_union=true variants="
+            variant_idx = 0
+            variants = descriptor.variants
+            while variant_idx < variants.size
+              STDERR.print "," if variant_idx > 0
+              STDERR.print variants.unsafe_fetch(variant_idx).type_ref.id
+              variant_idx += 1
+            end
+            STDERR.puts
           else
             STDERR.puts "[UNION_UNWRAP] union_value=#{unwrap.union_value} unwrap_type=#{unwrap.type} result_type=#{result_type.id} has_union=false"
           end

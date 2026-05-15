@@ -771,3 +771,25 @@ frontier after that and related inline/proc fixes.
 **Verdict:** no evidence value for this commit. Keep ACP Grok optional and
 non-blocking for this compiler loop.
 **Cost saved:** none.
+
+### Session 29 — 2026-05-14 — produced-s2 emit_block / union-wrap audit
+**Task:** read-only audit of the produced-s2 no-prelude hang after LLVM
+`emit_block` reached block 0 after splitting ids 2, 3, 4, 5.
+**Brief size:** one task file, ~2.1 KB, with exact current trace, reducer, and
+requested findings/predictions/adversary notes.
+**Latency:** returned within the local s2 build window after source greps and
+file reads.
+**Output quality:** useful but mixed. It correctly flagged union emission and
+remaining iterator-style union/predecessor helpers as high-risk, but its
+strongest prediction put the stall after all non-phi instructions in
+post-block phi-predecessor helpers.
+**Adversary check:** local trace falsified the strongest prediction: produced
+s2 stalled inside non-phi id 3, and MIR showed id 3 was
+`union_wrap nil : UInt32?`. Descriptor-backed scalar lookup in `emit_union_wrap`
+moved the reducer past the hang. The next exposed failure was invalid LLVM temp
+names such as `%3.ptr` / `%4.union_ptr`, fixed by using
+`llvm_local_base_name` in union-derived temp emitters.
+**Verdict:** partial evidence value. Grok helped rank union emission as a
+candidate, but local trace/MIR was required to identify the actual root and
+reject the post-block-helper prediction.
+**Cost saved:** moderate static-audit time; no replacement for local falsifier.
