@@ -2060,7 +2060,6 @@ module Crystal::HIR
     end
 
     def create_function(name : String, return_type : TypeRef) : Function
-      # Debug removed
       if ENV.has_key?("DBG_FILE_NEW") && (name.includes?("File") || name.includes?("file"))
         STDERR.puts "[FUNC_CREATE_FILE] name=#{name} return=#{return_type.id}"
       end
@@ -2562,8 +2561,10 @@ module Crystal::HIR
                   next
                 end
               else
-                # Bare top-level no-arg functions are stored as "name$arity0"
-                # but call instructions emit "name" — try the arity-0 variant.
+                # Legacy safety net: if a bare callee isn't found, try "name$arity0".
+                # Top-level zero-arg functions no longer get the $arity0 suffix
+                # (function_full_name_for_def suppresses it when base_name has no '#' or '.'),
+                # but older HIR or edge-case paths may still produce $arity0 names.
                 arity0_name = "#{direct_callee}$arity0"
                 if func_by_name.has_key?(arity0_name)
                   direct_callee = arity0_name

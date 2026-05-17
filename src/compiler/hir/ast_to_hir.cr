@@ -11861,8 +11861,11 @@ module Crystal::HIR
       return nil if slot_raw == 0_u64
       raw = slot_raw
       if sizeof(Slice(UInt8)) <= 8
-        return nil if raw == 0_u64 || raw < 4096_u64 || raw > 0x0000_7FFF_FFFF_FFFF_u64
-        return nil unless trust_slice_addr || readable_address?(raw)
+        # V2 ABI: raw is the heap Slice struct pointer. Skip mach_vm_read_overwrite
+        # check here — bdw-gc heap addresses in the 4GB+ range are valid but
+        # mach_vm_read_overwrite incorrectly rejects them in self-hosted builds.
+        # Structural bounds are sufficient.
+        return nil if raw < 4096_u64 || raw > 0x0000_7FFF_FFFF_FFFF_u64
       end
       ptr = slice.to_unsafe
       addr = ptr.address
@@ -11872,7 +11875,9 @@ module Crystal::HIR
       sz = slice.size
       return nil if sz < 0 || sz > 10_000_000 # sanity check
       if sizeof(Slice(UInt8)) <= 8
-        return nil unless trust_slice_addr || readable_address?(addr)
+        # Skip mach_vm_read_overwrite on data bytes: bdw-gc heap addresses in the
+        # 4GB+ range are valid in self-hosted builds but fail mach_vm_read_overwrite.
+        # Structural bounds (checked above) are sufficient for V2 ABI callers.
       else
         # Host-side inline slices for compiler-owned strings regularly live at
         # valid but non-Mach-readable addresses during bootstrap. Keep the
@@ -11881,9 +11886,6 @@ module Crystal::HIR
         return nil if addr < 0x1_0000_0000_u64
       end
       return "" if sz == 0
-      if sizeof(Slice(UInt8)) <= 8
-        return nil unless trust_slice_addr || readable_range?(addr, sz.to_u64)
-      end
       String.new(slice)
     end
 
@@ -25128,7 +25130,8 @@ module Crystal::HIR
       # Re-resolve annotated return type after full-name type-param map merge.
       if rt = node.return_type
         rt_text = (safe_slice_to_string(rt) || "")
-        resolved_return = with_type_param_map(extra_type_params) do
+        resolved_return = TypeRef::VOID
+        with_type_param_map(extra_type_params) do
           rt_name = rt_text
           if contextual_alias = resolve_contextual_type_alias_name(rt_name)
             rt_name = contextual_alias
@@ -25136,7 +25139,7 @@ module Crystal::HIR
           inferred = if !is_class_method && module_like_type_name?(rt_name)
                        infer_concrete_return_type_from_body(node, module_name)
                      end
-          inferred || annotation_type_ref(rt_name, module_name)
+          resolved_return = inferred || annotation_type_ref(rt_name, module_name)
         end
         if resolved_return != TypeRef::VOID || return_type == TypeRef::VOID
           return_type = resolved_return
@@ -30924,23 +30927,23 @@ module Crystal::HIR
       # Generic signatures like `: T*` may resolve to VOID before the lazy
       # specialization map is attached.
       if !is_initialize_method && (rt = node.return_type)
-        resolved_return = with_type_param_map(extra_type_params) do
+        resolved_return = TypeRef::VOID
+        with_type_param_map(extra_type_params) do
           rt_name = (safe_slice_to_string(rt) || "")
           if rt_name == "self"
-            class_info.type_ref
+            resolved_return = class_info.type_ref
           elsif module_like_type_name?(rt_name)
             inferred = infer_concrete_return_type_from_body(node, class_name)
             annotated = annotation_type_ref(rt_name, class_name)
             if inferred && inferred != TypeRef::VOID && inferred != TypeRef::NIL
-              inferred
+              resolved_return = inferred
             elsif annotated == TypeRef::VOID
-              type_ref_for_name(resolve_type_name_in_context(rt_name))
+              resolved_return = type_ref_for_name(resolve_type_name_in_context(rt_name))
             else
-              annotated
+              resolved_return = annotated
             end
           else
-            annotated = annotation_type_ref(rt_name, class_name)
-            annotated
+            resolved_return = annotation_type_ref(rt_name, class_name)
           end
         end
         if resolved_return != TypeRef::VOID || return_type == TypeRef::VOID
@@ -31125,7 +31128,7 @@ module Crystal::HIR
             body_indices = body.map(&.index).join(",")
             STDERR.puts "[BODY_EXPRS] class=#{class_name} method=#{method_name} body_size=#{body.size} indices=[#{body_indices}] node.span=#{node.span.start_offset}..#{node.span.end_offset}"
           end
-          body_proc = -> {
+          with_type_param_map(extra_type_params) do
             progress_filter = env_get("DEBUG_LOWER_PROGRESS")
             progress_match = false
             if progress_filter
@@ -31313,11 +31316,6 @@ module Crystal::HIR
 
               break if should_stop_sequential_lowering?(ctx)
             end
-          }
-          if extra_type_params.empty?
-            body_proc.call
-          else
-            with_type_param_map(extra_type_params) { body_proc.call }
           end
         end
       ensure
@@ -33060,11 +33058,16 @@ module Crystal::HIR
         full_name = "#{base_name}$arity#{param_count}"
       end
 
-      # Only rename to $arityN when there are params to disambiguate. Zero-arg
-      # functions have no overload ambiguity, and adding $arity0 causes a name
-      # mismatch between the call instruction ("foo") and the HIR function
-      # ("foo$arity0"), breaking RTA traversal.
-      if @function_defs.has_key?(full_name) && (full_name == base_name || has_untyped) && param_count > 0
+      # For TOP-LEVEL bare functions (no '#' or '.' in base_name), suppress
+      # $arity0 renaming: the prescan collision guard is a false positive caused
+      # by prescan pre-populating @function_defs before lower_def runs. Zero-arg
+      # top-level functions have no overload ambiguity and adding $arity0 causes
+      # a call/def name mismatch that breaks RTA traversal.
+      # For INSTANCE and CLASS methods (base_name contains '#' or '.'), the guard
+      # still fires for zero-arg overloads to preserve the prescan collision
+      # handling that s2b relies on.
+      is_method = base_name.includes?('#') || base_name.includes?('.')
+      if @function_defs.has_key?(full_name) && (full_name == base_name || has_untyped) && (param_count > 0 || is_method)
         full_name = "#{base_name}$arity#{param_count}"
       end
 
@@ -47866,6 +47869,23 @@ module Crystal::HIR
       end
     end
 
+    private def lower_def_resolve_type_annotation(rt_string : String) : TypeRef
+      normalized_rt = rt_string.strip
+      if normalized_rt.starts_with?("::")
+        direct = type_ref_for_name(normalized_rt)
+        if direct == TypeRef::VOID
+          stripped_rt = normalized_rt.size > 2 ? normalized_rt[2..] : ""
+          stripped_rt.empty? ? TypeRef::VOID : type_ref_for_name(stripped_rt)
+        else
+          direct
+        end
+      else
+        resolved_name = resolve_type_name_in_context(normalized_rt)
+        resolved = type_ref_for_name(resolved_name)
+        (resolved == TypeRef::VOID && resolved_name != normalized_rt) ? type_ref_for_name(normalized_rt) : resolved
+      end
+    end
+
     # Lower a function definition
     def lower_def(
       node : CrystalV2::Compiler::Frontend::DefNode,
@@ -47944,7 +47964,7 @@ module Crystal::HIR
       registered_param_infos = function_param_infos(lookup_name, node)
 
       if params = node.params
-        param_loop = -> {
+        with_type_param_map(registered_param_map || {} of String => String) do
           param_idx = 0
           param_buf = params.to_unsafe
           while param_idx < params.size
@@ -48140,11 +48160,6 @@ module Crystal::HIR
             end
             param_literal_flags << param_literal
           end
-        }
-        if registered_param_map
-          with_type_param_map(registered_param_map) { param_loop.call }
-        else
-          param_loop.call
         end
       end
       if splat_param_name
@@ -48218,41 +48233,12 @@ module Crystal::HIR
       saved_signature_scan_mode = @signature_scan_mode
       @signature_scan_mode = false
       begin
-        resolve_declared_type = ->(rt_string : String) do
-          normalized_rt = rt_string.strip
-          if normalized_rt.starts_with?("::")
-            # Absolute annotations must be context-free; resolving them through
-            # namespace-sensitive lookup can drift across phases.
-            direct = type_ref_for_name(normalized_rt)
-            if direct == TypeRef::VOID
-              stripped_rt = normalized_rt.size > 2 ? normalized_rt[2..] : ""
-              direct = stripped_rt.empty? ? TypeRef::VOID : type_ref_for_name(stripped_rt)
-            end
-            direct
-          else
-            resolved_name = resolve_type_name_in_context(normalized_rt)
-            resolved = type_ref_for_name(resolved_name)
-            if resolved == TypeRef::VOID && resolved_name != normalized_rt
-              resolved = type_ref_for_name(normalized_rt)
-            end
-            resolved
-          end
-        end
-        resolve_declared_return = -> do
+        with_type_param_map(extra_type_params) do
           if rt = node.return_type
-            rt_string = (safe_slice_to_string(rt) || "")
-            resolve_declared_type.call(rt_string)
+            rt_string = safe_slice_to_string(rt) || ""
+            return_type = lower_def_resolve_type_annotation(rt_string)
           elsif base_name.ends_with?('?')
-            TypeRef::BOOL
-          else
-            TypeRef::VOID
-          end
-        end
-        if extra_type_params.empty?
-          return_type = resolve_declared_return.call
-        else
-          with_type_param_map(extra_type_params) do
-            return_type = resolve_declared_return.call
+            return_type = TypeRef::BOOL
           end
         end
 
@@ -48285,9 +48271,10 @@ module Crystal::HIR
         # Generic signatures like `: T*` may resolve to VOID before lazy specialization
         # mappings are attached.
         if rt = node.return_type
-          resolved_return = with_type_param_map(extra_type_params) do
-            rt_string = (safe_slice_to_string(rt) || "")
-            resolve_declared_type.call(rt_string)
+          resolved_return = TypeRef::VOID
+          with_type_param_map(extra_type_params) do
+            rt_string = safe_slice_to_string(rt) || ""
+            resolved_return = lower_def_resolve_type_annotation(rt_string)
           end
           if resolved_return != TypeRef::VOID || return_type == TypeRef::VOID
             return_type = resolved_return
@@ -48420,7 +48407,7 @@ module Crystal::HIR
               hoist_box_for_local(ctx, name, local_type, local_id) unless local_type == TypeRef::VOID
             end
           end
-          body_proc = -> {
+          if extra_type_params.empty?
             def_arena = @arena
             i = 0
             while i < body.size
@@ -48431,11 +48418,19 @@ module Crystal::HIR
               break if should_stop_sequential_lowering?(ctx)
               i += 1
             end
-          }
-          if extra_type_params.empty?
-            body_proc.call
           else
-            with_type_param_map(extra_type_params) { body_proc.call }
+            with_type_param_map(extra_type_params) do
+              def_arena = @arena
+              i = 0
+              while i < body.size
+                expr_id = body[i]
+                with_arena(def_arena) do
+                  last_value = lower_expr(ctx, expr_id)
+                end
+                break if should_stop_sequential_lowering?(ctx)
+                i += 1
+              end
+            end
           end
         end
       ensure
@@ -48728,19 +48723,24 @@ module Crystal::HIR
         STDERR.puts "[LOWER_MAIN_FRONTIER] before_expr idx=#{idx + 1}" if lower_main_frontier
         arena_index = (packed_expr_ref >> 32).to_i32
         expr_index = (packed_expr_ref & 0xFFFF_FFFF_u64).to_i32
+        STDERR.puts "[LOWER_MAIN_FRONTIER] expr_unpacked ai=#{arena_index} ei=#{expr_index} oas=#{ordered_arenas.size}" if lower_main_frontier
         expr_id = CrystalV2::Compiler::Frontend::ExprId.new(expr_index)
         arena = if arena_index >= 0 && arena_index < ordered_arenas.size
+                  STDERR.puts "[LOWER_MAIN_FRONTIER] arena_select_start ai=#{arena_index}" if lower_main_frontier
                   ordered_arenas[arena_index]
                 else
                   @arena
                 end
+        STDERR.puts "[LOWER_MAIN_FRONTIER] arena_selected as=#{arena.size}" if lower_main_frontier
         if expr_id.index < 0 || expr_id.index >= arena.size
           if recovered = arena_for_expr?(expr_id)
             arena = recovered
           end
         end
+        STDERR.puts "[LOWER_MAIN_FRONTIER] arena_bounds_ok ei=#{expr_id.index} as=#{arena.size}" if lower_main_frontier
         # Switch arena context for this expression
         @arena = arena
+        STDERR.puts "[LOWER_MAIN_FRONTIER] arena_set" if lower_main_frontier
         if debug_main && !slow_only
           node = @arena[expr_id]
           snippet = nil
@@ -48787,11 +48787,13 @@ module Crystal::HIR
         expr_start = debug_main ? Time.instant : nil
         saved_lowering_depth = @lowering_depth
         @lowering_depth += 1
+        STDERR.puts "[LOWER_MAIN_FRONTIER] before_lower_expr ei=#{expr_id.index}" if lower_main_frontier
         begin
           last_value = lower_expr(ctx, expr_id)
         ensure
           @lowering_depth = saved_lowering_depth
         end
+        STDERR.puts "[LOWER_MAIN_FRONTIER] after_lower_expr" if lower_main_frontier
         if debug_main && expr_start
           elapsed = (Time.instant - expr_start).total_milliseconds
           if elapsed > slow_ms
@@ -49963,21 +49965,23 @@ module Crystal::HIR
         node = @arena[expr_id]
         previous_location = ctx.current_source_location
         ctx.current_source_location = source_location_for_node(@arena, node)
-        begin
+        result = begin
           lower_node(ctx, node)
         ensure
           ctx.current_source_location = previous_location
         end
+        result
       else
         with_arena(arena) do
           node = @arena[expr_id]
           previous_location = ctx.current_source_location
           ctx.current_source_location = source_location_for_node(@arena, node)
-          begin
+          result = begin
             lower_node(ctx, node)
           ensure
             ctx.current_source_location = previous_location
           end
+          result
         end
       end
     end
@@ -50003,7 +50007,7 @@ module Crystal::HIR
       when CrystalV2::Compiler::Frontend::NodeKind::Identifier
         return lower_identifier(ctx, node.unsafe_as(CrystalV2::Compiler::Frontend::IdentifierNode))
       when CrystalV2::Compiler::Frontend::NodeKind::MemberAccess
-        return lower_member_access(ctx, node.unsafe_as(CrystalV2::Compiler::Frontend::MemberAccessNode))
+        return lower_member_access(ctx, node.as?(CrystalV2::Compiler::Frontend::MemberAccessNode) || node.unsafe_as(CrystalV2::Compiler::Frontend::MemberAccessNode))
       when CrystalV2::Compiler::Frontend::NodeKind::Number
         return lower_number(ctx, node.unsafe_as(CrystalV2::Compiler::Frontend::NumberNode))
       when CrystalV2::Compiler::Frontend::NodeKind::String
@@ -84665,10 +84669,14 @@ module Crystal::HIR
 
     private def lower_member_access(ctx : LoweringContext, node : CrystalV2::Compiler::Frontend::MemberAccessNode) : ValueId
       obj_node = @arena[node.object]
-      member_name = (safe_slice_to_string(node.member) || "")
-      explicit_self_receiver = obj_node.is_a?(CrystalV2::Compiler::Frontend::SelfNode) ||
-                               obj_node.is_a?(CrystalV2::Compiler::Frontend::ImplicitObjNode) ||
-                               (obj_node.is_a?(CrystalV2::Compiler::Frontend::IdentifierNode) && (safe_slice_to_string(obj_node.name) || "") == "self")
+      # Use member_access_name_text (has span-based fallback safe in s2b when safe_slice_to_string
+      # fails due to Mach VM read guards on sub-4GB heap addresses)
+      member_name = member_access_name_text(node)
+      # s2b RTTI loss: use node_kind() for all obj_node dispatch (is_a? crashes in s2b)
+      obj_kind = CrystalV2::Compiler::Frontend.node_kind(obj_node)
+      explicit_self_receiver = obj_kind == CrystalV2::Compiler::Frontend::NodeKind::Self ||
+                               obj_kind == CrystalV2::Compiler::Frontend::NodeKind::ImplicitObj ||
+                               (obj_kind == CrystalV2::Compiler::Frontend::NodeKind::Identifier && identifier_name_text(obj_node.unsafe_as(CrystalV2::Compiler::Frontend::IdentifierNode)) == "self")
       # Proc#call intercept for zero-arg calls (parsed as MemberAccessNode, not CallNode)
       if member_name == "call"
         proc_recv_id = lower_expr(ctx, node.object)
@@ -84717,8 +84725,8 @@ module Crystal::HIR
         STDERR.puts "[DEBUG_ENUM_CALL_PATH] lower_member_access method=#{member_name} object=#{obj_node.class.name}"
       end
       if debug_env_filter_match?("DEBUG_HIGH_CALL", member_name)
-        var_name = if obj_node.is_a?(CrystalV2::Compiler::Frontend::IdentifierNode)
-                     (safe_slice_to_string(obj_node.name) || "")
+        var_name = if obj_kind == CrystalV2::Compiler::Frontend::NodeKind::Identifier
+                     (safe_slice_to_string(obj_node.unsafe_as(CrystalV2::Compiler::Frontend::IdentifierNode).name) || "")
                    else
                      "(non-ident)"
                    end
@@ -84729,8 +84737,9 @@ module Crystal::HIR
       # Similar logic to lower_call for MemberAccessNode
       class_name_str : String? = nil
 
-      if obj_node.is_a?(CrystalV2::Compiler::Frontend::ConstantNode)
-        name = (safe_slice_to_string(obj_node.name) || "")
+      if obj_kind == CrystalV2::Compiler::Frontend::NodeKind::Constant
+        const_obj = obj_node.as?(CrystalV2::Compiler::Frontend::ConstantNode) || obj_node.unsafe_as(CrystalV2::Compiler::Frontend::ConstantNode)
+        name = (safe_slice_to_string(const_obj.name) || "")
         resolved_name = resolve_class_name_in_context(name)
         resolved_name = resolve_type_alias_chain(resolved_name)
         if @module.is_lib?(resolved_name)
@@ -84740,8 +84749,9 @@ module Crystal::HIR
         elsif is_module_method?(resolved_name, member_name)
           class_name_str = resolved_name
         end
-      elsif obj_node.is_a?(CrystalV2::Compiler::Frontend::IdentifierNode)
-        name = (safe_slice_to_string(obj_node.name) || "")
+      elsif obj_kind == CrystalV2::Compiler::Frontend::NodeKind::Identifier
+        ident_obj = obj_node.as?(CrystalV2::Compiler::Frontend::IdentifierNode) || obj_node.unsafe_as(CrystalV2::Compiler::Frontend::IdentifierNode)
+        name = (safe_slice_to_string(ident_obj.name) || "")
         if ctx.lookup_local(name).nil?
           if env_get("DEBUG_IVAR_ACCESS")
             STDERR.puts "[IVAR_ACCESS] local_missing name=#{name} member=#{member_name}"
@@ -84758,9 +84768,10 @@ module Crystal::HIR
             end
           end
         end
-      elsif obj_node.is_a?(CrystalV2::Compiler::Frontend::GenericNode)
+      elsif obj_kind == CrystalV2::Compiler::Frontend::NodeKind::Generic
         # Generic type like Hash(Int32, Int32).new
-        base_name = resolve_path_like_name(obj_node.base_type)
+        gen_obj = obj_node.as?(CrystalV2::Compiler::Frontend::GenericNode) || obj_node.unsafe_as(CrystalV2::Compiler::Frontend::GenericNode)
+        base_name = resolve_path_like_name(gen_obj.base_type)
         if base_name
           base_name, lookup_base_name = resolve_generic_base_names(base_name)
           normalize_typeof_name = ->(type_name : String) : String {
@@ -84773,7 +84784,7 @@ module Crystal::HIR
             end
           }
 
-          type_args = obj_node.type_args.map do |arg_id|
+          type_args = gen_obj.type_args.map do |arg_id|
             arg_name = stringify_type_expr(arg_id) || "Unknown"
             arg_name = resolve_typeof_in_type_string(arg_name)
             arg_name = normalize_typeof_name.call(arg_name)
@@ -84788,9 +84799,10 @@ module Crystal::HIR
             monomorphize_generic_class(lookup_base_name, type_args, class_name_str)
           end
         end
-      elsif obj_node.is_a?(CrystalV2::Compiler::Frontend::CallNode)
+      elsif obj_kind == CrystalV2::Compiler::Frontend::NodeKind::Call
         # Type-like call receiver such as ::Set(String).new parsed without parens.
-        if type_like_call_expr?(obj_node)
+        call_obj = obj_node.as?(CrystalV2::Compiler::Frontend::CallNode) || obj_node.unsafe_as(CrystalV2::Compiler::Frontend::CallNode)
+        if type_like_call_expr?(call_obj)
           if type_name = stringify_type_expr(node.object)
             type_name = substitute_type_params_in_type_name(type_name)
             if type_name[0]?.try(&.uppercase?) || type_name.includes?("::")
@@ -84818,10 +84830,11 @@ module Crystal::HIR
             end
           end
         end
-      elsif obj_node.is_a?(CrystalV2::Compiler::Frontend::PathNode)
+      elsif obj_kind == CrystalV2::Compiler::Frontend::NodeKind::Path
         # Path like Crystal::EventLoop for nested module/class method calls
-        raw_path = collect_path_string(obj_node)
-        absolute_path = path_is_absolute?(obj_node)
+        path_obj = obj_node.as?(CrystalV2::Compiler::Frontend::PathNode) || obj_node.unsafe_as(CrystalV2::Compiler::Frontend::PathNode)
+        raw_path = collect_path_string(path_obj)
+        absolute_path = path_is_absolute?(path_obj)
         normalized_path = raw_path.starts_with?("::") ? (raw_path.size > 2 ? raw_path[2..] : "") : raw_path
         full_path = if absolute_path
                       normalized_path
@@ -84835,16 +84848,17 @@ module Crystal::HIR
                     end
         is_constant_path = resolve_constant_name_in_context(full_path) != nil
         left_name = nil
-        if left_id = obj_node.left
+        if left_id = path_obj.left
           left_node = @arena[left_id]
-          left_name = case left_node
-                      when CrystalV2::Compiler::Frontend::IdentifierNode
-                        (safe_slice_to_string(left_node.name) || "")
-                      when CrystalV2::Compiler::Frontend::ConstantNode
-                        (safe_slice_to_string(left_node.name) || "")
-                      when CrystalV2::Compiler::Frontend::PathNode
-                        left_path = collect_path_string(left_node)
-                        left_absolute = path_is_absolute?(left_node)
+          left_node_kind = CrystalV2::Compiler::Frontend.node_kind(left_node)
+          left_name = if left_node_kind == CrystalV2::Compiler::Frontend::NodeKind::Identifier
+                        (safe_slice_to_string(left_node.unsafe_as(CrystalV2::Compiler::Frontend::IdentifierNode).name) || "")
+                      elsif left_node_kind == CrystalV2::Compiler::Frontend::NodeKind::Constant
+                        (safe_slice_to_string(left_node.unsafe_as(CrystalV2::Compiler::Frontend::ConstantNode).name) || "")
+                      elsif left_node_kind == CrystalV2::Compiler::Frontend::NodeKind::Path
+                        left_path_obj = left_node.unsafe_as(CrystalV2::Compiler::Frontend::PathNode)
+                        left_path = collect_path_string(left_path_obj)
+                        left_absolute = path_is_absolute?(left_path_obj)
                         if left_absolute
                           left_path.starts_with?("::") ? left_path[2..] : left_path
                         else
@@ -84854,12 +84868,12 @@ module Crystal::HIR
                         nil
                       end
         end
-        right_node = @arena[obj_node.right]
-        right_name = case right_node
-                     when CrystalV2::Compiler::Frontend::IdentifierNode
-                       (safe_slice_to_string(right_node.name) || "")
-                     when CrystalV2::Compiler::Frontend::ConstantNode
-                       (safe_slice_to_string(right_node.name) || "")
+        right_node = @arena[path_obj.right]
+        right_node_kind = CrystalV2::Compiler::Frontend.node_kind(right_node)
+        right_name = if right_node_kind == CrystalV2::Compiler::Frontend::NodeKind::Identifier
+                       (safe_slice_to_string(right_node.unsafe_as(CrystalV2::Compiler::Frontend::IdentifierNode).name) || "")
+                     elsif right_node_kind == CrystalV2::Compiler::Frontend::NodeKind::Constant
+                       (safe_slice_to_string(right_node.unsafe_as(CrystalV2::Compiler::Frontend::ConstantNode).name) || "")
                      else
                        nil
                      end
@@ -84897,8 +84911,8 @@ module Crystal::HIR
       end
 
       # If the object path is an enum literal (Enum::Member), don't treat it as a static call.
-      if class_name_str && obj_node.is_a?(CrystalV2::Compiler::Frontend::PathNode)
-        raw_path = collect_path_string(obj_node)
+      if class_name_str && obj_kind == CrystalV2::Compiler::Frontend::NodeKind::Path
+        raw_path = collect_path_string(obj_node.as?(CrystalV2::Compiler::Frontend::PathNode) || obj_node.unsafe_as(CrystalV2::Compiler::Frontend::PathNode))
         if idx = raw_path.rindex("::")
           prefix = raw_path[0, idx]
           member = raw_path[(idx + 2)..]
@@ -84912,8 +84926,8 @@ module Crystal::HIR
 
       # If it's a static class call (like Counter.new), emit as static call
       if env_get("DEBUG_FIBER_CURRENT") && member_name == "current"
-        obj_kind = obj_node.class.name.split("::").last
-        STDERR.puts "[DEBUG_FIBER_MEMBER] obj=#{obj_kind} class=#{class_name_str || "nil"} current=#{@current_class || "nil"}"
+        obj_class_str = obj_node.class.name.split("::").last
+        STDERR.puts "[DEBUG_FIBER_MEMBER] obj=#{obj_class_str} class=#{class_name_str || "nil"} current=#{@current_class || "nil"}"
       end
       if class_name_str
         if env_get("DEBUG_IVAR_ACCESS")
@@ -84929,13 +84943,16 @@ module Crystal::HIR
       # speculatively lowering expressions with side effects (calls, etc.) which
       # would cause double evaluation if the optimization fails.
       inner_node = @arena[node.object]
-      if inner_node.is_a?(CrystalV2::Compiler::Frontend::MemberAccessNode) &&
-         (safe_slice_to_string(inner_node.member) || "") == "value"
-        inner_obj_node = @arena[inner_node.object]
+      inner_node_kind = CrystalV2::Compiler::Frontend.node_kind(inner_node)
+      if inner_node_kind == CrystalV2::Compiler::Frontend::NodeKind::MemberAccess &&
+         (safe_slice_to_string((inner_node.as?(CrystalV2::Compiler::Frontend::MemberAccessNode) || inner_node.unsafe_as(CrystalV2::Compiler::Frontend::MemberAccessNode)).member) || "") == "value"
+        inner_ma = inner_node.as?(CrystalV2::Compiler::Frontend::MemberAccessNode) || inner_node.unsafe_as(CrystalV2::Compiler::Frontend::MemberAccessNode)
+        inner_obj_node = @arena[inner_ma.object]
         # Only proceed if inner object is a local variable that's already assigned
         is_safe_to_lower = false
-        if inner_obj_node.is_a?(CrystalV2::Compiler::Frontend::IdentifierNode)
-          var_name = (safe_slice_to_string(inner_obj_node.name) || "")
+        inner_obj_kind = CrystalV2::Compiler::Frontend.node_kind(inner_obj_node)
+        if inner_obj_kind == CrystalV2::Compiler::Frontend::NodeKind::Identifier
+          var_name = (safe_slice_to_string((inner_obj_node.as?(CrystalV2::Compiler::Frontend::IdentifierNode) || inner_obj_node.unsafe_as(CrystalV2::Compiler::Frontend::IdentifierNode)).name) || "")
           if local_id = ctx.lookup_local(var_name)
             local_type = ctx.type_of(local_id)
             if local_type == TypeRef::POINTER
@@ -84948,7 +84965,7 @@ module Crystal::HIR
           end
         end
         if is_safe_to_lower
-          ptr_id = lower_expr(ctx, inner_node.object)
+          ptr_id = lower_expr(ctx, inner_ma.object)
           ptr_type = ctx.type_of(ptr_id)
           ptr_desc = @module.get_type_descriptor(ptr_type)
           is_pointer = ptr_type == TypeRef::POINTER ||
@@ -84995,8 +85012,8 @@ module Crystal::HIR
         repair_call_return_type_in_context(ctx, object_id)
       end
       if ctx.type_of(object_id) == TypeRef::VOID
-        if obj_node.is_a?(CrystalV2::Compiler::Frontend::SelfNode) ||
-           (obj_node.is_a?(CrystalV2::Compiler::Frontend::IdentifierNode) && (safe_slice_to_string(obj_node.name) || "") == "self")
+        if obj_kind == CrystalV2::Compiler::Frontend::NodeKind::Self ||
+           (obj_kind == CrystalV2::Compiler::Frontend::NodeKind::Identifier && (safe_slice_to_string((obj_node.as?(CrystalV2::Compiler::Frontend::IdentifierNode) || obj_node.unsafe_as(CrystalV2::Compiler::Frontend::IdentifierNode)).name) || "") == "self")
           if current = @current_class
             resolved_current = resolve_type_alias_chain(substitute_type_params_in_type_name(current))
             inferred = type_ref_for_name(resolved_current)
@@ -85007,10 +85024,11 @@ module Crystal::HIR
         end
       end
       if ctx.type_of(object_id) == TypeRef::VOID
-        if obj_node.is_a?(CrystalV2::Compiler::Frontend::IdentifierNode)
-          obj_name = (safe_slice_to_string(obj_node.name) || "")
+        if obj_kind == CrystalV2::Compiler::Frontend::NodeKind::Identifier
+          ident_obj_recv = obj_node.as?(CrystalV2::Compiler::Frontend::IdentifierNode) || obj_node.unsafe_as(CrystalV2::Compiler::Frontend::IdentifierNode)
+          obj_name = (safe_slice_to_string(ident_obj_recv.name) || "")
           if unresolved_identifier_receiver_candidate?(ctx, object_id, obj_name) &&
-             (implicit_receiver_id = lower_implicit_zero_arg_identifier_receiver(ctx, obj_node))
+             (implicit_receiver_id = lower_implicit_zero_arg_identifier_receiver(ctx, ident_obj_recv))
             object_id = implicit_receiver_id
           end
         end
