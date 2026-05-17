@@ -5650,7 +5650,10 @@ module Crystal::MIR
           emit_raw "@#{actual_name} = global #{llvm_type} null#{debug_attachment}\n"
         elsif llvm_type == "float" || llvm_type == "double"
           if const_val && initial == 0_i64
-            float_value = const_val.is_a?(Float64) ? const_val.to_s : const_val.to_f64.to_s
+            raw_f64 = const_val.is_a?(Float64) ? const_val : const_val.to_f64
+            # For float32 globals, round through f32 so the string is exactly
+            # representable — LLVM rejects decimals that don't round-trip exactly.
+            float_value = llvm_type == "float" ? raw_f64.to_f32.to_f64.to_s : raw_f64.to_s
           else
             float_value = initial.to_f.to_s
           end
@@ -5682,7 +5685,8 @@ module Crystal::MIR
           emit_raw "@#{name} = global #{llvm_type} zeroinitializer\n"
         elsif llvm_type == "float" || llvm_type == "double"
           if const_val
-            float_value = const_val.is_a?(Float64) ? const_val.to_s : const_val.to_f64.to_s
+            raw_f64 = const_val.is_a?(Float64) ? const_val : const_val.to_f64
+            float_value = llvm_type == "float" ? raw_f64.to_f32.to_f64.to_s : raw_f64.to_s
             float_value = "#{float_value}.0" if float_value.matches?(/^-?\d+$/)
           else
             float_value = "0.0"
