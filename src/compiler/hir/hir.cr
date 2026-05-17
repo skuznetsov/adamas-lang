@@ -2562,7 +2562,14 @@ module Crystal::HIR
                   next
                 end
               else
-                next
+                # Bare top-level no-arg functions are stored as "name$arity0"
+                # but call instructions emit "name" — try the arity-0 variant.
+                arity0_name = "#{direct_callee}$arity0"
+                if func_by_name.has_key?(arity0_name)
+                  direct_callee = arity0_name
+                else
+                  next
+                end
               end
             end
             next if reachable.includes?(direct_callee)

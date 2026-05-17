@@ -33060,7 +33060,11 @@ module Crystal::HIR
         full_name = "#{base_name}$arity#{param_count}"
       end
 
-      if @function_defs.has_key?(full_name) && (full_name == base_name || has_untyped)
+      # Only rename to $arityN when there are params to disambiguate. Zero-arg
+      # functions have no overload ambiguity, and adding $arity0 causes a name
+      # mismatch between the call instruction ("foo") and the HIR function
+      # ("foo$arity0"), breaking RTA traversal.
+      if @function_defs.has_key?(full_name) && (full_name == base_name || has_untyped) && param_count > 0
         full_name = "#{base_name}$arity#{param_count}"
       end
 
