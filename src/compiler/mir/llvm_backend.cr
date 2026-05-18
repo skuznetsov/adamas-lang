@@ -3975,6 +3975,55 @@ module Crystal::MIR
         return emit_extern_forwarding_stub(name, extern, return_type, arg_count, arg_types)
       end
 
+      # Pointer#puts(Tuple(String)) — arises when V2 infers a block argument as Pointer
+      # instead of File/IO::FileDescriptor (HIR type-inference gap for inline-yield blocks
+      # whose callee body isn't lowered yet).  At runtime %self is always an IO-like
+      # object; extract the single String from the Tuple and call IO#puts(String).
+      if name.starts_with?("Pointer$Hputs$$Tuple$L") || name.starts_with?("Pointer$Hputs$$String")
+        # Extract String from Tuple(String): String ptr is stored at offset 0 in the tuple object.
+        ir = "; #{name} — runtime fallback: Pointer receiver treated as IO\n" \
+             "define ptr @#{name}(ptr %self, ptr %tuple_or_str) {\n" \
+             "entry:\n" \
+             "  %is_null = icmp eq ptr %self, null\n" \
+             "  br i1 %is_null, label %done, label %do_puts\n" \
+             "do_puts:\n"
+        if name.includes?("Tuple$L")
+          # Tuple(String): String ptr lives at offset 0 of the tuple object
+          ir += "  %str = load ptr, ptr %tuple_or_str\n"
+          ir += "  call void @IO$Hputs$$String(ptr %self, ptr %str)\n"
+        else
+          ir += "  call void @IO$Hputs$$String(ptr %self, ptr %tuple_or_str)\n"
+        end
+        ir += "  br label %done\n" \
+              "done:\n" \
+              "  ret ptr null\n" \
+              "}\n"
+        return ir
+      end
+
+      # File.open(String, String, &block) — the Crystal body chains through
+      # open_internal → new_internal → File.new, which V2 currently fails to lower.
+      # Override: open via __crystal_v2_file_open, create IO::FileDescriptor, patch
+      # type_id to File, call block proc, then close.
+      if name == "File$Dopen$$String_String_block"
+        file_tid = @module.type_registry.get_by_name("File").try(&.id.to_i32) || 295
+        ir = "; File.open(String, String, &block) — dead-code-stub builtin override\n" \
+             "define ptr @#{name}(ptr %p0, ptr %p1, ptr %p2) {\n" \
+             "entry:\n" \
+             "  %fdtup = call ptr @__crystal_v2_file_open(ptr %p0, ptr %p1)\n" \
+             "  %fd = load i32, ptr %fdtup\n" \
+             "  %file = call ptr @IO$CCFileDescriptor$Dnew$$Int32(i32 %fd)\n" \
+             "  store i32 #{file_tid}, ptr %file\n" \
+             "  call void %p2(ptr %file)\n" \
+             "  ; flush write buffer (safe — no event loop) then C close\n" \
+             "  call ptr @File$Hflush(ptr %file)\n" \
+             "  %fd2 = call i32 @IO$CCFileDescriptor$Hfd(ptr %file)\n" \
+             "  call i32 @close(i32 %fd2)\n" \
+             "  ret ptr null\n" \
+             "}\n"
+        return ir
+      end
+
       if name == "IO$Hpos" && return_type == "i32" && arg_count == 1
         io_memory_tid = @module.type_registry.get_by_name("IO::Memory").try(&.id.to_i32) || -1
         io_fd_tid = @module.type_registry.get_by_name("IO::FileDescriptor").try(&.id.to_i32) || -1
@@ -4807,14 +4856,16 @@ module Crystal::MIR
                  "  %result = #{div_op} #{llvm_type} %self_val, %other\n" \
                  "  ret #{llvm_type} %result\n" \
                  "}\n"
-        else # tdiv
+        else # tdiv — returns abstract Int (ptr); must be a valid heap pointer, not a packed scalar
           div_op = is_signed ? "sdiv" : "udiv"
+          alloc_bytes = {"i8" => 1, "i16" => 2, "i32" => 4, "i64" => 8}[llvm_type]? || 4
           return "; Int#tdiv(#{arg_type_name}) primitive\n" \
                  "define ptr @#{name}(ptr %self, #{llvm_type} %other) {\n" \
                  "  %self_val = load #{llvm_type}, ptr %self\n" \
                  "  %result = #{div_op} #{llvm_type} %self_val, %other\n" \
-                 "  %result_ptr = inttoptr #{llvm_type} %result to ptr\n" \
-                 "  ret ptr %result_ptr\n" \
+                 "  %new = call ptr @GC_malloc_atomic(i64 #{alloc_bytes})\n" \
+                 "  store #{llvm_type} %result, ptr %new\n" \
+                 "  ret ptr %new\n" \
                  "}\n"
         end
       end
@@ -4956,14 +5007,25 @@ module Crystal::MIR
                    rest
                  end
       return nil if lib_name.empty? || fun_name.empty?
+      # Only treat as a lib extern if the namespace looks like a Crystal Lib binding.
+      # Crystal lib names use $CC-mangled namespaces: LibC → LibC, LibM → LibM,
+      # LibCrypto → LibCrypto, etc.  Regular classes (File, IO, Array, …) must NOT
+      # fall through to the C-extern lookup — e.g. File.open ≠ C open().
+      is_lib_namespace = lib_name.starts_with?("Lib") ||
+                         lib_name.includes?("$CCLib") ||
+                         lib_name.includes?("$CCSystem")
       if externs = @hir_extern_functions
         if result = externs[{lib_name, fun_name}]?
           return result
         end
       end
-      # Fallback: same C function registered under different Crystal lib name
-      if by_name = @hir_extern_by_name
-        return by_name[fun_name]?
+      # Fallback: same C function registered under different Crystal lib name.
+      # Guard: only apply to known Lib namespaces so that plain class methods
+      # (File.open, IO.read, …) are not confused with C externs.
+      if is_lib_namespace
+        if by_name = @hir_extern_by_name
+          return by_name[fun_name]?
+        end
       end
       nil
     end
@@ -6699,6 +6761,12 @@ module Crystal::MIR
       emit_raw "declare i32 @pthread_attr_destroy(ptr)\n"
       emit_raw "declare i32 @pthread_attr_setstack(ptr, ptr, i64)\n"
       emit_raw "declare i32 @pthread_attr_getstacksize(ptr, ptr)\n"
+      emit_raw "declare i32 @pthread_mutex_init(ptr, ptr)\n"
+      emit_raw "declare i32 @pthread_mutex_destroy(ptr)\n"
+      emit_raw "declare i32 @pthread_mutex_trylock(ptr)\n"
+      emit_raw "declare i32 @pthread_mutexattr_init(ptr)\n"
+      emit_raw "declare i32 @pthread_mutexattr_settype(ptr, i32)\n"
+      emit_raw "declare i32 @pthread_mutexattr_destroy(ptr)\n"
       emit_raw "declare i32 @gethostname(ptr, i64)\n"
       emit_raw "declare i32 @socket(i32, i32, i32)\n"
       emit_raw "declare i32 @connect(i32, ptr, i32)\n"
@@ -9262,6 +9330,216 @@ module Crystal::MIR
         emit_fiber_swapcontext_override(mangled)
         return true
       end
+      # Thread::Mutex in V2 allocates only 12 bytes (8-byte prefix + 4-byte type_id), but
+      # pthread_mutex_t needs 64 bytes. Also Hinitialize inits a STACK-local mutex instead of
+      # %self, so the heap object is never properly initialized. Fix both: allocate 72 bytes
+      # and initialize the mutex AT %self so pthread_mutex_lock(%self) works correctly.
+      if mangled == "Thread$CCMutex$Dnew"
+        emit_raw "; Thread$CCMutex$Dnew — fixed: allocate 72 bytes so pthread_mutex_t fits\n"
+        emit_raw "define ptr @Thread$CCMutex$Dnew() {\n"
+        emit_raw "entry:\n"
+        emit_raw "  %raw = call ptr @__crystal_v2_malloc64(i64 72)\n"
+        emit_raw "  store i64 9223372036854775807, ptr %raw, align 8\n"
+        emit_raw "  %obj = getelementptr i8, ptr %raw, i64 8\n"
+        emit_raw "  store i32 479, ptr %obj\n"
+        emit_raw "  call void @Thread$CCMutex$Hinitialize(ptr %obj)\n"
+        emit_raw "  ret ptr %obj\n"
+        emit_raw "}\n\n"
+        return true
+      end
+      if mangled == "Thread$CCMutex$Hinitialize"
+        emit_raw "; Thread$CCMutex$Hinitialize — fixed: init pthread_mutex AT %self (not stack copy)\n"
+        emit_raw "define void @Thread$CCMutex$Hinitialize(ptr %self) {\n"
+        emit_raw "entry:\n"
+        emit_raw "  %attr = alloca [16 x i8], align 8\n"
+        emit_raw "  call i32 @pthread_mutexattr_init(ptr %attr)\n"
+        emit_raw "  %errchk = load i32, ptr @LibC__classvar__PTHREAD_MUTEX_ERRORCHECK\n"
+        emit_raw "  call i32 @pthread_mutexattr_settype(ptr %attr, i32 %errchk)\n"
+        emit_raw "  call i32 @pthread_mutex_init(ptr %self, ptr %attr)\n"
+        emit_raw "  call i32 @pthread_mutexattr_destroy(ptr %attr)\n"
+        emit_raw "  ret void\n"
+        emit_raw "}\n\n"
+        return true
+      end
+      # spawn(..., &block) — V2 type-inference bug: when spawn's argument types match a
+      # Hash constructor (e.g. Hash(String, Time::Location).new), the HIR picks the wrong
+      # callee and emits Hash.new / Hash#enqueue instead of Fiber.new / Fiber#enqueue.
+      # Override: properly create a Fiber with an ARM64 stack frame set up for swapcontext,
+      # store the block proc, mark resumable (ctx[1]=1), register and enqueue.
+      if mangled.starts_with?("spawn$$") && mangled.ends_with?("_block")
+        fiber_tid = @module.type_registry.get_by_name("Fiber").try(&.id.to_i32) || 155
+        # Emit the fiber entry trampoline once per module
+        unless @emitted_functions.includes?("__crystal_v2_fiber_entry")
+          emit_raw "; Fiber entry trampoline — loads @proc from fiber and calls it\n"
+          emit_raw "define void @__crystal_v2_fiber_entry(ptr %fiber) {\n"
+          emit_raw "entry:\n"
+          emit_raw "  %proc_field = getelementptr i8, ptr %fiber, i32 128\n"
+          emit_raw "  %proc = load ptr, ptr %proc_field\n"
+          emit_raw "  %fn_ptr = load ptr, ptr %proc\n"
+          emit_raw "  %env_field = getelementptr i8, ptr %proc, i32 8\n"
+          emit_raw "  %env = load ptr, ptr %env_field\n"
+          emit_raw "  call void %fn_ptr(ptr %env)\n"
+          emit_raw "  %alive_ptr = getelementptr i8, ptr %fiber, i32 96\n"
+          emit_raw "  store i1 0, ptr %alive_ptr\n"
+          emit_raw "  call void @Fiber$Dsuspend()\n"
+          emit_raw "  unreachable\n"
+          emit_raw "}\n\n"
+          @emitted_functions << "__crystal_v2_fiber_entry"
+        end
+        emit_raw "; #{mangled} — spawn override: allocate Fiber + ARM64 initial stack frame\n"
+        emit_raw "define ptr @#{mangled}(ptr %name, i1 %same_thread, ptr %block) {\n"
+        emit_raw "entry:\n"
+        # Allocate Fiber object: 8-byte V2 header + 144 bytes payload = 152 bytes
+        emit_raw "  %raw = call ptr @__crystal_v2_malloc64(i64 152)\n"
+        emit_raw "  store i64 1, ptr %raw, align 8\n"
+        emit_raw "  %fiber = getelementptr i8, ptr %raw, i64 8\n"
+        emit_raw "  call void @llvm.memset.p0.i64(ptr %fiber, i8 0, i64 144, i1 false)\n"
+        # type_id at fiber+0
+        emit_raw "  store i32 #{fiber_tid}, ptr %fiber\n"
+        # alive flag = 1 at fiber+96
+        emit_raw "  %alive_ptr = getelementptr i8, ptr %fiber, i32 96\n"
+        emit_raw "  store i1 1, ptr %alive_ptr\n"
+        # @proc = block at fiber+128
+        emit_raw "  %proc_field = getelementptr i8, ptr %fiber, i32 128\n"
+        emit_raw "  store ptr %block, ptr %proc_field\n"
+        emit_raw "  call void @__crystal_v2_rc_inc(ptr %block)\n"
+        # @name at fiber+88
+        emit_raw "  %name_field = getelementptr i8, ptr %fiber, i32 88\n"
+        emit_raw "  store ptr %name, ptr %name_field\n"
+        # Allocate 1MB fiber stack (stack grows down on ARM64)
+        emit_raw "  %stack_raw = call ptr @GC_malloc(i64 1048576)\n"
+        emit_raw "  %stack_raw_int = ptrtoint ptr %stack_raw to i64\n"
+        emit_raw "  %stack_top_int = add i64 %stack_raw_int, 1048576\n"
+        # ARM64 swapcontext frame = 22×8 = 176 bytes; frame_base = stack_top - 176
+        emit_raw "  %frame_base_int = sub i64 %stack_top_int, 176\n"
+        emit_raw "  %frame_base = inttoptr i64 %frame_base_int to ptr\n"
+        emit_raw "  call void @llvm.memset.p0.i64(ptr %frame_base, i8 0, i64 176, i1 false)\n"
+        # x30 (return-address slot) at frame+64 = fiber entry trampoline
+        emit_raw "  %x30_slot = getelementptr i8, ptr %frame_base, i64 64\n"
+        emit_raw "  store ptr @__crystal_v2_fiber_entry, ptr %x30_slot\n"
+        # x0 (first-arg slot) at frame+160 = fiber ptr (arg to entry)
+        emit_raw "  %x0_slot = getelementptr i8, ptr %frame_base, i64 160\n"
+        emit_raw "  store ptr %fiber, ptr %x0_slot\n"
+        # ctx[0] = SP = frame_base, at fiber+8
+        emit_raw "  %ctx0 = getelementptr i8, ptr %fiber, i32 8\n"
+        emit_raw "  store ptr %frame_base, ptr %ctx0\n"
+        # ctx[1] = 1 (resumable) at fiber+16
+        emit_raw "  %ctx1 = getelementptr i8, ptr %fiber, i32 16\n"
+        emit_raw "  store i64 1, ptr %ctx1\n"
+        # Fiber::Stack: @pointer at fiber+24, @bottom at fiber+32, @bytesize at fiber+40
+        emit_raw "  %stack_ptr_field = getelementptr i8, ptr %fiber, i32 24\n"
+        emit_raw "  store ptr %stack_raw, ptr %stack_ptr_field\n"
+        emit_raw "  %stack_bottom_field = getelementptr i8, ptr %fiber, i32 32\n"
+        emit_raw "  %stack_top_ptr = inttoptr i64 %stack_top_int to ptr\n"
+        emit_raw "  store ptr %stack_top_ptr, ptr %stack_bottom_field\n"
+        emit_raw "  %stack_size_field = getelementptr i8, ptr %fiber, i32 40\n"
+        emit_raw "  store i32 1048576, ptr %stack_size_field\n"
+        # Lazily initialize @Fiber__classvar__fibers if null.
+        # Thread::LinkedList layout (V2 heap obj): +0 type_id(i32), +8 mutex ptr, +16 tail ptr, +24 head ptr
+        # Thread$Dnew → Thread$Hinitialize → Fiber$Hinitialize → Fiber$Dfibers() → push to list.
+        # If the list is null the push crashes at null+8 (mutex load). Initialize it here first.
+        emit_raw "  %fl_ptr = load ptr, ptr @Fiber__classvar__fibers\n"
+        emit_raw "  %fl_null = icmp eq ptr %fl_ptr, null\n"
+        emit_raw "  br i1 %fl_null, label %init_fl, label %fl_ok\n"
+        emit_raw "init_fl:\n"
+        emit_raw "  %fl_raw = call ptr @__crystal_v2_malloc64(i64 40)\n"
+        emit_raw "  store i64 9223372036854775807, ptr %fl_raw, align 8\n"
+        emit_raw "  %fl_obj = getelementptr i8, ptr %fl_raw, i64 8\n"
+        emit_raw "  call void @llvm.memset.p0.i64(ptr %fl_obj, i8 0, i64 32, i1 false)\n"
+        emit_raw "  %fl_mtx = call ptr @Thread$CCMutex$Dnew()\n"
+        emit_raw "  %fl_mtx_slot = getelementptr i8, ptr %fl_obj, i32 8\n"
+        emit_raw "  store ptr %fl_mtx, ptr %fl_mtx_slot\n"
+        emit_raw "  store ptr %fl_obj, ptr @Fiber__classvar__fibers\n"
+        emit_raw "  br label %fl_ok\n"
+        emit_raw "fl_ok:\n"
+        # Similarly initialize @Thread__classvar__threads — Thread$Hinitialize calls Thread$Dthreads()
+        # and pushes the newly created main-thread fiber. If null, same crash at null+8.
+        emit_raw "  %tl_ptr = load ptr, ptr @Thread__classvar__threads\n"
+        emit_raw "  %tl_null = icmp eq ptr %tl_ptr, null\n"
+        emit_raw "  br i1 %tl_null, label %init_tl, label %tl_ok\n"
+        emit_raw "init_tl:\n"
+        emit_raw "  %tl_raw = call ptr @__crystal_v2_malloc64(i64 40)\n"
+        emit_raw "  store i64 9223372036854775807, ptr %tl_raw, align 8\n"
+        emit_raw "  %tl_obj = getelementptr i8, ptr %tl_raw, i64 8\n"
+        emit_raw "  call void @llvm.memset.p0.i64(ptr %tl_obj, i8 0, i64 32, i1 false)\n"
+        emit_raw "  %tl_mtx = call ptr @Thread$CCMutex$Dnew()\n"
+        emit_raw "  %tl_mtx_slot = getelementptr i8, ptr %tl_obj, i32 8\n"
+        emit_raw "  store ptr %tl_mtx, ptr %tl_mtx_slot\n"
+        emit_raw "  store ptr %tl_obj, ptr @Thread__classvar__threads\n"
+        emit_raw "  br label %tl_ok\n"
+        emit_raw "tl_ok:\n"
+        emit_raw "  call void @Fiber$Henqueue(ptr %fiber)\n"
+        emit_raw "  ret ptr %fiber\n"
+        emit_raw "}\n\n"
+        return true
+      end
+      # Int#tdiv(IntX) returns abstract Int (ptr). The MIR-lowered body emits inttoptr for the
+      # result, creating a packed scalar that breaks loop-variable alloca/PHI chains.
+      # Override: heap-allocate the result so callers get a real pointer they can load from.
+      if m = mangled.match(/\AInt\$Htdiv\$\$(Int8|Int16|Int32|Int64|UInt8|UInt16|UInt32|UInt64)\z/)
+        arg_type_name = m[1]
+        llvm_type = case arg_type_name
+                    when "Int8", "UInt8"   then "i8"
+                    when "Int16", "UInt16" then "i16"
+                    when "Int32", "UInt32" then "i32"
+                    when "Int64", "UInt64" then "i64"
+                    else "i32"
+                    end
+        div_op = arg_type_name.starts_with?("UInt") ? "udiv" : "sdiv"
+        alloc_bytes = {"i8" => 1, "i16" => 2, "i32" => 4, "i64" => 8}[llvm_type]? || 4
+        emit_raw "; Int#tdiv(#{arg_type_name}) — heap-allocates result (abstract Int ABI, avoids packed-scalar loop bug)\n"
+        emit_raw "define ptr @#{mangled}(ptr %self, #{llvm_type} %other) {\n"
+        emit_raw "entry:\n"
+        emit_raw "  call void @Int$Hcheck_div_argument$$#{arg_type_name}(ptr %self, #{llvm_type} %other)\n"
+        emit_raw "  %self_val = load #{llvm_type}, ptr %self\n"
+        emit_raw "  %result = #{div_op} #{llvm_type} %self_val, %other\n"
+        emit_raw "  %new = call ptr @GC_malloc_atomic(i64 #{alloc_bytes})\n"
+        emit_raw "  store #{llvm_type} %result, ptr %new\n"
+        emit_raw "  ret ptr %new\n"
+        emit_raw "}\n\n"
+        return true
+      end
+      # String::Formatter(Tuple(T))#arg_at(Nil) — sequential arg fetch from inline tuple.
+      # The generic Tuple$Hunsafe_fetch$$Int32 uses stride=4 and returns i32, which
+      # truncates Float64 elements. Override per-element-type to fix the stride and load.
+      if mangled.starts_with?("String$CCFormatter$LTuple$L") && mangled.ends_with?("$R$R$Harg_at$$Nil")
+        # Extract inner type (e.g. "Float64" from "String$CCFormatter$LTuple$LFloat64$R$R")
+        inner = mangled.sub("String$CCFormatter$LTuple$L", "").sub(/\$R\$R\$Harg_at\$\$Nil$/, "")
+        elem_info : {String, Int32}? = case inner
+                                       when "Float64"        then {"double", 8}
+                                       when "Float32"        then {"float", 4}
+                                       when "Int64", "UInt64" then {"i64", 8}
+                                       when "Int32", "UInt32" then {"i32", 4}
+                                       when "Int16", "UInt16" then {"i16", 2}
+                                       when "Int8", "UInt8"   then {"i8", 1}
+                                       else                       nil
+                                       end
+        if elem_info
+          elem_llvm = elem_info[0]
+          elem_stride = elem_info[1]
+          ret_type = @type_mapper.llvm_type(func.return_type)
+          emit_raw "; #{mangled} — direct #{inner} sequential tuple fetch (fixes stride=4 generic bug)\n"
+          emit_raw "define #{ret_type} @#{mangled}(ptr %self, ptr %index) {\n"
+          emit_raw "entry:\n"
+          emit_raw "  %arg_idx_ptr = getelementptr i8, ptr %self, i32 64\n"
+          emit_raw "  %arg_idx = load i32, ptr %arg_idx_ptr\n"
+          emit_raw "  %tuple_base = getelementptr i8, ptr %self, i32 8\n"
+          emit_raw "  %idx64 = sext i32 %arg_idx to i64\n"
+          emit_raw "  %elem_off = mul i64 %idx64, #{elem_stride}\n"
+          emit_raw "  %elem_ptr = getelementptr i8, ptr %tuple_base, i64 %elem_off\n"
+          emit_raw "  %val = load #{elem_llvm}, ptr %elem_ptr, align #{elem_stride}\n"
+          emit_raw "  %new_idx = add i32 %arg_idx, 1\n"
+          emit_raw "  store i32 %new_idx, ptr %arg_idx_ptr\n"
+          emit_raw "  %result = alloca #{ret_type}\n"
+          emit_raw "  store #{ret_type} zeroinitializer, ptr %result\n"
+          emit_raw "  %pay_ptr = getelementptr #{ret_type}, ptr %result, i32 0, i32 1\n"
+          emit_raw "  store #{elem_llvm} %val, ptr %pay_ptr, align 4\n"
+          emit_raw "  %ret = load #{ret_type}, ptr %result\n"
+          emit_raw "  ret #{ret_type} %ret\n"
+          emit_raw "}\n\n"
+          return true
+        end
+      end
       case mangled
       when "Crystal$CCSystem$CCDir$Dcurrent"
         emit_raw "; #{mangled} - self-host-safe current directory via getcwd\n"
@@ -10033,6 +10311,35 @@ module Crystal::MIR
         emit_raw "  %cof_ptr = getelementptr i8, ptr %tup, i32 4\n"
         emit_raw "  store i1 1, ptr %cof_ptr\n"
         emit_raw "  ret ptr %tup\n"
+        emit_raw "}\n\n"
+        return true
+      end
+
+      # File.open(String, String, &block) — the Crystal body chains through open_internal →
+      # new_internal → File.new which V2 currently fails to lower.  Override with a direct
+      # implementation: open via __crystal_v2_file_open, create an IO::FileDescriptor object,
+      # patch the type_id to File's type_id, call the block proc, then close.
+      if mangled == "File$Dopen$$String_String_block"
+        file_type = @module.type_registry.get_by_name("File")
+        file_tid = file_type.try(&.id.to_i32) || 295
+
+        emit_raw "; File.open(String, String, &block) — builtin override\n"
+        emit_raw "define ptr @#{mangled}(ptr %p0, ptr %p1, ptr %p2) {\n"
+        emit_raw "entry:\n"
+        # Open file via low-level helper (handles C-string extraction + mode→flags)
+        emit_raw "  %fdtup = call ptr @__crystal_v2_file_open(ptr %p0, ptr %p1)\n"
+        emit_raw "  %fd = load i32, ptr %fdtup\n"
+        # Create a fully-initialised IO::FileDescriptor object
+        emit_raw "  %file = call ptr @IO$CCFileDescriptor$Dnew$$Int32(i32 %fd)\n"
+        # Patch type_id to File so that vdispatch cases for File dispatch correctly
+        emit_raw "  store i32 #{file_tid}, ptr %file\n"
+        # Invoke the block proc: void %p2(ptr file)
+        emit_raw "  call void %p2(ptr %file)\n"
+        # Flush write buffer (safe — no event loop), then close via C syscall
+        emit_raw "  call ptr @File$Hflush(ptr %file)\n"
+        emit_raw "  %fd2 = call i32 @IO$CCFileDescriptor$Hfd(ptr %file)\n"
+        emit_raw "  call i32 @close(i32 %fd2)\n"
+        emit_raw "  ret ptr null\n"
         emit_raw "}\n\n"
         return true
       end
@@ -16539,7 +16846,13 @@ module Crystal::MIR
         emit "call void @__tsan_read#{tsan_size}(ptr #{ptr})"
       end
 
-      emit "#{name} = load #{type}, ptr #{ptr}"
+      # Packed-scalar shortcut: if the pointer was created by inttoptr (packed integer),
+      # recovering the value via ptrtoint avoids loading from a bogus address.
+      if @inttoptr_value_ids.includes?(inst.ptr) && type != "ptr" && !type.includes?(".union")
+        emit "#{name} = ptrtoint ptr #{ptr} to #{type}"
+      else
+        emit "#{name} = load #{type}, ptr #{ptr}"
+      end
       record_emitted_type(name, type)
       # Cross-block store is now handled centrally in emit_instruction
     end
@@ -17339,20 +17652,52 @@ module Crystal::MIR
                        "i64"
                      end
                    end
-        if operand_type_str == "ptr" || right_type_str == "ptr"
+        # Heap-pointer operands: when a ptr holds a heap-allocated primitive (e.g.
+        # abstract Int receiving an Int32), load the integer value instead of using
+        # ptrtoint (which would give the pointer ADDRESS, not the value).
+        # Only applies to arithmetic operations — comparisons (e.g. ptr == null)
+        # still need ptrtoint to compare addresses.
+        # A ptr is a heap pointer iff it is NOT a packed scalar (@inttoptr_value_ids)
+        # AND the MIR type is not a Pointer kind (actual Crystal Pointer(T)).
+        left_is_heap_ptr = false
+        right_is_heap_ptr = false
+        if is_arithmetic && operand_type_str == "ptr"
+          left_mir = @module.type_registry.get(operand_type) if operand_type
+          is_packed = @inttoptr_value_ids.includes?(inst.left)
+          is_pointer_kind = left_mir ? left_mir.kind.pointer? : false
+          left_is_heap_ptr = !is_packed && !is_pointer_kind
+        end
+        if is_arithmetic && right_type_str == "ptr"
+          right_mir = @module.type_registry.get(right_type) if right_type
+          is_packed = @inttoptr_value_ids.includes?(inst.right)
+          is_pointer_kind = right_mir ? right_mir.kind.pointer? : false
+          right_is_heap_ptr = !is_packed && !is_pointer_kind
+        end
+
+        # Only force int_type to pointer width when dealing with actual pointer values.
+        # For heap-allocated primitives, keep the natural result width (e.g. i32).
+        if (operand_type_str == "ptr" && !left_is_heap_ptr) || (right_type_str == "ptr" && !right_is_heap_ptr)
           int_type = pointer_sized_int_llvm_type
         end
+
         if operand_type_str == "ptr"
-          # Convert 0 to null for ptr type
           left_ptr = left == "0" ? "null" : left
-          emit "%binop#{inst.id}.left = ptrtoint ptr #{left_ptr} to #{int_type}"
+          if left_is_heap_ptr
+            # Heap-allocated primitive: load the actual integer value
+            emit "%binop#{inst.id}.left = load #{int_type}, ptr #{left_ptr}"
+          else
+            emit "%binop#{inst.id}.left = ptrtoint ptr #{left_ptr} to #{int_type}"
+          end
           left = "%binop#{inst.id}.left"
           operand_type_str = int_type
         end
         if right_type_str == "ptr"
-          # Convert 0 to null for ptr type
           right_ptr = right == "0" ? "null" : right
-          emit "%binop#{inst.id}.right = ptrtoint ptr #{right_ptr} to #{int_type}"
+          if right_is_heap_ptr
+            emit "%binop#{inst.id}.right = load #{int_type}, ptr #{right_ptr}"
+          else
+            emit "%binop#{inst.id}.right = ptrtoint ptr #{right_ptr} to #{int_type}"
+          end
           right = "%binop#{inst.id}.right"
           right_type_str = int_type
         end
@@ -17721,6 +18066,10 @@ module Crystal::MIR
           return
         end
 
+        # For shift ops the left operand determines value width; MIR may type the
+        # result narrower.  We widen result_type for the op and trunc afterward.
+        narrow_result_type = nil  # String? — set when we widen for a shift op
+
         # Ensure operands match result_type for arithmetic ops
         # If operand is larger than result_type, use operand type instead (don't truncate)
         if result_type.starts_with?('i') && result_type != "i1"
@@ -17735,6 +18084,10 @@ module Crystal::MIR
           operand_bits = left_runtime_type.starts_with?('i') ? (left_runtime_type[1..].to_i? || 32) : 0
           right_bits_val = right_runtime_type.starts_with?('i') ? (right_runtime_type[1..].to_i? || 32) : 0
 
+          # For shift ops the left operand determines value width; is_shift_op gates
+          # the widen-then-trunc path in the left-normalization branch below.
+          is_shift_op = op == "ashr" || op == "lshr" || op == "shl"
+
           # Normalize operands to MIR result type.
           # MIR type is authoritative for arithmetic result width (for example UInt8 += 1).
           result_bits = result_type[1..].to_i? || 32
@@ -17746,8 +18099,15 @@ module Crystal::MIR
               emit "%binop#{inst.id}.left_to_result = #{ext_op} #{left_runtime_type} #{left} to #{result_type}"
               left = "%binop#{inst.id}.left_to_result"
             elsif operand_bits > result_bits
-              emit "%binop#{inst.id}.left_to_result = trunc #{left_runtime_type} #{left} to #{result_type}"
-              left = "%binop#{inst.id}.left_to_result"
+              if is_shift_op
+                # Widen result_type to left's width; trunc after the shift
+                narrow_result_type = result_type
+                result_type = left_runtime_type
+                result_bits = operand_bits
+              else
+                emit "%binop#{inst.id}.left_to_result = trunc #{left_runtime_type} #{left} to #{result_type}"
+                left = "%binop#{inst.id}.left_to_result"
+              end
             end
             left_runtime_type = result_type
           end
@@ -17775,7 +18135,15 @@ module Crystal::MIR
           @inttoptr_value_ids.add(inst.id)
           record_emitted_type(name, "ptr")
         else
-          emit "#{name} = #{op} #{result_type} #{left}, #{right}"
+          if narrow = narrow_result_type
+            # Shift op: emit at the wider type then trunc to the MIR result width
+            wide_name = "%binop#{inst.id}.wide_shift"
+            emit "#{wide_name} = #{op} #{result_type} #{left}, #{right}"
+            emit "#{name} = trunc #{result_type} #{wide_name} to #{narrow}"
+            result_type = narrow
+          else
+            emit "#{name} = #{op} #{result_type} #{left}, #{right}"
+          end
           # Track actual emitted type for downstream use
           # Preserve unsigned-ness from prepass if either operand was unsigned
           prepass_was_unsigned = if pt = @value_types[inst.id]?
