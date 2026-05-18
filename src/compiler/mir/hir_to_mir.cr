@@ -3335,10 +3335,21 @@ module Crystal
           return builder.extern_call(call.method_name, args, convert_type(call.type))
         end
 
+        # Atomic::Ops primitives must be checked BEFORE exact function lookup — the
+        # function (e.g. "Atomic::Ops.atomicrmw$...") may already be in the MIR module
+        # with a stub body, so the exact lookup would return it before we get a chance
+        # to intercept and emit a real MIR AtomicRMW/AtomicLoad/AtomicStore/AtomicCAS.
+        # See lower_call Atomic::Ops block below for the full implementation.
+        if call.method_name.starts_with?("Atomic::Ops.") || call.method_name.starts_with?("Atomic$CCOps$D")
+          atomic_ops_skip_exact_lookup = true
+        else
+          atomic_ops_skip_exact_lookup = false
+        end
+
         # Receiverless calls to an already-materialized function are static ABI
         # calls. Lower them directly before virtual/receiver dispatch heuristics,
         # which are only relevant once a runtime receiver participates.
-        unless call.has_receiver?
+        unless call.has_receiver? || atomic_ops_skip_exact_lookup
           if exact_func = @mir_module.get_function(call.method_name)
             coerced_args = coerce_call_args(builder, args, call.args, exact_func)
             call_return_type = exact_func.return_type
@@ -3445,8 +3456,17 @@ module Crystal
         # symbol→enum conversion turns the symbols into i32 LLVM enum values, which
         # we decode here to pick the right MIR op/ordering.
         if call.method_name.starts_with?("Atomic::Ops.") || call.method_name.starts_with?("Atomic$CCOps$D")
-          ops_method = call.method_name.split("$").first
-          ops_method = ops_method.sub("Atomic::Ops.", "").sub("Atomic$CCOps$D", "")
+          # Extract the bare method name (atomicrmw, cmpxchg, load, store) from either
+          # Crystal format ("Atomic::Ops.atomicrmw") or V2-mangled form
+          # ("Atomic$CCOps$Datomicrmw" or "Atomic$CCOps$Datomicrmw$$Int32_...").
+          # The old split("$").first broke on mangled names, yielding "Atomic" instead.
+          ops_method = if m = call.method_name.match(/\AAtomic::Ops\.(\w+)/)
+                         m[1]
+                       elsif m = call.method_name.match(/Atomic\$CCOps\$D(\w+)/)
+                         m[1]
+                       else
+                         ""
+                       end
 
           case ops_method
           when "atomicrmw"
