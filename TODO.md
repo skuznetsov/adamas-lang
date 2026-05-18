@@ -1627,10 +1627,15 @@ pending-budget oracle.
    scalar classification are advanced by LM-568. The primitive `each_key`
    fallback-stub LLVM shape is advanced by LM-569: produced `s2` now builds,
    and the old `Float32$Heach_key$$block(float %arg0, ptr %arg1) ret ptr %arg0`
-   verifier failure is guarded by a fast no-prelude oracle. Current produced-s2
-   full-prelude `puts 42` still exits 139 during early HIR setup, after
-   `[STAGE2_DEBUG] pre-scan class/module loops start`. Localize that prescan
-   crash before widening to s3b.
+   verifier failure is guarded by a fast no-prelude oracle. The
+   `Slice(T).literal` primitive return/lowering contract is advanced by LM-570:
+   the old FastFloat `POWER_OF_FIVE_128` null table no longer appears in
+   produced-s2 LLVM. Current produced-s2 full-prelude `puts 42` now advances
+   past the FastFloat segfault and aborts at
+   `STUB CALLED: EquivUint$Dnew$BANG$$UInt64` during early prescan. A produced-s2
+   no-prelude `Slice(UInt64).literal` reducer also exposes a separate
+   `Indexable$LT$R$Hequals$Q$$Indexable_block` abort before it can be used as a
+   produced-stage guard. Localize those stub frontiers before widening to s3b.
 2. Root-cause the remaining full-prelude nested-class return-inference crash
    under generated stage2. Current evidence: stale parameter slice frontiers are
    advanced through source-backed initializer capture, source-prefiltered

@@ -855,3 +855,27 @@ segfault.
 **Verdict:** no evidence value from this Grok ACP run. The wrapper should pass
 `--always-approve` for read-only runs or force an answer before any tool call.
 **Cost saved:** none.
+
+### Session 33 — 2026-05-18 — `Slice(T).literal` primitive return/lowering audit
+**Task:** read-only audit of the produced-s2 FastFloat null table frontier after
+lldb showed `Slice(UInt64)#to_unsafe` was called with null `self` and produced
+LLVM showed `Slice(UInt64).literal(...)` as `void` followed by a null classvar
+store.
+**Brief size:** one bounded inline prompt with exact generated LLVM evidence,
+files, and requested root/reducer/symptom-patch output.
+**Latency:** returned while local reducer and patch verification were in flight.
+**Output quality:** useful. Grok independently identified the same root family:
+`@[Primitive(:slice_literal)] def self.literal(*args)` has no return annotation,
+generic `Slice(T).literal` can stay `TypeRef::VOID`, and deferred constant
+initialization then stores the lowered void/null value.
+**Adversary check:** local evidence refined the implementation. The first host
+reducer proved `Slice(UInt64).literal(1_u64, 2_u64)` emitted
+`call void @Slice$LUInt64$R$Dliteral...` and stored null. The first intrinsic
+patch fixed the IR call shape but produced a bus-erroring test binary because
+no-prelude `Slice(UInt64)` lacked ivar metadata and allocated only 8 bytes.
+Seeding the Slice allocation with constructor args forced the canonical 16-byte
+payload, and the focused host guard then compiled and ran under `run_safe`.
+**Verdict:** partial evidence value. Grok was useful for root-family
+confirmation and patch-shape warnings; local IR and binary falsifiers were
+decisive for the final scoped fix.
+**Cost saved:** moderate static-audit time.

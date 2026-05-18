@@ -54,11 +54,11 @@ module Crystal::HIR
 
   # Lifetime classification from escape analysis
   enum LifetimeTag : UInt8
-    Unknown      = 0  # Not yet analyzed
-    StackLocal   = 1  # Does not escape, can be stack-allocated
-    ArgEscape    = 2  # Escapes via argument (container.add)
-    HeapEscape   = 3  # Escapes to heap (return, closure capture)
-    GlobalEscape = 4  # Escapes to global/class variable
+    Unknown      = 0 # Not yet analyzed
+    StackLocal   = 1 # Does not escape, can be stack-allocated
+    ArgEscape    = 2 # Escapes via argument (container.add)
+    HeapEscape   = 3 # Escapes to heap (return, closure capture)
+    GlobalEscape = 4 # Escapes to global/class variable
 
     # Comparison: higher value = more escaped
     def escapes_more_than?(other : LifetimeTag) : Bool
@@ -74,10 +74,10 @@ module Crystal::HIR
   @[Flags]
   enum Taint : UInt8
     None         = 0
-    ThreadShared = 1  # May be accessed from another fiber/thread
-    FFIExposed   = 2  # Passed to C code via lib fun
-    Cyclic       = 4  # Type can form reference cycles
-    Mutable      = 8  # Value is mutated after creation
+    ThreadShared = 1 # May be accessed from another fiber/thread
+    FFIExposed   = 2 # Passed to C code via lib fun
+    Cyclic       = 4 # Type can form reference cycles
+    Mutable      = 8 # Value is mutated after creation
   end
 
   # ═══════════════════════════════════════════════════════════════════════════
@@ -111,7 +111,7 @@ module Crystal::HIR
     STRING  = new(15_u32)
     NIL     = new(16_u32)
     SYMBOL  = new(17_u32)
-    POINTER = new(18_u32)  # Generic pointer type (for self params, etc.)
+    POINTER = new(18_u32) # Generic pointer type (for self params, etc.)
 
     FIRST_USER_TYPE = 32_u32
 
@@ -323,7 +323,7 @@ module Crystal::HIR
     getter element_type : TypeRef
 
     def initialize(id : ValueId, @element_type : TypeRef, @elements : Array(ValueId))
-      super(id, TypeRef::VOID)  # Array itself has special type handling
+      super(id, TypeRef::VOID) # Array itself has special type handling
       @lifetime = LifetimeTag::StackLocal
     end
 
@@ -345,7 +345,7 @@ module Crystal::HIR
 
     def initialize(id : ValueId, @parts : Array(ValueId))
       super(id, TypeRef::STRING)
-      @lifetime = LifetimeTag::HeapEscape  # Interpolated strings need heap allocation
+      @lifetime = LifetimeTag::HeapEscape # Interpolated strings need heap allocation
     end
 
     def to_s(io : IO) : Nil
@@ -405,7 +405,7 @@ module Crystal::HIR
   # Heap allocation (new object) or stack allocation (struct)
   class Allocate < Value
     getter constructor_args : Array(ValueId)
-    getter is_value_type : Bool  # true for struct (stack), false for class (heap)
+    getter is_value_type : Bool # true for struct (stack), false for class (heap)
 
     def initialize(id : ValueId, type : TypeRef, @constructor_args : Array(ValueId) = [] of ValueId, @is_value_type : Bool = false)
       super(id, type)
@@ -510,7 +510,7 @@ module Crystal::HIR
   # pointer.value / pointer[index]
   class PointerLoad < Value
     getter pointer : ValueId
-    getter index : ValueId?  # nil means index 0
+    getter index : ValueId? # nil means index 0
 
     def initialize(id : ValueId, type : TypeRef, @pointer : ValueId, @index : ValueId? = nil)
       super(id, type)
@@ -530,7 +530,7 @@ module Crystal::HIR
   class PointerStore < Value
     getter pointer : ValueId
     getter value : ValueId
-    getter index : ValueId?  # nil means index 0
+    getter index : ValueId? # nil means index 0
 
     def initialize(id : ValueId, type : TypeRef, @pointer : ValueId, @value : ValueId, @index : ValueId? = nil)
       super(id, type)
@@ -674,7 +674,7 @@ module Crystal::HIR
   # Method/function call
   class Call < Value
     NO_RECEIVER = UInt32::MAX
-    NO_BLOCK = UInt32::MAX
+    NO_BLOCK    = UInt32::MAX
 
     property method_name : String
     property args : Array(ValueId)
@@ -686,7 +686,7 @@ module Crystal::HIR
       id : ValueId,
       type : TypeRef,
       method_name : String,
-      args : Array(ValueId)
+      args : Array(ValueId),
     ) : Call
       if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
         STDERR.puts "[CALL_CTOR_TRACE] factory=without_receiver before id=#{id} method=#{method_name} args=#{args.size}"
@@ -710,7 +710,7 @@ module Crystal::HIR
     def initialize(
       id : ValueId,
       type : TypeRef,
-      method_name : String
+      method_name : String,
     )
       super(id, type)
       @receiver_value = NO_RECEIVER
@@ -724,7 +724,7 @@ module Crystal::HIR
       id : ValueId,
       type : TypeRef,
       method_name : String,
-      args : Array(ValueId)
+      args : Array(ValueId),
     )
       super(id, type)
       if ENV.has_key?("CRYSTAL_V2_TRACE_CALL_CTOR")
@@ -751,7 +751,7 @@ module Crystal::HIR
       type : TypeRef,
       method_name : String,
       args : Array(ValueId),
-      virtual : Bool
+      virtual : Bool,
     )
       super(id, type)
       if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
@@ -773,7 +773,7 @@ module Crystal::HIR
       receiver : ValueId,
       method_name : String,
       args : Array(ValueId) = [] of ValueId,
-      virtual : Bool = false
+      virtual : Bool = false,
     )
       super(id, type)
       if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
@@ -795,7 +795,7 @@ module Crystal::HIR
       receiver : Nil,
       method_name : String,
       args : Array(ValueId) = [] of ValueId,
-      virtual : Bool = false
+      virtual : Bool = false,
     )
       super(id, type)
       if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
@@ -817,7 +817,7 @@ module Crystal::HIR
       method_name : String,
       args : Array(ValueId),
       block : BlockId,
-      virtual : Bool = false
+      virtual : Bool = false,
     )
       super(id, type)
       if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
@@ -840,7 +840,7 @@ module Crystal::HIR
       method_name : String,
       args : Array(ValueId),
       block : BlockId,
-      virtual : Bool = false
+      virtual : Bool = false,
     )
       super(id, type)
       if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
@@ -863,7 +863,7 @@ module Crystal::HIR
       method_name : String,
       args : Array(ValueId),
       block : Nil,
-      virtual : Bool = false
+      virtual : Bool = false,
     )
       super(id, type)
       @receiver_value = receiver
@@ -880,7 +880,7 @@ module Crystal::HIR
       method_name : String,
       args : Array(ValueId),
       block : BlockId,
-      virtual : Bool = false
+      virtual : Bool = false,
     )
       super(id, type)
       @receiver_value = NO_RECEIVER
@@ -897,7 +897,7 @@ module Crystal::HIR
       method_name : String,
       args : Array(ValueId),
       block : Nil,
-      virtual : Bool = false
+      virtual : Bool = false,
     )
       super(id, type)
       @receiver_value = NO_RECEIVER
@@ -957,7 +957,7 @@ module Crystal::HIR
 
   # External C function call (libc, etc.)
   class ExternCall < Value
-    getter extern_name : String  # The real C function name (e.g., "puts", "malloc")
+    getter extern_name : String # The real C function name (e.g., "puts", "malloc")
     getter args : Array(ValueId)
     getter varargs : Bool
 
@@ -966,7 +966,7 @@ module Crystal::HIR
       type : TypeRef,
       @extern_name : String,
       @args : Array(ValueId) = [] of ValueId,
-      @varargs : Bool = false
+      @varargs : Bool = false,
     )
       super(id, type)
     end
@@ -1027,20 +1027,20 @@ module Crystal::HIR
   # `boxed=false` by default, and its consumer (direct-yield
   # MakeClosure with VOID type) never reads either field.
   struct CapturedVar
-    getter value_id      : ValueId
-    getter name          : String
-    getter by_reference  : Bool
+    getter value_id : ValueId
+    getter name : String
+    getter by_reference : Bool
     getter env_slot_type : TypeRef
-    getter payload_type  : TypeRef
-    getter boxed         : Bool
+    getter payload_type : TypeRef
+    getter boxed : Bool
 
     def initialize(
-      @value_id      : ValueId,
-      @name          : String,
-      @by_reference  : Bool    = true,
+      @value_id : ValueId,
+      @name : String,
+      @by_reference : Bool = true,
       @env_slot_type : TypeRef = TypeRef::POINTER,
-      @payload_type  : TypeRef = TypeRef::POINTER,
-      @boxed         : Bool    = false,
+      @payload_type : TypeRef = TypeRef::POINTER,
+      @boxed : Bool = false,
     )
       if @boxed && @env_slot_type != TypeRef::POINTER
         raise "CapturedVar invariant violated: boxed capture #{@name.inspect} must have env_slot_type == POINTER (got #{@env_slot_type.id})"
@@ -1106,7 +1106,7 @@ module Crystal::HIR
   # Emitted by proc literals and by block-to-proc conversions that require
   # heap Proc carrier semantics.
   class MakeProc < Value
-    getter fn_ptr  : ValueId
+    getter fn_ptr : ValueId
     getter env_ptr : ValueId
 
     def initialize(id : ValueId, type : TypeRef, @fn_ptr : ValueId, @env_ptr : ValueId)
@@ -1130,7 +1130,7 @@ module Crystal::HIR
   class Cast < Value
     getter value : ValueId
     getter target_type : TypeRef
-    getter safe : Bool  # as vs as?
+    getter safe : Bool # as vs as?
 
     def initialize(id : ValueId, type : TypeRef, @value : ValueId, @target_type : TypeRef, @safe : Bool = false)
       super(id, type)
@@ -1189,7 +1189,7 @@ module Crystal::HIR
 
     def initialize(id : ValueId, type : TypeRef, @op : BinaryOp, @left : ValueId, @right : ValueId)
       super(id, type)
-      @lifetime = LifetimeTag::StackLocal  # Primitives don't escape
+      @lifetime = LifetimeTag::StackLocal # Primitives don't escape
     end
 
     def to_s(io : IO) : Nil
@@ -1265,9 +1265,9 @@ module Crystal::HIR
   # Wrap a value into a union (box operation)
   # Creates a union value with the given discriminator and payload
   class UnionWrap < Value
-    getter value : ValueId           # The value to wrap
-    getter variant_type_id : Int32   # Discriminator for this variant
-    getter union_descriptor : UnionTypeDescriptor?  # Optional full descriptor
+    getter value : ValueId                         # The value to wrap
+    getter variant_type_id : Int32                 # Discriminator for this variant
+    getter union_descriptor : UnionTypeDescriptor? # Optional full descriptor
 
     def initialize(id : ValueId, type : TypeRef, @value : ValueId, @variant_type_id : Int32,
                    @union_descriptor : UnionTypeDescriptor? = nil)
@@ -1283,9 +1283,9 @@ module Crystal::HIR
   # Unwrap a value from a union (unbox operation)
   # Extracts the payload assuming it's the specified variant
   class UnionUnwrap < Value
-    getter union_value : ValueId     # The union to unwrap
-    getter variant_type_id : Int32   # Expected discriminator
-    getter safe : Bool               # If true, returns nil on mismatch; if false, raises
+    getter union_value : ValueId   # The union to unwrap
+    getter variant_type_id : Int32 # Expected discriminator
+    getter safe : Bool             # If true, returns nil on mismatch; if false, raises
 
     def initialize(id : ValueId, type : TypeRef, @union_value : ValueId, @variant_type_id : Int32,
                    @safe : Bool = false)
@@ -1336,8 +1336,8 @@ module Crystal::HIR
 
   # Raise an exception - terminates normal control flow
   class Raise < Value
-    getter exception : ValueId?    # Optional exception value (nil = re-raise current)
-    getter message : String?       # Optional message for simple raises
+    getter exception : ValueId? # Optional exception value (nil = re-raise current)
+    getter message : String?    # Optional message for simple raises
 
     def initialize(id : ValueId, @exception : ValueId? = nil, @message : String? = nil)
       super(id, TypeRef::VOID)
@@ -1541,11 +1541,11 @@ module Crystal::HIR
 
   # Scope kind
   enum ScopeKind : UInt8
-    Function = 0  # Top-level function scope
-    Block    = 1  # if/while/begin block
-    Loop     = 2  # while/until/loop (for break/next)
-    Closure  = 3  # Proc/lambda body
-    Rescue   = 4  # rescue/ensure region
+    Function = 0 # Top-level function scope
+    Block    = 1 # if/while/begin block
+    Loop     = 2 # while/until/loop (for break/next)
+    Closure  = 3 # Proc/lambda body
+    Rescue   = 4 # rescue/ensure region
   end
 
   # Scope region
@@ -1783,9 +1783,9 @@ module Crystal::HIR
 
   # External C function declaration from lib bindings
   struct ExternFunction
-    getter name : String         # Crystal-side name
-    getter real_name : String    # Actual C symbol name
-    getter lib_name : String?    # Library containing the function
+    getter name : String      # Crystal-side name
+    getter real_name : String # Actual C symbol name
+    getter lib_name : String? # Library containing the function
     getter param_types : Array(TypeRef)
     getter return_type : TypeRef
     getter varargs : Bool
@@ -1796,9 +1796,9 @@ module Crystal::HIR
 
   # External C global variable from lib bindings
   struct ExternGlobal
-    getter name : String         # Crystal-side name (without $)
-    getter real_name : String    # Actual C symbol name
-    getter lib_name : String?    # Library containing the global
+    getter name : String      # Crystal-side name (without $)
+    getter real_name : String # Actual C symbol name
+    getter lib_name : String? # Library containing the global
     getter type : TypeRef
 
     def initialize(@name, @real_name, @lib_name, @type)
@@ -1957,8 +1957,16 @@ module Crystal::HIR
 
     def primitive_for(name : String) : String?
       @primitive_methods[name]? || begin
-        if dollar = name.index('$')
-          @primitive_methods[name[0, dollar]]?
+        base_name = if dollar = name.index('$')
+                      name[0, dollar]
+                    else
+                      name
+                    end
+        @primitive_methods[base_name]? || begin
+          if base_name == "Slice.literal" ||
+             (base_name.starts_with?("Slice(") && base_name.ends_with?(").literal"))
+            "slice_literal"
+          end
         end
       end
     end
@@ -2711,7 +2719,7 @@ module Crystal::HIR
       @transfer : Bool = false,
       @thread_shared : Bool = false,
       @ffi_exposed : Bool = false,
-      @returns_alias : Bool = false
+      @returns_alias : Bool = false,
     )
     end
 
@@ -2743,26 +2751,25 @@ module Crystal::HIR
   # Information about a single variant in a discriminated union
   # Used for debug info and runtime type checking
   record UnionVariantInfo,
-    type_id : Int32,           # Discriminator value for this variant
-    type_ref : TypeRef,        # Reference to the actual type
-    full_name : String,        # Full qualified name (e.g., "MyModule::MyClass")
-    size : Int32,              # Size of this variant's payload in bytes
-    alignment : Int32,         # Alignment requirement for this variant
-    field_offsets : Hash(String, Int32)? = nil  # Field offsets for struct variants
+    type_id : Int32,                           # Discriminator value for this variant
+    type_ref : TypeRef,                        # Reference to the actual type
+    full_name : String,                        # Full qualified name (e.g., "MyModule::MyClass")
+    size : Int32,                              # Size of this variant's payload in bytes
+    alignment : Int32,                         # Alignment requirement for this variant
+    field_offsets : Hash(String, Int32)? = nil # Field offsets for struct variants
 
   # Complete descriptor for a discriminated union type
   # Provides all information needed for debug info and runtime operations
   record UnionTypeDescriptor,
-    name : String,                        # Display name (e.g., "Int32 | String | Nil")
-    variants : Array(UnionVariantInfo),   # All possible variants
-    total_size : Int32,                   # Total size: header + max(variant sizes)
-    alignment : Int32,                    # Alignment of the union
-    source_file : String? = nil,          # Source location for debug info
+    name : String,                      # Display name (e.g., "Int32 | String | Nil")
+    variants : Array(UnionVariantInfo), # All possible variants
+    total_size : Int32,                 # Total size: header + max(variant sizes)
+    alignment : Int32,                  # Alignment of the union
+    source_file : String? = nil,        # Source location for debug info
     source_line : Int32? = nil do
-
     # Header size (type_id discriminator)
     def header_size : Int32
-      4  # i32 for type_id
+      4 # i32 for type_id
     end
 
     # Payload offset (after header, aligned)

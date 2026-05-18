@@ -4350,3 +4350,78 @@ Boundary:
   the s2 build.
 
 Trust: {F/G/R: 0.83/0.52/0.86} [verified]
+
+## LM-570 — `Slice(T).literal` no longer lowers as a void/null constant on the host path
+
+Context: compiler/bootstrap/HIR primitive lowering, 2026-05-18, `codegen`.
+
+Verified outcome:
+
+- Generic `Slice(T).literal` calls are recognized as the `slice_literal`
+  primitive even when the exact `Slice(T).literal$...` specialization was not
+  explicitly registered in `@primitive_methods`.
+- The HIR primitive path now materializes a concrete `Slice(T)` value instead of
+  falling through to a regular empty primitive body with `TypeRef::VOID`.
+  It allocates the element buffer, stores literal arguments into it, allocates
+  the canonical 16-byte Slice payload, and writes `@size`, `@read_only`, and
+  `@pointer`.
+- The focused no-prelude host oracle
+  `S = Slice(UInt64).literal(1_u64, 2_u64)` no longer emits
+  `call void @Slice$LUInt64$R$Dliteral...` and no longer stores `ptr null` into
+  `@Object__classvar__S`; the produced test binary exits 0 under `run_safe`.
+- Produced `s2` LLVM for the real FastFloat table now stores a concrete pointer
+  into `@Float$CCFastFloat$CCPowers__classvar__POWER_OF_FIVE_128` instead of
+  `ptr null`, advancing the prior `Slice(UInt64)#to_unsafe` null-self segfault.
+
+Evidence:
+
+- `crystal build src/crystal_v2.cr -o /private/tmp/cv2_slice_literal_fix_fmt
+  --error-trace`
+- `regression_tests/p2_slice_literal_no_prelude.sh
+  /private/tmp/cv2_slice_literal_fix_fmt`
+- `regression_tests/p2_each_key_fallback_primitive_return_shape.sh
+  /private/tmp/cv2_slice_literal_fix_fmt`
+- `regression_tests/p2_pointer_param_not_packed_scalar_no_prelude.sh
+  /private/tmp/cv2_slice_literal_fix_fmt`
+- `regression_tests/p2_union_concrete_compare_type_guard.sh
+  /private/tmp/cv2_slice_literal_fix_fmt`
+- `regression_tests/p2_qualified_module_namespace_no_prelude.sh
+  /private/tmp/cv2_slice_literal_fix_fmt`
+- `regression_tests/p2_file_open_block_return.sh
+  /private/tmp/cv2_slice_literal_fix_fmt`
+- `regression_tests/p2_nilable_union_wrap_codegen_no_prelude.sh
+  /private/tmp/cv2_slice_literal_fix_fmt`
+- `CRYSTAL_CACHE_DIR=/private/tmp/cv2_slice_literal_fmt_s2_cache
+  scripts/run_safe.sh /private/tmp/cv2_slice_literal_fix_fmt 300 4096
+  src/crystal_v2.cr -o /private/tmp/cv2_slice_literal_fmt_s2/cv2_s2` exited
+  0 after ~163s.
+- `regression_tests/p2_qualified_module_namespace_no_prelude.sh
+  /private/tmp/cv2_slice_literal_fmt_s2/cv2_s2`
+- Static produced-s2 LLVM check:
+  `@Float$CCFastFloat$CCPowers__classvar__POWER_OF_FIVE_128` is still declared
+  `global ptr null`, but its initializer path now contains
+  `store ptr %r3930, ptr @Float$CCFastFloat$CCPowers__classvar__POWER_OF_FIVE_128`
+  and no `call void @Slice$LUInt64$R$Dliteral...`.
+- `CRYSTAL_V2_TRACE_CLASS_FRONTIER=1 scripts/run_safe.sh
+  /private/tmp/cv2_slice_literal_fmt_s2/cv2_s2 60 4096
+  /private/tmp/cv2_hello.cr -o /private/tmp/cv2_slice_literal_fmt_hello_bin`
+  advanced past the previous
+  FastFloat segfault and now exits 134 at
+  `STUB CALLED: EquivUint$Dnew$BANG$$UInt64`.
+
+Boundary:
+
+- This is not a broad primitive-return repair. It is intentionally scoped to the
+  `slice_literal` primitive contract and generic `Slice(T).literal` dispatch.
+- Produced `s2` still does not pass full-prelude `puts 42`; the new primary
+  frontier is the `EquivUint.new!` abort stub during early prescan.
+- Running the new no-prelude `Slice(UInt64).literal` guard with produced `s2`
+  currently hits a separate
+  `Indexable$LT$R$Hequals$Q$$Indexable_block` abort before IR emission, so the
+  new guard is host-path verified only until that produced-stage stub frontier is
+  fixed.
+- The remaining `CrystalV2::Compiler::CLI#file_sha256$String` MIR optimizer
+  arithmetic-overflow diagnostic is still non-fatal and still present during
+  the s2 build.
+
+Trust: {F/G/R: 0.84/0.56/0.86} [verified]
