@@ -834,3 +834,24 @@ inline-next path; local generated LLVM remained decisive for the committed
 backend fixes.
 **Cost saved:** moderate audit time; no replacement for produced-stage build
 falsifiers.
+
+### Session 32 — 2026-05-18 — primitive each_key fallback-stub audit
+**Task:** read-only audit of the produced-s2 LLVM frontier where
+`Float32$Heach_key$$block(float %arg0, ptr %arg1)` returned `ptr %arg0`.
+**Brief size:** one bounded task file, ~1.2 KB, with exact frontier, files, and
+three requested outputs.
+**Latency:** no final answer before local work completed; the ACP stream got
+stuck on a permission request for a trivial banner command and was killed.
+**Output quality:** no actionable Grok finding. Cursor and GPT Spark sidecars
+returned useful independent classification: the backend stub return shape was a
+valid LLVM containment invariant, while the primitive-owner `each_key` demand
+remains a separate unresolved-call/dispatch issue.
+**Adversary check:** local evidence found a fast reproducer
+`1.0_f32.each_key { |x| x }` that emitted the malformed fallback before the
+patch. The accepted guard now allows `ret ptr %arg0` only when the first
+argument is also `ptr`; otherwise it uses `zero_return_for_llvm_type`.
+Produced `s2` then built successfully and moved to a full-prelude prescan
+segfault.
+**Verdict:** no evidence value from this Grok ACP run. The wrapper should pass
+`--always-approve` for read-only runs or force an answer before any tool call.
+**Cost saved:** none.

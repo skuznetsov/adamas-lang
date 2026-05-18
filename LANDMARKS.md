@@ -4295,3 +4295,58 @@ Boundary:
   arithmetic-overflow diagnostic is still non-fatal and still present.
 
 Trust: {F/G/R: 0.84/0.58/0.86} [verified]
+
+## LM-569 — Stage2 no longer emits malformed primitive `each_key` fallback returns
+
+Context: compiler/bootstrap/MIR LLVM backend, 2026-05-18, `codegen`.
+
+Verified outcome:
+
+- Missing `*#each_key(&block)` fallback stubs no longer return `%arg0` as a
+  pointer unless `%arg0` is actually pointer-typed. Primitive impossible-owner
+  calls such as `Float32#each_key(&block)` now emit a typed null/zero return
+  through `zero_return_for_llvm_type` instead of malformed LLVM
+  (`ret ptr %arg0` where `%arg0` is `float`).
+- A focused no-prelude oracle now reproduces the old shape with
+  `1.0_f32.each_key { |x| x }` and guards that the fallback stub is LLVM-typed.
+- The produced-s2 build now gets past the previous `llc` failure in
+  `Float32$Heach_key$$block(float %arg0, ptr %arg1)`.
+
+Evidence:
+
+- `crystal build src/crystal_v2.cr -o /private/tmp/cv2_each_key_fix
+  --error-trace`
+- `regression_tests/p2_each_key_fallback_primitive_return_shape.sh
+  /private/tmp/cv2_each_key_fix`
+- `regression_tests/p2_pointer_param_not_packed_scalar_no_prelude.sh
+  /private/tmp/cv2_each_key_fix`
+- `regression_tests/p2_union_concrete_compare_type_guard.sh
+  /private/tmp/cv2_each_key_fix`
+- `regression_tests/p2_qualified_module_namespace_no_prelude.sh
+  /private/tmp/cv2_each_key_fix`
+- `regression_tests/p2_file_open_block_return.sh /private/tmp/cv2_each_key_fix`
+- `regression_tests/p2_nilable_union_wrap_codegen_no_prelude.sh
+  /private/tmp/cv2_each_key_fix`
+- `CRYSTAL_CACHE_DIR=/private/tmp/cv2_each_key_s2_cache
+  scripts/run_safe.sh /private/tmp/cv2_each_key_fix 300 4096
+  src/crystal_v2.cr -o /private/tmp/cv2_each_key_s2/cv2_s2` exited 0 after
+  ~175s.
+- `regression_tests/p2_qualified_module_namespace_no_prelude.sh
+  /private/tmp/cv2_each_key_s2/cv2_s2`
+
+Boundary:
+
+- This is a backend containment invariant for dead/missing fallback stubs, not a
+  semantic proof that primitive owners should ever demand `each_key`.
+  GPT Spark and Cursor both classified the primitive-owner demand as a separate
+  upstream unresolved-call/dispatch problem.
+- Produced `s2` still does not pass full-prelude `puts 42`: running
+  `CRYSTAL_V2_TRACE_CLASS_FRONTIER=1 scripts/run_safe.sh
+  /private/tmp/cv2_each_key_s2/cv2_s2 60 4096 /private/tmp/cv2_hello.cr -o
+  /private/tmp/cv2_hello_bin` exits 139 during early HIR setup, after
+  `[STAGE2_DEBUG] pre-scan class/module loops start`.
+- The remaining `CrystalV2::Compiler::CLI#file_sha256$String` MIR optimizer
+  arithmetic-overflow diagnostic is still non-fatal and still present during
+  the s2 build.
+
+Trust: {F/G/R: 0.83/0.52/0.86} [verified]

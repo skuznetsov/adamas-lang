@@ -4135,16 +4135,11 @@ module Crystal::MIR
 
       if name.includes?("$Heach_key$$block")
         params = arg_types.map_with_index { |type, idx| "#{type} %arg#{idx}" }.join(", ")
-        ret_value = if return_type == "void"
-                      "  ret void\n"
-                    elsif return_type == "ptr" && arg_count > 0
+        first_arg_type = arg_types.first?
+        ret_value = if return_type == "ptr" && first_arg_type == "ptr"
                       "  ret ptr %arg0\n"
-                    elsif return_type == "i1"
-                      "  ret i1 false\n"
-                    elsif return_type.starts_with?("i")
-                      "  ret #{return_type} 0\n"
                     else
-                      "  ret #{return_type} zeroinitializer\n"
+                      zero_return_for_llvm_type(return_type)
                     end
         return "; #{name} — bootstrap fallback for generated Hash#each_key adapter block\n" \
                "define #{return_type} @#{name}(#{params}) {\n" \

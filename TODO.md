@@ -1624,11 +1624,13 @@ pending-budget oracle.
    splitting the nilable wrapper from the non-nil `Array(ExprId)` arena-fit
    scan and adding a raw low-pointer guard. The later generated-s2 LLVM
    frontiers around broad union/concrete comparison and `Pointer(T)` parameter
-   scalar classification are advanced by LM-568. Current produced-s2 build
-   still fails in generated fallback stubs: `Float32$Heach_key$$block(float
-   %arg0, ptr %arg1)` returns `ptr %arg0` even though `%arg0` is `float`.
-   Root-cause fallback stub return typing for primitive block adapters before
-   widening to s3b.
+   scalar classification are advanced by LM-568. The primitive `each_key`
+   fallback-stub LLVM shape is advanced by LM-569: produced `s2` now builds,
+   and the old `Float32$Heach_key$$block(float %arg0, ptr %arg1) ret ptr %arg0`
+   verifier failure is guarded by a fast no-prelude oracle. Current produced-s2
+   full-prelude `puts 42` still exits 139 during early HIR setup, after
+   `[STAGE2_DEBUG] pre-scan class/module loops start`. Localize that prescan
+   crash before widening to s3b.
 2. Root-cause the remaining full-prelude nested-class return-inference crash
    under generated stage2. Current evidence: stale parameter slice frontiers are
    advanced through source-backed initializer capture, source-prefiltered
