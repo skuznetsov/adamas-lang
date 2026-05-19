@@ -125,6 +125,25 @@ included-module block rebase was refuted because it pushed the s2 build over the
 block/proc closure. The current traced full-prelude `puts 42` frontier is now
 `Crystal::SpinLock`, segfaulting after `concrete_after_pass0`.
 
+Stage2 macro-included proc source-sink checkpoint (2026-05-19): after LM-573,
+the produced `s2` no-prelude reducer for `macro included` no longer crashes in
+`AstToHir#extra_sources_for_arena` through the `MacroExpander#reparse`
+`source_sink` proc. Root closure: proc literal capture detection now recognizes
+bare calls that require lexical `self` when they are not proc params or parent
+locals, so `->(code) { store_extra_source(macro_arena, code) }` carries the
+compiler receiver instead of passing null as `self`. New guard:
+`p2_macro_included_proc_sink_self_capture_no_prelude.sh`, passed on host and
+produced `s2`. A broader unconditional proc `self` capture was refuted because
+it made produced `s2` crash during pass3 on unrelated no-prelude main programs;
+keep the accepted fix tied to implicit receiver demand, not every proc literal.
+Current full-prelude `puts 42` frontier moved past `Crystal::SpinLock` /
+`Crystal::Once::Operation` source-sink crash. Untraced produced `s2` now
+segfaults during module registration in
+`Hash(String, MacroValue)#key_hash` from `assign_macro_iter_vars` /
+`process_macro_for_in_module` / `record_constants_in_body`. With
+`CRYSTAL_V2_TRACE_CLASS_FRONTIER=1`, the same smoke timed out in pre-scan under
+the 60s gate, so the untraced lldb backtrace is the cleaner next anchor.
+
 Stage2 static-call LLVM emission checkpoint (2026-05-08): after LM-559,
 produced `s2` no-prelude LLVM IR for `Exception::CallStack.skip("x")` now emits
 the named static callee

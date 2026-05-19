@@ -924,3 +924,26 @@ baseline ~164s/4096MB envelope.
 **Verdict:** no evidence value from this Grok ACP run. The failed timeout is
 useful beta signal only.
 **Cost saved:** none.
+
+### Session 36 — 2026-05-19 — macro source-sink proc self-capture audit
+**Task:** read-only audit of the produced-s2 `Crystal::Once::Operation`
+frontier after local lldb evidence showed `extra_sources_for_arena` crashing
+through `store_extra_source -> MacroExpander#reparse`.
+**Brief size:** one bounded inline ACP prompt with exact stack, suspected
+`source_sink` proc shape, and requested supported/refuted/regression/risk
+output.
+**Latency:** no useful answer before the wrapper timeout; ACP printed only the
+startup/thinking/tool-call prelude and exited 124 after the prompt timeout.
+**Output quality:** no actionable Grok finding.
+**Adversary check:** Cursor's read-only audit did return useful confirmation:
+`lower_proc_literal` promised lexical `self` for implicit receiver calls but
+only captured it on explicit `self`. Local evidence was decisive: a no-prelude
+`macro included` reducer reproduced the same
+`extra_sources_for_arena -> store_extra_source -> __crystal_proc_*` stack on the
+clean produced compiler. The first broad fix, unconditional proc `self`
+capture, was refuted by produced-s2 pass3 crashes on unrelated no-prelude main
+programs. The landed fix captures `self` only for explicit `self`, instance
+variables, or detected bare implicit-receiver calls.
+**Verdict:** no Grok evidence value. The timeout is useful beta signal; Cursor
+and local lldb/reducer checks supplied the actual evidence.
+**Cost saved:** none.

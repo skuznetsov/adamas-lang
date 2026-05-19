@@ -4557,3 +4557,74 @@ Boundary:
   the s2 build.
 
 Trust: {F/G/R: 0.82/0.48/0.86} [verified]
+
+## LM-573 — Proc source-sink closures capture lexical self for implicit receiver calls
+
+Context: compiler/bootstrap/HIR proc literal capture lowering, 2026-05-19,
+`codegen`.
+
+Verified outcome:
+
+- Produced `s2` no longer crashes on a no-prelude `macro included` reducer that
+  expands a simple instance method while registering an including struct.
+- The old produced crash was in
+  `AstToHir#extra_sources_for_arena` called from
+  `store_extra_source -> MacroExpander#reparse -> expand_macro_expr ->
+  register_module_instance_methods_for -> register_concrete_class`.
+- The root was the `source_sink` proc in `expand_macro_expr`:
+  `->(code : String) { store_extra_source(macro_arena, code) }`. The proc body
+  uses an implicit receiver call, but `lower_proc_literal` only captured
+  lexical `self` when the body explicitly referenced `self`. Generated stage2
+  therefore called `store_extra_source` with a null receiver.
+- The fix teaches proc literal capture detection to identify bare
+  implicit-receiver calls whose callee name is not a proc parameter or parent
+  local, then captures lexical `self` for those procs. This covers
+  `store_extra_source(...)` without forcing `self` into every proc literal.
+
+Evidence:
+
+- Clean produced `s2` from LM-572 exits 139 on the new
+  `p2_macro_included_proc_sink_self_capture_no_prelude.sh` reducer.
+- lldb on the reducer showed
+  `extra_sources_for_arena -> store_extra_source -> __crystal_proc_* ->
+  MacroExpander#reparse`.
+- `crystal build src/crystal_v2.cr -o /private/tmp/cv2_proc_self_host2
+  --error-trace`
+- `crystal tool format src/compiler/hir/ast_to_hir.cr`
+- `regression_tests/p2_macro_included_proc_sink_self_capture_no_prelude.sh
+  /private/tmp/cv2_proc_self_host2`
+- `regression_tests/p2_generic_static_type_param_new_bang_no_prelude.sh
+  /private/tmp/cv2_proc_self_host2`
+- `regression_tests/p2_indexable_equals_block_receiver_rebase.sh
+  /private/tmp/cv2_proc_self_host2`
+- `scripts/run_safe.sh /private/tmp/cv2_proc_self_host2 300 4096
+  src/crystal_v2.cr -o /private/tmp/cv2_proc_self_s2b/cv2_s2`
+  exited 0 after ~154s.
+- `regression_tests/p2_macro_included_proc_sink_self_capture_no_prelude.sh
+  /private/tmp/cv2_proc_self_s2b/cv2_s2`
+- `regression_tests/p2_qualified_module_namespace_no_prelude.sh
+  /private/tmp/cv2_proc_self_s2b/cv2_s2`
+- Full-prelude `puts 42` with the patched produced `s2` moved past the old
+  `Crystal::Once::Operation` source-sink crash and now segfaults during module
+  registration in `Hash(String, MacroValue)#key_hash`, with lldb stack:
+  `assign_macro_iter_vars -> process_macro_for_in_module ->
+  record_constants_in_body -> register_nested_module_in_current_arena`.
+
+Refuted branch:
+
+- Unconditionally capturing lexical `self` for every proc literal fixed the
+  macro source-sink reducer but made produced `s2` crash during pass3 on
+  unrelated no-prelude main programs. The accepted fix is demand-driven:
+  explicit `self`, instance variables, or implicit receiver calls.
+
+Boundary:
+
+- This is not a complete direct proc-literal runtime/codegen closure. A
+  no-prelude `-> { marker }` executable compiles/runs with the host compiler,
+  but produced `s2` still crashes compiling that broader source; keep that as a
+  separate pass3 proc frontier.
+- The remaining `CrystalV2::Compiler::CLI#file_sha256$String` MIR optimizer
+  arithmetic-overflow diagnostic is still non-fatal and still present during
+  the s2 build.
+
+Trust: {F/G/R: 0.86/0.52/0.86} [verified]
