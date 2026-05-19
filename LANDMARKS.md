@@ -4628,3 +4628,80 @@ Boundary:
   the s2 build.
 
 Trust: {F/G/R: 0.86/0.52/0.86} [verified]
+
+## LM-574 — Macro-for iter variable names are safe strings before MacroValue hash binding
+
+Context: compiler/bootstrap/HIR macro-for registration, 2026-05-19, `codegen`.
+
+Verified outcome:
+
+- Produced `s2` no longer crashes on the no-prelude module macro-for reducer
+  during module registration.
+- The old produced crash was in
+  `Hash(String, MacroValue)#key_hash -> Hash#upsert -> Hash#[]= ->
+  assign_macro_iter_vars -> process_macro_for_in_module ->
+  record_constants_in_body -> register_module_with_name_in_current_arena`.
+- The root was raw `String.new(slice)` conversion of
+  `MacroForNode#iter_vars` before binding loop variables into
+  `Hash(String, MacroValue)`. In produced `s2`, those raw slice conversions can
+  create corrupted `String` keys; the next hash insertion then segfaults.
+- The fix centralizes HIR macro-for iter-var extraction through
+  `macro_for_iter_var_names`, which uses `safe_slice_to_string` plus
+  `identifier_source_name?`, and replaces the raw conversion sites in lib,
+  module, enum, class, class-constant, expression lowering, and text expansion
+  paths.
+
+Evidence:
+
+- Clean produced `s2` from LM-573 exits with a bus error on the new
+  `p2_module_macro_for_iter_var_names_no_prelude.sh` reducer, with the same
+  `assign_macro_iter_vars -> process_macro_for_in_module` stack family as the
+  full-prelude `puts 42` crash.
+- Spark sidecar independently pointed at the raw `String.new(slice)` macro-for
+  iter-var conversions; this was used as candidate evidence only and verified
+  locally.
+- `crystal build src/crystal_v2.cr -o /private/tmp/cv2_macro_for_host_final
+  --error-trace`
+- `crystal tool format --check src/compiler/hir/ast_to_hir.cr`
+- `git diff --check`
+- `regression_tests/p2_module_macro_for_iter_var_names_no_prelude.sh
+  /private/tmp/cv2_macro_for_host_final`
+- `regression_tests/p2_macro_included_proc_sink_self_capture_no_prelude.sh
+  /private/tmp/cv2_macro_for_host_final`
+- `regression_tests/p2_qualified_module_namespace_no_prelude.sh
+  /private/tmp/cv2_macro_for_host_final`
+- `scripts/run_safe.sh /private/tmp/cv2_macro_for_host_final 300 4096
+  src/crystal_v2.cr -o /private/tmp/cv2_macro_for_s2_final/cv2_s2`
+  exited 0 after ~162s.
+- `regression_tests/p2_module_macro_for_iter_var_names_no_prelude.sh
+  /private/tmp/cv2_macro_for_s2_final/cv2_s2`
+- `regression_tests/p2_macro_included_proc_sink_self_capture_no_prelude.sh
+  /private/tmp/cv2_macro_for_s2_final/cv2_s2`
+- `regression_tests/p2_qualified_module_namespace_no_prelude.sh
+  /private/tmp/cv2_macro_for_s2_final/cv2_s2`
+- Produced-s2 full-prelude `puts 42` still exits 139, but the untraced run now
+  reaches module register idx=51/114 after the focused macro-for reducer
+  passes. lldb under the 90s safe timeout did not reach the crash, so the next
+  full-prelude stack is not yet captured. With
+  `CRYSTAL_V2_TRACE_CLASS_FRONTIER=1`, the frontier reaches File nested error
+  classes before the traced run exits 133.
+
+Refuted branch:
+
+- A source-backed fallback parser for `{% for ... in ... %}` iter-var names
+  was refuted. It reduced the theoretical silent-skip risk but made the
+  `s1 -> s2` compiler build fail during pass3 with
+  `ExprId out of bounds: 1597133659`. The accepted fix keeps the previously
+  self-hosting safe-slice shape and does not add the fallback.
+
+Boundary:
+
+- This is not a full macro-for semantic closure. A stronger executable
+  no-prelude source that dispatches through generated module methods still
+  reaches a separate produced-s2 pass3/main crash; keep that as a later
+  frontier.
+- The remaining `CrystalV2::Compiler::CLI#file_sha256$String` MIR optimizer
+  arithmetic-overflow diagnostic is still non-fatal and still present during
+  the s2 build.
+
+Trust: {F/G/R: 0.84/0.50/0.87} [verified]

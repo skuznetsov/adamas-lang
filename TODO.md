@@ -144,6 +144,24 @@ segfaults during module registration in
 `CRYSTAL_V2_TRACE_CLASS_FRONTIER=1`, the same smoke timed out in pre-scan under
 the 60s gate, so the untraced lldb backtrace is the cleaner next anchor.
 
+Stage2 module macro-for iter-var checkpoint (2026-05-19): after LM-574,
+macro-for iter variable names inside HIR module/class/lib/enum handling are
+read through `safe_slice_to_string` and validated as identifiers before they
+are used as `Hash(String, MacroValue)` keys. Root closure: produced `s2` was
+constructing corrupted `String` keys with raw `String.new(slice)` in
+`process_macro_for_in_module`, then crashing in
+`Hash(String, MacroValue)#key_hash` during `assign_macro_iter_vars`. New guard:
+`p2_module_macro_for_iter_var_names_no_prelude.sh`, passed on host and
+produced `s2`; the prior proc source-sink and namespace guards still pass on
+produced `s2`. Produced `s2` also builds successfully under the standard
+300s/4096MB gate. Boundary: this clears the focused module macro-for hash-key
+crash, not full-prelude `puts 42`. The full-prelude smoke now reaches module
+register idx=51/114 untraced; lldb did not reach the crash under the 90s safe
+timeout. With the trace env it reaches File error nested classes before exiting
+133. A source-backed macro-for iter-var fallback was refuted because it made the
+`s1 -> s2` compiler build fail during pass3 with an `ExprId out of bounds`
+diagnostic; do not reapply that branch blindly.
+
 Stage2 static-call LLVM emission checkpoint (2026-05-08): after LM-559,
 produced `s2` no-prelude LLVM IR for `Exception::CallStack.skip("x")` now emits
 the named static callee
