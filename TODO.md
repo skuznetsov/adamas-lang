@@ -1,6 +1,6 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-05-15
+Updated: 2026-05-19
 Branch: `codegen`
 
 This is the active working backlog only. Historical detail is in git history,
@@ -91,6 +91,24 @@ times out under a 60s adversary check during early registration, and the broader
 nilable short-circuit union-phi reducer remains open on produced `s2`. The
 `s1 -> s2` build also still prints a non-fatal MIR optimizer overflow for
 `CrystalV2::Compiler::CLI#file_sha256$String`.
+
+Stage2 generic static type-param `new!` checkpoint (2026-05-19): after
+LM-571, host lowering preserves include-derived concrete long type-param
+bindings such as `EquivUint => UInt64` when they are real module type params,
+and static calls requested on a concrete generic owner such as
+`Direct(Int32, UInt64).f` reuse that requested-owner map instead of falling
+back to the template owner `Direct(T, U)`. New guard:
+`p2_generic_static_type_param_new_bang_no_prelude.sh`, passed on the host
+compiler and rules out unresolved `U.new!` / `EquivUint.new!` stubs plus
+void-returning lowered methods. Produced `s2` builds successfully and the
+full-prelude `puts 42` smoke no longer stops at
+`STUB CALLED: EquivUint$Dnew$BANG$$UInt64`; without the trace env it now stops
+at `STUB CALLED: Indexable$LT$R$Hequals$Q$$Indexable_block`. Boundary: the new
+no-prelude guard still cannot pass on produced `s2` because it hits that
+separate `Indexable#equals?` block-stub frontier before IR emission. The
+`CRYSTAL_V2_TRACE_CLASS_FRONTIER=1` diagnostic env perturbs the produced
+full-prelude smoke into a pre-scan timeout, so prefer the untraced abort stub as
+the next primary frontier unless the trace path is being debugged directly.
 
 Stage2 static-call LLVM emission checkpoint (2026-05-08): after LM-559,
 produced `s2` no-prelude LLVM IR for `Exception::CallStack.skip("x")` now emits

@@ -4425,3 +4425,73 @@ Boundary:
   the s2 build.
 
 Trust: {F/G/R: 0.84/0.56/0.86} [verified]
+
+## LM-571 — Generic static type-parameter `new!` lowering keeps concrete long bindings
+
+Context: compiler/bootstrap/HIR generic static-call lowering, 2026-05-19,
+`codegen`.
+
+Verified outcome:
+
+- Include-derived function type-param maps now retain concrete long type-param
+  bindings such as `EquivUint => UInt64` instead of keeping only one-letter
+  params, internal keys, or explicit template-allowed keys. Deferred/caller
+  snapshots only keep long concrete keys that are declared by the included
+  module's type params, preserving the old caller-context leak guard.
+- When a lowered function is looked up through a generic template owner but the
+  requested method name carries a concrete generic owner, HIR merges the
+  requested owner's concrete type-param map and resolves the lowered owner to
+  that concrete generic instance.
+- Static type-param primitive numeric constructors such as `U.new!(x)` and
+  included-method `EquivUint.new!(x)` lower to the concrete primitive value
+  shape instead of unresolved `U$Dnew$BANG` /
+  `EquivUint$Dnew$BANG` stubs or void-returning wrapper methods.
+- The primitive-constructor cast containment is limited to `new!`; allowing it
+  for ordinary `new` miscompiled produced-s2
+  `Float::FastFloat::Value128.new(UInt128)` into `inttoptr i128`, so that
+  broader variant is refuted.
+
+Evidence:
+
+- `crystal build src/crystal_v2.cr -o /private/tmp/cv2_generic_static_fix4
+  --error-trace`
+- `crystal tool format --check src/compiler/hir/ast_to_hir.cr`
+- `git diff --check`
+- `regression_tests/p2_generic_static_type_param_new_bang_no_prelude.sh
+  /private/tmp/cv2_generic_static_fix4`
+- `regression_tests/p2_slice_literal_no_prelude.sh
+  /private/tmp/cv2_generic_static_fix4`
+- `regression_tests/p2_qualified_module_namespace_no_prelude.sh
+  /private/tmp/cv2_generic_static_fix4`
+- `regression_tests/p2_nilable_union_wrap_codegen_no_prelude.sh
+  /private/tmp/cv2_generic_static_fix4`
+- `scripts/run_safe.sh /private/tmp/cv2_generic_static_fix4 300 4096
+  src/crystal_v2.cr -o /private/tmp/cv2_generic_static_s2_fix4/cv2_s2`
+  exited 0 after ~161s.
+- `regression_tests/p2_qualified_module_namespace_no_prelude.sh
+  /private/tmp/cv2_generic_static_s2_fix4/cv2_s2`
+- Produced-s2 LLVM check:
+  `Float$CCFastFloat$Dcompute_product_approximation$$Int64_UInt64_Int32`
+  now calls
+  `@Float$CCFastFloat$CCValue128$Dnew$$UInt128(i128 %r44)` instead of
+  returning an `inttoptr i128` cast.
+- Untraced produced-s2 full-prelude `puts 42` advanced from
+  `STUB CALLED: EquivUint$Dnew$BANG$$UInt64` to
+  `STUB CALLED: Indexable$LT$R$Hequals$Q$$Indexable_block`.
+
+Boundary:
+
+- This is not a broad generic-container or block/proc closure. It specifically
+  fixes concrete static type-param owner recovery for `new!`.
+- The new no-prelude guard is host-path verified only for now: produced `s2`
+  currently aborts at the separate
+  `Indexable$LT$R$Hequals$Q$$Indexable_block` frontier before the guard can
+  emit IR.
+- `CRYSTAL_V2_TRACE_CLASS_FRONTIER=1` perturbs the produced full-prelude smoke
+  into a pre-scan timeout; the untraced `Indexable#equals?` block stub is the
+  cleaner next frontier.
+- The remaining `CrystalV2::Compiler::CLI#file_sha256$String` MIR optimizer
+  arithmetic-overflow diagnostic is still non-fatal and still present during
+  the s2 build.
+
+Trust: {F/G/R: 0.84/0.55/0.86} [verified]

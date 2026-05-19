@@ -879,3 +879,28 @@ payload, and the focused host guard then compiled and ran under `run_safe`.
 confirmation and patch-shape warnings; local IR and binary falsifiers were
 decisive for the final scoped fix.
 **Cost saved:** moderate static-audit time.
+
+### Session 34 — 2026-05-19 — generic static type-param `new!` audit
+**Task:** read-only audit of the produced-s2
+`STUB CALLED: EquivUint$Dnew$BANG$$UInt64` frontier and the suspected generic
+template registration/static receiver lowering root.
+**Brief size:** bounded prompt with exact frontier, file anchors in
+`src/compiler/hir/ast_to_hir.cr`, and requested root/reducer/symptom-patch
+classification.
+**Latency:** returned during the local reducer and produced-s2 verification
+loop.
+**Output quality:** partially useful. Grok agreed with the long type-param map
+loss / concrete-owner lookup family and warned against depth-cap fixes. It did
+not isolate the direct requested-owner reducer, and it did not catch that an
+over-broad primitive constructor cast for ordinary `new` would miscompile
+`Float::FastFloat::Value128.new(UInt128)`.
+**Adversary check:** Cursor independently identified the concrete long
+type-param map drop, Spark independently identified static owner
+concretization, and local evidence was decisive. The accepted guard proves
+`U.new!` and included `EquivUint.new!` no longer emit unresolved stubs or
+void-returning methods on the host compiler. Produced-s2 LLVM also proves the
+refuted broad `new` variant was removed: `compute_product_approximation` again
+calls `Value128.new(UInt128)` instead of returning an `inttoptr i128` cast.
+**Verdict:** useful partial sidecar. Good family-level signal, but local
+reducers and produced LLVM/backtrace checks were required to avoid a regression.
+**Cost saved:** moderate audit time; not authoritative for patch scope.
