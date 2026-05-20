@@ -517,7 +517,7 @@ module CrystalV2
         @indexing_active : Bool
         @indexing_message : String?
         @indexing_last_sent : Time::Instant?
-        @semantic_token_cache : Hash(String, {Int32, SemanticTokens}) # URI -> {version, tokens}
+        @semantic_token_cache : Hash(String, {Int32, String}) # URI -> {version, serialized response}
 
         def initialize(@input = STDIN, @output = STDOUT, config : ServerConfig = ServerConfig.load)
           @config = config
@@ -562,7 +562,7 @@ module CrystalV2
           @indexing_active = false
           @indexing_message = nil
           @indexing_last_sent = Time.instant
-          @semantic_token_cache = {} of String => {Int32, SemanticTokens}
+          @semantic_token_cache = {} of String => {Int32, String}
           start_inference_worker
 
           if @config.background_indexing
@@ -5844,10 +5844,10 @@ module CrystalV2
 
           # Check cache first - use cached tokens if version matches
           if cached = @semantic_token_cache[uri]?
-            cached_version, cached_tokens = cached
+            cached_version, cached_json = cached
             if cached_version == version
               debug("Semantic tokens cache HIT for #{uri} v#{version}")
-              return send_response(id, cached_tokens.to_json)
+              return send_response(id, cached_json)
             end
           end
 
@@ -5865,13 +5865,14 @@ module CrystalV2
 
           collect_ms = (Time.instant - start_time).total_milliseconds
 
-          # Cache the result
-          @semantic_token_cache[uri] = {version, tokens}
-
           # Serialize to JSON
           json_start = Time.instant
           json = tokens.to_json
           json_ms = (Time.instant - json_start).total_milliseconds
+
+          # Cache the serialized response. Large files spend significant time
+          # serializing token arrays, and repeat full-token requests are common.
+          @semantic_token_cache[uri] = {version, json}
 
           if ENV["LSP_DEBUG"]? || @config.debug_log_path || ENV["LSP_PROFILE_TOKENS"]?
             sample = semantic_token_sample(tokens)

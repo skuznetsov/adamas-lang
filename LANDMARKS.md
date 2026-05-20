@@ -5023,6 +5023,52 @@ Known limits:
 
 Trust: {F/G/R: 0.88/0.48/0.90} [verified]
 
+## LM-587 — LSP semantic-token cache stores serialized responses
+
+Status: verified for repeated full semantic-token requests on `codegen`.
+
+Change:
+
+- The per-document semantic-token cache now stores the serialized JSON result
+  for the matching document version, not only the `SemanticTokens` integer
+  array.
+- Cache hits now send the cached JSON result directly and avoid reserializing
+  large token arrays on every repeated `textDocument/semanticTokens/full`
+  request.
+
+WBA framing:
+
+- Window/trigger: after LM-586 made semantic-token output complete, large files
+  returned much larger token arrays. On `src/compiler/lsp/server.cr`, a cached
+  repeat request still took ~127ms because the server reserialized 135750 token
+  integers from the cached array.
+- Transport corridor: versioned document snapshots already define the cache
+  boundary; the legal transport is the exact serialized semantic-token result
+  for that version.
+- Boundary: cache invalidation remains tied to `didOpen`/`didChange`; token
+  collection semantics are unchanged.
+- Potential decrease: repeat full-token requests skip the serialization pass
+  and reuse the version-certified response body.
+
+Evidence:
+
+- `crystal tool format --check src/compiler/lsp/server.cr`
+- `crystal build src/lsp_main.cr -o bin/crystal_v2_lsp --error-trace`
+- Repeated safe wrapped harness on `src/compiler/lsp/server.cr` exited 0 with
+  `errors=0`; representative timings were first semanticTokens ~455ms and
+  cached semanticTokens ~79ms for the same 135750-int payload.
+- Full LSP suite through safe runner:
+  `crystal build spec/lsp/*_spec.cr -o <tmp> --error-trace` then
+  `scripts/run_safe.sh <tmp> 120 1536 --no-color`: 213 examples, 0 failures.
+
+Known limits:
+
+- The client/harness still has to receive and parse the large JSON payload, so
+  this does not make huge full-token responses free. Further reductions require
+  payload-size work, range/delta support, or token-count reduction.
+
+Trust: {F/G/R: 0.84/0.48/0.88} [verified]
+
 ### LM-580 — s2 registration hardening: parsed number macro values, alias suffix index, and tuple-key avoidance
 
 Status: verified for s1 -> s2 build and focused no-prelude guards on branch
