@@ -4705,3 +4705,77 @@ Boundary:
   the s2 build.
 
 Trust: {F/G/R: 0.84/0.50/0.87} [verified]
+
+## LM-575 — Single-variable module macro-for binding uses the stable indexed path
+
+Context: compiler/bootstrap/HIR macro-for variable binding, 2026-05-19,
+`codegen`.
+
+Verified outcome:
+
+- Produced `s2` no longer crashes on no-prelude module macro-for reducers that
+  bind a single loop variable:
+  `{% for name in %w(alpha beta) %}`.
+- The reducer crashes at HEAD `b0d127f3` in the same stack family as the
+  full-prelude `puts 42` frontier:
+  `Hash(String, MacroValue)#key_hash -> Hash#upsert -> Hash#[]= ->
+  assign_macro_iter_vars -> process_macro_for_in_module ->
+  record_constants_in_body -> register_module_with_name_in_current_arena`.
+- Pair-var forms such as `{% for name, i in %w(...) %}` were already stable.
+  The difference is the one-variable fallback path:
+  `vars[iter_vars[0]] = value`.
+- The fix preserves semantics but changes the one-variable path to use an
+  indexed `each_with_index` loop over `iter_vars`, matching the stable binding
+  shape used by pair/tuple assignment and adding no visible macro variables.
+
+Evidence:
+
+- At `b0d127f3`, produced `s2` exits 139 on:
+  - a single-var generated-def reducer,
+  - a single-var generated nested-struct reducer, and
+  - a single-var generated nested-module reducer.
+- At the fix, produced `s2` passes:
+  - single-var generated-def reducer,
+  - single-var generated nested-struct reducer,
+  - pair-var generated nested-struct reducer.
+- `crystal build src/crystal_v2.cr -o /private/tmp/cv2_macro_single_loop_host
+  --error-trace`
+- `crystal tool format --check src/compiler/hir/ast_to_hir.cr`
+- `git diff --check`
+- `regression_tests/p2_module_macro_for_iter_var_names_no_prelude.sh
+  /private/tmp/cv2_macro_single_loop_host`
+- `regression_tests/p2_macro_included_proc_sink_self_capture_no_prelude.sh
+  /private/tmp/cv2_macro_single_loop_host`
+- `scripts/run_safe.sh /private/tmp/cv2_macro_single_loop_host 300 4096
+  src/crystal_v2.cr -o /private/tmp/cv2_macro_single_loop_s2/cv2_s2`
+  exited 0 after ~182s.
+- `regression_tests/p2_module_macro_for_iter_var_names_no_prelude.sh
+  /private/tmp/cv2_macro_single_loop_s2/cv2_s2`
+- `regression_tests/p2_macro_included_proc_sink_self_capture_no_prelude.sh
+  /private/tmp/cv2_macro_single_loop_s2/cv2_s2`
+- `regression_tests/p2_qualified_module_namespace_no_prelude.sh
+  /private/tmp/cv2_macro_single_loop_s2/cv2_s2`
+- Produced-s2 full-prelude `puts 42` no longer reaches the
+  `Hash(String, MacroValue)#key_hash` stack under the tested trace path. The
+  current full-prelude frontier is a pre-scan timeout under 45s/120s
+  `run_safe` gates.
+
+Refuted branches:
+
+- Casting macro values to the abstract `MacroValue` before hash insertion made
+  the `s1 -> s2` compiler build fail during pass3 with
+  `ExprId out of bounds: 1684105331`.
+- Routing all writes through a typed helper still left the single-var reducers
+  crashing on produced `s2`.
+
+Boundary:
+
+- This is a codegen-shape hardening for macro variable binding, not a general
+  Hash or union ABI fix.
+- The remaining full-prelude frontier should be treated as a pre-scan
+  progress/hang problem unless fresh evidence again shows a later crash.
+- The remaining `CrystalV2::Compiler::CLI#file_sha256$String` MIR optimizer
+  arithmetic-overflow diagnostic is still non-fatal and still present during
+  the s2 build.
+
+Trust: {F/G/R: 0.86/0.46/0.88} [verified]

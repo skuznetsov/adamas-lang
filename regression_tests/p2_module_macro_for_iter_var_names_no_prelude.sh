@@ -13,15 +13,22 @@ trap 'rm -rf "$tmpdir"' EXIT
 
 cat >"$tmpdir/repro.cr" <<'CR'
 module M
-  {% for name, i in %w(alpha beta) %}
+  {% for name in %w(alpha beta) %}
+    def {{name.id}} : Int32
+      1
+    end
+  {% end %}
+
+  {% for name, i in %w(gamma delta) %}
     def {{name.id}} : Int32
       {{i}}
     end
   {% end %}
-end
 
-struct Box
-  include M
+  {% for name in %w(Alpha Beta) %}
+    struct {{name.id}}
+    end
+  {% end %}
 end
 CR
 

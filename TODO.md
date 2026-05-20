@@ -162,6 +162,21 @@ timeout. With the trace env it reaches File error nested classes before exiting
 `s1 -> s2` compiler build fail during pass3 with an `ExprId out of bounds`
 diagnostic; do not reapply that branch blindly.
 
+Stage2 single-var macro-for binding checkpoint (2026-05-19): after LM-575,
+produced `s2` no longer crashes on one-variable module macro-for reducers such
+as `{% for name in %w(alpha beta) %}` while binding the loop variable into
+`Hash(String, MacroValue)`. Root closure: the one-variable fallback path in
+`assign_macro_iter_vars` used a direct `vars[iter_vars[0]] = value` shape that
+generated an unstable produced-s2 `Hash#[]=` call, while the indexed loop shape
+used by pair/tuple binding was stable. The fix routes the one-variable case
+through an indexed `each_with_index` loop without adding any visible macro
+variables. The `p2_module_macro_for_iter_var_names_no_prelude.sh` guard now
+covers single-var generated defs, pair-var generated defs, and single-var
+nested struct output; it passed on host and produced `s2`. Produced `s2` builds
+successfully under the standard 300s/4096MB gate. Boundary: full-prelude
+`puts 42` no longer reaches the `Hash(String, MacroValue)#key_hash` stack under
+the tested trace path; it now times out in pre-scan under 45s/120s gates.
+
 Stage2 static-call LLVM emission checkpoint (2026-05-08): after LM-559,
 produced `s2` no-prelude LLVM IR for `Exception::CallStack.skip("x")` now emits
 the named static callee
