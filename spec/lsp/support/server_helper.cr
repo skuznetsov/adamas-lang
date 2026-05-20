@@ -77,6 +77,22 @@ module CrystalV2::Compiler::LSP
       spec_read_last_response
     end
 
+    def spec_completion(uri : String, line : Int32, character : Int32) : JSON::Any
+      params = JSON.parse(%({"textDocument":{"uri":#{uri.to_json}},"position":{"line":#{line},"character":#{character}}}))
+      id = JSON.parse("10")
+      spec_reset_output
+      handle_completion(id, params)
+      spec_read_last_response
+    end
+
+    def spec_signature_help(uri : String, line : Int32, character : Int32) : JSON::Any
+      params = JSON.parse(%({"textDocument":{"uri":#{uri.to_json}},"position":{"line":#{line},"character":#{character}}}))
+      id = JSON.parse("11")
+      spec_reset_output
+      handle_signature_help(id, params)
+      spec_read_last_response
+    end
+
     def spec_document_symbols(uri : String) : JSON::Any
       params = JSON.parse(%({"textDocument":{"uri":#{uri.to_json}}}))
       id = JSON.parse("7")

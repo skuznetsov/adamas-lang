@@ -525,7 +525,7 @@ module CrystalV2
               end
             end
             class_sym
-          when "module", "overload_set"
+          when "module"
             scope = Semantic::SymbolTable.new
             (summary.children || [] of SymbolSummary).each do |child|
               if child_sym = build_symbol_from_summary(child, file_path, key, ranges_store, types_store)
@@ -539,11 +539,26 @@ module CrystalV2
             mod_sym = Semantic::ModuleSymbol.new(summary.name, node_id, scope: scope)
             mod_sym.file_path = file_path
             mod_sym
+          when "overload_set"
+            overloads = [] of Semantic::MethodSymbol
+            (summary.children || [] of SymbolSummary).each do |child|
+              if child_sym = build_symbol_from_summary(child, file_path, key, ranges_store, types_store)
+                if child_sym.is_a?(Semantic::MethodSymbol)
+                  overloads << child_sym
+                end
+              end
+            end
+            overload_set = Semantic::OverloadSetSymbol.new(summary.name, node_id, overloads)
+            overload_set.file_path = file_path
+            overload_set
           when "method"
+            params = (summary.params || [] of String).map do |param_summary|
+              parameter_from_summary(param_summary)
+            end
             method_sym = Semantic::MethodSymbol.new(
               summary.name,
               node_id,
-              params: [] of Frontend::Parameter,
+              params: params,
               return_annotation: summary.return_type,
               scope: Semantic::SymbolTable.new
             )
@@ -574,6 +589,30 @@ module CrystalV2
           end
         rescue
           nil
+        end
+
+        private def parameter_from_summary(summary : String) : Frontend::Parameter
+          stripped = summary.strip
+          return Frontend::Parameter.new(name: nil, is_block: true) if stripped == "&"
+
+          is_block = stripped.starts_with?("&")
+          is_double_splat = stripped.starts_with?("**")
+          is_splat = !is_double_splat && stripped.starts_with?("*")
+          body = stripped
+          body = body[1..] if is_block || is_splat
+          body = body[2..] if is_double_splat
+
+          parts = body.split(":", 2)
+          name = parts[0].strip
+          type_annotation = parts[1]?.try(&.strip)
+
+          Frontend::Parameter.new(
+            name: name.empty? ? nil : name.to_slice,
+            type_annotation: type_annotation && !type_annotation.empty? ? type_annotation.to_slice : nil,
+            is_splat: is_splat,
+            is_double_splat: is_double_splat,
+            is_block: is_block
+          )
         end
 
         def add_summaries_to_table(

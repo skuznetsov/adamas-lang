@@ -1096,3 +1096,28 @@ measurement rejected its strongest project-cache hypothesis for the current
 warm one-file harness.
 **Cost saved:** moderate audit/context time; final patch scope still came from
 local falsifiers.
+
+### Session 43 — 2026-05-20 — LSP project-cache expr-type fidelity audit
+**Task:** read-only Grok ACP hostile audit of the warm project-cache semantic
+fidelity patch after a local reducer showed no-cache signature help returning
+`value(scale : Int32) : Int32` while warm project cache returned
+`value() : Int`.
+**Brief size:** bounded task file at `/private/tmp/cv2_grok_lsp_cache_audit.md`
+with the local evidence, current patch shape, and requested output limited to
+root-cause coherence, adjacent tests, and compatibility risks.
+**Latency:** returned during local verification. Grok inspected the relevant
+LSP server/project-cache files and produced a focused critique.
+**Output quality:** useful and locally actionable. It agreed that bare
+`ExprId.index` project-cache type rows are not portable across fresh foreground
+parses, and it identified an additional stale fallback path:
+`cached_expr_type(doc_state, expr_id)` could still probe project-cache type
+rows after foreground analysis had rejected them.
+**Adversary check:** local source inspection confirmed the fallback hole. The
+accepted patch now tracks paths whose current analysis explicitly built a
+cache-compatible `TypeContext`; foreground `didOpen`/`didChange` removes that
+compatibility marker, so hover/type-definition fallbacks cannot silently reuse
+stale project-cache type rows.
+**Verdict:** useful. This was a good sidecar audit: it did not decide the patch
+alone, but it caught a real adjacent hole before commit.
+**Cost saved:** moderate review time; final scope still came from local
+reproduction and tests.

@@ -517,6 +517,7 @@ module CrystalV2
         @cached_symbol_ranges : Hash(String, Hash(String, Range))
         @cached_symbol_types : Hash(String, Hash(String, String))
         @cached_expr_types : Hash(String, Hash(Int32, String))
+        @cached_expr_type_compatible_paths : Set(String)
         @pending_inference : Channel(DeferredInference)
         @dependencies_warming : Set(String)
         @inference_timeouts : Set(String)
@@ -565,6 +566,7 @@ module CrystalV2
           @cached_symbol_ranges = Hash(String, Hash(String, Range)).new
           @cached_symbol_types = Hash(String, Hash(String, String)).new
           @cached_expr_types = Hash(String, Hash(Int32, String)).new
+          @cached_expr_type_compatible_paths = Set(String).new
           @pending_inference = Channel(DeferredInference).new(32)
           @dependencies_warming = Set(String).new
           @inference_timeouts = Set(String).new
@@ -1766,7 +1768,8 @@ module CrystalV2
                                                                                                       base_dir,
                                                                                                       doc_path,
                                                                                                       recursive_requires: recursive_dependency_load_in_foreground?,
-                                                                                                      workspace: DependencyWorkspace.new
+                                                                                                      workspace: DependencyWorkspace.new,
+                                                                                                      allow_cached_expr_types: false
                                                                                                     )
                                                                                                   else
                                                                                                     analyze_document(
@@ -1774,7 +1777,8 @@ module CrystalV2
                                                                                                       base_dir,
                                                                                                       doc_path,
                                                                                                       recursive_requires: recursive_dependency_load_in_foreground?,
-                                                                                                      workspace: DependencyWorkspace.new
+                                                                                                      workspace: DependencyWorkspace.new,
+                                                                                                      allow_cached_expr_types: false
                                                                                                     )
                                                                                                   end
 
@@ -1807,6 +1811,9 @@ module CrystalV2
           @documents.delete(uri)
           @semantic_token_cache.delete(uri) # Clear cached tokens
           @formatting_cache.delete(uri)     # Clear cached formatting response
+          if path = uri_to_path(uri)
+            @cached_expr_type_compatible_paths.delete(File.expand_path(path))
+          end
         end
 
         private def build_document_index(program : Frontend::Program, path : String?, build_expr_index : Bool = true) : DocumentIndex
@@ -1915,6 +1922,7 @@ module CrystalV2
           build_expr_index : Bool = true,
           parse_ms : Float64 = 0.0,
           publish_indexing : Bool = true,
+          allow_cached_expr_types : Bool = true,
         ) : {Array(Diagnostic), Frontend::Program, Semantic::TypeContext?, Hash(Frontend::ExprId, Semantic::Symbol)?, Semantic::SymbolTable?, Array(String), DocumentIndex?}
           debug { "Analyzing document: #{source.lines.size} lines, #{source.size} bytes" }
           ensure_prelude_loaded
@@ -2020,10 +2028,12 @@ module CrystalV2
             infer_ms = 0.0
 
             # Fast path: use cached types if available (skip expensive type inference)
-            have_cached_types = path && @cached_expr_types[path]? && !@cached_expr_types[path].empty?
+            have_cached_types = allow_cached_expr_types && path && @cached_expr_types[path]? && !@cached_expr_types[path].empty?
+            @cached_expr_type_compatible_paths.delete(path) if path && !(have_cached_types && should_infer)
             if have_cached_types && should_infer
               debug("Using cached types for #{path}, skipping type inference")
               type_context = build_type_context_from_cache(path.not_nil!)
+              @cached_expr_type_compatible_paths.add(path.not_nil!)
               infer_ms = 0.0
               debug("Loaded #{type_context.try(&.expression_types.size) || 0} cached expression types")
             elsif should_infer
@@ -2084,7 +2094,7 @@ module CrystalV2
         end
 
         # Analyze document and return diagnostics, program, type context, identifier symbols, and symbol table
-        private def analyze_document(source : String, base_dir : String? = nil, path : String? = nil, load_requires : Bool = true, recursive_requires : Bool = true, workspace : DependencyWorkspace? = nil, build_expr_index : Bool = true, publish_indexing : Bool = true) : {Array(Diagnostic), Frontend::Program, Semantic::TypeContext?, Hash(Frontend::ExprId, Semantic::Symbol)?, Semantic::SymbolTable?, Array(String), DocumentIndex?}
+        private def analyze_document(source : String, base_dir : String? = nil, path : String? = nil, load_requires : Bool = true, recursive_requires : Bool = true, workspace : DependencyWorkspace? = nil, build_expr_index : Bool = true, publish_indexing : Bool = true, allow_cached_expr_types : Bool = true) : {Array(Diagnostic), Frontend::Program, Semantic::TypeContext?, Hash(Frontend::ExprId, Semantic::Symbol)?, Semantic::SymbolTable?, Array(String), DocumentIndex?}
           parse_start = Time.instant
           lexer = Frontend::Lexer.new(source)
           parser = Frontend::Parser.new(lexer, recovery_mode: @config.parser_recovery_mode)
@@ -2102,7 +2112,8 @@ module CrystalV2
             workspace: workspace,
             build_expr_index: build_expr_index,
             parse_ms: parse_ms,
-            publish_indexing: publish_indexing
+            publish_indexing: publish_indexing,
+            allow_cached_expr_types: allow_cached_expr_types
           )
         end
 
@@ -3744,7 +3755,8 @@ module CrystalV2
                                                                                                       base_dir,
                                                                                                       doc_path,
                                                                                                       recursive_requires: recursive_dependency_load_in_foreground?,
-                                                                                                      workspace: DependencyWorkspace.new
+                                                                                                      workspace: DependencyWorkspace.new,
+                                                                                                      allow_cached_expr_types: false
                                                                                                     )
                                                                                                   else
                                                                                                     analyze_document(
@@ -3752,7 +3764,8 @@ module CrystalV2
                                                                                                       base_dir,
                                                                                                       doc_path,
                                                                                                       recursive_requires: recursive_dependency_load_in_foreground?,
-                                                                                                      workspace: DependencyWorkspace.new
+                                                                                                      workspace: DependencyWorkspace.new,
+                                                                                                      allow_cached_expr_types: false
                                                                                                     )
                                                                                                   end
 
@@ -3775,6 +3788,7 @@ module CrystalV2
           @semantic_token_cache.delete(uri)
           @formatting_cache.delete(uri)
           @cached_expr_types.delete(path) if path
+          @cached_expr_type_compatible_paths.delete(path) if path
         end
 
         # Apply LSP content changes to document text.
@@ -5146,6 +5160,7 @@ module CrystalV2
         private def cached_expr_type(doc_state : DocumentState, expr_id : Frontend::ExprId) : String?
           path = doc_state.path
           return nil unless path
+          return nil unless @cached_expr_type_compatible_paths.includes?(path)
           if types = @cached_expr_types[path]?
             return types[expr_id.index]?
           end

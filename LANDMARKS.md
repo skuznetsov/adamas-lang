@@ -5913,6 +5913,80 @@ WBA framing:
 
 Trust: {F/G/R: 0.88/0.60/0.90} [verified]
 
+### LM-608 — LSP project-cache expr types are not reused across fresh foreground parses
+
+Status: VERIFIED for the focused warm project-cache semantic-fidelity slice on
+`codegen`.
+
+After LM-607, local harness comparison showed that the signature/completion
+deltas were not unique to `LSP_AST_CACHE=1`: the same deltas appeared in warm
+project-cache mode. A two-file reducer then reproduced a concrete cache
+fidelity bug: the no-cache baseline returned
+`value(scale : Int32) : Int32`, while the warm project-cache path returned
+`value() : Int`.
+
+Accepted change:
+
+- Cached `SymbolSummary` method entries now rebuild `Frontend::Parameter`
+  metadata, so cached `MethodSymbol`s preserve parameter names, splat/block
+  shape, and type annotations.
+- Cached `overload_set` summaries now rebuild
+  `Semantic::OverloadSetSymbol` instead of pretending to be modules.
+- Foreground `didOpen`/`didChange` analysis no longer applies project-cache
+  `ExprId -> type` maps to freshly parsed foreground ASTs. Those maps are only
+  considered compatible for a path when the current analysis explicitly built
+  its `TypeContext` from that cache.
+- Added a focused project-cache semantic-fidelity regression covering
+  signature params, member completion, and method definition routing against a
+  no-cache baseline.
+
+Evidence:
+
+- Focused/related cache specs:
+  `CRYSTAL_CACHE_DIR=/private/tmp/cv2_lsp_project_cache_related2
+  scripts/run_safe.sh /Users/sergey/.local/bin/crystal 300 4096 spec
+  spec/lsp/project_cache_semantic_fidelity_spec.cr
+  spec/lsp/project_cache_validation_spec.cr
+  spec/lsp/project_cache_type_summary_spec.cr
+  spec/lsp/ast_cache_dependency_integration_spec.cr --error-trace`, 8
+  examples, 0 failures.
+- Full LSP suite:
+  `CRYSTAL_CACHE_DIR=/private/tmp/cv2_lsp_full_spec2 scripts/run_safe.sh
+  /Users/sergey/.local/bin/crystal 600 4096 spec spec/lsp --error-trace`, 234
+  examples, 0 failures.
+- LSP server and harness builds:
+  `src/lsp_main.cr` -> `/private/tmp/lsp_main_project_fix2` and
+  `benchmarks/lsp_harness.cr` -> `/private/tmp/lsp_harness_project_fix2`, both
+  via `scripts/run_safe.sh`.
+- Warm harness with `LSP_AST_CACHE=1` still reports fast foreground open
+  (`didOpen ~138ms` on the second AST-cache run) and zero diagnostics.
+
+Boundary:
+
+- This fixes a real cache-fidelity subcase, but it does not close the broader
+  large-repo warm-cache semantic frontier. The harness still shows warm
+  project-cache/AST-cache deltas for some definition/signature/completion
+  actions on `src/compiler/lsp/server.cr` and `benchmarks/bench_parser_single.cr`.
+  The next root is likely missing dependency/identifier-symbol fidelity in
+  summary-restored project state, not raw foreground TypeIndex reuse alone.
+
+WBA framing:
+
+- Window/trigger: an opened foreground document has a fresh AST, while the
+  project cache holds type rows keyed only by arena-local `ExprId.index`.
+- Transport corridor: symbol summaries may cross from project cache into live
+  semantic tables, but expression-type rows may cross only when the current
+  analysis frame certifies that the key-space is compatible.
+- Boundary: foreground AST identity, project-cache TypeIndex identity, and
+  cached symbol-summary shape must not be conflated.
+- Legal move: rehydrate structured method symbols from summaries, and reject
+  foreground cached-type transport unless the current analysis chose the cached
+  type frame.
+- Potential decrease: removes one stale-type bad corner without disabling
+  project-cache symbol summaries or the opt-in AST-cache fast foreground parse.
+
+Trust: {F/G/R: 0.88/0.52/0.89} [verified]
+
 ## LM-583 — LSP foreground hover avoids workspace reference scans by default
 
 Status: verified for the focused LSP hover/cache/harness slice on `codegen`.
