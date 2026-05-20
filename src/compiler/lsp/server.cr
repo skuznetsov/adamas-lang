@@ -5640,6 +5640,46 @@ module CrystalV2
           false
         end
 
+        private def find_required_type_location(doc_state : DocumentState, segments : Array(String)) : Location?
+          return nil unless segments.size == 1
+
+          type_name = segments.first
+          expected_file = "#{snake_case_type_name(type_name)}.cr"
+          doc_state.requires.each do |path|
+            next unless File.basename(path) == expected_file
+            next unless File.file?(path)
+
+            if location = find_type_location_in_file(path, type_name)
+              return location
+            end
+          end
+
+          nil
+        end
+
+        private def find_type_location_in_file(path : String, type_name : String) : Location?
+          pattern = Regex.new("^\\s*(class|struct|module)\\s+#{Regex.escape(type_name)}\\b")
+          line_index = 0
+          File.each_line(path) do |line|
+            Watchdog.check!
+            if match = pattern.match(line)
+              start_column = match.end - type_name.bytesize
+              return Location.new(
+                uri: file_uri(path),
+                range: Range.new(
+                  Position.new(line_index, start_column),
+                  Position.new(line_index, start_column + type_name.bytesize)
+                )
+              )
+            end
+            line_index += 1
+          end
+
+          nil
+        rescue
+          nil
+        end
+
         private def each_constructor_lookup_segments(doc_state : DocumentState, segments : Array(String), &block : Array(String) ->)
           yield segments
 
@@ -6606,6 +6646,7 @@ module CrystalV2
           when Semantic::InstanceType
             # Instance: obj.method - use instance methods from scope
             collect_methods_from_class_symbol(type.class_symbol, doc_state, items, visited)
+            collect_methods_from_class_source(type.class_symbol, doc_state, items)
           when Semantic::ClassType
             # Class: MyClass.method - use class methods from class_scope
             collect_class_methods_from_class_symbol(type.symbol, doc_state, items, visited)
@@ -6613,6 +6654,26 @@ module CrystalV2
             type.types.each do |member|
               collect_methods_for_type(member, doc_state, items, visited)
             end
+          end
+        end
+
+        private def collect_methods_from_class_source(
+          class_symbol : Semantic::ClassSymbol,
+          doc_state : DocumentState,
+          items : Array(CompletionItem),
+        )
+          source_type_name = class_symbol.name.split("::").last
+          seen = Set(String).new
+          items.each { |item| seen << item.label }
+
+          if path = class_symbol.file_path
+            return if collect_methods_from_required_source(path, source_type_name, items, seen)
+          end
+
+          expected_file = "#{snake_case_type_name(source_type_name)}.cr"
+          doc_state.requires.each do |path|
+            next unless File.basename(path) == expected_file
+            return if collect_methods_from_required_source(path, source_type_name, items, seen)
           end
         end
 
@@ -6751,9 +6812,9 @@ module CrystalV2
 
           case callee
           when Frontend::MemberAccessNode
-            resolve_receiver_symbol(doc_state, callee.object).as?(Semantic::ClassSymbol)
+            resolve_receiver_symbol_without_dependency_load(doc_state, callee.object).as?(Semantic::ClassSymbol)
           when Frontend::SafeNavigationNode
-            resolve_receiver_symbol(doc_state, callee.object).as?(Semantic::ClassSymbol)
+            resolve_receiver_symbol_without_dependency_load(doc_state, callee.object).as?(Semantic::ClassSymbol)
           else
             nil
           end
@@ -6836,12 +6897,92 @@ module CrystalV2
           doc_state.requires.each do |path|
             base = File.basename(path, ".cr")
             next unless base.downcase == target_segments.last.downcase
+            if collect_methods_from_required_source(path, target_segments.last, items, seen)
+              next
+            end
             if dep_state = load_dependency(path)
               collect_methods_from_dependency_ast(dep_state.program, target_segments, items, seen)
             end
           end
 
           debug("Dependency completion fallback produced #{items.size} items") unless items.empty?
+        end
+
+        private def collect_methods_from_required_source(
+          path : String,
+          type_name : String,
+          items : Array(CompletionItem),
+          seen : Set(String),
+        ) : Bool
+          return false unless File.file?(path)
+
+          found_type = false
+          File.each_line(path) do |line|
+            Watchdog.check!
+            stripped = line.lstrip
+            unless found_type
+              found_type = source_type_decl_line?(stripped, type_name)
+              next
+            end
+
+            name = method_name_from_def_line(stripped)
+            next unless name
+            next unless seen.add?(name)
+            items << CompletionItem.new(label: name, kind: CompletionItemKind::Method.value)
+          end
+
+          found_type && !items.empty?
+        rescue
+          false
+        end
+
+        private def source_type_decl_line?(stripped : String, type_name : String) : Bool
+          (stripped.starts_with?("class #{type_name}") || stripped.starts_with?("struct #{type_name}")) &&
+            type_name_boundary?(stripped, type_name)
+        end
+
+        private def type_name_boundary?(stripped : String, type_name : String) : Bool
+          index = stripped.starts_with?("class ") ? 6 : 7
+          boundary = index + type_name.bytesize
+          return true if boundary >= stripped.bytesize
+
+          byte = stripped.byte_at(boundary)
+          !identifier_byte?(byte)
+        end
+
+        private def method_name_from_def_line(stripped : String) : String?
+          rest = if stripped.starts_with?("def ")
+                   stripped.byte_slice(4)
+                 elsif stripped.starts_with?("private def ")
+                   stripped.byte_slice(12)
+                 elsif stripped.starts_with?("protected def ")
+                   stripped.byte_slice(14)
+                 else
+                   return nil
+                 end
+          return nil if rest.starts_with?("self.")
+
+          index = 0
+          while index < rest.bytesize
+            byte = rest.byte_at(index)
+            allowed = method_name_byte?(byte)
+            break unless allowed
+            index += 1
+          end
+          return nil if index == 0
+
+          rest.byte_slice(0, index)
+        end
+
+        private def method_name_byte?(byte : UInt8) : Bool
+          identifier_byte?(byte) || byte == 33_u8 || byte == 63_u8 || byte == 61_u8
+        end
+
+        private def identifier_byte?(byte : UInt8) : Bool
+          (byte >= 97_u8 && byte <= 122_u8) ||
+            (byte >= 65_u8 && byte <= 90_u8) ||
+            (byte >= 48_u8 && byte <= 57_u8) ||
+            byte == 95_u8
         end
 
         private def collect_methods_from_dependency_ast(
@@ -7417,6 +7558,10 @@ module CrystalV2
               end
 
               if location = indexed_constant_location(doc_state, name_str, offset)
+                return location
+              end
+
+              if location = find_required_type_location(doc_state, [name_str])
                 return location
               end
 
@@ -8856,6 +9001,10 @@ module CrystalV2
               end
             end
 
+            if location = find_required_type_location(doc_state, segments)
+              return location
+            end
+
             if symbol = resolve_path_symbol(doc_state, segments)
               if location = definition_location_for_symbol(symbol, doc_state, uri, path_segments: segments)
                 return location
@@ -9084,6 +9233,36 @@ module CrystalV2
           end
 
           nil
+        end
+
+        private def resolve_path_symbol_without_dependency_load(doc_state : DocumentState, segments : Array(String)) : Semantic::Symbol?
+          return nil if segments.empty?
+
+          if symbol = resolve_path_symbol_in_table(doc_state.symbol_table, segments)
+            return symbol
+          end
+
+          if symbol = resolve_compiler_relative_path_symbol(doc_state, segments)
+            return symbol
+          end
+
+          doc_state.requires.each do |path|
+            uri = file_uri(path)
+            dep_state = @documents[uri]? || @dependency_documents[uri]?
+            next unless dep_state
+
+            if symbol = resolve_path_symbol_in_table(dep_state.symbol_table, segments)
+              return symbol
+            end
+          end
+
+          if prelude = @prelude_state
+            if symbol = resolve_path_symbol_in_table(prelude.symbol_table, segments)
+              return symbol
+            end
+          end
+
+          find_symbol_by_segments(segments)
         end
 
         private def resolve_compiler_relative_path_symbol(doc_state : DocumentState, segments : Array(String)) : Semantic::Symbol?
@@ -9531,6 +9710,37 @@ module CrystalV2
           return nil unless segments && !segments.empty?
 
           resolve_path_symbol(doc_state, segments) || find_symbol_by_segments(segments)
+        end
+
+        private def resolve_receiver_symbol_without_dependency_load(doc_state : DocumentState, expr_id : Frontend::ExprId) : Semantic::Symbol?
+          if identifier_symbols = doc_state.identifier_symbols
+            if symbol = identifier_symbols[expr_id]?
+              case symbol
+              when Semantic::ClassSymbol, Semantic::ModuleSymbol, Semantic::ConstantSymbol
+                return symbol
+              end
+            end
+          end
+
+          arena = doc_state.program.arena
+          node = arena[expr_id]
+          segments = case node
+                     when Frontend::IdentifierNode
+                       if name = node.name
+                         [String.new(name)]
+                       else
+                         nil
+                       end
+                     when Frontend::ConstantNode
+                       [String.new(node.name)]
+                     when Frontend::PathNode
+                       collect_path_segments(arena, node)
+                     else
+                       nil
+                     end
+          return nil unless segments && !segments.empty?
+
+          resolve_path_symbol_without_dependency_load(doc_state, segments)
         end
 
         # Resolve receiver type from identifier_symbols for local variables

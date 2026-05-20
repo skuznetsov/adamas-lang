@@ -75,17 +75,18 @@ background prelude hydration is still in flight; warm default and
 location.
 After LM-610, warm project-cache foreground docs preserve filtered `require`
 paths for on-demand semantic fallback without re-enabling eager background
-dependency warming. Warm default harness now keeps `server.cr` hover and
-`Frontend::Parser.new` signature help in the single-digit millisecond range,
-and the bench-file `Lexer`/`Parser.new`/`parser.` actions return non-empty
-results. Remaining follow-up: the first warm bench-file `definition Lexer`
-request can still pay a dependency-load cost on the default no-AST-cache path.
+dependency warming. After LM-611, the remaining first-hit bench-file default
+no-AST-cache dependency-load cost is closed for the current harness:
+`definition Lexer` stays around 0.5-1.2ms, `signature help Parser.new` stays
+sub-millisecond to low-millisecond, and `completion parser.` stays around
+9-12ms with source-backed private/protected method labels instead of collapsing
+to the shallow 11-item cache summary or loading the dependency graph.
 Refuted for the current one-file warm harness: project-cache load itself is not
 the dominant `initialize` cost (`cache=~2.9ms`), and disabling project cache
 pushes dependency analysis back into foreground `didOpen`. Remaining LSP latency
 and fidelity candidates are foreground parse/name-resolution work on the
-default no-AST-cache path, plus direct constructor/type-definition routing for
-first-request bench-file navigation.
+default no-AST-cache path and deciding whether the opt-in AST cache is mature
+enough to enable by default after its remaining fidelity risks are closed.
 
 Spec-first bootstrap checkpoint (2026-05-08): `docs/specs/` now contains the
 first executable contract slice for Crystal V2, modeled after the DiamondDB

@@ -183,6 +183,9 @@ describe "LSP project cache semantic fidelity" do
         def parse_program : String
           "ok"
         end
+
+        private def reset_state : Nil
+        end
       end
       CR
       File.write(helper_path, helper_source)
@@ -218,7 +221,9 @@ describe "LSP project cache semantic fidelity" do
 
       completion_line, completion_char = lsp_line_char(main_source, "parser.", at_end: true)
       completion = cached.spec_completion(cached_uri, completion_line, completion_char)
-      completion["result"].as_a.map { |item| item["label"].as_s }.should contain("parse_program")
+      completion_labels = completion["result"].as_a.map { |item| item["label"].as_s }
+      completion_labels.should contain("parse_program")
+      completion_labels.should contain("reset_state")
     ensure
       FileUtils.rm_rf(root) if root
     end

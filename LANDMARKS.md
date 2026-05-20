@@ -4846,6 +4846,89 @@ Remaining risk:
 
 Trust: {F/G/R: 0.88/0.54/0.88} [verified]
 
+## LM-611 — Warm LSP bench-file navigation avoids first-hit dependency loads
+
+Context: LSP project-cache semantic fidelity and warm-request latency,
+2026-05-20, `codegen`.
+
+Verified outcome:
+
+- Warm bench-file `definition Lexer` now resolves directly through the
+  foreground document's retained `require` paths and source declaration scan,
+  instead of entering full dependency loading on the first request.
+- Completion inference for constructor-assigned locals no longer resolves the
+  constructor receiver through the dependency-loading resolver before trying
+  fallback segments. It uses already-loaded/local symbol state, then falls
+  through to the source-backed required-file corridor.
+- Cached/shallow class symbols are augmented from their defining source file,
+  or from the foreground document's matching `require`, so warm
+  `parser.` completion does not collapse to the shallow public cache summary.
+  The source scanner now recognizes `def`, `private def`, and `protected def`.
+- The project-cache semantic-fidelity regression now includes a private method
+  completion guard for the cached require fallback.
+
+Root pattern:
+
+- LM-610 restored `requires`, but the next warm request could still spend the
+  first dependency-load cost before reaching the lightweight fallback. The
+  bad corridor was `constructor_receiver_class -> resolve_receiver_symbol ->
+  resolve_path_symbol -> ensure_dependencies_loaded`.
+- Once that load was removed, the next semantic gap was visible: cached class
+  summaries and the source scanner were both too shallow for parser-style
+  private helper methods.
+
+Evidence:
+
+- Focused regression:
+  `CRYSTAL_CACHE_DIR=/private/tmp/cv2_lsp_type_def9_spec
+  scripts/run_safe.sh /Users/sergey/.local/bin/crystal 240 4096 spec
+  spec/lsp/project_cache_semantic_fidelity_spec.cr --error-trace`:
+  3 examples, 0 failures.
+- Full LSP suite:
+  `CRYSTAL_CACHE_DIR=/private/tmp/cv2_lsp_type_def9_fullspec
+  scripts/run_safe.sh /Users/sergey/.local/bin/crystal 300 4096 spec spec/lsp
+  --error-trace`: 236 examples, 0 failures.
+- Server and harness builds:
+  `src/lsp_main.cr -o /private/tmp/lsp_main_type_def9` and
+  `benchmarks/lsp_harness.cr -o /private/tmp/lsp_harness_type_def9` both
+  exited 0 through `scripts/run_safe.sh`.
+- Warm default harness with a populated project cache:
+  `initialize` 112.2ms, first `server.cr` `didOpen` 272.5ms,
+  `hover handle_completion` 8.0ms, `definition handle_completion` 1 location,
+  bench `definition Lexer` 0.5ms / 1 location, bench
+  `signature help Parser.new` 0.6ms / 1 signature, bench
+  `completion parser.` 11.1ms / 330 unique method labels.
+
+Boundary:
+
+- This closes the default no-AST-cache first-hit bench navigation latency
+  observed after LM-610. It does not claim the broader LSP startup/open path is
+  finished; `didOpen` for large foreground files still has parse and
+  name-resolution work, and `LSP_AST_CACHE=1` remains opt-in.
+- The warm source-backed completion path deduplicates method labels, so its
+  count is not expected to match cold full semantic completion counts that may
+  include overload duplicates.
+
+WBA framing:
+
+- Window/trigger: a warm cached foreground document has retained `require`
+  paths but shallow or missing dependency symbols at the first navigation or
+  member-completion request.
+- Transport corridor: use the required source file as a bounded source-backed
+  semantic corridor for type locations, constructor-assigned local completion,
+  and cached class-symbol completion augmentation.
+- Boundary: do not parse/load the full dependency graph on the request path;
+  source scans are limited to matching required files and preserve already
+  collected cached labels.
+- Legal move: route first through local/already-loaded symbols and direct
+  required-source scans; only fall back to dependency AST loading when the
+  source corridor cannot prove the answer.
+- Potential decrease: removes the first-hit dependency-load component while
+  increasing cached completion coverage from shallow public summaries to
+  source-backed method labels.
+
+Trust: {F/G/R: 0.89/0.55/0.90} [verified]
+
 ### LM-589 — LSP first-request latency now defers CPU-bound UnifiedProject updates
 
 Status: VERIFIED on `codegen`.
