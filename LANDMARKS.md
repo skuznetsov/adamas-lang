@@ -5353,6 +5353,82 @@ WBA framing:
 
 Trust: {F/G/R: 0.88/0.63/0.90} [verified]
 
+### LM-600 — Parser preload capacity no longer double-lexes large sources
+
+Status: VERIFIED for the parser/LSP open-latency slice on `codegen`.
+
+Warm-cache `didOpen` on `src/compiler/lsp/server.cr` remained parser-heavy
+after the formatter and semantic-token hot-path fixes. An in-process split
+with project cache loaded measured `analyze_ms=225.84ms`; parsing the large
+source itself accounted for most of that path. A direct parser probe showed the
+constructor was lexing once to count tokens for exact `Array(Token)` capacity,
+then lexing again to fill the token buffer.
+
+Accepted change:
+
+- Normal parser construction now uses a byte-size token-capacity estimate
+  instead of lexing the source once just for capacity.
+- The old exact counting path remains available for the tiny
+  `CRYSTAL_V2_TRACE_TOKEN_PRELOAD` trace mode, where preserving token-preload
+  diagnostics is more useful than avoiding the extra pass.
+- The heuristic is intentionally conservative enough to avoid the 4096MB memory
+  regression seen with a more aggressive `/6` estimate during host compiler
+  build verification.
+
+Evidence:
+
+- Before this branch, repeated large-file parser probes on
+  `src/compiler/lsp/server.cr` measured about `148-159ms` total parse time.
+- After the accepted `/8` no-trivia heuristic, repeated probes measured about
+  `122-126ms` after warmup, with the same `71876` parser tokens and `36642`
+  arena nodes.
+- Default LSP harness through nested `run_safe` wrappers measured first
+  `didOpen settled` at `259.7ms`, second `didOpen settled` at `228.5ms`,
+  semantic tokens at `118.6ms`, formatting at `78.6ms` with no edits, and
+  full-document range formatting at `0.1ms` with no edits.
+- Parser specs:
+  `crystal build spec/parser/*_spec.cr -o /tmp/parser_specs_preload
+  --error-trace` and `scripts/run_safe.sh /tmp/parser_specs_preload 120 1536
+  --no-color`, 2181 examples, 0 failures, 1 pre-existing pending example.
+- Full LSP suite:
+  `crystal build spec/lsp/*_spec.cr -o /tmp/lsp_full_parser_preload_spec
+  --error-trace` and `scripts/run_safe.sh /tmp/lsp_full_parser_preload_spec
+  120 1536 --no-color`, 228 examples, 0 failures.
+- Host compiler build sanity:
+  `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 300 8192 build
+  src/crystal_v2.cr -o /tmp/cv2_parser_preload --error-trace`, exited 0
+  with only the existing `ld64.lld -stack_size` warning.
+- Hygiene:
+  `git diff --check`.
+
+Refuted / limited evidence:
+
+- `LSP_AST_CACHE=1` did not materially improve warm open latency
+  (`didOpen settled` stayed around `261.8ms`) and had a cold shutdown outlier,
+  so AST cache is not accepted as the current foreground-open fix.
+- A `/6` no-trivia capacity estimate kept the parse speedup but tripped the
+  4096MB `run_safe` limit during host compiler build. The accepted `/8`
+  heuristic avoids that over-allocation pressure.
+- `crystal tool format --check src/compiler/frontend/parser.cr` still wants
+  broad unrelated historical formatting churn in this large file. That churn
+  was explicitly removed from the patch; this slice uses `git diff --check`
+  and targeted parser/LSP/compiler checks instead.
+
+WBA framing:
+
+- Window/trigger: large-source parser construction showed a repeated
+  token-preload counting pass immediately followed by the real token-fill pass.
+- Transport corridor: source bytes move through lexer tokenization into the
+  parser token buffer.
+- Boundary: token stream contents, parser order, tracing semantics, and AST
+  output must remain unchanged; only initial token-array capacity may change.
+- Legal move: replace exact pre-counting with a local byte-size capacity
+  estimate on the normal path, keeping exact counting for explicit trace mode.
+- Potential decrease: remove one full lexer traversal from parser startup while
+  avoiding capacity over-allocation that increases compiler-build memory.
+
+Trust: {F/G/R: 0.87/0.68/0.89} [verified]
+
 ## LM-583 — LSP foreground hover avoids workspace reference scans by default
 
 Status: verified for the focused LSP hover/cache/harness slice on `codegen`.

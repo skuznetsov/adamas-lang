@@ -127,6 +127,14 @@ module CrystalV2
           count
         end
 
+        private def estimated_token_preload_capacity(source : String, keep_trivia : Bool) : Int32
+          return token_preload_capacity(source, keep_trivia) if @trace_token_preload_enabled
+
+          divisor = keep_trivia ? 5 : 8
+          capacity = (source.bytesize // divisor) + 32
+          capacity < 64 ? 64 : capacity
+        end
+
         def initialize(lexer : Lexer, *, recovery_mode : Bool = false)
           @source = lexer.source
           @parser_init_trace_enabled = ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_PARSER_INIT_TRACE")
@@ -138,7 +146,7 @@ module CrystalV2
                                parser_init_trace("ctor1 preload disabled")
                                0
                              else
-                               token_preload_capacity(@source, keep_trivia)
+                               estimated_token_preload_capacity(@source, keep_trivia)
                              end
           @tokens = Array(Token).new(preload_capacity)
           parser_init_trace("ctor1 tokens array allocated capacity=#{preload_capacity}")
@@ -333,7 +341,7 @@ module CrystalV2
                                parser_init_trace("ctor2 preload disabled")
                                0
                              else
-                               token_preload_capacity(@source, keep_trivia)
+                               estimated_token_preload_capacity(@source, keep_trivia)
                              end
           @tokens = Array(Token).new(preload_capacity)
           parser_init_trace("ctor2 tokens array allocated capacity=#{preload_capacity}")
