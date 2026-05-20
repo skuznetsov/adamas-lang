@@ -39,13 +39,21 @@ Current hardening removed two produced-stage2 registration/container
 frontiers: `type_param_like?` no longer uses a non-essential
 `Hash(String, Bool)` cache before cheap lexical checks, and generic
 specialization no longer joins an `Array(String?)` produced by optional
-type-param-map lookups. Boundary: full-prelude produced `puts 42` is still not
-clean. A normal safe-wrapper sample exits 139 with the last flushed line near
-`class register idx=51/112`; lldb and tracing perturb the frontier and show
-later registration/lower-main failures, so treat the next root as unresolved
-source/type-ref/string-lifetime instability rather than a parser-first bug. The
-non-fatal `CLI#file_sha256$String` MIR optimizer arithmetic-overflow diagnostic
-remains during produced `s2` builds.
+type-param-map lookups. After LM-582, host HIR also preserves no-block
+included-module overload semantics for nested iterators:
+`Array(String)#each` now returns
+`Indexable(T)::ItemIterator(Array(String), String)` instead of poisoning later
+calls as `Nil#next`/`Pointer#next`. Boundary: full-prelude produced `puts 42`
+is still not clean. With `/private/tmp/cv2_return_guard_s2/cv2_s2`, a
+full-prelude `puts 42` smoke reached `lower_main: exprs=16` and timed out
+under a 60s safe wrapper, while the full-prelude nested iterator regression
+still exits 139 during early module registration. Treat the next root as
+unresolved produced-stage2 source/name/string-lifetime instability around
+module registration and lower-main, not a parser-first bug. The non-fatal
+`CLI#file_sha256$String` MIR optimizer arithmetic-overflow diagnostic remains
+during produced `s2` builds. Refuted: adding readability guards inside the
+normalizer helpers fixed a no-prelude reducer but regressed full-prelude
+module registration, so do not reapply that branch blindly.
 
 Spec-first bootstrap checkpoint (2026-05-08): `docs/specs/` now contains the
 first executable contract slice for Crystal V2, modeled after the DiamondDB

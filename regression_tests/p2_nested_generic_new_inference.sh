@@ -28,6 +28,7 @@ indices = a.each_index
 indices.next
 CR
 
+set +e
 CRYSTAL_V2_STOP_AFTER_HIR=1 \
 CRYSTAL_V2_PHASE_STATS=1 \
 DEBUG_MISSING_SUMMARY=1 \
@@ -35,6 +36,14 @@ DEBUG_MISSING_SAMPLES=1 \
 DEBUG_MISSING_TOP=40 \
   "$ROOT_DIR/scripts/run_safe.sh" "$COMPILER" 60 1024 \
     "$SRC" --emit hir --no-link -o "$OUT" >"$LOG" 2>&1
+status=$?
+set -e
+
+if [[ $status -ne 0 ]]; then
+  echo "p2 nested generic new regression: compiler run failed with status $status" >&2
+  tail -160 "$LOG" >&2 || true
+  exit 1
+fi
 
 HIR="$OUT.hir"
 if [[ ! -s "$HIR" ]]; then

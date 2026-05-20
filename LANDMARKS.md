@@ -4941,6 +4941,90 @@ Boundary:
 
 Trust: {F/G/R: 0.88/0.48/0.89} [verified]
 
+## LM-582 — No-block included-module lookup rejects block overloads
+
+Context: compiler/bootstrap/HIR method lookup and source-string transport,
+2026-05-20, `codegen`.
+
+Verified outcome:
+
+- Host HIR for the focused iterator reducer no longer lowers no-block
+  `Array(String)#each` and `Array(String)#each_index` through the block/yield
+  overloads.
+- The old host HIR emitted `Nil#next`, `Nil#each`, and `Pointer#next` after
+  `items = a.each`. The patched host HIR emits
+  `Indexable(T)::ItemIterator(Array(String), String)#next` and
+  `Indexable(T)::IndexIterator(Array(String))#next`.
+- Included-module return lookup and simple included-module materialization now
+  ask `find_module_def_recursive(..., expects_block: false)` for no-suffix
+  instance methods instead of accepting the first arity-compatible block
+  overload.
+- Source-span transport was hardened by preferring file-backed arena source
+  text for constant literal slicing and rejecting unreadable source/name
+  strings at the relevant lookup/slicing boundaries.
+
+WBA framing:
+
+- Window/trigger: a small full-prelude reducer using `a.each`,
+  `items.next`, `items.each`, and `a.each_index` exposed a host-semantic
+  lowering error before the produced-stage2 crash.
+- Transport corridor: no-block collection calls enter included generic module
+  lookup through `Array(T) -> Indexable(T)`, where block and no-block overloads
+  share method names and zero positional parameters.
+- Boundary: overload choice must carry the block/no-block bit; return/type
+  lookup helpers must not dereference stage2-invalid strings.
+- Legal moves: reuse the existing block-aware module lookup with
+  `expects_block=false` and keep the generated target under the concrete
+  receiver owner.
+- Potential decrease: removes a real semantic poison source without depth
+  caps, stdlib changes, or broad block/proc rebasing.
+
+Evidence:
+
+- `crystal tool format --check src/compiler/hir/ast_to_hir.cr`
+- `crystal build src/crystal_v2.cr -o /private/tmp/cv2_return_guard_host
+  --error-trace`
+- Host guards on `/private/tmp/cv2_return_guard_host`:
+  `p2_nested_generic_new_inference.sh`,
+  `p2_source_span_slice_bounds_no_prelude.sh`,
+  `p2_type_param_like_cacheless_no_prelude.sh`, and
+  `p2_qualified_module_namespace_no_prelude.sh`.
+- Produced `s2` build:
+  `scripts/run_safe.sh /private/tmp/cv2_return_guard_host 300 4096
+  src/crystal_v2.cr -o /private/tmp/cv2_return_guard_s2/cv2_s2`, exited 0
+  after ~150s.
+- Produced cheap guards on `/private/tmp/cv2_return_guard_s2/cv2_s2`:
+  `p2_source_span_slice_bounds_no_prelude.sh`,
+  `p2_type_param_like_cacheless_no_prelude.sh`, and
+  `p2_qualified_module_namespace_no_prelude.sh`.
+- Produced full-prelude `puts 42` with
+  `/private/tmp/cv2_return_guard_s2/cv2_s2` reached `lower_main: exprs=16`
+  and timed out under a 60s safe wrapper instead of the previous immediate
+  exit-139 class/register crash.
+
+Refuted/limited evidence:
+
+- The produced `s2` full-prelude nested-generic regression still exits 139,
+  now during module registration around idx 3/114. This commit does not close
+  the full-prelude iterator gate on produced `s2`.
+- Adding readability guards directly to
+  `normalize_compiler_collection_owner_name`, `normalize_method_owner_name`,
+  and `normalize_compiler_collection_method_name` fixed a no-prelude produced
+  reducer but regressed full-prelude `puts 42` back to early module
+  registration exit 139. That branch was reverted.
+- A broad overload-key readability filter in `lookup_function_def_for_call`
+  regressed the focused reducer to enum registration and was reverted.
+
+Boundary:
+
+- This is a host semantic fix plus stage2 source/name transport hardening, not
+  a clean `s1 -> s2b` gate. The next root remains produced-stage2 full-prelude
+  module/lower-main string lifetime or source provenance instability.
+- The non-fatal `CrystalV2::Compiler::CLI#file_sha256$String` MIR optimizer
+  arithmetic-overflow diagnostic remains during produced `s2` builds.
+
+Trust: {F/G/R: 0.88/0.52/0.87} [verified]
+
 ## LM-576 — Unbound type-param scans avoid Regex match-data in self-hosted registration
 
 Context: compiler/bootstrap/HIR method annotation scan, 2026-05-19, `codegen`.
