@@ -2,6 +2,8 @@
 # Safe runner for Crystal V2 test binaries
 # Prevents FD leaks and memory exhaustion from freezing the machine
 # Usage: scripts/run_safe.sh <binary> [timeout_sec] [max_mem_mb] [args...]
+# Set RUN_SAFE_PASSTHROUGH_STDIO=1 for stdio protocol servers. In that mode the
+# child keeps stdin/stdout, while run_safe diagnostics go to stderr.
 BINARY="$1"
 TIMEOUT="${2:-5}"
 MAX_MEM="${3:-512}"
@@ -15,6 +17,29 @@ fi
 STDOUT_TMP=$(mktemp /tmp/run_safe_stdout.XXXXXX)
 STDERR_TMP=$(mktemp /tmp/run_safe_stderr.XXXXXX)
 WATCHDOG_PID=""
+PASSTHROUGH_STDIO="${RUN_SAFE_PASSTHROUGH_STDIO:-0}"
+
+log_line() {
+  if [ "$PASSTHROUGH_STDIO" = "1" ]; then
+    echo "$@" >&2
+  else
+    echo "$@"
+  fi
+}
+
+dump_captured_output() {
+  if [ "$PASSTHROUGH_STDIO" = "1" ]; then
+    if [ -s "$STDERR_TMP" ]; then
+      log_line "=== STDERR ==="
+      cat "$STDERR_TMP" >&2
+    fi
+  else
+    echo "=== STDOUT ==="
+    cat "$STDOUT_TMP"
+    echo "=== STDERR ==="
+    cat "$STDERR_TMP"
+  fi
+}
 
 cleanup() {
   if [ -n "$WATCHDOG_PID" ]; then
@@ -73,8 +98,11 @@ kill_child_briefly() {
   return 0
 }
 
-# Run in background, capture output
-"$BINARY" "$@" > "$STDOUT_TMP" 2> "$STDERR_TMP" &
+if [ "$PASSTHROUGH_STDIO" = "1" ]; then
+  "$BINARY" "$@" <&0 >&1 2> "$STDERR_TMP" &
+else
+  "$BINARY" "$@" > "$STDOUT_TMP" 2> "$STDERR_TMP" &
+fi
 PID=$!
 RUN_SAFE_PID=$$
 
@@ -85,10 +113,9 @@ RUN_SAFE_PID=$$
   if kill -0 "$PID" 2>/dev/null; then
     FD_COUNT=$(fd_count_for_pid "$PID")
     RSS=$(ps -o rss= -p "$PID" 2>/dev/null | tr -d ' ')
-    echo "[KILL] Timeout after ${TIMEOUT}s (FDs: ${FD_COUNT:-?}, RSS: ${RSS:-?}KB)"
+    log_line "[KILL] Timeout after ${TIMEOUT}s (FDs: ${FD_COUNT:-?}, RSS: ${RSS:-?}KB)"
     kill_child_briefly "$PID"
-    echo "=== STDOUT ===" ; cat "$STDOUT_TMP"
-    echo "=== STDERR ===" ; cat "$STDERR_TMP"
+    dump_captured_output
     kill -TERM "$RUN_SAFE_PID" 2>/dev/null || true
   fi
 ) &
@@ -101,14 +128,11 @@ while [ $HALF_SECS -lt $MAX_HALF_SECS ]; do
   if ! kill -0 $PID 2>/dev/null; then
     wait $PID
     EXIT=$?
-    echo "=== STDOUT ==="
-    cat "$STDOUT_TMP"
-    echo "=== STDERR ==="
-    cat "$STDERR_TMP"
-    if [ $EXIT -eq 139 ]; then echo "[CRASH] Segfault (exit 139)"; fi
-    if [ $EXIT -eq 134 ]; then echo "[CRASH] Abort (exit 134)"; fi
+    dump_captured_output
+    if [ $EXIT -eq 139 ]; then log_line "[CRASH] Segfault (exit 139)"; fi
+    if [ $EXIT -eq 134 ]; then log_line "[CRASH] Abort (exit 134)"; fi
     SECS=$((HALF_SECS / 2))
-    echo "[EXIT: $EXIT] after ~${SECS}s"
+    log_line "[EXIT: $EXIT] after ~${SECS}s"
     exit $EXIT
   fi
 
@@ -119,19 +143,17 @@ while [ $HALF_SECS -lt $MAX_HALF_SECS ]; do
 
   if [ -n "$FD_COUNT" ] && [ "$FD_COUNT" -gt 1000 ]; then
     SECS=$((HALF_SECS / 2))
-    echo "[KILL] FD leak detected: $FD_COUNT FDs after ~${SECS}s"
+    log_line "[KILL] FD leak detected: $FD_COUNT FDs after ~${SECS}s"
     kill_child_briefly "$PID"
-    echo "=== STDOUT ===" ; cat "$STDOUT_TMP"
-    echo "=== STDERR ===" ; cat "$STDERR_TMP"
+    dump_captured_output
     exit 1
   fi
 
   if [ -n "$RSS" ] && [ "$RSS" -gt $((MAX_MEM * 1024)) ]; then
     SECS=$((HALF_SECS / 2))
-    echo "[KILL] Memory limit: ${RSS}KB > ${MAX_MEM}MB after ~${SECS}s"
+    log_line "[KILL] Memory limit: ${RSS}KB > ${MAX_MEM}MB after ~${SECS}s"
     kill_child_briefly "$PID"
-    echo "=== STDOUT ===" ; cat "$STDOUT_TMP"
-    echo "=== STDERR ===" ; cat "$STDERR_TMP"
+    dump_captured_output
     exit 1
   fi
 
@@ -142,8 +164,7 @@ done
 # Timeout
 FD_COUNT=$(fd_count_for_pid "$PID")
 RSS=$(ps -o rss= -p $PID 2>/dev/null | tr -d ' ')
-echo "[KILL] Timeout after ${TIMEOUT}s (FDs: ${FD_COUNT:-?}, RSS: ${RSS:-?}KB)"
+log_line "[KILL] Timeout after ${TIMEOUT}s (FDs: ${FD_COUNT:-?}, RSS: ${RSS:-?}KB)"
 kill_child_briefly "$PID"
-echo "=== STDOUT ===" ; cat "$STDOUT_TMP"
-echo "=== STDERR ===" ; cat "$STDERR_TMP"
+dump_captured_output
 exit 1

@@ -4840,6 +4840,57 @@ Known limits:
 
 Trust: {F/G/R: 0.82/0.34/0.86} [verified]
 
+## LM-584 — LSP stdio server can be benchmarked under run_safe
+
+Status: verified for LSP harness measurement safety on `codegen`.
+
+Change:
+
+- `scripts/run_safe.sh` now supports `RUN_SAFE_PASSTHROUGH_STDIO=1` for stdio
+  protocol servers. In this mode the wrapped child keeps stdin/stdout, while
+  `run_safe` diagnostics and captured child stderr go to stderr.
+- Normal capture mode remains unchanged for ordinary binaries.
+- `benchmarks/lsp_harness.cr` now persists notification counters correctly;
+  `NotificationStats` is a struct, so mutating the local copy must be written
+  back to the hash.
+
+WBA framing:
+
+- Window/trigger: LSP benchmarking needed to run `bin/crystal_v2_lsp` through
+  `run_safe`, but normal `run_safe` captured stdout and corrupted JSON-RPC
+  framing.
+- Transport corridor: JSON-RPC stdio must stay byte-exact between harness and
+  server while FD/RSS/timeout monitoring remains active around the server
+  process.
+- Boundary: existing non-protocol test binaries must keep the old captured
+  stdout/stderr output contract.
+- Legal move: env-gated pass-through mode only; wrapper diagnostics move to
+  stderr in that mode.
+- Potential decrease: removes the measurement blocker without weakening the
+  produced-binary safety rule.
+
+Evidence:
+
+- `/bin/bash -n scripts/run_safe.sh`
+- Normal mode smoke:
+  `scripts/run_safe.sh /bin/echo 5 64 hello-normal-2`
+- Pass-through stdin/stdout smoke:
+  `printf 'cat-passthrough\n' | RUN_SAFE_PASSTHROUGH_STDIO=1
+  scripts/run_safe.sh /bin/cat 5 64`
+- Safe LSP harness run:
+  `scripts/run_safe.sh <compiled_lsp_harness> 120 1024
+  --server="/usr/bin/env RUN_SAFE_PASSTHROUGH_STDIO=1 scripts/run_safe.sh
+  ./bin/crystal_v2_lsp 90 2048" --scenario=<small server.cr scenario>
+  --json=<report> --timeout=20 --verbose`, exited 0.
+- The sample JSON report had `errors=0`, notification counts of 1 for
+  `crystal/indexing`, `crystal/indexed`, and `textDocument/publishDiagnostics`,
+  and representative timings: initialize ~118ms, document symbols ~255ms,
+  semantic tokens ~307ms, hover ~24ms, shutdown ~15ms.
+- `crystal tool format --check benchmarks/lsp_harness.cr`
+- `git diff --check`
+
+Trust: {F/G/R: 0.83/0.42/0.88} [verified]
+
 ### LM-580 — s2 registration hardening: parsed number macro values, alias suffix index, and tuple-key avoidance
 
 Status: verified for s1 -> s2 build and focused no-prelude guards on branch

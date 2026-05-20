@@ -637,6 +637,7 @@ module CrystalV2
           elsif method == "window/logMessage" && params
             stats.last = params["message"]?.try(&.as_s)
           end
+          notifications[method] = stats
 
           if @verbose
             details = params ? params.to_json : "(no params)"
