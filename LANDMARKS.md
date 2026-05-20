@@ -4857,6 +4857,90 @@ Evidence:
 
 Trust: {F/G/R: 0.88/0.50/0.89} [verified]
 
+## LM-581 — Stage2 registration avoids Hash(Bool) and optional-map join frontiers
+
+Context: compiler/bootstrap/HIR registration boundaries, 2026-05-20,
+`codegen`.
+
+Verified outcome:
+
+- Produced `s2` builds cleanly after removing the registration-local
+  `@type_param_like_cache : Hash(String, Bool)` and after replacing optional
+  type-param map joins with `complete_type_param_mapping`.
+- Produced `s2` passes new no-prelude guards for the two observed crash
+  families:
+  `p2_type_param_like_cacheless_no_prelude.sh` and
+  `p2_optional_type_param_join_no_prelude.sh`.
+- The earlier `Hash(String, Bool)#key_hash` lldb frontier in
+  `AstToHir#type_param_like?` is no longer the observed produced-stage2
+  frontier under the tested guards.
+- The later `Array(String?)#join -> Pointer(Void)#to_s ->
+  __vdispatch__Object#to_s` lldb frontier from optional generic type-param
+  lookups is also no longer observed after the helper change.
+
+WBA framing:
+
+- Window/trigger: full-prelude produced `puts 42` reached HIR registration and
+  failed in generated-stage2 container/string code while resolving generic and
+  type-param metadata.
+- Transport corridor: frontend annotation/source strings and type-param maps
+  enter HIR registration caches before the produced compiler's generic
+  container lowering is robust enough for all high-level Crystal idioms.
+- Boundary: remove only non-essential self-host-critical container surfaces and
+  keep semantic type checks unchanged.
+- Legal moves: avoid the `Hash(String, Bool)` cache in `type_param_like?`, and
+  materialize an `Array(String)` only after every optional map lookup succeeds.
+- Potential decrease: does not add depth caps, does not modify stdlib, and
+  does not suppress generic/template registration; it reduces two proven
+  container/lifetime hazards on the registration path.
+
+Evidence:
+
+- `crystal tool format --check src/compiler/hir/ast_to_hir.cr`
+- `crystal build src/crystal_v2.cr -o /private/tmp/cv2_typecache_host
+  --error-trace`
+- Host guards:
+  `p2_type_param_like_cacheless_no_prelude.sh`,
+  `p2_optional_type_param_join_no_prelude.sh`, and
+  `p2_unbound_type_param_scan_no_regex_no_prelude.sh` on
+  `/private/tmp/cv2_typecache_host`.
+- Produced `s2` build:
+  `scripts/run_safe.sh /private/tmp/cv2_typecache_host 300 4096
+  src/crystal_v2.cr -o /private/tmp/cv2_typecache_s2/cv2_s2`, exited 0 after
+  ~145s on the final run.
+- Produced guards:
+  `p2_type_param_like_cacheless_no_prelude.sh` and
+  `p2_optional_type_param_join_no_prelude.sh` on
+  `/private/tmp/cv2_typecache_s2/cv2_s2`.
+- Produced full-prelude smoke remains open:
+  `scripts/run_safe.sh /private/tmp/cv2_typecache_s2/cv2_s2 120 4096
+  /private/tmp/cv2_typecache_hello.cr -o /private/tmp/cv2_typecache_hello_bin`
+  exited 139.
+
+Refuted/limited evidence:
+
+- `CRYSTAL_V2_TRACE_CLASS_FRONTIER=1` materially perturbs this frontier. A
+  traced safe-wrapper run reached `lower_main` before exit 139, while an
+  untraced lldb run stopped in `type_ref_for_name_inner` from
+  `annotation_type_ref` during class registration. Treat trace-only progress as
+  localization evidence, not proof that class registration is clean in the
+  normal run.
+- A traced lldb run stopped in `String#byte_slice` via
+  `slice_source_for_span -> constant_literal_value_from_source`, which points
+  at a remaining source-span/string-lifetime class of failures but is not part
+  of this committed fix.
+
+Boundary:
+
+- This is a moved-frontier/root-boundary hardening, not a clean full-prelude
+  smoke. The next target is the remaining produced-stage2 full-prelude `puts
+  42` exit 139, likely around type-ref/source-span/string lifetime instability
+  exposed by HIR registration/lower-main.
+- The non-fatal `CrystalV2::Compiler::CLI#file_sha256$String` MIR optimizer
+  arithmetic-overflow diagnostic remains during produced `s2` builds.
+
+Trust: {F/G/R: 0.88/0.48/0.89} [verified]
+
 ## LM-576 — Unbound type-param scans avoid Regex match-data in self-hosted registration
 
 Context: compiler/bootstrap/HIR method annotation scan, 2026-05-19, `codegen`.

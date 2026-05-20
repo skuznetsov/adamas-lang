@@ -30,19 +30,22 @@ Working policy:
 
 ## Current Checkpoint
 
-Latest bootstrap frontier (LM-580, 2026-05-20): produced `s2` builds cleanly
+Latest bootstrap frontier (LM-581, 2026-05-20): produced `s2` builds cleanly
 under the safe wrapper and passes the focused no-prelude guards for parsed
 macro number literals, normalize-decl cache keys, short-type-index `Set#first`
-avoidance, source-span bounds, constant globals, and qualified nested module
-namespaces. Current hardening removed several produced-stage2 registration
-frontiers: macro number evaluation no longer reparses `NumberNode` byte slices
-through generated `String#to_f64?`, alias module suffix resolution no longer
-walks every `@module_defs` key with `String#ends_with?`, the normalize-decl
-cache no longer uses stage2-sensitive tuple keys, and the signature fast path
-does not call `Set(String)#first` directly. Boundary: full-prelude produced
-`puts 42` is still not clean; the latest sample exits 139 after
-`class register idx=51/112`. The non-fatal `CLI#file_sha256$String` MIR
-optimizer arithmetic-overflow diagnostic remains during produced `s2` builds.
+avoidance, source-span bounds, constant globals, qualified nested module
+namespaces, cacheless `type_param_like?`, and optional type-param map joins.
+Current hardening removed two produced-stage2 registration/container
+frontiers: `type_param_like?` no longer uses a non-essential
+`Hash(String, Bool)` cache before cheap lexical checks, and generic
+specialization no longer joins an `Array(String?)` produced by optional
+type-param-map lookups. Boundary: full-prelude produced `puts 42` is still not
+clean. A normal safe-wrapper sample exits 139 with the last flushed line near
+`class register idx=51/112`; lldb and tracing perturb the frontier and show
+later registration/lower-main failures, so treat the next root as unresolved
+source/type-ref/string-lifetime instability rather than a parser-first bug. The
+non-fatal `CLI#file_sha256$String` MIR optimizer arithmetic-overflow diagnostic
+remains during produced `s2` builds.
 
 Spec-first bootstrap checkpoint (2026-05-08): `docs/specs/` now contains the
 first executable contract slice for Crystal V2, modeled after the DiamondDB
