@@ -5987,6 +5987,79 @@ WBA framing:
 
 Trust: {F/G/R: 0.88/0.52/0.89} [verified]
 
+### LM-609 — LSP definitions do not hard-fail while background prelude is in flight
+
+Status: VERIFIED for the focused warm-cache request-gating slice on `codegen`.
+
+After LM-608, a custom harness scenario reproduced the remaining warm
+`definition handle_completion` delta without the rest of the large default
+scenario. Cold run returned one definition location; warm project-cache run
+returned zero. With `LSP_DEBUG=1`, the request did not reach semantic
+resolution: `handle_definition` logged `Definition skipped: indexing in
+progress` because `@prelude_loading` was still true after foreground `didOpen`.
+
+Accepted change:
+
+- `indexing_in_progress?` now opportunistically applies a completed background
+  prelude state, then gates only on missing document-local symbol/identifier
+  state.
+- Foreground requests no longer hard-return `null` solely because background
+  prelude hydration is still in flight. They can use the already analyzed
+  opened document and whatever prelude/project-cache state is currently
+  available.
+- Added a focused project-cache regression that keeps same-file method
+  definition working even when `@prelude_loading` is true.
+
+Evidence:
+
+- Focused project-cache semantic-fidelity spec:
+  `CRYSTAL_CACHE_DIR=/private/tmp/cv2_lsp_def_fix_spec scripts/run_safe.sh
+  /Users/sergey/.local/bin/crystal 240 4096 spec
+  spec/lsp/project_cache_semantic_fidelity_spec.cr --error-trace`, 2
+  examples, 0 failures.
+- Related cache specs:
+  `CRYSTAL_CACHE_DIR=/private/tmp/cv2_lsp_project_cache_related3
+  scripts/run_safe.sh /Users/sergey/.local/bin/crystal 300 4096 spec
+  spec/lsp/project_cache_semantic_fidelity_spec.cr
+  spec/lsp/project_cache_validation_spec.cr
+  spec/lsp/project_cache_type_summary_spec.cr
+  spec/lsp/ast_cache_dependency_integration_spec.cr --error-trace`, 9
+  examples, 0 failures.
+- Full LSP suite:
+  `CRYSTAL_CACHE_DIR=/private/tmp/cv2_lsp_full_spec3 scripts/run_safe.sh
+  /Users/sergey/.local/bin/crystal 600 4096 spec spec/lsp --error-trace`, 235
+  examples, 0 failures.
+- Focused harness scenario:
+  warm project-cache `definition handle_completion` moved from `0 locations`
+  to `1 locations`.
+- Full harness comparison: warm default and warm `LSP_AST_CACHE=1` now both
+  return `1 locations` for `definition handle_completion`, while warm
+  `LSP_AST_CACHE=1` still opens `server.cr` in about `130ms`.
+
+Boundary:
+
+- This closes the `handle_completion` definition gating delta. The bench-file
+  deltas remain: warm project-cache/AST-cache still return zero for
+  `definition Lexer bench`, `signature help Parser.new bench`, and
+  `completion parser. bench`. Treat those as dependency/identifier-symbol
+  fidelity issues in summary-restored project state.
+
+WBA framing:
+
+- Window/trigger: first foreground request after warm `didOpen`, while
+  background prelude hydration is in flight or waiting to be applied.
+- Transport corridor: opened-document semantic state can serve local
+  definition/hover requests independently of the background prelude corridor.
+- Boundary: do not claim prelude-dependent precision if prelude is still
+  missing, but do not discard document-local symbol/identifier state.
+- Legal move: apply a ready background prelude opportunistically, then gate on
+  document-local analysis availability rather than the coarse prelude-loading
+  flag.
+- Potential decrease: removes one false indexing blocker without blocking the
+  request path or disabling background prelude loading.
+
+Trust: {F/G/R: 0.88/0.50/0.89} [verified]
+
 ## LM-583 — LSP foreground hover avoids workspace reference scans by default
 
 Status: verified for the focused LSP hover/cache/harness slice on `codegen`.

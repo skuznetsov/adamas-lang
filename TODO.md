@@ -69,13 +69,16 @@ project-cache `ExprId -> type` maps to freshly parsed opened documents, and
 cached method summaries rehydrate parameter/overload metadata. The focused
 project-cache semantic-fidelity regression is green for signature params,
 member completion, and method definition routing against a no-cache baseline.
+After LM-609, foreground definition requests no longer hard-fail solely because
+background prelude hydration is still in flight; warm default and
+`LSP_AST_CACHE=1` harness runs now keep `definition handle_completion` at 1
+location.
 Refuted for the current one-file warm harness: project-cache load itself is not
 the dominant `initialize` cost (`cache=~2.9ms`), and disabling project cache
 pushes dependency analysis back into foreground `didOpen`. Remaining LSP latency
 and fidelity candidates are foreground parse/name-resolution work on the
-default no-AST-cache path, missing dependency/identifier-symbol fidelity in
-summary-restored project state, and broader TypeIndex/cache restoration loops
-on large real project caches.
+default no-AST-cache path, plus missing dependency/identifier-symbol fidelity
+in summary-restored project state for the bench-file `Lexer`/`Parser` actions.
 
 Spec-first bootstrap checkpoint (2026-05-08): `docs/specs/` now contains the
 first executable contract slice for Crystal V2, modeled after the DiamondDB

@@ -113,4 +113,54 @@ describe "LSP project cache semantic fidelity" do
       FileUtils.rm_rf(root) if root
     end
   end
+
+  it "keeps same-file method definitions visible after warming project cache" do
+    with_lsp_project_cache_env do
+      root = File.join(Dir.tempdir, "lsp_project_cache_def_#{Random::Secure.hex(6)}")
+      src_dir = File.join(root, "src")
+      FileUtils.mkdir_p(src_dir)
+      File.write(File.join(root, "shard.yml"), "name: lsp_project_cache_def\n")
+
+      path = File.join(src_dir, "main.cr")
+      source = <<-CR
+      class Service
+        def handle_completion(id : Int32, params : String?) : Nil
+        end
+
+        def dispatch
+          handle_completion(1, nil)
+        end
+      end
+      CR
+      File.write(path, source)
+
+      baseline = CrystalV2::Compiler::LSP::Server.new(
+        IO::Memory.new,
+        IO::Memory.new,
+        CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
+      )
+      baseline_uri = baseline.spec_store_document(source, src_dir, path)
+      definition_line, definition_char = lsp_line_char(source, "handle_completion(1")
+      baseline_definition = baseline.spec_definition(baseline_uri, definition_line, definition_char)
+      baseline_definition["result"].as_a.size.should eq(1)
+
+      project = CrystalV2::Compiler::LSP::UnifiedProjectState.new
+      project.update_file(path, source)
+      CrystalV2::Compiler::LSP::ProjectCacheLoader.save_to_cache(project, root)
+
+      cached = CrystalV2::Compiler::LSP::Server.new(
+        IO::Memory.new,
+        IO::Memory.new,
+        CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: true)
+      )
+      cached_uri = cached.spec_did_open_document(source, path)
+      cached.spec_set_prelude_loading(true)
+      cached_definition = cached.spec_definition(cached_uri, definition_line, definition_char)
+
+      cached_definition["result"].as_a.size.should eq(1)
+      cached_definition["result"].as_a.first["uri"].as_s.should eq(baseline_definition["result"].as_a.first["uri"].as_s)
+    ensure
+      FileUtils.rm_rf(root) if root
+    end
+  end
 end

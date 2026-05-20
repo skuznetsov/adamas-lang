@@ -5012,7 +5012,8 @@ module CrystalV2
 
         # True when critical data (prelude or doc symbols) is missing; use to return fast/soft-fail.
         private def indexing_in_progress?(doc_state : DocumentState) : Bool
-          @prelude_loading || doc_state.symbol_table.nil? || doc_state.identifier_symbols.nil?
+          check_background_prelude_ready if @prelude_loading
+          doc_state.symbol_table.nil? || doc_state.identifier_symbols.nil?
         end
 
         # Warm dependency cache asynchronously to avoid first-click stalls on requires.

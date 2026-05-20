@@ -144,6 +144,10 @@ module CrystalV2::Compiler::LSP
       @cached_expr_types.has_key?(path)
     end
 
+    def spec_set_prelude_loading(value : Bool)
+      @prelude_loading = value
+    end
+
     def spec_file_uri(path : String) : String
       file_uri(path)
     end
