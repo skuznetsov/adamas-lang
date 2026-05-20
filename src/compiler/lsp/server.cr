@@ -10285,8 +10285,10 @@ module CrystalV2
 
           t3 = Time.instant
 
-          # Sort tokens by position and prefer higher-priority classifications on ties
-          raw_tokens.sort_by! { |t| {t.line, t.start_char, -token_type_priority(t.token_type), -t.length} }
+          # Sort tokens by position and prefer higher-priority classifications on ties.
+          raw_tokens.sort! do |left, right|
+            compare_semantic_tokens(left, right)
+          end
           raw_tokens = deduplicate_tokens(raw_tokens)
           if visible_range
             raw_tokens = raw_tokens.select { |token| context.raw_token_in_visible_range?(token) }
@@ -10659,12 +10661,12 @@ module CrystalV2
 
           lexer = Frontend::Lexer.new(source)
           line_offsets = build_line_offsets(source)
+          current_line = 0
           lexer.each_token do |tok|
             # Keywords
             if keyword_kind?(tok.kind)
-              position = position_from_offset(source, tok.span.start_offset, line_offsets)
-              line = position.line
-              col = position.character
+              line, col = position_from_monotonic_offset(tok.span.start_offset, line_offsets, current_line)
+              current_line = line
               length = tok.slice.size
               tokens << RawToken.new(line, col, length, SemanticTokenType::Keyword.value)
               next
@@ -10674,9 +10676,8 @@ module CrystalV2
             when Frontend::Token::Kind::String
               # Simple strings: color full token including quotes
               span = tok.span
-              position = position_from_offset(source, span.start_offset, line_offsets)
-              line = position.line
-              col = position.character
+              line, col = position_from_monotonic_offset(span.start_offset, line_offsets, current_line)
+              current_line = line
               length = span.end_offset - span.start_offset
               tokens << RawToken.new(line, col, length, SemanticTokenType::String.value)
             when Frontend::Token::Kind::StringInterpolation
@@ -10684,32 +10685,28 @@ module CrystalV2
               collect_interpolated_string_tokens_zero_copy(source, tok, tokens)
             when Frontend::Token::Kind::Char
               span = tok.span
-              position = position_from_offset(source, span.start_offset, line_offsets)
-              line = position.line
-              col = position.character
+              line, col = position_from_monotonic_offset(span.start_offset, line_offsets, current_line)
+              current_line = line
               length = span.end_offset - span.start_offset
               tokens << RawToken.new(line, col, length, SemanticTokenType::String.value)
             when Frontend::Token::Kind::Regex
               span = tok.span
-              position = position_from_offset(source, span.start_offset, line_offsets)
-              line = position.line
-              col = position.character
+              line, col = position_from_monotonic_offset(span.start_offset, line_offsets, current_line)
+              current_line = line
               length = span.end_offset - span.start_offset
               tokens << RawToken.new(line, col, length, SemanticTokenType::Regexp.value)
             when Frontend::Token::Kind::Identifier
               # Heuristic: uppercase identifiers are constants/types; color even without semantics
               slice = tok.slice
               if slice.size > 0 && slice[0].unsafe_chr.ascii_uppercase?
-                position = position_from_offset(source, tok.span.start_offset, line_offsets)
-                line = position.line
-                col = position.character
+                line, col = position_from_monotonic_offset(tok.span.start_offset, line_offsets, current_line)
+                current_line = line
                 length = slice.size
                 tokens << RawToken.new(line, col, length, SemanticTokenType::Type.value)
               end
             when Frontend::Token::Kind::Symbol
-              position = position_from_offset(source, tok.span.start_offset, line_offsets)
-              line = position.line
-              col = position.character
+              line, col = position_from_monotonic_offset(tok.span.start_offset, line_offsets, current_line)
+              current_line = line
               length = tok.span.end_offset - tok.span.start_offset
               length = tok.slice.size if length <= 0
               tokens << RawToken.new(line, col, length, SemanticTokenType::EnumMember.value)
@@ -10754,12 +10751,12 @@ module CrystalV2
         private def collect_lexical_tokens_unbounded(source : String, tokens : Array(RawToken))
           lexer = Frontend::Lexer.new(source)
           line_offsets = build_line_offsets(source)
+          current_line = 0
           lexer.each_token do |tok|
             # Keywords
             if keyword_kind?(tok.kind)
-              position = position_from_offset(source, tok.span.start_offset, line_offsets)
-              line = position.line
-              col = position.character
+              line, col = position_from_monotonic_offset(tok.span.start_offset, line_offsets, current_line)
+              current_line = line
               length = tok.slice.size
               tokens << RawToken.new(line, col, length, SemanticTokenType::Keyword.value)
               next
@@ -10768,45 +10765,58 @@ module CrystalV2
             case tok.kind
             when Frontend::Token::Kind::String
               span = tok.span
-              position = position_from_offset(source, span.start_offset, line_offsets)
-              line = position.line
-              col = position.character
+              line, col = position_from_monotonic_offset(span.start_offset, line_offsets, current_line)
+              current_line = line
               length = span.end_offset - span.start_offset
               tokens << RawToken.new(line, col, length, SemanticTokenType::String.value)
             when Frontend::Token::Kind::StringInterpolation
               collect_interpolated_string_tokens_zero_copy(source, tok, tokens)
             when Frontend::Token::Kind::Char
               span = tok.span
-              position = position_from_offset(source, span.start_offset, line_offsets)
-              line = position.line
-              col = position.character
+              line, col = position_from_monotonic_offset(span.start_offset, line_offsets, current_line)
+              current_line = line
               length = span.end_offset - span.start_offset
               tokens << RawToken.new(line, col, length, SemanticTokenType::String.value)
             when Frontend::Token::Kind::Regex
               span = tok.span
-              position = position_from_offset(source, span.start_offset, line_offsets)
-              line = position.line
-              col = position.character
+              line, col = position_from_monotonic_offset(span.start_offset, line_offsets, current_line)
+              current_line = line
               length = span.end_offset - span.start_offset
               tokens << RawToken.new(line, col, length, SemanticTokenType::Regexp.value)
             when Frontend::Token::Kind::Identifier
               slice = tok.slice
               if slice.size > 0 && slice[0].unsafe_chr.ascii_uppercase?
-                position = position_from_offset(source, tok.span.start_offset, line_offsets)
-                line = position.line
-                col = position.character
+                line, col = position_from_monotonic_offset(tok.span.start_offset, line_offsets, current_line)
+                current_line = line
                 length = slice.size
                 tokens << RawToken.new(line, col, length, SemanticTokenType::Type.value)
               end
             when Frontend::Token::Kind::Symbol
-              position = position_from_offset(source, tok.span.start_offset, line_offsets)
-              line = position.line
-              col = position.character
+              line, col = position_from_monotonic_offset(tok.span.start_offset, line_offsets, current_line)
+              current_line = line
               length = tok.span.end_offset - tok.span.start_offset
               length = tok.slice.size if length <= 0
               tokens << RawToken.new(line, col, length, SemanticTokenType::EnumMember.value)
             end
           end
+        end
+
+        private def position_from_monotonic_offset(offset : Int32, line_offsets : Array(Int32), current_line : Int32) : {Int32, Int32}
+          return {0, 0} if line_offsets.empty?
+
+          line = current_line
+          line = 0 if line < 0
+          line = line_offsets.size - 1 if line >= line_offsets.size
+
+          while line + 1 < line_offsets.size && line_offsets[line + 1] <= offset
+            line += 1
+          end
+
+          while line > 0 && line_offsets[line] > offset
+            line -= 1
+          end
+
+          {line, offset - line_offsets[line]}
         end
 
         # Map token kinds (from a sub-lexer) to semantic token types for interpolation content
@@ -11364,6 +11374,19 @@ module CrystalV2
 
         private def token_type_priority(token_type : Int32) : Int32
           TOKEN_TYPE_PRIORITY[token_type]? || 0
+        end
+
+        private def compare_semantic_tokens(left : RawToken, right : RawToken) : Int32
+          cmp = left.line <=> right.line
+          return cmp unless cmp == 0
+
+          cmp = left.start_char <=> right.start_char
+          return cmp unless cmp == 0
+
+          cmp = token_type_priority(right.token_type) <=> token_type_priority(left.token_type)
+          return cmp unless cmp == 0
+
+          right.length <=> left.length
         end
 
         private def deduplicate_tokens(tokens : Array(RawToken)) : Array(RawToken)

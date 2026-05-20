@@ -5286,6 +5286,73 @@ WBA framing:
 
 Trust: {F/G/R: 0.89/0.60/0.91} [verified]
 
+### LM-599 — LSP semantic-token full response avoids tuple-key sort overhead
+
+Status: VERIFIED for the semantic-token hot-path slice on `codegen`.
+
+After LM-598 removed the formatter replacement-size frontier, the default LSP
+harness exposed `textDocument/semanticTokens/full` as the next visible
+foreground request cost on `src/compiler/lsp/server.cr`. Profiling showed the
+first full-token request was not cache-miss dominated alone: token collection
+spent about 43ms in the lexical pass and about 19ms in `sort+dedup`, before
+JSON transport of a roughly 141k-int response.
+
+Accepted change:
+
+- The lexical token pass now carries a monotonic line-offset cursor instead of
+  binary-searching line offsets for each lexer token. This preserves the
+  existing byte-column coordinate behavior because it uses the same
+  line-offset table and offset arithmetic.
+- Semantic token sorting now uses a direct comparator instead of
+  `sort_by!` with tuple keys. The ordering remains line, start column,
+  descending token-type priority, and descending length.
+
+Evidence:
+
+- Semantic-token profile on `src/compiler/lsp/server.cr` before the direct
+  comparator showed approximately:
+  `setup=1.8ms ast_walk=12.6ms lexical=43.2ms sort+dedup=19.0ms encode=1.0ms
+  total=77.7ms`.
+- After the change, the same profile showed approximately:
+  `setup=1.9ms ast_walk=11.8ms lexical=40.5ms sort+dedup=9.3ms encode=1.1ms
+  total=64.6ms`.
+- Focused semantic-token specs:
+  `crystal build spec/lsp/semantic_tokens_spec.cr
+  spec/lsp/semantic_tokens_integration_spec.cr
+  spec/lsp/lsp_semantic_tokens_spec.cr -o /tmp/lsp_semantic_specs
+  --error-trace` and `scripts/run_safe.sh /tmp/lsp_semantic_specs 120 1536
+  --no-color`, 35 examples, 0 failures.
+- Default LSP harness through nested `run_safe` wrappers:
+  `scripts/run_safe.sh /tmp/lsp_harness_semantic_sort 180 1536
+  --server="/usr/bin/env RUN_SAFE_PASSTHROUGH_STDIO=1 scripts/run_safe.sh
+  /tmp/lsp_main_semantic_sort 180 1536" --timeout=20`, passed with zero
+  diagnostics. `semantic tokens` measured 118.7ms, `formatting` 78.9ms with
+  no edits, and full-document `rangeFormatting` 0.1ms with no edits.
+- Full LSP suite:
+  `crystal build spec/lsp/*_spec.cr -o /tmp/lsp_full_semantic_sort_spec
+  --error-trace` and `scripts/run_safe.sh /tmp/lsp_full_semantic_sort_spec
+  120 1536 --no-color`, 228 examples, 0 failures.
+- Hygiene:
+  `crystal tool format --check src/compiler/lsp/server.cr` and
+  `git diff --check`.
+
+WBA framing:
+
+- Window/trigger: the active full-token request had a local
+  `sort+dedup` maximizer and repeated offset-to-line lookup inside a
+  monotonic lexical scan.
+- Transport corridor: lexer token offsets move monotonically through the same
+  line-offset table; raw semantic tokens move through a fixed sort order before
+  overlap deduplication.
+- Boundary: token coordinates and priority semantics must remain identical to
+  the existing full-token contract.
+- Legal move: carry the current line cursor forward for lexical tokens and
+  compare `RawToken` fields directly during sort.
+- Potential decrease: per-token lookup and sort key allocation drop without
+  changing emitted semantic-token ordering.
+
+Trust: {F/G/R: 0.88/0.63/0.90} [verified]
+
 ## LM-583 — LSP foreground hover avoids workspace reference scans by default
 
 Status: verified for the focused LSP hover/cache/harness slice on `codegen`.
