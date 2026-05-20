@@ -5018,6 +5018,57 @@ Boundary:
 
 Trust: {F/G/R: 0.85/0.61/0.89} [verified]
 
+### LM-594 — LSP formatting returns minimal edit payloads
+
+Status: VERIFIED on `codegen`.
+
+After LM-593, repeated formatting no longer recomputed the formatter for an
+unchanged document version, but responses could still serialize a whole-document
+replacement for a tiny formatting delta. That kept cached `rangeFormatting`
+around 140-150ms on `src/compiler/lsp/server.cr` because the response payload
+was large even when the formatter was not rerun.
+
+Accepted change:
+
+- `handle_formatting` still runs the existing token formatter and preserves its
+  output semantics.
+- The server now computes one minimal byte-span `TextEdit` from the common
+  prefix/suffix between original and formatted source instead of always
+  replacing the whole document.
+- Minimal formatting edit ranges are converted to LSP UTF-16 character
+  positions so non-ASCII source does not receive byte-based edit columns.
+- No-op formatting still returns and caches `null`.
+- Full-document `rangeFormatting` still delegates to document formatting and
+  benefits from the same minimal cached response shape.
+- Partial `rangeFormatting` requests return `null` until true partial
+  formatting exists, avoiding edits outside the requested range.
+
+Evidence:
+
+- Focused formatting specs:
+  `crystal build spec/lsp/formatting_integration_spec.cr
+  spec/lsp/did_change_integration_spec.cr -o /tmp/lsp_formatting_spec
+  --error-trace` and
+  `scripts/run_safe.sh /tmp/lsp_formatting_spec 120 1536 --no-color`,
+  11 examples, 0 failures.
+- Default LSP harness via
+  `scripts/run_safe.sh /tmp/lsp_harness_minimal_format 120 1536 --server
+  bin/crystal_v2_lsp` passed. A post-hardening run measured formatting at
+  381.5ms and cached full-doc `rangeFormatting` at 142.3ms.
+- Full LSP suite:
+  `crystal build spec/lsp/*_spec.cr -o /tmp/lsp_full_spec --error-trace` and
+  `scripts/run_safe.sh /tmp/lsp_full_spec 120 1536 --no-color`, 224 examples,
+  0 failures.
+
+Boundary:
+
+- This is a response-payload and correctness fix, not true partial range
+  formatting.
+- First formatting still pays the token formatter cost; startup/open latency is
+  unaffected.
+
+Trust: {F/G/R: 0.86/0.62/0.9} [verified]
+
 ## LM-583 — LSP foreground hover avoids workspace reference scans by default
 
 Status: verified for the focused LSP hover/cache/harness slice on `codegen`.

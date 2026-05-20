@@ -11684,25 +11684,7 @@ module CrystalV2
           begin
             formatted_source = Formatter.format(original_source)
 
-            # If source is already formatted, return null (no changes)
-            if formatted_source == original_source
-              debug("Document already formatted")
-              @formatting_cache[uri] = {version, "null"}
-              return send_response(id, "null")
-            end
-
-            # Create TextEdit replacing entire document
-            start_pos = Position.new(line: 0, character: 0)
-
-            # Calculate end position (last line, last character)
-            lines = original_source.split('\n')
-            end_line = lines.size - 1
-            end_char = lines.last?.try(&.size) || 0
-            end_pos = Position.new(line: end_line, character: end_char)
-
-            range = Range.new(start_pos, end_pos)
-            edit = TextEdit.new(range: range, new_text: formatted_source)
-            json = [edit].to_json
+            json = formatting_response_json(original_source, formatted_source)
             @formatting_cache[uri] = {version, json}
 
             debug("Formatted: #{original_source.lines.size} lines → #{formatted_source.lines.size} lines")
@@ -11711,6 +11693,92 @@ module CrystalV2
             debug("Formatting error: #{ex.message}")
             send_error(id, -32603, "Formatting failed: #{ex.message}")
           end
+        end
+
+        private def formatting_response_json(original_source : String, formatted_source : String) : String
+          if formatted_source == original_source
+            debug("Document already formatted")
+            return "null"
+          end
+
+          [minimal_formatting_edit(original_source, formatted_source)].to_json
+        end
+
+        private def minimal_formatting_edit(original_source : String, formatted_source : String) : TextEdit
+          prefix_bytes = common_prefix_bytes(original_source, formatted_source)
+          suffix_bytes = common_suffix_bytes(original_source, formatted_source, prefix_bytes)
+
+          original_end = original_source.bytesize - suffix_bytes
+          formatted_end = formatted_source.bytesize - suffix_bytes
+          new_text = formatted_source.byte_slice(prefix_bytes, formatted_end - prefix_bytes)
+
+          line_offsets = build_line_offsets(original_source)
+          start_pos = position_from_byte_offset_for_lsp(original_source, prefix_bytes, line_offsets)
+          end_pos = position_from_byte_offset_for_lsp(original_source, original_end, line_offsets)
+
+          TextEdit.new(range: Range.new(start_pos, end_pos), new_text: new_text)
+        end
+
+        private def position_from_byte_offset_for_lsp(text : String, offset : Int32, line_offsets : Array(Int32)? = nil) : Position
+          offsets = line_offsets || build_line_offsets(text)
+          return Position.new(0, 0) if offsets.empty?
+
+          bounded = offset.clamp(0, text.bytesize)
+          bounded = previous_utf8_boundary(text, bounded)
+
+          low = 0
+          high = offsets.size - 1
+          line = 0
+          while low <= high
+            mid = (low + high) // 2
+            if offsets[mid] <= bounded
+              line = mid
+              low = mid + 1
+            else
+              high = mid - 1
+            end
+          end
+
+          line_start = offsets[line]
+          character = utf16_code_units(text.byte_slice(line_start, bounded - line_start))
+          Position.new(line, character)
+        end
+
+        private def previous_utf8_boundary(text : String, offset : Int32) : Int32
+          bounded = offset.clamp(0, text.bytesize)
+          while bounded > 0 && bounded < text.bytesize
+            byte = text.byte_at(bounded)
+            break unless (byte & 0b1100_0000) == 0b1000_0000
+            bounded -= 1
+          end
+          bounded
+        end
+
+        private def utf16_code_units(text : String) : Int32
+          units = 0
+          text.each_char do |char|
+            units += char.ord > 0xFFFF ? 2 : 1
+          end
+          units
+        end
+
+        private def common_prefix_bytes(left : String, right : String) : Int32
+          limit = Math.min(left.bytesize, right.bytesize)
+          index = 0
+          while index < limit && left.byte_at(index) == right.byte_at(index)
+            index += 1
+          end
+          index
+        end
+
+        private def common_suffix_bytes(left : String, right : String, prefix_bytes : Int32) : Int32
+          limit = Math.min(left.bytesize, right.bytesize) - prefix_bytes
+          count = 0
+          while count < limit &&
+                left.byte_at(left.bytesize - 1 - count) == right.byte_at(right.bytesize - 1 - count)
+            count += 1
+          end
+          count
         end
 
         # Handle textDocument/rangeFormatting request
@@ -11726,10 +11794,26 @@ module CrystalV2
             return send_response(id, "null")
           end
 
-          # MVP: Range formatting not supported yet - format entire document instead
-          # In future, could extract range, format it, and replace
-          debug("Range formatting not yet supported, formatting entire document")
+          range_json = params["range"]
+          range = Range.new(
+            Position.new(range_json["start"]["line"].as_i, range_json["start"]["character"].as_i),
+            Position.new(range_json["end"]["line"].as_i, range_json["end"]["character"].as_i)
+          )
+          unless range_covers_document?(doc_state, range)
+            debug("Partial range formatting not supported")
+            return send_response(id, "null")
+          end
+
+          debug("Full-document range formatting delegated to document formatter")
           handle_formatting(id, params)
+        end
+
+        private def range_covers_document?(doc_state : DocumentState, range : Range) : Bool
+          return false unless range.start.line == 0 && range.start.character == 0
+
+          text = doc_state.text_document.text
+          end_offset = position_to_offset(text, range.end.line, range.end.character, doc_state.line_offsets)
+          !!(end_offset && end_offset >= text.bytesize)
         end
       end
     end

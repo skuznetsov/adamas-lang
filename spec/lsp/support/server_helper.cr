@@ -108,6 +108,14 @@ module CrystalV2::Compiler::LSP
       spec_read_last_response
     end
 
+    def spec_range_formatting(uri : String, start_line : Int32, start_char : Int32, end_line : Int32, end_char : Int32) : JSON::Any
+      params = JSON.parse(%({"textDocument":{"uri":#{uri.to_json}},"range":{"start":{"line":#{start_line},"character":#{start_char}},"end":{"line":#{end_line},"character":#{end_char}}},"options":{"tabSize":2,"insertSpaces":true}}))
+      id = JSON.parse("9")
+      spec_reset_output
+      handle_range_formatting(id, params)
+      spec_read_last_response
+    end
+
     def spec_formatting_cache_version(uri : String) : Int32?
       @formatting_cache[uri]?.try(&.[0])
     end
