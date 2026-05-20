@@ -185,6 +185,7 @@ module CrystalV2
         getter background_indexing : Bool
         getter project_cache : Bool
         getter ast_cache : Bool
+        getter hover_reference_count : Bool
         getter compiler_flags : Set(String)
 
         def initialize(
@@ -193,10 +194,11 @@ module CrystalV2
           @best_effort_inference : Bool = true,
           @prelude_symbol_only : Bool = false,
           @real_prelude : Bool = true,
-          @debounce_ms : Int32 = 300,         # Default 300ms debounce
-          @background_indexing : Bool = true, # Default: load prelude in background
-          @project_cache : Bool = true,       # Default: cache project state to disk
-          @ast_cache : Bool = false,          # Default: staged rollout behind explicit flag
+          @debounce_ms : Int32 = 300,                      # Default 300ms debounce
+          @background_indexing : Bool = true,              # Default: load prelude in background
+          @project_cache : Bool = true,                    # Default: cache project state to disk
+          @ast_cache : Bool = false,                       # Default: staged rollout behind explicit flag
+          @hover_reference_count : Bool = false,           # Keep hover on the low-latency path by default
           @compiler_flags : Set(String) = Set(String).new, # Additional -D flags
         )
         end
@@ -213,6 +215,7 @@ module CrystalV2
           # Project cache enabled by default, can be disabled via env or config
           project_cache = ENV["LSP_PROJECT_CACHE"]? != "0"
           ast_cache = ENV["LSP_AST_CACHE"]? == "1"
+          hover_reference_count = ENV["LSP_HOVER_REFERENCE_COUNT"]? == "1"
           # Compiler flags from environment (comma-separated) or config
           compiler_flags = Set(String).new
           if env_flags = ENV["LSP_COMPILER_FLAGS"]?
@@ -253,6 +256,9 @@ module CrystalV2
                 if value = hash["ast_cache"]?.try(&.as_bool?)
                   ast_cache = value
                 end
+                if value = hash["hover_reference_count"]?.try(&.as_bool?)
+                  hover_reference_count = value
+                end
                 # Parse compiler_flags as array of strings
                 if flags_arr = hash["compiler_flags"]?.try(&.as_a?)
                   flags_arr.each do |flag|
@@ -269,7 +275,7 @@ module CrystalV2
 
           debug_path = File.expand_path(debug_path) if debug_path
 
-          new(debug_path, recovery_mode, best_effort_inference, prelude_symbol_only, real_prelude, debounce_ms, background_indexing, project_cache, ast_cache, compiler_flags)
+          new(debug_path, recovery_mode, best_effort_inference, prelude_symbol_only, real_prelude, debounce_ms, background_indexing, project_cache, ast_cache, hover_reference_count, compiler_flags)
         end
       end
 
@@ -335,7 +341,7 @@ module CrystalV2
           identifier_symbols : Hash(Frontend::ExprId, Semantic::Symbol)?,
           symbol_table : Semantic::SymbolTable?,
           requires : Array(String),
-          from_prelude : Bool
+          from_prelude : Bool,
         )
           # Avoid infinite requeue if a path already timed out twice
           if @inference_timeouts.includes?(path)
@@ -507,7 +513,7 @@ module CrystalV2
         @indexing_active : Bool
         @indexing_message : String?
         @indexing_last_sent : Time::Instant?
-        @semantic_token_cache : Hash(String, {Int32, SemanticTokens})  # URI -> {version, tokens}
+        @semantic_token_cache : Hash(String, {Int32, SemanticTokens}) # URI -> {version, tokens}
 
         def initialize(@input = STDIN, @output = STDOUT, config : ServerConfig = ServerConfig.load)
           @config = config
@@ -1590,7 +1596,7 @@ module CrystalV2
               t3 = Time.instant
               start_background_project_index
               t4 = Time.instant
-              STDERR.puts "[INIT] caps=#{(t1-t0).total_milliseconds.round(1)}ms cache=#{(t3-t2).total_milliseconds.round(1)}ms bg_index=#{(t4-t3).total_milliseconds.round(1)}ms" if ENV["LSP_DEBUG"]?
+              STDERR.puts "[INIT] caps=#{(t1 - t0).total_milliseconds.round(1)}ms cache=#{(t3 - t2).total_milliseconds.round(1)}ms bg_index=#{(t4 - t3).total_milliseconds.round(1)}ms" if ENV["LSP_DEBUG"]?
             elsif root_path = params["rootPath"]?.try(&.as_s?)
               @project_root = root_path
               debug("Project root (from rootPath): #{@project_root}")
@@ -1599,7 +1605,7 @@ module CrystalV2
               t3 = Time.instant
               start_background_project_index
               t4 = Time.instant
-              STDERR.puts "[INIT] caps=#{(t1-t0).total_milliseconds.round(1)}ms cache=#{(t3-t2).total_milliseconds.round(1)}ms bg_index=#{(t4-t3).total_milliseconds.round(1)}ms" if ENV["LSP_DEBUG"]?
+              STDERR.puts "[INIT] caps=#{(t1 - t0).total_milliseconds.round(1)}ms cache=#{(t3 - t2).total_milliseconds.round(1)}ms bg_index=#{(t4 - t3).total_milliseconds.round(1)}ms" if ENV["LSP_DEBUG"]?
             end
           end
 
@@ -1683,7 +1689,7 @@ module CrystalV2
           # Only remove from legacy @documents
           unregister_document_symbols(uri)
           @documents.delete(uri)
-          @semantic_token_cache.delete(uri)  # Clear cached tokens
+          @semantic_token_cache.delete(uri) # Clear cached tokens
         end
 
         private def build_document_index(program : Frontend::Program, path : String?, build_expr_index : Bool = true) : DocumentIndex
@@ -1992,7 +1998,6 @@ module CrystalV2
         end
 
         private def load_prelude
-
           @prelude_guard_deadline = Time.instant + 20.seconds
           # Phase 1: Try loading from binary cache (fastest path)
           if try_load_prelude_from_cache
@@ -2214,7 +2219,7 @@ module CrystalV2
           table = Semantic::SymbolTable.new
 
           cache.files.each do |file_state|
-            summaries = file_state.summaries  # Binary parsing, cached
+            summaries = file_state.summaries # Binary parsing, cached
             SymbolSummaryUtils.add_summaries_to_table(
               table,
               summaries,
@@ -2419,7 +2424,7 @@ module CrystalV2
         private def register_cached_symbols(cache : PreludeCache)
           if cache.files.any?
             cache.files.each do |file_state|
-              summaries = file_state.summaries  # Binary parsing, cached
+              summaries = file_state.summaries # Binary parsing, cached
               register_cached_summary_methods(summaries, file_state.path, "")
             end
           else
@@ -3214,8 +3219,8 @@ module CrystalV2
             end
           end
 
-          source.included_modules.each do |mod_symbol|
-            target.include_module(mod_symbol) unless target.included_modules.includes?(mod_symbol)
+          source.included_modules.each do |mod_ref|
+            target.include_module(mod_ref.symbol, mod_ref.type_arg_names) unless target.included_modules.includes?(mod_ref)
           end
         end
 
@@ -3555,7 +3560,7 @@ module CrystalV2
           line_offsets = build_line_offsets(new_text)
           @documents[uri] = DocumentState.new(doc, program, type_context, identifier_symbols, symbol_table, requires, index, line_offsets, path: doc_path)
           register_document_symbols(uri, @documents[uri])
-          @semantic_token_cache.delete(uri)  # Invalidate cache on content change
+          @semantic_token_cache.delete(uri) # Invalidate cache on content change
           warm_dependencies(doc_path, @documents[uri]) if doc_path
 
           publish_diagnostics(uri, diagnostics, version)
@@ -4623,7 +4628,7 @@ module CrystalV2
           # Count references for this symbol (exclude declaration)
           # Skip for MethodSymbol - call sites (.new, method calls) aren't tracked in identifier_symbols
           ref_info = ""
-          if symbol && !symbol.is_a?(Semantic::MethodSymbol)
+          if @config.hover_reference_count && symbol && !symbol.is_a?(Semantic::MethodSymbol)
             refs = find_all_references(symbol, false)
             if refs.size > 0
               ref_info = "\n\n---\n\n📍 **#{refs.size} reference#{refs.size == 1 ? "" : "s"}**"
@@ -10006,12 +10011,12 @@ module CrystalV2
           t5 = Time.instant
 
           if profile
-            STDERR.puts "[PROFILE] semantic tokens: setup=#{(t1-t0).total_milliseconds.round(1)}ms " \
-                        "ast_walk=#{(t2-t1).total_milliseconds.round(1)}ms (roots: #{roots_processed} processed, #{roots_skipped} skipped) " \
-                        "lexical=#{(t3-t2).total_milliseconds.round(1)}ms " \
-                        "sort+dedup=#{(t4-t3).total_milliseconds.round(1)}ms " \
-                        "encode=#{(t5-t4).total_milliseconds.round(1)}ms " \
-                        "total=#{(t5-t0).total_milliseconds.round(1)}ms tokens=#{raw_tokens.size}"
+            STDERR.puts "[PROFILE] semantic tokens: setup=#{(t1 - t0).total_milliseconds.round(1)}ms " \
+                        "ast_walk=#{(t2 - t1).total_milliseconds.round(1)}ms (roots: #{roots_processed} processed, #{roots_skipped} skipped) " \
+                        "lexical=#{(t3 - t2).total_milliseconds.round(1)}ms " \
+                        "sort+dedup=#{(t4 - t3).total_milliseconds.round(1)}ms " \
+                        "encode=#{(t5 - t4).total_milliseconds.round(1)}ms " \
+                        "total=#{(t5 - t0).total_milliseconds.round(1)}ms tokens=#{raw_tokens.size}"
           end
 
           SemanticTokens.new(data: data)

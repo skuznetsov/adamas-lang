@@ -56,4 +56,46 @@ describe CrystalV2::Compiler::LSP::Server do
   ensure
     FileUtils.rm_rf(dir) if dir
   end
+
+  it "keeps hover reference counting off the foreground path by default" do
+    dir = File.join(Dir.tempdir, "lsp_hover_refs_#{Random::Secure.hex(6)}")
+    FileUtils.mkdir_p(dir)
+    path = File.join(dir, "main.cr")
+    source = <<-CR
+    value = 1
+    value
+    CR
+    File.write(path, source)
+
+    default_server = CrystalV2::Compiler::LSP::Server.new(
+      IO::Memory.new,
+      IO::Memory.new,
+      CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
+    )
+    default_uri = default_server.spec_store_document(source, dir, path)
+
+    value_offset = source.rindex("value").not_nil!
+    line_idx = source[0, value_offset].count('\n')
+    last_nl = source.rindex('\n', value_offset) || -1
+    char_idx = value_offset - last_nl - 1
+
+    hover = default_server.spec_hover(default_uri, line_idx, char_idx)
+    contents = hover["result"]["contents"]["value"].as_s
+    contents.includes?("reference").should be_false
+
+    opt_in_server = CrystalV2::Compiler::LSP::Server.new(
+      IO::Memory.new,
+      IO::Memory.new,
+      CrystalV2::Compiler::LSP::ServerConfig.new(
+        background_indexing: false,
+        project_cache: false,
+        hover_reference_count: true
+      )
+    )
+    opt_in_uri = opt_in_server.spec_store_document(source, dir, path)
+    opt_in_hover = opt_in_server.spec_hover(opt_in_uri, line_idx, char_idx)
+    opt_in_hover["result"]["contents"]["value"].as_s.includes?("reference").should be_true
+  ensure
+    FileUtils.rm_rf(dir) if dir
+  end
 end

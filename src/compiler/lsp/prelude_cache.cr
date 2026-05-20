@@ -18,11 +18,11 @@ module CrystalV2
         getter column : Int32
         getter type_annotation : String?
         getter parent_scope : String?
-        getter params : Array(String)?        # for methods
-        getter return_type : String?          # for methods
-        getter superclass : String?           # for classes
-        getter type_params : Array(String)?   # for generic classes/methods
-        getter? is_class_method : Bool        # for methods: def self.* vs def *
+        getter params : Array(String)?      # for methods
+        getter return_type : String?        # for methods
+        getter superclass : String?         # for classes
+        getter type_params : Array(String)? # for generic classes/methods
+        getter? is_class_method : Bool      # for methods: def self.* vs def *
 
         enum SymbolKind : UInt8
           Class
@@ -48,7 +48,7 @@ module CrystalV2
           @return_type : String? = nil,
           @superclass : String? = nil,
           @type_params : Array(String)? = nil,
-          @is_class_method : Bool = false
+          @is_class_method : Bool = false,
         )
         end
 
@@ -141,7 +141,7 @@ module CrystalV2
       # - TypeIndex data: Bytes (binary serialized TypeIndex)
       class PreludeCache
         MAGIC   = "CV2C"
-        VERSION = 6_u32  # v6: Binary summaries instead of JSON in CachedFileState
+        VERSION = 6_u32 # v6: Binary summaries instead of JSON in CachedFileState
 
         getter symbols : Array(CachedSymbolInfo)
         getter stdlib_hash : UInt64
@@ -152,7 +152,7 @@ module CrystalV2
           @symbols : Array(CachedSymbolInfo),
           @stdlib_hash : UInt64,
           @files : Array(CachedFileState) = [] of CachedFileState,
-          @type_index : Semantic::TypeIndex? = nil
+          @type_index : Semantic::TypeIndex? = nil,
         )
         end
 
@@ -300,7 +300,7 @@ module CrystalV2
           file_path : String,
           parent_scope : String? = nil,
           depth : Int32 = 0,
-          visited : Set(UInt64)? = nil
+          visited : Set(UInt64)? = nil,
         ) : Array(CachedSymbolInfo)
           return [] of CachedSymbolInfo if depth > 50
           visited ||= Set(UInt64).new
@@ -333,7 +333,7 @@ module CrystalV2
           symbol : Semantic::Symbol,
           program : Frontend::Program,
           file_path : String,
-          parent_scope : String?
+          parent_scope : String?,
         ) : CachedSymbolInfo?
           node_id = symbol.node_id
           return nil if node_id.index < 0 || node_id.index >= program.arena.size
@@ -561,7 +561,7 @@ module CrystalV2
             symbol = Semantic::InstanceVarSymbol.new(info.name, node_id, info.type_annotation, info.file_path)
             symbol
           when .class_var?
-            symbol = Semantic::ClassVarSymbol.new(info.name, node_id, info.type_annotation, info.file_path)
+            symbol = Semantic::ClassVarSymbol.new(info.name, node_id, info.type_annotation, file_path: info.file_path)
             symbol
           when .global_var?
             symbol = Semantic::GlobalVarSymbol.new(info.name, node_id, info.type_annotation, info.file_path)

@@ -172,7 +172,7 @@ module CrystalV2
       class Runner
         class TimeoutError < Exception; end
 
-        def initialize(@server_cmd : Array(String), @scenario : Array(FileScenario), @timeout : Float64, @verbose : Bool)
+        def initialize(@server_cmd : Array(String), @scenario : Array(FileScenario), @timeout : Float64, @verbose : Bool, @json_report : String?)
           @queue = Channel(JSON::Any | Symbol).new
           @notifications = Hash(String, NotificationStats).new
           @results = [] of Result
@@ -189,6 +189,9 @@ module CrystalV2
           end
           shutdown
           print_summary
+          if path = @json_report
+            write_json_report(path)
+          end
         rescue error
           STDERR.puts("[harness error] #{error.class}: #{error.message}")
           error.backtrace?.try { |bt| bt.each { |line| STDERR.puts("  #{line}") } }
@@ -768,6 +771,79 @@ module CrystalV2
           end
         end
 
+        private def write_json_report(path : String)
+          File.open(path, "w") do |io|
+            JSON.build(io) do |json|
+              json.object do
+                write_summary_json(json)
+
+                json.field "results" do
+                  json.array do
+                    results.each do |res|
+                      json.object do
+                        json.field "name", res.name
+                        json.field "method", res.method
+                        json.field "status", res.status.to_s
+                        json.field "duration_ms", res.duration_ms
+                        json.field "summary", res.summary
+                      end
+                    end
+                  end
+                end
+
+                json.field "notifications" do
+                  json.object do
+                    notifications.each do |method, stats|
+                      json.field method do
+                        json.object do
+                          json.field "count", stats.count
+                          json.field "diagnostics", stats.diagnostics
+                          json.field "last", stats.last
+                        end
+                      end
+                    end
+                  end
+                end
+
+                json.field "diagnostics_by_uri" do
+                  json.array do
+                    diagnostics_by_uri.each_value do |entry|
+                      json.object do
+                        json.field "uri", entry.uri
+                        json.field "count", entry.count
+                        json.field "version", entry.version
+                      end
+                    end
+                  end
+                end
+              end
+            end
+          end
+        end
+
+        private def write_summary_json(json : JSON::Builder)
+          durations = results.map(&.duration_ms).sort
+          errors = results.count { |res| res.status != :ok }
+          json.field "summary" do
+            json.object do
+              json.field "actions", results.size
+              json.field "errors", errors
+              json.field "max_ms", durations.last? || 0.0
+              json.field "p50_ms", percentile(durations, 0.50)
+              json.field "p95_ms", percentile(durations, 0.95)
+              json.field "timeout_seconds", @timeout
+              json.field "server", @server_cmd.join(" ")
+            end
+          end
+        end
+
+        private def percentile(sorted_values : Array(Float64), quantile : Float64) : Float64
+          return 0.0 if sorted_values.empty?
+          clamped = quantile.clamp(0.0, 1.0)
+          index = ((sorted_values.size - 1) * clamped).ceil.to_i
+          sorted_values[index]
+        end
+
         private def resolve_position(text : String, spec : PositionSpec)
           index = find_occurrence(text, spec.needle, spec.occurrence)
           index += spec.needle.size if spec.mode == NeedleMode::End
@@ -836,6 +912,7 @@ module CrystalV2
         property scenario : Array(FileScenario) = DEFAULT_SCENARIO
         property verbose : Bool = false
         property files : Array(String) = [] of String
+        property json_report : String?
       end
 
       def self.parse_options(argv : Array(String)) : Options
@@ -858,6 +935,10 @@ module CrystalV2
 
           opts.on("-v", "--verbose", "Print raw notifications and stderr") do
             options.verbose = true
+          end
+
+          opts.on("--json=FILE", "Write machine-readable benchmark results to FILE") do |path|
+            options.json_report = path
           end
 
           opts.on("--file=PATH", "Add a Crystal file to open (repeatable)") do |path|
@@ -946,7 +1027,7 @@ module CrystalV2
       def self.run(argv = ARGV)
         options = parse_options(argv)
         scenarios = scenarios_for(options)
-        runner = Runner.new(options.server, scenarios, options.timeout, options.verbose)
+        runner = Runner.new(options.server, scenarios, options.timeout, options.verbose, options.json_report)
         runner.run
       end
 

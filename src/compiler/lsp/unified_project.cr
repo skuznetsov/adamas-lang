@@ -142,7 +142,7 @@ module CrystalV2
           end_col = read_optional_int32(io)
 
           new(name, kind, detail, return_type, inferred_type, params, ivars, consts,
-              class_children, children, start_line, start_col, end_line, end_col)
+            class_children, children, start_line, start_col, end_line, end_col)
         end
 
         def self.to_bytes_array(io : IO, summaries : Array(SymbolSummary)) : Nil
@@ -290,7 +290,7 @@ module CrystalV2
               return_type: nil,
               inferred_type: inferred_type,
               params: nil,
-              ivars: ivars + class_vars,  # Include class vars with ivars
+              ivars: ivars + class_vars, # Include class vars with ivars
               consts: consts.empty? ? nil : consts,
               class_children: class_children,
               children: children,
@@ -554,7 +554,7 @@ module CrystalV2
             var_sym.file_path = file_path
             var_sym
           when "class_var"
-            cvar_sym = Semantic::ClassVarSymbol.new(summary.name, node_id, summary.detail, file_path)
+            cvar_sym = Semantic::ClassVarSymbol.new(summary.name, node_id, summary.detail, file_path: file_path)
             cvar_sym
           when "const"
             const_sym = Semantic::ConstantSymbol.new(summary.name, node_id, node_id)
@@ -582,7 +582,7 @@ module CrystalV2
           file_path : String,
           ranges_store : Hash(String, Hash(String, LSP::Range)),
           types_store : Hash(String, Hash(String, String)),
-          container : String = ""
+          container : String = "",
         )
           summaries.each do |summary|
             next unless sym = build_symbol_from_summary(summary, file_path, container, ranges_store, types_store)

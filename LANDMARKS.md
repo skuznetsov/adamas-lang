@@ -4780,6 +4780,66 @@ Boundary:
 
 Trust: {F/G/R: 0.86/0.46/0.88} [verified]
 
+## LM-583 — LSP foreground hover avoids workspace reference scans by default
+
+Status: verified for the focused LSP hover/cache/harness slice on `codegen`.
+
+Change:
+
+- `ServerConfig` now exposes `hover_reference_count`, loaded from
+  `LSP_HOVER_REFERENCE_COUNT=1` or `hover_reference_count` in the LSP config.
+- `textDocument/hover` no longer calls `find_all_references` on the default
+  foreground path. The old reference-count display remains available by
+  opting in.
+- The benchmark harness can write a machine-readable JSON report with action
+  timings, p50/p95/max, notification counts, and diagnostics.
+- Two stale LSP cache/merge compile frontiers were fixed while building the
+  LSP server: included-module merging now preserves `IncludedModuleRef`
+  metadata, and cached class-variable symbols use the current named
+  `file_path:` constructor.
+
+WBA framing:
+
+- Window/trigger: hover on a resolved non-method symbol was performing an
+  O(open-doc identifiers) reference scan before responding.
+- Transport corridor: request-time hover resolution should transport only the
+  current document snapshot and already-available semantic/cache facts.
+- Boundary: explicit references remain a separate LSP request; hover must not
+  silently expand into workspace reference work unless configured.
+- Legal move: gate the reference-count adornment behind an explicit config bit
+  without changing `textDocument/references`.
+- Potential decrease: foreground hover work loses the workspace-reference scan
+  component while preserving opt-in behavior.
+
+Evidence:
+
+- `crystal build src/lsp_main.cr -o bin/crystal_v2_lsp --error-trace`
+- Harness compile/help guard through safe runner:
+  `crystal build benchmarks/lsp_harness.cr -o <tmp> --error-trace` then
+  `scripts/run_safe.sh <tmp> 10 512 --help`
+- Focused LSP spec binary through safe runner:
+  `crystal build spec/lsp/hover_definition_integration_spec.cr
+  spec/lsp/hover_definition_indexing_spec.cr
+  spec/lsp/references_integration_spec.cr
+  spec/lsp/ast_cache_dependency_integration_spec.cr -o <tmp> --error-trace`
+  then `scripts/run_safe.sh <tmp> 60 1024 --no-color`: 5 examples, 0 failures.
+- `crystal tool format --check src/compiler/lsp/server.cr
+  src/compiler/lsp/unified_project.cr src/compiler/lsp/prelude_cache.cr
+  benchmarks/lsp_harness.cr spec/lsp/hover_definition_integration_spec.cr`
+- `git diff --check`
+
+Known limits:
+
+- The full `spec/lsp/*_spec.cr` safe-run currently fails in existing
+  semantic-token/inlay-position specs (9 failures out of 212 examples). This
+  slice does not claim those surfaces are repaired.
+- Live process-level latency measurement still needs an LSP-safe monitor or a
+  harness-level resource guard, because `scripts/run_safe.sh` captures stdout
+  and therefore corrupts a stdio JSON-RPC server protocol if wrapped around
+  `bin/crystal_v2_lsp`.
+
+Trust: {F/G/R: 0.82/0.34/0.86} [verified]
+
 ### LM-580 — s2 registration hardening: parsed number macro values, alias suffix index, and tuple-key avoidance
 
 Status: verified for s1 -> s2 build and focused no-prelude guards on branch
