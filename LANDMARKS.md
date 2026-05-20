@@ -5114,6 +5114,58 @@ Boundary:
 
 Trust: {F/G/R: 0.85/0.64/0.9} [verified]
 
+### LM-596 — LSP project cache skips vendored stdlib payloads
+
+Status: VERIFIED on `codegen`.
+
+The LSP startup cache was restoring 1906 files on initialize. Cache inspection
+showed 1819 entries were under `src/stdlib`, taking about 4MB of a 5.9MB cache.
+That made initialize pay for stdlib project-cache reconstruction even when the
+active editing surface was compiler code.
+
+Accepted change:
+
+- `ProjectCache.cacheable_project_file?` rejects `src/stdlib/**` while keeping
+  project-local compiler/runtime files.
+- Project cache load filters legacy cache entries through that predicate, so an
+  existing stdlib-heavy cache does not need to be deleted manually.
+- Project cache save writes the filtered payload, and background project
+  indexing skips `src/stdlib/**`.
+- Regression coverage asserts that a compiler file remains cacheable while a
+  vendored stdlib file is excluded from the saved project cache payload.
+
+Evidence:
+
+- Cache specs:
+  `crystal build spec/lsp/project_cache_validation_spec.cr
+  spec/lsp/project_cache_type_summary_spec.cr -o /tmp/lsp_project_cache_spec
+  --error-trace` and
+  `scripts/run_safe.sh /tmp/lsp_project_cache_spec 120 1536 --no-color`,
+  6 examples, 0 failures.
+- Warm focused startup harness:
+  `LSP_DEBUG=1 scripts/run_safe.sh /tmp/lsp_harness_cache_slim 120 1536
+  --server bin/crystal_v2_lsp --file src/compiler/lsp/server.cr -v`.
+  Project cache load went from 1906 files / ~300ms to 87 files / 59.0ms, and
+  initialize measured 154.6ms while `didOpen` still used cached expression
+  types.
+- Default LSP harness:
+  `scripts/run_safe.sh /tmp/lsp_harness_cache_slim 120 1536 --server
+  bin/crystal_v2_lsp`, passed; initialize measured 152.6ms.
+- Full LSP suite:
+  `crystal build spec/lsp/*_spec.cr -o /tmp/lsp_full_spec --error-trace` and
+  `scripts/run_safe.sh /tmp/lsp_full_spec 120 1536 --no-color`, 227 examples,
+  0 failures.
+
+Boundary:
+
+- This does not change the separate prelude cache; background prelude table
+  rebuild still costs about 190-200ms before the first document fully settles.
+- This is scoped to the project cache. Opening `src/stdlib/**` directly still
+  falls back to normal document analysis rather than relying on project-cache
+  state.
+
+Trust: {F/G/R: 0.88/0.66/0.91} [verified]
+
 ## LM-583 — LSP foreground hover avoids workspace reference scans by default
 
 Status: verified for the focused LSP hover/cache/harness slice on `codegen`.

@@ -2621,6 +2621,7 @@ module CrystalV2
               batch_count = 0
 
               paths.each do |path|
+                next unless ProjectCache.cacheable_project_file?(path, root)
                 next if @project.files.has_key?(path)
                 begin
                   source = File.read(path)

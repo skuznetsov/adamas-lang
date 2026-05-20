@@ -66,6 +66,37 @@ describe CrystalV2::Compiler::LSP::ProjectCacheLoader do
       FileUtils.rm_rf(root) if root
     end
 
+    it "excludes vendored stdlib files from project cache payloads" do
+      root = File.join(Dir.tempdir, "cache_exclude_stdlib_#{Random::Secure.hex(6)}")
+      compiler_dir = File.join(root, "src", "compiler")
+      stdlib_dir = File.join(root, "src", "stdlib")
+      FileUtils.mkdir_p(compiler_dir)
+      FileUtils.mkdir_p(stdlib_dir)
+      compiler_path = File.join(compiler_dir, "server.cr")
+      stdlib_path = File.join(stdlib_dir, "array.cr")
+      File.write(compiler_path, "module CompilerFile\nend\n")
+      File.write(stdlib_path, "class Array\nend\n")
+
+      project = CrystalV2::Compiler::LSP::UnifiedProjectState.new
+      project.files[compiler_path] = CrystalV2::Compiler::LSP::FileAnalysisState.new(
+        path: compiler_path,
+        mtime: File.info(compiler_path).modification_time,
+        symbols: ["CompilerFile"]
+      )
+      project.files[stdlib_path] = CrystalV2::Compiler::LSP::FileAnalysisState.new(
+        path: stdlib_path,
+        mtime: File.info(stdlib_path).modification_time,
+        symbols: ["Array"]
+      )
+
+      cache = CrystalV2::Compiler::LSP::ProjectCache.from_project(project, root)
+      cache.files.map(&.path).should eq([compiler_path])
+      CrystalV2::Compiler::LSP::ProjectCache.cacheable_project_file?(compiler_path, root).should be_true
+      CrystalV2::Compiler::LSP::ProjectCache.cacheable_project_file?(stdlib_path, root).should be_false
+    ensure
+      FileUtils.rm_rf(root) if root
+    end
+
     it "restores expression types from TypeIndex" do
       root = File.join(Dir.tempdir, "cache_restore_types_#{Random::Secure.hex(6)}")
       src_dir = File.join(root, "src")

@@ -21,12 +21,12 @@ module CrystalV2
       # Note: Expression types are stored in TypeIndex, not per-file JSON
       struct CachedFileState
         getter path : String
-        getter mtime : Int64             # Unix timestamp
-        getter symbols : Array(String)   # Top-level symbol names
-        getter requires : Array(String)  # Required file paths
-        getter diagnostics_count : Int32 # Just count, not full diagnostics
-        @summary_bytes : Bytes           # Binary-encoded symbol summaries
-        @cached_summaries : Array(SymbolSummary)?  # Lazy-loaded summaries
+        getter mtime : Int64                      # Unix timestamp
+        getter symbols : Array(String)            # Top-level symbol names
+        getter requires : Array(String)           # Required file paths
+        getter diagnostics_count : Int32          # Just count, not full diagnostics
+        @summary_bytes : Bytes                    # Binary-encoded symbol summaries
+        @cached_summaries : Array(SymbolSummary)? # Lazy-loaded summaries
 
         def initialize(
           @path : String,
@@ -128,7 +128,7 @@ module CrystalV2
       # Project-level cache
       class ProjectCache
         MAGIC   = "CV2P"
-        VERSION = 6_u32  # v6: Binary summaries instead of JSON
+        VERSION = 6_u32 # v6: Binary summaries instead of JSON
 
         getter files : Array(CachedFileState)
         getter project_root : String
@@ -139,7 +139,7 @@ module CrystalV2
           @files : Array(CachedFileState),
           @project_root : String,
           @root_hash : UInt64,
-          @type_index : Semantic::TypeIndex? = nil
+          @type_index : Semantic::TypeIndex? = nil,
         )
         end
 
@@ -149,6 +149,19 @@ module CrystalV2
           # Use hash of project root for unique filename
           hash = fnv_hash(project_root)
           File.join(cache_dir, "crystal_v2_lsp", "projects", "#{hash}.cache")
+        end
+
+        def self.cacheable_project_file?(path : String, project_root : String) : Bool
+          expanded_path = File.expand_path(path)
+          expanded_root = File.expand_path(project_root)
+          root_prefix = expanded_root.ends_with?(File::SEPARATOR) ? expanded_root : "#{expanded_root}#{File::SEPARATOR}"
+          return false unless expanded_path.starts_with?(root_prefix)
+
+          stdlib_root = File.join(expanded_root, "src", "stdlib")
+          stdlib_prefix = "#{stdlib_root}#{File::SEPARATOR}"
+          return false if expanded_path == stdlib_root || expanded_path.starts_with?(stdlib_prefix)
+
+          true
         end
 
         # Load cache for a project
@@ -263,7 +276,9 @@ module CrystalV2
           # Build TypeIndex from cached_expr_types (TypeIndex is now the only storage)
           type_index = Semantic::TypeIndex.new
 
-          files = project.files.map do |path, state|
+          files = project.files.compact_map do |path, state|
+            next nil unless cacheable_project_file?(path, project_root)
+
             mtime = state.mtime.try(&.to_unix) || 0_i64
 
             # Populate TypeIndex from cached_expr_types (per-file storage)
@@ -325,8 +340,8 @@ module CrystalV2
             return {valid_count: 0, invalid_paths: [] of String}
           end
 
-          valid_files = cache.valid_files
-          invalid_paths = cache.invalid_file_paths
+          valid_files = cache.valid_files.select { |cached| ProjectCache.cacheable_project_file?(cached.path, project_root) }
+          invalid_paths = cache.invalid_file_paths.select { |path| ProjectCache.cacheable_project_file?(path, project_root) }
           type_index = cache.type_index
 
           # Load valid files into project (symbols only, no AST)
@@ -339,8 +354,8 @@ module CrystalV2
               symbols: cached.symbols,
               diagnostics: [] of Diagnostic,
               requires: cached.requires,
-              symbol_summaries: cached.summaries,  # Binary parsing, cached
-              from_cache: true # No AST available, only summaries
+              symbol_summaries: cached.summaries, # Binary parsing, cached
+              from_cache: true                    # No AST available, only summaries
             )
 
             project.files[cached.path] = state
@@ -369,8 +384,10 @@ module CrystalV2
         private def self.restore_expr_types_from_typeindex(
           project : UnifiedProjectState,
           path : String,
-          type_index : Semantic::TypeIndex
-        )
+          type_index : Semantic::TypeIndex,
+        ) : Bool
+          return true if project.cached_expr_types.has_key?(path)
+
           if file_index = type_index.file_index(path)
             expr_map = {} of Int32 => String
             file_index.@dense.each_with_index do |type_id, expr_idx|
@@ -387,7 +404,10 @@ module CrystalV2
               end
             end
             project.cached_expr_types[path] = expr_map unless expr_map.empty?
+            return !expr_map.empty?
           end
+
+          false
         end
 
         # Save project state to cache
