@@ -4960,10 +4960,68 @@ Known limits:
 - This slice fixes correctness and measurement for document symbols; it does
   not claim large-file documentSymbol is sub-100ms. The current evidence points
   to payload serialization/parsing size as the next bottleneck.
-- The full `spec/lsp/*_spec.cr` suite still has known pre-existing
-  semantic-token/inlay-position failures from LM-583.
+- The old full-suite semantic-token/inlay-position failures are closed by
+  LM-586.
 
 Trust: {F/G/R: 0.84/0.42/0.88} [verified]
+
+## LM-586 — LSP positions derive from byte offsets for inlay and semantic tokens
+
+Status: verified for the full LSP spec suite on `codegen`.
+
+Change:
+
+- LSP inlay hint positions now derive from `Span#start_offset` /
+  `Span#end_offset` plus document line offsets, instead of trusting
+  `Span#*_column` as an exclusive cursor.
+- Semantic token emission now uses offset-derived positions for identifiers,
+  member names, literals, lexical keywords/strings/symbols, parameter spans,
+  accessors, ivars/class vars/globals, and constants.
+- Member-access token placement now searches for the member name in the source
+  corridor after the receiver byte span, so `foo.bar` and `obj.calculate` no
+  longer depend on receiver `end_column` semantics.
+- The inlay position spec now asserts the offset-based conversion invariant
+  directly, matching the production path.
+
+WBA framing:
+
+- Window/trigger: the full LSP suite had 9 failures: one inlay position test
+  and eight semantic-token gaps for parameters, member/nested identifiers,
+  strings, symbols, and elsif/control-flow coverage.
+- Transport corridor: parser byte offsets are the stable document-coordinate
+  carrier; `*_column` values are still useful for diagnostics but are not a
+  safe exclusive-end transport for LSP foreground features.
+- Boundary: parser span representation is unchanged; the legal move is local
+  to LSP coordinate conversion and token emission.
+- Potential decrease: removes a whole class of off-by-one/missing-token cases
+  without adding per-token special-case patches.
+
+Evidence:
+
+- `crystal tool format --check src/compiler/lsp/server.cr
+  spec/lsp/lsp_inlay_hint_spec.cr`
+- `git diff --check`
+- `crystal build src/lsp_main.cr -o bin/crystal_v2_lsp --error-trace`
+- Focused failing pack through safe runner:
+  `crystal build spec/lsp/lsp_inlay_hint_spec.cr
+  spec/lsp/lsp_semantic_tokens_spec.cr
+  spec/lsp/semantic_tokens_integration_spec.cr
+  spec/lsp/semantic_tokens_spec.cr -o <tmp> --error-trace` then
+  `scripts/run_safe.sh <tmp> 120 1536 --no-color`: 54 examples, 0 failures.
+- Full LSP suite through safe runner:
+  `crystal build spec/lsp/*_spec.cr -o <tmp> --error-trace` then
+  `scripts/run_safe.sh <tmp> 120 1536 --no-color`: 213 examples, 0 failures.
+- Safe wrapped harness on `src/compiler/lsp/server.cr` exited 0 with
+  `errors=0`, `semantic tokens` reporting 135750 ints, representative
+  semanticTokens timing ~392ms, and hover timing ~30ms.
+
+Known limits:
+
+- Correctness is closed for the current LSP spec gate. Large-file semantic
+  token payloads are now more complete and larger; payload-size optimization is
+  a separate follow-up, not part of this fix.
+
+Trust: {F/G/R: 0.88/0.48/0.90} [verified]
 
 ### LM-580 — s2 registration hardening: parsed number macro values, alias suffix index, and tuple-key avoidance
 

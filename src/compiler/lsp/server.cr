@@ -3817,6 +3817,30 @@ module CrystalV2
           nil
         end
 
+        private def position_from_offset(text : String, offset : Int32, line_offsets : Array(Int32)? = nil) : Position
+          offsets = line_offsets || build_line_offsets(text)
+          return Position.new(0, 0) if offsets.empty?
+
+          bounded = offset
+          bounded = 0 if bounded < 0
+          bounded = text.bytesize if bounded > text.bytesize
+
+          low = 0
+          high = offsets.size - 1
+          line = 0
+          while low <= high
+            mid = (low + high) // 2
+            if offsets[mid] <= bounded
+              line = mid
+              low = mid + 1
+            else
+              high = mid - 1
+            end
+          end
+
+          Position.new(line, bounded - offsets[line])
+        end
+
         private def identifier_at(text : String, offset : Int32) : String?
           return nil if offset < 0 || offset >= text.bytesize
           start = offset
@@ -5655,14 +5679,18 @@ module CrystalV2
             doc_state.program,
             type_context,
             identifier_symbols,
-            range
+            range,
+            doc_state.text_document.text,
+            doc_state.line_offsets
           ).each { |entry| hints << entry }
 
           # Collect parameter hints
           collect_parameter_hints(
             doc_state.program,
             identifier_symbols,
-            range
+            range,
+            doc_state.text_document.text,
+            doc_state.line_offsets
           ).each { |entry| hints << entry }
 
           debug("Returning #{hints.size} inlay hints")
@@ -6643,6 +6671,8 @@ module CrystalV2
           type_context : Semantic::TypeContext,
           identifier_symbols : Hash(Frontend::ExprId, Semantic::Symbol),
           range : Range,
+          text : String,
+          line_offsets : Array(Int32),
         ) : Array(InlayHint)
           hints = [] of InlayHint
 
@@ -6666,12 +6696,7 @@ module CrystalV2
             type = type_context.get_type(expr_id)
             next unless type
 
-            # Create hint at end of variable name
-            # Position after identifier (Span is 1-indexed, Position is 0-indexed)
-            position = Position.new(
-              line: node.span.end_line - 1,
-              character: node.span.end_column - 1
-            )
+            position = position_from_offset(text, node.span.end_offset, line_offsets)
 
             label = ": #{type}"
 
@@ -6696,6 +6721,8 @@ module CrystalV2
           program : Frontend::Program,
           identifier_symbols : Hash(Frontend::ExprId, Semantic::Symbol),
           range : Range,
+          text : String,
+          line_offsets : Array(Int32),
         ) : Array(InlayHint)
           hints = [] of InlayHint
 
@@ -6708,6 +6735,8 @@ module CrystalV2
               program.arena,
               identifier_symbols,
               range,
+              text,
+              line_offsets,
               hints
             )
           end
@@ -6722,6 +6751,8 @@ module CrystalV2
           arena : Frontend::ArenaLike,
           identifier_symbols : Hash(Frontend::ExprId, Semantic::Symbol),
           range : Range,
+          text : String,
+          line_offsets : Array(Int32),
           hints : Array(InlayHint),
         )
           node = arena[expr_id]
@@ -6749,11 +6780,7 @@ module CrystalV2
                 # Phase BLOCK_CAPTURE: Skip inlay hint for anonymous block parameter
                 next unless param_name_slice = param.name
 
-                # Create hint before argument (Span 1-indexed → Position 0-indexed)
-                position = Position.new(
-                  line: arg_node.span.start_line - 1,
-                  character: arg_node.span.start_column - 1
-                )
+                position = position_from_offset(text, arg_node.span.start_offset, line_offsets)
 
                 param_name = String.new(param_name_slice)
                 label = "#{param_name}: "
@@ -6771,7 +6798,7 @@ module CrystalV2
 
               # Recursively process arguments (for nested calls)
               args.each do |arg_id|
-                collect_call_parameter_hints(arg_id, arena, identifier_symbols, range, hints)
+                collect_call_parameter_hints(arg_id, arena, identifier_symbols, range, text, line_offsets, hints)
               end
             end
           end
@@ -6780,11 +6807,11 @@ module CrystalV2
           case node
           when Frontend::AssignNode
             assign = node
-            collect_call_parameter_hints(assign.value, arena, identifier_symbols, range, hints)
+            collect_call_parameter_hints(assign.value, arena, identifier_symbols, range, text, line_offsets, hints)
           when Frontend::BinaryNode
             binary = node
-            collect_call_parameter_hints(binary.left, arena, identifier_symbols, range, hints)
-            collect_call_parameter_hints(binary.right, arena, identifier_symbols, range, hints)
+            collect_call_parameter_hints(binary.left, arena, identifier_symbols, range, text, line_offsets, hints)
+            collect_call_parameter_hints(binary.right, arena, identifier_symbols, range, text, line_offsets, hints)
           end
         end
 
@@ -10043,6 +10070,7 @@ module CrystalV2
           getter type_context : Semantic::TypeContext?
           getter symbol_table : Semantic::SymbolTable?
           getter target_path : String?
+          getter line_offsets : Array(Int32)
 
           def initialize(
             @program : Frontend::Program,
@@ -10054,6 +10082,11 @@ module CrystalV2
             target_path : String? = nil,
           )
             @target_path = target_path ? File.expand_path(target_path) : nil
+            @line_offsets = [] of Int32
+            @line_offsets << 0
+            source.to_slice.each_with_index do |byte, idx|
+              @line_offsets << (idx + 1) if byte == '\n'.ord
+            end
           end
 
           def expr_in_target_file?(expr_id : Frontend::ExprId) : Bool
@@ -10198,27 +10231,10 @@ module CrystalV2
           when Frontend::MemberAccessNode
             # Recurse into receiver
             collect_tokens_recursive(context, node.object, tokens)
-            # Emit token for member name using the receiver's end as anchor.
-            # This avoids relying on node.span which may cover call arguments.
-            recv = arena[node.object]
-            line = recv.span.end_line - 1
-            member_len = node.member.size
-            # Receiver end_column is 1-based and inclusive; member starts right after it.
-            # 0-based start = recv_end_1
-            col = recv.span.end_column
-            if col >= 0 && member_len > 0
-              tokens << RawToken.new(line, col, member_len, SemanticTokenType::Method.value)
-            end
+            emit_member_name_token(context, arena, node.object, node.span, node.member, tokens)
           when Frontend::SafeNavigationNode
             collect_tokens_recursive(context, node.object, tokens)
-            # Emit token for member name after &. Anchor to receiver end.
-            recv = arena[node.object]
-            line = recv.span.end_line - 1
-            member_len = node.member.size
-            col = recv.span.end_column
-            if col >= 0 && member_len > 0
-              tokens << RawToken.new(line, col, member_len, SemanticTokenType::Method.value)
-            end
+            emit_member_name_token(context, arena, node.object, node.span, node.member, tokens)
           when Frontend::PathNode
             if left = node.left
               collect_tokens_recursive(context, left, tokens)
@@ -10253,7 +10269,7 @@ module CrystalV2
             end
           when Frontend::SymbolNode
             length = node.name.size # name already includes leading colon
-            emit_span_token(node.span, length, SemanticTokenType::EnumMember.value, tokens)
+            emit_span_token(context, node.span, length, SemanticTokenType::EnumMember.value, tokens)
           when Frontend::GenericNode
             collect_tokens_recursive(context, node.base_type, tokens)
             node.type_args.each { |arg| collect_tokens_recursive(context, arg, tokens) }
@@ -10300,7 +10316,7 @@ module CrystalV2
           when Frontend::EnumNode
             emit_name_token(context, node.span, node.name, SemanticTokenType::Enum.value, tokens)
             node.members.each do |member|
-              emit_span_token(member.name_span, member.name.size, SemanticTokenType::EnumMember.value, tokens)
+              emit_span_token(context, member.name_span, member.name.size, SemanticTokenType::EnumMember.value, tokens)
               if value = member.value
                 collect_tokens_recursive(context, value, tokens) unless value.invalid?
               end
@@ -10340,28 +10356,28 @@ module CrystalV2
           when Frontend::IdentifierNode
             emit_identifier_token(context, node_id, node, tokens)
           when Frontend::InstanceVarNode
-            emit_span_token(node.span, node.name.size, SemanticTokenType::Property.value, tokens)
+            emit_span_token(context, node.span, node.name.size, SemanticTokenType::Property.value, tokens)
           when Frontend::ClassVarNode
-            emit_span_token(node.span, node.name.size, SemanticTokenType::Property.value, tokens)
+            emit_span_token(context, node.span, node.name.size, SemanticTokenType::Property.value, tokens)
           when Frontend::GlobalNode
-            emit_span_token(node.span, node.name.size, SemanticTokenType::Variable.value, tokens)
+            emit_span_token(context, node.span, node.name.size, SemanticTokenType::Variable.value, tokens)
           when Frontend::ConstantNode
             emit_constant_node_token(context, node, tokens)
             collect_tokens_recursive(context, node.value, tokens) unless node.value.invalid?
           when Frontend::InstanceVarDeclNode
-            emit_span_token(node.span, node.name.size, SemanticTokenType::Property.value, tokens, DECLARATION_MODIFIER)
+            emit_span_token(context, node.span, node.name.size, SemanticTokenType::Property.value, tokens, DECLARATION_MODIFIER)
             emit_type_annotation_token(context, node.span, node.type, tokens)
             if value = node.value
               collect_tokens_recursive(context, value, tokens) unless value.invalid?
             end
           when Frontend::ClassVarDeclNode
-            emit_span_token(node.span, node.name.size, SemanticTokenType::Property.value, tokens, DECLARATION_MODIFIER)
+            emit_span_token(context, node.span, node.name.size, SemanticTokenType::Property.value, tokens, DECLARATION_MODIFIER)
             emit_type_annotation_token(context, node.span, node.type, tokens)
             if value = node.value
               collect_tokens_recursive(context, value, tokens) unless value.invalid?
             end
           when Frontend::GlobalVarDeclNode
-            emit_span_token(node.span, node.name.size, SemanticTokenType::Variable.value, tokens, DECLARATION_MODIFIER)
+            emit_span_token(context, node.span, node.name.size, SemanticTokenType::Variable.value, tokens, DECLARATION_MODIFIER)
             emit_type_annotation_token(context, node.span, node.type, tokens)
           when Frontend::StringNode
             # Handled by lexical pass in collect_string_like_tokens to avoid overlap
@@ -10369,16 +10385,18 @@ module CrystalV2
 
           when Frontend::NumberNode
             # Token for number literal
-            line = node.span.start_line - 1
-            col = node.span.start_column - 1
+            position = position_from_offset(context.source, node.span.start_offset, context.line_offsets)
+            line = position.line
+            col = position.character
             # Prefer literal value length to avoid punctuation captured by spans
             length = node.value.bytesize
             tokens << RawToken.new(line, col, length, SemanticTokenType::Number.value)
           when Frontend::BoolNode
             # Token for boolean literal (true/false)
-            line = node.span.start_line - 1
-            col = node.span.start_column - 1
-            length = node.span.end_column - node.span.start_column
+            position = position_from_offset(context.source, node.span.start_offset, context.line_offsets)
+            line = position.line
+            col = position.character
+            length = node.span.end_offset - node.span.start_offset
             tokens << RawToken.new(line, col, length, SemanticTokenType::Keyword.value)
           when Frontend::AsNode
             collect_tokens_recursive(context, node.expression, tokens)
@@ -10410,10 +10428,12 @@ module CrystalV2
               callee_node = arena[node.callee]
               # If the callee is a bare identifier, color it as a method
               if callee_node.is_a?(Frontend::IdentifierNode)
-                line = callee_node.span.start_line - 1
-                col = callee_node.span.start_column - 1
                 if pos = locate_name_position(context, callee_node.span, callee_node.name)
                   line, col = pos
+                else
+                  position = position_from_offset(context.source, callee_node.span.start_offset, context.line_offsets)
+                  line = position.line
+                  col = position.character
                 end
                 length = callee_node.name.size
                 tokens << RawToken.new(line, col, length, SemanticTokenType::Method.value)
@@ -10492,11 +10512,13 @@ module CrystalV2
         # Single-pass lexical scan: collects keywords, strings, chars, regex and interpolations
         private def collect_lexical_tokens_single_pass(source : String, tokens : Array(RawToken))
           lexer = Frontend::Lexer.new(source)
+          line_offsets = build_line_offsets(source)
           lexer.each_token do |tok|
             # Keywords
             if keyword_kind?(tok.kind)
-              line = tok.span.start_line - 1
-              col = tok.span.start_column - 1
+              position = position_from_offset(source, tok.span.start_offset, line_offsets)
+              line = position.line
+              col = position.character
               length = tok.slice.size
               tokens << RawToken.new(line, col, length, SemanticTokenType::Keyword.value)
               next
@@ -10506,38 +10528,44 @@ module CrystalV2
             when Frontend::Token::Kind::String
               # Simple strings: color full token including quotes
               span = tok.span
-              line = span.start_line - 1
-              col = span.start_column - 1
-              length = span.end_column - span.start_column + 1
+              position = position_from_offset(source, span.start_offset, line_offsets)
+              line = position.line
+              col = position.character
+              length = span.end_offset - span.start_offset
               tokens << RawToken.new(line, col, length, SemanticTokenType::String.value)
             when Frontend::Token::Kind::StringInterpolation
               # Interpolated strings: split without allocating full String
               collect_interpolated_string_tokens_zero_copy(source, tok, tokens)
             when Frontend::Token::Kind::Char
               span = tok.span
-              line = span.start_line - 1
-              col = span.start_column - 1
-              length = span.end_column - span.start_column + 1
+              position = position_from_offset(source, span.start_offset, line_offsets)
+              line = position.line
+              col = position.character
+              length = span.end_offset - span.start_offset
               tokens << RawToken.new(line, col, length, SemanticTokenType::String.value)
             when Frontend::Token::Kind::Regex
               span = tok.span
-              line = span.start_line - 1
-              col = span.start_column - 1
-              length = span.end_column - span.start_column + 1
+              position = position_from_offset(source, span.start_offset, line_offsets)
+              line = position.line
+              col = position.character
+              length = span.end_offset - span.start_offset
               tokens << RawToken.new(line, col, length, SemanticTokenType::Regexp.value)
             when Frontend::Token::Kind::Identifier
               # Heuristic: uppercase identifiers are constants/types; color even without semantics
               slice = tok.slice
               if slice.size > 0 && slice[0].unsafe_chr.ascii_uppercase?
-                line = tok.span.start_line - 1
-                col = tok.span.start_column - 1
+                position = position_from_offset(source, tok.span.start_offset, line_offsets)
+                line = position.line
+                col = position.character
                 length = slice.size
                 tokens << RawToken.new(line, col, length, SemanticTokenType::Type.value)
               end
             when Frontend::Token::Kind::Symbol
-              line = tok.span.start_line - 1
-              col = tok.span.start_column - 1
-              length = tok.slice.size
+              position = position_from_offset(source, tok.span.start_offset, line_offsets)
+              line = position.line
+              col = position.character
+              length = tok.span.end_offset - tok.span.start_offset
+              length = tok.slice.size if length <= 0
               tokens << RawToken.new(line, col, length, SemanticTokenType::EnumMember.value)
             end
           end
@@ -10768,6 +10796,7 @@ module CrystalV2
         end
 
         private def emit_span_token(
+          context : SemanticTokenContext,
           span : Frontend::Span?,
           length : Int32,
           token_type : Int32,
@@ -10776,8 +10805,9 @@ module CrystalV2
         )
           return unless span
           return if length <= 0
-          line = span.start_line - 1
-          col = span.start_column - 1
+          position = position_from_offset(context.source, span.start_offset, context.line_offsets)
+          line = position.line
+          col = position.character
           emit_raw_token(tokens, line, col, length, token_type, modifiers)
         end
 
@@ -10789,12 +10819,39 @@ module CrystalV2
         )
           length = node.name.bytesize
           return if length <= 0
-          line = node.span.start_line - 1
-          col = node.span.start_column - 1
+          position = position_from_offset(context.source, node.span.start_offset, context.line_offsets)
+          line = position.line
+          col = position.character
           symbol = context.identifier_symbols.try(&.[expr_id]?)
           token_type = token_type_for_symbol(symbol)
           token_type ||= uppercase_identifier?(node.name) ? SemanticTokenType::Type.value : SemanticTokenType::Variable.value
           emit_raw_token(tokens, line, col, length, token_type)
+        end
+
+        private def emit_member_name_token(
+          context : SemanticTokenContext,
+          arena : Frontend::ArenaLike,
+          receiver_id : Frontend::ExprId,
+          span : Frontend::Span,
+          member : Slice(UInt8),
+          tokens : Array(RawToken),
+        )
+          return if member.empty?
+          receiver = arena[receiver_id]
+          search_start = receiver.span.end_offset
+          search_end = span.end_offset
+          search_end = context.bytes.size if search_end > context.bytes.size
+          return if search_start < 0 || search_start >= search_end
+
+          window = search_end - search_start
+          segment = context.source.byte_slice(search_start, window)
+          relative = segment.index(String.new(member))
+          return unless relative
+
+          absolute = search_start + relative
+          position = position_from_offset(context.source, absolute, context.line_offsets)
+          emit_raw_token(tokens, position.line, position.character, member.size, SemanticTokenType::Method.value)
+        rescue
         end
 
         private def emit_constant_node_token(
@@ -10898,10 +10955,9 @@ module CrystalV2
         )
           if param_name = param.name
             if name_span = param.name_span
-              # Use span-based length to handle @foo/@@foo shorthand params correctly
-              # (param.name excludes prefix but name_span includes it)
-              length = name_span.end_column - name_span.start_column
-              emit_span_token(name_span, length, SemanticTokenType::Parameter.value, tokens)
+              length = name_span.end_offset - name_span.start_offset
+              length = param_name.bytesize if length <= 0
+              emit_span_token(context, name_span, length, SemanticTokenType::Parameter.value, tokens)
             else
               line = param.span.start_line - 1
               col = param.span.start_column - 1
@@ -10911,7 +10967,7 @@ module CrystalV2
 
           if external_name = param.external_name
             if ext_span = param.external_name_span
-              emit_span_token(ext_span, external_name.bytesize, SemanticTokenType::Parameter.value, tokens)
+              emit_span_token(context, ext_span, external_name.bytesize, SemanticTokenType::Parameter.value, tokens)
             end
           end
 
@@ -10929,7 +10985,7 @@ module CrystalV2
           token_type : Int32 = SemanticTokenType::Property.value,
         )
           specs.each do |spec|
-            emit_span_token(spec.name_span, spec.name.size, token_type, tokens, DECLARATION_MODIFIER)
+            emit_span_token(context, spec.name_span, spec.name.size, token_type, tokens, DECLARATION_MODIFIER)
             emit_type_annotation_token(context, spec.type_span || spec.span, spec.type_annotation, tokens)
             if default_id = spec.default_value
               collect_tokens_recursive(context, default_id, tokens) unless default_id.invalid?
@@ -11002,7 +11058,8 @@ module CrystalV2
           relative = segment.index(name)
           return nil unless relative
           absolute = start_offset + relative
-          advance_position(context.bytes, span.start_line - 1, span.start_column - 1, start_offset, absolute)
+          position = position_from_offset(context.source, absolute, context.line_offsets)
+          {position.line, position.character}
         rescue
           nil
         end

@@ -395,13 +395,17 @@ describe "LSP InlayHint" do
       # Get node and check position conversion
       node = program.arena[x_symbol.node_id]
 
-      # Span is 1-indexed, LSP Position is 0-indexed
-      # Type hint should be positioned at end of identifier
-      lsp_line = node.span.end_line - 1
-      lsp_char = node.span.end_column - 1
+      # Parser span columns are not a reliable exclusive-end cursor for all
+      # nodes. LSP hint positions are derived from byte offsets instead.
+      line_offsets = [0]
+      source.to_slice.each_with_index do |byte, idx|
+        line_offsets << (idx + 1) if byte == '\n'.ord
+      end
+      lsp_line = line_offsets.rindex { |offset| offset <= node.span.end_offset }.not_nil!
+      lsp_char = node.span.end_offset - line_offsets[lsp_line]
 
-      lsp_line.should eq(0)  # First line (0-indexed)
-      lsp_char.should eq(1)  # After 'x' (0-indexed)
+      lsp_line.should eq(0) # First line (0-indexed)
+      lsp_char.should eq(1) # After 'x' (0-indexed)
     end
 
     it "calculates correct line numbers for multi-line programs" do
@@ -529,7 +533,7 @@ describe "LSP InlayHint" do
 
       # identifier_symbols should have all usages
       counter_count = identifier_symbols.count { |_, sym| sym == counter_symbol }
-      counter_count.should be > 3  # declaration + multiple uses
+      counter_count.should be > 3 # declaration + multiple uses
     end
 
     it "resolves variables inside if/else branches" do
