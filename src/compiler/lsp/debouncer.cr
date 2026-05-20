@@ -11,7 +11,7 @@ module CrystalV2
         getter uri : String
         getter text : String
         getter version : Int32
-        getter timestamp : Time
+        getter timestamp : Time::Instant
 
         def initialize(@uri, @text, @version, @timestamp = Time.instant)
         end
@@ -24,7 +24,7 @@ module CrystalV2
 
         getter delay_ms : Int32
         getter pending : Hash(String, PendingChange)
-        getter last_process_time : Hash(String, Time)
+        getter last_process_time : Hash(String, Time::Instant)
 
         @process_callback : Proc(String, String, Int32, Nil)?
         @running : Bool = false
@@ -32,8 +32,8 @@ module CrystalV2
 
         def initialize(@delay_ms : Int32 = DEFAULT_DELAY_MS)
           @pending = {} of String => PendingChange
-          @last_process_time = {} of String => Time
-          @process_channel = Channel(Nil).new
+          @last_process_time = {} of String => Time::Instant
+          @process_channel = Channel(Nil).new(1)
         end
 
         # Set callback for processing changes
@@ -92,11 +92,14 @@ module CrystalV2
         # Stop the background processor
         def stop
           @running = false
-          @process_channel.send(nil) rescue nil
+          schedule_process
         end
 
         private def schedule_process
-          @process_channel.send(nil) rescue nil
+          select
+          when @process_channel.send(nil)
+          else
+          end
         end
 
         private def process_ready_changes

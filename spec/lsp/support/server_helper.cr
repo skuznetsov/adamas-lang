@@ -152,6 +152,22 @@ module CrystalV2::Compiler::LSP
       @documents[uri]?.try(&.text_document.text)
     end
 
+    def spec_project_has_file?(path : String) : Bool
+      @project.files.has_key?(path)
+    end
+
+    def spec_project_update_pending?(uri : String) : Bool
+      @debouncer.pending?(uri)
+    end
+
+    def spec_project_pending_version(uri : String) : Int32?
+      @debouncer.get_pending(uri).try(&.version)
+    end
+
+    def spec_flush_project_updates
+      @debouncer.flush
+    end
+
     def spec_load_prelude_program(
       path : String,
       program_cache : Hash(String, CrystalV2::Compiler::Frontend::Program),

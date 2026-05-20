@@ -563,6 +563,7 @@ module CrystalV2
           @indexing_message = nil
           @indexing_last_sent = Time.instant
           @semantic_token_cache = {} of String => {Int32, String}
+          configure_project_update_debouncer
           start_inference_worker
 
           if @config.background_indexing
@@ -570,6 +571,26 @@ module CrystalV2
           else
             load_prelude
           end
+        end
+
+        private def configure_project_update_debouncer
+          @debouncer.on_process do |uri, text, version|
+            next unless doc_path = uri_to_path(uri)
+            project_start = Time.instant
+            begin
+              Frontend::Watchdog.enable!("UnifiedProject update_file timeout", 5.seconds)
+              project_diagnostics = @project.update_file(doc_path, text, version)
+              project_time = (Time.instant - project_start).total_milliseconds
+              debug("UnifiedProject update_file: #{project_time.round(2)}ms, #{project_diagnostics.size} diagnostics")
+              @project_cache_dirty = true
+              schedule_project_cache_save
+            rescue ex : Frontend::Watchdog::TimeoutError
+              debug("UnifiedProject update_file TIMEOUT: #{ex.message}")
+            ensure
+              Frontend::Watchdog.disable!
+            end
+          end
+          @debouncer.start
         end
 
         private def resolve_path_symbol_in_table(table : Semantic::SymbolTable?, segments : Array(String)) : Semantic::Symbol?
@@ -1621,7 +1642,9 @@ module CrystalV2
         # Handle shutdown request
         private def handle_shutdown(id : JSON::Any)
           # Save project cache before shutdown
+          @debouncer.flush
           save_project_cache
+          @debouncer.stop
           send_response(id, "null")
         end
 
@@ -1645,25 +1668,6 @@ module CrystalV2
             end
           end
 
-          # Update unified project state (new architecture) - async with watchdog
-          if doc_path
-            spawn do
-              project_start = Time.instant
-              begin
-                Frontend::Watchdog.enable!("UnifiedProject update_file timeout", 5.seconds)
-                project_diagnostics = @project.update_file(doc_path, text, version)
-                project_time = (Time.instant - project_start).total_milliseconds
-                debug("UnifiedProject update_file: #{project_time.round(2)}ms, #{project_diagnostics.size} diagnostics")
-                @project_cache_dirty = true
-                schedule_project_cache_save
-              rescue ex : Frontend::Watchdog::TimeoutError
-                debug("UnifiedProject update_file TIMEOUT: #{ex.message}")
-              ensure
-                Frontend::Watchdog.disable!
-              end
-            end
-          end
-
           # Legacy: Analyze and store document (will be removed after full migration)
           doc = TextDocumentItem.new(uri: uri, language_id: language_id, version: version, text: text)
           diagnostics, program, type_context, identifier_symbols, symbol_table, requires, index = analyze_document(
@@ -1683,6 +1687,12 @@ module CrystalV2
           # Publish diagnostics
           publish_diagnostics(uri, diagnostics, version)
           request_semantic_tokens_refresh
+
+          # Queue UnifiedProject work after the immediate foreground document
+          # path is ready. update_file is CPU-bound, so running it immediately
+          # in a spawned fiber can still monopolize Crystal's cooperative
+          # scheduler and delay the next request.
+          @debouncer.queue(uri, text, version) if doc_path
         end
 
         # Handle textDocument/didClose notification
@@ -3536,23 +3546,6 @@ module CrystalV2
           doc_path = uri_to_path(uri)
           base_dir = doc_path ? File.dirname(doc_path) : nil
 
-          # Update unified project state (incremental) - async with watchdog
-          if doc_path
-            spawn do
-              project_start = Time.instant
-              begin
-                Frontend::Watchdog.enable!("UnifiedProject update_file (change) timeout", 3.seconds)
-                project_diagnostics = @project.update_file(doc_path, new_text, version)
-                project_time = (Time.instant - project_start).total_milliseconds
-                debug("UnifiedProject update_file (change): #{project_time.round(2)}ms")
-              rescue ex : Frontend::Watchdog::TimeoutError
-                debug("UnifiedProject update_file (change) TIMEOUT: #{ex.message}")
-              ensure
-                Frontend::Watchdog.disable!
-              end
-            end
-          end
-
           # Legacy analysis (will be removed)
           diagnostics, program, type_context, identifier_symbols, symbol_table, requires, index = analyze_document(
             new_text,
@@ -3571,6 +3564,11 @@ module CrystalV2
 
           publish_diagnostics(uri, diagnostics, version)
           request_semantic_tokens_refresh
+
+          # Queue UnifiedProject work after the immediate foreground document
+          # state is ready; the legacy document state remains the source for
+          # diagnostics and navigation during the debounce window.
+          @debouncer.queue(uri, new_text, version) if doc_path
         end
 
         # Apply LSP content changes to document text.

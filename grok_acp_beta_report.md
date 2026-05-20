@@ -965,3 +965,29 @@ showed the accepted HIR hardening moves the smoke past pre-scan/module
 registration to early class registration.
 **Verdict:** no Grok evidence value from this run; useful beta signal only.
 **Cost saved:** none.
+
+### Session 38 — 2026-05-20 — LSP first-request latency audit
+**Task:** read-only audit of the LSP first post-`didOpen` request latency
+after local probes showed direct semantic-token range collection around 4ms,
+but JSON-RPC first hover/range requests around 260ms.
+**Brief size:** bounded task file with exact measurements and anchors in
+`src/compiler/lsp/server.cr` and `benchmarks/lsp_harness.cr`.
+**Latency:** returned during local implementation/verification.
+**Output quality:** partially useful. Grok correctly classified the issue as
+a first-request warmup/scheduling problem rather than semantic-token range
+work, and it pointed at cooperative scheduler/background work surfaces. Its
+top prelude-apply hypothesis did not match the decisive local debug timing for
+the accepted patch: prelude was already applied before the opened document
+analysis, while `UnifiedProject update_file` completed immediately before the
+delayed first hover.
+**Adversary check:** Spark initially suspected foreground recursive
+dependency loading; local `LSP_AST_CACHE=1` falsified that by worsening first
+hover to ~1.9s. Local debug logs then showed server-side hover completed in
+~25ms while harness wall time was ~261ms, with CPU-bound `UnifiedProject
+update_file` occupying the cooperative scheduler before the request was
+handled. The accepted fix routes UnifiedProject updates through the existing
+debouncer and keeps the legacy document state as the immediate foreground
+source for diagnostics/navigation.
+**Verdict:** useful family-level sidecar, but local timing evidence overrode
+the ranked root hypothesis.
+**Cost saved:** modest audit time; not authoritative for patch scope.

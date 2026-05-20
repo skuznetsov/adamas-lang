@@ -4780,6 +4780,75 @@ Boundary:
 
 Trust: {F/G/R: 0.86/0.46/0.88} [verified]
 
+### LM-589 — LSP first-request latency now defers CPU-bound UnifiedProject updates
+
+Status: VERIFIED on `codegen`.
+
+After semantic-token range support, direct in-process range collection for
+`src/compiler/lsp/server.cr` measured around 4ms, but the first JSON-RPC
+request after `didOpen` still measured around 260ms. Debug timing showed the
+server-side hover itself completed in about 25ms; the extra wall time came from
+a spawned `UnifiedProject update_file` fiber that was CPU-bound and monopolized
+Crystal's cooperative scheduler before the first foreground request was
+handled.
+
+Accepted change:
+
+- `didOpen` and `didChange` now queue UnifiedProject updates through the
+  existing LSP debouncer instead of spawning immediate CPU-bound work.
+- The debouncer uses `Time::Instant` consistently and a one-slot nonblocking
+  wake channel so queueing does not block the request path.
+- Shutdown flushes pending project updates before saving project cache.
+- A regression spec proves `didOpen` updates the immediate legacy document
+  state while leaving UnifiedProject work pending until the debouncer is
+  explicitly flushed.
+
+Refuted / corrected hypotheses:
+
+- Direct semantic-token range collection was not the bottleneck: repeated
+  in-process range collection stayed around 4ms.
+- `LSP_AST_CACHE=1` did not fix first-request latency; it made first hover
+  around 1.9s in the probe, so the simple foreground-recursive-requires
+  hypothesis was rejected.
+- Grok's prelude-apply hypothesis was useful as a scheduling-family signal,
+  but local debug logs showed prelude apply happened before document analysis
+  in the accepted run; UnifiedProject update completion was adjacent to the
+  delayed first hover.
+
+Evidence:
+
+- Before patch harness probe:
+  first hover after `didOpen` around 261ms, second hover around 26ms, range
+  around 5ms.
+- Server debug log before patch:
+  `UnifiedProject update_file: 242.14ms` completed immediately before the first
+  hover request; `Hover completed in 25.12ms`.
+- After patch harness probes:
+  debug-log run first hover after `didOpen` 26.2ms, second hover 55.2ms,
+  range 4.9ms; final no-debug run after moving the queue point after
+  diagnostics/semantic-refresh publication measured first hover 24.8ms,
+  second hover 67.9ms, range 7.2ms.
+- Focused spec:
+  `crystal build spec/lsp/did_change_integration_spec.cr -o
+  /tmp/lsp_did_change_spec --error-trace` and
+  `scripts/run_safe.sh /tmp/lsp_did_change_spec 120 1536 --no-color`,
+  3 examples, 0 failures.
+- Full LSP suite:
+  `crystal build spec/lsp/*_spec.cr -o /tmp/lsp_full_spec --error-trace` and
+  `scripts/run_safe.sh /tmp/lsp_full_spec 120 1536 --no-color`,
+  216 examples, 0 failures.
+- `crystal build src/lsp_main.cr -o bin/crystal_v2_lsp --error-trace`
+  succeeded for the post-patch harness probe.
+
+Remaining risks:
+
+- Project-cache saves can still land between foreground requests and add
+  secondary jitter.
+- Shutdown may now spend time flushing a pending project update before saving
+  cache; this is outside the interactive foreground request path.
+
+Trust: {F/G/R: 0.86/0.62/0.89} [verified]
+
 ## LM-583 — LSP foreground hover avoids workspace reference scans by default
 
 Status: verified for the focused LSP hover/cache/harness slice on `codegen`.

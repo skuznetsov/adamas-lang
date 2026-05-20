@@ -64,4 +64,30 @@ describe CrystalV2::Compiler::LSP::Server do
   ensure
     FileUtils.rm_rf(dir) if dir
   end
+
+  it "defers UnifiedProject updates behind the immediate document path" do
+    dir = File.join(Dir.tempdir, "lsp_deferred_project_update_#{Random::Secure.hex(6)}")
+    FileUtils.mkdir_p(dir)
+    path = File.join(dir, "main.cr")
+    source = "value = 1\n"
+    File.write(path, source)
+
+    server = CrystalV2::Compiler::LSP::Server.new(
+      IO::Memory.new,
+      IO::Memory.new,
+      CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false, debounce_ms: 10_000)
+    )
+
+    uri = server.spec_did_open_document(source, path)
+
+    server.spec_document_text(uri).should eq(source)
+    server.spec_project_update_pending?(uri).should be_true
+    server.spec_project_pending_version(uri).should eq(1)
+    server.spec_project_has_file?(path).should be_false
+
+    server.spec_flush_project_updates
+    server.spec_project_has_file?(path).should be_true
+  ensure
+    FileUtils.rm_rf(dir) if dir
+  end
 end
