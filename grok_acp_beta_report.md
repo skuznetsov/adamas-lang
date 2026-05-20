@@ -1046,3 +1046,27 @@ falsifiers still decide patch scope. The stale expression-type cache and
 background-scheduler families should be revisited as separate slices.
 **Cost saved:** modest context/audit time; not authoritative for final patch
 acceptance.
+
+### Session 41 — 2026-05-20 — LSP post-LM-605 warm-start audit
+**Task:** read-only Grok ACP audit after LM-605 fixed duplicate background
+prelude loads. The prompt asked for the top remaining warm-start/default
+harness latency roots, a smallest falsifier for each, and one patch to avoid.
+It was constrained to `src/compiler/lsp/server.cr`,
+`src/compiler/lsp/project_cache.cr`, `src/compiler/lsp/unified_project.cr`,
+and `benchmarks/lsp_harness.cr`.
+**Brief size:** bounded inline ACP prompt with local timing context:
+initialize jitter, normal first `didOpen` around 230-250ms, cache-off first
+`didOpen` around 2.3s, and a locally refuted deferred-prelude experiment.
+**Latency:** failed. `grok_acp_delegate.py` started `grok agent -m grok-4.3
+stdio`, ran a couple of read-only shell commands, then timed out after 120s
+waiting for stdout.
+**Output quality:** not useful; no final audit result was produced.
+**Adversary check:** local work continued independently. The deferred-prelude
+experiment was reverted because it did not improve `initialize` and worsened
+first `didOpen`; cache-off was also refuted because it shifted work into
+foreground analysis. A later debug run showed a sandbox artifact: project-cache
+save failed under `~/.cache/crystal_v2_lsp` with `Operation not permitted`,
+so repeated local harness runs can overstate stale-cache behavior in this
+sandbox.
+**Verdict:** failed interaction. Do not treat this Grok run as evidence.
+**Cost saved:** none.
