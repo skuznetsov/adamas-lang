@@ -7,36 +7,40 @@ module SemanticTokensSpecHelper
   # Legend as defined in LSP::Server::SemanticTokenType
   def self.legend_index(name : String)
     case name
-    when "namespace" then 0
-    when "type" then 1
-    when "class" then 2
-    when "enum" then 3
-    when "interface" then 4
-    when "struct" then 5
+    when "namespace"     then 0
+    when "type"          then 1
+    when "class"         then 2
+    when "enum"          then 3
+    when "interface"     then 4
+    when "struct"        then 5
     when "typeParameter" then 6
-    when "parameter" then 7
-    when "variable" then 8
-    when "property" then 9
-    when "enumMember" then 10
-    when "event" then 11
-    when "function" then 12
-    when "method" then 13
-    when "macro" then 14
-    when "keyword" then 15
-    when "modifier" then 16
-    when "comment" then 17
-    when "string" then 18
-    when "number" then 19
-    when "regexp" then 20
-    when "operator" then 21
-    else -1
+    when "parameter"     then 7
+    when "variable"      then 8
+    when "property"      then 9
+    when "enumMember"    then 10
+    when "event"         then 11
+    when "function"      then 12
+    when "method"        then 13
+    when "macro"         then 14
+    when "keyword"       then 15
+    when "modifier"      then 16
+    when "comment"       then 17
+    when "string"        then 18
+    when "number"        then 19
+    when "regexp"        then 20
+    when "operator"      then 21
+    else                      -1
     end
   end
-  
 
   def self.collect(program, source)
     server = CrystalV2::Compiler::LSP::Server.new
     server.collect_semantic_tokens(program, source)
+  end
+
+  def self.collect_range(program, source, range)
+    server = CrystalV2::Compiler::LSP::Server.new
+    server.collect_semantic_tokens(program, source, nil, nil, nil, nil, range)
   end
 
   def self.decode(tokens : CrystalV2::Compiler::LSP::SemanticTokens, source : String)
@@ -108,7 +112,7 @@ module SemanticTokensSpecHelper
   end
 
   it "lexically marks symbol literals inside string interpolation" do
-    source = %("#{ :foo }")
+    source = %("#{:foo}")
     lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
     parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
     program = parser.parse_program
@@ -117,5 +121,36 @@ module SemanticTokensSpecHelper
 
     string_kind = SemanticTokensSpecHelper.legend_index("string")
     decoded.any? { |(_, _, _, kind, text)| kind == string_kind && text.includes?("foo") }.should be_true
+  end
+
+  it "limits semantic token range responses to the requested visible window" do
+    source = "alpha = 1\nbeta = foo.bar(:speed)\ngamma = \"done\"\n"
+    parser = CrystalV2::Compiler::Frontend::Parser.new(
+      CrystalV2::Compiler::Frontend::Lexer.new(source)
+    )
+    program = parser.parse_program
+    range = CrystalV2::Compiler::LSP::Range.new(
+      CrystalV2::Compiler::LSP::Position.new(1, 0),
+      CrystalV2::Compiler::LSP::Position.new(1, source.lines[1].bytesize)
+    )
+
+    tokens = SemanticTokensSpecHelper.collect_range(program, source, range)
+    decoded = SemanticTokensSpecHelper.decode(tokens, source)
+    texts = decoded.map { |(_, _, _, _, text)| text }
+
+    texts.should contain("beta")
+    texts.should contain("foo")
+    texts.should contain("bar")
+    texts.should contain(":speed")
+    texts.should_not contain("alpha")
+    texts.should_not contain("gamma")
+  end
+
+  it "advertises semantic token range support" do
+    capabilities = CrystalV2::Compiler::LSP::ServerCapabilities.new
+    provider = capabilities.semantic_tokens_provider.not_nil!
+
+    provider["range"].as_bool.should be_true
+    provider["full"].as_bool.should be_true
   end
 end

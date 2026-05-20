@@ -292,7 +292,7 @@ module CrystalV2
                 rangeFormatting: {} of Symbol => Nil,
                 foldingRange:    {} of Symbol => Nil,
                 rename:          {} of Symbol => Nil,
-                semanticTokens:  {requests: {full: true}},
+                semanticTokens:  {requests: {full: true, range: true}},
                 callHierarchy:   {} of Symbol => Nil,
               },
               workspace: {workspaceFolders: true},
@@ -759,7 +759,7 @@ module CrystalV2
           when "textDocument/inlayHint"
             arr = safe_array(result)
             arr.empty? ? "0 hints" : "#{arr.size} hints"
-          when "textDocument/semanticTokens/full"
+          when "textDocument/semanticTokens/full", "textDocument/semanticTokens/range"
             data = [] of JSON::Any
             unless json_null?(result)
               data = result.try(&.as_h?).try(&.fetch("data", nil)).try(&.as_a) || [] of JSON::Any

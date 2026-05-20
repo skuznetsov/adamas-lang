@@ -5069,6 +5069,72 @@ Known limits:
 
 Trust: {F/G/R: 0.84/0.48/0.88} [verified]
 
+## LM-588 — LSP supports semantic-token range requests
+
+Status: verified for semantic-token range correctness and LSP suite stability on
+`codegen`.
+
+Change:
+
+- The server now advertises `"semanticTokensProvider": {"range": true,
+  "full": true}` and dispatches `textDocument/semanticTokens/range`.
+- Range requests reuse the existing semantic-token collector with a visible
+  `Range`; AST traversal skips nodes whose spans do not overlap the requested
+  line band, final raw tokens are filtered to the visible window, and the
+  lexical pass lexes only the covered line band instead of the whole file.
+- The benchmark harness advertises range semantic-token support and summarizes
+  `textDocument/semanticTokens/range` responses.
+
+WBA framing:
+
+- Window/trigger: after LM-586/LM-587, full semantic-token responses for
+  `src/compiler/lsp/server.cr` were correct but large: ~135k-138k encoded
+  integers. Even serialized-cache hits still paid large payload transfer and
+  client parse costs.
+- Transport corridor: visible viewport line ranges are a certified smaller
+  corridor for token transport; the full-document cache remains the fallback
+  frame for clients that request full tokens.
+- Boundary: full-token behavior and cache invalidation remain unchanged.
+  Range requests do not reuse the full cache because their result depends on
+  the requested window.
+- Potential decrease: visible-window requests reduce payload area from the
+  whole document to the requested line band while preserving exact token
+  encoding for that range.
+
+Evidence:
+
+- `crystal tool format --check src/compiler/lsp/server.cr
+  src/compiler/lsp/messages.cr benchmarks/lsp_harness.cr
+  spec/lsp/semantic_tokens_spec.cr`
+- `git diff --check`
+- `crystal build src/lsp_main.cr -o bin/crystal_v2_lsp --error-trace`
+- Focused semantic-token spec pack through safe runner:
+  `crystal build spec/lsp/semantic_tokens_spec.cr
+  spec/lsp/semantic_tokens_integration_spec.cr
+  spec/lsp/lsp_semantic_tokens_spec.cr -o <tmp> --error-trace` then
+  `scripts/run_safe.sh <tmp> 120 1536 --no-color`: 35 examples, 0 failures.
+- Full LSP suite through safe runner:
+  `crystal build spec/lsp/*_spec.cr -o <tmp> --error-trace` then
+  `scripts/run_safe.sh <tmp> 120 1536 --no-color`: 215 examples, 0 failures.
+- Direct in-process collection on `src/compiler/lsp/server.cr` measured full
+  semantic tokens at ~75ms for 138190 ints and a representative range at ~4ms
+  for 745 ints.
+- Safe wrapped harness on `src/compiler/lsp/server.cr` measured a repeated
+  visible-range request at ~13ms with a 630-int payload. The first range request
+  after `didOpen settled` was ~226ms, indicating remaining post-open queue or
+  warmup effects outside the range collector itself.
+
+Known limits:
+
+- This adds a small visible-window path; it does not reduce full-document token
+  payload size. Clients that request only `semanticTokens/full` still receive
+  large payloads.
+- The first foreground request after opening a large document can still be
+  delayed by startup/background work. That is a separate scheduling/frontier
+  issue.
+
+Trust: {F/G/R: 0.86/0.50/0.90} [verified]
+
 ### LM-580 — s2 registration hardening: parsed number macro values, alias suffix index, and tuple-key avoidance
 
 Status: verified for s1 -> s2 build and focused no-prelude guards on branch

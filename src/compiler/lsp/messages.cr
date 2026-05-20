@@ -119,7 +119,7 @@ module CrystalV2
         property folding_range_provider : Bool? = true
 
         @[JSON::Field(key: "semanticTokensProvider")]
-        property semantic_tokens_provider : JSON::Any? = JSON.parse(%{{"legend":{"tokenTypes":["namespace","type","class","enum","interface","struct","typeParameter","parameter","variable","property","enumMember","event","function","method","macro","keyword","modifier","comment","string","number","regexp","operator"],"tokenModifiers":["declaration","definition","readonly","static","deprecated","abstract","async","modification","documentation","defaultLibrary"]},"range":false,"full":true}})
+        property semantic_tokens_provider : JSON::Any? = JSON.parse(%{{"legend":{"tokenTypes":["namespace","type","class","enum","interface","struct","typeParameter","parameter","variable","property","enumMember","event","function","method","macro","keyword","modifier","comment","string","number","regexp","operator"],"tokenModifiers":["declaration","definition","readonly","static","deprecated","abstract","async","modification","documentation","defaultLibrary"]},"range":true,"full":true}})
 
         @[JSON::Field(key: "inlayHintProvider")]
         property inlay_hint_provider : Bool? = true
@@ -144,7 +144,7 @@ module CrystalV2
           @signature_help_provider = JSON.parse(%{{"triggerCharacters":["(", ","]}})
           @rename_provider = JSON.parse(%{{"prepareProvider":true}})
           # Align legend with SemanticTokenType enum; include full standard set
-          @semantic_tokens_provider = JSON.parse(%{{"legend":{"tokenTypes":["namespace","type","class","enum","interface","struct","typeParameter","parameter","variable","property","enumMember","event","function","method","macro","keyword","modifier","comment","string","number","regexp","operator"],"tokenModifiers":["declaration","definition","readonly","static","deprecated","abstract","async","modification","documentation","defaultLibrary"]},"range":false,"full":true}})
+          @semantic_tokens_provider = JSON.parse(%{{"legend":{"tokenTypes":["namespace","type","class","enum","interface","struct","typeParameter","parameter","variable","property","enumMember","event","function","method","macro","keyword","modifier","comment","string","number","regexp","operator"],"tokenModifiers":["declaration","definition","readonly","static","deprecated","abstract","async","modification","documentation","defaultLibrary"]},"range":true,"full":true}})
           @document_highlight_provider = false
           @workspace_symbol_provider = true
         end

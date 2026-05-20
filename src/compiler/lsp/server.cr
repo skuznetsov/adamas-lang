@@ -1525,6 +1525,8 @@ module CrystalV2
                 handle_folding_range(id, params)
               when "textDocument/semanticTokens/full"
                 handle_semantic_tokens(id, params)
+              when "textDocument/semanticTokens/range"
+                handle_semantic_tokens_range(id, params)
               when "textDocument/prepareCallHierarchy"
                 handle_prepare_call_hierarchy(id, params)
               when "callHierarchy/incomingCalls"
@@ -5884,6 +5886,40 @@ module CrystalV2
           send_response(id, json)
         end
 
+        # Handle textDocument/semanticTokens/range request
+        # Returns semantic tokens restricted to a visible document range.
+        private def handle_semantic_tokens_range(id : JSON::Any, params : JSON::Any?)
+          return send_error(id, -32602, "Missing params") unless params
+
+          uri = params["textDocument"]["uri"].as_s
+          range = parse_lsp_range(params["range"])
+          debug("Semantic token range request for: #{uri}")
+
+          doc_state = @documents[uri]?
+          return send_response(id, SemanticTokens.new(data: [] of Int32).to_json) unless doc_state
+
+          tokens = collect_semantic_tokens(
+            doc_state.program,
+            doc_state.text_document.text,
+            doc_state.identifier_symbols,
+            doc_state.type_context,
+            doc_state.symbol_table,
+            doc_state.path,
+            range
+          )
+
+          send_response(id, tokens.to_json)
+        end
+
+        private def parse_lsp_range(range_json : JSON::Any) : Range
+          start_json = range_json["start"]
+          end_json = range_json["end"]
+          Range.new(
+            Position.new(start_json["line"].as_i, start_json["character"].as_i),
+            Position.new(end_json["line"].as_i, end_json["character"].as_i)
+          )
+        end
+
         # Handle textDocument/prepareCallHierarchy request
         # Returns call hierarchy item for symbol at position
         private def handle_prepare_call_hierarchy(id : JSON::Any, params : JSON::Any?)
@@ -10071,6 +10107,7 @@ module CrystalV2
           getter type_context : Semantic::TypeContext?
           getter symbol_table : Semantic::SymbolTable?
           getter target_path : String?
+          getter visible_range : Range?
           getter line_offsets : Array(Int32)
 
           def initialize(
@@ -10081,6 +10118,7 @@ module CrystalV2
             @type_context : Semantic::TypeContext?,
             @symbol_table : Semantic::SymbolTable?,
             target_path : String? = nil,
+            @visible_range : Range? = nil,
           )
             @target_path = target_path ? File.expand_path(target_path) : nil
             @line_offsets = [] of Int32
@@ -10102,6 +10140,28 @@ module CrystalV2
               false
             end
           end
+
+          def span_in_visible_range?(span : Frontend::Span) : Bool
+            return true unless range = visible_range
+            span_end_line = span.end_line - 1
+            span_start_line = span.start_line - 1
+            return false if span_end_line < range.start.line
+            return false if span_start_line > range.end.line
+            true
+          end
+
+          def raw_token_in_visible_range?(token : RawToken) : Bool
+            return true unless range = visible_range
+            return false if token.line < range.start.line
+            return false if token.line > range.end.line
+            if token.line == range.start.line
+              return false if token.start_char + token.length <= range.start.character
+            end
+            if token.line == range.end.line
+              return false if token.start_char >= range.end.character
+            end
+            true
+          end
         end
 
         # Collect semantic tokens from AST and delta-encode them
@@ -10113,6 +10173,7 @@ module CrystalV2
           type_context : Semantic::TypeContext? = nil,
           symbol_table : Semantic::SymbolTable? = nil,
           target_path : String? = nil,
+          visible_range : Range? = nil,
         ) : SemanticTokens
           profile = ENV["LSP_PROFILE_TOKENS"]?
           t0 = Time.instant
@@ -10125,7 +10186,8 @@ module CrystalV2
             identifier_symbols,
             type_context,
             symbol_table,
-            target_path
+            target_path,
+            visible_range
           )
 
           t1 = Time.instant
@@ -10145,13 +10207,16 @@ module CrystalV2
           t2 = Time.instant
 
           # Single-pass lexical scan for keywords and string-like tokens
-          collect_lexical_tokens_single_pass(source, raw_tokens)
+          collect_lexical_tokens_single_pass(source, raw_tokens, visible_range)
 
           t3 = Time.instant
 
           # Sort tokens by position and prefer higher-priority classifications on ties
           raw_tokens.sort_by! { |t| {t.line, t.start_char, -token_type_priority(t.token_type), -t.length} }
           raw_tokens = deduplicate_tokens(raw_tokens)
+          if visible_range
+            raw_tokens = raw_tokens.select { |token| context.raw_token_in_visible_range?(token) }
+          end
 
           t4 = Time.instant
 
@@ -10196,6 +10261,7 @@ module CrystalV2
           return if node_id.invalid?
           arena = context.program.arena
           node = arena[node_id]
+          return unless context.span_in_visible_range?(node.span)
 
           case node
           when Frontend::MacroDefNode
@@ -10511,7 +10577,12 @@ module CrystalV2
         end
 
         # Single-pass lexical scan: collects keywords, strings, chars, regex and interpolations
-        private def collect_lexical_tokens_single_pass(source : String, tokens : Array(RawToken))
+        private def collect_lexical_tokens_single_pass(source : String, tokens : Array(RawToken), visible_range : Range? = nil)
+          if range = visible_range
+            collect_lexical_tokens_for_range(source, tokens, range)
+            return
+          end
+
           lexer = Frontend::Lexer.new(source)
           line_offsets = build_line_offsets(source)
           lexer.each_token do |tok|
@@ -10553,6 +10624,98 @@ module CrystalV2
               tokens << RawToken.new(line, col, length, SemanticTokenType::Regexp.value)
             when Frontend::Token::Kind::Identifier
               # Heuristic: uppercase identifiers are constants/types; color even without semantics
+              slice = tok.slice
+              if slice.size > 0 && slice[0].unsafe_chr.ascii_uppercase?
+                position = position_from_offset(source, tok.span.start_offset, line_offsets)
+                line = position.line
+                col = position.character
+                length = slice.size
+                tokens << RawToken.new(line, col, length, SemanticTokenType::Type.value)
+              end
+            when Frontend::Token::Kind::Symbol
+              position = position_from_offset(source, tok.span.start_offset, line_offsets)
+              line = position.line
+              col = position.character
+              length = tok.span.end_offset - tok.span.start_offset
+              length = tok.slice.size if length <= 0
+              tokens << RawToken.new(line, col, length, SemanticTokenType::EnumMember.value)
+            end
+          end
+        end
+
+        private def collect_lexical_tokens_for_range(source : String, tokens : Array(RawToken), range : Range)
+          line_offsets = build_line_offsets(source)
+          return if line_offsets.empty?
+
+          start_line = range.start.line
+          start_line = 0 if start_line < 0
+          return if start_line >= line_offsets.size
+
+          end_line = range.end.line
+          end_line = start_line if end_line < start_line
+          end_line = line_offsets.size - 1 if end_line >= line_offsets.size
+
+          start_offset = line_offsets[start_line]
+          end_offset = if end_line + 1 < line_offsets.size
+                         line_offsets[end_line + 1]
+                       else
+                         source.bytesize
+                       end
+          return if end_offset <= start_offset
+
+          local_tokens = [] of RawToken
+          collect_lexical_tokens_unbounded(source.byte_slice(start_offset, end_offset - start_offset), local_tokens)
+          local_tokens.each do |token|
+            shifted = RawToken.new(
+              token.line + start_line,
+              token.start_char,
+              token.length,
+              token.token_type,
+              token.modifiers
+            )
+            tokens << shifted if token_in_range?(shifted, range)
+          end
+        end
+
+        private def collect_lexical_tokens_unbounded(source : String, tokens : Array(RawToken))
+          lexer = Frontend::Lexer.new(source)
+          line_offsets = build_line_offsets(source)
+          lexer.each_token do |tok|
+            # Keywords
+            if keyword_kind?(tok.kind)
+              position = position_from_offset(source, tok.span.start_offset, line_offsets)
+              line = position.line
+              col = position.character
+              length = tok.slice.size
+              tokens << RawToken.new(line, col, length, SemanticTokenType::Keyword.value)
+              next
+            end
+
+            case tok.kind
+            when Frontend::Token::Kind::String
+              span = tok.span
+              position = position_from_offset(source, span.start_offset, line_offsets)
+              line = position.line
+              col = position.character
+              length = span.end_offset - span.start_offset
+              tokens << RawToken.new(line, col, length, SemanticTokenType::String.value)
+            when Frontend::Token::Kind::StringInterpolation
+              collect_interpolated_string_tokens_zero_copy(source, tok, tokens)
+            when Frontend::Token::Kind::Char
+              span = tok.span
+              position = position_from_offset(source, span.start_offset, line_offsets)
+              line = position.line
+              col = position.character
+              length = span.end_offset - span.start_offset
+              tokens << RawToken.new(line, col, length, SemanticTokenType::String.value)
+            when Frontend::Token::Kind::Regex
+              span = tok.span
+              position = position_from_offset(source, span.start_offset, line_offsets)
+              line = position.line
+              col = position.character
+              length = span.end_offset - span.start_offset
+              tokens << RawToken.new(line, col, length, SemanticTokenType::Regexp.value)
+            when Frontend::Token::Kind::Identifier
               slice = tok.slice
               if slice.size > 0 && slice[0].unsafe_chr.ascii_uppercase?
                 position = position_from_offset(source, tok.span.start_offset, line_offsets)
@@ -10730,6 +10893,32 @@ module CrystalV2
               col0 += 1
             end
           end
+        end
+
+        private def token_span_in_range?(span : Frontend::Span, range : Range) : Bool
+          token_start_line = span.start_line - 1
+          token_end_line = span.end_line - 1
+          return false if token_end_line < range.start.line
+          return false if token_start_line > range.end.line
+          if token_end_line == range.start.line
+            return false if span.end_column <= range.start.character
+          end
+          if token_start_line == range.end.line
+            return false if span.start_column - 1 >= range.end.character
+          end
+          true
+        end
+
+        private def token_in_range?(token : RawToken, range : Range) : Bool
+          return false if token.line < range.start.line
+          return false if token.line > range.end.line
+          if token.line == range.start.line
+            return false if token.start_char + token.length <= range.start.character
+          end
+          if token.line == range.end.line
+            return false if token.start_char >= range.end.character
+          end
+          true
         end
 
         # Subset of keywords we want colored by LSP regardless of semantic layer
