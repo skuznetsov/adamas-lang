@@ -5069,6 +5069,51 @@ Boundary:
 
 Trust: {F/G/R: 0.86/0.62/0.9} [verified]
 
+### LM-595 — LSP range formatting only returns contained edits
+
+Status: VERIFIED on `codegen`.
+
+LM-594 made partial `rangeFormatting` safe by returning `null` for non-full
+ranges. The next useful step was to make partial ranges productive without
+building a separate partial formatter.
+
+Accepted change:
+
+- `rangeFormatting` now runs the same whole-document formatter for partial
+  ranges, computes the minimal edit, and returns that edit only when the edit
+  range is fully contained by the requested range.
+- If the whole-document formatter would require a change outside the requested
+  range, the server returns `null`.
+- Full-document range formatting still delegates to `handle_formatting`, so it
+  keeps using the versioned formatting response cache.
+
+Evidence:
+
+- Focused formatting specs:
+  `crystal build spec/lsp/formatting_integration_spec.cr
+  spec/lsp/did_change_integration_spec.cr -o /tmp/lsp_range_formatting_spec
+  --error-trace` and
+  `scripts/run_safe.sh /tmp/lsp_range_formatting_spec 120 1536 --no-color`,
+  13 examples, 0 failures.
+- Default LSP harness:
+  `scripts/run_safe.sh /tmp/lsp_harness_range_format 120 1536 --server
+  bin/crystal_v2_lsp`, passed; full-document `rangeFormatting` measured
+  139.8ms after the formatting cache was populated.
+- Full LSP suite:
+  `crystal build spec/lsp/*_spec.cr -o /tmp/lsp_full_spec --error-trace` and
+  `scripts/run_safe.sh /tmp/lsp_full_spec 120 1536 --no-color`, 226 examples,
+  0 failures.
+
+Boundary:
+
+- This is still not a true local formatter; partial range requests pay the
+  whole-document formatter cost when the document is not already cached.
+- The containment rule is intentionally conservative and returns no edit for
+  multi-edit documents when one computed minimal span would cross outside the
+  requested range.
+
+Trust: {F/G/R: 0.85/0.64/0.9} [verified]
+
 ## LM-583 — LSP foreground hover avoids workspace reference scans by default
 
 Status: verified for the focused LSP hover/cache/harness slice on `codegen`.

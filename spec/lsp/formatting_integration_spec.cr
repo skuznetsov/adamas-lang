@@ -218,6 +218,53 @@ describe CrystalV2::Compiler::LSP::Server do
     FileUtils.rm_rf(dir) if dir
   end
 
+  it "formats a partial range when the computed edit stays inside it" do
+    dir = File.join(Dir.tempdir, "lsp_range_format_inside_#{Random::Secure.hex(6)}")
+    FileUtils.mkdir_p(dir)
+    path = File.join(dir, "main.cr")
+    source = "x = 1\ny=2\n"
+    File.write(path, source)
+
+    server = CrystalV2::Compiler::LSP::Server.new(
+      IO::Memory.new,
+      IO::Memory.new,
+      CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
+    )
+    uri = server.spec_store_document(source, dir, path)
+
+    response = server.spec_range_formatting(uri, 1, 0, 1, 3)
+    edits = response["result"].as_a
+    edits.size.should eq(1)
+    edits.first["range"]["start"]["line"].as_i.should eq(1)
+    edits.first["range"]["start"]["character"].as_i.should eq(1)
+    edits.first["range"]["end"]["line"].as_i.should eq(1)
+    edits.first["range"]["end"]["character"].as_i.should eq(2)
+    edits.first["newText"].as_s.should eq(" = ")
+    apply_formatting_edit(source, response).should eq(CrystalV2::Compiler::Formatter.format(source))
+  ensure
+    FileUtils.rm_rf(dir) if dir
+  end
+
+  it "returns null when a partial range excludes another formatting edit" do
+    dir = File.join(Dir.tempdir, "lsp_range_format_outside_#{Random::Secure.hex(6)}")
+    FileUtils.mkdir_p(dir)
+    path = File.join(dir, "main.cr")
+    source = "x=1\ny=2\n"
+    File.write(path, source)
+
+    server = CrystalV2::Compiler::LSP::Server.new(
+      IO::Memory.new,
+      IO::Memory.new,
+      CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
+    )
+    uri = server.spec_store_document(source, dir, path)
+
+    response = server.spec_range_formatting(uri, 1, 0, 1, 3)
+    response["result"].raw.should be_nil
+  ensure
+    FileUtils.rm_rf(dir) if dir
+  end
+
   it "does not edit outside partial range formatting requests" do
     dir = File.join(Dir.tempdir, "lsp_range_format_partial_#{Random::Secure.hex(6)}")
     FileUtils.mkdir_p(dir)

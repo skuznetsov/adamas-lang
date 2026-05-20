@@ -11799,13 +11799,25 @@ module CrystalV2
             Position.new(range_json["start"]["line"].as_i, range_json["start"]["character"].as_i),
             Position.new(range_json["end"]["line"].as_i, range_json["end"]["character"].as_i)
           )
-          unless range_covers_document?(doc_state, range)
-            debug("Partial range formatting not supported")
+          if range_covers_document?(doc_state, range)
+            debug("Full-document range formatting delegated to document formatter")
+            return handle_formatting(id, params)
+          end
+
+          original_source = doc_state.text_document.text
+          formatted_source = Formatter.format(original_source)
+          if formatted_source == original_source
+            debug("Range formatting found no document changes")
             return send_response(id, "null")
           end
 
-          debug("Full-document range formatting delegated to document formatter")
-          handle_formatting(id, params)
+          edit = minimal_formatting_edit(original_source, formatted_source)
+          unless range_contains_range?(range, edit.range)
+            debug("Range formatting edit falls outside requested range")
+            return send_response(id, "null")
+          end
+
+          send_response(id, [edit].to_json)
         end
 
         private def range_covers_document?(doc_state : DocumentState, range : Range) : Bool
@@ -11814,6 +11826,17 @@ module CrystalV2
           text = doc_state.text_document.text
           end_offset = position_to_offset(text, range.end.line, range.end.character, doc_state.line_offsets)
           !!(end_offset && end_offset >= text.bytesize)
+        end
+
+        private def range_contains_range?(outer : Range, inner : Range) : Bool
+          compare_positions(outer.start, inner.start) <= 0 &&
+            compare_positions(inner.end, outer.end) <= 0
+        end
+
+        private def compare_positions(left : Position, right : Position) : Int32
+          return left.line <=> right.line unless left.line == right.line
+
+          left.character <=> right.character
         end
       end
     end
