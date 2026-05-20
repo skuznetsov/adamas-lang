@@ -5612,6 +5612,67 @@ WBA framing:
 
 Trust: {F/G/R: 0.84/0.58/0.89} [verified]
 
+### LM-604 — LSP indexing notifications are foreground-document scoped
+
+Status: VERIFIED for the LSP notification-boundary slice on `codegen`.
+
+The default harness could capture dozens of `crystal/indexing` /
+`crystal/indexed` notifications for only a few opened files. The root was that
+notification emission lived inside `analyze_parsed_document`, so nested
+dependency analyses published UI indexing state transitions just like the
+foreground document analysis did.
+
+Accepted change:
+
+- `analyze_document` / `analyze_parsed_document` now accept a
+  `publish_indexing` flag.
+- Foreground `didOpen` / `didChange` keep the default publishing behavior.
+- Dependency analysis calls pass `publish_indexing: false`, so dependency
+  parsing/analysis no longer leaks user-visible indexing state transitions.
+
+Evidence:
+
+- Before this slice, a verbose default harness run after LM-603 captured
+  `crystal/indexing: 33x` and `crystal/indexed: 33x` for three opened files.
+- After the patch, the same harness through nested `run_safe` wrappers captured
+  `crystal/indexing: 3x`, `crystal/indexed: 3x`, and
+  `textDocument/publishDiagnostics: 3x`, with zero diagnostics.
+- Full LSP suite:
+  `crystal build spec/lsp/*_spec.cr -o /tmp/lsp_full_index_notifications_spec
+  --error-trace` and
+  `scripts/run_safe.sh /tmp/lsp_full_index_notifications_spec 120 1536
+  --no-color`, 229 examples, 0 failures.
+- LSP server/harness build sanity:
+  `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 300 4096 build
+  src/lsp_main.cr -o /tmp/lsp_main_index_notifications --error-trace -D
+  without_openssl` and
+  `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 240 4096 build
+  benchmarks/lsp_harness.cr -o /tmp/lsp_harness_index_notifications
+  --error-trace`, both exited 0.
+- Hygiene:
+  `crystal tool format --check src/compiler/lsp/server.cr`.
+
+Boundary:
+
+- This fixes protocol notification noise from nested dependency analysis. It
+  does not make dependency analysis itself cheaper or solve the larger
+  foreground-idle scheduler/prelude-cache frontier.
+
+WBA framing:
+
+- Window/trigger: nested dependency analysis emits the same indexing protocol
+  events as foreground document analysis.
+- Transport corridor: indexing state crosses from internal analysis phases to
+  client-visible JSON-RPC notifications.
+- Boundary: clients should see foreground document indexing transitions, not
+  every nested dependency traversal.
+- Legal move: carry a `publish_indexing` bit through the analysis corridor and
+  disable it for dependency loads.
+- Potential decrease: notification count per harness scenario drops from
+  dependency-scale to opened-document-scale.
+
+Trust: {F/G/R: 0.86/0.64/0.90} [verified]
+
 ## LM-583 — LSP foreground hover avoids workspace reference scans by default
 
 Status: verified for the focused LSP hover/cache/harness slice on `codegen`.

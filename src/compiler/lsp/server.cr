@@ -867,7 +867,8 @@ module CrystalV2
             path,
             load_requires: recursive,
             workspace: workspace,
-            build_expr_index: false
+            build_expr_index: false,
+            publish_indexing: false
           )
 
           text_doc = TextDocumentItem.new(uri: uri, language_id: "crystal", version: 0, text: source)
@@ -1881,10 +1882,11 @@ module CrystalV2
           workspace : DependencyWorkspace? = nil,
           build_expr_index : Bool = true,
           parse_ms : Float64 = 0.0,
+          publish_indexing : Bool = true,
         ) : {Array(Diagnostic), Frontend::Program, Semantic::TypeContext?, Hash(Frontend::ExprId, Semantic::Symbol)?, Semantic::SymbolTable?, Array(String), DocumentIndex?}
           debug { "Analyzing document: #{source.lines.size} lines, #{source.size} bytes" }
           ensure_prelude_loaded
-          notify_indexing("Indexing… loading document") if @config.background_indexing
+          notify_indexing("Indexing… loading document") if publish_indexing && @config.background_indexing
 
           diagnostics = [] of Diagnostic
           within_root = path && @project_root && path.starts_with?(@project_root.not_nil!)
@@ -2044,13 +2046,13 @@ module CrystalV2
             debug("Timing: parse=#{parse_ms.round(1)}ms requires=#{requires_ms.round(1)}ms symbols=#{(symbols_ms || 0).round(1)}ms resolve=#{(resolve_ms || 0).round(1)}ms infer=#{(infer_ms || 0).round(1)}ms total=#{total_ms.round(1)}ms")
           end
           requires.each { |req| debug("  require => #{req}") }
-          notify_indexed if @config.background_indexing
+          notify_indexed if publish_indexing && @config.background_indexing
           index = build_document_index(analysis_program, path, build_expr_index: build_expr_index)
           {diagnostics, analysis_program, type_context, identifier_symbols, symbol_table, requires, index}
         end
 
         # Analyze document and return diagnostics, program, type context, identifier symbols, and symbol table
-        private def analyze_document(source : String, base_dir : String? = nil, path : String? = nil, load_requires : Bool = true, recursive_requires : Bool = true, workspace : DependencyWorkspace? = nil, build_expr_index : Bool = true) : {Array(Diagnostic), Frontend::Program, Semantic::TypeContext?, Hash(Frontend::ExprId, Semantic::Symbol)?, Semantic::SymbolTable?, Array(String), DocumentIndex?}
+        private def analyze_document(source : String, base_dir : String? = nil, path : String? = nil, load_requires : Bool = true, recursive_requires : Bool = true, workspace : DependencyWorkspace? = nil, build_expr_index : Bool = true, publish_indexing : Bool = true) : {Array(Diagnostic), Frontend::Program, Semantic::TypeContext?, Hash(Frontend::ExprId, Semantic::Symbol)?, Semantic::SymbolTable?, Array(String), DocumentIndex?}
           parse_start = Time.instant
           lexer = Frontend::Lexer.new(source)
           parser = Frontend::Parser.new(lexer, recovery_mode: @config.parser_recovery_mode)
@@ -2067,7 +2069,8 @@ module CrystalV2
             recursive_requires: recursive_requires,
             workspace: workspace,
             build_expr_index: build_expr_index,
-            parse_ms: parse_ms
+            parse_ms: parse_ms,
+            publish_indexing: publish_indexing
           )
         end
 
