@@ -120,6 +120,14 @@ module CrystalV2::Compiler::LSP
       @formatting_cache[uri]?.try(&.[0])
     end
 
+    def spec_set_cached_expr_type(path : String, expr_index : Int32, type_name : String)
+      (@cached_expr_types[path] ||= Hash(Int32, String).new)[expr_index] = type_name
+    end
+
+    def spec_cached_expr_types?(path : String) : Bool
+      @cached_expr_types.has_key?(path)
+    end
+
     def spec_file_uri(path : String) : String
       file_uri(path)
     end

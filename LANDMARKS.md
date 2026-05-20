@@ -5492,6 +5492,67 @@ WBA framing:
 
 Trust: {F/G/R: 0.84/0.54/0.88} [verified]
 
+### LM-602 — LSP didChange invalidates per-file cached expression types
+
+Status: VERIFIED for the focused LSP edit-reanalysis cache slice on
+`codegen`.
+
+The LSP legacy foreground document path can use `@cached_expr_types[path]` to
+skip type inference when cache data exists. That is valid for unchanged files
+loaded from project/prelude cache, but it was unsafe for `didChange`: the
+handler invalidated semantic-token and formatting caches only after reanalysis,
+and never invalidated per-file cached expression types. During the debounce
+window before `UnifiedProject#update_file` refreshes the path, the immediate
+legacy analysis could therefore reuse expression types from old source text.
+
+Accepted change:
+
+- `didChange` now invalidates semantic-token, formatting, and per-path
+  expression-type caches before it re-analyzes the changed text.
+- The invalidation is scoped to the changed document path; unchanged project
+  and prelude cache entries stay available.
+- A focused regression seeds a stale expression-type entry, sends a full-sync
+  `didChange`, and asserts the per-path cache is gone while the updated
+  document text is stored.
+
+Evidence:
+
+- Focused didChange spec:
+  `crystal build spec/lsp/did_change_integration_spec.cr -o
+  /tmp/lsp_did_change_cached_expr_spec --error-trace` and
+  `scripts/run_safe.sh /tmp/lsp_did_change_cached_expr_spec 120 1536
+  --no-color`, 6 examples, 0 failures.
+- Full LSP suite:
+  `crystal build spec/lsp/*_spec.cr -o
+  /tmp/lsp_full_cached_expr_invalidate_spec --error-trace` and
+  `scripts/run_safe.sh /tmp/lsp_full_cached_expr_invalidate_spec 120 1536
+  --no-color`, 229 examples, 0 failures.
+- Hygiene:
+  `crystal tool format --check src/compiler/lsp/server.cr
+  spec/lsp/did_change_integration_spec.cr spec/lsp/support/server_helper.cr`.
+
+Boundary:
+
+- This closes the stale per-file expression-type cache risk for direct
+  `didChange` reanalysis. It does not solve broader background-scheduler
+  monopolization, project-cache save jitter, or redundant semantic-token
+  line-offset construction.
+
+WBA framing:
+
+- Window/trigger: an edit arrives for a path that may already have cached
+  expression types from older source bytes.
+- Transport corridor: expression-type cache entries travel from project/prelude
+  cache into foreground hover/navigation type contexts.
+- Boundary: unchanged cached files remain valid; only the actively changed
+  document path must lose source-derived cache state before reanalysis.
+- Legal move: delete the changed path from `@cached_expr_types` before the
+  legacy `analyze_document` call.
+- Potential decrease: stale source-derived state for the active edit drops to
+  zero before the new document state is built.
+
+Trust: {F/G/R: 0.88/0.66/0.91} [verified]
+
 ## LM-583 — LSP foreground hover avoids workspace reference scans by default
 
 Status: verified for the focused LSP hover/cache/harness slice on `codegen`.

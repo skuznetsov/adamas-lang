@@ -65,6 +65,32 @@ describe CrystalV2::Compiler::LSP::Server do
     FileUtils.rm_rf(dir) if dir
   end
 
+  it "invalidates cached expression types before re-analyzing didChange text" do
+    dir = File.join(Dir.tempdir, "lsp_did_change_cached_types_#{Random::Secure.hex(6)}")
+    FileUtils.mkdir_p(dir)
+    path = File.join(dir, "main.cr")
+    source = "value = 1\nvalue\n"
+    File.write(path, source)
+
+    server = CrystalV2::Compiler::LSP::Server.new(
+      IO::Memory.new,
+      IO::Memory.new,
+      CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
+    )
+    uri = server.spec_store_document(source, dir, path)
+    server.spec_set_cached_expr_type(path, 0, "StaleType")
+    server.spec_cached_expr_types?(path).should be_true
+
+    updated = "value = 2\nvalue\n"
+    changes = %([{"text":#{updated.to_json}}])
+    server.spec_did_change(uri, 2, changes)
+
+    server.spec_cached_expr_types?(path).should be_false
+    server.spec_document_text(uri).should eq(updated)
+  ensure
+    FileUtils.rm_rf(dir) if dir
+  end
+
   it "defers UnifiedProject updates behind the immediate document path" do
     dir = File.join(Dir.tempdir, "lsp_deferred_project_update_#{Random::Secure.hex(6)}")
     FileUtils.mkdir_p(dir)

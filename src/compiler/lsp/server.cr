@@ -3621,6 +3621,8 @@ module CrystalV2
           doc_path = uri_to_path(uri)
           base_dir = doc_path ? File.dirname(doc_path) : nil
 
+          invalidate_changed_document_caches(uri, doc_path)
+
           # Legacy analysis (will be removed)
           diagnostics, program, type_context, identifier_symbols, symbol_table, requires, index = analyze_document(
             new_text,
@@ -3634,8 +3636,6 @@ module CrystalV2
           line_offsets = build_line_offsets(new_text)
           @documents[uri] = DocumentState.new(doc, program, type_context, identifier_symbols, symbol_table, requires, index, line_offsets, path: doc_path, document_symbols: collect_ast_document_symbols(program, doc_path))
           register_document_symbols(uri, @documents[uri])
-          @semantic_token_cache.delete(uri) # Invalidate cache on content change
-          @formatting_cache.delete(uri)     # Invalidate cache on content change
           warm_dependencies(doc_path, @documents[uri]) if doc_path
 
           publish_diagnostics(uri, diagnostics, version)
@@ -3645,6 +3645,12 @@ module CrystalV2
           # state is ready; the legacy document state remains the source for
           # diagnostics and navigation during the debounce window.
           @debouncer.queue(uri, new_text, version) if doc_path
+        end
+
+        private def invalidate_changed_document_caches(uri : String, path : String?)
+          @semantic_token_cache.delete(uri)
+          @formatting_cache.delete(uri)
+          @cached_expr_types.delete(path) if path
         end
 
         # Apply LSP content changes to document text.
