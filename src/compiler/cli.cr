@@ -2513,9 +2513,8 @@ module CrystalV2
           next unless macro_value.is_a?(CrystalV2::Compiler::Semantic::MacroNumberValue)
           # Skip float constants — they can't be stored as Int64 initial values
           next if macro_value.value.is_a?(Float64)
-          owner_and_name = constant_owner_and_name(full_name)
-          owner = owner_and_name[0]
-          const_name = owner_and_name[1]
+          owner = hir_converter.constant_literal_owners[full_name]? || "Object"
+          const_name = hir_converter.constant_literal_names[full_name]? || full_name
           global_name = constant_class_var_global_name(owner, const_name)
           next if registered_globals.includes?(global_name)
           const_type = hir_converter.constant_types[full_name]? || HIR::TypeRef::INT32
@@ -2725,9 +2724,8 @@ module CrystalV2
           value = hir_converter.constant_literal_values[name]
           if value.is_a?(CrystalV2::Compiler::Semantic::MacroNumberValue)
             # Convert constant name (Math::PI) to global name (Math__classvar__PI)
-            owner_and_name = constant_owner_and_name(name)
-            owner = owner_and_name[0]
-            const_name = owner_and_name[1]
+            owner = hir_converter.constant_literal_owners[name]? || "Object"
+            const_name = hir_converter.constant_literal_names[name]? || name
             global_name = constant_class_var_global_name(owner, const_name)
             const_init[global_name] = value.value
           end

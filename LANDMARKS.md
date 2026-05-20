@@ -4908,3 +4908,67 @@ Boundary:
   is already present before CLI constant-literal export.
 
 Trust: {F/G/R: 0.88/0.40/0.88} [verified]
+
+## LM-578 — Constant global export carries structured owner/name metadata
+
+Context: compiler/bootstrap/HIR-to-CLI constant global transport, 2026-05-20,
+`codegen`.
+
+Verified outcome:
+
+- Produced `s2` now emits a module-scoped no-prelude numeric constant as
+  `Foo__classvar__COUNT` rather than `Object__classvar__Foo$CCCOUNT`.
+- The widened `p2_constant_globals_no_prelude.sh` guard now covers both
+  top-level numeric constants and `module Foo; private COUNT = 2; end`, and
+  rejects mangled namespace tokens inside `Object__classvar__...` globals.
+
+WBA framing:
+
+- Window/trigger: `Object__classvar__Foo$CCCOUNT` in produced `s2` LLVM IR.
+- Transport corridor: `ConstantNode -> record_constant_definition ->
+  @constant_literal_values -> CLI constant global export -> MIR globals ->
+  LLVM globals`.
+- Boundary: semantic owner and leaf constant name must remain separate from
+  rendered names.
+- Legal move: store `constant_literal_owners` and `constant_literal_names`
+  alongside each constant literal key during HIR registration, then have CLI
+  constant global export consume those structured fields instead of reparsing
+  the rendered key.
+- Potential decrease: removes one self-hosted string-split bad corner from the
+  constant global corridor while keeping the previous empty-global guard.
+
+Evidence:
+
+- Host trace before the fix showed `record_constants_in_body(owner=Foo)` and
+  `CONST_LIT full=Foo::COUNT owner=Foo`, while produced `s2` still emitted
+  `Object__classvar__Foo$CCCOUNT`. That localized the bug after HIR constant
+  registration and before final global symbol spelling.
+- `crystal build src/crystal_v2.cr -o /private/tmp/cv2_wba_structconst_host
+  --error-trace`
+- `regression_tests/p2_constant_globals_no_prelude.sh
+  /private/tmp/cv2_wba_structconst_host`
+- `scripts/run_safe.sh /private/tmp/cv2_wba_structconst_host 300 4096
+  src/crystal_v2.cr -o /private/tmp/cv2_wba_structconst_s2/cv2_s2`
+  exited 0 after ~165s.
+- Produced `s2` passed:
+  `p2_constant_globals_no_prelude.sh`,
+  `p2_unbound_type_param_scan_no_regex_no_prelude.sh`,
+  `p2_module_macro_for_iter_var_names_no_prelude.sh`, and
+  `p2_qualified_module_namespace_no_prelude.sh`.
+
+Refuted branch:
+
+- Replacing `String#rindex("::")` with a local byte-scan helper passed the host
+  guard but regressed produced `s2` build to
+  `ExprId out of bounds: 1600485477`. Under the LTP/WBA recomputation rule,
+  this was not a legal boundary-safe move and was backed out.
+
+Boundary:
+
+- This fixes the no-prelude module-constant global naming drift, not the
+  full-prelude `puts 42` gate. Produced `s2` full-prelude `puts 42` still needs
+  separate localization around the class/module pre-scan frontier.
+- The `file_sha256$String` MIR optimizer arithmetic-overflow diagnostic remains
+  non-fatal during produced `s2` builds.
+
+Trust: {F/G/R: 0.90/0.42/0.90} [verified]

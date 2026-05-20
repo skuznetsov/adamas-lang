@@ -14,6 +14,10 @@ trap 'rm -rf "$tmpdir"' EXIT
 cat >"$tmpdir/repro.cr" <<'CR'
 private UNLOCKED = 0
 private LOCKED = 1
+
+module Foo
+  private COUNT = 2
+end
 CR
 
 log="$tmpdir/repro.log"
@@ -41,8 +45,15 @@ if grep -Eq '@(__classvar__|[^[:space:]]+__classvar__)([[:space:]=]|$)' "$out.ll
   exit 1
 fi
 
+if grep -Eq '@Object__classvar__[^[:space:]]*\\$CC' "$out.ll"; then
+  echo "constant global guard emitted mangled namespace inside Object class-var global" >&2
+  grep -En '@Object__classvar__[^[:space:]]*\\$CC' "$out.ll" >&2 || true
+  exit 1
+fi
+
 grep -Eq '@Object__classvar__UNLOCKED[[:space:]]*=[[:space:]]*global i32' "$out.ll"
 grep -Eq '@Object__classvar__LOCKED[[:space:]]*=[[:space:]]*global i32' "$out.ll"
+grep -Eq '@Foo__classvar__COUNT[[:space:]]*=[[:space:]]*global i32' "$out.ll"
 grep -Eq 'store i32 1, ptr @Object__classvar__LOCKED' "$out.ll"
 
 echo "p2_constant_globals_no_prelude_ok"
