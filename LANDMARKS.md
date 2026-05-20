@@ -4979,6 +4979,45 @@ Observed follow-up frontier:
 
 Trust: {F/G/R: 0.84/0.58/0.9} [verified]
 
+### LM-593 — LSP formatting responses are cached per document version
+
+Status: VERIFIED on `codegen`.
+
+The default LSP harness showed full-document formatting around 365ms and
+rangeFormatting around 365ms on `src/compiler/lsp/server.cr`. The handler
+formats the whole document for both requests; rangeFormatting currently
+delegates to full formatting. Repeated requests therefore paid the token-based
+formatter cost again even when the document version was unchanged.
+
+Accepted change:
+
+- The LSP server now caches serialized formatting responses by URI and document
+  version.
+- The cache stores both `null` no-op responses and full edit responses.
+- Formatting cache entries are invalidated on `didChange` and `didClose`.
+
+Evidence:
+
+- Focused formatting specs:
+  `crystal build spec/lsp/formatting_integration_spec.cr
+  spec/lsp/did_change_integration_spec.cr -o /tmp/lsp_formatting_spec
+  --error-trace` and
+  `scripts/run_safe.sh /tmp/lsp_formatting_spec 120 1536 --no-color`,
+  6 examples, 0 failures.
+- Focused harness on `src/compiler/lsp/server.cr`:
+  first formatting 365.9ms, repeated formatting 149.2ms, rangeFormatting
+  138.9ms.
+- Debug log showed `Formatting cache HIT` for repeated formatting and for
+  rangeFormatting delegation.
+
+Boundary:
+
+- The remaining ~140-150ms repeated formatting cost is response-size cost from
+  returning a large whole-document edit, not formatter recomputation. True
+  range formatting remains a separate feature frontier.
+
+Trust: {F/G/R: 0.85/0.61/0.89} [verified]
+
 ## LM-583 — LSP foreground hover avoids workspace reference scans by default
 
 Status: verified for the focused LSP hover/cache/harness slice on `codegen`.

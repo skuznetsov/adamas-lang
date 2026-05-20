@@ -518,6 +518,7 @@ module CrystalV2
         @indexing_message : String?
         @indexing_last_sent : Time::Instant?
         @semantic_token_cache : Hash(String, {Int32, String}) # URI -> {version, serialized response}
+        @formatting_cache : Hash(String, {Int32, String})     # URI -> {version, serialized response}
         @last_foreground_activity : Time::Instant
         @force_project_update : Bool
 
@@ -565,6 +566,7 @@ module CrystalV2
           @indexing_message = nil
           @indexing_last_sent = Time.instant
           @semantic_token_cache = {} of String => {Int32, String}
+          @formatting_cache = {} of String => {Int32, String}
           @last_foreground_activity = Time.instant
           @force_project_update = false
           configure_project_update_debouncer
@@ -1753,6 +1755,7 @@ module CrystalV2
           unregister_document_symbols(uri)
           @documents.delete(uri)
           @semantic_token_cache.delete(uri) # Clear cached tokens
+          @formatting_cache.delete(uri)     # Clear cached formatting response
         end
 
         private def build_document_index(program : Frontend::Program, path : String?, build_expr_index : Bool = true) : DocumentIndex
@@ -3611,6 +3614,7 @@ module CrystalV2
           @documents[uri] = DocumentState.new(doc, program, type_context, identifier_symbols, symbol_table, requires, index, line_offsets, path: doc_path, document_symbols: collect_ast_document_symbols(program, doc_path))
           register_document_symbols(uri, @documents[uri])
           @semantic_token_cache.delete(uri) # Invalidate cache on content change
+          @formatting_cache.delete(uri)     # Invalidate cache on content change
           warm_dependencies(doc_path, @documents[uri]) if doc_path
 
           publish_diagnostics(uri, diagnostics, version)
@@ -11666,6 +11670,15 @@ module CrystalV2
 
           # Get original source
           original_source = doc_state.text_document.text
+          version = doc_state.text_document.version
+
+          if cached = @formatting_cache[uri]?
+            cached_version, cached_json = cached
+            if cached_version == version
+              debug("Formatting cache HIT for #{uri} v#{version}")
+              return send_response(id, cached_json)
+            end
+          end
 
           # Format using CrystalV2 token-based formatter
           begin
@@ -11674,6 +11687,7 @@ module CrystalV2
             # If source is already formatted, return null (no changes)
             if formatted_source == original_source
               debug("Document already formatted")
+              @formatting_cache[uri] = {version, "null"}
               return send_response(id, "null")
             end
 
@@ -11688,9 +11702,11 @@ module CrystalV2
 
             range = Range.new(start_pos, end_pos)
             edit = TextEdit.new(range: range, new_text: formatted_source)
+            json = [edit].to_json
+            @formatting_cache[uri] = {version, json}
 
             debug("Formatted: #{original_source.lines.size} lines → #{formatted_source.lines.size} lines")
-            send_response(id, [edit].to_json)
+            send_response(id, json)
           rescue ex
             debug("Formatting error: #{ex.message}")
             send_error(id, -32603, "Formatting failed: #{ex.message}")

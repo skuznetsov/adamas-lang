@@ -100,6 +100,18 @@ module CrystalV2::Compiler::LSP
       spec_read_last_response
     end
 
+    def spec_formatting(uri : String) : JSON::Any
+      params = JSON.parse(%({"textDocument":{"uri":#{uri.to_json}},"options":{"tabSize":2,"insertSpaces":true}}))
+      id = JSON.parse("8")
+      spec_reset_output
+      handle_formatting(id, params)
+      spec_read_last_response
+    end
+
+    def spec_formatting_cache_version(uri : String) : Int32?
+      @formatting_cache[uri]?.try(&.[0])
+    end
+
     def spec_file_uri(path : String) : String
       file_uri(path)
     end
