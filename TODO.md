@@ -121,15 +121,19 @@ compiler-fingerprint/mtime/size/text-match gate and a 64KB source-size floor.
 The measured `ast_to_hir.cr` full-token request dropped from about 1028ms on
 the first compute-and-save run to about 410ms on a fresh disk-cache-hit run in
 the helper path; the remaining cost is dominated by handling/parsing the huge
-JSON response.
+JSON response. After LM-623, semantic-token full responses carry stable
+`resultId`s and the server supports `textDocument/semanticTokens/full/delta`;
+when a client already has the current result id, the repeated
+`ast_to_hir.cr` request returns an empty 75-byte delta in about 0.9ms instead
+of resending 1,276,950 encoded ints.
 Refuted for the current one-file warm harness: project-cache load itself is not
 the dominant `initialize` cost (`cache=~2.9ms`), and disabling project cache
 pushes dependency analysis back into foreground `didOpen`; lazy-on-first
 `ExprSpanIndex` makes first hover worse for the current one-file warm harness.
 Remaining LSP latency and fidelity candidates are first-open foreground
 name-resolution/indexing work after the AST cache corridor has supplied a
-parsed foreground arena, and reducing the wire/client cost of huge full
-semantic-token responses.
+parsed foreground arena and first full semantic-token response cost before a
+client has a current delta result id.
 
 Spec-first bootstrap checkpoint (2026-05-08): `docs/specs/` now contains the
 first executable contract slice for Crystal V2, modeled after the DiamondDB

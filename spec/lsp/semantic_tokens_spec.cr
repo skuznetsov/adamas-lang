@@ -168,6 +168,6 @@ module SemanticTokensSpecHelper
     provider = capabilities.semantic_tokens_provider.not_nil!
 
     provider["range"].as_bool.should be_true
-    provider["full"].as_bool.should be_true
+    provider["full"]["delta"].as_bool.should be_true
   end
 end

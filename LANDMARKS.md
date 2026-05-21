@@ -7594,3 +7594,42 @@ Adversary notes:
   cost of a 1.27M-int semantic-token response.
 
 Trust: {F/G/R: 0.86/0.48/0.88} [verified]
+
+### LM-623 - Semantic-token full delta avoids repeated huge responses
+
+The LSP server now advertises `semanticTokensProvider.full.delta`, includes a
+stable `resultId` in full semantic-token responses, and handles
+`textDocument/semanticTokens/full/delta`. When the client sends the exact
+current result id previously issued or restored by this server process, the
+server returns an empty edit list instead of resending the full token array.
+Stale or unknown result ids fall back to the existing full-token response.
+
+Evidence:
+
+- The focused regression verifies an empty delta for the current result id, a
+  full fallback for a stale result id, exact close/reopen result-id
+  preservation, and the advertised `full.delta` capability.
+- `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 180 4096 spec
+  spec/lsp/semantic_token_disk_cache_spec.cr spec/lsp/semantic_tokens_spec.cr
+  --error-trace` -> 12 examples, 0 failures.
+- `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 300 4096 spec
+  spec/lsp --error-trace` -> 247 examples, 0 failures.
+- `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 120 4096 tool format
+  --check src/compiler/lsp/server.cr src/compiler/lsp/messages.cr
+  src/compiler/lsp/semantic_token_cache.cr spec/lsp/support/server_helper.cr
+  spec/lsp/semantic_token_disk_cache_spec.cr spec/lsp/semantic_tokens_spec.cr`
+  -> exit 0; `git diff --check` -> exit 0.
+- Temporary profile on `src/compiler/hir/ast_to_hir.cr`: full semantic tokens
+  still returned 1,276,950 encoded ints in about 1026.8ms in the helper path,
+  while same-result `full/delta` returned 0 edits, 75 bytes, in about 0.9ms.
+
+Adversary notes:
+
+- Empty delta is not derived from filename or mtime alone. The server must have
+  issued or restored the matching result id; unknown ids use full fallback.
+- Result ids are invalidated with the semantic-token cache on text changes and
+  preserved only for exact close/reopen cache hits.
+- This removes repeated huge-response cost after a client has a current full
+  result. It does not remove the first full-token request cost.
+
+Trust: {F/G/R: 0.88/0.50/0.89} [verified]

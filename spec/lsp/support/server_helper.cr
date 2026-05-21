@@ -124,6 +124,14 @@ module CrystalV2::Compiler::LSP
       spec_read_last_response
     end
 
+    def spec_semantic_tokens_delta(uri : String, previous_result_id : String) : JSON::Any
+      params = JSON.parse(%({"textDocument":{"uri":#{uri.to_json}},"previousResultId":#{previous_result_id.to_json}}))
+      id = JSON.parse("13")
+      spec_reset_output
+      handle_semantic_tokens_delta(id, params)
+      spec_read_last_response
+    end
+
     def spec_inlay_hints(uri : String, start_line : Int32, start_char : Int32, end_line : Int32, end_char : Int32) : JSON::Any
       params = JSON.parse(%({"textDocument":{"uri":#{uri.to_json}},"range":{"start":{"line":#{start_line},"character":#{start_char}},"end":{"line":#{end_line},"character":#{end_char}}}}))
       id = JSON.parse("4")

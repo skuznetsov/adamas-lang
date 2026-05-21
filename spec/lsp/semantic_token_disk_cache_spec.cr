@@ -59,4 +59,63 @@ describe "LSP semantic token disk cache" do
   ensure
     FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
   end
+
+  it "returns an empty semantic token delta for the current result id" do
+    dir = File.join(Dir.tempdir, "cv2_semantic_token_doc_#{Random::Secure.hex(6)}")
+    Dir.mkdir_p(dir)
+    path = File.join(dir, "sample.cr")
+    source = "value = 1\n"
+    File.write(path, source)
+
+    server = CrystalV2::Compiler::LSP::Server.new(IO::Memory.new, IO::Memory.new, CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false))
+    uri = server.spec_did_open_document(source, path)
+    full_response = server.spec_semantic_tokens(uri)
+    result_id = full_response["result"]["resultId"].as_s
+
+    delta_response = server.spec_semantic_tokens_delta(uri, result_id)
+    delta_response["result"]["resultId"].as_s.should eq(result_id)
+    delta_response["result"]["edits"].as_a.should be_empty
+  ensure
+    FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
+  end
+
+  it "falls back to full semantic tokens for a stale result id" do
+    dir = File.join(Dir.tempdir, "cv2_semantic_token_doc_#{Random::Secure.hex(6)}")
+    Dir.mkdir_p(dir)
+    path = File.join(dir, "sample.cr")
+    source = "value = 1\n"
+    File.write(path, source)
+
+    server = CrystalV2::Compiler::LSP::Server.new(IO::Memory.new, IO::Memory.new, CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false))
+    uri = server.spec_did_open_document(source, path)
+    delta_response = server.spec_semantic_tokens_delta(uri, "stale")
+
+    delta_response["result"]["data"].as_a.should_not be_empty
+    delta_response["result"]["resultId"].as_s.should_not eq("stale")
+  ensure
+    FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
+  end
+
+  it "preserves semantic token result ids across exact close and reopen" do
+    dir = File.join(Dir.tempdir, "cv2_semantic_token_doc_#{Random::Secure.hex(6)}")
+    Dir.mkdir_p(dir)
+    path = File.join(dir, "sample.cr")
+    source = "value = 1\n"
+    File.write(path, source)
+
+    server = CrystalV2::Compiler::LSP::Server.new(IO::Memory.new, IO::Memory.new, CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false))
+    uri = server.spec_did_open_document(source, path)
+    full_response = server.spec_semantic_tokens(uri)
+    result_id = full_response["result"]["resultId"].as_s
+
+    server.spec_did_close(uri)
+    reopened_uri = server.spec_did_open_document(source, path)
+    reopened_uri.should eq(uri)
+    delta_response = server.spec_semantic_tokens_delta(uri, result_id)
+
+    delta_response["result"]["resultId"].as_s.should eq(result_id)
+    delta_response["result"]["edits"].as_a.should be_empty
+  ensure
+    FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
+  end
 end

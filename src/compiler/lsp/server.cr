@@ -137,12 +137,14 @@ module CrystalV2
         getter language_id : String
         getter path : String?
         getter semantic_tokens_json : String?
+        getter semantic_tokens_result_id : String?
         getter formatting_json : String?
 
         def initialize(
           @state : DocumentState,
           @diagnostics : Array(Diagnostic),
           @semantic_tokens_json : String? = nil,
+          @semantic_tokens_result_id : String? = nil,
           @formatting_json : String? = nil,
         )
           doc = state.text_document
@@ -556,7 +558,8 @@ module CrystalV2
         @indexing_message : String?
         @indexing_last_sent : Time::Instant?
         @semantic_token_cache : Hash(String, {Int32, String}) # URI -> {version, serialized response}
-        @formatting_cache : Hash(String, {Int32, String})     # URI -> {version, serialized response}
+        @semantic_token_result_ids : Hash(String, {Int32, String})
+        @formatting_cache : Hash(String, {Int32, String}) # URI -> {version, serialized response}
         @last_foreground_activity : Time::Instant
         @force_project_update : Bool
 
@@ -607,6 +610,7 @@ module CrystalV2
           @indexing_message = nil
           @indexing_last_sent = Time.instant
           @semantic_token_cache = {} of String => {Int32, String}
+          @semantic_token_result_ids = {} of String => {Int32, String}
           @formatting_cache = {} of String => {Int32, String}
           @last_foreground_activity = Time.instant
           @force_project_update = false
@@ -1657,6 +1661,8 @@ module CrystalV2
                   handle_folding_range(id, params)
                 when "textDocument/semanticTokens/full"
                   handle_semantic_tokens(id, params)
+                when "textDocument/semanticTokens/full/delta"
+                  handle_semantic_tokens_delta(id, params)
                 when "textDocument/semanticTokens/range"
                   handle_semantic_tokens_range(id, params)
                 when "textDocument/prepareCallHierarchy"
@@ -1852,7 +1858,8 @@ module CrystalV2
           unregister_document_symbols(uri)
           @documents.delete(uri)
           @semantic_token_cache.delete(uri) # Clear cached tokens
-          @formatting_cache.delete(uri)     # Clear cached formatting response
+          @semantic_token_result_ids.delete(uri)
+          @formatting_cache.delete(uri) # Clear cached formatting response
           if path = uri_to_path(uri)
             @cached_expr_type_compatible_paths.delete(File.expand_path(path))
           end
@@ -1864,8 +1871,9 @@ module CrystalV2
 
           diagnostics = @document_diagnostics[uri]? || [] of Diagnostic
           semantic_tokens_json = @semantic_token_cache[uri]?.try(&.[1])
+          semantic_tokens_result_id = @semantic_token_result_ids[uri]?.try(&.[1])
           formatting_json = @formatting_cache[uri]?.try(&.[1])
-          @closed_document_cache[uri] = ClosedDocumentCacheEntry.new(state, diagnostics, semantic_tokens_json, formatting_json)
+          @closed_document_cache[uri] = ClosedDocumentCacheEntry.new(state, diagnostics, semantic_tokens_json, semantic_tokens_result_id, formatting_json)
           trim_closed_document_cache
         end
 
@@ -1897,6 +1905,9 @@ module CrystalV2
           @document_diagnostics[uri] = entry.diagnostics
           if semantic_tokens_json = entry.semantic_tokens_json
             @semantic_token_cache[uri] = {doc.version, semantic_tokens_json}
+            if semantic_tokens_result_id = entry.semantic_tokens_result_id
+              @semantic_token_result_ids[uri] = {doc.version, semantic_tokens_result_id}
+            end
           end
           if formatting_json = entry.formatting_json
             @formatting_cache[uri] = {doc.version, formatting_json}
@@ -3889,6 +3900,7 @@ module CrystalV2
 
         private def invalidate_changed_document_caches(uri : String, path : String?)
           @semantic_token_cache.delete(uri)
+          @semantic_token_result_ids.delete(uri)
           @formatting_cache.delete(uri)
           @closed_document_cache.delete(uri)
           @cached_expr_types.delete(path) if path
@@ -6602,12 +6614,14 @@ module CrystalV2
             end
           end
 
+          result_id = semantic_token_result_id(uri, doc_state)
           if disk_cache_eligible_for_semantic_tokens?(doc_state)
             path = doc_state.path.not_nil!
             info = File.info(path)
             if cached_json = SemanticTokenDiskCache.load(path, info.modification_time.to_unix_ns.to_i64, info.size.to_u64)
               debug("Semantic tokens disk cache HIT for #{uri} v#{version}")
               @semantic_token_cache[uri] = {version, cached_json}
+              @semantic_token_result_ids[uri] = {version, result_id}
               return send_response(id, cached_json)
             end
           end
@@ -6629,12 +6643,13 @@ module CrystalV2
 
           # Serialize to JSON
           json_start = Time.instant
-          json = tokens.to_json
+          json = SemanticTokens.new(tokens.data, result_id).to_json
           json_ms = (Time.instant - json_start).total_milliseconds
 
           # Cache the serialized response. Large files spend significant time
           # serializing token arrays, and repeat full-token requests are common.
           @semantic_token_cache[uri] = {version, json}
+          @semantic_token_result_ids[uri] = {version, result_id}
           if disk_cache_eligible_for_semantic_tokens?(doc_state)
             path = doc_state.path.not_nil!
             info = File.info(path)
@@ -6651,6 +6666,24 @@ module CrystalV2
           send_response(id, json)
         end
 
+        private def handle_semantic_tokens_delta(id : JSON::Any, params : JSON::Any?)
+          return send_error(id, -32602, "Missing params") unless params
+
+          uri = params["textDocument"]["uri"].as_s
+          previous_result_id = params["previousResultId"]?.try(&.as_s?)
+          doc_state = @documents[uri]?
+          return send_response(id, SemanticTokens.new(data: [] of Int32).to_json) unless doc_state
+
+          version = doc_state.text_document.version
+          result_id = semantic_token_result_id(uri, doc_state)
+          if previous_result_id == result_id && semantic_token_result_current?(uri, version, result_id)
+            debug("Semantic tokens delta empty for #{uri} v#{version}")
+            return send_response(id, %({"resultId":#{result_id.to_json},"edits":[]}))
+          end
+
+          handle_semantic_tokens(id, params)
+        end
+
         private def disk_cache_eligible_for_semantic_tokens?(doc_state : DocumentState) : Bool
           path = doc_state.path
           return false unless path
@@ -6661,6 +6694,26 @@ module CrystalV2
           return false unless info.size == text.bytesize
           File.read(path) == text
         rescue
+          false
+        end
+
+        private def semantic_token_result_id(uri : String, doc_state : DocumentState) : String
+          if disk_cache_eligible_for_semantic_tokens?(doc_state)
+            path = doc_state.path.not_nil!
+            info = File.info(path)
+            return "disk:#{AstCache.compiler_fingerprint.to_s(16)}:#{info.modification_time.to_unix_ns}:#{info.size}"
+          end
+
+          "mem:#{uri}:#{doc_state.text_document.version}:#{doc_state.text_document.text.bytesize}"
+        rescue
+          "mem:#{uri}:#{doc_state.text_document.version}:#{doc_state.text_document.text.bytesize}"
+        end
+
+        private def semantic_token_result_current?(uri : String, version : Int32, result_id : String) : Bool
+          if cached = @semantic_token_result_ids[uri]?
+            return true if cached[0] == version && cached[1] == result_id
+          end
+
           false
         end
 
