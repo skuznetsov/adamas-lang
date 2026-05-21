@@ -84,7 +84,10 @@ to the shallow 11-item cache summary or loading the dependency graph. After
 LM-612, `LSP_AST_CACHE` is enabled by default with `LSP_AST_CACHE=0` and
 config `ast_cache: false` opt-outs; warm default `server.cr` open is now about
 150ms in the harness while the focused cache semantic-fidelity spec and full
-LSP suite stay green.
+LSP suite stay green. After LM-613, AST document symbols are collected lazily
+on `textDocument/documentSymbol` instead of during `didOpen`; warm default
+`server.cr` open is about 140ms in the harness, while document symbols remain
+AST-backed when requested.
 Refuted for the current one-file warm harness: project-cache load itself is not
 the dominant `initialize` cost (`cache=~2.9ms`), and disabling project cache
 pushes dependency analysis back into foreground `didOpen`. Remaining LSP latency

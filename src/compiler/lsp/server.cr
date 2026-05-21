@@ -1784,7 +1784,7 @@ module CrystalV2
 
           # Store document state (legacy)
           line_offsets = build_line_offsets(text)
-          @documents[uri] = DocumentState.new(doc, program, type_context, identifier_symbols, symbol_table, requires, index, line_offsets, path: doc_path, document_symbols: collect_ast_document_symbols(program, doc_path))
+          @documents[uri] = DocumentState.new(doc, program, type_context, identifier_symbols, symbol_table, requires, index, line_offsets, path: doc_path)
           register_document_symbols(uri, @documents[uri])
           warm_dependencies(doc_path, @documents[uri]) if doc_path
 
@@ -3773,7 +3773,7 @@ module CrystalV2
 
           doc = TextDocumentItem.new(uri: uri, language_id: language_id, version: version, text: new_text)
           line_offsets = build_line_offsets(new_text)
-          @documents[uri] = DocumentState.new(doc, program, type_context, identifier_symbols, symbol_table, requires, index, line_offsets, path: doc_path, document_symbols: collect_ast_document_symbols(program, doc_path))
+          @documents[uri] = DocumentState.new(doc, program, type_context, identifier_symbols, symbol_table, requires, index, line_offsets, path: doc_path)
           register_document_symbols(uri, @documents[uri])
           warm_dependencies(doc_path, @documents[uri]) if doc_path
 
@@ -5759,7 +5759,7 @@ module CrystalV2
           doc_state = @documents[uri]?
           return send_response(id, "[]") unless doc_state
 
-          ast_symbols = doc_state.document_symbols
+          ast_symbols = ensure_ast_document_symbols(uri, doc_state)
           unless ast_symbols.empty?
             debug("Returning #{ast_symbols.size} AST document symbols")
             return send_response(id, ast_symbols.to_json)
@@ -5772,6 +5772,28 @@ module CrystalV2
           symbols = collect_document_symbols(symbol_table, doc_state.program)
           debug("Returning #{symbols.size} document symbols")
           send_response(id, symbols.to_json)
+        end
+
+        private def ensure_ast_document_symbols(uri : String, doc_state : DocumentState) : Array(DocumentSymbol)
+          symbols = doc_state.document_symbols
+          return symbols unless symbols.empty?
+
+          symbols = collect_ast_document_symbols(doc_state.program, doc_state.path)
+          return symbols if symbols.empty?
+
+          @documents[uri] = DocumentState.new(
+            doc_state.text_document,
+            doc_state.program,
+            doc_state.type_context,
+            doc_state.identifier_symbols,
+            doc_state.symbol_table,
+            doc_state.requires,
+            doc_state.index,
+            doc_state.line_offsets,
+            path: doc_state.path,
+            document_symbols: symbols
+          )
+          symbols
         end
 
         private def collect_ast_document_symbols(program : Frontend::Program, path : String?) : Array(DocumentSymbol)

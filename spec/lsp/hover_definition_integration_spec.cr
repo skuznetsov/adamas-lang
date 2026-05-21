@@ -138,4 +138,36 @@ describe CrystalV2::Compiler::LSP::Server do
   ensure
     FileUtils.rm_rf(dir) if dir
   end
+
+  it "collects AST document symbols lazily after didOpen" do
+    dir = File.join(Dir.tempdir, "lsp_doc_symbols_lazy_#{Random::Secure.hex(6)}")
+    FileUtils.mkdir_p(dir)
+    path = File.join(dir, "main.cr")
+    source = <<-CR
+    module Outer
+      class Thing
+        def run : Int32
+          1
+        end
+      end
+    end
+    CR
+    File.write(path, source)
+
+    server = CrystalV2::Compiler::LSP::Server.new(
+      IO::Memory.new,
+      IO::Memory.new,
+      CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
+    )
+    uri = server.spec_did_open_document(source, path)
+    server.spec_document_symbol_cache_size(uri).should eq(0)
+
+    response = server.spec_document_symbols(uri)
+    symbols = response["result"].as_a
+    symbols.size.should eq(1)
+    symbols.first["name"].as_s.should eq("Outer")
+    server.spec_document_symbol_cache_size(uri).should eq(3)
+  ensure
+    FileUtils.rm_rf(dir) if dir
+  end
 end

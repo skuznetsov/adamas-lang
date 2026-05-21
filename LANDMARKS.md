@@ -5009,6 +5009,81 @@ WBA framing:
 
 Trust: {F/G/R: 0.90/0.58/0.90} [verified]
 
+## LM-613 — LSP document symbols are lazy on foreground open
+
+Context: LSP warm foreground open latency after AST-cache default,
+2026-05-20, `codegen`.
+
+Verified outcome:
+
+- `didOpen` no longer performs the AST document-symbol traversal before
+  publishing diagnostics. It stores the opened document without precomputed
+  document symbols.
+- `textDocument/documentSymbol` now computes AST-backed document symbols on
+  first request and stores them back into the document state for reuse.
+- `didChange` follows the same boundary: edited documents do not pay the
+  document-symbol traversal until the client asks for document symbols.
+- A focused regression covers the lazy path: after `didOpen` the document
+  symbol cache is empty, `textDocument/documentSymbol` returns the AST-backed
+  hierarchy, and the cache is then populated.
+
+Root pattern:
+
+- After LM-612, `server.cr` warm foreground open was no longer parser-bound.
+  Debug timing showed the parsed document came from AST cache, semantic
+  analysis finished, and then `didOpen` still did extra full-AST work before
+  diagnostics and the first request.
+- Document symbols are a separate LSP request surface. Precomputing them during
+  `didOpen` improved a later request by spending work on every open, including
+  clients that do not request symbols immediately.
+
+Evidence:
+
+- Focused regression:
+  `CRYSTAL_CACHE_DIR=/private/tmp/cv2_lsp_lazy_docs_spec
+  scripts/run_safe.sh /Users/sergey/.local/bin/crystal 240 4096 spec
+  spec/lsp/hover_definition_integration_spec.cr --error-trace`: 4 examples,
+  0 failures.
+- Full LSP suite:
+  `CRYSTAL_CACHE_DIR=/private/tmp/cv2_lsp_lazy_docs_fullspec
+  scripts/run_safe.sh /Users/sergey/.local/bin/crystal 300 4096 spec spec/lsp
+  --error-trace`: 238 examples, 0 failures.
+- Server and harness builds:
+  `src/lsp_main.cr -o /private/tmp/lsp_main_lazy_docs` and
+  `benchmarks/lsp_harness.cr -o /private/tmp/lsp_harness_lazy_docs` both
+  exited 0 through `scripts/run_safe.sh`.
+- Warm default harness after the lazy-symbol change:
+  `initialize` 106.3ms, first `server.cr` `didOpen` 140.3ms,
+  `hover handle_completion` 9.6ms, `definition handle_completion` 1 location,
+  `document symbols` 24.0ms / 567 symbols, bench `definition Lexer` 0.3ms /
+  1 location, bench `signature help Parser.new` 0.4ms / 1 signature, bench
+  `completion parser.` 11.8ms / 330 unique method labels.
+
+Boundary:
+
+- This is a latency-boundary move, not a semantic-analysis shortcut. Opened
+  documents still get symbol tables, identifier symbols, type context, line
+  offsets, and symbol-location registration during `didOpen`.
+- The document-symbol request intentionally pays the AST-symbol traversal when
+  requested. This moves optional UI work out of the mandatory open/diagnostics
+  corridor.
+
+WBA framing:
+
+- Window/trigger: foreground `didOpen` with a cached AST still performs a
+  document-symbol traversal before diagnostics.
+- Transport corridor: opened document state carries the parsed arena and text;
+  document-symbol hierarchy can be transported lazily on the dedicated request
+  path.
+- Boundary: diagnostics and navigation state remain available at open; only
+  optional document-symbol UI data is delayed.
+- Legal move: initialize opened/changed documents without AST document symbols
+  and cache them on first `textDocument/documentSymbol`.
+- Potential decrease: mandatory foreground-open work shrinks while total
+  work remains available when explicitly demanded.
+
+Trust: {F/G/R: 0.89/0.50/0.90} [verified]
+
 ### LM-589 — LSP first-request latency now defers CPU-bound UnifiedProject updates
 
 Status: VERIFIED on `codegen`.
