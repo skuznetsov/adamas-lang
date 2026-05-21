@@ -38,6 +38,31 @@ module SemanticTokensSpecHelper
     server.collect_semantic_tokens(program, source)
   end
 
+  def self.collect_source(source : String)
+    parser = CrystalV2::Compiler::Frontend::Parser.new(
+      CrystalV2::Compiler::Frontend::Lexer.new(source)
+    )
+    program = parser.parse_program
+    collect(program, source)
+  end
+
+  def self.collect_source_with_fast_lexical(source : String, enabled : Bool)
+    old_value = ENV["LSP_FAST_LEXICAL_TOKENS"]?
+    if enabled
+      ENV.delete("LSP_FAST_LEXICAL_TOKENS")
+    else
+      ENV["LSP_FAST_LEXICAL_TOKENS"] = "0"
+    end
+
+    collect_source(source)
+  ensure
+    if old_value
+      ENV["LSP_FAST_LEXICAL_TOKENS"] = old_value
+    else
+      ENV.delete("LSP_FAST_LEXICAL_TOKENS")
+    end
+  end
+
   def self.collect_range(program, source, range)
     server = CrystalV2::Compiler::LSP::Server.new
     server.collect_semantic_tokens(program, source, nil, nil, nil, nil, range)
@@ -109,6 +134,25 @@ module SemanticTokensSpecHelper
 
     enum_member_kind = SemanticTokensSpecHelper.legend_index("enumMember")
     decoded.any? { |(_, _, _, kind, text)| kind == enum_member_kind && text == ":accel_usage_log" }.should be_true
+  end
+
+  it "keeps full lexical fast path identical to the lexer oracle for covered fixtures" do
+    fixtures = [
+      "if cond\n  begin\n    VALUE = :speed\n  end\nend\n",
+      "# if Fake\nVALUE = :speed\ntext = \"done\"\n",
+      "value:Int32 = Foo::Bar.new\n",
+      %("#{:foo}"),
+      "rx = /foo/\n",
+      "match = body_text.match(/=\\s*(\\w+(?:::\\w+)*)::/)\n",
+      "ratio = a / b\n",
+    ]
+
+    fixtures.each do |source|
+      fast = SemanticTokensSpecHelper.collect_source_with_fast_lexical(source, true)
+      lexer = SemanticTokensSpecHelper.collect_source_with_fast_lexical(source, false)
+
+      fast.data.should eq(lexer.data)
+    end
   end
 
   it "lexically marks symbol literals inside string interpolation" do

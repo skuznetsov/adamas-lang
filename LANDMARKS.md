@@ -6364,6 +6364,49 @@ WBA framing:
 
 Trust: {F/G/R: 0.88/0.50/0.89} [verified]
 
+### LM-624 - Full semantic-token lexical overlay uses a fast scanner
+
+The full-document semantic-token lexical overlay no longer runs the full
+frontend lexer for the common LSP-only token classes. The default path now uses
+a byte scanner for keywords, uppercase identifiers, symbol literals, strings,
+chars, and regex literals, while `LSP_FAST_LEXICAL_TOKENS=0` keeps the old
+lexer-backed oracle available. The range lexical helper uses the same scanner
+by default so full/range highlighting does not split across two lexical
+implementations.
+
+Evidence:
+
+- The focused semantic-token regression compares the fast path with the old
+  lexer oracle on covered lexical fixtures: keywords/end, comment skipping,
+  uppercase identifiers, symbol literals, simple interpolation, simple regex,
+  a complex regex literal from `ast_to_hir.cr`, and slash division that should
+  emit no lexical token.
+- `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 180 4096 spec
+  spec/lsp/semantic_tokens_spec.cr spec/lsp/lsp_semantic_tokens_spec.cr
+  spec/lsp/semantic_tokens_integration_spec.cr --error-trace` -> 37 examples,
+  0 failures.
+- `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 300 4096 spec
+  spec/lsp --error-trace` -> 248 examples, 0 failures.
+- Temporary profile on `src/compiler/hir/ast_to_hir.cr` with
+  `LSP_FAST_LEXICAL_TOKENS=0`: collection about 550.5ms, lexical about
+  314.1ms. Default fast scanner: collection about 315.1ms, lexical about
+  117.8ms. Same profile run showed first full request helper time at about
+  851.6ms after this change.
+- Formatting and diff hygiene: `scripts/run_safe.sh /Users/sergey/.local/bin/crystal
+  120 4096 tool format --check src/compiler/lsp/server.cr
+  spec/lsp/semantic_tokens_spec.cr` -> exit 0; `git diff --check` -> exit 0.
+
+Adversary notes:
+
+- The scanner is not a general Crystal lexer replacement. It is scoped to the
+  lexical token classes consumed by semantic-token highlighting.
+- The old lexer path remains available with `LSP_FAST_LEXICAL_TOKENS=0`.
+- A pre-existing lexer-column issue for complex string interpolation is not
+  reproduced by the fast scanner; the scanner emits positions from byte
+  offsets. Existing focused interpolation coverage remains green.
+
+Trust: {F/G/R: 0.86/0.48/0.87} [verified]
+
 ## LM-583 — LSP foreground hover avoids workspace reference scans by default
 
 Status: verified for the focused LSP hover/cache/harness slice on `codegen`.

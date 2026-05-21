@@ -11635,6 +11635,318 @@ module CrystalV2
             return
           end
 
+          if ENV["LSP_FAST_LEXICAL_TOKENS"]? == "0"
+            collect_lexical_tokens_with_lexer(source, tokens, line_offsets)
+            return
+          end
+
+          collect_lexical_tokens_fast(source, tokens)
+        end
+
+        private def collect_lexical_tokens_fast(source : String, tokens : Array(RawToken)) : Nil
+          bytes = source.to_slice
+          i = 0
+          line = 0
+          col = 0
+
+          while i < bytes.size
+            byte = bytes[i]
+
+            if byte == '\n'.ord.to_u8
+              i += 1
+              line += 1
+              col = 0
+              next
+            end
+
+            if lexical_space_byte?(byte)
+              i += 1
+              col += 1
+              next
+            end
+
+            if byte == '#'.ord.to_u8
+              while i < bytes.size && bytes[i] != '\n'.ord.to_u8
+                i += 1
+                col += 1
+              end
+              next
+            end
+
+            if byte == '"'.ord.to_u8
+              i, line, col = collect_fast_string_token(bytes, i, line, col, tokens)
+              next
+            end
+
+            if byte == '/'.ord.to_u8
+              if i + 1 < bytes.size && bytes[i + 1] == '/'.ord.to_u8
+                i += 2
+                col += 2
+                next
+              end
+              result = collect_fast_regex_token(bytes, i, line, col, tokens)
+              if result
+                i, line, col = result
+                next
+              end
+              i += 1
+              col += 1
+              next
+            end
+
+            if byte == '\''.ord.to_u8
+              start_i = i
+              start_line = line
+              start_col = col
+              i += 1
+              col += 1
+              while i < bytes.size
+                b = bytes[i]
+                i += 1
+                col += 1
+                if b == '\\'.ord.to_u8 && i < bytes.size
+                  i += 1
+                  col += 1
+                  next
+                end
+                break if b == '\''.ord.to_u8
+                if b == '\n'.ord.to_u8
+                  line += 1
+                  col = 0
+                end
+              end
+              tokens << RawToken.new(start_line, start_col, i - start_i, SemanticTokenType::String.value)
+              next
+            end
+
+            if lexical_symbol_start?(bytes, i)
+              start_i = i
+              start_col = col
+              i += 2
+              col += 2
+              while i < bytes.size && lexical_identifier_part_byte?(bytes[i])
+                i += 1
+                col += 1
+              end
+              tokens << RawToken.new(line, start_col, i - start_i, SemanticTokenType::EnumMember.value)
+              next
+            end
+
+            if lexical_identifier_start_byte?(byte)
+              start_i = i
+              start_col = col
+              i += 1
+              col += 1
+              while i < bytes.size && lexical_identifier_part_byte?(bytes[i])
+                i += 1
+                col += 1
+              end
+
+              length = i - start_i
+              if semantic_keyword_bytes?(bytes, start_i, length)
+                tokens << RawToken.new(line, start_col, length, SemanticTokenType::Keyword.value)
+              elsif byte >= 'A'.ord.to_u8 && byte <= 'Z'.ord.to_u8
+                tokens << RawToken.new(line, start_col, length, SemanticTokenType::Type.value)
+              end
+              next
+            end
+
+            i += 1
+            col += 1
+          end
+
+          nil
+        end
+
+        private def collect_fast_string_token(bytes : Bytes, index : Int32, line : Int32, col : Int32, tokens : Array(RawToken)) : {Int32, Int32, Int32}
+          start_i = index
+          start_line = line
+          start_col = col
+          i = index + 1
+          line0 = line
+          col0 = col + 1
+          content_start = i
+          content_end = i
+          has_interpolation = false
+
+          while i < bytes.size
+            byte = bytes[i]
+            if byte == '\\'.ord.to_u8
+              i += 1
+              col0 += 1
+              if i < bytes.size
+                if bytes[i] == '\n'.ord.to_u8
+                  line0 += 1
+                  col0 = 0
+                else
+                  col0 += 1
+                end
+                i += 1
+              end
+              next
+            end
+
+            if byte == '"'.ord.to_u8
+              content_end = i
+              i += 1
+              col0 += 1
+              break
+            end
+
+            if byte == '#'.ord.to_u8 && i + 1 < bytes.size && bytes[i + 1] == '{'.ord.to_u8
+              has_interpolation = true
+            end
+
+            if byte == '\n'.ord.to_u8
+              i += 1
+              line0 += 1
+              col0 = 0
+            else
+              i += 1
+              col0 += 1
+            end
+            content_end = i
+          end
+
+          if has_interpolation
+            content_size = content_end - content_start
+            if content_size > 0
+              collect_interpolated_string_content_tokens(bytes[content_start, content_size], start_line, start_col + 1, tokens)
+            end
+          else
+            tokens << RawToken.new(start_line, start_col, i - start_i, SemanticTokenType::String.value)
+          end
+
+          {i, line0, col0}
+        end
+
+        private def lexical_space_byte?(byte : UInt8) : Bool
+          byte == ' '.ord.to_u8 || byte == '\t'.ord.to_u8 || byte == '\r'.ord.to_u8 || byte == '\f'.ord.to_u8
+        end
+
+        private def lexical_identifier_start_byte?(byte : UInt8) : Bool
+          (byte >= 'a'.ord.to_u8 && byte <= 'z'.ord.to_u8) ||
+            (byte >= 'A'.ord.to_u8 && byte <= 'Z'.ord.to_u8) ||
+            byte == '_'.ord.to_u8 ||
+            byte >= 0x80
+        end
+
+        private def lexical_identifier_part_byte?(byte : UInt8) : Bool
+          lexical_identifier_start_byte?(byte) ||
+            (byte >= '0'.ord.to_u8 && byte <= '9'.ord.to_u8) ||
+            byte == '?'.ord.to_u8
+        end
+
+        private def lexical_symbol_start?(bytes : Bytes, index : Int32) : Bool
+          return false unless bytes[index] == ':'.ord.to_u8
+          return false if index + 1 >= bytes.size
+          return false unless lexical_identifier_start_byte?(bytes[index + 1])
+          return true if index == 0
+
+          prev = bytes[index - 1]
+          return false if prev == ':'.ord.to_u8
+          true
+        end
+
+        private def collect_fast_regex_token(bytes : Bytes, index : Int32, line : Int32, col : Int32, tokens : Array(RawToken)) : {Int32, Int32, Int32}?
+          start_i = index
+          start_line = line
+          start_col = col
+          i = index + 1
+          line0 = line
+          col0 = col + 1
+          in_class = false
+
+          while i < bytes.size
+            byte = bytes[i]
+            if byte == '\\'.ord.to_u8
+              i += 1
+              col0 += 1
+              if i < bytes.size
+                if bytes[i] == '\n'.ord.to_u8
+                  line0 += 1
+                  col0 = 0
+                else
+                  col0 += 1
+                end
+                i += 1
+              end
+              next
+            end
+
+            if byte == '['.ord.to_u8
+              in_class = true
+            elsif byte == ']'.ord.to_u8
+              in_class = false
+            elsif byte == '/'.ord.to_u8 && !in_class
+              i += 1
+              col0 += 1
+              while i < bytes.size && lexical_identifier_part_byte?(bytes[i])
+                i += 1
+                col0 += 1
+              end
+              tokens << RawToken.new(start_line, start_col, i - start_i, SemanticTokenType::Regexp.value)
+              return {i, line0, col0}
+            elsif byte == '\n'.ord.to_u8
+              return nil
+            end
+
+            i += 1
+            col0 += 1
+          end
+
+          nil
+        end
+
+        private def semantic_keyword_bytes?(bytes : Bytes, start : Int32, length : Int32) : Bool
+          case length
+          when 2
+            bytes_match?(bytes, start, "if") || bytes_match?(bytes, start, "do")
+          when 3
+            bytes_match?(bytes, start, "end") || bytes_match?(bytes, start, "def") ||
+              bytes_match?(bytes, start, "fun") || bytes_match?(bytes, start, "lib") ||
+              bytes_match?(bytes, start, "nil")
+          when 4
+            bytes_match?(bytes, start, "else") || bytes_match?(bytes, start, "then") ||
+              bytes_match?(bytes, start, "case") || bytes_match?(bytes, start, "when") ||
+              bytes_match?(bytes, start, "enum") || bytes_match?(bytes, start, "self") ||
+              bytes_match?(bytes, start, "true") || bytes_match?(bytes, start, "next")
+          when 5
+            bytes_match?(bytes, start, "elsif") || bytes_match?(bytes, start, "begin") ||
+              bytes_match?(bytes, start, "while") || bytes_match?(bytes, start, "until") ||
+              bytes_match?(bytes, start, "class") || bytes_match?(bytes, start, "union") ||
+              bytes_match?(bytes, start, "macro") || bytes_match?(bytes, start, "alias") ||
+              bytes_match?(bytes, start, "false") || bytes_match?(bytes, start, "yield") ||
+              bytes_match?(bytes, start, "break") || bytes_match?(bytes, start, "super")
+          when 6
+            bytes_match?(bytes, start, "unless") || bytes_match?(bytes, start, "rescue") ||
+              bytes_match?(bytes, start, "ensure") || bytes_match?(bytes, start, "module") ||
+              bytes_match?(bytes, start, "struct") || bytes_match?(bytes, start, "return")
+          when 7
+            bytes_match?(bytes, start, "require")
+          when 8
+            bytes_match?(bytes, start, "abstract")
+          when 10
+            bytes_match?(bytes, start, "annotation")
+          else
+            false
+          end
+        end
+
+        private def bytes_match?(bytes : Bytes, start : Int32, text : String) : Bool
+          return false if start < 0
+          return false if start + text.bytesize > bytes.size
+
+          text_bytes = text.to_slice
+          i = 0
+          while i < text_bytes.size
+            return false unless bytes[start + i] == text_bytes[i]
+            i += 1
+          end
+          true
+        end
+
+        private def collect_lexical_tokens_with_lexer(source : String, tokens : Array(RawToken), line_offsets : Array(Int32)? = nil)
           lexer = Frontend::Lexer.new(source)
           line_offsets ||= build_line_offsets(source)
           current_line = 0
@@ -11725,55 +12037,10 @@ module CrystalV2
         end
 
         private def collect_lexical_tokens_unbounded(source : String, tokens : Array(RawToken))
-          lexer = Frontend::Lexer.new(source)
-          line_offsets = build_line_offsets(source)
-          current_line = 0
-          lexer.each_token(skip_trivia: true) do |tok|
-            # Keywords
-            if keyword_kind?(tok.kind)
-              line, col = position_from_monotonic_offset(tok.span.start_offset, line_offsets, current_line)
-              current_line = line
-              length = tok.slice.size
-              tokens << RawToken.new(line, col, length, SemanticTokenType::Keyword.value)
-              next
-            end
-
-            case tok.kind
-            when Frontend::Token::Kind::String
-              span = tok.span
-              line, col = position_from_monotonic_offset(span.start_offset, line_offsets, current_line)
-              current_line = line
-              length = span.end_offset - span.start_offset
-              tokens << RawToken.new(line, col, length, SemanticTokenType::String.value)
-            when Frontend::Token::Kind::StringInterpolation
-              collect_interpolated_string_tokens_zero_copy(source, tok, tokens)
-            when Frontend::Token::Kind::Char
-              span = tok.span
-              line, col = position_from_monotonic_offset(span.start_offset, line_offsets, current_line)
-              current_line = line
-              length = span.end_offset - span.start_offset
-              tokens << RawToken.new(line, col, length, SemanticTokenType::String.value)
-            when Frontend::Token::Kind::Regex
-              span = tok.span
-              line, col = position_from_monotonic_offset(span.start_offset, line_offsets, current_line)
-              current_line = line
-              length = span.end_offset - span.start_offset
-              tokens << RawToken.new(line, col, length, SemanticTokenType::Regexp.value)
-            when Frontend::Token::Kind::Identifier
-              slice = tok.slice
-              if slice.size > 0 && slice[0].unsafe_chr.ascii_uppercase?
-                line, col = position_from_monotonic_offset(tok.span.start_offset, line_offsets, current_line)
-                current_line = line
-                length = slice.size
-                tokens << RawToken.new(line, col, length, SemanticTokenType::Type.value)
-              end
-            when Frontend::Token::Kind::Symbol
-              line, col = position_from_monotonic_offset(tok.span.start_offset, line_offsets, current_line)
-              current_line = line
-              length = tok.span.end_offset - tok.span.start_offset
-              length = tok.slice.size if length <= 0
-              tokens << RawToken.new(line, col, length, SemanticTokenType::EnumMember.value)
-            end
+          if ENV["LSP_FAST_LEXICAL_TOKENS"]? == "0"
+            collect_lexical_tokens_with_lexer(source, tokens)
+          else
+            collect_lexical_tokens_fast(source, tokens)
           end
         end
 
@@ -11828,11 +12095,13 @@ module CrystalV2
 
         # Emit tokens for an interpolated string token: splits text and expressions
         private def collect_interpolated_string_tokens_zero_copy(source : String, tok : Frontend::Token, tokens : Array(RawToken))
-          content = tok.slice # Slice(UInt8) referencing source
+          collect_interpolated_string_content_tokens(tok.slice, tok.span.start_line - 1, tok.span.start_column, tokens)
+        end
+
+        private def collect_interpolated_string_content_tokens(content : Bytes, start_line0 : Int32, start_col0 : Int32, tokens : Array(RawToken))
           i = 0
-          line0 = tok.span.start_line - 1
-          # Column at the first CONTENT char (after opening quote)
-          col0 = tok.span.start_column
+          line0 = start_line0
+          col0 = start_col0
 
           # Helper to flush a run of plain text as String tokens (split across lines)
           flush_text = ->(start_line0 : Int32, start_col0 : Int32, text_bytes : Slice(UInt8)) do

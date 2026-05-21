@@ -125,15 +125,20 @@ JSON response. After LM-623, semantic-token full responses carry stable
 `resultId`s and the server supports `textDocument/semanticTokens/full/delta`;
 when a client already has the current result id, the repeated
 `ast_to_hir.cr` request returns an empty 75-byte delta in about 0.9ms instead
-of resending 1,276,950 encoded ints.
+of resending 1,276,950 encoded ints. After LM-624, the remaining first full
+semantic-token request no longer pays the full frontend lexer cost for the
+LSP-only lexical overlay. On `ast_to_hir.cr`, the lexer-oracle path measured
+about 550.5ms collection / 314.1ms lexical, while the default byte scanner
+measured about 315.1ms collection / 117.8ms lexical with the focused
+semantic-token fixtures and full LSP suite green.
 Refuted for the current one-file warm harness: project-cache load itself is not
 the dominant `initialize` cost (`cache=~2.9ms`), and disabling project cache
 pushes dependency analysis back into foreground `didOpen`; lazy-on-first
 `ExprSpanIndex` makes first hover worse for the current one-file warm harness.
 Remaining LSP latency and fidelity candidates are first-open foreground
 name-resolution/indexing work after the AST cache corridor has supplied a
-parsed foreground arena and first full semantic-token response cost before a
-client has a current delta result id.
+parsed foreground arena and JSON/client handling for the first full
+semantic-token response before a client has a current delta result id.
 
 Spec-first bootstrap checkpoint (2026-05-08): `docs/specs/` now contains the
 first executable contract slice for Crystal V2, modeled after the DiamondDB
