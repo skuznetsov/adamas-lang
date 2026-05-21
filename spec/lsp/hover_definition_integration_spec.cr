@@ -170,4 +170,56 @@ describe CrystalV2::Compiler::LSP::Server do
   ensure
     FileUtils.rm_rf(dir) if dir
   end
+
+  it "keeps foreground expression indexes lazy while preserving navigation and tokens" do
+    dir = File.join(Dir.tempdir, "lsp_lazy_expr_index_#{Random::Secure.hex(6)}")
+    FileUtils.mkdir_p(dir)
+    path = File.join(dir, "main.cr")
+    source = <<-CR
+    module Outer
+      VALUE = 1
+
+      class Thing
+        def run(value : Int32) : Int32
+          value + VALUE
+        end
+      end
+    end
+
+    result = Outer::Thing.new.run(41)
+    CR
+    File.write(path, source)
+
+    server = CrystalV2::Compiler::LSP::Server.new(
+      IO::Memory.new,
+      IO::Memory.new,
+      CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
+    )
+    uri = server.spec_did_open_document(source, path)
+    server.spec_document_expr_index_built?(uri).should be_false
+
+    value_offset = source.index("value + VALUE").not_nil!
+    value_line = source[0, value_offset].count('\n')
+    value_char = value_offset - (source.rindex('\n', value_offset) || -1) - 1
+
+    hover = server.spec_hover(uri, value_line, value_char)
+    hover["result"].should_not be_nil
+
+    definition = server.spec_definition(uri, value_line, value_char)
+    locations = definition["result"].as_a
+    locations.size.should eq(1)
+    locations.first["uri"].as_s.should eq(uri)
+
+    tokens_before = server.spec_semantic_tokens(uri)["result"]["data"].as_a
+    tokens_after = server.spec_semantic_tokens(uri)["result"]["data"].as_a
+    tokens_before.should_not be_empty
+    tokens_after.should eq(tokens_before)
+    server.spec_document_expr_index_built?(uri).should be_false
+
+    symbols = server.spec_document_symbols(uri)["result"].as_a
+    symbols.size.should eq(1)
+    symbols.first["name"].as_s.should eq("Outer")
+  ensure
+    FileUtils.rm_rf(dir) if dir
+  end
 end

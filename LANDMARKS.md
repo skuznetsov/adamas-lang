@@ -7240,3 +7240,37 @@ Boundary:
   arithmetic-overflow diagnostic remains during produced `s2` builds.
 
 Trust: {F/G/R: 0.86/0.46/0.88} [verified]
+
+### LM-614 - LSP foreground expression span indexes are lazy
+
+Foreground `didOpen`/`didChange` no longer build the child-expression span
+index eagerly. The foreground `DocumentIndex` still records declaration maps
+for scoped vars, constants, ivars, globals, and defs, but `ExprSpanIndex` is
+left absent until a future measured need justifies rebuilding it. Positional
+navigation continues to use the existing AST walk fallback, which keeps the
+same PathNode boundary behavior as the indexed lookup.
+
+Evidence:
+
+- `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 120 2048 tool format
+  --check src/compiler/lsp/server.cr spec/lsp/support/server_helper.cr
+  spec/lsp/hover_definition_integration_spec.cr`
+- `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 240 4096 spec
+  spec/lsp/hover_definition_integration_spec.cr --error-trace` -> 5 examples,
+  0 failures.
+- Warm harness after the change kept the main interactions green:
+  `server.cr didOpen` around 140ms, hover `handle_completion` around 9ms on the
+  last warm run, definition 1 location, document symbols 567 symbols, semantic
+  tokens 149760 ints, formatting no edits.
+
+Adversary notes:
+
+- This is a small foreground-work reduction, not the main semantic-token root
+  fix: full semantic tokens still spend about 130ms on the current large
+  `server.cr` harness request.
+- The focused regression asserts the expression index stays absent after
+  `didOpen`, after hover/definition, and after semantic-token requests, while
+  hover, definition, repeated semantic tokens, and lazy document symbols remain
+  functional.
+
+Trust: {F/G/R: 0.82/0.42/0.84} [verified]

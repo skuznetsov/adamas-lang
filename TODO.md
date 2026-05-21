@@ -87,7 +87,11 @@ config `ast_cache: false` opt-outs; warm default `server.cr` open is now about
 LSP suite stay green. After LM-613, AST document symbols are collected lazily
 on `textDocument/documentSymbol` instead of during `didOpen`; warm default
 `server.cr` open is about 140ms in the harness, while document symbols remain
-AST-backed when requested.
+AST-backed when requested. After LM-614, foreground `didOpen`/`didChange`
+preserve declaration indexes but stop eagerly building the child expression span
+index; positional navigation falls back to the AST walk and the focused
+regression keeps hover, definition, semantic tokens, and lazy document symbols
+green.
 Refuted for the current one-file warm harness: project-cache load itself is not
 the dominant `initialize` cost (`cache=~2.9ms`), and disabling project cache
 pushes dependency analysis back into foreground `didOpen`. Remaining LSP latency

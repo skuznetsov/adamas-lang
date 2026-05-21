@@ -108,6 +108,18 @@ module CrystalV2::Compiler::LSP
       count_document_symbol_tree(doc_state.document_symbols)
     end
 
+    def spec_document_expr_index_built?(uri : String) : Bool
+      @documents[uri]?.try(&.index).try(&.expr_index) != nil
+    end
+
+    def spec_semantic_tokens(uri : String) : JSON::Any
+      params = JSON.parse(%({"textDocument":{"uri":#{uri.to_json}}}))
+      id = JSON.parse("12")
+      spec_reset_output
+      handle_semantic_tokens(id, params)
+      spec_read_last_response
+    end
+
     def spec_inlay_hints(uri : String, start_line : Int32, start_char : Int32, end_line : Int32, end_char : Int32) : JSON::Any
       params = JSON.parse(%({"textDocument":{"uri":#{uri.to_json}},"range":{"start":{"line":#{start_line},"character":#{start_char}},"end":{"line":#{end_line},"character":#{end_char}}}}))
       id = JSON.parse("4")

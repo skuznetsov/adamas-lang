@@ -1769,6 +1769,7 @@ module CrystalV2
                                                                                                       doc_path,
                                                                                                       recursive_requires: recursive_dependency_load_in_foreground?,
                                                                                                       workspace: DependencyWorkspace.new,
+                                                                                                      build_expr_index: false,
                                                                                                       allow_cached_expr_types: false
                                                                                                     )
                                                                                                   else
@@ -1778,6 +1779,7 @@ module CrystalV2
                                                                                                       doc_path,
                                                                                                       recursive_requires: recursive_dependency_load_in_foreground?,
                                                                                                       workspace: DependencyWorkspace.new,
+                                                                                                      build_expr_index: false,
                                                                                                       allow_cached_expr_types: false
                                                                                                     )
                                                                                                   end
@@ -3758,6 +3760,7 @@ module CrystalV2
                                                                                                       doc_path,
                                                                                                       recursive_requires: recursive_dependency_load_in_foreground?,
                                                                                                       workspace: DependencyWorkspace.new,
+                                                                                                      build_expr_index: false,
                                                                                                       allow_cached_expr_types: false
                                                                                                     )
                                                                                                   else
@@ -3767,6 +3770,7 @@ module CrystalV2
                                                                                                       doc_path,
                                                                                                       recursive_requires: recursive_dependency_load_in_foreground?,
                                                                                                       workspace: DependencyWorkspace.new,
+                                                                                                      build_expr_index: false,
                                                                                                       allow_cached_expr_types: false
                                                                                                     )
                                                                                                   end
