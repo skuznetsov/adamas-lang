@@ -26,6 +26,7 @@ module CrystalV2
 
         @tokens = [] of Frontend::Token
         lexer.each_token do |token|
+          next if token.kind == Frontend::Token::Kind::Whitespace
           @tokens << token
         end
 
@@ -51,14 +52,7 @@ module CrystalV2
             next
           end
 
-          # Skip whitespace tokens (we generate our own)
-          if current.kind == Frontend::Token::Kind::Whitespace
-            i += 1
-            next
-          end
-
-          # Find next non-whitespace token
-          next_token = find_next_non_whitespace(i + 1)
+          next_token = next_token_after(i)
           started_line = @at_line_start
 
           # Adjust indent BEFORE emitting indent for keywords that decrease it
@@ -94,14 +88,8 @@ module CrystalV2
         @output.to_s
       end
 
-      private def find_next_non_whitespace(start : Int32) : Frontend::Token?
-        i = start
-        while i < @tokens.size
-          token = @tokens[i]
-          return token unless token.kind == Frontend::Token::Kind::Whitespace
-          i += 1
-        end
-        nil
+      private def next_token_after(index : Int32) : Frontend::Token?
+        @tokens[index + 1]?
       end
 
       private def emit_token(token : Frontend::Token)

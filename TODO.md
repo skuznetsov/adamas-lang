@@ -95,7 +95,10 @@ green. After LM-615, first full semantic-token requests avoid ignored trivia,
 hash priority lookups, dedup allocation, and temporary String allocation during
 name/member source-window searches; the warm harness now reports `server.cr`
 semantic tokens around 122-126ms with server-side collection around 66ms and
-JSON serialization around 14ms.
+JSON serialization around 14ms. After LM-616, the formatter stores only
+non-whitespace tokens while preserving comments/newlines and uses direct
+one-token lookahead; steady direct formatting of `server.cr` is about 68-70ms
+instead of about 73ms.
 Refuted for the current one-file warm harness: project-cache load itself is not
 the dominant `initialize` cost (`cache=~2.9ms`), and disabling project cache
 pushes dependency analysis back into foreground `didOpen`. Remaining LSP latency

@@ -7321,3 +7321,38 @@ Adversary notes:
   specs keep enum-member/string/type behavior covered.
 
 Trust: {F/G/R: 0.84/0.48/0.86} [verified]
+
+### LM-616 - Formatter skips storing whitespace tokens
+
+The token-based formatter no longer stores whitespace tokens in its internal
+token array. It still keeps comments and newlines: comments carry source spans
+used by `original_gap_between`, and newlines drive line-start/indentation
+state. With whitespace filtered at collection time, formatter lookahead is a
+direct next-token lookup instead of a scan past ignored tokens.
+
+Evidence:
+
+- Direct formatter probes on `src/compiler/lsp/server.cr` moved steady runs
+  from about 73ms before the patch to about 68-70ms after the patch, with
+  `Formatter.format(source) == source`.
+- `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 120 4096 tool format
+  --check src/compiler/formatter.cr`
+- `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 240 4096 spec
+  spec/formatter_spec.cr spec/lsp/formatting_integration_spec.cr
+  --error-trace` -> 15 examples, 0 failures.
+- `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 300 4096 spec
+  spec/lsp --error-trace` -> 240 examples, 0 failures.
+- Rebuilt `src/lsp_main.cr` and `benchmarks/lsp_harness.cr`; warm harness kept
+  formatting green with no edits and measured about 77ms on the warm run.
+
+Adversary notes:
+
+- This is a modest formatter-internal cleanup, not a complete LSP formatting
+  latency fix. The formatter still lexes the whole document and builds the
+  formatted output before it can prove an already-formatted document is a null
+  edit.
+- The safe boundary is strict: do not replace this with
+  `Lexer#each_token(skip_trivia: true)`, because that would also remove
+  comments.
+
+Trust: {F/G/R: 0.82/0.45/0.84} [verified]
