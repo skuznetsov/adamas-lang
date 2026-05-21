@@ -1217,3 +1217,17 @@ with `LSP_FAST_PROJECT_OPEN=0`.
 unverified code-path claims.
 **Cost saved:** small to moderate review time; local verification remained the
 acceptance source.
+
+### Session 48 — 2026-05-21 — LSP member-completion constructor audit
+**Task:** read-only Grok CLI audit of the uncommitted patch that lets member
+completion infer `helper = Helper.new` when `Helper` is parsed as an uppercase
+`IdentifierNode`.
+**Brief size:** direct `grok --cwd ... -p` prompt restricted to the current
+diff, with explicit instructions not to edit files or run Crystal commands.
+**Latency:** no useful response after startup and MCP warnings; the process was
+stopped after local verification completed.
+**Output quality:** no signal. No findings were returned.
+**Adversary check:** local AST inspection identified the root parser shape, and
+focused/full LSP specs passed under `scripts/run_safe.sh`.
+**Verdict:** failed/no-signal interaction. Do not count this run as evidence.
+**Cost saved:** none.

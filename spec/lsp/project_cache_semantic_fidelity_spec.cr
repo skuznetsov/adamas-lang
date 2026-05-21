@@ -355,6 +355,19 @@ describe "LSP project cache semantic fidelity" do
       signature["result"]["signatures"].as_a.size.should be >= 1
       signature_server.spec_document_ast_loaded?(signature_uri).should be_true
 
+      completion_server = CrystalV2::Compiler::LSP::Server.new(
+        IO::Memory.new,
+        IO::Memory.new,
+        CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: true)
+      )
+      completion_uri = completion_server.spec_did_open_document(source, path)
+      completion_server.spec_document_ast_loaded?(completion_uri).should be_false
+
+      completion_line, completion_char = lsp_line_char(source, "helper.", at_end: true)
+      completion = completion_server.spec_completion(completion_uri, completion_line, completion_char)
+      completion["result"].as_a.map { |item| item["label"].as_s }.should contain("value")
+      completion_server.spec_document_ast_loaded?(completion_uri).should be_true
+
       symbols_server = CrystalV2::Compiler::LSP::Server.new(
         IO::Memory.new,
         IO::Memory.new,

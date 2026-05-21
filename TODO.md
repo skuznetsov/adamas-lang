@@ -156,9 +156,12 @@ the dominant `initialize` cost (`cache=~2.9ms`), and disabling project cache
 pushes dependency analysis back into foreground `didOpen`; lazy-on-first
 `ExprSpanIndex` makes first hover worse for the current one-file warm harness.
 Remaining LSP latency and fidelity candidates are first precision-request
-materialization when the cached open has no identifier map, member-completion
-precision gaps on lightweight opens, and JSON/client handling for the first
-full semantic-token response before a client has a current delta result id.
+materialization when the cached open has no identifier map and JSON/client
+handling for the first full semantic-token response before a client has a
+current delta result id. After LM-628, the method-local member-completion gap
+exposed by lightweight cached opens is closed for constructor assignments such
+as `helper = Helper.new`: the constructor extractor now recognizes uppercase
+identifier receivers while still rejecting lowercase `variable.new`.
 
 Spec-first bootstrap checkpoint (2026-05-08): `docs/specs/` now contains the
 first executable contract slice for Crystal V2, modeled after the DiamondDB

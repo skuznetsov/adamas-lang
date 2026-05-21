@@ -7327,6 +7327,17 @@ module CrystalV2
 
           arena = doc_state.program.arena
           value_node = arena[value_expr_id]
+          if type_name = extract_type_from_constructor(arena, value_expr_id)
+            if resolved = resolve_type_name_symbol(doc_state, type_name)
+              if resolved.is_a?(Semantic::ClassSymbol)
+                debug("Completion inference: constructor type #{resolved.name}")
+                return {Semantic::InstanceType.new(resolved), nil}
+              end
+            end
+
+            segments = type_name.split("::").reject(&.empty?)
+            return {nil, segments} unless segments.empty?
+          end
 
           case value_node
           when Frontend::CallNode
@@ -10468,34 +10479,37 @@ module CrystalV2
             if callee.is_a?(Frontend::MemberAccessNode)
               member_name = String.new(callee.member)
               if member_name == "new"
-                # Get the class name from the object
-                obj = arena[callee.object]
-                case obj
-                when Frontend::ConstantNode
-                  return String.new(obj.name)
-                when Frontend::PathNode
-                  # Return the last segment (e.g., Foo::Bar → Bar)
-                  segments = collect_path_segments(arena, obj)
-                  return segments.join("::")
-                end
+                return constructor_object_type_name(arena, callee.object)
               end
             end
           when Frontend::MemberAccessNode
             # Direct ClassName.new without parens
             member_name = String.new(node.member)
             if member_name == "new"
-              obj = arena[node.object]
-              case obj
-              when Frontend::ConstantNode
-                return String.new(obj.name)
-              when Frontend::PathNode
-                segments = collect_path_segments(arena, obj)
-                return segments.join("::")
-              end
+              return constructor_object_type_name(arena, node.object)
             end
           end
 
           nil
+        end
+
+        private def constructor_object_type_name(arena : Frontend::ArenaLike, expr_id : Frontend::ExprId) : String?
+          obj = arena[expr_id]
+          case obj
+          when Frontend::ConstantNode
+            String.new(obj.name)
+          when Frontend::IdentifierNode
+            name = obj.name
+            return nil unless name
+            type_name = String.new(name)
+            return nil unless type_name[0]?.try(&.uppercase?)
+            type_name
+          when Frontend::PathNode
+            segments = collect_path_segments(arena, obj)
+            segments.join("::")
+          else
+            nil
+          end
         end
 
         private def enclosing_callable_at_offset(doc_state : DocumentState, target_offset : Int32) : Frontend::TypedNode?

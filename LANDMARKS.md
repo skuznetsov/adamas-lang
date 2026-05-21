@@ -6538,6 +6538,43 @@ Adversary notes:
 
 Trust: {F/G/R: 0.89/0.47/0.89} [verified]
 
+### LM-628 - Member completion recognizes uppercase identifier constructors
+
+Member completion now reuses the shared constructor-type extractor when
+inferring a receiver from local assignments such as `helper = Helper.new`.
+The extractor accepts uppercase `IdentifierNode` receivers in addition to
+`ConstantNode` and `PathNode`, because the frontend can parse a simple
+constructor receiver as an identifier in method-local code. Lowercase
+`variable.new` is still rejected by the uppercase guard, so this does not turn
+arbitrary instance `.new` calls into class constructors.
+
+Evidence:
+
+- Focused regression:
+  `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 180 4096 spec
+  spec/lsp/project_cache_semantic_fidelity_spec.cr --error-trace` ->
+  5 examples, 0 failures. The added check opens a lightweight cached document,
+  asks for `helper.` completion inside a method after `helper = Helper.new`,
+  and expects `Helper#value`.
+- Full LSP suite:
+  `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 300 4096 spec
+  spec/lsp --error-trace` -> 250 examples, 0 failures.
+- Formatting and diff hygiene:
+  `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 120 4096 tool format
+  --check src/compiler/lsp/server.cr
+  spec/lsp/project_cache_semantic_fidelity_spec.cr` -> exit 0;
+  `git diff --check` -> exit 0.
+
+Adversary notes:
+
+- This is not a generic textual completion hack. The path still requires an
+  actual assignment value expression and the constructor extractor only accepts
+  class-like uppercase identifier receivers, constants, or paths.
+- A Grok read-only sidecar was attempted but produced no findings after
+  startup; it was stopped and not used as acceptance evidence.
+
+Trust: {F/G/R: 0.88/0.45/0.88} [verified]
+
 ## LM-583 — LSP foreground hover avoids workspace reference scans by default
 
 Status: verified for the focused LSP hover/cache/harness slice on `codegen`.
