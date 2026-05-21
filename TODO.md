@@ -101,16 +101,20 @@ one-token lookahead; steady direct formatting of `server.cr` is about 68-70ms
 instead of about 73ms. After LM-618, declaration-header hover bypasses the
 generic foreground AST walk while keeping the foreground expression index lazy;
 warm harness `hover handle_completion` now hits the method-declaration fast
-path in about 1.5ms server-side and about 5.4ms client-side.
+path in about 1.5ms server-side and about 5.4ms client-side. After LM-619,
+exact-text reopen restores recently closed document analysis and diagnostics
+inside the same server process; the repeated harness `server.cr` open used by
+the call-hierarchy scenario dropped from about 130-140ms to 13-31ms in the
+measured runs.
 Refuted for the current one-file warm harness: project-cache load itself is not
 the dominant `initialize` cost (`cache=~2.9ms`), and disabling project cache
 pushes dependency analysis back into foreground `didOpen`; lazy-on-first
 `ExprSpanIndex` makes first hover worse for the current one-file warm harness.
-Remaining LSP latency and fidelity candidates are non-declaration foreground
+Remaining LSP latency and fidelity candidates are first-open foreground
 name-resolution/indexing work after the AST cache corridor has supplied a
-parsed foreground arena, plus the remaining semantic-token cost outside the
-collector slice (response JSON size, client/transport parse, or protocol
-strategy such as range/delta).
+parsed foreground arena, and the remaining semantic-token full-request cost.
+Local profiling showed the semantic-token gap is mostly response size/client
+parse: direct helper parse of the 342KB response took about 42ms.
 
 Spec-first bootstrap checkpoint (2026-05-08): `docs/specs/` now contains the
 first executable contract slice for Crystal V2, modeled after the DiamondDB

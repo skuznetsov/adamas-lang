@@ -7442,3 +7442,38 @@ Adversary notes:
   foreground analysis; this landmark only closes the declaration-hover slice.
 
 Trust: {F/G/R: 0.86/0.42/0.88} [verified]
+
+### LM-619 - Exact-text reopen reuses closed document analysis
+
+The LSP server now keeps a small in-memory cache for recently closed documents.
+When a `didOpen` arrives for the same URI, same language id, same normalized
+path, and exact same text, the server restores the previous parsed/analyzed
+`DocumentState` and diagnostics instead of rebuilding foreground analysis. A
+text mismatch or `didChange` invalidates the closed-document entry.
+
+Evidence:
+
+- The regression closes and reopens an unchanged document, asserts the reopened
+  state reuses the same parsed program object, and checks method hover still
+  returns the declaration signature after restore.
+- `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 120 4096 tool format
+  --check src/compiler/lsp/server.cr spec/lsp/support/server_helper.cr
+  spec/lsp/did_change_integration_spec.cr`
+- `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 240 4096 spec
+  spec/lsp/did_change_integration_spec.cr --error-trace` -> 7 examples,
+  0 failures.
+- `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 300 4096 spec
+  spec/lsp --error-trace` -> 241 examples, 0 failures.
+- Rebuilt `src/lsp_main.cr` and `benchmarks/lsp_harness.cr`; the repeated
+  `server.cr` open used by the call-hierarchy scenario dropped from the prior
+  ~130-140ms range to 13.1ms on the cold-cache run and 31.2ms on the warm run.
+
+Adversary notes:
+
+- This does not claim to improve first open; it removes repeated exact-text
+  reopen work inside the same LSP server process.
+- Diagnostics are cached with the closed document so exact-text reopen does not
+  silently clear previous diagnostics.
+- The cache is bounded to eight documents and does not survive process restart.
+
+Trust: {F/G/R: 0.84/0.44/0.87} [verified]

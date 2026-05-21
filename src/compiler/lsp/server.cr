@@ -129,6 +129,25 @@ module CrystalV2
         end
       end
 
+      struct ClosedDocumentCacheEntry
+        getter state : DocumentState
+        getter diagnostics : Array(Diagnostic)
+        getter text : String
+        getter language_id : String
+        getter path : String?
+
+        def initialize(@state : DocumentState, @diagnostics : Array(Diagnostic))
+          doc = state.text_document
+          @text = doc.text
+          @language_id = doc.language_id
+          @path = state.path
+        end
+
+        def matches?(text : String, language_id : String, path : String?) : Bool
+          @text == text && @language_id == language_id && @path == (path ? File.expand_path(path) : nil)
+        end
+      end
+
       struct DependencyWorkspace
         getter visited : Set(String)
         getter cache : Hash(String, DocumentState)
@@ -493,6 +512,8 @@ module CrystalV2
         @project : UnifiedProjectState
         @debouncer : Debouncer
         @documents : Hash(String, DocumentState) # Legacy - being migrated to @project
+        @closed_document_cache : Hash(String, ClosedDocumentCacheEntry)
+        @document_diagnostics : Hash(String, Array(Diagnostic))
         @initialized : Bool = false
         @prelude_state : PreludeState?
         @prelude_mtime : Time?
@@ -546,6 +567,8 @@ module CrystalV2
           @project = UnifiedProjectState.new
           @debouncer = Debouncer.new(config.debounce_ms)
           @documents = {} of String => DocumentState # Legacy
+          @closed_document_cache = {} of String => ClosedDocumentCacheEntry
+          @document_diagnostics = {} of String => Array(Diagnostic)
           @prelude_real_mtime = nil
           @seq_id = 1
           @symbol_locations = {} of Semantic::Symbol => SymbolLocation
@@ -1756,8 +1779,15 @@ module CrystalV2
             end
           end
 
-          # Legacy: Analyze and store document (will be removed after full migration)
           doc = TextDocumentItem.new(uri: uri, language_id: language_id, version: version, text: text)
+          if restored = restore_closed_document(uri, doc, doc_path)
+            diagnostics = restored.diagnostics
+            publish_diagnostics(uri, diagnostics, version)
+            request_semantic_tokens_refresh
+            return
+          end
+
+          # Legacy: Analyze and store document (will be removed after full migration)
           diagnostics, program, type_context, identifier_symbols, symbol_table, requires, index = if doc_path && foreground_ast_cache_eligible?(doc_path, text)
                                                                                                     parser_diagnostics = [] of Frontend::Diagnostic
                                                                                                     parsed_program, _ast_cache_hit = load_or_parse_disk_program(doc_path, text, parser_diagnostics, cache_label: "foreground document")
@@ -1788,6 +1818,7 @@ module CrystalV2
           line_offsets = build_line_offsets(text)
           @documents[uri] = DocumentState.new(doc, program, type_context, identifier_symbols, symbol_table, requires, index, line_offsets, path: doc_path)
           register_document_symbols(uri, @documents[uri])
+          @document_diagnostics[uri] = diagnostics
           warm_dependencies(doc_path, @documents[uri]) if doc_path
 
           # Publish diagnostics
@@ -1809,12 +1840,60 @@ module CrystalV2
           # Note: We don't remove from @project because the file still exists on disk
           # and may be referenced by other files. UnifiedProject keeps all project files.
           # Only remove from legacy @documents
+          cache_closed_document(uri)
           unregister_document_symbols(uri)
           @documents.delete(uri)
           @semantic_token_cache.delete(uri) # Clear cached tokens
           @formatting_cache.delete(uri)     # Clear cached formatting response
           if path = uri_to_path(uri)
             @cached_expr_type_compatible_paths.delete(File.expand_path(path))
+          end
+        end
+
+        private def cache_closed_document(uri : String)
+          state = @documents[uri]?
+          return unless state
+
+          diagnostics = @document_diagnostics[uri]? || [] of Diagnostic
+          @closed_document_cache[uri] = ClosedDocumentCacheEntry.new(state, diagnostics)
+          trim_closed_document_cache
+        end
+
+        private def restore_closed_document(uri : String, doc : TextDocumentItem, path : String?) : ClosedDocumentCacheEntry?
+          entry = @closed_document_cache[uri]?
+          return nil unless entry
+
+          unless entry.matches?(doc.text, doc.language_id, path)
+            @closed_document_cache.delete(uri)
+            return nil
+          end
+
+          @closed_document_cache.delete(uri)
+          state = entry.state
+          reopened = DocumentState.new(
+            doc,
+            state.program,
+            state.type_context,
+            state.identifier_symbols,
+            state.symbol_table,
+            state.requires,
+            state.index,
+            state.line_offsets,
+            path: path,
+            document_symbols: state.document_symbols
+          )
+          @documents[uri] = reopened
+          register_document_symbols(uri, reopened)
+          @document_diagnostics[uri] = entry.diagnostics
+          debug("Restored closed document analysis for #{uri}")
+          entry
+        end
+
+        private def trim_closed_document_cache
+          while @closed_document_cache.size > 8
+            oldest = @closed_document_cache.first_key?
+            break unless oldest
+            @closed_document_cache.delete(oldest)
           end
         end
 
@@ -3779,6 +3858,8 @@ module CrystalV2
           line_offsets = build_line_offsets(new_text)
           @documents[uri] = DocumentState.new(doc, program, type_context, identifier_symbols, symbol_table, requires, index, line_offsets, path: doc_path)
           register_document_symbols(uri, @documents[uri])
+          @document_diagnostics[uri] = diagnostics
+          @closed_document_cache.delete(uri)
           warm_dependencies(doc_path, @documents[uri]) if doc_path
 
           publish_diagnostics(uri, diagnostics, version)
@@ -3793,6 +3874,7 @@ module CrystalV2
         private def invalidate_changed_document_caches(uri : String, path : String?)
           @semantic_token_cache.delete(uri)
           @formatting_cache.delete(uri)
+          @closed_document_cache.delete(uri)
           @cached_expr_types.delete(path) if path
           @cached_expr_type_compatible_paths.delete(path) if path
         end

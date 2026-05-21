@@ -50,6 +50,10 @@ module CrystalV2::Compiler::LSP
       text_doc.uri
     end
 
+    def spec_did_close(uri : String)
+      handle_did_close(JSON.parse(%({"textDocument":{"uri":#{uri.to_json}}})))
+    end
+
     # Run hover and return parsed JSON response.
     def spec_hover(uri : String, line : Int32, character : Int32) : JSON::Any
       params = JSON.parse(%({"textDocument":{"uri":#{uri.to_json}},"position":{"line":#{line},"character":#{character}}}))
@@ -210,6 +214,14 @@ module CrystalV2::Compiler::LSP
 
     def spec_document_text(uri : String) : String?
       @documents[uri]?.try(&.text_document.text)
+    end
+
+    def spec_document_program_id(uri : String) : UInt64?
+      @documents[uri]?.try(&.program.object_id)
+    end
+
+    def spec_closed_document_cache_size : Int32
+      @closed_document_cache.size
     end
 
     def spec_project_has_file?(path : String) : Bool
