@@ -91,12 +91,18 @@ AST-backed when requested. After LM-614, foreground `didOpen`/`didChange`
 preserve declaration indexes but stop eagerly building the child expression span
 index; positional navigation falls back to the AST walk and the focused
 regression keeps hover, definition, semantic tokens, and lazy document symbols
-green.
+green. After LM-615, first full semantic-token requests avoid ignored trivia,
+hash priority lookups, dedup allocation, and temporary String allocation during
+name/member source-window searches; the warm harness now reports `server.cr`
+semantic tokens around 122-126ms with server-side collection around 66ms and
+JSON serialization around 14ms.
 Refuted for the current one-file warm harness: project-cache load itself is not
 the dominant `initialize` cost (`cache=~2.9ms`), and disabling project cache
 pushes dependency analysis back into foreground `didOpen`. Remaining LSP latency
 and fidelity candidates are foreground name-resolution/indexing work after the
-AST cache corridor has supplied a parsed foreground arena.
+AST cache corridor has supplied a parsed foreground arena, plus the remaining
+semantic-token cost outside the collector slice (response JSON size,
+client/transport parse, or protocol strategy such as range/delta).
 
 Spec-first bootstrap checkpoint (2026-05-08): `docs/specs/` now contains the
 first executable contract slice for Crystal V2, modeled after the DiamondDB

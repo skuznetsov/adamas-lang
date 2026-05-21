@@ -123,6 +123,23 @@ module SemanticTokensSpecHelper
     decoded.any? { |(_, _, _, kind, text)| kind == string_kind && text.includes?("foo") }.should be_true
   end
 
+  it "skips trivia while preserving lexical symbols and strings" do
+    source = "# if Fake\nVALUE = :speed\ntext = \"done\"\n"
+    parser = CrystalV2::Compiler::Frontend::Parser.new(
+      CrystalV2::Compiler::Frontend::Lexer.new(source)
+    )
+    program = parser.parse_program
+    tokens = SemanticTokensSpecHelper.collect(program, source)
+    decoded = SemanticTokensSpecHelper.decode(tokens, source)
+    texts = decoded.map { |(_, _, _, _, text)| text }
+
+    texts.should_not contain("Fake")
+    decoded.any? { |(_, _, _, kind, text)| kind == SemanticTokensSpecHelper.legend_index("keyword") && text == "if" }.should be_false
+    decoded.any? { |(_, _, _, kind, text)| kind == SemanticTokensSpecHelper.legend_index("type") && text == "VALUE" }.should be_true
+    decoded.any? { |(_, _, _, kind, text)| kind == SemanticTokensSpecHelper.legend_index("enumMember") && text == ":speed" }.should be_true
+    decoded.any? { |(_, _, _, kind, text)| kind == SemanticTokensSpecHelper.legend_index("string") && text == "\"done\"" }.should be_true
+  end
+
   it "limits semantic token range responses to the requested visible window" do
     source = "alpha = 1\nbeta = foo.bar(:speed)\ngamma = \"done\"\n"
     parser = CrystalV2::Compiler::Frontend::Parser.new(

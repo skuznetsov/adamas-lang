@@ -1121,3 +1121,25 @@ stale project-cache type rows.
 alone, but it caught a real adjacent hole before commit.
 **Cost saved:** moderate review time; final scope still came from local
 reproduction and tests.
+
+### Session 44 — 2026-05-21 — LSP semantic-token collector audit
+**Task:** read-only Grok ACP audit for the remaining first full
+`textDocument/semanticTokens/full` cost on `src/compiler/lsp/server.cr`, after
+LM-614 left `didOpen` around 140ms and full semantic tokens around 130ms.
+**Brief size:** bounded task file in `/private/tmp` naming
+`handle_semantic_tokens`, `collect_semantic_tokens`, lexical collection,
+sort/dedup, delta encoding, and semantic-token tests.
+**Latency:** returned while local probes and a Spark explorer were also running.
+**Output quality:** useful. Grok identified zero-copy name/member source-window
+searches as a bounded allocation cut in the AST emission path. A parallel Spark
+audit independently pointed at the broader request-time collector family:
+skipping ignored trivia, replacing priority hash lookup, and compacting
+deduplication in place.
+**Adversary check:** local direct `LSP_PROFILE_TOKENS=1` probes showed the
+collector improvement was real but modest, and the rebuilt harness still showed
+the full request around 122-126ms. The accepted patch therefore records this as
+a request-time collector cleanup, not as the final semantic-token root fix.
+Focused semantic-token specs and full `spec/lsp` stayed green.
+**Verdict:** useful. Grok contributed a concrete zero-copy subpatch; local
+measurement and the second audit set the final bounded scope.
+**Cost saved:** moderate audit time; final acceptance remained local.

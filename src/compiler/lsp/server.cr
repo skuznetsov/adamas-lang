@@ -10782,30 +10782,30 @@ module CrystalV2
           Operator      = 21
         end
 
-        TOKEN_TYPE_PRIORITY = {
-          SemanticTokenType::Method.value        => 7,
-          SemanticTokenType::Function.value      => 7,
-          SemanticTokenType::Macro.value         => 7,
-          SemanticTokenType::Class.value         => 6,
-          SemanticTokenType::Struct.value        => 6,
-          SemanticTokenType::Enum.value          => 6,
-          SemanticTokenType::Type.value          => 6,
-          SemanticTokenType::Interface.value     => 6,
-          SemanticTokenType::Namespace.value     => 5,
-          SemanticTokenType::TypeParameter.value => 5,
-          SemanticTokenType::EnumMember.value    => 8, # ensure symbols win over lower-fidelity overlaps
-          SemanticTokenType::Property.value      => 4,
-          SemanticTokenType::Parameter.value     => 4,
-          SemanticTokenType::Variable.value      => 3,
-          SemanticTokenType::Keyword.value       => 3,
-          SemanticTokenType::String.value        => 3,
-          SemanticTokenType::Number.value        => 3,
-          SemanticTokenType::Regexp.value        => 3,
-          SemanticTokenType::Operator.value      => 2,
-          SemanticTokenType::Modifier.value      => 2,
-          SemanticTokenType::Comment.value       => 2,
-          SemanticTokenType::Event.value         => 2,
-        }
+        TOKEN_TYPE_PRIORITY = [
+          5, # Namespace
+          6, # Type
+          6, # Class
+          6, # Enum
+          6, # Interface
+          6, # Struct
+          5, # TypeParameter
+          4, # Parameter
+          3, # Variable
+          4, # Property
+          8, # EnumMember: symbols win over lower-fidelity overlaps
+          2, # Event
+          7, # Function
+          7, # Method
+          7, # Macro
+          3, # Keyword
+          2, # Modifier
+          2, # Comment
+          3, # String
+          3, # Number
+          3, # Regexp
+          2, # Operator
+        ]
 
         # Represents a single semantic token before delta encoding
         private struct RawToken
@@ -10945,7 +10945,7 @@ module CrystalV2
           raw_tokens.sort! do |left, right|
             compare_semantic_tokens(left, right)
           end
-          raw_tokens = deduplicate_tokens(raw_tokens)
+          deduplicate_tokens!(raw_tokens)
           if visible_range
             raw_tokens = raw_tokens.select { |token| context.raw_token_in_visible_range?(token) }
           end
@@ -11318,7 +11318,7 @@ module CrystalV2
           lexer = Frontend::Lexer.new(source)
           line_offsets ||= build_line_offsets(source)
           current_line = 0
-          lexer.each_token do |tok|
+          lexer.each_token(skip_trivia: true) do |tok|
             # Keywords
             if keyword_kind?(tok.kind)
               line, col = position_from_monotonic_offset(tok.span.start_offset, line_offsets, current_line)
@@ -11408,7 +11408,7 @@ module CrystalV2
           lexer = Frontend::Lexer.new(source)
           line_offsets = build_line_offsets(source)
           current_line = 0
-          lexer.each_token do |tok|
+          lexer.each_token(skip_trivia: true) do |tok|
             # Keywords
             if keyword_kind?(tok.kind)
               line, col = position_from_monotonic_offset(tok.span.start_offset, line_offsets, current_line)
@@ -11774,8 +11774,8 @@ module CrystalV2
           return if search_start < 0 || search_start >= search_end
 
           window = search_end - search_start
-          segment = context.source.byte_slice(search_start, window)
-          relative = segment.index(String.new(member))
+          segment = context.bytes[search_start, window]
+          relative = bytes_index(segment, member)
           return unless relative
 
           absolute = search_start + relative
@@ -11972,25 +11972,43 @@ module CrystalV2
           name_slice : Slice(UInt8),
         ) : {Int32, Int32}?
           return nil if name_slice.empty?
-          name = String.new(name_slice)
-          return nil if name.empty?
           start_offset = span.start_offset
           total = span.end_offset - start_offset
           window = total
           window = NAME_SEARCH_WINDOW if window > NAME_SEARCH_WINDOW
-          min_needed = name.bytesize
+          min_needed = name_slice.size
           window = min_needed if window < min_needed
           remaining = context.bytes.size - start_offset
           window = remaining if window > remaining
           return nil if window <= 0
-          return nil if window <= 0
-          segment = context.source.byte_slice(start_offset, window)
-          relative = segment.index(name)
+          segment = context.bytes[start_offset, window]
+          relative = bytes_index(segment, name_slice)
           return nil unless relative
           absolute = start_offset + relative
           position = position_from_offset(context.source, absolute, context.line_offsets)
           {position.line, position.character}
         rescue
+          nil
+        end
+
+        private def bytes_index(haystack : Bytes, needle : Bytes) : Int32?
+          return 0 if needle.empty?
+          limit = haystack.size - needle.size
+          return nil if limit < 0
+
+          first = needle[0]
+          i = 0
+          while i <= limit
+            if haystack[i] == first
+              j = 1
+              while j < needle.size && haystack[i + j] == needle[j]
+                j += 1
+              end
+              return i if j == needle.size
+            end
+            i += 1
+          end
+
           nil
         end
 
@@ -12045,10 +12063,10 @@ module CrystalV2
           right.length <=> left.length
         end
 
-        private def deduplicate_tokens(tokens : Array(RawToken)) : Array(RawToken)
+        private def deduplicate_tokens!(tokens : Array(RawToken))
           return tokens if tokens.empty?
 
-          deduped = [] of RawToken
+          write_index = 0
           last_line = Int32::MIN
           last_start = Int32::MIN
           last_end = Int32::MIN
@@ -12060,13 +12078,15 @@ module CrystalV2
               next if token.start_char <= last_start || token.start_char < last_end
             end
 
-            deduped << token
+            tokens[write_index] = token
+            write_index += 1
             last_line = token.line
             last_start = token.start_char
             last_end = token.start_char + token.length
           end
 
-          deduped
+          tokens.truncate(0, write_index)
+          tokens
         end
 
         # Delta-encode tokens according to LSP specification

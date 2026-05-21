@@ -7274,3 +7274,50 @@ Adversary notes:
   functional.
 
 Trust: {F/G/R: 0.82/0.42/0.84} [verified]
+
+### LM-615 - LSP full semantic-token collector avoids request-time waste
+
+First full semantic-token requests no longer spend collector work on data that
+cannot affect the response:
+
+- lexical token scans use `Lexer#each_token(skip_trivia: true)` because the
+  collector does not emit whitespace/comment tokens;
+- token priority is an enum-indexed array instead of a hash lookup inside the
+  sort comparator;
+- deduplication compacts the local `RawToken` array in place instead of
+  allocating a second array;
+- declaration/member source-window searches compare bytes directly instead of
+  allocating temporary `String`s for each name lookup.
+
+Evidence:
+
+- Direct `LSP_PROFILE_TOKENS=1` collector probes on `src/compiler/lsp/server.cr`
+  moved from about 68ms before this slice to about 63-65ms after the full patch
+  in local repeated runs.
+- `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 120 4096 tool format
+  --check src/compiler/lsp/server.cr spec/lsp/semantic_tokens_spec.cr`
+- `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 240 4096 spec
+  spec/lsp/semantic_tokens_spec.cr spec/lsp/lsp_semantic_tokens_spec.cr
+  spec/lsp/semantic_tokens_integration_spec.cr --error-trace` -> 36 examples,
+  0 failures.
+- `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 300 4096 spec
+  spec/lsp --error-trace` -> 240 examples, 0 failures.
+- Rebuilt `src/lsp_main.cr` and `benchmarks/lsp_harness.cr`; warm harness kept
+  `definition handle_completion` at 1 location, document symbols at 568
+  symbols, and `semanticTokens/full` green. The debug split reported
+  `collect=66.1ms json=14.1ms`; harness-level semantic tokens were about
+  122-126ms on the measured runs.
+
+Adversary notes:
+
+- This is a request-time collector cleanup, not a protocol-level semantic-token
+  fix. The remaining gap between server collection/JSON and harness request
+  time likely lives in response size, client/transport parsing, or full-document
+  protocol strategy.
+- Skipping trivia is only valid while comments remain intentionally uncolored.
+  A regression now asserts comment text is not tokenized while uppercase
+  identifiers, symbols, and strings still receive tokens.
+- The priority array depends on `SemanticTokenType` enum order; semantic-token
+  specs keep enum-member/string/type behavior covered.
+
+Trust: {F/G/R: 0.84/0.48/0.86} [verified]
