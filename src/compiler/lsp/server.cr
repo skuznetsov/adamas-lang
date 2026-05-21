@@ -6,6 +6,7 @@ require "./protocol"
 require "./messages"
 require "./prelude_cache"
 require "./ast_cache"
+require "./semantic_token_cache"
 require "./project_cache"
 require "./unified_project"
 require "./debouncer"
@@ -6601,6 +6602,16 @@ module CrystalV2
             end
           end
 
+          if disk_cache_eligible_for_semantic_tokens?(doc_state)
+            path = doc_state.path.not_nil!
+            info = File.info(path)
+            if cached_json = SemanticTokenDiskCache.load(path, info.modification_time.to_unix_ns.to_i64, info.size.to_u64)
+              debug("Semantic tokens disk cache HIT for #{uri} v#{version}")
+              @semantic_token_cache[uri] = {version, cached_json}
+              return send_response(id, cached_json)
+            end
+          end
+
           start_time = Time.instant
 
           # Collect semantic tokens from AST
@@ -6624,6 +6635,11 @@ module CrystalV2
           # Cache the serialized response. Large files spend significant time
           # serializing token arrays, and repeat full-token requests are common.
           @semantic_token_cache[uri] = {version, json}
+          if disk_cache_eligible_for_semantic_tokens?(doc_state)
+            path = doc_state.path.not_nil!
+            info = File.info(path)
+            SemanticTokenDiskCache.save(path, info.modification_time.to_unix_ns.to_i64, info.size.to_u64, json)
+          end
 
           if ENV["LSP_DEBUG"]? || @config.debug_log_path || ENV["LSP_PROFILE_TOKENS"]?
             sample = semantic_token_sample(tokens)
@@ -6633,6 +6649,19 @@ module CrystalV2
             debug("Generated semantic tokens in #{collect_ms.round(1)}ms")
           end
           send_response(id, json)
+        end
+
+        private def disk_cache_eligible_for_semantic_tokens?(doc_state : DocumentState) : Bool
+          path = doc_state.path
+          return false unless path
+          info = File.info?(path)
+          return false unless info
+          text = doc_state.text_document.text
+          return false if text.bytesize < SemanticTokenDiskCache::MIN_SOURCE_BYTES
+          return false unless info.size == text.bytesize
+          File.read(path) == text
+        rescue
+          false
         end
 
         # Handle textDocument/semanticTokens/range request

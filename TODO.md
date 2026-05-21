@@ -115,16 +115,21 @@ recoverable parser diagnostics from `src/compiler/hir/ast_to_hir.cr` that
 blocked foreground AST-cache persistence. A stable-binary isolated LSP profile
 created the AST cache on the first run and then loaded `ast_to_hir.cr` from it
 on the second run, dropping measured first `didOpen` from about 2.5s to about
-1.14s for that file.
+1.14s for that file. After LM-622, full semantic-token JSON responses for
+large exact disk-backed documents persist across LSP processes behind a strict
+compiler-fingerprint/mtime/size/text-match gate and a 64KB source-size floor.
+The measured `ast_to_hir.cr` full-token request dropped from about 1028ms on
+the first compute-and-save run to about 410ms on a fresh disk-cache-hit run in
+the helper path; the remaining cost is dominated by handling/parsing the huge
+JSON response.
 Refuted for the current one-file warm harness: project-cache load itself is not
 the dominant `initialize` cost (`cache=~2.9ms`), and disabling project cache
 pushes dependency analysis back into foreground `didOpen`; lazy-on-first
 `ExprSpanIndex` makes first hover worse for the current one-file warm harness.
 Remaining LSP latency and fidelity candidates are first-open foreground
 name-resolution/indexing work after the AST cache corridor has supplied a
-parsed foreground arena, and the remaining semantic-token full-request cost.
-Local profiling showed the semantic-token gap is mostly response size/client
-parse: direct helper parse of the 342KB response took about 42ms.
+parsed foreground arena, and reducing the wire/client cost of huge full
+semantic-token responses.
 
 Spec-first bootstrap checkpoint (2026-05-08): `docs/specs/` now contains the
 first executable contract slice for Crystal V2, modeled after the DiamondDB

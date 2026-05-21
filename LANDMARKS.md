@@ -7557,3 +7557,40 @@ Adversary notes:
   semantic-token full-response costs.
 
 Trust: {F/G/R: 0.87/0.46/0.89} [verified]
+
+### LM-622 - Large semantic-token responses are persisted across LSP processes
+
+Full semantic-token responses for large exact disk-backed documents are now
+stored in a strict disk cache. The server only uses this cache when the open
+document text exactly matches the file on disk and the cached header matches
+the current compiler fingerprint, file mtime, and file size. The cache has a
+64KB source-size floor, so normal small files stay on the in-memory path and do
+not churn disk.
+
+Evidence:
+
+- The focused regression pre-seeds a disk-cache entry and verifies that an
+  exact disk-backed open serves that cached response. It also verifies that an
+  open buffer with the same size but different text ignores the disk cache.
+- `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 180 4096 spec
+  spec/lsp/semantic_token_disk_cache_spec.cr --error-trace` -> 2 examples,
+  0 failures.
+- `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 300 4096 spec
+  spec/lsp --error-trace` -> 244 examples, 0 failures.
+- Temporary stable-binary profile with isolated `XDG_CACHE_HOME`: first
+  `ast_to_hir.cr` semantic-token request computed and saved tokens at about
+  `1028.0ms`; a fresh server process then logged
+  `Semantic tokens disk cache HIT` and returned the same 1,276,950 encoded
+  ints in about `410.2ms` in the helper path. The remaining time is dominated
+  by handling/parsing the huge JSON response after server-side
+  collect/serialization is skipped.
+
+Adversary notes:
+
+- This is not a stale-token shortcut: unsaved buffers, size mismatches, mtime
+  mismatches, and compiler rebuilds all fall back to recomputation.
+- It helps repeated opens or fresh LSP processes after the first full-token
+  computation for a large unchanged file. It does not reduce the wire/client
+  cost of a 1.27M-int semantic-token response.
+
+Trust: {F/G/R: 0.86/0.48/0.88} [verified]
