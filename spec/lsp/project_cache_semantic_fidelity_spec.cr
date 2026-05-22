@@ -372,6 +372,32 @@ describe "LSP project cache semantic fidelity" do
       hover["result"]["contents"]["value"].as_s.should contain("def self.target")
       hover_server.spec_document_ast_loaded?(hover_uri).should be_false
 
+      member_definition_server = CrystalV2::Compiler::LSP::Server.new(
+        IO::Memory.new,
+        IO::Memory.new,
+        CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: true)
+      )
+      member_definition_uri = member_definition_server.spec_did_open_document(source, path)
+      member_definition_server.spec_document_ast_loaded?(member_definition_uri).should be_false
+
+      value_line, value_char = lsp_line_char(source, "value(2")
+      member_definition = member_definition_server.spec_definition(member_definition_uri, value_line, value_char)
+      member_definition["result"].as_a.size.should eq(1)
+      member_definition["result"].as_a.first["uri"].as_s.should contain("helper.cr")
+      member_definition_server.spec_document_ast_loaded?(member_definition_uri).should be_false
+
+      member_hover_server = CrystalV2::Compiler::LSP::Server.new(
+        IO::Memory.new,
+        IO::Memory.new,
+        CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: true)
+      )
+      member_hover_uri = member_hover_server.spec_did_open_document(source, path)
+      member_hover_server.spec_document_ast_loaded?(member_hover_uri).should be_false
+
+      member_hover = member_hover_server.spec_hover(member_hover_uri, value_line, value_char)
+      member_hover["result"]["contents"]["value"].as_s.should contain("def value")
+      member_hover_server.spec_document_ast_loaded?(member_hover_uri).should be_false
+
       signature_server = CrystalV2::Compiler::LSP::Server.new(
         IO::Memory.new,
         IO::Memory.new,

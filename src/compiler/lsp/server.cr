@@ -4879,6 +4879,20 @@ module CrystalV2
                 return
               end
             end
+
+            if member_call = fast_member_method_call_at_offset(doc_state.text_document.text, hover_offset)
+              receiver_name, method_name, receiver_offset = member_call
+              if receiver_type = textual_assignment_type_before_offset(doc_state.text_document.text, receiver_name, receiver_offset)
+                if signature = find_method_signature_for_receiver_type(doc_state, receiver_type, method_name)
+                  debug("Hover member-call text fast path: #{receiver_type}##{method_name}")
+                  contents = MarkupContent.new("```crystal\n#{signature}\n```", markdown: true)
+                  hover = Hover.new(contents: contents)
+                  send_response(id, hover.to_json)
+                  debug("Hover completed in #{elapsed_ms_since(started_at)}ms -> hit(member-call-text)")
+                  return
+                end
+              end
+            end
           end
 
           doc_state = ensure_foreground_semantic_analysis(uri, doc_state)
@@ -5265,6 +5279,44 @@ module CrystalV2
           nil
         end
 
+        private def fast_member_method_call_at_offset(source : String, offset : Int32) : {String, String, Int32}?
+          bounds = identifier_bounds_at_offset(source, offset)
+          bounds ||= identifier_bounds_at_offset(source, offset - 1) if offset > 0
+          return nil unless bounds
+
+          method_start, method_end = bounds
+          return nil if method_start >= method_end
+
+          method_name = source.byte_slice(method_start, method_end - method_start)
+          first = method_name[0]?
+          return nil unless first && (first.lowercase? || first == '_')
+
+          dot_offset = previous_non_space_offset(source, method_start)
+          return nil unless dot_offset && source.byte_at(dot_offset) == '.'.ord
+
+          receiver_bounds = identifier_bounds_at_offset(source, dot_offset - 1)
+          return nil unless receiver_bounds
+          receiver_start, receiver_end = receiver_bounds
+          return nil if receiver_start >= receiver_end
+
+          receiver_name = source.byte_slice(receiver_start, receiver_end - receiver_start)
+          receiver_first = receiver_name[0]?
+          return nil unless receiver_first && (receiver_first.lowercase? || receiver_first == '_')
+
+          receiver_previous = previous_non_space_offset(source, receiver_start)
+          if receiver_previous
+            previous = source.byte_at(receiver_previous)
+            return nil if previous == '.'.ord || previous == ':'.ord || previous == '@'.ord
+          end
+
+          next_offset = next_non_space_offset(source, method_end)
+          return nil unless next_offset && source.byte_at(next_offset) == '('.ord
+
+          {receiver_name, method_name, receiver_start}
+        rescue
+          nil
+        end
+
         private def identifier_bounds_at_offset(source : String, offset : Int32) : {Int32, Int32}?
           return nil if source.empty?
           pos = offset
@@ -5317,6 +5369,48 @@ module CrystalV2
           false
         end
 
+        private def textual_assignment_type_before_offset(source : String, name : String, target_offset : Int32) : String?
+          return nil if target_offset <= 0
+          visible = source.byte_slice(0, Math.min(target_offset, source.bytesize))
+          assign_pattern = /^\s*#{Regex.escape(name)}\s*=\s*(.+)$/
+
+          last_rhs = nil
+          visible.each_line do |line|
+            if match = assign_pattern.match(line)
+              last_rhs = match[1].strip
+            end
+          end
+          return nil unless last_rhs
+
+          if match = /\b([A-Z][A-Za-z0-9_:]*)\.new\b/.match(last_rhs)
+            return clean_type_name(match[1])
+          end
+
+          nil
+        rescue
+          nil
+        end
+
+        private def resolved_type_file_path(doc_state : DocumentState, type_name : String) : String?
+          symbol = resolve_type_name_symbol(doc_state, type_name)
+          return nil unless symbol.responds_to?(:file_path)
+          path = symbol.file_path
+          return path if path && File.file?(path)
+          nil
+        rescue
+          nil
+        end
+
+        private def find_method_location_for_receiver_type(doc_state : DocumentState, type_name : String, method_name : String) : Location?
+          return nil unless path = resolved_type_file_path(doc_state, type_name)
+          find_method_location_in_path(path, method_name)
+        end
+
+        private def find_method_signature_for_receiver_type(doc_state : DocumentState, type_name : String, method_name : String) : String?
+          return nil unless path = resolved_type_file_path(doc_state, type_name)
+          find_method_signature_in_path(path, method_name)
+        end
+
         # Handle textDocument/definition request
         private def handle_definition(id : JSON::Any, params : JSON::Any?)
           started_at = Time.instant
@@ -5342,6 +5436,17 @@ module CrystalV2
               send_response(id, [location].to_json)
               debug("Definition completed in #{elapsed_ms_since(started_at)}ms -> hit(method-call-text)")
               return
+            end
+          end
+
+          if member_call = fast_member_method_call_at_offset(doc_state.text_document.text, offset)
+            receiver_name, method_name, receiver_offset = member_call
+            if receiver_type = textual_assignment_type_before_offset(doc_state.text_document.text, receiver_name, receiver_offset)
+              if location = find_method_location_for_receiver_type(doc_state, receiver_type, method_name)
+                send_response(id, [location].to_json)
+                debug("Definition completed in #{elapsed_ms_since(started_at)}ms -> hit(member-call-text)")
+                return
+              end
             end
           end
 

@@ -6659,6 +6659,45 @@ Adversary notes:
 
 Trust: {F/G/R: 0.88/0.42/0.88} [verified]
 
+### LM-631 - Constructor-assigned member calls avoid first semantic materialization
+
+After lazy cached opens, member-call hover and definition can now use a narrow
+text-backed receiver corridor for local variables assigned earlier to
+`Type.new`. The guard only accepts lowercase or underscore-prefixed local
+receivers, lowercase method names followed by `(`, rejects chained/path/ivar
+receivers, requires the receiver assignment to resolve to a concrete class
+source file, and then searches only that resolved file for the method
+signature/location. This covers common shapes like `helper = Helper.new` then
+`helper.value(2)` without materializing the foreground AST or identifier map.
+
+Evidence:
+
+- Focused cached-open regression:
+  `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 180 4096 spec
+  spec/lsp/project_cache_semantic_fidelity_spec.cr --error-trace` ->
+  5 examples, 0 failures. The new checks verify definition and hover for
+  `helper.value(2)` route to `helper.cr` and keep
+  `spec_document_ast_loaded? == false`.
+- Full LSP suite:
+  `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 300 4096 spec
+  spec/lsp --error-trace` -> 254 examples, 0 failures.
+- Formatting and diff hygiene:
+  `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 120 4096 tool format
+  --check src/compiler/lsp/server.cr
+  spec/lsp/project_cache_semantic_fidelity_spec.cr` -> exit 0;
+  `git diff --check` -> exit 0.
+
+Adversary notes:
+
+- This deliberately does not scan all required files for the first matching
+  method when a receiver type cannot be resolved. It falls back to the existing
+  semantic path instead, avoiding same-named-method false positives.
+- The path is limited to constructor-assigned local receivers; member chains,
+  ivars, constants, and non-call member access still use existing semantic
+  handling.
+
+Trust: {F/G/R: 0.88/0.43/0.88} [verified]
+
 ## LM-583 — LSP foreground hover avoids workspace reference scans by default
 
 Status: verified for the focused LSP hover/cache/harness slice on `codegen`.
