@@ -281,7 +281,7 @@ describe "LSP project cache semantic fidelity" do
       definition_line, definition_char = lsp_line_char(source, "handle(1")
       definition = cached.spec_definition(cached_uri, definition_line, definition_char)
       definition["result"].as_a.size.should eq(1)
-      cached.spec_identifier_symbols_built?(cached_uri).should be_true
+      cached.spec_identifier_symbols_built?(cached_uri).should be_false
     ensure
       FileUtils.rm_rf(root) if root
     end
@@ -309,9 +309,14 @@ describe "LSP project cache semantic fidelity" do
       require "./helper"
 
       class Entry
+        def self.target(value : Int32) : Int32
+          value
+        end
+
         def self.run
           helper = Helper.new
           helper.value(2)
+          target(1)
         end
       end
       CR
@@ -341,6 +346,31 @@ describe "LSP project cache semantic fidelity" do
       prepare_rename["result"].should_not be_nil
       rename_server.spec_document_ast_loaded?(rename_uri).should be_true
       rename_server.spec_identifier_symbols_built?(rename_uri).should be_true
+
+      definition_server = CrystalV2::Compiler::LSP::Server.new(
+        IO::Memory.new,
+        IO::Memory.new,
+        CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: true)
+      )
+      definition_uri = definition_server.spec_did_open_document(source, path)
+      definition_server.spec_document_ast_loaded?(definition_uri).should be_false
+
+      target_line, target_char = lsp_line_char(source, "target(1")
+      definition = definition_server.spec_definition(definition_uri, target_line, target_char)
+      definition["result"].as_a.size.should eq(1)
+      definition_server.spec_document_ast_loaded?(definition_uri).should be_false
+
+      hover_server = CrystalV2::Compiler::LSP::Server.new(
+        IO::Memory.new,
+        IO::Memory.new,
+        CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: true)
+      )
+      hover_uri = hover_server.spec_did_open_document(source, path)
+      hover_server.spec_document_ast_loaded?(hover_uri).should be_false
+
+      hover = hover_server.spec_hover(hover_uri, target_line, target_char)
+      hover["result"]["contents"]["value"].as_s.should contain("def self.target")
+      hover_server.spec_document_ast_loaded?(hover_uri).should be_false
 
       signature_server = CrystalV2::Compiler::LSP::Server.new(
         IO::Memory.new,

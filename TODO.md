@@ -162,6 +162,15 @@ current delta result id. After LM-628, the method-local member-completion gap
 exposed by lightweight cached opens is closed for constructor assignments such
 as `helper = Helper.new`: the constructor extractor now recognizes uppercase
 identifier receivers while still rejecting lowercase `variable.new`.
+After LM-629, unqualified method-call hover and definition no longer force
+first foreground semantic materialization after a lazy cached open. On
+`ast_to_hir.cr`, first hover/definition at
+`class_name_from_node(member, source)` measured about 24-25ms and kept
+`ast_loaded=false` / `identifiers=false`, instead of paying the earlier
+~2.6-2.8s semantic materialization cost. Remaining LSP latency candidates are
+now mostly request shapes that genuinely need identifier maps, member/qualified
+call precision outside the text fast path, and first full semantic-token
+response transport before a client has a current delta result id.
 
 Spec-first bootstrap checkpoint (2026-05-08): `docs/specs/` now contains the
 first executable contract slice for Crystal V2, modeled after the DiamondDB

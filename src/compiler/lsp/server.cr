@@ -4868,6 +4868,17 @@ module CrystalV2
               debug("Hover completed in #{elapsed_ms_since(started_at)}ms -> hit(method-decl)")
               return
             end
+
+            if method_name = fast_unqualified_method_call_name_at_offset(doc_state.text_document.text, hover_offset)
+              if signature = find_method_signature_by_text(doc_state, method_name)
+                debug("Hover method-call text fast path: #{method_name}")
+                contents = MarkupContent.new("```crystal\n#{signature}\n```", markdown: true)
+                hover = Hover.new(contents: contents)
+                send_response(id, hover.to_json)
+                debug("Hover completed in #{elapsed_ms_since(started_at)}ms -> hit(method-call-text)")
+                return
+              end
+            end
           end
 
           doc_state = ensure_foreground_semantic_analysis(uri, doc_state)
@@ -5227,6 +5238,85 @@ module CrystalV2
           false
         end
 
+        private def fast_unqualified_method_call_name_at_offset(source : String, offset : Int32) : String?
+          bounds = identifier_bounds_at_offset(source, offset)
+          bounds ||= identifier_bounds_at_offset(source, offset - 1) if offset > 0
+          return nil unless bounds
+
+          start_offset, end_offset = bounds
+          return nil if start_offset >= end_offset
+
+          method_name = source.byte_slice(start_offset, end_offset - start_offset)
+          first = method_name[0]?
+          return nil unless first && (first.lowercase? || first == '_')
+
+          previous_offset = previous_non_space_offset(source, start_offset)
+          if previous_offset
+            previous = source.byte_at(previous_offset)
+            return nil if previous == '.'.ord || previous == ':'.ord || previous == '@'.ord
+          end
+
+          next_offset = next_non_space_offset(source, end_offset)
+          return nil unless next_offset && source.byte_at(next_offset) == '('.ord
+          return nil if local_assignment_before_offset?(source, method_name, start_offset)
+
+          method_name
+        rescue
+          nil
+        end
+
+        private def identifier_bounds_at_offset(source : String, offset : Int32) : {Int32, Int32}?
+          return nil if source.empty?
+          pos = offset
+          pos = source.bytesize - 1 if pos >= source.bytesize
+          return nil if pos < 0
+          unless identifier_char?(source.byte_at(pos))
+            return nil unless pos > 0 && identifier_char?(source.byte_at(pos - 1))
+            pos -= 1
+          end
+
+          start_offset = pos
+          while start_offset > 0 && identifier_char?(source.byte_at(start_offset - 1))
+            start_offset -= 1
+          end
+
+          end_offset = pos + 1
+          while end_offset < source.bytesize && identifier_char?(source.byte_at(end_offset))
+            end_offset += 1
+          end
+
+          {start_offset, end_offset}
+        end
+
+        private def previous_non_space_offset(source : String, offset : Int32) : Int32?
+          pos = offset - 1
+          while pos >= 0
+            byte = source.byte_at(pos)
+            return pos unless byte == ' '.ord || byte == '\t'.ord || byte == '\n'.ord || byte == '\r'.ord
+            pos -= 1
+          end
+          nil
+        end
+
+        private def next_non_space_offset(source : String, offset : Int32) : Int32?
+          pos = offset
+          while pos < source.bytesize
+            byte = source.byte_at(pos)
+            return pos unless byte == ' '.ord || byte == '\t'.ord || byte == '\n'.ord || byte == '\r'.ord
+            pos += 1
+          end
+          nil
+        end
+
+        private def local_assignment_before_offset?(source : String, name : String, offset : Int32) : Bool
+          return false if offset <= 0
+          visible = source.byte_slice(0, Math.min(offset, source.bytesize))
+          pattern = /^\s*#{Regex.escape(name)}\s*=/
+          visible.each_line.any? { |line| pattern.matches?(line) }
+        rescue
+          false
+        end
+
         # Handle textDocument/definition request
         private def handle_definition(id : JSON::Any, params : JSON::Any?)
           started_at = Time.instant
@@ -5239,9 +5329,23 @@ module CrystalV2
 
           doc_state = @documents[uri]?
           return send_response(id, "null") unless doc_state
-          doc_state = ensure_foreground_semantic_analysis(uri, doc_state)
 
           character = clamp_character(doc_state.text_document.text, line, character)
+          offset = position_to_offset(doc_state, line, character)
+          unless offset
+            debug("Definition offset not found for line=#{line} char=#{character}")
+            return send_response(id, "null")
+          end
+
+          if method_name = fast_unqualified_method_call_name_at_offset(doc_state.text_document.text, offset)
+            if location = find_method_location_by_text(doc_state, method_name)
+              send_response(id, [location].to_json)
+              debug("Definition completed in #{elapsed_ms_since(started_at)}ms -> hit(method-call-text)")
+              return
+            end
+          end
+
+          doc_state = ensure_foreground_semantic_analysis(uri, doc_state)
 
           if indexing_in_progress?(doc_state)
             debug("Definition skipped: indexing in progress")
@@ -5256,12 +5360,6 @@ module CrystalV2
             debug("Definition skipped: indexing in progress")
             send_response(id, "null")
             return
-          end
-
-          offset = position_to_offset(doc_state, line, character)
-          unless offset
-            debug("Definition offset not found for line=#{line} char=#{character}")
-            return send_response(id, "null")
           end
 
           # Return asap if we know this is a module/class path: hover and definition
@@ -10675,15 +10773,19 @@ module CrystalV2
         end
 
         private def find_method_location_by_text(doc_state : DocumentState, method_name : String) : Location?
-          collect_dependency_paths(doc_state).each do |path|
-            next unless File.file?(path)
-            if location = find_method_in_file(path, method_name)
+          visited = Set(String).new
+          if path = doc_state.path
+            current = File.expand_path(path)
+            visited << current
+            if location = find_method_location_in_path(current, method_name)
               return location
-            elsif method_name == "new"
-              if location = find_method_in_file(path, "initialize")
-                return location
-              end
             end
+          end
+
+          collect_dependency_paths(doc_state).each do |path|
+            abs = File.expand_path(path)
+            next unless visited.add?(abs)
+            return location if location = find_method_location_in_path(abs, method_name)
           end
           nil
         end
@@ -10695,17 +10797,41 @@ module CrystalV2
             end
           end
 
-          collect_dependency_paths(doc_state).each do |path|
-            next unless File.file?(path)
-            if signature = find_method_signature_in_file(path, method_name)
+          visited = Set(String).new
+          if path = doc_state.path
+            current = File.expand_path(path)
+            visited << current
+            if signature = find_method_signature_in_path(current, method_name)
               return signature
-            elsif method_name == "new"
-              if signature = find_method_signature_in_file(path, "initialize", display_name: "new")
-                return signature
-              end
             end
           end
 
+          collect_dependency_paths(doc_state).each do |path|
+            abs = File.expand_path(path)
+            next unless visited.add?(abs)
+            return signature if signature = find_method_signature_in_path(abs, method_name)
+          end
+
+          nil
+        end
+
+        private def find_method_location_in_path(path : String, method_name : String) : Location?
+          return nil unless File.file?(path)
+          if location = find_method_in_file(path, method_name)
+            return location
+          elsif method_name == "new"
+            return find_method_in_file(path, "initialize")
+          end
+          nil
+        end
+
+        private def find_method_signature_in_path(path : String, method_name : String) : String?
+          return nil unless File.file?(path)
+          if signature = find_method_signature_in_file(path, method_name)
+            return signature
+          elsif method_name == "new"
+            return find_method_signature_in_file(path, "initialize", display_name: "new")
+          end
           nil
         end
 

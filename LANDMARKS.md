@@ -6575,6 +6575,49 @@ Adversary notes:
 
 Trust: {F/G/R: 0.88/0.45/0.88} [verified]
 
+### LM-629 - Method-call hover and definition avoid first semantic materialization
+
+After lazy cached opens, unqualified method-call hover and definition can now
+use a narrow text-backed method lookup before materializing the AST and
+identifier map. The fast path is limited to lowercase or underscore-prefixed
+identifiers followed by `(`, rejects member/namespace/ivar receivers, and
+skips names that have a prior local assignment in the visible text. Method text
+lookup now tries the current document before required files, so same-file calls
+in large files do not spend the request budget scanning dependencies first.
+
+Evidence:
+
+- Focused regression:
+  `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 180 4096 spec
+  spec/lsp/project_cache_semantic_fidelity_spec.cr --error-trace` ->
+  5 examples, 0 failures. The added checks open a lightweight cached document,
+  ask for definition and hover on `target(1)`, and verify the AST remains
+  unloaded.
+- Full LSP suite:
+  `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 300 4096 spec
+  spec/lsp --error-trace` -> 250 examples, 0 failures.
+- Isolated timing on `src/compiler/hir/ast_to_hir.cr` at the
+  `class_name_from_node(member, source)` call:
+  lazy `didOpen` remained about `277ms`; first hover was `24.5ms` and first
+  definition was `25.3ms`, both leaving `ast_loaded=false` and
+  `identifiers=false`. The earlier corrected baseline for the same call shape
+  was about `2.6-2.8s` when full foreground semantic materialization ran first.
+- Formatting and diff hygiene:
+  `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 120 4096 tool format
+  --check src/compiler/lsp/server.cr
+  spec/lsp/project_cache_semantic_fidelity_spec.cr` -> exit 0;
+  `git diff --check` -> exit 0.
+
+Adversary notes:
+
+- This does not replace semantic definition generally. It is a bounded
+  method-call text shortcut for the common unqualified call form and falls back
+  to the existing semantic path when the guard does not match.
+- A false-positive guard rejects names with prior visible local assignment, so
+  local proc/variable calls do not take the text method path.
+
+Trust: {F/G/R: 0.89/0.44/0.89} [verified]
+
 ## LM-583 — LSP foreground hover avoids workspace reference scans by default
 
 Status: verified for the focused LSP hover/cache/harness slice on `codegen`.
