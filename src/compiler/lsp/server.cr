@@ -6116,7 +6116,6 @@ module CrystalV2
 
           doc_state = @documents[uri]?
           return send_response(id, "null") unless doc_state
-          doc_state = ensure_foreground_ast_loaded(uri, doc_state)
 
           # Find call context: look backwards for opening paren
           call_info = find_call_context(doc_state.text_document.text, line, character)
@@ -6124,6 +6123,25 @@ module CrystalV2
 
           paren_pos, method_name, active_param = call_info
           debug("Call context: method=#{method_name}, active_param=#{active_param}")
+
+          if paren_offset = position_to_offset(doc_state, line, paren_pos)
+            if member_call = fast_member_method_call_at_offset(doc_state.text_document.text, paren_offset - 1)
+              receiver_name, member_name, receiver_offset = member_call
+              if receiver_type = textual_assignment_type_before_offset(doc_state.text_document.text, receiver_name, receiver_offset)
+                if signature = find_method_signature_for_receiver_type(doc_state, receiver_type, member_name)
+                  sig_help = SignatureHelp.new(
+                    signatures: [SignatureInformation.new(signature)],
+                    active_signature: 0,
+                    active_parameter: active_param
+                  )
+                  debug("SignatureHelp member-call text fast path: #{receiver_type}##{member_name}")
+                  return send_response(id, sig_help.to_json)
+                end
+              end
+            end
+          end
+
+          doc_state = ensure_foreground_ast_loaded(uri, doc_state)
 
           arena = doc_state.program.arena
           call_expr_id = find_expr_at_position(doc_state, line, paren_pos)

@@ -6734,6 +6734,42 @@ Adversary notes:
 
 Trust: {F/G/R: 0.88/0.43/0.88} [verified]
 
+### LM-633 - Constructor-assigned member signature help avoids first AST load
+
+After lazy cached opens, signature help for constructor-assigned member calls
+can now use the same receiver corridor as LM-631/LM-632. For `helper =
+Helper.new` followed by `helper.value(`, the handler finds the call paren in
+text before AST materialization, resolves `helper` through the prior
+constructor assignment, and reads the method signature from the resolved class
+source file. If the receiver/type/file guard fails, the request still falls
+back to the existing AST-backed signature-help path.
+
+Evidence:
+
+- Focused cached-open regression:
+  `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 180 4096 spec
+  spec/lsp/project_cache_semantic_fidelity_spec.cr --error-trace` ->
+  5 examples, 0 failures. The signature-help check for `helper.value(` now
+  verifies `scale : Int32` and keeps `spec_document_ast_loaded? == false`.
+- Full LSP suite:
+  `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 300 4096 spec
+  spec/lsp --error-trace` -> 254 examples, 0 failures.
+- Formatting and diff hygiene:
+  `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 120 4096 tool format
+  --check src/compiler/lsp/server.cr
+  spec/lsp/project_cache_semantic_fidelity_spec.cr` -> exit 0;
+  `git diff --check` -> exit 0.
+
+Adversary notes:
+
+- The fast path only creates signature help from a concrete receiver source
+  file. It does not infer arbitrary receiver chains or scan unrelated required
+  files.
+- Constructor calls, unresolved member calls, and complex receivers keep the
+  existing AST/semantic signature-help behavior.
+
+Trust: {F/G/R: 0.88/0.43/0.88} [verified]
+
 ## LM-583 — LSP foreground hover avoids workspace reference scans by default
 
 Status: verified for the focused LSP hover/cache/harness slice on `codegen`.

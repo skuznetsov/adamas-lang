@@ -182,6 +182,8 @@ receiver type resolves to a concrete source file.
 After LM-632, the same constructor-assigned local receiver corridor also serves
 member completion for `helper.` without foreground AST materialization when the
 receiver type resolves to a concrete source file.
+After LM-633, signature help for the same shape (`helper.value(`) also returns
+the resolved method signature without foreground AST materialization.
 
 Spec-first bootstrap checkpoint (2026-05-08): `docs/specs/` now contains the
 first executable contract slice for Crystal V2, modeled after the DiamondDB

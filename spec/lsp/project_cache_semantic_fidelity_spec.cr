@@ -409,7 +409,8 @@ describe "LSP project cache semantic fidelity" do
       signature_line, signature_char = lsp_line_char(source, "value(", at_end: true)
       signature = signature_server.spec_signature_help(signature_uri, signature_line, signature_char)
       signature["result"]["signatures"].as_a.size.should be >= 1
-      signature_server.spec_document_ast_loaded?(signature_uri).should be_true
+      signature["result"]["signatures"].as_a.first["label"].as_s.should contain("scale : Int32")
+      signature_server.spec_document_ast_loaded?(signature_uri).should be_false
 
       completion_server = CrystalV2::Compiler::LSP::Server.new(
         IO::Memory.new,
