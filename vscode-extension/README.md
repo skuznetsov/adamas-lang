@@ -2,6 +2,11 @@
 
 VS Code extension for CrystalV2 Language Server Protocol support.
 
+The LSP server is currently the stable user-facing part of Crystal V2. The
+compiler/codegen pipeline is still beta, so the extension is the recommended
+way to try the project while bootstrap and generated-stage compiler bugs are
+being fixed.
+
 ## Implemented Features (21 LSP methods)
 
 ### ✅ Navigation

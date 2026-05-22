@@ -1,5 +1,9 @@
 # Quick Start - Testing Crystal V2 LSP
 
+Use this path when you want to try Crystal V2 today. The LSP server is the
+stable user-facing surface; the compiler/codegen pipeline is still beta and
+not yet a production Crystal compiler replacement.
+
 ## 1. Build LSP Server
 
 ```bash

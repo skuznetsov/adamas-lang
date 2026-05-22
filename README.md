@@ -17,20 +17,35 @@ Crystal combines Ruby's expressiveness with static typing and native performance
 
 ---
 
-## Current State (March 2026)
+## Current State (May 2026)
+
+### What is ready to try
+
+The **Crystal V2 LSP server is the most stable part of the project today**.
+It has a focused regression suite and is usable through the VS Code extension
+or through `crystal_v2 tool lsp` when pointed at a built LSP server.
+
+The **compiler/codegen pipeline is still beta**. It is useful for experiments,
+no-prelude oracles, reduced repros, and bootstrap work, but it is not yet a
+drop-in replacement for the production Crystal compiler. Expect codegen and
+self-hosting bugs, especially around generated-stage compilers.
 
 ### Bootstrap Status
 
-The compiler is in active bootstrap — V2 can compile itself (stage2), and we're working toward a fully stable stage2/stage3 cycle.
+The compiler is in active bootstrap. Stage1 can build a generated stage2
+compiler, but the generated compiler is not yet stable enough for a clean
+stage2/stage3 cycle.
 
 | Stage | Status | Time |
 |-------|--------|------|
 | Stage1 (original Crystal → V2) | Working, --release | ~7.5 min |
 | Stage2 (V2 → V2) | Builds successfully | ~3 min |
-| Stage2 running | Crashes during compilation | In progress |
+| Stage2 running | Still unstable on broader full-prelude compilation | In progress |
 | Stage3 (stage2 → V2) | Blocked by stage2 stability | Pending |
 
-**Regression tests:** 87 individual + 20 combined tests, all passing.
+**LSP regression suite:** 254 examples, passing in the latest local gate.
+**Compiler regression tests:** focused bootstrap/codegen guards are used as the
+main near-term gate; full self-hosting is still being hardened.
 
 ### Pipeline
 
@@ -70,8 +85,9 @@ Crystal Source (.cr)
 - **~120K lines** of compiler code (core pipeline)
 - **~2,700 MIR functions** for hello world
 - **~31,300 MIR functions** for self-compilation (stage2)
-- **87/87 + 20/20** regression tests passing
-- **2,620+** git commits
+- **254** LSP regression examples passing in the latest local gate
+- **570+** regression scripts and fixtures for compiler/bootstrap work
+- **3,400+** git commits
 
 ---
 
@@ -134,6 +150,34 @@ crystal build src/crystal_v2.cr -o bin/crystal_v2 --error-trace
 # No-prelude oracle for fast debugging
 bin/crystal_v2 test.cr --no-prelude -o test_bin
 ```
+
+## Language Server
+
+The LSP server is the recommended entry point for new users who want to try the
+project without depending on compiler bootstrap stability.
+
+```bash
+# Build the standalone LSP server
+./build_lsp.sh
+
+# Or build the compiler and launch the sibling LSP server through tool mode
+crystal build src/crystal_v2.cr -o bin/crystal_v2 --error-trace
+bin/crystal_v2 tool lsp
+```
+
+The VS Code extension lives in `vscode-extension/`. By default it launches
+`../bin/crystal_v2_lsp`; alternatively configure:
+
+```json
+{
+  "crystalv2.lsp.serverPath": "/path/to/crystal_v2/bin/crystal_v2",
+  "crystalv2.lsp.serverArgs": ["tool", "lsp"]
+}
+```
+
+Current LSP coverage includes hover, definition, references, completion,
+signature help, document symbols, folding, semantic tokens, inlay hints,
+formatting, rename, and call hierarchy.
 
 ### Environment Variables
 
