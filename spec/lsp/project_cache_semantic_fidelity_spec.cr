@@ -435,7 +435,7 @@ describe "LSP project cache semantic fidelity" do
 
       symbols = symbols_server.spec_document_symbols(symbols_uri)
       symbols["result"].as_a.map { |entry| entry["name"].as_s }.should contain("Entry")
-      symbols_server.spec_document_ast_loaded?(symbols_uri).should be_true
+      symbols_server.spec_document_ast_loaded?(symbols_uri).should be_false
 
       folding_server = CrystalV2::Compiler::LSP::Server.new(
         IO::Memory.new,

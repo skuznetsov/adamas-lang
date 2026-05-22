@@ -6478,6 +6478,14 @@ module CrystalV2
 
           doc_state = @documents[uri]?
           return send_response(id, "[]") unless doc_state
+
+          if cached_symbols = cached_document_symbols(doc_state)
+            unless cached_symbols.empty?
+              debug("Returning #{cached_symbols.size} cached document symbols")
+              return send_response(id, cached_symbols.to_json)
+            end
+          end
+
           doc_state = ensure_foreground_ast_loaded(uri, doc_state)
 
           ast_symbols = ensure_ast_document_symbols(uri, doc_state)
@@ -6493,6 +6501,71 @@ module CrystalV2
           symbols = collect_document_symbols(symbol_table, doc_state.program)
           debug("Returning #{symbols.size} document symbols")
           send_response(id, symbols.to_json)
+        end
+
+        private def cached_document_symbols(doc_state : DocumentState) : Array(DocumentSymbol)?
+          path = doc_state.path
+          return nil unless path
+          return nil unless state = valid_cached_project_file_state(path)
+          return nil unless File.read(path) == doc_state.text_document.text
+
+          symbols = document_symbols_from_summaries(state.symbol_summaries)
+          symbols.empty? ? nil : symbols
+        rescue ex
+          debug("Cached document symbols unavailable for #{path}: #{ex.message}") if path
+          nil
+        end
+
+        private def document_symbols_from_summaries(summaries : Array(SymbolSummary)) : Array(DocumentSymbol)
+          symbols = [] of DocumentSymbol
+          summaries.each do |summary|
+            if symbol = document_symbol_from_summary(summary)
+              symbols << symbol
+            end
+          end
+          symbols
+        end
+
+        private def document_symbol_from_summary(summary : SymbolSummary) : DocumentSymbol?
+          return nil unless summary.start_line && summary.start_col && summary.end_line && summary.end_col
+
+          range = Range.new(
+            Position.new(summary.start_line.not_nil! - 1, summary.start_col.not_nil! - 1),
+            Position.new(summary.end_line.not_nil! - 1, summary.end_col.not_nil! - 1)
+          )
+          children = document_symbols_from_summaries(summary.children || [] of SymbolSummary)
+          class_children = document_symbols_from_summaries(summary.class_children || [] of SymbolSummary)
+          all_children = children + class_children
+
+          DocumentSymbol.new(
+            summary.name,
+            symbol_kind_for_summary(summary.kind),
+            range,
+            range,
+            summary.detail || summary.return_type || summary.inferred_type,
+            all_children.empty? ? nil : all_children
+          )
+        end
+
+        private def symbol_kind_for_summary(kind : String) : Int32
+          case kind
+          when "class"
+            SymbolKind::Class.value
+          when "module"
+            SymbolKind::Module.value
+          when "method"
+            SymbolKind::Method.value
+          when "macro"
+            SymbolKind::Function.value
+          when "ivar", "class_var"
+            SymbolKind::Field.value
+          when "const"
+            SymbolKind::Constant.value
+          when "global_var", "variable"
+            SymbolKind::Variable.value
+          else
+            SymbolKind::Variable.value
+          end
         end
 
         private def ensure_ast_document_symbols(uri : String, doc_state : DocumentState) : Array(DocumentSymbol)

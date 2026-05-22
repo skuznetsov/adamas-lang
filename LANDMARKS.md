@@ -6770,6 +6770,40 @@ Adversary notes:
 
 Trust: {F/G/R: 0.88/0.43/0.88} [verified]
 
+### LM-634 - Cached document symbols avoid first AST load
+
+After lazy cached opens, `textDocument/documentSymbol` can now answer from
+persisted `SymbolSummary` rows instead of forcing foreground AST
+materialization. The fast path is boundary-checked: it only uses cached
+summaries when the project-cache state is valid and the open buffer text
+exactly matches the unchanged file on disk. Unsaved buffers, stale mtimes,
+missing summaries, and conversion gaps still fall back to the existing
+AST-backed document-symbol path.
+
+Evidence:
+
+- Focused cached-open regression:
+  `scripts/run_safe.sh crystal 300 4096 spec/lsp/project_cache_semantic_fidelity_spec.cr`
+  -> 5 examples, 0 failures. The document-symbol request still returns
+  `Entry` and now keeps `spec_document_ast_loaded? == false`.
+- Full LSP suite:
+  `scripts/run_safe.sh crystal 300 4096 spec spec/lsp` -> 254 examples,
+  0 failures.
+- Formatting and diff hygiene:
+  `crystal tool format --check src/compiler/lsp/server.cr
+  spec/lsp/project_cache_semantic_fidelity_spec.cr` -> exit 0;
+  `git diff --check` -> exit 0.
+
+Adversary notes:
+
+- The cache corridor does not trust filename/mtime alone; it also compares the
+  current open document text with disk before emitting cached symbols.
+- The conversion is intentionally limited to structural symbol summaries.
+  Folding ranges, prepare-rename, and semantic-token full responses keep their
+  existing stronger paths.
+
+Trust: {F/G/R: 0.87/0.44/0.88} [verified]
+
 ## LM-583 — LSP foreground hover avoids workspace reference scans by default
 
 Status: verified for the focused LSP hover/cache/harness slice on `codegen`.
