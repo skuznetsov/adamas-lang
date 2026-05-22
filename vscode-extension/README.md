@@ -38,6 +38,16 @@ cd /path/to/crystal_v2
 
 This creates the executable `bin/crystal_v2_lsp`.
 
+The extension uses `../bin/crystal_v2_lsp` by default. To run through the
+compiler tool command instead, configure:
+
+```json
+{
+  "crystalv2.lsp.serverPath": "/path/to/crystal_v2/bin/crystal_v2",
+  "crystalv2.lsp.serverArgs": ["tool", "lsp"]
+}
+```
+
 ### Step 2: Install Extension Dependencies
 
 ```bash

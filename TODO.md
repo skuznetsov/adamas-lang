@@ -171,6 +171,10 @@ first foreground semantic materialization after a lazy cached open. On
 now mostly request shapes that genuinely need identifier maps, member/qualified
 call precision outside the text fast path, and first full semantic-token
 response transport before a client has a current delta result id.
+After LM-630, `crystal_v2 tool lsp` is available as a thin launcher for a
+sibling `crystal_v2_lsp` binary or `CRYSTAL_V2_LSP_SERVER`, and the VS Code
+extension can be configured with `crystalv2.lsp.serverPath` plus
+`crystalv2.lsp.serverArgs` while keeping the old default direct binary path.
 
 Spec-first bootstrap checkpoint (2026-05-08): `docs/specs/` now contains the
 first executable contract slice for Crystal V2, modeled after the DiamondDB

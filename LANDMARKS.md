@@ -6618,6 +6618,47 @@ Adversary notes:
 
 Trust: {F/G/R: 0.89/0.44/0.89} [verified]
 
+### LM-630 - `crystal_v2 tool lsp` launches the sibling LSP server
+
+The compiler entry point now recognizes `tool lsp` before normal compile-mode
+argument parsing and execs a sibling `crystal_v2_lsp` binary, or an explicit
+`CRYSTAL_V2_LSP_SERVER` path. This keeps the bootstrap compiler binary from
+embedding `src/compiler/lsp/server.cr` while still exposing the Crystal-style
+tool command shape. The VS Code extension remains backward-compatible with its
+default `../bin/crystal_v2_lsp` path and now also supports
+`crystalv2.lsp.serverPath` plus `crystalv2.lsp.serverArgs`, so users can point
+it at `crystal_v2` with `["tool", "lsp"]`.
+
+Evidence:
+
+- Focused dispatch regression:
+  `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 180 4096 spec
+  spec/lsp/tool_dispatch_spec.cr --error-trace` -> 4 examples, 0 failures.
+- Full LSP suite:
+  `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 300 4096 spec
+  spec/lsp --error-trace` -> 254 examples, 0 failures.
+- Process-level launcher smoke:
+  built `src/crystal_v2.cr` under `scripts/run_safe.sh` to a temporary
+  directory, installed a fake sibling `crystal_v2_lsp`, then ran
+  `scripts/run_safe.sh <tmp>/crystal_v2 10 512 tool lsp alpha beta`; the fake
+  server received `alpha beta` and exited with the expected sentinel status.
+- Formatting and syntax checks:
+  `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 120 4096 tool format
+  --check src/compiler/lsp/tool_dispatch.cr src/crystal_v2.cr
+  spec/lsp/tool_dispatch_spec.cr` -> exit 0;
+  `node --check vscode-extension/extension.js` -> exit 0;
+  `git diff --check` -> exit 0.
+
+Adversary notes:
+
+- This is a launcher, not an embedded server. If the sibling LSP binary is
+  absent, `tool lsp` reports a clear build/configuration error instead of
+  falling through to compile mode.
+- Extra child args are preserved after `tool lsp`, which keeps the command
+  usable for future LSP flags and for VS Code `serverArgs`.
+
+Trust: {F/G/R: 0.88/0.42/0.88} [verified]
+
 ## LM-583 — LSP foreground hover avoids workspace reference scans by default
 
 Status: verified for the focused LSP hover/cache/harness slice on `codegen`.

@@ -50,6 +50,19 @@
           "type": "string",
           "default": "",
           "description": "Write LSP debug logs (including semantic token samples) to this file path when set."
+        },
+        "crystalv2.lsp.serverPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the Crystal V2 language server executable. Empty uses the extension-bundled ../bin/crystal_v2_lsp."
+        },
+        "crystalv2.lsp.serverArgs": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "description": "Arguments passed to the configured language server executable. For crystal_v2 tool mode use [\"tool\", \"lsp\"]."
         }
       }
     },

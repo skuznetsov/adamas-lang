@@ -1,43 +1,62 @@
 const vscode = require('vscode');
 const { LanguageClient, TransportKind, Trace, State } = require('vscode-languageclient/node');
+const fs = require('fs');
+const path = require('path');
 
 let client;
 let lspLogChannel;
 let statusItem;
 
+function workspaceRoot() {
+    return vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath;
+}
+
+function expandConfiguredPath(rawPath, defaultBase) {
+    if (typeof rawPath !== 'string' || rawPath.trim().length === 0) {
+        return '';
+    }
+
+    const trimmed = rawPath.trim();
+    let expanded = trimmed.startsWith('~')
+        ? path.join(process.env.HOME || '', trimmed.slice(1))
+        : trimmed;
+
+    if (!path.isAbsolute(expanded)) {
+        expanded = path.join(defaultBase || process.cwd(), expanded);
+    }
+
+    return expanded;
+}
+
 function activate(context) {
     console.log('Crystal V2 LSP extension is now active');
-
-    // Path to the LSP server executable
-    const serverPath = context.asAbsolutePath('../bin/crystal_v2_lsp');
 
     // Server options
     // Allow user to configure debug logging via VS Code settings.
     // When crystalV2.lsp.debugLogPath is set, pass CRYSTALV2_LSP_CONFIG pointing to a temp JSON
     // so the server writes detailed logs (including semantic token samples) to that path.
     const config = vscode.workspace.getConfiguration('crystalv2');
+    const configuredServerPathRaw = config.get('lsp.serverPath') || '';
+    const configuredServerPath = typeof configuredServerPathRaw === 'string' ? configuredServerPathRaw : '';
+    const configuredServerArgs = config.get('lsp.serverArgs') || [];
+    const serverPath = configuredServerPath.trim().length > 0
+        ? expandConfiguredPath(configuredServerPath, workspaceRoot())
+        : context.asAbsolutePath('../bin/crystal_v2_lsp');
+    const serverArgs = Array.isArray(configuredServerArgs)
+        ? configuredServerArgs.filter((arg) => typeof arg === 'string')
+        : [];
     const debugLogPathRaw = config.get('lsp.debugLogPath');
 
     const env = { ...process.env };
     if (debugLogPathRaw && debugLogPathRaw.trim().length > 0) {         
         // Inline JSON config via env var; server already understands CRYSTALV2_LSP_CONFIG
         const tmpConfigPath = `/tmp/crystal_v2_lsp_config_${process.pid}.json`;
-        const fs = require('fs');
-        const path = require('path');
         try {
-            let expanded = debugLogPathRaw.startsWith('~')
-                ? path.join(process.env.HOME || '', debugLogPathRaw.slice(1))
-                : debugLogPathRaw;
-            if (!path.isAbsolute(expanded)) {
-                const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath;
-                if (workspaceRoot) {
-                    const hasDir = path.dirname(expanded) !== '.';
-                    expanded = hasDir
-                        ? path.join(workspaceRoot, expanded)
-                        : path.join(workspaceRoot, 'logs', expanded);
-                }
-            }
-            const dir = path.dirname(expanded)
+            const base = path.dirname(debugLogPathRaw.trim()) === '.'
+                ? path.join(workspaceRoot() || process.cwd(), 'logs')
+                : workspaceRoot();
+            let expanded = expandConfiguredPath(debugLogPathRaw, base);
+            const dir = path.dirname(expanded);
             fs.mkdirSync(dir, { recursive: true });
             fs.writeFileSync(tmpConfigPath, JSON.stringify({ debug_log_path: expanded }));
             env['LSP_DEBUG_LOG'] = expanded; // legacy env for direct path
@@ -50,7 +69,7 @@ function activate(context) {
 
     const serverOptions = {
         command: serverPath,
-        args: [],
+        args: serverArgs,
         options: { env },
         transport: TransportKind.stdio
     };
