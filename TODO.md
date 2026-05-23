@@ -232,6 +232,9 @@ conversion fallback even after a ternary `:`, with definitions anchored in
 After LM-644, explicit `lib` receivers are covered by the source-text path:
 `LibIntrinsics.popcount8(src)` now hovers as the `fun` declaration and defines
 to the `fun` line instead of selecting the wrapper `def self.popcount8`.
+After LM-645, `&-` definition responses include an explicit
+`originSelectionRange` via `LocationLink`, so editors have the operator token
+range needed for clickable-source decoration.
 
 Spec-first bootstrap checkpoint (2026-05-08): `docs/specs/` now contains the
 first executable contract slice for Crystal V2, modeled after the DiamondDB

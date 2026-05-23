@@ -320,7 +320,10 @@ describe CrystalV2::Compiler::LSP::Server do
 
     operator_definition = server.spec_definition(uri, operator_line, operator_char)
     operator_location = operator_definition["result"].as_a.first
-    operator_location["uri"].as_s.should end_with("/primitives.cr")
+    operator_location["targetUri"].as_s.should end_with("/primitives.cr")
+    operator_location["originSelectionRange"]["start"]["line"].as_i.should eq(operator_line)
+    operator_location["originSelectionRange"]["start"]["character"].as_i.should eq(operator_char - 1)
+    operator_location["originSelectionRange"]["end"]["character"].as_i.should eq(operator_char + 1)
 
     conversion_line, conversion_char = lsp_line_char(source, "to_u8!", delta: 3)
     conversion_hover = server.spec_hover(uri, conversion_line, conversion_char)

@@ -4869,7 +4869,7 @@ module CrystalV2
             end
 
             if operator_call = fast_wrapping_binary_operator_call_at_offset(doc_state.text_document.text, hover_offset)
-              operator_name, arity = operator_call
+              operator_name, arity, _, _ = operator_call
               if signature = synthetic_wrapping_binary_operator_signature(operator_name, arity)
                 debug("Hover wrapping-operator text fast path: #{operator_name}")
                 contents = MarkupContent.new("```crystal\n#{signature}\n```", markdown: true)
@@ -5319,7 +5319,7 @@ module CrystalV2
           nil
         end
 
-        private def fast_wrapping_binary_operator_call_at_offset(source : String, offset : Int32) : {String, Int32}?
+        private def fast_wrapping_binary_operator_call_at_offset(source : String, offset : Int32) : {String, Int32, Int32, Int32}?
           bounds = operator_name_bounds_at_offset(source, offset)
           bounds ||= operator_name_bounds_at_offset(source, offset - 1) if offset > 0
           return nil unless bounds
@@ -5335,7 +5335,7 @@ module CrystalV2
           return nil unless previous_offset && next_offset
           return nil if zero_arg_boundary_char?(source.byte_at(next_offset))
 
-          {operator_name, 1}
+          {operator_name, 1, start_offset, end_offset}
         rescue
           nil
         end
@@ -5761,6 +5761,13 @@ module CrystalV2
           nil
         end
 
+        private def source_range_from_offsets(doc_state : DocumentState, start_offset : Int32, end_offset : Int32) : Range
+          text = doc_state.text_document.text
+          start_pos = position_from_byte_offset_for_lsp(text, start_offset, doc_state.line_offsets)
+          end_pos = position_from_byte_offset_for_lsp(text, end_offset, doc_state.line_offsets)
+          Range.new(start_pos, end_pos)
+        end
+
         private def collect_method_completions_for_receiver_type(doc_state : DocumentState, type_name : String, items : Array(CompletionItem)) : Nil
           return unless path = resolved_type_file_path(doc_state, type_name)
           seen = Set(String).new
@@ -5800,9 +5807,16 @@ module CrystalV2
           end
 
           if operator_call = fast_wrapping_binary_operator_call_at_offset(doc_state.text_document.text, offset)
-            operator_name, arity = operator_call
+            operator_name, arity, operator_start, operator_end = operator_call
             if location = synthetic_wrapping_binary_operator_location(operator_name, arity)
-              send_response(id, [location].to_json)
+              origin_range = source_range_from_offsets(doc_state, operator_start, operator_end)
+              link = LocationLink.new(
+                target_uri: location.uri,
+                target_range: location.range,
+                target_selection_range: location.range,
+                origin_selection_range: origin_range
+              )
+              send_response(id, [link].to_json)
               debug("Definition completed in #{elapsed_ms_since(started_at)}ms -> hit(wrapping-operator-text)")
               return
             end

@@ -7195,6 +7195,38 @@ Adversary notes:
 
 Trust: {F/G/R: 0.88/0.44/0.90} [verified]
 
+### LM-645 - Wrapping operator definitions return source origin ranges
+
+Wrapping primitive operators such as `&-` now return a `LocationLink` from the
+definition fast path, including `originSelectionRange` over the exact operator
+token. This preserves the existing primitive-template target while giving
+editors an explicit source-side range for clickable decoration.
+
+Evidence:
+
+- Focused regression checks the `&-` definition response has `targetUri`
+  `/primitives.cr` and `originSelectionRange` from the operator start to end.
+- `scripts/run_safe.sh crystal 180 4096 spec
+  spec/lsp/hover_definition_integration_spec.cr` -> 12 examples, 0 failures.
+- `./build_lsp_debug.sh` rebuilt `bin/crystal_v2_lsp` successfully.
+- Real LSP stdio harness against
+  `/Users/sergey/Projects/Crystal/crystal/src/int.cr` line 1032 returned a
+  `LocationLink` whose origin range covers `&-` and whose target selection is
+  the wrapping primitive template in `primitives.cr`.
+
+Adversary notes:
+
+- Only the operator fast path returns a `LocationLink`; identifier-shaped
+  definitions still return the existing `Location[]` shape.
+- This does not change semantic resolution or jump target. It adds the missing
+  source range needed for operator-token UI decoration.
+- LTP/WBA shape: trigger is a wrapping operator token with a valid primitive
+  target; transport carries the source token byte range into an LSP
+  `originSelectionRange`; potential decreases from navigable-but-undecorated
+  operator to decorated source token without changing the target anchor.
+
+Trust: {F/G/R: 0.87/0.37/0.89} [verified]
+
 ## LM-583 — LSP foreground hover avoids workspace reference scans by default
 
 Status: verified for the focused LSP hover/cache/harness slice on `codegen`.

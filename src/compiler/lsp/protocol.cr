@@ -184,7 +184,7 @@ module CrystalV2
             else
               name_col = span.start_column + 4
             end
-            name_col -= 1  # Convert to 0-indexed
+            name_col -= 1 # Convert to 0-indexed
             Range.new(
               Position.new(span.start_line - 1, name_col),
               Position.new(span.start_line - 1, name_col + name_len)
@@ -231,6 +231,25 @@ module CrystalV2
           else
             nil
           end
+        end
+      end
+
+      # LocationLink includes the source-side selection range for definition
+      # results. This helps editors decorate operator tokens that are not
+      # identifier-shaped words.
+      struct LocationLink
+        include JSON::Serializable
+
+        @[JSON::Field(key: "originSelectionRange")]
+        property origin_selection_range : Range?
+        @[JSON::Field(key: "targetUri")]
+        property target_uri : String
+        @[JSON::Field(key: "targetRange")]
+        property target_range : Range
+        @[JSON::Field(key: "targetSelectionRange")]
+        property target_selection_range : Range
+
+        def initialize(@target_uri : String, @target_range : Range, @target_selection_range : Range, @origin_selection_range : Range? = nil)
         end
       end
 
