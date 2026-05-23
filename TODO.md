@@ -255,6 +255,12 @@ crashes the LSP server on scoped alias-head type names such as
 `Plan::Replica`. The semantic resolver now transports through lexical alias
 heads before resolving the rest of a `::` path, and an exact in-progress
 type-name guard keeps true alias cycles from stack-overflowing.
+After LM-650, semantic coloring now traverses `case`/`when` branches and the
+fast lexical overlay recognizes the frontend's broader Crystal keyword set.
+The exact DiamondDB SQL lexer slice now emits tokens for `private`, `loop`,
+`.ord.to_u8`, `peek_byte_at`, receiverless `peek_byte`/`at_end?`, and
+`!at_end? && peek_byte`; the semantic-token disk cache moved to v4 to avoid
+stale large-file token JSON.
 
 Spec-first bootstrap checkpoint (2026-05-08): `docs/specs/` now contains the
 first executable contract slice for Crystal V2, modeled after the DiamondDB

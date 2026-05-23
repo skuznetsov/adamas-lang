@@ -46,6 +46,24 @@ module SemanticTokensSpecHelper
     collect(program, source)
   end
 
+  def self.collect_source_with_symbols(source : String)
+    parser = CrystalV2::Compiler::Frontend::Parser.new(
+      CrystalV2::Compiler::Frontend::Lexer.new(source)
+    )
+    program = parser.parse_program
+    analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+    analyzer.collect_symbols
+    result = analyzer.resolve_names(defer_method_body_receiverless_candidates: true)
+    server = CrystalV2::Compiler::LSP::Server.new
+    server.collect_semantic_tokens(
+      program,
+      source,
+      result.identifier_symbols,
+      nil,
+      analyzer.global_context.symbol_table
+    )
+  end
+
   def self.collect_source_with_fast_lexical(source : String, enabled : Bool)
     old_value = ENV["LSP_FAST_LEXICAL_TOKENS"]?
     if enabled
@@ -123,6 +141,58 @@ module SemanticTokensSpecHelper
     decoded.count { |(_, _, _, kind, text)| kind == SemanticTokensSpecHelper.legend_index("keyword") && text == "end" }.should be >= 2
   end
 
+  it "highlights Crystal keywords and calls inside case branches" do
+    source = <<-CR
+    class Lexer
+      def at_end? : Bool
+        false
+      end
+
+      def peek_byte : UInt8
+        0_u8
+      end
+
+      def peek_byte_at(index : Int32) : UInt8
+        0_u8
+      end
+
+      private def skip_whitespace_and_comments : Nil
+        loop do
+          break if at_end?
+          b = peek_byte
+          case b
+          when 0x20_u8, 0x09_u8
+            @pos += 1
+          when '-'.ord.to_u8
+            if peek_byte_at(1) == '-'.ord.to_u8
+              @pos += 2
+              while !at_end? && peek_byte != '\\n'.ord.to_u8
+                @pos += 1
+              end
+            end
+          end
+        end
+      end
+    end
+    CR
+
+    tokens = SemanticTokensSpecHelper.collect_source_with_symbols(source)
+    decoded = SemanticTokensSpecHelper.decode(tokens, source)
+    keyword = SemanticTokensSpecHelper.legend_index("keyword")
+    method = SemanticTokensSpecHelper.legend_index("method")
+    operator = SemanticTokensSpecHelper.legend_index("operator")
+
+    decoded.any? { |(_, _, _, kind, text)| kind == keyword && text == "private" }.should be_true
+    decoded.any? { |(_, _, _, kind, text)| kind == keyword && text == "loop" }.should be_true
+    decoded.any? { |(_, _, _, kind, text)| kind == method && text == "ord" }.should be_true
+    decoded.any? { |(_, _, _, kind, text)| kind == method && text == "to_u8" }.should be_true
+    decoded.any? { |(_, _, _, kind, text)| kind == method && text == "peek_byte_at" }.should be_true
+    decoded.any? { |(_, _, _, kind, text)| kind == method && text == "peek_byte" }.should be_true
+    decoded.any? { |(_, _, _, kind, text)| kind == method && text == "at_end?" }.should be_true
+    decoded.any? { |(_, _, _, kind, text)| kind == operator && text == "&&" }.should be_true
+    decoded.any? { |(_, _, _, kind, text)| kind == operator && text == "!" }.should be_true
+  end
+
   it "highlights symbol literals in hash access" do
     source = "options[:accel_usage_log] = true\n"
     parser = CrystalV2::Compiler::Frontend::Parser.new(
@@ -139,6 +209,10 @@ module SemanticTokensSpecHelper
   it "keeps full lexical fast path identical to the lexer oracle for covered fixtures" do
     fixtures = [
       "if cond\n  begin\n    VALUE = :speed\n  end\nend\n",
+      "private def run\n  loop do\n    break\n  end\nend\n",
+      "protected def wait\n  select\n  when ch.receive\n  end\nend\n",
+      "include Foo\nextend Bar\nspawn work\nraise ex\n",
+      "value = item.as?(Int32).responds_to?(:foo)\n",
       "# if Fake\nVALUE = :speed\ntext = \"done\"\n",
       "value:Int32 = Foo::Bar.new\n",
       %("#{:foo}"),

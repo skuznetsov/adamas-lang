@@ -12903,6 +12903,23 @@ module CrystalV2
             node.body.each { |expr_id| collect_tokens_recursive(context, expr_id, tokens) }
           when Frontend::LoopNode
             node.body.each { |expr_id| collect_tokens_recursive(context, expr_id, tokens) }
+          when Frontend::CaseNode
+            if value = node.value
+              collect_tokens_recursive(context, value, tokens)
+            end
+            node.when_branches.each do |branch|
+              branch.conditions.each { |expr_id| collect_tokens_recursive(context, expr_id, tokens) }
+              branch.body.each { |expr_id| collect_tokens_recursive(context, expr_id, tokens) }
+            end
+            if in_branches = node.in_branches
+              in_branches.each do |branch|
+                branch.conditions.each { |expr_id| collect_tokens_recursive(context, expr_id, tokens) }
+                branch.body.each { |expr_id| collect_tokens_recursive(context, expr_id, tokens) }
+              end
+            end
+            if else_branch = node.else_branch
+              else_branch.each { |expr_id| collect_tokens_recursive(context, expr_id, tokens) }
+            end
           when Frontend::BeginNode
             node.body.each { |expr_id| collect_tokens_recursive(context, expr_id, tokens) }
             if rescues = node.rescue_clauses
@@ -13196,33 +13213,51 @@ module CrystalV2
         private def semantic_keyword_bytes?(bytes : Bytes, start : Int32, length : Int32) : Bool
           case length
           when 2
-            bytes_match?(bytes, start, "if") || bytes_match?(bytes, start, "do")
+            bytes_match?(bytes, start, "if") || bytes_match?(bytes, start, "do") ||
+              bytes_match?(bytes, start, "as") || bytes_match?(bytes, start, "in") ||
+              bytes_match?(bytes, start, "of")
           when 3
             bytes_match?(bytes, start, "end") || bytes_match?(bytes, start, "def") ||
               bytes_match?(bytes, start, "fun") || bytes_match?(bytes, start, "lib") ||
-              bytes_match?(bytes, start, "nil")
+              bytes_match?(bytes, start, "nil") || bytes_match?(bytes, start, "out") ||
+              bytes_match?(bytes, start, "for") || bytes_match?(bytes, start, "asm")
           when 4
             bytes_match?(bytes, start, "else") || bytes_match?(bytes, start, "then") ||
               bytes_match?(bytes, start, "case") || bytes_match?(bytes, start, "when") ||
               bytes_match?(bytes, start, "enum") || bytes_match?(bytes, start, "self") ||
-              bytes_match?(bytes, start, "true") || bytes_match?(bytes, start, "next")
+              bytes_match?(bytes, start, "true") || bytes_match?(bytes, start, "next") ||
+              bytes_match?(bytes, start, "loop") || bytes_match?(bytes, start, "with")
           when 5
             bytes_match?(bytes, start, "elsif") || bytes_match?(bytes, start, "begin") ||
               bytes_match?(bytes, start, "while") || bytes_match?(bytes, start, "until") ||
               bytes_match?(bytes, start, "class") || bytes_match?(bytes, start, "union") ||
               bytes_match?(bytes, start, "macro") || bytes_match?(bytes, start, "alias") ||
               bytes_match?(bytes, start, "false") || bytes_match?(bytes, start, "yield") ||
-              bytes_match?(bytes, start, "break") || bytes_match?(bytes, start, "super")
+              bytes_match?(bytes, start, "break") || bytes_match?(bytes, start, "super") ||
+              bytes_match?(bytes, start, "spawn") || bytes_match?(bytes, start, "raise")
           when 6
             bytes_match?(bytes, start, "unless") || bytes_match?(bytes, start, "rescue") ||
               bytes_match?(bytes, start, "ensure") || bytes_match?(bytes, start, "module") ||
-              bytes_match?(bytes, start, "struct") || bytes_match?(bytes, start, "return")
+              bytes_match?(bytes, start, "struct") || bytes_match?(bytes, start, "return") ||
+              bytes_match?(bytes, start, "select") || bytes_match?(bytes, start, "extend") ||
+              bytes_match?(bytes, start, "typeof") || bytes_match?(bytes, start, "sizeof")
           when 7
-            bytes_match?(bytes, start, "require")
+            bytes_match?(bytes, start, "require") || bytes_match?(bytes, start, "include") ||
+              bytes_match?(bytes, start, "private") || bytes_match?(bytes, start, "alignof")
           when 8
-            bytes_match?(bytes, start, "abstract")
+            bytes_match?(bytes, start, "abstract") || bytes_match?(bytes, start, "offsetof")
+          when 9
+            bytes_match?(bytes, start, "protected") || bytes_match?(bytes, start, "pointerof")
           when 10
             bytes_match?(bytes, start, "annotation")
+          when 12
+            bytes_match?(bytes, start, "previous_def") || bytes_match?(bytes, start, "responds_to?")
+          when 13
+            bytes_match?(bytes, start, "uninitialized")
+          when 15
+            bytes_match?(bytes, start, "instance_sizeof")
+          when 16
+            bytes_match?(bytes, start, "instance_alignof")
           else
             false
           end
@@ -13555,14 +13590,21 @@ module CrystalV2
                Frontend::Token::Kind::Do,
                Frontend::Token::Kind::Begin,
                Frontend::Token::Kind::While,
+               Frontend::Token::Kind::Loop,
+               Frontend::Token::Kind::Spawn,
                Frontend::Token::Kind::Until,
                Frontend::Token::Kind::Unless,
                Frontend::Token::Kind::Case,
                Frontend::Token::Kind::When,
+               Frontend::Token::Kind::Select,
+               Frontend::Token::Kind::For,
                Frontend::Token::Kind::Then,
                Frontend::Token::Kind::Rescue,
                Frontend::Token::Kind::Ensure,
+               Frontend::Token::Kind::Raise,
                Frontend::Token::Kind::Module,
+               Frontend::Token::Kind::Include,
+               Frontend::Token::Kind::Extend,
                Frontend::Token::Kind::Class,
                Frontend::Token::Kind::Struct,
                Frontend::Token::Kind::Union,
@@ -13573,12 +13615,30 @@ module CrystalV2
                Frontend::Token::Kind::Macro,
                Frontend::Token::Kind::Lib,
                Frontend::Token::Kind::Abstract,
+               Frontend::Token::Kind::Private,
+               Frontend::Token::Kind::Protected,
                Frontend::Token::Kind::Alias,
                Frontend::Token::Kind::Return,
                Frontend::Token::Kind::Yield,
                Frontend::Token::Kind::Break,
                Frontend::Token::Kind::Next,
                Frontend::Token::Kind::Super,
+               Frontend::Token::Kind::PreviousDef,
+               Frontend::Token::Kind::Typeof,
+               Frontend::Token::Kind::Sizeof,
+               Frontend::Token::Kind::Pointerof,
+               Frontend::Token::Kind::Uninitialized,
+               Frontend::Token::Kind::Offsetof,
+               Frontend::Token::Kind::Alignof,
+               Frontend::Token::Kind::InstanceAlignof,
+               Frontend::Token::Kind::Asm,
+               Frontend::Token::Kind::Out,
+               Frontend::Token::Kind::As,
+               Frontend::Token::Kind::AsQuestion,
+               Frontend::Token::Kind::IsA,
+               Frontend::Token::Kind::RespondsTo,
+               Frontend::Token::Kind::In,
+               Frontend::Token::Kind::Of,
                Frontend::Token::Kind::Self,
                Frontend::Token::Kind::True,
                Frontend::Token::Kind::False,

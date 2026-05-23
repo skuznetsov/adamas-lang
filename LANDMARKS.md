@@ -6364,6 +6364,44 @@ WBA framing:
 
 Trust: {F/G/R: 0.88/0.50/0.89} [verified]
 
+### LM-650 - Semantic tokens traverse case branches and full Crystal keyword set
+
+Semantic coloring now follows `CaseNode` branches before sorting/deduping token
+ranges, so method calls and operators inside `when` bodies are emitted by the
+same AST/semantic-token path that already covered `if`/`while`/`loop` bodies.
+The fast lexical overlay also recognizes the Crystal keyword set used by the
+frontend lexer, including visibility keywords such as `private`/`protected`
+and control keywords such as `loop`, `select`, `spawn`, and `raise`. The
+semantic-token disk cache moved to v4 so unchanged large files cannot reuse
+stale pre-case-traversal token JSON.
+
+Evidence:
+
+- Focused regression:
+  `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 180 3072 spec
+  spec/lsp/semantic_tokens_spec.cr --error-trace` -> 9 examples, 0 failures.
+- Full LSP suite:
+  `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 240 4096 spec spec/lsp
+  --error-trace` -> 266 examples, 0 failures.
+- Formatter:
+  `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 120 2048 tool format
+  --check src/compiler/lsp/server.cr src/compiler/lsp/semantic_token_cache.cr
+  spec/lsp/semantic_tokens_spec.cr` -> exit 0.
+- Actual DiamondDB probe on
+  `/Users/sergey/Projects/Crystal/DiamondDB/src/diamond_foundation/sql/lexer.cr`
+  lines 120-130 emitted `private`/`loop` as keyword, `ord`/`to_u8`/
+  `peek_byte_at`/`peek_byte`/`at_end?` as method, and `!`/`&&` as operator.
+- `./build_lsp_debug.sh` rebuilt `bin/crystal_v2_lsp` successfully.
+
+Adversary notes:
+
+- This is not a styling/theme fix. Navigation already used independent
+  hover/definition paths; the missing surface was semantic-token emission.
+- The fast lexical path is still checked against the lexer oracle for covered
+  keyword fixtures to avoid scanner drift.
+
+Trust: {F/G/R: 0.87/0.58/0.90} [verified]
+
 ### LM-624 - Full semantic-token lexical overlay uses a fast scanner
 
 The full-document semantic-token lexical overlay no longer runs the full
