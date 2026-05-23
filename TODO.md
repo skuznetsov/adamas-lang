@@ -229,6 +229,9 @@ After LM-643, `Int#abs_unsigned`-style ternary branches are covered: `&-`
 hovers as a wrapping primitive operator and `to_u8!` reaches the generated
 conversion fallback even after a ternary `:`, with definitions anchored in
 `primitives.cr`.
+After LM-644, explicit `lib` receivers are covered by the source-text path:
+`LibIntrinsics.popcount8(src)` now hovers as the `fun` declaration and defines
+to the `fun` line instead of selecting the wrapper `def self.popcount8`.
 
 Spec-first bootstrap checkpoint (2026-05-08): `docs/specs/` now contains the
 first executable contract slice for Crystal V2, modeled after the DiamondDB

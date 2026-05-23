@@ -7154,6 +7154,47 @@ Adversary notes:
 
 Trust: {F/G/R: 0.88/0.43/0.90} [verified]
 
+### LM-644 - LSP constant receiver lookup handles lib fun declarations
+
+Hover and definition for calls such as `LibIntrinsics.popcount8(src)` now
+select the `lib` function declaration instead of falling back to the wrapper
+method with the same name.
+
+Root cause:
+
+- The source-text constant locator did not recognize `lib LibIntrinsics`, so
+  the uppercase receiver-specific lookup could not derive the receiver source
+  file.
+- The text method index recognized `def` and `macro`, but not `fun`, so even a
+  receiver-directed scan could not return the lib declaration.
+
+Evidence:
+
+- Focused regression covers a wrapper method calling
+  `LibIntrinsics.popcount8(src)`: hover returns
+  `fun popcount8 = "llvm.ctpop.i8"(src : Int8) : Int8`, and definition points
+  to the `fun` line.
+- `scripts/run_safe.sh crystal 180 4096 spec
+  spec/lsp/hover_definition_integration_spec.cr` -> 12 examples, 0 failures.
+- `./build_lsp_debug.sh` rebuilt `bin/crystal_v2_lsp` successfully.
+- Real LSP stdio harness against
+  `/Users/sergey/Projects/Crystal/crystal/src/intrinsics.cr` line 251 returned
+  the `LibIntrinsics` `fun` signature and definition at line 92.
+
+Adversary notes:
+
+- This does not replace semantic lib binding support. It extends the existing
+  source-text hover/definition path to recognize `lib` constants and `fun`
+  declarations when the receiver is explicit.
+- Wrapper declarations still use the declaration fast path when hovering their
+  own `def self.popcount8` header.
+- LTP/WBA shape: trigger is an uppercase receiver whose declaration kind is
+  `lib`; transport carries the receiver to its source file and the callee name
+  to a `fun` index; potential decreases from wrong same-name wrapper match to
+  receiver-local declaration without changing semantic fallback.
+
+Trust: {F/G/R: 0.88/0.44/0.90} [verified]
+
 ## LM-583 — LSP foreground hover avoids workspace reference scans by default
 
 Status: verified for the focused LSP hover/cache/harness slice on `codegen`.

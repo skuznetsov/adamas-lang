@@ -10918,8 +10918,8 @@ module CrystalV2
           # 1. For nested definitions (e.g., "module Serializable" inside JSON module)
           # 2. For fully qualified names (e.g., "struct JSON::Any")
           # 3. For annotations (e.g., "annotation Field" inside JSON module)
-          pattern = /^\s*(module|class|struct|abstract class|abstract struct|annotation)\s+#{Regex.escape(search_name)}\b/
-          full_pattern = constant_name.includes?("::") ? /^\s*(module|class|struct|abstract class|abstract struct|annotation)\s+#{Regex.escape(constant_name)}\b/ : nil
+          pattern = /^\s*(module|class|struct|abstract class|abstract struct|annotation|lib)\s+#{Regex.escape(search_name)}\b/
+          full_pattern = constant_name.includes?("::") ? /^\s*(module|class|struct|abstract class|abstract struct|annotation|lib)\s+#{Regex.escape(constant_name)}\b/ : nil
 
           deadline = Time.instant + 100.milliseconds
           break_search = false
@@ -11540,7 +11540,7 @@ module CrystalV2
           end
           deadline = Time.instant + 100.milliseconds
           text = File.read(path)
-          pattern = /(?:def|macro)\s+(?:self\.|[A-Za-z0-9_:]+\.)?#{Regex.escape(method_name)}#{method_name_regex_tail}/
+          pattern = /(?:def|macro|fun)\s+(?:self\.|[A-Za-z0-9_:]+\.)?#{Regex.escape(method_name)}#{method_name_regex_tail}/
           getter_pattern = /^\s*(getter|property)\s+#{Regex.escape(method_name)}\b/
           line_index = 0
           first_location = nil
@@ -11698,7 +11698,7 @@ module CrystalV2
         private def find_method_signature_in_file(path : String, method_name : String, display_name : String? = nil, arity : Int32? = nil) : String?
           deadline = Time.instant + 100.milliseconds
           text = File.read(path)
-          pattern = /(?:def|macro)\s+(?:self\.|[A-Za-z0-9_:]+\.)?#{Regex.escape(method_name)}#{method_name_regex_tail}/
+          pattern = /(?:def|macro|fun)\s+(?:self\.|[A-Za-z0-9_:]+\.)?#{Regex.escape(method_name)}#{method_name_regex_tail}/
           first_signature = nil
 
           text.each_line do |line|
@@ -11729,7 +11729,7 @@ module CrystalV2
           File.each_line(path) do |line|
             if line_index == location.range.start.line
               stripped = line.lstrip.chomp
-              return stripped if stripped.matches?(/^(abstract\s+class|abstract\s+struct|class|struct|module|annotation)\b/)
+              return stripped if stripped.matches?(/^(abstract\s+class|abstract\s+struct|class|struct|module|annotation|lib)\b/)
               return nil
             end
             line_index += 1

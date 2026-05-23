@@ -333,6 +333,41 @@ describe CrystalV2::Compiler::LSP::Server do
     FileUtils.rm_rf(dir) if dir
   end
 
+  it "uses lib fun signatures for constant receiver calls" do
+    dir = File.join(Dir.tempdir, "lsp_hover_lib_fun_#{Random::Secure.hex(6)}")
+    FileUtils.mkdir_p(dir)
+    path = File.join(dir, "main.cr")
+    source = <<-CR
+    lib LibIntrinsics
+      fun popcount8 = "llvm.ctpop.i8"(src : Int8) : Int8
+    end
+
+    module Intrinsics
+      def self.popcount8(src) : Int8
+        LibIntrinsics.popcount8(src)
+      end
+    end
+    CR
+    File.write(path, source)
+
+    server = CrystalV2::Compiler::LSP::Server.new(
+      IO::Memory.new,
+      IO::Memory.new,
+      CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
+    )
+    uri = server.spec_store_document(source, dir, path)
+
+    call_line, call_char = lsp_line_char(source, "LibIntrinsics.popcount8", delta: "LibIntrinsics.".bytesize + 4)
+    hover = server.spec_hover(uri, call_line, call_char)
+    hover["result"]["contents"]["value"].as_s.should contain(%(fun popcount8 = "llvm.ctpop.i8"(src : Int8) : Int8))
+
+    definition = server.spec_definition(uri, call_line, call_char)
+    location = definition["result"].as_a.first
+    location["range"]["start"]["line"].as_i.should eq(1)
+  ensure
+    FileUtils.rm_rf(dir) if dir
+  end
+
   it "returns AST document symbols without depending on semantic symbol tables" do
     dir = File.join(Dir.tempdir, "lsp_doc_symbols_#{Random::Secure.hex(6)}")
     FileUtils.mkdir_p(dir)
