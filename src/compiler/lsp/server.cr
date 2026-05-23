@@ -5104,8 +5104,8 @@ module CrystalV2
               first_char = lexical_ident[0]?
               is_localish = first_char && (first_char.lowercase? || first_char == '_')
               if is_localish
-                if param_type = parameter_type_in_enclosing_callable(doc_state, lexical_ident, hover_offset)
-                  type_str = clean_type_name(param_type)
+                if param_signature = parameter_signature_in_enclosing_callable(doc_state, lexical_ident, hover_offset)
+                  type_str = param_signature
                 elsif assignment_type = preferred_local_assignment_type(doc_state, lexical_ident, hover_offset)
                   type_str = assignment_type
                 elsif type_str.nil? || type_str == "Unknown" || node.is_a?(Frontend::DefNode)
@@ -5903,6 +5903,27 @@ module CrystalV2
             context_end = Math.min(text.bytesize, offset + 16)
             context_slice = text.byte_slice(context_start, context_end - context_start)
             "Definition context='#{context_slice}'"
+          end
+
+          if ident = identifier_at(doc_state.text_document.text, offset) || (offset > 0 ? identifier_at(doc_state.text_document.text, offset - 1) : nil)
+            first_char = ident[0]?
+            is_local_var = first_char && (first_char.lowercase? || first_char == '_')
+            if is_local_var
+              ident_start = offset
+              while ident_start > 0
+                byte = text.byte_at?(ident_start - 1)
+                break unless byte && identifier_char?(byte)
+                ident_start -= 1
+              end
+              prev_byte = ident_start > 0 ? text.byte_at?(ident_start - 1) : nil
+              unless prev_byte == '.'.ord
+                if location = parameter_location_in_enclosing_callable(doc_state, ident, offset)
+                  send_response(id, [location].to_json)
+                  debug("Definition completed in #{elapsed_ms_since(started_at)}ms -> hit(parameter)")
+                  return
+                end
+              end
+            end
           end
 
           # Find expression at position
@@ -11315,14 +11336,32 @@ module CrystalV2
             p_name = param.name
             next unless p_name
             next unless String.new(p_name) == name
-            span = param.name_span || param.span
-            return Location.new(uri: doc_state.text_document.uri, range: Range.from_span(span))
+            return Location.new(uri: doc_state.text_document.uri, range: parameter_name_range(doc_state, param, name))
           end
 
           nil
         end
 
-        private def parameter_type_in_enclosing_callable(doc_state : DocumentState, name : String, target_offset : Int32) : String?
+        private def parameter_name_range(doc_state : DocumentState, param : Frontend::Parameter, name : String) : Range
+          if span = param.name_span
+            if span.start_offset >= 0 && span.end_offset > span.start_offset
+              text = doc_state.text_document.text.byte_slice(span.start_offset, span.end_offset - span.start_offset)
+              return source_range_from_offsets(doc_state, span.start_offset, span.end_offset) if text == name
+            end
+          end
+
+          if param.span.start_offset >= 0 && param.span.end_offset > param.span.start_offset
+            text = doc_state.text_document.text.byte_slice(param.span.start_offset, param.span.end_offset - param.span.start_offset)
+            if index = text.index(name)
+              start_offset = param.span.start_offset + index
+              return source_range_from_offsets(doc_state, start_offset, start_offset + name.bytesize)
+            end
+          end
+
+          Range.from_span(param.name_span || param.span)
+        end
+
+        private def parameter_signature_in_enclosing_callable(doc_state : DocumentState, name : String, target_offset : Int32) : String?
           callable = enclosing_callable_at_offset(doc_state, target_offset)
           return nil unless callable
 
@@ -11338,9 +11377,17 @@ module CrystalV2
             p_name = param.name
             next unless p_name
             next unless String.new(p_name) == name
-            if type_annotation = param.type_annotation
-              return String.new(type_annotation)
+
+            if param.span.start_offset >= 0 && param.span.end_offset > param.span.start_offset
+              signature = doc_state.text_document.text.byte_slice(param.span.start_offset, param.span.end_offset - param.span.start_offset).strip
+              return signature unless signature.empty?
             end
+
+            if type_annotation = param.type_annotation
+              return "#{name} : #{clean_type_name(String.new(type_annotation))}"
+            end
+
+            return name
           end
 
           nil

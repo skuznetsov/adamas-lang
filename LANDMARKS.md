@@ -7325,6 +7325,66 @@ Adversary notes:
 
 Trust: {F/G/R: 0.91/0.45/0.91} [verified]
 
+### LM-648 - LSP preserves parameter signatures and operator word spans
+
+Callable parameter hover now prefers the parameter's source signature instead
+of collapsing typed parameters to the raw annotation. For the stdlib
+`Comparable(T)#<` shape, hovering the body use of `other` now reports
+`other : T` rather than only `T`.
+
+Definition for local parameters now runs before the generic expression
+definition path for non-member local identifiers. Parameter target ranges are
+derived from source byte offsets instead of trusting `Span` line/column
+metadata, because the operator-def parameter shape can have correct offsets
+but stale columns. This keeps definition on the parameter name rather than the
+enclosing operator method header.
+
+The VS Code language configuration now defines a Crystal word pattern that
+treats operator-shaped tokens such as `&-`, `<=>`, and `to_u8!` as single
+editor words. This complements the existing server-side `LocationLink`
+`originSelectionRange` and semantic-token operator ranges for clickable source
+decoration.
+
+Evidence:
+
+- Focused regression covers a local `Comparable(T)#<` sample: hover on
+  `self <=> other` contains `other : T`, and definition points at the
+  parameter name range.
+- `regression_tests/vscode_operator_word_pattern.sh` verifies the VS Code
+  word pattern keeps `&-` and `<=>` as single tokens while preserving ordinary
+  identifiers and bang method names.
+- `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 120 4096 tool format
+  --check src/compiler/lsp/server.cr
+  spec/lsp/hover_definition_integration_spec.cr` -> exit 0.
+- `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 240 4096 spec
+  spec/lsp/hover_definition_integration_spec.cr --error-trace` -> 14
+  examples, 0 failures.
+- `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 300 4096 spec
+  spec/lsp --error-trace` -> 265 examples, 0 failures.
+- `scripts/run_safe.sh /bin/bash 30 512
+  regression_tests/vscode_operator_word_pattern.sh` -> exit 0.
+- `./build_lsp_debug.sh` rebuilt `bin/crystal_v2_lsp` successfully.
+- `git diff --check` -> exit 0.
+
+Adversary notes:
+
+- This is not a broad parser span rewrite. The legal move is local to LSP
+  parameter navigation and uses existing source offsets, which are already the
+  stable coordinate source for other LSP ranges.
+- The parameter-first definition path is restricted to localish non-member
+  identifiers, so member calls and constant/member navigation keep their
+  existing method-resolution paths.
+- The word-pattern change is client-side; it does not claim server resolution
+  was missing for `&-`. Server logs already showed hover/definition hits for
+  that operator, so the remaining issue was editor token decoration.
+- LTP/WBA shape: trigger is a cursor on a local parameter or operator-shaped
+  token; transport carries the exact source byte span into hover/definition or
+  editor word selection; legal move does not mutate parser/semantic state; the
+  potential decreases from resolved-but-misdecorated/misformatted token to
+  exact source-span response.
+
+Trust: {F/G/R: 0.90/0.48/0.91} [verified]
+
 ## LM-583 — LSP foreground hover avoids workspace reference scans by default
 
 Status: verified for the focused LSP hover/cache/harness slice on `codegen`.

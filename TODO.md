@@ -242,6 +242,14 @@ After LM-647, fully qualified uppercase receiver hover/definition stays
 receiver-local: `Crystal::System::Time.instant` resolves to
 `crystal/system/time.cr` and hovers as `def self.instant`, rather than falling
 back to the nearby `def Time.instant` wrapper.
+After LM-648, callable parameter hover preserves the source parameter
+signature and parameter definition uses byte-offset-derived ranges instead of
+trusting stale span columns. This fixes the `Comparable(T)#<` body hover on
+`other` so it reports `other : T` and definition lands on the parameter name.
+The VS Code language configuration also treats Crystal operator tokens such as
+`&-` and `<=>` as word-pattern units, so the editor can decorate the same
+operator span that the server already returns through hover, definition, and
+semantic tokens.
 
 Spec-first bootstrap checkpoint (2026-05-08): `docs/specs/` now contains the
 first executable contract slice for Crystal V2, modeled after the DiamondDB

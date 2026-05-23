@@ -336,6 +336,42 @@ describe CrystalV2::Compiler::LSP::Server do
     FileUtils.rm_rf(dir) if dir
   end
 
+  it "hovers callable parameters with their source signature" do
+    dir = File.join(Dir.tempdir, "lsp_hover_parameter_signature_#{Random::Secure.hex(6)}")
+    FileUtils.mkdir_p(dir)
+    path = File.join(dir, "main.cr")
+    source = <<-CR
+    module Comparable(T)
+      def <(other : T) : Bool
+        cmp = self <=> other
+        cmp ? cmp < 0 : false
+      end
+    end
+    CR
+    File.write(path, source)
+
+    server = CrystalV2::Compiler::LSP::Server.new(
+      IO::Memory.new,
+      IO::Memory.new,
+      CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
+    )
+    uri = server.spec_store_document(source, dir, path)
+
+    use_line, use_char = lsp_line_char(source, "<=> other", delta: 5)
+    hover = server.spec_hover(uri, use_line, use_char)
+    hover["result"]["contents"]["value"].as_s.should contain("other : T")
+
+    def_line, def_char = lsp_line_char(source, "other : T")
+    definition = server.spec_definition(uri, use_line, use_char)
+    location = definition["result"].as_a.first
+    location["uri"].as_s.should eq(uri)
+    location["range"]["start"]["line"].as_i.should eq(def_line)
+    location["range"]["start"]["character"].as_i.should eq(def_char)
+    location["range"]["end"]["character"].as_i.should eq(def_char + "other".size)
+  ensure
+    FileUtils.rm_rf(dir) if dir
+  end
+
   it "uses lib fun signatures for constant receiver calls" do
     dir = File.join(Dir.tempdir, "lsp_hover_lib_fun_#{Random::Secure.hex(6)}")
     FileUtils.mkdir_p(dir)
