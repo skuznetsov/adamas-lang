@@ -197,6 +197,11 @@ background indexing, and cleared only after a successful foreground document
 update. This removes the VS Code crash corridor where `bin/crystal_v2_lsp`
 could stack-overflow in the parser shortly after startup while reparsing an
 invalid cached file.
+After LM-637, hover on qualified paths and member accesses no longer loads the
+dependency graph on the request path. On `src/crystal_v2.cr`, the harness keeps
+the `CLI`/`CLI.new`/`cli.run` hover corridor in the low-millisecond range and
+the debug log shows no `Loading dependency` entries during hover. Definition
+keeps the broader dependency-loading resolver.
 
 Spec-first bootstrap checkpoint (2026-05-08): `docs/specs/` now contains the
 first executable contract slice for Crystal V2, modeled after the DiamondDB

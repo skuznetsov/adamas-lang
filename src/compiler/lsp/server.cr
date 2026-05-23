@@ -4922,7 +4922,7 @@ module CrystalV2
             # For PathNode, resolve the specific segment under cursor
             # e.g., hovering on M in M::A should show module M, not class A
             if hover_offset
-              symbol = resolve_path_segment_symbol(node, doc_state, hover_offset)
+              symbol = resolve_path_segment_symbol(node, doc_state, hover_offset, load_dependencies: false)
             end
           end
           span = node.span
@@ -4976,7 +4976,7 @@ module CrystalV2
             method_symbol ||= resolve_call_method_symbol(node, doc_state)
             display_name = method_name_for_call(node, doc_state.program.arena)
           when Frontend::MemberAccessNode
-            method_symbol ||= resolve_member_access_method_symbol(node, doc_state)
+            method_symbol ||= resolve_member_access_method_symbol(node, doc_state, load_dependencies: false)
             display_name = String.new(node.member)
           when Frontend::SafeNavigationNode
             method_symbol ||= resolve_safe_navigation_method_symbol(node, doc_state)
@@ -4986,7 +4986,7 @@ module CrystalV2
           debug("Hover method_symbol=#{method_symbol ? "#{method_symbol.name}(#{method_symbol.return_annotation.inspect})" : "nil"}")
           method_signature = method_symbol ? method_signature_for(method_symbol, doc_state, display_name) : nil
           if method_signature.nil? && node.is_a?(Frontend::MemberAccessNode) && display_name
-            receiver_symbol = resolve_receiver_symbol(doc_state, node.object)
+            receiver_symbol = resolve_receiver_symbol_without_dependency_load(doc_state, node.object)
             receiver_symbol ||= resolve_receiver_type_from_identifier(doc_state, node.object)
             receiver_path = receiver_symbol.try(&.file_path)
             method_signature = find_method_signature_by_text(doc_state, display_name, receiver_path)
@@ -9691,13 +9691,23 @@ module CrystalV2
           nil
         end
 
-        private def resolve_member_access_method_symbol(node : Frontend::MemberAccessNode, doc_state : DocumentState) : Semantic::MethodSymbol?
+        private def resolve_member_access_method_symbol(
+          node : Frontend::MemberAccessNode,
+          doc_state : DocumentState,
+          *,
+          load_dependencies : Bool = true,
+        ) : Semantic::MethodSymbol?
           method_name = String.new(node.member)
           doc_table = doc_state.symbol_table
           prelude_table = @prelude_state.try(&.symbol_table)
           prelude_state = @prelude_state
           receiver_type = doc_state.type_context.try(&.get_type(node.object))
-          receiver_symbol = canonicalize_prelude_receiver(resolve_receiver_symbol(doc_state, node.object))
+          receiver_symbol = if load_dependencies
+                              resolve_receiver_symbol(doc_state, node.object)
+                            else
+                              resolve_receiver_symbol_without_dependency_load(doc_state, node.object)
+                            end
+          receiver_symbol = canonicalize_prelude_receiver(receiver_symbol)
           receiver_symbol ||= receiver_symbol_from_new_call(node.object, doc_state)
 
           method_symbol = nil
@@ -9779,7 +9789,7 @@ module CrystalV2
             end
           end
 
-          method_symbol ||= fallback_method_by_name(method_name, doc_state)
+          method_symbol ||= fallback_method_by_name(method_name, doc_state, load_dependencies: load_dependencies)
           method_symbol
         end
 
@@ -9924,7 +9934,13 @@ module CrystalV2
 
         # Resolve symbol for a specific segment of a PathNode based on cursor position.
         # For M::A with cursor on M, returns the symbol for module M (not class A).
-        private def resolve_path_segment_symbol(node : Frontend::PathNode, doc_state : DocumentState, target_offset : Int32) : Semantic::Symbol?
+        private def resolve_path_segment_symbol(
+          node : Frontend::PathNode,
+          doc_state : DocumentState,
+          target_offset : Int32,
+          *,
+          load_dependencies : Bool = true,
+        ) : Semantic::Symbol?
           arena = doc_state.program.arena
           all_segments = collect_path_segments(arena, node)
           return nil if all_segments.empty?
@@ -9948,7 +9964,12 @@ module CrystalV2
           end
 
           # Resolve symbol for these segments
-          if symbol = resolve_path_symbol(doc_state, segments)
+          symbol = if load_dependencies
+                     resolve_path_symbol(doc_state, segments)
+                   else
+                     resolve_path_symbol_without_dependency_load(doc_state, segments)
+                   end
+          if symbol
             return symbol
           end
 
@@ -10407,8 +10428,8 @@ module CrystalV2
           end
         end
 
-        private def fallback_method_by_name(method_name : String, doc_state : DocumentState) : Semantic::MethodSymbol?
-          ensure_dependencies_loaded(doc_state)
+        private def fallback_method_by_name(method_name : String, doc_state : DocumentState, *, load_dependencies : Bool = true) : Semantic::MethodSymbol?
+          ensure_dependencies_loaded(doc_state) if load_dependencies
           methods = @methods_by_name[method_name]?
           return nil unless methods && !methods.empty?
           return methods.first if methods.size == 1

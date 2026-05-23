@@ -99,6 +99,40 @@ describe CrystalV2::Compiler::LSP::Server do
     FileUtils.rm_rf(dir) if dir
   end
 
+  it "keeps qualified path hover off the dependency-loading path" do
+    dir = File.join(Dir.tempdir, "lsp_hover_no_dep_load_#{Random::Secure.hex(6)}")
+    FileUtils.mkdir_p(dir)
+    path = File.join(dir, "main.cr")
+    helper_path = File.join(dir, "helper.cr")
+    source = <<-CR
+    require "./helper"
+
+    value = Missing::Thing.new
+    CR
+    File.write(path, source)
+    File.write(helper_path, "class Helper; end\n")
+
+    server = CrystalV2::Compiler::LSP::Server.new(
+      IO::Memory.new,
+      IO::Memory.new,
+      CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
+    )
+    uri = server.spec_store_document(source, dir, path)
+    server.spec_clear_dependency_documents
+
+    missing_offset = source.index("Missing").not_nil!
+    line_idx = source[0, missing_offset].count('\n')
+    last_nl = source.rindex('\n', missing_offset) || -1
+    char_idx = missing_offset - last_nl - 1
+
+    before_count = server.spec_dependency_document_count
+    hover = server.spec_hover(uri, line_idx, char_idx)
+    hover["error"]?.should be_nil
+    server.spec_dependency_document_count.should eq(before_count)
+  ensure
+    FileUtils.rm_rf(dir) if dir
+  end
+
   it "returns AST document symbols without depending on semantic symbol tables" do
     dir = File.join(Dir.tempdir, "lsp_doc_symbols_#{Random::Secure.hex(6)}")
     FileUtils.mkdir_p(dir)

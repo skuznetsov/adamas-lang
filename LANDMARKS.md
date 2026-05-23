@@ -6881,6 +6881,42 @@ Adversary notes:
 
 Trust: {F/G/R: 0.88/0.46/0.90} [verified]
 
+### LM-637 - Hover does not load dependency graphs for qualified paths
+
+Hover on qualified paths and member accesses now resolves only through the
+active document, already-loaded dependency/project-cache state, and prelude
+state. It no longer calls the dependency-loading resolver used by definition.
+This keeps hover on a bounded request-time corridor while preserving broader
+dependency loading for navigation and other precision requests.
+
+Evidence:
+
+- Harness scenario on `src/crystal_v2.cr` around `cli =
+  CrystalV2::Compiler::CLI.new(ARGV)`:
+  - before the fix, hovering the qualified `CLI` segment took about 105ms and
+    `CLI.new` triggered recursive `Loading dependency ... from project cache`
+    lines across the compiler graph.
+  - after the fix, `CLI` hover is about 1.2ms, `CLI.new` hover is about
+    6.7ms, `cli.run` hover is about 1.2ms, and the debug log has no
+    `Loading dependency` entries for the hover sequence.
+- Focused regression:
+  `scripts/run_safe.sh crystal 180 4096 spec
+  spec/lsp/hover_definition_integration_spec.cr` -> 6 examples, 0 failures.
+- Full LSP suite:
+  `scripts/run_safe.sh crystal 300 4096 spec spec/lsp` -> 256 examples,
+  0 failures.
+
+Adversary notes:
+
+- This is not a precision downgrade for explicit navigation: definition still
+  uses the dependency-loading resolver. The constrained path applies only to
+  hover.
+- The LTP/WBA trigger is a hover request over a qualified `PathNode` or
+  `MemberAccessNode`; the transport is already-materialized symbol state; the
+  potential decreases by eliminating request-time dependency graph loads.
+
+Trust: {F/G/R: 0.88/0.47/0.90} [verified]
+
 ## LM-583 — LSP foreground hover avoids workspace reference scans by default
 
 Status: verified for the focused LSP hover/cache/harness slice on `codegen`.

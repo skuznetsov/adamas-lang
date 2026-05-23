@@ -192,6 +192,14 @@ module CrystalV2::Compiler::LSP
       @cached_expr_types.has_key?(path)
     end
 
+    def spec_dependency_document_count : Int32
+      @dependency_documents.size
+    end
+
+    def spec_clear_dependency_documents
+      @dependency_documents.clear
+    end
+
     def spec_set_prelude_loading(value : Bool)
       @prelude_loading = value
     end
