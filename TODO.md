@@ -1,7 +1,7 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-05-21
-Branch: `codegen`
+Updated: 2026-05-22
+Branch: `main`
 
 This is the active working backlog only. Historical detail is in git history,
 especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
@@ -191,6 +191,12 @@ After LM-635, the VS Code extension no longer hardcodes a repo-relative LSP
 binary path: settings override discovery, configured paths must be executable,
 and the default path is `crystal2 tool lsp` with fallbacks to `crystal_v2` and
 standalone `crystal_v2_lsp`.
+After LM-636, invalid project-cache entries no longer run through a background
+startup reparse path. They are recorded as deferred foreground work, skipped by
+background indexing, and cleared only after a successful foreground document
+update. This removes the VS Code crash corridor where `bin/crystal_v2_lsp`
+could stack-overflow in the parser shortly after startup while reparsing an
+invalid cached file.
 
 Spec-first bootstrap checkpoint (2026-05-08): `docs/specs/` now contains the
 first executable contract slice for Crystal V2, modeled after the DiamondDB

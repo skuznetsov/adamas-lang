@@ -6838,6 +6838,49 @@ Adversary notes:
 
 Trust: {F/G/R: 0.86/0.45/0.87} [verified]
 
+### LM-636 - Invalid project-cache reparses stay off the LSP background path
+
+Invalid project-cache entries are now tracked as deferred foreground work
+instead of being reparsed by the startup/background maintenance fiber. The
+previous `schedule_reparse_invalid_files` path could call
+`UnifiedProjectState#update_file` on arbitrary invalid cached files after
+initialize, which reproduced the user-visible standalone LSP crash as a parser
+stack overflow. Background project indexing also skips these invalid paths,
+and the invalid marker is cleared only after a successful foreground document
+update.
+
+Evidence:
+
+- User crash signature: `schedule_reparse_invalid_files` ->
+  `UnifiedProjectState#update_file` -> recursive parser stack overflow while
+  VS Code restarted `bin/crystal_v2_lsp` repeatedly.
+- Focused cache regression:
+  `scripts/run_safe.sh crystal 180 4096 spec
+  spec/lsp/did_change_integration_spec.cr
+  spec/lsp/project_cache_validation_spec.cr` -> 13 examples, 0 failures.
+- Full LSP suite:
+  `scripts/run_safe.sh crystal 300 4096 spec spec/lsp` -> 255 examples,
+  0 failures.
+- Rebuilt `bin/crystal_v2_lsp` with `./build_lsp.sh`; stdio harness against
+  the rebuilt binary returned initialize in about 462ms, first `server.cr`
+  `didOpen` settled in about 67ms, document symbols in about 15ms, semantic
+  tokens in about 66ms, and exited cleanly with no diagnostics.
+
+Adversary notes:
+
+- This is not a parser depth cap and does not weaken Crystal syntax handling.
+  The LTP/WBA move removes a sticky startup corridor: invalid cache paths are
+  recorded at cache-load time, transported only as exact path markers, and
+  collapsed when a foreground update recomputes the real document state.
+- A larger stack is not the accepted fix. Current `ld64.lld` warns that the
+  Darwin `-stack_size` option is ignored in this build path, so the root
+  evidence is the background reparse removal, not linker stack tuning.
+- Non-invalid background indexing still parses cacheable project files. If a
+  future crash points there, treat it as a separate background-indexing root,
+  not as evidence to re-enable invalid-cache reparsing.
+
+Trust: {F/G/R: 0.88/0.46/0.90} [verified]
+
 ## LM-583 — LSP foreground hover avoids workspace reference scans by default
 
 Status: verified for the focused LSP hover/cache/harness slice on `codegen`.

@@ -544,6 +544,7 @@ module CrystalV2
         @project_cache_dirty : Bool = false
         @project_cache_loaded : Bool = false
         @project_cache_save_scheduled : Bool = false
+        @project_cache_invalid_paths : Set(String)
         @project_indexing_started : Bool = false
         @cached_symbol_ranges : Hash(String, Hash(String, Range))
         @cached_symbol_types : Hash(String, Hash(String, String))
@@ -596,6 +597,7 @@ module CrystalV2
           @project_cache_dirty = false
           @project_cache_loaded = false
           @project_cache_save_scheduled = false
+          @project_cache_invalid_paths = Set(String).new
           @project_indexing_started = false
           @cached_symbol_ranges = Hash(String, Hash(String, Range)).new
           @cached_symbol_types = Hash(String, Hash(String, String)).new
@@ -666,6 +668,7 @@ module CrystalV2
             project_diagnostics = @project.update_file(doc_path, text, version)
             project_time = (Time.instant - project_start).total_milliseconds
             debug("UnifiedProject update_file: #{project_time.round(2)}ms, #{project_diagnostics.size} diagnostics")
+            @project_cache_invalid_paths.delete(doc_path)
             @project_cache_dirty = true
             schedule_project_cache_save
             true
@@ -2874,9 +2877,8 @@ module CrystalV2
             debug("Project cache loaded: #{result[:valid_count]} valid files in #{load_ms}ms")
 
             if result[:invalid_paths].size > 0
-              debug("  #{result[:invalid_paths].size} files need re-parsing")
-              # Queue invalid files for background re-parsing
-              schedule_reparse_invalid_files(result[:invalid_paths])
+              @project_cache_invalid_paths = result[:invalid_paths].to_set
+              debug("  #{@project_cache_invalid_paths.size} invalid cached files deferred until foreground use")
             end
             @project_cache_loaded = true
             @cached_symbol_ranges = @project.cached_ranges
@@ -2938,6 +2940,7 @@ module CrystalV2
 
               paths.each do |path|
                 next unless ProjectCache.cacheable_project_file?(path, root)
+                next if @project_cache_invalid_paths.includes?(path)
                 next if @project.files.has_key?(path)
                 wait_for_project_update_idle(require_document: true)
                 begin
@@ -2973,33 +2976,8 @@ module CrystalV2
         # Schedule background re-parsing of files that were invalidated (mtime changed since cache)
         private def schedule_reparse_invalid_files(invalid_paths : Array(String))
           return if invalid_paths.empty?
-
-          spawn do
-            begin
-              reparsed = 0
-              invalid_paths.each do |path|
-                wait_for_project_update_idle(require_document: true)
-                next unless File.exists?(path)
-                begin
-                  source = File.read(path)
-                  @project.update_file(path, source, 0)
-                  reparsed += 1
-                rescue ex
-                  debug("Reparse failed for #{path}: #{ex.message}")
-                end
-              end
-
-              if reparsed > 0
-                @project_cache_dirty = true
-                # Update cached tables after re-parsing
-                @cached_symbol_ranges = @project.cached_ranges
-                @cached_symbol_types = @project.cached_types
-                @cached_expr_types = @project.cached_expr_types
-                schedule_project_cache_save
-                debug("Reparsed #{reparsed} invalid cached files")
-              end
-            end
-          end
+          invalid_paths.each { |path| @project_cache_invalid_paths << path }
+          debug("Deferred #{invalid_paths.size} invalid cached files until foreground use")
         end
 
         private def try_load_prelude(path : String, label : String) : Bool

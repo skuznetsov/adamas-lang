@@ -218,7 +218,7 @@ describe CrystalV2::Compiler::LSP::Server do
     FileUtils.rm_rf(dir) if dir
   end
 
-  it "defers invalid project-cache reparse until foreground is idle" do
+  it "keeps invalid project-cache reparse off the background path" do
     dir = File.join(Dir.tempdir, "lsp_invalid_reparse_idle_#{Random::Secure.hex(6)}")
     FileUtils.mkdir_p(dir)
     path = File.join(dir, "stale.cr")
