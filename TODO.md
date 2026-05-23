@@ -202,6 +202,11 @@ dependency graph on the request path. On `src/crystal_v2.cr`, the harness keeps
 the `CLI`/`CLI.new`/`cli.run` hover corridor in the low-millisecond range and
 the debug log shows no `Loading dependency` entries during hover. Definition
 keeps the broader dependency-loading resolver.
+After LM-638, the hover text fallback for unqualified method calls uses
+call-site arity to choose between same-name overloads and source-backed
+signature formatting preserves default parameter values. This fixes the
+`Random::PCG32#new_seed` shape where hovering a two-argument call selected the
+zero-argument overload.
 
 Spec-first bootstrap checkpoint (2026-05-08): `docs/specs/` now contains the
 first executable contract slice for Crystal V2, modeled after the DiamondDB

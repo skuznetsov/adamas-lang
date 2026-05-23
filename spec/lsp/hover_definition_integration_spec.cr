@@ -4,6 +4,22 @@ require "random/secure"
 
 require "./support/server_helper"
 
+private def lsp_line_char(source : String, needle : String, occurrence : Int32 = 0, delta : Int32 = 0) : {Int32, Int32}
+  offset = nil
+  search_from = 0
+  (occurrence + 1).times do
+    found = source.index(needle, search_from)
+    raise "Missing needle #{needle}" unless found
+    offset = found
+    search_from = found + needle.bytesize
+  end
+
+  target = offset.not_nil! + delta
+  line = source[0, target].count('\n')
+  line_start = source.rindex('\n', target) || -1
+  {line, target - line_start - 1}
+end
+
 describe CrystalV2::Compiler::LSP::Server do
   around_each do |example|
     prev = ENV["CRYSTALV2_LSP_FORCE_STUB"]?
@@ -129,6 +145,41 @@ describe CrystalV2::Compiler::LSP::Server do
     hover = server.spec_hover(uri, line_idx, char_idx)
     hover["error"]?.should be_nil
     server.spec_dependency_document_count.should eq(before_count)
+  ensure
+    FileUtils.rm_rf(dir) if dir
+  end
+
+  it "selects hover method signature by call arity and keeps default parameters" do
+    dir = File.join(Dir.tempdir, "lsp_hover_overload_arity_#{Random::Secure.hex(6)}")
+    FileUtils.mkdir_p(dir)
+    path = File.join(dir, "main.cr")
+    source = <<-CR
+    class Generator
+      def new_seed : UInt32
+        new_seed(1_u64, 2_u64)
+      end
+
+      def new_seed(initstate : UInt64, initseq = 0_u64) : UInt32
+        1_u32
+      end
+    end
+    CR
+    File.write(path, source)
+
+    server = CrystalV2::Compiler::LSP::Server.new(
+      IO::Memory.new,
+      IO::Memory.new,
+      CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
+    )
+    uri = server.spec_store_document(source, dir, path)
+
+    call_line, call_char = lsp_line_char(source, "new_seed(1_u64", delta: 5)
+    call_hover = server.spec_hover(uri, call_line, call_char)
+    call_hover["result"]["contents"]["value"].as_s.should contain("def new_seed(initstate : UInt64, initseq = 0_u64) : UInt32")
+
+    def_line, def_char = lsp_line_char(source, "def new_seed(initstate", delta: 5)
+    def_hover = server.spec_hover(uri, def_line, def_char)
+    def_hover["result"]["contents"]["value"].as_s.should contain("def new_seed(initstate : UInt64, initseq = 0_u64) : UInt32")
   ensure
     FileUtils.rm_rf(dir) if dir
   end

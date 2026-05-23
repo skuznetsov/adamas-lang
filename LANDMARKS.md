@@ -6917,6 +6917,42 @@ Adversary notes:
 
 Trust: {F/G/R: 0.88/0.47/0.90} [verified]
 
+### LM-638 - Hover method-call text fallback selects overloads by arity
+
+The hover text fallback for unqualified method calls now carries the call-site
+argument count into source-text signature lookup. When several methods share a
+name, it selects a signature whose required/allowed arity accepts the call
+instead of returning the first textual `def`. Source-backed `DefNode`
+signature formatting also preserves default parameter values from parameter
+default spans.
+
+Evidence:
+
+- The focused regression models `new_seed` with a zero-arg wrapper and a
+  two-arg overload with `initseq = 0_u64`. Hovering the two-arg call now
+  returns `def new_seed(initstate : UInt64, initseq = 0_u64) : UInt32`, not
+  `def new_seed : UInt32`.
+- Harness scenario on `/Users/sergey/Projects/Crystal/crystal/src/random/pcg32.cr`
+  with a temporary patched LSP returned hover payloads for both the overload
+  declaration and the call. Debug output logged the synthesized declaration
+  signature as `def new_seed(initstate : UInt64, initseq = 0_u64) : UInt32`.
+- Focused regression:
+  `scripts/run_safe.sh crystal 180 4096 spec
+  spec/lsp/hover_definition_integration_spec.cr` -> 7 examples, 0 failures.
+- Full LSP suite:
+  `scripts/run_safe.sh crystal 300 4096 spec spec/lsp` -> 257 examples,
+  0 failures.
+
+Adversary notes:
+
+- This does not implement full Crystal overload resolution in hover. It is a
+  bounded text fallback: use call arity to avoid obviously wrong same-name
+  overloads, while preserving the existing semantic resolver paths.
+- The arity parser counts top-level call arguments and top-level signature
+  parameters, including defaults and splats, without modifying stdlib files.
+
+Trust: {F/G/R: 0.86/0.44/0.89} [verified]
+
 ## LM-583 — LSP foreground hover avoids workspace reference scans by default
 
 Status: verified for the focused LSP hover/cache/harness slice on `codegen`.

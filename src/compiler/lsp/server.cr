@@ -1315,7 +1315,7 @@ module CrystalV2
           end
         end
 
-        private def append_parameter_signature(io : IO, param : Frontend::Parameter)
+        private def append_parameter_signature(io : IO, param : Frontend::Parameter, source_text : String? = nil)
           if param.is_double_splat
             io << "**"
           elsif param.is_splat
@@ -1337,6 +1337,13 @@ module CrystalV2
           if type = slice_to_string(param.type_annotation)
             io << " : "
             io << type
+          end
+
+          if source_text && (span = param.default_span)
+            if span.end_offset > span.start_offset && span.start_offset >= 0 && span.end_offset <= source_text.bytesize
+              io << " = "
+              io << source_text.byte_slice(span.start_offset, span.end_offset - span.start_offset)
+            end
           end
         end
 
@@ -4847,8 +4854,9 @@ module CrystalV2
               return
             end
 
-            if method_name = fast_unqualified_method_call_name_at_offset(doc_state.text_document.text, hover_offset)
-              if signature = find_method_signature_by_text(doc_state, method_name)
+            if method_call = fast_unqualified_method_call_at_offset(doc_state.text_document.text, hover_offset)
+              method_name, arity = method_call
+              if signature = find_method_signature_by_text(doc_state, method_name, arity: arity)
                 debug("Hover method-call text fast path: #{method_name}")
                 contents = MarkupContent.new("```crystal\n#{signature}\n```", markdown: true)
                 hover = Hover.new(contents: contents)
@@ -5231,6 +5239,10 @@ module CrystalV2
         end
 
         private def fast_unqualified_method_call_name_at_offset(source : String, offset : Int32) : String?
+          fast_unqualified_method_call_at_offset(source, offset).try(&.[0])
+        end
+
+        private def fast_unqualified_method_call_at_offset(source : String, offset : Int32) : {String, Int32?}?
           bounds = identifier_bounds_at_offset(source, offset)
           bounds ||= identifier_bounds_at_offset(source, offset - 1) if offset > 0
           return nil unless bounds
@@ -5252,7 +5264,61 @@ module CrystalV2
           return nil unless next_offset && source.byte_at(next_offset) == '('.ord
           return nil if local_assignment_before_offset?(source, method_name, start_offset)
 
-          method_name
+          {method_name, argument_count_in_parentheses(source, next_offset)}
+        rescue
+          nil
+        end
+
+        private def argument_count_in_parentheses(source : String, open_offset : Int32) : Int32?
+          return nil if open_offset < 0 || open_offset >= source.bytesize
+          return nil unless source.byte_at(open_offset) == '('.ord
+
+          pos = open_offset + 1
+          depth = 1
+          count = 0
+          saw_argument = false
+          quote = 0_u8
+          escaped = false
+
+          while pos < source.bytesize
+            byte = source.byte_at(pos)
+
+            if quote != 0
+              if escaped
+                escaped = false
+              elsif byte == '\\'.ord
+                escaped = true
+              elsif byte == quote
+                quote = 0_u8
+              end
+              pos += 1
+              next
+            end
+
+            case byte
+            when '"'.ord, '\''.ord
+              quote = byte
+            when '('.ord, '['.ord, '{'.ord
+              depth += 1
+              saw_argument = true if depth == 2
+            when ')'.ord, ']'.ord, '}'.ord
+              depth -= 1
+              if depth == 0
+                return saw_argument ? count + 1 : 0
+              end
+            when ','.ord
+              if depth == 1
+                count += 1
+                saw_argument = false
+              end
+            else
+              saw_argument = true unless byte == ' '.ord || byte == '\t'.ord || byte == '\n'.ord || byte == '\r'.ord
+            end
+
+            pos += 1
+          end
+
+          nil
         rescue
           nil
         end
@@ -11038,9 +11104,9 @@ module CrystalV2
           nil
         end
 
-        private def find_method_signature_by_text(doc_state : DocumentState, method_name : String, receiver_path : String? = nil) : String?
+        private def find_method_signature_by_text(doc_state : DocumentState, method_name : String, receiver_path : String? = nil, arity : Int32? = nil) : String?
           if receiver_path && File.file?(receiver_path)
-            if signature = find_method_signature_in_file(receiver_path, method_name)
+            if signature = find_method_signature_in_file(receiver_path, method_name, arity: arity)
               return signature
             end
           end
@@ -11049,7 +11115,7 @@ module CrystalV2
           if path = doc_state.path
             current = File.expand_path(path)
             visited << current
-            if signature = find_method_signature_in_path(current, method_name)
+            if signature = find_method_signature_in_path(current, method_name, arity: arity)
               return signature
             end
           end
@@ -11057,7 +11123,7 @@ module CrystalV2
           collect_dependency_paths(doc_state).each do |path|
             abs = File.expand_path(path)
             next unless visited.add?(abs)
-            return signature if signature = find_method_signature_in_path(abs, method_name)
+            return signature if signature = find_method_signature_in_path(abs, method_name, arity: arity)
           end
 
           nil
@@ -11073,12 +11139,12 @@ module CrystalV2
           nil
         end
 
-        private def find_method_signature_in_path(path : String, method_name : String) : String?
+        private def find_method_signature_in_path(path : String, method_name : String, arity : Int32? = nil) : String?
           return nil unless File.file?(path)
-          if signature = find_method_signature_in_file(path, method_name)
+          if signature = find_method_signature_in_file(path, method_name, arity: arity)
             return signature
           elsif method_name == "new"
-            return find_method_signature_in_file(path, "initialize", display_name: "new")
+            return find_method_signature_in_file(path, "initialize", display_name: "new", arity: arity)
           end
           nil
         end
@@ -11199,10 +11265,125 @@ module CrystalV2
           nil
         end
 
-        private def find_method_signature_in_file(path : String, method_name : String, display_name : String? = nil) : String?
+        private def matching_paren_index(source : String, open_index : Int32) : Int32?
+          depth = 0
+          quote = 0_u8
+          escaped = false
+          pos = open_index
+
+          while pos < source.bytesize
+            byte = source.byte_at(pos)
+            if quote != 0
+              if escaped
+                escaped = false
+              elsif byte == '\\'.ord
+                escaped = true
+              elsif byte == quote
+                quote = 0_u8
+              end
+              pos += 1
+              next
+            end
+
+            case byte
+            when '"'.ord, '\''.ord
+              quote = byte
+            when '('.ord
+              depth += 1
+            when ')'.ord
+              depth -= 1
+              return pos if depth == 0
+            end
+            pos += 1
+          end
+
+          nil
+        end
+
+        private def split_top_level_commas(source : String) : Array(String)
+          parts = [] of String
+          start = 0
+          depth = 0
+          quote = 0_u8
+          escaped = false
+          pos = 0
+
+          while pos < source.bytesize
+            byte = source.byte_at(pos)
+            if quote != 0
+              if escaped
+                escaped = false
+              elsif byte == '\\'.ord
+                escaped = true
+              elsif byte == quote
+                quote = 0_u8
+              end
+              pos += 1
+              next
+            end
+
+            case byte
+            when '"'.ord, '\''.ord
+              quote = byte
+            when '('.ord, '['.ord, '{'.ord
+              depth += 1
+            when ')'.ord, ']'.ord, '}'.ord
+              depth -= 1 if depth > 0
+            when ','.ord
+              if depth == 0
+                parts << source.byte_slice(start, pos - start)
+                start = pos + 1
+              end
+            end
+            pos += 1
+          end
+
+          parts << source.byte_slice(start, source.bytesize - start)
+          parts
+        end
+
+        private def top_level_contains?(source : String, target : Char) : Bool
+          depth = 0
+          quote = 0_u8
+          escaped = false
+          target_byte = target.ord.to_u8
+          pos = 0
+
+          while pos < source.bytesize
+            byte = source.byte_at(pos)
+            if quote != 0
+              if escaped
+                escaped = false
+              elsif byte == '\\'.ord
+                escaped = true
+              elsif byte == quote
+                quote = 0_u8
+              end
+              pos += 1
+              next
+            end
+
+            case byte
+            when '"'.ord, '\''.ord
+              quote = byte
+            when '('.ord, '['.ord, '{'.ord
+              depth += 1
+            when ')'.ord, ']'.ord, '}'.ord
+              depth -= 1 if depth > 0
+            else
+              return true if depth == 0 && byte == target_byte
+            end
+            pos += 1
+          end
+
+          false
+        end
+
+        private def find_method_signature_in_file(path : String, method_name : String, display_name : String? = nil, arity : Int32? = nil) : String?
           deadline = Time.instant + 100.milliseconds
           text = File.read(path)
           pattern = /def\s+(?:self\.|[A-Za-z0-9_:]+\.)?#{Regex.escape(method_name)}\b/
+          first_signature = nil
 
           text.each_line do |line|
             Watchdog.check!
@@ -11212,10 +11393,53 @@ module CrystalV2
             next unless pattern.matches?(line)
 
             signature = stripped.chomp
-            return apply_signature_display_name(signature, method_name, display_name)
+            signature = apply_signature_display_name(signature, method_name, display_name)
+            return signature if arity.nil? || signature_accepts_arity?(signature, arity.not_nil!)
+            first_signature ||= signature
           end
 
+          first_signature
+        rescue
           nil
+        end
+
+        private def signature_accepts_arity?(signature : String, arity : Int32) : Bool
+          range = signature_arity_range(signature)
+          return false unless range
+          min_arity, max_arity = range
+          arity >= min_arity && arity <= max_arity
+        end
+
+        private def signature_arity_range(signature : String) : {Int32, Int32}?
+          open_index = signature.index('(')
+          return {0, 0} unless open_index
+
+          close_index = matching_paren_index(signature, open_index)
+          return nil unless close_index
+          params_source = signature.byte_slice(open_index + 1, close_index - open_index - 1).strip
+          return {0, 0} if params_source.empty?
+
+          params = split_top_level_commas(params_source)
+          min_arity = 0
+          max_arity = 0
+
+          params.each do |param|
+            stripped = param.strip
+            next if stripped.empty?
+            next if stripped.starts_with?('&')
+
+            if stripped.starts_with?("**")
+              next
+            elsif stripped.starts_with?('*')
+              max_arity = Int32::MAX
+              next
+            end
+
+            max_arity += 1 unless max_arity == Int32::MAX
+            min_arity += 1 unless top_level_contains?(stripped, '=')
+          end
+
+          {min_arity, max_arity}
         rescue
           nil
         end
@@ -11306,7 +11530,7 @@ module CrystalV2
                 io << '('
                 params.each_with_index do |param, index|
                   io << ", " if index > 0
-                  append_parameter_signature(io, param)
+                  append_parameter_signature(io, param, source_text)
                 end
                 io << ')'
               else
