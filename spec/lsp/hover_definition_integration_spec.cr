@@ -371,6 +371,27 @@ describe CrystalV2::Compiler::LSP::Server do
     FileUtils.rm_rf(dir) if dir
   end
 
+  it "keeps fully qualified stdlib receiver signatures receiver-local" do
+    instant_path = File.expand_path("../../../crystal/src/time/instant.cr", __DIR__)
+    source = File.read(instant_path)
+
+    server = CrystalV2::Compiler::LSP::Server.new(
+      IO::Memory.new,
+      IO::Memory.new,
+      CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
+    )
+    uri = server.spec_store_document(source, File.dirname(instant_path), instant_path)
+
+    call_line, call_char = lsp_line_char(source, "Crystal::System::Time.instant", delta: "Crystal::System::Time.".bytesize + 2)
+    hover = server.spec_hover(uri, call_line, call_char)
+    hover["result"]["contents"]["value"].as_s.should contain("def self.instant")
+    hover["result"]["contents"]["value"].as_s.should_not contain("def Time.instant")
+
+    definition = server.spec_definition(uri, call_line, call_char)
+    location = definition["result"].as_a.first
+    location["uri"].as_s.should end_with("/crystal/system/time.cr")
+  end
+
   it "returns AST document symbols without depending on semantic symbol tables" do
     dir = File.join(Dir.tempdir, "lsp_doc_symbols_#{Random::Secure.hex(6)}")
     FileUtils.mkdir_p(dir)

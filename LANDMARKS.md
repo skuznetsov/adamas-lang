@@ -7276,6 +7276,55 @@ Adversary notes:
 
 Trust: {F/G/R: 0.90/0.50/0.91} [verified]
 
+### LM-647 - Qualified constant receiver signatures stay receiver-local
+
+Fully qualified uppercase receiver calls now resolve hover and definition only
+through the receiver's source file. The previous constant-member text fast path
+could fail to locate nested stdlib receiver files such as
+`crystal/system/time.cr`, then fall back to an unqualified method search. For
+`Crystal::System::Time.instant` inside `time/instant.cr`, that fallback picked
+the nearby wrapper `def Time.instant : Time::Instant` instead of the receiver
+implementation `def self.instant`.
+
+The namespace path search now adds direct nested stdlib candidates such as
+`crystal/system/time.cr` and the containing namespace directory before broader
+fallback paths. Constant-member hover uses `find_method_signature_in_path` only
+after the receiver path is resolved, and constant-member definition no longer
+falls back to unqualified method lookup when receiver resolution fails.
+
+Evidence:
+
+- `logs/vscode_debug.log` showed
+  `Hover constant-member text fast path: Crystal::System::Time.instant` on
+  `time/instant.cr`, while the UI displayed the wrapper signature
+  `def Time.instant : Time::Instant`.
+- Focused regression opens the real `../crystal/src/time/instant.cr`, hovers
+  `Crystal::System::Time.instant`, asserts the hover contains
+  `def self.instant` and not `def Time.instant`, and asserts definition points
+  at `/crystal/system/time.cr`.
+- `crystal tool format --check src/compiler/lsp/server.cr
+  spec/lsp/hover_definition_integration_spec.cr` -> exit 0.
+- `scripts/run_safe.sh crystal 180 4096 spec
+  spec/lsp/hover_definition_integration_spec.cr` -> 13 examples, 0 failures.
+- `scripts/run_safe.sh crystal 300 4096 spec spec/lsp` -> 264 examples,
+  0 failures.
+- `./build_lsp_debug.sh` rebuilt `bin/crystal_v2_lsp` successfully.
+
+Adversary notes:
+
+- The fix deliberately removes a symptom-prone fallback for uppercase receiver
+  calls. If the receiver cannot be resolved, returning no fast-path answer is
+  safer than selecting an unrelated same-name method in the current file.
+- Unqualified method calls still use the existing broad source-text search;
+  this change only narrows receiver-qualified constant-member calls.
+- LTP/WBA shape: trigger is a qualified uppercase receiver whose direct source
+  file is missing from the candidate corridor; transport carries the namespace
+  segments into a bounded stdlib path candidate; legal move keeps hover and
+  definition inside the resolved receiver file; potential decreases from
+  receiver-erased same-name fallback to receiver-local signature/target.
+
+Trust: {F/G/R: 0.91/0.45/0.91} [verified]
+
 ## LM-583 — LSP foreground hover avoids workspace reference scans by default
 
 Status: verified for the focused LSP hover/cache/harness slice on `codegen`.

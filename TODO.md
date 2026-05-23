@@ -238,6 +238,10 @@ range needed for clickable-source decoration.
 After LM-646, AST-owned unary/binary operators also emit semantic-token
 `operator` ranges, and the disk semantic-token cache moved to v3 so unchanged
 large stdlib files do not serve stale pre-operator-token JSON.
+After LM-647, fully qualified uppercase receiver hover/definition stays
+receiver-local: `Crystal::System::Time.instant` resolves to
+`crystal/system/time.cr` and hovers as `def self.instant`, rather than falling
+back to the nearby `def Time.instant` wrapper.
 
 Spec-first bootstrap checkpoint (2026-05-08): `docs/specs/` now contains the
 first executable contract slice for Crystal V2, modeled after the DiamondDB

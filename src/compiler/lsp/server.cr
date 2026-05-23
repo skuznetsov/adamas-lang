@@ -4905,15 +4905,16 @@ module CrystalV2
                   return
                 end
               elsif receiver_name[0]?.try(&.uppercase?)
-                receiver_path = constant_receiver_source_path(doc_state, receiver_name)
-                signature = find_method_signature_by_text(doc_state, method_name, receiver_path, arity: arity)
-                if signature
-                  debug("Hover constant-member text fast path: #{receiver_name}.#{method_name}")
-                  contents = MarkupContent.new("```crystal\n#{signature}\n```", markdown: true)
-                  hover = Hover.new(contents: contents)
-                  send_response(id, hover.to_json)
-                  debug("Hover completed in #{elapsed_ms_since(started_at)}ms -> hit(constant-member-text)")
-                  return
+                if receiver_path = constant_receiver_source_path(doc_state, receiver_name)
+                  signature = find_method_signature_in_path(receiver_path, method_name, arity: arity)
+                  if signature
+                    debug("Hover constant-member text fast path: #{receiver_name}.#{method_name}")
+                    contents = MarkupContent.new("```crystal\n#{signature}\n```", markdown: true)
+                    hover = Hover.new(contents: contents)
+                    send_response(id, hover.to_json)
+                    debug("Hover completed in #{elapsed_ms_since(started_at)}ms -> hit(constant-member-text)")
+                    return
+                  end
                 end
               end
             end
@@ -5845,7 +5846,6 @@ module CrystalV2
               if receiver_path = constant_receiver_source_path(doc_state, receiver_name)
                 location = find_method_location_in_path(receiver_path, method_name, arity: arity)
               end
-              location ||= find_method_location_by_text(doc_state, method_name, arity: arity)
               if location
                 send_response(id, [location].to_json)
                 debug("Definition completed in #{elapsed_ms_since(started_at)}ms -> hit(constant-member-text)")
@@ -10881,6 +10881,15 @@ module CrystalV2
             # First check the main module file (e.g., json.cr for JSON::ParseException)
             main_module_file = File.join(stdlib_path, "#{parts.first.downcase}.cr")
             priority_paths << main_module_file if File.file?(main_module_file)
+            nested_namespace_path = parts.map(&.downcase).join("/")
+            nested_file = File.join(stdlib_path, nested_namespace_path) + ".cr"
+            priority_paths << nested_file if File.file?(nested_file)
+            if parts.size > 1
+              nested_dir = File.join(stdlib_path, parts[0...-1].map(&.downcase).join("/"))
+              if Dir.exists?(nested_dir)
+                Dir.glob(File.join(nested_dir, "*.cr")).each { |f| priority_paths << f }
+              end
+            end
             # Then check namespace subdirectory to search paths (e.g., json/*.cr for JSON::*)
             namespace_dir = File.join(stdlib_path, parts.first.downcase)
             if Dir.exists?(namespace_dir)
