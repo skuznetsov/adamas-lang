@@ -187,6 +187,72 @@ describe CrystalV2::Compiler::LSP::Server do
     FileUtils.rm_rf(dir) if dir
   end
 
+  it "hovers bang member calls without parentheses" do
+    dir = File.join(Dir.tempdir, "lsp_hover_bang_member_#{Random::Secure.hex(6)}")
+    FileUtils.mkdir_p(dir)
+    path = File.join(dir, "main.cr")
+    source = <<-CR
+    class Converter
+      def self.convert(value)
+        value.to_i8!
+      end
+
+      def to_i8 : Int8
+        0_i8
+      end
+
+      def to_i8! : Int8
+        1_i8
+      end
+    end
+    CR
+    File.write(path, source)
+
+    server = CrystalV2::Compiler::LSP::Server.new(
+      IO::Memory.new,
+      IO::Memory.new,
+      CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
+    )
+    uri = server.spec_store_document(source, dir, path)
+
+    call_line, call_char = lsp_line_char(source, "to_i8!", delta: 3)
+    call_hover = server.spec_hover(uri, call_line, call_char)
+    call_hover["result"]["contents"]["value"].as_s.should contain("def to_i8! : Int8")
+
+    def_line, _def_char = lsp_line_char(source, "def to_i8! : Int8", delta: 5)
+    call_definition = server.spec_definition(uri, call_line, call_char)
+    call_definition["result"].as_a.first["range"]["start"]["line"].as_i.should eq(def_line)
+  ensure
+    FileUtils.rm_rf(dir) if dir
+  end
+
+  it "synthesizes hover for generated numeric bang conversions" do
+    dir = File.join(Dir.tempdir, "lsp_hover_generated_numeric_#{Random::Secure.hex(6)}")
+    FileUtils.mkdir_p(dir)
+    path = File.join(dir, "main.cr")
+    source = <<-CR
+    class Converter
+      def self.convert(value)
+        value.to_i8!
+      end
+    end
+    CR
+    File.write(path, source)
+
+    server = CrystalV2::Compiler::LSP::Server.new(
+      IO::Memory.new,
+      IO::Memory.new,
+      CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
+    )
+    uri = server.spec_store_document(source, dir, path)
+
+    call_line, call_char = lsp_line_char(source, "to_i8!", delta: 3)
+    call_hover = server.spec_hover(uri, call_line, call_char)
+    call_hover["result"]["contents"]["value"].as_s.should contain("def to_i8! : Int8")
+  ensure
+    FileUtils.rm_rf(dir) if dir
+  end
+
   it "returns AST document symbols without depending on semantic symbol tables" do
     dir = File.join(Dir.tempdir, "lsp_doc_symbols_#{Random::Secure.hex(6)}")
     FileUtils.mkdir_p(dir)

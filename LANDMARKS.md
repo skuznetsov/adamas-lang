@@ -6990,6 +6990,45 @@ Adversary notes:
 
 Trust: {F/G/R: 0.87/0.44/0.90} [verified]
 
+### LM-640 - Hover recognizes bare bang numeric conversion calls
+
+Member-call hover now treats trailing `!`/`?` as part of a method name and
+accepts bare zero-argument member calls without requiring parentheses. This
+closes the `value.to_i8!` shape in `Int8.new!(value)`, where the old extractor
+stopped at `to_i8`, then missed because there was no following `(`.
+
+When the source-text lookup still cannot find a real `def` because Crystal's
+numeric conversion methods are generated, hover uses a narrow synthetic
+signature for generated integer conversion bangs such as `to_i8!`:
+`def to_i8! : Int8`. Definition does not synthesize a fake source location for
+those generated methods.
+
+Evidence:
+
+- Focused regressions cover a textual `def to_i8! : Int8` after a `def to_i8`
+  prefix trap, plus a generated-conversion shape with no textual `def`.
+- Real LSP stdio harness against
+  `/Users/sergey/Projects/Crystal/crystal/src/int.cr` at
+  `Int8.new!(value)` returned hover `def to_i8! : Int8`.
+- `./build_lsp_debug.sh` rebuilt `bin/crystal_v2_lsp` successfully.
+- `scripts/run_safe.sh crystal 180 4096 spec
+  spec/lsp/hover_definition_integration_spec.cr` -> 9 examples, 0 failures.
+- `scripts/run_safe.sh crystal 300 4096 spec spec/lsp` -> 259 examples,
+  0 failures.
+
+Adversary notes:
+
+- This is not a broad generated-method model. The synthetic fallback is
+  limited to zero-argument `to_i*/to_u*` bang integer conversions.
+- The text lookup boundary was tightened so searching for `to_i8` does not
+  accidentally match `to_i8!`.
+- LTP/WBA shape: trigger is a local member-call token with a bang/question
+  suffix; transport carries the suffix and zero-arg boundary through the hover
+  text corridor; the dual frame is a narrow synthetic signature only when no
+  source `def` exists.
+
+Trust: {F/G/R: 0.87/0.43/0.90} [verified]
+
 ## LM-583 — LSP foreground hover avoids workspace reference scans by default
 
 Status: verified for the focused LSP hover/cache/harness slice on `codegen`.

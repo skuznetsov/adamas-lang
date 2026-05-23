@@ -212,6 +212,10 @@ into source-text method location lookup and keys the method-location cache by
 arity. On the real `pcg32.cr` stdio harness, the two-argument `new_seed(...)`
 call now hovers as the parameterized overload and go-to-definition points at
 that same overload instead of the zero-argument wrapper.
+After LM-640, hover also recognizes bare zero-argument member calls whose method
+name ends in `!`/`?`. The real `int.cr` `value.to_i8!` request now returns
+`def to_i8! : Int8`; because that numeric conversion is generated, hover uses
+a narrow synthetic signature rather than inventing a fake definition location.
 
 Spec-first bootstrap checkpoint (2026-05-08): `docs/specs/` now contains the
 first executable contract slice for Crystal V2, modeled after the DiamondDB
