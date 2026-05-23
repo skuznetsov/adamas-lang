@@ -74,6 +74,7 @@ module CrystalV2
         @method_candidates_cache : Hash(MethodCandidatesKey, Array(MethodSymbol))
         @responds_to_narrowing_cache : Hash(RespondsToNarrowingKey, Type?)
         @parse_type_cache : Hash(String, Type)
+        @parse_type_in_progress : Set(String)
         @class_type_cache : Hash(ClassSymbol, ClassType)
         @module_type_cache : Hash(ModuleSymbol, ModuleType)
         @instance_type_cache : Hash(ClassSymbol, InstanceType)
@@ -202,6 +203,7 @@ module CrystalV2
           @method_candidates_cache = {} of MethodCandidatesKey => Array(MethodSymbol)
           @responds_to_narrowing_cache = {} of RespondsToNarrowingKey => Type?
           @parse_type_cache = {} of String => Type
+          @parse_type_in_progress = Set(String).new
           @class_type_cache = {} of ClassSymbol => ClassType
           @module_type_cache = {} of ModuleSymbol => ModuleType
           @instance_type_cache = {} of ClassSymbol => InstanceType
@@ -3267,6 +3269,19 @@ module CrystalV2
             return cached
           end
 
+          if @parse_type_in_progress.includes?(name)
+            return unknown_type
+          end
+
+          @parse_type_in_progress.add(name)
+          begin
+            parse_type_name_uncached(name)
+          ensure
+            @parse_type_in_progress.delete(name)
+          end
+        end
+
+        private def parse_type_name_uncached(name : String) : Type
           if prim = primitive_type_for(name)
             return @parse_type_cache[name] = prim
           end
@@ -3365,6 +3380,10 @@ module CrystalV2
             return resolve_scoped_symbol(name)
           end
 
+          lookup_unqualified_type_symbol(name)
+        end
+
+        private def lookup_unqualified_type_symbol(name : String) : Symbol?
           if current_class = @current_class
             if symbol = current_class.scope.lookup(name)
               return symbol
@@ -3427,6 +3446,10 @@ module CrystalV2
 
         # Resolve a scoped name like Folding::Core::Protein against the global symbol table.
         private def resolve_scoped_symbol(name : String) : Symbol?
+          resolve_scoped_symbol(name, Set(UInt64).new)
+        end
+
+        private def resolve_scoped_symbol(name : String, resolving_aliases : Set(UInt64)) : Symbol?
           guard_watchdog!
 
           return nil unless table = @global_table
@@ -3448,8 +3471,19 @@ module CrystalV2
             return nil if i <= start
 
             seg = intern_path_segment(name, start, i)
-            sym = current_table.try(&.lookup(seg))
+            sym =
+              if current_symbol.nil?
+                lookup_unqualified_type_symbol(seg) || table.lookup(seg)
+              else
+                current_table.try(&.lookup(seg))
+              end
             return nil unless sym
+
+            if sym.is_a?(AliasSymbol) && !at_end
+              sym = resolve_alias_target_symbol(sym, resolving_aliases)
+              return nil unless sym
+            end
+
             current_symbol = sym
             case sym
             when ModuleSymbol
@@ -3468,6 +3502,21 @@ module CrystalV2
           end
 
           current_symbol
+        end
+
+        private def resolve_alias_target_symbol(symbol : AliasSymbol, resolving_aliases : Set(UInt64)) : Symbol?
+          key = symbol.object_id.to_u64
+          return nil if resolving_aliases.includes?(key)
+
+          resolving_aliases.add(key)
+          target = symbol.target
+          result = if target.includes?("::")
+                     resolve_scoped_symbol(target, resolving_aliases)
+                   else
+                     lookup_unqualified_type_symbol(target)
+                   end
+          resolving_aliases.delete(key)
+          result
         end
 
         # Find a class symbol by matching the rightmost segment across global table (fallback).

@@ -7385,6 +7385,57 @@ Adversary notes:
 
 Trust: {F/G/R: 0.90/0.48/0.91} [verified]
 
+### LM-649 - LSP semantic type lookup resolves scoped aliases through alias heads
+
+Opening DiamondDB's `src/diamond_foundation.cr` exposed a stack overflow in
+semantic type inference while loading dependencies. The reduced root was a
+lexical scoped-alias corridor:
+`Plan = DiamondFoundation::Storage::ClusterBackupPlan`, followed by aliases
+and annotations such as `Replica = Plan::Replica` and
+`{Plan::Partition, Plan::PersistedBackup}`. `parse_type_name("Plan::Replica")`
+could miss the lexical alias head, fall back to the `Replica` alias by leaf
+name, and recurse through `type_from_symbol`.
+
+Scoped type-symbol lookup now resolves the first segment through the current
+lexical type scope and can transport through an alias head before continuing
+the remaining path. `parse_type_name` also has an exact in-progress set so a
+real alias cycle degrades to `Unknown` instead of overflowing the LSP process.
+
+Evidence:
+
+- Reduced semantic regression covers the DiamondDB alias shape and asserts
+  concrete inferred names for `Replica`, `ReplicaState`, and
+  `Tuple(Partition, PersistedBackup)`.
+- `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 120 2048 spec
+  spec/semantic/type_inference_scoped_alias_spec.cr --error-trace` -> 1
+  example, 0 failures.
+- Real LSP harness against
+  `/Users/sergey/Projects/Crystal/DiamondDB/src/diamond_foundation.cr` after
+  rebuilding `bin/crystal_v2_lsp` -> `didOpen` settled in about 1478.8ms,
+  loaded 63 requires, published 0 diagnostics, and exited 0.
+- `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 240 4096 spec
+  spec/semantic/type_inference_scoped_alias_spec.cr
+  spec/lsp/hover_definition_integration_spec.cr --error-trace` -> 15 examples,
+  0 failures.
+- `git diff --check` -> exit 0.
+
+Adversary notes:
+
+- This is not a depth cap. The guard is keyed to the exact active type-name
+  window, and the semantic fix resolves the alias-head path rather than merely
+  bailing out.
+- Alias transport only happens for non-final path segments. Final aliases keep
+  the existing alias-symbol flow and parse their target normally.
+- The DiamondDB harness is an external-workspace smoke, not a repository unit
+  test dependency; the checked-in regression keeps the minimized shape local.
+- LTP/WBA shape: trigger is a scoped type name whose first segment is a
+  lexical alias; transport carries the alias target's symbol scope across the
+  remaining `::` path; legal move preserves symbol tables and caches; potential
+  decreases from repeated `(type_name, alias)` recursion to a resolved member
+  symbol, with the in-progress set as the dual frame for true alias cycles.
+
+Trust: {F/G/R: 0.91/0.50/0.91} [verified]
+
 ## LM-583 — LSP foreground hover avoids workspace reference scans by default
 
 Status: verified for the focused LSP hover/cache/harness slice on `codegen`.

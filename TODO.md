@@ -1,6 +1,6 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-05-22
+Updated: 2026-05-23
 Branch: `main`
 
 This is the active working backlog only. Historical detail is in git history,
@@ -250,6 +250,11 @@ The VS Code language configuration also treats Crystal operator tokens such as
 `&-` and `<=>` as word-pattern units, so the editor can decorate the same
 operator span that the server already returns through hover, definition, and
 semantic tokens.
+After LM-649, DiamondDB's full `src/diamond_foundation.cr` open no longer
+crashes the LSP server on scoped alias-head type names such as
+`Plan::Replica`. The semantic resolver now transports through lexical alias
+heads before resolving the rest of a `::` path, and an exact in-progress
+type-name guard keeps true alias cycles from stack-overflowing.
 
 Spec-first bootstrap checkpoint (2026-05-08): `docs/specs/` now contains the
 first executable contract slice for Crystal V2, modeled after the DiamondDB
