@@ -225,6 +225,10 @@ After LM-642, the `expand_div` call itself is covered too: no-parentheses
 member calls with uppercase receivers resolve the receiver source and index
 `macro` declarations, so hover returns
 `macro expand_div(rhs_types, result_type)` and definition opens `number.cr`.
+After LM-643, `Int#abs_unsigned`-style ternary branches are covered: `&-`
+hovers as a wrapping primitive operator and `to_u8!` reaches the generated
+conversion fallback even after a ternary `:`, with definitions anchored in
+`primitives.cr`.
 
 Spec-first bootstrap checkpoint (2026-05-08): `docs/specs/` now contains the
 first executable contract slice for Crystal V2, modeled after the DiamondDB

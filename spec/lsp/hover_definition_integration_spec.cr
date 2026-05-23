@@ -294,6 +294,45 @@ describe CrystalV2::Compiler::LSP::Server do
     FileUtils.rm_rf(dir) if dir
   end
 
+  it "hovers wrapping operators and unqualified generated bang conversions" do
+    dir = File.join(Dir.tempdir, "lsp_hover_wrapping_operator_#{Random::Secure.hex(6)}")
+    FileUtils.mkdir_p(dir)
+    path = File.join(dir, "main.cr")
+    source = <<-CR
+    struct Int8
+      def abs_unsigned : UInt8
+        self < 0 ? 0_u8 &- self : to_u8!
+      end
+    end
+    CR
+    File.write(path, source)
+
+    server = CrystalV2::Compiler::LSP::Server.new(
+      IO::Memory.new,
+      IO::Memory.new,
+      CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
+    )
+    uri = server.spec_store_document(source, dir, path)
+
+    operator_line, operator_char = lsp_line_char(source, "&- self", delta: 1)
+    operator_hover = server.spec_hover(uri, operator_line, operator_char)
+    operator_hover["result"]["contents"]["value"].as_s.should contain("def &-(other) : self")
+
+    operator_definition = server.spec_definition(uri, operator_line, operator_char)
+    operator_location = operator_definition["result"].as_a.first
+    operator_location["uri"].as_s.should end_with("/primitives.cr")
+
+    conversion_line, conversion_char = lsp_line_char(source, "to_u8!", delta: 3)
+    conversion_hover = server.spec_hover(uri, conversion_line, conversion_char)
+    conversion_hover["result"]["contents"]["value"].as_s.should contain("def to_u8! : UInt8")
+
+    conversion_definition = server.spec_definition(uri, conversion_line, conversion_char)
+    conversion_location = conversion_definition["result"].as_a.first
+    conversion_location["uri"].as_s.should end_with("/primitives.cr")
+  ensure
+    FileUtils.rm_rf(dir) if dir
+  end
+
   it "returns AST document symbols without depending on semantic symbol tables" do
     dir = File.join(Dir.tempdir, "lsp_doc_symbols_#{Random::Secure.hex(6)}")
     FileUtils.mkdir_p(dir)

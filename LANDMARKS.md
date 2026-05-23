@@ -7114,6 +7114,46 @@ Adversary notes:
 
 Trust: {F/G/R: 0.88/0.45/0.90} [verified]
 
+### LM-643 - LSP recognizes ternary bang conversions and wrapping operators
+
+The LSP hover fast path now covers two additional shallow stdlib forms from
+`Int#abs_unsigned`: unqualified generated bang conversions after a ternary
+colon, and wrapping binary primitive operators such as `&-`.
+
+Root causes:
+
+- Unqualified bang conversion calls rejected any preceding `:`, so the
+  `to_u8!` branch in `self < 0 ? 0_u8 &- self : to_u8!` never reached the
+  synthetic primitive-conversion fallback.
+- `&-` is an operator token, not an identifier, so the identifier-based method
+  scanner could only fall through to semantic `Unknown`.
+
+Evidence:
+
+- Focused regression covers `0_u8 &- self : to_u8!`: `&-` hovers as
+  `def &-(other) : self` and definition points to `/primitives.cr`; `to_u8!`
+  hovers as `def to_u8! : UInt8` and definition also points to
+  `/primitives.cr`.
+- `scripts/run_safe.sh crystal 180 4096 spec
+  spec/lsp/hover_definition_integration_spec.cr` -> 11 examples, 0 failures.
+- `./build_lsp_debug.sh` rebuilt `bin/crystal_v2_lsp` successfully.
+- Real LSP stdio harness against
+  `/Users/sergey/Projects/Crystal/crystal/src/int.cr` line 1032 returned both
+  hovers and both primitive-template definitions.
+
+Adversary notes:
+
+- The ternary-colon fix only relaxes a single `:` before unqualified method
+  names; `::` still blocks the unqualified-call path.
+- Operator recognition is intentionally narrow to wrapping binary primitive
+  operators `&+`, `&-`, and `&*`, with a plausible RHS requirement.
+- LTP/WBA shape: trigger is a local ternary branch or operator token hover
+  window; transport maps the shallow token to the already-certified primitive
+  template; potential decreases from `Unknown` to stable primitive anchor
+  without changing semantic fallback.
+
+Trust: {F/G/R: 0.88/0.43/0.90} [verified]
+
 ## LM-583 — LSP foreground hover avoids workspace reference scans by default
 
 Status: verified for the focused LSP hover/cache/harness slice on `codegen`.

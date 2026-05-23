@@ -4856,12 +4856,26 @@ module CrystalV2
 
             if method_call = fast_unqualified_method_call_at_offset(doc_state.text_document.text, hover_offset)
               method_name, arity = method_call
-              if signature = find_method_signature_by_text(doc_state, method_name, arity: arity)
+              signature = find_method_signature_by_text(doc_state, method_name, arity: arity)
+              signature ||= synthetic_numeric_conversion_signature(method_name, arity)
+              if signature
                 debug("Hover method-call text fast path: #{method_name}")
                 contents = MarkupContent.new("```crystal\n#{signature}\n```", markdown: true)
                 hover = Hover.new(contents: contents)
                 send_response(id, hover.to_json)
                 debug("Hover completed in #{elapsed_ms_since(started_at)}ms -> hit(method-call-text)")
+                return
+              end
+            end
+
+            if operator_call = fast_wrapping_binary_operator_call_at_offset(doc_state.text_document.text, hover_offset)
+              operator_name, arity = operator_call
+              if signature = synthetic_wrapping_binary_operator_signature(operator_name, arity)
+                debug("Hover wrapping-operator text fast path: #{operator_name}")
+                contents = MarkupContent.new("```crystal\n#{signature}\n```", markdown: true)
+                hover = Hover.new(contents: contents)
+                send_response(id, hover.to_json)
+                debug("Hover completed in #{elapsed_ms_since(started_at)}ms -> hit(wrapping-operator-text)")
                 return
               end
             end
@@ -5292,7 +5306,8 @@ module CrystalV2
           previous_offset = previous_non_space_offset(source, start_offset)
           if previous_offset
             previous = source.byte_at(previous_offset)
-            return nil if previous == '.'.ord || previous == ':'.ord || previous == '@'.ord
+            return nil if previous == '.'.ord || previous == '@'.ord
+            return nil if previous == ':'.ord && previous_offset > 0 && source.byte_at(previous_offset - 1) == ':'.ord
           end
 
           arity = method_call_arity_after_name(source, end_offset, allow_bare: bang_or_question_method_name?(method_name))
@@ -5302,6 +5317,63 @@ module CrystalV2
           {method_name, arity}
         rescue
           nil
+        end
+
+        private def fast_wrapping_binary_operator_call_at_offset(source : String, offset : Int32) : {String, Int32}?
+          bounds = operator_name_bounds_at_offset(source, offset)
+          bounds ||= operator_name_bounds_at_offset(source, offset - 1) if offset > 0
+          return nil unless bounds
+
+          start_offset, end_offset = bounds
+          return nil if start_offset >= end_offset
+
+          operator_name = source.byte_slice(start_offset, end_offset - start_offset)
+          return nil unless wrapping_binary_operator?(operator_name)
+
+          previous_offset = previous_non_space_offset(source, start_offset)
+          next_offset = next_non_space_offset(source, end_offset)
+          return nil unless previous_offset && next_offset
+          return nil if zero_arg_boundary_char?(source.byte_at(next_offset))
+
+          {operator_name, 1}
+        rescue
+          nil
+        end
+
+        private def operator_name_bounds_at_offset(source : String, offset : Int32) : {Int32, Int32}?
+          return nil if source.empty?
+          pos = offset
+          pos = source.bytesize - 1 if pos >= source.bytesize
+          return nil if pos < 0
+          unless operator_name_char?(source.byte_at(pos))
+            return nil unless pos > 0 && operator_name_char?(source.byte_at(pos - 1))
+            pos -= 1
+          end
+
+          start_offset = pos
+          while start_offset > 0 && operator_name_char?(source.byte_at(start_offset - 1))
+            start_offset -= 1
+          end
+
+          end_offset = pos + 1
+          while end_offset < source.bytesize && operator_name_char?(source.byte_at(end_offset))
+            end_offset += 1
+          end
+
+          {start_offset, end_offset}
+        end
+
+        private def operator_name_char?(byte : UInt8) : Bool
+          case byte
+          when '&'.ord, '+'.ord, '-'.ord, '*'.ord
+            true
+          else
+            false
+          end
+        end
+
+        private def wrapping_binary_operator?(name : String) : Bool
+          name == "&+" || name == "&-" || name == "&*"
         end
 
         private def argument_count_in_parentheses(source : String, open_offset : Int32) : Int32?
@@ -5718,9 +5790,20 @@ module CrystalV2
 
           if method_call = fast_unqualified_method_call_at_offset(doc_state.text_document.text, offset)
             method_name, arity = method_call
-            if location = find_method_location_by_text(doc_state, method_name, arity: arity)
+            location = find_method_location_by_text(doc_state, method_name, arity: arity)
+            location ||= synthetic_numeric_conversion_location(method_name, arity)
+            if location
               send_response(id, [location].to_json)
               debug("Definition completed in #{elapsed_ms_since(started_at)}ms -> hit(method-call-text)")
+              return
+            end
+          end
+
+          if operator_call = fast_wrapping_binary_operator_call_at_offset(doc_state.text_document.text, offset)
+            operator_name, arity = operator_call
+            if location = synthetic_wrapping_binary_operator_location(operator_name, arity)
+              send_response(id, [location].to_json)
+              debug("Definition completed in #{elapsed_ms_since(started_at)}ms -> hit(wrapping-operator-text)")
               return
             end
           end
@@ -11687,6 +11770,39 @@ module CrystalV2
                 range: Range.new(
                   Position.new(line_index, start_column),
                   Position.new(line_index, start_column + "{{name.id}}!".bytesize)
+                )
+              )
+            end
+            line_index += 1
+          end
+
+          nil
+        rescue
+          nil
+        end
+
+        private def synthetic_wrapping_binary_operator_signature(operator_name : String, arity : Int32?) : String?
+          return nil unless arity == 1
+          return nil unless wrapping_binary_operator?(operator_name)
+
+          "def #{operator_name}(other) : self"
+        end
+
+        private def synthetic_wrapping_binary_operator_location(operator_name : String, arity : Int32?) : Location?
+          return nil unless synthetic_wrapping_binary_operator_signature(operator_name, arity)
+
+          path = File.join(File.dirname(PRELUDE_PATH), "primitives.cr")
+          return nil unless File.file?(path)
+
+          line_index = 0
+          File.each_line(path) do |line|
+            if line.includes?("def &{{op.id}}(other : {{int2.id}}) : self")
+              start_column = line.index("&{{op.id}}").not_nil!
+              return Location.new(
+                uri: file_uri(path),
+                range: Range.new(
+                  Position.new(line_index, start_column),
+                  Position.new(line_index, start_column + "&{{op.id}}".bytesize)
                 )
               )
             end
