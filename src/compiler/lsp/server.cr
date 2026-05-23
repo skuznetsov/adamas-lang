@@ -5514,8 +5514,9 @@ module CrystalV2
             return send_response(id, "null")
           end
 
-          if method_name = fast_unqualified_method_call_name_at_offset(doc_state.text_document.text, offset)
-            if location = find_method_location_by_text(doc_state, method_name)
+          if method_call = fast_unqualified_method_call_at_offset(doc_state.text_document.text, offset)
+            method_name, arity = method_call
+            if location = find_method_location_by_text(doc_state, method_name, arity: arity)
               send_response(id, [location].to_json)
               debug("Definition completed in #{elapsed_ms_since(started_at)}ms -> hit(method-call-text)")
               return
@@ -11086,12 +11087,12 @@ module CrystalV2
           results
         end
 
-        private def find_method_location_by_text(doc_state : DocumentState, method_name : String) : Location?
+        private def find_method_location_by_text(doc_state : DocumentState, method_name : String, arity : Int32? = nil) : Location?
           visited = Set(String).new
           if path = doc_state.path
             current = File.expand_path(path)
             visited << current
-            if location = find_method_location_in_path(current, method_name)
+            if location = find_method_location_in_path(current, method_name, arity: arity)
               return location
             end
           end
@@ -11099,7 +11100,7 @@ module CrystalV2
           collect_dependency_paths(doc_state).each do |path|
             abs = File.expand_path(path)
             next unless visited.add?(abs)
-            return location if location = find_method_location_in_path(abs, method_name)
+            return location if location = find_method_location_in_path(abs, method_name, arity: arity)
           end
           nil
         end
@@ -11129,12 +11130,12 @@ module CrystalV2
           nil
         end
 
-        private def find_method_location_in_path(path : String, method_name : String) : Location?
+        private def find_method_location_in_path(path : String, method_name : String, arity : Int32? = nil) : Location?
           return nil unless File.file?(path)
-          if location = find_method_in_file(path, method_name)
+          if location = find_method_in_file(path, method_name, arity: arity)
             return location
           elsif method_name == "new"
-            return find_method_in_file(path, "initialize")
+            return find_method_in_file(path, "initialize", arity: arity)
           end
           nil
         end
@@ -11218,8 +11219,8 @@ module CrystalV2
           nil
         end
 
-        private def find_method_in_file(path : String, method_name : String) : Location?
-          cache_key = "#{path}::#{method_name}"
+        private def find_method_in_file(path : String, method_name : String, arity : Int32? = nil) : Location?
+          cache_key = "#{path}::#{method_name}::#{arity.nil? ? "any" : arity}"
           if cached = @method_file_cache[cache_key]?
             return cached
           end
@@ -11228,6 +11229,7 @@ module CrystalV2
           pattern = /def\s+(?:self\.|[A-Za-z0-9_:]+\.)?#{Regex.escape(method_name)}/
           getter_pattern = /^\s*(getter|property)\s+#{Regex.escape(method_name)}\b/
           line_index = 0
+          first_location = nil
           text.each_line do |line|
             Watchdog.check!
             break if Time.instant > deadline
@@ -11245,8 +11247,8 @@ module CrystalV2
                 Position.new(line_index, start_column + method_name.bytesize)
               )
               loc = Location.new(uri: uri, range: range)
-              @method_file_cache[cache_key] = loc
-              return loc
+              return (@method_file_cache[cache_key] = loc) if arity.nil? || signature_accepts_arity?(stripped.chomp, arity.not_nil!)
+              first_location ||= loc
             end
             if match = getter_pattern.match(line)
               start_column = match.begin + match[0].rindex(method_name).not_nil!
@@ -11256,13 +11258,13 @@ module CrystalV2
                 Position.new(line_index, start_column + method_name.bytesize)
               )
               loc = Location.new(uri: uri, range: range)
-              @method_file_cache[cache_key] = loc
-              return loc
+              return (@method_file_cache[cache_key] = loc) if arity.nil? || arity == 0
+              first_location ||= loc
             end
             line_index += 1
           end
-          @method_file_cache[cache_key] = nil
-          nil
+          @method_file_cache[cache_key] = first_location
+          first_location
         end
 
         private def matching_paren_index(source : String, open_index : Int32) : Int32?

@@ -178,6 +178,9 @@ describe CrystalV2::Compiler::LSP::Server do
     call_hover["result"]["contents"]["value"].as_s.should contain("def new_seed(initstate : UInt64, initseq = 0_u64) : UInt32")
 
     def_line, def_char = lsp_line_char(source, "def new_seed(initstate", delta: 5)
+    call_definition = server.spec_definition(uri, call_line, call_char)
+    call_definition["result"].as_a.first["range"]["start"]["line"].as_i.should eq(def_line)
+
     def_hover = server.spec_hover(uri, def_line, def_char)
     def_hover["result"]["contents"]["value"].as_s.should contain("def new_seed(initstate : UInt64, initseq = 0_u64) : UInt32")
   ensure

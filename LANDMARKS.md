@@ -6953,6 +6953,43 @@ Adversary notes:
 
 Trust: {F/G/R: 0.86/0.44/0.89} [verified]
 
+### LM-639 - Definition method-call text fallback selects overloads by arity
+
+The unqualified definition fast path now carries the same call-site arity used
+by hover into source-text method location lookup. For overloaded methods, it
+returns the first same-name `def` whose signature accepts the call arity before
+falling back to the first textual match. The per-file method-location cache key
+includes arity so a previous zero-arg lookup cannot poison a later two-arg
+definition request.
+
+Evidence:
+
+- The focused regression extends the `new_seed` overload fixture so a
+  two-argument call resolves definition to
+  `def new_seed(initstate : UInt64, initseq = 0_u64) : UInt32`, matching the
+  hover selection instead of the zero-arg wrapper.
+- Real LSP stdio harness against
+  `/Users/sergey/Projects/Crystal/crystal/src/random/pcg32.cr` returned hover
+  `def new_seed(initstate : UInt64, initseq = 0_u64) : UInt32` and definition
+  location `line=62, character=6`, the parameterized overload.
+- `./build_lsp_debug.sh` rebuilt `bin/crystal_v2_lsp` successfully.
+- `scripts/run_safe.sh crystal 180 4096 spec
+  spec/lsp/hover_definition_integration_spec.cr` -> 7 examples, 0 failures.
+- `scripts/run_safe.sh crystal 300 4096 spec spec/lsp` -> 257 examples,
+  0 failures.
+
+Adversary notes:
+
+- This is still a bounded text fallback, not full Crystal overload resolution.
+  It fixes the local root where definition stayed name-only after hover became
+  arity-aware.
+- LTP/WBA shape: trigger is an unqualified call-site definition request;
+  transport is top-level argument count into the method-location corridor;
+  potential decreases from same-name overload ambiguity to arity-compatible
+  candidates while preserving the semantic resolver fallback boundary.
+
+Trust: {F/G/R: 0.87/0.44/0.90} [verified]
+
 ## LM-583 — LSP foreground hover avoids workspace reference scans by default
 
 Status: verified for the focused LSP hover/cache/harness slice on `codegen`.

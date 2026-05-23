@@ -207,6 +207,11 @@ call-site arity to choose between same-name overloads and source-backed
 signature formatting preserves default parameter values. This fixes the
 `Random::PCG32#new_seed` shape where hovering a two-argument call selected the
 zero-argument overload.
+After LM-639, the matching definition fast path also carries call-site arity
+into source-text method location lookup and keys the method-location cache by
+arity. On the real `pcg32.cr` stdio harness, the two-argument `new_seed(...)`
+call now hovers as the parameterized overload and go-to-definition points at
+that same overload instead of the zero-argument wrapper.
 
 Spec-first bootstrap checkpoint (2026-05-08): `docs/specs/` now contains the
 first executable contract slice for Crystal V2, modeled after the DiamondDB
