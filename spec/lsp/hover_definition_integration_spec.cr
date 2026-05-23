@@ -257,7 +257,7 @@ describe CrystalV2::Compiler::LSP::Server do
     FileUtils.rm_rf(dir) if dir
   end
 
-  it "hovers and defines stdlib type constants in macro argument lists" do
+  it "hovers and defines stdlib macro calls and type constants in macro argument lists" do
     dir = File.join(Dir.tempdir, "lsp_hover_macro_constant_#{Random::Secure.hex(6)}")
     FileUtils.mkdir_p(dir)
     path = File.join(dir, "main.cr")
@@ -274,6 +274,14 @@ describe CrystalV2::Compiler::LSP::Server do
       CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
     )
     uri = server.spec_store_document(source, dir, path)
+
+    macro_line, macro_char = lsp_line_char(source, "expand_div", delta: 4)
+    macro_hover = server.spec_hover(uri, macro_line, macro_char)
+    macro_hover["result"]["contents"]["value"].as_s.should contain("macro expand_div(rhs_types, result_type)")
+
+    macro_definition = server.spec_definition(uri, macro_line, macro_char)
+    macro_location = macro_definition["result"].as_a.first
+    macro_location["uri"].as_s.should end_with("/number.cr")
 
     const_line, const_char = lsp_line_char(source, "], Float64", delta: 4)
     hover = server.spec_hover(uri, const_line, const_char)

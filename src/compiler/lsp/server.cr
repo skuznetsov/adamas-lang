@@ -4890,6 +4890,17 @@ module CrystalV2
                   debug("Hover completed in #{elapsed_ms_since(started_at)}ms -> hit(member-call-suffix-text)")
                   return
                 end
+              elsif receiver_name[0]?.try(&.uppercase?)
+                receiver_path = constant_receiver_source_path(doc_state, receiver_name)
+                signature = find_method_signature_by_text(doc_state, method_name, receiver_path, arity: arity)
+                if signature
+                  debug("Hover constant-member text fast path: #{receiver_name}.#{method_name}")
+                  contents = MarkupContent.new("```crystal\n#{signature}\n```", markdown: true)
+                  hover = Hover.new(contents: contents)
+                  send_response(id, hover.to_json)
+                  debug("Hover completed in #{elapsed_ms_since(started_at)}ms -> hit(constant-member-text)")
+                  return
+                end
               end
             end
 
@@ -5369,7 +5380,7 @@ module CrystalV2
 
           receiver_name = source.byte_slice(receiver_start, receiver_end - receiver_start)
           receiver_first = receiver_name[0]?
-          return nil unless receiver_first && (receiver_first.lowercase? || receiver_first == '_')
+          return nil unless receiver_first && (receiver_first.lowercase? || receiver_first.uppercase? || receiver_first == '_')
 
           receiver_previous = previous_non_space_offset(source, receiver_start)
           if receiver_previous
@@ -5491,7 +5502,92 @@ module CrystalV2
 
           return nil unless allow_bare
           return 0 if bare_zero_arg_call_boundary?(source, end_offset)
+          bare_call_argument_count_after_name(source, end_offset)
+        end
+
+        private def bare_call_argument_count_after_name(source : String, offset : Int32) : Int32?
+          pos = next_non_space_offset(source, offset)
+          return 0 unless pos
+
+          first = source.byte_at(pos)
+          return 0 if zero_arg_boundary_char?(first)
+          return nil unless bare_argument_start_char?(first)
+
+          depth = 0
+          count = 1
+          saw_argument = false
+          quote = 0_u8
+          escaped = false
+
+          while pos < source.bytesize
+            byte = source.byte_at(pos)
+            if quote != 0
+              if escaped
+                escaped = false
+              elsif byte == '\\'.ord
+                escaped = true
+              elsif byte == quote
+                quote = 0_u8
+              end
+              pos += 1
+              next
+            end
+
+            case byte
+            when '"'.ord, '\''.ord
+              quote = byte
+              saw_argument = true
+            when '('.ord, '['.ord, '{'.ord
+              depth += 1
+              saw_argument = true
+            when ')'.ord, ']'.ord, '}'.ord
+              if depth == 0
+                return saw_argument ? count : 0
+              end
+              depth -= 1
+            when ','.ord
+              if depth == 0
+                count += 1
+                saw_argument = false
+              else
+                saw_argument = true
+              end
+            when '\n'.ord, '\r'.ord, '#'.ord, ';'.ord
+              return saw_argument ? count : 0 if depth == 0
+              saw_argument = true
+            else
+              saw_argument = true unless byte == ' '.ord || byte == '\t'.ord
+            end
+
+            pos += 1
+          end
+
+          saw_argument ? count : 0
+        rescue
           nil
+        end
+
+        private def zero_arg_boundary_char?(byte : UInt8) : Bool
+          case byte
+          when '\n'.ord, '\r'.ord, '#'.ord, ';'.ord, ','.ord, ')'.ord, ']'.ord, '}'.ord
+            true
+          else
+            false
+          end
+        end
+
+        private def bare_argument_start_char?(byte : UInt8) : Bool
+          ('a'.ord <= byte && byte <= 'z'.ord) ||
+            ('A'.ord <= byte && byte <= 'Z'.ord) ||
+            ('0'.ord <= byte && byte <= '9'.ord) ||
+            byte == '_'.ord ||
+            byte == '@'.ord ||
+            byte == ':'.ord ||
+            byte == '"'.ord ||
+            byte == '\''.ord ||
+            byte == '['.ord ||
+            byte == '{'.ord ||
+            byte == '('.ord
         end
 
         private def bare_zero_arg_call_boundary?(source : String, offset : Int32) : Bool
@@ -5582,6 +5678,17 @@ module CrystalV2
           find_method_signature_in_path(path, method_name, arity: arity)
         end
 
+        private def constant_receiver_source_path(doc_state : DocumentState, receiver_name : String) : String?
+          return nil unless receiver_name[0]?.try(&.uppercase?)
+          location = find_constant_location_by_text(doc_state, receiver_name)
+          return nil unless location
+          path = uri_to_path(location.uri)
+          return path if path && File.file?(path)
+          nil
+        rescue
+          nil
+        end
+
         private def collect_method_completions_for_receiver_type(doc_state : DocumentState, type_name : String, items : Array(CompletionItem)) : Nil
           return unless path = resolved_type_file_path(doc_state, type_name)
           seen = Set(String).new
@@ -5634,6 +5741,17 @@ module CrystalV2
               if location
                 send_response(id, [location].to_json)
                 debug("Definition completed in #{elapsed_ms_since(started_at)}ms -> hit(member-call-suffix-text)")
+                return
+              end
+            elsif receiver_name[0]?.try(&.uppercase?)
+              location = nil
+              if receiver_path = constant_receiver_source_path(doc_state, receiver_name)
+                location = find_method_location_in_path(receiver_path, method_name, arity: arity)
+              end
+              location ||= find_method_location_by_text(doc_state, method_name, arity: arity)
+              if location
+                send_response(id, [location].to_json)
+                debug("Definition completed in #{elapsed_ms_since(started_at)}ms -> hit(constant-member-text)")
                 return
               end
             end
@@ -11339,7 +11457,7 @@ module CrystalV2
           end
           deadline = Time.instant + 100.milliseconds
           text = File.read(path)
-          pattern = /def\s+(?:self\.|[A-Za-z0-9_:]+\.)?#{Regex.escape(method_name)}#{method_name_regex_tail}/
+          pattern = /(?:def|macro)\s+(?:self\.|[A-Za-z0-9_:]+\.)?#{Regex.escape(method_name)}#{method_name_regex_tail}/
           getter_pattern = /^\s*(getter|property)\s+#{Regex.escape(method_name)}\b/
           line_index = 0
           first_location = nil
@@ -11497,7 +11615,7 @@ module CrystalV2
         private def find_method_signature_in_file(path : String, method_name : String, display_name : String? = nil, arity : Int32? = nil) : String?
           deadline = Time.instant + 100.milliseconds
           text = File.read(path)
-          pattern = /def\s+(?:self\.|[A-Za-z0-9_:]+\.)?#{Regex.escape(method_name)}#{method_name_regex_tail}/
+          pattern = /(?:def|macro)\s+(?:self\.|[A-Za-z0-9_:]+\.)?#{Regex.escape(method_name)}#{method_name_regex_tail}/
           first_signature = nil
 
           text.each_line do |line|

@@ -7073,6 +7073,47 @@ Adversary notes:
 
 Trust: {F/G/R: 0.88/0.44/0.90} [verified]
 
+### LM-642 - LSP navigates no-parentheses macro member calls
+
+The previous macro-argument fix covered constants inside
+`Number.expand_div [Float64], Float64`, but not the `expand_div` call itself.
+The missing shape was a no-parentheses member call with an uppercase receiver:
+the fast member scanner only accepted lowercase local receivers, and the text
+method index only recognized `def`, not `macro`.
+
+The LSP now accepts constant receivers for member-call text lookup, parses
+bounded no-parentheses argument lists such as `[Float64], Float64`, resolves the
+receiver source through the existing constant locator, and indexes `macro`
+declarations alongside `def` declarations for hover and definition.
+
+Evidence:
+
+- Focused regression now checks `expand_div` itself in
+  `Number.expand_div [Float64], Float64`: hover returns
+  `macro expand_div(rhs_types, result_type)`, and definition points to
+  `/number.cr`.
+- `scripts/run_safe.sh crystal 180 4096 spec
+  spec/lsp/hover_definition_integration_spec.cr` -> 10 examples, 0 failures.
+- `./build_lsp_debug.sh` rebuilt `bin/crystal_v2_lsp` successfully.
+- Real LSP stdio harness against
+  `/Users/sergey/Projects/Crystal/crystal/src/int.cr` line 958 returned
+  `macro expand_div(rhs_types, result_type)` and definition
+  `/Users/sergey/Projects/Crystal/crystal/src/number.cr`.
+
+Adversary notes:
+
+- The no-parentheses parser is not an arbitrary depth cap: it tracks nested
+  `()`, `[]`, and `{}` while scanning to the line boundary.
+- The parser only activates after a plausible argument-start token, so member
+  hovers after operators do not become broad one-argument guesses.
+- LTP/WBA shape: trigger is a constant receiver plus lower-case member in a
+  shallow hover/definition window; transport carries the receiver to the
+  constant source file and the member name to a `def`/`macro` index; potential
+  decreases from unresolved request to source anchor while semantic fallback
+  remains intact.
+
+Trust: {F/G/R: 0.88/0.45/0.90} [verified]
+
 ## LM-583 — LSP foreground hover avoids workspace reference scans by default
 
 Status: verified for the focused LSP hover/cache/harness slice on `codegen`.

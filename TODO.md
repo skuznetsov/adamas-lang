@@ -221,6 +221,10 @@ primitive template in `primitives.cr`, and uppercase stdlib constants in macro
 argument lists use a lexical source-text path. The real `int.cr`
 `Number.expand_div [Float64], Float64` request now hovers as `struct Float64`
 and defines to `float.cr`.
+After LM-642, the `expand_div` call itself is covered too: no-parentheses
+member calls with uppercase receivers resolve the receiver source and index
+`macro` declarations, so hover returns
+`macro expand_div(rhs_types, result_type)` and definition opens `number.cr`.
 
 Spec-first bootstrap checkpoint (2026-05-08): `docs/specs/` now contains the
 first executable contract slice for Crystal V2, modeled after the DiamondDB
