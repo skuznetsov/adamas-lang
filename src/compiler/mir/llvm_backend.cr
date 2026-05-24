@@ -5427,7 +5427,7 @@ module Crystal::MIR
       if parts = extract_receiver_and_method(name)
         receiver, method = parts
         return false unless receiver
-        return false unless receiver.starts_with?("Pointer")
+        return false unless receiver == "Pointer" || receiver.starts_with?("Pointer(")
         return method == "new" || method == "new!"
       end
       false

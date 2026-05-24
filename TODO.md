@@ -75,6 +75,16 @@ only 4 bytes per heap-struct pointer slot and truncated every other pointer.
 Produced `s2` now emits `Array(ExprId)#dup` with `elem_size=8`, and the former
 full-prelude require-scan segfault moves forward into module registration.
 
+Nested generic pointer-appender checkpoint (LM-652, 2026-05-24):
+`Pointer::Appender(T).new(pointer)` now preserves its specialized nested
+receiver through path receiver normalization and is no longer mistaken for the
+primitive `Pointer(T).new(address)` shortcut in LLVM. The focused produced
+binary oracle for `Pointer(UInt8)#appender` now initializes `@pointer`/`@start`,
+pushes bytes, and reads the resulting slice successfully. Produced `s2` still
+builds in about 154s with the existing non-fatal `CLI#file_sha256$String` MIR
+optimizer overflow diagnostic; full-prelude produced-s2 `puts 42` still exits
+139, now with trace output reaching later `Float` module registration.
+
 LSP performance side checkpoint (LM-605, 2026-05-20): the background prelude
 loader now has a single in-flight owner. Repeated foreground requests while
 `@prelude_state` is still nil no longer spawn duplicate cache rebuilds. The
@@ -1988,9 +1998,13 @@ pending-budget oracle.
    `Indexable$LT$R$Hequals$Q$$Indexable_block` abort before it can be used as a
    produced-stage guard. LM-651 additionally fixes the `Pointer(Void)` byte
    stride/root allocation invariant and guards it against the prior typed-array
-   stride regressions. Produced s2 still exits 139 on full-prelude `puts 42`,
-   now with a traced frontier around a later repeated Object registration path;
-   localize that remaining memory-corruption frontier before widening to s3b.
+   stride regressions. LM-652 additionally fixes the nested generic
+   `Pointer::Appender(T).new(pointer)` constructor path: the specialized
+   receiver is preserved through path normalization, and LLVM only applies the
+   primitive pointer-address constructor shortcut to real `Pointer` receivers.
+   Produced s2 still builds, but full-prelude `puts 42` still exits 139 after
+   reaching later `Float` module registration; localize that remaining
+   memory-corruption frontier before widening to s3b.
 2. Root-cause the remaining full-prelude nested-class return-inference crash
    under generated stage2. Current evidence: stale parameter slice frontiers are
    advanced through source-backed initializer capture, source-prefiltered

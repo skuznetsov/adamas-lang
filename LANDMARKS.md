@@ -6402,6 +6402,61 @@ Adversary notes:
 
 Trust: {F/G/R: 0.87/0.55/0.88} [verified]
 
+### LM-652 - Pointer::Appender constructors require nested generic owner preservation
+
+`Pointer(UInt8)#appender` exposed a two-part nested generic constructor root.
+HIR first inferred and registered `Pointer::Appender(UInt8)`, but the path
+receiver corridor overwrote the specialized receiver with the original
+`Pointer::Appender` path before call emission. After preserving the specialized
+path receiver, HIR/MIR generated a real
+`Pointer::Appender(UInt8).new$Pointer(UInt8)` allocator. LLVM then exposed the
+second root: the primitive `Pointer.new(address)` shortcut matched every
+receiver whose name started with `Pointer`, including `Pointer::Appender`.
+That rewrote the nested struct constructor to an identity bitcast, leaving
+`@pointer` and `@start` zeroed.
+
+Evidence:
+
+- Before the fix, the focused `Pointer(UInt8).malloc(8).appender << 1_u8`
+  repro compiled but the produced binary segfaulted in
+  `Pointer::Appender(UInt8)#<<` at `strb w9, [x10]` with `x10 == 0`.
+- Intermediate HIR showed the call target stuck at
+  `Pointer::Appender.new$Pointer(UInt8)` with no generated constructor symbol.
+- After preserving `path_receiver_class_name`, HIR/MIR emitted
+  `Pointer::Appender(UInt8).new$Pointer(UInt8)`, but LLVM still compiled
+  `Pointer(UInt8)#appender` as `ret self` because `pointer_constructor_name?`
+  treated `Pointer::Appender` as a primitive `Pointer` constructor.
+- `regression_tests/p2_pointer_appender_constructor.sh /tmp/cv2_appender_fix3`
+  -> `p2_pointer_appender_constructor_ok`.
+- Neighbor guards also passed with `/tmp/cv2_appender_fix3`:
+  `p2_pointer_void_byte_stride_ok`,
+  `p2_array_heap_struct_dup_stride_ok`,
+  `p2_array_tuple_storage_ok`, and
+  `p2_array_value_union_storage_ok`.
+- Rebuilt after reverting formatter churn:
+  `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 420 8192 build
+  src/crystal_v2.cr -o /tmp/cv2_appender_fix4 --error-trace` -> exit 0;
+  `p2_pointer_appender_constructor.sh /tmp/cv2_appender_fix4` and
+  `p2_pointer_void_byte_stride.sh /tmp/cv2_appender_fix4` -> ok.
+- Produced `s2` built with the fix:
+  `scripts/run_safe.sh /tmp/cv2_appender_fix4 900 8192 src/crystal_v2.cr
+  -o /tmp/cv2_appender_fix4_s2/cv2_s2` -> exit 0 in about 154s, with the
+  existing non-fatal `CLI#file_sha256$String` MIR optimizer overflow
+  diagnostic. Full-prelude produced-s2 `puts 42` still exits 139, but the
+  visible trace reaches later `Float` module registration instead of the
+  `Pointer::Appender` constructor/runtime crash.
+
+Adversary notes:
+
+- This is not a depth cap or a `Pointer::Appender` runtime shim. The fix keeps
+  the existing generic constructor machinery and narrows only the primitive
+  pointer-address shortcut to real `Pointer` / `Pointer(T)` receivers.
+- The first local inference patch alone did not move the runtime result; the
+  decisive evidence was HIR-to-LLVM drift from a generated constructor call to
+  an identity bitcast.
+
+Trust: {F/G/R: 0.90/0.58/0.89} [verified]
+
 ### LM-631 - Pointer copy helpers must use container slot stride
 
 `Pointer(T)#copy_from`, `copy_to`, `move_from`, and `move_to` now lower their
