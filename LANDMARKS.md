@@ -6364,6 +6364,45 @@ WBA framing:
 
 Trust: {F/G/R: 0.88/0.50/0.89} [verified]
 
+### LM-660 - No-prelude layout matrix isolates struct performance divergence
+
+The no-prelude layout matrix now compares original Crystal and Crystal V2 on a
+small carrier family: scalar loops, local structs, nested structs, pointer
+strides, tuple strides, nilable/mixed struct unions, yield-carried structs, and
+class allocation. The current matrix shows checksum parity for all carriers,
+but V2 is much slower in the hot-loop tick counter, especially local/nested
+structs and yield-carried structs. This points to value-carrier lowering rather
+than a parser/type-inference failure in these cases.
+
+Evidence:
+
+- `scripts/bench_no_prelude_layout_matrix.sh /tmp/cv2_layout_matrix_host
+  /Users/sergey/.local/bin/crystal | tee /tmp/cv2_layout_matrix.tsv` -> all
+  nine cases compile and run for both compilers; all checksums match.
+- Representative hot-loop tick ratios from that run:
+  `struct_local_loop` 47.42x, `nested_struct_loop` 90.96x,
+  `yield_struct_loop` 51.65x, `pointer_nilable_struct_union` 14.21x,
+  `class_alloc_loop` 4.85x V2 over original.
+- V2 LLVM IR for `struct_local_loop` shows the root shape directly:
+  `Pair.new` is called inside `__crystal_main`, and
+  `Pair$Dnew$$Int64_Int64` calls `@__crystal_v2_malloc64(i64 24)`. The original
+  compiler computes the same checksum without exposing this heap allocation in
+  the hot carrier.
+
+Adversary notes:
+
+- The matrix is a semantic/layout smoke oracle plus a performance locator, not
+  a final benchmark suite. Original Crystal still loads its normal prelude,
+  while V2 uses `--no-prelude`; compile time and binary size are therefore not
+  apples-to-apples.
+- The run-safe wrapper dominates outer `run_ms`, so `internal_ticks` is the
+  relevant performance signal.
+- Matching checksums do not prove identical ABI layout. They narrow this
+  carrier family to performance/codegen lowering gaps unless later IR or ABI
+  probes contradict it.
+
+Trust: {F/G/R: 0.84/0.48/0.86} [verified]
+
 ### LM-656 - Bare generic `.new` can use the enclosing expected return
 
 Bare generic constructor calls inside generic methods now prefer the enclosing
