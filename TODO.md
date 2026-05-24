@@ -97,6 +97,18 @@ idx=3/111` in the latest safe run), so continue with class-registration memory
 and malformed byte-count source localization rather than treating this as a
 complete s2b fix.
 
+Built-in generic-base checkpoint (LM-654, 2026-05-24): contextual generic
+resolution now preserves built-in generic bases such as `Array`, `Hash`,
+`Tuple`, and `Pointer` instead of resolving plain `Array(T)` to sibling
+compiler-internal names like `Crystal::MIR::Array(T)`. This fixes the generated
+`Module#intern_type` bucket entry type (`Tuple(UInt8, Array(HIR::TypeRef),
+HIR::TypeRef)`) and removes the produced-s2 no-prelude crash while interning
+`Pointer(UInt8)`. Host guards for `Hash#to_a` block-return tuples and qualified
+module namespaces pass, and produced-s2 passes the namespace no-prelude guard.
+Boundary: full-prelude produced-s2 `puts 42` still exits 139 during early module
+registration, so the next root remains full-prelude module-registration
+state/memory, not generic-base tuple capture.
+
 LSP performance side checkpoint (LM-605, 2026-05-20): the background prelude
 loader now has a single in-flight owner. Repeated foreground requests while
 `@prelude_state` is still nil no longer spawn duplicate cache rebuilds. The

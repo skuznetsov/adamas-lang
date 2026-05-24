@@ -6364,6 +6364,46 @@ WBA framing:
 
 Trust: {F/G/R: 0.88/0.50/0.89} [verified]
 
+### LM-654 - Built-in generic bases must not be captured by sibling namespaces
+
+Contextual type resolution now preserves known built-in generic bases
+(`Array`, `Hash`, `Tuple`, `Pointer`, and peers) when resolving generic type
+names. This prevents plain `Array(T)` inside compiler internals from being
+rewritten to a sibling type such as `Crystal::MIR::Array(T)` while lowering
+`Crystal::HIR::Module#intern_type`.
+
+Evidence:
+
+- Host HIR emission before the fix produced
+  `Tuple(UInt8, Crystal::MIR::Array(Crystal::HIR::TypeRef),
+  Crystal::HIR::TypeRef)` for the `@type_intern` bucket entries in
+  `Module#intern_type`.
+- After preserving built-in generic bases, HIR emission contains
+  `Tuple(UInt8, Array(Crystal::HIR::TypeRef), Crystal::HIR::TypeRef)` and no
+  longer contains the `Crystal::MIR::Array` capture in that tuple family.
+- Produced `s2` builds successfully under `run_safe.sh`; its generated LLVM
+  for `Module#intern_type` no longer contains
+  `Crystal$CCMIR$CCArray$LCrystal$CCHIR$CCTypeRef`.
+- Produced `s2` now compiles a minimal `--no-prelude` program that previously
+  segfaulted while interning `Pointer(UInt8)`.
+- Host regression guards pass:
+  `p2_hash_to_a_block_return_tuple_ok` and
+  `p2_qualified_module_namespace_no_prelude_ok`.
+- Produced `s2` still crashes with full prelude during early module
+  registration, so this is a root fix for generic-base capture and the
+  no-prelude intern-type crash, not a complete s2b fix.
+
+Adversary notes:
+
+- This is not a depth cap or string-specific patch. The resolver keeps
+  externally visible built-in generic container bases stable and still resolves
+  non-built-in generic bases contextually.
+- Explicitly qualified names such as `Crystal::MIR::Array(T)` remain qualified;
+  the fix only protects unqualified built-in generic bases from accidental
+  contextual capture.
+
+Trust: {F/G/R: 0.88/0.52/0.89} [verified]
+
 ### LM-653 - String pointer constructor bounds guard prevents huge signed memcpy
 
 The V2 LLVM override for `String.new(UInt8*, Int32, Int32)` now guards the
