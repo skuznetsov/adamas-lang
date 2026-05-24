@@ -6364,6 +6364,43 @@ WBA framing:
 
 Trust: {F/G/R: 0.88/0.50/0.89} [verified]
 
+### LM-656 - Bare generic `.new` can use the enclosing expected return
+
+Bare generic constructor calls inside generic methods now prefer the enclosing
+function's concrete generic return type when the return base matches the
+constructor receiver. This fixes `Enumerable#to_set : Set(T)`, where
+`Set.new(self)` inside `Array(String)#to_set` was inferred from the receiver
+object (`Array(String)`) and generated a body returning `Set(String)` while
+calling `Set(Array(String)).new`.
+
+Evidence:
+
+- `regression_tests/p2_bare_generic_new_uses_expected_return_no_prelude.sh
+  /tmp/cv2_expected_new_fix_host` -> `p2_bare_generic_new_uses_expected_return_no_prelude_ok`.
+- `regression_tests/p2_nilable_proc_union_preserves_signature_no_prelude.sh
+  /tmp/cv2_expected_new_fix_host` -> `p2_nilable_proc_union_preserves_signature_no_prelude_ok`.
+- `regression_tests/p2_qualified_module_namespace_no_prelude.sh
+  /tmp/cv2_expected_new_fix_host` -> `p2_qualified_module_namespace_no_prelude_ok`.
+- Full host HIR for `src/crystal_v2.cr --emit hir --no-link` now lowers
+  `Array(String)#to_set` as `call Set(String).new$Array(String)(%0) : 2489`
+  instead of `Set(Array(String)).new$Array(String)`.
+- Produced `s2` builds under `scripts/run_safe.sh` in about 172s and still
+  passes the qualified-module namespace no-prelude guard.
+
+Adversary notes:
+
+- This is not a `Set` hardcode. The specialization only fires for bare
+  generic `.new` when the current function return type is a concrete generic
+  with the same template base and arity; otherwise existing argument inference
+  remains in control.
+- Full-prelude produced-s2 `puts 42` still fails in `fixup_inherited_ivars`,
+  but the crash has moved from `Set(Array(String))#hash` during
+  `Array(String)#to_set` to `Set(String)#each` while invalidating generated
+  allocator state. Treat that as the next allocator/layout invalidation
+  frontier, not as the erased generic-return root.
+
+Trust: {F/G/R: 0.87/0.44/0.88} [verified]
+
 ### LM-655 - Nilable Proc unions preserve callable signatures
 
 HIR union construction now uses proc-aware type names when a union is built

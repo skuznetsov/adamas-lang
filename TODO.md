@@ -121,6 +121,20 @@ Produced `s2` still builds, and the full-prelude `puts 42` frontier now reaches
 `fixup_inherited_ivars start` before a segfault; continue from that
 memory/layout-sensitive fixup frontier, not from the erased-Proc return root.
 
+Bare generic constructor checkpoint (LM-656, 2026-05-24): bare generic `.new`
+inside generic methods now prefers the enclosing concrete generic return type
+when the generic template base and arity match. This fixes the host-generated
+HIR invariant break where `Array(String)#to_set : Set(String)` called
+`Set(Array(String)).new$Array(String)` for stdlib `Set.new(self)`. The focused
+no-prelude guard catches the same root with `Bag.new(self)` in a generic module,
+and full host HIR now calls `Set(String).new$Array(String)`. Produced `s2`
+still builds and passes the qualified namespace guard, but full-prelude
+produced-s2 `puts 42` still fails in `fixup_inherited_ivars`; the fresh lldb
+frontier is `Set(String)#each` called from
+`invalidate_generated_allocator_state` / `invalidate_lowered_layout_functions`
+during `align_all_class_ivars`. Continue there rather than revisiting
+`Array(String)#to_set` or patching `.to_set`/`Set#hash` symptoms.
+
 LSP performance side checkpoint (LM-605, 2026-05-20): the background prelude
 loader now has a single in-flight owner. Repeated foreground requests while
 `@prelude_state` is still nil no longer spawn duplicate cache rebuilds. The
