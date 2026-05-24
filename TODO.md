@@ -1986,7 +1986,11 @@ pending-budget oracle.
    `STUB CALLED: EquivUint$Dnew$BANG$$UInt64` during early prescan. A produced-s2
    no-prelude `Slice(UInt64).literal` reducer also exposes a separate
    `Indexable$LT$R$Hequals$Q$$Indexable_block` abort before it can be used as a
-   produced-stage guard. Localize those stub frontiers before widening to s3b.
+   produced-stage guard. LM-651 additionally fixes the `Pointer(Void)` byte
+   stride/root allocation invariant and guards it against the prior typed-array
+   stride regressions. Produced s2 still exits 139 on full-prelude `puts 42`,
+   now with a traced frontier around a later repeated Object registration path;
+   localize that remaining memory-corruption frontier before widening to s3b.
 2. Root-cause the remaining full-prelude nested-class return-inference crash
    under generated stage2. Current evidence: stale parameter slice frontiers are
    advanced through source-backed initializer capture, source-prefiltered

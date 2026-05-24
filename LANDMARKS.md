@@ -6364,6 +6364,44 @@ WBA framing:
 
 Trust: {F/G/R: 0.88/0.50/0.89} [verified]
 
+### LM-651 - Pointer(Void) malloc and arithmetic use byte stride
+
+`Pointer(Void).malloc(n)` is now lowered as a `Pointer(Void)` allocation
+instead of accidentally wrapping the type literal as `Pointer(Pointer(Void))`.
+Pointer arithmetic/copy sizing uses a byte stride for `Void`, while preserving
+normal container-element sizing for typed pointers and value-union array
+storage.
+
+Evidence:
+
+- Original Crystal treats `Void` pointer element size as `1` for pointer
+  malloc/codegen so `Pointer(Void)` works like a byte pointer.
+- The focused HIR repro previously emitted `ptr_malloc 34` and pointer-width
+  arithmetic for `Pointer(Void).malloc(32)`. After the fix it emits
+  `ptr_malloc 0` for `Pointer(Void)` and `ptr_add ... size=1` for the user
+  byte-stride operations.
+- `regression_tests/p2_pointer_void_byte_stride.sh /tmp/cv2_void_stride_fix3`
+  -> `p2_pointer_void_byte_stride_ok`.
+- `regression_tests/p2_array_heap_struct_dup_stride.sh
+  /tmp/cv2_void_stride_fix3` -> `p2_array_heap_struct_dup_stride_ok`.
+- `regression_tests/p2_array_tuple_storage.sh /tmp/cv2_void_stride_fix3` ->
+  `p2_array_tuple_storage_ok`.
+- `regression_tests/p2_array_value_union_storage.sh
+  /tmp/cv2_void_stride_fix3` -> `p2_array_value_union_storage_ok`.
+- Produced s2 still exits 139 on full-prelude `puts 42`, but the traced
+  frontier moved past the earlier Time::Span area to a later repeated Object
+  registration path. This landmark is not a complete s2 bootstrap fix.
+
+Adversary notes:
+
+- The fix is not a depth cap or name-family patch: it restores the original
+  compiler's element-size invariant for `Pointer(Void)`.
+- A broader first attempt that forced explicit pointer-add sizes for all
+  elements regressed `p2_array_value_union_storage`; the landed corridor only
+  forces the explicit byte size for raw `Void` elements.
+
+Trust: {F/G/R: 0.87/0.55/0.88} [verified]
+
 ### LM-631 - Pointer copy helpers must use container slot stride
 
 `Pointer(T)#copy_from`, `copy_to`, `move_from`, and `move_to` now lower their
