@@ -6587,6 +6587,8 @@ module Crystal
                        require_lib_struct_byte_size(malloc.element_type).to_i32
                      elsif hir_type_is_inline_container_struct?(malloc.element_type)
                        hir_type_inline_size(malloc.element_type)
+                     elsif elem_mir = @mir_module.type_registry.get(convert_type(malloc.element_type))
+                       container_elem_storage_size_u64(elem_mir).to_i32
                      else
                        type_size(malloc.element_type)
                      end
@@ -6677,7 +6679,9 @@ module Crystal
           else
             elem_size = container_elem_storage_size_u64(@mir_module.type_registry.get(elem_type))
             gep = builder.gep_dynamic(ptr, index, elem_type, elem_size)
-            builder.store(gep, val)
+            store_inst = MIR::Store.new(builder.next_id, gep, val)
+            store_inst.field_type = elem_type
+            builder.emit(store_inst)
           end
         else
           # ptr.value = val - direct store
@@ -6687,7 +6691,9 @@ module Crystal
             builder.memcopy(ptr, val, sz)
             lib_struct_indexed_memcpy = true
           else
-            builder.store(ptr, val)
+            store_inst = MIR::Store.new(builder.next_id, ptr, val)
+            store_inst.field_type = elem_type
+            builder.emit(store_inst)
           end
         end
 

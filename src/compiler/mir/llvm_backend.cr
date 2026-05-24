@@ -17002,8 +17002,7 @@ module Crystal::MIR
         # Memcpy the full union to the destination instead of wrapping ptr as union.
         if field_type_str.includes?(".union") && (final_emitted == "ptr" || val_type_str == "ptr")
           if val_mir = @module.type_registry.get(val_type)
-            if val_mir.kind.union? || (val_type != TypeRef::POINTER && val_type != TypeRef::NIL &&
-               val_type != TypeRef::STRING && !val_mir.kind.reference? && !val_mir.kind.array?)
+            if val_mir.kind.union?
               # Value is a union passed as ptr — memcpy preserves the tag
               union_size = val_mir.size > 0 ? val_mir.size : 16
               emit "call void @llvm.memcpy.p0.p0.i64(ptr #{ptr}, ptr #{val}, i64 #{union_size}, i1 false)"
@@ -23265,10 +23264,19 @@ module Crystal::MIR
             is_actual_ptr = actual_elem_type_str == "ptr"
             is_elem_union = element_type.includes?(".union")
             if is_elem_union && is_actual_ptr
-              # ptr → union: wrap ptr in union with type_id=0 (non-nil)
+              # ptr -> union: wrap with the descriptor-backed discriminator.
+              # Discriminator 0 is reserved for Nil/Void, so using it for a
+              # pointer-backed struct corrupts Array(T | Nil) storage.
+              elem_variant_id = union_variant_global_id_for_value_type(inst.element_type, actual_elem_type)
               emit "%#{base_name}.elem#{idx}_union_ptr = alloca #{element_type}, align 8"
               emit "%#{base_name}.elem#{idx}_type_id_ptr = getelementptr #{element_type}, ptr %#{base_name}.elem#{idx}_union_ptr, i32 0, i32 0"
-              emit "store i32 0, ptr %#{base_name}.elem#{idx}_type_id_ptr"
+              if nil_variant_id_for_union_type_ref(inst.element_type) && elem_variant_id != 0
+                emit "%#{base_name}.elem#{idx}_is_null = icmp eq ptr #{elem_val}, null"
+                emit "%#{base_name}.elem#{idx}_type_id = select i1 %#{base_name}.elem#{idx}_is_null, i32 0, i32 #{elem_variant_id}"
+                emit "store i32 %#{base_name}.elem#{idx}_type_id, ptr %#{base_name}.elem#{idx}_type_id_ptr"
+              else
+                emit "store i32 #{elem_variant_id}, ptr %#{base_name}.elem#{idx}_type_id_ptr"
+              end
               emit "%#{base_name}.elem#{idx}_payload_ptr = getelementptr #{element_type}, ptr %#{base_name}.elem#{idx}_union_ptr, i32 0, i32 1"
               emit "store ptr #{elem_val}, ptr %#{base_name}.elem#{idx}_payload_ptr, align 4"
               emit "%#{base_name}.elem#{idx}_union = load #{element_type}, ptr %#{base_name}.elem#{idx}_union_ptr"
@@ -24090,10 +24098,19 @@ module Crystal::MIR
         emit "%#{base_name}.val_conv = load #{element_type}, ptr %#{base_name}.val_payload_ptr, align 4"
         value = "%#{base_name}.val_conv"
       elsif actual_value_type == "ptr" && element_type.includes?(".union")
-        # ptr → union: wrap pointer in union with type_id=0
+        # ptr -> union: wrap with the descriptor-backed discriminator.
+        # Discriminator 0 is reserved for Nil/Void, not for non-nil pointer-
+        # backed value types such as heap-backed structs.
+        value_variant_id = union_variant_global_id_for_value_type(inst.element_type, value_type)
         emit "%#{base_name}.val_union_ptr = alloca #{element_type}, align 8"
         emit "%#{base_name}.val_tid_ptr = getelementptr #{element_type}, ptr %#{base_name}.val_union_ptr, i32 0, i32 0"
-        emit "store i32 0, ptr %#{base_name}.val_tid_ptr"
+        if nil_variant_id_for_union_type_ref(inst.element_type) && value_variant_id != 0
+          emit "%#{base_name}.val_is_null = icmp eq ptr #{value}, null"
+          emit "%#{base_name}.val_type_id = select i1 %#{base_name}.val_is_null, i32 0, i32 #{value_variant_id}"
+          emit "store i32 %#{base_name}.val_type_id, ptr %#{base_name}.val_tid_ptr"
+        else
+          emit "store i32 #{value_variant_id}, ptr %#{base_name}.val_tid_ptr"
+        end
         emit "%#{base_name}.val_pay_ptr = getelementptr #{element_type}, ptr %#{base_name}.val_union_ptr, i32 0, i32 1"
         emit "store ptr #{value}, ptr %#{base_name}.val_pay_ptr, align 4"
         emit "%#{base_name}.val_union = load #{element_type}, ptr %#{base_name}.val_union_ptr"
@@ -25660,6 +25677,40 @@ module Crystal::MIR
         end
       end
       variant_type_id  # fallback
+    end
+
+    private def union_variant_global_id_for_value_type(union_type_ref : TypeRef, value_type_ref : TypeRef?) : Int32
+      return 0 if !value_type_ref || value_type_ref == TypeRef::NIL || value_type_ref == TypeRef::VOID
+
+      if union_desc = @module.get_union_descriptor(union_type_ref)
+        variants = union_desc.variants
+        variant_idx = 0
+        while variant_idx < variants.size
+          variant = variants.unsafe_fetch(variant_idx)
+          if variant.type_ref == value_type_ref
+            return 0 if variant.type_ref == TypeRef::NIL || variant.type_ref == TypeRef::VOID
+            return variant.type_ref.id.to_i32
+          end
+          variant_idx += 1
+        end
+
+        if value_type_ref == TypeRef::POINTER
+          non_nil_count = 0
+          non_nil_id = 0
+          variant_idx = 0
+          while variant_idx < variants.size
+            variant = variants.unsafe_fetch(variant_idx)
+            unless variant.type_ref == TypeRef::NIL || variant.type_ref == TypeRef::VOID
+              non_nil_count += 1
+              non_nil_id = variant.type_ref.id.to_i32
+            end
+            variant_idx += 1
+          end
+          return non_nil_id if non_nil_count == 1
+        end
+      end
+
+      value_type_ref.id.to_i32
     end
 
     private def nil_variant_id_for_union_type_ref(union_type_ref : TypeRef) : Int32?

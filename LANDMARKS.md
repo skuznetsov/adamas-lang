@@ -6364,6 +6364,54 @@ WBA framing:
 
 Trust: {F/G/R: 0.88/0.50/0.89} [verified]
 
+### LM-626 - Pointer container storage uses one stride for inline value unions
+
+`Pointer(T)` lowering now uses the same container storage size for allocation,
+indexed stores, indexed loads, pointer arithmetic, realloc, clear, and
+copy/move helpers. This fixes `Array(Pair | Nil)` and `Array(Pair | Int64)`
+corruption where `Pointer(T).malloc` and `copy_from` still used pointer-size
+8-byte slots while array reads/writes used the 24-byte inline union slot for
+`Pair | Nil`.
+
+The same change also preserves the destination element type on MIR stores
+emitted from `PointerStore`, so the LLVM backend can construct tagged inline
+union values instead of storing raw pointers or reading a nonexistent runtime
+header from heap-backed structs. The backend's "union passed as ptr" memcpy
+fast path is now restricted to actual union-typed MIR values; bare structs
+must be wrapped with a descriptor-backed discriminator.
+
+Evidence:
+
+- `regression_tests/p2_array_value_union_storage.sh
+  /tmp/cv2_layout_fix_host6` -> `p2_array_value_union_storage_ok`.
+- `regression_tests/p2_nilable_union_wrap_codegen_no_prelude.sh
+  /tmp/cv2_layout_fix_host6` -> `p2_nilable_union_wrap_codegen_no_prelude_ok`.
+- `regression_tests/p2_union_concrete_compare_type_guard.sh
+  /tmp/cv2_layout_fix_host6` -> `p2_union_concrete_compare_type_guard_ok`.
+- Generated IR for `Array(Pair | Nil)#resize_to_capacity` now has both
+  realloc and initial malloc branches multiplying capacity by 24, and
+  `Array(Pair | Nil)#check_needs_resize` calls
+  `__crystal_v2_ptr_copy(..., i32 24)` for the compaction copy.
+- Release benchmark smoke with `N=500_000` matched original checksums for
+  `Array(Pair)`, `Array(BenchBox)`, `Array(Pair | Nil)`,
+  `Array(BenchBox | Nil)`, and `Array(Pair | Int64)`. `Array(Tuple(Int64,
+  Int64))` still segfaults under V2 and remains a separate tuple-container
+  frontier.
+
+Adversary notes:
+
+- The regression covers direct `Pointer(Pair | Nil).malloc` writes,
+  `Array(Pair | Nil)` initial allocation, `Array(Pair | Nil)` shifted-buffer
+  compaction, and `Array(Pair | Int64)` mixed value unions. This guards the
+  storage-stride family rather than only the first observed nilable-array
+  symptom.
+- V2 still heap-allocates most structs, so matching checksums here does not
+  imply upstream-equivalent struct layout or performance. The benchmark shows
+  the next performance/correctness frontier is tuple/container storage, not
+  nilable struct union tags.
+
+Trust: {F/G/R: 0.89/0.57/0.90} [verified]
+
 ### LM-624 - Generated-stage2 require scanning avoids Regex-backed skip_file suffix extraction
 
 Produced `s2` full-prelude `puts 42` no longer crashes before `prelude parsed`

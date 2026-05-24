@@ -54,6 +54,17 @@ adding readability guards inside normalizer helpers fixed a no-prelude reducer
 but regressed full-prelude module registration; do not reapply that branch
 blindly.
 
+Container-layout side checkpoint (LM-626, 2026-05-23): `Pointer(T)` allocation,
+store/load arithmetic, realloc, clear, and copy/move helpers now agree on the
+same container storage size for inline unions. This fixed corruption in
+`Array(Pair | Nil)` and `Array(Pair | Int64)` where initial malloc and shifted
+buffer compaction used 8-byte pointer slots while reads/writes used 24-byte
+inline union slots. Release benchmark smoke now matches original checksums for
+struct arrays, class arrays, nilable struct/class arrays, and mixed
+struct/int unions. `Array(Tuple(Int64, Int64))` still segfaults under V2 and
+should be treated as the next tuple-container layout frontier, separate from
+nilable struct union tagging.
+
 LSP performance side checkpoint (LM-605, 2026-05-20): the background prelude
 loader now has a single in-flight owner. Repeated foreground requests while
 `@prelude_state` is still nil no longer spawn duplicate cache rebuilds. The
