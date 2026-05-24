@@ -2666,6 +2666,10 @@ module Crystal::MIR
         return elem_type.size
       end
 
+      if inline_primitive_tuple_type?(elem_type)
+        return elem_type.size
+      end
+
       # Only structs with an implemented container-value ABI are stored inline.
       # Most V2 structs are still heap-pointer values; treating every Struct as
       # inline corrupts arrays such as Array(Parameter).
@@ -2675,6 +2679,17 @@ module Crystal::MIR
 
       # Classes/non-inline values are represented as pointers in containers.
       pointer_word_bytes_u64
+    end
+
+    private def inline_primitive_tuple_type?(elem_type : Type?) : Bool
+      return false unless elem_type
+      return false unless elem_type.kind.tuple? && elem_type.size > 0
+      elements = elem_type.element_types
+      return false unless elements && !elements.empty?
+
+      elements.all? do |element|
+        (element.kind.primitive? || element.kind.enum?) && element.size > 0
+      end
     end
 
     private def inline_container_struct_type?(elem_type : Type?) : Bool
@@ -17235,11 +17250,11 @@ module Crystal::MIR
         element_type = "i8"
       end
 
-      # V2 ABI: tuples are heap-allocated and represented as `ptr`. Pointer(Tuple)
-      # buffers store 8-byte heap pointers, so GEP must use ptr stride (sizeof(ptr)=8),
-      # NOT the tuple's inline byte size. Force struct_elem_size = 0 (which yields
-      # `getelementptr ptr, ptr base, i64 idx`) for tuple element types, even if HIR
-      # set element_byte_size to the inline size (e.g. 12 for Tuple(Int32,Int32,Int32)).
+      # Legacy V2 tuple-slot ABI: when a GEP still names a tuple element type,
+      # the container stores 8-byte heap tuple pointers. Certified inline
+      # Pointer(Tuple) paths are byte-addressed by HIR with element type Void,
+      # so they intentionally bypass this guard without changing non-primitive
+      # Tuple carriers.
       # Crystal structs do NOT follow the tuple rule: Pointer(T)/Array(T)
       # buffers store their bytes inline, and loads return the element address.
       struct_elem_size = inst.element_byte_size  # Explicit size from HIR (for generic structs)
@@ -23610,6 +23625,14 @@ module Crystal::MIR
         end
       end
 
+      if ct = inst.container_type
+        if container_mir = @module.type_registry.get(ct)
+          if container_mir.kind.tuple?
+            array_value_type = ct
+          end
+        end
+      end
+
       # Tuple element access: use struct GEP with constant index instead of array layout.
       # IMPORTANT: for known Array values, always use array buffer layout.
       if array_value_type && !@array_info.has_key?(inst.array_value)
@@ -23994,7 +24017,7 @@ module Crystal::MIR
           emit "%#{base_name}.idx_i64 = sext i32 #{normalized_index} to i64"
           emit "%#{base_name}.byte_off = mul i64 %#{base_name}.idx_i64, #{stride}"
           emit "%#{base_name}.elem_ptr = getelementptr i8, ptr %#{base_name}.buf, i64 %#{base_name}.byte_off"
-        elsif (stride_type = elem_mir_for_stride) && inline_container_struct_type?(stride_type)
+        elsif (stride_type = elem_mir_for_stride) && (inline_container_struct_type?(stride_type) || inline_primitive_tuple_type?(stride_type))
           stride = stride_type.size
           emit "%#{base_name}.idx_i64 = sext i32 #{normalized_index} to i64"
           emit "%#{base_name}.byte_off = mul i64 %#{base_name}.idx_i64, #{stride}"
@@ -24275,7 +24298,7 @@ module Crystal::MIR
           emit "%#{base_name}.idx_i64 = sext i32 #{normalized_index} to i64"
           emit "%#{base_name}.byte_off = mul i64 %#{base_name}.idx_i64, #{stride}"
           emit "%#{base_name}.elem_ptr = getelementptr i8, ptr %#{base_name}.buf, i64 %#{base_name}.byte_off"
-        elsif (stride_type = elem_mir_for_stride) && inline_container_struct_type?(stride_type)
+        elsif (stride_type = elem_mir_for_stride) && (inline_container_struct_type?(stride_type) || inline_primitive_tuple_type?(stride_type))
           stride = stride_type.size
           emit "%#{base_name}.idx_i64 = sext i32 #{normalized_index} to i64"
           emit "%#{base_name}.byte_off = mul i64 %#{base_name}.idx_i64, #{stride}"

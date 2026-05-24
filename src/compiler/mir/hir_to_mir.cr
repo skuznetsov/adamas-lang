@@ -1254,6 +1254,10 @@ module Crystal
           return elem_type.size
         end
 
+        if inline_primitive_tuple_type?(elem_type)
+          return elem_type.size
+        end
+
         # Only structs with an implemented container-value ABI are stored inline.
         # Most V2 structs are still represented as heap pointers; treating all
         # Struct types as inline corrupts arrays such as Array(Parameter).
@@ -1263,6 +1267,17 @@ module Crystal
 
         # Classes/non-inline values are represented as pointers in containers.
         pointer_word_bytes_u64
+      end
+
+      private def inline_primitive_tuple_type?(elem_type : Type?) : Bool
+        return false unless elem_type
+        return false unless elem_type.kind.tuple? && elem_type.size > 0
+        elements = elem_type.element_types
+        return false unless elements && !elements.empty?
+
+        elements.all? do |element|
+          (element.kind.primitive? || element.kind.enum?) && element.size > 0
+        end
       end
 
       private def inline_container_struct_type?(elem_type : Type?) : Bool
@@ -3179,6 +3194,21 @@ module Crystal
         inline_container_struct_type?(@mir_module.type_registry.get(mir_ref))
       end
 
+      private def hir_type_is_inline_pointer_tuple?(type : HIR::TypeRef?) : Bool
+        return false unless type
+        desc = @hir_module.get_type_descriptor(type)
+        return false unless desc
+        return false unless desc.kind == HIR::TypeKind::Tuple || desc.kind == HIR::TypeKind::NamedTuple
+
+        mir_ref = convert_type(type)
+        mir_type = @mir_module.type_registry.get(mir_ref)
+        # Keep the first carrier reduction narrow: primitive/enum tuple payloads
+        # are copied as plain bytes and do not carry ownership or nested layout
+        # obligations. Tuple slots containing refs, unions, or structs still use
+        # the legacy pointer-carrier ABI until separately certified.
+        inline_primitive_tuple_type?(mir_type)
+      end
+
       # Resolve MIR element type for HIR Pointer(T).
       private def pointer_element_mir_type(pointer_hir_type : HIR::TypeRef?) : TypeRef?
         return nil unless pointer_hir_type
@@ -3231,6 +3261,8 @@ module Crystal
         container_type : MIR::TypeRef? = nil
         if obj_hir_type = @hir_value_types[idx.object]?
           if hir_type_is_array_container?(obj_hir_type)
+            container_type = convert_type(obj_hir_type)
+          elsif hir_type_is_inline_pointer_tuple?(obj_hir_type)
             container_type = convert_type(obj_hir_type)
           end
         end
@@ -6973,6 +7005,8 @@ module Crystal
         count = get_value(malloc.count)
         elem_size = if hir_type_is_lib_struct?(malloc.element_type)
                        require_lib_struct_byte_size(malloc.element_type).to_i32
+                     elsif hir_type_is_inline_pointer_tuple?(malloc.element_type)
+                       hir_type_inline_size(malloc.element_type)
                      elsif hir_type_is_inline_container_struct?(malloc.element_type)
                        hir_type_inline_size(malloc.element_type)
                      elsif elem_mir = @mir_module.type_registry.get(convert_type(malloc.element_type))
@@ -7005,14 +7039,22 @@ module Crystal
           elem_hir = pointer_element_hir_type(@hir_value_types[load.pointer]?) || load.type
           elem_size = if hir_type_is_lib_struct?(elem_hir)
                         require_lib_struct_byte_size(elem_hir)
+                      elsif hir_type_is_inline_pointer_tuple?(elem_hir)
+                        hir_type_inline_size(elem_hir).to_u64
                       elsif hir_type_is_inline_container_struct?(elem_hir)
                         hir_type_inline_size(elem_hir).to_u64
                       else
                         container_elem_storage_size_u64(@mir_module.type_registry.get(elem_mir))
                       end
-          gep = builder.gep_dynamic(ptr, index, elem_mir, elem_size)
+          gep_element_type = hir_type_is_inline_pointer_tuple?(elem_hir) ? TypeRef::VOID : elem_mir
+          gep = builder.gep_dynamic(ptr, index, gep_element_type, elem_size)
           if hir_type_is_lib_struct?(elem_hir)
             # Same ABI as ptr.value: inline C struct at gep; opaque ptr handle, no heap slot load.
+            return gep
+          end
+          if hir_type_is_inline_pointer_tuple?(elem_hir)
+            @inline_struct_ptrs << load.id
+            @inline_struct_ptrs << gep
             return gep
           end
           if hir_type_is_inline_container_struct?(elem_hir)
@@ -7027,6 +7069,10 @@ module Crystal
             # C lib structs are stored inline at *ptr. Unlike heap-backed Crystal structs,
             # there is no pointer-sized indirection — *ptr is the struct bytes. The V2 ABI
             # still represents struct "values" as opaque ptr handles; pass the address through.
+            return ptr
+          end
+          if hir_type_is_inline_pointer_tuple?(load.type)
+            @inline_struct_ptrs << load.id
             return ptr
           end
           if hir_type_is_inline_container_struct?(load.type)
@@ -7059,6 +7105,11 @@ module Crystal
             gep = builder.gep_dynamic(ptr, index, elem_type, sz)
             builder.memcopy(gep, val, sz)
             lib_struct_indexed_memcpy = true
+          elsif elem_hir && hir_type_is_inline_pointer_tuple?(elem_hir)
+            sz = hir_type_inline_size(elem_hir).to_u64
+            gep = builder.gep_dynamic(ptr, index, TypeRef::VOID, sz)
+            builder.memcopy(gep, val, sz)
+            lib_struct_indexed_memcpy = true
           elsif elem_hir && hir_type_is_inline_container_struct?(elem_hir)
             sz = hir_type_inline_size(elem_hir).to_u64
             gep = builder.gep_dynamic(ptr, index, elem_type, sz)
@@ -7074,7 +7125,11 @@ module Crystal
         else
           # ptr.value = val - direct store
           elem_hir = pointer_element_hir_type(@hir_value_types[store.pointer]?) || @hir_value_types[store.value]? || store.type
-          if elem_hir && hir_type_is_inline_container_struct?(elem_hir)
+          if elem_hir && hir_type_is_inline_pointer_tuple?(elem_hir)
+            sz = hir_type_inline_size(elem_hir).to_u64
+            builder.memcopy(ptr, val, sz)
+            lib_struct_indexed_memcpy = true
+          elsif elem_hir && hir_type_is_inline_container_struct?(elem_hir)
             sz = hir_type_inline_size(elem_hir).to_u64
             builder.memcopy(ptr, val, sz)
             lib_struct_indexed_memcpy = true
@@ -7110,13 +7165,16 @@ module Crystal
         if elem_size == 0_u64
           if hir_type_is_lib_struct?(add.element_type)
             elem_size = require_lib_struct_byte_size(add.element_type)
+          elsif hir_type_is_inline_pointer_tuple?(add.element_type)
+            elem_size = hir_type_inline_size(add.element_type).to_u64
           else
             elem_size = container_elem_storage_size_u64(@mir_module.type_registry.get(elem_type))
           end
         end
 
         # GEP with dynamic offset computes ptr + offset * sizeof(elem)
-        builder.gep_dynamic(ptr, offset, elem_type, elem_size)
+        gep_element_type = hir_type_is_inline_pointer_tuple?(add.element_type) ? TypeRef::VOID : elem_type
+        builder.gep_dynamic(ptr, offset, gep_element_type, elem_size)
       end
 
       private def lower_pointer_realloc(realloc : HIR::PointerRealloc) : ValueId
@@ -7137,6 +7195,8 @@ module Crystal
 
         elem_size = if elem_hir && hir_type_is_lib_struct?(elem_hir)
                       require_lib_struct_byte_size(elem_hir).to_i64
+                    elsif elem_hir && hir_type_is_inline_pointer_tuple?(elem_hir)
+                      hir_type_inline_size(elem_hir).to_i64
                     elsif elem_mir_ref && (elem_mir = @mir_module.type_registry.get(elem_mir_ref))
                       container_elem_storage_size_u64(elem_mir).to_i64
                     else

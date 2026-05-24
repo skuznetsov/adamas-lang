@@ -84,8 +84,17 @@ ranges exactly cover the struct storage, so padding bytes remain protected.
 Escaping constructors still use the heap-backed generated allocator. The
 no-prelude layout matrix keeps all checksums aligned with original Crystal and
 improves the local/nested/yield struct hot-loop profile, but V2 still trails
-original substantially; next value-carrier work should target residual copies,
-union/container carriers, and optimizer parity.
+original substantially.
+
+Primitive tuple carrier checkpoint (LM-663, 2026-05-24): primitive/enum-only
+tuples now use one inline container-slot ABI across `Pointer(Tuple(...))` and
+`Array(Tuple(...))`. Allocation, indexed load/store, pointer add, realloc, and
+LLVM Array get/set all agree on the MIR tuple byte size, while tuple carriers
+containing refs, unions, or structs still use the legacy pointer-carrier path.
+The no-prelude layout matrix now brings `pointer_tuple_stride` down to the
+same V2 internal-tick class as the scalar baseline. Remaining structural
+slowdowns are now concentrated in heap-backed struct pointer slots, nilable/mixed
+union materialization, and optimizer parity.
 
 Nested generic pointer-appender checkpoint (LM-652, 2026-05-24):
 `Pointer::Appender(T).new(pointer)` now preserves its specialized nested

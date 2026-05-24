@@ -6364,6 +6364,52 @@ WBA framing:
 
 Trust: {F/G/R: 0.88/0.50/0.89} [verified]
 
+### LM-663 - Primitive tuple containers use inline slots consistently
+
+Primitive/enum-only tuple containers now use a single inline byte-slot ABI
+across HIR pointer lowering and LLVM Array access. The certified family is
+narrow by design: `Pointer(Tuple(...))` and `Array(Tuple(...))` where every
+tuple element is primitive or enum use the MIR tuple size for malloc, load,
+store, pointer add, realloc, and Array get/set. Tuples containing refs, unions,
+or structs stay on the legacy pointer-carrier path until separately verified.
+
+This fixes the remaining `pointer_tuple_stride` carrier root from the layout
+matrix. Before this change, V2 stored `Pointer(Tuple(Int64, Int64))` as an
+8-byte heap-pointer slot, and LLVM emitted `tuple_slot_copy` plus pointer-slot
+loads. After the change, the pointer buffer uses a 16-byte inline stride and
+tuple indexing keeps tuple container provenance instead of falling through to
+Array layout.
+
+Evidence:
+
+- `crystal build src/crystal_v2.cr -o /tmp/cv2_pointer_tuple_inline
+  --error-trace` -> exit 0.
+- `regression_tests/p2_pointer_primitive_tuple_inline_stride_no_prelude.sh
+  /tmp/cv2_pointer_tuple_inline` -> verifies no `tuple_slot_copy`, 16-byte
+  inline stride, and runtime checksum.
+- `regression_tests/p2_array_tuple_storage.sh /tmp/cv2_pointer_tuple_inline`
+  -> `p2_array_tuple_storage_ok`, guarding Array(Tuple) against mixed
+  write/read ABIs.
+- `regression_tests/p2_stack_local_struct_init_store_no_prelude.sh
+  /tmp/cv2_pointer_tuple_inline` ->
+  `p2_stack_local_struct_init_store_no_prelude_ok`.
+- `scripts/bench_no_prelude_layout_matrix.sh /tmp/cv2_pointer_tuple_inline
+  /opt/homebrew/bin/crystal` -> all matrix checksums matched. Representative
+  V2 internal ticks: scalar `160936`, pointer tuple `154776`, nilable union
+  `319276`, mixed union `373200`.
+
+Adversary notes:
+
+- This is not a global tuple ABI rewrite. The inline move is legal only for
+  tuple payloads with no ownership or nested carrier obligations.
+- The first attempt exposed a real Array(Tuple) boundary bug: Array push wrote
+  inline bytes while Array get still loaded pointer slots. The final fix makes
+  Array allocation/get/set/realloc agree on the same tuple slot size.
+- Union rows remain slow, so the next root is union slot materialization and
+  `is_a?` lowering, not tuple pointer stride.
+
+Trust: {F/G/R: 0.87/0.45/0.89} [verified]
+
 ### LM-660 - No-prelude layout matrix isolates struct performance divergence
 
 The no-prelude layout matrix now compares original Crystal and Crystal V2 on a
