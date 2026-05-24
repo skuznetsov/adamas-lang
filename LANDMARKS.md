@@ -6448,6 +6448,58 @@ Adversary notes:
 
 Trust: {F/G/R: 0.86/0.50/0.88} [verified]
 
+### LM-662 - Trivial stack-local struct initializers lower to direct field stores
+
+Stack-local generated struct constructors now inline trivial
+`initialize(@ivar, ...)` bodies as direct field stores at the call site. This
+removes the hot-loop `#initialize` call after LM-661 has already removed the
+heap allocator call. The inliner is deliberately narrow: the initializer must
+be one block, write only `self` fields from initializer parameters, contain no
+calls/control flow/non-zero computations, and return `Nil`/`Void`. Non-trivial
+initializers fall back to the previous zero-fill plus real initializer call.
+
+Zero-fill elision is separately guarded by byte coverage. Even if every MIR
+field has a matching store, the memset is skipped only when the stored field
+ranges exactly cover the whole struct storage with no padding gaps. This keeps
+padding bytes and nil-erased/shared-offset fields conservative while still
+letting dense structs such as two-`Int64` `Pair` avoid redundant zeroing.
+
+Evidence:
+
+- `crystal build src/crystal_v2.cr -o /tmp/cv2_struct_init_final
+  --error-trace` -> exit 0.
+- `regression_tests/p2_stack_local_struct_init_store_no_prelude.sh
+  /tmp/cv2_struct_init_final` -> `p2_stack_local_struct_init_store_no_prelude_ok`.
+  This guard verifies dense trivial direct stores with no `#initialize` or
+  memset, custom initializer fallback with real `#initialize` plus memset, and
+  padded trivial structs keeping memset while still inlining field stores.
+- `regression_tests/p2_stack_local_struct_new_no_prelude.sh
+  /tmp/cv2_struct_init_final` -> existing stack-local/escaping/unsafe-arg
+  guard still passes.
+- Focused no-prelude IR for `Pair.new(1_i64, 2_i64)` now emits direct
+  `getelementptr` plus `store i64` in `__crystal_main` and no
+  `Pair$Hinitialize` call.
+- `scripts/bench_no_prelude_layout_matrix.sh /tmp/cv2_struct_init_final
+  /opt/homebrew/bin/crystal` -> all nine original/V2 checksums still match.
+  Representative V2/original internal tick ratios from this run:
+  `struct_local_loop` about 12.0x, `nested_struct_loop` about 6.9x, and
+  `yield_struct_loop` about 12.7x. Pointer/container/union cases remain much
+  slower and are a separate carrier-specialization frontier.
+
+Adversary notes:
+
+- This is still not a global by-value struct ABI rewrite. Arbitrary method
+  argument constructors remain heap-backed unless the existing use-site guard
+  proves the result stays local.
+- The field-store emission reuses the same MIR field-store helper as ordinary
+  `HIR::FieldSet`, preserving scalar coercion, union wrapping, inline
+  struct/lib/static-array memcopy, and reference ownership behavior.
+- If MIR and HIR argument lists diverge, the inliner falls back to the real
+  initializer call because union wrapping and reference retains require the
+  caller HIR argument type.
+
+Trust: {F/G/R: 0.88/0.52/0.89} [verified]
+
 ### LM-656 - Bare generic `.new` can use the enclosing expected return
 
 Bare generic constructor calls inside generic methods now prefer the enclosing

@@ -75,15 +75,17 @@ only 4 bytes per heap-struct pointer slot and truncated every other pointer.
 Produced `s2` now emits `Array(ExprId)#dup` with `elem_size=8`, and the former
 full-prelude require-scan segfault moves forward into module registration.
 
-Stack-local struct constructor checkpoint (LM-661, 2026-05-24): generated
+Stack-local struct constructor checkpoints (LM-661/662, 2026-05-24): generated
 struct `.new` calls whose HIR result is `StackLocal` now lower directly to a
-caller-local stack allocation, zero-fill, and `#initialize` call. Escaping
-constructors still use the heap-backed generated allocator. The no-prelude
-layout matrix keeps all checksums aligned with original Crystal and improves
-the local/nested/yield struct hot-loop profile, but V2 still trails original
-substantially; next value-carrier work should target constructor/init call
-overhead, residual copies, and optimizer parity rather than hot-loop GC
-allocation for this generated-local constructor family.
+caller-local stack allocation. Trivial generated `initialize(@ivar, ...)`
+bodies inline as direct field stores; non-trivial initializer bodies still use
+the real `#initialize` call. Zero-fill is skipped only when the field-store
+ranges exactly cover the struct storage, so padding bytes remain protected.
+Escaping constructors still use the heap-backed generated allocator. The
+no-prelude layout matrix keeps all checksums aligned with original Crystal and
+improves the local/nested/yield struct hot-loop profile, but V2 still trails
+original substantially; next value-carrier work should target residual copies,
+union/container carriers, and optimizer parity.
 
 Nested generic pointer-appender checkpoint (LM-652, 2026-05-24):
 `Pointer::Appender(T).new(pointer)` now preserves its specialized nested

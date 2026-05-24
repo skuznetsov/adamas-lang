@@ -31,6 +31,11 @@ module Crystal
         dispatch_class: String? # for nested class dispatch
       )
 
+      private alias TrivialStructInitStore = NamedTuple(
+        field: HIR::FieldSet,
+        param_index: Int32
+      )
+
       # Explicit provenance for Proc-shaped HIR values. TypeKind::Proc alone is
       # not a safe dispatch discriminator: raw yield callbacks and heap Proc
       # objects can both be typed as Proc in HIR.
@@ -2829,20 +2834,42 @@ module Crystal
         builder = @builder.not_nil!
         obj_ptr = get_value(field.object)
         value = get_value(field.value)
+        obj_mir_type = @hir_value_types[field.object]?.try { |t| convert_type(t) }
 
+        lower_field_store_to_ptr(
+          obj_ptr,
+          obj_mir_type,
+          field.field_name,
+          field.field_offset,
+          field.type,
+          value,
+          field.value
+        )
+      end
+
+      private def lower_field_store_to_ptr(
+        obj_ptr : ValueId,
+        obj_mir_type : TypeRef?,
+        field_name : String,
+        field_offset : Int32,
+        field_hir_type : HIR::TypeRef,
+        value : ValueId,
+        value_hir_id : HIR::ValueId?,
+      ) : ValueId
+        builder = @builder.not_nil!
         # Nil-typed fields are zero-sized placeholders with no backing storage.
         # Emitting a physical store for them can clobber adjacent fields that share
         # the same byte offset (for example in Hash::Entry(K, Nil)).
-        if field.type == HIR::TypeRef::NIL
+        if field_hir_type == HIR::TypeRef::NIL
           return value
         end
 
         # Check if the field is a union type but the value being stored is not.
         # If so, wrap the value in a union before storing (e.g., storing a Proc
         # into a (Proc | Nil) ivar).
-        field_mir_type = convert_type(field.type)
+        field_mir_type = convert_type(field_hir_type)
         if is_union_type?(field_mir_type)
-          value_hir_type = @hir_value_types[field.value]?
+          value_hir_type = value_hir_id ? @hir_value_types[value_hir_id]? : nil
           if value_hir_type
             value_mir_type = convert_type(value_hir_type)
             if !is_union_type?(value_mir_type)
@@ -2853,30 +2880,30 @@ module Crystal
               end
             end
           end
-        elsif field.type != HIR::TypeRef::VOID
+        elsif field_hir_type != HIR::TypeRef::VOID
           # Coerce scalar stores to the declared field type.
           # This is required for assignments like @u8 = 0 where the literal is Int32.
-          value_hir_type = @hir_value_types[field.value]? || field.type
-          value = coerce_value_for_field_store(builder, value, value_hir_type, field.type)
+          value_hir_type = value_hir_id.try { |id| @hir_value_types[id]? } || field_hir_type
+          value = coerce_value_for_field_store(builder, value, value_hir_type, field_hir_type)
         end
 
         # GEP to field address + store
-        field_ptr = builder.gep(obj_ptr, [field.field_offset.to_u32], TypeRef::POINTER)
+        field_ptr = builder.gep(obj_ptr, [field_offset.to_u32], TypeRef::POINTER)
 
         # For struct, lib struct, and StaticArray fields with inline size > pointer size,
         # copy the data inline using memcpy. Smaller structs (≤ 8 bytes) can be stored
         # directly as scalar values.
-        is_crystal_struct = hir_type_is_struct?(field.type) && !hir_type_is_lib_struct?(field.type)
-        is_lib = hir_type_is_lib_struct?(field.type)
-        is_static_array = hir_type_is_static_array?(field.type)
+        is_crystal_struct = hir_type_is_struct?(field_hir_type) && !hir_type_is_lib_struct?(field_hir_type)
+        is_lib = hir_type_is_lib_struct?(field_hir_type)
+        is_static_array = hir_type_is_static_array?(field_hir_type)
         # Only memcopy if the struct is larger than a pointer (needs inline storage)
-        inline_size = is_crystal_struct ? hir_type_inline_size(field.type).to_u64 : 0_u64
+        inline_size = is_crystal_struct ? hir_type_inline_size(field_hir_type).to_u64 : 0_u64
         use_memcopy = is_lib || is_static_array || (is_crystal_struct && inline_size > pointer_word_bytes_u64)
         if use_memcopy
           struct_size = if is_lib
-                          hir_type_lib_struct_size(field.type)
+                          hir_type_lib_struct_size(field_hir_type)
                         else
-                          hir_type_inline_size(field.type).to_u64
+                          hir_type_inline_size(field_hir_type).to_u64
                         end
           if struct_size > 0
             builder.memcopy(field_ptr, value, struct_size)
@@ -2888,12 +2915,11 @@ module Crystal
         # The FieldSet may carry a declared type (e.g. 3-variant all-ref union → ptr)
         # while the class layout has a wider type (e.g. 6-variant non-all-ref union → struct).
         actual_field_type = field_mir_type
-        if obj_hir_type = @hir_value_types[field.object]?
-          obj_mir_type = convert_type(obj_hir_type)
+        if obj_mir_type
           if mir_type = @mir_module.type_registry.get(obj_mir_type)
             if fields = mir_type.fields
               # Match by both field name and offset for safety
-              if found_field = fields.find { |f| f.name == field.field_name && f.offset == field.field_offset.to_u32 }
+              if found_field = fields.find { |f| f.name == field_name && f.offset == field_offset.to_u32 }
                 if found_field.type_ref != field_mir_type
                   # Only override if the actual field type is a union type (non-all-ref)
                   # This prevents incorrect overrides for fields where types differ
@@ -2917,14 +2943,14 @@ module Crystal
         # we can MOVE ownership instead of copying (skip rc_inc here, skip rc_dec
         # at block end). This eliminates redundant rc_inc/rc_dec pairs for values
         # that are created and immediately stored in a field (e.g., TreeNode children).
-        unless @hir_constant_values.includes?(field.value)
-          if value_hir_type = @hir_value_types[field.value]?
+        if value_hir_id && !@hir_constant_values.includes?(value_hir_id)
+          if value_hir_type = @hir_value_types[value_hir_id]?
             if type_needs_rc?(convert_type(value_hir_type))
-              is_last_use = (@remaining_uses[field.value]? || 0) <= 0
-              is_owned_temp = @block_arc_temps.any? { |(hid, _)| hid == field.value }
-              if is_last_use && is_owned_temp && !@cross_block_values.includes?(field.value)
+              is_last_use = (@remaining_uses[value_hir_id]? || 0) <= 0
+              is_owned_temp = @block_arc_temps.any? { |(hid, _)| hid == value_hir_id }
+              if is_last_use && is_owned_temp && !@cross_block_values.includes?(value_hir_id)
                 # MOVE: transfer ownership, skip rc_inc, mark for skipping rc_dec
-                @moved_values << field.value
+                @moved_values << value_hir_id
               else
                 # COPY: normal rc_inc (value still used or cross-block)
                 builder.rc_inc(value)
@@ -5444,15 +5470,38 @@ module Crystal
         struct_ptr = builder.alloc(MemoryStrategy::Stack, mir_type_ref, mir_type.size, mir_type.alignment)
         @stats.stack_allocations += 1
 
-        if mir_type.size > 0
+        trivial_stores = trivial_struct_initializer_stores(init_func.name, mir_type_ref)
+        if trivial_stores && trivial_stores.any? { |store| (store[:param_index] - 1) >= args.size || (store[:param_index] - 1) >= hir_args.size }
+          trivial_stores = nil
+        end
+        fully_initialized = trivial_stores && trivial_struct_initializer_covers_all_storage?(trivial_stores, mir_type)
+        if mir_type.size > 0 && !fully_initialized
           zero = builder.const_int(0_i64, TypeRef::UINT8)
           size = builder.const_int(mir_type.size.to_i64, TypeRef::UINT64)
           volatile = builder.const_bool(false)
           builder.extern_call("llvm.memset.p0.i64", [struct_ptr, zero, size, volatile], TypeRef::VOID)
         end
 
-        init_args = coerce_struct_initializer_args(builder, struct_ptr, args, hir_args, init_func)
-        builder.call(init_func.id, init_args, init_func.return_type)
+        if trivial_stores
+          trivial_stores.each do |store|
+            arg_idx = store[:param_index] - 1
+            value_hir_id = arg_idx < hir_args.size ? hir_args[arg_idx] : nil
+            field = store[:field]
+            lower_field_store_to_ptr(
+              struct_ptr,
+              mir_type_ref,
+              field.field_name,
+              field.field_offset,
+              field.type,
+              args[arg_idx],
+              value_hir_id
+            )
+          end
+        else
+          init_args = coerce_struct_initializer_args(builder, struct_ptr, args, hir_args, init_func)
+          builder.call(init_func.id, init_args, init_func.return_type)
+        end
+
         struct_ptr
       end
 
@@ -5574,6 +5623,129 @@ module Crystal
           term.value == alloc_inst.not_nil!.id
         else
           false
+        end
+      end
+
+      private def trivial_struct_initializer_stores(
+        init_name : String,
+        mir_type_ref : TypeRef,
+      ) : ::Array(TrivialStructInitStore)?
+        hir_func = @hir_module.function_by_name(init_name)
+        return nil unless hir_func
+        return nil unless hir_func.blocks.size == 1
+
+        params = hir_func.params
+        return nil if params.empty?
+        self_param = params[0]
+        return nil unless convert_type(self_param.type) == mir_type_ref
+        mir_type = @mir_module.type_registry.get(mir_type_ref)
+        return nil unless mir_type && mir_type.kind.struct?
+        mir_fields = mir_type.fields
+        return nil unless mir_fields
+
+        param_index_by_id = {} of HIR::ValueId => Int32
+        params.each_with_index do |param, idx|
+          param_index_by_id[param.id] = idx
+        end
+
+        entry = hir_func.blocks.first
+        stores = [] of TrivialStructInitStore
+        entry.instructions.each do |inst|
+          case inst
+          when HIR::FieldSet
+            return nil unless inst.object == self_param.id
+            param_index = param_index_by_id[inst.value]?
+            return nil unless param_index && param_index > 0
+            return nil unless mir_fields.any? { |f| f.name == inst.field_name && f.offset == inst.field_offset.to_u32 }
+            stores << {field: inst, param_index: param_index}
+          when HIR::Literal
+            return nil unless hir_zero_literal?(inst)
+          else
+            return nil
+          end
+        end
+
+        case term = entry.terminator
+        when HIR::Return
+          return nil unless trivial_initializer_return?(term, entry)
+        else
+          return nil
+        end
+
+        stores
+      end
+
+      private def trivial_initializer_return?(term : HIR::Return, entry : HIR::Block) : Bool
+        return true unless value_id = term.value
+
+        inst = entry.instructions.find { |candidate| candidate.id == value_id }
+        return false unless inst
+        case inst
+        when HIR::Literal
+          inst.value.nil?
+        else
+          inst.type == HIR::TypeRef::VOID || inst.type == HIR::TypeRef::NIL
+        end
+      end
+
+      private def trivial_struct_initializer_covers_all_fields?(
+        stores : ::Array(TrivialStructInitStore),
+        mir_type : Type,
+      ) : Bool
+        fields = mir_type.fields
+        return false unless fields
+        fields.all? do |field|
+          stores.any? { |store| store[:field].field_name == field.name && store[:field].field_offset.to_u32 == field.offset }
+        end
+      end
+
+      private def trivial_struct_initializer_covers_all_storage?(
+        stores : ::Array(TrivialStructInitStore),
+        mir_type : Type,
+      ) : Bool
+        return true if mir_type.size == 0
+        return false unless trivial_struct_initializer_covers_all_fields?(stores, mir_type)
+
+        fields = mir_type.fields
+        return false unless fields
+
+        ranges = [] of Tuple(UInt64, UInt64)
+        fields.each do |field|
+          size = mir_field_storage_size(field.type_ref)
+          next if size == 0
+          start = field.offset.to_u64
+          finish = start + size
+          return false if finish > mir_type.size
+          ranges << {start, finish}
+        end
+        return mir_type.size == 0 if ranges.empty?
+
+        ranges.sort_by! { |range| range[0] }
+        cursor = 0_u64
+        ranges.each do |(start, finish)|
+          return false unless start == cursor
+          cursor = finish
+        end
+        cursor == mir_type.size
+      end
+
+      private def mir_field_storage_size(type_ref : TypeRef) : UInt64
+        case type_ref
+        when TypeRef::VOID, TypeRef::NIL
+          0_u64
+        when TypeRef::BOOL, TypeRef::INT8, TypeRef::UINT8
+          1_u64
+        when TypeRef::INT16, TypeRef::UINT16
+          2_u64
+        when TypeRef::INT32, TypeRef::UINT32, TypeRef::FLOAT32
+          4_u64
+        when TypeRef::INT64, TypeRef::UINT64, TypeRef::FLOAT64, TypeRef::POINTER, TypeRef::STRING
+          pointer_word_bytes_u64
+        else
+          if desc = @mir_module.type_registry.get(type_ref)
+            return desc.size if desc.size > 0
+          end
+          pointer_word_bytes_u64
         end
       end
 
