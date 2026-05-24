@@ -109,6 +109,18 @@ Boundary: full-prelude produced-s2 `puts 42` still exits 139 during early module
 registration, so the next root remains full-prelude module-registration
 state/memory, not generic-base tuple capture.
 
+Nilable Proc union checkpoint (LM-655, 2026-05-24): HIR union construction now
+preserves typed `Proc(...)` variants instead of canonicalizing them to bare
+`Proc`, and proc shorthand argument normalization resolves `self` against the
+concrete owner. This fixes the host HIR pollution where
+`Hash(String, Crystal::HIR::ClassInfo)#[]` returned
+`Crystal::HIR::ClassInfo | String` because `@block : (self, K -> V)?` lost its
+proc signature and made `Proc#call` return `Void`/wrong fallback types. Host
+guards for nilable proc unions, `Hash#to_a`, and qualified namespaces pass.
+Produced `s2` still builds, and the full-prelude `puts 42` frontier now reaches
+`fixup_inherited_ivars start` before a segfault; continue from that
+memory/layout-sensitive fixup frontier, not from the erased-Proc return root.
+
 LSP performance side checkpoint (LM-605, 2026-05-20): the background prelude
 loader now has a single in-flight owner. Repeated foreground requests while
 `@prelude_state` is still nil no longer spawn duplicate cache rebuilds. The

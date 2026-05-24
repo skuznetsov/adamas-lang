@@ -6364,6 +6364,50 @@ WBA framing:
 
 Trust: {F/G/R: 0.88/0.50/0.89} [verified]
 
+### LM-655 - Nilable Proc unions preserve callable signatures
+
+HIR union construction now uses proc-aware type names when a union is built
+from TypeRefs. This prevents typed callable variants such as
+`Proc(Hash(String, Crystal::HIR::ClassInfo), String, Crystal::HIR::ClassInfo)`
+from being canonicalized to bare `Proc`. Proc shorthand argument normalization
+also resolves `self` against the concrete owner, avoiding fake names such as
+`Box::self` in `(self, K -> V)?`.
+
+Evidence:
+
+- Before the fix, host HIR for `Hash(String, Crystal::HIR::ClassInfo)#[]$String`
+  returned `Crystal::HIR::ClassInfo | String`, loaded `@block` as
+  `Union Nil | Proc`, and emitted `Proc#call` with return type `Void`.
+- After the fix, host HIR has
+  `type.3287 = Union Nil | Proc(Hash(String, Crystal::HIR::ClassInfo), String, Crystal::HIR::ClassInfo)`;
+  `Hash(String, Crystal::HIR::ClassInfo)#[]$String` returns
+  `Crystal::HIR::ClassInfo`; and `Proc#call` returns `Crystal::HIR::ClassInfo`.
+- `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 420 8192 build
+  src/crystal_v2.cr -o /tmp/cv2_proc_union_fix_host4 --error-trace` -> exit 0.
+- `regression_tests/p2_nilable_proc_union_preserves_signature_no_prelude.sh
+  /tmp/cv2_proc_union_fix_host4` -> ok.
+- `regression_tests/p2_hash_to_a_block_return_tuple.sh
+  /tmp/cv2_proc_union_fix_host4` -> ok.
+- `regression_tests/p2_qualified_module_namespace_no_prelude.sh
+  /tmp/cv2_proc_union_fix_host4` -> ok.
+- Produced `s2` build with `/tmp/cv2_proc_union_fix_host4` -> exit 0 in about
+  174s; the existing non-fatal
+  `CrystalV2::Compiler::CLI#file_sha256$String` MIR optimizer overflow remains.
+- Produced `s2` passes the qualified namespace no-prelude guard. Full-prelude
+  produced-s2 `puts 42` still exits 139, now after registration and at
+  `fixup_inherited_ivars start`.
+
+Adversary notes:
+
+- This is not a `Hash#[]` special case. The fix covers the structural root:
+  any union or phi built from a typed `Proc` TypeRef must keep the callable
+  parameter and return signature.
+- Remaining full-prelude failure is memory/layout-sensitive. Do not reclassify
+  this fix as a complete s2b bootstrap fix; the next root starts at
+  `fixup_inherited_ivars`.
+
+Trust: {F/G/R: 0.86/0.55/0.86} [verified]
+
 ### LM-654 - Built-in generic bases must not be captured by sibling namespaces
 
 Contextual type resolution now preserves known built-in generic bases
