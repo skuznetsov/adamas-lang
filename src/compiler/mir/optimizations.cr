@@ -500,9 +500,9 @@ module Crystal::MIR
 
     private def fold_int_op(op : BinOp, left : Int64, right : Int64) : (Int64 | Bool)?
       case op
-      when .add? then left + right
-      when .sub? then left - right
-      when .mul? then left * right
+      when .add? then left &+ right
+      when .sub? then left &- right
+      when .mul? then left &* right
       when .div? then right != 0 ? left // right : nil
       when .rem? then right != 0 ? left % right : nil
       when .shl? then left << right
@@ -522,9 +522,9 @@ module Crystal::MIR
 
     private def fold_uint_op(op : BinOp, left : UInt64, right : UInt64) : (UInt64 | Bool)?
       case op
-      when .add? then left + right
-      when .sub? then left - right
-      when .mul? then left * right
+      when .add? then left &+ right
+      when .sub? then left &- right
+      when .mul? then left &* right
       when .div? then right != 0_u64 ? left // right : nil
       when .rem? then right != 0_u64 ? left % right : nil
       when .shl? then left << right

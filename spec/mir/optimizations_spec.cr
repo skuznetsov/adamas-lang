@@ -264,6 +264,26 @@ describe Crystal::MIR do
       result.value.should eq(30_u64)
     end
 
+    it "folds UInt64 arithmetic with emitted LLVM wrapping semantics" do
+      mod = Crystal::MIR::Module.new
+      func = mod.create_function("test", Crystal::MIR::TypeRef::UINT64)
+      builder = Crystal::MIR::Builder.new(func)
+
+      offset = builder.const_uint(0xcbf29ce484222325_u64, Crystal::MIR::TypeRef::UINT64)
+      prime = builder.const_uint(0x100000001b3_u64, Crystal::MIR::TypeRef::UINT64)
+      product = builder.mul(offset, prime, Crystal::MIR::TypeRef::UINT64)
+      builder.ret(product)
+
+      pass = Crystal::MIR::ConstantFoldingPass.new(func)
+      folded = pass.run
+
+      folded.should eq(1)
+
+      block = func.get_block(func.entry_block)
+      result = block.instructions[2].as(Crystal::MIR::Constant)
+      result.value.should eq(0xcbf29ce484222325_u64 &* 0x100000001b3_u64)
+    end
+
     it "folds Bool ops" do
       mod = Crystal::MIR::Module.new
       func = mod.create_function("test", Crystal::MIR::TypeRef::BOOL)

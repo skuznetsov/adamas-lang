@@ -149,6 +149,17 @@ with `Worker 0: MIR opt error for CrystalV2::Compiler::CLI#file_sha256$String:
 Arithmetic overflow`; continue there as the next root, not at allocator-state
 Set iteration.
 
+MIR constant-fold wrapping checkpoint (LM-658, 2026-05-24): integer constant
+folding now uses wrapping add/sub/mul semantics for signed and unsigned MIR
+integer ops, matching the LLVM integer instructions V2 emits. This fixes the
+produced-s2 build failure where the optimizer evaluated the FNV-1a
+`file_sha256` `UInt64` multiply with checked Crystal arithmetic and raised
+`Arithmetic overflow`. The focused MIR optimizer spec covers the same FNV
+offset/prime multiply. Produced `s2` now builds cleanly again. Current
+frontier: produced-s2 full-prelude `puts 42` exits 139 during target compile,
+with trace reaching `class register idx=3/92`; continue from class
+registration state/memory, not MIR constant folding.
+
 LSP performance side checkpoint (LM-605, 2026-05-20): the background prelude
 loader now has a single in-flight owner. Repeated foreground requests while
 `@prelude_state` is still nil no longer spawn duplicate cache rebuilds. The

@@ -6442,6 +6442,37 @@ Adversary notes:
 
 Trust: {F/G/R: 0.88/0.44/0.88} [verified]
 
+### LM-658 - MIR constant folding wraps integer add/sub/mul like emitted LLVM
+
+The MIR constant folder now evaluates signed and unsigned integer add/sub/mul
+with wrapping arithmetic. This matches the LLVM integer ops V2 emits and avoids
+host/compiler exceptions while optimizing generated-stage2 functions whose MIR
+contains overflowing constant arithmetic.
+
+Evidence:
+
+- `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 120 4096 spec
+  spec/mir/optimizations_spec.cr --error-trace` -> 46 examples, 0 failures.
+  The new focused spec folds the FNV-1a `0xcbf29ce484222325_u64 *
+  0x100000001b3_u64` multiply that previously exposed the produced-s2 overflow.
+- `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 420 8192 build
+  src/crystal_v2.cr -o /tmp/cv2_mir_wrap_host --error-trace` -> exit 0.
+- Produced-s2 build with `/tmp/cv2_mir_wrap_host`:
+  `scripts/run_safe.sh /tmp/cv2_mir_wrap_host 300 4096 src/crystal_v2.cr -o
+  /tmp/cv2_mir_wrap_s2/cv2_s2` -> exit 0. The previous
+  `CrystalV2::Compiler::CLI#file_sha256$String: Arithmetic overflow` diagnostic
+  is gone.
+
+Adversary notes:
+
+- This is an optimizer/IR-semantics fix, not a `file_sha256` workaround. The
+  backend already emits plain LLVM integer arithmetic, so constant folding must
+  not use host checked arithmetic for add/sub/mul.
+- Produced-s2 full-prelude `puts 42` is still not clean. It now exits 139
+  during target compile, with trace reaching `class register idx=3/92`.
+
+Trust: {F/G/R: 0.89/0.48/0.90} [verified]
+
 ### LM-655 - Nilable Proc unions preserve callable signatures
 
 HIR union construction now uses proc-aware type names when a union is built
