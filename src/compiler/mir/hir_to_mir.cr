@@ -3359,6 +3359,10 @@ module Crystal
         # which are only relevant once a runtime receiver participates.
         unless call.has_receiver? || atomic_ops_skip_exact_lookup
           if exact_func = @mir_module.get_function(call.method_name)
+            if stack_value = lower_stack_local_struct_allocator_call(call, exact_func, args, call.args)
+              return stack_value
+            end
+
             coerced_args = coerce_call_args(builder, args, call.args, exact_func)
             call_return_type = exact_func.return_type
             hir_call_return_type = convert_type(call.type)
@@ -3813,6 +3817,10 @@ module Crystal
             effective_hir_args = effective_hir_args[0, callee_param_count]? || effective_hir_args
           end
 
+          if stack_value = lower_stack_local_struct_allocator_call(call, func, effective_args, effective_hir_args)
+            return stack_value
+          end
+
           coerced_args = coerce_call_args(builder, effective_args, effective_hir_args, func)
           call_return_type = func.return_type
           hir_call_return_type = convert_type(call.type)
@@ -3920,6 +3928,9 @@ module Crystal
             hir_args = call.has_receiver? ? [call.receiver_value] + call.args : call.args
             if func.params.size < hir_args.size
               hir_args = hir_args[hir_args.size - func.params.size, func.params.size]
+            end
+            if stack_value = lower_stack_local_struct_allocator_call(call, func, effective_args, hir_args)
+              return stack_value
             end
             coerced_args = coerce_call_args(builder, effective_args, hir_args, func)
             call_return_type = func.return_type
@@ -5409,6 +5420,211 @@ module Crystal
             end
           rescue ex : IndexError
             raise "Index error in coerce_call_args for #{func.name} at arg #{idx}: mir_args.size=#{mir_args.size} params.size=#{params.size} hir_args.size=#{hir_args.size}\n#{ex.message}"
+          end
+        end
+
+        result
+      end
+
+      private def lower_stack_local_struct_allocator_call(
+        call : HIR::Call,
+        allocator_func : MIR::Function,
+        args : ::Array(ValueId),
+        hir_args : ::Array(HIR::ValueId),
+      ) : ValueId?
+        return nil unless call.lifetime == HIR::LifetimeTag::StackLocal
+        return nil unless init_func = stack_promotable_struct_allocator_initializer(allocator_func)
+        return nil unless stack_local_struct_constructor_uses_safe?(call.id)
+
+        mir_type_ref = allocator_func.return_type
+        mir_type = @mir_module.type_registry.get(mir_type_ref)
+        return nil unless mir_type && mir_type.kind.struct?
+
+        builder = @builder.not_nil!
+        struct_ptr = builder.alloc(MemoryStrategy::Stack, mir_type_ref, mir_type.size, mir_type.alignment)
+        @stats.stack_allocations += 1
+
+        if mir_type.size > 0
+          zero = builder.const_int(0_i64, TypeRef::UINT8)
+          size = builder.const_int(mir_type.size.to_i64, TypeRef::UINT64)
+          volatile = builder.const_bool(false)
+          builder.extern_call("llvm.memset.p0.i64", [struct_ptr, zero, size, volatile], TypeRef::VOID)
+        end
+
+        init_args = coerce_struct_initializer_args(builder, struct_ptr, args, hir_args, init_func)
+        builder.call(init_func.id, init_args, init_func.return_type)
+        struct_ptr
+      end
+
+      private def initializer_name_for_allocator_name(allocator_name : String) : String?
+        new_idx = allocator_name.rindex(".new")
+        return nil unless new_idx
+
+        suffix_start = new_idx + ".new".bytesize
+        allocator_name[0...new_idx] + "#initialize" + allocator_name[suffix_start..]
+      end
+
+      private def stack_promotable_struct_allocator_initializer(allocator_func : MIR::Function) : MIR::Function?
+        init_name = initializer_name_for_allocator_name(allocator_func.name)
+        return nil unless init_name
+
+        mir_type = @mir_module.type_registry.get(allocator_func.return_type)
+        return nil unless mir_type && mir_type.kind.struct?
+
+        init_func = @mir_module.get_function(init_name)
+        return nil unless init_func
+        return nil unless init_func.params.size == allocator_func.params.size + 1
+
+        return nil unless hir_struct_allocator_zero_init_only?(
+                            allocator_func.name,
+                            init_name,
+                            allocator_func.return_type
+                          )
+        init_func
+      end
+
+      private def stack_local_struct_constructor_uses_safe?(
+        value_id : HIR::ValueId,
+        visited = ::Set(HIR::ValueId).new,
+      ) : Bool
+        return false if visited.includes?(value_id)
+        visited << value_id
+
+        hir_func = @current_hir_func
+        return false unless hir_func
+
+        hir_func.blocks.each do |block|
+          block.instructions.each do |inst|
+            next unless hir_instruction_used_values(inst).includes?(value_id)
+
+            case inst
+            when HIR::Copy
+              return false unless stack_local_struct_constructor_uses_safe?(inst.id, visited)
+            when HIR::FieldGet
+              return false unless inst.object == value_id
+            when HIR::FieldSet
+              return false unless inst.object == value_id
+            when HIR::Call
+              if inst.has_receiver? && inst.receiver_value == value_id
+                next
+              end
+              return false unless generated_struct_allocator_hir_call?(inst)
+            else
+              return false
+            end
+          end
+
+          if hir_terminator_used_values(block.terminator).includes?(value_id)
+            return false
+          end
+        end
+
+        true
+      end
+
+      private def generated_struct_allocator_hir_call?(call : HIR::Call) : Bool
+        return false unless call.method_name.includes?(".new")
+        desc = @hir_module.get_type_descriptor(call.type)
+        return false unless desc && desc.kind == HIR::TypeKind::Struct
+        init_name = initializer_name_for_allocator_name(call.method_name)
+        return false unless init_name
+
+        hir_struct_allocator_zero_init_only?(call.method_name, init_name, convert_type(call.type))
+      end
+
+      private def hir_struct_allocator_zero_init_only?(
+        allocator_name : String,
+        init_name : String,
+        mir_return_type : TypeRef,
+      ) : Bool
+        hir_func = @hir_module.function_by_name(allocator_name)
+        return false unless hir_func
+
+        entry = hir_func.blocks.first?
+        return false unless entry
+
+        alloc_inst = nil.as(HIR::Allocate?)
+        init_call = nil.as(HIR::Call?)
+        zero_values = ::Set(ValueId).new
+        zero_allocs = ::Set(ValueId).new
+
+        entry.instructions.each do |inst|
+          case inst
+          when HIR::Allocate
+            if convert_type(inst.type) == mir_return_type
+              alloc_inst = inst
+            end
+            zero_allocs << inst.id
+          when HIR::Literal
+            zero_values << inst.id if hir_zero_literal?(inst)
+          when HIR::FieldSet
+            return false unless zero_values.includes?(inst.value) || zero_allocs.includes?(inst.value)
+          when HIR::Call
+            if inst.has_receiver? && alloc_inst && inst.receiver_value == alloc_inst.not_nil!.id && inst.method_name == init_name
+              init_call = inst
+              break
+            end
+            return false
+          end
+        end
+
+        return false unless alloc_inst && init_call
+        case term = entry.terminator
+        when HIR::Return
+          term.value == alloc_inst.not_nil!.id
+        else
+          false
+        end
+      end
+
+      private def hir_zero_literal?(literal : HIR::Literal) : Bool
+        case value = literal.value
+        when Nil
+          true
+        when Bool
+          !value
+        when Int64
+          value == 0_i64
+        when UInt64
+          value == 0_u64
+        when Float64
+          value == 0.0
+        when Char
+          value == '\0'
+        else
+          false
+        end
+      end
+
+      private def coerce_struct_initializer_args(
+        builder : MIR::Builder,
+        self_ptr : ValueId,
+        mir_args : ::Array(ValueId),
+        hir_args : ::Array(HIR::ValueId),
+        init_func : MIR::Function,
+      ) : ::Array(ValueId)
+        result = [self_ptr] of ValueId
+
+        mir_args.each_with_index do |mir_arg, idx|
+          param = init_func.params[idx + 1]?
+          unless param
+            result << mir_arg
+            next
+          end
+
+          arg_type = get_mir_value_type(mir_arg) ||
+                     if idx < hir_args.size
+                       get_arg_type(hir_args[idx])
+                     else
+                       param.type
+                     end
+          param_type = param.type
+
+          if arg_type != param_type && is_union_type?(param_type) && !is_union_type?(arg_type)
+            variant_id = get_union_variant_id(arg_type, param_type)
+            result << builder.union_wrap(mir_arg, variant_id, param_type)
+          else
+            result << mir_arg
           end
         end
 

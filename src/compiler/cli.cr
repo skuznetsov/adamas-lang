@@ -2397,13 +2397,20 @@ module CrystalV2
               bootstrap_trace_puts "  Escape analysis: #{idx + 1}/#{total_funcs}..."
             end
 
-            # Fast-path: skip EA for functions with no allocation instructions
+            # Fast-path: skip EA for functions with no allocation-relevant values.
+            # Struct constructor calls do not contain a literal HIR::Allocate in the
+            # caller, but their result lifetime is needed by MIR stack promotion.
             has_alloc = false
             func.blocks.each do |block|
               block.instructions.each do |inst|
                 if inst.is_a?(HIR::Allocate) || inst.is_a?(HIR::ArrayLiteral) || inst.is_a?(HIR::StringInterpolation)
                   has_alloc = true
                   break
+                elsif inst.is_a?(HIR::Call) && inst.method_name.includes?(".new")
+                  if desc = hir_module.get_type_descriptor(inst.type)
+                    has_alloc = desc.kind == HIR::TypeKind::Struct
+                    break if has_alloc
+                  end
                 end
               end
               break if has_alloc

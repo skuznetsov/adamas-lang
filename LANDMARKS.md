@@ -6403,6 +6403,51 @@ Adversary notes:
 
 Trust: {F/G/R: 0.84/0.48/0.86} [verified]
 
+### LM-661 - Stack-local generated struct constructors bypass allocator calls
+
+Generated struct `.new` calls whose HIR result remains `StackLocal` are now
+lowered at the MIR call site as a caller-local stack allocation, zero-fill, and
+direct `#initialize` call. The guard uses the generated allocator's HIR body to
+prove the expected shape (`allocate`, zero-default field setup, receiver
+`#initialize`, `return allocate`) before rewriting. Escaping constructor
+results, such as a function returning `Pair.new(...)`, keep the existing heap
+allocator call.
+
+Evidence:
+
+- `crystal build src/crystal_v2.cr -o /tmp/cv2_struct_fix_candidate
+  --error-trace` -> exit 0.
+- `regression_tests/p2_stack_local_struct_new_no_prelude.sh
+  /tmp/cv2_struct_fix_candidate` -> `not reproduced: stack-local struct .new is
+  inlined while escaping/unsafe-arg .new stays heap-backed`.
+- A focused no-prelude executable using `pair = Pair.new(1_i64, 2_i64);
+  pair.sum` compiled with the candidate compiler and ran through
+  `scripts/run_safe.sh`, exiting successfully.
+- `git diff --check` -> exit 0.
+- `scripts/bench_no_prelude_layout_matrix.sh /tmp/cv2_struct_fix_candidate
+  /opt/homebrew/bin/crystal` -> all nine original/V2 checksums still match.
+  Representative V2/original internal tick ratios from this run:
+  `struct_local_loop` about 15.6x, `nested_struct_loop` about 17.3x,
+  `yield_struct_loop` about 17.7x. This improves the previous heap-allocation
+  profile but does not reach original-compiler parity.
+
+Adversary notes:
+
+- This is not a global struct ABI rewrite. Pointer/container/union storage
+  still follows the existing V2 pointer-carrier rules.
+- The rewrite is intentionally gated by existing HIR escape analysis. The CLI
+  escape-analysis skip fast path now treats struct constructor calls as
+  allocation-relevant so call-result lifetimes are available even when the
+  caller has no literal `HIR::Allocate`.
+- A use-site whitelist keeps arbitrary method-argument constructors heap-backed
+  because V2 currently passes struct values as pointer carriers and an unknown
+  callee could retain that pointer.
+- Remaining value-carrier slowdown is now likely in constructor/init call
+  overhead, residual copies, and broader optimization, not hot-loop GC
+  allocation for these generated local constructors.
+
+Trust: {F/G/R: 0.86/0.50/0.88} [verified]
+
 ### LM-656 - Bare generic `.new` can use the enclosing expected return
 
 Bare generic constructor calls inside generic methods now prefer the enclosing
