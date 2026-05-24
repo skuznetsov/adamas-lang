@@ -1,6 +1,6 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-05-23
+Updated: 2026-05-24
 Branch: `main`
 
 This is the active working backlog only. Historical detail is in git history,
@@ -66,6 +66,14 @@ stores now persist a tuple copy and store the pointer. Release benchmark smoke
 now matches original checksums for struct arrays, tuple arrays, class arrays,
 nilable struct/class arrays, and mixed struct/int unions. Remaining performance
 gap: tuple/class-heavy V2 cases still pay extra heap-pointer/allocation cost.
+
+Pointer-copy stride checkpoint (LM-631, 2026-05-24): `Pointer(T)#copy_from`,
+`copy_to`, `move_from`, and `move_to` now use the same V2 container element
+storage size as Array buffers instead of logical `type_size(T)`. This fixed
+`Array(ExprId)#dup` and `Array(tiny_struct)#dup`, where generated code copied
+only 4 bytes per heap-struct pointer slot and truncated every other pointer.
+Produced `s2` now emits `Array(ExprId)#dup` with `elem_size=8`, and the former
+full-prelude require-scan segfault moves forward into module registration.
 
 LSP performance side checkpoint (LM-605, 2026-05-20): the background prelude
 loader now has a single in-flight owner. Repeated foreground requests while
