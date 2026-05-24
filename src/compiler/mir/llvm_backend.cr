@@ -16975,6 +16975,31 @@ module Crystal::MIR
       # first user field instead of a discriminator.
       field_type_ref = inst.field_type
       if field_type_ref
+        if @ptr_aggregate_buffer_slots.includes?(inst.ptr)
+          if field_type = @module.type_registry.get(field_type_ref)
+            if field_type.kind.tuple?
+              if val == "null"
+                emit "store ptr null, ptr #{ptr}"
+              else
+                aggregate_size = field_type.size.to_u64
+                source_ptr = val
+                source_type = @emitted_value_types[val]? || actual_val_type || val_type_str
+                if source_type != "ptr"
+                  tmp = "%r#{inst.id}.aggregate_store_src"
+                  emit "#{tmp} = alloca #{source_type}, align 8"
+                  emit "store #{source_type} #{normalize_union_value(val, source_type)}, ptr #{tmp}"
+                  source_ptr = tmp
+                end
+                copy = "%r#{inst.id}.tuple_slot_copy"
+                emit "#{copy} = call ptr @__crystal_v2_malloc64(i64 #{aggregate_size})"
+                emit "call void @llvm.memcpy.p0.p0.i64(ptr #{copy}, ptr #{source_ptr}, i64 #{aggregate_size}, i1 false)"
+                emit "store ptr #{copy}, ptr #{ptr}"
+              end
+              return
+            end
+          end
+        end
+
         if inline_pointer_aggregate_type?(field_type_ref)
           aggregate_size = inline_pointer_aggregate_size(field_type_ref)
           if aggregate_size > 0

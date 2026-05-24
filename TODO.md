@@ -54,16 +54,18 @@ adding readability guards inside normalizer helpers fixed a no-prelude reducer
 but regressed full-prelude module registration; do not reapply that branch
 blindly.
 
-Container-layout side checkpoint (LM-626, 2026-05-23): `Pointer(T)` allocation,
-store/load arithmetic, realloc, clear, and copy/move helpers now agree on the
-same container storage size for inline unions. This fixed corruption in
-`Array(Pair | Nil)` and `Array(Pair | Int64)` where initial malloc and shifted
-buffer compaction used 8-byte pointer slots while reads/writes used 24-byte
-inline union slots. Release benchmark smoke now matches original checksums for
-struct arrays, class arrays, nilable struct/class arrays, and mixed
-struct/int unions. `Array(Tuple(Int64, Int64))` still segfaults under V2 and
-should be treated as the next tuple-container layout frontier, separate from
-nilable struct union tagging.
+Container-layout side checkpoint (LM-626/LM-630, 2026-05-23): `Pointer(T)`
+allocation, store/load arithmetic, realloc, clear, and copy/move helpers now
+agree on the same container storage size for inline unions. This fixed
+corruption in `Array(Pair | Nil)` and `Array(Pair | Int64)` where initial malloc
+and shifted buffer compaction used 8-byte pointer slots while reads/writes used
+24-byte inline union slots. The next tuple frontier was also fixed:
+`Array(Tuple(Int64, Int64))#push` previously memcpy'd tuple bytes into
+pointer-slot buffers while reads loaded each slot as `ptr`; tuple pointer-buffer
+stores now persist a tuple copy and store the pointer. Release benchmark smoke
+now matches original checksums for struct arrays, tuple arrays, class arrays,
+nilable struct/class arrays, and mixed struct/int unions. Remaining performance
+gap: tuple/class-heavy V2 cases still pay extra heap-pointer/allocation cost.
 
 LSP performance side checkpoint (LM-605, 2026-05-20): the background prelude
 loader now has a single in-flight owner. Repeated foreground requests while

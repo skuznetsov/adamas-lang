@@ -6364,6 +6364,49 @@ WBA framing:
 
 Trust: {F/G/R: 0.88/0.50/0.89} [verified]
 
+### LM-630 - Tuple pointer-buffer stores must store pointers, not inline bytes
+
+`Array(Tuple(Int64, Int64))` exposed the next container ABI mismatch after
+LM-626. V2 represents tuple values as pointers and `Pointer(Tuple)`/`Array(Tuple)`
+buffers use pointer-sized slots. `emit_gep_dynamic` already marked those slots
+with `@ptr_aggregate_buffer_slots`, and loads dereferenced them as `ptr`; however
+the generic `Store` backend saw the tuple `field_type` and memcpy'd the tuple
+payload bytes directly into the pointer slot. The first tuple element was then
+loaded back as a pointer, so `{0_i64, 10_i64}` crashed at null dereference.
+
+The fix makes `Store` honor `@ptr_aggregate_buffer_slots` before the inline tuple
+memcpy path: tuple pointer-buffer writes now copy the tuple payload to stable
+heap storage and store that heap pointer in the buffer slot. Inline tuple storage
+continues to use memcpy through the existing path.
+
+Evidence:
+
+- A reduced full-prelude program with `Array(Tuple(Int64, Int64))` printed `52`
+  with the original compiler, crashed with V2 before the fix, and prints `52`
+  with `/tmp/cv2_tuple_store_fix` after the fix.
+- `regression_tests/p2_array_tuple_storage.sh /tmp/cv2_tuple_store_fix` ->
+  `p2_array_tuple_storage_ok`.
+- IR shape check on the reducer shows
+  `Array$LTuple$LInt64$C$_Int64$R$R$Hpush` now emits `tuple_slot_copy` followed
+  by `store ptr`, instead of memcpying 16 tuple bytes into the pointer slot.
+- Regression guards still pass:
+  `p2_array_value_union_storage_ok`,
+  `p2_nilable_union_wrap_codegen_no_prelude_ok`, and
+  `p2_union_concrete_compare_type_guard_ok`.
+- Release layout benchmark smoke now matches original checksums for struct,
+  tuple, class, nilable struct/class, and mixed struct/int cases. V2 remains
+  slower on tuple/class-heavy cases, so performance work should target tuple
+  heap persistence/object allocation rather than this semantic crash.
+
+Adversary notes:
+
+- This is not a tuple-wide inline ABI rewrite. It only changes stores into slots
+  already certified as tuple pointer-buffer slots by `emit_gep_dynamic`.
+- The previous inline aggregate store path remains for actual inline tuple
+  storage.
+
+Trust: {F/G/R: 0.90/0.62/0.91} [verified]
+
 ### LM-626 - Pointer container storage uses one stride for inline value unions
 
 `Pointer(T)` lowering now uses the same container storage size for allocation,
