@@ -85,6 +85,18 @@ builds in about 154s with the existing non-fatal `CLI#file_sha256$String` MIR
 optimizer overflow diagnostic; full-prelude produced-s2 `puts 42` still exits
 139, now with trace output reaching later `Float` module registration.
 
+String constructor safety checkpoint (LM-653, 2026-05-24): the
+`String.new(UInt8*, Int32, Int32)` LLVM override now rejects non-positive,
+null, and allocation-overflow byte counts before allocation or `memcpy`; the
+UInt64 delegate now bounds-checks before truncation. This removes a verified
+heap-corruption root where negative `bytesize` became a huge unsigned copy
+length and could poison GC metadata with `[STAGE2_DEBUG]` bytes. Produced `s2`
+still builds in about 154s, but full-prelude produced-s2 `puts 42` still exits
+139; the current frontier has moved to class registration (`class register
+idx=3/111` in the latest safe run), so continue with class-registration memory
+and malformed byte-count source localization rather than treating this as a
+complete s2b fix.
+
 LSP performance side checkpoint (LM-605, 2026-05-20): the background prelude
 loader now has a single in-flight owner. Repeated foreground requests while
 `@prelude_state` is still nil no longer spawn duplicate cache rebuilds. The

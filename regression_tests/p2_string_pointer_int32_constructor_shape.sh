@@ -69,4 +69,40 @@ if grep -q 'GC\$Dmalloc_atomic' "$BODY"; then
   exit 1
 fi
 
+BODY3="$TMP_DIR/string_pointer_int32_int32_body.ll"
+awk '
+  /^define ptr @String\$Dnew\$\$Pointer\$LUInt8\$R_Int32_Int32\(/ {in_body=1}
+  in_body {print}
+  in_body && /^}$/ {exit}
+' "$LL" >"$BODY3"
+
+if [[ ! -s "$BODY3" ]]; then
+  echo "p2 string pointer constructor regression: missing String.new(UInt8*, Int32, Int32) body" >&2
+  exit 1
+fi
+
+if ! grep -q 'icmp sgt i32 %bytesize, 0' "$BODY3"; then
+  echo "p2 string pointer constructor regression: missing positive bytesize guard" >&2
+  cat "$BODY3" >&2
+  exit 1
+fi
+
+if ! grep -q 'icmp sle i32 %bytesize, 2147483626' "$BODY3"; then
+  echo "p2 string pointer constructor regression: missing allocation-size overflow guard" >&2
+  cat "$BODY3" >&2
+  exit 1
+fi
+
+if ! grep -q 'icmp eq ptr %chars, null' "$BODY3"; then
+  echo "p2 string pointer constructor regression: missing null pointer guard" >&2
+  cat "$BODY3" >&2
+  exit 1
+fi
+
+if grep -q 'sext i32 %bytesize to i64' "$BODY3"; then
+  echo "p2 string pointer constructor regression: signed bytesize still feeds memcpy length" >&2
+  cat "$BODY3" >&2
+  exit 1
+fi
+
 echo "p2_string_pointer_int32_constructor_shape_ok"

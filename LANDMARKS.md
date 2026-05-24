@@ -6364,6 +6364,42 @@ WBA framing:
 
 Trust: {F/G/R: 0.88/0.50/0.89} [verified]
 
+### LM-653 - String pointer constructor bounds guard prevents huge signed memcpy
+
+The V2 LLVM override for `String.new(UInt8*, Int32, Int32)` now guards the
+unsafe constructor boundary before allocation and `memcpy`: non-positive
+`bytesize`, null `chars`, and byte counts that would overflow the
+`bytesize + header` allocation return the empty string instead of feeding a
+negative signed `i32` into an `i64` copy length. The UInt64 overload now also
+rejects values outside the guarded Int32 allocation corridor before truncating.
+
+Evidence:
+
+- Crash reports from produced `s2` included `String$Dnew$$Pointer$LUInt8$R_Int32_Int32`
+  in `_platform_memmove` with a huge unsigned copy length, and another
+  `GC_malloc_kind -> GC$Dmalloc_atomic$$UInt64` fault whose bad pointer bytes
+  decoded as `[STAGE2_`, consistent with earlier heap corruption from string
+  debug text.
+- `regression_tests/p2_string_pointer_int32_constructor_shape.sh
+  /tmp/cv2_string_guard` -> `p2_string_pointer_int32_constructor_shape_ok`.
+- Negative-byte-count smoke compiled by `/tmp/cv2_string_guard` and run through
+  `scripts/run_safe.sh` printed `0` bytesize instead of crashing.
+- Produced `s2` built with the guard in about 154s with the existing non-fatal
+  `CLI#file_sha256$String` MIR optimizer overflow diagnostic.
+
+Adversary notes:
+
+- This is not the final full-prelude bootstrap fix. Produced-s2 full-prelude
+  `puts 42` still exits 139, with the current run moving to class registration
+  (`class register idx=3/111`) instead of the older signed-copy/GC metadata
+  crash pattern.
+- The guard is intentionally at the unsafe String constructor ABI edge. It
+  prevents a malformed byte count from corrupting unrelated heap state, but the
+  next root remains the source of the malformed count or a separate class
+  registration memory issue.
+
+Trust: {F/G/R: 0.84/0.42/0.86} [verified]
+
 ### LM-651 - Pointer(Void) malloc and arithmetic use byte stride
 
 `Pointer(Void).malloc(n)` is now lowered as a `Pointer(Void)` allocation
