@@ -6410,6 +6410,42 @@ Adversary notes:
 
 Trust: {F/G/R: 0.87/0.45/0.89} [verified]
 
+### LM-664 - CLI AST-cache stat timestamp is target-portable
+
+The disabled CLI AST-cache branch still type-checks during normal compiler
+builds. It previously read `LibC::Stat#st_mtimespec`, which only exists on
+Darwin targets. Linux targets expose `st_mtim`, so Ubuntu/WSL builds with
+Crystal 1.20.1 failed while expanding the `bootstrap_fast` macro guard even
+though the runtime branch was `if false && options.ast_cache`.
+
+The timestamp extraction now follows Crystal stdlib's platform split:
+Darwin uses `st_mtimespec`, Windows uses second-resolution `st_mtime`, and
+other Unix targets use `st_mtim`.
+
+Evidence:
+
+- Before the fix, `crystal build src/crystal_v2.cr -o /tmp/cv2_linux_check
+  --error-trace --cross-compile --target x86_64-linux-gnu` failed with
+  `undefined method 'st_mtimespec' for LibC::Stat`.
+- After the fix, `regression_tests/p2_linux_cross_compile_stat_mtime_guard.sh`
+  -> `p2_linux_cross_compile_stat_mtime_guard_ok`.
+- Host build with local Crystal 1.20.2:
+  `crystal build src/crystal_v2.cr -o /tmp/cv2_stat_mtime_host --error-trace`
+  -> exit 0.
+- Exact Linux compiler check:
+  `docker run --rm -v "$PWD:/work" -w /work crystallang/crystal:1.20.1
+  crystal build src/crystal_v2.cr -o /tmp/cv2_forum_1201 --error-trace`
+  -> exit 0.
+
+Adversary notes:
+
+- This is a compile-time portability fix, not an AST-cache behavior change.
+  The affected branch remains disabled in this bootstrap corridor.
+- The regression uses cross-target type-checking so Darwin hosts catch Linux
+  `LibC::Stat` field drift before forum users hit it.
+
+Trust: {F/G/R: 0.88/0.46/0.90} [verified]
+
 ### LM-660 - No-prelude layout matrix isolates struct performance divergence
 
 The no-prelude layout matrix now compares original Crystal and Crystal V2 on a

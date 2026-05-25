@@ -3513,7 +3513,15 @@ module CrystalV2
           source_mtime_ns = begin
             stat2 = uninitialized LibC::Stat
             if LibC.stat(abs_path.to_unsafe, pointerof(stat2)) == 0
-              stat2.st_mtimespec.tv_sec.to_i64 * 1_000_000_000_i64 + stat2.st_mtimespec.tv_nsec.to_i64
+              {% if flag?(:darwin) %}
+                mtime = stat2.st_mtimespec
+                mtime.tv_sec.to_i64 * 1_000_000_000_i64 + mtime.tv_nsec.to_i64
+              {% elsif flag?(:win32) %}
+                stat2.st_mtime.to_i64 * 1_000_000_000_i64
+              {% else %}
+                mtime = stat2.st_mtim
+                mtime.tv_sec.to_i64 * 1_000_000_000_i64 + mtime.tv_nsec.to_i64
+              {% end %}
             else
               nil
             end
