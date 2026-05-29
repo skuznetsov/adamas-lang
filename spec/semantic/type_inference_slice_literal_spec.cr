@@ -13,8 +13,8 @@ require "../../src/compiler/semantic/types/type"
 require "../../src/compiler/semantic/type_inference_engine"
 
 module TypeInferenceSliceLiteralSpecAliases
-  alias Frontend = CrystalV2::Compiler::Frontend
-  alias Semantic = CrystalV2::Compiler::Semantic
+  alias Frontend = Adamas::Compiler::Frontend
+  alias Semantic = Adamas::Compiler::Semantic
 end
 
 include TypeInferenceSliceLiteralSpecAliases
@@ -36,7 +36,7 @@ private def infer_types_from_units_for_slice_literal(units : Array(NamedTuple(pa
   {analyzer, name_result, engine}
 end
 
-describe CrystalV2::Compiler::Semantic::TypeInferenceEngine do
+describe Adamas::Compiler::Semantic::TypeInferenceEngine do
   it "infers Slice.literal constants across reopened path-style modules" do
     units = [
       {

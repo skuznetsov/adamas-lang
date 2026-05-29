@@ -3,19 +3,19 @@ require "spec"
 require "../../src/compiler/frontend/parser"
 
 private def fetch_class(program)
-  program.arena[program.roots.first].as(CrystalV2::Compiler::Frontend::ClassNode)
+  program.arena[program.roots.first].as(Adamas::Compiler::Frontend::ClassNode)
 end
 
 private def fetch_method(arena, expr_id)
-  arena[expr_id].as(CrystalV2::Compiler::Frontend::DefNode)
+  arena[expr_id].as(Adamas::Compiler::Frontend::DefNode)
 end
 
 private def fetch_previous_def(arena, method_node)
   body = method_node.body.not_nil!
-  arena[body.first].as(CrystalV2::Compiler::Frontend::PreviousDefNode)
+  arena[body.first].as(Adamas::Compiler::Frontend::PreviousDefNode)
 end
 
-describe "CrystalV2::Compiler::Frontend::Parser" do
+describe "Adamas::Compiler::Frontend::Parser" do
   describe "Phase 96: previous_def keyword" do
     it "parses previous_def without parentheses (implicit args)" do
       source = <<-CRYSTAL
@@ -26,7 +26,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
@@ -48,7 +48,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
@@ -71,7 +71,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
@@ -85,7 +85,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       args.size.should eq(1)
 
       # Check argument is a binary expression (x + 1)
-      arena[args[0]].as(CrystalV2::Compiler::Frontend::BinaryNode)
+      arena[args[0]].as(Adamas::Compiler::Frontend::BinaryNode)
     end
 
     it "parses previous_def with multiple arguments" do
@@ -97,7 +97,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
@@ -120,7 +120,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
@@ -130,11 +130,11 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       method_node = fetch_method(arena, class_body[0])
 
       method_body = method_node.body.not_nil!
-      if_node = arena[method_body[0]].as(CrystalV2::Compiler::Frontend::IfNode)
+      if_node = arena[method_body[0]].as(Adamas::Compiler::Frontend::IfNode)
 
       # Then branch should contain previous_def
       if_then = if_node.then_body
-      arena[if_then.first].as(CrystalV2::Compiler::Frontend::PreviousDefNode)
+      arena[if_then.first].as(Adamas::Compiler::Frontend::PreviousDefNode)
     end
 
     it "parses previous_def in multiple methods" do
@@ -150,7 +150,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
@@ -182,7 +182,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
@@ -195,7 +195,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       method_body.size.should be >= 2
 
       # First statement is previous_def
-      arena[method_body[0]].as(CrystalV2::Compiler::Frontend::PreviousDefNode)
+      arena[method_body[0]].as(Adamas::Compiler::Frontend::PreviousDefNode)
 
       # Verify there are other statements
       method_body.size.should be > 1
@@ -210,7 +210,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
@@ -224,10 +224,10 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       args.size.should eq(2)
 
       # First arg is binary expression
-      arena[args[0]].as(CrystalV2::Compiler::Frontend::BinaryNode)
+      arena[args[0]].as(Adamas::Compiler::Frontend::BinaryNode)
 
       # Second arg is ternary expression
-      arena[args[1]].as(CrystalV2::Compiler::Frontend::TernaryNode)
+      arena[args[1]].as(Adamas::Compiler::Frontend::TernaryNode)
     end
 
     it "distinguishes previous_def(), previous_def and previous_def(args)" do
@@ -247,7 +247,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)

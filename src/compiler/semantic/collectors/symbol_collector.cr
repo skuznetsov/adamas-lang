@@ -6,7 +6,7 @@ require "../diagnostic"
 require "../generated_overlay"
 require "../macro_expander"
 
-module CrystalV2
+module Adamas
   module Compiler
     module Semantic
       class SymbolCollector

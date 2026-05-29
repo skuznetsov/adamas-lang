@@ -3,21 +3,21 @@ require "../../src/compiler/hir/ast_to_hir"
 require "../../src/compiler/frontend/parser"
 require "../../src/compiler/frontend/lexer"
 
-private def parse(code : String) : {CrystalV2::Compiler::Frontend::ArenaLike, Array(CrystalV2::Compiler::Frontend::ExprId)}
-  lexer = CrystalV2::Compiler::Frontend::Lexer.new(code)
-  parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+private def parse(code : String) : {Adamas::Compiler::Frontend::ArenaLike, Array(Adamas::Compiler::Frontend::ExprId)}
+  lexer = Adamas::Compiler::Frontend::Lexer.new(code)
+  parser = Adamas::Compiler::Frontend::Parser.new(lexer)
   result = parser.parse_program
   {result.arena, result.roots}
 end
 
-private def lower_named_function(code : String, name : String) : Crystal::HIR::Function
+private def lower_named_function(code : String, name : String) : Adamas::HIR::Function
   arena, exprs = parse(code)
-  converter = Crystal::HIR::AstToHir.new(arena)
+  converter = Adamas::HIR::AstToHir.new(arena)
 
-  def_nodes = [] of CrystalV2::Compiler::Frontend::DefNode
+  def_nodes = [] of Adamas::Compiler::Frontend::DefNode
   exprs.each do |expr_id|
     node = arena[expr_id]
-    def_nodes << node.as(CrystalV2::Compiler::Frontend::DefNode) if node.is_a?(CrystalV2::Compiler::Frontend::DefNode)
+    def_nodes << node.as(Adamas::Compiler::Frontend::DefNode) if node.is_a?(Adamas::Compiler::Frontend::DefNode)
   end
 
   def_nodes.each { |node| converter.register_function(node) }
@@ -28,9 +28,9 @@ private def lower_named_function(code : String, name : String) : Crystal::HIR::F
   converter.lower_def(target)
 end
 
-private def phi_count(func : Crystal::HIR::Function) : Int32
+private def phi_count(func : Adamas::HIR::Function) : Int32
   func.blocks.sum do |block|
-    block.instructions.count { |inst| inst.is_a?(Crystal::HIR::Phi) }
+    block.instructions.count { |inst| inst.is_a?(Adamas::HIR::Phi) }
   end
 end
 

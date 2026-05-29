@@ -4,7 +4,7 @@ require "../../../src/compiler/frontend/watchdog"
 # Default spec timeout for LSP operations (catches infinite loops in parser/type inference)
 LSP_SPEC_TIMEOUT = 10.seconds
 
-module CrystalV2::Compiler::LSP
+module Adamas::Compiler::LSP
   class Server
     def spec_analyze_document(source : String, base_dir : String?, path : String?)
       Frontend::Watchdog.enable!("LSP spec analyze_document", LSP_SPEC_TIMEOUT)
@@ -224,7 +224,7 @@ module CrystalV2::Compiler::LSP
       spec_read_last_response
     end
 
-    def spec_collect_folding_ranges(program : CrystalV2::Compiler::Frontend::Program)
+    def spec_collect_folding_ranges(program : Adamas::Compiler::Frontend::Program)
       collect_folding_ranges(program)
     end
 
@@ -239,7 +239,7 @@ module CrystalV2::Compiler::LSP
       total
     end
 
-    def spec_location_for_symbol(symbol : CrystalV2::Compiler::Semantic::Symbol)
+    def spec_location_for_symbol(symbol : Adamas::Compiler::Semantic::Symbol)
       location_for_symbol(symbol)
     end
 
@@ -290,9 +290,9 @@ module CrystalV2::Compiler::LSP
 
     def spec_load_prelude_program(
       path : String,
-      program_cache : Hash(String, CrystalV2::Compiler::Frontend::Program),
+      program_cache : Hash(String, Adamas::Compiler::Frontend::Program),
       source_cache : Hash(String, String),
-      diagnostics : Array(CrystalV2::Compiler::LSP::Diagnostic),
+      diagnostics : Array(Adamas::Compiler::LSP::Diagnostic),
     ) : Bool
       load_prelude_program(path, program_cache, source_cache, diagnostics)
     end

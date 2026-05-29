@@ -24,11 +24,11 @@ RUN_LOG="$TMP_DIR/run.log"
 cat >"$SRC" <<CR
 require "${ROOT_DIR}/src/compiler/hir/ast_to_hir"
 
-arena = CrystalV2::Compiler::Frontend::AstArena.new
+arena = Adamas::Compiler::Frontend::AstArena.new
 key = arena.object_id.to_u64
 sources = {key => ""} of UInt64 => String
 paths = {key => "/tmp/direct"} of UInt64 => String
-main_arenas = [arena.as(CrystalV2::Compiler::Frontend::ArenaLike)]
+main_arenas = [arena.as(Adamas::Compiler::Frontend::ArenaLike)]
 hir_mod = Crystal::HIR::Module.new("main")
 hir_mod.bootstrap_reinitialize_runtime_state
 conv = Crystal::HIR::AstToHir.new(

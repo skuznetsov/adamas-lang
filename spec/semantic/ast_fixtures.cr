@@ -3,7 +3,7 @@ require "../../src/compiler/frontend/ast"
 module AstFixtures
   extend self
 
-  alias Frontend = CrystalV2::Compiler::Frontend
+  alias Frontend = Adamas::Compiler::Frontend
   alias ExprId = Frontend::ExprId
   alias AstArena = Frontend::AstArena
   alias Span = Frontend::Span

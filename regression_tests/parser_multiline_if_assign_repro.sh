@@ -16,7 +16,7 @@ cat >"$CHECKER" <<CR
 require "./src/compiler/bootstrap_shims"
 require "./src/compiler/frontend/parser"
 
-alias Frontend = CrystalV2::Compiler::Frontend
+alias Frontend = Adamas::Compiler::Frontend
 
 def assert(condition : Bool, message : String)
   raise message unless condition

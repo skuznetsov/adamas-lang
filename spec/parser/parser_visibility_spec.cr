@@ -2,7 +2,7 @@ require "spec"
 
 require "../../src/compiler/frontend/parser"
 
-describe "CrystalV2::Compiler::Frontend::Parser" do
+describe "Adamas::Compiler::Frontend::Parser" do
   describe "Phase 37: Visibility modifiers (PRODUCTION-READY)" do
     it "parses private method" do
       source = <<-CRYSTAL
@@ -13,20 +13,20 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
       class_node = arena[program.roots.first]
 
-      class_body = CrystalV2::Compiler::Frontend.node_class_body(class_node).not_nil!
+      class_body = Adamas::Compiler::Frontend.node_class_body(class_node).not_nil!
       class_body.size.should eq(1)
 
       method_node = arena[class_body[0]]
-      CrystalV2::Compiler::Frontend.node_kind(method_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Def)
-      String.new(CrystalV2::Compiler::Frontend.node_def_name(method_node).not_nil!).should eq("secret_method")
-      CrystalV2::Compiler::Frontend.node_def_visibility(method_node).should eq(CrystalV2::Compiler::Frontend::Visibility::Private)
+      Adamas::Compiler::Frontend.node_kind(method_node).should eq(Adamas::Compiler::Frontend::NodeKind::Def)
+      String.new(Adamas::Compiler::Frontend.node_def_name(method_node).not_nil!).should eq("secret_method")
+      Adamas::Compiler::Frontend.node_def_visibility(method_node).should eq(Adamas::Compiler::Frontend::Visibility::Private)
     end
 
     it "parses protected method" do
@@ -38,18 +38,18 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
       class_node = arena[program.roots.first]
 
-      class_body = CrystalV2::Compiler::Frontend.node_class_body(class_node).not_nil!
+      class_body = Adamas::Compiler::Frontend.node_class_body(class_node).not_nil!
       method_node = arena[class_body[0]]
 
-      String.new(CrystalV2::Compiler::Frontend.node_def_name(method_node).not_nil!).should eq("helper_method")
-      CrystalV2::Compiler::Frontend.node_def_visibility(method_node).should eq(CrystalV2::Compiler::Frontend::Visibility::Protected)
+      String.new(Adamas::Compiler::Frontend.node_def_name(method_node).not_nil!).should eq("helper_method")
+      Adamas::Compiler::Frontend.node_def_visibility(method_node).should eq(Adamas::Compiler::Frontend::Visibility::Protected)
     end
 
     it "preserves private accessor macro visibility" do
@@ -59,16 +59,16 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       arena = program.arena
       class_node = arena[program.roots.first]
-      class_body = CrystalV2::Compiler::Frontend.node_class_body(class_node).not_nil!
+      class_body = Adamas::Compiler::Frontend.node_class_body(class_node).not_nil!
       getter_node = arena[class_body[0]]
 
-      CrystalV2::Compiler::Frontend.node_kind(getter_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Getter)
-      CrystalV2::Compiler::Frontend.node_accessor_visibility(getter_node).should eq(CrystalV2::Compiler::Frontend::Visibility::Private)
+      Adamas::Compiler::Frontend.node_kind(getter_node).should eq(Adamas::Compiler::Frontend::NodeKind::Getter)
+      Adamas::Compiler::Frontend.node_accessor_visibility(getter_node).should eq(Adamas::Compiler::Frontend::Visibility::Private)
     end
 
     it "preserves protected accessor macro visibility" do
@@ -78,16 +78,16 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       arena = program.arena
       class_node = arena[program.roots.first]
-      class_body = CrystalV2::Compiler::Frontend.node_class_body(class_node).not_nil!
+      class_body = Adamas::Compiler::Frontend.node_class_body(class_node).not_nil!
       property_node = arena[class_body[0]]
 
-      CrystalV2::Compiler::Frontend.node_kind(property_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Property)
-      CrystalV2::Compiler::Frontend.node_accessor_visibility(property_node).should eq(CrystalV2::Compiler::Frontend::Visibility::Protected)
+      Adamas::Compiler::Frontend.node_kind(property_node).should eq(Adamas::Compiler::Frontend::NodeKind::Property)
+      Adamas::Compiler::Frontend.node_accessor_visibility(property_node).should eq(Adamas::Compiler::Frontend::Visibility::Protected)
     end
 
     it "parses public method (default)" do
@@ -99,18 +99,18 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
       class_node = arena[program.roots.first]
 
-      class_body = CrystalV2::Compiler::Frontend.node_class_body(class_node).not_nil!
+      class_body = Adamas::Compiler::Frontend.node_class_body(class_node).not_nil!
       method_node = arena[class_body[0]]
 
-      String.new(CrystalV2::Compiler::Frontend.node_def_name(method_node).not_nil!).should eq("public_method")
-      CrystalV2::Compiler::Frontend.node_def_visibility(method_node).should be_nil  # nil = public (default)
+      String.new(Adamas::Compiler::Frontend.node_def_name(method_node).not_nil!).should eq("public_method")
+      Adamas::Compiler::Frontend.node_def_visibility(method_node).should be_nil  # nil = public (default)
     end
 
     it "parses mixed visibility methods" do
@@ -127,27 +127,27 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
       class_node = arena[program.roots.first]
 
-      class_body = CrystalV2::Compiler::Frontend.node_class_body(class_node).not_nil!
+      class_body = Adamas::Compiler::Frontend.node_class_body(class_node).not_nil!
       class_body.size.should eq(3)
 
       # Public method
       public_method = arena[class_body[0]]
-      CrystalV2::Compiler::Frontend.node_def_visibility(public_method).should be_nil
+      Adamas::Compiler::Frontend.node_def_visibility(public_method).should be_nil
 
       # Private method
       private_method = arena[class_body[1]]
-      CrystalV2::Compiler::Frontend.node_def_visibility(private_method).should eq(CrystalV2::Compiler::Frontend::Visibility::Private)
+      Adamas::Compiler::Frontend.node_def_visibility(private_method).should eq(Adamas::Compiler::Frontend::Visibility::Private)
 
       # Protected method
       protected_method = arena[class_body[2]]
-      CrystalV2::Compiler::Frontend.node_def_visibility(protected_method).should eq(CrystalV2::Compiler::Frontend::Visibility::Protected)
+      Adamas::Compiler::Frontend.node_def_visibility(protected_method).should eq(Adamas::Compiler::Frontend::Visibility::Protected)
     end
 
     it "parses private method with parameters" do
@@ -159,18 +159,18 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
       class_node = arena[program.roots.first]
 
-      class_body = CrystalV2::Compiler::Frontend.node_class_body(class_node).not_nil!
+      class_body = Adamas::Compiler::Frontend.node_class_body(class_node).not_nil!
       method_node = arena[class_body[0]]
 
-      CrystalV2::Compiler::Frontend.node_def_visibility(method_node).should eq(CrystalV2::Compiler::Frontend::Visibility::Private)
-      params = CrystalV2::Compiler::Frontend.node_def_params(method_node).not_nil!
+      Adamas::Compiler::Frontend.node_def_visibility(method_node).should eq(Adamas::Compiler::Frontend::Visibility::Private)
+      params = Adamas::Compiler::Frontend.node_def_params(method_node).not_nil!
       params.size.should eq(2)
     end
 
@@ -183,17 +183,17 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
       module_node = arena[program.roots.first]
 
-      module_body = CrystalV2::Compiler::Frontend.node_module_body(module_node).not_nil!
+      module_body = Adamas::Compiler::Frontend.node_module_body(module_node).not_nil!
       method_node = arena[module_body[0]]
 
-      CrystalV2::Compiler::Frontend.node_def_visibility(method_node).should eq(CrystalV2::Compiler::Frontend::Visibility::Private)
+      Adamas::Compiler::Frontend.node_def_visibility(method_node).should eq(Adamas::Compiler::Frontend::Visibility::Private)
     end
 
     it "parses nested class with visibility" do
@@ -206,20 +206,20 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
       outer_class = arena[program.roots.first]
 
-      outer_body = CrystalV2::Compiler::Frontend.node_class_body(outer_class).not_nil!
+      outer_body = Adamas::Compiler::Frontend.node_class_body(outer_class).not_nil!
       inner_class = arena[outer_body[0]]
 
-      inner_body = CrystalV2::Compiler::Frontend.node_class_body(inner_class).not_nil!
+      inner_body = Adamas::Compiler::Frontend.node_class_body(inner_class).not_nil!
       method_node = arena[inner_body[0]]
 
-      CrystalV2::Compiler::Frontend.node_def_visibility(method_node).should eq(CrystalV2::Compiler::Frontend::Visibility::Private)
+      Adamas::Compiler::Frontend.node_def_visibility(method_node).should eq(Adamas::Compiler::Frontend::Visibility::Private)
     end
 
     it "distinguishes visibility from method body" do
@@ -235,25 +235,25 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
       class_node = arena[program.roots.first]
 
-      class_body = CrystalV2::Compiler::Frontend.node_class_body(class_node).not_nil!
+      class_body = Adamas::Compiler::Frontend.node_class_body(class_node).not_nil!
 
       # Private method still has body
       private_method = arena[class_body[0]]
-      CrystalV2::Compiler::Frontend.node_def_visibility(private_method).should eq(CrystalV2::Compiler::Frontend::Visibility::Private)
-      CrystalV2::Compiler::Frontend.node_def_body(private_method).should_not be_nil
-      CrystalV2::Compiler::Frontend.node_def_body(private_method).not_nil!.size.should be > 0
+      Adamas::Compiler::Frontend.node_def_visibility(private_method).should eq(Adamas::Compiler::Frontend::Visibility::Private)
+      Adamas::Compiler::Frontend.node_def_body(private_method).should_not be_nil
+      Adamas::Compiler::Frontend.node_def_body(private_method).not_nil!.size.should be > 0
 
       # Public method has body
       public_method = arena[class_body[1]]
-      CrystalV2::Compiler::Frontend.node_def_visibility(public_method).should be_nil
-      CrystalV2::Compiler::Frontend.node_def_body(public_method).should_not be_nil
+      Adamas::Compiler::Frontend.node_def_visibility(public_method).should be_nil
+      Adamas::Compiler::Frontend.node_def_body(public_method).should_not be_nil
     end
 
     it "parses private method at top level" do
@@ -263,15 +263,15 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
       method_node = arena[program.roots.first]
 
-      CrystalV2::Compiler::Frontend.node_kind(method_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Def)
-      CrystalV2::Compiler::Frontend.node_def_visibility(method_node).should eq(CrystalV2::Compiler::Frontend::Visibility::Private)
+      Adamas::Compiler::Frontend.node_kind(method_node).should eq(Adamas::Compiler::Frontend::NodeKind::Def)
+      Adamas::Compiler::Frontend.node_def_visibility(method_node).should eq(Adamas::Compiler::Frontend::Visibility::Private)
     end
   end
 end

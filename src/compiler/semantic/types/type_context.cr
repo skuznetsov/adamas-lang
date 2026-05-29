@@ -3,7 +3,7 @@ require "./primitive_type"
 require "./class_type"
 require "./union_type"
 
-module CrystalV2
+module Adamas
   module Compiler
     module Semantic
       # TypeContext stores all type information for a program

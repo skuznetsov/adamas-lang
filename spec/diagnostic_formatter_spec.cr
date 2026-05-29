@@ -2,9 +2,9 @@ require "spec"
 
 require "../src/compiler/frontend/diagnostic_formatter"
 
-alias Span = CrystalV2::Compiler::Frontend::Span
-alias Diagnostic = CrystalV2::Compiler::Frontend::Diagnostic
-alias DiagnosticFormatter = CrystalV2::Compiler::Frontend::DiagnosticFormatter
+alias Span = Adamas::Compiler::Frontend::Span
+alias Diagnostic = Adamas::Compiler::Frontend::Diagnostic
+alias DiagnosticFormatter = Adamas::Compiler::Frontend::DiagnosticFormatter
 
 describe DiagnosticFormatter do
   it "formats single line diagnostic with underline" do
@@ -50,7 +50,7 @@ describe DiagnosticFormatter do
       Span.new(0, 0, 2, 5, 2, 12),
       file_path: "/tmp/generated.cr",
       related_spans: [
-        CrystalV2::Compiler::Frontend::RelatedSpan.new(
+        Adamas::Compiler::Frontend::RelatedSpan.new(
           Span.new(0, 0, 1, 1, 1, 8),
           "expanded from macro call here",
           file_path: "/tmp/main.cr"

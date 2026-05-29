@@ -1,7 +1,7 @@
 require "json"
 require "./protocol"
 
-module CrystalV2
+module Adamas
   module Compiler
     module LSP
       # Base JSON-RPC 2.0 message types

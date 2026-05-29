@@ -1,6 +1,6 @@
 require "../src/compiler/file_loader"
 
-include CrystalV2::Compiler
+include Adamas::Compiler
 
 PRELUDE_ENTRY = "/Users/sergey/Projects/Crystal/crystal/src/prelude.cr"
 

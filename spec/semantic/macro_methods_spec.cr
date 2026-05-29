@@ -8,9 +8,9 @@ require "../../src/compiler/semantic/macro_expander"
 require "../../src/compiler/semantic/symbol_table"
 require "../../src/compiler/semantic/collectors/symbol_collector"
 
-include CrystalV2::Compiler
+include Adamas::Compiler
 
-private def expand_first_top_level_macro_text(source : String) : {String, Array(CrystalV2::Compiler::Semantic::Diagnostic)}
+private def expand_first_top_level_macro_text(source : String) : {String, Array(Adamas::Compiler::Semantic::Diagnostic)}
   lexer = Frontend::Lexer.new(source)
   parser = Frontend::Parser.new(lexer)
   program = parser.parse_program

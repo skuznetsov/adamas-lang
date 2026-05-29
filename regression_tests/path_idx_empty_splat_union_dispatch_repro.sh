@@ -19,7 +19,7 @@
 # Path.new$String_Tuple() and joins with empty Tuple correctly.
 set -euo pipefail
 
-COMPILER="${1:-./bin/crystal_v2}"
+COMPILER="${1:-./bin/adamas}"
 KEEP_TMP="${KEEP_TMP:-0}"
 
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/path_idx_empty_splat.XXXXXX")"

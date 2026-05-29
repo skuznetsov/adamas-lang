@@ -16,12 +16,12 @@ require "../../src/compiler/semantic/types/type_context"
 require "../../src/compiler/semantic/type_inference_engine"
 
 module TypeInferenceGenericsSpecAliases
-  alias Frontend = CrystalV2::Compiler::Frontend
-  alias Semantic = CrystalV2::Compiler::Semantic
+  alias Frontend = Adamas::Compiler::Frontend
+  alias Semantic = Adamas::Compiler::Semantic
 end
 
 include TypeInferenceGenericsSpecAliases
-include CrystalV2::Compiler::Semantic
+include Adamas::Compiler::Semantic
 
 # Helper: Parse source and run full semantic pipeline
 private def infer_types(source : String)

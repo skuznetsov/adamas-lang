@@ -11,7 +11,7 @@
 # def_matches_phase0_body_infer_identity?), not by DefNode heap identity.
 # Cache hits are still verified with def_matches_phase0_body_infer_identity?; misses are not cached as -1.
 
-module CrystalV2::Compiler::Semantic
+module Adamas::Compiler::Semantic
   # Structured def identity — injective by construction.
   # Two fields uniquely identify a Def within one compilation:
   # - arena_id: object_id of the AstArena containing this Def

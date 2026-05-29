@@ -16,7 +16,7 @@
 require "../frontend/ast"
 require "../frontend/string_pool"
 
-module CrystalV2
+module Adamas
   module Compiler
     module LSP
       # Node type tags for binary serialization
@@ -139,7 +139,7 @@ module CrystalV2
           # Stable hash for cache key (avoid randomized String#hash).
           # Include VERSION in directory path so old caches are automatically orphaned
           hash = fnv_hash(file_path).to_s(16)
-          File.join(cache_dir, "crystal_v2_lsp", "ast", "v#{VERSION}", "#{hash}.ast")
+          File.join(cache_dir, "adamas_lsp", "ast", "v#{VERSION}", "#{hash}.ast")
         end
 
         # Compiler binary mtime — if compiler is rebuilt, all AST caches are stale

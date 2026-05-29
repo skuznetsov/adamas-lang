@@ -9,7 +9,7 @@
 #
 # See docs/codegen_architecture.md Section 4 for specification.
 
-module Crystal::MIR
+module Adamas::MIR
   # ═══════════════════════════════════════════════════════════════════════════
   # TYPE ALIASES
   # ═══════════════════════════════════════════════════════════════════════════

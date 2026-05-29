@@ -5,14 +5,14 @@ require "../../src/compiler/lsp/server"
 
 module SemanticTokensIntegrationHelper
   def self.collect_tokens(source : String)
-    lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-    parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+    lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+    parser = Adamas::Compiler::Frontend::Parser.new(lexer)
     program = parser.parse_program
-    server = CrystalV2::Compiler::LSP::Server.new
+    server = Adamas::Compiler::LSP::Server.new
     server.collect_semantic_tokens(program, source)
   end
 
-  def self.decode(tokens : CrystalV2::Compiler::LSP::SemanticTokens)
+  def self.decode(tokens : Adamas::Compiler::LSP::SemanticTokens)
     data = tokens.data
     line = 0
     start = 0

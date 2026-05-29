@@ -45,7 +45,7 @@ private def utf16_position_to_byte_offset(text : String, line : Int32, character
   byte_offset
 end
 
-describe CrystalV2::Compiler::LSP::Server do
+describe Adamas::Compiler::LSP::Server do
   around_each do |example|
     prev = ENV["CRYSTALV2_LSP_FORCE_STUB"]?
     ENV["CRYSTALV2_LSP_FORCE_STUB"] = "1"
@@ -67,10 +67,10 @@ describe CrystalV2::Compiler::LSP::Server do
     source = "x=1\n"
     File.write(path, source)
 
-    server = CrystalV2::Compiler::LSP::Server.new(
+    server = Adamas::Compiler::LSP::Server.new(
       IO::Memory.new,
       IO::Memory.new,
-      CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
+      Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
     )
     uri = server.spec_store_document(source, dir, path)
 
@@ -92,10 +92,10 @@ describe CrystalV2::Compiler::LSP::Server do
     source = "x=1\n"
     File.write(path, source)
 
-    server = CrystalV2::Compiler::LSP::Server.new(
+    server = Adamas::Compiler::LSP::Server.new(
       IO::Memory.new,
       IO::Memory.new,
-      CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
+      Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
     )
     uri = server.spec_store_document(source, dir, path)
 
@@ -109,7 +109,7 @@ describe CrystalV2::Compiler::LSP::Server do
     edit["range"]["end"]["line"].as_i.should eq(0)
     edit["range"]["end"]["character"].as_i.should eq(2)
     edit["newText"].as_s.should eq(" = ")
-    apply_formatting_edit(source, response).should eq(CrystalV2::Compiler::Formatter.format(source))
+    apply_formatting_edit(source, response).should eq(Adamas::Compiler::Formatter.format(source))
   ensure
     FileUtils.rm_rf(dir) if dir
   end
@@ -119,10 +119,10 @@ describe CrystalV2::Compiler::LSP::Server do
     FileUtils.mkdir_p(dir)
     path = File.join(dir, "main.cr")
 
-    server = CrystalV2::Compiler::LSP::Server.new(
+    server = Adamas::Compiler::LSP::Server.new(
       IO::Memory.new,
       IO::Memory.new,
-      CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
+      Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
     )
 
     pi_source = "π=1\n"
@@ -132,7 +132,7 @@ describe CrystalV2::Compiler::LSP::Server do
     pi_edit = pi_response["result"].as_a.first
     pi_edit["range"]["start"]["character"].as_i.should eq(1)
     pi_edit["range"]["end"]["character"].as_i.should eq(2)
-    apply_formatting_edit(pi_source, pi_response).should eq(CrystalV2::Compiler::Formatter.format(pi_source))
+    apply_formatting_edit(pi_source, pi_response).should eq(Adamas::Compiler::Formatter.format(pi_source))
 
     emoji_path = File.join(dir, "emoji.cr")
     emoji_source = "😀=1\n"
@@ -142,7 +142,7 @@ describe CrystalV2::Compiler::LSP::Server do
     emoji_edit = emoji_response["result"].as_a.first
     emoji_edit["range"]["start"]["character"].as_i.should eq(2)
     emoji_edit["range"]["end"]["character"].as_i.should eq(3)
-    apply_formatting_edit(emoji_source, emoji_response).should eq(CrystalV2::Compiler::Formatter.format(emoji_source))
+    apply_formatting_edit(emoji_source, emoji_response).should eq(Adamas::Compiler::Formatter.format(emoji_source))
   ensure
     FileUtils.rm_rf(dir) if dir
   end
@@ -154,10 +154,10 @@ describe CrystalV2::Compiler::LSP::Server do
     source = "x = 1\n"
     File.write(path, source)
 
-    server = CrystalV2::Compiler::LSP::Server.new(
+    server = Adamas::Compiler::LSP::Server.new(
       IO::Memory.new,
       IO::Memory.new,
-      CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
+      Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
     )
     uri = server.spec_store_document(source, dir, path)
 
@@ -175,10 +175,10 @@ describe CrystalV2::Compiler::LSP::Server do
     source = "x=1\n"
     File.write(path, source)
 
-    server = CrystalV2::Compiler::LSP::Server.new(
+    server = Adamas::Compiler::LSP::Server.new(
       IO::Memory.new,
       IO::Memory.new,
-      CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
+      Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
     )
     uri = server.spec_store_document(source, dir, path)
 
@@ -203,10 +203,10 @@ describe CrystalV2::Compiler::LSP::Server do
     source = "x=1\n"
     File.write(path, source)
 
-    server = CrystalV2::Compiler::LSP::Server.new(
+    server = Adamas::Compiler::LSP::Server.new(
       IO::Memory.new,
       IO::Memory.new,
-      CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
+      Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
     )
     uri = server.spec_store_document(source, dir, path)
 
@@ -225,10 +225,10 @@ describe CrystalV2::Compiler::LSP::Server do
     source = "x = 1\ny=2\n"
     File.write(path, source)
 
-    server = CrystalV2::Compiler::LSP::Server.new(
+    server = Adamas::Compiler::LSP::Server.new(
       IO::Memory.new,
       IO::Memory.new,
-      CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
+      Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
     )
     uri = server.spec_store_document(source, dir, path)
 
@@ -240,7 +240,7 @@ describe CrystalV2::Compiler::LSP::Server do
     edits.first["range"]["end"]["line"].as_i.should eq(1)
     edits.first["range"]["end"]["character"].as_i.should eq(2)
     edits.first["newText"].as_s.should eq(" = ")
-    apply_formatting_edit(source, response).should eq(CrystalV2::Compiler::Formatter.format(source))
+    apply_formatting_edit(source, response).should eq(Adamas::Compiler::Formatter.format(source))
   ensure
     FileUtils.rm_rf(dir) if dir
   end
@@ -252,10 +252,10 @@ describe CrystalV2::Compiler::LSP::Server do
     source = "x=1\ny=2\n"
     File.write(path, source)
 
-    server = CrystalV2::Compiler::LSP::Server.new(
+    server = Adamas::Compiler::LSP::Server.new(
       IO::Memory.new,
       IO::Memory.new,
-      CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
+      Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
     )
     uri = server.spec_store_document(source, dir, path)
 
@@ -272,10 +272,10 @@ describe CrystalV2::Compiler::LSP::Server do
     source = "x=1\n"
     File.write(path, source)
 
-    server = CrystalV2::Compiler::LSP::Server.new(
+    server = Adamas::Compiler::LSP::Server.new(
       IO::Memory.new,
       IO::Memory.new,
-      CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
+      Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
     )
     uri = server.spec_store_document(source, dir, path)
 

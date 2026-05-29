@@ -20,7 +20,7 @@ echo ""
 # Compile Crystal v2 driver first
 echo -e "${YELLOW}Building Crystal v2 compiler driver...${NC}"
 time_start=$(perl -MTime::HiRes=time -e 'printf "%.3f", time')
-crystal build src/compiler/driver.cr -o bin/crystal_v2_driver --release 2>/dev/null
+crystal build src/compiler/driver.cr -o bin/adamas_driver --release 2>/dev/null
 time_end=$(perl -MTime::HiRes=time -e 'printf "%.3f", time')
 driver_build_time=$(echo "$time_end - $time_start" | bc)
 echo -e "Driver build time: ${GREEN}${driver_build_time}s${NC}"
@@ -34,7 +34,7 @@ echo -e "${BLUE}═════════════════════�
 # Compile with v2
 echo -e "${YELLOW}[Crystal v2] Compiling...${NC}"
 time_start=$(perl -MTime::HiRes=time -e 'printf "%.3f", time')
-./bin/crystal_v2_driver examples/bench_fib35.cr -o /tmp/bench_fib35_v2 2>/dev/null
+./bin/adamas_driver examples/bench_fib35.cr -o /tmp/bench_fib35_v2 2>/dev/null
 time_end=$(perl -MTime::HiRes=time -e 'printf "%.3f", time')
 v2_compile_time=$(echo "$time_end - $time_start" | bc)
 echo -e "Compile time: ${GREEN}${v2_compile_time}s${NC}"

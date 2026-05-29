@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build crystal_v2 from two git commits in detached worktrees, run the same
+# Build adamas from two git commits in detached worktrees, run the same
 # carrier.cr with CRYSTAL_V2_MACRO_BODY_OUTPUT_STATS_DUMP=1, extract JSONL, and
 # diff with macro_body_output_stats_tool.py (--span-key if paths differ).
 #
@@ -46,10 +46,10 @@ git worktree add -f "$WT_A" "$COMMIT_A" >/dev/null
 git worktree add -f "$WT_B" "$COMMIT_B" >/dev/null
 
 echo "[1/4] crystal build $COMMIT_A -> $BIN_A"
-( cd "$WT_A" && crystal build src/crystal_v2.cr -o "$BIN_A" --error-trace )
+( cd "$WT_A" && crystal build src/adamas.cr -o "$BIN_A" --error-trace )
 
 echo "[2/4] crystal build $COMMIT_B -> $BIN_B"
-( cd "$WT_B" && crystal build src/crystal_v2.cr -o "$BIN_B" --error-trace )
+( cd "$WT_B" && crystal build src/adamas.cr -o "$BIN_B" --error-trace )
 
 OUT_A="/tmp/macro_cmp_out_a_$$"
 OUT_B="/tmp/macro_cmp_out_b_$$"

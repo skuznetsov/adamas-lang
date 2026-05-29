@@ -15,8 +15,8 @@ require "../src/compiler/semantic/types/union_type"
 require "../src/compiler/semantic/types/type_context"
 require "../src/compiler/semantic/type_inference_engine"
 
-include CrystalV2::Compiler::Frontend
-include CrystalV2::Compiler::Semantic
+include Adamas::Compiler::Frontend
+include Adamas::Compiler::Semantic
 
 # Helper: Parse source and run full semantic pipeline
 private def infer_types(source : String)
@@ -56,9 +56,9 @@ describe TypeInferenceEngine do
 
       arena = program.arena
       assign_node = arena[program.roots[0]]
-      value = arena[CrystalV2::Compiler::Frontend.node_assign_value(assign_node).not_nil!]
+      value = arena[Adamas::Compiler::Frontend.node_assign_value(assign_node).not_nil!]
 
-      value_type = engine.context.get_type(CrystalV2::Compiler::Frontend.node_assign_value(assign_node).not_nil!)
+      value_type = engine.context.get_type(Adamas::Compiler::Frontend.node_assign_value(assign_node).not_nil!)
       value_type.should_not be_nil
     end
 
@@ -84,10 +84,10 @@ describe TypeInferenceEngine do
       assign1 = arena[program.roots[0]]
       assign2 = arena[program.roots[1]]
 
-      value1_type = engine.context.get_type(CrystalV2::Compiler::Frontend.node_assign_value(assign1).not_nil!)
+      value1_type = engine.context.get_type(Adamas::Compiler::Frontend.node_assign_value(assign1).not_nil!)
       value1_type.should_not be_nil
 
-      value2_type = engine.context.get_type(CrystalV2::Compiler::Frontend.node_assign_value(assign2).not_nil!)
+      value2_type = engine.context.get_type(Adamas::Compiler::Frontend.node_assign_value(assign2).not_nil!)
       value2_type.should_not be_nil
     end
   end

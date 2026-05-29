@@ -9,22 +9,22 @@ require "../../src/compiler/semantic/analyzer"
 describe "LSP Rename" do
   describe "TextEdit struct" do
     it "creates text edit with range and new text" do
-      range = CrystalV2::Compiler::LSP::Range.new(
-        start: CrystalV2::Compiler::LSP::Position.new(0, 0),
-        end: CrystalV2::Compiler::LSP::Position.new(0, 5)
+      range = Adamas::Compiler::LSP::Range.new(
+        start: Adamas::Compiler::LSP::Position.new(0, 0),
+        end: Adamas::Compiler::LSP::Position.new(0, 5)
       )
-      edit = CrystalV2::Compiler::LSP::TextEdit.new(range: range, new_text: "hello")
+      edit = Adamas::Compiler::LSP::TextEdit.new(range: range, new_text: "hello")
 
       edit.range.should eq(range)
       edit.new_text.should eq("hello")
     end
 
     it "serializes to JSON with camelCase" do
-      range = CrystalV2::Compiler::LSP::Range.new(
-        start: CrystalV2::Compiler::LSP::Position.new(0, 0),
-        end: CrystalV2::Compiler::LSP::Position.new(0, 5)
+      range = Adamas::Compiler::LSP::Range.new(
+        start: Adamas::Compiler::LSP::Position.new(0, 0),
+        end: Adamas::Compiler::LSP::Position.new(0, 5)
       )
-      edit = CrystalV2::Compiler::LSP::TextEdit.new(range: range, new_text: "world")
+      edit = Adamas::Compiler::LSP::TextEdit.new(range: range, new_text: "world")
 
       json = edit.to_json
       json.should contain("\"newText\"")
@@ -34,13 +34,13 @@ describe "LSP Rename" do
 
   describe "WorkspaceEdit struct" do
     it "creates workspace edit with URI and edits" do
-      range = CrystalV2::Compiler::LSP::Range.new(
-        start: CrystalV2::Compiler::LSP::Position.new(0, 0),
-        end: CrystalV2::Compiler::LSP::Position.new(0, 1)
+      range = Adamas::Compiler::LSP::Range.new(
+        start: Adamas::Compiler::LSP::Position.new(0, 0),
+        end: Adamas::Compiler::LSP::Position.new(0, 1)
       )
-      edit = CrystalV2::Compiler::LSP::TextEdit.new(range: range, new_text: "y")
+      edit = Adamas::Compiler::LSP::TextEdit.new(range: range, new_text: "y")
 
-      workspace_edit = CrystalV2::Compiler::LSP::WorkspaceEdit.new(
+      workspace_edit = Adamas::Compiler::LSP::WorkspaceEdit.new(
         changes: {"file:///test.cr" => [edit]}
       )
 
@@ -49,13 +49,13 @@ describe "LSP Rename" do
     end
 
     it "serializes to JSON correctly" do
-      range = CrystalV2::Compiler::LSP::Range.new(
-        start: CrystalV2::Compiler::LSP::Position.new(0, 0),
-        end: CrystalV2::Compiler::LSP::Position.new(0, 1)
+      range = Adamas::Compiler::LSP::Range.new(
+        start: Adamas::Compiler::LSP::Position.new(0, 0),
+        end: Adamas::Compiler::LSP::Position.new(0, 1)
       )
-      edit = CrystalV2::Compiler::LSP::TextEdit.new(range: range, new_text: "z")
+      edit = Adamas::Compiler::LSP::TextEdit.new(range: range, new_text: "z")
 
-      workspace_edit = CrystalV2::Compiler::LSP::WorkspaceEdit.new(
+      workspace_edit = Adamas::Compiler::LSP::WorkspaceEdit.new(
         changes: {"file:///test.cr" => [edit]}
       )
 
@@ -67,11 +67,11 @@ describe "LSP Rename" do
 
   describe "PrepareRenameResult struct" do
     it "creates result with range and placeholder" do
-      range = CrystalV2::Compiler::LSP::Range.new(
-        start: CrystalV2::Compiler::LSP::Position.new(5, 10),
-        end: CrystalV2::Compiler::LSP::Position.new(5, 15)
+      range = Adamas::Compiler::LSP::Range.new(
+        start: Adamas::Compiler::LSP::Position.new(5, 10),
+        end: Adamas::Compiler::LSP::Position.new(5, 15)
       )
-      result = CrystalV2::Compiler::LSP::PrepareRenameResult.new(
+      result = Adamas::Compiler::LSP::PrepareRenameResult.new(
         range: range,
         placeholder: "oldName"
       )
@@ -81,11 +81,11 @@ describe "LSP Rename" do
     end
 
     it "serializes to JSON correctly" do
-      range = CrystalV2::Compiler::LSP::Range.new(
-        start: CrystalV2::Compiler::LSP::Position.new(0, 0),
-        end: CrystalV2::Compiler::LSP::Position.new(0, 4)
+      range = Adamas::Compiler::LSP::Range.new(
+        start: Adamas::Compiler::LSP::Position.new(0, 0),
+        end: Adamas::Compiler::LSP::Position.new(0, 4)
       )
-      result = CrystalV2::Compiler::LSP::PrepareRenameResult.new(
+      result = Adamas::Compiler::LSP::PrepareRenameResult.new(
         range: range,
         placeholder: "test"
       )
@@ -99,10 +99,10 @@ describe "LSP Rename" do
 
   describe "PrepareRenameParams struct" do
     it "creates params with text document and position" do
-      text_doc = CrystalV2::Compiler::LSP::TextDocumentIdentifier.new(uri: "file:///test.cr")
-      position = CrystalV2::Compiler::LSP::Position.new(line: 10, character: 5)
+      text_doc = Adamas::Compiler::LSP::TextDocumentIdentifier.new(uri: "file:///test.cr")
+      position = Adamas::Compiler::LSP::Position.new(line: 10, character: 5)
 
-      params = CrystalV2::Compiler::LSP::PrepareRenameParams.new(
+      params = Adamas::Compiler::LSP::PrepareRenameParams.new(
         text_document: text_doc,
         position: position
       )
@@ -113,10 +113,10 @@ describe "LSP Rename" do
     end
 
     it "serializes to JSON with camelCase" do
-      text_doc = CrystalV2::Compiler::LSP::TextDocumentIdentifier.new(uri: "file:///test.cr")
-      position = CrystalV2::Compiler::LSP::Position.new(line: 0, character: 0)
+      text_doc = Adamas::Compiler::LSP::TextDocumentIdentifier.new(uri: "file:///test.cr")
+      position = Adamas::Compiler::LSP::Position.new(line: 0, character: 0)
 
-      params = CrystalV2::Compiler::LSP::PrepareRenameParams.new(
+      params = Adamas::Compiler::LSP::PrepareRenameParams.new(
         text_document: text_doc,
         position: position
       )
@@ -129,10 +129,10 @@ describe "LSP Rename" do
 
   describe "RenameParams struct" do
     it "creates params with all required fields" do
-      text_doc = CrystalV2::Compiler::LSP::TextDocumentIdentifier.new(uri: "file:///test.cr")
-      position = CrystalV2::Compiler::LSP::Position.new(line: 5, character: 10)
+      text_doc = Adamas::Compiler::LSP::TextDocumentIdentifier.new(uri: "file:///test.cr")
+      position = Adamas::Compiler::LSP::Position.new(line: 5, character: 10)
 
-      params = CrystalV2::Compiler::LSP::RenameParams.new(
+      params = Adamas::Compiler::LSP::RenameParams.new(
         text_document: text_doc,
         position: position,
         new_name: "newIdentifier"
@@ -145,10 +145,10 @@ describe "LSP Rename" do
     end
 
     it "serializes to JSON with camelCase" do
-      text_doc = CrystalV2::Compiler::LSP::TextDocumentIdentifier.new(uri: "file:///test.cr")
-      position = CrystalV2::Compiler::LSP::Position.new(line: 0, character: 0)
+      text_doc = Adamas::Compiler::LSP::TextDocumentIdentifier.new(uri: "file:///test.cr")
+      position = Adamas::Compiler::LSP::Position.new(line: 0, character: 0)
 
-      params = CrystalV2::Compiler::LSP::RenameParams.new(
+      params = Adamas::Compiler::LSP::RenameParams.new(
         text_document: text_doc,
         position: position,
         new_name: "renamed"
@@ -170,11 +170,11 @@ describe "LSP Rename" do
       z = x * 2
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       result = analyzer.resolve_names
       identifier_symbols = result.identifier_symbols
@@ -204,11 +204,11 @@ describe "LSP Rename" do
       result2 = calculate(30, 40)
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       result = analyzer.resolve_names
       identifier_symbols = result.identifier_symbols
@@ -237,11 +237,11 @@ describe "LSP Rename" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       result = analyzer.resolve_names
       identifier_symbols = result.identifier_symbols
@@ -249,8 +249,8 @@ describe "LSP Rename" do
       # Find 'process' method
       process_symbol = analyzer.global_context.symbol_table.lookup("process")
       process_symbol.should_not be_nil
-      process_symbol.should be_a(CrystalV2::Compiler::Semantic::MethodSymbol)
-      method_symbol = process_symbol.as(CrystalV2::Compiler::Semantic::MethodSymbol)
+      process_symbol.should be_a(Adamas::Compiler::Semantic::MethodSymbol)
+      method_symbol = process_symbol.as(Adamas::Compiler::Semantic::MethodSymbol)
 
       # Get 'value' parameter from method's scope
       value_symbol = method_symbol.scope.lookup("value")
@@ -279,11 +279,11 @@ describe "LSP Rename" do
       z = x * 2
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       result = analyzer.resolve_names
       identifier_symbols = result.identifier_symbols
@@ -314,11 +314,11 @@ describe "LSP Rename" do
       calc = Calculator.new
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       result = analyzer.resolve_names
       identifier_symbols = result.identifier_symbols
@@ -344,11 +344,11 @@ describe "LSP Rename" do
       y = x
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       result = analyzer.resolve_names
       identifier_symbols = result.identifier_symbols
@@ -359,12 +359,12 @@ describe "LSP Rename" do
       x_symbol = x_symbol.not_nil!
 
       # Create TextEdit objects
-      edits = [] of CrystalV2::Compiler::LSP::TextEdit
+      edits = [] of Adamas::Compiler::LSP::TextEdit
       identifier_symbols.each do |expr_id, symbol|
         if symbol == x_symbol
           node = program.arena[expr_id]
-          range = CrystalV2::Compiler::LSP::Range.from_span(node.span)
-          edits << CrystalV2::Compiler::LSP::TextEdit.new(range: range, new_text: "newX")
+          range = Adamas::Compiler::LSP::Range.from_span(node.span)
+          edits << Adamas::Compiler::LSP::TextEdit.new(range: range, new_text: "newX")
         end
       end
 
@@ -385,11 +385,11 @@ describe "LSP Rename" do
       result = value * 2
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       result = analyzer.resolve_names
       identifier_symbols = result.identifier_symbols
@@ -400,18 +400,18 @@ describe "LSP Rename" do
       value_symbol = value_symbol.not_nil!
 
       # Create edits
-      edits = [] of CrystalV2::Compiler::LSP::TextEdit
+      edits = [] of Adamas::Compiler::LSP::TextEdit
       identifier_symbols.each do |expr_id, symbol|
         if symbol == value_symbol
           node = program.arena[expr_id]
-          range = CrystalV2::Compiler::LSP::Range.from_span(node.span)
-          edits << CrystalV2::Compiler::LSP::TextEdit.new(range: range, new_text: "newValue")
+          range = Adamas::Compiler::LSP::Range.from_span(node.span)
+          edits << Adamas::Compiler::LSP::TextEdit.new(range: range, new_text: "newValue")
         end
       end
 
       # Create WorkspaceEdit
       uri = "file:///test.cr"
-      workspace_edit = CrystalV2::Compiler::LSP::WorkspaceEdit.new(
+      workspace_edit = Adamas::Compiler::LSP::WorkspaceEdit.new(
         changes: {uri => edits}
       )
 
@@ -427,11 +427,11 @@ describe "LSP Rename" do
       y = x + 5
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       result = analyzer.resolve_names
       identifier_symbols = result.identifier_symbols
@@ -460,11 +460,11 @@ describe "LSP Rename" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       result = analyzer.resolve_names
       identifier_symbols = result.identifier_symbols
@@ -494,11 +494,11 @@ describe "LSP Rename" do
       x = 10
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       analyzer.resolve_names  # Need this to populate symbol table
 
@@ -518,11 +518,11 @@ describe "LSP Rename" do
       puts data
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       result = analyzer.resolve_names
       identifier_symbols = result.identifier_symbols
@@ -533,12 +533,12 @@ describe "LSP Rename" do
       data_symbol = data_symbol.not_nil!
 
       # Collect edits
-      edits = [] of CrystalV2::Compiler::LSP::TextEdit
+      edits = [] of Adamas::Compiler::LSP::TextEdit
       identifier_symbols.each do |expr_id, symbol|
         if symbol == data_symbol
           node = program.arena[expr_id]
-          range = CrystalV2::Compiler::LSP::Range.from_span(node.span)
-          edits << CrystalV2::Compiler::LSP::TextEdit.new(range: range, new_text: "items")
+          range = Adamas::Compiler::LSP::Range.from_span(node.span)
+          edits << Adamas::Compiler::LSP::TextEdit.new(range: range, new_text: "items")
         end
       end
 
@@ -562,11 +562,11 @@ describe "LSP Rename" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       result = analyzer.resolve_names
       identifier_symbols = result.identifier_symbols
@@ -591,11 +591,11 @@ describe "LSP Rename" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       result = analyzer.resolve_names
       identifier_symbols = result.identifier_symbols
@@ -616,11 +616,11 @@ describe "LSP Rename" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       result = analyzer.resolve_names
       identifier_symbols = result.identifier_symbols
@@ -641,11 +641,11 @@ describe "LSP Rename" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       result = analyzer.resolve_names
       identifier_symbols = result.identifier_symbols
@@ -667,11 +667,11 @@ describe "LSP Rename" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       result = analyzer.resolve_names
       identifier_symbols = result.identifier_symbols
@@ -694,11 +694,11 @@ describe "LSP Rename" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       result = analyzer.resolve_names
       identifier_symbols = result.identifier_symbols

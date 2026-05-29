@@ -2,7 +2,7 @@
 
 ## Entry Flow
 ```
-src/crystal_v2.cr
+src/adamas.cr
   -> Compiler::CLI (src/compiler/cli.cr)
   -> CompilerDriver (src/compiler/driver.cr)
 ```
@@ -41,6 +41,6 @@ src/crystal_v2.cr
 - `--lto`, `--pgo-gen`, `--pgo-use FILE`: clang link options.
 
 ## Typical Debug Runs
-- Fast HIR: `./bin/crystal_v2 --no-prelude --emit-hir <file>`
-- Fast LLVM: `./bin/crystal_v2 --no-llvm-opt --no-llvm-metadata --emit-llvm <file>`
-- No link: `./bin/crystal_v2 --no-link <file>`
+- Fast HIR: `./bin/adamas --no-prelude --emit-hir <file>`
+- Fast LLVM: `./bin/adamas --no-llvm-opt --no-llvm-metadata --emit-llvm <file>`
+- No link: `./bin/adamas --no-link <file>`

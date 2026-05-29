@@ -1,4 +1,4 @@
-module CrystalV2
+module Adamas
   module Compiler
     module Frontend
       module Watchdog

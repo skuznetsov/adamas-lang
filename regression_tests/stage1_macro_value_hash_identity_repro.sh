@@ -24,15 +24,15 @@ RUN_LOG="$TMP_DIR/run.log"
 cat >"$SRC" <<CR
 require "${ROOT_DIR}/src/compiler/semantic/macro_value"
 
-h = {} of String => CrystalV2::Compiler::Semantic::MacroValue
+h = {} of String => Adamas::Compiler::Semantic::MacroValue
 puts "empty=#{h.size}"
-h["x"] = CrystalV2::Compiler::Semantic::MacroBoolValue.new(true)
+h["x"] = Adamas::Compiler::Semantic::MacroBoolValue.new(true)
 puts "filled=#{h.size}"
 v = h["x"]
-puts "lookup_is_bool=#{v.is_a?(CrystalV2::Compiler::Semantic::MacroBoolValue)}"
+puts "lookup_is_bool=#{v.is_a?(Adamas::Compiler::Semantic::MacroBoolValue)}"
 puts "lookup_class=#{v.class.name}"
 h.each do |k, mv|
-  puts "each=#{k}:#{mv.is_a?(CrystalV2::Compiler::Semantic::MacroBoolValue)}:#{mv.class.name}"
+  puts "each=#{k}:#{mv.is_a?(Adamas::Compiler::Semantic::MacroBoolValue)}:#{mv.class.name}"
 end
 CR
 
@@ -53,15 +53,15 @@ run_rc=$?
 set -e
 
 if rg -Fq 'lookup_is_bool=true' "$RUN_LOG" &&
-   rg -Fq 'lookup_class=CrystalV2::Compiler::Semantic::MacroBoolValue' "$RUN_LOG" &&
-   rg -Fq 'each=x:true:CrystalV2::Compiler::Semantic::MacroBoolValue' "$RUN_LOG"; then
+   rg -Fq 'lookup_class=Adamas::Compiler::Semantic::MacroBoolValue' "$RUN_LOG" &&
+   rg -Fq 'each=x:true:Adamas::Compiler::Semantic::MacroBoolValue' "$RUN_LOG"; then
   echo "not reproduced (generated code preserved MacroValue subclass identity through Hash lookup/each)"
   exit 0
 fi
 
 if rg -Fq 'lookup_is_bool=true' "$RUN_LOG" &&
-   rg -Fq 'lookup_class=CrystalV2::Compiler::Semantic::MacroValue | String' "$RUN_LOG" &&
-   rg -Fq 'each=x:true:CrystalV2::Compiler::Semantic::MacroValue' "$RUN_LOG"; then
+   rg -Fq 'lookup_class=Adamas::Compiler::Semantic::MacroValue | String' "$RUN_LOG" &&
+   rg -Fq 'each=x:true:Adamas::Compiler::Semantic::MacroValue' "$RUN_LOG"; then
   echo "reproduced: generated code degraded Hash(String, MacroValue) lookup/each type identity"
   exit 1
 fi

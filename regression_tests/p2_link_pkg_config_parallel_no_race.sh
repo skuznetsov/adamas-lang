@@ -2,8 +2,8 @@
 # Linker pkg-config invocation must be safe under parallel compilation.
 #
 # Regression: build_link_flags wrote pkg-config output to a shared
-#   "/tmp/crystal_v2_pkg_config_<digest_of_value>.log"
-# (and similarly for backtick ldflags). Two parallel `crystal_v2`
+#   "/tmp/adamas_pkg_config_<digest_of_value>.log"
+# (and similarly for backtick ldflags). Two parallel `adamas`
 # processes hashing the same library name (e.g. "bdw-gc") raced on
 # delete/open/read/delete. The losing reader saw an empty log,
 # build_link_flags returned no `-L/opt/homebrew/opt/bdw-gc/lib`, and
@@ -16,7 +16,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-COMPILER="${1:-$ROOT_DIR/bin/crystal_v2}"
+COMPILER="${1:-$ROOT_DIR/bin/adamas}"
 JOBS="${2:-8}"
 
 if [[ ! -x "$COMPILER" ]]; then

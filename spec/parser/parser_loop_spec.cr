@@ -2,7 +2,7 @@ require "spec"
 
 require "../../src/compiler/frontend/parser"
 
-describe "CrystalV2::Compiler::Frontend::Parser" do
+describe "Adamas::Compiler::Frontend::Parser" do
   describe "Phase 83: Loop keyword (infinite loop)" do
     it "parses simple loop with single statement" do
       source = <<-CRYSTAL
@@ -11,21 +11,21 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       loop_node = arena[program.roots[0]]
-      CrystalV2::Compiler::Frontend.node_kind(loop_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Loop)
+      Adamas::Compiler::Frontend.node_kind(loop_node).should eq(Adamas::Compiler::Frontend::NodeKind::Loop)
 
       # Body should contain one statement
-      body = CrystalV2::Compiler::Frontend.node_loop_body(loop_node).not_nil!
+      body = Adamas::Compiler::Frontend.node_loop_body(loop_node).not_nil!
       body.size.should eq(1)
 
       stmt = arena[body[0]]
-      CrystalV2::Compiler::Frontend.node_kind(stmt).should eq(CrystalV2::Compiler::Frontend::NodeKind::Call)
+      Adamas::Compiler::Frontend.node_kind(stmt).should eq(Adamas::Compiler::Frontend::NodeKind::Call)
     end
 
     it "parses loop with break statement" do
@@ -36,17 +36,17 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       loop_node = arena[program.roots[0]]
-      CrystalV2::Compiler::Frontend.node_kind(loop_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Loop)
+      Adamas::Compiler::Frontend.node_kind(loop_node).should eq(Adamas::Compiler::Frontend::NodeKind::Loop)
 
       # Body should contain two statements (assignment and break-if)
-      body = CrystalV2::Compiler::Frontend.node_loop_body(loop_node).not_nil!
+      body = Adamas::Compiler::Frontend.node_loop_body(loop_node).not_nil!
       body.size.should eq(2)
     end
 
@@ -58,21 +58,21 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       loop_node = arena[program.roots[0]]
-      CrystalV2::Compiler::Frontend.node_kind(loop_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Loop)
+      Adamas::Compiler::Frontend.node_kind(loop_node).should eq(Adamas::Compiler::Frontend::NodeKind::Loop)
 
-      body = CrystalV2::Compiler::Frontend.node_loop_body(loop_node).not_nil!
+      body = Adamas::Compiler::Frontend.node_loop_body(loop_node).not_nil!
       body.size.should eq(2)
 
       # First statement should be if (suffix if parses as If node)
       if_stmt = arena[body[0]]
-      CrystalV2::Compiler::Frontend.node_kind(if_stmt).should eq(CrystalV2::Compiler::Frontend::NodeKind::If)
+      Adamas::Compiler::Frontend.node_kind(if_stmt).should eq(Adamas::Compiler::Frontend::NodeKind::If)
     end
 
     it "parses loop with multiple statements" do
@@ -85,16 +85,16 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       loop_node = arena[program.roots[0]]
-      CrystalV2::Compiler::Frontend.node_kind(loop_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Loop)
+      Adamas::Compiler::Frontend.node_kind(loop_node).should eq(Adamas::Compiler::Frontend::NodeKind::Loop)
 
-      body = CrystalV2::Compiler::Frontend.node_loop_body(loop_node).not_nil!
+      body = Adamas::Compiler::Frontend.node_loop_body(loop_node).not_nil!
       body.size.should eq(4)
     end
 
@@ -108,23 +108,23 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       outer_loop = arena[program.roots[0]]
-      CrystalV2::Compiler::Frontend.node_kind(outer_loop).should eq(CrystalV2::Compiler::Frontend::NodeKind::Loop)
+      Adamas::Compiler::Frontend.node_kind(outer_loop).should eq(Adamas::Compiler::Frontend::NodeKind::Loop)
 
-      outer_body = CrystalV2::Compiler::Frontend.node_loop_body(outer_loop).not_nil!
+      outer_body = Adamas::Compiler::Frontend.node_loop_body(outer_loop).not_nil!
       outer_body.size.should eq(2)
 
       # First statement in outer body should be inner loop
       inner_loop = arena[outer_body[0]]
-      CrystalV2::Compiler::Frontend.node_kind(inner_loop).should eq(CrystalV2::Compiler::Frontend::NodeKind::Loop)
+      Adamas::Compiler::Frontend.node_kind(inner_loop).should eq(Adamas::Compiler::Frontend::NodeKind::Loop)
 
-      inner_body = CrystalV2::Compiler::Frontend.node_loop_body(inner_loop).not_nil!
+      inner_body = Adamas::Compiler::Frontend.node_loop_body(inner_loop).not_nil!
       inner_body.size.should eq(1)
     end
 
@@ -136,21 +136,21 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       loop_node = arena[program.roots[0]]
-      CrystalV2::Compiler::Frontend.node_kind(loop_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Loop)
+      Adamas::Compiler::Frontend.node_kind(loop_node).should eq(Adamas::Compiler::Frontend::NodeKind::Loop)
 
-      body = CrystalV2::Compiler::Frontend.node_loop_body(loop_node).not_nil!
+      body = Adamas::Compiler::Frontend.node_loop_body(loop_node).not_nil!
       body.size.should eq(2)
 
       # First statement should be if (suffix if parses as If node)
       if_stmt = arena[body[0]]
-      CrystalV2::Compiler::Frontend.node_kind(if_stmt).should eq(CrystalV2::Compiler::Frontend::NodeKind::If)
+      Adamas::Compiler::Frontend.node_kind(if_stmt).should eq(Adamas::Compiler::Frontend::NodeKind::If)
     end
 
     it "parses loop inside method definition" do
@@ -162,21 +162,21 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       method_def = arena[program.roots[0]]
-      CrystalV2::Compiler::Frontend.node_kind(method_def).should eq(CrystalV2::Compiler::Frontend::NodeKind::Def)
+      Adamas::Compiler::Frontend.node_kind(method_def).should eq(Adamas::Compiler::Frontend::NodeKind::Def)
 
       # Method body should contain loop
-      body_exprs = CrystalV2::Compiler::Frontend.node_def_body(method_def).not_nil!
+      body_exprs = Adamas::Compiler::Frontend.node_def_body(method_def).not_nil!
       body_exprs.size.should eq(1)
 
       loop_node = arena[body_exprs[0]]
-      CrystalV2::Compiler::Frontend.node_kind(loop_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Loop)
+      Adamas::Compiler::Frontend.node_kind(loop_node).should eq(Adamas::Compiler::Frontend::NodeKind::Loop)
     end
 
     it "parses loop with if/else conditions inside" do
@@ -190,21 +190,21 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       loop_node = arena[program.roots[0]]
-      CrystalV2::Compiler::Frontend.node_kind(loop_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Loop)
+      Adamas::Compiler::Frontend.node_kind(loop_node).should eq(Adamas::Compiler::Frontend::NodeKind::Loop)
 
-      body = CrystalV2::Compiler::Frontend.node_loop_body(loop_node).not_nil!
+      body = Adamas::Compiler::Frontend.node_loop_body(loop_node).not_nil!
       body.size.should eq(1)
 
       # Body should contain if statement
       if_stmt = arena[body[0]]
-      CrystalV2::Compiler::Frontend.node_kind(if_stmt).should eq(CrystalV2::Compiler::Frontend::NodeKind::If)
+      Adamas::Compiler::Frontend.node_kind(if_stmt).should eq(Adamas::Compiler::Frontend::NodeKind::If)
     end
 
     it "parses empty loop" do
@@ -213,17 +213,17 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       loop_node = arena[program.roots[0]]
-      CrystalV2::Compiler::Frontend.node_kind(loop_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Loop)
+      Adamas::Compiler::Frontend.node_kind(loop_node).should eq(Adamas::Compiler::Frontend::NodeKind::Loop)
 
       # Empty body
-      body = CrystalV2::Compiler::Frontend.node_loop_body(loop_node).not_nil!
+      body = Adamas::Compiler::Frontend.node_loop_body(loop_node).not_nil!
       body.size.should eq(0)
     end
 
@@ -236,29 +236,29 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       loop_node = arena[program.roots[0]]
-      CrystalV2::Compiler::Frontend.node_kind(loop_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Loop)
+      Adamas::Compiler::Frontend.node_kind(loop_node).should eq(Adamas::Compiler::Frontend::NodeKind::Loop)
 
-      body = CrystalV2::Compiler::Frontend.node_loop_body(loop_node).not_nil!
+      body = Adamas::Compiler::Frontend.node_loop_body(loop_node).not_nil!
       body.size.should eq(3)
 
       # First statement: assignment with complex expression
       assign1 = arena[body[0]]
-      CrystalV2::Compiler::Frontend.node_kind(assign1).should eq(CrystalV2::Compiler::Frontend::NodeKind::Assign)
+      Adamas::Compiler::Frontend.node_kind(assign1).should eq(Adamas::Compiler::Frontend::NodeKind::Assign)
 
       # Second statement: index assignment
       assign2 = arena[body[1]]
-      CrystalV2::Compiler::Frontend.node_kind(assign2).should eq(CrystalV2::Compiler::Frontend::NodeKind::Assign)
+      Adamas::Compiler::Frontend.node_kind(assign2).should eq(Adamas::Compiler::Frontend::NodeKind::Assign)
 
       # Third statement: if (suffix if parses as If node)
       if_stmt = arena[body[2]]
-      CrystalV2::Compiler::Frontend.node_kind(if_stmt).should eq(CrystalV2::Compiler::Frontend::NodeKind::If)
+      Adamas::Compiler::Frontend.node_kind(if_stmt).should eq(Adamas::Compiler::Frontend::NodeKind::If)
     end
   end
 end

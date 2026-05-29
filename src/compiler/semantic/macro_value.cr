@@ -9,7 +9,7 @@
 # - Fast: minimal allocations, inline storage where possible
 # - Compatible: match original Crystal macro semantics
 
-module CrystalV2
+module Adamas
   module Compiler
     module Semantic
       # Base class for all macro values

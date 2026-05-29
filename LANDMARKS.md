@@ -28,12 +28,12 @@ spans before falling back to guarded raw slices. Refuted variant: reading
 `arena.extra_sources` inside the collector regressed even bare defs because
 that array path is itself fragile in produced `s2`; source must come through
 the file/provider boundary. Evidence: `CRYSTAL_CACHE_DIR=/private/tmp/cv2_cache_symbol_final
-crystal build src/crystal_v2.cr -o /private/tmp/cv2_symbol_final --error-trace`;
+crystal build src/adamas.cr -o /private/tmp/cv2_symbol_final --error-trace`;
 host guards `p2_generated_stage2_no_codegen_def_semantic_frontier.sh`,
 `p2_qualified_module_namespace_no_prelude.sh`,
 `p2_full_prelude_generic_template_namespace_no_pollution.sh`, and
 `p2_self_nested_module_registration_frontier.sh` on `/private/tmp/cv2_symbol_final`;
-`scripts/run_safe.sh /private/tmp/cv2_symbol_final 300 4096 src/crystal_v2.cr
+`scripts/run_safe.sh /private/tmp/cv2_symbol_final 300 4096 src/adamas.cr
 -o /private/tmp/cv2_symbol_final_s2/cv2_s2`; produced guards
 `p2_generated_stage2_no_codegen_def_semantic_frontier.sh`,
 `p2_generated_stage2_char_macro_for_frontier.sh`,
@@ -55,14 +55,14 @@ macro-for scanning from method registration, only reparses class macro
 expansions that can define record-time declarations, and registers the exact
 stdlib `Char` `op,desc` six-entry comparison primitive macro directly as six
 binary primitive signatures. Evidence: `CRYSTAL_CACHE_DIR=/private/tmp/cv2_cache_char_clean
-crystal build src/crystal_v2.cr -o /private/tmp/cv2_char_clean --error-trace`;
+crystal build src/adamas.cr -o /private/tmp/cv2_char_clean --error-trace`;
 `regression_tests/p2_qualified_module_namespace_no_prelude.sh
 /private/tmp/cv2_char_clean`;
 `regression_tests/p2_self_nested_module_registration_frontier.sh
 /private/tmp/cv2_char_clean`;
 `regression_tests/p2_full_prelude_generic_template_namespace_no_pollution.sh
 /private/tmp/cv2_char_clean`; `scripts/run_safe.sh /private/tmp/cv2_char_clean
-300 4096 src/crystal_v2.cr -o /private/tmp/cv2_char_clean_s2/cv2_s2`; and
+300 4096 src/adamas.cr -o /private/tmp/cv2_char_clean_s2/cv2_s2`; and
 `regression_tests/p2_generated_stage2_char_macro_for_frontier.sh
 /private/tmp/cv2_char_clean_s2/cv2_s2`. Boundary: produced `s2` still exits
 139 on full-prelude `puts 42`, but the trace now shows
@@ -88,13 +88,13 @@ index used only by constant-name lookup. Refuted variants: making all pre-scan
 constants name-only, or storing `TypeRef::VOID` in `@constant_types`, both let
 self-build reach invalid LLVM (`store ptr 32768`) because scalar metadata was
 lost. Evidence: `CRYSTAL_CACHE_DIR=/private/tmp/cv2_cache_prescan_final crystal
-build src/crystal_v2.cr -o /private/tmp/cv2_prescan_final --error-trace`;
+build src/adamas.cr -o /private/tmp/cv2_prescan_final --error-trace`;
 `regression_tests/p2_macro_compare_versions_control_no_raw_sanitize.sh
 /private/tmp/cv2_prescan_final`; `regression_tests/p2_qualified_module_namespace_no_prelude.sh
 /private/tmp/cv2_prescan_final`;
 `regression_tests/p2_prescan_complex_constants_frontier.sh
 /private/tmp/cv2_prescan_final`; `scripts/run_safe.sh
-/private/tmp/cv2_prescan_final 300 4096 src/crystal_v2.cr -o
+/private/tmp/cv2_prescan_final 300 4096 src/adamas.cr -o
 /private/tmp/cv2_prescan_final_s2/cv2_s2`; and the same three guards on
 `/private/tmp/cv2_prescan_final_s2/cv2_s2`. Boundary: produced full-prelude
 `puts 42` now passes `pre-scan constants done`, then exits 133 later during
@@ -110,12 +110,12 @@ helper boundaries while registering macro-expanded text. The fix uses
 macro-expanded version literal methods, source-backed `ConstantNode` definition
 names for reparsed arenas, direct builtin-version operand scanning, and
 in-place branch selection instead of returning `Tuple(Bool, String?)` for
-selected macro-control text. Evidence: `crystal build src/crystal_v2.cr -o
+selected macro-control text. Evidence: `crystal build src/adamas.cr -o
 /tmp/cv2_compare_cleanup --error-trace`;
 `regression_tests/p2_macro_compare_versions_control_no_raw_sanitize.sh
 /tmp/cv2_compare_cleanup`; `regression_tests/p2_qualified_module_namespace_no_prelude.sh
 /tmp/cv2_compare_cleanup`; `scripts/run_safe.sh /tmp/cv2_compare_cleanup 300
-4096 src/crystal_v2.cr -o /tmp/cv2_compare_cleanup_s2/cv2_s2`; and the same
+4096 src/adamas.cr -o /tmp/cv2_compare_cleanup_s2/cv2_s2`; and the same
 two guards on `/tmp/cv2_compare_cleanup_s2/cv2_s2`. Boundary: generated
 `cv2_s2` full-prelude `puts 42` no longer emits the old 51KB
 `Float::FastFloat::Powers` raw-sanitize trace under `DEBUG_MACRO_STRIP_HOT=8192`,
@@ -137,7 +137,7 @@ host-built `/tmp/cv2_param_source_candidate` passes
 `p2_bootstrap_semantic_emit_oracle.sh`, and
 `p2_visibility_private_accessor_no_prelude.sh`; direct self-host build
 `scripts/run_safe.sh /tmp/cv2_param_source_candidate 300 4096
-src/crystal_v2.cr -o /tmp/cv2_direct_param_source/cv2_s2` exits 0 after ~143s.
+src/adamas.cr -o /tmp/cv2_direct_param_source/cv2_s2` exits 0 after ~143s.
 Boundary: the produced `cv2_s2` still cannot compile a full-prelude smoke; it
 now fails later at `Exception::CallStack#initialize` while class registration
 handles an index expression/parameter annotation corridor. This is progress to
@@ -244,7 +244,7 @@ Covered semantics match original Crystal for non-call forms: private
 type/constant/macro wrappers are accepted, protected type/constant/macro
 wrappers raise `can only use 'private' for ...`, and invalid non-call targets
 raise `can't apply visibility modifier`. Evidence: `crystal build
-src/crystal_v2.cr -o /private/tmp/cv2_visibility_modifier_semantics
+src/adamas.cr -o /private/tmp/cv2_visibility_modifier_semantics
 --error-trace`; `p2_visibility_modifier_semantics_no_prelude.sh`,
 `p2_visibility_private_accessor_no_prelude.sh`,
 `p2_visibility_protected_namespace_no_prelude.sh`,
@@ -269,11 +269,11 @@ was Crystal's `has_protected_access_to?` same-namespace rule, not an
 owner, preserves union descriptor names during mangling, resolves union aliases
 per variant, rejects non-union cache hits for union keys, and implements
 protected access through hierarchy/generic-base/same-top-namespace checks.
-Evidence: `crystal build src/crystal_v2.cr -o /private/tmp/cv2_protected_namespace
+Evidence: `crystal build src/adamas.cr -o /private/tmp/cv2_protected_namespace
 --error-trace`; `p2_visibility_protected_namespace_no_prelude.sh` and
 `p2_visibility_private_accessor_no_prelude.sh` pass with that compiler;
 `CRYSTAL_V2_STOP_AFTER_HIR=1 CRYSTAL_V2_PHASE_STATS=1 scripts/run_safe.sh
-/private/tmp/cv2_protected_namespace 180 4096 src/crystal_v2.cr -o
+/private/tmp/cv2_protected_namespace 180 4096 src/adamas.cr -o
 /private/tmp/cv2_protected_namespace_s2` exits 0 after ~145s. Boundary:
 `lower_missing` still fanouts from `615 -> 35882` in ~159s; that is the next
 demand-driven root, not part of this visibility/union fix. {F/G/R:
@@ -291,7 +291,7 @@ pattern is not a missing default value: this hot backend lookup corridor was
 using closure/Enumerable helpers while generated stage2 still has fragile block
 helper ABI paths. The fix replaces both predicates with direct while loops,
 preserving the same lookup semantics without invoking block iterators.
-Evidence: `crystal build src/crystal_v2.cr -o /tmp/cv2_value_ref_def_loop
+Evidence: `crystal build src/adamas.cr -o /tmp/cv2_value_ref_def_loop
 --error-trace`; `p2_bootstrap_semantic_emit_oracle.sh`,
 `p2_pending_budget_no_prelude.sh`, `p2_universal_helper_fanout_no_prelude.sh`,
 and `p1_ir_shape_check.sh` pass with `/tmp/cv2_value_ref_def_loop`; canonical
@@ -304,7 +304,7 @@ work remains tracked separately. {F/G/R: 0.90/0.56/0.91} [verified]
 [LM-524|verified]: MIR debug line-scope caching must avoid tuple keys under
 self-hosted stage2. After the class-method nested-yield fix, generated `cv2_s2`
 still built, but the no-prelude smoke segfaulted after `lower_main: exprs=5`.
-LLDB stopped in `__crystal_v2_string_eq` through
+LLDB stopped in `__adamas_string_eq` through
 `Tuple(String, Int32)#== -> Hash(Tuple(String, Int32), UInt32)#fetch ->
 HIRToMIRLowering#hir_innermost_scope_for_source_line ->
 propagate_debug_local_bindings -> lower_function_body`; registers showed
@@ -316,14 +316,14 @@ stage2. The fix rewrites it to `Hash(String, Hash(Int32, UInt32))` and
 reinitializes both scope caches per function, preserving the existing
 stage2-sensitive lowering-map invariant while removing the tuple-key Hash
 surface from this hot debug path. Evidence: `crystal build
-src/crystal_v2.cr -o /tmp/cv2_scope_cache_nested --error-trace`;
+src/adamas.cr -o /tmp/cv2_scope_cache_nested --error-trace`;
 `p2_class_method_nested_yield_block_param_no_prelude.sh`,
 `p2_loop_block_proc_capture_no_prelude.sh`,
 `p2_bootstrap_semantic_emit_oracle.sh`, and `p2_pending_budget_no_prelude.sh`
 pass with `/tmp/cv2_scope_cache_nested`; canonical `s1 -> s2` builds `cv2_s2`
 in about 227s, and fresh LLDB now stops later in
 `Crystal::MIR::LLVMIRGenerator#value_ref(UInt32)` from `emit_extern_call`,
-not in `__crystal_v2_string_eq`. Boundary: general tuple-key Hash safety is
+not in `__adamas_string_eq`. Boundary: general tuple-key Hash safety is
 still tracked separately; this fixes the compiler debug-cache root, not every
 possible tuple-key user program. {F/G/R: 0.91/0.58/0.92} [verified]
 
@@ -344,12 +344,12 @@ focused `File.open` HIR reducer now types both the inline block param and
 `File#read(Slice(UInt8))`; the no-prelude
 `p2_class_method_nested_yield_block_param_no_prelude.sh` reducer guards the
 same class-method nested-yield shape with `FileLike.open -> open_internal`;
-`crystal build src/crystal_v2.cr -o /tmp/cv2_yield_owner_fix --error-trace`
+`crystal build src/adamas.cr -o /tmp/cv2_yield_owner_fix --error-trace`
 passes; canonical `s1 -> s2` builds `cv2_s2` in about 230s, and generated
 `cv2_s2.ll` now contains `__crystal_block_proc_720 -> File#read(Slice(UInt8))`
 instead of the old `Pointer#read` frontier. Boundary: generated `cv2_s2`
 no-prelude smoke now segfaults after `lower_main: exprs=5`; LLDB stops in
-`__crystal_v2_string_eq` through
+`__adamas_string_eq` through
 `Tuple(String, Int32)#== -> Hash(Tuple(String, Int32), UInt32)#fetch ->
 HIRToMIRLowering#hir_innermost_scope_for_source_line ->
 propagate_debug_local_bindings -> lower_function_body`. {F/G/R:
@@ -396,7 +396,7 @@ through `scripts/run_safe.sh`; `abstract_class_method_dispatch_synth.sh`,
 builds `cv2_s2` and moves past the previous `Frontend::Node#span` smoke abort.
 New frontier: generated `cv2_s2` no-prelude smoke aborts later at
 `Hash(String, Array(Tuple(String, Crystal::MIR::Function)))#read(Slice(UInt8))`
-from `CrystalV2::Compiler::CLI#file_sha256`. {F/G/R: 0.94/0.64/0.94}
+from `Adamas::Compiler::CLI#file_sha256`. {F/G/R: 0.94/0.64/0.94}
 [verified]
 
 [LM-520|verified]: Return-type force-lowering must be demand-gated by whether
@@ -439,9 +439,9 @@ bootstrap root is broad concrete-call demand volume, not this namespace
 lookup bug. {F/G/R: 0.92/0.66/0.93} [verified]
 
 [LM-481|verified]: Backend-owned runtime intrinsics must not be demand-driven
-as source-level HIR functions. HIR currently emits `__crystal_v2_string_eq`,
-`__crystal_v2_hash_get_entry_ptr`, `__crystal_v2_hash_entry_deleted`, and
-`__crystal_v2_select_ptr` as plain `Call` instructions, but MIR lowering turns
+as source-level HIR functions. HIR currently emits `__adamas_string_eq`,
+`__adamas_hash_get_entry_ptr`, `__adamas_hash_entry_deleted`, and
+`__adamas_select_ptr` as plain `Call` instructions, but MIR lowering turns
 unresolved calls into `extern_call`, and the LLVM backend either defines those
 runtime helpers or intercepts them specially (`select_ptr`). A focused patch
 skips that exact allowlist in `lower_missing_call_targets`,
@@ -450,7 +450,7 @@ skips that exact allowlist in `lower_missing_call_targets`,
 /tmp/cv2_intrinsic_boundary_check` keeps `string_eq` / `select_ptr` visible in
 HIR while rejecting their appearance in missing-source logs; fresh generated
 `s1` full-source `STOP_AFTER_HIR` exits 0 after about 220s, and
-`rg '__crystal_v2_(string_eq|hash_get_entry_ptr|hash_entry_deleted|select_ptr)'
+`rg '__adamas_(string_eq|hash_get_entry_ptr|hash_entry_deleted|select_ptr)'
 /tmp/cv2_missing_intrinsic/run.log` returns no matches. Boundary: this removes
 one wrong demand source but does not by itself shrink the remaining
 `lower_missing` total (`+25690` in the measured run). {F/G/R:
@@ -520,7 +520,7 @@ still lowers whole method bodies, so those branches pulled generic
 The root fix replaced the two diagnostic `.to_json` calls with a local
 scalar-only `MacroDiagJson` writer and removed `require "json"` from
 `src/compiler/semantic/macro_expander.cr`. Evidence:
-`crystal build src/crystal_v2.cr -o /tmp/cv2_macro_json_free --error-trace`;
+`crystal build src/adamas.cr -o /tmp/cv2_macro_json_free --error-trace`;
 `regression_tests/p2_pending_budget_no_prelude.sh /tmp/cv2_macro_json_free`
 printed `process_delta=2 emit_delta=4 lower_missing_delta=0 total=40
 max_queue=29`; the p2 semantic emit, backend-intrinsic, and each-index
@@ -539,7 +539,7 @@ compiler/corpus pair under `scripts/run_safe.sh`; `scripts/normalize_bootstrap_i
 strips known non-semantic ids, tmp paths, temp suffixes, and stub-name hashes;
 `scripts/compare_bootstrap_stages.sh` diffs normalized S1..S5 dumps against
 `regression_tests/bootstrap_semantic_corpus.cr`. Evidence: `bash -n` is green,
-one emit smoke with `bin/crystal_v2` produced all three artifacts, and a
+one emit smoke with `bin/adamas` produced all three artifacts, and a
 synthetic five-stage directory where all stage names point at the same compiler
 prints `SEMANTIC_EQ: S1..S5 ok`. Boundary: this is only the gate scaffold; it
 does not prove the real `original -> stage1 -> s2b -> s3b -> s4b -> s5b` chain
@@ -663,11 +663,11 @@ skipped materializing the requested child symbol. The bounded fix switches the
 "already lowered" gate and lowering state bookkeeping to the actual
 materialized symbol, and lowers inherited instance wrappers under the requested
 owner when the callsite needs a concrete child method body. Evidence:
-`crystal build src/crystal_v2.cr -o /tmp/cv2_tell_fix --error-trace` succeeded;
+`crystal build src/adamas.cr -o /tmp/cv2_tell_fix --error-trace` succeeded;
 plain `File.open { |f| f.tell }` HIR emitted by `/tmp/cv2_tell_fix` contains
 only `IO#tell` (`rg -n "func @IO::FileDescriptor#tell|func @IO#tell"
 /tmp/io_tell_probe_plain_fix.hir` => only `func @IO#tell`);
-`scripts/run_safe.sh /tmp/cv2_tell_fix 420 4096 src/crystal_v2.cr -o
+`scripts/run_safe.sh /tmp/cv2_tell_fix 420 4096 src/adamas.cr -o
 /tmp/cv2_tell_fix_s2` succeeded; `lldb --batch -o 'disassemble -n
 IO$CCFileDescriptor$Htell' /tmp/cv2_tell_fix_s2` shows a real delegate body
 calling `IO$CCFileDescriptor$Hpos`, not an abort stub; and
@@ -746,7 +746,7 @@ lower_missing_delta=45 total=92`; full `STOP_AFTER_HIR` with
 phase stats from baseline `process_pending +14371, lower_missing +25702,
 43471 total` to `process_pending +4148, lower_missing +35210, 43091 total`.
 `DEBUG_MISSING_SUMMARY=1` identifies the compensating concrete-call demand as
-`IO#<<`, `__crystal_v2_string_eq`, `Array#root_buffer`, Hash internals,
+`IO#<<`, `__adamas_string_eq`, `Array#root_buffer`, Hash internals,
 `JSON::Builder`, and `Hash::Entry#inspect/to_s`. Boundary: do not enable this
 by default or filter `lower_missing` blindly; the next root target is why
 serialization/formatting/hash bodies enter HIR before the concrete missing-call
@@ -851,7 +851,7 @@ fall back to the generic module block owner. The fix keeps
 canonicalization, and block emit lookup. Evidence:
 `DEBUG_CALL_TRACE=reverse_each DEBUG_HOOK_FILTER=reverse_each
 CRYSTAL_V2_STOP_AFTER_HIR=1 scripts/run_safe.sh /tmp/cv2_commit_candidate 300
-4096 src/crystal_v2.cr -o /tmp/cv2_commit_candidate_reverse_stop` exited 0,
+4096 src/adamas.cr -o /tmp/cv2_commit_candidate_reverse_stop` exited 0,
 and grep found no `Indexable(T)#reverse_each$block` trace while concrete
 `Array(...)#reverse_each$block` targets were lowered. {F/G/R:
 0.93/0.62/0.94} [verified]
@@ -865,7 +865,7 @@ included-module chain with `find_module_def_recursive_with_owner` and preserves
 the found arena for parameter/default reads. Evidence:
 `DEBUG_CALL_TRACE=each_with_index DEBUG_HOOK_FILTER=each_with_index
 CRYSTAL_V2_STOP_AFTER_HIR=1 scripts/run_safe.sh /tmp/cv2_commit_candidate 300
-4096 src/crystal_v2.cr -o /tmp/cv2_commit_candidate_each_stop` exited 0 and
+4096 src/adamas.cr -o /tmp/cv2_commit_candidate_each_stop` exited 0 and
 showed repeated `after_args ... args=0` followed by `after_defaults ... args=1`
 for concrete Array/Slice calls. {F/G/R: 0.93/0.62/0.94} [verified]
 
@@ -876,7 +876,7 @@ and offsets are owned by the type registry and normal lowering. The fix disables
 `emit_hash_string_linear_scan_override` and lets HIR/MIR lowering emit the real
 method body. Evidence: full self-compile with
 `CRYSTAL_V2_PHASE_STATS=1 scripts/run_safe.sh /tmp/cv2_commit_candidate 300
-4096 src/crystal_v2.cr -o /tmp/cv2_s2_commit_candidate` exited 0, the generated
+4096 src/adamas.cr -o /tmp/cv2_s2_commit_candidate` exited 0, the generated
 LL had no `direct small Hash linear scan` marker and no
 `Hash$LString$C$_Nil$R$Hupdate_linear_scan`, and
 `regression_tests/p2_selfhost_hir_emit_no_prelude.sh /tmp/cv2_s2_commit_candidate`
@@ -896,10 +896,10 @@ Third, deferred runtime constants must update `@constant_types` after lowering;
 `Path | String` variant-0 miswrap and the previous `String#bytesize` crash.
 Fourth, splat parameters must be rebound as tuple locals inside method bodies;
 `Dir.glob$..._block_splat` now allocates a tuple for `patterns` and no longer
-self-recurses. Evidence: `crystal build src/crystal_v2.cr -o
+self-recurses. Evidence: `crystal build src/adamas.cr -o
 /tmp/cv2_splat_tuple_guard --error-trace` exited 0;
 `CRYSTAL_V2_STOP_AFTER_MIR=1 scripts/run_safe.sh /tmp/cv2_splat_tuple_guard
-300 4096 src/crystal_v2.cr --emit mir --no-link -o
+300 4096 src/adamas.cr --emit mir --no-link -o
 /tmp/cv2_splat_tuple_guard_mir` exited 0; and
 `regression_tests/p2_selfhost_stage2_shape_guard.sh /tmp/cv2_splat_tuple_guard`
 printed `p2_selfhost_stage2_shape_guard_ok`. Boundary: this proves shape
@@ -913,7 +913,7 @@ The smallest no-prelude smoke also times out:
 `scripts/run_safe.sh /tmp/cv2_s2_splat_tuple_guard 30 2048
 /tmp/cv2_no_prelude_expr_splat_tuple_guard.cr --no-prelude --no-codegen`.
 Samples identify the next root area rather than the fixed roots:
-`__crystal_v2_string_eq` in one timeout and
+`__adamas_string_eq` in one timeout and
 `Indexable.range_to_index_and_count -> Range(Int32, Int32)#begin` in another.
 Boundary: do not run `s3b+`; next work is a minimal no-prelude oracle for this
 string/range primitive hang. {F/G/R: 0.88/0.42/0.90} [verified]
@@ -930,7 +930,7 @@ blocker. Third, `TypeInferenceEngine#primitive_metaclass?` must not rely on
 flow narrowing across `type.is_a?(PrimitiveType) && type.name...`; explicit
 `PrimitiveType` casting makes HIR emit `PrimitiveType#name -> String` followed
 by `String#ends_with?`, not stale `Hash(...HIR::Value)#ends_with?`. Evidence:
-`crystal build src/crystal_v2.cr -o /tmp/cv2_primitive_metaclass_narrow
+`crystal build src/adamas.cr -o /tmp/cv2_primitive_metaclass_narrow
 --error-trace` exited 0; `CRYSTAL_V2_STOP_AFTER_HIR=1 ... --emit hir --no-link`
 showed the explicit cast and `String#ends_with?$String`;
 `CRYSTAL_V2_STOP_AFTER_MIR=1 ... --emit mir --no-link` exited 0 and showed
@@ -940,7 +940,7 @@ showed the explicit cast and `String#ends_with?$String`;
 /tmp/cv2_primitive_metaclass_narrow` printed
 `p2_selfhost_stage2_shape_guard_ok`. Boundary: generated stage2 still times out
 after parse on minimal no-prelude; latest sample is hot in
-`__crystal_v2_string_eq`, which is the next root target. {F/G/R:
+`__adamas_string_eq`, which is the next root target. {F/G/R:
 0.92/0.55/0.93} [verified]
 
 [LM-487|verified]: The full `s1 -> s2b` wrapper gate now produces the stage2
@@ -966,10 +966,10 @@ repacked the splat tuple indefinitely in generated stage2. The fix resolves
 bare, `_splat`, and current-function fallback targets through the block overload
 table, prefers a typed non-splat block target when available, and does not
 eagerly force the corrected callee body during fallback. Evidence:
-`crystal build src/crystal_v2.cr -o /tmp/cv2_dirglob_rootfix3 --error-trace`
+`crystal build src/adamas.cr -o /tmp/cv2_dirglob_rootfix3 --error-trace`
 exited 0; mini `Dir.glob` HIR emit under `scripts/run_safe.sh` no longer
 contains `Dir.glob$Path | String_File::MatchOptions_Bool_block_splat`; full
-`CRYSTAL_V2_STOP_AFTER_HIR=1 ... src/crystal_v2.cr --emit hir --no-link`
+`CRYSTAL_V2_STOP_AFTER_HIR=1 ... src/adamas.cr --emit hir --no-link`
 exited 0 after about `189s`; `regression_tests/p2_bootstrap_semantic_emit_oracle.sh
 /tmp/cv2_dirglob_rootfix3` and
 `regression_tests/p2_selfhost_stage2_shape_guard.sh /tmp/cv2_dirglob_rootfix3`
@@ -986,11 +986,11 @@ the generated stage2 compiler dispatch `String#each$block` inside
 `Dir.glob$Enumerable...`. The fix only prefers a typed non-splat block target
 when the first call argument is already a tuple/collection; scalar calls keep
 the `_block_splat` wrapper so the wrapper performs tuple packing before
-forwarding. Evidence: `crystal build src/crystal_v2.cr -o
+forwarding. Evidence: `crystal build src/adamas.cr -o
 /tmp/cv2_dirglob_scalar_guard --error-trace` exited 0; a mini scalar
 `Dir.glob` HIR emit showed the wrapper calling `Dir.glob$Enumerable...` with a
 tuple local and no `String#each$block`; full
-`CRYSTAL_V2_STOP_AFTER_HIR=1 ... src/crystal_v2.cr --emit hir --no-link`
+`CRYSTAL_V2_STOP_AFTER_HIR=1 ... src/adamas.cr --emit hir --no-link`
 exited 0 after about `187s`; `regression_tests/p2_bootstrap_semantic_emit_oracle.sh
 /tmp/cv2_dirglob_scalar_guard` and
 `regression_tests/p2_selfhost_stage2_shape_guard.sh /tmp/cv2_dirglob_scalar_guard`
@@ -1013,7 +1013,7 @@ Adding `@table_stack : Array(SymbolTable)` makes `current_table` return
 `current_method_is_class_method?`, `top_level_scope?`,
 `type_expression_context?`) were present as calls but not materialized as
 bodies; inlining their simple stack/depth checks at source call sites removes
-that abort-stub cluster. Evidence: `crystal build src/crystal_v2.cr -o
+that abort-stub cluster. Evidence: `crystal build src/adamas.cr -o
 /tmp/cv2_semantic_helper_commit --error-trace` exited 0;
 `regression_tests/p2_bootstrap_semantic_emit_oracle.sh
 /tmp/cv2_semantic_helper_commit` and
@@ -1035,15 +1035,15 @@ leaf-helper target, not a missing def registration. The def was registered
 early, but calls emitted during `TypeInferenceEngine` lowering deferred the
 zero-arg helper into the work queue; later lazy-RTA/safety-net passes could
 leave a concrete call target without a materialized body, so LLVM generated
-`STUB CALLED: CrystalV2::Compiler::Semantic::TypeInferenceEngine#guard_watchdog!`.
+`STUB CALLED: Adamas::Compiler::Semantic::TypeInferenceEngine#guard_watchdog!`.
 The safe fix is not a broad stale-Pending requeue: that was tested and rejected
 because it reopens the deep generic formatting/iterator fan-out and times out.
 Instead, this specific leaf guard bypasses nested deferral and is lowered
-immediately. Evidence: `crystal build src/crystal_v2.cr -o /tmp/cv2_guardleaf
+immediately. Evidence: `crystal build src/adamas.cr -o /tmp/cv2_guardleaf
 --error-trace` exited 0; `CRYSTAL_V2_STOP_AFTER_HIR=1 scripts/run_safe.sh
-/tmp/cv2_guardleaf 300 4096 src/crystal_v2.cr -o /tmp/cv2_guardleaf_stop`
+/tmp/cv2_guardleaf 300 4096 src/adamas.cr -o /tmp/cv2_guardleaf_stop`
 exited 0 after about `197s`; `--emit hir --no-link` produced a HIR body
-`func @CrystalV2::Compiler::Semantic::TypeInferenceEngine#guard_watchdog!`
+`func @Adamas::Compiler::Semantic::TypeInferenceEngine#guard_watchdog!`
 that calls `Frontend::Watchdog.check!`; `regression_tests/p2_selfhost_stage2_shape_guard.sh
 /tmp/cv2_guardleaf` and `regression_tests/p2_bootstrap_semantic_emit_oracle.sh
 /tmp/cv2_guardleaf` both passed. Boundary: a direct full `s1` codegen attempt
@@ -1060,12 +1060,12 @@ primitive lowering could emit the original compiler's metaclass/type-id
 semantics. The fix keeps `crystal_type_id` and `crystal_instance_type_id` on
 the primitive path for type-literal receivers and emits an `Int32` type-id
 literal in both call and no-parens member-access paths. Evidence:
-`crystal build src/crystal_v2.cr -o /tmp/cv2_typeid3 --error-trace` exited 0;
+`crystal build src/adamas.cr -o /tmp/cv2_typeid3 --error-trace` exited 0;
 `regression_tests/p2_selfhost_stage2_shape_guard.sh /tmp/cv2_typeid3` passed
 and now rejects `Class.crystal_type_id` / `Class#crystal_type_id`;
 `regression_tests/p2_bootstrap_semantic_emit_oracle.sh /tmp/cv2_typeid3`
 passed; fresh `scripts/run_safe.sh /tmp/cv2_typeid3 420 4096
-src/crystal_v2.cr -o /tmp/cv2_typeid3_s2_full` exited 0 after about `248s`;
+src/adamas.cr -o /tmp/cv2_typeid3_s2_full` exited 0 after about `248s`;
 generated `s2b` no-prelude no-codegen smoke moved past
 `Class$Dcrystal_type_id` to `STUB CALLED: Char$Hascii_control$Q`. Boundary:
 this is a root fix for type-id primitive dispatch, not a green generated-stage2
@@ -1079,11 +1079,11 @@ still emitted an abort stub for the raw `Char` predicate. The fix lowers
 implicit self, explicit call, and no-parens member-access forms of
 `Char#ascii_control?` inline as `self < 0x20 || self == 0x7f`, matching
 `src/stdlib/char.cr` without touching stdlib/runtime. Evidence:
-`crystal build src/crystal_v2.cr -o /tmp/cv2_charctl_final --error-trace`
+`crystal build src/adamas.cr -o /tmp/cv2_charctl_final --error-trace`
 exited 0; `regression_tests/p2_bootstrap_semantic_emit_oracle.sh
 /tmp/cv2_charctl_final` and `regression_tests/p2_selfhost_stage2_shape_guard.sh
 /tmp/cv2_charctl_final` passed; fresh `scripts/run_safe.sh
-/tmp/cv2_charctl_final 420 4096 src/crystal_v2.cr -o
+/tmp/cv2_charctl_final 420 4096 src/adamas.cr -o
 /tmp/cv2_charctl_final_s2_full` exited 0 after about `252s`; generated `s2b`
 no-prelude no-codegen smoke moved past `Char$Hascii_control$Q` to
 `STUB CALLED: Printer$Dshortest$$Float32_IO`. Boundary: this is a root fix for
@@ -1103,11 +1103,11 @@ inference, which reached `Float32#to_s(io)` and the unlowered
 `debug_type_trace` methods with runtime-gated macros in
 `type_inference_engine.cr`, so interpolated strings are only built when
 debugging is actually enabled. Evidence:
-`crystal build src/crystal_v2.cr -o /tmp/cv2_printerfix --error-trace` exited
+`crystal build src/adamas.cr -o /tmp/cv2_printerfix --error-trace` exited
 0; `regression_tests/p2_bootstrap_semantic_emit_oracle.sh /tmp/cv2_printerfix`
 and `regression_tests/p2_selfhost_stage2_shape_guard.sh /tmp/cv2_printerfix`
 passed; fresh `scripts/run_safe.sh /tmp/cv2_printerfix 420 4096
-src/crystal_v2.cr -o /tmp/cv2_printerfix_s2_full` exited 0 after about `242s`;
+src/adamas.cr -o /tmp/cv2_printerfix_s2_full` exited 0 after about `242s`;
 generated `s2b` no-prelude no-codegen smoke moved past
 `Printer$Dshortest$$Float32_IO` and now reaches semantic checking with
 `error[E3001]: Function 'puts' not found`. Boundary: this fixes the eager debug
@@ -1123,10 +1123,10 @@ semantic analysis with `error[E3001]: Function 'puts' not found`. The HIR
 lowerer already has receiverless `puts`/`print` corridors; type inference did
 not. The fix adds a tiny receiverless builtin semantic path for top-level
 `puts`/`print`, returning `Nil` and letting HIR handle the actual lowering.
-Evidence: `crystal build src/crystal_v2.cr -o /tmp/cv2_puts --error-trace`
+Evidence: `crystal build src/adamas.cr -o /tmp/cv2_puts --error-trace`
 exited 0; `regression_tests/p2_bootstrap_semantic_emit_oracle.sh /tmp/cv2_puts`
 and `regression_tests/p2_selfhost_stage2_shape_guard.sh /tmp/cv2_puts` passed;
-fresh `scripts/run_safe.sh /tmp/cv2_puts 420 4096 src/crystal_v2.cr -o
+fresh `scripts/run_safe.sh /tmp/cv2_puts 420 4096 src/adamas.cr -o
 /tmp/cv2_puts_s2_full` exited 0 after about `241s`;
 `regression_tests/p2_generated_stage2_no_prelude_interp.sh /tmp/cv2_puts`
 passed. The next measured blocker is
@@ -1139,7 +1139,7 @@ Boundary: top-level `puts` semantic parity is fixed, but runtime no-prelude
 [LM-496|verified]: The generated-stage2 `Tuple$Heach$$block` abort for
 no-prelude `puts 7` was a compile-mode tracking bug in HIR print fallback
 selection, not a real tuple root cause. `s1` already compiled the tiny
-`puts 7 --no-prelude` repro to a direct `call void @__crystal_v2_print_int32_ln`
+`puts 7 --no-prelude` repro to a direct `call void @__adamas_print_int32_ln`
 shape, but generated `s2b` still disabled `emit_runtime_print_fallback`
 because `prelude_io_print_available?` inferred availability from ambient
 `IO` method tables instead of the actual `--no-prelude` option. That let the
@@ -1149,7 +1149,7 @@ mode. The fix threads `options.no_prelude` into `HIR::AstToHir` and makes
 `prelude_io_print_available?` return false under `--no-prelude`, so supported
 primitive/string/bool print calls always take the runtime fallback corridor in
 that mode. Evidence: `CRYSTAL_CACHE_DIR=/tmp/crystal_cache_v2_noprel_printfix
-crystal build src/crystal_v2.cr -o /tmp/cv2_noprel_printfix --error-trace`
+crystal build src/adamas.cr -o /tmp/cv2_noprel_printfix --error-trace`
 exited 0; `regression_tests/stage2_no_prelude_puts_runtime_repro.sh
 /tmp/cv2_noprel_printfix` returned `not reproduced`; and
 `regression_tests/p2_generated_stage2_no_prelude_interp.sh
@@ -1176,8 +1176,8 @@ same path was block-param inference for compiler collection aliases:
 `normalize_compiler_collection_owner_name` in element/hash block-param
 inference changes the self-host HIR for the late-emission Array loop from a
 `Void` block param to a real tuple param. Evidence:
-`crystal build src/crystal_v2.cr -o /tmp/cv2_flat_missing --error-trace`
-passed; `scripts/run_safe.sh /tmp/cv2_flat_missing 420 4096 src/crystal_v2.cr
+`crystal build src/adamas.cr -o /tmp/cv2_flat_missing --error-trace`
+passed; `scripts/run_safe.sh /tmp/cv2_flat_missing 420 4096 src/adamas.cr
 -o /tmp/cv2_flat_missing_s2` exited 0; `scripts/run_safe.sh
 /tmp/cv2_flat_missing_s2 120 1024 /tmp/repro_puts7.cr --no-prelude -o
 /tmp/repro_puts7_bin` moved to `STUB CALLED:
@@ -1197,7 +1197,7 @@ so implicit calls inside the ancestor body resolved back to the child wrapper
 and self-recursed. The fix preserves requested wrapper owner only for
 value/primitive/generic owner-specialization cases; normal reference-class
 inherited wrappers lower the resolved ancestor body while still materializing
-the requested dispatch symbol. Evidence: `crystal build src/crystal_v2.cr -o
+the requested dispatch symbol. Evidence: `crystal build src/adamas.cr -o
 /tmp/cv2_inherited_owner --error-trace` passed; HIR emitted with
 `DEBUG_CALL_LOOKUP=file_descriptor_close DEBUG_BLOCK_CALL_ABI=1` shows
 `File#file_descriptor_close` calling
@@ -1232,7 +1232,7 @@ inserting `0x00`. `File.exists?("#{pipeline_hash_str}.ll")` then raises
 original Crystal `primitives.cr:149`: `t1.signed? ? srem : urem`. In
 `llvm_backend.cr`, div/rem now derives signedness from dividend only
 (`left_is_signed`) instead of OR-ing both operands. Evidence:
-`regression_tests/p2_u64_to_s_base16_no_null.sh bin/crystal_v2` baseline
+`regression_tests/p2_u64_to_s_base16_no_null.sh bin/adamas` baseline
 without fix printed corrupted bytes with embedded nul (`byte_index(0)==0`);
 with fix prints `cbf29ce484222325`, `16`, `true`. Full regression suite delta
 vs baseline: zero changed. The generated-stage2 no-prelude `puts 7` frontier
@@ -1433,7 +1433,7 @@ Evidence:
 - Stage2 LLVM IR contains thunks numbered 1889, 1890, 1891 matching
   the three `->...` call sites in `Process.after_fork_child_callbacks`.
 - Regression suite: 22 → 23 passing out of 31 combined (pre-fix
-  baseline `/tmp/cv2_lm502_built` vs fixed `bin/crystal_v2`); no new
+  baseline `/tmp/cv2_lm502_built` vs fixed `bin/adamas`); no new
   failures. Remaining 8 failures are pre-existing RTA STUB gaps
   (`Permissions$Hvalue`, `UInt8$Hremainder`, etc.) unrelated to
   proc-pointer paths.
@@ -1484,7 +1484,7 @@ Evidence:
   -> `named_arg_after_splat_type_alignment_ok`
 - `CRYSTAL_V2_STOP_AFTER_HIR=1 CRYSTAL_V2_PHASE_STATS=1
   DEBUG_PENDING_SOURCES=1 ... scripts/run_safe.sh /tmp/cv2_nil_branch_fix 300
-  4096 src/crystal_v2.cr -o /tmp/cv2_nil_branch_stop_hir` -> `[EXIT: 0]`;
+  4096 src/adamas.cr -o /tmp/cv2_nil_branch_stop_hir` -> `[EXIT: 0]`;
   `lower_missing` remains large (`17775 -> 46442`, `+28667`), proving this
   closes a real dead-demand bug but does not solve the broader formatting
   helper explosion. {F/G/R: 0.9/0.55/0.9} [verified]
@@ -1515,7 +1515,7 @@ Evidence:
   lower_missing_delta=44 total=92 max_queue=57`.
 - `CRYSTAL_V2_STOP_AFTER_HIR=1 CRYSTAL_V2_PHASE_STATS=1
   DEBUG_PENDING_SOURCES=1 ... scripts/run_safe.sh /tmp/cv2_rta_declared_method
-  300 4096 src/crystal_v2.cr -o /tmp/cv2_rta_decl_stop_hir` -> `[EXIT: 0]`;
+  300 4096 src/adamas.cr -o /tmp/cv2_rta_decl_stop_hir` -> `[EXIT: 0]`;
   `lower_missing` improved from `+28667` to `+25702`, and `Array` function
   prefix count dropped from `11817` to `8930`. `Array#inspect_with_backtrace`
   remains visible in enqueue-source accounting, so the next root remains the
@@ -1561,13 +1561,13 @@ extern declarations about `98ms`, missing Crystal stubs about `21ms`, and
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o /tmp/cv2_tail_stats --error-trace`
+- `crystal build src/adamas.cr -o /tmp/cv2_tail_stats --error-trace`
   -> exit 0.
 - `regression_tests/p2_llvm_tail_stats_no_prelude.sh /tmp/cv2_tail_stats`
   -> `p2_llvm_tail_stats_no_prelude_ok phase=type_name_table ...`.
 - `CRYSTAL_V2_TRACE_STDERR=1 CRYSTAL_V2_LLVM_REACHABILITY=1
   CRYSTAL_V2_LLVM_TAIL_STATS=1 scripts/run_safe.sh /tmp/cv2_tail_stats 300
-  4096 src/crystal_v2.cr -o /tmp/cv2_tail_stats_trace_s2` -> expected
+  4096 src/adamas.cr -o /tmp/cv2_tail_stats_trace_s2` -> expected
   timeout, but the log contains `[STAGE2_TRACE] step5: generate done` before
   `[KILL] Timeout`.
 
@@ -1592,7 +1592,7 @@ Tuple splat lowering in the bootstrap-hot path.
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o /tmp/cv2_debug_filter_fix --error-trace`
+- `crystal build src/adamas.cr -o /tmp/cv2_debug_filter_fix --error-trace`
   -> exit 0.
 - `regression_tests/p2_generated_stage2_no_prelude_puts_guard.sh
   /tmp/cv2_debug_filter_fix` -> `p2_generated_stage2_no_prelude_puts_guard_ok
@@ -1624,7 +1624,7 @@ by RTA and no tuple `to_s`/block-join body is needed in this bootstrap-hot path.
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o /tmp/cv2_extern_join_inline
+- `crystal build src/adamas.cr -o /tmp/cv2_extern_join_inline
   --error-trace` -> exit 0.
 - `regression_tests/p2_bootstrap_semantic_emit_oracle.sh
   /tmp/cv2_extern_join_inline` -> `p2_bootstrap_semantic_emit_oracle_ok`.
@@ -1656,14 +1656,14 @@ Findings:
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o /tmp/cv2_vtarget_mir --error-trace`
+- `crystal build src/adamas.cr -o /tmp/cv2_vtarget_mir --error-trace`
   -> exit 0.
 - `CRYSTAL_V2_STOP_AFTER_HIR=1 scripts/run_safe.sh /tmp/cv2_vtarget_fix 300
-  4096 src/crystal_v2.cr --emit hir --no-link -o /tmp/cv2_vtarget_fix_hir`
+  4096 src/adamas.cr --emit hir --no-link -o /tmp/cv2_vtarget_fix_hir`
   -> exit 0; final HIR retained
   `Crystal::EventLoop::Polling#close$Crystal::System::FileDescriptor`.
 - `CRYSTAL_V2_TRACE_STDERR=1 scripts/run_safe.sh /tmp/cv2_vtarget_mir 360
-  4096 src/crystal_v2.cr --emit llvm-ir --no-link -o /tmp/cv2_vtarget_mir_ir`
+  4096 src/adamas.cr --emit llvm-ir --no-link -o /tmp/cv2_vtarget_mir_ir`
   -> exit 0; `IO::FileDescriptor#system_close` calls
   `__vdispatch__Crystal$CCEventLoop$Hclose$$IO$CCFileDescriptor$$T329`, the
   vdispatch body calls `Crystal$CCEventLoop$CCPolling$Hclose$$Crystal$CCSystem$CCFileDescriptor`,
@@ -1722,7 +1722,7 @@ Fix:
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o /tmp/cv2_safe_commit --error-trace` ->
+- `crystal build src/adamas.cr -o /tmp/cv2_safe_commit --error-trace` ->
   exit 0, only the known `Random::DEFAULT` warning.
 - `regression_tests/p2_bootstrap_semantic_emit_oracle.sh /tmp/cv2_safe_commit`
   -> `p2_bootstrap_semantic_emit_oracle_ok`.
@@ -1770,7 +1770,7 @@ Fix:
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o /tmp/cv2_slot_haskey_only --error-trace`
+- `crystal build src/adamas.cr -o /tmp/cv2_slot_haskey_only --error-trace`
   -> exit 0, only the known `Random::DEFAULT` warning.
 - `regression_tests/p2_generated_stage2_no_prelude_puts_guard.sh
   /tmp/cv2_slot_haskey_only` ->
@@ -1788,7 +1788,7 @@ Evidence:
 
 Boundary: this fixes the empty cross-block slot malformed-LLVM class. It does
 not fix the next generated-stage2 semantic codegen bug: `puts 7` currently
-lowers to duplicate `__crystal_v2_print_int32_ln(ptr null)` calls instead of a
+lowers to duplicate `__adamas_print_int32_ln(ptr null)` calls instead of a
 single `i32 7` extern call. {F/G/R: 0.92/0.62/0.91} [verified]
 
 [LM-514|verified]: The generated-stage2 no-prelude `puts 7` extern-call ABI
@@ -1798,14 +1798,14 @@ bug.
 Findings:
 
 - Generated HIR for the repro already contained one extern call:
-  `extern_call @__crystal_v2_print_int32_ln(%2)`, with `%2` as `Int32`.
+  `extern_call @__adamas_print_int32_ln(%2)`, with `%2` as `Int32`.
 - Generated MIR lowering first duplicated that one HIR block:
   `[MIR_LOWER] function=__crystal_main blocks=1`, followed by
   `ordered blocks count=2` and two emitted extern calls. The source was
   `order_blocks_for` using `Set(HIR::BlockId)`, which is backed by
   `Hash(BlockId, Nil)`; generated stage2 mis-deduped the single-entry function.
 - After block ordering was made deterministic with a linear visited list, the
-  backend still emitted `call void @__crystal_v2_print_int32_ln(ptr 7)`.
+  backend still emitted `call void @__adamas_print_int32_ln(ptr 7)`.
   That refuted the earlier "ptr null only" formulation and exposed the second
   root: extern-call arg typing used `@value_types[arg_id]? || TypeRef::POINTER`
   even though the Int32 type entry was present.
@@ -1823,19 +1823,19 @@ Fix:
 - `LLVMIRGenerator#value_ref` applies the same key-presence invariant for
   constants, cross-block slots, and value names.
 - `p2_generated_stage2_no_prelude_puts_guard.sh` now classifies any
-  `__crystal_v2_print_int32_ln(ptr ...)` call as the extern arg type frontier,
+  `__adamas_print_int32_ln(ptr ...)` call as the extern arg type frontier,
   so `ptr 7` cannot be hidden as a generic full-codegen frontier again.
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o /tmp/cv2_extern_arg_type_fix
+- `crystal build src/adamas.cr -o /tmp/cv2_extern_arg_type_fix
   --error-trace` -> exit 0, only the known `Random::DEFAULT` warning.
 - `regression_tests/p2_generated_stage2_no_prelude_puts_guard.sh
   /tmp/cv2_extern_arg_type_fix` ->
   `p2_generated_stage2_no_prelude_puts_guard_ok
   frontier=nocodegen_clean_full_codegen_hang`.
 - Raw kept IR from that guard shows exactly:
-  `call void @__crystal_v2_print_int32_ln(i32 7)`.
+  `call void @__adamas_print_int32_ln(i32 7)`.
 - `regression_tests/p2_bootstrap_semantic_emit_oracle.sh
   /tmp/cv2_extern_arg_type_fix` -> `p2_bootstrap_semantic_emit_oracle_ok`.
 - `regression_tests/p2_pending_budget_no_prelude.sh
@@ -1888,7 +1888,7 @@ Fix:
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o /tmp/cv2_macro_control_check
+- `crystal build src/adamas.cr -o /tmp/cv2_macro_control_check
   --error-trace` -> exit 0, only the known `Random::DEFAULT` warning.
 - `regression_tests/p2_macro_control_module_literal_guard.sh
   /tmp/cv2_macro_control_check` -> `p2_macro_control_module_literal_guard_ok`.
@@ -1943,7 +1943,7 @@ Fix:
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o /tmp/cv2_shape_guard_check
+- `crystal build src/adamas.cr -o /tmp/cv2_shape_guard_check
   --error-trace` -> exit 0, only the known `Random::DEFAULT` warning.
 - `regression_tests/p2_each_index_block_param_no_prelude.sh
   /tmp/cv2_shape_guard_check` -> `p2_each_index_block_param_no_prelude_ok`.
@@ -1988,7 +1988,7 @@ Findings:
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o /tmp/cv2_runner_rawcopy_check
+- `crystal build src/adamas.cr -o /tmp/cv2_runner_rawcopy_check
   --error-trace` -> exit 0, only the known `ld64.lld` stack-size warning.
 - `regression_tests/p2_generated_stage2_no_prelude_puts_guard.sh
   /tmp/cv2_runner_rawcopy_check` ->
@@ -2034,7 +2034,7 @@ Findings:
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o /tmp/cv2_static_truthy_if
+- `crystal build src/adamas.cr -o /tmp/cv2_static_truthy_if
   --error-trace` -> exit 0.
 - `regression_tests/p2_static_truthy_dead_branch_no_prelude.sh
   /tmp/cv2_static_truthy_if` ->
@@ -2094,7 +2094,7 @@ Fix:
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o /tmp/cv2_object_id_semantics
+- `crystal build src/adamas.cr -o /tmp/cv2_object_id_semantics
   --error-trace` -> exit 0.
 - `regression_tests/p2_object_id_responds_to_semantics.sh
   /tmp/cv2_object_id_semantics` -> `p2_object_id_responds_to_semantics_ok`.
@@ -2154,7 +2154,7 @@ Fix:
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o /tmp/cv2_arg_fp_known_type
+- `crystal build src/adamas.cr -o /tmp/cv2_arg_fp_known_type
   --error-trace` -> exit 0.
 - `regression_tests/p2_bootstrap_semantic_emit_oracle.sh
   /tmp/cv2_arg_fp_known_type`,
@@ -2179,7 +2179,7 @@ Evidence:
 
 Boundary: generated `s2` now builds, but both smoke tests abort immediately
 during parser setup with
-`STUB CALLED: CrystalV2$CCCompiler$CCFrontend$CCNode$Hspan`. That is the next
+`STUB CALLED: Adamas$CCCompiler$CCFrontend$CCNode$Hspan`. That is the next
 runtime/vdispatch frontier; no `s2 -> s3` attempt yet.
 {F/G/R: 0.92/0.62/0.91} [verified]
 
@@ -2213,7 +2213,7 @@ Fix:
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o /tmp/cv2_alias_suffix --error-trace`
+- `crystal build src/adamas.cr -o /tmp/cv2_alias_suffix --error-trace`
   passed.
 - `regression_tests/p2_file_open_tuple_handle_alias_shape.sh
   /tmp/cv2_alias_suffix` passed and showed scalar `load i32` in
@@ -2265,7 +2265,7 @@ Fix:
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o /private/tmp/cv2_namedtuple_keys
+- `crystal build src/adamas.cr -o /private/tmp/cv2_namedtuple_keys
   --error-trace` passed.
 - `regression_tests/p2_named_tuple_annotation_keys_no_prelude.sh
   /private/tmp/cv2_namedtuple_keys` passed.
@@ -2314,7 +2314,7 @@ Findings:
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o /private/tmp/cv2_proc_call_boundary
+- `crystal build src/adamas.cr -o /private/tmp/cv2_proc_call_boundary
   --error-trace` passed.
 - `regression_tests/p2_proc_call_backend_boundary_no_prelude.sh
   /private/tmp/cv2_proc_call_boundary` passed and verifies both sides of the
@@ -2357,7 +2357,7 @@ Findings:
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o /private/tmp/cv2_string_table_arrays
+- `crystal build src/adamas.cr -o /private/tmp/cv2_string_table_arrays
   --error-trace` passed.
 - `regression_tests/p2_no_prelude_unique_alloca_names.sh
   /private/tmp/cv2_string_table_arrays`,
@@ -2397,7 +2397,7 @@ Findings:
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o /private/tmp/cv2_commit_candidate
+- `crystal build src/adamas.cr -o /private/tmp/cv2_commit_candidate
   --error-trace` passed.
 - `regression_tests/p2_splat_default_args_no_prelude.sh
   /private/tmp/cv2_commit_candidate` passed.
@@ -2428,7 +2428,7 @@ Findings:
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o /private/tmp/cv2_commit_candidate
+- `crystal build src/adamas.cr -o /private/tmp/cv2_commit_candidate
   --error-trace` passed.
 - `regression_tests/p1_mixed_proc_block_yield_carrier.sh
   /private/tmp/cv2_commit_candidate` passed.
@@ -2494,14 +2494,14 @@ Findings:
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o
+- `crystal build src/adamas.cr -o
   /private/tmp/cv2_string_nullsafe_candidate --error-trace` passed.
 - `regression_tests/p2_string_bounded_search_runtime_repro.sh
   /private/tmp/cv2_string_nullsafe_candidate` passed.
 - `regression_tests/p2_visibility_modifier_semantics_no_prelude.sh
   /private/tmp/cv2_string_nullsafe_candidate` passed.
 - `scripts/run_safe.sh /private/tmp/cv2_string_nullsafe_candidate 300 4096
-  src/crystal_v2.cr -o /private/tmp/cv2_s2_string_nullsafe` built generated
+  src/adamas.cr -o /private/tmp/cv2_s2_string_nullsafe` built generated
   stage2.
 
 Boundary: this fixes the unsafe String-search helper root and hardens two
@@ -2534,10 +2534,10 @@ Findings:
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o
+- `crystal build src/adamas.cr -o
   /private/tmp/cv2_lazy_enum_noprelude_candidate --error-trace` passed.
 - `scripts/run_safe.sh /private/tmp/cv2_lazy_enum_noprelude_candidate 300 4096
-  src/crystal_v2.cr -o /private/tmp/cv2_s2_lazy_enum_noprelude` built
+  src/adamas.cr -o /private/tmp/cv2_s2_lazy_enum_noprelude` built
   generated stage2.
 - Generated stage2 compiled both no-prelude reducers:
   `"Hidden.new".includes?("$$block")` and `private class Hidden; def value :
@@ -2567,7 +2567,7 @@ Findings:
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o /tmp/cv2_array_fetch_candidate
+- `crystal build src/adamas.cr -o /tmp/cv2_array_fetch_candidate
   --error-trace` passed.
 - `regression_tests/p2_array_class_ref_unsafe_fetch_no_prelude.sh
   /tmp/cv2_array_fetch_candidate` passed.
@@ -2605,7 +2605,7 @@ Findings:
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o /tmp/cv2_elsif_sc_candidate
+- `crystal build src/adamas.cr -o /tmp/cv2_elsif_sc_candidate
   --error-trace` passed.
 - `regression_tests/p2_elsif_short_circuit_condition_no_prelude.sh
   /tmp/cv2_elsif_sc_candidate` passed.
@@ -2653,7 +2653,7 @@ Findings:
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o /tmp/cv2_source_extern_split_candidate
+- `crystal build src/adamas.cr -o /tmp/cv2_source_extern_split_candidate
   --error-trace` passed.
 - `regression_tests/p2_source_extern_signature_no_prelude.sh
   /tmp/cv2_source_extern_split_candidate` passed.
@@ -2700,11 +2700,11 @@ Findings:
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o /tmp/cv2_final_boundary_candidate
+- `crystal build src/adamas.cr -o /tmp/cv2_final_boundary_candidate
   --error-trace` passed.
 - `CRYSTAL_V2_STOP_AFTER_HIR=1 DEBUG_CALL_TRACE='to_unsafe,null_ptr'
   scripts/run_safe.sh /tmp/cv2_final_boundary_candidate 300 4096
-  src/crystal_v2.cr -o /tmp/cv2_final_boundary_s2_hir` exited 0; grep found
+  src/adamas.cr -o /tmp/cv2_final_boundary_s2_hir` exited 0; grep found
   no `Hash(String, Hash(UInt32, Crystal::HIR::Value))#to_unsafe` or
   `Hash(String, Hash(UInt32, Crystal::HIR::Value))#null_ptr?`.
 - `scripts/build_bootstrap_stages.sh --stages 2 --out
@@ -2742,7 +2742,7 @@ Findings:
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o
+- `crystal build src/adamas.cr -o
   /tmp/cv2_numeric_suffix_chain_candidate --error-trace` passed.
 - `scripts/build_bootstrap_stages.sh --stages 2 --out
   /tmp/cv2_bs_s2_numeric_suffix_chain` built `s2` in 235s and passed
@@ -2774,7 +2774,7 @@ Findings:
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o
+- `crystal build src/adamas.cr -o
   /tmp/cv2_lib_global_inline_candidate --error-trace` passed.
 - `scripts/build_bootstrap_stages.sh --stages 2 --out
   /tmp/cv2_bs_s2_lib_global_inline` built `s2` in 250s and passed no-prelude
@@ -2808,7 +2808,7 @@ Findings:
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o
+- `crystal build src/adamas.cr -o
   /tmp/cv2_detect_yield_inline_candidate --error-trace` passed.
 - `scripts/build_bootstrap_stages.sh --stages 2 --out
   /tmp/cv2_bs_s2_detect_yield_inline` built `s2` in 239s and passed
@@ -2843,7 +2843,7 @@ Findings:
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o /tmp/cv2_phase0_gated_candidate
+- `crystal build src/adamas.cr -o /tmp/cv2_phase0_gated_candidate
   --error-trace` passed.
 - `scripts/build_bootstrap_stages.sh --stages 2 --out
   /tmp/cv2_bs_s2_phase0_gated` built `s2` in 224s and passed no-prelude smoke.
@@ -2872,13 +2872,13 @@ Findings:
 - The dirty implementation was refuted by a clean-vs-dirty full-source
   comparison: clean HEAD `CRYSTAL_V2_STOP_AFTER_HIR=1
   CRYSTAL_V2_PHASE_STATS=1 scripts/run_safe.sh /tmp/cv2_clean_head_candidate
-  300 4096 src/crystal_v2.cr -o /tmp/cv2_clean_head_stop_hir` exits 0 after
+  300 4096 src/adamas.cr -o /tmp/cv2_clean_head_stop_hir` exits 0 after
   about 145s, while the dirty narrowing patch exits 1 after about 34s with
   `ExprId out of bounds: 1684105331`.
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o /tmp/cv2_dirty_guard_candidate
+- `crystal build src/adamas.cr -o /tmp/cv2_dirty_guard_candidate
   --error-trace` passed before the experiment was reverted.
 - `regression_tests/p2_prior_nil_guard_infer_no_prelude.sh
   /tmp/cv2_clean_head_candidate` -> `p2_prior_nil_guard_infer_no_prelude_ok`.
@@ -2926,7 +2926,7 @@ Findings:
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o /tmp/cv2_enum_yield_skip_candidate
+- `crystal build src/adamas.cr -o /tmp/cv2_enum_yield_skip_candidate
   --error-trace` passed.
 - `regression_tests/p2_prior_nil_guard_infer_no_prelude.sh`,
   `regression_tests/p2_source_extern_signature_no_prelude.sh`, and
@@ -2969,7 +2969,7 @@ Findings:
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o /tmp/cv2_yield_context_guard
+- `crystal build src/adamas.cr -o /tmp/cv2_yield_context_guard
   --error-trace` passed.
 - `regression_tests/p2_yield_body_infer_no_prelude.sh`,
   `regression_tests/p2_prior_nil_guard_infer_no_prelude.sh`,
@@ -3015,7 +3015,7 @@ Verified:
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o /tmp/cv2_include_contract_candidate
+- `crystal build src/adamas.cr -o /tmp/cv2_include_contract_candidate
   --error-trace` passed.
 - `regression_tests/p2_yield_body_infer_no_prelude.sh`,
   `regression_tests/p2_prior_nil_guard_infer_no_prelude.sh`,
@@ -3060,7 +3060,7 @@ Verified:
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o /tmp/cv2_module_name_candidate
+- `crystal build src/adamas.cr -o /tmp/cv2_module_name_candidate
   --error-trace` passed.
 - `regression_tests/p2_yield_body_infer_no_prelude.sh`,
   `regression_tests/p2_prior_nil_guard_infer_no_prelude.sh`,
@@ -3094,7 +3094,7 @@ Verified:
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o /tmp/cv2_body_ids_candidate
+- `crystal build src/adamas.cr -o /tmp/cv2_body_ids_candidate
   --error-trace` passed.
 - `regression_tests/p2_yield_body_infer_no_prelude.sh`,
   `regression_tests/p2_prior_nil_guard_infer_no_prelude.sh`,
@@ -3133,7 +3133,7 @@ Verified:
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o /tmp/cv2_param_source_candidate
+- `crystal build src/adamas.cr -o /tmp/cv2_param_source_candidate
   --error-trace` passed.
 - `regression_tests/p2_enum_class_setter_return_infer_no_prelude.sh`,
   `regression_tests/p2_nested_module_registration_no_prelude.sh`,
@@ -3141,7 +3141,7 @@ Evidence:
   `regression_tests/p2_visibility_private_accessor_no_prelude.sh` passed with
   `/tmp/cv2_param_source_candidate`.
 - `scripts/run_safe.sh /tmp/cv2_param_source_candidate 300 4096
-  src/crystal_v2.cr -o /tmp/cv2_direct_param_source_candidate/cv2_s2` built
+  src/adamas.cr -o /tmp/cv2_direct_param_source_candidate/cv2_s2` built
   generated `cv2_s2` in ~160s with `[EXIT: 0]`.
 - The produced `cv2_s2` still fails the plain `puts 42` smoke in ~1s:
   module registration reaches `module register idx=3/53`, prints
@@ -3179,7 +3179,7 @@ Verified:
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o
+- `crystal build src/adamas.cr -o
   /tmp/cv2_ivar_param_source_candidate --error-trace` passed.
 - Existing no-prelude guards passed:
   `p2_enum_class_setter_return_infer_no_prelude.sh`,
@@ -3192,7 +3192,7 @@ Evidence:
   `def initialize(@value : Int32)` still registers the field while a normal
   untyped method remains present in the same class.
 - `scripts/run_safe.sh /tmp/cv2_ivar_param_source_candidate 300 4096
-  src/crystal_v2.cr -o /tmp/cv2_direct_ivar_param_source/cv2_s2` built
+  src/adamas.cr -o /tmp/cv2_direct_ivar_param_source/cv2_s2` built
   generated `cv2_s2` in ~161s with `[EXIT: 0]`.
 - With `DEBUG_REG_CONCRETE_PHASE=CallStack`, generated `cv2_s2` now reaches
   `after_implicit_ivar_scan`, `after_final_info`,
@@ -3225,7 +3225,7 @@ Verified:
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o
+- `crystal build src/adamas.cr -o
   /tmp/cv2_nested_module_params_candidate --error-trace` passed.
 - `p2_enum_class_setter_return_infer_no_prelude.sh`,
   `p2_nested_module_registration_no_prelude.sh`,
@@ -3234,7 +3234,7 @@ Evidence:
   `p2_implicit_ivar_param_source_scan_no_prelude.sh` passed with
   `/tmp/cv2_nested_module_params_candidate`.
 - `scripts/run_safe.sh /tmp/cv2_nested_module_params_candidate 300 4096
-  src/crystal_v2.cr -o /tmp/cv2_direct_nested_module_params/cv2_s2` built
+  src/adamas.cr -o /tmp/cv2_direct_nested_module_params/cv2_s2` built
   generated `cv2_s2` in ~155s with `[EXIT: 0]`.
 - `CRYSTAL_V2_TRACE_CLASS_FRONTIER=1` on the generated compiler now advances
   past `Float::Float::ParsedNumberStringT` and reaches
@@ -3271,7 +3271,7 @@ Verified:
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o /tmp/cv2_initialize_void_candidate
+- `crystal build src/adamas.cr -o /tmp/cv2_initialize_void_candidate
   --error-trace` passed.
 - `regression_tests/p2_initialize_return_void_no_prelude.sh
   /tmp/cv2_initialize_void_candidate` passed, proving a constructor whose body
@@ -3283,7 +3283,7 @@ Evidence:
   `p2_visibility_private_accessor_no_prelude.sh`, and
   `p2_implicit_ivar_param_source_scan_no_prelude.sh`.
 - `scripts/run_safe.sh /tmp/cv2_initialize_void_candidate 300 4096
-  src/crystal_v2.cr -o /tmp/cv2_direct_initialize_void/cv2_s2` built generated
+  src/adamas.cr -o /tmp/cv2_direct_initialize_void/cv2_s2` built generated
   `cv2_s2` in ~162s with `[EXIT: 0]`.
 - The generated `cv2_s2` full-prelude `puts 42` smoke no longer dies in
   `Float::Float::Bigint` return/body inference. It now reaches module
@@ -3341,7 +3341,7 @@ Fix:
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o /tmp/cv2_macro_param_source_candidate3
+- `crystal build src/adamas.cr -o /tmp/cv2_macro_param_source_candidate3
   --error-trace` passed.
 - `regression_tests/p2_macro_extra_source_param_recovery_no_prelude.sh
   /tmp/cv2_macro_param_source_candidate3` passed. The reducer fails on the
@@ -3358,13 +3358,13 @@ Evidence:
   `p2_visibility_private_accessor_no_prelude.sh`.
 - `DEBUG_INIT_PARAMS=UnionDescriptor CRYSTAL_V2_STOP_AFTER_HIR=1
   scripts/run_safe.sh /tmp/cv2_macro_param_source_candidate2 300 4096
-  src/crystal_v2.cr -o /tmp/cv2_uniondesc_trace_candidate2/cv2_s2_stop_hir`
+  src/adamas.cr -o /tmp/cv2_uniondesc_trace_candidate2/cv2_s2_stop_hir`
   showed full recovered params:
   `[name:String, variants:Array(Crystal::MIR::UnionVariantDescriptor),
   total_size:Int32, alignment:Int32, source_file:Nil | String,
   source_line:Nil | Int32]`.
 - `scripts/run_safe.sh /tmp/cv2_macro_param_source_candidate3 300 4096
-  src/crystal_v2.cr -o /tmp/cv2_direct_macro_param_source3/cv2_s2` built
+  src/adamas.cr -o /tmp/cv2_direct_macro_param_source3/cv2_s2` built
   generated `cv2_s2` in ~153s with `[EXIT: 0]`.
 - The generated `cv2_s2` full-prelude `puts 42` smoke no longer aborts on
   `UnionDescriptor#initialize` or the helper stub. It now reaches module
@@ -3384,7 +3384,7 @@ Context: compiler/bootstrap/codegen, 2026-05-01, `codegen`.
 Observed after LM-549:
 
 - `scripts/run_safe.sh /tmp/cv2_macro_param_source_candidate3 300 4096
-  src/crystal_v2.cr -o /tmp/cv2_direct_macro_param_source3/cv2_s2` built
+  src/adamas.cr -o /tmp/cv2_direct_macro_param_source3/cv2_s2` built
   generated `s2`; the remaining plain-smoke crash is in the generated compiler
   while registering nested stdlib/compiler types for a trivial `puts 42`.
 - Clearing `@current_method` / `@current_method_is_class` around
@@ -3438,7 +3438,7 @@ Evidence:
   `p2_initialize_return_void_no_prelude.sh`, and
   `p2_bootstrap_semantic_emit_oracle.sh` where run.
 - Generated `s2` builds passed for the candidates under
-  `scripts/run_safe.sh ... 300 4096 src/crystal_v2.cr`.
+  `scripts/run_safe.sh ... 300 4096 src/adamas.cr`.
 - Generated `s2` plain smoke remains red with `Segmentation fault: 11` at
   `Exception::CallStack#initialize` parameter registration.
 
@@ -3481,7 +3481,7 @@ Verified/observed after LM-550:
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o /tmp/cv2_ivar_param_preseed_candidate
+- `crystal build src/adamas.cr -o /tmp/cv2_ivar_param_preseed_candidate
   --error-trace` passed.
 - Existing p2 no-prelude guards passed:
   `p2_macro_extra_source_param_recovery_no_prelude.sh`,
@@ -3489,7 +3489,7 @@ Evidence:
   `p2_initialize_return_void_no_prelude.sh`, and
   `p2_bootstrap_semantic_emit_oracle.sh`.
 - `scripts/run_safe.sh /tmp/cv2_ivar_param_preseed_candidate 300 4096
-  src/crystal_v2.cr -o /tmp/cv2_ivar_param_preseed_s2/cv2_s2` built generated
+  src/adamas.cr -o /tmp/cv2_ivar_param_preseed_s2/cv2_s2` built generated
   `s2` in ~155s with `[EXIT: 0]`.
 - Plain generated `s2` full-prelude `puts 42` smoke remains red:
   `scripts/run_safe.sh /tmp/cv2_ivar_param_preseed_s2/cv2_s2 60 4096
@@ -3539,11 +3539,11 @@ Root cause and fix:
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o /tmp/cv2_float_ns_fix3 --error-trace`
+- `crystal build src/adamas.cr -o /tmp/cv2_float_ns_fix3 --error-trace`
   passed.
 - `regression_tests/p2_qualified_module_namespace_no_prelude.sh
   /tmp/cv2_float_ns_fix3` passed on the host-built compiler.
-- `scripts/run_safe.sh /tmp/cv2_float_ns_fix3 300 4096 src/crystal_v2.cr -o
+- `scripts/run_safe.sh /tmp/cv2_float_ns_fix3 300 4096 src/adamas.cr -o
   /tmp/cv2_float_ns_fix3_s2/cv2_s2` built generated `s2` in ~148s.
 - `regression_tests/p2_qualified_module_namespace_no_prelude.sh
   /tmp/cv2_float_ns_fix3_s2/cv2_s2` passed on the produced compiler. This is
@@ -3599,7 +3599,7 @@ Root cause and fix:
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o /private/tmp/cv2_self_nested_final
+- `crystal build src/adamas.cr -o /private/tmp/cv2_self_nested_final
   --error-trace` passed.
 - Host guards passed:
   `regression_tests/p2_qualified_module_namespace_no_prelude.sh
@@ -3609,7 +3609,7 @@ Evidence:
   `regression_tests/p2_self_nested_module_registration_frontier.sh
   /private/tmp/cv2_self_nested_final`.
 - `scripts/run_safe.sh /private/tmp/cv2_self_nested_final 300 4096
-  src/crystal_v2.cr -o /private/tmp/cv2_self_nested_final_s2/cv2_s2` built a
+  src/adamas.cr -o /private/tmp/cv2_self_nested_final_s2/cv2_s2` built a
   generated `s2` compiler with `[EXIT: 0]`.
 - Produced `s2` guards passed:
   `regression_tests/p2_qualified_module_namespace_no_prelude.sh
@@ -3658,7 +3658,7 @@ Root cause and fix:
 Evidence:
 
 - `CRYSTAL_CACHE_DIR=/private/tmp/cv2_cache_annot_structural crystal build
-  src/crystal_v2.cr -o /private/tmp/cv2_annot_structural --error-trace` passed.
+  src/adamas.cr -o /private/tmp/cv2_annot_structural --error-trace` passed.
 - Host guards passed:
   `regression_tests/p2_qualified_module_namespace_no_prelude.sh
   /private/tmp/cv2_annot_structural`,
@@ -3669,7 +3669,7 @@ Evidence:
   `regression_tests/p2_full_prelude_generic_template_namespace_no_pollution.sh
   /private/tmp/cv2_annot_structural`.
 - `scripts/run_safe.sh /private/tmp/cv2_annot_structural 300 4096
-  src/crystal_v2.cr -o /private/tmp/cv2_annot_structural_s2/cv2_s2` built a
+  src/adamas.cr -o /private/tmp/cv2_annot_structural_s2/cv2_s2` built a
   generated `s2` compiler with `[EXIT: 0]`.
 - Produced `s2` guard passed:
   `regression_tests/p2_full_prelude_generic_template_namespace_no_pollution.sh
@@ -3751,7 +3751,7 @@ Root cause and fix:
 Evidence:
 
 - `CRYSTAL_CACHE_DIR=/private/tmp/cv2_cache_char_clean crystal build
-  src/crystal_v2.cr -o /private/tmp/cv2_char_clean --error-trace` passed.
+  src/adamas.cr -o /private/tmp/cv2_char_clean --error-trace` passed.
 - Host guards passed:
   `regression_tests/p2_qualified_module_namespace_no_prelude.sh
   /private/tmp/cv2_char_clean`,
@@ -3760,7 +3760,7 @@ Evidence:
   `regression_tests/p2_full_prelude_generic_template_namespace_no_pollution.sh
   /private/tmp/cv2_char_clean`.
 - `scripts/run_safe.sh /private/tmp/cv2_char_clean 300 4096
-  src/crystal_v2.cr -o /private/tmp/cv2_char_clean_s2/cv2_s2` built produced
+  src/adamas.cr -o /private/tmp/cv2_char_clean_s2/cv2_s2` built produced
   `s2` with `[EXIT: 0]`.
 - `regression_tests/p2_generated_stage2_char_macro_for_frontier.sh
   /private/tmp/cv2_char_clean_s2/cv2_s2` passed. The underlying trace reached
@@ -3813,7 +3813,7 @@ Refuted branch:
 Evidence:
 
 - `CRYSTAL_CACHE_DIR=/private/tmp/cv2_cache_symbol_final crystal build
-  src/crystal_v2.cr -o /private/tmp/cv2_symbol_final --error-trace` passed.
+  src/adamas.cr -o /private/tmp/cv2_symbol_final --error-trace` passed.
 - Host guards passed:
   `regression_tests/p2_generated_stage2_no_codegen_def_semantic_frontier.sh
   /private/tmp/cv2_symbol_final`,
@@ -3824,7 +3824,7 @@ Evidence:
   `regression_tests/p2_self_nested_module_registration_frontier.sh
   /private/tmp/cv2_symbol_final`.
 - `scripts/run_safe.sh /private/tmp/cv2_symbol_final 300 4096
-  src/crystal_v2.cr -o /private/tmp/cv2_symbol_final_s2/cv2_s2` built produced
+  src/adamas.cr -o /private/tmp/cv2_symbol_final_s2/cv2_s2` built produced
   `s2` with `[EXIT: 0]`.
 - Produced guards passed:
   `regression_tests/p2_generated_stage2_no_codegen_def_semantic_frontier.sh
@@ -3870,13 +3870,13 @@ Root cause and fix:
 Evidence:
 
 - `CRYSTAL_CACHE_DIR=/private/tmp/crystal_cache_v2_type_literal_name_query4
-  crystal build src/crystal_v2.cr -o /private/tmp/cv2_type_literal_name_query4
+  crystal build src/adamas.cr -o /private/tmp/cv2_type_literal_name_query4
   --error-trace` passed.
 - New guard `regression_tests/p2_type_literal_name_query_no_stub.sh` passed
   and rejects static `NameProbe$Dto_s` / `NameProbe$Dname` stubs in
   no-prelude LLVM IR while requiring the literal `NameProbe` string.
 - `scripts/run_safe.sh /private/tmp/cv2_type_literal_name_query4 420 4096
-  src/crystal_v2.cr -o /private/tmp/cv2_type_literal_name_query4_s2/cv2_s2`
+  src/adamas.cr -o /private/tmp/cv2_type_literal_name_query4_s2/cv2_s2`
   built produced `s2` with `[EXIT: 0]`.
 - Produced `cv2_s2.ll` had no `Bool$Dto_s` or `Bool$Dname`, and
   `Pointer(Bool)#to_s(io)` emitted the literal `"Bool"` path instead of calling
@@ -3918,11 +3918,11 @@ Root cause and fix:
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o /private/tmp/cv2_funcid_empty_host
+- `crystal build src/adamas.cr -o /private/tmp/cv2_funcid_empty_host
   --error-trace` passed.
 - `CRYSTAL_CACHE_DIR=/private/tmp/crystal_cache_cv2_funcid_empty
   scripts/run_safe.sh /private/tmp/cv2_funcid_empty_host 300 4096
-  src/crystal_v2.cr -o /private/tmp/cv2_funcid_empty_s2/cv2_s2` built
+  src/adamas.cr -o /private/tmp/cv2_funcid_empty_s2/cv2_s2` built
   produced `s2` with `[EXIT: 0]`.
 - New guard `regression_tests/p2_stage2_static_call_named_llvm_no_prelude.sh`
   passed on both `/private/tmp/cv2_funcid_empty_host` and produced
@@ -4078,7 +4078,7 @@ Root evidence:
 - Cursor A2A review correctly pushed the next falsifier toward the tail after
   file close, but local lldb evidence refined the root: `compile_llvm_ir`
   reached `file_sha256`, which used `File.open`; the produced compiler entered
-  `Crystal::System::Dir.open` and called `__crystal_v2_raise` with `x0 = NULL`,
+  `Crystal::System::Dir.open` and called `__adamas_raise` with `x0 = NULL`,
   leading the outer rescue path to dereference a nil exception object.
 - Refuted branches: backend `generate_to(output)` split, resetting
   `LLVMIRGenerator.@output`, a custom `RawFdOutput`, removing `ensure` around
@@ -4087,11 +4087,11 @@ Root evidence:
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o /private/tmp/cv2_cli_tail_final3_host
+- `crystal build src/adamas.cr -o /private/tmp/cv2_cli_tail_final3_host
   --error-trace`
 - `CRYSTAL_CACHE_DIR=/private/tmp/crystal_cache_cv2_cli_tail_final3
   scripts/run_safe.sh /private/tmp/cv2_cli_tail_final3_host 600 4096
-  src/crystal_v2.cr -o /private/tmp/cv2_cli_tail_final3_s2/cv2_s2`
+  src/adamas.cr -o /private/tmp/cv2_cli_tail_final3_s2/cv2_s2`
 - Host and produced `s2` guards:
   `p2_stage2_cli_output_tail_no_prelude.sh`,
   `p2_stage2_static_call_named_llvm_no_prelude.sh`,
@@ -4173,9 +4173,9 @@ Root evidence:
 Evidence:
 
 - `CRYSTAL_CACHE_DIR=/private/tmp/cv2_final_host_cache crystal build
-  src/crystal_v2.cr -o /private/tmp/cv2_final_host --error-trace`
+  src/adamas.cr -o /private/tmp/cv2_final_host --error-trace`
 - `CRYSTAL_CACHE_DIR=/private/tmp/cv2_final_s2_cache scripts/run_safe.sh
-  /private/tmp/cv2_final_host 300 4096 src/crystal_v2.cr -o
+  /private/tmp/cv2_final_host 300 4096 src/adamas.cr -o
   /private/tmp/cv2_final_s2/cv2_s2`
 - `regression_tests/p2_nilable_union_wrap_codegen_no_prelude.sh
   /private/tmp/cv2_final_host`
@@ -4195,7 +4195,7 @@ Boundary:
   old Float crash frontier. The broader nilable short-circuit union-phi reducer
   also remains open on produced `s2`.
 - The `s1 -> s2` build still prints a non-fatal MIR optimizer overflow for
-  `CrystalV2::Compiler::CLI#file_sha256$String`; that is not solved here.
+  `Adamas::Compiler::CLI#file_sha256$String`; that is not solved here.
 
 Trust: {F/G/R: 0.86/0.56/0.86} [verified]
 
@@ -4232,7 +4232,7 @@ Root evidence:
 Evidence:
 
 - `CRYSTAL_CACHE_DIR=/private/tmp/cv2_fix_host_cache crystal build
-  src/crystal_v2.cr -o /private/tmp/cv2_fix_host --error-trace`
+  src/adamas.cr -o /private/tmp/cv2_fix_host --error-trace`
 - `regression_tests/p2_file_open_block_return.sh /private/tmp/cv2_fix_host`
 - `regression_tests/p2_record_macro_init_defaults.sh /private/tmp/cv2_fix_host`
 - `regression_tests/p2_qualified_module_namespace_no_prelude.sh
@@ -4268,7 +4268,7 @@ Verified outcome:
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o /private/tmp/cv2_pointer_param_fix
+- `crystal build src/adamas.cr -o /private/tmp/cv2_pointer_param_fix
   --error-trace`
 - `regression_tests/p2_union_concrete_compare_type_guard.sh
   /private/tmp/cv2_pointer_param_fix`
@@ -4291,7 +4291,7 @@ Boundary:
   frontier is invalid fallback stub emission for primitive `each_key` adapter
   blocks, first seen as `ret ptr %arg0` in
   `Float32$Heach_key$$block(float %arg0, ptr %arg1)`.
-- The remaining `CrystalV2::Compiler::CLI#file_sha256$String` MIR optimizer
+- The remaining `Adamas::Compiler::CLI#file_sha256$String` MIR optimizer
   arithmetic-overflow diagnostic is still non-fatal and still present.
 
 Trust: {F/G/R: 0.84/0.58/0.86} [verified]
@@ -4314,7 +4314,7 @@ Verified outcome:
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o /private/tmp/cv2_each_key_fix
+- `crystal build src/adamas.cr -o /private/tmp/cv2_each_key_fix
   --error-trace`
 - `regression_tests/p2_each_key_fallback_primitive_return_shape.sh
   /private/tmp/cv2_each_key_fix`
@@ -4329,7 +4329,7 @@ Evidence:
   /private/tmp/cv2_each_key_fix`
 - `CRYSTAL_CACHE_DIR=/private/tmp/cv2_each_key_s2_cache
   scripts/run_safe.sh /private/tmp/cv2_each_key_fix 300 4096
-  src/crystal_v2.cr -o /private/tmp/cv2_each_key_s2/cv2_s2` exited 0 after
+  src/adamas.cr -o /private/tmp/cv2_each_key_s2/cv2_s2` exited 0 after
   ~175s.
 - `regression_tests/p2_qualified_module_namespace_no_prelude.sh
   /private/tmp/cv2_each_key_s2/cv2_s2`
@@ -4345,7 +4345,7 @@ Boundary:
   /private/tmp/cv2_each_key_s2/cv2_s2 60 4096 /private/tmp/cv2_hello.cr -o
   /private/tmp/cv2_hello_bin` exits 139 during early HIR setup, after
   `[STAGE2_DEBUG] pre-scan class/module loops start`.
-- The remaining `CrystalV2::Compiler::CLI#file_sha256$String` MIR optimizer
+- The remaining `Adamas::Compiler::CLI#file_sha256$String` MIR optimizer
   arithmetic-overflow diagnostic is still non-fatal and still present during
   the s2 build.
 
@@ -4375,7 +4375,7 @@ Verified outcome:
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o /private/tmp/cv2_slice_literal_fix_fmt
+- `crystal build src/adamas.cr -o /private/tmp/cv2_slice_literal_fix_fmt
   --error-trace`
 - `regression_tests/p2_slice_literal_no_prelude.sh
   /private/tmp/cv2_slice_literal_fix_fmt`
@@ -4393,7 +4393,7 @@ Evidence:
   /private/tmp/cv2_slice_literal_fix_fmt`
 - `CRYSTAL_CACHE_DIR=/private/tmp/cv2_slice_literal_fmt_s2_cache
   scripts/run_safe.sh /private/tmp/cv2_slice_literal_fix_fmt 300 4096
-  src/crystal_v2.cr -o /private/tmp/cv2_slice_literal_fmt_s2/cv2_s2` exited
+  src/adamas.cr -o /private/tmp/cv2_slice_literal_fmt_s2/cv2_s2` exited
   0 after ~163s.
 - `regression_tests/p2_qualified_module_namespace_no_prelude.sh
   /private/tmp/cv2_slice_literal_fmt_s2/cv2_s2`
@@ -4420,7 +4420,7 @@ Boundary:
   `Indexable$LT$R$Hequals$Q$$Indexable_block` abort before IR emission, so the
   new guard is host-path verified only until that produced-stage stub frontier is
   fixed.
-- The remaining `CrystalV2::Compiler::CLI#file_sha256$String` MIR optimizer
+- The remaining `Adamas::Compiler::CLI#file_sha256$String` MIR optimizer
   arithmetic-overflow diagnostic is still non-fatal and still present during
   the s2 build.
 
@@ -4453,7 +4453,7 @@ Verified outcome:
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o /private/tmp/cv2_generic_static_fix4
+- `crystal build src/adamas.cr -o /private/tmp/cv2_generic_static_fix4
   --error-trace`
 - `crystal tool format --check src/compiler/hir/ast_to_hir.cr`
 - `git diff --check`
@@ -4466,7 +4466,7 @@ Evidence:
 - `regression_tests/p2_nilable_union_wrap_codegen_no_prelude.sh
   /private/tmp/cv2_generic_static_fix4`
 - `scripts/run_safe.sh /private/tmp/cv2_generic_static_fix4 300 4096
-  src/crystal_v2.cr -o /private/tmp/cv2_generic_static_s2_fix4/cv2_s2`
+  src/adamas.cr -o /private/tmp/cv2_generic_static_s2_fix4/cv2_s2`
   exited 0 after ~161s.
 - `regression_tests/p2_qualified_module_namespace_no_prelude.sh
   /private/tmp/cv2_generic_static_s2_fix4/cv2_s2`
@@ -4490,7 +4490,7 @@ Boundary:
 - `CRYSTAL_V2_TRACE_CLASS_FRONTIER=1` perturbs the produced full-prelude smoke
   into a pre-scan timeout; the untraced `Indexable#equals?` block stub is the
   cleaner next frontier.
-- The remaining `CrystalV2::Compiler::CLI#file_sha256$String` MIR optimizer
+- The remaining `Adamas::Compiler::CLI#file_sha256$String` MIR optimizer
   arithmetic-overflow diagnostic is still non-fatal and still present during
   the s2 build.
 
@@ -4518,7 +4518,7 @@ Verified outcome:
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o /private/tmp/cv2_indexable_host_fix7
+- `crystal build src/adamas.cr -o /private/tmp/cv2_indexable_host_fix7
   --error-trace`
 - `crystal tool format --check src/compiler/hir/ast_to_hir.cr`
 - `git diff --check`
@@ -4531,7 +4531,7 @@ Evidence:
 - `regression_tests/array_bool_join_module_super_repro.sh
   /private/tmp/cv2_indexable_host_fix7`
 - `scripts/run_safe.sh /private/tmp/cv2_indexable_host_fix7 300 4096
-  src/crystal_v2.cr -o /private/tmp/cv2_indexable_s2_fix7/cv2_s2`
+  src/adamas.cr -o /private/tmp/cv2_indexable_s2_fix7/cv2_s2`
   exited 0 after ~164s.
 - `regression_tests/p2_qualified_module_namespace_no_prelude.sh
   /private/tmp/cv2_indexable_s2_fix7/cv2_s2`
@@ -4552,7 +4552,7 @@ Boundary:
 - The new full-prelude equality guard is host-path verified. Produced `s2`
   reaches the next full-prelude registration/runtime crash before it can pass
   the same guard end-to-end.
-- The remaining `CrystalV2::Compiler::CLI#file_sha256$String` MIR optimizer
+- The remaining `Adamas::Compiler::CLI#file_sha256$String` MIR optimizer
   arithmetic-overflow diagnostic is still non-fatal and still present during
   the s2 build.
 
@@ -4588,7 +4588,7 @@ Evidence:
 - lldb on the reducer showed
   `extra_sources_for_arena -> store_extra_source -> __crystal_proc_* ->
   MacroExpander#reparse`.
-- `crystal build src/crystal_v2.cr -o /private/tmp/cv2_proc_self_host2
+- `crystal build src/adamas.cr -o /private/tmp/cv2_proc_self_host2
   --error-trace`
 - `crystal tool format src/compiler/hir/ast_to_hir.cr`
 - `regression_tests/p2_macro_included_proc_sink_self_capture_no_prelude.sh
@@ -4598,7 +4598,7 @@ Evidence:
 - `regression_tests/p2_indexable_equals_block_receiver_rebase.sh
   /private/tmp/cv2_proc_self_host2`
 - `scripts/run_safe.sh /private/tmp/cv2_proc_self_host2 300 4096
-  src/crystal_v2.cr -o /private/tmp/cv2_proc_self_s2b/cv2_s2`
+  src/adamas.cr -o /private/tmp/cv2_proc_self_s2b/cv2_s2`
   exited 0 after ~154s.
 - `regression_tests/p2_macro_included_proc_sink_self_capture_no_prelude.sh
   /private/tmp/cv2_proc_self_s2b/cv2_s2`
@@ -4623,7 +4623,7 @@ Boundary:
   no-prelude `-> { marker }` executable compiles/runs with the host compiler,
   but produced `s2` still crashes compiling that broader source; keep that as a
   separate pass3 proc frontier.
-- The remaining `CrystalV2::Compiler::CLI#file_sha256$String` MIR optimizer
+- The remaining `Adamas::Compiler::CLI#file_sha256$String` MIR optimizer
   arithmetic-overflow diagnostic is still non-fatal and still present during
   the s2 build.
 
@@ -4660,7 +4660,7 @@ Evidence:
 - Spark sidecar independently pointed at the raw `String.new(slice)` macro-for
   iter-var conversions; this was used as candidate evidence only and verified
   locally.
-- `crystal build src/crystal_v2.cr -o /private/tmp/cv2_macro_for_host_final
+- `crystal build src/adamas.cr -o /private/tmp/cv2_macro_for_host_final
   --error-trace`
 - `crystal tool format --check src/compiler/hir/ast_to_hir.cr`
 - `git diff --check`
@@ -4671,7 +4671,7 @@ Evidence:
 - `regression_tests/p2_qualified_module_namespace_no_prelude.sh
   /private/tmp/cv2_macro_for_host_final`
 - `scripts/run_safe.sh /private/tmp/cv2_macro_for_host_final 300 4096
-  src/crystal_v2.cr -o /private/tmp/cv2_macro_for_s2_final/cv2_s2`
+  src/adamas.cr -o /private/tmp/cv2_macro_for_s2_final/cv2_s2`
   exited 0 after ~162s.
 - `regression_tests/p2_module_macro_for_iter_var_names_no_prelude.sh
   /private/tmp/cv2_macro_for_s2_final/cv2_s2`
@@ -4700,7 +4700,7 @@ Boundary:
   no-prelude source that dispatches through generated module methods still
   reaches a separate produced-s2 pass3/main crash; keep that as a later
   frontier.
-- The remaining `CrystalV2::Compiler::CLI#file_sha256$String` MIR optimizer
+- The remaining `Adamas::Compiler::CLI#file_sha256$String` MIR optimizer
   arithmetic-overflow diagnostic is still non-fatal and still present during
   the s2 build.
 
@@ -4738,7 +4738,7 @@ Evidence:
   - single-var generated-def reducer,
   - single-var generated nested-struct reducer,
   - pair-var generated nested-struct reducer.
-- `crystal build src/crystal_v2.cr -o /private/tmp/cv2_macro_single_loop_host
+- `crystal build src/adamas.cr -o /private/tmp/cv2_macro_single_loop_host
   --error-trace`
 - `crystal tool format --check src/compiler/hir/ast_to_hir.cr`
 - `git diff --check`
@@ -4747,7 +4747,7 @@ Evidence:
 - `regression_tests/p2_macro_included_proc_sink_self_capture_no_prelude.sh
   /private/tmp/cv2_macro_single_loop_host`
 - `scripts/run_safe.sh /private/tmp/cv2_macro_single_loop_host 300 4096
-  src/crystal_v2.cr -o /private/tmp/cv2_macro_single_loop_s2/cv2_s2`
+  src/adamas.cr -o /private/tmp/cv2_macro_single_loop_s2/cv2_s2`
   exited 0 after ~182s.
 - `regression_tests/p2_module_macro_for_iter_var_names_no_prelude.sh
   /private/tmp/cv2_macro_single_loop_s2/cv2_s2`
@@ -4774,7 +4774,7 @@ Boundary:
   Hash or union ABI fix.
 - The remaining full-prelude frontier should be treated as a pre-scan
   progress/hang problem unless fresh evidence again shows a later crash.
-- The remaining `CrystalV2::Compiler::CLI#file_sha256$String` MIR optimizer
+- The remaining `Adamas::Compiler::CLI#file_sha256$String` MIR optimizer
   arithmetic-overflow diagnostic is still non-fatal and still present during
   the s2 build.
 
@@ -5141,7 +5141,7 @@ Evidence:
   `crystal build spec/lsp/*_spec.cr -o /tmp/lsp_full_spec --error-trace` and
   `scripts/run_safe.sh /tmp/lsp_full_spec 120 1536 --no-color`,
   216 examples, 0 failures.
-- `crystal build src/lsp_main.cr -o bin/crystal_v2_lsp --error-trace`
+- `crystal build src/lsp_main.cr -o bin/adamas_lsp --error-trace`
   succeeded for the post-patch harness probe.
 
 Remaining risks:
@@ -5255,8 +5255,8 @@ Trust: {F/G/R: 0.88/0.67/0.9} [verified]
 
 Status: VERIFIED on `codegen`.
 
-The LSP harness default scenario still referenced stale `crystal_v2/...`
-paths, including `crystal_v2/debug_tests/check_lexer.cr`, which no longer
+The LSP harness default scenario still referenced stale `adamas/...`
+paths, including `adamas/debug_tests/check_lexer.cr`, which no longer
 exists in this checkout. Running the default harness therefore failed before
 it could exercise the LSP server and could be misread as an LSP regression.
 
@@ -5273,7 +5273,7 @@ Evidence:
   /tmp/lsp_harness_default_fixed --error-trace`
 - `scripts/run_safe.sh /tmp/lsp_harness_default_fixed 180 1536
   --server="/usr/bin/env RUN_SAFE_PASSTHROUGH_STDIO=1 scripts/run_safe.sh
-  bin/crystal_v2_lsp 180 1536" --timeout=20` exited 0.
+  bin/adamas_lsp 180 1536" --timeout=20` exited 0.
 
 Observed follow-up frontier:
 
@@ -5357,7 +5357,7 @@ Evidence:
   11 examples, 0 failures.
 - Default LSP harness via
   `scripts/run_safe.sh /tmp/lsp_harness_minimal_format 120 1536 --server
-  bin/crystal_v2_lsp` passed. A post-hardening run measured formatting at
+  bin/adamas_lsp` passed. A post-hardening run measured formatting at
   381.5ms and cached full-doc `rangeFormatting` at 142.3ms.
 - Full LSP suite:
   `crystal build spec/lsp/*_spec.cr -o /tmp/lsp_full_spec --error-trace` and
@@ -5401,7 +5401,7 @@ Evidence:
   13 examples, 0 failures.
 - Default LSP harness:
   `scripts/run_safe.sh /tmp/lsp_harness_range_format 120 1536 --server
-  bin/crystal_v2_lsp`, passed; full-document `rangeFormatting` measured
+  bin/adamas_lsp`, passed; full-document `rangeFormatting` measured
   139.8ms after the formatting cache was populated.
 - Full LSP suite:
   `crystal build spec/lsp/*_spec.cr -o /tmp/lsp_full_spec --error-trace` and
@@ -5448,13 +5448,13 @@ Evidence:
   6 examples, 0 failures.
 - Warm focused startup harness:
   `LSP_DEBUG=1 scripts/run_safe.sh /tmp/lsp_harness_cache_slim 120 1536
-  --server bin/crystal_v2_lsp --file src/compiler/lsp/server.cr -v`.
+  --server bin/adamas_lsp --file src/compiler/lsp/server.cr -v`.
   Project cache load went from 1906 files / ~300ms to 87 files / 59.0ms, and
   initialize measured 154.6ms while `didOpen` still used cached expression
   types.
 - Default LSP harness:
   `scripts/run_safe.sh /tmp/lsp_harness_cache_slim 120 1536 --server
-  bin/crystal_v2_lsp`, passed; initialize measured 152.6ms.
+  bin/adamas_lsp`, passed; initialize measured 152.6ms.
 - Full LSP suite:
   `crystal build spec/lsp/*_spec.cr -o /tmp/lsp_full_spec --error-trace` and
   `scripts/run_safe.sh /tmp/lsp_full_spec 120 1536 --no-color`, 227 examples,
@@ -5700,7 +5700,7 @@ Evidence:
   120 1536 --no-color`, 228 examples, 0 failures.
 - Host compiler build sanity:
   `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 300 8192 build
-  src/crystal_v2.cr -o /tmp/cv2_parser_preload --error-trace`, exited 0
+  src/adamas.cr -o /tmp/cv2_parser_preload --error-trace`, exited 0
   with only the existing `ld64.lld -stack_size` warning.
 - Hygiene:
   `git diff --check`.
@@ -6382,7 +6382,7 @@ Array layout.
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o /tmp/cv2_pointer_tuple_inline
+- `crystal build src/adamas.cr -o /tmp/cv2_pointer_tuple_inline
   --error-trace` -> exit 0.
 - `regression_tests/p2_pointer_primitive_tuple_inline_stride_no_prelude.sh
   /tmp/cv2_pointer_tuple_inline` -> verifies no `tuple_slot_copy`, 16-byte
@@ -6424,17 +6424,17 @@ other Unix targets use `st_mtim`.
 
 Evidence:
 
-- Before the fix, `crystal build src/crystal_v2.cr -o /tmp/cv2_linux_check
+- Before the fix, `crystal build src/adamas.cr -o /tmp/cv2_linux_check
   --error-trace --cross-compile --target x86_64-linux-gnu` failed with
   `undefined method 'st_mtimespec' for LibC::Stat`.
 - After the fix, `regression_tests/p2_linux_cross_compile_stat_mtime_guard.sh`
   -> `p2_linux_cross_compile_stat_mtime_guard_ok`.
 - Host build with local Crystal 1.20.2:
-  `crystal build src/crystal_v2.cr -o /tmp/cv2_stat_mtime_host --error-trace`
+  `crystal build src/adamas.cr -o /tmp/cv2_stat_mtime_host --error-trace`
   -> exit 0.
 - Exact Linux compiler check:
   `docker run --rm -v "$PWD:/work" -w /work crystallang/crystal:1.20.1
-  crystal build src/crystal_v2.cr -o /tmp/cv2_forum_1201 --error-trace`
+  crystal build src/adamas.cr -o /tmp/cv2_forum_1201 --error-trace`
   -> exit 0.
 
 Adversary notes:
@@ -6467,7 +6467,7 @@ Evidence:
   `class_alloc_loop` 4.85x V2 over original.
 - V2 LLVM IR for `struct_local_loop` shows the root shape directly:
   `Pair.new` is called inside `__crystal_main`, and
-  `Pair$Dnew$$Int64_Int64` calls `@__crystal_v2_malloc64(i64 24)`. The original
+  `Pair$Dnew$$Int64_Int64` calls `@__adamas_malloc64(i64 24)`. The original
   compiler computes the same checksum without exposing this heap allocation in
   the hot carrier.
 
@@ -6497,7 +6497,7 @@ allocator call.
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o /tmp/cv2_struct_fix_candidate
+- `crystal build src/adamas.cr -o /tmp/cv2_struct_fix_candidate
   --error-trace` -> exit 0.
 - `regression_tests/p2_stack_local_struct_new_no_prelude.sh
   /tmp/cv2_struct_fix_candidate` -> `not reproduced: stack-local struct .new is
@@ -6548,7 +6548,7 @@ letting dense structs such as two-`Int64` `Pair` avoid redundant zeroing.
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o /tmp/cv2_struct_init_final
+- `crystal build src/adamas.cr -o /tmp/cv2_struct_init_final
   --error-trace` -> exit 0.
 - `regression_tests/p2_stack_local_struct_init_store_no_prelude.sh
   /tmp/cv2_struct_init_final` -> `p2_stack_local_struct_init_store_no_prelude_ok`.
@@ -6599,7 +6599,7 @@ Evidence:
   /tmp/cv2_expected_new_fix_host` -> `p2_nilable_proc_union_preserves_signature_no_prelude_ok`.
 - `regression_tests/p2_qualified_module_namespace_no_prelude.sh
   /tmp/cv2_expected_new_fix_host` -> `p2_qualified_module_namespace_no_prelude_ok`.
-- Full host HIR for `src/crystal_v2.cr --emit hir --no-link` now lowers
+- Full host HIR for `src/adamas.cr --emit hir --no-link` now lowers
   `Array(String)#to_set` as `call Set(String).new$Array(String)(%0) : 2489`
   instead of `Set(Array(String)).new$Array(String)`.
 - Produced `s2` builds under `scripts/run_safe.sh` in about 172s and still
@@ -6635,14 +6635,14 @@ Evidence:
   The guard compiles a no-prelude `&block : String ->` callback whose body
   returns `Token.new`, then verifies the generated raw block proc is
   `Proc(String, Nil)` and returns explicit nil.
-- Full host HIR for `src/crystal_v2.cr --emit hir --no-link` now shows
+- Full host HIR for `src/adamas.cr --emit hir --no-link` now shows
   `Crystal::HIR::AstToHir#invalidate_generated_allocator_state$String_String`
   emitting `%144 = func_pointer @__crystal_block_proc_1260 : 883`, where
   `type.883 = Proc Proc(15, 16)`, and
   `func @__crystal_block_proc_1260(%1: 15) -> 16`.
 - Produced `s2` build now reaches past `fixup_inherited_ivars done`; the next
   frontier is later in MIR optimization:
-  `CrystalV2::Compiler::CLI#file_sha256$String: Arithmetic overflow`.
+  `Adamas::Compiler::CLI#file_sha256$String: Arithmetic overflow`.
 - Nearby guards still pass:
   `regression_tests/p2_bare_generic_new_uses_expected_return_no_prelude.sh
   /tmp/cv2_nil_block_fix_host` and
@@ -6674,11 +6674,11 @@ Evidence:
   The new focused spec folds the FNV-1a `0xcbf29ce484222325_u64 *
   0x100000001b3_u64` multiply that previously exposed the produced-s2 overflow.
 - `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 420 8192 build
-  src/crystal_v2.cr -o /tmp/cv2_mir_wrap_host --error-trace` -> exit 0.
+  src/adamas.cr -o /tmp/cv2_mir_wrap_host --error-trace` -> exit 0.
 - Produced-s2 build with `/tmp/cv2_mir_wrap_host`:
-  `scripts/run_safe.sh /tmp/cv2_mir_wrap_host 300 4096 src/crystal_v2.cr -o
+  `scripts/run_safe.sh /tmp/cv2_mir_wrap_host 300 4096 src/adamas.cr -o
   /tmp/cv2_mir_wrap_s2/cv2_s2` -> exit 0. The previous
-  `CrystalV2::Compiler::CLI#file_sha256$String: Arithmetic overflow` diagnostic
+  `Adamas::Compiler::CLI#file_sha256$String: Arithmetic overflow` diagnostic
   is gone.
 
 Adversary notes:
@@ -6712,11 +6712,11 @@ Evidence:
   emitted, localizing the unsafe corridor to lazy `@module_defs` iteration.
 - `crystal tool format --check src/compiler/hir/ast_to_hir.cr` -> exit 0.
 - `git diff --check` -> exit 0.
-- `crystal build src/crystal_v2.cr -o /tmp/cv2_module_stripped_array_host
+- `crystal build src/adamas.cr -o /tmp/cv2_module_stripped_array_host
   --error-trace` -> exit 0.
 - Produced-s2 build:
   `scripts/run_safe.sh /tmp/cv2_module_stripped_array_host 300 4096
-  src/crystal_v2.cr -o /tmp/cv2_module_stripped_array_s2/cv2_s2` -> exit 0.
+  src/adamas.cr -o /tmp/cv2_module_stripped_array_s2/cv2_s2` -> exit 0.
 - `regression_tests/p2_full_prelude_module_stripped_lookup_frontier.sh
   /tmp/cv2_module_stripped_array_s2/cv2_s2` ->
   `p2_full_prelude_module_stripped_lookup_frontier_ok`.
@@ -6764,7 +6764,7 @@ Evidence:
   `Hash(String, Crystal::HIR::ClassInfo)#[]$String` returns
   `Crystal::HIR::ClassInfo`; and `Proc#call` returns `Crystal::HIR::ClassInfo`.
 - `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 420 8192 build
-  src/crystal_v2.cr -o /tmp/cv2_proc_union_fix_host4 --error-trace` -> exit 0.
+  src/adamas.cr -o /tmp/cv2_proc_union_fix_host4 --error-trace` -> exit 0.
 - `regression_tests/p2_nilable_proc_union_preserves_signature_no_prelude.sh
   /tmp/cv2_proc_union_fix_host4` -> ok.
 - `regression_tests/p2_hash_to_a_block_return_tuple.sh
@@ -6773,7 +6773,7 @@ Evidence:
   /tmp/cv2_proc_union_fix_host4` -> ok.
 - Produced `s2` build with `/tmp/cv2_proc_union_fix_host4` -> exit 0 in about
   174s; the existing non-fatal
-  `CrystalV2::Compiler::CLI#file_sha256$String` MIR optimizer overflow remains.
+  `Adamas::Compiler::CLI#file_sha256$String` MIR optimizer overflow remains.
 - Produced `s2` passes the qualified namespace no-prelude guard. Full-prelude
   produced-s2 `puts 42` still exits 139, now after registration and at
   `fixup_inherited_ivars start`.
@@ -6936,11 +6936,11 @@ Evidence:
   `p2_array_value_union_storage_ok`.
 - Rebuilt after reverting formatter churn:
   `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 420 8192 build
-  src/crystal_v2.cr -o /tmp/cv2_appender_fix4 --error-trace` -> exit 0;
+  src/adamas.cr -o /tmp/cv2_appender_fix4 --error-trace` -> exit 0;
   `p2_pointer_appender_constructor.sh /tmp/cv2_appender_fix4` and
   `p2_pointer_void_byte_stride.sh /tmp/cv2_appender_fix4` -> ok.
 - Produced `s2` built with the fix:
-  `scripts/run_safe.sh /tmp/cv2_appender_fix4 900 8192 src/crystal_v2.cr
+  `scripts/run_safe.sh /tmp/cv2_appender_fix4 900 8192 src/adamas.cr
   -o /tmp/cv2_appender_fix4_s2/cv2_s2` -> exit 0 in about 154s, with the
   existing non-fatal `CLI#file_sha256$String` MIR optimizer overflow
   diagnostic. Full-prelude produced-s2 `puts 42` still exits 139, but the
@@ -6965,13 +6965,13 @@ element byte size through the V2 container-storage ABI instead of logical
 `type_size(T)`. This matters for heap-backed structs: `ExprId` is logically a
 4-byte value, but `Array(ExprId)` stores 8-byte heap-object pointers in its
 buffer. Generated `Array(ExprId)#dup` had been calling
-`__crystal_v2_ptr_copy(..., elem_size=4)`, which copied only half of each
+`__adamas_ptr_copy(..., elem_size=4)`, which copied only half of each
 pointer slot and produced low-32-bit pointers in produced `s2`.
 
 Evidence:
 
 - `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 420 8192 build
-  src/crystal_v2.cr -o /tmp/cv2_ptr_copy_stride_fix --error-trace` -> exit 0.
+  src/adamas.cr -o /tmp/cv2_ptr_copy_stride_fix --error-trace` -> exit 0.
 - Before the fix, a focused `Array(IdBox)#dup` generated by
   `/tmp/cv2_after_tuple` segfaulted at runtime after copying 71 heap-backed
   struct elements.
@@ -6985,9 +6985,9 @@ Evidence:
   /tmp/cv2_ptr_copy_stride_fix` all pass.
 - Produced `s2` built cleanly with the fix:
   `scripts/run_safe.sh /tmp/cv2_ptr_copy_stride_fix 600 8192
-  src/crystal_v2.cr -o /tmp/cv2_ptr_copy_stride_s2/cv2_s2` -> exit 0.
+  src/adamas.cr -o /tmp/cv2_ptr_copy_stride_s2/cv2_s2` -> exit 0.
 - Disassembly of the new produced `s2` shows
-  `Array(ExprId)#dup` passes `mov w3, #0x8` to `__crystal_v2_ptr_copy`.
+  `Array(ExprId)#dup` passes `mov w3, #0x8` to `__adamas_ptr_copy`.
 
 Adversary notes:
 
@@ -7071,7 +7071,7 @@ Evidence:
 - Generated IR for `Array(Pair | Nil)#resize_to_capacity` now has both
   realloc and initial malloc branches multiplying capacity by 24, and
   `Array(Pair | Nil)#check_needs_resize` calls
-  `__crystal_v2_ptr_copy(..., i32 24)` for the compaction copy.
+  `__adamas_ptr_copy(..., i32 24)` for the compaction copy.
 - Release benchmark smoke with `N=500_000` matched original checksums for
   `Array(Pair)`, `Array(BenchBox)`, `Array(Pair | Nil)`,
   `Array(BenchBox | Nil)`, and `Array(Pair | Int64)`. `Array(Tuple(Int64,
@@ -7106,9 +7106,9 @@ scanning.
 Evidence:
 
 - `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 360 8192 build
-  src/crystal_v2.cr -o /tmp/cv2_skipfile_regex_host --error-trace` -> exit 0.
+  src/adamas.cr -o /tmp/cv2_skipfile_regex_host --error-trace` -> exit 0.
 - `scripts/run_safe.sh /tmp/cv2_skipfile_regex_host 360 4096
-  src/crystal_v2.cr -o /tmp/cv2_skipfile_regex_s2/cv2_s2` -> exit 0.
+  src/adamas.cr -o /tmp/cv2_skipfile_regex_s2/cv2_s2` -> exit 0.
 - `regression_tests/p2_require_scan_skip_file_no_regex_no_prelude.sh
   /tmp/cv2_skipfile_regex_s2/cv2_s2` -> exit 0.
 - The previous produced-stage2 full-prelude smoke reached `prelude exists` and
@@ -7144,9 +7144,9 @@ fetch, and produced `s2` dispatched `Parameter#index` to an unrelated
 Evidence:
 
 - `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 360 8192 build
-  src/crystal_v2.cr -o /tmp/cv2_param_index_host --error-trace` -> exit 0.
+  src/adamas.cr -o /tmp/cv2_param_index_host --error-trace` -> exit 0.
 - `scripts/run_safe.sh /tmp/cv2_param_index_host 360 4096
-  src/crystal_v2.cr -o /tmp/cv2_param_index_s2/cv2_s2` -> exit 0.
+  src/adamas.cr -o /tmp/cv2_param_index_s2/cv2_s2` -> exit 0.
 - Before the prefix fix, the def-only no-prelude oracle crashed with exit 139
   in `resolve_element_type_expression`; after the fix,
   `regression_tests/p2_typeof_element_type_prefix_no_array_scan_no_prelude.sh
@@ -7194,7 +7194,7 @@ Evidence:
   `/Users/sergey/Projects/Crystal/DiamondDB/src/diamond_foundation/sql/lexer.cr`
   lines 120-130 emitted `private`/`loop` as keyword, `ord`/`to_u8`/
   `peek_byte_at`/`peek_byte`/`at_end?` as method, and `!`/`&&` as operator.
-- `./build_lsp_debug.sh` rebuilt `bin/crystal_v2_lsp` successfully.
+- `./build_lsp_debug.sh` rebuilt `bin/adamas_lsp` successfully.
 
 Adversary notes:
 
@@ -7459,16 +7459,16 @@ Adversary notes:
 
 Trust: {F/G/R: 0.89/0.44/0.89} [verified]
 
-### LM-630 - `crystal_v2 tool lsp` launches the sibling LSP server
+### LM-630 - `adamas tool lsp` launches the sibling LSP server
 
 The compiler entry point now recognizes `tool lsp` before normal compile-mode
-argument parsing and execs a sibling `crystal_v2_lsp` binary, or an explicit
+argument parsing and execs a sibling `adamas_lsp` binary, or an explicit
 `CRYSTAL_V2_LSP_SERVER` path. This keeps the bootstrap compiler binary from
 embedding `src/compiler/lsp/server.cr` while still exposing the Crystal-style
 tool command shape. The VS Code extension remains backward-compatible with its
-default `../bin/crystal_v2_lsp` path and now also supports
+default `../bin/adamas_lsp` path and now also supports
 `crystalv2.lsp.serverPath` plus `crystalv2.lsp.serverArgs`, so users can point
-it at `crystal_v2` with `["tool", "lsp"]`.
+it at `adamas` with `["tool", "lsp"]`.
 
 Evidence:
 
@@ -7479,13 +7479,13 @@ Evidence:
   `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 300 4096 spec
   spec/lsp --error-trace` -> 254 examples, 0 failures.
 - Process-level launcher smoke:
-  built `src/crystal_v2.cr` under `scripts/run_safe.sh` to a temporary
-  directory, installed a fake sibling `crystal_v2_lsp`, then ran
-  `scripts/run_safe.sh <tmp>/crystal_v2 10 512 tool lsp alpha beta`; the fake
+  built `src/adamas.cr` under `scripts/run_safe.sh` to a temporary
+  directory, installed a fake sibling `adamas_lsp`, then ran
+  `scripts/run_safe.sh <tmp>/adamas 10 512 tool lsp alpha beta`; the fake
   server received `alpha beta` and exited with the expected sentinel status.
 - Formatting and syntax checks:
   `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 120 4096 tool format
-  --check src/compiler/lsp/tool_dispatch.cr src/crystal_v2.cr
+  --check src/compiler/lsp/tool_dispatch.cr src/adamas.cr
   spec/lsp/tool_dispatch_spec.cr` -> exit 0;
   `node --check vscode-extension/extension.js` -> exit 0;
   `git diff --check` -> exit 0.
@@ -7648,11 +7648,11 @@ Trust: {F/G/R: 0.87/0.44/0.88} [verified]
 ### LM-635 - VS Code extension discovers `crystal2` without hardcoded repo paths
 
 The VS Code extension no longer defaults to a repo-relative
-`../bin/crystal_v2_lsp` path. If `crystalv2.lsp.serverPath` is configured, that
+`../bin/adamas_lsp` path. If `crystalv2.lsp.serverPath` is configured, that
 path overrides all discovery and must point to an executable file or the
 extension reports an error and does not start the language client. Without an
 explicit setting, the extension tries `crystal2 tool lsp`, then
-`crystal_v2 tool lsp`, then standalone `crystal_v2_lsp` from `PATH`. The
+`adamas tool lsp`, then standalone `adamas_lsp` from `PATH`. The
 compiler-side dispatcher also accepts `tools lsp` as a compatibility alias for
 `tool lsp`.
 
@@ -7694,7 +7694,7 @@ Evidence:
 
 - User crash signature: `schedule_reparse_invalid_files` ->
   `UnifiedProjectState#update_file` -> recursive parser stack overflow while
-  VS Code restarted `bin/crystal_v2_lsp` repeatedly.
+  VS Code restarted `bin/adamas_lsp` repeatedly.
 - Focused cache regression:
   `scripts/run_safe.sh crystal 180 4096 spec
   spec/lsp/did_change_integration_spec.cr
@@ -7702,7 +7702,7 @@ Evidence:
 - Full LSP suite:
   `scripts/run_safe.sh crystal 300 4096 spec spec/lsp` -> 255 examples,
   0 failures.
-- Rebuilt `bin/crystal_v2_lsp` with `./build_lsp.sh`; stdio harness against
+- Rebuilt `bin/adamas_lsp` with `./build_lsp.sh`; stdio harness against
   the rebuilt binary returned initialize in about 462ms, first `server.cr`
   `didOpen` settled in about 67ms, document symbols in about 15ms, semantic
   tokens in about 66ms, and exited cleanly with no diagnostics.
@@ -7732,8 +7732,8 @@ dependency loading for navigation and other precision requests.
 
 Evidence:
 
-- Harness scenario on `src/crystal_v2.cr` around `cli =
-  CrystalV2::Compiler::CLI.new(ARGV)`:
+- Harness scenario on `src/adamas.cr` around `cli =
+  Adamas::Compiler::CLI.new(ARGV)`:
   - before the fix, hovering the qualified `CLI` segment took about 105ms and
     `CLI.new` triggered recursive `Loading dependency ... from project cache`
     lines across the compiler graph.
@@ -7813,7 +7813,7 @@ Evidence:
   `/Users/sergey/Projects/Crystal/crystal/src/random/pcg32.cr` returned hover
   `def new_seed(initstate : UInt64, initseq = 0_u64) : UInt32` and definition
   location `line=62, character=6`, the parameterized overload.
-- `./build_lsp_debug.sh` rebuilt `bin/crystal_v2_lsp` successfully.
+- `./build_lsp_debug.sh` rebuilt `bin/adamas_lsp` successfully.
 - `scripts/run_safe.sh crystal 180 4096 spec
   spec/lsp/hover_definition_integration_spec.cr` -> 7 examples, 0 failures.
 - `scripts/run_safe.sh crystal 300 4096 spec spec/lsp` -> 257 examples,
@@ -7852,7 +7852,7 @@ Evidence:
 - Real LSP stdio harness against
   `/Users/sergey/Projects/Crystal/crystal/src/int.cr` at
   `Int8.new!(value)` returned hover `def to_i8! : Int8`.
-- `./build_lsp_debug.sh` rebuilt `bin/crystal_v2_lsp` successfully.
+- `./build_lsp_debug.sh` rebuilt `bin/adamas_lsp` successfully.
 - `scripts/run_safe.sh crystal 180 4096 spec
   spec/lsp/hover_definition_integration_spec.cr` -> 9 examples, 0 failures.
 - `scripts/run_safe.sh crystal 300 4096 spec spec/lsp` -> 259 examples,
@@ -7894,7 +7894,7 @@ Evidence:
   `/Users/sergey/Projects/Crystal/crystal/src/int.cr` returned
   `struct Float64` plus definition `/float.cr` for the macro argument, and
   `def to_i8! : Int8` plus definition `/primitives.cr` for `value.to_i8!`.
-- `./build_lsp_debug.sh` rebuilt `bin/crystal_v2_lsp` successfully.
+- `./build_lsp_debug.sh` rebuilt `bin/adamas_lsp` successfully.
 - `scripts/run_safe.sh crystal 180 4096 spec
   spec/lsp/hover_definition_integration_spec.cr` -> 10 examples, 0 failures.
 - `scripts/run_safe.sh crystal 300 4096 spec spec/lsp` -> 260 examples,
@@ -7935,7 +7935,7 @@ Evidence:
   `/number.cr`.
 - `scripts/run_safe.sh crystal 180 4096 spec
   spec/lsp/hover_definition_integration_spec.cr` -> 10 examples, 0 failures.
-- `./build_lsp_debug.sh` rebuilt `bin/crystal_v2_lsp` successfully.
+- `./build_lsp_debug.sh` rebuilt `bin/adamas_lsp` successfully.
 - Real LSP stdio harness against
   `/Users/sergey/Projects/Crystal/crystal/src/int.cr` line 958 returned
   `macro expand_div(rhs_types, result_type)` and definition
@@ -7977,7 +7977,7 @@ Evidence:
   `/primitives.cr`.
 - `scripts/run_safe.sh crystal 180 4096 spec
   spec/lsp/hover_definition_integration_spec.cr` -> 11 examples, 0 failures.
-- `./build_lsp_debug.sh` rebuilt `bin/crystal_v2_lsp` successfully.
+- `./build_lsp_debug.sh` rebuilt `bin/adamas_lsp` successfully.
 - Real LSP stdio harness against
   `/Users/sergey/Projects/Crystal/crystal/src/int.cr` line 1032 returned both
   hovers and both primitive-template definitions.
@@ -8017,7 +8017,7 @@ Evidence:
   to the `fun` line.
 - `scripts/run_safe.sh crystal 180 4096 spec
   spec/lsp/hover_definition_integration_spec.cr` -> 12 examples, 0 failures.
-- `./build_lsp_debug.sh` rebuilt `bin/crystal_v2_lsp` successfully.
+- `./build_lsp_debug.sh` rebuilt `bin/adamas_lsp` successfully.
 - Real LSP stdio harness against
   `/Users/sergey/Projects/Crystal/crystal/src/intrinsics.cr` line 251 returned
   the `LibIntrinsics` `fun` signature and definition at line 92.
@@ -8049,7 +8049,7 @@ Evidence:
   `/primitives.cr` and `originSelectionRange` from the operator start to end.
 - `scripts/run_safe.sh crystal 180 4096 spec
   spec/lsp/hover_definition_integration_spec.cr` -> 12 examples, 0 failures.
-- `./build_lsp_debug.sh` rebuilt `bin/crystal_v2_lsp` successfully.
+- `./build_lsp_debug.sh` rebuilt `bin/adamas_lsp` successfully.
 - Real LSP stdio harness against
   `/Users/sergey/Projects/Crystal/crystal/src/int.cr` line 1032 returned a
   `LocationLink` whose origin range covers `&-` and whose target selection is
@@ -8098,7 +8098,7 @@ Evidence:
   spec/lsp/hover_definition_integration_spec.cr` -> 45 examples, 0 failures.
 - `scripts/run_safe.sh crystal 300 4096 spec spec/lsp` -> 263 examples,
   0 failures.
-- `./build_lsp_debug.sh` rebuilt `bin/crystal_v2_lsp` successfully.
+- `./build_lsp_debug.sh` rebuilt `bin/adamas_lsp` successfully.
 
 Adversary notes:
 
@@ -8149,7 +8149,7 @@ Evidence:
   spec/lsp/hover_definition_integration_spec.cr` -> 13 examples, 0 failures.
 - `scripts/run_safe.sh crystal 300 4096 spec spec/lsp` -> 264 examples,
   0 failures.
-- `./build_lsp_debug.sh` rebuilt `bin/crystal_v2_lsp` successfully.
+- `./build_lsp_debug.sh` rebuilt `bin/adamas_lsp` successfully.
 
 Adversary notes:
 
@@ -8204,7 +8204,7 @@ Evidence:
   spec/lsp --error-trace` -> 265 examples, 0 failures.
 - `scripts/run_safe.sh /bin/bash 30 512
   regression_tests/vscode_operator_word_pattern.sh` -> exit 0.
-- `./build_lsp_debug.sh` rebuilt `bin/crystal_v2_lsp` successfully.
+- `./build_lsp_debug.sh` rebuilt `bin/adamas_lsp` successfully.
 - `git diff --check` -> exit 0.
 
 Adversary notes:
@@ -8252,7 +8252,7 @@ Evidence:
   example, 0 failures.
 - Real LSP harness against
   `/Users/sergey/Projects/Crystal/DiamondDB/src/diamond_foundation.cr` after
-  rebuilding `bin/crystal_v2_lsp` -> `didOpen` settled in about 1478.8ms,
+  rebuilding `bin/adamas_lsp` -> `didOpen` settled in about 1478.8ms,
   loaded 63 requires, published 0 diagnostics, and exited 0.
 - `scripts/run_safe.sh /Users/sergey/.local/bin/crystal 240 4096 spec
   spec/semantic/type_inference_scoped_alias_spec.cr
@@ -8310,7 +8310,7 @@ WBA framing:
 
 Evidence:
 
-- `crystal build src/lsp_main.cr -o bin/crystal_v2_lsp --error-trace`
+- `crystal build src/lsp_main.cr -o bin/adamas_lsp --error-trace`
 - Harness compile/help guard through safe runner:
   `crystal build benchmarks/lsp_harness.cr -o <tmp> --error-trace` then
   `scripts/run_safe.sh <tmp> 10 512 --help`
@@ -8333,7 +8333,7 @@ Known limits:
 - Live process-level latency measurement still needs an LSP-safe monitor or a
   harness-level resource guard, because `scripts/run_safe.sh` captures stdout
   and therefore corrupts a stdio JSON-RPC server protocol if wrapped around
-  `bin/crystal_v2_lsp`.
+  `bin/adamas_lsp`.
 
 Trust: {F/G/R: 0.82/0.34/0.86} [verified]
 
@@ -8353,7 +8353,7 @@ Change:
 
 WBA framing:
 
-- Window/trigger: LSP benchmarking needed to run `bin/crystal_v2_lsp` through
+- Window/trigger: LSP benchmarking needed to run `bin/adamas_lsp` through
   `run_safe`, but normal `run_safe` captured stdout and corrupted JSON-RPC
   framing.
 - Transport corridor: JSON-RPC stdio must stay byte-exact between harness and
@@ -8377,7 +8377,7 @@ Evidence:
 - Safe LSP harness run:
   `scripts/run_safe.sh <compiled_lsp_harness> 120 1024
   --server="/usr/bin/env RUN_SAFE_PASSTHROUGH_STDIO=1 scripts/run_safe.sh
-  ./bin/crystal_v2_lsp 90 2048" --scenario=<small server.cr scenario>
+  ./bin/adamas_lsp 90 2048" --scenario=<small server.cr scenario>
   --json=<report> --timeout=20 --verbose`, exited 0.
 - The sample JSON report had `errors=0`, notification counts of 1 for
   `crystal/indexing`, `crystal/indexed`, and `textDocument/publishDiagnostics`,
@@ -8437,7 +8437,7 @@ Evidence:
   spec/lsp/support/server_helper.cr
   spec/lsp/hover_definition_integration_spec.cr benchmarks/lsp_harness.cr`
 - `git diff --check`
-- `crystal build src/lsp_main.cr -o bin/crystal_v2_lsp --error-trace`
+- `crystal build src/lsp_main.cr -o bin/adamas_lsp --error-trace`
 - Focused LSP spec binary through safe runner:
   `crystal build spec/lsp/hover_definition_integration_spec.cr
   spec/lsp/hover_definition_indexing_spec.cr
@@ -8498,7 +8498,7 @@ Evidence:
 - `crystal tool format --check src/compiler/lsp/server.cr
   spec/lsp/lsp_inlay_hint_spec.cr`
 - `git diff --check`
-- `crystal build src/lsp_main.cr -o bin/crystal_v2_lsp --error-trace`
+- `crystal build src/lsp_main.cr -o bin/adamas_lsp --error-trace`
 - Focused failing pack through safe runner:
   `crystal build spec/lsp/lsp_inlay_hint_spec.cr
   spec/lsp/lsp_semantic_tokens_spec.cr
@@ -8550,7 +8550,7 @@ WBA framing:
 Evidence:
 
 - `crystal tool format --check src/compiler/lsp/server.cr`
-- `crystal build src/lsp_main.cr -o bin/crystal_v2_lsp --error-trace`
+- `crystal build src/lsp_main.cr -o bin/adamas_lsp --error-trace`
 - Repeated safe wrapped harness on `src/compiler/lsp/server.cr` exited 0 with
   `errors=0`; representative timings were first semanticTokens ~455ms and
   cached semanticTokens ~79ms for the same 135750-int payload.
@@ -8604,7 +8604,7 @@ Evidence:
   src/compiler/lsp/messages.cr benchmarks/lsp_harness.cr
   spec/lsp/semantic_tokens_spec.cr`
 - `git diff --check`
-- `crystal build src/lsp_main.cr -o bin/crystal_v2_lsp --error-trace`
+- `crystal build src/lsp_main.cr -o bin/adamas_lsp --error-trace`
 - Focused semantic-token spec pack through safe runner:
   `crystal build spec/lsp/semantic_tokens_spec.cr
   spec/lsp/semantic_tokens_integration_spec.cr
@@ -8641,7 +8641,7 @@ Verified outcome:
 
 - Host compiler builds successfully.
 - Produced `s2` builds successfully from the patched host. The known non-fatal
-  `CrystalV2::Compiler::CLI#file_sha256$String` MIR optimizer arithmetic
+  `Adamas::Compiler::CLI#file_sha256$String` MIR optimizer arithmetic
   overflow diagnostic remains.
 - Produced `s2` passes the focused no-prelude guards:
   `p2_macro_number_parsed_literals_no_prelude.sh`,
@@ -8686,7 +8686,7 @@ Refuted/limited evidence:
 
 Evidence:
 
-- `crystal build src/crystal_v2.cr -o /private/tmp/cv2_setfirst_host
+- `crystal build src/adamas.cr -o /private/tmp/cv2_setfirst_host
   --error-trace`
 - Host guards:
   `p2_short_type_index_first_no_prelude.sh`,
@@ -8698,7 +8698,7 @@ Evidence:
   `/private/tmp/cv2_setfirst_host`.
 - Produced `s2` build:
   `scripts/run_safe.sh /private/tmp/cv2_setfirst_host 300 4096
-  src/crystal_v2.cr -o /private/tmp/cv2_setfirst_s2/cv2_s2`, exited 0 after
+  src/adamas.cr -o /private/tmp/cv2_setfirst_s2/cv2_s2`, exited 0 after
   ~154s.
 - Produced guards:
   the same six no-prelude guards on `/private/tmp/cv2_setfirst_s2/cv2_s2`.
@@ -8749,7 +8749,7 @@ WBA framing:
 Evidence:
 
 - `crystal tool format --check src/compiler/hir/ast_to_hir.cr`
-- `crystal build src/crystal_v2.cr -o /private/tmp/cv2_typecache_host
+- `crystal build src/adamas.cr -o /private/tmp/cv2_typecache_host
   --error-trace`
 - Host guards:
   `p2_type_param_like_cacheless_no_prelude.sh`,
@@ -8758,7 +8758,7 @@ Evidence:
   `/private/tmp/cv2_typecache_host`.
 - Produced `s2` build:
   `scripts/run_safe.sh /private/tmp/cv2_typecache_host 300 4096
-  src/crystal_v2.cr -o /private/tmp/cv2_typecache_s2/cv2_s2`, exited 0 after
+  src/adamas.cr -o /private/tmp/cv2_typecache_s2/cv2_s2`, exited 0 after
   ~145s on the final run.
 - Produced guards:
   `p2_type_param_like_cacheless_no_prelude.sh` and
@@ -8788,7 +8788,7 @@ Boundary:
   smoke. The next target is the remaining produced-stage2 full-prelude `puts
   42` exit 139, likely around type-ref/source-span/string lifetime instability
   exposed by HIR registration/lower-main.
-- The non-fatal `CrystalV2::Compiler::CLI#file_sha256$String` MIR optimizer
+- The non-fatal `Adamas::Compiler::CLI#file_sha256$String` MIR optimizer
   arithmetic-overflow diagnostic remains during produced `s2` builds.
 
 Trust: {F/G/R: 0.88/0.48/0.89} [verified]
@@ -8834,7 +8834,7 @@ WBA framing:
 Evidence:
 
 - `crystal tool format --check src/compiler/hir/ast_to_hir.cr`
-- `crystal build src/crystal_v2.cr -o /private/tmp/cv2_return_guard_host
+- `crystal build src/adamas.cr -o /private/tmp/cv2_return_guard_host
   --error-trace`
 - Host guards on `/private/tmp/cv2_return_guard_host`:
   `p2_nested_generic_new_inference.sh`,
@@ -8843,7 +8843,7 @@ Evidence:
   `p2_qualified_module_namespace_no_prelude.sh`.
 - Produced `s2` build:
   `scripts/run_safe.sh /private/tmp/cv2_return_guard_host 300 4096
-  src/crystal_v2.cr -o /private/tmp/cv2_return_guard_s2/cv2_s2`, exited 0
+  src/adamas.cr -o /private/tmp/cv2_return_guard_s2/cv2_s2`, exited 0
   after ~150s.
 - Produced cheap guards on `/private/tmp/cv2_return_guard_s2/cv2_s2`:
   `p2_source_span_slice_bounds_no_prelude.sh`,
@@ -8872,7 +8872,7 @@ Boundary:
 - This is a host semantic fix plus stage2 source/name transport hardening, not
   a clean `s1 -> s2b` gate. The next root remains produced-stage2 full-prelude
   module/lower-main string lifetime or source provenance instability.
-- The non-fatal `CrystalV2::Compiler::CLI#file_sha256$String` MIR optimizer
+- The non-fatal `Adamas::Compiler::CLI#file_sha256$String` MIR optimizer
   arithmetic-overflow diagnostic remains during produced `s2` builds.
 
 Trust: {F/G/R: 0.88/0.52/0.87} [verified]
@@ -8904,7 +8904,7 @@ Evidence:
 - lldb on that reducer shows
   `Regex::MatchData#byte_end -> unbound_type_params_from_type_name ->
   def_has_unbound_type_params? -> register_module_instance_methods_for`.
-- `crystal build src/crystal_v2.cr -o /private/tmp/cv2_unbound_tokens_host
+- `crystal build src/adamas.cr -o /private/tmp/cv2_unbound_tokens_host
   --error-trace`
 - `crystal tool format --check src/compiler/hir/ast_to_hir.cr`
 - `git diff --check`
@@ -8915,7 +8915,7 @@ Evidence:
 - `regression_tests/p2_macro_included_proc_sink_self_capture_no_prelude.sh
   /private/tmp/cv2_unbound_tokens_host`
 - `scripts/run_safe.sh /private/tmp/cv2_unbound_tokens_host 300 4096
-  src/crystal_v2.cr -o /private/tmp/cv2_unbound_tokens_s2/cv2_s2`
+  src/adamas.cr -o /private/tmp/cv2_unbound_tokens_s2/cv2_s2`
   exited 0 after ~165s.
 - `regression_tests/p2_unbound_type_param_scan_no_regex_no_prelude.sh
   /private/tmp/cv2_unbound_tokens_s2/cv2_s2`
@@ -8928,7 +8928,7 @@ Boundary:
 
 - This is a targeted bootstrap hot-path rewrite, not a general Regex runtime
   fix.
-- The remaining `CrystalV2::Compiler::CLI#file_sha256$String` MIR optimizer
+- The remaining `Adamas::Compiler::CLI#file_sha256$String` MIR optimizer
   arithmetic-overflow diagnostic is still non-fatal and still present during
   the s2 build.
 
@@ -8966,12 +8966,12 @@ Evidence:
 - Temporary backend tracing localized the crash to `emit_global_variables`;
   temporary CLI tracing showed the constant-literal export path produced an
   empty global name for `UNLOCKED`.
-- `crystal build src/crystal_v2.cr -o /private/tmp/cv2_constglobal_final5_host
+- `crystal build src/adamas.cr -o /private/tmp/cv2_constglobal_final5_host
   --error-trace`
 - `regression_tests/p2_constant_globals_no_prelude.sh
   /private/tmp/cv2_constglobal_final5_host`
 - `scripts/run_safe.sh /private/tmp/cv2_constglobal_final5_host 300 4096
-  src/crystal_v2.cr -o /private/tmp/cv2_constglobal_final5_s2/cv2_s2`
+  src/adamas.cr -o /private/tmp/cv2_constglobal_final5_s2/cv2_s2`
   exited 0 after ~163s.
 - `regression_tests/p2_constant_globals_no_prelude.sh
   /private/tmp/cv2_constglobal_final5_s2/cv2_s2`
@@ -8995,7 +8995,7 @@ Boundary:
   `puts 42` gate. Produced `s2` full-prelude `puts 42` currently times out
   after top-level collection at `pre-scan class/module loops start` under a
   120s safe gate.
-- The remaining `CrystalV2::Compiler::CLI#file_sha256$String` MIR optimizer
+- The remaining `Adamas::Compiler::CLI#file_sha256$String` MIR optimizer
   arithmetic-overflow diagnostic is still non-fatal and still present during
   the s2 build.
 - A hostile-review expansion found a separate upstream HIR registration gap:
@@ -9040,12 +9040,12 @@ Evidence:
   `CONST_LIT full=Foo::COUNT owner=Foo`, while produced `s2` still emitted
   `Object__classvar__Foo$CCCOUNT`. That localized the bug after HIR constant
   registration and before final global symbol spelling.
-- `crystal build src/crystal_v2.cr -o /private/tmp/cv2_wba_structconst_host
+- `crystal build src/adamas.cr -o /private/tmp/cv2_wba_structconst_host
   --error-trace`
 - `regression_tests/p2_constant_globals_no_prelude.sh
   /private/tmp/cv2_wba_structconst_host`
 - `scripts/run_safe.sh /private/tmp/cv2_wba_structconst_host 300 4096
-  src/crystal_v2.cr -o /private/tmp/cv2_wba_structconst_s2/cv2_s2`
+  src/adamas.cr -o /private/tmp/cv2_wba_structconst_s2/cv2_s2`
   exited 0 after ~165s.
 - Produced `s2` passed:
   `p2_constant_globals_no_prelude.sh`,
@@ -9108,7 +9108,7 @@ WBA framing:
 Evidence:
 
 - `git diff --check`
-- `crystal build src/crystal_v2.cr -o /private/tmp/cv2_clean_hirfix_host
+- `crystal build src/adamas.cr -o /private/tmp/cv2_clean_hirfix_host
   --error-trace`
 - Host guards:
   `regression_tests/p2_source_span_slice_bounds_no_prelude.sh
@@ -9117,7 +9117,7 @@ Evidence:
   /private/tmp/cv2_clean_hirfix_host`
 - Produced `s2` build:
   `scripts/run_safe.sh /private/tmp/cv2_clean_hirfix_host 300 4096
-  src/crystal_v2.cr -o /private/tmp/cv2_clean_hirfix_s2/cv2_s2`, exited 0
+  src/adamas.cr -o /private/tmp/cv2_clean_hirfix_s2/cv2_s2`, exited 0
   after ~154s.
 - Produced guards:
   `p2_source_span_slice_bounds_no_prelude.sh`,
@@ -9149,7 +9149,7 @@ Boundary:
 - This is a moved-frontier/root-boundary hardening, not a closed
   full-prelude smoke. The next target is the early class-registration segfault
   after `class register idx=3/112`.
-- The non-fatal `CrystalV2::Compiler::CLI#file_sha256$String` MIR optimizer
+- The non-fatal `Adamas::Compiler::CLI#file_sha256$String` MIR optimizer
   arithmetic-overflow diagnostic remains during produced `s2` builds.
 
 Trust: {F/G/R: 0.86/0.46/0.88} [verified]

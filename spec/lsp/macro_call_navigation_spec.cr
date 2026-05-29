@@ -2,7 +2,7 @@ require "spec"
 
 require "./support/server_helper"
 
-describe CrystalV2::Compiler::LSP::Server do
+describe Adamas::Compiler::LSP::Server do
   it "navigates from macro call to macro definition" do
     source = <<-CR
     macro hello(name)
@@ -14,7 +14,7 @@ describe CrystalV2::Compiler::LSP::Server do
     hello world
     CR
 
-    server = CrystalV2::Compiler::LSP::Server.new(IO::Memory.new, IO::Memory.new, CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false))
+    server = Adamas::Compiler::LSP::Server.new(IO::Memory.new, IO::Memory.new, Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false))
     uri = server.spec_store_document(source, nil, "/tmp/macro_call.cr")
 
     line_idx = source.lines.index { |l| l.includes?("hello world") }.not_nil!

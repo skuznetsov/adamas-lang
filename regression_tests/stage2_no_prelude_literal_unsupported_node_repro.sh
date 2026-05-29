@@ -36,7 +36,7 @@ fi
 echo "--- stderr ---"
 cat "$STDERR_LOG"
 
-if grep -Fq "Unsupported AST node type: CrystalV2::Compiler::Frontend::Node" "$STDERR_LOG"; then
+if grep -Fq "Unsupported AST node type: Adamas::Compiler::Frontend::Node" "$STDERR_LOG"; then
   echo "reproduced: no-prelude literal compile hit unsupported Frontend::Node lowering"
   exit 0
 fi

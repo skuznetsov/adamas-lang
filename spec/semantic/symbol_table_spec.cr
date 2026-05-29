@@ -4,10 +4,10 @@ require "../../src/compiler/frontend/ast"
 require "../../src/compiler/semantic/symbol_table"
 require "../../src/compiler/semantic/symbol"
 
-alias SymbolTable = CrystalV2::Compiler::Semantic::SymbolTable
-alias DummySymbol = CrystalV2::Compiler::Semantic::DummySymbol
-alias SymbolRedefinitionError = CrystalV2::Compiler::Semantic::SymbolRedefinitionError
-alias ExprId = CrystalV2::Compiler::Frontend::ExprId
+alias SymbolTable = Adamas::Compiler::Semantic::SymbolTable
+alias DummySymbol = Adamas::Compiler::Semantic::DummySymbol
+alias SymbolRedefinitionError = Adamas::Compiler::Semantic::SymbolRedefinitionError
+alias ExprId = Adamas::Compiler::Frontend::ExprId
 
 private def dummy_symbol(name, metadata)
   DummySymbol.new(name, ExprId.new(-1), metadata)

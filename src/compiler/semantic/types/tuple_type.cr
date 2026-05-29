@@ -1,6 +1,6 @@
 require "./type"
 
-module CrystalV2
+module Adamas
   module Compiler
     module Semantic
       # Represents a Tuple generic type: Tuple(T1, T2, ..., Tn)

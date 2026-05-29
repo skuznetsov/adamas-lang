@@ -3,7 +3,7 @@
 # Low-level memory allocation wrappers used by MIR codegen.
 # These functions are called directly from generated LLVM IR.
 
-module Crystal::Runtime
+module Adamas::Runtime
   # Memory allocation statistics (debug builds only)
   {% if flag?(:runtime_stats) %}
     class_property total_allocations : UInt64 = 0
@@ -129,26 +129,26 @@ end
 # Exported functions for LLVM IR calls
 # These use C calling convention and are the symbols referenced in llvm_backend.cr
 #
-# Note: We use __crystal_v2_* prefix to avoid conflicts with the standard
+# Note: We use __adamas_* prefix to avoid conflicts with the standard
 # Crystal runtime (__crystal_malloc, etc.). The LLVM backend should reference
 # these v2 versions.
 
 # Primary allocation function - allocates `size` bytes
-fun __crystal_v2_malloc64(size : UInt64) : Void*
-  Crystal::Runtime.malloc(size)
+fun __adamas_malloc64(size : UInt64) : Void*
+  Adamas::Runtime.malloc(size)
 end
 
 # Reallocate to new size
-fun __crystal_v2_realloc(ptr : Void*, size : UInt64) : Void*
-  Crystal::Runtime.realloc(ptr, size)
+fun __adamas_realloc(ptr : Void*, size : UInt64) : Void*
+  Adamas::Runtime.realloc(ptr, size)
 end
 
 # Free memory
-fun __crystal_v2_free(ptr : Void*) : Void
-  Crystal::Runtime.free(ptr)
+fun __adamas_free(ptr : Void*) : Void
+  Adamas::Runtime.free(ptr)
 end
 
 # Zero-initialized allocation
-fun __crystal_v2_calloc(count : UInt64, size : UInt64) : Void*
-  Crystal::Runtime.calloc(count, size)
+fun __adamas_calloc(count : UInt64, size : UInt64) : Void*
+  Adamas::Runtime.calloc(count, size)
 end

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-V2_COMPILER="${1:-$ROOT_DIR/bin/crystal_v2}"
+V2_COMPILER="${1:-$ROOT_DIR/bin/adamas}"
 ORIG_COMPILER="${2:-crystal}"
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/cv2_layout_matrix.XXXXXX")"
 

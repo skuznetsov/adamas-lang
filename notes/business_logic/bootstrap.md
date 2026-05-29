@@ -5,9 +5,9 @@ Goal: compile with full prelude and link without missing runtime/stdlib symbols.
 ## Typical Commands
 - Build release: `./scripts/build.sh release`
 - Generate LLVM IR (no link):
-  - `./bin/crystal_v2 --emit llvm-ir --no-link --no-llvm-opt --no-llvm-metadata examples/bootstrap_array.cr -o /tmp/bootstrap_array_full > /tmp/bootstrap_array_full.ll`
+  - `./bin/adamas --emit llvm-ir --no-link --no-llvm-opt --no-llvm-metadata examples/bootstrap_array.cr -o /tmp/bootstrap_array_full > /tmp/bootstrap_array_full.ll`
 - Link attempt (capture missing symbols):
-  - `./bin/crystal_v2 --stats --no-llvm-opt --no-llvm-metadata examples/bootstrap_array.cr -o /tmp/bootstrap_array_full 2> /tmp/bootstrap_array_full.link.log`
+  - `./bin/adamas --stats --no-llvm-opt --no-llvm-metadata examples/bootstrap_array.cr -o /tmp/bootstrap_array_full 2> /tmp/bootstrap_array_full.link.log`
 
 ## Known Failure Modes
 - Missing runtime/stdlib symbols during link (IO, Fiber, Signal, String/Pointer helpers).

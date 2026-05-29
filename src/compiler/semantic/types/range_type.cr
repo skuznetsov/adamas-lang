@@ -1,6 +1,6 @@
 require "./type"
 
-module CrystalV2
+module Adamas
   module Compiler
     module Semantic
       # Represents a Range generic type: Range(B, E)

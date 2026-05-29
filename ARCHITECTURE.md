@@ -775,7 +775,7 @@ end
 
 ```crystal
 # src/compiler/lsp/server.cr
-module CrystalV2::LSP
+module Adamas::LSP
   class Server
     @stdin : IO
     @stdout : IO

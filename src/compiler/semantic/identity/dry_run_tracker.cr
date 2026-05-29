@@ -14,7 +14,7 @@ require "./semantic_type_id"
 require "./def_identity"
 require "./def_instance_key"
 
-module CrystalV2::Compiler::Semantic
+module Adamas::Compiler::Semantic
   # Fallback surrogate for call sites where ExprId is not yet available.
   # Will be removed once ExprId is plumbed to all call sites.
   struct DryRunDefKey

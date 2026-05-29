@@ -1,4 +1,4 @@
-module CrystalV2
+module Adamas
   module Compiler
     module LSP
       module ToolDispatch
@@ -26,10 +26,10 @@ module CrystalV2
 
           dir = File.dirname(executable_path)
           ext = executable_path.ends_with?(".exe") ? ".exe" : ""
-          candidate = File.join(dir, "crystal_v2_lsp#{ext}")
+          candidate = File.join(dir, "adamas_lsp#{ext}")
           return candidate if File.exists?(candidate)
 
-          plain_candidate = File.join(dir, "crystal_v2_lsp")
+          plain_candidate = File.join(dir, "adamas_lsp")
           return plain_candidate if plain_candidate != candidate && File.exists?(plain_candidate)
 
           nil
@@ -44,9 +44,9 @@ module CrystalV2
             if env_path && !env_path.empty?
               err_io.puts "Configured #{SERVER_ENV}=#{env_path}"
             elsif exe_path = Process.executable_path
-              err_io.puts "Expected sibling executable: #{File.join(File.dirname(exe_path), "crystal_v2_lsp")}"
+              err_io.puts "Expected sibling executable: #{File.join(File.dirname(exe_path), "adamas_lsp")}"
             end
-            err_io.puts "Build it with ./build_lsp.sh or set #{SERVER_ENV}=/path/to/crystal_v2_lsp."
+            err_io.puts "Build it with ./build_lsp.sh or set #{SERVER_ENV}=/path/to/adamas_lsp."
             return 1
           end
 

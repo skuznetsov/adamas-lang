@@ -25,7 +25,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-COMPILER="${1:-$ROOT_DIR/bin/crystal_v2}"
+COMPILER="${1:-$ROOT_DIR/bin/adamas}"
 KEEP_TMP="${KEEP_TMP:-0}"
 
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/tuple_to_static_array.XXXXXX")"
@@ -94,8 +94,8 @@ body="$(awk '/^define ptr @Tuple\$Hto_static_array/{flag=1} flag{print} /^}/{if(
 null_ary=$(echo "$body" | grep -c 'inttoptr i64 0 to ptr' || true)
 echo "(info) null-pointer assignments in body = $null_ary (pre-fix had >=2)"
 
-# Post-fix sentinel: the body must allocate via __crystal_v2_malloc
-malloc_calls=$(echo "$body" | grep -c 'call ptr @__crystal_v2_malloc' || true)
+# Post-fix sentinel: the body must allocate via __adamas_malloc
+malloc_calls=$(echo "$body" | grep -c 'call ptr @__adamas_malloc' || true)
 echo "good: malloc calls in body = $malloc_calls"
 
 if [[ "$malloc_calls" -lt 1 ]]; then

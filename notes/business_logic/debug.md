@@ -2,9 +2,9 @@
 
 ## HIR Debug Hooks
 - File: `src/compiler/hir/debug_hooks.cr`
-- Build: `crystal build -Ddebug_hooks src/crystal_v2.cr -o bin/crystal_v2_debug`
+- Build: `crystal build -Ddebug_hooks src/adamas.cr -o bin/adamas_debug`
 - Run:
-  - `CRYSTAL_V2_DEBUG_HOOKS=1 ./bin/crystal_v2_debug <file>`
+  - `CRYSTAL_V2_DEBUG_HOOKS=1 ./bin/adamas_debug <file>`
   - `CRYSTAL_V2_DEBUG_HOOKS_FILTER=call.class_receiver.unresolved` to narrow output.
 
 ## Driver Trace

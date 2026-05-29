@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-COMPILER="${1:-bin/crystal_v2}"
+COMPILER="${1:-bin/adamas}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP_DIR="$(mktemp -d /tmp/cv2_p2_selfhost_shapes.XXXXXX)"
 OUT_PREFIX="$TMP_DIR/selfhost_shapes"
@@ -19,7 +19,7 @@ trap cleanup EXIT
 
 CRYSTAL_V2_STOP_AFTER_MIR=1 \
   "$ROOT/scripts/run_safe.sh" "$COMPILER" 300 4096 \
-  "$ROOT/src/crystal_v2.cr" --emit mir --no-link -o "$OUT_PREFIX" \
+  "$ROOT/src/adamas.cr" --emit mir --no-link -o "$OUT_PREFIX" \
   >"$LOG" 2>&1
 
 if [[ ! -s "$MIR" ]]; then
@@ -197,15 +197,15 @@ require_legacy_shape_targets_absent_or_well_typed() {
   require_dir_glob_splat_wrapper_shape
 }
 
-require_pattern 'global_load @CrystalV2::Compiler__classvar__CRYSTAL_SRC_PATH : String' \
+require_pattern 'global_load @Adamas::Compiler__classvar__CRYSTAL_SRC_PATH : String' \
   'typed CRYSTAL_SRC_PATH global load'
 
 require_legacy_shape_targets_absent_or_well_typed
 
-require_in_function 'func @CrystalV2::Compiler::Frontend::Parser#is_constant_name\?\$Slice\(UInt8\)' \
+require_in_function 'func @Adamas::Compiler::Frontend::Parser#is_constant_name\?\$Slice\(UInt8\)' \
   'zext %[0-9]+ : Char' \
   'UInt8-to-Char zext in Parser#is_constant_name?'
-reject_in_function 'func @CrystalV2::Compiler::Frontend::Parser#is_constant_name\?\$Slice\(UInt8\)' \
+reject_in_function 'func @Adamas::Compiler::Frontend::Parser#is_constant_name\?\$Slice\(UInt8\)' \
   'load %[0-9]+ : Char' \
   'stale Slice(UInt8)#[] return repaired to Char load'
 
@@ -222,10 +222,10 @@ reject_in_function 'func @Dir\.glob\$Enumerable_File::MatchOptions_Bool_block' \
 reject_pattern '^func @Dir\.glob\$String\(' \
   'scalar Dir.glob$String wrapper after splat default expansion'
 
-require_in_function 'func @CrystalV2::Compiler::Semantic::TypeInferenceEngine#primitive_metaclass\?\$CrystalV2::Compiler::Semantic::Type' \
+require_in_function 'func @Adamas::Compiler::Semantic::TypeInferenceEngine#primitive_metaclass\?\$Adamas::Compiler::Semantic::Type' \
   'bitcast %[0-9]+ : Type#[0-9]+' \
   'PrimitiveType cast before PrimitiveType#name'
-reject_in_function 'func @CrystalV2::Compiler::Semantic::TypeInferenceEngine#primitive_metaclass\?\$CrystalV2::Compiler::Semantic::Type' \
+reject_in_function 'func @Adamas::Compiler::Semantic::TypeInferenceEngine#primitive_metaclass\?\$Adamas::Compiler::Semantic::Type' \
   'Hash\(String, Hash\(UInt32, Crystal::HIR::Value\)\)#ends_with\?\$String' \
   'stale Hash#ends_with target after PrimitiveType#name'
 
@@ -235,7 +235,7 @@ reject_pattern 'T#lookup_macro\$String' \
   'generic T#lookup_macro target in self-host MIR'
 reject_pattern 'NameResolver#(current_owner_symbol|in_method_body\?|current_method_is_class_method\?|top_level_scope\?|type_expression_context\?)' \
   'unmaterialized NameResolver zero-arg helper target in self-host MIR'
-require_pattern 'func @CrystalV2::Compiler::Semantic::TypeInferenceEngine#guard_watchdog!' \
+require_pattern 'func @Adamas::Compiler::Semantic::TypeInferenceEngine#guard_watchdog!' \
   'materialized TypeInferenceEngine guard_watchdog! helper in self-host MIR'
 reject_pattern 'Class\.crystal_type_id|Class#crystal_type_id' \
   'Class.crystal_type_id stub target in self-host MIR'

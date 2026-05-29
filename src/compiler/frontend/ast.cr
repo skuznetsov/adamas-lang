@@ -8,7 +8,7 @@ require "./string_pool"
   end
 {% end %}
 
-module CrystalV2
+module Adamas
   module Compiler
     module Frontend
       # Abstract base class for all AST nodes

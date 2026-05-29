@@ -4,11 +4,11 @@ require "../spec_helper"
 # These exercises the AST-to-HIR yield substitution path (inline-only functions).
 
 module YieldInliningTestHelper
-  COMPILER_PATH = File.expand_path("../../bin/crystal_v2", __DIR__)
+  COMPILER_PATH = File.expand_path("../../bin/adamas", __DIR__)
 
   def self.compile_and_run(files : Hash(String, String), main_file : String) : String
-    dir = "/tmp/crystal_v2_yield_inline_#{Random.rand(100000)}"
-    exe = "/tmp/crystal_v2_yield_inline_#{Random.rand(100000)}"
+    dir = "/tmp/adamas_yield_inline_#{Random.rand(100000)}"
+    exe = "/tmp/adamas_yield_inline_#{Random.rand(100000)}"
 
     Dir.mkdir(dir)
     files.each do |name, content|

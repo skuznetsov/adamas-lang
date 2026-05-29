@@ -10,8 +10,8 @@ require "../../src/compiler/semantic/diagnostic_formatter"
 require "../../src/compiler/semantic/types/primitive_type"
 
 module CompileShadowAggregateSpecAliases
-  alias Frontend = CrystalV2::Compiler::Frontend
-  alias Semantic = CrystalV2::Compiler::Semantic
+  alias Frontend = Adamas::Compiler::Frontend
+  alias Semantic = Adamas::Compiler::Semantic
 end
 
 include CompileShadowAggregateSpecAliases

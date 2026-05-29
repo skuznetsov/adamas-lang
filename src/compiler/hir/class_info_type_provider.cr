@@ -1,7 +1,7 @@
 require "./taint_analysis"
 require "./ast_to_hir"
 
-module Crystal::HIR
+module Adamas::HIR
   # Type info backed by AstToHir class metadata.
   class ClassInfoTypeProvider
     include TypeInfoProvider

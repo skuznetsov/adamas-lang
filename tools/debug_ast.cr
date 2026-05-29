@@ -9,8 +9,8 @@ def main : Int32
 end
 CR
 
-lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+parser = Adamas::Compiler::Frontend::Parser.new(lexer)
 result = parser.parse_program
 arena = result.arena
 
@@ -20,25 +20,25 @@ def dump_node(arena, expr_id, indent = 0)
   puts "#{prefix}#{node.class.name.split("::").last}"
 
   case node
-  when CrystalV2::Compiler::Frontend::DefNode
+  when Adamas::Compiler::Frontend::DefNode
     puts "#{prefix}  name: #{String.new(node.name)}"
     node.body.try &.each { |e| dump_node(arena, e, indent + 1) }
-  when CrystalV2::Compiler::Frontend::AssignNode
+  when Adamas::Compiler::Frontend::AssignNode
     puts "#{prefix}  target:"
     dump_node(arena, expr_id: node.target, indent: indent + 2)
     puts "#{prefix}  value:"
     dump_node(arena, expr_id: node.value, indent: indent + 2)
-  when CrystalV2::Compiler::Frontend::CallNode
+  when Adamas::Compiler::Frontend::CallNode
     puts "#{prefix}  callee:"
     dump_node(arena, expr_id: node.callee, indent: indent + 2)
     puts "#{prefix}  args: #{node.args.size}"
-  when CrystalV2::Compiler::Frontend::MemberAccessNode
+  when Adamas::Compiler::Frontend::MemberAccessNode
     puts "#{prefix}  object:"
     dump_node(arena, expr_id: node.object, indent: indent + 2)
     puts "#{prefix}  member: #{String.new(node.member)}"
-  when CrystalV2::Compiler::Frontend::IdentifierNode
+  when Adamas::Compiler::Frontend::IdentifierNode
     puts "#{prefix}  name: #{String.new(node.name)}"
-  when CrystalV2::Compiler::Frontend::ConstantNode
+  when Adamas::Compiler::Frontend::ConstantNode
     puts "#{prefix}  name: #{String.new(node.name)}"
   end
 end

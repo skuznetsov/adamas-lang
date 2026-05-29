@@ -14,7 +14,7 @@
 - `logs/`: debug logs, LSP traces.
 
 ## Compiler Entry Points
-- CLI: `src/crystal_v2.cr` -> `src/compiler/cli.cr`.
+- CLI: `src/adamas.cr` -> `src/compiler/cli.cr`.
 - Driver: `src/compiler/driver.cr`.
 - LSP: `src/lsp_main.cr` -> `src/compiler/lsp/server.cr`.
 

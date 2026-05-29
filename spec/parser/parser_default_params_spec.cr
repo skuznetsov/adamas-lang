@@ -2,7 +2,7 @@ require "spec"
 
 require "../../src/compiler/frontend/parser"
 
-describe "CrystalV2::Compiler::Frontend::Parser" do
+describe "Adamas::Compiler::Frontend::Parser" do
   describe "Phase 71: Default parameter values (PRODUCTION-READY)" do
     it "parses method with single default parameter" do
       source = <<-CRYSTAL
@@ -11,16 +11,16 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       method_node = arena[program.roots[0]]
-      CrystalV2::Compiler::Frontend.node_kind(method_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Def)
+      Adamas::Compiler::Frontend.node_kind(method_node).should eq(Adamas::Compiler::Frontend::NodeKind::Def)
 
-      params = CrystalV2::Compiler::Frontend.node_def_params(method_node).not_nil!
+      params = Adamas::Compiler::Frontend.node_def_params(method_node).not_nil!
       params.size.should eq(1)
       params[0].name.should eq("x".to_slice)
       params[0].default_value.should_not be_nil
@@ -33,14 +33,14 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       method_node = arena[program.roots[0]]
-      params = CrystalV2::Compiler::Frontend.node_def_params(method_node).not_nil!
+      params = Adamas::Compiler::Frontend.node_def_params(method_node).not_nil!
       params.size.should eq(1)
       params[0].name.should eq("x".to_slice)
       params[0].type_annotation.not_nil!.should eq("Int32".to_slice)
@@ -54,14 +54,14 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       method_node = arena[program.roots[0]]
-      params = CrystalV2::Compiler::Frontend.node_def_params(method_node).not_nil!
+      params = Adamas::Compiler::Frontend.node_def_params(method_node).not_nil!
       params.size.should eq(3)
       params[0].name.should eq("x".to_slice)
       params[0].default_value.should_not be_nil
@@ -78,14 +78,14 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       method_node = arena[program.roots[0]]
-      params = CrystalV2::Compiler::Frontend.node_def_params(method_node).not_nil!
+      params = Adamas::Compiler::Frontend.node_def_params(method_node).not_nil!
       params.size.should eq(3)
       params[0].name.should eq("a".to_slice)
       params[0].default_value.should be_nil
@@ -102,19 +102,19 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       method_node = arena[program.roots[0]]
-      params = CrystalV2::Compiler::Frontend.node_def_params(method_node).not_nil!
+      params = Adamas::Compiler::Frontend.node_def_params(method_node).not_nil!
       params.size.should eq(1)
 
       default_value = params[0].default_value.not_nil!
       default_node = arena[default_value]
-      CrystalV2::Compiler::Frontend.node_kind(default_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Binary)
+      Adamas::Compiler::Frontend.node_kind(default_node).should eq(Adamas::Compiler::Frontend::NodeKind::Binary)
     end
 
     it "parses method with identifier as default value" do
@@ -124,19 +124,19 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       method_node = arena[program.roots[0]]
-      params = CrystalV2::Compiler::Frontend.node_def_params(method_node).not_nil!
+      params = Adamas::Compiler::Frontend.node_def_params(method_node).not_nil!
       params.size.should eq(1)
 
       default_value = params[0].default_value.not_nil!
       default_node = arena[default_value]
-      CrystalV2::Compiler::Frontend.node_kind(default_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Identifier)
+      Adamas::Compiler::Frontend.node_kind(default_node).should eq(Adamas::Compiler::Frontend::NodeKind::Identifier)
     end
 
     it "parses method with string literal as default value" do
@@ -146,19 +146,19 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       method_node = arena[program.roots[0]]
-      params = CrystalV2::Compiler::Frontend.node_def_params(method_node).not_nil!
+      params = Adamas::Compiler::Frontend.node_def_params(method_node).not_nil!
       params.size.should eq(1)
 
       default_value = params[0].default_value.not_nil!
       default_node = arena[default_value]
-      CrystalV2::Compiler::Frontend.node_kind(default_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::String)
+      Adamas::Compiler::Frontend.node_kind(default_node).should eq(Adamas::Compiler::Frontend::NodeKind::String)
     end
 
     it "parses method with array literal as default value" do
@@ -168,19 +168,19 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       method_node = arena[program.roots[0]]
-      params = CrystalV2::Compiler::Frontend.node_def_params(method_node).not_nil!
+      params = Adamas::Compiler::Frontend.node_def_params(method_node).not_nil!
       params.size.should eq(1)
 
       default_value = params[0].default_value.not_nil!
       default_node = arena[default_value]
-      CrystalV2::Compiler::Frontend.node_kind(default_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::ArrayLiteral)
+      Adamas::Compiler::Frontend.node_kind(default_node).should eq(Adamas::Compiler::Frontend::NodeKind::ArrayLiteral)
     end
 
     it "parses method with default after splat" do
@@ -190,14 +190,14 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       method_node = arena[program.roots[0]]
-      params = CrystalV2::Compiler::Frontend.node_def_params(method_node).not_nil!
+      params = Adamas::Compiler::Frontend.node_def_params(method_node).not_nil!
       params.size.should eq(3)
       params[0].name.should eq("x".to_slice)
       params[0].default_value.should be_nil
@@ -214,14 +214,14 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       method_node = arena[program.roots[0]]
-      params = CrystalV2::Compiler::Frontend.node_def_params(method_node).not_nil!
+      params = Adamas::Compiler::Frontend.node_def_params(method_node).not_nil!
       params.size.should eq(3)
 
       params[0].name.should eq("a".to_slice)
@@ -246,22 +246,22 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       class_node = arena[program.roots[0]]
-      CrystalV2::Compiler::Frontend.node_kind(class_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Class)
+      Adamas::Compiler::Frontend.node_kind(class_node).should eq(Adamas::Compiler::Frontend::NodeKind::Class)
 
-      class_body = CrystalV2::Compiler::Frontend.node_class_body(class_node).not_nil!
+      class_body = Adamas::Compiler::Frontend.node_class_body(class_node).not_nil!
       class_body.size.should eq(1)
 
       method_node = arena[class_body[0]]
-      CrystalV2::Compiler::Frontend.node_kind(method_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Def)
+      Adamas::Compiler::Frontend.node_kind(method_node).should eq(Adamas::Compiler::Frontend::NodeKind::Def)
 
-      params = CrystalV2::Compiler::Frontend.node_def_params(method_node).not_nil!
+      params = Adamas::Compiler::Frontend.node_def_params(method_node).not_nil!
       params.size.should eq(1)
       params[0].default_value.should_not be_nil
     end
@@ -273,19 +273,19 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       method_node = arena[program.roots[0]]
-      params = CrystalV2::Compiler::Frontend.node_def_params(method_node).not_nil!
+      params = Adamas::Compiler::Frontend.node_def_params(method_node).not_nil!
       params.size.should eq(1)
 
       default_value = params[0].default_value.not_nil!
       default_node = arena[default_value]
-      CrystalV2::Compiler::Frontend.node_kind(default_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Nil)
+      Adamas::Compiler::Frontend.node_kind(default_node).should eq(Adamas::Compiler::Frontend::NodeKind::Nil)
     end
 
     it "parses method with boolean as default value" do
@@ -295,19 +295,19 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       method_node = arena[program.roots[0]]
-      params = CrystalV2::Compiler::Frontend.node_def_params(method_node).not_nil!
+      params = Adamas::Compiler::Frontend.node_def_params(method_node).not_nil!
       params.size.should eq(1)
 
       default_value = params[0].default_value.not_nil!
       default_node = arena[default_value]
-      CrystalV2::Compiler::Frontend.node_kind(default_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Bool)
+      Adamas::Compiler::Frontend.node_kind(default_node).should eq(Adamas::Compiler::Frontend::NodeKind::Bool)
     end
 
     it "parses method with complex expression as default value" do
@@ -317,20 +317,20 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       method_node = arena[program.roots[0]]
-      params = CrystalV2::Compiler::Frontend.node_def_params(method_node).not_nil!
+      params = Adamas::Compiler::Frontend.node_def_params(method_node).not_nil!
       params.size.should eq(1)
 
       default_value = params[0].default_value.not_nil!
       default_node = arena[default_value]
       # Complex expression: 1 + (2 * 3)
-      CrystalV2::Compiler::Frontend.node_kind(default_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Binary)
+      Adamas::Compiler::Frontend.node_kind(default_node).should eq(Adamas::Compiler::Frontend::NodeKind::Binary)
     end
   end
 end

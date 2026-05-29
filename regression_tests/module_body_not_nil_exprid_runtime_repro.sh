@@ -23,7 +23,7 @@ trap cleanup EXIT
 cat >"$SRC" <<'CR'
 require "../../src/compiler/frontend/ast"
 
-alias FE = CrystalV2::Compiler::Frontend
+alias FE = Adamas::Compiler::Frontend
 
 body = [FE::ExprId.new(7)]
 puts "body0"

@@ -16,14 +16,14 @@ project_root = File.expand_path("..", __DIR__)
   require {{ "#{upstream_root}/src/compiler/crystal/syntax/exception" }}
   require {{ "#{upstream_root}/src/compiler/crystal/syntax/parser" }}
 {% else %}
-  # Fallback to sibling checkout: ../crystal relative to crystal_v2_repo/tools
+  # Fallback to sibling checkout: ../crystal relative to adamas_repo/tools
   require "../../crystal/src/compiler/crystal/syntax/virtual_file"
   require "../../crystal/src/compiler/crystal/syntax/exception"
   require "../../crystal/src/compiler/crystal/syntax/parser"
 {% end %}
 
 module CompareParsers
-  alias Watchdog = CrystalV2::Compiler::Frontend::Watchdog
+  alias Watchdog = Adamas::Compiler::Frontend::Watchdog
 
   struct FileResult
     getter path : String
@@ -40,8 +40,8 @@ module CompareParsers
 
   def self.parse_v2(path : String) : {Bool, Int32}
     source = File.read(path)
-    lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-    parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+    lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+    parser = Adamas::Compiler::Frontend::Parser.new(lexer)
 
     Watchdog.enable!("parse_v2 #{path}", MAX_TIME)
     begin

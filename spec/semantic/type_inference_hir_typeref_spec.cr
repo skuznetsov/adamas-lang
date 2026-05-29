@@ -6,8 +6,8 @@ require "../../src/compiler/frontend/parser"
 require "../../src/compiler/semantic/analyzer"
 require "../../src/compiler/semantic/type_inference_engine"
 
-alias Frontend = CrystalV2::Compiler::Frontend
-alias Semantic = CrystalV2::Compiler::Semantic
+alias Frontend = Adamas::Compiler::Frontend
+alias Semantic = Adamas::Compiler::Semantic
 
 private def infer_hir_typeref_types(source : String)
   parser = Frontend::Parser.new(Frontend::Lexer.new(source))
@@ -25,7 +25,7 @@ describe Semantic::TypeInferenceEngine do
   describe "nested receiverless new in HIR-style type refs" do
     it "supports receiverless new with outer aliases in nested modules" do
       source = <<-CRYSTAL
-        module Crystal::HIR
+        module Adamas::HIR
           alias TypeId = UInt32
 
           struct TypeRef
@@ -43,7 +43,7 @@ describe Semantic::TypeInferenceEngine do
           end
         end
 
-        Crystal::HIR::TypeRef.zero.id
+        Adamas::HIR::TypeRef.zero.id
       CRYSTAL
 
       program, analyzer, engine = infer_hir_typeref_types(source)

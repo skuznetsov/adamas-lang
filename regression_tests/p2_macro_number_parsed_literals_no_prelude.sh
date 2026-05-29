@@ -13,10 +13,10 @@ trap 'rm -rf "$tmpdir"' EXIT
 
 if ! awk '
   /private def macro_value_for_expr/ { in_macro_value = 1 }
-  in_macro_value && /when CrystalV2::Compiler::Frontend::NumberNode/ { in_number = 1 }
+  in_macro_value && /when Adamas::Compiler::Frontend::NumberNode/ { in_number = 1 }
   in_number && /expr_node\.parsed_float/ { parsed_float = 1 }
   in_number && /MacroNumberValue\.from_literal\(literal\)/ { reparses = 1 }
-  in_number && /when CrystalV2::Compiler::Frontend::CallNode/ {
+  in_number && /when Adamas::Compiler::Frontend::CallNode/ {
     if (parsed_float && !reparses) exit 0
     exit 1
   }

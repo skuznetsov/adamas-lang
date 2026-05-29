@@ -3,13 +3,13 @@ require "./lexer/token"
 require "./string_pool"
 require "./watchdog"
 
-module CrystalV2
+module Adamas
   module Compiler
     module Frontend
       class Lexer
-        @@lexer_debug_enabled = ::CrystalV2::Compiler::BootstrapEnv.enabled?("LEXER_DEBUG")
-        @@stage2_lexer_debug_enabled = ::CrystalV2::Compiler::BootstrapEnv.enabled?("STAGE2_LEXER_DEBUG")
-        @diagnostics : Array(CrystalV2::Compiler::Frontend::Diagnostic)?
+        @@lexer_debug_enabled = ::Adamas::Compiler::BootstrapEnv.enabled?("LEXER_DEBUG")
+        @@stage2_lexer_debug_enabled = ::Adamas::Compiler::BootstrapEnv.enabled?("STAGE2_LEXER_DEBUG")
+        @diagnostics : Array(Adamas::Compiler::Frontend::Diagnostic)?
         property diagnostics
         @last_token_kind : Token::Kind? # Phase 57: for regex vs division disambiguation
         @at_statement_start : Bool      # Phase 57: Track statement boundaries for regex disambiguation

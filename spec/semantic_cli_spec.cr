@@ -68,13 +68,13 @@ private def with_semantic_shadow_strict_env(&)
   end
 end
 
-describe CrystalV2::Compiler::CLI do
+describe Adamas::Compiler::CLI do
   it "reports semantic errors when --no-codegen is used" do
     file_path = File.join(__DIR__, "semantic/test_data/missing_method.cr")
     out_io = IO::Memory.new
     err_io = IO::Memory.new
 
-    cli = CrystalV2::Compiler::CLI.new([file_path, "--no-codegen"])
+    cli = Adamas::Compiler::CLI.new([file_path, "--no-codegen"])
     cli.run(out_io: out_io, err_io: err_io)
 
     err_io.rewind
@@ -87,7 +87,7 @@ describe CrystalV2::Compiler::CLI do
     out_io = IO::Memory.new
     err_io = IO::Memory.new
 
-    cli = CrystalV2::Compiler::CLI.new([file_path, "--dump-symbols", "--no-codegen"])
+    cli = Adamas::Compiler::CLI.new([file_path, "--dump-symbols", "--no-codegen"])
     cli.run(out_io: out_io, err_io: err_io)
 
     err_io.rewind
@@ -105,7 +105,7 @@ describe CrystalV2::Compiler::CLI do
     out_io = IO::Memory.new
     err_io = IO::Memory.new
 
-    cli = CrystalV2::Compiler::CLI.new([file_path, "--no-codegen"])
+    cli = Adamas::Compiler::CLI.new([file_path, "--no-codegen"])
     cli.run(out_io: out_io, err_io: err_io)
 
     err_io.rewind
@@ -120,7 +120,7 @@ describe CrystalV2::Compiler::CLI do
     out_io = IO::Memory.new
     err_io = IO::Memory.new
 
-    cli = CrystalV2::Compiler::CLI.new([file_path, "--no-codegen"])
+    cli = Adamas::Compiler::CLI.new([file_path, "--no-codegen"])
     cli.run(out_io: out_io, err_io: err_io)
 
     err_io.rewind
@@ -141,7 +141,7 @@ describe CrystalV2::Compiler::CLI do
       status = 1
 
       with_semantic_compile_env do
-        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli = Adamas::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
         status = cli.run(out_io: out_io, err_io: err_io)
       end
 
@@ -168,7 +168,7 @@ describe CrystalV2::Compiler::CLI do
       status = 0
 
       with_semantic_compile_env do
-        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli = Adamas::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
         status = cli.run(out_io: out_io, err_io: err_io)
       end
 
@@ -195,7 +195,7 @@ describe CrystalV2::Compiler::CLI do
       status = 0
 
       with_semantic_compile_env do
-        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli = Adamas::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
         status = cli.run(out_io: out_io, err_io: err_io)
       end
 
@@ -223,7 +223,7 @@ describe CrystalV2::Compiler::CLI do
       status = 1
 
       with_semantic_compile_env do
-        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli = Adamas::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
         status = cli.run(out_io: out_io, err_io: err_io)
       end
 
@@ -259,7 +259,7 @@ describe CrystalV2::Compiler::CLI do
       status = 1
 
       with_semantic_compile_env do
-        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli = Adamas::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
         status = cli.run(out_io: out_io, err_io: err_io)
       end
 
@@ -346,7 +346,7 @@ describe CrystalV2::Compiler::CLI do
       status = 1
 
       with_semantic_compile_env do
-        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli = Adamas::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
         status = cli.run(out_io: out_io, err_io: err_io)
       end
 
@@ -381,7 +381,7 @@ describe CrystalV2::Compiler::CLI do
       status = 1
 
       with_semantic_compile_env do
-        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli = Adamas::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
         status = cli.run(out_io: out_io, err_io: err_io)
       end
 
@@ -422,7 +422,7 @@ describe CrystalV2::Compiler::CLI do
       status = 1
 
       with_semantic_compile_env do
-        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli = Adamas::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
         status = cli.run(out_io: out_io, err_io: err_io)
       end
 
@@ -461,7 +461,7 @@ describe CrystalV2::Compiler::CLI do
       status = 1
 
       with_semantic_compile_env do
-        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli = Adamas::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
         status = cli.run(out_io: out_io, err_io: err_io)
       end
 
@@ -504,7 +504,7 @@ describe CrystalV2::Compiler::CLI do
       status = 1
 
       with_semantic_compile_env do
-        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli = Adamas::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
         status = cli.run(out_io: out_io, err_io: err_io)
       end
 
@@ -554,7 +554,7 @@ describe CrystalV2::Compiler::CLI do
       status = 1
 
       with_semantic_compile_env do
-        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli = Adamas::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
         status = cli.run(out_io: out_io, err_io: err_io)
       end
 
@@ -583,7 +583,7 @@ describe CrystalV2::Compiler::CLI do
       status = 1
 
       with_semantic_compile_env do
-        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli = Adamas::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
         status = cli.run(out_io: out_io, err_io: err_io)
       end
 
@@ -640,7 +640,7 @@ describe CrystalV2::Compiler::CLI do
       status = 1
 
       with_semantic_compile_env do
-        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli = Adamas::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
         status = cli.run(out_io: out_io, err_io: err_io)
       end
 
@@ -695,7 +695,7 @@ describe CrystalV2::Compiler::CLI do
       status = 1
 
       with_semantic_compile_env do
-        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli = Adamas::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
         status = cli.run(out_io: out_io, err_io: err_io)
       end
 
@@ -758,7 +758,7 @@ describe CrystalV2::Compiler::CLI do
       status = 1
 
       with_semantic_compile_env do
-        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli = Adamas::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
         status = cli.run(out_io: out_io, err_io: err_io)
       end
 
@@ -821,7 +821,7 @@ describe CrystalV2::Compiler::CLI do
       status = 1
 
       with_semantic_compile_env do
-        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli = Adamas::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
         status = cli.run(out_io: out_io, err_io: err_io)
       end
 
@@ -910,7 +910,7 @@ describe CrystalV2::Compiler::CLI do
       status = 1
 
       with_semantic_compile_env do
-        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli = Adamas::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
         status = cli.run(out_io: out_io, err_io: err_io)
       end
 
@@ -947,7 +947,7 @@ describe CrystalV2::Compiler::CLI do
       status = 1
 
       with_semantic_compile_env do
-        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli = Adamas::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
         status = cli.run(out_io: out_io, err_io: err_io)
       end
 
@@ -961,8 +961,8 @@ describe CrystalV2::Compiler::CLI do
   it "keeps semantic compile prepass green for stdlib record macros with user-defined generic type applications" do
     with_temp_shadow_project({
       "main.cr" => <<-'CRYSTAL',
-        require "/Users/sergey/Projects/Crystal/crystal_v2_repo/src/stdlib/object/properties"
-        require "/Users/sergey/Projects/Crystal/crystal_v2_repo/src/stdlib/macros"
+        require "/Users/sergey/Projects/Crystal/adamas_repo/src/stdlib/object/properties"
+        require "/Users/sergey/Projects/Crystal/adamas_repo/src/stdlib/macros"
 
         struct Object
         end
@@ -1002,7 +1002,7 @@ describe CrystalV2::Compiler::CLI do
       status = 1
 
       with_semantic_compile_env do
-        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli = Adamas::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
         status = cli.run(out_io: out_io, err_io: err_io)
       end
 
@@ -1046,7 +1046,7 @@ describe CrystalV2::Compiler::CLI do
       status = 1
 
       with_semantic_compile_env do
-        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli = Adamas::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
         status = cli.run(out_io: out_io, err_io: err_io)
       end
 
@@ -1076,7 +1076,7 @@ describe CrystalV2::Compiler::CLI do
       status = 1
 
       with_semantic_compile_env do
-        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli = Adamas::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
         status = cli.run(out_io: out_io, err_io: err_io)
       end
 
@@ -1097,7 +1097,7 @@ describe CrystalV2::Compiler::CLI do
       err_io = IO::Memory.new
 
       with_semantic_shadow_env do
-        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli = Adamas::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
         cli.run(out_io: out_io, err_io: err_io)
       end
 
@@ -1121,7 +1121,7 @@ describe CrystalV2::Compiler::CLI do
       err_io = IO::Memory.new
 
       with_semantic_shadow_strict_env do
-        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli = Adamas::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
         cli.run(out_io: out_io, err_io: err_io)
       end
 
@@ -1154,7 +1154,7 @@ describe CrystalV2::Compiler::CLI do
       err_io = IO::Memory.new
 
       with_semantic_shadow_env do
-        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli = Adamas::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
         cli.run(out_io: out_io, err_io: err_io)
       end
 
@@ -1187,7 +1187,7 @@ describe CrystalV2::Compiler::CLI do
       err_io = IO::Memory.new
 
       with_semantic_shadow_env do
-        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli = Adamas::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
         cli.run(out_io: out_io, err_io: err_io)
       end
 
@@ -1222,7 +1222,7 @@ describe CrystalV2::Compiler::CLI do
       err_io = IO::Memory.new
 
       with_semantic_shadow_env do
-        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli = Adamas::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
         cli.run(out_io: out_io, err_io: err_io)
       end
 
@@ -1257,7 +1257,7 @@ describe CrystalV2::Compiler::CLI do
       err_io = IO::Memory.new
 
       with_semantic_shadow_env do
-        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli = Adamas::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
         cli.run(out_io: out_io, err_io: err_io)
       end
 
@@ -1295,7 +1295,7 @@ describe CrystalV2::Compiler::CLI do
       err_io = IO::Memory.new
 
       with_semantic_shadow_env do
-        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli = Adamas::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
         cli.run(out_io: out_io, err_io: err_io)
       end
 
@@ -1344,7 +1344,7 @@ describe CrystalV2::Compiler::CLI do
       err_io = IO::Memory.new
 
       with_semantic_shadow_env do
-        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli = Adamas::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
         cli.run(out_io: out_io, err_io: err_io)
       end
 
@@ -1391,7 +1391,7 @@ describe CrystalV2::Compiler::CLI do
       err_io = IO::Memory.new
 
       with_semantic_shadow_env do
-        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli = Adamas::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
         cli.run(out_io: out_io, err_io: err_io)
       end
 
@@ -1440,7 +1440,7 @@ describe CrystalV2::Compiler::CLI do
       err_io = IO::Memory.new
 
       with_semantic_shadow_env do
-        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli = Adamas::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
         cli.run(out_io: out_io, err_io: err_io)
       end
 
@@ -1487,7 +1487,7 @@ describe CrystalV2::Compiler::CLI do
       err_io = IO::Memory.new
 
       with_semantic_shadow_env do
-        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli = Adamas::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
         cli.run(out_io: out_io, err_io: err_io)
       end
 
@@ -1536,7 +1536,7 @@ describe CrystalV2::Compiler::CLI do
       err_io = IO::Memory.new
 
       with_semantic_shadow_env do
-        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli = Adamas::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
         cli.run(out_io: out_io, err_io: err_io)
       end
 
@@ -1585,7 +1585,7 @@ describe CrystalV2::Compiler::CLI do
       err_io = IO::Memory.new
 
       with_semantic_shadow_env do
-        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli = Adamas::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
         cli.run(out_io: out_io, err_io: err_io)
       end
 
@@ -1632,7 +1632,7 @@ describe CrystalV2::Compiler::CLI do
       err_io = IO::Memory.new
 
       with_semantic_shadow_env do
-        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli = Adamas::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
         cli.run(out_io: out_io, err_io: err_io)
       end
 
@@ -1681,7 +1681,7 @@ describe CrystalV2::Compiler::CLI do
       err_io = IO::Memory.new
 
       with_semantic_shadow_env do
-        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli = Adamas::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
         cli.run(out_io: out_io, err_io: err_io)
       end
 
@@ -1732,7 +1732,7 @@ describe CrystalV2::Compiler::CLI do
       err_io = IO::Memory.new
 
       with_semantic_shadow_env do
-        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli = Adamas::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
         cli.run(out_io: out_io, err_io: err_io)
       end
 
@@ -1781,7 +1781,7 @@ describe CrystalV2::Compiler::CLI do
       err_io = IO::Memory.new
 
       with_semantic_shadow_strict_env do
-        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli = Adamas::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
         cli.run(out_io: out_io, err_io: err_io)
       end
 
@@ -1816,7 +1816,7 @@ describe CrystalV2::Compiler::CLI do
       err_io = IO::Memory.new
 
       with_semantic_shadow_env do
-        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli = Adamas::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
         cli.run(out_io: out_io, err_io: err_io)
       end
 
@@ -1850,7 +1850,7 @@ describe CrystalV2::Compiler::CLI do
       err_io = IO::Memory.new
 
       with_semantic_shadow_env do
-        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli = Adamas::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
         cli.run(out_io: out_io, err_io: err_io)
       end
 
@@ -1893,7 +1893,7 @@ describe CrystalV2::Compiler::CLI do
       err_io = IO::Memory.new
 
       with_semantic_shadow_env do
-        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli = Adamas::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
         cli.run(out_io: out_io, err_io: err_io)
       end
 
@@ -1926,7 +1926,7 @@ describe CrystalV2::Compiler::CLI do
       err_io = IO::Memory.new
 
       with_semantic_shadow_env do
-        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli = Adamas::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
         cli.run(out_io: out_io, err_io: err_io)
       end
 
@@ -1962,7 +1962,7 @@ describe CrystalV2::Compiler::CLI do
       err_io = IO::Memory.new
 
       with_semantic_shadow_env do
-        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli = Adamas::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
         cli.run(out_io: out_io, err_io: err_io)
       end
 
@@ -1997,7 +1997,7 @@ describe CrystalV2::Compiler::CLI do
       err_io = IO::Memory.new
 
       with_semantic_shadow_env do
-        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli = Adamas::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
         cli.run(out_io: out_io, err_io: err_io)
       end
 
@@ -2030,7 +2030,7 @@ describe CrystalV2::Compiler::CLI do
       err_io = IO::Memory.new
 
       with_semantic_shadow_env do
-        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli = Adamas::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
         cli.run(out_io: out_io, err_io: err_io)
       end
 
@@ -2062,7 +2062,7 @@ describe CrystalV2::Compiler::CLI do
       err_io = IO::Memory.new
 
       with_semantic_shadow_env do
-        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli = Adamas::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
         cli.run(out_io: out_io, err_io: err_io)
       end
 
@@ -2094,7 +2094,7 @@ describe CrystalV2::Compiler::CLI do
       err_io = IO::Memory.new
 
       with_semantic_shadow_env do
-        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli = Adamas::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
         cli.run(out_io: out_io, err_io: err_io)
       end
 
@@ -2123,7 +2123,7 @@ describe CrystalV2::Compiler::CLI do
       err_io = IO::Memory.new
 
       with_semantic_shadow_env do
-        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli = Adamas::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
         cli.run(out_io: out_io, err_io: err_io)
       end
 
@@ -2138,7 +2138,7 @@ describe CrystalV2::Compiler::CLI do
   it "keeps semantic compile prepass green for stdlib class_property macros" do
     with_temp_shadow_project({
       "main.cr" => <<-'CRYSTAL',
-        require "/Users/sergey/Projects/Crystal/crystal_v2_repo/src/stdlib/object/properties"
+        require "/Users/sergey/Projects/Crystal/adamas_repo/src/stdlib/object/properties"
 
         class Reference < Object
         end
@@ -2160,7 +2160,7 @@ describe CrystalV2::Compiler::CLI do
       status = 1
 
       with_semantic_compile_env do
-        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli = Adamas::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
         status = cli.run(out_io: out_io, err_io: err_io)
       end
 

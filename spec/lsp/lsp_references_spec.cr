@@ -9,15 +9,15 @@ require "../../src/compiler/semantic/analyzer"
 describe "LSP References" do
   describe "ReferenceContext struct" do
     it "creates context with includeDeclaration flag" do
-      context = CrystalV2::Compiler::LSP::ReferenceContext.new(include_declaration: true)
+      context = Adamas::Compiler::LSP::ReferenceContext.new(include_declaration: true)
       context.include_declaration.should be_true
 
-      context_false = CrystalV2::Compiler::LSP::ReferenceContext.new(include_declaration: false)
+      context_false = Adamas::Compiler::LSP::ReferenceContext.new(include_declaration: false)
       context_false.include_declaration.should be_false
     end
 
     it "serializes to JSON with camelCase" do
-      context = CrystalV2::Compiler::LSP::ReferenceContext.new(include_declaration: true)
+      context = Adamas::Compiler::LSP::ReferenceContext.new(include_declaration: true)
       json = context.to_json
       json.should contain("\"includeDeclaration\"")
       json.should contain("true")
@@ -26,11 +26,11 @@ describe "LSP References" do
 
   describe "ReferenceParams struct" do
     it "creates params with all required fields" do
-      text_doc = CrystalV2::Compiler::LSP::TextDocumentIdentifier.new(uri: "file:///test.cr")
-      position = CrystalV2::Compiler::LSP::Position.new(line: 5, character: 10)
-      context = CrystalV2::Compiler::LSP::ReferenceContext.new(include_declaration: true)
+      text_doc = Adamas::Compiler::LSP::TextDocumentIdentifier.new(uri: "file:///test.cr")
+      position = Adamas::Compiler::LSP::Position.new(line: 5, character: 10)
+      context = Adamas::Compiler::LSP::ReferenceContext.new(include_declaration: true)
 
-      params = CrystalV2::Compiler::LSP::ReferenceParams.new(
+      params = Adamas::Compiler::LSP::ReferenceParams.new(
         text_document: text_doc,
         position: position,
         context: context
@@ -43,11 +43,11 @@ describe "LSP References" do
     end
 
     it "serializes to JSON correctly" do
-      text_doc = CrystalV2::Compiler::LSP::TextDocumentIdentifier.new(uri: "file:///test.cr")
-      position = CrystalV2::Compiler::LSP::Position.new(line: 5, character: 10)
-      context = CrystalV2::Compiler::LSP::ReferenceContext.new(include_declaration: false)
+      text_doc = Adamas::Compiler::LSP::TextDocumentIdentifier.new(uri: "file:///test.cr")
+      position = Adamas::Compiler::LSP::Position.new(line: 5, character: 10)
+      context = Adamas::Compiler::LSP::ReferenceContext.new(include_declaration: false)
 
-      params = CrystalV2::Compiler::LSP::ReferenceParams.new(
+      params = Adamas::Compiler::LSP::ReferenceParams.new(
         text_document: text_doc,
         position: position,
         context: context
@@ -69,11 +69,11 @@ describe "LSP References" do
       z = x * 2
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       result = analyzer.resolve_names
       identifier_symbols = result.identifier_symbols
@@ -105,11 +105,11 @@ describe "LSP References" do
       z = x * 2
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       result = analyzer.resolve_names
       identifier_symbols = result.identifier_symbols
@@ -141,11 +141,11 @@ describe "LSP References" do
       result2 = calculate(20)
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       result = analyzer.resolve_names
       identifier_symbols = result.identifier_symbols
@@ -176,11 +176,11 @@ describe "LSP References" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       result = analyzer.resolve_names
       identifier_symbols = result.identifier_symbols
@@ -188,8 +188,8 @@ describe "LSP References" do
       # Find 'process' method
       process_symbol = analyzer.global_context.symbol_table.lookup("process")
       process_symbol.should_not be_nil
-      process_symbol.should be_a(CrystalV2::Compiler::Semantic::MethodSymbol)
-      method_symbol = process_symbol.as(CrystalV2::Compiler::Semantic::MethodSymbol)
+      process_symbol.should be_a(Adamas::Compiler::Semantic::MethodSymbol)
+      method_symbol = process_symbol.as(Adamas::Compiler::Semantic::MethodSymbol)
 
       # Get 'value' parameter symbol from method's scope
       value_symbol = method_symbol.scope.lookup("value")
@@ -215,11 +215,11 @@ describe "LSP References" do
       y = x + 5
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       result = analyzer.resolve_names
       identifier_symbols = result.identifier_symbols
@@ -252,11 +252,11 @@ describe "LSP References" do
       z = x * 2
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       result = analyzer.resolve_names
       identifier_symbols = result.identifier_symbols
@@ -284,11 +284,11 @@ describe "LSP References" do
       y = x
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       result = analyzer.resolve_names
       identifier_symbols = result.identifier_symbols
@@ -299,12 +299,12 @@ describe "LSP References" do
       x_symbol = x_symbol.not_nil!
 
       # Create locations
-      locations = [] of CrystalV2::Compiler::LSP::Location
+      locations = [] of Adamas::Compiler::LSP::Location
       identifier_symbols.each do |expr_id, symbol|
         if symbol == x_symbol
           node = program.arena[expr_id]
-          range = CrystalV2::Compiler::LSP::Range.from_span(node.span)
-          location = CrystalV2::Compiler::LSP::Location.new(uri: "file:///test.cr", range: range)
+          range = Adamas::Compiler::LSP::Range.from_span(node.span)
+          location = Adamas::Compiler::LSP::Location.new(uri: "file:///test.cr", range: range)
           locations << location
         end
       end
@@ -330,11 +330,11 @@ describe "LSP References" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       result = analyzer.resolve_names
       identifier_symbols = result.identifier_symbols
@@ -357,11 +357,11 @@ describe "LSP References" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       result = analyzer.resolve_names
       identifier_symbols = result.identifier_symbols
@@ -384,11 +384,11 @@ describe "LSP References" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       result = analyzer.resolve_names
       identifier_symbols = result.identifier_symbols

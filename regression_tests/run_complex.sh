@@ -4,7 +4,7 @@
 
 set -u
 
-COMPILER="${1:-bin/crystal_v2}"
+COMPILER="${1:-bin/adamas}"
 MODE="${2:-quick}"
 TIMEOUT="${TIMEOUT:-12}"
 MAX_MEM="${MAX_MEM:-768}"
@@ -93,7 +93,7 @@ if [ ! -x "$COMPILER" ]; then
     COMPILER="$(command -v "$COMPILER")"
   else
     echo "ERROR: Compiler not found at $COMPILER"
-    echo "Build with: crystal build src/crystal_v2.cr -o bin/crystal_v2 --error-trace"
+    echo "Build with: crystal build src/adamas.cr -o bin/adamas --error-trace"
     exit 1
   fi
 fi

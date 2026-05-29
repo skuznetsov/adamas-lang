@@ -8,7 +8,7 @@ require "./diagnostic"
 require "./generated_overlay"
 require "../hir/debug_hooks"
 
-module CrystalV2
+module Adamas
   module Compiler
     module Semantic
       class Analyzer

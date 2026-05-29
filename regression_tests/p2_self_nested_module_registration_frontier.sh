@@ -4,7 +4,7 @@
 # wrapper must not recurse back into the same registration frontier.
 set -euo pipefail
 
-compiler="${1:-bin/crystal_v2}"
+compiler="${1:-bin/adamas}"
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tmpdir="$(mktemp -d /tmp/cv2_self_nested_module_frontier.XXXXXX)"
 trap 'rm -rf "$tmpdir"' EXIT

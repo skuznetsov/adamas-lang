@@ -22,7 +22,7 @@ abort "Usage: show_diagnostics <file> [limit]" unless ARGV.size >= 1
 path = ARGV[0]
 limit = (ARGV[1]? || "50").to_i
 source = File.read(path)
-lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
+lexer = Adamas::Compiler::Frontend::Lexer.new(source)
 
 # Optional streaming mode for large files to avoid pre-tokenization stalls
 begin
@@ -32,14 +32,14 @@ rescue KeyError
   # Some stdlib Env impls require rescue for writes; ignore
 end
 
-parser = CrystalV2::Compiler::Frontend::Parser.new(lexer, recovery_mode: ENV["CRYSTAL_V2_LSP_RECOVERY"]? == "1")
+parser = Adamas::Compiler::Frontend::Parser.new(lexer, recovery_mode: ENV["CRYSTAL_V2_LSP_RECOVERY"]? == "1")
 
 # Optional prelude parse into shared arena to seed constants (best-effort, skip errors)
 if prelude && File.exists?(prelude)
   begin
     prelude_src = File.read(prelude)
-    prelude_parser = CrystalV2::Compiler::Frontend::Parser.new(
-      CrystalV2::Compiler::Frontend::Lexer.new(prelude_src),
+    prelude_parser = Adamas::Compiler::Frontend::Parser.new(
+      Adamas::Compiler::Frontend::Lexer.new(prelude_src),
       parser.arena,  # share arena to reuse nodes
       recovery_mode: true
     )
@@ -55,11 +55,11 @@ begin
   # Default timeout is 0.1 seconds when ENABLE_WATCHDOG is set without SHOW_TIMEOUT.
   if ENV["ENABLE_WATCHDOG"]? || ENV["SHOW_TIMEOUT"]?
     timeout_s = (ENV["SHOW_TIMEOUT"]? || "0.1").to_f
-    CrystalV2::Compiler::Frontend::Watchdog.enable!("show_diagnostics timeout", timeout_s.seconds)
+    Adamas::Compiler::Frontend::Watchdog.enable!("show_diagnostics timeout", timeout_s.seconds)
   end
 
   parser.parse_program
-rescue ex : CrystalV2::Compiler::Frontend::Watchdog::TimeoutError
+rescue ex : Adamas::Compiler::Frontend::Watchdog::TimeoutError
   STDERR.puts "Watchdog timeout while parsing #{path}: #{ex.message}"
   # Best-effort hint: current implementation does not expose full parser
   # internals here, but the stack trace together with this message should
@@ -67,7 +67,7 @@ rescue ex : CrystalV2::Compiler::Frontend::Watchdog::TimeoutError
   STDERR.puts ex.backtrace?.try(&.join('\n'))
   exit 1
 ensure
-  CrystalV2::Compiler::Frontend::Watchdog.disable!
+  Adamas::Compiler::Frontend::Watchdog.disable!
 end
 
 puts "Diagnostics: #{parser.diagnostics.size}"

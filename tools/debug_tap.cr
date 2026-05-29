@@ -2,15 +2,15 @@ require "../src/compiler/frontend/parser"
 require "../src/compiler/frontend/ast"
 
 # Parse object.cr and check for yield in tap
-parser = CrystalV2::Compiler::Frontend::Parser.new
+parser = Adamas::Compiler::Frontend::Parser.new
 
 # Parse object.cr  
 arena, ast = parser.parse_file("src/stdlib/object.cr")
 
-def contains_yield_rec?(arena, expr_ids : Array(CrystalV2::Compiler::Frontend::ExprId)) : Bool
+def contains_yield_rec?(arena, expr_ids : Array(Adamas::Compiler::Frontend::ExprId)) : Bool
   expr_ids.each do |id|
     node = arena[id]
-    if node.is_a?(CrystalV2::Compiler::Frontend::YieldNode)
+    if node.is_a?(Adamas::Compiler::Frontend::YieldNode)
       return true
     end
     # Check children
@@ -23,14 +23,14 @@ end
 # Find tap method
 ast.each do |node_id|
   node = arena[node_id]
-  if node.is_a?(CrystalV2::Compiler::Frontend::ClassNode)
+  if node.is_a?(Adamas::Compiler::Frontend::ClassNode)
     class_name = String.new(node.name)
     next unless class_name == "Object"
     puts "Found class Object"
     if body = node.body
       body.each do |member_id|
         member = arena[member_id]
-        if member.is_a?(CrystalV2::Compiler::Frontend::DefNode)
+        if member.is_a?(Adamas::Compiler::Frontend::DefNode)
           method_name = String.new(member.name)
           next unless method_name == "tap"
           puts "  Found def tap"

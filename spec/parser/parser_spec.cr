@@ -3,11 +3,11 @@ require "spec"
 require "../../src/compiler/frontend/parser"
 
 
-describe CrystalV2::Compiler::Frontend::Parser do
+describe Adamas::Compiler::Frontend::Parser do
   it "produces AST nodes with arena storage" do
-    lexer = CrystalV2::Compiler::Frontend::Lexer.new("foo + 1
+    lexer = Adamas::Compiler::Frontend::Lexer.new("foo + 1
 bar")
-    parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+    parser = Adamas::Compiler::Frontend::Parser.new(lexer)
     program = parser.parse_program
 
     program.roots.size.should eq(2)
@@ -16,12 +16,12 @@ bar")
 
     # Check if it's a typed node (BinaryNode is migrated to typed)
     first = arena[first_id]
-    first.should be_a(CrystalV2::Compiler::Frontend::BinaryNode)
+    first.should be_a(Adamas::Compiler::Frontend::BinaryNode)
   end
 
   it "parses grouping, unary, and calls" do
     source = "-(f(1 + 2))"
-    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
     program = parser.parse_program
 
     program.roots.size.should eq(1)
@@ -29,82 +29,82 @@ bar")
     root_id = program.roots.first
 
     root = arena[root_id]
-    root.should be_a(CrystalV2::Compiler::Frontend::UnaryNode)
+    root.should be_a(Adamas::Compiler::Frontend::UnaryNode)
 
-    grouping_id = root.as(CrystalV2::Compiler::Frontend::UnaryNode).operand
+    grouping_id = root.as(Adamas::Compiler::Frontend::UnaryNode).operand
     grouping = arena[grouping_id]
-    CrystalV2::Compiler::Frontend.node_kind(grouping).should eq(CrystalV2::Compiler::Frontend::NodeKind::Grouping)
+    Adamas::Compiler::Frontend.node_kind(grouping).should eq(Adamas::Compiler::Frontend::NodeKind::Grouping)
 
-    call_node = arena[CrystalV2::Compiler::Frontend.node_left(grouping).not_nil!]
-    CrystalV2::Compiler::Frontend.node_kind(call_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Call)
-    CrystalV2::Compiler::Frontend.node_args(call_node).not_nil!.size.should eq(1)
+    call_node = arena[Adamas::Compiler::Frontend.node_left(grouping).not_nil!]
+    Adamas::Compiler::Frontend.node_kind(call_node).should eq(Adamas::Compiler::Frontend::NodeKind::Call)
+    Adamas::Compiler::Frontend.node_args(call_node).not_nil!.size.should eq(1)
 
-    arg_id = CrystalV2::Compiler::Frontend.node_args(call_node).not_nil!.first
+    arg_id = Adamas::Compiler::Frontend.node_args(call_node).not_nil!.first
     arg = arena[arg_id]
-    arg.should be_a(CrystalV2::Compiler::Frontend::BinaryNode)
+    arg.should be_a(Adamas::Compiler::Frontend::BinaryNode)
   end
 
   it "parses member access and indexing" do
     source = "foo.bar(1)[0]"
-    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
     program = parser.parse_program
 
     program.roots.size.should eq(1)
     arena = program.arena
 
     root = arena[program.roots.first]
-    CrystalV2::Compiler::Frontend.node_kind(root).should eq(CrystalV2::Compiler::Frontend::NodeKind::Index)
+    Adamas::Compiler::Frontend.node_kind(root).should eq(Adamas::Compiler::Frontend::NodeKind::Index)
 
     # Index uses 'left' field, not 'callee'
-    call_node = arena[CrystalV2::Compiler::Frontend.node_left(root).not_nil!]
-    CrystalV2::Compiler::Frontend.node_kind(call_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Call)
+    call_node = arena[Adamas::Compiler::Frontend.node_left(root).not_nil!]
+    Adamas::Compiler::Frontend.node_kind(call_node).should eq(Adamas::Compiler::Frontend::NodeKind::Call)
 
-    member = arena[CrystalV2::Compiler::Frontend.node_callee(call_node).not_nil!]
-    CrystalV2::Compiler::Frontend.node_kind(member).should eq(CrystalV2::Compiler::Frontend::NodeKind::MemberAccess)
-    CrystalV2::Compiler::Frontend.node_member(member).try { |m| String.new(m) }.should eq("bar")
+    member = arena[Adamas::Compiler::Frontend.node_callee(call_node).not_nil!]
+    Adamas::Compiler::Frontend.node_kind(member).should eq(Adamas::Compiler::Frontend::NodeKind::MemberAccess)
+    Adamas::Compiler::Frontend.node_member(member).try { |m| String.new(m) }.should eq("bar")
   end
 
   it "preserves escaped quote text around string interpolation" do
     source = %q(msg = "\"#{name}\"")
 
-    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
     program = parser.parse_program
 
     program.roots.size.should eq(1)
     arena = program.arena
 
-    assign = arena[program.roots.first].as(CrystalV2::Compiler::Frontend::AssignNode)
-    value = arena[assign.value].as(CrystalV2::Compiler::Frontend::StringInterpolationNode)
+    assign = arena[program.roots.first].as(Adamas::Compiler::Frontend::AssignNode)
+    value = arena[assign.value].as(Adamas::Compiler::Frontend::StringInterpolationNode)
     pieces = value.pieces
 
     pieces.size.should eq(3)
-    pieces[0].kind.should eq(CrystalV2::Compiler::Frontend::StringPiece::Kind::Text)
+    pieces[0].kind.should eq(Adamas::Compiler::Frontend::StringPiece::Kind::Text)
     pieces[0].text.should eq("\"")
-    pieces[1].kind.should eq(CrystalV2::Compiler::Frontend::StringPiece::Kind::Expression)
+    pieces[1].kind.should eq(Adamas::Compiler::Frontend::StringPiece::Kind::Expression)
     pieces[1].expr.should_not be_nil
-    pieces[2].kind.should eq(CrystalV2::Compiler::Frontend::StringPiece::Kind::Text)
+    pieces[2].kind.should eq(Adamas::Compiler::Frontend::StringPiece::Kind::Text)
     pieces[2].text.should eq("\"")
   end
 
   it "preserves escaped newline text around string interpolation" do
     source = %q(msg = "\n#{name}\n")
 
-    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
     program = parser.parse_program
 
     program.roots.size.should eq(1)
     arena = program.arena
 
-    assign = arena[program.roots.first].as(CrystalV2::Compiler::Frontend::AssignNode)
-    value = arena[assign.value].as(CrystalV2::Compiler::Frontend::StringInterpolationNode)
+    assign = arena[program.roots.first].as(Adamas::Compiler::Frontend::AssignNode)
+    value = arena[assign.value].as(Adamas::Compiler::Frontend::StringInterpolationNode)
     pieces = value.pieces
 
     pieces.size.should eq(3)
-    pieces[0].kind.should eq(CrystalV2::Compiler::Frontend::StringPiece::Kind::Text)
+    pieces[0].kind.should eq(Adamas::Compiler::Frontend::StringPiece::Kind::Text)
     pieces[0].text.should eq("\n")
-    pieces[1].kind.should eq(CrystalV2::Compiler::Frontend::StringPiece::Kind::Expression)
+    pieces[1].kind.should eq(Adamas::Compiler::Frontend::StringPiece::Kind::Expression)
     pieces[1].expr.should_not be_nil
-    pieces[2].kind.should eq(CrystalV2::Compiler::Frontend::StringPiece::Kind::Text)
+    pieces[2].kind.should eq(Adamas::Compiler::Frontend::StringPiece::Kind::Text)
     pieces[2].text.should eq("\n")
   end
 
@@ -116,21 +116,21 @@ bar")
       end
     CR
 
-    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
     program = parser.parse_program
 
     program.roots.size.should eq(1)
     arena = program.arena
-    def_node = arena[program.roots.first].as(CrystalV2::Compiler::Frontend::DefNode)
+    def_node = arena[program.roots.first].as(Adamas::Compiler::Frontend::DefNode)
     body = def_node.body.not_nil!
 
-    assign = arena[body[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
-    target = arena[assign.target].as(CrystalV2::Compiler::Frontend::IdentifierNode)
+    assign = arena[body[0]].as(Adamas::Compiler::Frontend::AssignNode)
+    target = arena[assign.target].as(Adamas::Compiler::Frontend::IdentifierNode)
     String.new(target.name).should eq("union")
 
-    call = arena[body[1]].as(CrystalV2::Compiler::Frontend::CallNode)
-    callee = arena[call.callee].as(CrystalV2::Compiler::Frontend::MemberAccessNode)
-    obj = arena[callee.object].as(CrystalV2::Compiler::Frontend::IdentifierNode)
+    call = arena[body[1]].as(Adamas::Compiler::Frontend::CallNode)
+    callee = arena[call.callee].as(Adamas::Compiler::Frontend::MemberAccessNode)
+    obj = arena[callee.object].as(Adamas::Compiler::Frontend::IdentifierNode)
     String.new(obj.name).should eq("union")
   end
 
@@ -141,15 +141,15 @@ bar")
       end
     CR
 
-    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
     program = parser.parse_program
 
     program.roots.size.should eq(1)
     arena = program.arena
     root = arena[program.roots.first]
 
-    root.should be_a(CrystalV2::Compiler::Frontend::CallNode)
-    call = root.as(CrystalV2::Compiler::Frontend::CallNode)
+    root.should be_a(Adamas::Compiler::Frontend::CallNode)
+    call = root.as(Adamas::Compiler::Frontend::CallNode)
     call.args.size.should eq(2)
     call.block.should_not be_nil
   end
@@ -161,18 +161,18 @@ bar")
       end
     CR
 
-    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
     program = parser.parse_program
     arena = program.arena
 
-    outer = arena[program.roots.first].as(CrystalV2::Compiler::Frontend::ModuleNode)
-    klass = arena[outer.body.not_nil!.first].as(CrystalV2::Compiler::Frontend::ClassNode)
-    call = arena[klass.body.not_nil!.first].as(CrystalV2::Compiler::Frontend::CallNode)
+    outer = arena[program.roots.first].as(Adamas::Compiler::Frontend::ModuleNode)
+    klass = arena[outer.body.not_nil!.first].as(Adamas::Compiler::Frontend::ClassNode)
+    call = arena[klass.body.not_nil!.first].as(Adamas::Compiler::Frontend::CallNode)
 
     call.args.size.should eq(1)
     call.named_args.should be_nil
 
-    decl = arena[call.args.first].as(CrystalV2::Compiler::Frontend::TypeDeclarationNode)
+    decl = arena[call.args.first].as(Adamas::Compiler::Frontend::TypeDeclarationNode)
     String.new(decl.name).should eq("local")
     String.new(decl.declared_type).should eq("Location")
     call.block.should_not be_nil
@@ -180,15 +180,15 @@ bar")
 
   it "covers no-parens positional call spans through the last argument" do
     source = "setter path_index"
-    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
     program = parser.parse_program
 
     program.roots.size.should eq(1)
     arena = program.arena
     root = arena[program.roots.first]
-    root.should be_a(CrystalV2::Compiler::Frontend::CallNode)
+    root.should be_a(Adamas::Compiler::Frontend::CallNode)
 
-    call = root.as(CrystalV2::Compiler::Frontend::CallNode)
+    call = root.as(Adamas::Compiler::Frontend::CallNode)
     call.span.start_offset.should eq(0)
     call.span.end_offset.should eq(source.bytesize)
   end
@@ -202,22 +202,22 @@ bar")
       end
     CR
 
-    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
     program = parser.parse_program
 
     program.roots.size.should eq(1)
     arena = program.arena
-    while_node = arena[program.roots.first].as(CrystalV2::Compiler::Frontend::WhileNode)
+    while_node = arena[program.roots.first].as(Adamas::Compiler::Frontend::WhileNode)
     while_node.body.size.should eq(2)
 
-    assign = arena[while_node.body[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
-    target = arena[assign.target].as(CrystalV2::Compiler::Frontend::IdentifierNode)
+    assign = arena[while_node.body[0]].as(Adamas::Compiler::Frontend::AssignNode)
+    target = arena[assign.target].as(Adamas::Compiler::Frontend::IdentifierNode)
     String.new(target.name).should eq("mid")
 
     value = arena[assign.value]
-    CrystalV2::Compiler::Frontend.node_kind(value).should eq(CrystalV2::Compiler::Frontend::NodeKind::Ternary)
+    Adamas::Compiler::Frontend.node_kind(value).should eq(Adamas::Compiler::Frontend::NodeKind::Ternary)
 
-    trailing_expr = arena[while_node.body[1]].as(CrystalV2::Compiler::Frontend::IdentifierNode)
+    trailing_expr = arena[while_node.body[1]].as(Adamas::Compiler::Frontend::IdentifierNode)
     String.new(trailing_expr.name).should eq("foo")
   end
 
@@ -232,22 +232,22 @@ bar")
       end
     CR
 
-    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
     program = parser.parse_program
     arena = program.arena
 
-    outer = arena[program.roots.first].as(CrystalV2::Compiler::Frontend::ModuleNode)
+    outer = arena[program.roots.first].as(Adamas::Compiler::Frontend::ModuleNode)
     outer.absolute.should be_false
 
-    absolute_class = arena[outer.body.not_nil!.first].as(CrystalV2::Compiler::Frontend::ClassNode)
+    absolute_class = arena[outer.body.not_nil!.first].as(Adamas::Compiler::Frontend::ClassNode)
     absolute_class.absolute.should be_true
     String.new(absolute_class.name).should eq("RootTarget")
 
-    absolute_module = arena[outer.body.not_nil![1]].as(CrystalV2::Compiler::Frontend::ModuleNode)
+    absolute_module = arena[outer.body.not_nil![1]].as(Adamas::Compiler::Frontend::ModuleNode)
     absolute_module.absolute.should be_true
     String.new(absolute_module.name).should eq("RootSpace")
 
-    nested_module = arena[absolute_module.body.not_nil!.first].as(CrystalV2::Compiler::Frontend::ModuleNode)
+    nested_module = arena[absolute_module.body.not_nil!.first].as(Adamas::Compiler::Frontend::ModuleNode)
     nested_module.absolute.should be_false
     String.new(nested_module.name).should eq("Inner")
   end
@@ -259,19 +259,19 @@ bar")
       end
     CR
 
-    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
     program = parser.parse_program
 
     program.roots.size.should eq(1)
     arena = program.arena
     macro_def = arena[program.roots.first]
-    CrystalV2::Compiler::Frontend.node_kind(macro_def).should eq(CrystalV2::Compiler::Frontend::NodeKind::MacroDef)
-    CrystalV2::Compiler::Frontend.node_macro_name(macro_def).try { |slice| String.new(slice) }.should eq("my_macro")
+    Adamas::Compiler::Frontend.node_kind(macro_def).should eq(Adamas::Compiler::Frontend::NodeKind::MacroDef)
+    Adamas::Compiler::Frontend.node_macro_name(macro_def).try { |slice| String.new(slice) }.should eq("my_macro")
 
-    body = arena[CrystalV2::Compiler::Frontend.node_left(macro_def).not_nil!]
-    CrystalV2::Compiler::Frontend.node_kind(body).should eq(CrystalV2::Compiler::Frontend::NodeKind::MacroLiteral)
-    pieces = CrystalV2::Compiler::Frontend.node_macro_pieces(body).not_nil!
-    pieces.map(&.kind).should contain(CrystalV2::Compiler::Frontend::MacroPiece::Kind::Expression)
+    body = arena[Adamas::Compiler::Frontend.node_left(macro_def).not_nil!]
+    Adamas::Compiler::Frontend.node_kind(body).should eq(Adamas::Compiler::Frontend::NodeKind::MacroLiteral)
+    pieces = Adamas::Compiler::Frontend.node_macro_pieces(body).not_nil!
+    pieces.map(&.kind).should contain(Adamas::Compiler::Frontend::MacroPiece::Kind::Expression)
   end
 
   it "parses macro control blocks" do
@@ -287,20 +287,20 @@ bar")
       end
     CR
 
-    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
     program = parser.parse_program
 
     program.roots.size.should eq(1)
     arena = program.arena
     macro_def = arena[program.roots.first]
-    body = arena[CrystalV2::Compiler::Frontend.node_left(macro_def).not_nil!]
-    pieces = CrystalV2::Compiler::Frontend.node_macro_pieces(body).not_nil!
-    pieces.map(&.kind).should contain(CrystalV2::Compiler::Frontend::MacroPiece::Kind::ControlStart)
-    pieces.map(&.kind).should contain(CrystalV2::Compiler::Frontend::MacroPiece::Kind::ControlElse)
-    pieces.map(&.kind).should contain(CrystalV2::Compiler::Frontend::MacroPiece::Kind::ControlElseIf)
-    elsif_piece = pieces.find { |piece| piece.kind == CrystalV2::Compiler::Frontend::MacroPiece::Kind::ControlElseIf }
+    body = arena[Adamas::Compiler::Frontend.node_left(macro_def).not_nil!]
+    pieces = Adamas::Compiler::Frontend.node_macro_pieces(body).not_nil!
+    pieces.map(&.kind).should contain(Adamas::Compiler::Frontend::MacroPiece::Kind::ControlStart)
+    pieces.map(&.kind).should contain(Adamas::Compiler::Frontend::MacroPiece::Kind::ControlElse)
+    pieces.map(&.kind).should contain(Adamas::Compiler::Frontend::MacroPiece::Kind::ControlElseIf)
+    elsif_piece = pieces.find { |piece| piece.kind == Adamas::Compiler::Frontend::MacroPiece::Kind::ControlElseIf }
     elsif_piece.not_nil!.expr.should_not be_nil
-    pieces.map(&.kind).should contain(CrystalV2::Compiler::Frontend::MacroPiece::Kind::ControlEnd)
+    pieces.map(&.kind).should contain(Adamas::Compiler::Frontend::MacroPiece::Kind::ControlEnd)
   end
 
   it "parses return yield with grouped first arg and extra args" do
@@ -310,24 +310,24 @@ bar")
       end
     CR
 
-    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
     program = parser.parse_program
 
     program.roots.size.should eq(1)
     arena = program.arena
     def_node = arena[program.roots.first]
-    def_node.should be_a(CrystalV2::Compiler::Frontend::DefNode)
+    def_node.should be_a(Adamas::Compiler::Frontend::DefNode)
 
-    body = def_node.as(CrystalV2::Compiler::Frontend::DefNode).body
+    body = def_node.as(Adamas::Compiler::Frontend::DefNode).body
     body.should_not be_nil
     return_node = arena[body.not_nil!.first]
-    return_node.should be_a(CrystalV2::Compiler::Frontend::ReturnNode)
+    return_node.should be_a(Adamas::Compiler::Frontend::ReturnNode)
 
-    value_id = return_node.as(CrystalV2::Compiler::Frontend::ReturnNode).value
+    value_id = return_node.as(Adamas::Compiler::Frontend::ReturnNode).value
     value_id.should_not be_nil
     value_node = arena[value_id.not_nil!]
-    value_node.should be_a(CrystalV2::Compiler::Frontend::YieldNode)
-    args = value_node.as(CrystalV2::Compiler::Frontend::YieldNode).args
+    value_node.should be_a(Adamas::Compiler::Frontend::YieldNode)
+    args = value_node.as(Adamas::Compiler::Frontend::YieldNode).args
     args.should_not be_nil
     args.not_nil!.size.should eq(3)
   end
@@ -343,14 +343,14 @@ bar")
       end
     CR
 
-    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
     program = parser.parse_program
 
     program.roots.size.should eq(1)
     arena = program.arena
     macro_def = arena[program.roots.first]
-    body = arena[CrystalV2::Compiler::Frontend.node_left(macro_def).not_nil!]
-    pieces = CrystalV2::Compiler::Frontend.node_macro_pieces(body).not_nil!
+    body = arena[Adamas::Compiler::Frontend.node_left(macro_def).not_nil!]
+    pieces = Adamas::Compiler::Frontend.node_macro_pieces(body).not_nil!
 
     control_keywords = pieces.map(&.control_keyword).compact
     control_keywords.should contain("for")
@@ -369,14 +369,14 @@ bar")
       end
     CR
 
-    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
     program = parser.parse_program
 
     program.roots.size.should eq(1)
     arena = program.arena
     macro_def = arena[program.roots.first]
-    body = arena[CrystalV2::Compiler::Frontend.node_left(macro_def).not_nil!]
-    pieces = CrystalV2::Compiler::Frontend.node_macro_pieces(body).not_nil!
+    body = arena[Adamas::Compiler::Frontend.node_left(macro_def).not_nil!]
+    pieces = Adamas::Compiler::Frontend.node_macro_pieces(body).not_nil!
 
     pieces.any? { |piece| piece.kind.text? && piece.text.try(&.includes?("{{ foo }}")) }.should be_true
     pieces.count { |piece| piece.kind.expression? }.should eq(1)
@@ -415,19 +415,19 @@ bar")
       end
     CR
 
-    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source), recovery_mode: true)
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source), recovery_mode: true)
     program = parser.parse_program
 
     parser.diagnostics.should be_empty
     program.roots.size.should eq(1)
 
     arena = program.arena
-    object_class = arena[program.roots.first].as(CrystalV2::Compiler::Frontend::ClassNode)
+    object_class = arena[program.roots.first].as(Adamas::Compiler::Frontend::ClassNode)
     body = object_class.body.not_nil!
     body.size.should eq(2)
 
-    getter_macro = arena[body[0]].as(CrystalV2::Compiler::Frontend::MacroDefNode)
-    setter_macro = arena[body[1]].as(CrystalV2::Compiler::Frontend::MacroDefNode)
+    getter_macro = arena[body[0]].as(Adamas::Compiler::Frontend::MacroDefNode)
+    setter_macro = arena[body[1]].as(Adamas::Compiler::Frontend::MacroDefNode)
     String.new(getter_macro.name).should eq("getter!")
     String.new(setter_macro.name).should eq("setter")
   end
@@ -445,19 +445,19 @@ bar")
       end
     CR
 
-    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source), recovery_mode: true)
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source), recovery_mode: true)
     program = parser.parse_program
 
     parser.diagnostics.should be_empty
     program.roots.size.should eq(1)
 
     arena = program.arena
-    demo_class = arena[program.roots.first].as(CrystalV2::Compiler::Frontend::ClassNode)
+    demo_class = arena[program.roots.first].as(Adamas::Compiler::Frontend::ClassNode)
     body = demo_class.body.not_nil!
     body.size.should eq(2)
 
-    first_def = arena[body[0]].as(CrystalV2::Compiler::Frontend::DefNode)
-    second_def = arena[body[1]].as(CrystalV2::Compiler::Frontend::DefNode)
+    first_def = arena[body[0]].as(Adamas::Compiler::Frontend::DefNode)
+    second_def = arena[body[1]].as(Adamas::Compiler::Frontend::DefNode)
     String.new(first_def.name).should eq("before")
     String.new(second_def.name).should eq("after")
   end
@@ -472,16 +472,16 @@ bar")
       end
     CR
 
-    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
     program = parser.parse_program
 
     program.roots.size.should eq(1)
     arena = program.arena
     macro_def = arena[program.roots.first]
-    body = arena[CrystalV2::Compiler::Frontend.node_left(macro_def).not_nil!]
-    pieces = CrystalV2::Compiler::Frontend.node_macro_pieces(body).not_nil!
+    body = arena[Adamas::Compiler::Frontend.node_left(macro_def).not_nil!]
+    pieces = Adamas::Compiler::Frontend.node_macro_pieces(body).not_nil!
 
-    expr_piece = pieces.find { |piece| piece.kind == CrystalV2::Compiler::Frontend::MacroPiece::Kind::Expression }
+    expr_piece = pieces.find { |piece| piece.kind == Adamas::Compiler::Frontend::MacroPiece::Kind::Expression }
     expr_piece = expr_piece.not_nil!
     expr_piece.trim_left.should be_true
     expr_piece.trim_right.should be_true
@@ -497,16 +497,16 @@ bar")
       end
     CR
 
-    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
     program = parser.parse_program
 
     program.roots.size.should eq(1)
     arena = program.arena
     macro_def = arena[program.roots.first]
-    body = arena[CrystalV2::Compiler::Frontend.node_left(macro_def).not_nil!]
-    pieces = CrystalV2::Compiler::Frontend.node_macro_pieces(body).not_nil!
+    body = arena[Adamas::Compiler::Frontend.node_left(macro_def).not_nil!]
+    pieces = Adamas::Compiler::Frontend.node_macro_pieces(body).not_nil!
 
-    expr_piece = pieces.find { |piece| piece.kind == CrystalV2::Compiler::Frontend::MacroPiece::Kind::Expression }
+    expr_piece = pieces.find { |piece| piece.kind == Adamas::Compiler::Frontend::MacroPiece::Kind::Expression }
     expr_piece = expr_piece.not_nil!
     expr_piece.trim_left.should be_true
     expr_piece.trim_right.should be_true
@@ -520,17 +520,17 @@ bar")
       end
     CR
 
-    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
     program = parser.parse_program
 
     program.roots.size.should eq(1)
     arena = program.arena
     macro_def = arena[program.roots.first]
-    body = arena[CrystalV2::Compiler::Frontend.node_left(macro_def).not_nil!]
-    pieces = CrystalV2::Compiler::Frontend.node_macro_pieces(body).not_nil!
+    body = arena[Adamas::Compiler::Frontend.node_left(macro_def).not_nil!]
+    pieces = Adamas::Compiler::Frontend.node_macro_pieces(body).not_nil!
 
     pieces.size.should eq(2)
-    expr_piece = pieces.find { |piece| piece.kind == CrystalV2::Compiler::Frontend::MacroPiece::Kind::Expression }.not_nil!
+    expr_piece = pieces.find { |piece| piece.kind == Adamas::Compiler::Frontend::MacroPiece::Kind::Expression }.not_nil!
     expr_piece.trim_left.should be_false
     expr_piece.trim_right.should be_false
 
@@ -547,23 +547,23 @@ bar")
       end
     CR
 
-    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
     program = parser.parse_program
 
     program.roots.size.should eq(1)
     arena = program.arena
     macro_def = arena[program.roots.first]
-    body = arena[CrystalV2::Compiler::Frontend.node_left(macro_def).not_nil!]
-    pieces = CrystalV2::Compiler::Frontend.node_macro_pieces(body).not_nil!
+    body = arena[Adamas::Compiler::Frontend.node_left(macro_def).not_nil!]
+    pieces = Adamas::Compiler::Frontend.node_macro_pieces(body).not_nil!
 
     # Should have ControlStart for while
-    control_start = pieces.find { |p| p.kind == CrystalV2::Compiler::Frontend::MacroPiece::Kind::ControlStart }
+    control_start = pieces.find { |p| p.kind == Adamas::Compiler::Frontend::MacroPiece::Kind::ControlStart }
     control_start.should_not be_nil
     control_start.not_nil!.control_keyword.should eq("while")
     control_start.not_nil!.expr.should_not be_nil
 
     # Should have ControlEnd
-    pieces.map(&.kind).should contain(CrystalV2::Compiler::Frontend::MacroPiece::Kind::ControlEnd)
+    pieces.map(&.kind).should contain(Adamas::Compiler::Frontend::MacroPiece::Kind::ControlEnd)
   end
 
   # ECR feature, not Crystal macros
@@ -576,23 +576,23 @@ bar")
       end
     CR
 
-    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
     program = parser.parse_program
 
     program.roots.size.should eq(1)
     arena = program.arena
     macro_def = arena[program.roots.first]
-    body = arena[CrystalV2::Compiler::Frontend.node_left(macro_def).not_nil!]
-    pieces = CrystalV2::Compiler::Frontend.node_macro_pieces(body).not_nil!
+    body = arena[Adamas::Compiler::Frontend.node_left(macro_def).not_nil!]
+    pieces = Adamas::Compiler::Frontend.node_macro_pieces(body).not_nil!
 
-    control_start = pieces.find { |p| p.kind == CrystalV2::Compiler::Frontend::MacroPiece::Kind::ControlStart }
+    control_start = pieces.find { |p| p.kind == Adamas::Compiler::Frontend::MacroPiece::Kind::ControlStart }
     control_start.should_not be_nil
     control_start.not_nil!.trim_left.should be_true
     control_start.not_nil!.trim_right.should be_true
 
     # Body should be properly trimmed
-    CrystalV2::Compiler::Frontend.node_trim_left(body).should be_true
-    CrystalV2::Compiler::Frontend.node_trim_right(body).should be_true
+    Adamas::Compiler::Frontend.node_trim_left(body).should be_true
+    Adamas::Compiler::Frontend.node_trim_right(body).should be_true
   end
 
   it "parses macro for loop" do
@@ -604,17 +604,17 @@ bar")
       end
     CR
 
-    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
     program = parser.parse_program
 
     program.roots.size.should eq(1)
     arena = program.arena
     macro_def = arena[program.roots.first]
-    body = arena[CrystalV2::Compiler::Frontend.node_left(macro_def).not_nil!]
-    pieces = CrystalV2::Compiler::Frontend.node_macro_pieces(body).not_nil!
+    body = arena[Adamas::Compiler::Frontend.node_left(macro_def).not_nil!]
+    pieces = Adamas::Compiler::Frontend.node_macro_pieces(body).not_nil!
 
     # Should have ControlStart for for
-    control_start = pieces.find { |p| p.kind == CrystalV2::Compiler::Frontend::MacroPiece::Kind::ControlStart }
+    control_start = pieces.find { |p| p.kind == Adamas::Compiler::Frontend::MacroPiece::Kind::ControlStart }
     control_start.should_not be_nil
     control_start.not_nil!.control_keyword.should eq("for")
 
@@ -623,7 +623,7 @@ bar")
     control_start.not_nil!.iterable.should_not be_nil
 
     # Should have ControlEnd
-    pieces.map(&.kind).should contain(CrystalV2::Compiler::Frontend::MacroPiece::Kind::ControlEnd)
+    pieces.map(&.kind).should contain(Adamas::Compiler::Frontend::MacroPiece::Kind::ControlEnd)
   end
 
   it "parses macro for loop with tuple destructuring" do
@@ -635,16 +635,16 @@ bar")
       end
     CR
 
-    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
     program = parser.parse_program
 
     program.roots.size.should eq(1)
     arena = program.arena
     macro_def = arena[program.roots.first]
-    body = arena[CrystalV2::Compiler::Frontend.node_left(macro_def).not_nil!]
-    pieces = CrystalV2::Compiler::Frontend.node_macro_pieces(body).not_nil!
+    body = arena[Adamas::Compiler::Frontend.node_left(macro_def).not_nil!]
+    pieces = Adamas::Compiler::Frontend.node_macro_pieces(body).not_nil!
 
-    control_start = pieces.find { |p| p.kind == CrystalV2::Compiler::Frontend::MacroPiece::Kind::ControlStart }
+    control_start = pieces.find { |p| p.kind == Adamas::Compiler::Frontend::MacroPiece::Kind::ControlStart }
     control_start.should_not be_nil
 
     # Should capture both iteration variables
@@ -665,25 +665,25 @@ bar")
       end
     CR
 
-    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
     program = parser.parse_program
 
     program.roots.size.should eq(1)
     arena = program.arena
     macro_def = arena[program.roots.first]
-    body = arena[CrystalV2::Compiler::Frontend.node_left(macro_def).not_nil!]
-    pieces = CrystalV2::Compiler::Frontend.node_macro_pieces(body).not_nil!
+    body = arena[Adamas::Compiler::Frontend.node_left(macro_def).not_nil!]
+    pieces = Adamas::Compiler::Frontend.node_macro_pieces(body).not_nil!
 
     # Should have ControlStart for comment
-    control_start = pieces.find { |p| p.kind == CrystalV2::Compiler::Frontend::MacroPiece::Kind::ControlStart }
+    control_start = pieces.find { |p| p.kind == Adamas::Compiler::Frontend::MacroPiece::Kind::ControlStart }
     control_start.should_not be_nil
     control_start.not_nil!.control_keyword.should eq("comment")
 
     # Should have ControlEnd
-    pieces.map(&.kind).should contain(CrystalV2::Compiler::Frontend::MacroPiece::Kind::ControlEnd)
+    pieces.map(&.kind).should contain(Adamas::Compiler::Frontend::MacroPiece::Kind::ControlEnd)
 
     # Content inside comment should NOT appear as text pieces
-    text_pieces = pieces.select { |p| p.kind == CrystalV2::Compiler::Frontend::MacroPiece::Kind::Text }
+    text_pieces = pieces.select { |p| p.kind == Adamas::Compiler::Frontend::MacroPiece::Kind::Text }
     text_pieces.any? { |p| p.text.to_s.includes?("hidden") }.should be_false
 
     # Should have visible text
@@ -702,16 +702,16 @@ bar")
       end
     CR
 
-    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
     program = parser.parse_program
 
     program.roots.size.should eq(1)
     arena = program.arena
     macro_def = arena[program.roots.first]
-    body = arena[CrystalV2::Compiler::Frontend.node_left(macro_def).not_nil!]
-    pieces = CrystalV2::Compiler::Frontend.node_macro_pieces(body).not_nil!
+    body = arena[Adamas::Compiler::Frontend.node_left(macro_def).not_nil!]
+    pieces = Adamas::Compiler::Frontend.node_macro_pieces(body).not_nil!
 
-    control_start = pieces.find { |p| p.kind == CrystalV2::Compiler::Frontend::MacroPiece::Kind::ControlStart }
+    control_start = pieces.find { |p| p.kind == Adamas::Compiler::Frontend::MacroPiece::Kind::ControlStart }
     control_start.should_not be_nil
     control_start.not_nil!.trim_left.should be_true
     control_start.not_nil!.trim_right.should be_true
@@ -719,7 +719,7 @@ bar")
 
   it "exposes diagnostic spans on unexpected tokens" do
     source = ")"
-    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
     parser.parse_program
 
     parser.diagnostics.size.should eq(1)
@@ -740,26 +740,26 @@ bar")
       end
     CR
 
-    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
     program = parser.parse_program
 
     program.roots.size.should eq(1)
     arena = program.arena
     macro_def = arena[program.roots.first]
-    body = arena[CrystalV2::Compiler::Frontend.node_left(macro_def).not_nil!]
-    pieces = CrystalV2::Compiler::Frontend.node_macro_pieces(body).not_nil!
+    body = arena[Adamas::Compiler::Frontend.node_left(macro_def).not_nil!]
+    pieces = Adamas::Compiler::Frontend.node_macro_pieces(body).not_nil!
 
     # Should have expression piece
-    expr_piece = pieces.find { |p| p.kind == CrystalV2::Compiler::Frontend::MacroPiece::Kind::Expression }
+    expr_piece = pieces.find { |p| p.kind == Adamas::Compiler::Frontend::MacroPiece::Kind::Expression }
     expr_piece.should_not be_nil
 
     # Should have control pieces for if block
-    control_pieces = pieces.select { |p| p.kind == CrystalV2::Compiler::Frontend::MacroPiece::Kind::ControlStart }
+    control_pieces = pieces.select { |p| p.kind == Adamas::Compiler::Frontend::MacroPiece::Kind::ControlStart }
     control_pieces.size.should be >= 1
     control_pieces.any? { |p| p.control_keyword == "if" }.should be_true
 
     # Text after expression should not include newline (due to backslash)
-    text_after_expr = pieces.select { |p| p.kind == CrystalV2::Compiler::Frontend::MacroPiece::Kind::Text }
+    text_after_expr = pieces.select { |p| p.kind == Adamas::Compiler::Frontend::MacroPiece::Kind::Text }
     # Backslash should have consumed the newline between expression and control
   end
 
@@ -773,16 +773,16 @@ bar")
       end
     CR
 
-    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
     program = parser.parse_program
 
     program.roots.size.should eq(1)
     arena = program.arena
     macro_def = arena[program.roots.first]
-    body = arena[CrystalV2::Compiler::Frontend.node_left(macro_def).not_nil!]
-    pieces = CrystalV2::Compiler::Frontend.node_macro_pieces(body).not_nil!
+    body = arena[Adamas::Compiler::Frontend.node_left(macro_def).not_nil!]
+    pieces = Adamas::Compiler::Frontend.node_macro_pieces(body).not_nil!
 
-    expr_piece = pieces.find { |p| p.kind == CrystalV2::Compiler::Frontend::MacroPiece::Kind::Expression }
+    expr_piece = pieces.find { |p| p.kind == Adamas::Compiler::Frontend::MacroPiece::Kind::Expression }
     expr_piece.should_not be_nil
 
     # Both dash (-) and tilde (~) should set trim flags
@@ -798,16 +798,16 @@ bar")
       end
     CR
 
-    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
     program = parser.parse_program
 
     program.roots.size.should eq(1)
     arena = program.arena
     macro_def = arena[program.roots.first]
-    body = arena[CrystalV2::Compiler::Frontend.node_left(macro_def).not_nil!]
-    pieces = CrystalV2::Compiler::Frontend.node_macro_pieces(body).not_nil!
+    body = arena[Adamas::Compiler::Frontend.node_left(macro_def).not_nil!]
+    pieces = Adamas::Compiler::Frontend.node_macro_pieces(body).not_nil!
 
-    expr_pieces = pieces.select { |p| p.kind == CrystalV2::Compiler::Frontend::MacroPiece::Kind::Expression }
+    expr_pieces = pieces.select { |p| p.kind == Adamas::Compiler::Frontend::MacroPiece::Kind::Expression }
     expr_pieces.size.should eq(3)
 
     # First expression: right trim
@@ -832,17 +832,17 @@ bar")
       end
     CR
 
-    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
     program = parser.parse_program
 
     program.roots.size.should eq(1)
     arena = program.arena
     macro_def = arena[program.roots.first]
-    body = arena[CrystalV2::Compiler::Frontend.node_left(macro_def).not_nil!]
-    pieces = CrystalV2::Compiler::Frontend.node_macro_pieces(body).not_nil!
+    body = arena[Adamas::Compiler::Frontend.node_left(macro_def).not_nil!]
+    pieces = Adamas::Compiler::Frontend.node_macro_pieces(body).not_nil!
 
     # Find control start piece
-    control_start = pieces.find { |p| p.kind == CrystalV2::Compiler::Frontend::MacroPiece::Kind::ControlStart }
+    control_start = pieces.find { |p| p.kind == Adamas::Compiler::Frontend::MacroPiece::Kind::ControlStart }
     control_start.should_not be_nil
 
     # Should have span covering full {% if condition %}
@@ -852,7 +852,7 @@ bar")
     span.not_nil!.start_column.should eq(5)  # Start of {%
 
     # Find control end piece
-    control_end = pieces.find { |p| p.kind == CrystalV2::Compiler::Frontend::MacroPiece::Kind::ControlEnd }
+    control_end = pieces.find { |p| p.kind == Adamas::Compiler::Frontend::MacroPiece::Kind::ControlEnd }
     control_end.should_not be_nil
 
     # Should have span covering full {% end %}
@@ -868,17 +868,17 @@ bar")
       end
     CR
 
-    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
     program = parser.parse_program
 
     program.roots.size.should eq(1)
     arena = program.arena
     macro_def = arena[program.roots.first]
-    body = arena[CrystalV2::Compiler::Frontend.node_left(macro_def).not_nil!]
-    pieces = CrystalV2::Compiler::Frontend.node_macro_pieces(body).not_nil!
+    body = arena[Adamas::Compiler::Frontend.node_left(macro_def).not_nil!]
+    pieces = Adamas::Compiler::Frontend.node_macro_pieces(body).not_nil!
 
     # Find expression piece
-    expr_piece = pieces.find { |p| p.kind == CrystalV2::Compiler::Frontend::MacroPiece::Kind::Expression }
+    expr_piece = pieces.find { |p| p.kind == Adamas::Compiler::Frontend::MacroPiece::Kind::Expression }
     expr_piece.should_not be_nil
 
     # Should have span covering full {{ value }}
@@ -890,7 +890,7 @@ bar")
 
   it "handles unary with empty grouping without crashing" do
     source = "-( )"
-    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
     program = parser.parse_program
 
     # Crystal allows this - ( ) is an empty tuple (Nil), so -() is valid syntax
@@ -901,7 +901,7 @@ bar")
 
   it "handles grouping with just unary operator without crashing" do
     source = "(+)"
-    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
     program = parser.parse_program
 
     # Should not crash, should emit diagnostic
@@ -911,7 +911,7 @@ bar")
 
   it "handles binary missing right operand without crashing" do
     source = "1 +"
-    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
     program = parser.parse_program
 
     # Should not crash - parser handles this gracefully
@@ -920,7 +920,7 @@ bar")
 
   it "handles nested invalid expressions without crashing" do
     source = "foo(1 +, 2)"
-    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
     program = parser.parse_program
 
     # Should not crash, should emit diagnostic
@@ -929,7 +929,7 @@ bar")
 
   it "handles invalid prefix in index without crashing" do
     source = "arr[+]"
-    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
     program = parser.parse_program
 
     # Should not crash, should emit diagnostic
@@ -946,17 +946,17 @@ bar")
       end
     CR
 
-    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
     program = parser.parse_program
 
     program.roots.size.should eq(1)
     arena = program.arena
     macro_def = arena[program.roots.first]
-    body = arena[CrystalV2::Compiler::Frontend.node_left(macro_def).not_nil!]
-    pieces = CrystalV2::Compiler::Frontend.node_macro_pieces(body).not_nil!
+    body = arena[Adamas::Compiler::Frontend.node_left(macro_def).not_nil!]
+    pieces = Adamas::Compiler::Frontend.node_macro_pieces(body).not_nil!
 
     # Should have text pieces with spans
-    text_pieces = pieces.select { |p| p.kind == CrystalV2::Compiler::Frontend::MacroPiece::Kind::Text }
+    text_pieces = pieces.select { |p| p.kind == Adamas::Compiler::Frontend::MacroPiece::Kind::Text }
     text_pieces.size.should be >= 1
 
     # First text piece should have span
@@ -974,16 +974,16 @@ bar")
       end
     CR
 
-    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
     program = parser.parse_program
 
     program.roots.size.should eq(1)
     arena = program.arena
     macro_def = arena[program.roots.first]
-    body = arena[CrystalV2::Compiler::Frontend.node_left(macro_def).not_nil!]
-    pieces = CrystalV2::Compiler::Frontend.node_macro_pieces(body).not_nil!
+    body = arena[Adamas::Compiler::Frontend.node_left(macro_def).not_nil!]
+    pieces = Adamas::Compiler::Frontend.node_macro_pieces(body).not_nil!
 
-    text_pieces = pieces.select { |p| p.kind == CrystalV2::Compiler::Frontend::MacroPiece::Kind::Text }
+    text_pieces = pieces.select { |p| p.kind == Adamas::Compiler::Frontend::MacroPiece::Kind::Text }
     text_pieces.size.should eq(1)
 
     # Multi-line text should have span covering all lines
@@ -1003,16 +1003,16 @@ bar")
       end
     CR
 
-    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
     program = parser.parse_program
 
     program.roots.size.should eq(1)
     arena = program.arena
     macro_def = arena[program.roots.first]
-    body = arena[CrystalV2::Compiler::Frontend.node_left(macro_def).not_nil!]
-    pieces = CrystalV2::Compiler::Frontend.node_macro_pieces(body).not_nil!
+    body = arena[Adamas::Compiler::Frontend.node_left(macro_def).not_nil!]
+    pieces = Adamas::Compiler::Frontend.node_macro_pieces(body).not_nil!
 
-    text_pieces = pieces.select { |p| p.kind == CrystalV2::Compiler::Frontend::MacroPiece::Kind::Text }
+    text_pieces = pieces.select { |p| p.kind == Adamas::Compiler::Frontend::MacroPiece::Kind::Text }
     text_pieces.size.should be >= 2
 
     # Both text pieces should have spans even though first is trimmed
@@ -1028,15 +1028,15 @@ bar")
       end
     CR
 
-    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
     program = parser.parse_program
 
     program.roots.size.should eq(1)
     arena = program.arena
-    def_node = arena[program.roots.first].as(CrystalV2::Compiler::Frontend::DefNode)
+    def_node = arena[program.roots.first].as(Adamas::Compiler::Frontend::DefNode)
     def_node.body.not_nil!.size.should eq(1)
 
     call_node = arena[def_node.body.not_nil!.first]
-    CrystalV2::Compiler::Frontend.node_kind(call_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Call)
+    Adamas::Compiler::Frontend.node_kind(call_node).should eq(Adamas::Compiler::Frontend::NodeKind::Call)
   end
 end

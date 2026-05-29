@@ -16,7 +16,7 @@
 #
 # Larger allocations fall through to regular malloc.
 
-module Crystal::Runtime
+module Adamas::Runtime
   # Number of size classes
   SLAB_SIZE_CLASSES = 8
 
@@ -94,29 +94,29 @@ module Crystal::Runtime
 end
 
 # Exported functions for LLVM IR calls
-# Note: We use __crystal_v2_* prefix to avoid conflicts with standard runtime.
+# Note: We use __adamas_* prefix to avoid conflicts with standard runtime.
 
 # Allocate from slab (by size class)
-fun __crystal_v2_slab_alloc(size_class : Int32) : Void*
-  Crystal::Runtime::Slab.alloc(size_class)
+fun __adamas_slab_alloc(size_class : Int32) : Void*
+  Adamas::Runtime::Slab.alloc(size_class)
 end
 
 # Free to slab
-fun __crystal_v2_slab_free(ptr : Void*, size_class : Int32) : Void
-  Crystal::Runtime::Slab.free(ptr, size_class)
+fun __adamas_slab_free(ptr : Void*, size_class : Int32) : Void
+  Adamas::Runtime::Slab.free(ptr, size_class)
 end
 
 # Get size class for given size
-fun __crystal_v2_slab_size_class(size : UInt32) : Int32
-  Crystal::Runtime::Slab.size_class(size)
+fun __adamas_slab_size_class(size : UInt32) : Int32
+  Adamas::Runtime::Slab.size_class(size)
 end
 
 # Initialize slab allocator
-fun __crystal_v2_slab_init : Void
-  Crystal::Runtime::Slab.init
+fun __adamas_slab_init : Void
+  Adamas::Runtime::Slab.init
 end
 
 # Shutdown slab allocator
-fun __crystal_v2_slab_shutdown : Void
-  Crystal::Runtime::Slab.shutdown
+fun __adamas_slab_shutdown : Void
+  Adamas::Runtime::Slab.shutdown
 end

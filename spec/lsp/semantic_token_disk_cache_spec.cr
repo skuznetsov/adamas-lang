@@ -28,9 +28,9 @@ describe "LSP semantic token disk cache" do
 
     info = File.info(path)
     cached_json = %({"data":[]})
-    CrystalV2::Compiler::LSP::SemanticTokenDiskCache.save(path, info.modification_time.to_unix_ns.to_i64, info.size.to_u64, cached_json)
+    Adamas::Compiler::LSP::SemanticTokenDiskCache.save(path, info.modification_time.to_unix_ns.to_i64, info.size.to_u64, cached_json)
 
-    server = CrystalV2::Compiler::LSP::Server.new(IO::Memory.new, IO::Memory.new, CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false))
+    server = Adamas::Compiler::LSP::Server.new(IO::Memory.new, IO::Memory.new, Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false))
     uri = server.spec_did_open_document(source, path)
     response = server.spec_semantic_tokens(uri)
 
@@ -49,9 +49,9 @@ describe "LSP semantic token disk cache" do
 
     info = File.info(path)
     cached_json = %({"data":[]})
-    CrystalV2::Compiler::LSP::SemanticTokenDiskCache.save(path, info.modification_time.to_unix_ns.to_i64, info.size.to_u64, cached_json)
+    Adamas::Compiler::LSP::SemanticTokenDiskCache.save(path, info.modification_time.to_unix_ns.to_i64, info.size.to_u64, cached_json)
 
-    server = CrystalV2::Compiler::LSP::Server.new(IO::Memory.new, IO::Memory.new, CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false))
+    server = Adamas::Compiler::LSP::Server.new(IO::Memory.new, IO::Memory.new, Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false))
     uri = server.spec_did_open_document(open_source, path)
     response = server.spec_semantic_tokens(uri)
 
@@ -67,7 +67,7 @@ describe "LSP semantic token disk cache" do
     source = "value = 1\n"
     File.write(path, source)
 
-    server = CrystalV2::Compiler::LSP::Server.new(IO::Memory.new, IO::Memory.new, CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false))
+    server = Adamas::Compiler::LSP::Server.new(IO::Memory.new, IO::Memory.new, Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false))
     uri = server.spec_did_open_document(source, path)
     full_response = server.spec_semantic_tokens(uri)
     result_id = full_response["result"]["resultId"].as_s
@@ -86,7 +86,7 @@ describe "LSP semantic token disk cache" do
     source = "value = 1\n"
     File.write(path, source)
 
-    server = CrystalV2::Compiler::LSP::Server.new(IO::Memory.new, IO::Memory.new, CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false))
+    server = Adamas::Compiler::LSP::Server.new(IO::Memory.new, IO::Memory.new, Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false))
     uri = server.spec_did_open_document(source, path)
     delta_response = server.spec_semantic_tokens_delta(uri, "stale")
 
@@ -103,7 +103,7 @@ describe "LSP semantic token disk cache" do
     source = "value = 1\n"
     File.write(path, source)
 
-    server = CrystalV2::Compiler::LSP::Server.new(IO::Memory.new, IO::Memory.new, CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false))
+    server = Adamas::Compiler::LSP::Server.new(IO::Memory.new, IO::Memory.new, Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false))
     uri = server.spec_did_open_document(source, path)
     full_response = server.spec_semantic_tokens(uri)
     result_id = full_response["result"]["resultId"].as_s

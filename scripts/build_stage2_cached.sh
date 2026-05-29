@@ -11,7 +11,7 @@ MODE="$2"
 shift 2
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SRC="$ROOT_DIR/src/crystal_v2.cr"
+SRC="$ROOT_DIR/src/adamas.cr"
 
 case "$MODE" in
   debug)

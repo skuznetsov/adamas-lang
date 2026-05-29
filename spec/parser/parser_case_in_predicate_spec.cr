@@ -2,7 +2,7 @@ require "spec"
 
 require "../../src/compiler/frontend/parser"
 
-describe "CrystalV2::Compiler::Frontend::Parser" do
+describe "Adamas::Compiler::Frontend::Parser" do
   describe "case/in predicate patterns" do
     it "parses dot predicates as implicit zero-arg calls" do
       source = <<-CRYSTAL
@@ -12,8 +12,8 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
         end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(
-        CrystalV2::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(
+        Adamas::Compiler::Frontend::Lexer.new(source)
       )
       program = parser.parse_program
 
@@ -21,13 +21,13 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       program.roots.size.should eq(1)
 
       arena = program.arena
-      case_node = arena[program.roots.first].as(CrystalV2::Compiler::Frontend::CaseNode)
+      case_node = arena[program.roots.first].as(Adamas::Compiler::Frontend::CaseNode)
       branch = case_node.in_branches.not_nil!.first
-      pattern = arena[branch.conditions.first].as(CrystalV2::Compiler::Frontend::CallNode)
-      callee = arena[pattern.callee].as(CrystalV2::Compiler::Frontend::MemberAccessNode)
+      pattern = arena[branch.conditions.first].as(Adamas::Compiler::Frontend::CallNode)
+      callee = arena[pattern.callee].as(Adamas::Compiler::Frontend::MemberAccessNode)
       receiver = arena[callee.object]
 
-      receiver.should be_a(CrystalV2::Compiler::Frontend::ImplicitObjNode)
+      receiver.should be_a(Adamas::Compiler::Frontend::ImplicitObjNode)
       String.new(callee.member).should eq("delivered?")
       pattern.args.should be_empty
     end

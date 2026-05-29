@@ -33,7 +33,7 @@ end
 describe "LSP Semantic Tokens" do
   describe "SemanticTokens struct" do
     it "creates semantic tokens with empty data" do
-      tokens = CrystalV2::Compiler::LSP::SemanticTokens.new(data: [] of Int32)
+      tokens = Adamas::Compiler::LSP::SemanticTokens.new(data: [] of Int32)
 
       tokens.data.should be_empty
       tokens.result_id.should be_nil
@@ -41,7 +41,7 @@ describe "LSP Semantic Tokens" do
 
     it "creates semantic tokens with data" do
       data = [0, 5, 3, 2, 0] # deltaLine, deltaStart, length, tokenType, modifiers
-      tokens = CrystalV2::Compiler::LSP::SemanticTokens.new(data: data)
+      tokens = Adamas::Compiler::LSP::SemanticTokens.new(data: data)
 
       tokens.data.should eq(data)
       tokens.data.size.should eq(5)
@@ -49,14 +49,14 @@ describe "LSP Semantic Tokens" do
 
     it "creates semantic tokens with result_id" do
       data = [0, 5, 3, 2, 0]
-      tokens = CrystalV2::Compiler::LSP::SemanticTokens.new(data: data, result_id: "v1")
+      tokens = Adamas::Compiler::LSP::SemanticTokens.new(data: data, result_id: "v1")
 
       tokens.result_id.should eq("v1")
     end
 
     it "serializes to JSON with camelCase" do
       data = [0, 5, 3, 2, 0]
-      tokens = CrystalV2::Compiler::LSP::SemanticTokens.new(data: data, result_id: "v1")
+      tokens = Adamas::Compiler::LSP::SemanticTokens.new(data: data, result_id: "v1")
 
       json = tokens.to_json
       json.should contain("\"data\"")
@@ -67,15 +67,15 @@ describe "LSP Semantic Tokens" do
 
   describe "SemanticTokensParams struct" do
     it "creates params with text document" do
-      text_doc = CrystalV2::Compiler::LSP::TextDocumentIdentifier.new(uri: "file:///test.cr")
-      params = CrystalV2::Compiler::LSP::SemanticTokensParams.new(text_document: text_doc)
+      text_doc = Adamas::Compiler::LSP::TextDocumentIdentifier.new(uri: "file:///test.cr")
+      params = Adamas::Compiler::LSP::SemanticTokensParams.new(text_document: text_doc)
 
       params.text_document.uri.should eq("file:///test.cr")
     end
 
     it "serializes to JSON with camelCase" do
-      text_doc = CrystalV2::Compiler::LSP::TextDocumentIdentifier.new(uri: "file:///test.cr")
-      params = CrystalV2::Compiler::LSP::SemanticTokensParams.new(text_document: text_doc)
+      text_doc = Adamas::Compiler::LSP::TextDocumentIdentifier.new(uri: "file:///test.cr")
+      params = Adamas::Compiler::LSP::SemanticTokensParams.new(text_document: text_doc)
 
       json = params.to_json
       json.should contain("\"textDocument\"")
@@ -89,11 +89,11 @@ describe "LSP Semantic Tokens" do
       x = 42
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      server = CrystalV2::Compiler::LSP::Server.new
+      server = Adamas::Compiler::LSP::Server.new
       tokens = server.collect_semantic_tokens(program, source)
 
       # Should have tokens for identifier and number
@@ -107,11 +107,11 @@ describe "LSP Semantic Tokens" do
       x = 42
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      server = CrystalV2::Compiler::LSP::Server.new
+      server = Adamas::Compiler::LSP::Server.new
       tokens = server.collect_semantic_tokens(program, source)
 
       # Tokens on same line should use delta position (relative to previous)
@@ -136,11 +136,11 @@ describe "LSP Semantic Tokens" do
       y = 2
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      server = CrystalV2::Compiler::LSP::Server.new
+      server = Adamas::Compiler::LSP::Server.new
       tokens = server.collect_semantic_tokens(program, source)
 
       data = tokens.data
@@ -172,11 +172,11 @@ describe "LSP Semantic Tokens" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      server = CrystalV2::Compiler::LSP::Server.new
+      server = Adamas::Compiler::LSP::Server.new
       tokens = server.collect_semantic_tokens(program, source)
 
       # Should have token for class name "Calculator"
@@ -200,11 +200,11 @@ describe "LSP Semantic Tokens" do
       x = 42
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      server = CrystalV2::Compiler::LSP::Server.new
+      server = Adamas::Compiler::LSP::Server.new
       tokens = server.collect_semantic_tokens(program, source)
 
       decoded = SemanticTokensSpecHelper.decode_tokens(tokens.data)
@@ -225,11 +225,11 @@ describe "LSP Semantic Tokens" do
       3 &* 4
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      server = CrystalV2::Compiler::LSP::Server.new
+      server = Adamas::Compiler::LSP::Server.new
       tokens = server.collect_semantic_tokens(program, source)
       decoded = SemanticTokensSpecHelper.decode_tokens(tokens.data)
 
@@ -249,11 +249,11 @@ describe "LSP Semantic Tokens" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      server = CrystalV2::Compiler::LSP::Server.new
+      server = Adamas::Compiler::LSP::Server.new
       tokens = server.collect_semantic_tokens(program, source)
 
       # Should have token for method name "calculate"
@@ -277,11 +277,11 @@ describe "LSP Semantic Tokens" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      server = CrystalV2::Compiler::LSP::Server.new
+      server = Adamas::Compiler::LSP::Server.new
       tokens = server.collect_semantic_tokens(program, source)
 
       # Should have tokens for parameters "x" and "y"
@@ -304,11 +304,11 @@ describe "LSP Semantic Tokens" do
       result = 42
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      server = CrystalV2::Compiler::LSP::Server.new
+      server = Adamas::Compiler::LSP::Server.new
       tokens = server.collect_semantic_tokens(program, source)
 
       # Should have token for identifier "result"
@@ -331,11 +331,11 @@ describe "LSP Semantic Tokens" do
       message = "hello"
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      server = CrystalV2::Compiler::LSP::Server.new
+      server = Adamas::Compiler::LSP::Server.new
       tokens = server.collect_semantic_tokens(program, source)
 
       # Should have token for string "hello"
@@ -358,11 +358,11 @@ describe "LSP Semantic Tokens" do
       x = 42
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      server = CrystalV2::Compiler::LSP::Server.new
+      server = Adamas::Compiler::LSP::Server.new
       tokens = server.collect_semantic_tokens(program, source)
 
       # Should have token for number 42
@@ -391,11 +391,11 @@ describe "LSP Semantic Tokens" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      server = CrystalV2::Compiler::LSP::Server.new
+      server = Adamas::Compiler::LSP::Server.new
       tokens = server.collect_semantic_tokens(program, source)
 
       # Should collect tokens from condition and body
@@ -415,11 +415,11 @@ describe "LSP Semantic Tokens" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      server = CrystalV2::Compiler::LSP::Server.new
+      server = Adamas::Compiler::LSP::Server.new
       tokens = server.collect_semantic_tokens(program, source)
 
       # Should collect tokens from condition and body
@@ -438,11 +438,11 @@ describe "LSP Semantic Tokens" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      server = CrystalV2::Compiler::LSP::Server.new
+      server = Adamas::Compiler::LSP::Server.new
       tokens = server.collect_semantic_tokens(program, source)
 
       # Should collect tokens from condition and body
@@ -460,11 +460,11 @@ describe "LSP Semantic Tokens" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      server = CrystalV2::Compiler::LSP::Server.new
+      server = Adamas::Compiler::LSP::Server.new
       tokens = server.collect_semantic_tokens(program, source)
 
       # Should collect tokens from condition and body
@@ -483,11 +483,11 @@ describe "LSP Semantic Tokens" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      server = CrystalV2::Compiler::LSP::Server.new
+      server = Adamas::Compiler::LSP::Server.new
       tokens = server.collect_semantic_tokens(program, source)
 
       # Should collect tokens from body
@@ -508,11 +508,11 @@ describe "LSP Semantic Tokens" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      server = CrystalV2::Compiler::LSP::Server.new
+      server = Adamas::Compiler::LSP::Server.new
       tokens = server.collect_semantic_tokens(program, source)
 
       # Should collect tokens from all nested levels
@@ -535,11 +535,11 @@ describe "LSP Semantic Tokens" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      server = CrystalV2::Compiler::LSP::Server.new
+      server = Adamas::Compiler::LSP::Server.new
       tokens = server.collect_semantic_tokens(program, source)
 
       # Should collect tokens from all branches
@@ -566,11 +566,11 @@ describe "LSP Semantic Tokens" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      server = CrystalV2::Compiler::LSP::Server.new
+      server = Adamas::Compiler::LSP::Server.new
       tokens = server.collect_semantic_tokens(program, source)
 
       # Should have tokens for:
@@ -605,11 +605,11 @@ describe "LSP Semantic Tokens" do
       z = 3
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      server = CrystalV2::Compiler::LSP::Server.new
+      server = Adamas::Compiler::LSP::Server.new
       tokens = server.collect_semantic_tokens(program, source)
 
       # Tokens should be sorted, so deltaLine should be non-negative
@@ -650,11 +650,11 @@ describe "LSP Semantic Tokens" do
       x = 1
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      server = CrystalV2::Compiler::LSP::Server.new
+      server = Adamas::Compiler::LSP::Server.new
       tokens = server.collect_semantic_tokens(program, source)
 
       # First token should be on line 0 (LSP 0-indexed)
@@ -673,17 +673,17 @@ describe "LSP Semantic Tokens" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
       # Parser: 1-indexed (verified by previous tests)
       root = program.arena[program.roots[0]]
-      def_node = root.as(CrystalV2::Compiler::Frontend::DefNode)
+      def_node = root.as(Adamas::Compiler::Frontend::DefNode)
       def_node.span.start_line.should eq(1) # Parser gives 1
 
       # Tokens: 0-indexed (LSP requirement)
-      server = CrystalV2::Compiler::LSP::Server.new
+      server = Adamas::Compiler::LSP::Server.new
       tokens = server.collect_semantic_tokens(program, source)
 
       data = tokens.data

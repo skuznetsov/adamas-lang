@@ -17,7 +17,7 @@ The extension first looks for `crystal2` on `PATH` and runs
 ```
 
 ```bash
-cd /path/to/crystal_v2
+cd /path/to/adamas
 ./build_lsp.sh
 ```
 
@@ -32,7 +32,7 @@ npm install
 
 1. Open `vscode-extension` folder in VS Code:
    ```bash
-   code /path/to/crystal_v2/vscode-extension
+   code /path/to/adamas/vscode-extension
    ```
 
 2. Press **F5** (or Run → Start Debugging)
@@ -78,10 +78,10 @@ In the Extension Development Host window:
 2. Check file language is set to "Crystal" (bottom right corner of VS Code)
 
 **If LSP doesn't start:**
-1. Verify `bin/crystal_v2_lsp` exists and is executable:
+1. Verify `bin/adamas_lsp` exists and is executable:
    ```bash
-   ls -lh ../bin/crystal_v2_lsp
-   ./bin/crystal_v2_lsp --version  # Should start (Ctrl+C to exit)
+   ls -lh ../bin/adamas_lsp
+   ./bin/adamas_lsp --version  # Should start (Ctrl+C to exit)
    ```
 
 2. Check VS Code logs:

@@ -7,8 +7,8 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 
 LOG="$TMP_DIR/build.log"
 
-if ! crystal build "$ROOT_DIR/src/crystal_v2.cr" \
-  -o "$TMP_DIR/crystal_v2_linux" \
+if ! crystal build "$ROOT_DIR/src/adamas.cr" \
+  -o "$TMP_DIR/adamas_linux" \
   --error-trace \
   --cross-compile \
   --target x86_64-linux-gnu >"$LOG" 2>&1; then

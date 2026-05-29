@@ -27,7 +27,7 @@ require "./memory"
 require "./arc"
 require "./slab"
 
-module Crystal::Runtime
+module Adamas::Runtime
   VERSION = "0.1.0"
 
   # Runtime initialization - called at program start

@@ -16,10 +16,10 @@ require "../semantic/analyzer"
 require "../formatter"
 require "../../runtime"
 
-module CrystalV2
+module Adamas
   module Compiler
     module LSP
-      alias Frontend = CrystalV2::Compiler::Frontend
+      alias Frontend = Adamas::Compiler::Frontend
       alias Watchdog = Frontend::Watchdog
 
       struct ScopedVarDecl
@@ -346,10 +346,10 @@ module CrystalV2
             end
           end
         end
-        COMPILER_MODULE_SEGMENTS = ["CrystalV2", "Compiler"]
+        COMPILER_MODULE_SEGMENTS = ["Adamas", "Compiler"]
         COMPILER_ALIAS_SEGMENTS  = {
-          "Lexer"  => ["CrystalV2", "Compiler", "Frontend", "Lexer"],
-          "Parser" => ["CrystalV2", "Compiler", "Frontend", "Parser"],
+          "Lexer"  => ["Adamas", "Compiler", "Frontend", "Lexer"],
+          "Parser" => ["Adamas", "Compiler", "Frontend", "Parser"],
         }
         COMPILER_ROOT             = File.expand_path("..", __DIR__)
         COMPILER_DEPENDENCY_PATHS = [
@@ -10600,7 +10600,7 @@ module CrystalV2
             return true if expanded == COMPILER_ROOT || expanded.starts_with?(root_prefix)
           end
 
-          doc_state.text_document.text.includes?("include CrystalV2::Compiler")
+          doc_state.text_document.text.includes?("include Adamas::Compiler")
         end
 
         private def definition_from_call(
@@ -14396,7 +14396,7 @@ module CrystalV2
             end
           end
 
-          # Format using CrystalV2 token-based formatter
+          # Format using Adamas token-based formatter
           begin
             formatted_source = Formatter.format(original_source)
 

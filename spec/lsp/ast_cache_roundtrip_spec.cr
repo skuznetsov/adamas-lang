@@ -4,12 +4,12 @@ require "random/secure"
 
 require "./support/server_helper"
 
-describe CrystalV2::Compiler::LSP::AstCache do
+describe Adamas::Compiler::LSP::AstCache do
   it "roundtrips call nodes with blocks and named args" do
     dir = File.join(Dir.tempdir, "lsp_ast_cache_roundtrip_#{Random::Secure.hex(6)}")
     FileUtils.mkdir_p(dir)
     path = File.join(dir, "sample.cr")
-    cache_path = CrystalV2::Compiler::LSP::AstCache.cache_path(path)
+    cache_path = Adamas::Compiler::LSP::AstCache.cache_path(path)
 
     source = <<-CR
     foo(bar: 1) do
@@ -18,20 +18,20 @@ describe CrystalV2::Compiler::LSP::AstCache do
     CR
     File.write(path, source)
 
-    lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-    parser = CrystalV2::Compiler::Frontend::Parser.new(lexer, recovery_mode: true)
+    lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+    parser = Adamas::Compiler::Frontend::Parser.new(lexer, recovery_mode: true)
     program = parser.parse_program
 
     parser.diagnostics.should be_empty
-    arena = program.arena.as(CrystalV2::Compiler::Frontend::AstArena)
+    arena = program.arena.as(Adamas::Compiler::Frontend::AstArena)
 
-    CrystalV2::Compiler::LSP::AstCache.new(arena, program.roots, lexer.string_pool).save(path)
+    Adamas::Compiler::LSP::AstCache.new(arena, program.roots, lexer.string_pool).save(path)
 
-    loaded = CrystalV2::Compiler::LSP::AstCache.load(path)
+    loaded = Adamas::Compiler::LSP::AstCache.load(path)
     loaded.should_not be_nil
 
-    loaded_program = CrystalV2::Compiler::Frontend::Program.new(loaded.not_nil!.arena, loaded.not_nil!.roots)
-    call = loaded_program.arena[loaded_program.roots.first].as(CrystalV2::Compiler::Frontend::CallNode)
+    loaded_program = Adamas::Compiler::Frontend::Program.new(loaded.not_nil!.arena, loaded.not_nil!.roots)
+    call = loaded_program.arena[loaded_program.roots.first].as(Adamas::Compiler::Frontend::CallNode)
 
     call.block.should_not be_nil
     named_args = call.named_args

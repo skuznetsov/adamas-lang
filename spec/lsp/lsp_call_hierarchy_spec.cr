@@ -10,10 +10,10 @@ require "../../src/compiler/semantic/analyzer"
 describe "LSP Call Hierarchy" do
   describe "CallHierarchyItem struct" do
     it "creates item with required fields" do
-      pos = CrystalV2::Compiler::LSP::Position.new(line: 0, character: 0)
-      range = CrystalV2::Compiler::LSP::Range.new(start: pos, end: pos)
+      pos = Adamas::Compiler::LSP::Position.new(line: 0, character: 0)
+      range = Adamas::Compiler::LSP::Range.new(start: pos, end: pos)
 
-      item = CrystalV2::Compiler::LSP::CallHierarchyItem.new(
+      item = Adamas::Compiler::LSP::CallHierarchyItem.new(
         name: "test_method",
         kind: 6,  # Method
         uri: "file:///test.cr",
@@ -28,10 +28,10 @@ describe "LSP Call Hierarchy" do
     end
 
     it "creates item with detail" do
-      pos = CrystalV2::Compiler::LSP::Position.new(line: 0, character: 0)
-      range = CrystalV2::Compiler::LSP::Range.new(start: pos, end: pos)
+      pos = Adamas::Compiler::LSP::Position.new(line: 0, character: 0)
+      range = Adamas::Compiler::LSP::Range.new(start: pos, end: pos)
 
-      item = CrystalV2::Compiler::LSP::CallHierarchyItem.new(
+      item = Adamas::Compiler::LSP::CallHierarchyItem.new(
         name: "calculate",
         kind: 6,
         uri: "file:///test.cr",
@@ -44,10 +44,10 @@ describe "LSP Call Hierarchy" do
     end
 
     it "serializes to JSON with camelCase" do
-      pos = CrystalV2::Compiler::LSP::Position.new(line: 0, character: 0)
-      range = CrystalV2::Compiler::LSP::Range.new(start: pos, end: pos)
+      pos = Adamas::Compiler::LSP::Position.new(line: 0, character: 0)
+      range = Adamas::Compiler::LSP::Range.new(start: pos, end: pos)
 
-      item = CrystalV2::Compiler::LSP::CallHierarchyItem.new(
+      item = Adamas::Compiler::LSP::CallHierarchyItem.new(
         name: "method",
         kind: 6,
         uri: "file:///test.cr",
@@ -63,10 +63,10 @@ describe "LSP Call Hierarchy" do
 
   describe "CallHierarchyIncomingCall struct" do
     it "creates incoming call with ranges" do
-      pos = CrystalV2::Compiler::LSP::Position.new(line: 0, character: 0)
-      range = CrystalV2::Compiler::LSP::Range.new(start: pos, end: pos)
+      pos = Adamas::Compiler::LSP::Position.new(line: 0, character: 0)
+      range = Adamas::Compiler::LSP::Range.new(start: pos, end: pos)
 
-      from_item = CrystalV2::Compiler::LSP::CallHierarchyItem.new(
+      from_item = Adamas::Compiler::LSP::CallHierarchyItem.new(
         name: "caller",
         kind: 6,
         uri: "file:///test.cr",
@@ -74,7 +74,7 @@ describe "LSP Call Hierarchy" do
         selection_range: range
       )
 
-      incoming = CrystalV2::Compiler::LSP::CallHierarchyIncomingCall.new(
+      incoming = Adamas::Compiler::LSP::CallHierarchyIncomingCall.new(
         from: from_item,
         from_ranges: [range]
       )
@@ -84,10 +84,10 @@ describe "LSP Call Hierarchy" do
     end
 
     it "serializes to JSON with camelCase" do
-      pos = CrystalV2::Compiler::LSP::Position.new(line: 0, character: 0)
-      range = CrystalV2::Compiler::LSP::Range.new(start: pos, end: pos)
+      pos = Adamas::Compiler::LSP::Position.new(line: 0, character: 0)
+      range = Adamas::Compiler::LSP::Range.new(start: pos, end: pos)
 
-      from_item = CrystalV2::Compiler::LSP::CallHierarchyItem.new(
+      from_item = Adamas::Compiler::LSP::CallHierarchyItem.new(
         name: "caller",
         kind: 6,
         uri: "file:///test.cr",
@@ -95,7 +95,7 @@ describe "LSP Call Hierarchy" do
         selection_range: range
       )
 
-      incoming = CrystalV2::Compiler::LSP::CallHierarchyIncomingCall.new(
+      incoming = Adamas::Compiler::LSP::CallHierarchyIncomingCall.new(
         from: from_item,
         from_ranges: [range]
       )
@@ -108,10 +108,10 @@ describe "LSP Call Hierarchy" do
 
   describe "CallHierarchyOutgoingCall struct" do
     it "creates outgoing call with ranges" do
-      pos = CrystalV2::Compiler::LSP::Position.new(line: 0, character: 0)
-      range = CrystalV2::Compiler::LSP::Range.new(start: pos, end: pos)
+      pos = Adamas::Compiler::LSP::Position.new(line: 0, character: 0)
+      range = Adamas::Compiler::LSP::Range.new(start: pos, end: pos)
 
-      to_item = CrystalV2::Compiler::LSP::CallHierarchyItem.new(
+      to_item = Adamas::Compiler::LSP::CallHierarchyItem.new(
         name: "callee",
         kind: 6,
         uri: "file:///test.cr",
@@ -119,7 +119,7 @@ describe "LSP Call Hierarchy" do
         selection_range: range
       )
 
-      outgoing = CrystalV2::Compiler::LSP::CallHierarchyOutgoingCall.new(
+      outgoing = Adamas::Compiler::LSP::CallHierarchyOutgoingCall.new(
         to: to_item,
         from_ranges: [range]
       )
@@ -131,10 +131,10 @@ describe "LSP Call Hierarchy" do
 
   describe "Request parameter structures" do
     it "creates CallHierarchyPrepareParams" do
-      text_doc = CrystalV2::Compiler::LSP::TextDocumentIdentifier.new(uri: "file:///test.cr")
-      pos = CrystalV2::Compiler::LSP::Position.new(line: 5, character: 10)
+      text_doc = Adamas::Compiler::LSP::TextDocumentIdentifier.new(uri: "file:///test.cr")
+      pos = Adamas::Compiler::LSP::Position.new(line: 5, character: 10)
 
-      params = CrystalV2::Compiler::LSP::CallHierarchyPrepareParams.new(
+      params = Adamas::Compiler::LSP::CallHierarchyPrepareParams.new(
         text_document: text_doc,
         position: pos
       )
@@ -153,20 +153,20 @@ describe "LSP Call Hierarchy" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
 
       # Find the calculate method
       symbol = analyzer.global_context.symbol_table.lookup("calculate")
       symbol.should_not be_nil
-      symbol.should be_a(CrystalV2::Compiler::Semantic::MethodSymbol)
+      symbol.should be_a(Adamas::Compiler::Semantic::MethodSymbol)
 
-      method_symbol = symbol.as(CrystalV2::Compiler::Semantic::MethodSymbol)
-      item = CrystalV2::Compiler::LSP::CallHierarchyItem.from_method(
+      method_symbol = symbol.as(Adamas::Compiler::Semantic::MethodSymbol)
+      item = Adamas::Compiler::LSP::CallHierarchyItem.from_method(
         method_symbol,
         program,
         "file:///test.cr",
@@ -198,11 +198,11 @@ describe "LSP Call Hierarchy" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       analyzer.resolve_names
 
@@ -210,7 +210,7 @@ describe "LSP Call Hierarchy" do
       # For MVP, verify program structure exists
       main_symbol = analyzer.global_context.symbol_table.lookup("main")
       main_symbol.should_not be_nil
-      main_symbol.should be_a(CrystalV2::Compiler::Semantic::MethodSymbol)
+      main_symbol.should be_a(Adamas::Compiler::Semantic::MethodSymbol)
 
       helper_symbol = analyzer.global_context.symbol_table.lookup("helper")
       helper_symbol.should_not be_nil
@@ -231,11 +231,11 @@ describe "LSP Call Hierarchy" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       analyzer.resolve_names
 
@@ -259,11 +259,11 @@ describe "LSP Call Hierarchy" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       analyzer.resolve_names
 
@@ -287,11 +287,11 @@ describe "LSP Call Hierarchy" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       analyzer.resolve_names
 
@@ -315,11 +315,11 @@ describe "LSP Call Hierarchy" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       analyzer.resolve_names
 
@@ -345,11 +345,11 @@ describe "LSP Call Hierarchy" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       analyzer.resolve_names
 
@@ -381,11 +381,11 @@ describe "LSP Call Hierarchy" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       analyzer.resolve_names
 
@@ -422,11 +422,11 @@ describe "LSP Call Hierarchy" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       analyzer.resolve_names
 
@@ -459,11 +459,11 @@ describe "LSP Call Hierarchy" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       analyzer.resolve_names
 

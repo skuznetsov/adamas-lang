@@ -14,16 +14,16 @@ describe "LSP AST cache foreground document loading" do
 
     ENV.delete("LSP_AST_CACHE")
     ENV.delete("CRYSTALV2_LSP_CONFIG")
-    CrystalV2::Compiler::LSP::ServerConfig.load.ast_cache.should be_true
+    Adamas::Compiler::LSP::ServerConfig.load.ast_cache.should be_true
 
     ENV["LSP_AST_CACHE"] = "0"
-    CrystalV2::Compiler::LSP::ServerConfig.load.ast_cache.should be_false
+    Adamas::Compiler::LSP::ServerConfig.load.ast_cache.should be_false
 
     config_path = File.join(dir, "lsp.json")
     File.write(config_path, %({"ast_cache":false}))
     ENV.delete("LSP_AST_CACHE")
     ENV["CRYSTALV2_LSP_CONFIG"] = config_path
-    CrystalV2::Compiler::LSP::ServerConfig.load.ast_cache.should be_false
+    Adamas::Compiler::LSP::ServerConfig.load.ast_cache.should be_false
   ensure
     if prev_ast_cache
       ENV["LSP_AST_CACHE"] = prev_ast_cache
@@ -61,10 +61,10 @@ describe "LSP AST cache foreground document loading" do
     CR
     File.write(path, source)
 
-    server1 = CrystalV2::Compiler::LSP::Server.new(
+    server1 = Adamas::Compiler::LSP::Server.new(
       IO::Memory.new,
       IO::Memory.new,
-      CrystalV2::Compiler::LSP::ServerConfig.new(
+      Adamas::Compiler::LSP::ServerConfig.new(
         background_indexing: false,
         project_cache: false,
         ast_cache: true,
@@ -72,12 +72,12 @@ describe "LSP AST cache foreground document loading" do
       )
     )
     server1.spec_did_open_document(source, path)
-    File.exists?(CrystalV2::Compiler::LSP::AstCache.cache_path(path)).should be_true
+    File.exists?(Adamas::Compiler::LSP::AstCache.cache_path(path)).should be_true
 
-    server2 = CrystalV2::Compiler::LSP::Server.new(
+    server2 = Adamas::Compiler::LSP::Server.new(
       IO::Memory.new,
       IO::Memory.new,
-      CrystalV2::Compiler::LSP::ServerConfig.new(
+      Adamas::Compiler::LSP::ServerConfig.new(
         background_indexing: false,
         project_cache: false,
         ast_cache: true,
@@ -118,10 +118,10 @@ describe "LSP AST cache foreground document loading" do
     edited_source = source.sub("42", "43")
     File.write(path, source)
 
-    server1 = CrystalV2::Compiler::LSP::Server.new(
+    server1 = Adamas::Compiler::LSP::Server.new(
       IO::Memory.new,
       IO::Memory.new,
-      CrystalV2::Compiler::LSP::ServerConfig.new(
+      Adamas::Compiler::LSP::ServerConfig.new(
         background_indexing: false,
         project_cache: false,
         ast_cache: true,
@@ -129,12 +129,12 @@ describe "LSP AST cache foreground document loading" do
       )
     )
     server1.spec_did_open_document(source, path)
-    File.exists?(CrystalV2::Compiler::LSP::AstCache.cache_path(path)).should be_true
+    File.exists?(Adamas::Compiler::LSP::AstCache.cache_path(path)).should be_true
 
-    server2 = CrystalV2::Compiler::LSP::Server.new(
+    server2 = Adamas::Compiler::LSP::Server.new(
       IO::Memory.new,
       IO::Memory.new,
-      CrystalV2::Compiler::LSP::ServerConfig.new(
+      Adamas::Compiler::LSP::ServerConfig.new(
         background_indexing: false,
         project_cache: false,
         ast_cache: true,

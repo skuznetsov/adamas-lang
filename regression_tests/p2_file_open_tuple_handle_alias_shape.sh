@@ -8,7 +8,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-COMPILER="${1:-$ROOT_DIR/bin/crystal_v2}"
+COMPILER="${1:-$ROOT_DIR/bin/adamas}"
 TIMEOUT_SEC="${P2_FILE_OPEN_TUPLE_TIMEOUT_SEC:-60}"
 MEM_MB="${P2_FILE_OPEN_TUPLE_MEM_MB:-2048}"
 

@@ -6,10 +6,10 @@ require "../../src/compiler/frontend/parser"
 require "../../src/compiler/semantic/analyzer"
 require "../../src/compiler/semantic/type_inference_engine"
 
-alias Frontend = CrystalV2::Compiler::Frontend
-alias Semantic = CrystalV2::Compiler::Semantic
+alias Frontend = Adamas::Compiler::Frontend
+alias Semantic = Adamas::Compiler::Semantic
 
-class CrystalV2::Compiler::Semantic::TypeInferenceEngine
+class Adamas::Compiler::Semantic::TypeInferenceEngine
   def __debug_reinfer_constant_symbol(symbol : Semantic::ConstantSymbol)
     infer_constant_value_expression(symbol.value, owner_class: symbol.owner_class, owner_module: symbol.owner_module)
   end

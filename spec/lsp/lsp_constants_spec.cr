@@ -2,7 +2,7 @@ require "spec"
 
 require "./support/server_helper"
 
-describe CrystalV2::Compiler::LSP::Server do
+describe Adamas::Compiler::LSP::Server do
   around_each do |example|
     previous = ENV["CRYSTALV2_LSP_FORCE_STUB"]?
     ENV["CRYSTALV2_LSP_FORCE_STUB"] = "1"
@@ -23,14 +23,14 @@ describe CrystalV2::Compiler::LSP::Server do
     PARSER_FILE
     CR
 
-    server = CrystalV2::Compiler::LSP::Server.new(IO::Memory.new, IO::Memory.new)
+    server = Adamas::Compiler::LSP::Server.new(IO::Memory.new, IO::Memory.new)
     diagnostics, _program, _type_context, identifier_symbols, symbol_table, _requires =
       server.spec_analyze_document(source, nil, nil)
 
     diagnostics.should be_empty
     symbol_table.should_not be_nil
     const_symbol = symbol_table.not_nil!.lookup("PARSER_FILE")
-    const_symbol.should be_a(CrystalV2::Compiler::Semantic::ConstantSymbol)
+    const_symbol.should be_a(Adamas::Compiler::Semantic::ConstantSymbol)
     identifier_symbols.should_not be_nil
     identifier_symbols.not_nil!.values.should contain(const_symbol.not_nil!)
   end

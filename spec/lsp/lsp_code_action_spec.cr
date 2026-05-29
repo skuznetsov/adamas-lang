@@ -8,17 +8,17 @@ require "../../src/compiler/lsp/server"
 describe "LSP Code Action" do
   describe "CodeActionKind constants" do
     it "defines standard code action kinds" do
-      CrystalV2::Compiler::LSP::CodeActionKind::QuickFix.should eq("quickfix")
-      CrystalV2::Compiler::LSP::CodeActionKind::Refactor.should eq("refactor")
-      CrystalV2::Compiler::LSP::CodeActionKind::RefactorExtract.should eq("refactor.extract")
-      CrystalV2::Compiler::LSP::CodeActionKind::RefactorInline.should eq("refactor.inline")
-      CrystalV2::Compiler::LSP::CodeActionKind::Source.should eq("source")
+      Adamas::Compiler::LSP::CodeActionKind::QuickFix.should eq("quickfix")
+      Adamas::Compiler::LSP::CodeActionKind::Refactor.should eq("refactor")
+      Adamas::Compiler::LSP::CodeActionKind::RefactorExtract.should eq("refactor.extract")
+      Adamas::Compiler::LSP::CodeActionKind::RefactorInline.should eq("refactor.inline")
+      Adamas::Compiler::LSP::CodeActionKind::Source.should eq("source")
     end
   end
 
   describe "CodeAction struct" do
     it "creates action with required fields" do
-      action = CrystalV2::Compiler::LSP::CodeAction.new(
+      action = Adamas::Compiler::LSP::CodeAction.new(
         title: "Add type annotation"
       )
 
@@ -28,9 +28,9 @@ describe "LSP Code Action" do
     end
 
     it "creates action with kind" do
-      action = CrystalV2::Compiler::LSP::CodeAction.new(
+      action = Adamas::Compiler::LSP::CodeAction.new(
         title: "Fix error",
-        kind: CrystalV2::Compiler::LSP::CodeActionKind::QuickFix
+        kind: Adamas::Compiler::LSP::CodeActionKind::QuickFix
       )
 
       action.title.should eq("Fix error")
@@ -38,16 +38,16 @@ describe "LSP Code Action" do
     end
 
     it "creates action with edit" do
-      pos = CrystalV2::Compiler::LSP::Position.new(line: 0, character: 0)
-      range = CrystalV2::Compiler::LSP::Range.new(start: pos, end: pos)
-      edit = CrystalV2::Compiler::LSP::TextEdit.new(range: range, new_text: "fix")
-      workspace_edit = CrystalV2::Compiler::LSP::WorkspaceEdit.new(
+      pos = Adamas::Compiler::LSP::Position.new(line: 0, character: 0)
+      range = Adamas::Compiler::LSP::Range.new(start: pos, end: pos)
+      edit = Adamas::Compiler::LSP::TextEdit.new(range: range, new_text: "fix")
+      workspace_edit = Adamas::Compiler::LSP::WorkspaceEdit.new(
         changes: {"file:///test.cr" => [edit]}
       )
 
-      action = CrystalV2::Compiler::LSP::CodeAction.new(
+      action = Adamas::Compiler::LSP::CodeAction.new(
         title: "Apply fix",
-        kind: CrystalV2::Compiler::LSP::CodeActionKind::QuickFix,
+        kind: Adamas::Compiler::LSP::CodeActionKind::QuickFix,
         edit: workspace_edit
       )
 
@@ -56,7 +56,7 @@ describe "LSP Code Action" do
     end
 
     it "serializes to JSON with camelCase" do
-      action = CrystalV2::Compiler::LSP::CodeAction.new(
+      action = Adamas::Compiler::LSP::CodeAction.new(
         title: "Test",
         is_preferred: true
       )
@@ -69,14 +69,14 @@ describe "LSP Code Action" do
 
   describe "CodeActionContext struct" do
     it "creates context with diagnostics" do
-      pos = CrystalV2::Compiler::LSP::Position.new(line: 0, character: 0)
-      range = CrystalV2::Compiler::LSP::Range.new(start: pos, end: pos)
-      diagnostic = CrystalV2::Compiler::LSP::Diagnostic.new(
+      pos = Adamas::Compiler::LSP::Position.new(line: 0, character: 0)
+      range = Adamas::Compiler::LSP::Range.new(start: pos, end: pos)
+      diagnostic = Adamas::Compiler::LSP::Diagnostic.new(
         range: range,
         message: "Error"
       )
 
-      context = CrystalV2::Compiler::LSP::CodeActionContext.new(
+      context = Adamas::Compiler::LSP::CodeActionContext.new(
         diagnostics: [diagnostic]
       )
 
@@ -85,8 +85,8 @@ describe "LSP Code Action" do
     end
 
     it "creates context with only filter" do
-      context = CrystalV2::Compiler::LSP::CodeActionContext.new(
-        diagnostics: [] of CrystalV2::Compiler::LSP::Diagnostic,
+      context = Adamas::Compiler::LSP::CodeActionContext.new(
+        diagnostics: [] of Adamas::Compiler::LSP::Diagnostic,
         only: ["quickfix"]
       )
 
@@ -97,14 +97,14 @@ describe "LSP Code Action" do
 
   describe "CodeActionParams struct" do
     it "creates params with all fields" do
-      text_doc = CrystalV2::Compiler::LSP::TextDocumentIdentifier.new(uri: "file:///test.cr")
-      pos = CrystalV2::Compiler::LSP::Position.new(line: 5, character: 10)
-      range = CrystalV2::Compiler::LSP::Range.new(start: pos, end: pos)
-      context = CrystalV2::Compiler::LSP::CodeActionContext.new(
-        diagnostics: [] of CrystalV2::Compiler::LSP::Diagnostic
+      text_doc = Adamas::Compiler::LSP::TextDocumentIdentifier.new(uri: "file:///test.cr")
+      pos = Adamas::Compiler::LSP::Position.new(line: 5, character: 10)
+      range = Adamas::Compiler::LSP::Range.new(start: pos, end: pos)
+      context = Adamas::Compiler::LSP::CodeActionContext.new(
+        diagnostics: [] of Adamas::Compiler::LSP::Diagnostic
       )
 
-      params = CrystalV2::Compiler::LSP::CodeActionParams.new(
+      params = Adamas::Compiler::LSP::CodeActionParams.new(
         text_document: text_doc,
         range: range,
         context: context
@@ -122,9 +122,9 @@ describe "LSP Code Action" do
       # In a real scenario, would check actual AST
 
       # For now, verify structures are in place
-      action = CrystalV2::Compiler::LSP::CodeAction.new(
+      action = Adamas::Compiler::LSP::CodeAction.new(
         title: "Extract to local variable",
-        kind: CrystalV2::Compiler::LSP::CodeActionKind::RefactorExtract
+        kind: Adamas::Compiler::LSP::CodeActionKind::RefactorExtract
       )
 
       action.title.should contain("Extract")
@@ -144,8 +144,8 @@ describe "LSP Code Action" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
       # Verify program structure exists for action analysis
@@ -162,8 +162,8 @@ describe "LSP Code Action" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
       program.roots.should_not be_empty
@@ -178,8 +178,8 @@ describe "LSP Code Action" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
       program.roots.should_not be_empty
@@ -194,8 +194,8 @@ describe "LSP Code Action" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
       program.roots.should_not be_empty
@@ -211,8 +211,8 @@ describe "LSP Code Action" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
       program.roots.should_not be_empty
@@ -229,8 +229,8 @@ describe "LSP Code Action" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
       program.roots.should_not be_empty
@@ -249,8 +249,8 @@ describe "LSP Code Action" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
       program.roots.should_not be_empty
@@ -261,9 +261,9 @@ describe "LSP Code Action" do
     it "returns empty array for MVP (no diagnostics)" do
       # MVP implementation returns no quick fixes
       # This test documents current behavior
-      pos = CrystalV2::Compiler::LSP::Position.new(line: 0, character: 0)
-      range = CrystalV2::Compiler::LSP::Range.new(start: pos, end: pos)
-      diagnostic = CrystalV2::Compiler::LSP::Diagnostic.new(
+      pos = Adamas::Compiler::LSP::Position.new(line: 0, character: 0)
+      range = Adamas::Compiler::LSP::Range.new(start: pos, end: pos)
+      diagnostic = Adamas::Compiler::LSP::Diagnostic.new(
         range: range,
         message: "Error"
       )
@@ -277,9 +277,9 @@ describe "LSP Code Action" do
   describe "Refactor actions" do
     it "suggests extract variable for valid range" do
       # MVP suggests extract variable for non-empty single-line ranges
-      action = CrystalV2::Compiler::LSP::CodeAction.new(
+      action = Adamas::Compiler::LSP::CodeAction.new(
         title: "Extract to local variable",
-        kind: CrystalV2::Compiler::LSP::CodeActionKind::RefactorExtract
+        kind: Adamas::Compiler::LSP::CodeActionKind::RefactorExtract
       )
 
       action.kind.should eq("refactor.extract")

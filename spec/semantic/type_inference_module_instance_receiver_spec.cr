@@ -6,8 +6,8 @@ require "../../src/compiler/frontend/parser"
 require "../../src/compiler/semantic/analyzer"
 require "../../src/compiler/semantic/type_inference_engine"
 
-include CrystalV2::Compiler::Frontend
-include CrystalV2::Compiler::Semantic
+include Adamas::Compiler::Frontend
+include Adamas::Compiler::Semantic
 
 private def infer_types(source : String)
   lexer = Lexer.new(source)

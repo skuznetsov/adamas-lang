@@ -1,6 +1,6 @@
 require "../frontend/ast"
 
-module CrystalV2
+module Adamas
   module Compiler
     module Semantic
       record GeneratedNodeInfo,

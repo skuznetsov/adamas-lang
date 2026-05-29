@@ -10,10 +10,10 @@ describe "LSP background prelude loading" do
     FileUtils.mkdir_p(dir)
     log_path = File.join(dir, "server.log")
 
-    server = CrystalV2::Compiler::LSP::Server.new(
+    server = Adamas::Compiler::LSP::Server.new(
       IO::Memory.new,
       IO::Memory.new,
-      CrystalV2::Compiler::LSP::ServerConfig.new(
+      Adamas::Compiler::LSP::ServerConfig.new(
         background_indexing: true,
         project_cache: false,
         debug_log_path: log_path

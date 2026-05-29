@@ -9,8 +9,8 @@ require "../../src/compiler/semantic/collectors/symbol_collector"
 require "../../src/compiler/semantic/symbol"
 
 module SymbolCollectorSpecAliases
-  alias Frontend = CrystalV2::Compiler::Frontend
-  alias Semantic = CrystalV2::Compiler::Semantic
+  alias Frontend = Adamas::Compiler::Frontend
+  alias Semantic = Adamas::Compiler::Semantic
 end
 
 include SymbolCollectorSpecAliases
@@ -643,7 +643,7 @@ describe Semantic::SymbolCollector do
 
   it "collects uppercase assignment constants in class scopes" do
     source = <<-CR
-      module Crystal::HIR
+      module Adamas::HIR
         class TaintAnalyzer
           FFI_METHODS = 1
 
@@ -670,7 +670,7 @@ describe Semantic::SymbolCollector do
 
   it "collects module-body macro-generated constants" do
     source = <<-CR
-      module Crystal::MIR
+      module Adamas::MIR
         {% if true %}
           TARGET_POINTER_BYTES_U64 = 8_u64
         {% else %}

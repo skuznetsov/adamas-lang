@@ -2,14 +2,14 @@ require "spec"
 
 require "../../src/compiler/frontend/parser"
 
-describe "CrystalV2::Compiler::Frontend::Parser" do
+describe "Adamas::Compiler::Frontend::Parser" do
   describe "Phase 52: &=, |=, ^=, <<=, >>= bitwise compound assignment (PRODUCTION-READY)" do
     it "parses simple &= assignment" do
       source = <<-CRYSTAL
       flags &= mask
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
@@ -17,22 +17,22 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
 
       # Should desugar to: flags = flags & mask
       assign_node = arena[program.roots[0]]
-      CrystalV2::Compiler::Frontend.node_kind(assign_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Assign)
+      Adamas::Compiler::Frontend.node_kind(assign_node).should eq(Adamas::Compiler::Frontend::NodeKind::Assign)
 
       # Value is binary expression: flags & mask
-      binary_node = arena[CrystalV2::Compiler::Frontend.node_assign_value(assign_node).not_nil!]
-      CrystalV2::Compiler::Frontend.node_kind(binary_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Binary)
-      CrystalV2::Compiler::Frontend.node_operator(binary_node).not_nil!.should eq("&".to_slice)
+      binary_node = arena[Adamas::Compiler::Frontend.node_assign_value(assign_node).not_nil!]
+      Adamas::Compiler::Frontend.node_kind(binary_node).should eq(Adamas::Compiler::Frontend::NodeKind::Binary)
+      Adamas::Compiler::Frontend.node_operator(binary_node).not_nil!.should eq("&".to_slice)
 
       # Left side is 'flags'
-      left = arena[CrystalV2::Compiler::Frontend.node_left(binary_node).not_nil!]
-      CrystalV2::Compiler::Frontend.node_kind(left).should eq(CrystalV2::Compiler::Frontend::NodeKind::Identifier)
-      CrystalV2::Compiler::Frontend.node_literal(left).not_nil!.should eq("flags".to_slice)
+      left = arena[Adamas::Compiler::Frontend.node_left(binary_node).not_nil!]
+      Adamas::Compiler::Frontend.node_kind(left).should eq(Adamas::Compiler::Frontend::NodeKind::Identifier)
+      Adamas::Compiler::Frontend.node_literal(left).not_nil!.should eq("flags".to_slice)
 
       # Right side is 'mask'
-      right = arena[CrystalV2::Compiler::Frontend.node_right(binary_node).not_nil!]
-      CrystalV2::Compiler::Frontend.node_kind(right).should eq(CrystalV2::Compiler::Frontend::NodeKind::Identifier)
-      CrystalV2::Compiler::Frontend.node_literal(right).not_nil!.should eq("mask".to_slice)
+      right = arena[Adamas::Compiler::Frontend.node_right(binary_node).not_nil!]
+      Adamas::Compiler::Frontend.node_kind(right).should eq(Adamas::Compiler::Frontend::NodeKind::Identifier)
+      Adamas::Compiler::Frontend.node_literal(right).not_nil!.should eq("mask".to_slice)
     end
 
     it "parses simple |= assignment" do
@@ -40,15 +40,15 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       bits |= value
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       assign_node = arena[program.roots[0]]
-      binary_node = arena[CrystalV2::Compiler::Frontend.node_assign_value(assign_node).not_nil!]
-      CrystalV2::Compiler::Frontend.node_operator(binary_node).not_nil!.should eq("|".to_slice)
+      binary_node = arena[Adamas::Compiler::Frontend.node_assign_value(assign_node).not_nil!]
+      Adamas::Compiler::Frontend.node_operator(binary_node).not_nil!.should eq("|".to_slice)
     end
 
     it "parses simple ^= assignment" do
@@ -56,15 +56,15 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       state ^= toggle
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       assign_node = arena[program.roots[0]]
-      binary_node = arena[CrystalV2::Compiler::Frontend.node_assign_value(assign_node).not_nil!]
-      CrystalV2::Compiler::Frontend.node_operator(binary_node).not_nil!.should eq("^".to_slice)
+      binary_node = arena[Adamas::Compiler::Frontend.node_assign_value(assign_node).not_nil!]
+      Adamas::Compiler::Frontend.node_operator(binary_node).not_nil!.should eq("^".to_slice)
     end
 
     it "parses simple <<= assignment" do
@@ -72,15 +72,15 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       num <<= shift
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       assign_node = arena[program.roots[0]]
-      binary_node = arena[CrystalV2::Compiler::Frontend.node_assign_value(assign_node).not_nil!]
-      CrystalV2::Compiler::Frontend.node_operator(binary_node).not_nil!.should eq("<<".to_slice)
+      binary_node = arena[Adamas::Compiler::Frontend.node_assign_value(assign_node).not_nil!]
+      Adamas::Compiler::Frontend.node_operator(binary_node).not_nil!.should eq("<<".to_slice)
     end
 
     it "parses simple >>= assignment" do
@@ -88,15 +88,15 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       value >>= count
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       assign_node = arena[program.roots[0]]
-      binary_node = arena[CrystalV2::Compiler::Frontend.node_assign_value(assign_node).not_nil!]
-      CrystalV2::Compiler::Frontend.node_operator(binary_node).not_nil!.should eq(">>".to_slice)
+      binary_node = arena[Adamas::Compiler::Frontend.node_assign_value(assign_node).not_nil!]
+      Adamas::Compiler::Frontend.node_operator(binary_node).not_nil!.should eq(">>".to_slice)
     end
 
     it "parses &= with number literal" do
@@ -104,19 +104,19 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       flags &= 255
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       assign_node = arena[program.roots[0]]
-      binary_node = arena[CrystalV2::Compiler::Frontend.node_assign_value(assign_node).not_nil!]
-      CrystalV2::Compiler::Frontend.node_operator(binary_node).not_nil!.should eq("&".to_slice)
+      binary_node = arena[Adamas::Compiler::Frontend.node_assign_value(assign_node).not_nil!]
+      Adamas::Compiler::Frontend.node_operator(binary_node).not_nil!.should eq("&".to_slice)
 
       # Right side is number
-      right = arena[CrystalV2::Compiler::Frontend.node_right(binary_node).not_nil!]
-      CrystalV2::Compiler::Frontend.node_kind(right).should eq(CrystalV2::Compiler::Frontend::NodeKind::Number)
+      right = arena[Adamas::Compiler::Frontend.node_right(binary_node).not_nil!]
+      Adamas::Compiler::Frontend.node_kind(right).should eq(Adamas::Compiler::Frontend::NodeKind::Number)
     end
 
     it "parses <<= with constant" do
@@ -124,19 +124,19 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       result <<= SHIFT_AMOUNT
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       assign_node = arena[program.roots[0]]
-      binary_node = arena[CrystalV2::Compiler::Frontend.node_assign_value(assign_node).not_nil!]
-      CrystalV2::Compiler::Frontend.node_operator(binary_node).not_nil!.should eq("<<".to_slice)
+      binary_node = arena[Adamas::Compiler::Frontend.node_assign_value(assign_node).not_nil!]
+      Adamas::Compiler::Frontend.node_operator(binary_node).not_nil!.should eq("<<".to_slice)
 
       # Right side is identifier (constant)
-      right = arena[CrystalV2::Compiler::Frontend.node_right(binary_node).not_nil!]
-      CrystalV2::Compiler::Frontend.node_kind(right).should eq(CrystalV2::Compiler::Frontend::NodeKind::Identifier)
+      right = arena[Adamas::Compiler::Frontend.node_right(binary_node).not_nil!]
+      Adamas::Compiler::Frontend.node_kind(right).should eq(Adamas::Compiler::Frontend::NodeKind::Identifier)
     end
 
     it "parses multiple bitwise compound assignments" do
@@ -148,7 +148,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       e >>= 5
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(5)
@@ -158,10 +158,10 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       operators = ["&".to_slice, "|".to_slice, "^".to_slice, "<<".to_slice, ">>".to_slice]
       (0..4).each do |i|
         assign = arena[program.roots[i]]
-        CrystalV2::Compiler::Frontend.node_kind(assign).should eq(CrystalV2::Compiler::Frontend::NodeKind::Assign)
+        Adamas::Compiler::Frontend.node_kind(assign).should eq(Adamas::Compiler::Frontend::NodeKind::Assign)
 
-        binary = arena[CrystalV2::Compiler::Frontend.node_assign_value(assign).not_nil!]
-        CrystalV2::Compiler::Frontend.node_operator(binary).not_nil!.should eq(operators[i])
+        binary = arena[Adamas::Compiler::Frontend.node_assign_value(assign).not_nil!]
+        Adamas::Compiler::Frontend.node_operator(binary).not_nil!.should eq(operators[i])
       end
     end
 
@@ -172,22 +172,22 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       method_node = arena[program.roots[0]]
-      CrystalV2::Compiler::Frontend.node_kind(method_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Def)
+      Adamas::Compiler::Frontend.node_kind(method_node).should eq(Adamas::Compiler::Frontend::NodeKind::Def)
 
-      def_body = CrystalV2::Compiler::Frontend.node_def_body(method_node).not_nil!
+      def_body = Adamas::Compiler::Frontend.node_def_body(method_node).not_nil!
       def_body.size.should eq(1)
       assign = arena[def_body[0]]
-      CrystalV2::Compiler::Frontend.node_kind(assign).should eq(CrystalV2::Compiler::Frontend::NodeKind::Assign)
+      Adamas::Compiler::Frontend.node_kind(assign).should eq(Adamas::Compiler::Frontend::NodeKind::Assign)
 
-      binary = arena[CrystalV2::Compiler::Frontend.node_assign_value(assign).not_nil!]
-      CrystalV2::Compiler::Frontend.node_operator(binary).not_nil!.should eq("&".to_slice)
+      binary = arena[Adamas::Compiler::Frontend.node_assign_value(assign).not_nil!]
+      Adamas::Compiler::Frontend.node_operator(binary).not_nil!.should eq("&".to_slice)
     end
 
     it "parses bitwise compound in class" do
@@ -199,26 +199,26 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       class_node = arena[program.roots[0]]
-      CrystalV2::Compiler::Frontend.node_kind(class_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Class)
+      Adamas::Compiler::Frontend.node_kind(class_node).should eq(Adamas::Compiler::Frontend::NodeKind::Class)
 
-      class_body = CrystalV2::Compiler::Frontend.node_class_body(class_node).not_nil!
+      class_body = Adamas::Compiler::Frontend.node_class_body(class_node).not_nil!
       class_body.size.should eq(1)
       method = arena[class_body[0]]
-      CrystalV2::Compiler::Frontend.node_kind(method).should eq(CrystalV2::Compiler::Frontend::NodeKind::Def)
+      Adamas::Compiler::Frontend.node_kind(method).should eq(Adamas::Compiler::Frontend::NodeKind::Def)
 
-      method_def_body = CrystalV2::Compiler::Frontend.node_def_body(method).not_nil!
+      method_def_body = Adamas::Compiler::Frontend.node_def_body(method).not_nil!
       method_def_body.size.should eq(1)
       assign = arena[method_def_body[0]]
 
-      binary = arena[CrystalV2::Compiler::Frontend.node_assign_value(assign).not_nil!]
-      CrystalV2::Compiler::Frontend.node_operator(binary).not_nil!.should eq("<<".to_slice)
+      binary = arena[Adamas::Compiler::Frontend.node_assign_value(assign).not_nil!]
+      Adamas::Compiler::Frontend.node_operator(binary).not_nil!.should eq("<<".to_slice)
     end
 
     it "correctly distinguishes &= from &&= and &" do
@@ -229,7 +229,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       d = e & f
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(4)
@@ -237,23 +237,23 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
 
       # First: x && y (logical and)
       assign1 = arena[program.roots[0]]
-      binary1 = arena[CrystalV2::Compiler::Frontend.node_assign_value(assign1).not_nil!]
-      CrystalV2::Compiler::Frontend.node_operator(binary1).not_nil!.should eq("&&".to_slice)
+      binary1 = arena[Adamas::Compiler::Frontend.node_assign_value(assign1).not_nil!]
+      Adamas::Compiler::Frontend.node_operator(binary1).not_nil!.should eq("&&".to_slice)
 
       # Second: b &&= z (logical and assign)
       assign2 = arena[program.roots[1]]
-      binary2 = arena[CrystalV2::Compiler::Frontend.node_assign_value(assign2).not_nil!]
-      CrystalV2::Compiler::Frontend.node_operator(binary2).not_nil!.should eq("&&".to_slice)
+      binary2 = arena[Adamas::Compiler::Frontend.node_assign_value(assign2).not_nil!]
+      Adamas::Compiler::Frontend.node_operator(binary2).not_nil!.should eq("&&".to_slice)
 
       # Third: c &= mask (bitwise and assign)
       assign3 = arena[program.roots[2]]
-      binary3 = arena[CrystalV2::Compiler::Frontend.node_assign_value(assign3).not_nil!]
-      CrystalV2::Compiler::Frontend.node_operator(binary3).not_nil!.should eq("&".to_slice)
+      binary3 = arena[Adamas::Compiler::Frontend.node_assign_value(assign3).not_nil!]
+      Adamas::Compiler::Frontend.node_operator(binary3).not_nil!.should eq("&".to_slice)
 
       # Fourth: e & f (bitwise and)
       assign4 = arena[program.roots[3]]
-      binary4 = arena[CrystalV2::Compiler::Frontend.node_assign_value(assign4).not_nil!]
-      CrystalV2::Compiler::Frontend.node_operator(binary4).not_nil!.should eq("&".to_slice)
+      binary4 = arena[Adamas::Compiler::Frontend.node_assign_value(assign4).not_nil!]
+      Adamas::Compiler::Frontend.node_operator(binary4).not_nil!.should eq("&".to_slice)
     end
 
     it "correctly distinguishes |= from ||= and |" do
@@ -264,7 +264,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       d = e | f
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(4)
@@ -274,8 +274,8 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       operators = ["||".to_slice, "||".to_slice, "|".to_slice, "|".to_slice]
       (0..3).each do |i|
         assign = arena[program.roots[i]]
-        binary = arena[CrystalV2::Compiler::Frontend.node_assign_value(assign).not_nil!]
-        CrystalV2::Compiler::Frontend.node_operator(binary).not_nil!.should eq(operators[i])
+        binary = arena[Adamas::Compiler::Frontend.node_assign_value(assign).not_nil!]
+        Adamas::Compiler::Frontend.node_operator(binary).not_nil!.should eq(operators[i])
       end
     end
 
@@ -286,7 +286,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       c = d < e
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(3)
@@ -294,18 +294,18 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
 
       # First: x << y (left shift)
       assign1 = arena[program.roots[0]]
-      binary1 = arena[CrystalV2::Compiler::Frontend.node_assign_value(assign1).not_nil!]
-      CrystalV2::Compiler::Frontend.node_operator(binary1).not_nil!.should eq("<<".to_slice)
+      binary1 = arena[Adamas::Compiler::Frontend.node_assign_value(assign1).not_nil!]
+      Adamas::Compiler::Frontend.node_operator(binary1).not_nil!.should eq("<<".to_slice)
 
       # Second: b <<= shift (left shift assign)
       assign2 = arena[program.roots[1]]
-      binary2 = arena[CrystalV2::Compiler::Frontend.node_assign_value(assign2).not_nil!]
-      CrystalV2::Compiler::Frontend.node_operator(binary2).not_nil!.should eq("<<".to_slice)
+      binary2 = arena[Adamas::Compiler::Frontend.node_assign_value(assign2).not_nil!]
+      Adamas::Compiler::Frontend.node_operator(binary2).not_nil!.should eq("<<".to_slice)
 
       # Third: d < e (less than)
       assign3 = arena[program.roots[2]]
-      binary3 = arena[CrystalV2::Compiler::Frontend.node_assign_value(assign3).not_nil!]
-      CrystalV2::Compiler::Frontend.node_operator(binary3).not_nil!.should eq("<".to_slice)
+      binary3 = arena[Adamas::Compiler::Frontend.node_assign_value(assign3).not_nil!]
+      Adamas::Compiler::Frontend.node_operator(binary3).not_nil!.should eq("<".to_slice)
     end
 
     it "correctly distinguishes >>= from >> and >" do
@@ -315,7 +315,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       c = d > e
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(3)
@@ -323,18 +323,18 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
 
       # First: x >> y (right shift)
       assign1 = arena[program.roots[0]]
-      binary1 = arena[CrystalV2::Compiler::Frontend.node_assign_value(assign1).not_nil!]
-      CrystalV2::Compiler::Frontend.node_operator(binary1).not_nil!.should eq(">>".to_slice)
+      binary1 = arena[Adamas::Compiler::Frontend.node_assign_value(assign1).not_nil!]
+      Adamas::Compiler::Frontend.node_operator(binary1).not_nil!.should eq(">>".to_slice)
 
       # Second: b >>= count (right shift assign)
       assign2 = arena[program.roots[1]]
-      binary2 = arena[CrystalV2::Compiler::Frontend.node_assign_value(assign2).not_nil!]
-      CrystalV2::Compiler::Frontend.node_operator(binary2).not_nil!.should eq(">>".to_slice)
+      binary2 = arena[Adamas::Compiler::Frontend.node_assign_value(assign2).not_nil!]
+      Adamas::Compiler::Frontend.node_operator(binary2).not_nil!.should eq(">>".to_slice)
 
       # Third: d > e (greater than)
       assign3 = arena[program.roots[2]]
-      binary3 = arena[CrystalV2::Compiler::Frontend.node_assign_value(assign3).not_nil!]
-      CrystalV2::Compiler::Frontend.node_operator(binary3).not_nil!.should eq(">".to_slice)
+      binary3 = arena[Adamas::Compiler::Frontend.node_assign_value(assign3).not_nil!]
+      Adamas::Compiler::Frontend.node_operator(binary3).not_nil!.should eq(">".to_slice)
     end
 
     it "parses all compound operators together" do
@@ -347,7 +347,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       f >>= 1
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(6)
@@ -357,10 +357,10 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       operators = ["+", "&", "|", "^", "<<", ">>"]
       (0..5).each do |i|
         assign = arena[program.roots[i]]
-        CrystalV2::Compiler::Frontend.node_kind(assign).should eq(CrystalV2::Compiler::Frontend::NodeKind::Assign)
+        Adamas::Compiler::Frontend.node_kind(assign).should eq(Adamas::Compiler::Frontend::NodeKind::Assign)
 
-        binary = arena[CrystalV2::Compiler::Frontend.node_assign_value(assign).not_nil!]
-        CrystalV2::Compiler::Frontend.node_operator(binary).not_nil!.should eq(operators[i].to_slice)
+        binary = arena[Adamas::Compiler::Frontend.node_assign_value(assign).not_nil!]
+        Adamas::Compiler::Frontend.node_operator(binary).not_nil!.should eq(operators[i].to_slice)
       end
     end
   end

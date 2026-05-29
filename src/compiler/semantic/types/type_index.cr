@@ -9,7 +9,7 @@ require "./hash_type"
 require "./tuple_type"
 require "./module_type"
 
-module CrystalV2
+module Adamas
   module Compiler
     module Semantic
       # TypeId - compact identifier for types in TypeArena

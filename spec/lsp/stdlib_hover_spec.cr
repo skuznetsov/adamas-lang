@@ -28,9 +28,9 @@ describe "Stdlib hover and definition" do
     float = 3.14
     CR
 
-    server = CrystalV2::Compiler::LSP::Server.new(
+    server = Adamas::Compiler::LSP::Server.new(
       IO::Memory.new, IO::Memory.new,
-      CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
+      Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
     )
     uri = server.spec_store_document(source, nil, "/tmp/stdlib_types_test.cr")
 
@@ -76,9 +76,9 @@ describe "Stdlib hover and definition" do
     val = first.sigma
     CR
 
-    server = CrystalV2::Compiler::LSP::Server.new(
+    server = Adamas::Compiler::LSP::Server.new(
       IO::Memory.new, IO::Memory.new,
-      CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
+      Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
     )
     uri = server.spec_store_document(source, nil, "/tmp/array_element_test.cr")
 

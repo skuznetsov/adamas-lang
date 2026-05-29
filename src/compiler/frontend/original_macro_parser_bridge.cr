@@ -4,7 +4,7 @@
 require "../../../src/compiler/crystal/syntax/parser"
 require "../../../src/compiler/crystal/syntax/lexer"
 
-module CrystalV2
+module Adamas
   module Compiler
     module Frontend
       # Bridge to delegate macro body parsing to original Crystal parser

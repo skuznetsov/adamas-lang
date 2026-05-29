@@ -2,7 +2,7 @@ require "spec"
 
 require "../../src/compiler/frontend/parser"
 
-describe "CrystalV2::Compiler::Frontend::Parser" do
+describe "Adamas::Compiler::Frontend::Parser" do
   describe "Phase 61: Generic class/struct/module definitions (PRODUCTION-READY)" do
     # Class tests
 
@@ -14,20 +14,20 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       klass = arena[program.roots[0]]
-      CrystalV2::Compiler::Frontend.node_kind(klass).should eq(CrystalV2::Compiler::Frontend::NodeKind::Class)
+      Adamas::Compiler::Frontend.node_kind(klass).should eq(Adamas::Compiler::Frontend::NodeKind::Class)
 
       # Check class name
-      String.new(CrystalV2::Compiler::Frontend.node_class_name(klass).not_nil!).should eq("Box")
+      String.new(Adamas::Compiler::Frontend.node_class_name(klass).not_nil!).should eq("Box")
 
       # Check type parameters
-      type_params = klass.as(CrystalV2::Compiler::Frontend::ClassNode).type_params.not_nil!
+      type_params = klass.as(Adamas::Compiler::Frontend::ClassNode).type_params.not_nil!
       type_params.size.should eq(1)
       String.new(type_params[0]).should eq("T")
     end
@@ -40,7 +40,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
@@ -49,7 +49,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       klass = arena[program.roots[0]]
 
       # Check type parameters
-      type_params = klass.as(CrystalV2::Compiler::Frontend::ClassNode).type_params.not_nil!
+      type_params = klass.as(Adamas::Compiler::Frontend::ClassNode).type_params.not_nil!
       type_params.size.should eq(2)
       String.new(type_params[0]).should eq("K")
       String.new(type_params[1]).should eq("V")
@@ -61,7 +61,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
@@ -69,7 +69,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
 
       klass = arena[program.roots[0]]
 
-      type_params = klass.as(CrystalV2::Compiler::Frontend::ClassNode).type_params.not_nil!
+      type_params = klass.as(Adamas::Compiler::Frontend::ClassNode).type_params.not_nil!
       type_params.size.should eq(3)
       String.new(type_params[0]).should eq("A")
       String.new(type_params[1]).should eq("B")
@@ -82,17 +82,17 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       klass = arena[program.roots[0]]
-      String.new(CrystalV2::Compiler::Frontend.node_class_name(klass).not_nil!).should eq("Foo")
+      String.new(Adamas::Compiler::Frontend.node_class_name(klass).not_nil!).should eq("Foo")
 
       # No type parameters
-      klass.as(CrystalV2::Compiler::Frontend::ClassNode).type_params.should be_nil
+      klass.as(Adamas::Compiler::Frontend::ClassNode).type_params.should be_nil
     end
 
     # Struct tests
@@ -105,20 +105,20 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       struct_node = arena[program.roots[0]]
-      CrystalV2::Compiler::Frontend.node_kind(struct_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Struct)
+      Adamas::Compiler::Frontend.node_kind(struct_node).should eq(Adamas::Compiler::Frontend::NodeKind::Struct)
 
       # Check struct name
-      String.new(CrystalV2::Compiler::Frontend.node_class_name(struct_node).not_nil!).should eq("Point")
+      String.new(Adamas::Compiler::Frontend.node_class_name(struct_node).not_nil!).should eq("Point")
 
       # Check type parameters
-      type_params = struct_node.as(CrystalV2::Compiler::Frontend::ClassNode).type_params.not_nil!
+      type_params = struct_node.as(Adamas::Compiler::Frontend::ClassNode).type_params.not_nil!
       type_params.size.should eq(1)
       String.new(type_params[0]).should eq("T")
     end
@@ -129,7 +129,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
@@ -137,7 +137,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
 
       struct_node = arena[program.roots[0]]
 
-      type_params = struct_node.as(CrystalV2::Compiler::Frontend::ClassNode).type_params.not_nil!
+      type_params = struct_node.as(Adamas::Compiler::Frontend::ClassNode).type_params.not_nil!
       type_params.size.should eq(2)
       String.new(type_params[0]).should eq("K")
       String.new(type_params[1]).should eq("V")
@@ -153,20 +153,20 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       mod = arena[program.roots[0]]
-      CrystalV2::Compiler::Frontend.node_kind(mod).should eq(CrystalV2::Compiler::Frontend::NodeKind::Module)
+      Adamas::Compiler::Frontend.node_kind(mod).should eq(Adamas::Compiler::Frontend::NodeKind::Module)
 
       # Check module name
-      String.new(CrystalV2::Compiler::Frontend.node_module_name(mod).not_nil!).should eq("Enumerable")
+      String.new(Adamas::Compiler::Frontend.node_module_name(mod).not_nil!).should eq("Enumerable")
 
       # Check type parameters
-      type_params = mod.as(CrystalV2::Compiler::Frontend::ModuleNode).type_params.not_nil!
+      type_params = mod.as(Adamas::Compiler::Frontend::ModuleNode).type_params.not_nil!
       type_params.size.should eq(1)
       String.new(type_params[0]).should eq("T")
     end
@@ -177,7 +177,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
@@ -185,7 +185,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
 
       mod = arena[program.roots[0]]
 
-      type_params = mod.as(CrystalV2::Compiler::Frontend::ModuleNode).type_params.not_nil!
+      type_params = mod.as(Adamas::Compiler::Frontend::ModuleNode).type_params.not_nil!
       type_params.size.should eq(2)
       String.new(type_params[0]).should eq("T")
       String.new(type_params[1]).should eq("U")
@@ -199,7 +199,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
@@ -208,12 +208,12 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       klass = arena[program.roots[0]]
 
       # Check type parameters
-      type_params = klass.as(CrystalV2::Compiler::Frontend::ClassNode).type_params.not_nil!
+      type_params = klass.as(Adamas::Compiler::Frontend::ClassNode).type_params.not_nil!
       type_params.size.should eq(1)
       String.new(type_params[0]).should eq("T")
 
       # Check superclass
-      String.new(CrystalV2::Compiler::Frontend.node_class_super_name(klass).not_nil!).should eq("Parent")
+      String.new(Adamas::Compiler::Frontend.node_class_super_name(klass).not_nil!).should eq("Parent")
     end
 
     it "parses abstract generic class" do
@@ -222,7 +222,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
@@ -231,10 +231,10 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       klass = arena[program.roots[0]]
 
       # Check abstract flag
-      CrystalV2::Compiler::Frontend.node_class_is_abstract(klass).should be_true
+      Adamas::Compiler::Frontend.node_class_is_abstract(klass).should be_true
 
       # Check type parameters
-      type_params = klass.as(CrystalV2::Compiler::Frontend::ClassNode).type_params.not_nil!
+      type_params = klass.as(Adamas::Compiler::Frontend::ClassNode).type_params.not_nil!
       type_params.size.should eq(1)
       String.new(type_params[0]).should eq("T")
     end
@@ -251,7 +251,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(3)
@@ -259,13 +259,13 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
 
       # Check all have type parameters
       klass = arena[program.roots[0]]
-      klass.as(CrystalV2::Compiler::Frontend::ClassNode).type_params.not_nil!.size.should eq(1)
+      klass.as(Adamas::Compiler::Frontend::ClassNode).type_params.not_nil!.size.should eq(1)
 
       struct_node = arena[program.roots[1]]
-      struct_node.as(CrystalV2::Compiler::Frontend::ClassNode).type_params.not_nil!.size.should eq(1)
+      struct_node.as(Adamas::Compiler::Frontend::ClassNode).type_params.not_nil!.size.should eq(1)
 
       mod = arena[program.roots[2]]
-      mod.as(CrystalV2::Compiler::Frontend::ModuleNode).type_params.not_nil!.size.should eq(1)
+      mod.as(Adamas::Compiler::Frontend::ModuleNode).type_params.not_nil!.size.should eq(1)
     end
 
     it "parses nested generic classes" do
@@ -276,22 +276,22 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       outer = arena[program.roots[0]]
-      String.new(CrystalV2::Compiler::Frontend.node_class_name(outer).not_nil!).should eq("Outer")
-      type_params = outer.as(CrystalV2::Compiler::Frontend::ClassNode).type_params.not_nil!
+      String.new(Adamas::Compiler::Frontend.node_class_name(outer).not_nil!).should eq("Outer")
+      type_params = outer.as(Adamas::Compiler::Frontend::ClassNode).type_params.not_nil!
       type_params.size.should eq(1)
       String.new(type_params[0]).should eq("T")
 
       # Check inner class
-      inner_id = CrystalV2::Compiler::Frontend.node_class_body(outer).not_nil![0]
-      inner = arena[inner_id].as(CrystalV2::Compiler::Frontend::ClassNode)
-      String.new(CrystalV2::Compiler::Frontend.node_class_name(inner).not_nil!).should eq("Inner")
+      inner_id = Adamas::Compiler::Frontend.node_class_body(outer).not_nil![0]
+      inner = arena[inner_id].as(Adamas::Compiler::Frontend::ClassNode)
+      String.new(Adamas::Compiler::Frontend.node_class_name(inner).not_nil!).should eq("Inner")
       inner_params = inner.type_params.not_nil!
       inner_params.size.should eq(1)
       String.new(inner_params[0]).should eq("U")

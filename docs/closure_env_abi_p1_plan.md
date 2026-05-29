@@ -1253,7 +1253,7 @@ registry.
 
 All checks below must pass on a fresh build of a non-trivial program
 (`regression_tests/spawn_capture_block_param` source in particular). The
-tests run against `/tmp/p1_repro.ll` (produced by `bin/crystal_v2 -S` or
+tests run against `/tmp/p1_repro.ll` (produced by `bin/adamas -S` or
 equivalent).
 
 ### 6.1 No `%__crystal_proc` as value type
@@ -1500,16 +1500,16 @@ Every row must be green before commit. All binaries run via
 
 | # | Command | Expected |
 |---|---|---|
-| R1 | `crystal build src/crystal_v2.cr -o bin/crystal_v2 --error-trace` | exit 0, only Random warning |
-| R2 | `regression_tests/spawn_capture_block_param_repro.sh bin/crystal_v2` | **exit 1** (both probes print `_ok`; historical bug stays fixed) |
-| R3 | `bin/crystal_v2 regression_tests/tuple_int32_int64_layout.cr -o /tmp/p1_tup && scripts/run_safe.sh /tmp/p1_tup 5 512` | stdout contains `tuple_int32_int64_layout_ok` and `..._big_ok` |
-| R4 | `bin/crystal_v2 regression_tests/channel_ping_pong_repro.cr -o /tmp/p1_ch && scripts/run_safe.sh /tmp/p1_ch 5 512` | stdout `channel_ping_pong_ok` |
-| R5 | `bash regression_tests/object_in_splat_broadcast_hir_count.sh bin/crystal_v2` | `ok: fix intact` |
-| R6 | `bash regression_tests/in_array_stub_repro.sh bin/crystal_v2` | exit 0 (`reproduced: STUB CALLED …`) |
-| R7 | `bin/crystal_v2 regression_tests/test_proc_basic.cr -o /tmp/p1_proc && scripts/run_safe.sh /tmp/p1_proc 5 512` | `7 / 50 / proc_test_done` |
-| R8 | `bin/crystal_v2 regression_tests/test_blocks.cr -o /tmp/p1_blk && scripts/run_safe.sh /tmp/p1_blk 5 512` | `10 / 2 / blocks_done` |
+| R1 | `crystal build src/adamas.cr -o bin/adamas --error-trace` | exit 0, only Random warning |
+| R2 | `regression_tests/spawn_capture_block_param_repro.sh bin/adamas` | **exit 1** (both probes print `_ok`; historical bug stays fixed) |
+| R3 | `bin/adamas regression_tests/tuple_int32_int64_layout.cr -o /tmp/p1_tup && scripts/run_safe.sh /tmp/p1_tup 5 512` | stdout contains `tuple_int32_int64_layout_ok` and `..._big_ok` |
+| R4 | `bin/adamas regression_tests/channel_ping_pong_repro.cr -o /tmp/p1_ch && scripts/run_safe.sh /tmp/p1_ch 5 512` | stdout `channel_ping_pong_ok` |
+| R5 | `bash regression_tests/object_in_splat_broadcast_hir_count.sh bin/adamas` | `ok: fix intact` |
+| R6 | `bash regression_tests/in_array_stub_repro.sh bin/adamas` | exit 0 (`reproduced: STUB CALLED …`) |
+| R7 | `bin/adamas regression_tests/test_proc_basic.cr -o /tmp/p1_proc && scripts/run_safe.sh /tmp/p1_proc 5 512` | `7 / 50 / proc_test_done` |
+| R8 | `bin/adamas regression_tests/test_blocks.cr -o /tmp/p1_blk && scripts/run_safe.sh /tmp/p1_blk 5 512` | `10 / 2 / blocks_done` |
 | R9 | Fiber fan-out benchmark reducer (re-use Part 6 / `spawn_capture_block_param` source): run compiled binary and capture both probe sums. | `sum_a = 6` AND `sum_b = 6` (expected totals) |
-| R10 | `regression_tests/p1_ir_shape_check.sh bin/crystal_v2` | exit 0 (all §6 assertions) |
+| R10 | `regression_tests/p1_ir_shape_check.sh bin/adamas` | exit 0 (all §6 assertions) |
 | R11 | `git diff --check` | clean |
 | R12 | `bash regression_tests/run_all_suites.sh` | not worse than baseline (baseline re-captured before P1; post-P1 combined score ≥ pre-P1 on this branch) |
 | R13 | **Capture mutation — parent observes.** New reducer (add in P1 commit): `x = 0; inc = -> { x += 1; nil }; inc.call; inc.call; puts x` | stdout `2`. Asserts I11 for single-closure write-through. |

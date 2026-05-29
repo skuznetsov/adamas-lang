@@ -14,22 +14,22 @@ private def expand_flag_macro(flag_name : String) : String
   end
   CR
 
-  lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-  parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+  lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+  parser = Adamas::Compiler::Frontend::Parser.new(lexer)
   program = parser.parse_program
-  context = CrystalV2::Compiler::Semantic::Context.new(CrystalV2::Compiler::Semantic::SymbolTable.new)
+  context = Adamas::Compiler::Semantic::Context.new(Adamas::Compiler::Semantic::SymbolTable.new)
   context.flags.should_not be_empty
 
-  analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program, context)
+  analyzer = Adamas::Compiler::Semantic::Analyzer.new(program, context)
   analyzer.collect_symbols
   table = context.symbol_table
   symbol = table.lookup_macro("__flag_test")
   symbol.should_not be_nil
 
-  expander = CrystalV2::Compiler::Semantic::MacroExpander.new(program, program.arena, context.flags)
-  expr_id = expander.expand(symbol.not_nil!, [] of CrystalV2::Compiler::Frontend::ExprId)
+  expander = Adamas::Compiler::Semantic::MacroExpander.new(program, program.arena, context.flags)
+  expr_id = expander.expand(symbol.not_nil!, [] of Adamas::Compiler::Frontend::ExprId)
   node = program.arena[expr_id]
-  CrystalV2::Compiler::Frontend.node_literal_string(node) || ""
+  Adamas::Compiler::Frontend.node_literal_string(node) || ""
 end
 
 private def expand_unless_flag_macro(flag_name : String) : String
@@ -43,26 +43,26 @@ private def expand_unless_flag_macro(flag_name : String) : String
   end
   CR
 
-  lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-  parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+  lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+  parser = Adamas::Compiler::Frontend::Parser.new(lexer)
   program = parser.parse_program
-  context = CrystalV2::Compiler::Semantic::Context.new(CrystalV2::Compiler::Semantic::SymbolTable.new)
+  context = Adamas::Compiler::Semantic::Context.new(Adamas::Compiler::Semantic::SymbolTable.new)
 
-  analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program, context)
+  analyzer = Adamas::Compiler::Semantic::Analyzer.new(program, context)
   analyzer.collect_symbols
   table = context.symbol_table
   symbol = table.lookup_macro("__unless_flag_test")
   symbol.should_not be_nil
 
-  expander = CrystalV2::Compiler::Semantic::MacroExpander.new(program, program.arena, context.flags)
-  expr_id = expander.expand(symbol.not_nil!, [] of CrystalV2::Compiler::Frontend::ExprId)
+  expander = Adamas::Compiler::Semantic::MacroExpander.new(program, program.arena, context.flags)
+  expr_id = expander.expand(symbol.not_nil!, [] of Adamas::Compiler::Frontend::ExprId)
   node = program.arena[expr_id]
-  CrystalV2::Compiler::Frontend.node_literal_string(node) || ""
+  Adamas::Compiler::Frontend.node_literal_string(node) || ""
 end
 
 describe "Macro flag? evaluation" do
   it "returns true for existing flags" do
-    flag = CrystalV2::Runtime.target_flags.first?
+    flag = Adamas::Runtime.target_flags.first?
     flag.should_not be_nil
     expand_flag_macro(flag.not_nil!).should eq("true")
   end
@@ -72,7 +72,7 @@ describe "Macro flag? evaluation" do
   end
 
   it "supports unless control flow in macro bodies" do
-    flag = CrystalV2::Runtime.target_flags.first?
+    flag = Adamas::Runtime.target_flags.first?
     flag.should_not be_nil
     expand_unless_flag_macro(flag.not_nil!).should eq("true")
     expand_unless_flag_macro("nonexistent_flag").should eq("false")
@@ -89,25 +89,25 @@ describe "Macro flag? evaluation" do
     end
     CR
 
-    lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-    parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+    lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+    parser = Adamas::Compiler::Frontend::Parser.new(lexer)
     program = parser.parse_program
 
     # Create context with custom flag
-    custom_flags = CrystalV2::Runtime.target_flags.dup
+    custom_flags = Adamas::Runtime.target_flags.dup
     custom_flags << "my_custom_feature"
-    context = CrystalV2::Compiler::Semantic::Context.new(CrystalV2::Compiler::Semantic::SymbolTable.new, custom_flags)
+    context = Adamas::Compiler::Semantic::Context.new(Adamas::Compiler::Semantic::SymbolTable.new, custom_flags)
 
-    analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program, context)
+    analyzer = Adamas::Compiler::Semantic::Analyzer.new(program, context)
     analyzer.collect_symbols
     table = context.symbol_table
     symbol = table.lookup_macro("__custom_flag_test")
     symbol.should_not be_nil
 
-    expander = CrystalV2::Compiler::Semantic::MacroExpander.new(program, program.arena, context.flags)
-    expr_id = expander.expand(symbol.not_nil!, [] of CrystalV2::Compiler::Frontend::ExprId)
+    expander = Adamas::Compiler::Semantic::MacroExpander.new(program, program.arena, context.flags)
+    expr_id = expander.expand(symbol.not_nil!, [] of Adamas::Compiler::Frontend::ExprId)
     node = program.arena[expr_id]
-    result = CrystalV2::Compiler::Frontend.node_literal_string(node) || ""
+    result = Adamas::Compiler::Frontend.node_literal_string(node) || ""
     result.should eq("enabled")
   end
 end

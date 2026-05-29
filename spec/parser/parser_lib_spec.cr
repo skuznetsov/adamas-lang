@@ -2,7 +2,7 @@ require "spec"
 
 require "../../src/compiler/frontend/parser"
 
-describe "CrystalV2::Compiler::Frontend::Parser" do
+describe "Adamas::Compiler::Frontend::Parser" do
   describe "Phase 38: lib (C bindings) (PRODUCTION-READY)" do
     it "parses empty lib" do
       source = <<-CRYSTAL
@@ -10,16 +10,16 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
       lib_node = arena[program.roots.first]
 
-      CrystalV2::Compiler::Frontend.node_kind(lib_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Lib)
-      String.new(lib_node.as(CrystalV2::Compiler::Frontend::LibNode).name).should eq("LibC")
-      body = lib_node.as(CrystalV2::Compiler::Frontend::LibNode).body
+      Adamas::Compiler::Frontend.node_kind(lib_node).should eq(Adamas::Compiler::Frontend::NodeKind::Lib)
+      String.new(lib_node.as(Adamas::Compiler::Frontend::LibNode).name).should eq("LibC")
+      body = lib_node.as(Adamas::Compiler::Frontend::LibNode).body
       body.should_not be_nil
       body.not_nil!.size.should eq(0)
     end
@@ -32,12 +32,12 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
-      lib_node = arena[program.roots.first].as(CrystalV2::Compiler::Frontend::LibNode)
+      lib_node = arena[program.roots.first].as(Adamas::Compiler::Frontend::LibNode)
 
       String.new(lib_node.name).should eq("LibC")
 
@@ -45,8 +45,8 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       lib_body.size.should eq(1)
 
       method_node = arena[lib_body[0]]
-      CrystalV2::Compiler::Frontend.node_kind(method_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Def)
-      String.new(method_node.as(CrystalV2::Compiler::Frontend::DefNode).name).should eq("strlen")
+      Adamas::Compiler::Frontend.node_kind(method_node).should eq(Adamas::Compiler::Frontend::NodeKind::Def)
+      String.new(method_node.as(Adamas::Compiler::Frontend::DefNode).name).should eq("strlen")
     end
 
     it "parses lib with multiple method definitions" do
@@ -60,23 +60,23 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
-      lib_node = arena[program.roots.first].as(CrystalV2::Compiler::Frontend::LibNode)
+      lib_node = arena[program.roots.first].as(Adamas::Compiler::Frontend::LibNode)
 
       lib_body = lib_node.body.not_nil!
       lib_body.size.should eq(2)
 
       # First method
       method1 = arena[lib_body[0]]
-      String.new(method1.as(CrystalV2::Compiler::Frontend::DefNode).name).should eq("strlen")
+      String.new(method1.as(Adamas::Compiler::Frontend::DefNode).name).should eq("strlen")
 
       # Second method
       method2 = arena[lib_body[1]]
-      String.new(method2.as(CrystalV2::Compiler::Frontend::DefNode).name).should eq("strcmp")
+      String.new(method2.as(Adamas::Compiler::Frontend::DefNode).name).should eq("strcmp")
     end
 
     it "parses nested lib" do
@@ -89,19 +89,19 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
       class_node = arena[program.roots.first]
 
-      class_body = CrystalV2::Compiler::Frontend.node_class_body(class_node).not_nil!
+      class_body = Adamas::Compiler::Frontend.node_class_body(class_node).not_nil!
       class_body.size.should eq(1)
 
       lib_node = arena[class_body[0]]
-      CrystalV2::Compiler::Frontend.node_kind(lib_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Lib)
-      String.new(lib_node.as(CrystalV2::Compiler::Frontend::LibNode).name).should eq("LibC")
+      Adamas::Compiler::Frontend.node_kind(lib_node).should eq(Adamas::Compiler::Frontend::NodeKind::Lib)
+      String.new(lib_node.as(Adamas::Compiler::Frontend::LibNode).name).should eq("LibC")
     end
 
     it "parses lib in module" do
@@ -114,19 +114,19 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
-      module_node = arena[program.roots.first].as(CrystalV2::Compiler::Frontend::ModuleNode)
+      module_node = arena[program.roots.first].as(Adamas::Compiler::Frontend::ModuleNode)
 
       module_body = module_node.body.not_nil!
       module_body.size.should eq(1)
 
       lib_node = arena[module_body[0]]
-      CrystalV2::Compiler::Frontend.node_kind(lib_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Lib)
-      String.new(lib_node.as(CrystalV2::Compiler::Frontend::LibNode).name).should eq("LibC")
+      Adamas::Compiler::Frontend.node_kind(lib_node).should eq(Adamas::Compiler::Frontend::NodeKind::Lib)
+      String.new(lib_node.as(Adamas::Compiler::Frontend::LibNode).name).should eq("LibC")
     end
 
     it "parses lib with struct definition" do
@@ -137,19 +137,19 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
-      lib_node = arena[program.roots.first].as(CrystalV2::Compiler::Frontend::LibNode)
+      lib_node = arena[program.roots.first].as(Adamas::Compiler::Frontend::LibNode)
 
       lib_body = lib_node.body.not_nil!
       lib_body.size.should eq(1)
 
       struct_node = arena[lib_body[0]]
-      CrystalV2::Compiler::Frontend.node_kind(struct_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Struct)
-      String.new(CrystalV2::Compiler::Frontend.node_class_name(struct_node).not_nil!).should eq("TimeSpec")
+      Adamas::Compiler::Frontend.node_kind(struct_node).should eq(Adamas::Compiler::Frontend::NodeKind::Struct)
+      String.new(Adamas::Compiler::Frontend.node_class_name(struct_node).not_nil!).should eq("TimeSpec")
     end
 
     it "parses lib with type alias" do
@@ -159,20 +159,20 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
-      lib_node = arena[program.roots.first].as(CrystalV2::Compiler::Frontend::LibNode)
+      lib_node = arena[program.roots.first].as(Adamas::Compiler::Frontend::LibNode)
 
       lib_body = lib_node.body.not_nil!
       lib_body.size.should eq(1)
 
       alias_node = arena[lib_body[0]]
-      CrystalV2::Compiler::Frontend.node_kind(alias_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Alias)
-      String.new(CrystalV2::Compiler::Frontend.node_alias_name(alias_node).not_nil!).should eq("SizeT")
-      String.new(CrystalV2::Compiler::Frontend.node_alias_value(alias_node).not_nil!).should eq("UInt64")
+      Adamas::Compiler::Frontend.node_kind(alias_node).should eq(Adamas::Compiler::Frontend::NodeKind::Alias)
+      String.new(Adamas::Compiler::Frontend.node_alias_name(alias_node).not_nil!).should eq("SizeT")
+      String.new(Adamas::Compiler::Frontend.node_alias_value(alias_node).not_nil!).should eq("UInt64")
     end
 
     it "parses multiple libs" do
@@ -188,7 +188,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(2)
@@ -196,13 +196,13 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
 
       # First lib
       lib1 = arena[program.roots[0]]
-      CrystalV2::Compiler::Frontend.node_kind(lib1).should eq(CrystalV2::Compiler::Frontend::NodeKind::Lib)
-      String.new(CrystalV2::Compiler::Frontend.node_lib_name(lib1).not_nil!).should eq("LibC")
+      Adamas::Compiler::Frontend.node_kind(lib1).should eq(Adamas::Compiler::Frontend::NodeKind::Lib)
+      String.new(Adamas::Compiler::Frontend.node_lib_name(lib1).not_nil!).should eq("LibC")
 
       # Second lib
       lib2 = arena[program.roots[1]]
-      CrystalV2::Compiler::Frontend.node_kind(lib2).should eq(CrystalV2::Compiler::Frontend::NodeKind::Lib)
-      String.new(CrystalV2::Compiler::Frontend.node_lib_name(lib2).not_nil!).should eq("LibPthread")
+      Adamas::Compiler::Frontend.node_kind(lib2).should eq(Adamas::Compiler::Frontend::NodeKind::Lib)
+      String.new(Adamas::Compiler::Frontend.node_lib_name(lib2).not_nil!).should eq("LibPthread")
     end
 
     it "parses lib with mixed definitions" do
@@ -218,27 +218,27 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
-      lib_node = arena[program.roots.first].as(CrystalV2::Compiler::Frontend::LibNode)
+      lib_node = arena[program.roots.first].as(Adamas::Compiler::Frontend::LibNode)
 
       lib_body = lib_node.body.not_nil!
       lib_body.size.should eq(3)
 
       # Alias
       alias_node = arena[lib_body[0]]
-      CrystalV2::Compiler::Frontend.node_kind(alias_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Alias)
+      Adamas::Compiler::Frontend.node_kind(alias_node).should eq(Adamas::Compiler::Frontend::NodeKind::Alias)
 
       # Struct
       struct_node = arena[lib_body[1]]
-      CrystalV2::Compiler::Frontend.node_kind(struct_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Struct)
+      Adamas::Compiler::Frontend.node_kind(struct_node).should eq(Adamas::Compiler::Frontend::NodeKind::Struct)
 
       # Method
       method_node = arena[lib_body[2]]
-      CrystalV2::Compiler::Frontend.node_kind(method_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Def)
+      Adamas::Compiler::Frontend.node_kind(method_node).should eq(Adamas::Compiler::Frontend::NodeKind::Def)
     end
   end
 end

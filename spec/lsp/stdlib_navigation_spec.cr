@@ -2,10 +2,10 @@ require "spec"
 
 require "./support/server_helper"
 
-describe CrystalV2::Compiler::LSP::Server do
+describe Adamas::Compiler::LSP::Server do
   it "provides hover/definition for Time.now (stdlib)" do
     source = "Time.now\n"
-    server = CrystalV2::Compiler::LSP::Server.new(IO::Memory.new, IO::Memory.new, CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false))
+    server = Adamas::Compiler::LSP::Server.new(IO::Memory.new, IO::Memory.new, Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false))
     uri = server.spec_store_document(source, nil, "/tmp/stdnav.cr")
 
     col = source.index("Time").not_nil!
@@ -19,7 +19,7 @@ describe CrystalV2::Compiler::LSP::Server do
 
   it "provides hover/definition for File.basename (stdlib)" do
     source = "File.basename(\"/tmp/foo\")\n"
-    server = CrystalV2::Compiler::LSP::Server.new(IO::Memory.new, IO::Memory.new, CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false))
+    server = Adamas::Compiler::LSP::Server.new(IO::Memory.new, IO::Memory.new, Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false))
     uri = server.spec_store_document(source, nil, "/tmp/stdnav2.cr")
 
     col = source.index("File").not_nil!

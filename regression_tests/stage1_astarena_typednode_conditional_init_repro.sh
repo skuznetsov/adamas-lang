@@ -17,9 +17,9 @@ OUT="$WORKDIR/repro_bin"
 cat >"$SRC" <<'CR'
 require "../src/compiler/frontend/ast"
 
-arena = CrystalV2::Compiler::Frontend::AstArena.new
+arena = Adamas::Compiler::Frontend::AstArena.new
 STDERR.puts "before-add"
-node = CrystalV2::Compiler::Frontend::NilNode.new(CrystalV2::Compiler::Frontend::Span.zero)
+node = Adamas::Compiler::Frontend::NilNode.new(Adamas::Compiler::Frontend::Span.zero)
 id = arena.add_typed(node)
 STDERR.puts "after-add #{id.index} size=#{arena.size}"
 CR

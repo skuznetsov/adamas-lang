@@ -104,14 +104,14 @@ should NOT rc_dec because there's no old value. Options:
 - Initialize ARC slots with null pointer at allocation time
 - Track "first store" flag per slot
 - Simplest: always init ARC slots to null. rc_dec(null) should be a no-op.
-  Verify `__crystal_v2_rc_dec` handles null (llvm_backend.cr:2648).
+  Verify `__adamas_rc_dec` handles null (llvm_backend.cr:2648).
 
 ### 2c. Verify rc_dec(null) is safe
 
-Check `__crystal_v2_rc_dec` in llvm_backend.cr:2648. If it doesn't guard against
+Check `__adamas_rc_dec` in llvm_backend.cr:2648. If it doesn't guard against
 null, add a null check:
 ```llvm
-define void @__crystal_v2_rc_dec(ptr %ptr, ptr %destructor) {
+define void @__adamas_rc_dec(ptr %ptr, ptr %destructor) {
   %is_null = icmp eq ptr %ptr, null
   br i1 %is_null, label %done, label %dec
 dec:
@@ -210,8 +210,8 @@ iterating blocks.
 ### 5a. Binary tree benchmark
 
 ```
-cd ~/Projects/Crystal/crystal_v2_repo/examples
-../bin/crystal_v2 bench_tree_crystal.cr -o bench_tree_crystal --release
+cd ~/Projects/Crystal/adamas_repo/examples
+../bin/adamas bench_tree_crystal.cr -o bench_tree_crystal --release
 ```
 
 After rc_dec is implemented:
@@ -222,8 +222,8 @@ After rc_dec is implemented:
 ### 5b. LLVM IR check
 
 ```
-DEBUG_LLVM_IR=1 ../bin/crystal_v2 bench_tree_crystal.cr -o bench_tree_crystal --release
-grep -c "rc_dec" /tmp/crystal_v2_*.ll
+DEBUG_LLVM_IR=1 ../bin/adamas bench_tree_crystal.cr -o bench_tree_crystal --release
+grep -c "rc_dec" /tmp/adamas_*.ll
 ```
 
 Should show non-zero rc_dec count. Previously: 6211 rc_inc, 0 rc_dec.
@@ -257,20 +257,20 @@ and batch-process them periodically. This is cache-friendly and amortizes the co
 
 ```crystal
 # Runtime (LLVM IR): per-thread circular buffer of pending rc_dec pointers
-@__crystal_v2_release_buffer : [1024 x ptr]  # fixed-size ring buffer
-@__crystal_v2_release_count : i32             # current fill level
+@__adamas_release_buffer : [1024 x ptr]  # fixed-size ring buffer
+@__adamas_release_count : i32             # current fill level
 ```
 
 ### 6b. Deferred rc_dec call
 
-Replace `__crystal_v2_rc_dec(ptr, dtor)` at block end with:
+Replace `__adamas_rc_dec(ptr, dtor)` at block end with:
 ```
-__crystal_v2_release_defer(ptr)  ; append to buffer, O(1)
+__adamas_release_defer(ptr)  ; append to buffer, O(1)
 ```
 
 When the buffer is full (or at function return / scope exit), flush:
 ```
-__crystal_v2_release_flush()     ; batch rc_dec all buffered pointers
+__adamas_release_flush()     ; batch rc_dec all buffered pointers
 ```
 
 ### 6c. Flush triggers
@@ -297,7 +297,7 @@ __crystal_v2_release_flush()     ; batch rc_dec all buffered pointers
 
 ### 6f. Implementation order
 
-1. Add `__crystal_v2_release_defer` and `__crystal_v2_release_flush` to runtime
+1. Add `__adamas_release_defer` and `__adamas_release_flush` to runtime
 2. Replace per-block `rc_dec` with `release_defer` for non-RAII types
 3. Emit `release_flush` at function returns
 4. Benchmark: compare immediate vs deferred on bench_tree_crystal
@@ -336,7 +336,7 @@ Task 6 (deferred batch)    — optimization: batch rc_dec for cache efficiency
 | `MIR::RCDecrement` class | mir.cr:558 | Ready |
 | `builder.rc_dec()` method | mir.cr:2045 | Ready |
 | `emit_rc_dec()` LLVM emitter | llvm_backend.cr:10433 | Ready |
-| `__crystal_v2_rc_dec` runtime | llvm_backend.cr:2648 | Ready (check null safety) |
+| `__adamas_rc_dec` runtime | llvm_backend.cr:2648 | Ready (check null safety) |
 | `RCElisionPass` optimizer | optimizations.cr:51 | Ready (removes matched pairs) |
 | `EscapeAnalyzer` | escape_analysis.cr | Ready |
 | `TaintAnalyzer` | taint_analysis.cr | Ready |

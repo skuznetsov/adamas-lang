@@ -5,7 +5,7 @@
 require "json"
 
 class LSPTimingProbe
-  SERVER_PATH = "#{__DIR__}/../bin/crystal_v2_lsp"
+  SERVER_PATH = "#{__DIR__}/../bin/adamas_lsp"
 
   @process : Process
   @input : IO

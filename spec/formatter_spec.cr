@@ -4,7 +4,7 @@ require "../src/compiler/bootstrap_shims"
 require "../src/compiler/frontend/parser/diagnostic"
 require "../src/compiler/formatter"
 
-alias Formatter = CrystalV2::Compiler::Formatter
+alias Formatter = Adamas::Compiler::Formatter
 
 describe Formatter do
   it "formats compact assignments without rewriting already spaced code" do
@@ -13,7 +13,7 @@ describe Formatter do
   end
 
   it "preserves namespace paths without inserting spaces around ::" do
-    source = "alias Frontend = CrystalV2::Compiler::Frontend\ngetter span : Frontend::Span\n"
+    source = "alias Frontend = Adamas::Compiler::Frontend\ngetter span : Frontend::Span\n"
     Formatter.format(source).should eq(source)
   end
 

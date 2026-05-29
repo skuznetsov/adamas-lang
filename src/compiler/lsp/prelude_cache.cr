@@ -6,7 +6,7 @@
 require "./project_cache"
 require "./unified_project"
 
-module CrystalV2
+module Adamas
   module Compiler
     module LSP
       # Cached symbol information - lightweight version of Symbol for serialization
@@ -158,7 +158,7 @@ module CrystalV2
 
         def self.cache_path : String
           cache_dir = ENV["XDG_CACHE_HOME"]? || File.join(ENV["HOME"]? || "/tmp", ".cache")
-          File.join(cache_dir, "crystal_v2_lsp", "prelude.cache")
+          File.join(cache_dir, "adamas_lsp", "prelude.cache")
         end
 
         def self.load(stdlib_path : String) : PreludeCache?

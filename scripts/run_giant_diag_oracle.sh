@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Run crystal_v2 on macro dump carriers with CRYSTAL_V2_MACRO_BODY_GIANT_DIAG=1 and print
+# Run adamas on macro dump carriers with CRYSTAL_V2_MACRO_BODY_GIANT_DIAG=1 and print
 # only immediate giant JSON lines (stderr) — quick oracle without LLDB.
 #
 # Does not change compilation semantics (observability only).
 #
 # Usage (from repo root):
-#   crystal build src/crystal_v2.cr -o bin/crystal_v2 --error-trace
-#   scripts/run_giant_diag_oracle.sh [path/to/crystal_v2]
+#   crystal build src/adamas.cr -o bin/adamas --error-trace
+#   scripts/run_giant_diag_oracle.sh [path/to/adamas]
 #
 # Optional (exported before invoking this script):
 #   CRYSTAL_V2_MACRO_BODY_GIANT_DIAG=1          # default: 1
@@ -16,13 +16,13 @@
 # For long compiles, wrap the compiler with scripts/run_safe.sh if needed.
 #
 # Bootstrap spot-check (optional, slow): same env, then
-#   CRYSTAL_V2_MACRO_BODY_GIANT_DIAG=1 bin/crystal_v2 src/crystal_v2.cr -o /tmp/cv2_boot.out
+#   CRYSTAL_V2_MACRO_BODY_GIANT_DIAG=1 bin/adamas src/adamas.cr -o /tmp/cv2_boot.out
 # and look for macro_body_giant on stderr — expect primitives giant on the prelude path.
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-COMPILER="${1:-$REPO_ROOT/bin/crystal_v2}"
-STAGING="${TMPDIR:-/tmp}/crystal_v2_giant_oracle_$$"
+COMPILER="${1:-$REPO_ROOT/bin/adamas}"
+STAGING="${TMPDIR:-/tmp}/adamas_giant_oracle_$$"
 mkdir -p "$STAGING"
 trap 'rm -rf "$STAGING"' EXIT
 

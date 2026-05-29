@@ -5,8 +5,8 @@ require "../../src/compiler/frontend/ast"
 require "../../src/compiler/semantic/analyzer"
 
 module NameResolverSpecAliases
-  alias Frontend = CrystalV2::Compiler::Frontend
-  alias Semantic = CrystalV2::Compiler::Semantic
+  alias Frontend = Adamas::Compiler::Frontend
+  alias Semantic = Adamas::Compiler::Semantic
 end
 
 include NameResolverSpecAliases
@@ -869,7 +869,7 @@ describe Semantic::NameResolver do
 
   it "resolves class constants and aliases inside method bodies" do
     source = <<-CR
-      module Crystal::HIR
+      module Adamas::HIR
         class Foo
           BAR = 1
           alias Baz = Int32
@@ -1220,7 +1220,7 @@ describe Semantic::NameResolver do
 
   it "resolves module-body macro-generated constants" do
     source = <<-CR
-      module Crystal::MIR
+      module Adamas::MIR
         {% if true %}
           TARGET_POINTER_BYTES_U64 = 8_u64
         {% else %}

@@ -10,31 +10,31 @@ require "../../src/compiler/frontend/lexer"
 
 # Helper to parse and create HIR converter (top-level for Crystal spec compatibility).
 private def create_converter(source : String)
-  lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-  parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+  lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+  parser = Adamas::Compiler::Frontend::Parser.new(lexer)
   program = parser.parse_program
   arena = parser.arena
 
-  sources_by_arena = {arena => source} of CrystalV2::Compiler::Frontend::ArenaLike => String
-  paths_by_arena = {arena => "(test)"} of CrystalV2::Compiler::Frontend::ArenaLike => String
+  sources_by_arena = {arena => source} of Adamas::Compiler::Frontend::ArenaLike => String
+  paths_by_arena = {arena => "(test)"} of Adamas::Compiler::Frontend::ArenaLike => String
 
-  converter = Crystal::HIR::AstToHir.new(arena, "(test)", sources_by_arena, paths_by_arena)
+  converter = Adamas::HIR::AstToHir.new(arena, "(test)", sources_by_arena, paths_by_arena)
   {converter, program, arena}
 end
 
-class Crystal::HIR::AstToHir
+class Adamas::HIR::AstToHir
   # Test-only wrapper to access private return-type inference.
-  def test_function_return_type(name : String) : Crystal::HIR::TypeRef
+  def test_function_return_type(name : String) : Adamas::HIR::TypeRef
     get_function_return_type(name)
   end
 
   # Test-only wrapper for type name rendering.
-  def test_type_name(type_ref : Crystal::HIR::TypeRef) : String
+  def test_type_name(type_ref : Adamas::HIR::TypeRef) : String
     get_type_name_from_ref(type_ref)
   end
 end
 
-describe Crystal::HIR::AstToHir do
+describe Adamas::HIR::AstToHir do
 
   describe "Return Type Inference - Explicit Annotations" do
     it "infers return type from explicit annotation" do
@@ -48,7 +48,7 @@ describe Crystal::HIR::AstToHir do
       # Register the function signature
       program.roots.each do |root_id|
         node = arena[root_id]
-        if node.is_a?(CrystalV2::Compiler::Frontend::DefNode)
+        if node.is_a?(Adamas::Compiler::Frontend::DefNode)
           converter.register_function(node)
         end
       end
@@ -67,7 +67,7 @@ describe Crystal::HIR::AstToHir do
       converter, program, arena = create_converter(source)
       program.roots.each do |root_id|
         node = arena[root_id]
-        if node.is_a?(CrystalV2::Compiler::Frontend::DefNode)
+        if node.is_a?(Adamas::Compiler::Frontend::DefNode)
           converter.register_function(node)
         end
       end
@@ -88,7 +88,7 @@ describe Crystal::HIR::AstToHir do
       converter, program, arena = create_converter(source)
       program.roots.each do |root_id|
         node = arena[root_id]
-        if node.is_a?(CrystalV2::Compiler::Frontend::DefNode)
+        if node.is_a?(Adamas::Compiler::Frontend::DefNode)
           converter.register_function(node)
         end
       end
@@ -107,7 +107,7 @@ describe Crystal::HIR::AstToHir do
       converter, program, arena = create_converter(source)
       program.roots.each do |root_id|
         node = arena[root_id]
-        if node.is_a?(CrystalV2::Compiler::Frontend::DefNode)
+        if node.is_a?(Adamas::Compiler::Frontend::DefNode)
           converter.register_function(node)
         end
       end
@@ -126,7 +126,7 @@ describe Crystal::HIR::AstToHir do
       converter, program, arena = create_converter(source)
       program.roots.each do |root_id|
         node = arena[root_id]
-        if node.is_a?(CrystalV2::Compiler::Frontend::DefNode)
+        if node.is_a?(Adamas::Compiler::Frontend::DefNode)
           converter.register_function(node)
         end
       end
@@ -147,7 +147,7 @@ describe Crystal::HIR::AstToHir do
       converter, program, arena = create_converter(source)
       program.roots.each do |root_id|
         node = arena[root_id]
-        if node.is_a?(CrystalV2::Compiler::Frontend::DefNode)
+        if node.is_a?(Adamas::Compiler::Frontend::DefNode)
           converter.register_function(node)
         end
       end
@@ -166,7 +166,7 @@ describe Crystal::HIR::AstToHir do
       converter, program, arena = create_converter(source)
       program.roots.each do |root_id|
         node = arena[root_id]
-        if node.is_a?(CrystalV2::Compiler::Frontend::DefNode)
+        if node.is_a?(Adamas::Compiler::Frontend::DefNode)
           converter.register_function(node)
         end
       end
@@ -185,7 +185,7 @@ describe Crystal::HIR::AstToHir do
       converter, program, arena = create_converter(source)
       program.roots.each do |root_id|
         node = arena[root_id]
-        if node.is_a?(CrystalV2::Compiler::Frontend::DefNode)
+        if node.is_a?(Adamas::Compiler::Frontend::DefNode)
           converter.register_function(node)
         end
       end
@@ -211,7 +211,7 @@ describe Crystal::HIR::AstToHir do
       # Register module
       program.roots.each do |root_id|
         node = arena[root_id]
-        if node.is_a?(CrystalV2::Compiler::Frontend::ModuleNode)
+        if node.is_a?(Adamas::Compiler::Frontend::ModuleNode)
           converter.register_module(node)
         end
       end
@@ -240,7 +240,7 @@ describe Crystal::HIR::AstToHir do
       converter, program, arena = create_converter(source)
       program.roots.each do |root_id|
         node = arena[root_id]
-        if node.is_a?(CrystalV2::Compiler::Frontend::ModuleNode)
+        if node.is_a?(Adamas::Compiler::Frontend::ModuleNode)
           converter.register_module(node)
         end
       end
@@ -270,7 +270,7 @@ describe Crystal::HIR::AstToHir do
       # Register ALL signatures first (two-pass approach)
       program.roots.each do |root_id|
         node = arena[root_id]
-        if node.is_a?(CrystalV2::Compiler::Frontend::DefNode)
+        if node.is_a?(Adamas::Compiler::Frontend::DefNode)
           converter.register_function(node)
         end
       end
@@ -299,7 +299,7 @@ describe Crystal::HIR::AstToHir do
       converter, program, arena = create_converter(source)
       program.roots.each do |root_id|
         node = arena[root_id]
-        if node.is_a?(CrystalV2::Compiler::Frontend::DefNode)
+        if node.is_a?(Adamas::Compiler::Frontend::DefNode)
           converter.register_function(node)
         end
       end
@@ -325,7 +325,7 @@ describe Crystal::HIR::AstToHir do
       converter, program, arena = create_converter(source)
       program.roots.each do |root_id|
         node = arena[root_id]
-        if node.is_a?(CrystalV2::Compiler::Frontend::DefNode)
+        if node.is_a?(Adamas::Compiler::Frontend::DefNode)
           converter.register_function(node)
         end
       end

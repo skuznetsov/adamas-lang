@@ -104,7 +104,7 @@ and arena/source lookup; explain the run_safe/lldb divergence and propose the
 smallest root-aligned patch outline. No edits.
 
 **Invocation:** direct
-`/Users/sergey/.grok/bin/grok_acp_delegate.py --cwd /Users/sergey/Projects/Crystal/crystal_v2_repo --task-file /tmp/grok_tasks/errno_value_crash_audit.md --out-dir /tmp/grok_errno_audit --prompt-timeout 120 --request-timeout 30`.
+`/Users/sergey/.grok/bin/grok_acp_delegate.py --cwd /Users/sergey/Projects/Crystal/adamas_repo --task-file /tmp/grok_tasks/errno_value_crash_audit.md --out-dir /tmp/grok_errno_audit --prompt-timeout 120 --request-timeout 30`.
 
 **Latency:** ~250s, exit 0.
 
@@ -150,7 +150,7 @@ with deterministic byte-suffix rewrite is root-cause or symptom; find identical
 sites; suggest regression shape.
 
 **Invocation:** direct
-`python3 ~/.grok/bin/grok_acp_delegate.py --cwd /Users/sergey/Projects/Crystal/crystal_v2_repo --task-file /tmp/grok_suffix_review_task.txt --request-timeout 30 --prompt-timeout 120 --stream-limit-mb 2`.
+`python3 ~/.grok/bin/grok_acp_delegate.py --cwd /Users/sergey/Projects/Crystal/adamas_repo --task-file /tmp/grok_suffix_review_task.txt --request-timeout 30 --prompt-timeout 120 --stream-limit-mb 2`.
 
 **Result:** timeout after 120s waiting for stdout. Stream showed tool activity
 (`[tool] list_dir`, several `grep`, `read_file`, `run_terminal_cmd`) but no final
@@ -280,10 +280,10 @@ completion; use it for parallel read-only search and record timeouts.
 **Cost saved:** none; cost increased slightly due timeout handling.
 
 ### Session 6 — 2026-04-29 — backend-intrinsic boundary hostile review
-**Задача:** read-only hostile review точечного allowlist-флага для backend-owned HIR calls (`__crystal_v2_string_eq`, hash entry helpers, `__crystal_v2_select_ptr`) плюс следующий root после `STOP_AFTER_HIR`.
+**Задача:** read-only hostile review точечного allowlist-флага для backend-owned HIR calls (`__adamas_string_eq`, hash entry helpers, `__adamas_select_ptr`) плюс следующий root после `STOP_AFTER_HIR`.
 **Brief size:** ~28 строк, ~2.3 KB, файл `/tmp/grok_task_intrinsic_boundary_review.md`.
 **Latency:** interrupted manually after several minutes.
-**Output quality:** ⚠ partial. Grok успел independently подтвердить основную рамку: these helper calls are emitted as HIR `Call`, then owned by MIR/LLVM extern/runtime lowering; broad `__crystal_v2_*` skipping would be unsafe because many runtime/helper names have other ownership paths. It did not produce a final answer because it requested permission for a bash command under the non-interactive ACP wrapper.
+**Output quality:** ⚠ partial. Grok успел independently подтвердить основную рамку: these helper calls are emitted as HIR `Call`, then owned by MIR/LLVM extern/runtime lowering; broad `__adamas_*` skipping would be unsafe because many runtime/helper names have other ownership paths. It did not produce a final answer because it requested permission for a bash command under the non-interactive ACP wrapper.
 **Что было хорошо:** source exploration was on target and the partial stream matched the local Adversary result: exact allowlist is safer than broad prefix filtering.
 **Что было плохо:** I launched `grok_acp_delegate.py` without `--always-approve`; when Grok attempted a verification shell command it entered `session/request_permission`, which this non-interactive Codex path cannot answer. I had to kill the Grok process. This should be treated as operator error plus ACP UX footgun.
 **Adversary check:** local verification did not depend on Grok: build and four no-prelude guards passed; fresh generated `s1` `STOP_AFTER_HIR` full-source run exited 0; grep confirmed the exact backend-owned intrinsic names are absent from missing-target logs.
@@ -359,7 +359,7 @@ completion; use it for parallel read-only search and record timeouts.
 **Task:** read-only audit the new frontier after the local `ptrtoint`/`double`
 fix: canonical `s1 -> s2` now builds generated stage2, but both smoke tests
 abort in parser setup with `STUB CALLED:
-CrystalV2$CCCompiler$CCFrontend$CCNode$Hspan`.
+Adamas$CCCompiler$CCFrontend$CCNode$Hspan`.
 **Brief size:** ~10 lines, ~0.9 KB, file
 `/tmp/grok_node_span_frontier/task.txt`.
 **Latency:** produced only initialization output before local checkpoint/docs
@@ -419,7 +419,7 @@ reduction before accepting suggested implementation shape.
 
 ### Session 14 — 2026-04-29 — debug scope Tuple(String, Int32) cache crash
 **Task:** read-only audit the generated `cv2_s2` no-prelude segfault after the
-File.open block-param fix. LLDB stopped in `__crystal_v2_string_eq` through
+File.open block-param fix. LLDB stopped in `__adamas_string_eq` through
 `Tuple(String, Int32)#== -> Hash(Tuple(String, Int32), UInt32)#fetch ->
 HIRToMIRLowering#hir_innermost_scope_for_source_line`.
 **Brief size:** ~11 lines, ~1.1 KB, file
@@ -438,7 +438,7 @@ and saved search time. The important signal was not "string_eq is broken", but
 whole root. Local Adversary required the stronger representation fix:
 `Hash(String, Hash(Int32, UInt32))` plus per-function reinit.
 **Adversary check:** canonical `s1 -> s2` with the final nested-cache patch
-still builds `cv2_s2`; the old `__crystal_v2_string_eq` crash disappears and
+still builds `cv2_s2`; the old `__adamas_string_eq` crash disappears and
 fresh LLDB stops later in `LLVMIRGenerator#value_ref(UInt32)` from
 `emit_extern_call`. The stage is not green yet, but the previous root is
 removed.
@@ -1065,7 +1065,7 @@ waiting for stdout.
 experiment was reverted because it did not improve `initialize` and worsened
 first `didOpen`; cache-off was also refuted because it shifted work into
 foreground analysis. A later debug run showed a sandbox artifact: project-cache
-save failed under `~/.cache/crystal_v2_lsp` with `Operation not permitted`,
+save failed under `~/.cache/adamas_lsp` with `Operation not permitted`,
 so repeated local harness runs can overstate stale-cache behavior in this
 sandbox.
 **Verdict:** failed interaction. Do not treat this Grok run as evidence.

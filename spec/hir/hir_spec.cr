@@ -1,40 +1,40 @@
 require "../spec_helper"
 require "../../src/compiler/hir/hir"
 
-describe Crystal::HIR do
+describe Adamas::HIR do
   describe "LifetimeTag" do
     it "compares correctly" do
-      Crystal::HIR::LifetimeTag::HeapEscape.escapes_more_than?(Crystal::HIR::LifetimeTag::StackLocal).should be_true
-      Crystal::HIR::LifetimeTag::StackLocal.escapes_more_than?(Crystal::HIR::LifetimeTag::HeapEscape).should be_false
+      Adamas::HIR::LifetimeTag::HeapEscape.escapes_more_than?(Adamas::HIR::LifetimeTag::StackLocal).should be_true
+      Adamas::HIR::LifetimeTag::StackLocal.escapes_more_than?(Adamas::HIR::LifetimeTag::HeapEscape).should be_false
     end
 
     it "merges to most escaped" do
-      Crystal::HIR::LifetimeTag::StackLocal.merge(Crystal::HIR::LifetimeTag::HeapEscape).should eq(Crystal::HIR::LifetimeTag::HeapEscape)
-      Crystal::HIR::LifetimeTag::GlobalEscape.merge(Crystal::HIR::LifetimeTag::ArgEscape).should eq(Crystal::HIR::LifetimeTag::GlobalEscape)
+      Adamas::HIR::LifetimeTag::StackLocal.merge(Adamas::HIR::LifetimeTag::HeapEscape).should eq(Adamas::HIR::LifetimeTag::HeapEscape)
+      Adamas::HIR::LifetimeTag::GlobalEscape.merge(Adamas::HIR::LifetimeTag::ArgEscape).should eq(Adamas::HIR::LifetimeTag::GlobalEscape)
     end
   end
 
   describe "TypeRef" do
     it "has primitive types" do
-      Crystal::HIR::TypeRef::INT32.primitive?.should be_true
-      Crystal::HIR::TypeRef::STRING.primitive?.should be_true
+      Adamas::HIR::TypeRef::INT32.primitive?.should be_true
+      Adamas::HIR::TypeRef::STRING.primitive?.should be_true
     end
 
     it "compares by id" do
-      (Crystal::HIR::TypeRef::INT32 == Crystal::HIR::TypeRef::INT32).should be_true
-      (Crystal::HIR::TypeRef::INT32 == Crystal::HIR::TypeRef::INT64).should be_false
+      (Adamas::HIR::TypeRef::INT32 == Adamas::HIR::TypeRef::INT32).should be_true
+      (Adamas::HIR::TypeRef::INT32 == Adamas::HIR::TypeRef::INT64).should be_false
     end
   end
 
   describe "Module" do
     it "creates empty module" do
-      mod = Crystal::HIR::Module.new("test")
+      mod = Adamas::HIR::Module.new("test")
       mod.name.should eq("test")
       mod.functions.size.should eq(0)
     end
 
     it "interns strings" do
-      mod = Crystal::HIR::Module.new
+      mod = Adamas::HIR::Module.new
       id1 = mod.intern_string("hello")
       id2 = mod.intern_string("world")
       id3 = mod.intern_string("hello")
@@ -45,8 +45,8 @@ describe Crystal::HIR do
     end
 
     it "creates function with entry block" do
-      mod = Crystal::HIR::Module.new
-      func = mod.create_function("foo", Crystal::HIR::TypeRef::VOID)
+      mod = Adamas::HIR::Module.new
+      func = mod.create_function("foo", Adamas::HIR::TypeRef::VOID)
 
       func.name.should eq("foo")
       func.blocks.size.should eq(1)  # Entry block
@@ -54,16 +54,16 @@ describe Crystal::HIR do
     end
 
     it "includes virtual call targets by base name" do
-      mod = Crystal::HIR::Module.new
-      main = mod.create_function("__crystal_main", Crystal::HIR::TypeRef::VOID)
-      receiver = main.add_param("self", Crystal::HIR::TypeRef::POINTER)
+      mod = Adamas::HIR::Module.new
+      main = mod.create_function("__crystal_main", Adamas::HIR::TypeRef::VOID)
+      receiver = main.add_param("self", Adamas::HIR::TypeRef::POINTER)
 
-      call = Crystal::HIR::Call.new(
+      call = Adamas::HIR::Call.new(
         1_u32,
-        Crystal::HIR::TypeRef::VOID,
+        Adamas::HIR::TypeRef::VOID,
         receiver.id,
         "A#foo",
-        [] of Crystal::HIR::ValueId,
+        [] of Adamas::HIR::ValueId,
         nil,
         true
       )
@@ -73,16 +73,16 @@ describe Crystal::HIR do
       mod.class_parents["B"] = "A"
 
       # RTA needs types to be instantiated (via Allocate) to include them
-      a_type_ref = mod.intern_type(Crystal::HIR::TypeDescriptor.new(Crystal::HIR::TypeKind::Class, "A"))
-      b_type_ref = mod.intern_type(Crystal::HIR::TypeDescriptor.new(Crystal::HIR::TypeKind::Class, "B"))
-      alloc_a = Crystal::HIR::Allocate.new(2_u32, a_type_ref)
-      alloc_b = Crystal::HIR::Allocate.new(3_u32, b_type_ref)
+      a_type_ref = mod.intern_type(Adamas::HIR::TypeDescriptor.new(Adamas::HIR::TypeKind::Class, "A"))
+      b_type_ref = mod.intern_type(Adamas::HIR::TypeDescriptor.new(Adamas::HIR::TypeKind::Class, "B"))
+      alloc_a = Adamas::HIR::Allocate.new(2_u32, a_type_ref)
+      alloc_b = Adamas::HIR::Allocate.new(3_u32, b_type_ref)
       main.blocks[0].add(alloc_a)
       main.blocks[0].add(alloc_b)
 
-      mod.create_function("A#foo", Crystal::HIR::TypeRef::VOID)
-      mod.create_function("B#foo", Crystal::HIR::TypeRef::VOID)
-      mod.create_function("C#bar", Crystal::HIR::TypeRef::VOID)
+      mod.create_function("A#foo", Adamas::HIR::TypeRef::VOID)
+      mod.create_function("B#foo", Adamas::HIR::TypeRef::VOID)
+      mod.create_function("C#bar", Adamas::HIR::TypeRef::VOID)
 
       reachable = mod.reachable_function_names(["__crystal_main"])
       reachable.should contain("A#foo")
@@ -93,11 +93,11 @@ describe Crystal::HIR do
 
   describe "Function" do
     it "adds parameters" do
-      mod = Crystal::HIR::Module.new
-      func = mod.create_function("add", Crystal::HIR::TypeRef::INT32)
+      mod = Adamas::HIR::Module.new
+      func = mod.create_function("add", Adamas::HIR::TypeRef::INT32)
 
-      param_a = func.add_param("a", Crystal::HIR::TypeRef::INT32)
-      param_b = func.add_param("b", Crystal::HIR::TypeRef::INT32)
+      param_a = func.add_param("a", Adamas::HIR::TypeRef::INT32)
+      param_b = func.add_param("b", Adamas::HIR::TypeRef::INT32)
 
       func.params.size.should eq(2)
       param_a.name.should eq("a")
@@ -106,14 +106,14 @@ describe Crystal::HIR do
     end
 
     it "creates blocks and scopes" do
-      mod = Crystal::HIR::Module.new
-      func = mod.create_function("test", Crystal::HIR::TypeRef::VOID)
+      mod = Adamas::HIR::Module.new
+      func = mod.create_function("test", Adamas::HIR::TypeRef::VOID)
 
       # Entry block already exists
       func.blocks.size.should eq(1)
 
       # Create nested scope and block
-      inner_scope = func.create_scope(Crystal::HIR::ScopeKind::Block, parent: 0_u32)
+      inner_scope = func.create_scope(Adamas::HIR::ScopeKind::Block, parent: 0_u32)
       inner_block = func.create_block(inner_scope)
 
       func.scopes.size.should eq(2)
@@ -124,22 +124,22 @@ describe Crystal::HIR do
 
   describe "Values" do
     it "creates literal" do
-      lit = Crystal::HIR::Literal.new(0_u32, Crystal::HIR::TypeRef::INT64, 42_i64)
+      lit = Adamas::HIR::Literal.new(0_u32, Adamas::HIR::TypeRef::INT64, 42_i64)
       lit.value.should eq(42_i64)
-      lit.lifetime.should eq(Crystal::HIR::LifetimeTag::StackLocal)
+      lit.lifetime.should eq(Adamas::HIR::LifetimeTag::StackLocal)
     end
 
     it "creates allocate" do
-      user_type = Crystal::HIR::TypeRef.new(100_u32)
-      alloc = Crystal::HIR::Allocate.new(0_u32, user_type)
+      user_type = Adamas::HIR::TypeRef.new(100_u32)
+      alloc = Adamas::HIR::Allocate.new(0_u32, user_type)
       alloc.type.should eq(user_type)
-      alloc.lifetime.should eq(Crystal::HIR::LifetimeTag::Unknown)
+      alloc.lifetime.should eq(Adamas::HIR::LifetimeTag::Unknown)
     end
 
     it "creates call" do
-      call = Crystal::HIR::Call.new(
+      call = Adamas::HIR::Call.new(
         id: 0_u32,
-        type: Crystal::HIR::TypeRef::INT32,
+        type: Adamas::HIR::TypeRef::INT32,
         receiver: 1_u32,
         method_name: "foo",
         args: [2_u32, 3_u32]
@@ -150,76 +150,76 @@ describe Crystal::HIR do
 
     it "creates closure with captures" do
       captures = [
-        Crystal::HIR::CapturedVar.new(1_u32, "x", by_reference: true),
-        Crystal::HIR::CapturedVar.new(2_u32, "y", by_reference: false),
+        Adamas::HIR::CapturedVar.new(1_u32, "x", by_reference: true),
+        Adamas::HIR::CapturedVar.new(2_u32, "y", by_reference: false),
       ]
-      closure = Crystal::HIR::MakeClosure.new(0_u32, Crystal::HIR::TypeRef.new(50_u32), 5_u32, captures)
+      closure = Adamas::HIR::MakeClosure.new(0_u32, Adamas::HIR::TypeRef.new(50_u32), 5_u32, captures)
 
       closure.captures.size.should eq(2)
       closure.captures[0].by_reference.should be_true
       closure.captures[1].by_reference.should be_false
-      closure.lifetime.should eq(Crystal::HIR::LifetimeTag::HeapEscape)
+      closure.lifetime.should eq(Adamas::HIR::LifetimeTag::HeapEscape)
     end
   end
 
   describe "Terminators" do
     it "return has no successors" do
-      ret = Crystal::HIR::Return.new(0_u32)
-      ret.successors.should eq([] of Crystal::HIR::BlockId)
+      ret = Adamas::HIR::Return.new(0_u32)
+      ret.successors.should eq([] of Adamas::HIR::BlockId)
     end
 
     it "branch has two successors" do
-      branch = Crystal::HIR::Branch.new(0_u32, 1_u32, 2_u32)
+      branch = Adamas::HIR::Branch.new(0_u32, 1_u32, 2_u32)
       branch.successors.should eq([1_u32, 2_u32])
     end
 
     it "jump has one successor" do
-      jump = Crystal::HIR::Jump.new(5_u32)
+      jump = Adamas::HIR::Jump.new(5_u32)
       jump.successors.should eq([5_u32])
     end
 
     it "switch has multiple successors" do
-      switch = Crystal::HIR::Switch.new(0_u32, [{1_u32, 2_u32}, {3_u32, 4_u32}], 5_u32)
+      switch = Adamas::HIR::Switch.new(0_u32, [{1_u32, 2_u32}, {3_u32, 4_u32}], 5_u32)
       switch.successors.should eq([2_u32, 4_u32, 5_u32])
     end
   end
 
   describe "Block" do
     it "adds instructions" do
-      block = Crystal::HIR::Block.new(0_u32, 0_u32)
+      block = Adamas::HIR::Block.new(0_u32, 0_u32)
 
-      lit = Crystal::HIR::Literal.new(0_u32, Crystal::HIR::TypeRef::INT32, 1_i64)
+      lit = Adamas::HIR::Literal.new(0_u32, Adamas::HIR::TypeRef::INT32, 1_i64)
       block.add(lit)
 
       block.instructions.size.should eq(1)
     end
 
     it "has default unreachable terminator" do
-      block = Crystal::HIR::Block.new(0_u32, 0_u32)
-      block.terminator.should be_a(Crystal::HIR::Unreachable)
+      block = Adamas::HIR::Block.new(0_u32, 0_u32)
+      block.terminator.should be_a(Adamas::HIR::Unreachable)
     end
   end
 
   describe "Text output" do
     it "prints simple function" do
-      mod = Crystal::HIR::Module.new("test")
-      func = mod.create_function("add", Crystal::HIR::TypeRef::INT32)
+      mod = Adamas::HIR::Module.new("test")
+      func = mod.create_function("add", Adamas::HIR::TypeRef::INT32)
 
-      param_a = func.add_param("a", Crystal::HIR::TypeRef::INT32)
-      param_b = func.add_param("b", Crystal::HIR::TypeRef::INT32)
+      param_a = func.add_param("a", Adamas::HIR::TypeRef::INT32)
+      param_b = func.add_param("b", Adamas::HIR::TypeRef::INT32)
 
       entry = func.get_block(func.entry_block)
 
       # %2 = binop Add %0, %1
-      binop = Crystal::HIR::BinaryOperation.new(
+      binop = Adamas::HIR::BinaryOperation.new(
         func.next_value_id,
-        Crystal::HIR::TypeRef::INT32,
-        Crystal::HIR::BinaryOp::Add,
+        Adamas::HIR::TypeRef::INT32,
+        Adamas::HIR::BinaryOp::Add,
         param_a.id,
         param_b.id
       )
       entry.add(binop)
-      entry.terminator = Crystal::HIR::Return.new(binop.id)
+      entry.terminator = Adamas::HIR::Return.new(binop.id)
 
       output = String.build { |io| mod.to_s(io) }
 

@@ -1,6 +1,6 @@
 require "./frontend/lexer"
 
-module CrystalV2
+module Adamas
   module Compiler
     # Token-based formatter for Crystal code
     # Traverses token stream and emits formatted source with proper whitespace

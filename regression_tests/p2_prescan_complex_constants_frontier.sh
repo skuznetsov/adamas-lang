@@ -3,7 +3,7 @@ set -euo pipefail
 
 compiler="${1:-}"
 if [[ -z "$compiler" || ! -x "$compiler" ]]; then
-  echo "usage: $0 /path/to/crystal_v2_or_produced_s2" >&2
+  echo "usage: $0 /path/to/adamas_or_produced_s2" >&2
   exit 2
 fi
 

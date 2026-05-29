@@ -1,6 +1,6 @@
 require "json"
 
-module CrystalV2
+module Adamas
   module Compiler
     module LSP
       # LSP Protocol base types

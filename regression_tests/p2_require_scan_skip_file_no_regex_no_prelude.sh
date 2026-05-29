@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-compiler="${1:-bin/crystal_v2}"
+compiler="${1:-bin/adamas}"
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tmpdir="$(mktemp -d /tmp/cv2_require_scan_skip_file.XXXXXX)"
 trap 'rm -rf "$tmpdir"' EXIT

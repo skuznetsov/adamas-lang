@@ -7,7 +7,7 @@ require "./symbol_table"
 require "./diagnostic"
 require "./macro_value"
 
-module CrystalV2
+module Adamas
   module Compiler
     module Semantic
       # Small JSONL writer for macro-expansion diagnostics.

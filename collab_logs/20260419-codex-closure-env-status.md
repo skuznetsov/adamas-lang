@@ -51,12 +51,12 @@ Both expect `12\n12` from `counter = 5; p.call(7); puts counter`. This catches t
 
 ## Verification run
 
-- `crystal build src/crystal_v2.cr -o bin/crystal_v2 --error-trace` — green, only the known `Random::DEFAULT` warning.
-- `regression_tests/spawn_capture_block_param_repro.sh bin/crystal_v2` — exit 0, reproduced expected known-red sums `(16, 12)`.
-- `regression_tests/conditional_closure_capture_repro.sh bin/crystal_v2` — exit 1, correct forward-guard output.
-- `regression_tests/escaping_branch_closure_capture_repro.sh bin/crystal_v2` — exit 1, correct forward-guard output.
-- `bin/crystal_v2 regression_tests/test_proc_basic.cr -o /tmp/test_proc_basic_codex && scripts/run_safe.sh /tmp/test_proc_basic_codex 5 512` — prints `7`, `50`, `proc_test_done`.
-- `bin/crystal_v2 regression_tests/channel_ping_pong_repro.cr -o /tmp/channel_ping_pong_codex && scripts/run_safe.sh /tmp/channel_ping_pong_codex 10 512` — prints `channel_ping_pong_ok`.
+- `crystal build src/adamas.cr -o bin/adamas --error-trace` — green, only the known `Random::DEFAULT` warning.
+- `regression_tests/spawn_capture_block_param_repro.sh bin/adamas` — exit 0, reproduced expected known-red sums `(16, 12)`.
+- `regression_tests/conditional_closure_capture_repro.sh bin/adamas` — exit 1, correct forward-guard output.
+- `regression_tests/escaping_branch_closure_capture_repro.sh bin/adamas` — exit 1, correct forward-guard output.
+- `bin/adamas regression_tests/test_proc_basic.cr -o /tmp/test_proc_basic_codex && scripts/run_safe.sh /tmp/test_proc_basic_codex 5 512` — prints `7`, `50`, `proc_test_done`.
+- `bin/adamas regression_tests/channel_ping_pong_repro.cr -o /tmp/channel_ping_pong_codex && scripts/run_safe.sh /tmp/channel_ping_pong_codex 10 512` — prints `channel_ping_pong_ok`.
 - `git diff --check` — clean.
 
 ## Next safe step
@@ -94,30 +94,30 @@ Key implementation changes now in the working tree:
 
 Verification so far:
 
-- `crystal build src/crystal_v2.cr -o bin/crystal_v2 --error-trace` — green,
+- `crystal build src/adamas.cr -o bin/adamas --error-trace` — green,
   only the known `Random::DEFAULT` warning.
-- `regression_tests/spawn_capture_block_param_repro.sh bin/crystal_v2` — exit 1,
+- `regression_tests/spawn_capture_block_param_repro.sh bin/adamas` — exit 1,
   both probes print `_ok`; original known-red is fixed.
-- `regression_tests/conditional_closure_capture_repro.sh bin/crystal_v2` — exit 1,
+- `regression_tests/conditional_closure_capture_repro.sh bin/adamas` — exit 1,
   correct `12/12`.
-- `regression_tests/escaping_branch_closure_capture_repro.sh bin/crystal_v2` —
+- `regression_tests/escaping_branch_closure_capture_repro.sh bin/adamas` —
   exit 1, correct `12/12`.
-- `bin/crystal_v2 regression_tests/test_proc_basic.cr -o /tmp/test_proc_basic &&
+- `bin/adamas regression_tests/test_proc_basic.cr -o /tmp/test_proc_basic &&
   scripts/run_safe.sh /tmp/test_proc_basic 5 512` — prints `7`, `50`,
   `proc_test_done`.
-- `bin/crystal_v2 regression_tests/test_blocks.cr -o /tmp/test_blocks &&
+- `bin/adamas regression_tests/test_blocks.cr -o /tmp/test_blocks &&
   scripts/run_safe.sh /tmp/test_blocks 5 512` — prints `blocks_done`.
-- `bin/crystal_v2 regression_tests/channel_ping_pong_repro.cr -o
+- `bin/adamas regression_tests/channel_ping_pong_repro.cr -o
   /tmp/channel_ping_pong_repro && scripts/run_safe.sh /tmp/channel_ping_pong_repro
   5 512` — prints `channel_ping_pong_ok`.
-- `bin/crystal_v2 regression_tests/tuple_int32_int64_layout.cr -o
+- `bin/adamas regression_tests/tuple_int32_int64_layout.cr -o
   /tmp/tuple_int32_int64_layout && scripts/run_safe.sh
   /tmp/tuple_int32_int64_layout 5 512` — prints both tuple layout ok markers.
-- `bin/crystal_v2 regression_tests/combined/test_complex_closures_capture.cr -o
+- `bin/adamas regression_tests/combined/test_complex_closures_capture.cr -o
   /tmp/test_complex_closures_capture && scripts/run_safe.sh
   /tmp/test_complex_closures_capture 5 512` — prints `closures_capture_all_ok`
   after the `Proc#call` return-type fix.
-- `regression_tests/run_combined.sh bin/crystal_v2 4` was attempted after
+- `regression_tests/run_combined.sh bin/adamas 4` was attempted after
   cleaning old result files. Final result: 26 passed, 5 failed out of 31.
   Failures: `test_collections`, `test_edge_hash_complex`,
   `test_complex_generic_dispatch`, `test_generics_unions`, `test_strings_join`.
@@ -160,16 +160,16 @@ Implementation:
 
 Verification:
 
-- `crystal build src/crystal_v2.cr -o bin/crystal_v2 --error-trace` — green,
+- `crystal build src/adamas.cr -o bin/adamas --error-trace` — green,
   only the known `Random::DEFAULT` warning.
-- `regression_tests/hash_small_linear_scan_repro.sh bin/crystal_v2` — green,
+- `regression_tests/hash_small_linear_scan_repro.sh bin/adamas` — green,
   prints `hash_small_linear_scan_ok`.
 - Focused `/tmp/hash_string_probe.cr` — prints `1 / true / true / 1`.
 - Focused `/tmp/hash_int_probe.cr` — prints `true / 1 / 9`.
-- `regression_tests/spawn_capture_block_param_repro.sh bin/crystal_v2` —
+- `regression_tests/spawn_capture_block_param_repro.sh bin/adamas` —
   fixed-state exit `1`, both probes print `_ok`.
 - `git diff --check` — clean.
-- `regression_tests/run_combined.sh bin/crystal_v2 4` — `27 passed, 4 failed
+- `regression_tests/run_combined.sh bin/adamas 4` — `27 passed, 4 failed
   out of 31`; `test_collections` is now green.
 
 Remaining frontier:
@@ -209,15 +209,15 @@ Implementation:
 
 Verification:
 
-- `crystal build src/crystal_v2.cr -o bin/crystal_v2 --error-trace` — green,
+- `crystal build src/adamas.cr -o bin/adamas --error-trace` — green,
   only the known `Random::DEFAULT` warning.
-- `regression_tests/hash_each_block_writeback_repro.sh bin/crystal_v2` —
+- `regression_tests/hash_each_block_writeback_repro.sh bin/adamas` —
   green, prints `hash_each_block_writeback_ok`.
-- `regression_tests/hash_small_linear_scan_repro.sh bin/crystal_v2` — still
+- `regression_tests/hash_small_linear_scan_repro.sh bin/adamas` — still
   green.
-- `regression_tests/spawn_capture_block_param_repro.sh bin/crystal_v2` —
+- `regression_tests/spawn_capture_block_param_repro.sh bin/adamas` —
   fixed-state exit `1`, both probes print `_ok`.
-- `regression_tests/run_combined.sh bin/crystal_v2 4` — still `27 passed, 4
+- `regression_tests/run_combined.sh bin/adamas 4` — still `27 passed, 4
   failed out of 31`; `test_edge_hash_complex` now reaches the expected
   iteration total `26` before the next segfault.
 
@@ -254,16 +254,16 @@ Implementation:
 
 Verification:
 
-- `crystal build src/crystal_v2.cr -o bin/crystal_v2 --error-trace` — green,
+- `crystal build src/adamas.cr -o bin/adamas --error-trace` — green,
   only the known `Random::DEFAULT` warning.
-- `regression_tests/hash_each_then_hash_new_type_repro.sh bin/crystal_v2` —
+- `regression_tests/hash_each_then_hash_new_type_repro.sh bin/adamas` —
   green, prints `hash_each_then_hash_new_type_ok`.
 - Focused HIR for `/tmp/hash_after_each_empty_counts.cr` now types the
   post-`Hash#each` constructor as `Hash(String, Int32)` and follows with
   `Hash(String, Int32)#[]=` / `Hash(String, Int32)#[]`.
 - `regression_tests/combined/test_edge_hash_complex.cr` now prints
   `hash_complex_all_ok` and exits `0`.
-- `regression_tests/run_combined.sh bin/crystal_v2 4` now reports
+- `regression_tests/run_combined.sh bin/adamas 4` now reports
   `28 passed, 3 failed out of 31`; `test_edge_hash_complex` is green.
 
 Remaining frontier:
@@ -297,15 +297,15 @@ Fix:
 
 Verification:
 
-- `crystal build src/crystal_v2.cr -o bin/crystal_v2 --error-trace` — green,
+- `crystal build src/adamas.cr -o bin/adamas --error-trace` — green,
   only the known `Random::DEFAULT` warning.
-- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/array_bool_join_module_super_repro.sh bin/crystal_v2` — green, prints `array_bool_join_module_super_ok`.
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/array_bool_join_module_super_repro.sh bin/adamas` — green, prints `array_bool_join_module_super_ok`.
 - `regression_tests/combined/test_strings_join.cr` — green, prints
   `strings_join_all_ok`.
 - Focused HIR for `/tmp/bool_join.cr` now shows
   `Array(Bool)#join_super$String -> Array(Bool)#join_super_from_Enumerable$String`,
   not `Reference#join(String)_super`.
-- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_combined.sh bin/crystal_v2 4`
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_combined.sh bin/adamas 4`
   — `29 passed, 2 failed out of 31`.
 
 Remaining combined frontiers:
@@ -338,14 +338,14 @@ Fix:
 
 Verification:
 
-- `crystal build src/crystal_v2.cr -o bin/crystal_v2 --error-trace` — green,
+- `crystal build src/adamas.cr -o bin/adamas --error-trace` — green,
   only the known `Random::DEFAULT` warning.
-- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/array_widget_sum_block_repro.sh bin/crystal_v2` — green, prints `array_widget_sum_block_ok`.
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/array_widget_sum_block_repro.sh bin/adamas` — green, prints `array_widget_sum_block_ok`.
 - `regression_tests/combined/test_complex_generic_dispatch.cr` — green, prints
   `generic_dispatch_all_ok` under `scripts/run_safe.sh`.
 - Focused HIR for `Container#width` now shows `index_get ... : Widget` followed
   by virtual `Widget#width()`, not `Pointer#width`.
-- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_combined.sh bin/crystal_v2 4`
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_combined.sh bin/adamas 4`
   — `30 passed, 1 failed out of 31`.
 
 Remaining combined frontier:
@@ -380,19 +380,19 @@ Fixes:
 
 Verification:
 
-- `crystal build src/crystal_v2.cr -o bin/crystal_v2 --error-trace` — green,
+- `crystal build src/adamas.cr -o bin/adamas --error-trace` — green,
   only the known `Random::DEFAULT` warning.
-- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/generics_unions_union_array_nilable_repro.sh bin/crystal_v2` — green, prints `generics_unions_union_array_nilable_ok`.
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/generics_unions_union_array_nilable_repro.sh bin/adamas` — green, prints `generics_unions_union_array_nilable_ok`.
 - `regression_tests/combined/test_generics_unions.cr` — green, prints
   `generics_unions_all_ok` under `scripts/run_safe.sh`.
 - HIR shape: `Array(Int32 | String)#push$Int32/String` now has
   `union_wrap ... : Int32 | String` before `ptr_store`.
-- LLVM shape: `get_config` no longer emits `__crystal_v2_rc_dec` of the returned
+- LLVM shape: `get_config` no longer emits `__adamas_rc_dec` of the returned
   `Config.new` result before `ret ptr`.
 
 Remaining combined frontier:
 
-- None observed. `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_combined.sh bin/crystal_v2 4` reports `31 passed, 0 failed out of 31`.
+- None observed. `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_combined.sh bin/adamas 4` reports `31 passed, 0 failed out of 31`.
 
 ## 2026-04-19 Codex checkpoint: broader run_all frontier after combined green
 
@@ -401,7 +401,7 @@ frontiers.
 
 Verification:
 
-- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_all.sh bin/crystal_v2`
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_all.sh bin/adamas`
   — `140 passed, 5 failed out of 145`.
 
 Failures outside combined:
@@ -452,19 +452,19 @@ Fix:
 
 Verification:
 
-- `crystal build src/crystal_v2.cr -o bin/crystal_v2 --error-trace` — green,
+- `crystal build src/adamas.cr -o bin/adamas --error-trace` — green,
   only the known `Random::DEFAULT` warning.
 - Focused HIR for `regression_tests/test_nilable_struct_union_layout.cr` —
   `NodeWithNilableStructs#initialize$arity7` now accepts union params and both
   nil/non-nil constructor overloads emit `union_wrap` before the initializer
   call.
-- `LIBRARY_PATH=/opt/homebrew/lib bin/crystal_v2 regression_tests/test_nilable_struct_union_layout.cr -o /tmp/test_nilable_struct_union_layout && scripts/run_safe.sh /tmp/test_nilable_struct_union_layout 8 512`
+- `LIBRARY_PATH=/opt/homebrew/lib bin/adamas regression_tests/test_nilable_struct_union_layout.cr -o /tmp/test_nilable_struct_union_layout && scripts/run_safe.sh /tmp/test_nilable_struct_union_layout 8 512`
   — prints `layout_ok`.
-- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/stage2_nilable_struct_union_overflow_repro.sh bin/crystal_v2`
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/stage2_nilable_struct_union_overflow_repro.sh bin/adamas`
   — fixed-state `not reproduced: nilable struct union layout is correct`.
-- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_combined.sh bin/crystal_v2 4`
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_combined.sh bin/adamas 4`
   — still `31 passed, 0 failed out of 31`.
-- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_all.sh bin/crystal_v2`
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_all.sh bin/adamas`
   — `141 passed, 4 failed out of 145`.
 
 Remaining `run_all.sh` frontiers:
@@ -514,18 +514,18 @@ Fix:
 
 Verification:
 
-- `crystal build src/crystal_v2.cr -o bin/crystal_v2 --error-trace` — green,
+- `crystal build src/adamas.cr -o bin/adamas --error-trace` — green,
   only the known `Random::DEFAULT` warning.
 - Focused HIR for `regression_tests/test_byteformat_decode_u32.cr` — endian
   checks emit `literal true : Bool`; no relevant
   `ByteFormat::LittleEndian#==` call remains.
-- `LIBRARY_PATH=/opt/homebrew/lib bin/crystal_v2 regression_tests/test_byteformat_decode_u32.cr -o /tmp/test_byteformat_decode_u32 && scripts/run_safe.sh /tmp/test_byteformat_decode_u32 5 512`
+- `LIBRARY_PATH=/opt/homebrew/lib bin/adamas regression_tests/test_byteformat_decode_u32.cr -o /tmp/test_byteformat_decode_u32 && scripts/run_safe.sh /tmp/test_byteformat_decode_u32 5 512`
   — prints `byteformat_u32_ok`.
-- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_mini_oracles.sh bin/crystal_v2`
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_mini_oracles.sh bin/adamas`
   — `Mini-oracles: 6 passed, 0 failed out of 6 tests`.
-- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_combined.sh bin/crystal_v2 4`
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_combined.sh bin/adamas 4`
   — `31 passed, 0 failed out of 31`.
-- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_all.sh bin/crystal_v2`
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_all.sh bin/adamas`
   — `142 passed, 3 failed out of 145`.
 
 Remaining `run_all.sh` frontiers:
@@ -569,18 +569,18 @@ Fix:
 
 Verification:
 
-- `crystal build src/crystal_v2.cr -o bin/crystal_v2 --error-trace` — green,
+- `crystal build src/adamas.cr -o bin/adamas --error-trace` — green,
   only the known `Random::DEFAULT` warning.
-- `LIBRARY_PATH=/opt/homebrew/lib bin/crystal_v2 regression_tests/unless_branch_local_writeback.cr -o /tmp/unless_branch_local_writeback && scripts/run_safe.sh /tmp/unless_branch_local_writeback 5 512`
+- `LIBRARY_PATH=/opt/homebrew/lib bin/adamas regression_tests/unless_branch_local_writeback.cr -o /tmp/unless_branch_local_writeback && scripts/run_safe.sh /tmp/unless_branch_local_writeback 5 512`
   — prints `unless_branch_local_writeback_ok`.
-- `LIBRARY_PATH=/opt/homebrew/lib bin/crystal_v2 regression_tests/sprintf_float_precision.cr -o /tmp/sprintf_float_precision && scripts/run_safe.sh /tmp/sprintf_float_precision 5 512`
+- `LIBRARY_PATH=/opt/homebrew/lib bin/adamas regression_tests/sprintf_float_precision.cr -o /tmp/sprintf_float_precision && scripts/run_safe.sh /tmp/sprintf_float_precision 5 512`
   — prints `sprintf_float_precision_ok`.
 - Direct Ryu probe under `scripts/run_safe.sh` — prints `0.10000`.
-- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_mini_oracles.sh bin/crystal_v2`
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_mini_oracles.sh bin/adamas`
   — `Mini-oracles: 6 passed, 0 failed out of 6 tests`.
-- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_combined.sh bin/crystal_v2 4`
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_combined.sh bin/adamas 4`
   — `31 passed, 0 failed out of 31`.
-- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_all.sh bin/crystal_v2`
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_all.sh bin/adamas`
   — `144 passed, 2 failed out of 146`.
 
 Remaining `run_all.sh` frontiers:
@@ -620,17 +620,17 @@ Fix:
 
 Verification:
 
-- `crystal build src/crystal_v2.cr -o bin/crystal_v2 --error-trace` — green,
+- `crystal build src/adamas.cr -o bin/adamas --error-trace` — green,
   only the known `Random::DEFAULT` warning.
-- `LIBRARY_PATH=/opt/homebrew/lib bin/crystal_v2 regression_tests/test_3mod.cr -o /tmp/test_3mod && scripts/run_safe.sh /tmp/test_3mod 5 512`
+- `LIBRARY_PATH=/opt/homebrew/lib bin/adamas regression_tests/test_3mod.cr -o /tmp/test_3mod && scripts/run_safe.sh /tmp/test_3mod 5 512`
   — prints `Int32(4)`, `Ptr(Int32)(8)`, `Arr(Int32)(24)`, `done`.
 - Adjacent smokes `test_6_classes`, `test_module`, and
   `test_complex_hierarchy` compile and run under `scripts/run_safe.sh`.
-- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_mini_oracles.sh bin/crystal_v2`
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_mini_oracles.sh bin/adamas`
   — `Mini-oracles: 6 passed, 0 failed out of 6 tests`.
-- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_combined.sh bin/crystal_v2 4`
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_combined.sh bin/adamas 4`
   — `31 passed, 0 failed out of 31`.
-- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_all.sh bin/crystal_v2`
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_all.sh bin/adamas`
   — `145 passed, 1 failed out of 146`.
 
 Remaining `run_all.sh` frontier:
@@ -675,15 +675,15 @@ Fix:
 
 Verification:
 
-- `LIBRARY_PATH=/opt/homebrew/lib bin/crystal_v2 regression_tests/test_closure_ref.cr -o /tmp/test_closure_ref && scripts/run_safe.sh /tmp/test_closure_ref 5 512`
+- `LIBRARY_PATH=/opt/homebrew/lib bin/adamas regression_tests/test_closure_ref.cr -o /tmp/test_closure_ref && scripts/run_safe.sh /tmp/test_closure_ref 5 512`
   — prints `42`.
 - Adjacent smokes `test_proc_basic`, `test_blocks`, and `test_blocks_closures`
   compile and run under `scripts/run_safe.sh`.
-- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_mini_oracles.sh bin/crystal_v2`
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_mini_oracles.sh bin/adamas`
   — `Mini-oracles: 6 passed, 0 failed out of 6 tests`.
-- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_combined.sh bin/crystal_v2 4`
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_combined.sh bin/adamas 4`
   — `31 passed, 0 failed out of 31`.
-- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_all.sh bin/crystal_v2`
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_all.sh bin/adamas`
   — `146 passed, 0 failed out of 146 tests`.
 
 Adversary note:
@@ -729,7 +729,7 @@ Verification:
 
 - `git diff --check` — clean.
 - `bash -n regression_tests/conditional_closure_capture_repro.sh` — clean.
-- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/conditional_closure_capture_repro.sh bin/crystal_v2; echo SCRIPT_RC:$?`
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/conditional_closure_capture_repro.sh bin/adamas; echo SCRIPT_RC:$?`
   — prints `correct: proc.call(7) -> result=12, counter=12` and
   `SCRIPT_RC:1`.
 
@@ -771,16 +771,16 @@ Applied:
 
 Verification:
 
-- `regression_tests/spawn_capture_block_param_repro.sh bin/crystal_v2; echo SPAWN_RC:$?`
+- `regression_tests/spawn_capture_block_param_repro.sh bin/adamas; echo SPAWN_RC:$?`
   — both probes print `_ok`; script exits `1` (fixed forward-guard status).
-- `bin/crystal_v2 regression_tests/test_closure_ref.cr -o /tmp/test_closure_ref && scripts/run_safe.sh /tmp/test_closure_ref 5 512`
+- `bin/adamas regression_tests/test_closure_ref.cr -o /tmp/test_closure_ref && scripts/run_safe.sh /tmp/test_closure_ref 5 512`
   — prints `42`.
 - Manual two-probe file prints `a=6` and `b=6`.
 - `regression_tests/test_proc_basic.cr`, `test_blocks.cr`, and
   `test_blocks_closures.cr` compile and run under `scripts/run_safe.sh`.
-- `regression_tests/run_mini_oracles.sh bin/crystal_v2`
+- `regression_tests/run_mini_oracles.sh bin/adamas`
   — `6 passed, 0 failed out of 6`.
-- `regression_tests/run_combined.sh bin/crystal_v2 4`
+- `regression_tests/run_combined.sh bin/adamas 4`
   — `31 passed, 0 failed out of 31`.
 
 Boundary:
@@ -810,11 +810,11 @@ Verification:
 
 - `bash -n regression_tests/spawn_capture_block_param_repro.sh regression_tests/conditional_closure_capture_repro.sh regression_tests/escaping_branch_closure_capture_repro.sh`
   — clean.
-- `regression_tests/spawn_capture_block_param_repro.sh bin/crystal_v2; echo SPAWN_RC:$?`
+- `regression_tests/spawn_capture_block_param_repro.sh bin/adamas; echo SPAWN_RC:$?`
   — both probes `_ok`, `SPAWN_RC:1`.
-- `regression_tests/conditional_closure_capture_repro.sh bin/crystal_v2; echo CONDITIONAL_RC:$?`
+- `regression_tests/conditional_closure_capture_repro.sh bin/adamas; echo CONDITIONAL_RC:$?`
   — correct `12/12`, `CONDITIONAL_RC:1`.
-- `regression_tests/escaping_branch_closure_capture_repro.sh bin/crystal_v2; echo ESCAPING_RC:$?`
+- `regression_tests/escaping_branch_closure_capture_repro.sh bin/adamas; echo ESCAPING_RC:$?`
   — correct branch-local escape output, `ESCAPING_RC:1`.
 
 ## 2026-04-19 Codex checkpoint: P1 shape guard added
@@ -840,13 +840,13 @@ Verification:
 
 - `bash -n regression_tests/p1_ir_shape_check.sh`
   — clean.
-- `regression_tests/p1_ir_shape_check.sh bin/crystal_v2; echo P1_SHAPE_RC:$?`
+- `regression_tests/p1_ir_shape_check.sh bin/adamas; echo P1_SHAPE_RC:$?`
   — `p1_ir_shape_ok captured_fn=__crystal_block_proc_1`, `P1_SHAPE_RC:0`.
-- `regression_tests/spawn_capture_block_param_repro.sh bin/crystal_v2`
+- `regression_tests/spawn_capture_block_param_repro.sh bin/adamas`
   — fixed-state exit `1`; both `_ok` markers.
-- `regression_tests/conditional_closure_capture_repro.sh bin/crystal_v2`
+- `regression_tests/conditional_closure_capture_repro.sh bin/adamas`
   — fixed-state exit `1`; correct `12/12`.
-- `regression_tests/escaping_branch_closure_capture_repro.sh bin/crystal_v2`
+- `regression_tests/escaping_branch_closure_capture_repro.sh bin/adamas`
   — fixed-state exit `1`; correct branch-local escape output.
 - `git diff --check`
   — clean.
@@ -881,7 +881,7 @@ Verification:
   — clean.
 - `regression_tests/p1_hybrid_boundary_guard.sh; echo HYBRID_RC:$?`
   — `p1_hybrid_boundary_ok`, `HYBRID_RC:0`.
-- `regression_tests/p1_ir_shape_check.sh bin/crystal_v2; echo P1_SHAPE_RC:$?`
+- `regression_tests/p1_ir_shape_check.sh bin/adamas; echo P1_SHAPE_RC:$?`
   — `p1_ir_shape_ok captured_fn=__crystal_block_proc_1`, `P1_SHAPE_RC:0`.
 - `git diff --check`
   — clean.
@@ -919,23 +919,23 @@ Verification:
 
 - `rg -n "@proc_captures_by_value" src/compiler/hir/ast_to_hir.cr; echo RG_SRC_RC:$?`
   — no matches, `RG_SRC_RC:1`.
-- `crystal build src/crystal_v2.cr -o bin/crystal_v2 --error-trace`
+- `crystal build src/adamas.cr -o bin/adamas --error-trace`
   — green with only the known `Random::DEFAULT` warning.
 - `regression_tests/p1_hybrid_boundary_guard.sh`
   — `p1_hybrid_boundary_ok`.
-- `regression_tests/p1_ir_shape_check.sh bin/crystal_v2`
+- `regression_tests/p1_ir_shape_check.sh bin/adamas`
   — `p1_ir_shape_ok captured_fn=__crystal_block_proc_1`.
-- `regression_tests/spawn_capture_block_param_repro.sh bin/crystal_v2`
+- `regression_tests/spawn_capture_block_param_repro.sh bin/adamas`
   — fixed-state exit `1`; both `_ok` markers.
-- `regression_tests/conditional_closure_capture_repro.sh bin/crystal_v2`
+- `regression_tests/conditional_closure_capture_repro.sh bin/adamas`
   — fixed-state exit `1`; correct `12/12`.
-- `regression_tests/escaping_branch_closure_capture_repro.sh bin/crystal_v2`
+- `regression_tests/escaping_branch_closure_capture_repro.sh bin/adamas`
   — fixed-state exit `1`; correct branch-local escape output.
-- `regression_tests/run_mini_oracles.sh bin/crystal_v2`
+- `regression_tests/run_mini_oracles.sh bin/adamas`
   — `6 passed, 0 failed out of 6`.
-- `regression_tests/run_combined.sh bin/crystal_v2 4`
+- `regression_tests/run_combined.sh bin/adamas 4`
   — `31 passed, 0 failed out of 31`.
-- `regression_tests/run_all.sh bin/crystal_v2 4`
+- `regression_tests/run_all.sh bin/adamas 4`
   — `146 passed, 0 failed out of 146`.
 - `git diff --check`
   — clean.
@@ -967,7 +967,7 @@ Verification:
 
 - `bash -n regression_tests/p1_raw_callback_shape_check.sh`
   — clean.
-- `regression_tests/p1_raw_callback_shape_check.sh bin/crystal_v2; echo RAW_RC:$?`
+- `regression_tests/p1_raw_callback_shape_check.sh bin/adamas; echo RAW_RC:$?`
   — `p1_raw_callback_shape_ok block_fn=__crystal_block_proc_1 cell=__closure_cell_2`, `RAW_RC:0`.
 
 Boundary:
@@ -1019,7 +1019,7 @@ Result:
 - Rejected. The combined suite regressed badly under the candidate binary,
   proving that some raw callback carriers are still Proc-typed in HIR while the
   actual ABI value is a bare function pointer.
-- After reverting the source and rebuilding `bin/crystal_v2`, the broad red was
+- After reverting the source and rebuilding `bin/adamas`, the broad red was
   gone. A repeated combined run reached `30 passed, 1 failed`; the single
   failure was `test_edge_string_prefix_suffix` linking with `library 'gc' not
   found`.
@@ -1035,7 +1035,7 @@ Conclusion:
   provenance check that distinguishes heap `MakeProc` objects from raw callback
   function pointers.
 - Process note: after reverting source from a candidate, rebuild
-  `bin/crystal_v2` before rerunning suites; otherwise the runner tests a stale
+  `bin/adamas` before rerunning suites; otherwise the runner tests a stale
   candidate binary.
 
 ## 2026-04-19 Codex checkpoint: MIR Yield carrier guard landed
@@ -1061,22 +1061,22 @@ Verification:
 - `bash -n regression_tests/p1_hybrid_boundary_guard.sh` — clean.
 - `LIBRARY_PATH=/opt/homebrew/lib regression_tests/p1_hybrid_boundary_guard.sh`
   — `p1_hybrid_boundary_ok`.
-- `crystal build src/crystal_v2.cr -o bin/crystal_v2 --error-trace` — green,
+- `crystal build src/adamas.cr -o bin/adamas --error-trace` — green,
   known `Random::DEFAULT` warning only.
-- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/p1_raw_callback_shape_check.sh bin/crystal_v2`
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/p1_raw_callback_shape_check.sh bin/adamas`
   — `p1_raw_callback_shape_ok ...`.
-- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/p1_ir_shape_check.sh bin/crystal_v2`
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/p1_ir_shape_check.sh bin/adamas`
   — `p1_ir_shape_ok ...`.
-- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_mini_oracles.sh bin/crystal_v2`
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_mini_oracles.sh bin/adamas`
   — `6 passed, 0 failed out of 6 tests`.
 
 Broad baseline:
 
-- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_all.sh bin/crystal_v2 4`
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_all.sh bin/adamas 4`
   — `145 passed, 1 failed out of 146 tests`; sole failure was compile-phase
   `test_generics_stack` with truncated stderr in the suite summary.
 - Focused falsifier:
-  `LIBRARY_PATH=/opt/homebrew/lib bin/crystal_v2 regression_tests/test_generics_stack.cr -o /tmp/test_generics_stack && scripts/run_safe.sh /tmp/test_generics_stack 5 512`
+  `LIBRARY_PATH=/opt/homebrew/lib bin/adamas regression_tests/test_generics_stack.cr -o /tmp/test_generics_stack && scripts/run_safe.sh /tmp/test_generics_stack 5 512`
   compiled, linked, ran, and printed the expected stack outputs ending in
   `done`.
 
@@ -1116,17 +1116,17 @@ Guards:
 
 Verification:
 
-- `crystal build src/crystal_v2.cr -o bin/crystal_v2 --error-trace` — green,
+- `crystal build src/adamas.cr -o bin/adamas --error-trace` — green,
   known `Random::DEFAULT` warning only.
-- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/p1_no_prelude_yield_carrier_trace.sh bin/crystal_v2`
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/p1_no_prelude_yield_carrier_trace.sh bin/adamas`
   — `p1_no_prelude_yield_carrier_ok`.
-- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/p1_mixed_proc_block_yield_carrier.sh bin/crystal_v2`
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/p1_mixed_proc_block_yield_carrier.sh bin/adamas`
   — `p1_mixed_proc_block_yield_carrier_ok`.
-- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/p1_hybrid_boundary_guard.sh bin/crystal_v2`
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/p1_hybrid_boundary_guard.sh bin/adamas`
   — `p1_hybrid_boundary_ok`.
 - `crystal spec spec/mir/hir_to_mir_debug_spec.cr --error-trace` — `2
   examples, 0 failures`.
-- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_mini_oracles.sh bin/crystal_v2`
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_mini_oracles.sh bin/adamas`
   — `6 passed, 0 failed out of 6 tests`.
 
 Boundary:
@@ -1163,19 +1163,19 @@ Boundary:
 
 Verification:
 
-- `crystal build src/crystal_v2.cr -o bin/crystal_v2 --error-trace` — green,
+- `crystal build src/adamas.cr -o bin/adamas --error-trace` — green,
   known `Random::DEFAULT` warning only.
-- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/p1_block_call_diagnostic.sh bin/crystal_v2`
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/p1_block_call_diagnostic.sh bin/adamas`
   — `p1_block_call_diagnostic_ok`.
-- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/p1_ir_shape_check.sh bin/crystal_v2`
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/p1_ir_shape_check.sh bin/adamas`
   — `p1_ir_shape_ok`.
-- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/p1_no_prelude_yield_carrier_trace.sh bin/crystal_v2`
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/p1_no_prelude_yield_carrier_trace.sh bin/adamas`
   — `p1_no_prelude_yield_carrier_ok`.
-- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/p1_mixed_proc_block_yield_carrier.sh bin/crystal_v2`
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/p1_mixed_proc_block_yield_carrier.sh bin/adamas`
   — `p1_mixed_proc_block_yield_carrier_ok`.
-- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/p1_hybrid_boundary_guard.sh bin/crystal_v2`
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/p1_hybrid_boundary_guard.sh bin/adamas`
   — `p1_hybrid_boundary_ok`.
 - `crystal spec spec/mir/hir_to_mir_debug_spec.cr --error-trace` — `2
   examples, 0 failures`.
-- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_mini_oracles.sh bin/crystal_v2`
+- `LIBRARY_PATH=/opt/homebrew/lib regression_tests/run_mini_oracles.sh bin/adamas`
   — `6 passed, 0 failed out of 6 tests`.

@@ -3,41 +3,41 @@ require "../../src/compiler/hir/ast_to_hir"
 require "../../src/compiler/frontend/parser"
 require "../../src/compiler/frontend/lexer"
 
-class Crystal::HIR::AstToHir
+class Adamas::HIR::AstToHir
   def __test_record_phase0_body_infer_walk(
-    node : CrystalV2::Compiler::Frontend::DefNode,
-    resolved_arena : CrystalV2::Compiler::Frontend::ArenaLike,
-    node_expr_id : CrystalV2::Compiler::Frontend::ExprId? = nil,
-  ) : CrystalV2::Compiler::Semantic::DefIdentity?
+    node : Adamas::Compiler::Frontend::DefNode,
+    resolved_arena : Adamas::Compiler::Frontend::ArenaLike,
+    node_expr_id : Adamas::Compiler::Frontend::ExprId? = nil,
+  ) : Adamas::Compiler::Semantic::DefIdentity?
     record_phase0_body_infer_walk(node, resolved_arena, node_expr_id)
   end
 
-  def __test_phase0_body_infer_counts : Hash(CrystalV2::Compiler::Semantic::DefIdentity, Int32)
+  def __test_phase0_body_infer_counts : Hash(Adamas::Compiler::Semantic::DefIdentity, Int32)
     @phase0_body_infer_counts.dup
   end
 end
 
 private def parse_phase0_metric_program(
   code : String,
-) : {CrystalV2::Compiler::Frontend::ArenaLike, Array(CrystalV2::Compiler::Frontend::ExprId)}
-  lexer = CrystalV2::Compiler::Frontend::Lexer.new(code)
-  parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+) : {Adamas::Compiler::Frontend::ArenaLike, Array(Adamas::Compiler::Frontend::ExprId)}
+  lexer = Adamas::Compiler::Frontend::Lexer.new(code)
+  parser = Adamas::Compiler::Frontend::Parser.new(lexer)
   result = parser.parse_program
   {result.arena, result.roots}
 end
 
 private def first_phase0_metric_def(
-  arena : CrystalV2::Compiler::Frontend::ArenaLike,
-  exprs : Array(CrystalV2::Compiler::Frontend::ExprId),
-) : {CrystalV2::Compiler::Frontend::ExprId, CrystalV2::Compiler::Frontend::DefNode}
+  arena : Adamas::Compiler::Frontend::ArenaLike,
+  exprs : Array(Adamas::Compiler::Frontend::ExprId),
+) : {Adamas::Compiler::Frontend::ExprId, Adamas::Compiler::Frontend::DefNode}
   def_expr = exprs.find do |expr_id|
-    arena[expr_id].is_a?(CrystalV2::Compiler::Frontend::DefNode)
+    arena[expr_id].is_a?(Adamas::Compiler::Frontend::DefNode)
   end
   raise "No function definition found" unless def_expr
-  {def_expr, arena[def_expr].as(CrystalV2::Compiler::Frontend::DefNode)}
+  {def_expr, arena[def_expr].as(Adamas::Compiler::Frontend::DefNode)}
 end
 
-describe Crystal::HIR::AstToHir do
+describe Adamas::HIR::AstToHir do
   describe "phase0 body inference metrics" do
     it "collapses reparsed defs by canonical identity" do
       code = <<-CRYSTAL
@@ -61,7 +61,7 @@ describe Crystal::HIR::AstToHir do
         arena_b.object_id => path,
       }
 
-      converter = Crystal::HIR::AstToHir.new(
+      converter = Adamas::HIR::AstToHir.new(
         arena_b,
         sources_by_arena: sources_by_arena,
         paths_by_arena: paths_by_arena,
@@ -105,7 +105,7 @@ describe Crystal::HIR::AstToHir do
         arena_c.object_id => path,
       }
 
-      converter = Crystal::HIR::AstToHir.new(
+      converter = Adamas::HIR::AstToHir.new(
         arena_c,
         sources_by_arena: sources_by_arena,
         paths_by_arena: paths_by_arena,

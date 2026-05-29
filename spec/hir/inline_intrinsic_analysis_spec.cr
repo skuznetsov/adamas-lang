@@ -5,29 +5,29 @@ require "../../src/compiler/hir/taint_analysis"
 require "../../src/compiler/frontend/parser"
 require "../../src/compiler/frontend/lexer"
 
-private def parse(code : String) : {CrystalV2::Compiler::Frontend::ArenaLike, Array(CrystalV2::Compiler::Frontend::ExprId)}
-  lexer = CrystalV2::Compiler::Frontend::Lexer.new(code)
-  parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+private def parse(code : String) : {Adamas::Compiler::Frontend::ArenaLike, Array(Adamas::Compiler::Frontend::ExprId)}
+  lexer = Adamas::Compiler::Frontend::Lexer.new(code)
+  parser = Adamas::Compiler::Frontend::Parser.new(lexer)
   result = parser.parse_program
   {result.arena, result.roots}
 end
 
-private def lower_named_function(code : String, name : String) : {Crystal::HIR::Module, Crystal::HIR::Function}
+private def lower_named_function(code : String, name : String) : {Adamas::HIR::Module, Adamas::HIR::Function}
   arena, exprs = parse(code)
-  converter = Crystal::HIR::AstToHir.new(arena)
+  converter = Adamas::HIR::AstToHir.new(arena)
 
-  class_nodes = [] of CrystalV2::Compiler::Frontend::ClassNode
-  enum_nodes = [] of CrystalV2::Compiler::Frontend::EnumNode
-  def_nodes = [] of CrystalV2::Compiler::Frontend::DefNode
+  class_nodes = [] of Adamas::Compiler::Frontend::ClassNode
+  enum_nodes = [] of Adamas::Compiler::Frontend::EnumNode
+  def_nodes = [] of Adamas::Compiler::Frontend::DefNode
 
   exprs.each do |expr_id|
     node = arena[expr_id]
     case node
-    when CrystalV2::Compiler::Frontend::ClassNode
+    when Adamas::Compiler::Frontend::ClassNode
       class_nodes << node
-    when CrystalV2::Compiler::Frontend::EnumNode
+    when Adamas::Compiler::Frontend::EnumNode
       enum_nodes << node
-    when CrystalV2::Compiler::Frontend::DefNode
+    when Adamas::Compiler::Frontend::DefNode
       def_nodes << node
     end
   end
@@ -43,19 +43,19 @@ private def lower_named_function(code : String, name : String) : {Crystal::HIR::
 end
 
 private def find_call_by_prefix(
-  func : Crystal::HIR::Function,
+  func : Adamas::HIR::Function,
   prefix : String
-) : Crystal::HIR::Call
+) : Adamas::HIR::Call
   func.blocks.each do |block|
     block.instructions.each do |inst|
-      next unless inst.is_a?(Crystal::HIR::Call)
+      next unless inst.is_a?(Adamas::HIR::Call)
       return inst if inst.method_name.starts_with?(prefix)
     end
   end
   raise "call with prefix #{prefix} not found"
 end
 
-private def find_value(func : Crystal::HIR::Function, id : Crystal::HIR::ValueId) : Crystal::HIR::Value?
+private def find_value(func : Adamas::HIR::Function, id : Adamas::HIR::ValueId) : Adamas::HIR::Value?
   func.blocks.each do |block|
     block.instructions.each do |inst|
       return inst if inst.id == id
@@ -78,11 +78,11 @@ describe "inline intrinsics analysis" do
     CRYSTAL
 
     _, func = lower_named_function(code, "foo")
-    analyzer = Crystal::HIR::EscapeAnalyzer.new(func)
+    analyzer = Adamas::HIR::EscapeAnalyzer.new(func)
     analyzer.analyze
 
     call = find_call_by_prefix(func, "Data.new")
-    call.lifetime.should eq(Crystal::HIR::LifetimeTag::ArgEscape)
+    call.lifetime.should eq(Adamas::HIR::LifetimeTag::ArgEscape)
   end
 
   it "marks allocations inside range each loops as ArgEscape" do
@@ -98,11 +98,11 @@ describe "inline intrinsics analysis" do
     CRYSTAL
 
     _, func = lower_named_function(code, "foo")
-    analyzer = Crystal::HIR::EscapeAnalyzer.new(func)
+    analyzer = Adamas::HIR::EscapeAnalyzer.new(func)
     analyzer.analyze
 
     call = find_call_by_prefix(func, "Data.new")
-    call.lifetime.should eq(Crystal::HIR::LifetimeTag::ArgEscape)
+    call.lifetime.should eq(Adamas::HIR::LifetimeTag::ArgEscape)
   end
 
   it "marks allocations inside array each loops as ArgEscape" do
@@ -118,11 +118,11 @@ describe "inline intrinsics analysis" do
     CRYSTAL
 
     _, func = lower_named_function(code, "foo")
-    analyzer = Crystal::HIR::EscapeAnalyzer.new(func)
+    analyzer = Adamas::HIR::EscapeAnalyzer.new(func)
     analyzer.analyze
 
     call = find_call_by_prefix(func, "Data.new")
-    call.lifetime.should eq(Crystal::HIR::LifetimeTag::ArgEscape)
+    call.lifetime.should eq(Adamas::HIR::LifetimeTag::ArgEscape)
   end
 
   it "marks by-reference captures as Mutable inside inline loops" do
@@ -137,13 +137,13 @@ describe "inline intrinsics analysis" do
     CRYSTAL
 
     _, func = lower_named_function(code, "foo")
-    analyzer = Crystal::HIR::TaintAnalyzer.new(func)
+    analyzer = Adamas::HIR::TaintAnalyzer.new(func)
     analyzer.analyze
 
-    closures = [] of Crystal::HIR::MakeClosure
+    closures = [] of Adamas::HIR::MakeClosure
     func.blocks.each do |block|
       block.instructions.each do |inst|
-        closures << inst if inst.is_a?(Crystal::HIR::MakeClosure)
+        closures << inst if inst.is_a?(Adamas::HIR::MakeClosure)
       end
     end
 
@@ -151,7 +151,7 @@ describe "inline intrinsics analysis" do
 
     mutable_non_alloc = func.blocks.any? do |block|
       block.instructions.any? do |inst|
-        inst.taints.mutable? && !inst.is_a?(Crystal::HIR::Allocate)
+        inst.taints.mutable? && !inst.is_a?(Adamas::HIR::Allocate)
       end
     end
 

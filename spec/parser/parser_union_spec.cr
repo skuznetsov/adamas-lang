@@ -3,12 +3,12 @@ require "spec"
 require "../../src/compiler/frontend/parser"
 
 module ParserUnionSpecAliases
-  alias Frontend = CrystalV2::Compiler::Frontend
+  alias Frontend = Adamas::Compiler::Frontend
 end
 
 include ParserUnionSpecAliases
 
-describe "CrystalV2::Compiler::Frontend::Parser" do
+describe "Adamas::Compiler::Frontend::Parser" do
   describe "Phase 97: Union definition (C bindings)" do
     it "parses empty union" do
       source = <<-CRYSTAL

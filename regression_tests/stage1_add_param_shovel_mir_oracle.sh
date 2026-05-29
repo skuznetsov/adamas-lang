@@ -26,7 +26,7 @@ cat >"$wrapper" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 export CRYSTAL_V2_STOP_AFTER_MIR=1
-exec "$compiler" "$repo_root/src/crystal_v2.cr" --emit mir -o "$output_base"
+exec "$compiler" "$repo_root/src/adamas.cr" --emit mir -o "$output_base"
 EOF
 chmod +x "$wrapper"
 

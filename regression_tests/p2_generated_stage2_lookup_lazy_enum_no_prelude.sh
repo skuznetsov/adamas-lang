@@ -8,7 +8,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-COMPILER="${1:-$ROOT_DIR/bin/crystal_v2}"
+COMPILER="${1:-$ROOT_DIR/bin/adamas}"
 
 if [[ ! -x "$COMPILER" ]]; then
   echo "p2_generated_stage2_lookup_lazy_enum_failed: compiler not found: $COMPILER" >&2
@@ -29,7 +29,7 @@ cleanup() {
 trap cleanup EXIT
 
 "$ROOT_DIR/scripts/run_safe.sh" "$COMPILER" 300 4096 \
-  "$ROOT_DIR/src/crystal_v2.cr" -o "$GENERATED_S2" >"$BUILD_LOG" 2>&1
+  "$ROOT_DIR/src/adamas.cr" -o "$GENERATED_S2" >"$BUILD_LOG" 2>&1
 
 if [[ ! -x "$GENERATED_S2" ]]; then
   echo "p2_generated_stage2_lookup_lazy_enum_failed: missing generated stage2 compiler" >&2

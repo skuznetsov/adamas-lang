@@ -6,7 +6,7 @@ require "random/secure"
 require "../../src/compiler/lsp/unified_project"
 require "../../src/compiler/lsp/project_cache"
 
-describe CrystalV2::Compiler::LSP::UnifiedProjectState do
+describe Adamas::Compiler::LSP::UnifiedProjectState do
   it "persists inferred types into cache and rebuilds cached types on load" do
     root = File.join(Dir.tempdir, "cache_type_test_#{Random::Secure.hex(6)}")
     src_dir = File.join(root, "src")
@@ -21,7 +21,7 @@ describe CrystalV2::Compiler::LSP::UnifiedProjectState do
     CR
     File.write(path, source)
 
-    project = CrystalV2::Compiler::LSP::UnifiedProjectState.new
+    project = Adamas::Compiler::LSP::UnifiedProjectState.new
     project.update_file(path, source)
 
     state = project.files[path].not_nil!
@@ -32,12 +32,12 @@ describe CrystalV2::Compiler::LSP::UnifiedProjectState do
     project.cached_expr_types[path].should_not be_empty
 
     # Save cache
-    cache = CrystalV2::Compiler::LSP::ProjectCache.from_project(project, root)
+    cache = Adamas::Compiler::LSP::ProjectCache.from_project(project, root)
     cache.save
 
     # Load into a fresh project and rebuild cached types
-    fresh = CrystalV2::Compiler::LSP::UnifiedProjectState.new
-    result = CrystalV2::Compiler::LSP::ProjectCacheLoader.load_from_cache(fresh, root)
+    fresh = Adamas::Compiler::LSP::UnifiedProjectState.new
+    result = Adamas::Compiler::LSP::ProjectCacheLoader.load_from_cache(fresh, root)
     result[:valid_count].should eq(1)
     fresh.cached_types[path]["M"].should_not be_nil
     fresh.cached_expr_types[path].should_not be_empty

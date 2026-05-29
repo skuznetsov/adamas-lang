@@ -3,9 +3,9 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-STAGE_DIR="${1:-/tmp/crystal_v2_bootstrap_stages}"
+STAGE_DIR="${1:-/tmp/adamas_bootstrap_stages}"
 CORPUS="${2:-$ROOT_DIR/regression_tests/bootstrap_semantic_corpus.cr}"
-OUT_DIR="${3:-/tmp/crystal_v2_bootstrap_ir}"
+OUT_DIR="${3:-/tmp/adamas_bootstrap_ir}"
 
 stages=(s1_bootstrap s2b s3b s4b s5b)
 kinds=(hir mir ll)

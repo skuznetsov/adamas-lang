@@ -7,7 +7,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-COMPILER="${1:-$ROOT_DIR/bin/crystal_v2}"
+COMPILER="${1:-$ROOT_DIR/bin/adamas}"
 SRC="${P2_FANOUT_SOURCE:-$ROOT_DIR/src/compiler/hir/ast_to_hir.cr}"
 
 TIMEOUT_SEC="${P2_FANOUT_TIMEOUT_SEC:-60}"

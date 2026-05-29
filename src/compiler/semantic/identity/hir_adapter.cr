@@ -9,30 +9,30 @@
 
 require "../identity/semantic_type_id"
 
-module CrystalV2::Compiler::Semantic
+module Adamas::Compiler::Semantic
   class SemanticToHIRAdapter
-    @semantic_to_hir : ::Hash(SemanticTypeId, Crystal::HIR::TypeRef)
-    @hir_to_semantic : ::Hash(Crystal::HIR::TypeRef, SemanticTypeId)
+    @semantic_to_hir : ::Hash(SemanticTypeId, Adamas::HIR::TypeRef)
+    @hir_to_semantic : ::Hash(Adamas::HIR::TypeRef, SemanticTypeId)
 
     def initialize
-      @semantic_to_hir = {} of SemanticTypeId => Crystal::HIR::TypeRef
-      @hir_to_semantic = {} of Crystal::HIR::TypeRef => SemanticTypeId
+      @semantic_to_hir = {} of SemanticTypeId => Adamas::HIR::TypeRef
+      @hir_to_semantic = {} of Adamas::HIR::TypeRef => SemanticTypeId
     end
 
     # Map a semantic type to an HIR TypeRef.
     # The caller must provide the TypeRef (from HIR type registration).
-    def register(semantic_id : SemanticTypeId, type_ref : Crystal::HIR::TypeRef) : Nil
+    def register(semantic_id : SemanticTypeId, type_ref : Adamas::HIR::TypeRef) : Nil
       @semantic_to_hir[semantic_id] = type_ref
       @hir_to_semantic[type_ref] = semantic_id
     end
 
     # Look up existing mapping (returns nil if not yet mapped).
-    def resolve(semantic_id : SemanticTypeId) : Crystal::HIR::TypeRef?
+    def resolve(semantic_id : SemanticTypeId) : Adamas::HIR::TypeRef?
       @semantic_to_hir[semantic_id]?
     end
 
     # Reverse lookup (for diagnostics/debugging only).
-    def semantic_for(type_ref : Crystal::HIR::TypeRef) : SemanticTypeId?
+    def semantic_for(type_ref : Adamas::HIR::TypeRef) : SemanticTypeId?
       @hir_to_semantic[type_ref]?
     end
 

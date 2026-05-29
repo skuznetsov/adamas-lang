@@ -10,7 +10,7 @@ require "../../../src/compiler/semantic/types/class_type"
 require "../../../src/compiler/semantic/types/union_type"
 require "../../../src/compiler/semantic/types/type_context"
 
-include CrystalV2::Compiler::Semantic
+include Adamas::Compiler::Semantic
 
 # Note: ExprId alias is already available from Semantic module (defined in symbol.cr)
 

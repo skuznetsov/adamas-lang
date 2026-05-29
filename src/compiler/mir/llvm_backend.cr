@@ -15,9 +15,9 @@
 
 require "./mir"
 
-module Crystal::MIR
+module Adamas::MIR
   class ::Hash(K, V)
-    def crystal_v2_debug_structural_bytes : Int64
+    def adamas_debug_structural_bytes : Int64
       entry_bytes = entries_capacity.to_i64 * sizeof(Entry(K, V)).to_i64
       index_bytes = if indices_size <= MAX_INDICES_SIZE_LINEAR_SCAN
                       0_i64
@@ -33,13 +33,13 @@ module Crystal::MIR
   end
 
   struct ::Set(T)
-    def crystal_v2_debug_structural_bytes : Int64
-      @hash.crystal_v2_debug_structural_bytes
+    def adamas_debug_structural_bytes : Int64
+      @hash.adamas_debug_structural_bytes
     end
   end
 
   class ::Array(T)
-    def crystal_v2_debug_structural_bytes : Int64
+    def adamas_debug_structural_bytes : Int64
       @capacity.to_i64 * sizeof(T)
     end
   end
@@ -210,8 +210,8 @@ module Crystal::MIR
 
     def debug_structural_bytes : {Int64, Int64}
       {
-        @type_ref_cache.crystal_v2_debug_structural_bytes,
-        @mangle_cache.crystal_v2_debug_structural_bytes,
+        @type_ref_cache.adamas_debug_structural_bytes,
+        @mangle_cache.adamas_debug_structural_bytes,
       }
     end
 
@@ -924,7 +924,7 @@ module Crystal::MIR
                       end
         io << "\n!llvm.dbg.cu = !{!#{COMPILE_UNIT_ID}}\n"
         io << "!llvm.module.flags = !{!#{MODULE_FLAG_DWARF_ID}, !#{MODULE_FLAG_DEBUG_ID}, !#{MODULE_FLAG_WCHAR_ID}}\n"
-        io << "!#{COMPILE_UNIT_ID} = distinct !DICompileUnit(language: DW_LANG_C_plus_plus_14, file: !#{compile_unit_file_id}, producer: \"crystal_v2\", isOptimized: false, emissionKind: FullDebug#{retained_types_ref}#{globals_ref})\n"
+        io << "!#{COMPILE_UNIT_ID} = distinct !DICompileUnit(language: DW_LANG_C_plus_plus_14, file: !#{compile_unit_file_id}, producer: \"adamas\", isOptimized: false, emissionKind: FullDebug#{retained_types_ref}#{globals_ref})\n"
         io << "!#{MODULE_FLAG_DWARF_ID} = !{i32 7, !\"Dwarf Version\", i32 5}\n"
         io << "!#{MODULE_FLAG_DEBUG_ID} = !{i32 2, !\"Debug Info Version\", i32 3}\n"
         io << "!#{MODULE_FLAG_WCHAR_ID} = !{i32 1, !\"wchar_size\", i32 4}\n"
@@ -1785,21 +1785,21 @@ module Crystal::MIR
 
   class LLVMIRGenerator
     private def bootstrap_trace_puts(value = "") : Nil
-      return if ::CrystalV2::Compiler::BootstrapEnv.get?("CRYSTAL_V2_TRACE_STDERR").nil?
+      return if ::Adamas::Compiler::BootstrapEnv.get?("CRYSTAL_V2_TRACE_STDERR").nil?
       Crystal::System.print_error "%s\n", value.to_s
     end
 
     private def bootstrap_env_enabled?(name : String) : Bool
-      !::CrystalV2::Compiler::BootstrapEnv.get?(name).nil?
+      !::Adamas::Compiler::BootstrapEnv.get?(name).nil?
     end
 
     private def bootstrap_env_enabled?(name1 : String, name2 : String) : Bool
-      return true unless ::CrystalV2::Compiler::BootstrapEnv.get?(name1).nil?
-      !::CrystalV2::Compiler::BootstrapEnv.get?(name2).nil?
+      return true unless ::Adamas::Compiler::BootstrapEnv.get?(name1).nil?
+      !::Adamas::Compiler::BootstrapEnv.get?(name2).nil?
     end
 
     private def llvm_entry_opt_guard_enabled? : Bool
-      raw = (::CrystalV2::Compiler::BootstrapEnv.get?("CRYSTAL_V2_LLVM_ENTRY_OPT_GUARD") || "").strip.downcase
+      raw = (::Adamas::Compiler::BootstrapEnv.get?("CRYSTAL_V2_LLVM_ENTRY_OPT_GUARD") || "").strip.downcase
       return true if raw.empty?
       !(raw == "0" || raw == "false" || raw == "off")
     end
@@ -2153,7 +2153,7 @@ module Crystal::MIR
 
     private def mangle_function_name(name : String) : String
       mangled = @type_mapper.mangle_name(name)
-      return "__crystal_v2_fn_#{mangled}" if c_library_function?(mangled)
+      return "__adamas_fn_#{mangled}" if c_library_function?(mangled)
       mangled
     end
 
@@ -2425,8 +2425,8 @@ module Crystal::MIR
 
     # Fused parallel pipeline: MIR lowering in fork workers (experimental, correctness issues).
     property fused_mir_lowering : HIRToMIRLowering? = nil
-    property hir_extern_functions : Hash(Tuple(String, String), Crystal::HIR::ExternFunction)? = nil
-    property hir_extern_by_name : Hash(String, Crystal::HIR::ExternFunction)? = nil
+    property hir_extern_functions : Hash(Tuple(String, String), Adamas::HIR::ExternFunction)? = nil
+    property hir_extern_by_name : Hash(String, Adamas::HIR::ExternFunction)? = nil
     # Per-worker MIR optimization: each fork worker optimizes its chunk before LLVM emission.
     # This parallelizes MIR opt across workers, saving serial MIR opt time.
     property worker_mir_opt : Bool = false
@@ -3303,7 +3303,7 @@ module Crystal::MIR
     end
 
     private def regex_runtime_helper_extern?(extern_name : String) : Bool
-      extern_name.starts_with?("__crystal_v2_regex_") || extern_name == "__crystal_v2_string_gsub_regex"
+      extern_name.starts_with?("__adamas_regex_") || extern_name == "__adamas_string_gsub_regex"
     end
 
     private def emit_undefined_extern_declarations
@@ -3321,20 +3321,20 @@ module Crystal::MIR
       already_declared << "strtol" << "strtoull"
       already_declared << "setjmp" << "longjmp"
       # Crystal v2 runtime functions
-      already_declared << "__crystal_v2_raise" << "__crystal_v2_int_to_string"
-      already_declared << "__crystal_v2_string_concat" << "__crystal_v2_string_interpolate" << "__crystal_v2_f64_to_string"
-      already_declared << "__crystal_v2_char_to_string" << "__crystal_v2_malloc64"
-      already_declared << "__crystal_v2_init_buffer" << "__crystal_v2_string_repeat"
-      already_declared << "__crystal_v2_string_index_string" << "__crystal_v2_string_index_char"
-      already_declared << "__crystal_v2_string_gsub" << "__crystal_v2_string_gsub_char" << "__crystal_v2_string_byte_slice"
-      already_declared << "__crystal_v2_array_join_int32"
-      already_declared << "__crystal_v2_string_bytesize" << "__crystal_v2_string_byte_at"
-      already_declared << "__crystal_v2_array_new_filled_i32" << "__crystal_v2_array_new_filled_bool"
-      already_declared << "__crystal_v2_array_concat"
-      already_declared << "__crystal_v2_hash_new"
-      already_declared << "__crystal_v2_ptr_copy" << "__crystal_v2_ptr_move"
-      already_declared << "__crystal_v2_sort_i32_array" << "__crystal_v2_sort_string_array"
-      already_declared << "__crystal_v2_sort_i32_array_dup" << "__crystal_v2_sort_string_array_dup"
+      already_declared << "__adamas_raise" << "__adamas_int_to_string"
+      already_declared << "__adamas_string_concat" << "__adamas_string_interpolate" << "__adamas_f64_to_string"
+      already_declared << "__adamas_char_to_string" << "__adamas_malloc64"
+      already_declared << "__adamas_init_buffer" << "__adamas_string_repeat"
+      already_declared << "__adamas_string_index_string" << "__adamas_string_index_char"
+      already_declared << "__adamas_string_gsub" << "__adamas_string_gsub_char" << "__adamas_string_byte_slice"
+      already_declared << "__adamas_array_join_int32"
+      already_declared << "__adamas_string_bytesize" << "__adamas_string_byte_at"
+      already_declared << "__adamas_array_new_filled_i32" << "__adamas_array_new_filled_bool"
+      already_declared << "__adamas_array_concat"
+      already_declared << "__adamas_hash_new"
+      already_declared << "__adamas_ptr_copy" << "__adamas_ptr_move"
+      already_declared << "__adamas_sort_i32_array" << "__adamas_sort_string_array"
+      already_declared << "__adamas_sort_i32_array_dup" << "__adamas_sort_string_array_dup"
       already_declared << "__cmp_i32" << "__cmp_string"
       already_declared << "llvm.memcpy.p0.p0.i32" << "llvm.memcpy.p0.p0.i64" << "llvm.memmove.p0.p0.i64"
       if @emit_regex_runtime
@@ -3349,8 +3349,8 @@ module Crystal::MIR
       # Avoid redeclaring in fallback passes.
       already_declared << "ttyname_r" << "fcntl"
       add_runtime_declared_extern_names(already_declared)
-      # Skip any function starting with __crystal_v2_ (runtime functions)
-      runtime_prefix = "__crystal_v2_"
+      # Skip any function starting with __adamas_ (runtime functions)
+      runtime_prefix = "__adamas_"
 
       undefined_snapshot = [] of {String, String}
       @undefined_externs.each do |name, return_type|
@@ -3578,10 +3578,10 @@ module Crystal::MIR
     #
     # What we support on purpose (bedrock for oracles and compiler-generated code):
     # - String literal layout and C-compatible string emission where applicable.
-    # - Runtime helpers declared in emit_runtime (e.g. __crystal_v2_string_bytesize, __crystal_v2_int_to_string,
-    #   __crystal_v2_string_interpolate, __crystal_v2_string_concat).
+    # - Runtime helpers declared in emit_runtime (e.g. __adamas_string_bytesize, __adamas_int_to_string,
+    #   __adamas_string_interpolate, __adamas_string_concat).
     # - String interpolation `"#{expr}"`: lowered in ast_to_hir (lower_string_interpolation) to HIR StringInterpolation,
-    #   then LLVM emit_string_interpolation → __crystal_v2_string_interpolate — not via String::Builder.
+    #   then LLVM emit_string_interpolation → __adamas_string_interpolate — not via String::Builder.
     # - Primitive and compiler-needed coercions wired through those helpers (not “all of stdlib String”).
     #
     # Compiler-generated language sugar: same pipeline as normal lowering; must not require hand-written
@@ -3643,7 +3643,7 @@ module Crystal::MIR
         "  %n1 = icmp eq ptr %str, null\n" \
         "  br i1 %n1, label %done, label %chk0\n" \
         "chk0:\n" \
-        "  %slen = call i32 @__crystal_v2_string_bytesize(ptr %str)\n" \
+        "  %slen = call i32 @__adamas_string_bytesize(ptr %str)\n" \
         "  %z = icmp eq i32 %slen, 0\n" \
         "  br i1 %z, label %done, label %work\n" \
         "work:\n" \
@@ -3752,7 +3752,7 @@ module Crystal::MIR
                "  %e = call ptr @String$CCBuilder$Dnew$$Int32(i32 0)\n" \
                "  ret ptr %e\n" \
                "have:\n" \
-               "  %bs = call i32 @__crystal_v2_string_bytesize(ptr %str)\n" \
+               "  %bs = call i32 @__adamas_string_bytesize(ptr %str)\n" \
                "  %io = call ptr @String$CCBuilder$Dnew$$Int32(i32 %bs)\n" \
                "  call ptr @String$CCBuilder$H$SHL$$String(ptr %io, ptr %str)\n" \
                "  ret ptr %io\n" \
@@ -3783,7 +3783,7 @@ module Crystal::MIR
                "  %bsp = getelementptr i8, ptr %self, i32 56\n" \
                "  %bs = load i32, ptr %bsp\n" \
                "  %dat = getelementptr i8, ptr %buf, i32 12\n" \
-               "  %res = call ptr @__crystal_v2_create_substring(ptr %dat, i32 %bs, i32 #{stid})\n" \
+               "  %res = call ptr @__adamas_create_substring(ptr %dat, i32 %bs, i32 #{stid})\n" \
                "  ret ptr %res\n" \
                "}\n"
       when "String$CCBuilder$H$SHL$$Int32"
@@ -3802,16 +3802,16 @@ module Crystal::MIR
         return prefix + "; String::Builder#<<(Int32) — synthesized (no-prelude)\n" \
                "define #{return_type} @#{name}(ptr %self, i32 %v) {\n" \
                "entry:\n" \
-               "  %tmp = call ptr @__crystal_v2_int_to_string(i32 %v)\n" \
+               "  %tmp = call ptr @__adamas_int_to_string(i32 %v)\n" \
                "  call ptr @String$CCBuilder$H$SHL$$String(ptr %self, ptr %tmp)\n" \
                "#{ret_line}" \
                "}\n"
       when "String$Hsize"
         return nil unless return_type == "i32" && arg_count == 1
-        return "; String#size — forward to __crystal_v2_string_bytesize\n" \
+        return "; String#size — forward to __adamas_string_bytesize\n" \
                "define i32 @#{name}(ptr %self) {\n" \
                "entry:\n" \
-               "  %r = call i32 @__crystal_v2_string_bytesize(ptr %self)\n" \
+               "  %r = call i32 @__adamas_string_bytesize(ptr %self)\n" \
                "  ret i32 %r\n" \
                "}\n"
       when "String$H$IDX$$Int32"
@@ -3819,11 +3819,11 @@ module Crystal::MIR
         return "; String#[](Int32) — byte with negative index\n" \
                "define i32 @#{name}(ptr %self, i32 %idx) {\n" \
                "entry:\n" \
-               "  %bs = call i32 @__crystal_v2_string_bytesize(ptr %self)\n" \
+               "  %bs = call i32 @__adamas_string_bytesize(ptr %self)\n" \
                "  %neg = icmp slt i32 %idx, 0\n" \
                "  %adj = add i32 %bs, %idx\n" \
                "  %real = select i1 %neg, i32 %adj, i32 %idx\n" \
-               "  %r = call i32 @__crystal_v2_string_byte_at(ptr %self, i32 %real)\n" \
+               "  %r = call i32 @__adamas_string_byte_at(ptr %self, i32 %real)\n" \
                "  ret i32 %r\n" \
                "}\n"
       when "String$Hstarts_with$Q$$String"
@@ -3834,8 +3834,8 @@ module Crystal::MIR
                "  %pn = icmp eq ptr %p, null\n" \
                "  br i1 %pn, label %f, label %k\n" \
                "k:\n" \
-               "  %pl = call i32 @__crystal_v2_string_bytesize(ptr %p)\n" \
-               "  %sl = call i32 @__crystal_v2_string_bytesize(ptr %self)\n" \
+               "  %pl = call i32 @__adamas_string_bytesize(ptr %p)\n" \
+               "  %sl = call i32 @__adamas_string_bytesize(ptr %self)\n" \
                "  %bad = icmp sgt i32 %pl, %sl\n" \
                "  br i1 %bad, label %f, label %cmp\n" \
                "cmp:\n" \
@@ -3855,8 +3855,8 @@ module Crystal::MIR
                "  %sn = icmp eq ptr %suf, null\n" \
                "  br i1 %sn, label %f, label %k\n" \
                "k:\n" \
-               "  %sl = call i32 @__crystal_v2_string_bytesize(ptr %self)\n" \
-               "  %tl = call i32 @__crystal_v2_string_bytesize(ptr %suf)\n" \
+               "  %sl = call i32 @__adamas_string_bytesize(ptr %self)\n" \
+               "  %tl = call i32 @__adamas_string_bytesize(ptr %suf)\n" \
                "  %bad = icmp sgt i32 %tl, %sl\n" \
                "  br i1 %bad, label %f, label %cmp\n" \
                "cmp:\n" \
@@ -3875,7 +3875,7 @@ module Crystal::MIR
         return "; String#empty?\n" \
                "define i1 @#{name}(ptr %self) {\n" \
                "entry:\n" \
-               "  %bs = call i32 @__crystal_v2_string_bytesize(ptr %self)\n" \
+               "  %bs = call i32 @__adamas_string_bytesize(ptr %self)\n" \
                "  %e = icmp eq i32 %bs, 0\n" \
                "  ret i1 %e\n" \
                "}\n"
@@ -3884,14 +3884,14 @@ module Crystal::MIR
         return "; String#strip — ASCII whitespace trim\n" \
                "define ptr @#{name}(ptr %self) {\n" \
                "entry:\n" \
-               "  %bs = call i32 @__crystal_v2_string_bytesize(ptr %self)\n" \
+               "  %bs = call i32 @__adamas_string_bytesize(ptr %self)\n" \
                "  br label %l_left\n" \
                "l_left:\n" \
                "  %i = phi i32 [0, %entry], [%in, %l_left_next]\n" \
                "  %ge = icmp sge i32 %i, %bs\n" \
                "  br i1 %ge, label %ret_empty, label %l_left_test\n" \
                "l_left_test:\n" \
-               "  %cb = call i32 @__crystal_v2_string_byte_at(ptr %self, i32 %i)\n" \
+               "  %cb = call i32 @__adamas_string_byte_at(ptr %self, i32 %i)\n" \
                "  %w32 = icmp eq i32 %cb, 32\n" \
                "  %w9 = icmp eq i32 %cb, 9\n" \
                "  %w10 = icmp eq i32 %cb, 10\n" \
@@ -3915,7 +3915,7 @@ module Crystal::MIR
                "  %jl = icmp slt i32 %j, %istart\n" \
                "  br i1 %jl, label %ret_empty, label %r_test\n" \
                "r_test:\n" \
-               "  %c2 = call i32 @__crystal_v2_string_byte_at(ptr %self, i32 %j)\n" \
+               "  %c2 = call i32 @__adamas_string_byte_at(ptr %self, i32 %j)\n" \
                "  %u32 = icmp eq i32 %c2, 32\n" \
                "  %u9 = icmp eq i32 %c2, 9\n" \
                "  %u10 = icmp eq i32 %c2, 10\n" \
@@ -3930,14 +3930,14 @@ module Crystal::MIR
                "ret_empty:\n" \
                "  %zstk = alloca i8\n" \
                "  store i8 0, ptr %zstk\n" \
-               "  %em = call ptr @__crystal_v2_create_substring(ptr %zstk, i32 0, i32 #{stid})\n" \
+               "  %em = call ptr @__adamas_create_substring(ptr %zstk, i32 0, i32 #{stid})\n" \
                "  ret ptr %em\n" \
                "make_sub:\n" \
                "  %cnt = sub i32 %j, %istart\n" \
                "  %cnt1 = add i32 %cnt, 1\n" \
                "  %base = getelementptr i8, ptr %self, i32 12\n" \
                "  %src = getelementptr i8, ptr %base, i32 %istart\n" \
-               "  %out = call ptr @__crystal_v2_create_substring(ptr %src, i32 %cnt1, i32 #{stid})\n" \
+               "  %out = call ptr @__adamas_create_substring(ptr %src, i32 %cnt1, i32 #{stid})\n" \
                "  ret ptr %out\n" \
                "}\n"
       when "IO$Hputs$$Char"
@@ -3960,13 +3960,13 @@ module Crystal::MIR
                "  %nn = icmp eq ptr %s, null\n" \
                "  br i1 %nn, label %nl_only, label %pr\n" \
                "pr:\n" \
-               "  call void @__crystal_v2_print_string(ptr %s)\n" \
-               "  %bs = call i32 @__crystal_v2_string_bytesize(ptr %s)\n" \
+               "  call void @__adamas_print_string(ptr %s)\n" \
+               "  %bs = call i32 @__adamas_string_bytesize(ptr %s)\n" \
                "  %has = icmp sgt i32 %bs, 0\n" \
                "  br i1 %has, label %chk, label %nl_only\n" \
                "chk:\n" \
                "  %la = sub i32 %bs, 1\n" \
-               "  %lc = call i32 @__crystal_v2_string_byte_at(ptr %s, i32 %la)\n" \
+               "  %lc = call i32 @__adamas_string_byte_at(ptr %s, i32 %la)\n" \
                "  %isnl = icmp eq i32 %lc, 10\n" \
                "  br i1 %isnl, label %done, label %nl_only\n" \
                "nl_only:\n" \
@@ -4017,7 +4017,7 @@ module Crystal::MIR
 
       # File.open(String, String, &block) — the Crystal body chains through
       # open_internal → new_internal → File.new, which V2 currently fails to lower.
-      # Override: open via __crystal_v2_file_open, create IO::FileDescriptor, patch
+      # Override: open via __adamas_file_open, create IO::FileDescriptor, patch
       # type_id to File, call block proc, then close.
       if name == "File$Dopen$$String_String_block"
         file_tid = @module.type_registry.get_by_name("File").try(&.id.to_i32) || 295
@@ -4034,7 +4034,7 @@ module Crystal::MIR
         ir = "; File.open(String, String, &block) — dead-code-stub builtin override\n" \
              "define #{return_type} @#{name}(ptr %p0, ptr %p1, ptr %p2) {\n" \
              "entry:\n" \
-             "  %fdtup = call ptr @__crystal_v2_file_open(ptr %p0, ptr %p1)\n" \
+             "  %fdtup = call ptr @__adamas_file_open(ptr %p0, ptr %p1)\n" \
              "  %fd = load i32, ptr %fdtup\n" \
              "  %file = call ptr @IO$CCFileDescriptor$Dnew$$Int32(i32 %fd)\n" \
              "  store i32 #{file_tid}, ptr %file\n" \
@@ -4219,7 +4219,7 @@ module Crystal::MIR
                "  %old_buf = load ptr, ptr %buf_field_g\n" \
                "  %new_cap64 = sext i32 %new_cap to i64\n" \
                "  %new_bytes = mul i64 %new_cap64, #{elem_size}\n" \
-               "  %new_buf = call ptr @__crystal_v2_realloc64(ptr %old_buf, i64 %new_bytes)\n" \
+               "  %new_buf = call ptr @__adamas_realloc64(ptr %old_buf, i64 %new_bytes)\n" \
                "  store ptr %new_buf, ptr %buf_field_g\n" \
                "  store i32 %new_cap, ptr %cap_ptr\n" \
                "  br label %store\n" \
@@ -4260,7 +4260,7 @@ module Crystal::MIR
                "}\n"
       end
 
-      # Crystal::MIR::Array(T) is the same runtime object as top-level ::Array(T),
+      # Adamas::MIR::Array(T) is the same runtime object as top-level ::Array(T),
       # but self-host sometimes materializes a separate V2 symbol path for methods
       # like #size / #unsafe_fetch. Delegate those missing bodies to the real Array.
       if name.starts_with?("Crystal$CCMIR$CCArray$L")
@@ -4275,7 +4275,7 @@ module Crystal::MIR
                                end
 
           if name.ends_with?("$Hsize")
-            return "; #{name} — delegate Crystal::MIR::Array#size to ::Array#size\n" \
+            return "; #{name} — delegate Adamas::MIR::Array#size to ::Array#size\n" \
                    "define #{target_return_type} @#{name}(ptr %self) {\n" \
                    "entry:\n" \
                    "  %r = call #{target_return_type} @#{target}(ptr %self)\n" \
@@ -4284,7 +4284,7 @@ module Crystal::MIR
           end
 
           if name.ends_with?("$Hunsafe_fetch$$Int32")
-            return "; #{name} — delegate Crystal::MIR::Array#unsafe_fetch(Int32) to ::Array\n" \
+            return "; #{name} — delegate Adamas::MIR::Array#unsafe_fetch(Int32) to ::Array\n" \
                    "define #{target_return_type} @#{name}(ptr %self, i32 %index) {\n" \
                    "entry:\n" \
                    "  %r = call #{target_return_type} @#{target}(ptr %self, i32 %index)\n" \
@@ -4294,11 +4294,11 @@ module Crystal::MIR
         end
       end
 
-      # Crystal::MIR::Set(T) uses the same runtime object as top-level ::Set(T).
+      # Adamas::MIR::Set(T) uses the same runtime object as top-level ::Set(T).
       # When self-host materializes namespace-prefixed instance method symbols,
       # delegate them to the real Set implementation instead of aborting.
       if name == "Crystal$CCMIR$CCSet$LString$R$Hincludes$Q$$String"
-        return "; #{name} — delegate Crystal::MIR::Set(String)#includes? to ::Set\n" \
+        return "; #{name} — delegate Adamas::MIR::Set(String)#includes? to ::Set\n" \
                "define i32 @#{name}(ptr %self, ptr %value) {\n" \
                "entry:\n" \
                "  %r = call i32 @Set$LString$R$Hincludes$Q$$String(ptr %self, ptr %value)\n" \
@@ -4307,7 +4307,7 @@ module Crystal::MIR
       end
 
       if name == "Crystal$CCMIR$CCSet$LString$R$Hadd$$String"
-        return "; #{name} — delegate Crystal::MIR::Set(String)#add to ::Set\n" \
+        return "; #{name} — delegate Adamas::MIR::Set(String)#add to ::Set\n" \
                "define void @#{name}(ptr %self, ptr %value) {\n" \
                "entry:\n" \
                "  call void @Set$LString$R$Hadd$$String(ptr %self, ptr %value)\n" \
@@ -4316,7 +4316,7 @@ module Crystal::MIR
       end
 
       if name == "Crystal$CCMIR$CCSet$LString$R$H$SHL$$String"
-        return "; #{name} — delegate Crystal::MIR::Set(String)#<< to ::Set\n" \
+        return "; #{name} — delegate Adamas::MIR::Set(String)#<< to ::Set\n" \
                "define ptr @#{name}(ptr %self, ptr %value) {\n" \
                "entry:\n" \
                "  %r = call ptr @Set$LString$R$H$SHL$$String(ptr %self, ptr %value)\n" \
@@ -4325,7 +4325,7 @@ module Crystal::MIR
       end
 
       if name == "Crystal$CCMIR$CCSet$Hsize"
-        return "; #{name} — generic Crystal::MIR::Set#size via inner Hash size field\n" \
+        return "; #{name} — generic Adamas::MIR::Set#size via inner Hash size field\n" \
                "define i32 @#{name}(ptr %self) {\n" \
                "entry:\n" \
                "  %self_null = icmp eq ptr %self, null\n" \
@@ -4345,7 +4345,7 @@ module Crystal::MIR
       end
 
       if name == "Crystal$CCMIR$CCSet$LCrystal$CCMIR$CCFunctionId$R$Hincludes$Q$$UInt32"
-        return "; #{name} — delegate Crystal::MIR::Set(FunctionId)#includes? to ::Set(UInt32)\n" \
+        return "; #{name} — delegate Adamas::MIR::Set(FunctionId)#includes? to ::Set(UInt32)\n" \
                "define i32 @#{name}(ptr %self, i32 %value) {\n" \
                "entry:\n" \
                "  %r.bool = call i1 @Set$LUInt32$R$Hincludes$Q$$UInt32(ptr %self, i32 %value)\n" \
@@ -4355,7 +4355,7 @@ module Crystal::MIR
       end
 
       if name == "Crystal$CCMIR$CCSet$LCrystal$CCMIR$CCFunctionId$R$Hadd$$UInt32"
-        return "; #{name} — delegate Crystal::MIR::Set(FunctionId)#add to ::Set(UInt32)\n" \
+        return "; #{name} — delegate Adamas::MIR::Set(FunctionId)#add to ::Set(UInt32)\n" \
                "define i32 @#{name}(ptr %self, i32 %value) {\n" \
                "entry:\n" \
                "  %ignored = call ptr @Set$LUInt32$R$Hadd$$UInt32(ptr %self, i32 %value)\n" \
@@ -4364,7 +4364,7 @@ module Crystal::MIR
       end
 
       if name == "Crystal$CCMIR$CCSet$LCrystal$CCMIR$CCFunctionId$R$H$SHL$$UInt32"
-        return "; #{name} — delegate Crystal::MIR::Set(FunctionId)#<< to ::Set(UInt32)#add\n" \
+        return "; #{name} — delegate Adamas::MIR::Set(FunctionId)#<< to ::Set(UInt32)#add\n" \
                "define i32 @#{name}(ptr %self, i32 %value) {\n" \
                "entry:\n" \
                "  %ignored = call ptr @Set$LUInt32$R$Hadd$$UInt32(ptr %self, i32 %value)\n" \
@@ -4373,7 +4373,7 @@ module Crystal::MIR
       end
 
       if name == "Crystal$CCMIR$CCSet$LCrystal$CCMIR$CCFunctionId$R$Hclear"
-        return "; #{name} — delegate Crystal::MIR::Set(FunctionId)#clear to ::Set(UInt32)\n" \
+        return "; #{name} — delegate Adamas::MIR::Set(FunctionId)#clear to ::Set(UInt32)\n" \
                "define ptr @#{name}(ptr %self) {\n" \
                "entry:\n" \
                "  %r = call ptr @Set$LUInt32$R$Hclear(ptr %self)\n" \
@@ -4382,7 +4382,7 @@ module Crystal::MIR
       end
 
       if name == "Crystal$CCMIR$CCSet$LCrystal$CCMIR$CCValueId$R$Hincludes$Q$$UInt32"
-        return "; #{name} — delegate Crystal::MIR::Set(ValueId)#includes? to ::Set(UInt32)\n" \
+        return "; #{name} — delegate Adamas::MIR::Set(ValueId)#includes? to ::Set(UInt32)\n" \
                "define i32 @#{name}(ptr %self, i32 %value) {\n" \
                "entry:\n" \
                "  %r.bool = call i1 @Set$LUInt32$R$Hincludes$Q$$UInt32(ptr %self, i32 %value)\n" \
@@ -4392,7 +4392,7 @@ module Crystal::MIR
       end
 
       if name == "Crystal$CCMIR$CCSet$LCrystal$CCMIR$CCBlockId$R$Hincludes$Q$$UInt32"
-        return "; #{name} — delegate Crystal::MIR::Set(BlockId)#includes? to ::Set(UInt32)\n" \
+        return "; #{name} — delegate Adamas::MIR::Set(BlockId)#includes? to ::Set(UInt32)\n" \
                "define i32 @#{name}(ptr %self, i32 %value) {\n" \
                "entry:\n" \
                "  %r.bool = call i1 @Set$LUInt32$R$Hincludes$Q$$UInt32(ptr %self, i32 %value)\n" \
@@ -4402,7 +4402,7 @@ module Crystal::MIR
       end
 
       if name == "Crystal$CCMIR$CCSet$LCrystal$CCMIR$CCBlockId$R$Hadd$$UInt32"
-        return "; #{name} — delegate Crystal::MIR::Set(BlockId)#add to ::Set(UInt32)\n" \
+        return "; #{name} — delegate Adamas::MIR::Set(BlockId)#add to ::Set(UInt32)\n" \
                "define i32 @#{name}(ptr %self, i32 %value) {\n" \
                "entry:\n" \
                "  %ignored = call ptr @Set$LUInt32$R$Hadd$$UInt32(ptr %self, i32 %value)\n" \
@@ -4411,7 +4411,7 @@ module Crystal::MIR
       end
 
       if name == "Crystal$CCMIR$CCSet$LCrystal$CCMIR$CCBlockId$R$H$SHL$$UInt32"
-        return "; #{name} — delegate Crystal::MIR::Set(BlockId)#<< to ::Set(UInt32)#add\n" \
+        return "; #{name} — delegate Adamas::MIR::Set(BlockId)#<< to ::Set(UInt32)#add\n" \
                "define i32 @#{name}(ptr %self, i32 %value) {\n" \
                "entry:\n" \
                "  %ignored = call ptr @Set$LUInt32$R$Hadd$$UInt32(ptr %self, i32 %value)\n" \
@@ -4420,7 +4420,7 @@ module Crystal::MIR
       end
 
       if name == "Crystal$CCMIR$CCSet$LCrystal$CCMIR$CCValueId$R$Hadd$$UInt32"
-        return "; #{name} — delegate Crystal::MIR::Set(ValueId)#add to ::Set(UInt32)\n" \
+        return "; #{name} — delegate Adamas::MIR::Set(ValueId)#add to ::Set(UInt32)\n" \
                "define i32 @#{name}(ptr %self, i32 %value) {\n" \
                "entry:\n" \
                "  %ignored = call ptr @Set$LUInt32$R$Hadd$$UInt32(ptr %self, i32 %value)\n" \
@@ -4429,7 +4429,7 @@ module Crystal::MIR
       end
 
       if name == "Crystal$CCMIR$CCSet$LCrystal$CCMIR$CCValueId$R$H$SHL$$UInt32"
-        return "; #{name} — delegate Crystal::MIR::Set(ValueId)#<< to ::Set(UInt32)#add\n" \
+        return "; #{name} — delegate Adamas::MIR::Set(ValueId)#<< to ::Set(UInt32)#add\n" \
                "define i32 @#{name}(ptr %self, i32 %value) {\n" \
                "entry:\n" \
                "  %ignored = call ptr @Set$LUInt32$R$Hadd$$UInt32(ptr %self, i32 %value)\n" \
@@ -4438,7 +4438,7 @@ module Crystal::MIR
       end
 
       if name == "Crystal$CCMIR$CCSet$LCrystal$CCMIR$CCValueId$R$Hclear"
-        return "; #{name} — delegate Crystal::MIR::Set(ValueId)#clear to ::Set(UInt32)\n" \
+        return "; #{name} — delegate Adamas::MIR::Set(ValueId)#clear to ::Set(UInt32)\n" \
                "define ptr @#{name}(ptr %self) {\n" \
                "entry:\n" \
                "  %r = call ptr @Set$LUInt32$R$Hclear(ptr %self)\n" \
@@ -4450,7 +4450,7 @@ module Crystal::MIR
         target = name.sub("Crystal$CCMIR$CCHash$L", "Hash$L")
         if target != name
           @called_crystal_functions[target] = {"ptr", 1, ["ptr"] of String}
-          return "; #{name} — delegate Crystal::MIR::Hash#clear to ::Hash on the same receiver\n" \
+          return "; #{name} — delegate Adamas::MIR::Hash#clear to ::Hash on the same receiver\n" \
                  "define ptr @#{name}(ptr %self) {\n" \
                  "entry:\n" \
                  "  %r = call ptr @#{target}(ptr %self)\n" \
@@ -4515,7 +4515,7 @@ module Crystal::MIR
         return body + clear_ret + "}\n"
       end
 
-      # Crystal::MIR::Hash(K,V) is V2's mangling of `::Hash(K,V)` used from the MIR module.
+      # Adamas::MIR::Hash(K,V) is V2's mangling of `::Hash(K,V)` used from the MIR module.
       # The receiver is the real Hash object (type_id at offset 0), not a {inner: Hash*} wrapper.
       # Older stubs wrongly did `load ptr, ptr %self`, misreading the header as a pointer (stage2 crash).
       if name == "Crystal$CCMIR$CCHash$LUInt32$C$_Crystal$CCMIR$CCFunction$R$Hhas_key$Q$$UInt32"
@@ -4575,7 +4575,7 @@ module Crystal::MIR
       end
 
       if name == "Crystal$CCMIR$CCHash$LString$C$_Crystal$CCMIR$CCTypeRef$R$Hempty$Q"
-        return "; #{name} — derive Crystal::MIR::Hash(String, TypeRef)#empty? from ::Hash#size\n" \
+        return "; #{name} — derive Adamas::MIR::Hash(String, TypeRef)#empty? from ::Hash#size\n" \
                "define i32 @#{name}(ptr %self) {\n" \
                "entry:\n" \
                "  %size = call i32 @Hash$LString$C$_Crystal$CCMIR$CCTypeRef$R$Hsize(ptr %self)\n" \
@@ -4585,7 +4585,7 @@ module Crystal::MIR
                "}\n"
       end
 
-      # Crystal::MIR::Set(T).new lowered without running #initialize — @hash stays null (SIGSEGV in Set#add).
+      # Adamas::MIR::Set(T).new lowered without running #initialize — @hash stays null (SIGSEGV in Set#add).
       if name.starts_with?("Crystal$CCMIR$CCSet$L") && name.includes?("$R$Dnew")
         target = name.sub("Crystal$CCMIR$CCSet$L", "Set$L")
         if target != name
@@ -5013,7 +5013,7 @@ module Crystal::MIR
 
     # Try to resolve a V2-mangled lib function name to its registered ExternFunction.
     # E.g., "LibM$Dsqrt_f64$$Float64" → ExternFunction(name: "sqrt_f64", real_name: "llvm.sqrt.f64")
-    private def try_resolve_extern_from_mangled(name : String) : Crystal::HIR::ExternFunction?
+    private def try_resolve_extern_from_mangled(name : String) : Adamas::HIR::ExternFunction?
       # Extract lib name and fun name from V2 mangling: LibName$Dfun_name$$params
       dollar_d = name.index("$D")
       return nil unless dollar_d
@@ -5052,7 +5052,7 @@ module Crystal::MIR
     # Emit a forwarding stub from V2-mangled name to the real extern name.
     private def emit_extern_forwarding_stub(
       mangled_name : String,
-      extern : Crystal::HIR::ExternFunction,
+      extern : Adamas::HIR::ExternFunction,
       return_type : String,
       arg_count : Int32,
       arg_types : Array(String)
@@ -5530,7 +5530,7 @@ module Crystal::MIR
         emit_raw "@.str.dbg_open_label = private unnamed_addr constant [5 x i8] c\"open\\00\", align 1\n"
         emit_raw "@.str.dbg_write_label = private unnamed_addr constant [6 x i8] c\"write\\00\", align 1\n"
       else
-        # No-prelude mode: Crystal-shaped string headers so __crystal_v2_string_* and
+        # No-prelude mode: Crystal-shaped string headers so __adamas_string_* and
         # synthesized stubs see the same layout as heap-allocated strings (i32 type_id @0, bytesize @4, data @12).
         np_str_tid = TypeRef::STRING.id.to_i32
         emit_raw "@.str.empty = private unnamed_addr constant { i32, i32, i32, [1 x i8] } { i32 #{np_str_tid}, i32 0, i32 0, [1 x i8] c\"\\00\" }, align 8\n"
@@ -6156,37 +6156,37 @@ module Crystal::MIR
       # This is necessary because LLVM's interprocedural Attributor pass can infer noalias
       # on our return value (by seeing we call calloc, even through noinline boundaries).
       # With noalias inferred, LLVM's heap-to-stack promotion converts calloc → alloca
-      # when the allocation only escapes through a noreturn call (__crystal_v2_raise/longjmp).
+      # when the allocation only escapes through a noreturn call (__adamas_raise/longjmp).
       # After longjmp, the stack frame is destroyed and the exception pointer is garbage.
       # Volatile function pointer loads are opaque to LLVM — it can't constant-fold them
       # or infer allocation semantics from an indirect call to an unknown target.
       # In the original Crystal compiler, GC_MALLOC is in a separate shared library (libgc)
       # so LLVM can never see through it. This achieves the same opacity.
-      emit_raw "@__crystal_v2_calloc_fn = global ptr @calloc\n"
-      emit_raw "@__crystal_v2_malloc_fn = global ptr @malloc\n"
-      emit_raw "@__crystal_v2_realloc_fn = global ptr @realloc\n\n"
+      emit_raw "@__adamas_calloc_fn = global ptr @calloc\n"
+      emit_raw "@__adamas_malloc_fn = global ptr @malloc\n"
+      emit_raw "@__adamas_realloc_fn = global ptr @realloc\n\n"
 
-      emit_raw "define ptr @__crystal_v2_malloc64(i64 %size) noinline {\n"
-      emit_raw "  %fn = load volatile ptr, ptr @__crystal_v2_calloc_fn\n"
+      emit_raw "define ptr @__adamas_malloc64(i64 %size) noinline {\n"
+      emit_raw "  %fn = load volatile ptr, ptr @__adamas_calloc_fn\n"
       emit_raw "  %ptr = call ptr %fn(i64 1, i64 %size)\n"
       emit_raw "  ret ptr %ptr\n"
       emit_raw "}\n\n"
 
-      emit_raw "define ptr @__crystal_v2_realloc64(ptr %old_ptr, i64 %size) noinline {\n"
-      emit_raw "  %fn = load volatile ptr, ptr @__crystal_v2_realloc_fn\n"
+      emit_raw "define ptr @__adamas_realloc64(ptr %old_ptr, i64 %size) noinline {\n"
+      emit_raw "  %fn = load volatile ptr, ptr @__adamas_realloc_fn\n"
       emit_raw "  %ptr = call ptr %fn(ptr %old_ptr, i64 %size)\n"
       emit_raw "  ret ptr %ptr\n"
       emit_raw "}\n\n"
 
       emit_raw "define ptr @__crystal_malloc_atomic64(i64 %size) noinline {\n"
-      emit_raw "  %fn = load volatile ptr, ptr @__crystal_v2_malloc_fn\n"
+      emit_raw "  %fn = load volatile ptr, ptr @__adamas_malloc_fn\n"
       emit_raw "  %ptr = call ptr %fn(i64 %size)\n"
       emit_raw "  ret ptr %ptr\n"
       emit_raw "}\n\n"
       bootstrap_trace_puts "  [RT_DECL] after alloc wrappers" if runtime_decl_trace
 
       emit_raw "define ptr @__crystal_realloc64(ptr %ptr, i64 %size) noinline {\n"
-      emit_raw "  %fn = load volatile ptr, ptr @__crystal_v2_realloc_fn\n"
+      emit_raw "  %fn = load volatile ptr, ptr @__adamas_realloc_fn\n"
       emit_raw "  %new_ptr = call ptr %fn(ptr %ptr, i64 %size)\n"
       emit_raw "  ret ptr %new_ptr\n"
       emit_raw "}\n\n"
@@ -6201,7 +6201,7 @@ module Crystal::MIR
       # old unsafe ptr-8 probe while letting true ARC objects reclaim memory again.
       {% if flag?(:darwin) %}
         # rc_inc (non-atomic): null-safe increment with raw-base validation.
-        emit_raw "define void @__crystal_v2_rc_inc(ptr %ptr) {\n"
+        emit_raw "define void @__adamas_rc_inc(ptr %ptr) {\n"
         emit_raw "  %is_null = icmp eq ptr %ptr, null\n"
         emit_raw "  br i1 %is_null, label %done, label %guard\n"
         emit_raw "guard:\n"
@@ -6222,7 +6222,7 @@ module Crystal::MIR
         emit_raw "}\n\n"
 
         # rc_dec (non-atomic): null-safe decrement with raw-base validation, free at 0.
-        emit_raw "define void @__crystal_v2_rc_dec(ptr %ptr, ptr %destructor) {\n"
+        emit_raw "define void @__adamas_rc_dec(ptr %ptr, ptr %destructor) {\n"
         emit_raw "  %is_null = icmp eq ptr %ptr, null\n"
         emit_raw "  br i1 %is_null, label %done, label %guard\n"
         emit_raw "guard:\n"
@@ -6253,7 +6253,7 @@ module Crystal::MIR
         emit_raw "}\n\n"
 
         # rc_inc_atomic: null-safe atomic increment with raw-base validation.
-        emit_raw "define void @__crystal_v2_rc_inc_atomic(ptr %ptr) {\n"
+        emit_raw "define void @__adamas_rc_inc_atomic(ptr %ptr) {\n"
         emit_raw "  %is_null = icmp eq ptr %ptr, null\n"
         emit_raw "  br i1 %is_null, label %done, label %guard\n"
         emit_raw "guard:\n"
@@ -6273,7 +6273,7 @@ module Crystal::MIR
         emit_raw "}\n\n"
 
         # rc_dec_atomic: null-safe atomic decrement with raw-base validation, free at 0.
-        emit_raw "define void @__crystal_v2_rc_dec_atomic(ptr %ptr, ptr %destructor) {\n"
+        emit_raw "define void @__adamas_rc_dec_atomic(ptr %ptr, ptr %destructor) {\n"
         emit_raw "  %is_null = icmp eq ptr %ptr, null\n"
         emit_raw "  br i1 %is_null, label %done, label %guard\n"
         emit_raw "guard:\n"
@@ -6305,52 +6305,52 @@ module Crystal::MIR
       {% else %}
         # rc_inc (non-atomic): NO-OP outside Darwin until a portable raw-base
         # discriminator replaces the old unsafe ptr-8 probe.
-        emit_raw "define void @__crystal_v2_rc_inc(ptr %ptr) {\n"
+        emit_raw "define void @__adamas_rc_inc(ptr %ptr) {\n"
         emit_raw "  ret void\n"
         emit_raw "}\n\n"
 
         # rc_dec (non-atomic): NO-OP for portability safety.
-        emit_raw "define void @__crystal_v2_rc_dec(ptr %ptr, ptr %destructor) {\n"
+        emit_raw "define void @__adamas_rc_dec(ptr %ptr, ptr %destructor) {\n"
         emit_raw "  ret void\n"
         emit_raw "}\n\n"
 
         # rc_inc_atomic: NO-OP for portability safety.
-        emit_raw "define void @__crystal_v2_rc_inc_atomic(ptr %ptr) {\n"
+        emit_raw "define void @__adamas_rc_inc_atomic(ptr %ptr) {\n"
         emit_raw "  ret void\n"
         emit_raw "}\n\n"
 
         # rc_dec_atomic: NO-OP for portability safety.
-        emit_raw "define void @__crystal_v2_rc_dec_atomic(ptr %ptr, ptr %destructor) {\n"
+        emit_raw "define void @__adamas_rc_dec_atomic(ptr %ptr, ptr %destructor) {\n"
         emit_raw "  ret void\n"
         emit_raw "}\n\n"
         bootstrap_trace_puts "  [RT_DECL] after rc stubs" if runtime_decl_trace
       {% end %}
 
       # Slab allocator - use calloc for zero-init
-      emit_raw "define ptr @__crystal_v2_slab_alloc(i32 %size_class) {\n"
+      emit_raw "define ptr @__adamas_slab_alloc(i32 %size_class) {\n"
       emit_raw "  %size = sext i32 %size_class to i64\n"
       emit_raw "  %shift = shl i64 16, %size\n"
       emit_raw "  %ptr = call ptr @calloc(i64 1, i64 %shift)\n"
       emit_raw "  ret ptr %ptr\n"
       emit_raw "}\n\n"
 
-      emit_raw "define void @__crystal_v2_slab_free(ptr %ptr, i32 %size_class) {\n"
+      emit_raw "define void @__adamas_slab_free(ptr %ptr, i32 %size_class) {\n"
       emit_raw "  call void @free(ptr %ptr)\n"
       emit_raw "  ret void\n"
       emit_raw "}\n\n"
 
-      emit_raw "define void @__crystal_v2_slab_frame_push() {\n"
+      emit_raw "define void @__adamas_slab_frame_push() {\n"
       emit_raw "  ret void\n"
       emit_raw "}\n\n"
 
-      emit_raw "define void @__crystal_v2_slab_frame_pop() {\n"
+      emit_raw "define void @__adamas_slab_frame_pop() {\n"
       emit_raw "  ret void\n"
       emit_raw "}\n\n"
       bootstrap_trace_puts "  [RT_DECL] after slab stubs" if runtime_decl_trace
 
       # Convert Crystal file mode string to POSIX open flags.
       # Supports: "r", "w", "a" and their '+' variants.
-      emit_raw "define i32 @__crystal_v2_mode_to_open_flags(ptr %mode) {\n"
+      emit_raw "define i32 @__adamas_mode_to_open_flags(ptr %mode) {\n"
       emit_raw "entry:\n"
       emit_raw "  %mode_cstr = getelementptr i8, ptr %mode, i32 12\n"
       emit_raw "  %m0 = load i8, ptr %mode_cstr\n"
@@ -6384,19 +6384,19 @@ module Crystal::MIR
 
       # File.new(path, mode) helper — opens file via POSIX open(), returns ptr to {i32 fd, i1 blocking}
       # Takes plain ptr args (no union by-value) to avoid ARM64 ABI decomposition issues.
-      emit_raw "define ptr @__crystal_v2_file_open(ptr %path, ptr %mode) {\n"
+      emit_raw "define ptr @__adamas_file_open(ptr %path, ptr %mode) {\n"
       emit_raw "entry:\n"
       emit_raw "  %cstr = getelementptr i8, ptr %path, i32 12\n"
-      emit_raw "  %flags = call i32 @__crystal_v2_mode_to_open_flags(ptr %mode)\n"
+      emit_raw "  %flags = call i32 @__adamas_mode_to_open_flags(ptr %mode)\n"
       emit_raw "  %fd = call i32 (ptr, i32, ...) @open(ptr %cstr, i32 %flags, i32 438)\n"
       emit_raw "  %fd_neg = icmp slt i32 %fd, 0\n"
       emit_raw "  br i1 %fd_neg, label %error, label %success\n"
       emit_raw "error:\n"
       emit_raw "  call void @perror(ptr @.str.dbg_open_label)\n"
-      emit_raw "  call void @__crystal_v2_raise_msg(ptr @.str.file_open_error)\n"
+      emit_raw "  call void @__adamas_raise_msg(ptr @.str.file_open_error)\n"
       emit_raw "  unreachable\n"
       emit_raw "success:\n"
-      emit_raw "  %tup = call ptr @__crystal_v2_malloc64(i64 8)\n"
+      emit_raw "  %tup = call ptr @__adamas_malloc64(i64 8)\n"
       emit_raw "  store i32 %fd, ptr %tup\n"
       emit_raw "  %cof_ptr = getelementptr i8, ptr %tup, i32 4\n"
       emit_raw "  store i1 1, ptr %cof_ptr\n"
@@ -6405,12 +6405,12 @@ module Crystal::MIR
       bootstrap_trace_puts "  [RT_DECL] after file_open helper" if runtime_decl_trace
 
       # IO functions - use printf
-      emit_raw "define void @__crystal_v2_puts(ptr %str) {\n"
+      emit_raw "define void @__adamas_puts(ptr %str) {\n"
       emit_raw "  call i32 @puts(ptr %str)\n"
       emit_raw "  ret void\n"
       emit_raw "}\n\n"
 
-      emit_raw "define void @__crystal_v2_print_int32(i32 %val) {\n"
+      emit_raw "define void @__adamas_print_int32(i32 %val) {\n"
       emit_raw "  call i32 (ptr, ...) @printf(ptr @.int_fmt_no_nl, i32 %val)\n"
       emit_raw "  ret void\n"
       emit_raw "}\n\n"
@@ -6421,7 +6421,7 @@ module Crystal::MIR
       emit_raw "declare i32 @sprintf(ptr, ptr, ...)\n"
       emit_raw "declare i64 @strlen(ptr)\n"
       emit_raw "declare i64 @write(i32, ptr, i64)\n"
-      emit_raw "define void @__crystal_v2_print_int32_ln(i32 %val) {\n"
+      emit_raw "define void @__adamas_print_int32_ln(i32 %val) {\n"
       emit_raw "entry:\n"
       emit_raw "  %tmp = alloca [16 x i8]\n"
       emit_raw "  call i32 (ptr, ptr, ...) @sprintf(ptr %tmp, ptr @.int_fmt, i32 %val)\n"
@@ -6430,12 +6430,12 @@ module Crystal::MIR
       emit_raw "  ret void\n"
       emit_raw "}\n\n"
 
-      emit_raw "define void @__crystal_v2_print_uint32(i32 %val) {\n"
+      emit_raw "define void @__adamas_print_uint32(i32 %val) {\n"
       emit_raw "  call i32 (ptr, ...) @printf(ptr @.uint_fmt_no_nl, i32 %val)\n"
       emit_raw "  ret void\n"
       emit_raw "}\n\n"
 
-      emit_raw "define void @__crystal_v2_print_uint32_ln(i32 %val) {\n"
+      emit_raw "define void @__adamas_print_uint32_ln(i32 %val) {\n"
       emit_raw "entry:\n"
       emit_raw "  %tmp = alloca [16 x i8]\n"
       emit_raw "  call i32 (ptr, ptr, ...) @sprintf(ptr %tmp, ptr @.uint_fmt, i32 %val)\n"
@@ -6444,12 +6444,12 @@ module Crystal::MIR
       emit_raw "  ret void\n"
       emit_raw "}\n\n"
 
-      emit_raw "define void @__crystal_v2_print_int64(i64 %val) {\n"
+      emit_raw "define void @__adamas_print_int64(i64 %val) {\n"
       emit_raw "  call i32 (ptr, ...) @printf(ptr @.long_fmt_no_nl, i64 %val)\n"
       emit_raw "  ret void\n"
       emit_raw "}\n\n"
 
-      emit_raw "define void @__crystal_v2_print_int64_ln(i64 %val) {\n"
+      emit_raw "define void @__adamas_print_int64_ln(i64 %val) {\n"
       emit_raw "entry:\n"
       emit_raw "  %tmp = alloca [32 x i8]\n"
       emit_raw "  call i32 (ptr, ptr, ...) @sprintf(ptr %tmp, ptr @.long_fmt, i64 %val)\n"
@@ -6458,12 +6458,12 @@ module Crystal::MIR
       emit_raw "  ret void\n"
       emit_raw "}\n\n"
 
-      emit_raw "define void @__crystal_v2_print_uint64(i64 %val) {\n"
+      emit_raw "define void @__adamas_print_uint64(i64 %val) {\n"
       emit_raw "  call i32 (ptr, ...) @printf(ptr @.ulong_fmt_no_nl, i64 %val)\n"
       emit_raw "  ret void\n"
       emit_raw "}\n\n"
 
-      emit_raw "define void @__crystal_v2_print_uint64_ln(i64 %val) {\n"
+      emit_raw "define void @__adamas_print_uint64_ln(i64 %val) {\n"
       emit_raw "entry:\n"
       emit_raw "  %tmp = alloca [32 x i8]\n"
       emit_raw "  call i32 (ptr, ptr, ...) @sprintf(ptr %tmp, ptr @.ulong_fmt, i64 %val)\n"
@@ -6472,7 +6472,7 @@ module Crystal::MIR
       emit_raw "  ret void\n"
       emit_raw "}\n\n"
 
-      emit_raw "define void @__crystal_v2_print_string(ptr %str) {\n"
+      emit_raw "define void @__adamas_print_string(ptr %str) {\n"
       emit_raw "entry:\n"
       emit_raw "  %str_null = icmp eq ptr %str, null\n"
       emit_raw "  br i1 %str_null, label %done, label %print\n"
@@ -6487,13 +6487,13 @@ module Crystal::MIR
       emit_raw "  ret void\n"
       emit_raw "}\n\n"
 
-      emit_raw "define void @__crystal_v2_print_string_ln(ptr %str) {\n"
-      emit_raw "  call void @__crystal_v2_print_string(ptr %str)\n"
+      emit_raw "define void @__adamas_print_string_ln(ptr %str) {\n"
+      emit_raw "  call void @__adamas_print_string(ptr %str)\n"
       emit_raw "  call i64 @write(i32 1, ptr @.str_newline, i64 1)\n"
       emit_raw "  ret void\n"
       emit_raw "}\n\n"
 
-      emit_raw "define void @__crystal_v2_print_bool(i1 %val) {\n"
+      emit_raw "define void @__adamas_print_bool(i1 %val) {\n"
       emit_raw "entry:\n"
       emit_raw "  br i1 %val, label %print_true, label %print_false\n"
       emit_raw "print_true:\n"
@@ -6504,8 +6504,8 @@ module Crystal::MIR
       emit_raw "  ret void\n"
       emit_raw "}\n\n"
 
-      emit_raw "define void @__crystal_v2_print_bool_ln(i1 %val) {\n"
-      emit_raw "  call void @__crystal_v2_print_bool(i1 %val)\n"
+      emit_raw "define void @__adamas_print_bool_ln(i1 %val) {\n"
+      emit_raw "  call void @__adamas_print_bool(i1 %val)\n"
       emit_raw "  call i64 @write(i32 1, ptr @.str_newline, i64 1)\n"
       emit_raw "  ret void\n"
       emit_raw "}\n\n"
@@ -6534,7 +6534,7 @@ module Crystal::MIR
       emit_raw "@.str_neg_zero = private constant [5 x i8] c\"-0.0\\00\"\n"
       emit_raw "@.str.fmt.d = private constant [3 x i8] c\"%d\\00\"\n\n"
 
-      emit_raw "define void @__crystal_v2_print_float_impl(double %val, i1 %newline) {\n"
+      emit_raw "define void @__adamas_print_float_impl(double %val, i1 %newline) {\n"
       emit_raw "entry:\n"
       emit_raw "  %buf = alloca [64 x i8], align 8\n"
       # Check for negative zero: val == 0.0 && copysign(1.0, val) < 0.0
@@ -6662,25 +6662,25 @@ module Crystal::MIR
       emit_raw "  ret void\n"
       emit_raw "}\n\n"
 
-      emit_raw "define void @__crystal_v2_print_float64(double %val) {\n"
-      emit_raw "  call void @__crystal_v2_print_float_impl(double %val, i1 0)\n"
+      emit_raw "define void @__adamas_print_float64(double %val) {\n"
+      emit_raw "  call void @__adamas_print_float_impl(double %val, i1 0)\n"
       emit_raw "  ret void\n"
       emit_raw "}\n\n"
 
-      emit_raw "define void @__crystal_v2_print_float64_ln(double %val) {\n"
-      emit_raw "  call void @__crystal_v2_print_float_impl(double %val, i1 1)\n"
+      emit_raw "define void @__adamas_print_float64_ln(double %val) {\n"
+      emit_raw "  call void @__adamas_print_float_impl(double %val, i1 1)\n"
       emit_raw "  ret void\n"
       emit_raw "}\n\n"
 
-      emit_raw "define void @__crystal_v2_print_float32(float %val) {\n"
+      emit_raw "define void @__adamas_print_float32(float %val) {\n"
       emit_raw "  %ext = fpext float %val to double\n"
-      emit_raw "  call void @__crystal_v2_print_float_impl(double %ext, i1 0)\n"
+      emit_raw "  call void @__adamas_print_float_impl(double %ext, i1 0)\n"
       emit_raw "  ret void\n"
       emit_raw "}\n\n"
 
-      emit_raw "define void @__crystal_v2_print_float32_ln(float %val) {\n"
+      emit_raw "define void @__adamas_print_float32_ln(float %val) {\n"
       emit_raw "  %ext = fpext float %val to double\n"
-      emit_raw "  call void @__crystal_v2_print_float_impl(double %ext, i1 1)\n"
+      emit_raw "  call void @__adamas_print_float_impl(double %ext, i1 1)\n"
       emit_raw "  ret void\n"
       emit_raw "}\n\n"
       bootstrap_trace_puts "  [RT_DECL] after float print helpers" if runtime_decl_trace
@@ -6822,7 +6822,7 @@ module Crystal::MIR
       # Crystal string payloads are not NUL-terminated, so libc strstr is unsafe.
       # Crystal String layout: { i32 type_id, i32 bytesize, i32 length, [N x i8] data }
       # Data starts at offset 12
-      emit_raw "define i1 @__crystal_v2_string_includes_string(ptr %self, ptr %search) {\n"
+      emit_raw "define i1 @__adamas_string_includes_string(ptr %self, ptr %search) {\n"
       emit_raw "entry:\n"
       emit_raw "  %self_null = icmp eq ptr %self, null\n"
       emit_raw "  %search_null = icmp eq ptr %search, null\n"
@@ -6857,14 +6857,14 @@ module Crystal::MIR
       emit_raw "}\n\n"
 
       # String#bytesize → i32 (read from offset 4)
-      emit_raw "define i32 @__crystal_v2_string_bytesize(ptr %self) {\n"
+      emit_raw "define i32 @__adamas_string_bytesize(ptr %self) {\n"
       emit_raw "  %bs_ptr = getelementptr i8, ptr %self, i32 4\n"
       emit_raw "  %bs = load i32, ptr %bs_ptr\n"
       emit_raw "  ret i32 %bs\n"
       emit_raw "}\n\n"
 
       # String byte_at(index) → i32 (read byte at offset 12 + index, zero-extend to i32 for Char)
-      emit_raw "define i32 @__crystal_v2_string_byte_at(ptr %self, i32 %idx) {\n"
+      emit_raw "define i32 @__adamas_string_byte_at(ptr %self, i32 %idx) {\n"
       emit_raw "  %data = getelementptr i8, ptr %self, i32 12\n"
       emit_raw "  %byte_ptr = getelementptr i8, ptr %data, i32 %idx\n"
       emit_raw "  %byte = load i8, ptr %byte_ptr\n"
@@ -6874,7 +6874,7 @@ module Crystal::MIR
 
       # String#index(String, offset) → i32 (-1 if not found, byte index otherwise)
       # Uses bounded memcmp over Crystal String data; payloads are not NUL-terminated.
-      emit_raw "define i32 @__crystal_v2_string_index_string(ptr %self, ptr %search, i32 %offset) {\n"
+      emit_raw "define i32 @__adamas_string_index_string(ptr %self, ptr %search, i32 %offset) {\n"
       emit_raw "entry:\n"
       emit_raw "  %self_null = icmp eq ptr %self, null\n"
       emit_raw "  %search_null = icmp eq ptr %search, null\n"
@@ -6920,7 +6920,7 @@ module Crystal::MIR
 
       # String#index(Char, offset) → i32 (-1 if not found, byte index otherwise)
       # Scans string data byte-by-byte for the given ASCII char
-      emit_raw "define i32 @__crystal_v2_string_index_char(ptr %self, i32 %ch, i32 %offset) {\n"
+      emit_raw "define i32 @__adamas_string_index_char(ptr %self, i32 %ch, i32 %offset) {\n"
       emit_raw "entry:\n"
       emit_raw "  %bs_ptr = getelementptr i8, ptr %self, i32 4\n"
       emit_raw "  %bs = load i32, ptr %bs_ptr\n"
@@ -6947,7 +6947,7 @@ module Crystal::MIR
 
       # String#gsub(String, String) → Crystal String
       # Two-pass: first count occurrences to compute size, then build result
-      emit_raw "define ptr @__crystal_v2_string_gsub(ptr %self, ptr %search, ptr %repl) {\n"
+      emit_raw "define ptr @__adamas_string_gsub(ptr %self, ptr %search, ptr %repl) {\n"
       emit_raw "entry:\n"
       # Load self bytesize and data
       emit_raw "  %self_bs_ptr = getelementptr i8, ptr %self, i32 4\n"
@@ -6997,7 +6997,7 @@ module Crystal::MIR
       emit_raw "  %result_bs2 = add i32 %result_bs, %added\n"
       emit_raw "  %alloc_sz = add i32 %result_bs2, 13\n"
       emit_raw "  %alloc_sz64 = sext i32 %alloc_sz to i64\n"
-      emit_raw "  %result = call ptr @__crystal_v2_malloc64(i64 %alloc_sz64)\n"
+      emit_raw "  %result = call ptr @__adamas_malloc64(i64 %alloc_sz64)\n"
       # Write Crystal String header
       emit_raw "  store i32 #{@string_type_id}, ptr %result\n"
       emit_raw "  %r_bs = getelementptr i8, ptr %result, i32 4\n"
@@ -7057,7 +7057,7 @@ module Crystal::MIR
       # String#gsub(Char, Char) → Crystal String
       # Simple byte-for-byte replacement: iterate string, replace matching bytes
       # Note: only works correctly for ASCII chars (single-byte). Multi-byte chars need more complex handling.
-      emit_raw "define ptr @__crystal_v2_string_gsub_char(ptr %self, i32 %search, i32 %repl) {\n"
+      emit_raw "define ptr @__adamas_string_gsub_char(ptr %self, i32 %search, i32 %repl) {\n"
       emit_raw "entry:\n"
       emit_raw "  %self_bs_ptr = getelementptr i8, ptr %self, i32 4\n"
       emit_raw "  %self_bs = load i32, ptr %self_bs_ptr\n"
@@ -7068,7 +7068,7 @@ module Crystal::MIR
       # Allocate result: same size as self (gsub char→char preserves length)
       emit_raw "  %alloc_sz = add i32 %self_bs, 13\n"
       emit_raw "  %alloc_sz64 = sext i32 %alloc_sz to i64\n"
-      emit_raw "  %result = call ptr @__crystal_v2_malloc64(i64 %alloc_sz64)\n"
+      emit_raw "  %result = call ptr @__adamas_malloc64(i64 %alloc_sz64)\n"
       # Write Crystal String header
       emit_raw "  store i32 #{@string_type_id}, ptr %result\n"
       emit_raw "  %r_bs = getelementptr i8, ptr %result, i32 4\n"
@@ -7102,7 +7102,7 @@ module Crystal::MIR
 
       # String#byte_slice(start, length) → Crystal String
       # Extracts a substring by byte offset and length
-      emit_raw "define ptr @__crystal_v2_string_byte_slice(ptr %self, i32 %start, i32 %len) {\n"
+      emit_raw "define ptr @__adamas_string_byte_slice(ptr %self, i32 %start, i32 %len) {\n"
       emit_raw "entry:\n"
       emit_raw "  %self_bs_ptr = getelementptr i8, ptr %self, i32 4\n"
       emit_raw "  %self_bs = load i32, ptr %self_bs_ptr\n"
@@ -7121,7 +7121,7 @@ module Crystal::MIR
       # Allocate result Crystal String
       emit_raw "  %alloc_i32 = add i32 %len_safe, 13\n"
       emit_raw "  %alloc_i64 = sext i32 %alloc_i32 to i64\n"
-      emit_raw "  %result = call ptr @__crystal_v2_malloc64(i64 %alloc_i64)\n"
+      emit_raw "  %result = call ptr @__adamas_malloc64(i64 %alloc_i64)\n"
       emit_raw "  store i32 #{@string_type_id}, ptr %result\n"
       emit_raw "  %r_bs = getelementptr i8, ptr %result, i32 4\n"
       emit_raw "  store i32 %len_safe, ptr %r_bs\n"
@@ -7142,7 +7142,7 @@ module Crystal::MIR
       # 1. Pointer equality (same object → true)
       # 2. Bytesize comparison (different lengths → false)
       # 3. memcmp on the data bytes
-      emit_raw "define i1 @__crystal_v2_string_eq(ptr %a, ptr %b) {\n"
+      emit_raw "define i1 @__adamas_string_eq(ptr %a, ptr %b) {\n"
       emit_raw "entry:\n"
       # Guard against null pointers (e.g., deleted hash entries with zeroed keys)
       emit_raw "  %a_null = icmp eq ptr %a, null\n"
@@ -7174,7 +7174,7 @@ module Crystal::MIR
 
       # String#to_i — convert Crystal String to Int32 via strtol
       # Data starts at offset 12 in Crystal String layout
-      emit_raw "define i32 @__crystal_v2_string_to_i(ptr %self) {\n"
+      emit_raw "define i32 @__adamas_string_to_i(ptr %self) {\n"
       emit_raw "  %data = getelementptr i8, ptr %self, i32 12\n"
       emit_raw "  %val = call i64 @strtol(ptr %data, ptr null, i32 10)\n"
       emit_raw "  %result = trunc i64 %val to i32\n"
@@ -7182,14 +7182,14 @@ module Crystal::MIR
       emit_raw "}\n\n"
 
       # String#to_i64 — convert Crystal String to Int64 via strtol
-      emit_raw "define i64 @__crystal_v2_string_to_i64(ptr %self) {\n"
+      emit_raw "define i64 @__adamas_string_to_i64(ptr %self) {\n"
       emit_raw "  %data = getelementptr i8, ptr %self, i32 12\n"
       emit_raw "  %val = call i64 @strtol(ptr %data, ptr null, i32 10)\n"
       emit_raw "  ret i64 %val\n"
       emit_raw "}\n\n"
 
       # String#to_u64 — convert Crystal String to UInt64 via strtoull
-      emit_raw "define i64 @__crystal_v2_string_to_u64(ptr %self) {\n"
+      emit_raw "define i64 @__adamas_string_to_u64(ptr %self) {\n"
       emit_raw "  %data = getelementptr i8, ptr %self, i32 12\n"
       emit_raw "  %val = call i64 @strtoull(ptr %data, ptr null, i32 10)\n"
       emit_raw "  ret i64 %val\n"
@@ -7197,7 +7197,7 @@ module Crystal::MIR
 
       # String#[](Int32, Int32) — extract substring (start, count)
       # Returns new Crystal String with the specified byte range
-      emit_raw "define ptr @__crystal_v2_string_substring(ptr %self, i32 %start, i32 %count) {\n"
+      emit_raw "define ptr @__adamas_string_substring(ptr %self, i32 %start, i32 %count) {\n"
       emit_raw "entry:\n"
       emit_raw "  %bs_ptr = getelementptr i8, ptr %self, i32 4\n"
       emit_raw "  %bytesize = load i32, ptr %bs_ptr\n"
@@ -7217,13 +7217,13 @@ module Crystal::MIR
       emit_raw "  %data_start = getelementptr i8, ptr %data_base, i32 %real_start\n"
       # Get String type_id from self
       emit_raw "  %tid = load i32, ptr %self\n"
-      emit_raw "  %result = call ptr @__crystal_v2_create_substring(ptr %data_start, i32 %final_count, i32 %tid)\n"
+      emit_raw "  %result = call ptr @__adamas_create_substring(ptr %data_start, i32 %final_count, i32 %tid)\n"
       emit_raw "  ret ptr %result\n"
       emit_raw "}\n\n"
 
       # Array#sum for Int32 — loops over Crystal Array buffer and sums elements
       # Crystal Array layout: { i32 type_id, i32 @size, i32 @capacity, i32 @offset_to_buffer, ptr @buffer }
-      emit_raw "define i32 @__crystal_v2_array_sum_int32(ptr %arr) {\n"
+      emit_raw "define i32 @__adamas_array_sum_int32(ptr %arr) {\n"
       emit_raw "entry:\n"
       emit_raw "  %size_ptr = getelementptr i8, ptr %arr, i32 4\n"
       emit_raw "  %size = load i32, ptr %size_ptr\n"
@@ -7247,10 +7247,10 @@ module Crystal::MIR
 
       # Array.new(size, initial_i32_value) → creates filled Crystal Array
       # Creates proper 24-byte Array header with buffer filled with initial value
-      emit_raw "define ptr @__crystal_v2_array_new_filled_i32(i32 %size, i32 %val) {\n"
+      emit_raw "define ptr @__adamas_array_new_filled_i32(i32 %size, i32 %val) {\n"
       emit_raw "entry:\n"
       # Allocate 24-byte Crystal Array header
-      emit_raw "  %arr = call ptr @__crystal_v2_malloc64(i64 24)\n"
+      emit_raw "  %arr = call ptr @__adamas_malloc64(i64 24)\n"
       emit_raw "  store i32 #{array_runtime_type_id_for_element(TypeRef::INT32)}, ptr %arr\n"
       emit_raw "  %sz_ptr = getelementptr i8, ptr %arr, i32 4\n"
       emit_raw "  store i32 %size, ptr %sz_ptr\n"  # @size = size
@@ -7261,7 +7261,7 @@ module Crystal::MIR
       # Allocate element buffer
       emit_raw "  %buf_bytes = mul i32 %size, 4\n"
       emit_raw "  %buf_sz64 = sext i32 %buf_bytes to i64\n"
-      emit_raw "  %buf = call ptr @__crystal_v2_malloc64(i64 %buf_sz64)\n"
+      emit_raw "  %buf = call ptr @__adamas_malloc64(i64 %buf_sz64)\n"
       emit_raw "  %buf_ptr = getelementptr i8, ptr %arr, i32 16\n"
       emit_raw "  store ptr %buf, ptr %buf_ptr\n"  # @buffer = buf
       # Fill buffer with initial value
@@ -7279,9 +7279,9 @@ module Crystal::MIR
       emit_raw "}\n\n"
 
       # Array.new(size, initial_bool_value) → creates filled Crystal Array with i1 stored as i8
-      emit_raw "define ptr @__crystal_v2_array_new_filled_bool(i32 %size, i1 %val) {\n"
+      emit_raw "define ptr @__adamas_array_new_filled_bool(i32 %size, i1 %val) {\n"
       emit_raw "entry:\n"
-      emit_raw "  %arr = call ptr @__crystal_v2_malloc64(i64 24)\n"
+      emit_raw "  %arr = call ptr @__adamas_malloc64(i64 24)\n"
       emit_raw "  store i32 #{array_runtime_type_id_for_element(TypeRef::BOOL)}, ptr %arr\n"
       emit_raw "  %sz_ptr = getelementptr i8, ptr %arr, i32 4\n"
       emit_raw "  store i32 %size, ptr %sz_ptr\n"
@@ -7290,7 +7290,7 @@ module Crystal::MIR
       emit_raw "  %otb_ptr = getelementptr i8, ptr %arr, i32 12\n"
       emit_raw "  store i32 0, ptr %otb_ptr\n"
       emit_raw "  %buf_sz64 = sext i32 %size to i64\n"
-      emit_raw "  %buf = call ptr @__crystal_v2_malloc64(i64 %buf_sz64)\n"
+      emit_raw "  %buf = call ptr @__adamas_malloc64(i64 %buf_sz64)\n"
       emit_raw "  %buf_ptr = getelementptr i8, ptr %arr, i32 16\n"
       emit_raw "  store ptr %buf, ptr %buf_ptr\n"
       emit_raw "  %val8 = zext i1 %val to i8\n"
@@ -7309,7 +7309,7 @@ module Crystal::MIR
 
       # Array#+(other) → new Crystal Array with elements from both arrays
       # Takes elem_size to correctly copy elements of any type (i32=4, ptr=8, etc.)
-      emit_raw "define ptr @__crystal_v2_array_concat(ptr %a, ptr %b, i32 %elem_size) {\n"
+      emit_raw "define ptr @__adamas_array_concat(ptr %a, ptr %b, i32 %elem_size) {\n"
       emit_raw "entry:\n"
       # Load sizes
       emit_raw "  %a_sz_ptr = getelementptr i8, ptr %a, i32 4\n"
@@ -7323,7 +7323,7 @@ module Crystal::MIR
       emit_raw "  %b_buf_ptr = getelementptr i8, ptr %b, i32 16\n"
       emit_raw "  %b_buf = load ptr, ptr %b_buf_ptr\n"
       # Allocate new array header (24 bytes)
-      emit_raw "  %arr = call ptr @__crystal_v2_malloc64(i64 24)\n"
+      emit_raw "  %arr = call ptr @__adamas_malloc64(i64 24)\n"
       emit_raw "  %a_tid = load i32, ptr %a\n"
       emit_raw "  store i32 %a_tid, ptr %arr\n"
       emit_raw "  %sz_ptr = getelementptr i8, ptr %arr, i32 4\n"
@@ -7335,7 +7335,7 @@ module Crystal::MIR
       # Allocate buffer (elem_size bytes per element)
       emit_raw "  %buf_bytes = mul i32 %total, %elem_size\n"
       emit_raw "  %buf_sz64 = sext i32 %buf_bytes to i64\n"
-      emit_raw "  %buf = call ptr @__crystal_v2_malloc64(i64 %buf_sz64)\n"
+      emit_raw "  %buf = call ptr @__adamas_malloc64(i64 %buf_sz64)\n"
       emit_raw "  %buf_addr = getelementptr i8, ptr %arr, i32 16\n"
       emit_raw "  store ptr %buf, ptr %buf_addr\n"
       # Copy a's elements
@@ -7355,7 +7355,7 @@ module Crystal::MIR
       # buffer, so the helper returns the address of the entry slot rather than
       # loading an Entry* pointer.
       # hash_offset is provided by HIR from Hash::Entry(K,V) ClassInfo.
-      emit_raw "define ptr @__crystal_v2_hash_get_entry_ptr(ptr %hash, i32 %index, i32 %entry_size) {\n"
+      emit_raw "define ptr @__adamas_hash_get_entry_ptr(ptr %hash, i32 %index, i32 %entry_size) {\n"
       emit_raw "  %entries_addr = getelementptr i8, ptr %hash, i32 8\n"
       emit_raw "  %entries = load ptr, ptr %entries_addr\n"
       emit_raw "  %entries_null = icmp eq ptr %entries, null\n"
@@ -7370,7 +7370,7 @@ module Crystal::MIR
       emit_raw "  ret ptr %entry\n"
       emit_raw "}\n\n"
 
-      emit_raw "define i1 @__crystal_v2_hash_entry_deleted(ptr %entry, i32 %hash_offset) {\n"
+      emit_raw "define i1 @__adamas_hash_entry_deleted(ptr %entry, i32 %hash_offset) {\n"
       emit_raw "  %is_null = icmp eq ptr %entry, null\n"
       emit_raw "  br i1 %is_null, label %null_entry, label %check_flag\n"
       emit_raw "null_entry:\n"
@@ -7394,9 +7394,9 @@ module Crystal::MIR
       #   offset 33: @indices_size_pow2 (i8)
       #   offset 34: @compare_by_identity (i1)
       #   offset 35-47: padding / @block (ptr)
-      emit_raw "define ptr @__crystal_v2_hash_new(i32 %type_id) {\n"
+      emit_raw "define ptr @__adamas_hash_new(i32 %type_id) {\n"
       emit_raw "entry:\n"
-      emit_raw "  %raw = call ptr @__crystal_v2_malloc64(i64 48)\n"
+      emit_raw "  %raw = call ptr @__adamas_malloc64(i64 48)\n"
       emit_raw "  call void @llvm.memset.p0.i64(ptr %raw, i8 0, i64 48, i1 false)\n"
       emit_raw "  store i32 %type_id, ptr %raw\n"
       # Hash requires @indices_bytesize = 1 for empty state (offset 32, i8).
@@ -7408,7 +7408,7 @@ module Crystal::MIR
 
       # Pointer copy helper — memcpy with element-size-aware byte count
       # count = number of elements, elem_size = bytes per element
-      emit_raw "define ptr @__crystal_v2_ptr_copy(ptr %dest, ptr %src, i32 %count, i32 %elem_size) {\n"
+      emit_raw "define ptr @__adamas_ptr_copy(ptr %dest, ptr %src, i32 %count, i32 %elem_size) {\n"
       emit_raw "entry:\n"
       emit_raw "  %bytes = mul i32 %count, %elem_size\n"
       emit_raw "  call void @llvm.memcpy.p0.p0.i32(ptr %dest, ptr %src, i32 %bytes, i1 false)\n"
@@ -7416,7 +7416,7 @@ module Crystal::MIR
       emit_raw "}\n\n"
 
       # Pointer move helper — memmove with element-size-aware byte count
-      emit_raw "define ptr @__crystal_v2_ptr_move(ptr %dest, ptr %src, i32 %count, i32 %elem_size) {\n"
+      emit_raw "define ptr @__adamas_ptr_move(ptr %dest, ptr %src, i32 %count, i32 %elem_size) {\n"
       emit_raw "entry:\n"
       emit_raw "  %bytes = mul i32 %count, %elem_size\n"
       emit_raw "  call void @llvm.memmove.p0.p0.i32(ptr %dest, ptr %src, i32 %bytes, i1 false)\n"
@@ -7447,7 +7447,7 @@ module Crystal::MIR
       emit_raw "}\n\n"
 
       # Sort Crystal Array(Int32) in-place using qsort
-      emit_raw "define void @__crystal_v2_sort_i32_array(ptr %arr) {\n"
+      emit_raw "define void @__adamas_sort_i32_array(ptr %arr) {\n"
       emit_raw "entry:\n"
       emit_raw "  %size_ptr = getelementptr i8, ptr %arr, i32 4\n"
       emit_raw "  %size = load i32, ptr %size_ptr\n"
@@ -7459,7 +7459,7 @@ module Crystal::MIR
       emit_raw "}\n\n"
 
       # Sort Crystal Array(String) in-place using qsort
-      emit_raw "define void @__crystal_v2_sort_string_array(ptr %arr) {\n"
+      emit_raw "define void @__adamas_sort_string_array(ptr %arr) {\n"
       emit_raw "entry:\n"
       emit_raw "  %size_ptr = getelementptr i8, ptr %arr, i32 4\n"
       emit_raw "  %size = load i32, ptr %size_ptr\n"
@@ -7471,14 +7471,14 @@ module Crystal::MIR
       emit_raw "}\n\n"
 
       # Dup + sort Crystal Array(Int32): allocate new array, copy, sort, return
-      emit_raw "define ptr @__crystal_v2_sort_i32_array_dup(ptr %arr, i32 %type_id) {\n"
+      emit_raw "define ptr @__adamas_sort_i32_array_dup(ptr %arr, i32 %type_id) {\n"
       emit_raw "entry:\n"
       emit_raw "  %size_ptr = getelementptr i8, ptr %arr, i32 4\n"
       emit_raw "  %size = load i32, ptr %size_ptr\n"
       emit_raw "  %buf_ptr = getelementptr i8, ptr %arr, i32 16\n"
       emit_raw "  %old_buf = load ptr, ptr %buf_ptr\n"
       # Allocate new Crystal Array (24 bytes)
-      emit_raw "  %new_arr = call ptr @__crystal_v2_malloc64(i64 24)\n"
+      emit_raw "  %new_arr = call ptr @__adamas_malloc64(i64 24)\n"
       emit_raw "  store i32 %type_id, ptr %new_arr\n"
       emit_raw "  %new_size_ptr = getelementptr i8, ptr %new_arr, i32 4\n"
       emit_raw "  store i32 %size, ptr %new_size_ptr\n"
@@ -7489,7 +7489,7 @@ module Crystal::MIR
       # Allocate buffer: size * 4 bytes
       emit_raw "  %buf_bytes = mul i32 %size, 4\n"
       emit_raw "  %buf_bytes64 = sext i32 %buf_bytes to i64\n"
-      emit_raw "  %new_buf = call ptr @__crystal_v2_malloc64(i64 %buf_bytes64)\n"
+      emit_raw "  %new_buf = call ptr @__adamas_malloc64(i64 %buf_bytes64)\n"
       emit_raw "  %new_buf_ptr = getelementptr i8, ptr %new_arr, i32 16\n"
       emit_raw "  store ptr %new_buf, ptr %new_buf_ptr\n"
       # Copy buffer
@@ -7501,13 +7501,13 @@ module Crystal::MIR
       emit_raw "}\n\n"
 
       # Dup + sort Crystal Array(String): allocate new array, copy ptr buffer, sort, return
-      emit_raw "define ptr @__crystal_v2_sort_string_array_dup(ptr %arr, i32 %type_id) {\n"
+      emit_raw "define ptr @__adamas_sort_string_array_dup(ptr %arr, i32 %type_id) {\n"
       emit_raw "entry:\n"
       emit_raw "  %size_ptr = getelementptr i8, ptr %arr, i32 4\n"
       emit_raw "  %size = load i32, ptr %size_ptr\n"
       emit_raw "  %buf_ptr = getelementptr i8, ptr %arr, i32 16\n"
       emit_raw "  %old_buf = load ptr, ptr %buf_ptr\n"
-      emit_raw "  %new_arr = call ptr @__crystal_v2_malloc64(i64 24)\n"
+      emit_raw "  %new_arr = call ptr @__adamas_malloc64(i64 24)\n"
       emit_raw "  store i32 %type_id, ptr %new_arr\n"
       emit_raw "  %new_size_ptr = getelementptr i8, ptr %new_arr, i32 4\n"
       emit_raw "  store i32 %size, ptr %new_size_ptr\n"
@@ -7517,7 +7517,7 @@ module Crystal::MIR
       emit_raw "  store i32 0, ptr %new_off_ptr\n"
       emit_raw "  %buf_bytes = mul i32 %size, 8\n"
       emit_raw "  %buf_bytes64 = sext i32 %buf_bytes to i64\n"
-      emit_raw "  %new_buf = call ptr @__crystal_v2_malloc64(i64 %buf_bytes64)\n"
+      emit_raw "  %new_buf = call ptr @__adamas_malloc64(i64 %buf_bytes64)\n"
       emit_raw "  %new_buf_ptr = getelementptr i8, ptr %new_arr, i32 16\n"
       emit_raw "  store ptr %new_buf, ptr %new_buf_ptr\n"
       emit_raw "  call void @llvm.memcpy.p0.p0.i32(ptr %new_buf, ptr %old_buf, i32 %buf_bytes, i1 false)\n"
@@ -7528,7 +7528,7 @@ module Crystal::MIR
 
       # Array(Int32)#to_s → "[elem, elem, ...]" Crystal String
       # Uses snprintf to build the string in a buffer
-      emit_raw "define ptr @__crystal_v2_array_i32_to_string(ptr %arr) {\n"
+      emit_raw "define ptr @__adamas_array_i32_to_string(ptr %arr) {\n"
       emit_raw "entry:\n"
       emit_raw "  %size_ptr = getelementptr i8, ptr %arr, i32 4\n"
       emit_raw "  %size = load i32, ptr %size_ptr\n"
@@ -7538,7 +7538,7 @@ module Crystal::MIR
       emit_raw "  %max_len_i32 = mul i32 %size, 14\n"
       emit_raw "  %max_len_with_extra = add i32 %max_len_i32, 16\n"
       emit_raw "  %max_len = sext i32 %max_len_with_extra to i64\n"
-      emit_raw "  %tmp_buf = call ptr @__crystal_v2_malloc64(i64 %max_len)\n"
+      emit_raw "  %tmp_buf = call ptr @__adamas_malloc64(i64 %max_len)\n"
       # Start with "["
       emit_raw "  store i8 91, ptr %tmp_buf\n"  # '[' = 91
       emit_raw "  %pos_init = add i32 0, 1\n"
@@ -7582,12 +7582,12 @@ module Crystal::MIR
       emit_raw "  store i8 0, ptr %null_ptr\n"
       # Create Crystal String
       emit_raw "  %str_type_id = add i32 0, #{TypeRef::STRING.id}\n"
-      emit_raw "  %result = call ptr @__crystal_v2_create_substring(ptr %tmp_buf, i32 %total_len, i32 %str_type_id)\n"
+      emit_raw "  %result = call ptr @__adamas_create_substring(ptr %tmp_buf, i32 %total_len, i32 %str_type_id)\n"
       emit_raw "  ret ptr %result\n"
       emit_raw "}\n\n"
 
       # Array(String)#to_s → "[\"elem\", \"elem\", ...]" Crystal String
-      emit_raw "define ptr @__crystal_v2_array_string_to_string(ptr %arr) {\n"
+      emit_raw "define ptr @__adamas_array_string_to_string(ptr %arr) {\n"
       emit_raw "entry:\n"
       emit_raw "  %size_ptr = getelementptr i8, ptr %arr, i32 4\n"
       emit_raw "  %size = load i32, ptr %size_ptr\n"
@@ -7597,7 +7597,7 @@ module Crystal::MIR
       emit_raw "  %max_len_i32 = mul i32 %size, 64\n"
       emit_raw "  %max_len_with_extra = add i32 %max_len_i32, 16\n"
       emit_raw "  %max_len = sext i32 %max_len_with_extra to i64\n"
-      emit_raw "  %tmp_buf = call ptr @__crystal_v2_malloc64(i64 %max_len)\n"
+      emit_raw "  %tmp_buf = call ptr @__adamas_malloc64(i64 %max_len)\n"
       # Start with "["
       emit_raw "  store i8 91, ptr %tmp_buf\n"
       emit_raw "  %pos_init = add i32 0, 1\n"
@@ -7644,16 +7644,16 @@ module Crystal::MIR
       emit_raw "  %null_ptr = getelementptr i8, ptr %tmp_buf, i32 %total_len\n"
       emit_raw "  store i8 0, ptr %null_ptr\n"
       emit_raw "  %str_type_id = add i32 0, #{TypeRef::STRING.id}\n"
-      emit_raw "  %result = call ptr @__crystal_v2_create_substring(ptr %tmp_buf, i32 %total_len, i32 %str_type_id)\n"
+      emit_raw "  %result = call ptr @__adamas_create_substring(ptr %tmp_buf, i32 %total_len, i32 %str_type_id)\n"
       emit_raw "  ret ptr %result\n"
       emit_raw "}\n\n"
 
       # Helper: create Crystal String from raw pointer + length
-      emit_raw "define ptr @__crystal_v2_create_substring(ptr %data, i32 %len, i32 %str_tid) {\n"
+      emit_raw "define ptr @__adamas_create_substring(ptr %data, i32 %len, i32 %str_tid) {\n"
       emit_raw "entry:\n"
       emit_raw "  %alloc_i32 = add i32 %len, 13\n"
       emit_raw "  %alloc = sext i32 %alloc_i32 to i64\n"
-      emit_raw "  %str = call ptr @__crystal_v2_malloc64(i64 %alloc)\n"
+      emit_raw "  %str = call ptr @__adamas_malloc64(i64 %alloc)\n"
       emit_raw "  store i32 %str_tid, ptr %str\n"
       emit_raw "  %bs_ptr = getelementptr i8, ptr %str, i32 4\n"
       emit_raw "  store i32 %len, ptr %bs_ptr\n"
@@ -7668,7 +7668,7 @@ module Crystal::MIR
       emit_raw "}\n\n"
 
       # String#split(String) — splits self by separator, returns Crystal Array(String)
-      emit_raw "define ptr @__crystal_v2_string_split_string(ptr %self, ptr %sep) {\n"
+      emit_raw "define ptr @__adamas_string_split_string(ptr %self, ptr %sep) {\n"
       emit_raw "entry:\n"
       emit_raw "  %self_bs_ptr = getelementptr i8, ptr %self, i32 4\n"
       emit_raw "  %self_bs = load i32, ptr %self_bs_ptr\n"
@@ -7691,7 +7691,7 @@ module Crystal::MIR
       # Allocate Array(String)
       emit_raw "count_done:\n"
       emit_raw "  %num_segs = add i32 %count, 1\n"
-      emit_raw "  %arr = call ptr @__crystal_v2_malloc64(i64 24)\n"
+      emit_raw "  %arr = call ptr @__adamas_malloc64(i64 24)\n"
       emit_raw "  store i32 #{array_runtime_type_id_for_element(TypeRef::STRING)}, ptr %arr\n"
       emit_raw "  %arr_sz = getelementptr i8, ptr %arr, i32 4\n"
       emit_raw "  store i32 %num_segs, ptr %arr_sz\n"
@@ -7701,7 +7701,7 @@ module Crystal::MIR
       emit_raw "  store i32 0, ptr %arr_off\n"
       emit_raw "  %buf_sz32 = mul i32 %num_segs, 8\n"
       emit_raw "  %buf_sz = sext i32 %buf_sz32 to i64\n"
-      emit_raw "  %buf = call ptr @__crystal_v2_malloc64(i64 %buf_sz)\n"
+      emit_raw "  %buf = call ptr @__adamas_malloc64(i64 %buf_sz)\n"
       emit_raw "  %arr_buf = getelementptr i8, ptr %arr, i32 16\n"
       emit_raw "  store ptr %buf, ptr %arr_buf\n"
       # Split loop
@@ -7717,7 +7717,7 @@ module Crystal::MIR
       emit_raw "  %sf_i = ptrtoint ptr %sf to i64\n"
       emit_raw "  %seg_len64 = sub i64 %sf_i, %start_i\n"
       emit_raw "  %seg_len = trunc i64 %seg_len64 to i32\n"
-      emit_raw "  %sub = call ptr @__crystal_v2_create_substring(ptr %start, i32 %seg_len, i32 #{@string_type_id})\n"
+      emit_raw "  %sub = call ptr @__adamas_create_substring(ptr %start, i32 %seg_len, i32 #{@string_type_id})\n"
       emit_raw "  %slot = getelementptr ptr, ptr %buf, i32 %idx\n"
       emit_raw "  store ptr %sub, ptr %slot\n"
       emit_raw "  %idx_next = add i32 %idx, 1\n"
@@ -7730,7 +7730,7 @@ module Crystal::MIR
       emit_raw "  %end_i = ptrtoint ptr %self_end to i64\n"
       emit_raw "  %last_len64 = sub i64 %end_i, %start_i2\n"
       emit_raw "  %last_len = trunc i64 %last_len64 to i32\n"
-      emit_raw "  %last_sub = call ptr @__crystal_v2_create_substring(ptr %start, i32 %last_len, i32 #{@string_type_id})\n"
+      emit_raw "  %last_sub = call ptr @__adamas_create_substring(ptr %start, i32 %last_len, i32 #{@string_type_id})\n"
       emit_raw "  %last_slot = getelementptr ptr, ptr %buf, i32 %idx\n"
       emit_raw "  store ptr %last_sub, ptr %last_slot\n"
       emit_raw "  ret ptr %arr\n"
@@ -7739,7 +7739,7 @@ module Crystal::MIR
       # array_join_string: join Array(String) with separator string
       # Array layout: {i32 type_id, i32 size, i32 cap, i32 offset, ptr buffer}
       # Buffer holds ptr elements (each is a Crystal String)
-      emit_raw "define ptr @__crystal_v2_array_join_string(ptr %arr, ptr %sep) {\n"
+      emit_raw "define ptr @__adamas_array_join_string(ptr %arr, ptr %sep) {\n"
       emit_raw "entry:\n"
       emit_raw "  %sz_ptr = getelementptr i8, ptr %arr, i32 4\n"
       emit_raw "  %sz = load i32, ptr %sz_ptr\n"
@@ -7752,7 +7752,7 @@ module Crystal::MIR
       emit_raw "  %is_empty = icmp eq i32 %sz, 0\n"
       emit_raw "  br i1 %is_empty, label %ret_empty, label %calc_len\n"
       emit_raw "ret_empty:\n"
-      emit_raw "  %empty = call ptr @__crystal_v2_malloc64(i64 13)\n"
+      emit_raw "  %empty = call ptr @__adamas_malloc64(i64 13)\n"
       emit_raw "  store i32 #{@string_type_id}, ptr %empty\n"
       emit_raw "  %empty_bs = getelementptr i8, ptr %empty, i32 4\n"
       emit_raw "  store i32 0, ptr %empty_bs\n"
@@ -7781,7 +7781,7 @@ module Crystal::MIR
       emit_raw "alloc_str:\n"
       emit_raw "  %alloc_i32 = add i32 %total_next, 13\n"
       emit_raw "  %alloc_i64 = sext i32 %alloc_i32 to i64\n"
-      emit_raw "  %result = call ptr @__crystal_v2_malloc64(i64 %alloc_i64)\n"
+      emit_raw "  %result = call ptr @__adamas_malloc64(i64 %alloc_i64)\n"
       emit_raw "  store i32 #{@string_type_id}, ptr %result\n"
       emit_raw "  %r_bs = getelementptr i8, ptr %result, i32 4\n"
       emit_raw "  store i32 %total_next, ptr %r_bs\n"
@@ -7820,7 +7820,7 @@ module Crystal::MIR
 
       # array_join_int32: join Array(Int32) with separator string
       # Converts each i32 element to its string representation, separated by sep
-      emit_raw "define ptr @__crystal_v2_array_join_int32(ptr %arr, ptr %sep) {\n"
+      emit_raw "define ptr @__adamas_array_join_int32(ptr %arr, ptr %sep) {\n"
       emit_raw "entry:\n"
       emit_raw "  %sz_ptr = getelementptr i8, ptr %arr, i32 4\n"
       emit_raw "  %sz = load i32, ptr %sz_ptr\n"
@@ -7833,7 +7833,7 @@ module Crystal::MIR
       emit_raw "  %is_empty = icmp eq i32 %sz, 0\n"
       emit_raw "  br i1 %is_empty, label %ret_empty, label %pass1\n"
       emit_raw "ret_empty:\n"
-      emit_raw "  %empty = call ptr @__crystal_v2_malloc64(i64 13)\n"
+      emit_raw "  %empty = call ptr @__adamas_malloc64(i64 13)\n"
       emit_raw "  store i32 #{@string_type_id}, ptr %empty\n"
       emit_raw "  %empty_bs = getelementptr i8, ptr %empty, i32 4\n"
       emit_raw "  store i32 0, ptr %empty_bs\n"
@@ -7846,7 +7846,7 @@ module Crystal::MIR
       emit_raw "pass1:\n"
       emit_raw "  %sz64 = sext i32 %sz to i64\n"
       emit_raw "  %ptrsz = mul i64 %sz64, 8\n"
-      emit_raw "  %strs = call ptr @__crystal_v2_malloc64(i64 %ptrsz)\n"
+      emit_raw "  %strs = call ptr @__adamas_malloc64(i64 %ptrsz)\n"
       emit_raw "  %sep_count = sub i32 %sz, 1\n"
       emit_raw "  %sep_total = mul i32 %sep_count, %sep_bs\n"
       emit_raw "  br label %conv_loop\n"
@@ -7855,7 +7855,7 @@ module Crystal::MIR
       emit_raw "  %total = phi i32 [%sep_total, %pass1], [%total_next, %conv_loop]\n"
       emit_raw "  %elem_slot = getelementptr i32, ptr %buf, i32 %ci\n"
       emit_raw "  %elem = load i32, ptr %elem_slot\n"
-      emit_raw "  %str = call ptr @__crystal_v2_int_to_string(i32 %elem)\n"
+      emit_raw "  %str = call ptr @__adamas_int_to_string(i32 %elem)\n"
       emit_raw "  %str_slot = getelementptr ptr, ptr %strs, i32 %ci\n"
       emit_raw "  store ptr %str, ptr %str_slot\n"
       emit_raw "  %str_bs_ptr = getelementptr i8, ptr %str, i32 4\n"
@@ -7868,7 +7868,7 @@ module Crystal::MIR
       emit_raw "alloc_str:\n"
       emit_raw "  %alloc_i32 = add i32 %total_next, 13\n"
       emit_raw "  %alloc_i64 = sext i32 %alloc_i32 to i64\n"
-      emit_raw "  %result = call ptr @__crystal_v2_malloc64(i64 %alloc_i64)\n"
+      emit_raw "  %result = call ptr @__adamas_malloc64(i64 %alloc_i64)\n"
       emit_raw "  store i32 #{@string_type_id}, ptr %result\n"
       emit_raw "  %r_bs = getelementptr i8, ptr %result, i32 4\n"
       emit_raw "  store i32 %total_next, ptr %r_bs\n"
@@ -7905,14 +7905,14 @@ module Crystal::MIR
 
       # int_to_string: allocate buffer and sprintf
       # int_to_string: sprintf to temp buffer, then wrap in Crystal String struct
-      emit_raw "define ptr @__crystal_v2_int_to_string(i32 %val) {\n"
+      emit_raw "define ptr @__adamas_int_to_string(i32 %val) {\n"
       emit_raw "  %tmp = alloca [16 x i8]\n"
       emit_raw "  call i32 (ptr, ptr, ...) @sprintf(ptr %tmp, ptr @.int_fmt_no_nl, i32 %val)\n"
       emit_raw "  %len64 = call i64 @strlen(ptr %tmp)\n"
       emit_raw "  %len = trunc i64 %len64 to i32\n"
       emit_raw "  %alloc_32 = add i32 %len, 13\n"
       emit_raw "  %alloc_64 = sext i32 %alloc_32 to i64\n"
-      emit_raw "  %str = call ptr @__crystal_v2_malloc64(i64 %alloc_64)\n"
+      emit_raw "  %str = call ptr @__adamas_malloc64(i64 %alloc_64)\n"
       emit_raw "  store i32 #{@string_type_id}, ptr %str\n"
       emit_raw "  %bs = getelementptr i8, ptr %str, i32 4\n"
       emit_raw "  store i32 %len, ptr %bs\n"
@@ -7926,14 +7926,14 @@ module Crystal::MIR
       emit_raw "  ret ptr %str\n"
       emit_raw "}\n\n"
 
-      emit_raw "define ptr @__crystal_v2_int64_to_string(i64 %val) {\n"
+      emit_raw "define ptr @__adamas_int64_to_string(i64 %val) {\n"
       emit_raw "  %tmp = alloca [24 x i8]\n"
       emit_raw "  call i32 (ptr, ptr, ...) @sprintf(ptr %tmp, ptr @.long_fmt_no_nl, i64 %val)\n"
       emit_raw "  %len64 = call i64 @strlen(ptr %tmp)\n"
       emit_raw "  %len = trunc i64 %len64 to i32\n"
       emit_raw "  %alloc_32 = add i32 %len, 13\n"
       emit_raw "  %alloc_64 = sext i32 %alloc_32 to i64\n"
-      emit_raw "  %str = call ptr @__crystal_v2_malloc64(i64 %alloc_64)\n"
+      emit_raw "  %str = call ptr @__adamas_malloc64(i64 %alloc_64)\n"
       emit_raw "  store i32 #{@string_type_id}, ptr %str\n"
       emit_raw "  %bs = getelementptr i8, ptr %str, i32 4\n"
       emit_raw "  store i32 %len, ptr %bs\n"
@@ -7948,7 +7948,7 @@ module Crystal::MIR
       emit_raw "}\n\n"
 
       # File.read — reads entire file into Crystal String
-      emit_raw "define ptr @__crystal_v2_file_read(ptr %path) {\n"
+      emit_raw "define ptr @__adamas_file_read(ptr %path) {\n"
       emit_raw "entry:\n"
       emit_raw "  %cstr = getelementptr i8, ptr %path, i32 12\n"
       emit_raw "  %fd = call i32 (ptr, i32, ...) @open(ptr %cstr, i32 0)\n"
@@ -7960,7 +7960,7 @@ module Crystal::MIR
       emit_raw "  %size32 = trunc i64 %size to i32\n"
       emit_raw "  %alloc_i32 = add i32 %size32, 13\n"
       emit_raw "  %alloc = sext i32 %alloc_i32 to i64\n"
-      emit_raw "  %str = call ptr @__crystal_v2_malloc64(i64 %alloc)\n"
+      emit_raw "  %str = call ptr @__adamas_malloc64(i64 %alloc)\n"
       emit_raw "  store i32 #{@string_type_id}, ptr %str\n"
       emit_raw "  %bs = getelementptr i8, ptr %str, i32 4\n"
       emit_raw "  store i32 %size32, ptr %bs\n"
@@ -7973,7 +7973,7 @@ module Crystal::MIR
       emit_raw "  %ignore2 = call i32 @close(i32 %fd)\n"
       emit_raw "  ret ptr %str\n"
       emit_raw "err:\n"
-      emit_raw "  %empty = call ptr @__crystal_v2_malloc64(i64 13)\n"
+      emit_raw "  %empty = call ptr @__adamas_malloc64(i64 13)\n"
       emit_raw "  store i32 #{@string_type_id}, ptr %empty\n"
       emit_raw "  %ebs = getelementptr i8, ptr %empty, i32 4\n"
       emit_raw "  store i32 0, ptr %ebs\n"
@@ -7985,7 +7985,7 @@ module Crystal::MIR
       emit_raw "}\n\n"
 
       # File.write — writes Crystal String to file (returns nil)
-      emit_raw "define void @__crystal_v2_file_write(ptr %path, ptr %content) {\n"
+      emit_raw "define void @__adamas_file_write(ptr %path, ptr %content) {\n"
       emit_raw "entry:\n"
       emit_raw "  %cstr = getelementptr i8, ptr %path, i32 12\n"
       # O_WRONLY=1 | O_CREAT=0x200 | O_TRUNC=0x400 = 0x601 = 1537
@@ -8006,7 +8006,7 @@ module Crystal::MIR
 
       # File.dirname — extract directory part of a path string.
       # Implements POSIX dirname logic: strip trailing seps, strip filename, strip trailing seps.
-      emit_raw "define ptr @__crystal_v2_file_dirname(ptr %path) {\n"
+      emit_raw "define ptr @__adamas_file_dirname(ptr %path) {\n"
       emit_raw "entry:\n"
       emit_raw "  %bs_ptr = getelementptr i8, ptr %path, i32 4\n"
       emit_raw "  %len = load i32, ptr %bs_ptr\n"
@@ -8068,7 +8068,7 @@ module Crystal::MIR
       emit_raw "make_slice:\n"
       emit_raw "  %alloc_sz = add i32 %end_pos, 13\n"
       emit_raw "  %alloc64 = sext i32 %alloc_sz to i64\n"
-      emit_raw "  %result = call ptr @__crystal_v2_malloc64(i64 %alloc64)\n"
+      emit_raw "  %result = call ptr @__adamas_malloc64(i64 %alloc64)\n"
       emit_raw "  store i32 #{@string_type_id}, ptr %result\n"
       emit_raw "  %rbs = getelementptr i8, ptr %result, i32 4\n"
       emit_raw "  store i32 %end_pos, ptr %rbs\n"
@@ -8082,7 +8082,7 @@ module Crystal::MIR
       emit_raw "  ret ptr %result\n"
       # Return "/" (single separator)
       emit_raw "make_slice_one:\n"
-      emit_raw "  %r1 = call ptr @__crystal_v2_malloc64(i64 14)\n"
+      emit_raw "  %r1 = call ptr @__adamas_malloc64(i64 14)\n"
       emit_raw "  store i32 #{@string_type_id}, ptr %r1\n"
       emit_raw "  %r1bs = getelementptr i8, ptr %r1, i32 4\n"
       emit_raw "  store i32 1, ptr %r1bs\n"
@@ -8095,7 +8095,7 @@ module Crystal::MIR
       emit_raw "  ret ptr %r1\n"
       # Return "." (no parent)
       emit_raw "ret_dot:\n"
-      emit_raw "  %rdot = call ptr @__crystal_v2_malloc64(i64 14)\n"
+      emit_raw "  %rdot = call ptr @__adamas_malloc64(i64 14)\n"
       emit_raw "  store i32 #{@string_type_id}, ptr %rdot\n"
       emit_raw "  %rdbs = getelementptr i8, ptr %rdot, i32 4\n"
       emit_raw "  store i32 1, ptr %rdbs\n"
@@ -8111,7 +8111,7 @@ module Crystal::MIR
       # File.expand_path(path, dir) — resolve relative path against dir, normalize via realpath.
       # path: Crystal String, dir: Crystal String (may be empty → use getcwd).
       # Returns Crystal String with absolute, normalized path.
-      emit_raw "define ptr @__crystal_v2_file_expand_path(ptr %path, ptr %dir) {\n"
+      emit_raw "define ptr @__adamas_file_expand_path(ptr %path, ptr %dir) {\n"
       emit_raw "entry:\n"
       emit_raw "  %buf = alloca [4096 x i8]\n"
       emit_raw "  %buf_ptr = getelementptr [4096 x i8], ptr %buf, i32 0, i32 0\n"
@@ -8171,7 +8171,7 @@ module Crystal::MIR
       emit_raw "  %res_len32 = trunc i64 %res_len to i32\n"
       emit_raw "  %alloc_i32 = add i32 %res_len32, 13\n"
       emit_raw "  %alloc64 = sext i32 %alloc_i32 to i64\n"
-      emit_raw "  %str = call ptr @__crystal_v2_malloc64(i64 %alloc64)\n"
+      emit_raw "  %str = call ptr @__adamas_malloc64(i64 %alloc64)\n"
       emit_raw "  store i32 #{@string_type_id}, ptr %str\n"
       emit_raw "  %str_bs = getelementptr i8, ptr %str, i32 4\n"
       emit_raw "  store i32 %res_len32, ptr %str_bs\n"
@@ -8187,7 +8187,7 @@ module Crystal::MIR
       emit_raw "return_joined:\n"
       emit_raw "  %j_alloc_i32 = add i32 %total_len, 13\n"
       emit_raw "  %j_alloc64 = sext i32 %j_alloc_i32 to i64\n"
-      emit_raw "  %j_str = call ptr @__crystal_v2_malloc64(i64 %j_alloc64)\n"
+      emit_raw "  %j_str = call ptr @__adamas_malloc64(i64 %j_alloc64)\n"
       emit_raw "  store i32 #{@string_type_id}, ptr %j_str\n"
       emit_raw "  %j_bs = getelementptr i8, ptr %j_str, i32 4\n"
       emit_raw "  store i32 %total_len, ptr %j_bs\n"
@@ -8203,7 +8203,7 @@ module Crystal::MIR
       emit_raw "return_path_copy:\n"
       emit_raw "  %p_alloc_i32 = add i32 %path_bs, 13\n"
       emit_raw "  %p_alloc64 = sext i32 %p_alloc_i32 to i64\n"
-      emit_raw "  %p_str = call ptr @__crystal_v2_malloc64(i64 %p_alloc64)\n"
+      emit_raw "  %p_str = call ptr @__adamas_malloc64(i64 %p_alloc64)\n"
       emit_raw "  store i32 #{@string_type_id}, ptr %p_str\n"
       emit_raw "  %p_bs = getelementptr i8, ptr %p_str, i32 4\n"
       emit_raw "  store i32 %path_bs, ptr %p_bs\n"
@@ -8218,13 +8218,13 @@ module Crystal::MIR
       emit_raw "}\n\n"
 
       # int64 to i32 (truncate)
-      emit_raw "define i32 @__crystal_v2_int64_to_i32(i64 %val) {\n"
+      emit_raw "define i32 @__adamas_int64_to_i32(i64 %val) {\n"
       emit_raw "  %trunc = trunc i64 %val to i32\n"
       emit_raw "  ret i32 %trunc\n"
       emit_raw "}\n\n"
 
       # int32 absolute value
-      emit_raw "define i32 @__crystal_v2_int_abs(i32 %val) {\n"
+      emit_raw "define i32 @__adamas_int_abs(i32 %val) {\n"
       emit_raw "fn_entry:\n"
       emit_raw "  %neg = icmp slt i32 %val, 0\n"
       emit_raw "  br i1 %neg, label %do_neg, label %done\n"
@@ -8238,7 +8238,7 @@ module Crystal::MIR
 
       # Int32 next_power_of_two (bit-trick, clamped for signed)
       # Equivalent to Crystal's Int#next_power_of_two for Int32 (signed)
-      emit_raw "define i32 @__crystal_v2_next_power_of_two_i32(i32 %val) {\n"
+      emit_raw "define i32 @__adamas_next_power_of_two_i32(i32 %val) {\n"
       emit_raw "fn_entry:\n"
       emit_raw "  %le1 = icmp sle i32 %val, 1\n"
       emit_raw "  br i1 %le1, label %ret_one, label %compute\n"
@@ -8265,32 +8265,32 @@ module Crystal::MIR
 
       # Int32 leading_zeros_count (using LLVM ctlz intrinsic)
       emit_raw "declare i32 @llvm.ctlz.i32(i32, i1)\n"
-      emit_raw "define i32 @__crystal_v2_leading_zeros_count_i32(i32 %val) {\n"
+      emit_raw "define i32 @__adamas_leading_zeros_count_i32(i32 %val) {\n"
       emit_raw "  %result = call i32 @llvm.ctlz.i32(i32 %val, i1 0)\n"
       emit_raw "  ret i32 %result\n"
       emit_raw "}\n\n"
 
       # int32 to int64 (sign extend)
-      emit_raw "define i64 @__crystal_v2_int_to_i64(i32 %val) {\n"
+      emit_raw "define i64 @__adamas_int_to_i64(i32 %val) {\n"
       emit_raw "  %ext = sext i32 %val to i64\n"
       emit_raw "  ret i64 %ext\n"
       emit_raw "}\n\n"
 
       # int32 to float64
-      emit_raw "define double @__crystal_v2_int_to_f64(i32 %val) {\n"
+      emit_raw "define double @__adamas_int_to_f64(i32 %val) {\n"
       emit_raw "  %conv = sitofp i32 %val to double\n"
       emit_raw "  ret double %conv\n"
       emit_raw "}\n\n"
 
       # float64 to string
-      emit_raw "define ptr @__crystal_v2_f64_to_string(double %val) {\n"
+      emit_raw "define ptr @__adamas_f64_to_string(double %val) {\n"
       emit_raw "  %tmp = alloca [32 x i8]\n"
       emit_raw "  call i32 (ptr, ptr, ...) @sprintf(ptr %tmp, ptr @.float_fmt_no_nl, double %val)\n"
       emit_raw "  %len64 = call i64 @strlen(ptr %tmp)\n"
       emit_raw "  %len = trunc i64 %len64 to i32\n"
       emit_raw "  %alloc_32 = add i32 %len, 13\n"
       emit_raw "  %alloc_64 = sext i32 %alloc_32 to i64\n"
-      emit_raw "  %str = call ptr @__crystal_v2_malloc64(i64 %alloc_64)\n"
+      emit_raw "  %str = call ptr @__adamas_malloc64(i64 %alloc_64)\n"
       emit_raw "  store i32 #{@string_type_id}, ptr %str\n"
       emit_raw "  %bs = getelementptr i8, ptr %str, i32 4\n"
       emit_raw "  store i32 %len, ptr %bs\n"
@@ -8305,19 +8305,19 @@ module Crystal::MIR
       emit_raw "}\n\n"
 
       # float64 to int32
-      emit_raw "define i32 @__crystal_v2_f64_to_i32(double %val) {\n"
+      emit_raw "define i32 @__adamas_f64_to_i32(double %val) {\n"
       emit_raw "  %conv = fptosi double %val to i32\n"
       emit_raw "  ret i32 %conv\n"
       emit_raw "}\n\n"
 
       # float64 to int64
-      emit_raw "define i64 @__crystal_v2_f64_to_i64(double %val) {\n"
+      emit_raw "define i64 @__adamas_f64_to_i64(double %val) {\n"
       emit_raw "  %conv = fptosi double %val to i64\n"
       emit_raw "  ret i64 %conv\n"
       emit_raw "}\n\n"
 
       # bool to string
-      emit_raw "define ptr @__crystal_v2_bool_to_string(i1 %val) {\n"
+      emit_raw "define ptr @__adamas_bool_to_string(i1 %val) {\n"
       emit_raw "entry:\n"
       emit_raw "  br i1 %val, label %is_true, label %is_false\n"
       emit_raw "is_true:\n"
@@ -8327,7 +8327,7 @@ module Crystal::MIR
       emit_raw "}\n\n"
 
       # ── char_to_string: Char (i32 codepoint) → Crystal String ──
-      emit_raw "define ptr @__crystal_v2_char_to_string(i32 %cp) {\n"
+      emit_raw "define ptr @__adamas_char_to_string(i32 %cp) {\n"
       emit_raw "entry:\n"
       # Determine UTF-8 byte length
       emit_raw "  %is_ascii = icmp ult i32 %cp, 128\n"
@@ -8340,7 +8340,7 @@ module Crystal::MIR
       emit_raw "  br i1 %is_3byte, label %utf3, label %utf4\n"
       # ASCII: 1 byte
       emit_raw "ascii:\n"
-      emit_raw "  %a_alloc = call ptr @__crystal_v2_malloc64(i64 16)\n"
+      emit_raw "  %a_alloc = call ptr @__adamas_malloc64(i64 16)\n"
       emit_raw "  store i32 #{@string_type_id}, ptr %a_alloc\n"
       emit_raw "  %a_bs = getelementptr i8, ptr %a_alloc, i32 4\n"
       emit_raw "  store i32 1, ptr %a_bs\n"
@@ -8354,7 +8354,7 @@ module Crystal::MIR
       emit_raw "  ret ptr %a_alloc\n"
       # 2-byte UTF-8: 110xxxxx 10xxxxxx
       emit_raw "utf2:\n"
-      emit_raw "  %u2_alloc = call ptr @__crystal_v2_malloc64(i64 16)\n"
+      emit_raw "  %u2_alloc = call ptr @__adamas_malloc64(i64 16)\n"
       emit_raw "  store i32 #{@string_type_id}, ptr %u2_alloc\n"
       emit_raw "  %u2_bs = getelementptr i8, ptr %u2_alloc, i32 4\n"
       emit_raw "  store i32 2, ptr %u2_bs\n"
@@ -8375,7 +8375,7 @@ module Crystal::MIR
       emit_raw "  ret ptr %u2_alloc\n"
       # 3-byte UTF-8: 1110xxxx 10xxxxxx 10xxxxxx
       emit_raw "utf3:\n"
-      emit_raw "  %u3_alloc = call ptr @__crystal_v2_malloc64(i64 20)\n"
+      emit_raw "  %u3_alloc = call ptr @__adamas_malloc64(i64 20)\n"
       emit_raw "  store i32 #{@string_type_id}, ptr %u3_alloc\n"
       emit_raw "  %u3_bs = getelementptr i8, ptr %u3_alloc, i32 4\n"
       emit_raw "  store i32 3, ptr %u3_bs\n"
@@ -8402,7 +8402,7 @@ module Crystal::MIR
       emit_raw "  ret ptr %u3_alloc\n"
       # 4-byte UTF-8: 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx
       emit_raw "utf4:\n"
-      emit_raw "  %u4_alloc = call ptr @__crystal_v2_malloc64(i64 20)\n"
+      emit_raw "  %u4_alloc = call ptr @__adamas_malloc64(i64 20)\n"
       emit_raw "  store i32 #{@string_type_id}, ptr %u4_alloc\n"
       emit_raw "  %u4_bs = getelementptr i8, ptr %u4_alloc, i32 4\n"
       emit_raw "  store i32 4, ptr %u4_bs\n"
@@ -8437,7 +8437,7 @@ module Crystal::MIR
 
       # ── string_concat: two Crystal Strings → one new Crystal String ──
       # Crystal String layout: {type_id:i32, bytesize:i32, size:i32, bytes:[N x i8]}
-      emit_raw "define ptr @__crystal_v2_string_concat(ptr %a, ptr %b) {\n"
+      emit_raw "define ptr @__adamas_string_concat(ptr %a, ptr %b) {\n"
       emit_raw "entry:\n"
       emit_raw "  %a_null = icmp eq ptr %a, null\n"
       emit_raw "  br i1 %a_null, label %a_is_null, label %a_not_null\n"
@@ -8461,7 +8461,7 @@ module Crystal::MIR
       emit_raw "  %total = add i32 %a_bs, %b_bs\n"
       emit_raw "  %alloc_32 = add i32 %total, 13\n"
       emit_raw "  %alloc_64 = sext i32 %alloc_32 to i64\n"
-      emit_raw "  %buf = call ptr @__crystal_v2_malloc64(i64 %alloc_64)\n"
+      emit_raw "  %buf = call ptr @__adamas_malloc64(i64 %alloc_64)\n"
       emit_raw "  store i32 #{@string_type_id}, ptr %buf\n"
       emit_raw "  %buf_bs = getelementptr i8, ptr %buf, i32 4\n"
       emit_raw "  store i32 %total, ptr %buf_bs\n"
@@ -8483,7 +8483,7 @@ module Crystal::MIR
       # ── string_interpolate: N Crystal Strings → one new Crystal String (single alloc) ──
       # Takes a ptr to array of String ptrs and a count.
       # Pass 1: sum bytesizes. Pass 2: alloc once, memcpy all parts.
-      emit_raw "define ptr @__crystal_v2_string_interpolate(ptr %parts, i32 %count) {\n"
+      emit_raw "define ptr @__adamas_string_interpolate(ptr %parts, i32 %count) {\n"
       emit_raw "entry:\n"
       emit_raw "  %total_ptr = alloca i32\n"
       emit_raw "  store i32 0, ptr %total_ptr\n"
@@ -8523,7 +8523,7 @@ module Crystal::MIR
       emit_raw "  %total = load i32, ptr %total_ptr\n"
       emit_raw "  %a32 = add i32 %total, 13\n"
       emit_raw "  %a64 = sext i32 %a32 to i64\n"
-      emit_raw "  %buf = call ptr @__crystal_v2_malloc64(i64 %a64)\n"
+      emit_raw "  %buf = call ptr @__adamas_malloc64(i64 %a64)\n"
       emit_raw "  store i32 #{@string_type_id}, ptr %buf\n"
       emit_raw "  %bbs = getelementptr i8, ptr %buf, i32 4\n"
       emit_raw "  store i32 %total, ptr %bbs\n"
@@ -8579,7 +8579,7 @@ module Crystal::MIR
       emit_raw "}\n\n"
 
       # Initialize buffer with empty string (null terminator)
-      emit_raw "define void @__crystal_v2_init_buffer(ptr %buf) {\n"
+      emit_raw "define void @__adamas_init_buffer(ptr %buf) {\n"
       emit_raw "  store i8 0, ptr %buf\n"
       emit_raw "  ret void\n"
       emit_raw "}\n\n"
@@ -8599,20 +8599,20 @@ module Crystal::MIR
 
       # IO_shovel for integers - convert to string and append
       emit_raw "define ptr @IO_shovel_int(ptr %buf, i32 %val) {\n"
-      emit_raw "  %str = call ptr @__crystal_v2_int_to_string(i32 %val)\n"
+      emit_raw "  %str = call ptr @__adamas_int_to_string(i32 %val)\n"
       emit_raw "  call ptr @strcat(ptr %buf, ptr %str)\n"
       emit_raw "  ret ptr %buf\n"
       emit_raw "}\n\n"
 
       # String repeat: "str" * n -> repeat string n times
       # String repeat: reads Crystal String (header at 0/4/8, data at 12), returns Crystal String
-      emit_raw "define ptr @__crystal_v2_string_repeat(ptr %str, i32 %count) {\n"
+      emit_raw "define ptr @__adamas_string_repeat(ptr %str, i32 %count) {\n"
       emit_raw "entry:\n"
       emit_raw "  %cmp = icmp sle i32 %count, 0\n"
       emit_raw "  br i1 %cmp, label %ret_empty, label %repeat\n"
       # Empty result → return empty Crystal String
       emit_raw "ret_empty:\n"
-      emit_raw "  %empty = call ptr @__crystal_v2_malloc64(i64 13)\n"
+      emit_raw "  %empty = call ptr @__adamas_malloc64(i64 13)\n"
       emit_raw "  store i32 #{@string_type_id}, ptr %empty\n"
       emit_raw "  %empty_bs = getelementptr i8, ptr %empty, i32 4\n"
       emit_raw "  store i32 0, ptr %empty_bs\n"
@@ -8631,7 +8631,7 @@ module Crystal::MIR
       # Allocate result Crystal String: 12-byte header + total + 1 (null terminator)
       emit_raw "  %alloc_i32 = add i32 %total, 13\n"
       emit_raw "  %alloc_i64 = sext i32 %alloc_i32 to i64\n"
-      emit_raw "  %result = call ptr @__crystal_v2_malloc64(i64 %alloc_i64)\n"
+      emit_raw "  %result = call ptr @__adamas_malloc64(i64 %alloc_i64)\n"
       # Write header: type_id, bytesize, charsize
       emit_raw "  store i32 #{@string_type_id}, ptr %result\n"
       emit_raw "  %r_bs = getelementptr i8, ptr %result, i32 4\n"
@@ -8679,27 +8679,27 @@ module Crystal::MIR
 
       # Synchronization primitives runtime - stubs for bootstrap
       emit_raw "; Synchronization runtime functions\n"
-      emit_raw "define void @__crystal_v2_mutex_lock(ptr %mutex) {\n"
+      emit_raw "define void @__adamas_mutex_lock(ptr %mutex) {\n"
       emit_raw "  ret void\n"
       emit_raw "}\n\n"
 
-      emit_raw "define void @__crystal_v2_mutex_unlock(ptr %mutex) {\n"
+      emit_raw "define void @__adamas_mutex_unlock(ptr %mutex) {\n"
       emit_raw "  ret void\n"
       emit_raw "}\n\n"
 
-      emit_raw "define i1 @__crystal_v2_mutex_trylock(ptr %mutex) {\n"
+      emit_raw "define i1 @__adamas_mutex_trylock(ptr %mutex) {\n"
       emit_raw "  ret i1 true\n"
       emit_raw "}\n\n"
 
-      emit_raw "define void @__crystal_v2_channel_send(ptr %chan, ptr %val) {\n"
+      emit_raw "define void @__adamas_channel_send(ptr %chan, ptr %val) {\n"
       emit_raw "  ret void\n"
       emit_raw "}\n\n"
 
-      emit_raw "define ptr @__crystal_v2_channel_receive(ptr %chan) {\n"
+      emit_raw "define ptr @__adamas_channel_receive(ptr %chan) {\n"
       emit_raw "  ret ptr null\n"
       emit_raw "}\n\n"
 
-      emit_raw "define void @__crystal_v2_channel_close(ptr %chan) {\n"
+      emit_raw "define void @__adamas_channel_close(ptr %chan) {\n"
       emit_raw "  ret void\n"
       emit_raw "}\n\n"
       bootstrap_trace_puts "  [RT_DECL] end" if runtime_decl_trace
@@ -8737,7 +8737,7 @@ module Crystal::MIR
         fields = type.fields.not_nil!
         type_id = type.id
         @dtor_type_ids << type_id
-        dtor_name = "@__crystal_v2_dtor_#{type_id}"
+        dtor_name = "@__adamas_dtor_#{type_id}"
 
         emit_raw "define void #{dtor_name}(ptr %obj) {\n"
         field_idx = 0
@@ -8756,7 +8756,7 @@ module Crystal::MIR
           emit_raw "  %fval.#{field_idx} = load ptr, ptr %fptr.#{field_idx}, align 8\n"
           # rc_dec the field value — this will cascade to child destructors
           # For all-ref unions, null (Nil variant) is handled by rc_dec's null check
-          emit_raw "  call void @__crystal_v2_rc_dec(ptr %fval.#{field_idx}, ptr @__crystal_v2_dtor_dispatch)\n"
+          emit_raw "  call void @__adamas_rc_dec(ptr %fval.#{field_idx}, ptr @__adamas_dtor_dispatch)\n"
           field_idx += 1
         end
         emit_raw "  ret void\n"
@@ -8764,7 +8764,7 @@ module Crystal::MIR
       end
 
       # Generate dispatch function: reads type_id, calls correct destructor
-      emit_raw "define void @__crystal_v2_dtor_dispatch(ptr %obj) {\n"
+      emit_raw "define void @__adamas_dtor_dispatch(ptr %obj) {\n"
       emit_raw "  %tid_ptr = load i32, ptr %obj, align 4\n"
 
       if dtor_types.empty?
@@ -8779,7 +8779,7 @@ module Crystal::MIR
 
         dtor_types.each do |type|
           emit_raw "dtor_#{type.id}:\n"
-          emit_raw "  call void @__crystal_v2_dtor_#{type.id}(ptr %obj)\n"
+          emit_raw "  call void @__adamas_dtor_#{type.id}(ptr %obj)\n"
           emit_raw "  br label %no_dtor\n"
         end
 
@@ -8795,23 +8795,23 @@ module Crystal::MIR
     private def emit_union_debug_helpers
       emit_raw "; Union debug helper functions\n"
       # Debug print: prints union value with type name
-      emit_raw "define void @__crystal_v2_union_debug_print(ptr %union_ptr, ptr %descriptor) {\n"
+      emit_raw "define void @__adamas_union_debug_print(ptr %union_ptr, ptr %descriptor) {\n"
       emit_raw "  ret void\n"
       emit_raw "}\n\n"
 
       # Type check with error: verifies type_id, traps on mismatch
-      emit_raw "define void @__crystal_v2_union_type_check(i32 %expected, i32 %actual, ptr %msg) {\n"
+      emit_raw "define void @__adamas_union_type_check(i32 %expected, i32 %actual, ptr %msg) {\n"
       emit_raw "  ret void\n"
       emit_raw "}\n\n"
 
       # Get type name from union descriptor
-      emit_raw "define ptr @__crystal_v2_union_type_name(i32 %type_id, ptr %descriptor) {\n"
+      emit_raw "define ptr @__adamas_union_type_name(i32 %type_id, ptr %descriptor) {\n"
       emit_raw "  ret ptr null\n"
       emit_raw "}\n\n"
 
       # Null function pointer guard (debug aid for PC=0 crash hunting)
       emit_raw "; Null function pointer guard\n"
-      emit_raw "define void @__crystal_v2_null_fn_guard(ptr %fn) {\n"
+      emit_raw "define void @__adamas_null_fn_guard(ptr %fn) {\n"
       emit_raw "  %is_null = icmp eq ptr %fn, null\n"
       emit_raw "  br i1 %is_null, label %trap, label %ok\n"
       emit_raw "trap:\n"
@@ -8850,7 +8850,7 @@ module Crystal::MIR
       emit_raw "}\n\n"
 
       # End exception handler scope — decrement depth
-      emit_raw "define void @__crystal_v2_try_end() {\n"
+      emit_raw "define void @__adamas_try_end() {\n"
       emit_raw "  %depth = load i32, ptr @__crystal_exc_depth\n"
       emit_raw "  %new_depth = sub i32 %depth, 1\n"
       emit_raw "  %clamped = call i32 @llvm.smax.i32(i32 %new_depth, i32 0)\n"
@@ -8859,7 +8859,7 @@ module Crystal::MIR
       emit_raw "}\n"
       emit_raw "declare i32 @llvm.smax.i32(i32, i32)\n\n"
 
-      emit_raw "define void @__crystal_v2_raise(ptr %exc) noinline {\n"
+      emit_raw "define void @__adamas_raise(ptr %exc) noinline {\n"
       emit_raw "  store ptr %exc, ptr @__crystal_exc_ptr\n"
       emit_raw "  %depth = load i32, ptr @__crystal_exc_depth\n"
       emit_raw "  %has_handler = icmp sgt i32 %depth, 0\n"
@@ -8879,10 +8879,10 @@ module Crystal::MIR
       runtime_error_type_id = runtime_error_type.try(&.id.to_i32) || exception_type.try(&.id.to_i32) || 1_i32
       runtime_error_alloc_size = runtime_error_size + 8_i64 # + refcount header
 
-      emit_raw "define void @__crystal_v2_raise_msg(ptr %msg) noinline {\n"
+      emit_raw "define void @__adamas_raise_msg(ptr %msg) noinline {\n"
       emit_raw "  ; Build a minimal RuntimeError object: {type_id, message, ...}\n"
       emit_raw "  ; so rescue variables can safely call Exception#message.\n"
-      emit_raw "  %raw = call ptr @__crystal_v2_malloc64(i64 #{runtime_error_alloc_size})\n"
+      emit_raw "  %raw = call ptr @__adamas_malloc64(i64 #{runtime_error_alloc_size})\n"
       emit_raw "  store i64 1, ptr %raw, align 8\n"
       emit_raw "  %exc = getelementptr i8, ptr %raw, i64 8\n"
       emit_raw "  call void @llvm.memset.p0.i64(ptr %exc, i8 0, i64 #{runtime_error_size}, i1 false)\n"
@@ -8906,7 +8906,7 @@ module Crystal::MIR
       emit_raw "  unreachable\n"
       emit_raw "}\n\n"
 
-      emit_raw "define void @__crystal_v2_reraise() noinline {\n"
+      emit_raw "define void @__adamas_reraise() noinline {\n"
       emit_raw "  %exc = load ptr, ptr @__crystal_exc_ptr\n"
       emit_raw "  %depth = load i32, ptr @__crystal_exc_depth\n"
       emit_raw "  %has_handler = icmp sgt i32 %depth, 0\n"
@@ -8920,7 +8920,7 @@ module Crystal::MIR
       emit_raw "  unreachable\n"
       emit_raw "}\n\n"
 
-      emit_raw "define ptr @__crystal_v2_get_exception() {\n"
+      emit_raw "define ptr @__adamas_get_exception() {\n"
       emit_raw "  %exc = load ptr, ptr @__crystal_exc_ptr\n"
       emit_raw "  ret ptr %exc\n"
       emit_raw "}\n\n"
@@ -8936,12 +8936,12 @@ module Crystal::MIR
         # PCRE2 external functions are already declared in emit_external_declarations
 
         # Global: last match data for $~ / capture group access
-        emit_raw "@__crystal_v2_last_match_data = global ptr null\n"
-        emit_raw "@__crystal_v2_last_match_str = global ptr null\n\n"
+        emit_raw "@__adamas_last_match_data = global ptr null\n"
+        emit_raw "@__adamas_last_match_str = global ptr null\n\n"
 
-        # __crystal_v2_regex_new(pattern_str: Crystal::String*, options: i32) -> ptr
+        # __adamas_regex_new(pattern_str: Crystal::String*, options: i32) -> ptr
         # Compiles a PCRE2 regex pattern. Returns pointer to {code, match_data} struct.
-        emit_raw "define ptr @__crystal_v2_regex_new(ptr %pattern_str, i32 %options) {\n"
+        emit_raw "define ptr @__adamas_regex_new(ptr %pattern_str, i32 %options) {\n"
         emit_raw "entry:\n"
         emit_raw "  %bs_ptr = getelementptr i8, ptr %pattern_str, i32 4\n"
         emit_raw "  %bytesize = load i32, ptr %bs_ptr\n"
@@ -8956,7 +8956,7 @@ module Crystal::MIR
         emit_raw "  br i1 %re_null, label %fail, label %ok\n"
         emit_raw "ok:\n"
         # Allocate 16-byte struct: {code*, match_data*}
-        emit_raw "  %regex = call ptr @__crystal_v2_malloc64(i64 16)\n"
+        emit_raw "  %regex = call ptr @__adamas_malloc64(i64 16)\n"
         emit_raw "  store ptr %re, ptr %regex\n"
         emit_raw "  %md = call ptr @pcre2_match_data_create_from_pattern_8(ptr %re, ptr null)\n"
         emit_raw "  %md_slot = getelementptr i8, ptr %regex, i32 8\n"
@@ -8969,9 +8969,9 @@ module Crystal::MIR
         emit_raw "  ret ptr null\n"
         emit_raw "}\n\n"
 
-        # __crystal_v2_regex_match_q(regex: ptr, str: Crystal::String*) -> i1
+        # __adamas_regex_match_q(regex: ptr, str: Crystal::String*) -> i1
         # Returns true if regex matches the string. Sets last match data for capture groups.
-        emit_raw "define i1 @__crystal_v2_regex_match_q(ptr %regex, ptr %str) {\n"
+        emit_raw "define i1 @__adamas_regex_match_q(ptr %regex, ptr %str) {\n"
         emit_raw "entry:\n"
         emit_raw "  %re_null = icmp eq ptr %regex, null\n"
         emit_raw "  br i1 %re_null, label %ret_false, label %check_str\n"
@@ -8991,18 +8991,18 @@ module Crystal::MIR
         # Store last match data for capture group access
         emit_raw "  br i1 %matched, label %store_match, label %ret_false\n"
         emit_raw "store_match:\n"
-        emit_raw "  store ptr %md, ptr @__crystal_v2_last_match_data\n"
-        emit_raw "  store ptr %str, ptr @__crystal_v2_last_match_str\n"
+        emit_raw "  store ptr %md, ptr @__adamas_last_match_data\n"
+        emit_raw "  store ptr %str, ptr @__adamas_last_match_str\n"
         emit_raw "  ret i1 1\n"
         emit_raw "ret_false:\n"
         # Clear last match data on failure
-        emit_raw "  store ptr null, ptr @__crystal_v2_last_match_data\n"
+        emit_raw "  store ptr null, ptr @__adamas_last_match_data\n"
         emit_raw "  ret i1 0\n"
         emit_raw "}\n\n"
 
-        # __crystal_v2_regex_match_pos(regex: ptr, str: Crystal::String*) -> i32
+        # __adamas_regex_match_pos(regex: ptr, str: Crystal::String*) -> i32
         # Returns byte position of match start, or -1 if no match.
-        emit_raw "define i32 @__crystal_v2_regex_match_pos(ptr %regex, ptr %str) {\n"
+        emit_raw "define i32 @__adamas_regex_match_pos(ptr %regex, ptr %str) {\n"
         emit_raw "entry:\n"
         emit_raw "  %re_null = icmp eq ptr %regex, null\n"
         emit_raw "  br i1 %re_null, label %ret_neg, label %check_str\n"
@@ -9021,22 +9021,22 @@ module Crystal::MIR
         emit_raw "  %matched = icmp sge i32 %rc, 0\n"
         emit_raw "  br i1 %matched, label %get_pos, label %ret_neg\n"
         emit_raw "get_pos:\n"
-        emit_raw "  store ptr %md, ptr @__crystal_v2_last_match_data\n"
-        emit_raw "  store ptr %str, ptr @__crystal_v2_last_match_str\n"
+        emit_raw "  store ptr %md, ptr @__adamas_last_match_data\n"
+        emit_raw "  store ptr %str, ptr @__adamas_last_match_str\n"
         emit_raw "  %ovector = call ptr @pcre2_get_ovector_pointer_8(ptr %md)\n"
         emit_raw "  %start64 = load i64, ptr %ovector\n"
         emit_raw "  %start = trunc i64 %start64 to i32\n"
         emit_raw "  ret i32 %start\n"
         emit_raw "ret_neg:\n"
-        emit_raw "  store ptr null, ptr @__crystal_v2_last_match_data\n"
+        emit_raw "  store ptr null, ptr @__adamas_last_match_data\n"
         emit_raw "  ret i32 -1\n"
         emit_raw "}\n\n"
 
-        # __crystal_v2_regex_capture(capture_idx: i32) -> Crystal::String* (or null)
+        # __adamas_regex_capture(capture_idx: i32) -> Crystal::String* (or null)
         # Returns the captured substring from the last regex match.
-        emit_raw "define ptr @__crystal_v2_regex_capture(i32 %idx) {\n"
+        emit_raw "define ptr @__adamas_regex_capture(i32 %idx) {\n"
         emit_raw "entry:\n"
-        emit_raw "  %md = load ptr, ptr @__crystal_v2_last_match_data\n"
+        emit_raw "  %md = load ptr, ptr @__adamas_last_match_data\n"
         emit_raw "  %md_null = icmp eq ptr %md, null\n"
         emit_raw "  br i1 %md_null, label %ret_null, label %get_ovector\n"
         emit_raw "get_ovector:\n"
@@ -9052,22 +9052,22 @@ module Crystal::MIR
         emit_raw "  %unset = icmp eq i64 %start64, -1\n"
         emit_raw "  br i1 %unset, label %ret_null, label %extract\n"
         emit_raw "extract:\n"
-        emit_raw "  %str = load ptr, ptr @__crystal_v2_last_match_str\n"
+        emit_raw "  %str = load ptr, ptr @__adamas_last_match_str\n"
         emit_raw "  %str_data = getelementptr i8, ptr %str, i32 12\n"
         emit_raw "  %start = trunc i64 %start64 to i32\n"
         emit_raw "  %end = trunc i64 %end64 to i32\n"
         emit_raw "  %len = sub i32 %end, %start\n"
         emit_raw "  %src = getelementptr i8, ptr %str_data, i32 %start\n"
         # Use existing create_substring helper (needs type_id for String)
-        emit_raw "  %result = call ptr @__crystal_v2_create_substring(ptr %src, i32 %len, i32 #{@string_type_id})\n"
+        emit_raw "  %result = call ptr @__adamas_create_substring(ptr %src, i32 %len, i32 #{@string_type_id})\n"
         emit_raw "  ret ptr %result\n"
         emit_raw "ret_null:\n"
         emit_raw "  ret ptr null\n"
         emit_raw "}\n\n"
 
-        # __crystal_v2_string_gsub_regex(str: Crystal::String*, regex: ptr, repl: Crystal::String*) -> Crystal::String*
+        # __adamas_string_gsub_regex(str: Crystal::String*, regex: ptr, repl: Crystal::String*) -> Crystal::String*
         # Simple gsub: replaces all non-overlapping matches with replacement string.
-        emit_raw "define ptr @__crystal_v2_string_gsub_regex(ptr %str, ptr %regex, ptr %repl) {\n"
+        emit_raw "define ptr @__adamas_string_gsub_regex(ptr %str, ptr %regex, ptr %repl) {\n"
         emit_raw "entry:\n"
         emit_raw "  %re_null = icmp eq ptr %regex, null\n"
         emit_raw "  br i1 %re_null, label %ret_orig, label %check_str\n"
@@ -9090,7 +9090,7 @@ module Crystal::MIR
         emit_raw "  %max_out2 = add i32 %max_out, %repl_bs\n"
         emit_raw "  %max_out3 = add i32 %max_out2, 256\n"
         emit_raw "  %max64 = sext i32 %max_out3 to i64\n"
-        emit_raw "  %buf = call ptr @__crystal_v2_malloc64(i64 %max64)\n"
+        emit_raw "  %buf = call ptr @__adamas_malloc64(i64 %max64)\n"
         emit_raw "  br label %loop\n"
         emit_raw "loop:\n"
         emit_raw "  %pos = phi i64 [0, %init], [%next_pos, %copy_rest_of_match]\n"
@@ -9138,16 +9138,16 @@ module Crystal::MIR
         emit_raw "  %rem64 = sext i32 %remain to i64\n"
         emit_raw "  call void @llvm.memcpy.p0.p0.i64(ptr %dst_tail, ptr %src_tail, i64 %rem64, i1 false)\n"
         emit_raw "  %total_len = add i32 %final_out, %remain\n"
-        emit_raw "  %result = call ptr @__crystal_v2_create_substring(ptr %buf, i32 %total_len, i32 #{@string_type_id})\n"
+        emit_raw "  %result = call ptr @__adamas_create_substring(ptr %buf, i32 %total_len, i32 #{@string_type_id})\n"
         emit_raw "  ret ptr %result\n"
         emit_raw "ret_orig:\n"
         emit_raw "  ret ptr %str\n"
         emit_raw "}\n\n"
 
-        # __crystal_v2_regex_match(regex: ptr, str: Crystal::String*) -> ptr
+        # __adamas_regex_match(regex: ptr, str: Crystal::String*) -> ptr
         # Returns non-null pointer (the regex struct itself) on match, null on no match.
-        # Stores match data globally for capture group access via __crystal_v2_regex_capture.
-        emit_raw "define ptr @__crystal_v2_regex_match(ptr %regex, ptr %str) {\n"
+        # Stores match data globally for capture group access via __adamas_regex_capture.
+        emit_raw "define ptr @__adamas_regex_match(ptr %regex, ptr %str) {\n"
         emit_raw "entry:\n"
         emit_raw "  %re_null = icmp eq ptr %regex, null\n"
         emit_raw "  br i1 %re_null, label %ret_null, label %check_str\n"
@@ -9166,12 +9166,12 @@ module Crystal::MIR
         emit_raw "  %matched = icmp sge i32 %rc, 0\n"
         emit_raw "  br i1 %matched, label %store_match, label %ret_null\n"
         emit_raw "store_match:\n"
-        emit_raw "  store ptr %md, ptr @__crystal_v2_last_match_data\n"
-        emit_raw "  store ptr %str, ptr @__crystal_v2_last_match_str\n"
+        emit_raw "  store ptr %md, ptr @__adamas_last_match_data\n"
+        emit_raw "  store ptr %str, ptr @__adamas_last_match_str\n"
         # Return the regex struct itself as a non-null truthy value
         emit_raw "  ret ptr %regex\n"
         emit_raw "ret_null:\n"
-        emit_raw "  store ptr null, ptr @__crystal_v2_last_match_data\n"
+        emit_raw "  store ptr null, ptr @__adamas_last_match_data\n"
         emit_raw "  ret ptr null\n"
         emit_raw "}\n\n"
       end
@@ -9216,7 +9216,7 @@ module Crystal::MIR
       end
     end
 
-    # `Set(T)` referenced from `Crystal::MIR` gets a distinct V2 symbol `Crystal::MIR::Set(T).new`
+    # `Set(T)` referenced from `Adamas::MIR` gets a distinct V2 symbol `Adamas::MIR::Set(T).new`
     # that was emitted as malloc+sentinel only, skipping `#initialize` (internal `@hash` never created).
     # Delegate to top-level `Set(T).new`, which runs `Set#initialize` and allocates the Hash.
     private def emit_crystal_mir_set_new_delegate_override(func : Function, mangled : String) : Bool
@@ -9231,7 +9231,7 @@ module Crystal::MIR
       if !mangled.includes?("$Dnew$$")
         return false unless target_func.params.size == 1
         return false unless emitted_param_llvm_type(target_func.params[0]) == "ptr"
-        emit_raw "; #{mangled} — delegate Crystal::MIR::Set.new → ::Set.new(nil capacity)\n"
+        emit_raw "; #{mangled} — delegate Adamas::MIR::Set.new → ::Set.new(nil capacity)\n"
         emit_raw "define ptr @#{mangled}() {\n"
         emit_raw "entry:\n"
         emit_raw "  %r = call ptr @#{target}(ptr null)\n"
@@ -9253,7 +9253,7 @@ module Crystal::MIR
         param_names << "%a#{i}"
       end
       plist = param_decls.join(", ")
-      emit_raw "; #{mangled} — delegate Crystal::MIR::Set.new → ::Set.new (same LLVM param types)\n"
+      emit_raw "; #{mangled} — delegate Adamas::MIR::Set.new → ::Set.new (same LLVM param types)\n"
       emit_raw "define ptr @#{mangled}(#{plist}) {\n"
       emit_raw "entry:\n"
       emit_raw "  %r = call ptr @#{target}(#{param_names.join(", ")})\n"
@@ -9357,7 +9357,7 @@ module Crystal::MIR
         emit_raw "; Thread$CCMutex$Dnew — fixed: allocate 72 bytes so pthread_mutex_t fits\n"
         emit_raw "define ptr @Thread$CCMutex$Dnew() {\n"
         emit_raw "entry:\n"
-        emit_raw "  %raw = call ptr @__crystal_v2_malloc64(i64 72)\n"
+        emit_raw "  %raw = call ptr @__adamas_malloc64(i64 72)\n"
         emit_raw "  store i64 9223372036854775807, ptr %raw, align 8\n"
         emit_raw "  %obj = getelementptr i8, ptr %raw, i64 8\n"
         emit_raw "  store i32 479, ptr %obj\n"
@@ -9388,9 +9388,9 @@ module Crystal::MIR
       if mangled.starts_with?("spawn$$") && mangled.ends_with?("_block")
         fiber_tid = @module.type_registry.get_by_name("Fiber").try(&.id.to_i32) || 155
         # Emit the fiber entry trampoline once per module
-        unless @emitted_functions.includes?("__crystal_v2_fiber_entry")
+        unless @emitted_functions.includes?("__adamas_fiber_entry")
           emit_raw "; Fiber entry trampoline — loads @proc from fiber and calls it\n"
-          emit_raw "define void @__crystal_v2_fiber_entry(ptr %fiber) {\n"
+          emit_raw "define void @__adamas_fiber_entry(ptr %fiber) {\n"
           emit_raw "entry:\n"
           emit_raw "  %proc_field = getelementptr i8, ptr %fiber, i32 128\n"
           emit_raw "  %proc = load ptr, ptr %proc_field\n"
@@ -9403,13 +9403,13 @@ module Crystal::MIR
           emit_raw "  call void @Fiber$Dsuspend()\n"
           emit_raw "  unreachable\n"
           emit_raw "}\n\n"
-          @emitted_functions << "__crystal_v2_fiber_entry"
+          @emitted_functions << "__adamas_fiber_entry"
         end
         emit_raw "; #{mangled} — spawn override: allocate Fiber + ARM64 initial stack frame\n"
         emit_raw "define ptr @#{mangled}(ptr %name, i1 %same_thread, ptr %block) {\n"
         emit_raw "entry:\n"
         # Allocate Fiber object: 8-byte V2 header + 144 bytes payload = 152 bytes
-        emit_raw "  %raw = call ptr @__crystal_v2_malloc64(i64 152)\n"
+        emit_raw "  %raw = call ptr @__adamas_malloc64(i64 152)\n"
         emit_raw "  store i64 1, ptr %raw, align 8\n"
         emit_raw "  %fiber = getelementptr i8, ptr %raw, i64 8\n"
         emit_raw "  call void @llvm.memset.p0.i64(ptr %fiber, i8 0, i64 144, i1 false)\n"
@@ -9421,7 +9421,7 @@ module Crystal::MIR
         # @proc = block at fiber+128
         emit_raw "  %proc_field = getelementptr i8, ptr %fiber, i32 128\n"
         emit_raw "  store ptr %block, ptr %proc_field\n"
-        emit_raw "  call void @__crystal_v2_rc_inc(ptr %block)\n"
+        emit_raw "  call void @__adamas_rc_inc(ptr %block)\n"
         # @name at fiber+88
         emit_raw "  %name_field = getelementptr i8, ptr %fiber, i32 88\n"
         emit_raw "  store ptr %name, ptr %name_field\n"
@@ -9435,7 +9435,7 @@ module Crystal::MIR
         emit_raw "  call void @llvm.memset.p0.i64(ptr %frame_base, i8 0, i64 176, i1 false)\n"
         # x30 (return-address slot) at frame+64 = fiber entry trampoline
         emit_raw "  %x30_slot = getelementptr i8, ptr %frame_base, i64 64\n"
-        emit_raw "  store ptr @__crystal_v2_fiber_entry, ptr %x30_slot\n"
+        emit_raw "  store ptr @__adamas_fiber_entry, ptr %x30_slot\n"
         # x0 (first-arg slot) at frame+160 = fiber ptr (arg to entry)
         emit_raw "  %x0_slot = getelementptr i8, ptr %frame_base, i64 160\n"
         emit_raw "  store ptr %fiber, ptr %x0_slot\n"
@@ -9461,7 +9461,7 @@ module Crystal::MIR
         emit_raw "  %fl_null = icmp eq ptr %fl_ptr, null\n"
         emit_raw "  br i1 %fl_null, label %init_fl, label %fl_ok\n"
         emit_raw "init_fl:\n"
-        emit_raw "  %fl_raw = call ptr @__crystal_v2_malloc64(i64 40)\n"
+        emit_raw "  %fl_raw = call ptr @__adamas_malloc64(i64 40)\n"
         emit_raw "  store i64 9223372036854775807, ptr %fl_raw, align 8\n"
         emit_raw "  %fl_obj = getelementptr i8, ptr %fl_raw, i64 8\n"
         emit_raw "  call void @llvm.memset.p0.i64(ptr %fl_obj, i8 0, i64 32, i1 false)\n"
@@ -9477,7 +9477,7 @@ module Crystal::MIR
         emit_raw "  %tl_null = icmp eq ptr %tl_ptr, null\n"
         emit_raw "  br i1 %tl_null, label %init_tl, label %tl_ok\n"
         emit_raw "init_tl:\n"
-        emit_raw "  %tl_raw = call ptr @__crystal_v2_malloc64(i64 40)\n"
+        emit_raw "  %tl_raw = call ptr @__adamas_malloc64(i64 40)\n"
         emit_raw "  store i64 9223372036854775807, ptr %tl_raw, align 8\n"
         emit_raw "  %tl_obj = getelementptr i8, ptr %tl_raw, i64 8\n"
         emit_raw "  call void @llvm.memset.p0.i64(ptr %tl_obj, i8 0, i64 32, i1 false)\n"
@@ -9574,7 +9574,7 @@ module Crystal::MIR
         emit_raw "  %len = trunc i64 %len64 to i32\n"
         emit_raw "  %alloc_i32 = add i32 %len, 13\n"
         emit_raw "  %alloc64 = sext i32 %alloc_i32 to i64\n"
-        emit_raw "  %str = call ptr @__crystal_v2_malloc64(i64 %alloc64)\n"
+        emit_raw "  %str = call ptr @__adamas_malloc64(i64 %alloc64)\n"
         emit_raw "  store i32 #{@string_type_id}, ptr %str\n"
         emit_raw "  %bs = getelementptr i8, ptr %str, i32 4\n"
         emit_raw "  store i32 %len, ptr %bs\n"
@@ -9586,7 +9586,7 @@ module Crystal::MIR
         emit_raw "  store i8 0, ptr %nul\n"
         emit_raw "  ret ptr %str\n"
         emit_raw "ret_dot:\n"
-        emit_raw "  %dot = call ptr @__crystal_v2_malloc64(i64 14)\n"
+        emit_raw "  %dot = call ptr @__adamas_malloc64(i64 14)\n"
         emit_raw "  store i32 #{@string_type_id}, ptr %dot\n"
         emit_raw "  %dot_bs = getelementptr i8, ptr %dot, i32 4\n"
         emit_raw "  store i32 1, ptr %dot_bs\n"
@@ -9733,7 +9733,7 @@ module Crystal::MIR
         emit_raw "}\n\n"
         return true
       when "Crystal$CCMIR$CCSet$LCrystal$CCMIR$CCFunctionId$R$Dnew"
-        emit_raw "; #{mangled} — delegate Crystal::MIR::Set(FunctionId).new to ::Set(UInt32).new(nil capacity)\n"
+        emit_raw "; #{mangled} — delegate Adamas::MIR::Set(FunctionId).new to ::Set(UInt32).new(nil capacity)\n"
         emit_raw "define ptr @#{mangled}() {\n"
         emit_raw "entry:\n"
         emit_raw "  %r = call ptr @Set$LUInt32$R$Dnew(ptr null)\n"
@@ -9741,7 +9741,7 @@ module Crystal::MIR
         emit_raw "}\n\n"
         return true
       when "Crystal$CCMIR$CCSet$LCrystal$CCMIR$CCValueId$R$Dnew"
-        emit_raw "; #{mangled} — delegate Crystal::MIR::Set(ValueId).new to ::Set(UInt32).new(nil capacity)\n"
+        emit_raw "; #{mangled} — delegate Adamas::MIR::Set(ValueId).new to ::Set(UInt32).new(nil capacity)\n"
         emit_raw "define ptr @#{mangled}() {\n"
         emit_raw "entry:\n"
         emit_raw "  %r = call ptr @Set$LUInt32$R$Dnew(ptr null)\n"
@@ -9749,7 +9749,7 @@ module Crystal::MIR
         emit_raw "}\n\n"
         return true
       when "Crystal$CCMIR$CCSet$LCrystal$CCMIR$CCBlockId$R$Dnew"
-        emit_raw "; #{mangled} — delegate Crystal::MIR::Set(BlockId).new to ::Set(UInt32).new(nil capacity)\n"
+        emit_raw "; #{mangled} — delegate Adamas::MIR::Set(BlockId).new to ::Set(UInt32).new(nil capacity)\n"
         emit_raw "define ptr @#{mangled}() {\n"
         emit_raw "entry:\n"
         emit_raw "  %r = call ptr @Set$LUInt32$R$Dnew(ptr null)\n"
@@ -9757,7 +9757,7 @@ module Crystal::MIR
         emit_raw "}\n\n"
         return true
       when "Crystal$CCMIR$CCSet$LCrystal$CCMIR$CCFunctionId$R$Hclear"
-        emit_raw "; #{mangled} — delegate Crystal::MIR::Set(FunctionId)#clear to ::Set(UInt32)\n"
+        emit_raw "; #{mangled} — delegate Adamas::MIR::Set(FunctionId)#clear to ::Set(UInt32)\n"
         emit_raw "define ptr @#{mangled}(ptr %self) {\n"
         emit_raw "entry:\n"
         emit_raw "  %r = call ptr @Set$LUInt32$R$Hclear(ptr %self)\n"
@@ -9765,7 +9765,7 @@ module Crystal::MIR
         emit_raw "}\n\n"
         return true
       when "Crystal$CCMIR$CCSet$LCrystal$CCMIR$CCValueId$R$Hclear"
-        emit_raw "; #{mangled} — delegate Crystal::MIR::Set(ValueId)#clear to ::Set(UInt32)\n"
+        emit_raw "; #{mangled} — delegate Adamas::MIR::Set(ValueId)#clear to ::Set(UInt32)\n"
         emit_raw "define ptr @#{mangled}(ptr %self) {\n"
         emit_raw "entry:\n"
         emit_raw "  %r = call ptr @Set$LUInt32$R$Hclear(ptr %self)\n"
@@ -9773,7 +9773,7 @@ module Crystal::MIR
         emit_raw "}\n\n"
         return true
       when "Crystal$CCMIR$CCSet$LCrystal$CCMIR$CCBlockId$R$Hincludes$Q$$UInt32"
-        emit_raw "; #{mangled} — delegate Crystal::MIR::Set(BlockId)#includes? to ::Set(UInt32)\n"
+        emit_raw "; #{mangled} — delegate Adamas::MIR::Set(BlockId)#includes? to ::Set(UInt32)\n"
         emit_raw "define i32 @#{mangled}(ptr %self, i32 %value) {\n"
         emit_raw "entry:\n"
         emit_raw "  %r.bool = call i1 @Set$LUInt32$R$Hincludes$Q$$UInt32(ptr %self, i32 %value)\n"
@@ -9782,7 +9782,7 @@ module Crystal::MIR
         emit_raw "}\n\n"
         return true
       when "Crystal$CCMIR$CCSet$LCrystal$CCMIR$CCBlockId$R$Hadd$$UInt32"
-        emit_raw "; #{mangled} — delegate Crystal::MIR::Set(BlockId)#add to ::Set(UInt32)\n"
+        emit_raw "; #{mangled} — delegate Adamas::MIR::Set(BlockId)#add to ::Set(UInt32)\n"
         emit_raw "define i32 @#{mangled}(ptr %self, i32 %value) {\n"
         emit_raw "entry:\n"
         emit_raw "  %ignored = call ptr @Set$LUInt32$R$Hadd$$UInt32(ptr %self, i32 %value)\n"
@@ -9790,7 +9790,7 @@ module Crystal::MIR
         emit_raw "}\n\n"
         return true
       when "Crystal$CCMIR$CCSet$LCrystal$CCMIR$CCBlockId$R$H$SHL$$UInt32"
-        emit_raw "; #{mangled} — delegate Crystal::MIR::Set(BlockId)#<< to ::Set(UInt32)#add\n"
+        emit_raw "; #{mangled} — delegate Adamas::MIR::Set(BlockId)#<< to ::Set(UInt32)#add\n"
         emit_raw "define i32 @#{mangled}(ptr %self, i32 %value) {\n"
         emit_raw "entry:\n"
         emit_raw "  %ignored = call ptr @Set$LUInt32$R$Hadd$$UInt32(ptr %self, i32 %value)\n"
@@ -9801,7 +9801,7 @@ module Crystal::MIR
         target = mangled.sub("Crystal$CCMIR$CCHash$L", "Hash$L")
         return false if target == mangled
         @called_crystal_functions[target] = {"ptr", 1, ["ptr"] of String}
-        emit_raw "; #{mangled} — delegate Crystal::MIR::Hash#clear to ::Hash on the same receiver\n"
+        emit_raw "; #{mangled} — delegate Adamas::MIR::Hash#clear to ::Hash on the same receiver\n"
         emit_raw "define ptr @#{mangled}(ptr %self) {\n"
         emit_raw "entry:\n"
         emit_raw "  %r = call ptr @#{target}(ptr %self)\n"
@@ -9809,7 +9809,7 @@ module Crystal::MIR
         emit_raw "}\n\n"
         return true
       when "Crystal$CCMIR$CCHash$LUInt32$C$_Crystal$CCMIR$CCFunction$R$Hhas_key$Q$$UInt32"
-        # V2 mangles `Hash(K,V)` from the MIR namespace as `Crystal::MIR::Hash`; the receiver
+        # V2 mangles `Hash(K,V)` from the MIR namespace as `Adamas::MIR::Hash`; the receiver
         # is the same GC `::Hash` object — not a wrapper whose first word is an inner pointer.
         emit_raw "; #{mangled} — delegate has_key? to monomorphized ::Hash#[]? on self\n"
         emit_raw "define i32 @#{mangled}(ptr %self, i32 %key) {\n"
@@ -9924,7 +9924,7 @@ module Crystal::MIR
         emit_raw "do_alloc:\n"
         emit_raw "  %alloc_i32 = add i32 %bytesize, 21\n"  # 8 (sentinel) + 4+4+4 (header) + bytesize + 1 (null)
         emit_raw "  %alloc = zext i32 %alloc_i32 to i64\n"
-        emit_raw "  %raw = call ptr @__crystal_v2_malloc64(i64 %alloc)\n"
+        emit_raw "  %raw = call ptr @__adamas_malloc64(i64 %alloc)\n"
         emit_raw "  store i64 9223372036854775807, ptr %raw, align 8\n"  # INT64_MAX sentinel at raw
         emit_raw "  %str = getelementptr i8, ptr %raw, i64 8\n"  # object starts at raw+8
         emit_raw "  store i32 #{@string_type_id}, ptr %str\n"
@@ -10325,18 +10325,18 @@ module Crystal::MIR
         # Get filename C string: Crystal String data starts at offset 12
         emit_raw "  %cstr = getelementptr i8, ptr %p0, i32 12\n"
         # Get open flags from mode string
-        emit_raw "  %flags = call i32 @__crystal_v2_mode_to_open_flags(ptr %p1)\n"
+        emit_raw "  %flags = call i32 @__adamas_mode_to_open_flags(ptr %p1)\n"
         # Call POSIX open(path, flags, 0666)
         emit_raw "  %fd = call i32 (ptr, i32, ...) @open(ptr %cstr, i32 %flags, i32 438)\n"
         emit_raw "  %fd_neg = icmp slt i32 %fd, 0\n"
         emit_raw "  br i1 %fd_neg, label %error, label %success\n"
         emit_raw "error:\n"
         emit_raw "  call void @perror(ptr @.str.dbg_open_label)\n"
-        emit_raw "  call void @__crystal_v2_raise_msg(ptr @.str.file_open_error)\n"
+        emit_raw "  call void @__adamas_raise_msg(ptr @.str.file_open_error)\n"
         emit_raw "  unreachable\n"
         emit_raw "success:\n"
         # Allocate tuple {i32 fd, i1 close_on_finalize}
-        emit_raw "  %tup = call ptr @__crystal_v2_malloc64(i64 8)\n"
+        emit_raw "  %tup = call ptr @__adamas_malloc64(i64 8)\n"
         emit_raw "  store i32 %fd, ptr %tup\n"
         emit_raw "  %cof_ptr = getelementptr i8, ptr %tup, i32 4\n"
         emit_raw "  store i1 1, ptr %cof_ptr\n"
@@ -10347,7 +10347,7 @@ module Crystal::MIR
 
       # File.open(String, String, &block) — the Crystal body chains through open_internal →
       # new_internal → File.new which V2 currently fails to lower.  Override with a direct
-      # implementation: open via __crystal_v2_file_open, create an IO::FileDescriptor object,
+      # implementation: open via __adamas_file_open, create an IO::FileDescriptor object,
       # patch the type_id to File's type_id, call the block proc, then close.
       if mangled == "File$Dopen$$String_String_block"
         file_type = @module.type_registry.get_by_name("File")
@@ -10358,7 +10358,7 @@ module Crystal::MIR
         emit_raw "define #{return_type} @#{mangled}(ptr %p0, ptr %p1, ptr %p2) {\n"
         emit_raw "entry:\n"
         # Open file via low-level helper (handles C-string extraction + mode→flags)
-        emit_raw "  %fdtup = call ptr @__crystal_v2_file_open(ptr %p0, ptr %p1)\n"
+        emit_raw "  %fdtup = call ptr @__adamas_file_open(ptr %p0, ptr %p1)\n"
         emit_raw "  %fd = load i32, ptr %fdtup\n"
         # Create a fully-initialised IO::FileDescriptor object
         emit_raw "  %file = call ptr @IO$CCFileDescriptor$Dnew$$Int32(i32 %fd)\n"
@@ -10441,7 +10441,7 @@ module Crystal::MIR
         emit_raw "  br i1 %is_err, label %raise_err, label %ret_ok\n"
         emit_raw "raise_err:\n"
         emit_raw "  call void @perror(ptr @.str.dbg_write_label)\n"
-        emit_raw "  call void @__crystal_v2_raise_msg(ptr @.str.file_write_error)\n"
+        emit_raw "  call void @__adamas_raise_msg(ptr @.str.file_write_error)\n"
         emit_raw "  unreachable\n"
         emit_raw "ret_ok:\n"
         emit_raw "  %result = trunc i64 %nbytes to i32\n"
@@ -10461,7 +10461,7 @@ module Crystal::MIR
         emit_raw "entry:\n"
         emit_raw "  %fd = call i32 @IO$CCFileDescriptor$Hfd(ptr %self)\n"
         # Allocate buffer (4096 bytes) and a 1-byte read buffer
-        emit_raw "  %buf = call ptr @__crystal_v2_malloc64(i64 4096)\n"
+        emit_raw "  %buf = call ptr @__adamas_malloc64(i64 4096)\n"
         emit_raw "  %byte_buf = alloca i8\n"
         emit_raw "  %delim_byte = trunc i32 %delimiter to i8\n"
         emit_raw "  br label %loop\n"
@@ -10889,7 +10889,7 @@ module Crystal::MIR
       # ExprId#invalid? — null-safe guard for V2 struct-as-pointer ABI.
       # ExprId is a wrapper struct { @index : Int32 }. V2 stores it as a heap pointer.
       # Null ExprId pointer (uninitialized field) → treat as invalid (return true).
-      if mangled == "CrystalV2$CCCompiler$CCFrontend$CCExprId$Hinvalid$Q"
+      if mangled == "Adamas$CCCompiler$CCFrontend$CCExprId$Hinvalid$Q"
         emit_raw "; #{mangled} — null-safe ExprId#invalid? override\n"
         emit_raw "define i1 @#{mangled}(ptr %self) {\n"
         emit_raw "entry:\n"
@@ -11465,13 +11465,13 @@ module Crystal::MIR
         emit_raw "}\n\n"
         return true
       elsif mangled.starts_with?("String$Hgsub$$Regex")
-        # String#gsub(Regex, ...) — redirect to __crystal_v2_string_gsub_regex
+        # String#gsub(Regex, ...) — redirect to __adamas_string_gsub_regex
         # The Crystal frontend may resolve gsub(Regex, String) to a Hash|NamedTuple
         # overload. We override the entire function to use our PCRE2-based runtime.
         # Extract the replacement string from the union payload (field 1).
         hash_param_type = func.params.size >= 3 ? @type_mapper.llvm_type(func.params[2].type) : "ptr"
         if hash_param_type.includes?(".union")
-          emit_raw "; String#gsub(Regex, ...) — runtime override via __crystal_v2_string_gsub_regex\n"
+          emit_raw "; String#gsub(Regex, ...) — runtime override via __adamas_string_gsub_regex\n"
           emit_raw "define ptr @#{mangled}(ptr %self, ptr %pattern, #{hash_param_type} %hash, i32 %options) {\n"
           emit_raw "entry:\n"
           # Extract replacement string from union payload
@@ -11479,14 +11479,14 @@ module Crystal::MIR
           emit_raw "  store #{hash_param_type} %hash, ptr %hash_ptr\n"
           emit_raw "  %repl_slot = getelementptr #{hash_param_type}, ptr %hash_ptr, i32 0, i32 1\n"
           emit_raw "  %repl = load ptr, ptr %repl_slot\n"
-          emit_raw "  %result = call ptr @__crystal_v2_string_gsub_regex(ptr %self, ptr %pattern, ptr %repl)\n"
+          emit_raw "  %result = call ptr @__adamas_string_gsub_regex(ptr %self, ptr %pattern, ptr %repl)\n"
           emit_raw "  ret ptr %result\n"
           emit_raw "}\n\n"
         else
           emit_raw "; String#gsub(Regex, ...) — runtime override (non-union)\n"
           emit_raw "define ptr @#{mangled}(ptr %self, ptr %pattern, ptr %repl, i32 %options) {\n"
           emit_raw "entry:\n"
-          emit_raw "  %result = call ptr @__crystal_v2_string_gsub_regex(ptr %self, ptr %pattern, ptr %repl)\n"
+          emit_raw "  %result = call ptr @__adamas_string_gsub_regex(ptr %self, ptr %pattern, ptr %repl)\n"
           emit_raw "  ret ptr %result\n"
           emit_raw "}\n\n"
         end
@@ -11494,7 +11494,7 @@ module Crystal::MIR
       elsif mangled.starts_with?("Regex$Hmatch_at_byte_index")
         # Regex#match_at_byte_index — PCRE2 runtime override
         # Replaces self-recursive stub with actual pcre2_match_8 call.
-        # Regex struct layout (from __crystal_v2_regex_new): {code* @0, match_data* @8}
+        # Regex struct layout (from __adamas_regex_new): {code* @0, match_data* @8}
         # MatchData layout: {type_id @0, group_size @8, string @16, ovector @40}
         ret_type = @type_mapper.llvm_type(func.return_type)
         emit_raw "; Regex#match_at_byte_index — PCRE2 runtime override\n"
@@ -11525,10 +11525,10 @@ module Crystal::MIR
         emit_raw "  %ov_entries = mul i32 %ovcount, 2\n"
         emit_raw "  %ov_bytes_i32 = mul i32 %ov_entries, 8\n"
         emit_raw "  %ov_bytes = sext i32 %ov_bytes_i32 to i64\n"
-        emit_raw "  %ov_copy = call ptr @__crystal_v2_malloc64(i64 %ov_bytes)\n"
+        emit_raw "  %ov_copy = call ptr @__adamas_malloc64(i64 %ov_bytes)\n"
         emit_raw "  call void @llvm.memcpy.p0.p0.i64(ptr %ov_copy, ptr %ov, i64 %ov_bytes, i1 false)\n"
         # Allocate MatchData (48 bytes)
-        emit_raw "  %md_obj = call ptr @__crystal_v2_malloc64(i64 48)\n"
+        emit_raw "  %md_obj = call ptr @__adamas_malloc64(i64 48)\n"
         emit_raw "  store i32 0, ptr %md_obj\n"
         emit_raw "  %gs_ptr = getelementptr i8, ptr %md_obj, i32 8\n"
         emit_raw "  store i32 %group_size, ptr %gs_ptr\n"
@@ -11997,7 +11997,7 @@ module Crystal::MIR
       emit_raw "  %next_i = add i32 %i, 1\n"
       emit_raw "  br label %loop\n"
       emit_raw "found:\n"
-      emit_raw "  %tuple.raw = call ptr @__crystal_v2_malloc64(i64 24)\n"
+      emit_raw "  %tuple.raw = call ptr @__adamas_malloc64(i64 24)\n"
       emit_raw "  store i64 1, ptr %tuple.raw, align 8\n"
       emit_raw "  %tuple = getelementptr i8, ptr %tuple.raw, i64 8\n"
       emit_raw "  %tuple.entry = getelementptr i8, ptr %tuple, i32 0\n"
@@ -12262,8 +12262,8 @@ module Crystal::MIR
 
     private def compiler_i32_wrapper_key_hash?(mangled : String) : Bool
       suffixes = {
-        "$Hkey_hash$$CrystalV2$CCCompiler$CCFrontend$CCExprId",
-        "$Hkey_hash$$CrystalV2$CCCompiler$CCSemantic$CCTypeId",
+        "$Hkey_hash$$Adamas$CCCompiler$CCFrontend$CCExprId",
+        "$Hkey_hash$$Adamas$CCCompiler$CCSemantic$CCTypeId",
       }
 
       idx = 0
@@ -12336,7 +12336,7 @@ module Crystal::MIR
     private def emit_inline_zeroed_hasher_allocation(result_name : String) : Nil
       payload_size = @module.type_registry.get_by_name("Crystal::Hasher").try(&.size.to_i64) || 16_i64
       alloc_size = payload_size + 8_i64
-      emit_raw "  %#{result_name}.raw = call ptr @__crystal_v2_malloc64(i64 #{alloc_size})\n"
+      emit_raw "  %#{result_name}.raw = call ptr @__adamas_malloc64(i64 #{alloc_size})\n"
       emit_raw "  store i64 9223372036854775807, ptr %#{result_name}.raw, align 8\n"
       emit_raw "  %#{result_name} = getelementptr i8, ptr %#{result_name}.raw, i64 8\n"
       emit_raw "  call void @llvm.memset.p0.i64(ptr %#{result_name}, i8 0, i64 #{payload_size}, i1 false)\n"
@@ -13061,7 +13061,7 @@ module Crystal::MIR
       emit_dwarf_local_debug_declares
       emit_dwarf_local_entry_debug_stores
       if @current_slab_frame
-        emit_raw "  call void @__crystal_v2_slab_frame_push()\n"
+        emit_raw "  call void @__adamas_slab_frame_push()\n"
       end
 
       # TSan: emit function entry in first block
@@ -15951,7 +15951,7 @@ module Crystal::MIR
     private def parallel_llvm_workers : Int32
       # V2 BOOTSTRAP: ENV access crashes V2-compiled binaries.
       # Use BootstrapEnv for safe access.
-      if val = ::CrystalV2::Compiler::BootstrapEnv.get?("CRYSTAL_V2_LLVM_WORKERS")
+      if val = ::Adamas::Compiler::BootstrapEnv.get?("CRYSTAL_V2_LLVM_WORKERS")
         return val.to_i? || 1
       end
       # Default: use available cores (capped at 8)
@@ -15963,7 +15963,7 @@ module Crystal::MIR
 
     # Sequential function emission (original path)
     private def emit_functions_sequential(functions : ::Array(Function))
-      snapshot_every = ::CrystalV2::Compiler::BootstrapEnv.get?("CRYSTAL_V2_LLVM_MEM_SNAPSHOT_EVERY").try(&.to_i?)
+      snapshot_every = ::Adamas::Compiler::BootstrapEnv.get?("CRYSTAL_V2_LLVM_MEM_SNAPSHOT_EVERY").try(&.to_i?)
       functions.each_with_index do |func, idx|
         if @progress && (idx % 100 == 0 || idx == functions.size - 1)
           STDERR.puts "    Emitting function #{idx + 1}/#{functions.size}: #{func.name}"
@@ -16034,20 +16034,20 @@ module Crystal::MIR
         end
         if structural
           type_ref_struct, mangle_struct = @type_mapper.debug_structural_bytes
-          io << " emitted_struct=" << @emitted_functions.crystal_v2_debug_structural_bytes
-          io << " ret_struct=" << @emitted_function_return_types.crystal_v2_debug_structural_bytes
-          io << " called_struct=" << @called_crystal_functions.crystal_v2_debug_structural_bytes
-          io << " undef_struct=" << @undefined_externs.crystal_v2_debug_structural_bytes
-          io << " global_map_struct=" << @global_name_mapping.crystal_v2_debug_structural_bytes
-          io << " global_type_struct=" << @global_declared_types.crystal_v2_debug_structural_bytes
-          io << " func_name_struct=" << @func_by_name.crystal_v2_debug_structural_bytes
-          io << " func_suffix_struct=" << @func_by_suffix.crystal_v2_debug_structural_bytes
-          io << " func_id_struct=" << @func_by_id.crystal_v2_debug_structural_bytes
-          io << " alloc_elem_struct=" << @alloc_element_types.crystal_v2_debug_structural_bytes
-          io << " arr_info_struct=" << @array_info.crystal_v2_debug_structural_bytes
+          io << " emitted_struct=" << @emitted_functions.adamas_debug_structural_bytes
+          io << " ret_struct=" << @emitted_function_return_types.adamas_debug_structural_bytes
+          io << " called_struct=" << @called_crystal_functions.adamas_debug_structural_bytes
+          io << " undef_struct=" << @undefined_externs.adamas_debug_structural_bytes
+          io << " global_map_struct=" << @global_name_mapping.adamas_debug_structural_bytes
+          io << " global_type_struct=" << @global_declared_types.adamas_debug_structural_bytes
+          io << " func_name_struct=" << @func_by_name.adamas_debug_structural_bytes
+          io << " func_suffix_struct=" << @func_by_suffix.adamas_debug_structural_bytes
+          io << " func_id_struct=" << @func_by_id.adamas_debug_structural_bytes
+          io << " alloc_elem_struct=" << @alloc_element_types.adamas_debug_structural_bytes
+          io << " arr_info_struct=" << @array_info.adamas_debug_structural_bytes
           io << " str_const_struct=" << string_constant_bytes
-          io << " str_alias_struct=" << @string_aliases.crystal_v2_debug_structural_bytes
-          io << " singleton_struct=" << @module_singleton_globals.crystal_v2_debug_structural_bytes
+          io << " str_alias_struct=" << @string_aliases.adamas_debug_structural_bytes
+          io << " singleton_struct=" << @module_singleton_globals.adamas_debug_structural_bytes
           io << " type_ref_struct=" << type_ref_struct
           io << " mangle_struct=" << mangle_struct
         end
@@ -16142,83 +16142,83 @@ module Crystal::MIR
 
     private def current_function_state_structural_bytes : {Int64, Int64, Int64, Int64, Int64, Int64}
       local_state_struct =
-        @value_names.crystal_v2_debug_structural_bytes +
-        @block_names.crystal_v2_debug_structural_bytes +
-        @emitted_value_types.crystal_v2_debug_structural_bytes +
-        @emitted_value_names.crystal_v2_debug_structural_bytes
+        @value_names.adamas_debug_structural_bytes +
+        @block_names.adamas_debug_structural_bytes +
+        @emitted_value_types.adamas_debug_structural_bytes +
+        @emitted_value_names.adamas_debug_structural_bytes
 
       value_state_struct =
-        @constant_values.crystal_v2_debug_structural_bytes +
-        @value_types.crystal_v2_debug_structural_bytes +
-        @void_values.crystal_v2_debug_structural_bytes +
-        @array_info.crystal_v2_debug_structural_bytes +
-        @alloc_types.crystal_v2_debug_structural_bytes +
-        @alloc_element_types.crystal_v2_debug_structural_bytes +
-        @inttoptr_value_ids.crystal_v2_debug_structural_bytes +
-        @ptr_passthrough.crystal_v2_debug_structural_bytes +
-        @zext_value_names.crystal_v2_debug_structural_bytes
+        @constant_values.adamas_debug_structural_bytes +
+        @value_types.adamas_debug_structural_bytes +
+        @void_values.adamas_debug_structural_bytes +
+        @array_info.adamas_debug_structural_bytes +
+        @alloc_types.adamas_debug_structural_bytes +
+        @alloc_element_types.adamas_debug_structural_bytes +
+        @inttoptr_value_ids.adamas_debug_structural_bytes +
+        @ptr_passthrough.adamas_debug_structural_bytes +
+        @zext_value_names.adamas_debug_structural_bytes
 
       addressable_struct =
-        @emitted_allocas.crystal_v2_debug_structural_bytes +
-        @addressable_allocas.crystal_v2_debug_structural_bytes +
-        @addressable_alloca_initialized.crystal_v2_debug_structural_bytes +
-        @pending_allocas.crystal_v2_debug_structural_bytes
+        @emitted_allocas.adamas_debug_structural_bytes +
+        @addressable_allocas.adamas_debug_structural_bytes +
+        @addressable_alloca_initialized.adamas_debug_structural_bytes +
+        @pending_allocas.adamas_debug_structural_bytes
 
       cross_block_struct =
-        @value_def_block.crystal_v2_debug_structural_bytes +
-        @cross_block_values.crystal_v2_debug_structural_bytes +
-        @cross_block_slots.crystal_v2_debug_structural_bytes +
-        @cross_block_slot_types.crystal_v2_debug_structural_bytes +
-        @cross_block_slot_type_refs.crystal_v2_debug_structural_bytes +
-        @current_func_blocks.crystal_v2_debug_structural_bytes
+        @value_def_block.adamas_debug_structural_bytes +
+        @cross_block_values.adamas_debug_structural_bytes +
+        @cross_block_slots.adamas_debug_structural_bytes +
+        @cross_block_slot_types.adamas_debug_structural_bytes +
+        @cross_block_slot_type_refs.adamas_debug_structural_bytes +
+        @current_func_blocks.adamas_debug_structural_bytes
 
       phi_struct =
-        @phi_slot_redirect.crystal_v2_debug_structural_bytes +
-        @phi_zext_conversions.crystal_v2_debug_structural_bytes +
-        @phi_predecessor_loads.crystal_v2_debug_structural_bytes +
-        @phi_predecessor_conversions.crystal_v2_debug_structural_bytes +
-        @phi_int_to_ptr.crystal_v2_debug_structural_bytes +
-        @phi_predecessor_union_wraps.crystal_v2_debug_structural_bytes +
-        @phi_union_to_ptr_extracts.crystal_v2_debug_structural_bytes +
-        @phi_union_to_union_converts.crystal_v2_debug_structural_bytes +
-        @phi_union_payload_extracts.crystal_v2_debug_structural_bytes +
-        @phi_nil_incoming_blocks.crystal_v2_debug_structural_bytes +
-        @deferred_phi_stores.crystal_v2_debug_structural_bytes +
-        @deferred_phi_store_op_ids.crystal_v2_debug_structural_bytes +
-        @deferred_phi_store_op_values.crystal_v2_debug_structural_bytes +
-        @deferred_phi_store_op_slots.crystal_v2_debug_structural_bytes
+        @phi_slot_redirect.adamas_debug_structural_bytes +
+        @phi_zext_conversions.adamas_debug_structural_bytes +
+        @phi_predecessor_loads.adamas_debug_structural_bytes +
+        @phi_predecessor_conversions.adamas_debug_structural_bytes +
+        @phi_int_to_ptr.adamas_debug_structural_bytes +
+        @phi_predecessor_union_wraps.adamas_debug_structural_bytes +
+        @phi_union_to_ptr_extracts.adamas_debug_structural_bytes +
+        @phi_union_to_union_converts.adamas_debug_structural_bytes +
+        @phi_union_payload_extracts.adamas_debug_structural_bytes +
+        @phi_nil_incoming_blocks.adamas_debug_structural_bytes +
+        @deferred_phi_stores.adamas_debug_structural_bytes +
+        @deferred_phi_store_op_ids.adamas_debug_structural_bytes +
+        @deferred_phi_store_op_values.adamas_debug_structural_bytes +
+        @deferred_phi_store_op_slots.adamas_debug_structural_bytes
 
       @phi_union_to_union_converts.each_value do |arr|
-        phi_struct += arr.crystal_v2_debug_structural_bytes
+        phi_struct += arr.adamas_debug_structural_bytes
       end
       @phi_nil_incoming_blocks.each_value do |set|
-        phi_struct += set.crystal_v2_debug_structural_bytes
+        phi_struct += set.adamas_debug_structural_bytes
       end
 
-      func_array_struct = @current_func_params.crystal_v2_debug_structural_bytes
+      func_array_struct = @current_func_params.adamas_debug_structural_bytes
 
       {local_state_struct, value_state_struct, addressable_struct, cross_block_struct, phi_struct, func_array_struct}
     end
 
     private def current_module_structural_bytes : {Int64, Int64, Int64, Int64, Int64, Int64}
       module_struct =
-        @module.functions.crystal_v2_debug_structural_bytes +
-        @module.globals.crystal_v2_debug_structural_bytes +
-        @module.symbol_names.crystal_v2_debug_structural_bytes +
-        @module.extern_globals.crystal_v2_debug_structural_bytes +
-        @module.union_descriptors.crystal_v2_debug_structural_bytes +
-        @module.module_type_refs.crystal_v2_debug_structural_bytes
+        @module.functions.adamas_debug_structural_bytes +
+        @module.globals.adamas_debug_structural_bytes +
+        @module.symbol_names.adamas_debug_structural_bytes +
+        @module.extern_globals.adamas_debug_structural_bytes +
+        @module.union_descriptors.adamas_debug_structural_bytes +
+        @module.module_type_refs.adamas_debug_structural_bytes
 
-      type_struct = @module.type_registry.types.crystal_v2_debug_structural_bytes
+      type_struct = @module.type_registry.types.adamas_debug_structural_bytes
       @module.type_registry.types.each do |type|
         if fields = type.fields
-          type_struct += fields.crystal_v2_debug_structural_bytes
+          type_struct += fields.adamas_debug_structural_bytes
         end
         if variants = type.variants
-          type_struct += variants.crystal_v2_debug_structural_bytes
+          type_struct += variants.adamas_debug_structural_bytes
         end
         if element_types = type.element_types
-          type_struct += element_types.crystal_v2_debug_structural_bytes
+          type_struct += element_types.adamas_debug_structural_bytes
         end
       end
 
@@ -16228,14 +16228,14 @@ module Crystal::MIR
       predecessor_struct = 0_i64
 
       @module.functions.each do |func|
-        function_struct += func.params.crystal_v2_debug_structural_bytes
-        function_struct += func.blocks.crystal_v2_debug_structural_bytes
-        function_struct += sizeof(Crystal::MIR::Function).to_i64
+        function_struct += func.params.adamas_debug_structural_bytes
+        function_struct += func.blocks.adamas_debug_structural_bytes
+        function_struct += sizeof(Adamas::MIR::Function).to_i64
 
         func.blocks.each do |block|
-          block_struct += sizeof(Crystal::MIR::BasicBlock).to_i64
-          instr_struct += block.instructions.crystal_v2_debug_structural_bytes
-          predecessor_struct += block.predecessors.crystal_v2_debug_structural_bytes
+          block_struct += sizeof(Adamas::MIR::BasicBlock).to_i64
+          instr_struct += block.instructions.adamas_debug_structural_bytes
+          predecessor_struct += block.predecessors.adamas_debug_structural_bytes
         end
       end
 
@@ -16312,7 +16312,7 @@ module Crystal::MIR
       total = functions.size
 
       # Create temp directory for worker outputs
-      tmp_dir = File.tempname("crystal_v2_llvm_par", "")
+      tmp_dir = File.tempname("adamas_llvm_par", "")
       Dir.mkdir_p(tmp_dir)
 
       # Save the current output position — workers will write to temp files
@@ -16719,18 +16719,18 @@ module Crystal::MIR
         end
       when MemoryStrategy::Slab
         size_class = compute_size_class(inst.size)
-        emit "#{name} = call ptr @__crystal_v2_slab_alloc(i32 #{size_class})"
+        emit "#{name} = call ptr @__adamas_slab_alloc(i32 #{size_class})"
       when MemoryStrategy::ARC, MemoryStrategy::AtomicARC
         # ARC: allocate extra 8 bytes for RC, initialize to 1
         total_size = inst.size + 8
-        emit "%raw#{inst.id} = call ptr @__crystal_v2_malloc64(i64 #{total_size})"
+        emit "%raw#{inst.id} = call ptr @__adamas_malloc64(i64 #{total_size})"
         emit "store i64 1, ptr %raw#{inst.id}, align 8"
         emit "#{name} = getelementptr i8, ptr %raw#{inst.id}, i64 8"
       when MemoryStrategy::GC
         # GC: allocate extra 8 bytes for RC header (sentinel value prevents free).
         # This uniform header layout makes rc_inc/rc_dec safe on ANY heap pointer.
         gc_total = inst.size + 8
-        emit "%raw#{inst.id} = call ptr @__crystal_v2_malloc64(i64 #{gc_total})"
+        emit "%raw#{inst.id} = call ptr @__adamas_malloc64(i64 #{gc_total})"
         emit "store i64 9223372036854775807, ptr %raw#{inst.id}, align 8"  # INT64_MAX sentinel
         emit "#{name} = getelementptr i8, ptr %raw#{inst.id}, i64 8"
       end
@@ -16756,7 +16756,7 @@ module Crystal::MIR
       ptr = value_ref(inst.ptr)
       case inst.strategy
       when MemoryStrategy::Slab
-        emit "call void @__crystal_v2_slab_free(ptr #{ptr}, i32 0)"
+        emit "call void @__adamas_slab_free(ptr #{ptr}, i32 0)"
       else
         emit "call void @free(ptr #{ptr})"
       end
@@ -16772,9 +16772,9 @@ module Crystal::MIR
       end
       ptr = value_ref(inst.ptr)
       if inst.atomic
-        emit "call void @__crystal_v2_rc_inc_atomic(ptr #{ptr})"
+        emit "call void @__adamas_rc_inc_atomic(ptr #{ptr})"
       else
-        emit "call void @__crystal_v2_rc_inc(ptr #{ptr})"
+        emit "call void @__adamas_rc_inc(ptr #{ptr})"
       end
     end
 
@@ -16790,11 +16790,11 @@ module Crystal::MIR
       # Use the universal destructor dispatch function — it reads the object's
       # type_id and calls the appropriate per-type destructor (which rc_dec's
       # all reference-typed fields for cascading cleanup).
-      destructor = @dtor_type_ids.empty? ? "null" : "@__crystal_v2_dtor_dispatch"
+      destructor = @dtor_type_ids.empty? ? "null" : "@__adamas_dtor_dispatch"
       if inst.atomic
-        emit "call void @__crystal_v2_rc_dec_atomic(ptr #{ptr}, ptr #{destructor})"
+        emit "call void @__adamas_rc_dec_atomic(ptr #{ptr}, ptr #{destructor})"
       else
-        emit "call void @__crystal_v2_rc_dec(ptr #{ptr}, ptr #{destructor})"
+        emit "call void @__adamas_rc_dec(ptr #{ptr}, ptr #{destructor})"
       end
     end
 
@@ -17017,7 +17017,7 @@ module Crystal::MIR
                   source_ptr = tmp
                 end
                 copy = "%r#{inst.id}.tuple_slot_copy"
-                emit "#{copy} = call ptr @__crystal_v2_malloc64(i64 #{aggregate_size})"
+                emit "#{copy} = call ptr @__adamas_malloc64(i64 #{aggregate_size})"
                 emit "call void @llvm.memcpy.p0.p0.i64(ptr #{copy}, ptr #{source_ptr}, i64 #{aggregate_size}, i1 false)"
                 emit "store ptr #{copy}, ptr #{ptr}"
               end
@@ -19796,7 +19796,7 @@ module Crystal::MIR
                     end
       raw_callee_name = callee_func.try(&.name)
 
-      # Crystal::MIR::Array(T) is runtime-identical to top-level ::Array(T).
+      # Adamas::MIR::Array(T) is runtime-identical to top-level ::Array(T).
       # If self-host resolves calls through the MIR namespace alias, use the
       # canonical ::Array specialization immediately so call-site ABI follows
       # the real function signature instead of stale alias metadata.
@@ -19829,7 +19829,7 @@ module Crystal::MIR
           self_arg = value_ref(inst.args[0])
           case elem_type
           when "Int32", "UInt32"
-            emit "#{name} = call i32 @__crystal_v2_array_sum_int32(ptr #{self_arg})"
+            emit "#{name} = call i32 @__adamas_array_sum_int32(ptr #{self_arg})"
             @value_types[inst.id] = TypeRef::INT32
             return
           end
@@ -19880,9 +19880,9 @@ module Crystal::MIR
             # Raw int encoded as ptr — ptrtoint first
             int_name = "%npt_int.#{inst.id}"
             emit "#{int_name} = ptrtoint ptr #{self_val} to i32"
-            emit "#{name} = call i32 @__crystal_v2_next_power_of_two_i32(i32 #{int_name})"
+            emit "#{name} = call i32 @__adamas_next_power_of_two_i32(i32 #{int_name})"
           else
-            emit "#{name} = call i32 @__crystal_v2_next_power_of_two_i32(i32 #{self_val})"
+            emit "#{name} = call i32 @__adamas_next_power_of_two_i32(i32 #{self_val})"
           end
           @value_types[inst.id] = TypeRef::INT32
           return
@@ -19898,9 +19898,9 @@ module Crystal::MIR
           if self_type == "ptr"
             int_name = "%lzc_int.#{inst.id}"
             emit "#{int_name} = ptrtoint ptr #{self_val} to i32"
-            emit "#{name} = call i32 @__crystal_v2_leading_zeros_count_i32(i32 #{int_name})"
+            emit "#{name} = call i32 @__adamas_leading_zeros_count_i32(i32 #{int_name})"
           else
-            emit "#{name} = call i32 @__crystal_v2_leading_zeros_count_i32(i32 #{self_val})"
+            emit "#{name} = call i32 @__adamas_leading_zeros_count_i32(i32 #{self_val})"
           end
           @value_types[inst.id] = TypeRef::INT32
           return
@@ -20087,7 +20087,7 @@ module Crystal::MIR
                         end
           # Call helper: returns i32 (-1 = not found, else byte index)
           idx_name = "%str_idx.#{inst.id}"
-          emit "#{idx_name} = call i32 @__crystal_v2_string_index_string(ptr #{self_val}, ptr #{search_val}, i32 #{offset_val})"
+          emit "#{idx_name} = call i32 @__adamas_string_index_string(ptr #{self_val}, ptr #{search_val}, i32 #{offset_val})"
           # Build Nil|Int32 union: {i32 type_id, [8 x i8] payload}
           # type_id=0 for Nil, type_id=1 for Int32 (local convention)
           cmp_name = "%str_idx_nil.#{inst.id}"
@@ -20425,7 +20425,7 @@ module Crystal::MIR
                           c = @cond_counter
                           @cond_counter += 1
                           type_id = param.type.id.to_i32
-                          emit "%empty_arr.#{c} = call ptr @__crystal_v2_malloc64(i64 24)"
+                          emit "%empty_arr.#{c} = call ptr @__adamas_malloc64(i64 24)"
                           emit "%empty_arr.#{c}.tid = getelementptr i8, ptr %empty_arr.#{c}, i32 0"
                           emit "store i32 #{type_id}, ptr %empty_arr.#{c}.tid"
                           emit "%empty_arr.#{c}.sz = getelementptr i8, ptr %empty_arr.#{c}, i32 4"
@@ -20594,7 +20594,7 @@ module Crystal::MIR
                    val = value_ref(a)
                    c = @cond_counter
                    @cond_counter += 1
-                   emit "%bool_to_str.#{c} = call ptr @__crystal_v2_bool_to_string(i1 #{val})"
+                   emit "%bool_to_str.#{c} = call ptr @__adamas_bool_to_string(i1 #{val})"
                    "ptr %bool_to_str.#{c}"
                 elsif expected_llvm_type == "ptr" && (actual_llvm_type.starts_with?('i') || actual_llvm_type == "ptr")
                    # Scalar-to-ptr call coercion.
@@ -21319,7 +21319,7 @@ module Crystal::MIR
 
       # --- Null function pointer guard (debug: catch PC=0 crashes) ---
       # Uses a single call (no branching) to avoid splitting blocks and breaking PHI nodes
-      emit "call void @__crystal_v2_null_fn_guard(ptr #{callee})"
+      emit "call void @__adamas_null_fn_guard(ptr #{callee})"
       # --- End null function pointer guard ---
 
       if return_type == "void"
@@ -21365,9 +21365,9 @@ module Crystal::MIR
     end
 
     private def emit_extern_call(inst : ExternCall, name : String)
-      # Intercept __crystal_v2_select_ptr(is_a_bool, obj) → select i1, ptr, ptr null
+      # Intercept __adamas_select_ptr(is_a_bool, obj) → select i1, ptr, ptr null
       # Used by as?() implementation: returns obj if type matches, null if not.
-      if inst.extern_name == "__crystal_v2_select_ptr" && inst.args.size == 2
+      if inst.extern_name == "__adamas_select_ptr" && inst.args.size == 2
         cond_val = value_ref(inst.args[0])
         obj_val = value_ref(inst.args[1])
         cond_type = lookup_value_llvm_type(inst.args[0])
@@ -22058,8 +22058,8 @@ module Crystal::MIR
         "execle"    => ["ptr", "ptr"],
         "execlp"    => ["ptr", "ptr"],
         # crystal runtime helpers
-        "__crystal_v2_ptr_copy" => ["ptr", "ptr", "i32", "i32"],
-        "__crystal_v2_ptr_move" => ["ptr", "ptr", "i32", "i32"],
+        "__adamas_ptr_copy" => ["ptr", "ptr", "i32", "i32"],
+        "__adamas_ptr_move" => ["ptr", "ptr", "i32", "i32"],
       } of String => Array(String)
       fixed_sig = varargs_signatures[mangled_extern_name]?
 
@@ -23245,7 +23245,7 @@ module Crystal::MIR
       if inst.strategy == MIR::MemoryStrategy::Stack
         emit "%#{base_name}.ptr = alloca { i32, i32, i32, i32, ptr }, align 8"
       else
-        emit "%#{base_name}.ptr = call ptr @__crystal_v2_malloc64(i64 24)"
+        emit "%#{base_name}.ptr = call ptr @__adamas_malloc64(i64 24)"
       end
 
       # Store type_id at offset 0
@@ -23266,7 +23266,7 @@ module Crystal::MIR
 
       # Heap-allocate buffer (capacity * elem_size bytes, zero-initialized via calloc)
       buffer_bytes = capacity * elem_byte_size
-      emit "%#{base_name}.buf = call ptr @__crystal_v2_malloc64(i64 #{buffer_bytes})"
+      emit "%#{base_name}.buf = call ptr @__adamas_malloc64(i64 #{buffer_bytes})"
 
       # Store @buffer at offset 16
       emit "%#{base_name}.buf_field_ptr = getelementptr i8, ptr %#{base_name}.ptr, i32 16"
@@ -23526,7 +23526,7 @@ module Crystal::MIR
       # Allocate proper Crystal Array object (24 bytes):
       #   offset 0:  type_id (i32), offset 4: @size (i32), offset 8: @capacity (i32),
       #   offset 12: @offset_to_buffer (i32), offset 16: @buffer (ptr)
-      emit "%#{base_name}.arr = call ptr @__crystal_v2_malloc64(i64 24)"
+      emit "%#{base_name}.arr = call ptr @__adamas_malloc64(i64 24)"
 
       # Set runtime type_id for Array(T) when known.
       emit "store i32 #{array_type_id}, ptr %#{base_name}.arr"
@@ -23546,7 +23546,7 @@ module Crystal::MIR
       # Allocate buffer for elements
       emit "%#{base_name}.elem_bytes = mul i32 #{capacity_val}, #{elem_size}"
       emit "%#{base_name}.buf_size = sext i32 %#{base_name}.elem_bytes to i64"
-      emit "%#{base_name}.buf = call ptr @__crystal_v2_malloc64(i64 %#{base_name}.buf_size)"
+      emit "%#{base_name}.buf = call ptr @__adamas_malloc64(i64 %#{base_name}.buf_size)"
 
       # Set @buffer at offset 16
       emit "%#{base_name}.buf_addr = getelementptr i8, ptr %#{base_name}.arr, i32 16"
@@ -24229,7 +24229,7 @@ module Crystal::MIR
         if elem_mir = @module.type_registry.get(inst.element_type)
           if elem_mir.kind.tuple? && elem_mir.size > 0
             tuple_copy_size = elem_mir.size.to_u64
-            emit "%#{base_name}.tuple_copy = call ptr @__crystal_v2_malloc64(i64 #{tuple_copy_size})"
+            emit "%#{base_name}.tuple_copy = call ptr @__adamas_malloc64(i64 #{tuple_copy_size})"
             emit "call void @llvm.memcpy.p0.p0.i64(ptr %#{base_name}.tuple_copy, ptr #{value}, i64 #{tuple_copy_size}, i1 false)"
             value = "%#{base_name}.tuple_copy"
           end
@@ -24316,7 +24316,7 @@ module Crystal::MIR
       end
     end
 
-    # Lowers HIR StringInterpolation to __crystal_v2_string_* helpers (single alloc for 3+ parts).
+    # Lowers HIR StringInterpolation to __adamas_string_* helpers (single alloc for 3+ parts).
     # This is the bedrock interpolation path for --no-prelude; it does not use String::Builder stubs.
     private def emit_string_interpolation(inst : StringInterpolation, name : String)
       base_name = llvm_local_base_name(name)
@@ -24370,11 +24370,11 @@ module Crystal::MIR
           elem_llvm_type = arr_info[0]  # LLVM type: "i32", "ptr", etc.
           helper = case elem_llvm_type
                    when "i32", "i16", "i8"
-                     "__crystal_v2_array_i32_to_string"
+                     "__adamas_array_i32_to_string"
                    when "ptr"
-                     "__crystal_v2_array_string_to_string"
+                     "__adamas_array_string_to_string"
                    else
-                     "__crystal_v2_array_i32_to_string"  # fallback
+                     "__adamas_array_i32_to_string"  # fallback
                    end
           emit "%#{base_name}.conv#{idx} = call ptr @#{helper}(ptr #{part_ref})"
           string_parts << "%#{base_name}.conv#{idx}"
@@ -24387,68 +24387,68 @@ module Crystal::MIR
         elsif part_type == TypeRef::CHAR
           # Convert char (i32 codepoint) to string
           char_arg = interpolation_i32_arg(part_ref, part_id, base_name, idx, part_type)
-          emit "%#{base_name}.conv#{idx} = call ptr @__crystal_v2_char_to_string(i32 #{char_arg})"
+          emit "%#{base_name}.conv#{idx} = call ptr @__adamas_char_to_string(i32 #{char_arg})"
           string_parts << "%#{base_name}.conv#{idx}"
         elsif part_type == TypeRef::INT32 || part_type == TypeRef::UINT32
           # Convert int32 to string
           int_arg = interpolation_i32_arg(part_ref, part_id, base_name, idx, part_type)
-          emit "%#{base_name}.conv#{idx} = call ptr @__crystal_v2_int_to_string(i32 #{int_arg})"
+          emit "%#{base_name}.conv#{idx} = call ptr @__adamas_int_to_string(i32 #{int_arg})"
           string_parts << "%#{base_name}.conv#{idx}"
         elsif part_type == TypeRef::INT64 || part_type == TypeRef::UINT64
           # Convert int64 to string
-          emit "%#{base_name}.conv#{idx} = call ptr @__crystal_v2_int64_to_string(i64 #{part_ref})"
+          emit "%#{base_name}.conv#{idx} = call ptr @__adamas_int64_to_string(i64 #{part_ref})"
           string_parts << "%#{base_name}.conv#{idx}"
         elsif part_type == TypeRef::INT128 || part_type == TypeRef::UINT128
           # Convert int128 to string (truncate to i64 — sufficient for practical values like unix_ns)
           emit "%#{base_name}.trunc#{idx} = trunc i128 #{part_ref} to i64"
-          emit "%#{base_name}.conv#{idx} = call ptr @__crystal_v2_int64_to_string(i64 %#{base_name}.trunc#{idx})"
+          emit "%#{base_name}.conv#{idx} = call ptr @__adamas_int64_to_string(i64 %#{base_name}.trunc#{idx})"
           string_parts << "%#{base_name}.conv#{idx}"
         elsif part_type == TypeRef::INT8 || part_type == TypeRef::UINT8
           # Extend i8 to i32 then convert to string
           emit "%#{base_name}.ext#{idx} = zext i8 #{part_ref} to i32"
-          emit "%#{base_name}.conv#{idx} = call ptr @__crystal_v2_int_to_string(i32 %#{base_name}.ext#{idx})"
+          emit "%#{base_name}.conv#{idx} = call ptr @__adamas_int_to_string(i32 %#{base_name}.ext#{idx})"
           string_parts << "%#{base_name}.conv#{idx}"
         elsif part_type == TypeRef::INT16 || part_type == TypeRef::UINT16
           # Extend i16 to i32 then convert to string
           emit "%#{base_name}.ext#{idx} = zext i16 #{part_ref} to i32"
-          emit "%#{base_name}.conv#{idx} = call ptr @__crystal_v2_int_to_string(i32 %#{base_name}.ext#{idx})"
+          emit "%#{base_name}.conv#{idx} = call ptr @__adamas_int_to_string(i32 %#{base_name}.ext#{idx})"
           string_parts << "%#{base_name}.conv#{idx}"
         elsif part_type == TypeRef::BOOL
           # Convert bool to string
-          emit "%#{base_name}.conv#{idx} = call ptr @__crystal_v2_bool_to_string(i1 #{part_ref})"
+          emit "%#{base_name}.conv#{idx} = call ptr @__adamas_bool_to_string(i1 #{part_ref})"
           string_parts << "%#{base_name}.conv#{idx}"
         else
           # Check actual LLVM type - might be i32 (enum/symbol) that needs conversion
           part_llvm_type = part_type ? @type_mapper.llvm_type(part_type) : "ptr"
           if part_llvm_type == "i32"
             int_arg = interpolation_i32_arg(part_ref, part_id, base_name, idx, part_type)
-            emit "%#{base_name}.conv#{idx} = call ptr @__crystal_v2_int_to_string(i32 #{int_arg})"
+            emit "%#{base_name}.conv#{idx} = call ptr @__adamas_int_to_string(i32 #{int_arg})"
             string_parts << "%#{base_name}.conv#{idx}"
           elsif part_llvm_type == "i64"
-            emit "%#{base_name}.conv#{idx} = call ptr @__crystal_v2_int64_to_string(i64 #{part_ref})"
+            emit "%#{base_name}.conv#{idx} = call ptr @__adamas_int64_to_string(i64 #{part_ref})"
             string_parts << "%#{base_name}.conv#{idx}"
           elsif part_llvm_type == "i128"
             emit "%#{base_name}.trunc#{idx} = trunc i128 #{part_ref} to i64"
-            emit "%#{base_name}.conv#{idx} = call ptr @__crystal_v2_int64_to_string(i64 %#{base_name}.trunc#{idx})"
+            emit "%#{base_name}.conv#{idx} = call ptr @__adamas_int64_to_string(i64 %#{base_name}.trunc#{idx})"
             string_parts << "%#{base_name}.conv#{idx}"
           elsif part_llvm_type == "i8"
             emit "%#{base_name}.ext#{idx} = zext i8 #{part_ref} to i32"
-            emit "%#{base_name}.conv#{idx} = call ptr @__crystal_v2_int_to_string(i32 %#{base_name}.ext#{idx})"
+            emit "%#{base_name}.conv#{idx} = call ptr @__adamas_int_to_string(i32 %#{base_name}.ext#{idx})"
             string_parts << "%#{base_name}.conv#{idx}"
           elsif part_llvm_type == "i16"
             emit "%#{base_name}.ext#{idx} = zext i16 #{part_ref} to i32"
-            emit "%#{base_name}.conv#{idx} = call ptr @__crystal_v2_int_to_string(i32 %#{base_name}.ext#{idx})"
+            emit "%#{base_name}.conv#{idx} = call ptr @__adamas_int_to_string(i32 %#{base_name}.ext#{idx})"
             string_parts << "%#{base_name}.conv#{idx}"
           elsif part_llvm_type == "i1"
-            emit "%#{base_name}.conv#{idx} = call ptr @__crystal_v2_bool_to_string(i1 #{part_ref})"
+            emit "%#{base_name}.conv#{idx} = call ptr @__adamas_bool_to_string(i1 #{part_ref})"
             string_parts << "%#{base_name}.conv#{idx}"
           elsif part_llvm_type == "double"
-            emit "%#{base_name}.conv#{idx} = call ptr @__crystal_v2_f64_to_string(double #{part_ref})"
+            emit "%#{base_name}.conv#{idx} = call ptr @__adamas_f64_to_string(double #{part_ref})"
             string_parts << "%#{base_name}.conv#{idx}"
           elsif part_llvm_type == "float"
             # Convert float to double first
             emit "%#{base_name}.ext#{idx} = fpext float #{part_ref} to double"
-            emit "%#{base_name}.conv#{idx} = call ptr @__crystal_v2_f64_to_string(double %#{base_name}.ext#{idx})"
+            emit "%#{base_name}.conv#{idx} = call ptr @__adamas_f64_to_string(double %#{base_name}.ext#{idx})"
             string_parts << "%#{base_name}.conv#{idx}"
           elsif part_llvm_type.includes?(".union")
             # Union type — must check payload type, not always assume ptr.
@@ -24468,11 +24468,11 @@ module Crystal::MIR
               case actual_slot_type
               when "i32"
                 int_arg = interpolation_i32_arg(part_ref, part_id, base_name, idx, part_type)
-                emit "%#{base_name}.conv#{idx} = call ptr @__crystal_v2_int_to_string(i32 #{int_arg})"
+                emit "%#{base_name}.conv#{idx} = call ptr @__adamas_int_to_string(i32 #{int_arg})"
               when "i64"
-                emit "%#{base_name}.conv#{idx} = call ptr @__crystal_v2_int64_to_string(i64 #{part_ref})"
+                emit "%#{base_name}.conv#{idx} = call ptr @__adamas_int64_to_string(i64 #{part_ref})"
               when "i1"
-                emit "%#{base_name}.conv#{idx} = call ptr @__crystal_v2_bool_to_string(i1 #{part_ref})"
+                emit "%#{base_name}.conv#{idx} = call ptr @__adamas_bool_to_string(i1 #{part_ref})"
               when "ptr"
                 string_parts << part_ref
                 next
@@ -24520,7 +24520,7 @@ module Crystal::MIR
               if int_vid
                 emit "%#{base_name}.is_int#{idx} = icmp eq i32 %#{base_name}.tid#{idx}, #{int_vid}"
                 emit "%#{base_name}.i32_val#{idx} = load i32, ptr %#{base_name}.payload_ptr#{idx}, align 4"
-                emit "%#{base_name}.i32_str#{idx} = call ptr @__crystal_v2_int_to_string(i32 %#{base_name}.i32_val#{idx})"
+                emit "%#{base_name}.i32_str#{idx} = call ptr @__adamas_int_to_string(i32 %#{base_name}.i32_val#{idx})"
                 emit "%#{base_name}.str_ptr#{idx} = load ptr, ptr %#{base_name}.payload_ptr#{idx}, align 4"
                 # Int32 variant → i32_str, String/ptr variant → str_ptr, Nil → empty
                 emit "%#{base_name}.non_nil#{idx} = select i1 %#{base_name}.is_int#{idx}, ptr %#{base_name}.i32_str#{idx}, ptr %#{base_name}.str_ptr#{idx}"
@@ -24533,18 +24533,18 @@ module Crystal::MIR
               string_parts << "%#{base_name}.conv#{idx}"
             elsif has_int32
               emit "%#{base_name}.i32_val#{idx} = load i32, ptr %#{base_name}.payload_ptr#{idx}, align 4"
-              emit "%#{base_name}.i32_str#{idx} = call ptr @__crystal_v2_int_to_string(i32 %#{base_name}.i32_val#{idx})"
+              emit "%#{base_name}.i32_str#{idx} = call ptr @__adamas_int_to_string(i32 %#{base_name}.i32_val#{idx})"
               emit "%#{base_name}.conv#{idx} = select i1 %#{base_name}.is_nil#{idx}, ptr @.str.empty, ptr %#{base_name}.i32_str#{idx}"
               string_parts << "%#{base_name}.conv#{idx}"
             elsif has_int64
               emit "%#{base_name}.i64_val#{idx} = load i64, ptr %#{base_name}.payload_ptr#{idx}, align 4"
-              emit "%#{base_name}.i64_str#{idx} = call ptr @__crystal_v2_int64_to_string(i64 %#{base_name}.i64_val#{idx})"
+              emit "%#{base_name}.i64_str#{idx} = call ptr @__adamas_int64_to_string(i64 %#{base_name}.i64_val#{idx})"
               emit "%#{base_name}.conv#{idx} = select i1 %#{base_name}.is_nil#{idx}, ptr @.str.empty, ptr %#{base_name}.i64_str#{idx}"
               string_parts << "%#{base_name}.conv#{idx}"
             elsif has_bool
               emit "%#{base_name}.bool_val#{idx} = load i8, ptr %#{base_name}.payload_ptr#{idx}, align 4"
               emit "%#{base_name}.bool_i1#{idx} = trunc i8 %#{base_name}.bool_val#{idx} to i1"
-              emit "%#{base_name}.bool_str#{idx} = call ptr @__crystal_v2_bool_to_string(i1 %#{base_name}.bool_i1#{idx})"
+              emit "%#{base_name}.bool_str#{idx} = call ptr @__adamas_bool_to_string(i1 %#{base_name}.bool_i1#{idx})"
               emit "%#{base_name}.conv#{idx} = select i1 %#{base_name}.is_nil#{idx}, ptr @.str.empty, ptr %#{base_name}.bool_str#{idx}"
               string_parts << "%#{base_name}.conv#{idx}"
             else
@@ -24561,11 +24561,11 @@ module Crystal::MIR
               elem_name = arr_type_name[6, arr_type_name.size - 7]
               helper = case elem_name
                        when "Int32", "UInt32", "Int16", "UInt16", "Int8", "UInt8"
-                         "__crystal_v2_array_i32_to_string"
+                         "__adamas_array_i32_to_string"
                        when "String"
-                         "__crystal_v2_array_string_to_string"
+                         "__adamas_array_string_to_string"
                        else
-                         "__crystal_v2_array_i32_to_string"  # fallback for int-like types
+                         "__adamas_array_i32_to_string"  # fallback for int-like types
                        end
               emit "%#{base_name}.conv#{idx} = call ptr @#{helper}(ptr #{part_ref})"
               string_parts << "%#{base_name}.conv#{idx}"
@@ -24581,17 +24581,17 @@ module Crystal::MIR
         # Single part - just use it directly
         emit "#{name} = bitcast ptr #{string_parts[0]} to ptr"
       elsif string_parts.size == 2
-        # Two parts - call __crystal_v2_string_concat
-        emit "#{name} = call ptr @__crystal_v2_string_concat(ptr #{string_parts[0]}, ptr #{string_parts[1]})"
+        # Two parts - call __adamas_string_concat
+        emit "#{name} = call ptr @__adamas_string_concat(ptr #{string_parts[0]}, ptr #{string_parts[1]})"
       else
-        # 3+ parts: alloca array, store parts, call single-alloc __crystal_v2_string_interpolate
+        # 3+ parts: alloca array, store parts, call single-alloc __adamas_string_interpolate
         n = string_parts.size
         emit "%#{base_name}.arr = alloca [#{n} x ptr]"
         string_parts.each_with_index do |part, i|
           emit "%#{base_name}.slot#{i} = getelementptr [#{n} x ptr], ptr %#{base_name}.arr, i32 0, i32 #{i}"
           emit "store ptr #{part}, ptr %#{base_name}.slot#{i}"
         end
-        emit "#{name} = call ptr @__crystal_v2_string_interpolate(ptr %#{base_name}.arr, i32 #{n})"
+        emit "#{name} = call ptr @__adamas_string_interpolate(ptr %#{base_name}.arr, i32 #{n})"
       end
     end
 
@@ -24743,7 +24743,7 @@ module Crystal::MIR
     private def emit_mutex_lock(inst : MutexLock, name : String)
       ptr = value_ref(inst.mutex_ptr)
 
-      emit "call void @__crystal_v2_mutex_lock(ptr #{ptr})"
+      emit "call void @__adamas_mutex_lock(ptr #{ptr})"
 
       if @emit_tsan
         emit "call void @__tsan_acquire(ptr #{ptr})"
@@ -24757,13 +24757,13 @@ module Crystal::MIR
         emit "call void @__tsan_release(ptr #{ptr})"
       end
 
-      emit "call void @__crystal_v2_mutex_unlock(ptr #{ptr})"
+      emit "call void @__adamas_mutex_unlock(ptr #{ptr})"
     end
 
     private def emit_mutex_trylock(inst : MutexTryLock, name : String)
       ptr = value_ref(inst.mutex_ptr)
 
-      emit "#{name} = call i1 @__crystal_v2_mutex_trylock(ptr #{ptr})"
+      emit "#{name} = call i1 @__adamas_mutex_trylock(ptr #{ptr})"
 
       if @emit_tsan
         # TSan acquire only on successful lock
@@ -24785,13 +24785,13 @@ module Crystal::MIR
         emit "call void @__tsan_release(ptr #{channel})"
       end
 
-      emit "call void @__crystal_v2_channel_send(ptr #{channel}, ptr #{val})"
+      emit "call void @__adamas_channel_send(ptr #{channel}, ptr #{val})"
     end
 
     private def emit_channel_receive(inst : ChannelReceive, name : String)
       channel = value_ref(inst.channel_ptr)
 
-      emit "#{name} = call ptr @__crystal_v2_channel_receive(ptr #{channel})"
+      emit "#{name} = call ptr @__adamas_channel_receive(ptr #{channel})"
 
       if @emit_tsan
         emit "call void @__tsan_acquire(ptr #{channel})"
@@ -24805,7 +24805,7 @@ module Crystal::MIR
         emit "call void @__tsan_release(ptr #{channel})"
       end
 
-      emit "call void @__crystal_v2_channel_close(ptr #{channel})"
+      emit "call void @__adamas_channel_close(ptr #{channel})"
     end
 
     # Exception handling - push jmp_buf and inline setjmp
@@ -24822,7 +24822,7 @@ module Crystal::MIR
 
     # Exception handling - pop jmp_buf (decrement depth)
     private def emit_try_end(inst : TryEnd, name : String)
-      emit "call void @__crystal_v2_try_end()"
+      emit "call void @__adamas_try_end()"
     end
 
     private def emit_func_pointer(inst : FuncPointer, name : String)
@@ -24840,7 +24840,7 @@ module Crystal::MIR
       case term
       when Return
         if @current_slab_frame
-          emit "call void @__crystal_v2_slab_frame_pop()"
+          emit "call void @__adamas_slab_frame_pop()"
         end
         # TSan: emit function exit before return
         if @emit_tsan
@@ -26203,7 +26203,7 @@ module Crystal::MIR
       emit_raw "]\n"
 
       # Emit the lookup function
-      emit_raw "\ndefine ptr @__crystal_v2_type_name(i32 %tid) {\n"
+      emit_raw "\ndefine ptr @__adamas_type_name(i32 %tid) {\n"
       emit_raw "entry:\n"
       emit_raw "  %inbounds = icmp ult i32 %tid, #{table_size}\n"
       emit_raw "  br i1 %inbounds, label %lookup, label %unknown\n"

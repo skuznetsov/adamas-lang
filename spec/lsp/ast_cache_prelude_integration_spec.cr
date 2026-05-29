@@ -28,17 +28,17 @@ describe "LSP AST cache prelude loading" do
     prev_cache_home = ENV["XDG_CACHE_HOME"]?
     ENV["XDG_CACHE_HOME"] = cache_home
 
-    stdlib_path = File.dirname(CrystalV2::Compiler::LSP::Server::PRELUDE_PATH)
-    cache = CrystalV2::Compiler::LSP::PreludeCache.new(
-      [] of CrystalV2::Compiler::LSP::CachedSymbolInfo,
-      CrystalV2::Compiler::LSP::PreludeCache.compute_stdlib_hash(stdlib_path)
+    stdlib_path = File.dirname(Adamas::Compiler::LSP::Server::PRELUDE_PATH)
+    cache = Adamas::Compiler::LSP::PreludeCache.new(
+      [] of Adamas::Compiler::LSP::CachedSymbolInfo,
+      Adamas::Compiler::LSP::PreludeCache.compute_stdlib_hash(stdlib_path)
     )
     cache.save
 
-    CrystalV2::Compiler::LSP::Server.new(
+    Adamas::Compiler::LSP::Server.new(
       IO::Memory.new,
       IO::Memory.new,
-      CrystalV2::Compiler::LSP::ServerConfig.new(
+      Adamas::Compiler::LSP::ServerConfig.new(
         background_indexing: false,
         project_cache: false,
         ast_cache: true,
@@ -64,7 +64,7 @@ describe "LSP AST cache prelude loading" do
     path = File.join(dir, "prelude_dep.cr")
     log1 = File.join(dir, "prelude1.log")
     log2 = File.join(dir, "prelude2.log")
-    cache_path = CrystalV2::Compiler::LSP::AstCache.cache_path(path)
+    cache_path = Adamas::Compiler::LSP::AstCache.cache_path(path)
 
     File.write(path, <<-CR)
     module PreludeDep
@@ -76,13 +76,13 @@ describe "LSP AST cache prelude loading" do
     end
     CR
 
-    program_cache1 = {} of String => CrystalV2::Compiler::Frontend::Program
+    program_cache1 = {} of String => Adamas::Compiler::Frontend::Program
     source_cache1 = {} of String => String
-    diagnostics1 = [] of CrystalV2::Compiler::LSP::Diagnostic
-    server1 = CrystalV2::Compiler::LSP::Server.new(
+    diagnostics1 = [] of Adamas::Compiler::LSP::Diagnostic
+    server1 = Adamas::Compiler::LSP::Server.new(
       IO::Memory.new,
       IO::Memory.new,
-      CrystalV2::Compiler::LSP::ServerConfig.new(
+      Adamas::Compiler::LSP::ServerConfig.new(
         background_indexing: false,
         project_cache: false,
         ast_cache: true,
@@ -92,13 +92,13 @@ describe "LSP AST cache prelude loading" do
     server1.spec_load_prelude_program(path, program_cache1, source_cache1, diagnostics1).should be_true
     File.exists?(cache_path).should be_true
 
-    program_cache2 = {} of String => CrystalV2::Compiler::Frontend::Program
+    program_cache2 = {} of String => Adamas::Compiler::Frontend::Program
     source_cache2 = {} of String => String
-    diagnostics2 = [] of CrystalV2::Compiler::LSP::Diagnostic
-    server2 = CrystalV2::Compiler::LSP::Server.new(
+    diagnostics2 = [] of Adamas::Compiler::LSP::Diagnostic
+    server2 = Adamas::Compiler::LSP::Server.new(
       IO::Memory.new,
       IO::Memory.new,
-      CrystalV2::Compiler::LSP::ServerConfig.new(
+      Adamas::Compiler::LSP::ServerConfig.new(
         background_indexing: false,
         project_cache: false,
         ast_cache: true,

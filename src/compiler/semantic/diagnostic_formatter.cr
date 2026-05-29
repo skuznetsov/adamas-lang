@@ -1,7 +1,7 @@
 require "./diagnostic"
 require "../frontend/diagnostic_formatter"
 
-module CrystalV2
+module Adamas
   module Compiler
     module Semantic
       module DiagnosticFormatter

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-COMPILER="${1:-$ROOT_DIR/bin/crystal_v2}"
+COMPILER="${1:-$ROOT_DIR/bin/adamas}"
 TMP_DIR="$(mktemp -d /tmp/p2_generated_stage2_puts_guard_XXXXXX)"
 GENERATED_S2="$TMP_DIR/generated_s2"
 SOURCE="$TMP_DIR/repro.cr"
@@ -33,7 +33,7 @@ puts 7
 CR
 
 "$ROOT_DIR/scripts/run_safe.sh" "$COMPILER" 420 4096 \
-  "$ROOT_DIR/src/crystal_v2.cr" -o "$GENERATED_S2" >"$BUILD_LOG" 2>&1
+  "$ROOT_DIR/src/adamas.cr" -o "$GENERATED_S2" >"$BUILD_LOG" 2>&1
 
 if [[ ! -x "$GENERATED_S2" ]]; then
   echo "p2_generated_stage2_no_prelude_puts_guard_failed: missing generated stage2 compiler" >&2
@@ -148,7 +148,7 @@ fi
 # no-prelude `puts 7` extern argument shape: generated stage2 reaches LLVM
 # emission but passes ptr null to the Int32 print helper. Keep this distinct
 # from generic full-codegen hangs so the next reducer has a precise target.
-if [[ -f "$OUT_BIN.ll" ]] && grep -Eq 'call void @__crystal_v2_print_int32_ln\(ptr (null|[-]?[0-9]+|%[^)]*)\)' "$OUT_BIN.ll"; then
+if [[ -f "$OUT_BIN.ll" ]] && grep -Eq 'call void @__adamas_print_int32_ln\(ptr (null|[-]?[0-9]+|%[^)]*)\)' "$OUT_BIN.ll"; then
   echo "p2_generated_stage2_no_prelude_puts_guard_ok frontier=extern_puts_arg_type_codegen_gap"
   exit 0
 fi
@@ -235,7 +235,7 @@ set +e
 nocodegen_status=$?
 set -e
 
-if grep -q 'STUB CALLED: Array\$LNil\$_\$OR\$_Array\$LCrystalV2\$CCCompiler\$CCFrontend\$CCExprId\$R\$R\$Hcheck_index_out_of_bounds' "$NOCODEGEN_LOG"; then
+if grep -q 'STUB CALLED: Array\$LNil\$_\$OR\$_Array\$LAdamas\$CCCompiler\$CCFrontend\$CCExprId\$R\$R\$Hcheck_index_out_of_bounds' "$NOCODEGEN_LOG"; then
   echo "p2_generated_stage2_no_prelude_puts_guard_failed: LM-500 regressed — check_index_out_of_bounds ABORT returned" >&2
   tail -120 "$NOCODEGEN_LOG" >&2 || true
   exit 1

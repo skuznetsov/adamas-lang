@@ -2,7 +2,7 @@ require "./frontend/lexer"
 require "./frontend/parser"
 require "./frontend/ast"
 
-module CrystalV2
+module Adamas
   module Compiler
     # FileLoader handles loading Crystal source files with require support
     #
@@ -79,7 +79,7 @@ module CrystalV2
         paths << Dir.current
 
         # CRYSTAL_PATH from environment
-        if crystal_path = ::CrystalV2::Compiler::BootstrapEnv.get?("CRYSTAL_PATH")
+        if crystal_path = ::Adamas::Compiler::BootstrapEnv.get?("CRYSTAL_PATH")
           crystal_path.split(Process::PATH_DELIMITER).each do |entry|
             paths << entry
           end

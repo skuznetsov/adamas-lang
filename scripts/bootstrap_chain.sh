@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Bootstrap ladder: stage1 = host Crystal builds crystal_v2; stage2+ = previous
-# binary builds crystal_v2 again (plain flags only — no --stats in the ladder).
+# Bootstrap ladder: stage1 = host Crystal builds adamas; stage2+ = previous
+# binary builds adamas again (plain flags only — no --stats in the ladder).
 #
 # Usage (from repo root):
 #   scripts/bootstrap_chain.sh [--stages N] [--host PATH] [--source PATH] [--out DIR]
@@ -24,7 +24,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 STAGES="${BOOTSTRAP_CHAIN_STAGES:-5}"
 HOST_CRYSTAL="${CRYSTAL_HOST:-crystal}"
-SOURCE_REL="${BOOTSTRAP_CHAIN_SOURCE:-src/crystal_v2.cr}"
+SOURCE_REL="${BOOTSTRAP_CHAIN_SOURCE:-src/adamas.cr}"
 OUT_DIR="${BOOTSTRAP_CHAIN_OUT:-}"
 TIMEOUT_SEC="${BOOTSTRAP_TIMEOUT_SEC:-900}"
 MEM_MB="${BOOTSTRAP_MEM_MB:-12288}"
@@ -32,8 +32,8 @@ SMOKE_PLAIN_MEM_MB="${BOOTSTRAP_SMOKE_PLAIN_MEM_MB:-8192}"
 
 usage() {
   cat <<'USAGE'
-Bootstrap ladder (stage1 = host Crystal builds crystal_v2; stage2+ = previous
-binary builds crystal_v2 again). Plain self-host only — no --stats on the ladder.
+Bootstrap ladder (stage1 = host Crystal builds adamas; stage2+ = previous
+binary builds adamas again). Plain self-host only — no --stats on the ladder.
 
 Usage:
   scripts/bootstrap_chain.sh [--stages N] [--host PATH] [--source PATH] [--out DIR]
@@ -98,7 +98,7 @@ if ! [[ "$STAGES" =~ ^[1-9][0-9]*$ ]]; then
 fi
 
 if [[ -z "$OUT_DIR" ]]; then
-  OUT_DIR="/tmp/crystal_v2_bootstrap_chain_${USER:-user}_$$"
+  OUT_DIR="/tmp/adamas_bootstrap_chain_${USER:-user}_$$"
 fi
 mkdir -p "$OUT_DIR"
 

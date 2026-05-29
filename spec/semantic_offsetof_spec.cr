@@ -15,8 +15,8 @@ require "../src/compiler/semantic/types/union_type"
 require "../src/compiler/semantic/types/type_context"
 require "../src/compiler/semantic/type_inference_engine"
 
-include CrystalV2::Compiler::Frontend
-include CrystalV2::Compiler::Semantic
+include Adamas::Compiler::Frontend
+include Adamas::Compiler::Semantic
 
 # Helper: Parse source and run full semantic pipeline
 private def infer_types(source : String)

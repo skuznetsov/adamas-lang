@@ -8,8 +8,8 @@ require "../../src/compiler/semantic/collectors/symbol_collector"
 require "../../src/compiler/semantic/symbol"
 
 module AccessorExpansionSpecAliases
-  alias Frontend = CrystalV2::Compiler::Frontend
-  alias Semantic = CrystalV2::Compiler::Semantic
+  alias Frontend = Adamas::Compiler::Frontend
+  alias Semantic = Adamas::Compiler::Semantic
 end
 
 include AccessorExpansionSpecAliases

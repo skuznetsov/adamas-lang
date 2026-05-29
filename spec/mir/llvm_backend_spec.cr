@@ -4,7 +4,7 @@ require "../../src/compiler/mir/hir_to_mir"
 require "../../src/compiler/mir/optimizations"
 require "../../src/compiler/mir/llvm_backend"
 
-class Crystal::MIR::DwarfDebugContext
+class Adamas::MIR::DwarfDebugContext
   def __test_stable_metadata_id(key : String, base : Int32, span : Int32) : Int32
     stable_metadata_id(key, base, span)
   end
@@ -19,64 +19,64 @@ class Crystal::MIR::DwarfDebugContext
   end
 end
 
-describe Crystal::MIR::LLVMTypeMapper do
+describe Adamas::MIR::LLVMTypeMapper do
   describe "#llvm_type" do
     it "maps primitive types correctly" do
-      registry = Crystal::MIR::TypeRegistry.new
-      mapper = Crystal::MIR::LLVMTypeMapper.new(registry)
+      registry = Adamas::MIR::TypeRegistry.new
+      mapper = Adamas::MIR::LLVMTypeMapper.new(registry)
 
-      mapper.llvm_type(Crystal::MIR::TypeRef::VOID).should eq("void")
-      mapper.llvm_type(Crystal::MIR::TypeRef::BOOL).should eq("i1")
-      mapper.llvm_type(Crystal::MIR::TypeRef::INT8).should eq("i8")
-      mapper.llvm_type(Crystal::MIR::TypeRef::INT16).should eq("i16")
-      mapper.llvm_type(Crystal::MIR::TypeRef::INT32).should eq("i32")
-      mapper.llvm_type(Crystal::MIR::TypeRef::INT64).should eq("i64")
-      mapper.llvm_type(Crystal::MIR::TypeRef::INT128).should eq("i128")
-      mapper.llvm_type(Crystal::MIR::TypeRef::UINT8).should eq("i8")
-      mapper.llvm_type(Crystal::MIR::TypeRef::UINT32).should eq("i32")
-      mapper.llvm_type(Crystal::MIR::TypeRef::FLOAT32).should eq("float")
-      mapper.llvm_type(Crystal::MIR::TypeRef::FLOAT64).should eq("double")
-      mapper.llvm_type(Crystal::MIR::TypeRef::POINTER).should eq("ptr")
+      mapper.llvm_type(Adamas::MIR::TypeRef::VOID).should eq("void")
+      mapper.llvm_type(Adamas::MIR::TypeRef::BOOL).should eq("i1")
+      mapper.llvm_type(Adamas::MIR::TypeRef::INT8).should eq("i8")
+      mapper.llvm_type(Adamas::MIR::TypeRef::INT16).should eq("i16")
+      mapper.llvm_type(Adamas::MIR::TypeRef::INT32).should eq("i32")
+      mapper.llvm_type(Adamas::MIR::TypeRef::INT64).should eq("i64")
+      mapper.llvm_type(Adamas::MIR::TypeRef::INT128).should eq("i128")
+      mapper.llvm_type(Adamas::MIR::TypeRef::UINT8).should eq("i8")
+      mapper.llvm_type(Adamas::MIR::TypeRef::UINT32).should eq("i32")
+      mapper.llvm_type(Adamas::MIR::TypeRef::FLOAT32).should eq("float")
+      mapper.llvm_type(Adamas::MIR::TypeRef::FLOAT64).should eq("double")
+      mapper.llvm_type(Adamas::MIR::TypeRef::POINTER).should eq("ptr")
     end
 
     it "maps struct types to ptr (structs passed by pointer in ABI)" do
-      registry = Crystal::MIR::TypeRegistry.new
-      struct_type = registry.create_type(Crystal::MIR::TypeKind::Struct, "MyStruct", 16, 8)
-      mapper = Crystal::MIR::LLVMTypeMapper.new(registry)
+      registry = Adamas::MIR::TypeRegistry.new
+      struct_type = registry.create_type(Adamas::MIR::TypeKind::Struct, "MyStruct", 16, 8)
+      mapper = Adamas::MIR::LLVMTypeMapper.new(registry)
 
       # Structs are passed by pointer in our ABI for consistency
       mapper.llvm_type(struct_type).should eq("ptr")
     end
 
     it "maps struct types to named types for alloca" do
-      registry = Crystal::MIR::TypeRegistry.new
-      struct_type = registry.create_type(Crystal::MIR::TypeKind::Struct, "MyStruct", 16, 8)
-      mapper = Crystal::MIR::LLVMTypeMapper.new(registry)
+      registry = Adamas::MIR::TypeRegistry.new
+      struct_type = registry.create_type(Adamas::MIR::TypeKind::Struct, "MyStruct", 16, 8)
+      mapper = Adamas::MIR::LLVMTypeMapper.new(registry)
 
       # For alloca, we need the actual struct type (via TypeRef)
-      struct_type_ref = Crystal::MIR::TypeRef.new(struct_type.id)
+      struct_type_ref = Adamas::MIR::TypeRef.new(struct_type.id)
       mapper.llvm_alloca_type(struct_type_ref).should eq("%MyStruct")
     end
 
     it "maps reference types to ptr" do
-      registry = Crystal::MIR::TypeRegistry.new
-      ref_type = registry.create_type(Crystal::MIR::TypeKind::Reference, "MyClass", 8, 8)
-      mapper = Crystal::MIR::LLVMTypeMapper.new(registry)
+      registry = Adamas::MIR::TypeRegistry.new
+      ref_type = registry.create_type(Adamas::MIR::TypeKind::Reference, "MyClass", 8, 8)
+      mapper = Adamas::MIR::LLVMTypeMapper.new(registry)
 
       mapper.llvm_type(ref_type).should eq("ptr")
     end
 
     it "maps union types with .union suffix" do
-      registry = Crystal::MIR::TypeRegistry.new
-      union_type = registry.create_type(Crystal::MIR::TypeKind::Union, "IntOrString", 16, 8)
-      mapper = Crystal::MIR::LLVMTypeMapper.new(registry)
+      registry = Adamas::MIR::TypeRegistry.new
+      union_type = registry.create_type(Adamas::MIR::TypeKind::Union, "IntOrString", 16, 8)
+      mapper = Adamas::MIR::LLVMTypeMapper.new(registry)
 
       mapper.llvm_type(union_type).should eq("%IntOrString.union")
     end
 
     it "mangles special characters in type names" do
-      registry = Crystal::MIR::TypeRegistry.new
-      mapper = Crystal::MIR::LLVMTypeMapper.new(registry)
+      registry = Adamas::MIR::TypeRegistry.new
+      mapper = Adamas::MIR::LLVMTypeMapper.new(registry)
 
       mapper.mangle_name("Array(Int32)").should eq("Array$LInt32$R")
       mapper.mangle_name("Hash(String, Int32)").should eq("Hash$LString$C$_Int32$R")
@@ -84,13 +84,13 @@ describe Crystal::MIR::LLVMTypeMapper do
   end
 end
 
-describe Crystal::MIR::LLVMIRGenerator do
+describe Adamas::MIR::LLVMIRGenerator do
   describe "#generate" do
     it "generates module header" do
-      mod = Crystal::MIR::Module.new("test_module")
+      mod = Adamas::MIR::Module.new("test_module")
       mod.source_file = "test.cr"
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       output = gen.generate
 
@@ -100,28 +100,28 @@ describe Crystal::MIR::LLVMIRGenerator do
     end
 
     it "generates runtime definitions" do
-      mod = Crystal::MIR::Module.new("test")
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      mod = Adamas::MIR::Module.new("test")
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       output = gen.generate
 
       # Runtime functions are now defined with implementations
-      output.should contain("define ptr @__crystal_v2_malloc64(i64 %size)")
-      output.should contain("define void @__crystal_v2_rc_inc(ptr %ptr)")
-      output.should contain("define void @__crystal_v2_rc_dec(ptr %ptr, ptr %destructor)")
-      output.should contain("define ptr @__crystal_v2_slab_alloc(i32 %size_class)")
+      output.should contain("define ptr @__adamas_malloc64(i64 %size)")
+      output.should contain("define void @__adamas_rc_inc(ptr %ptr)")
+      output.should contain("define void @__adamas_rc_dec(ptr %ptr, ptr %destructor)")
+      output.should contain("define ptr @__adamas_slab_alloc(i32 %size_class)")
       output.should contain("shl i64 16, %size")
-      output.should contain("define void @__crystal_v2_slab_frame_push()")
-      output.should contain("define void @__crystal_v2_slab_frame_pop()")
+      output.should contain("define void @__adamas_slab_frame_push()")
+      output.should contain("define void @__adamas_slab_frame_pop()")
     end
 
     it "emits entrypoint when __crystal_main is present" do
-      mod = Crystal::MIR::Module.new("test")
-      func = mod.create_function("__crystal_main", Crystal::MIR::TypeRef::VOID)
-      builder = Crystal::MIR::Builder.new(func)
+      mod = Adamas::MIR::Module.new("test")
+      func = mod.create_function("__crystal_main", Adamas::MIR::TypeRef::VOID)
+      builder = Adamas::MIR::Builder.new(func)
       builder.ret
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       gen.reachability = true
       output = gen.generate
@@ -131,29 +131,29 @@ describe Crystal::MIR::LLVMIRGenerator do
     end
 
     it "emits slab frame prolog/epilog when enabled" do
-      mod = Crystal::MIR::Module.new("test")
-      func = mod.create_function("foo", Crystal::MIR::TypeRef::VOID)
+      mod = Adamas::MIR::Module.new("test")
+      func = mod.create_function("foo", Adamas::MIR::TypeRef::VOID)
       func.slab_frame = true
-      builder = Crystal::MIR::Builder.new(func)
+      builder = Adamas::MIR::Builder.new(func)
       builder.ret
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       output = gen.generate
 
-      output.should contain("call void @__crystal_v2_slab_frame_push()")
-      output.should contain("call void @__crystal_v2_slab_frame_pop()")
+      output.should contain("call void @__adamas_slab_frame_push()")
+      output.should contain("call void @__adamas_slab_frame_pop()")
     end
 
     it "keeps entrypoint when __crystal_main contains typeof_ extern calls" do
-      mod = Crystal::MIR::Module.new("test")
-      func = mod.create_function("__crystal_main", Crystal::MIR::TypeRef::VOID)
-      builder = Crystal::MIR::Builder.new(func)
-      args = [] of Crystal::MIR::ValueId
-      builder.extern_call("typeof_foo", args, Crystal::MIR::TypeRef::VOID)
+      mod = Adamas::MIR::Module.new("test")
+      func = mod.create_function("__crystal_main", Adamas::MIR::TypeRef::VOID)
+      builder = Adamas::MIR::Builder.new(func)
+      args = [] of Adamas::MIR::ValueId
+      builder.extern_call("typeof_foo", args, Adamas::MIR::TypeRef::VOID)
       builder.ret
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       gen.reachability = true
       output = gen.generate
@@ -163,17 +163,17 @@ describe Crystal::MIR::LLVMIRGenerator do
     end
 
     it "generates simple function" do
-      mod = Crystal::MIR::Module.new("test")
-      func = mod.create_function("add", Crystal::MIR::TypeRef::INT32)
-      func.add_param("a", Crystal::MIR::TypeRef::INT32)
-      func.add_param("b", Crystal::MIR::TypeRef::INT32)
+      mod = Adamas::MIR::Module.new("test")
+      func = mod.create_function("add", Adamas::MIR::TypeRef::INT32)
+      func.add_param("a", Adamas::MIR::TypeRef::INT32)
+      func.add_param("b", Adamas::MIR::TypeRef::INT32)
 
-      builder = Crystal::MIR::Builder.new(func)
+      builder = Adamas::MIR::Builder.new(func)
       # a + b
-      sum = builder.add(0_u32, 1_u32, Crystal::MIR::TypeRef::INT32)
+      sum = builder.add(0_u32, 1_u32, Adamas::MIR::TypeRef::INT32)
       builder.ret(sum)
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       output = gen.generate
 
@@ -183,14 +183,14 @@ describe Crystal::MIR::LLVMIRGenerator do
     end
 
     it "generates stack allocation" do
-      mod = Crystal::MIR::Module.new("test")
-      func = mod.create_function("alloc_test", Crystal::MIR::TypeRef::VOID)
+      mod = Adamas::MIR::Module.new("test")
+      func = mod.create_function("alloc_test", Adamas::MIR::TypeRef::VOID)
 
-      builder = Crystal::MIR::Builder.new(func)
-      ptr = builder.alloc(Crystal::MIR::MemoryStrategy::Stack, Crystal::MIR::TypeRef::INT32, 4_u64, 4_u32)
+      builder = Adamas::MIR::Builder.new(func)
+      ptr = builder.alloc(Adamas::MIR::MemoryStrategy::Stack, Adamas::MIR::TypeRef::INT32, 4_u64, 4_u32)
       builder.ret
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       output = gen.generate
 
@@ -198,73 +198,73 @@ describe Crystal::MIR::LLVMIRGenerator do
     end
 
     it "generates ARC allocation with RC initialization" do
-      mod = Crystal::MIR::Module.new("test")
-      func = mod.create_function("arc_test", Crystal::MIR::TypeRef::POINTER)
+      mod = Adamas::MIR::Module.new("test")
+      func = mod.create_function("arc_test", Adamas::MIR::TypeRef::POINTER)
 
-      builder = Crystal::MIR::Builder.new(func)
-      ptr = builder.alloc(Crystal::MIR::MemoryStrategy::ARC, Crystal::MIR::TypeRef::STRING, 32_u64, 8_u32)
+      builder = Adamas::MIR::Builder.new(func)
+      ptr = builder.alloc(Adamas::MIR::MemoryStrategy::ARC, Adamas::MIR::TypeRef::STRING, 32_u64, 8_u32)
       builder.ret(ptr)
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       output = gen.generate
 
-      output.should contain("call ptr @__crystal_v2_malloc64(i64 40)")  # 32 + 8 for RC
+      output.should contain("call ptr @__adamas_malloc64(i64 40)")  # 32 + 8 for RC
       output.should contain("store i64 1")  # Initialize RC to 1
       output.should contain("getelementptr i8")  # Skip RC to get object pointer
     end
 
     it "generates slab allocation" do
-      mod = Crystal::MIR::Module.new("test")
-      func = mod.create_function("slab_test", Crystal::MIR::TypeRef::POINTER)
+      mod = Adamas::MIR::Module.new("test")
+      func = mod.create_function("slab_test", Adamas::MIR::TypeRef::POINTER)
 
-      builder = Crystal::MIR::Builder.new(func)
-      ptr = builder.alloc(Crystal::MIR::MemoryStrategy::Slab, Crystal::MIR::TypeRef::INT32, 16_u64, 4_u32)
+      builder = Adamas::MIR::Builder.new(func)
+      ptr = builder.alloc(Adamas::MIR::MemoryStrategy::Slab, Adamas::MIR::TypeRef::INT32, 16_u64, 4_u32)
       builder.ret(ptr)
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       output = gen.generate
 
-      output.should contain("call ptr @__crystal_v2_slab_alloc(i32 0)")  # Size class 0 for <=16 bytes
+      output.should contain("call ptr @__adamas_slab_alloc(i32 0)")  # Size class 0 for <=16 bytes
     end
 
     it "generates slab free" do
-      mod = Crystal::MIR::Module.new("test")
-      func = mod.create_function("slab_free_test", Crystal::MIR::TypeRef::VOID)
+      mod = Adamas::MIR::Module.new("test")
+      func = mod.create_function("slab_free_test", Adamas::MIR::TypeRef::VOID)
 
-      builder = Crystal::MIR::Builder.new(func)
-      ptr = builder.alloc(Crystal::MIR::MemoryStrategy::Slab, Crystal::MIR::TypeRef::INT32, 16_u64, 4_u32)
-      builder.free(ptr, Crystal::MIR::MemoryStrategy::Slab)
+      builder = Adamas::MIR::Builder.new(func)
+      ptr = builder.alloc(Adamas::MIR::MemoryStrategy::Slab, Adamas::MIR::TypeRef::INT32, 16_u64, 4_u32)
+      builder.free(ptr, Adamas::MIR::MemoryStrategy::Slab)
       builder.ret
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       output = gen.generate
 
-      output.should contain("call void @__crystal_v2_slab_free(ptr %")
+      output.should contain("call void @__adamas_slab_free(ptr %")
     end
 
     it "normalizes union stores to zeroinitializer" do
-      mod = Crystal::MIR::Module.new("test")
-      union_type = mod.type_registry.create_type(Crystal::MIR::TypeKind::Union, "IntOrNil", 16, 8)
-      union_ref = Crystal::MIR::TypeRef.new(union_type.id)
+      mod = Adamas::MIR::Module.new("test")
+      union_type = mod.type_registry.create_type(Adamas::MIR::TypeKind::Union, "IntOrNil", 16, 8)
+      union_ref = Adamas::MIR::TypeRef.new(union_type.id)
       mod.register_union(
         union_ref,
-        Crystal::MIR::UnionDescriptor.new(
+        Adamas::MIR::UnionDescriptor.new(
           "IntOrNil",
           [
-            Crystal::MIR::UnionVariantDescriptor.new(
+            Adamas::MIR::UnionVariantDescriptor.new(
               type_id: 0,
-              type_ref: Crystal::MIR::TypeRef::INT32,
+              type_ref: Adamas::MIR::TypeRef::INT32,
               full_name: "Int32",
               size: 4,
               alignment: 4,
               field_offsets: nil
             ),
-            Crystal::MIR::UnionVariantDescriptor.new(
+            Adamas::MIR::UnionVariantDescriptor.new(
               type_id: 1,
-              type_ref: Crystal::MIR::TypeRef::NIL,
+              type_ref: Adamas::MIR::TypeRef::NIL,
               full_name: "Nil",
               size: 0,
               alignment: 1,
@@ -276,17 +276,17 @@ describe Crystal::MIR::LLVMIRGenerator do
         )
       )
 
-      func = mod.create_function("union_store", Crystal::MIR::TypeRef::VOID)
-      builder = Crystal::MIR::Builder.new(func)
-      ptr = builder.alloc(Crystal::MIR::MemoryStrategy::Stack, union_ref, 16_u64, 8_u32)
+      func = mod.create_function("union_store", Adamas::MIR::TypeRef::VOID)
+      builder = Adamas::MIR::Builder.new(func)
+      ptr = builder.alloc(Adamas::MIR::MemoryStrategy::Stack, union_ref, 16_u64, 8_u32)
 
       block = func.get_block(func.entry_block)
-      union_nil = Crystal::MIR::Constant.new(func.next_value_id, union_ref, nil)
+      union_nil = Adamas::MIR::Constant.new(func.next_value_id, union_ref, nil)
       block.add(union_nil)
       builder.store(ptr, union_nil.id)
       builder.ret
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       output = gen.generate
 
@@ -294,25 +294,25 @@ describe Crystal::MIR::LLVMIRGenerator do
     end
 
     it "normalizes union nil array element stores to zeroinitializer" do
-      mod = Crystal::MIR::Module.new("test")
-      union_type = mod.type_registry.create_type(Crystal::MIR::TypeKind::Union, "IntOrNil", 16, 8)
-      union_ref = Crystal::MIR::TypeRef.new(union_type.id)
+      mod = Adamas::MIR::Module.new("test")
+      union_type = mod.type_registry.create_type(Adamas::MIR::TypeKind::Union, "IntOrNil", 16, 8)
+      union_ref = Adamas::MIR::TypeRef.new(union_type.id)
       mod.register_union(
         union_ref,
-        Crystal::MIR::UnionDescriptor.new(
+        Adamas::MIR::UnionDescriptor.new(
           "IntOrNil",
           [
-            Crystal::MIR::UnionVariantDescriptor.new(
+            Adamas::MIR::UnionVariantDescriptor.new(
               type_id: 0,
-              type_ref: Crystal::MIR::TypeRef::INT32,
+              type_ref: Adamas::MIR::TypeRef::INT32,
               full_name: "Int32",
               size: 4,
               alignment: 4,
               field_offsets: nil
             ),
-            Crystal::MIR::UnionVariantDescriptor.new(
+            Adamas::MIR::UnionVariantDescriptor.new(
               type_id: 1,
-              type_ref: Crystal::MIR::TypeRef::NIL,
+              type_ref: Adamas::MIR::TypeRef::NIL,
               full_name: "Nil",
               size: 0,
               alignment: 1,
@@ -324,18 +324,18 @@ describe Crystal::MIR::LLVMIRGenerator do
         )
       )
 
-      func = mod.create_function("union_array_set", Crystal::MIR::TypeRef::VOID)
-      array_param = func.add_param("arr", Crystal::MIR::TypeRef::POINTER)
-      builder = Crystal::MIR::Builder.new(func)
-      index = builder.const_int(0_i64, Crystal::MIR::TypeRef::INT32)
+      func = mod.create_function("union_array_set", Adamas::MIR::TypeRef::VOID)
+      array_param = func.add_param("arr", Adamas::MIR::TypeRef::POINTER)
+      builder = Adamas::MIR::Builder.new(func)
+      index = builder.const_int(0_i64, Adamas::MIR::TypeRef::INT32)
 
       block = func.get_block(func.entry_block)
-      union_nil = Crystal::MIR::Constant.new(func.next_value_id, union_ref, nil)
+      union_nil = Adamas::MIR::Constant.new(func.next_value_id, union_ref, nil)
       block.add(union_nil)
-      block.add(Crystal::MIR::ArraySet.new(func.next_value_id, union_ref, array_param, index, union_nil.id))
+      block.add(Adamas::MIR::ArraySet.new(func.next_value_id, union_ref, array_param, index, union_nil.id))
       builder.ret
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       output = gen.generate
 
@@ -344,14 +344,14 @@ describe Crystal::MIR::LLVMIRGenerator do
     end
 
     it "skips emitting SSA values for void casts" do
-      mod = Crystal::MIR::Module.new("test")
-      func = mod.create_function("void_cast", Crystal::MIR::TypeRef::VOID)
-      builder = Crystal::MIR::Builder.new(func)
-      val = builder.const_int(1_i64, Crystal::MIR::TypeRef::INT32)
-      builder.cast(Crystal::MIR::CastKind::Bitcast, val, Crystal::MIR::TypeRef::VOID)
+      mod = Adamas::MIR::Module.new("test")
+      func = mod.create_function("void_cast", Adamas::MIR::TypeRef::VOID)
+      builder = Adamas::MIR::Builder.new(func)
+      val = builder.const_int(1_i64, Adamas::MIR::TypeRef::INT32)
+      builder.cast(Adamas::MIR::CastKind::Bitcast, val, Adamas::MIR::TypeRef::VOID)
       builder.ret
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       output = gen.generate
 
@@ -359,15 +359,15 @@ describe Crystal::MIR::LLVMIRGenerator do
     end
 
     it "casts ptr to float64 via ptrtoint + uitofp (without dereference)" do
-      mod = Crystal::MIR::Module.new("test")
-      func = mod.create_function("ptr_to_float_cast", Crystal::MIR::TypeRef::FLOAT64)
-      func.add_param("p", Crystal::MIR::TypeRef::POINTER)
-      builder = Crystal::MIR::Builder.new(func)
+      mod = Adamas::MIR::Module.new("test")
+      func = mod.create_function("ptr_to_float_cast", Adamas::MIR::TypeRef::FLOAT64)
+      func.add_param("p", Adamas::MIR::TypeRef::POINTER)
+      builder = Adamas::MIR::Builder.new(func)
 
-      casted = builder.cast(Crystal::MIR::CastKind::Bitcast, 0_u32, Crystal::MIR::TypeRef::FLOAT64)
+      casted = builder.cast(Adamas::MIR::CastKind::Bitcast, 0_u32, Adamas::MIR::TypeRef::FLOAT64)
       builder.ret(casted)
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       output = gen.generate
 
@@ -381,18 +381,18 @@ describe Crystal::MIR::LLVMIRGenerator do
     end
 
     it "uses zext for unsigned fixed vararg widening in extern call" do
-      mod = Crystal::MIR::Module.new("test")
-      func = mod.create_function("extern_unsigned_widen", Crystal::MIR::TypeRef::INT32)
-      func.add_param("fmt", Crystal::MIR::TypeRef::POINTER)
-      builder = Crystal::MIR::Builder.new(func)
+      mod = Adamas::MIR::Module.new("test")
+      func = mod.create_function("extern_unsigned_widen", Adamas::MIR::TypeRef::INT32)
+      func.add_param("fmt", Adamas::MIR::TypeRef::POINTER)
+      builder = Adamas::MIR::Builder.new(func)
 
-      dst = builder.const_nil_typed(Crystal::MIR::TypeRef::POINTER)
-      len = builder.const_uint(255_u64, Crystal::MIR::TypeRef::UINT32)
-      call_args = [dst, len, 0_u32] of Crystal::MIR::ValueId
-      res = builder.extern_call("snprintf", call_args, Crystal::MIR::TypeRef::INT32)
+      dst = builder.const_nil_typed(Adamas::MIR::TypeRef::POINTER)
+      len = builder.const_uint(255_u64, Adamas::MIR::TypeRef::UINT32)
+      call_args = [dst, len, 0_u32] of Adamas::MIR::ValueId
+      res = builder.extern_call("snprintf", call_args, Adamas::MIR::TypeRef::INT32)
       builder.ret(res)
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       output = gen.generate
 
@@ -408,15 +408,15 @@ describe Crystal::MIR::LLVMIRGenerator do
     end
 
     it "uses fptoui for float64 to uint32 cast" do
-      mod = Crystal::MIR::Module.new("test")
-      func = mod.create_function("float_to_uint_cast", Crystal::MIR::TypeRef::UINT32)
-      func.add_param("x", Crystal::MIR::TypeRef::FLOAT64)
-      builder = Crystal::MIR::Builder.new(func)
+      mod = Adamas::MIR::Module.new("test")
+      func = mod.create_function("float_to_uint_cast", Adamas::MIR::TypeRef::UINT32)
+      func.add_param("x", Adamas::MIR::TypeRef::FLOAT64)
+      builder = Adamas::MIR::Builder.new(func)
 
-      casted = builder.cast(Crystal::MIR::CastKind::Bitcast, 0_u32, Crystal::MIR::TypeRef::UINT32)
+      casted = builder.cast(Adamas::MIR::CastKind::Bitcast, 0_u32, Adamas::MIR::TypeRef::UINT32)
       builder.ret(casted)
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       output = gen.generate
 
@@ -428,15 +428,15 @@ describe Crystal::MIR::LLVMIRGenerator do
     end
 
     it "uses uitofp for uint32 to float64 cast" do
-      mod = Crystal::MIR::Module.new("test")
-      func = mod.create_function("uint_to_float_cast", Crystal::MIR::TypeRef::FLOAT64)
-      func.add_param("x", Crystal::MIR::TypeRef::UINT32)
-      builder = Crystal::MIR::Builder.new(func)
+      mod = Adamas::MIR::Module.new("test")
+      func = mod.create_function("uint_to_float_cast", Adamas::MIR::TypeRef::FLOAT64)
+      func.add_param("x", Adamas::MIR::TypeRef::UINT32)
+      builder = Adamas::MIR::Builder.new(func)
 
-      casted = builder.cast(Crystal::MIR::CastKind::Bitcast, 0_u32, Crystal::MIR::TypeRef::FLOAT64)
+      casted = builder.cast(Adamas::MIR::CastKind::Bitcast, 0_u32, Adamas::MIR::TypeRef::FLOAT64)
       builder.ret(casted)
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       output = gen.generate
 
@@ -448,15 +448,15 @@ describe Crystal::MIR::LLVMIRGenerator do
     end
 
     it "uses uitofp for uint64 to float64 cast" do
-      mod = Crystal::MIR::Module.new("test")
-      func = mod.create_function("uint64_to_float_cast", Crystal::MIR::TypeRef::FLOAT64)
-      func.add_param("x", Crystal::MIR::TypeRef::UINT64)
-      builder = Crystal::MIR::Builder.new(func)
+      mod = Adamas::MIR::Module.new("test")
+      func = mod.create_function("uint64_to_float_cast", Adamas::MIR::TypeRef::FLOAT64)
+      func.add_param("x", Adamas::MIR::TypeRef::UINT64)
+      builder = Adamas::MIR::Builder.new(func)
 
-      casted = builder.cast(Crystal::MIR::CastKind::UIToFP, 0_u32, Crystal::MIR::TypeRef::FLOAT64)
+      casted = builder.cast(Adamas::MIR::CastKind::UIToFP, 0_u32, Adamas::MIR::TypeRef::FLOAT64)
       builder.ret(casted)
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       output = gen.generate
 
@@ -468,15 +468,15 @@ describe Crystal::MIR::LLVMIRGenerator do
     end
 
     it "uses uitofp for uint128 to float64 cast" do
-      mod = Crystal::MIR::Module.new("test")
-      func = mod.create_function("uint128_to_float_cast", Crystal::MIR::TypeRef::FLOAT64)
-      func.add_param("x", Crystal::MIR::TypeRef::UINT128)
-      builder = Crystal::MIR::Builder.new(func)
+      mod = Adamas::MIR::Module.new("test")
+      func = mod.create_function("uint128_to_float_cast", Adamas::MIR::TypeRef::FLOAT64)
+      func.add_param("x", Adamas::MIR::TypeRef::UINT128)
+      builder = Adamas::MIR::Builder.new(func)
 
-      casted = builder.cast(Crystal::MIR::CastKind::UIToFP, 0_u32, Crystal::MIR::TypeRef::FLOAT64)
+      casted = builder.cast(Adamas::MIR::CastKind::UIToFP, 0_u32, Adamas::MIR::TypeRef::FLOAT64)
       builder.ret(casted)
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       output = gen.generate
 
@@ -488,20 +488,20 @@ describe Crystal::MIR::LLVMIRGenerator do
     end
 
     it "uses uitofp for uint32 argument when calling float64 callee" do
-      mod = Crystal::MIR::Module.new("test")
+      mod = Adamas::MIR::Module.new("test")
 
-      callee = mod.create_function("takes_f64_arg", Crystal::MIR::TypeRef::FLOAT64)
-      callee.add_param("x", Crystal::MIR::TypeRef::FLOAT64)
-      callee_builder = Crystal::MIR::Builder.new(callee)
+      callee = mod.create_function("takes_f64_arg", Adamas::MIR::TypeRef::FLOAT64)
+      callee.add_param("x", Adamas::MIR::TypeRef::FLOAT64)
+      callee_builder = Adamas::MIR::Builder.new(callee)
       callee_builder.ret(0_u32)
 
-      caller = mod.create_function("call_uint_to_f64_arg", Crystal::MIR::TypeRef::FLOAT64)
-      caller.add_param("x", Crystal::MIR::TypeRef::UINT32)
-      caller_builder = Crystal::MIR::Builder.new(caller)
-      call = caller_builder.call(callee.id, ([0_u32] of Crystal::MIR::ValueId), Crystal::MIR::TypeRef::FLOAT64)
+      caller = mod.create_function("call_uint_to_f64_arg", Adamas::MIR::TypeRef::FLOAT64)
+      caller.add_param("x", Adamas::MIR::TypeRef::UINT32)
+      caller_builder = Adamas::MIR::Builder.new(caller)
+      call = caller_builder.call(callee.id, ([0_u32] of Adamas::MIR::ValueId), Adamas::MIR::TypeRef::FLOAT64)
       caller_builder.ret(call)
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       output = gen.generate
 
@@ -514,20 +514,20 @@ describe Crystal::MIR::LLVMIRGenerator do
     end
 
     it "uses fptoui for float64 argument when calling uint32 callee" do
-      mod = Crystal::MIR::Module.new("test")
+      mod = Adamas::MIR::Module.new("test")
 
-      callee = mod.create_function("takes_u32_arg", Crystal::MIR::TypeRef::UINT32)
-      callee.add_param("x", Crystal::MIR::TypeRef::UINT32)
-      callee_builder = Crystal::MIR::Builder.new(callee)
+      callee = mod.create_function("takes_u32_arg", Adamas::MIR::TypeRef::UINT32)
+      callee.add_param("x", Adamas::MIR::TypeRef::UINT32)
+      callee_builder = Adamas::MIR::Builder.new(callee)
       callee_builder.ret(0_u32)
 
-      caller = mod.create_function("call_f64_to_u32_arg", Crystal::MIR::TypeRef::UINT32)
-      caller.add_param("x", Crystal::MIR::TypeRef::FLOAT64)
-      caller_builder = Crystal::MIR::Builder.new(caller)
-      call = caller_builder.extern_call("takes_u32_arg", ([0_u32] of Crystal::MIR::ValueId), Crystal::MIR::TypeRef::UINT32)
+      caller = mod.create_function("call_f64_to_u32_arg", Adamas::MIR::TypeRef::UINT32)
+      caller.add_param("x", Adamas::MIR::TypeRef::FLOAT64)
+      caller_builder = Adamas::MIR::Builder.new(caller)
+      call = caller_builder.extern_call("takes_u32_arg", ([0_u32] of Adamas::MIR::ValueId), Adamas::MIR::TypeRef::UINT32)
       caller_builder.ret(call)
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       output = gen.generate
 
@@ -540,20 +540,20 @@ describe Crystal::MIR::LLVMIRGenerator do
     end
 
     it "uses ptrtoint + uitofp for pointer argument when calling float64 callee" do
-      mod = Crystal::MIR::Module.new("test")
+      mod = Adamas::MIR::Module.new("test")
 
-      callee = mod.create_function("takes_f64_ptr_arg", Crystal::MIR::TypeRef::FLOAT64)
-      callee.add_param("x", Crystal::MIR::TypeRef::FLOAT64)
-      callee_builder = Crystal::MIR::Builder.new(callee)
+      callee = mod.create_function("takes_f64_ptr_arg", Adamas::MIR::TypeRef::FLOAT64)
+      callee.add_param("x", Adamas::MIR::TypeRef::FLOAT64)
+      callee_builder = Adamas::MIR::Builder.new(callee)
       callee_builder.ret(0_u32)
 
-      caller = mod.create_function("call_ptr_to_f64_arg", Crystal::MIR::TypeRef::FLOAT64)
-      caller.add_param("p", Crystal::MIR::TypeRef::POINTER)
-      caller_builder = Crystal::MIR::Builder.new(caller)
-      call = caller_builder.call(callee.id, ([0_u32] of Crystal::MIR::ValueId), Crystal::MIR::TypeRef::FLOAT64)
+      caller = mod.create_function("call_ptr_to_f64_arg", Adamas::MIR::TypeRef::FLOAT64)
+      caller.add_param("p", Adamas::MIR::TypeRef::POINTER)
+      caller_builder = Adamas::MIR::Builder.new(caller)
+      call = caller_builder.call(callee.id, ([0_u32] of Adamas::MIR::ValueId), Adamas::MIR::TypeRef::FLOAT64)
       caller_builder.ret(call)
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       output = gen.generate
 
@@ -567,29 +567,29 @@ describe Crystal::MIR::LLVMIRGenerator do
     end
 
     it "evaluates abstract Int#remainder(Int32) directly for scalar receivers" do
-      mod = Crystal::MIR::Module.new("test")
+      mod = Adamas::MIR::Module.new("test")
 
-      check = mod.create_function("Int#check_div_argument$Int32", Crystal::MIR::TypeRef::INT32)
-      check.add_param("self", Crystal::MIR::TypeRef::POINTER)
-      check.add_param("other", Crystal::MIR::TypeRef::INT32)
-      check_builder = Crystal::MIR::Builder.new(check)
-      zero = check_builder.const_int(0, Crystal::MIR::TypeRef::INT32)
+      check = mod.create_function("Int#check_div_argument$Int32", Adamas::MIR::TypeRef::INT32)
+      check.add_param("self", Adamas::MIR::TypeRef::POINTER)
+      check.add_param("other", Adamas::MIR::TypeRef::INT32)
+      check_builder = Adamas::MIR::Builder.new(check)
+      zero = check_builder.const_int(0, Adamas::MIR::TypeRef::INT32)
       check_builder.ret(zero)
 
-      callee = mod.create_function("Int#remainder$Int32", Crystal::MIR::TypeRef::INT32)
-      callee.add_param("self", Crystal::MIR::TypeRef::POINTER)
-      callee.add_param("other", Crystal::MIR::TypeRef::INT32)
-      callee_builder = Crystal::MIR::Builder.new(callee)
+      callee = mod.create_function("Int#remainder$Int32", Adamas::MIR::TypeRef::INT32)
+      callee.add_param("self", Adamas::MIR::TypeRef::POINTER)
+      callee.add_param("other", Adamas::MIR::TypeRef::INT32)
+      callee_builder = Adamas::MIR::Builder.new(callee)
       callee_builder.ret(1_u32)
 
-      caller = mod.create_function("call_int_remainder", Crystal::MIR::TypeRef::INT32)
-      caller.add_param("self", Crystal::MIR::TypeRef::INT32)
-      caller.add_param("other", Crystal::MIR::TypeRef::INT32)
-      caller_builder = Crystal::MIR::Builder.new(caller)
-      call = caller_builder.call(callee.id, [0_u32, 1_u32], Crystal::MIR::TypeRef::INT32)
+      caller = mod.create_function("call_int_remainder", Adamas::MIR::TypeRef::INT32)
+      caller.add_param("self", Adamas::MIR::TypeRef::INT32)
+      caller.add_param("other", Adamas::MIR::TypeRef::INT32)
+      caller_builder = Adamas::MIR::Builder.new(caller)
+      call = caller_builder.call(callee.id, [0_u32, 1_u32], Adamas::MIR::TypeRef::INT32)
       caller_builder.ret(call)
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       output = gen.generate
 
@@ -606,32 +606,32 @@ describe Crystal::MIR::LLVMIRGenerator do
     end
 
     it "evaluates bare Tuple#size directly for concrete tuple receivers" do
-      mod = Crystal::MIR::Module.new("test")
+      mod = Adamas::MIR::Module.new("test")
 
       tuple_type = mod.type_registry.create_type(
-        Crystal::MIR::TypeKind::Tuple,
+        Adamas::MIR::TypeKind::Tuple,
         "Tuple(Float64)",
         8_u64,
         8_u32
       )
-      float64_type = mod.type_registry.get(Crystal::MIR::TypeRef::FLOAT64)
+      float64_type = mod.type_registry.get(Adamas::MIR::TypeRef::FLOAT64)
       float64_type.should_not be_nil
       tuple_type.add_element_type(float64_type.not_nil!)
-      tuple_ref = Crystal::MIR::TypeRef.new(tuple_type.id)
+      tuple_ref = Adamas::MIR::TypeRef.new(tuple_type.id)
 
-      callee = mod.create_function("Tuple#size", Crystal::MIR::TypeRef::INT32)
+      callee = mod.create_function("Tuple#size", Adamas::MIR::TypeRef::INT32)
       callee.add_param("self", tuple_ref)
-      callee_builder = Crystal::MIR::Builder.new(callee)
-      zero = callee_builder.const_int(0, Crystal::MIR::TypeRef::INT32)
+      callee_builder = Adamas::MIR::Builder.new(callee)
+      zero = callee_builder.const_int(0, Adamas::MIR::TypeRef::INT32)
       callee_builder.ret(zero)
 
-      caller = mod.create_function("call_tuple_size", Crystal::MIR::TypeRef::INT32)
+      caller = mod.create_function("call_tuple_size", Adamas::MIR::TypeRef::INT32)
       caller.add_param("self", tuple_ref)
-      caller_builder = Crystal::MIR::Builder.new(caller)
-      call = caller_builder.call(callee.id, [0_u32], Crystal::MIR::TypeRef::INT32)
+      caller_builder = Adamas::MIR::Builder.new(caller)
+      call = caller_builder.call(callee.id, [0_u32], Adamas::MIR::TypeRef::INT32)
       caller_builder.ret(call)
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       output = gen.generate
 
@@ -644,29 +644,29 @@ describe Crystal::MIR::LLVMIRGenerator do
     end
 
     it "evaluates abstract Int#tdiv(Int32) directly for scalar receivers" do
-      mod = Crystal::MIR::Module.new("test")
+      mod = Adamas::MIR::Module.new("test")
 
-      check = mod.create_function("Int#check_div_argument$Int32", Crystal::MIR::TypeRef::INT32)
-      check.add_param("self", Crystal::MIR::TypeRef::POINTER)
-      check.add_param("other", Crystal::MIR::TypeRef::INT32)
-      check_builder = Crystal::MIR::Builder.new(check)
-      zero = check_builder.const_int(0, Crystal::MIR::TypeRef::INT32)
+      check = mod.create_function("Int#check_div_argument$Int32", Adamas::MIR::TypeRef::INT32)
+      check.add_param("self", Adamas::MIR::TypeRef::POINTER)
+      check.add_param("other", Adamas::MIR::TypeRef::INT32)
+      check_builder = Adamas::MIR::Builder.new(check)
+      zero = check_builder.const_int(0, Adamas::MIR::TypeRef::INT32)
       check_builder.ret(zero)
 
-      callee = mod.create_function("Int#tdiv$Int32", Crystal::MIR::TypeRef::POINTER)
-      callee.add_param("self", Crystal::MIR::TypeRef::POINTER)
-      callee.add_param("other", Crystal::MIR::TypeRef::INT32)
-      callee_builder = Crystal::MIR::Builder.new(callee)
+      callee = mod.create_function("Int#tdiv$Int32", Adamas::MIR::TypeRef::POINTER)
+      callee.add_param("self", Adamas::MIR::TypeRef::POINTER)
+      callee.add_param("other", Adamas::MIR::TypeRef::INT32)
+      callee_builder = Adamas::MIR::Builder.new(callee)
       callee_builder.ret(0_u32)
 
-      caller = mod.create_function("call_int_tdiv", Crystal::MIR::TypeRef::POINTER)
-      caller.add_param("self", Crystal::MIR::TypeRef::INT32)
-      caller.add_param("other", Crystal::MIR::TypeRef::INT32)
-      caller_builder = Crystal::MIR::Builder.new(caller)
-      call = caller_builder.call(callee.id, [0_u32, 1_u32], Crystal::MIR::TypeRef::POINTER)
+      caller = mod.create_function("call_int_tdiv", Adamas::MIR::TypeRef::POINTER)
+      caller.add_param("self", Adamas::MIR::TypeRef::INT32)
+      caller.add_param("other", Adamas::MIR::TypeRef::INT32)
+      caller_builder = Adamas::MIR::Builder.new(caller)
+      call = caller_builder.call(callee.id, [0_u32, 1_u32], Adamas::MIR::TypeRef::POINTER)
       caller_builder.ret(call)
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       output = gen.generate
 
@@ -685,34 +685,34 @@ describe Crystal::MIR::LLVMIRGenerator do
     end
 
     it "dispatches abstract Int#to_s on scalar receivers to concrete integer implementations" do
-      mod = Crystal::MIR::Module.new("test")
+      mod = Adamas::MIR::Module.new("test")
 
-      concrete = mod.create_function("Int32#to_s", Crystal::MIR::TypeRef::POINTER)
-      concrete.add_param("self", Crystal::MIR::TypeRef::INT32)
-      concrete.add_param("base", Crystal::MIR::TypeRef::INT32)
-      concrete.add_param("precision", Crystal::MIR::TypeRef::INT32)
-      concrete.add_param("upcase", Crystal::MIR::TypeRef::BOOL)
-      concrete_builder = Crystal::MIR::Builder.new(concrete)
+      concrete = mod.create_function("Int32#to_s", Adamas::MIR::TypeRef::POINTER)
+      concrete.add_param("self", Adamas::MIR::TypeRef::INT32)
+      concrete.add_param("base", Adamas::MIR::TypeRef::INT32)
+      concrete.add_param("precision", Adamas::MIR::TypeRef::INT32)
+      concrete.add_param("upcase", Adamas::MIR::TypeRef::BOOL)
+      concrete_builder = Adamas::MIR::Builder.new(concrete)
       concrete_builder.ret(0_u32)
 
-      callee = mod.create_function("Int#to_s$Int32_Int32_Bool", Crystal::MIR::TypeRef::POINTER)
-      callee.add_param("self", Crystal::MIR::TypeRef::POINTER)
-      callee.add_param("base", Crystal::MIR::TypeRef::INT32)
-      callee.add_param("precision", Crystal::MIR::TypeRef::INT32)
-      callee.add_param("upcase", Crystal::MIR::TypeRef::BOOL)
-      callee_builder = Crystal::MIR::Builder.new(callee)
+      callee = mod.create_function("Int#to_s$Int32_Int32_Bool", Adamas::MIR::TypeRef::POINTER)
+      callee.add_param("self", Adamas::MIR::TypeRef::POINTER)
+      callee.add_param("base", Adamas::MIR::TypeRef::INT32)
+      callee.add_param("precision", Adamas::MIR::TypeRef::INT32)
+      callee.add_param("upcase", Adamas::MIR::TypeRef::BOOL)
+      callee_builder = Adamas::MIR::Builder.new(callee)
       callee_builder.ret(0_u32)
 
-      caller = mod.create_function("call_abstract_int_to_s", Crystal::MIR::TypeRef::POINTER)
-      caller.add_param("self", Crystal::MIR::TypeRef::INT32)
-      caller.add_param("base", Crystal::MIR::TypeRef::INT32)
-      caller.add_param("precision", Crystal::MIR::TypeRef::INT32)
-      caller.add_param("upcase", Crystal::MIR::TypeRef::BOOL)
-      caller_builder = Crystal::MIR::Builder.new(caller)
-      call = caller_builder.call(callee.id, [0_u32, 1_u32, 2_u32, 3_u32], Crystal::MIR::TypeRef::POINTER)
+      caller = mod.create_function("call_abstract_int_to_s", Adamas::MIR::TypeRef::POINTER)
+      caller.add_param("self", Adamas::MIR::TypeRef::INT32)
+      caller.add_param("base", Adamas::MIR::TypeRef::INT32)
+      caller.add_param("precision", Adamas::MIR::TypeRef::INT32)
+      caller.add_param("upcase", Adamas::MIR::TypeRef::BOOL)
+      caller_builder = Adamas::MIR::Builder.new(caller)
+      call = caller_builder.call(callee.id, [0_u32, 1_u32, 2_u32, 3_u32], Adamas::MIR::TypeRef::POINTER)
       caller_builder.ret(call)
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       output = gen.generate
 
@@ -727,42 +727,42 @@ describe Crystal::MIR::LLVMIRGenerator do
     end
 
     it "lowers abstract Int#to_s(IO, ...) on scalar receivers via concrete to_s plus IO << String" do
-      mod = Crystal::MIR::Module.new("test")
+      mod = Adamas::MIR::Module.new("test")
 
-      concrete = mod.create_function("Int32#to_s", Crystal::MIR::TypeRef::POINTER)
-      concrete.add_param("self", Crystal::MIR::TypeRef::INT32)
-      concrete.add_param("base", Crystal::MIR::TypeRef::INT32)
-      concrete.add_param("precision", Crystal::MIR::TypeRef::INT32)
-      concrete.add_param("upcase", Crystal::MIR::TypeRef::BOOL)
-      concrete_builder = Crystal::MIR::Builder.new(concrete)
+      concrete = mod.create_function("Int32#to_s", Adamas::MIR::TypeRef::POINTER)
+      concrete.add_param("self", Adamas::MIR::TypeRef::INT32)
+      concrete.add_param("base", Adamas::MIR::TypeRef::INT32)
+      concrete.add_param("precision", Adamas::MIR::TypeRef::INT32)
+      concrete.add_param("upcase", Adamas::MIR::TypeRef::BOOL)
+      concrete_builder = Adamas::MIR::Builder.new(concrete)
       concrete_builder.ret(0_u32)
 
-      io_append = mod.create_function("IO#<<$String", Crystal::MIR::TypeRef::POINTER)
-      io_append.add_param("io", Crystal::MIR::TypeRef::POINTER)
-      io_append.add_param("str", Crystal::MIR::TypeRef::POINTER)
-      io_builder = Crystal::MIR::Builder.new(io_append)
+      io_append = mod.create_function("IO#<<$String", Adamas::MIR::TypeRef::POINTER)
+      io_append.add_param("io", Adamas::MIR::TypeRef::POINTER)
+      io_append.add_param("str", Adamas::MIR::TypeRef::POINTER)
+      io_builder = Adamas::MIR::Builder.new(io_append)
       io_builder.ret(0_u32)
 
-      callee = mod.create_function("Int#to_s$IO_Int32_Int32_Bool", Crystal::MIR::TypeRef::VOID)
-      callee.add_param("self", Crystal::MIR::TypeRef::POINTER)
-      callee.add_param("io", Crystal::MIR::TypeRef::POINTER)
-      callee.add_param("base", Crystal::MIR::TypeRef::INT32)
-      callee.add_param("precision", Crystal::MIR::TypeRef::INT32)
-      callee.add_param("upcase", Crystal::MIR::TypeRef::BOOL)
-      callee_builder = Crystal::MIR::Builder.new(callee)
+      callee = mod.create_function("Int#to_s$IO_Int32_Int32_Bool", Adamas::MIR::TypeRef::VOID)
+      callee.add_param("self", Adamas::MIR::TypeRef::POINTER)
+      callee.add_param("io", Adamas::MIR::TypeRef::POINTER)
+      callee.add_param("base", Adamas::MIR::TypeRef::INT32)
+      callee.add_param("precision", Adamas::MIR::TypeRef::INT32)
+      callee.add_param("upcase", Adamas::MIR::TypeRef::BOOL)
+      callee_builder = Adamas::MIR::Builder.new(callee)
       callee_builder.ret
 
-      caller = mod.create_function("call_abstract_int_to_s_io", Crystal::MIR::TypeRef::VOID)
-      caller.add_param("self", Crystal::MIR::TypeRef::INT32)
-      caller.add_param("io", Crystal::MIR::TypeRef::POINTER)
-      caller.add_param("base", Crystal::MIR::TypeRef::INT32)
-      caller.add_param("precision", Crystal::MIR::TypeRef::INT32)
-      caller.add_param("upcase", Crystal::MIR::TypeRef::BOOL)
-      caller_builder = Crystal::MIR::Builder.new(caller)
-      caller_builder.call(callee.id, [0_u32, 1_u32, 2_u32, 3_u32, 4_u32], Crystal::MIR::TypeRef::VOID)
+      caller = mod.create_function("call_abstract_int_to_s_io", Adamas::MIR::TypeRef::VOID)
+      caller.add_param("self", Adamas::MIR::TypeRef::INT32)
+      caller.add_param("io", Adamas::MIR::TypeRef::POINTER)
+      caller.add_param("base", Adamas::MIR::TypeRef::INT32)
+      caller.add_param("precision", Adamas::MIR::TypeRef::INT32)
+      caller.add_param("upcase", Adamas::MIR::TypeRef::BOOL)
+      caller_builder = Adamas::MIR::Builder.new(caller)
+      caller_builder.call(callee.id, [0_u32, 1_u32, 2_u32, 3_u32, 4_u32], Adamas::MIR::TypeRef::VOID)
       caller_builder.ret
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       output = gen.generate
 
@@ -778,20 +778,20 @@ describe Crystal::MIR::LLVMIRGenerator do
     end
 
     it "uses uitofp for uint128 argument when calling float64 callee" do
-      mod = Crystal::MIR::Module.new("test")
+      mod = Adamas::MIR::Module.new("test")
 
-      callee = mod.create_function("takes_f64_arg_u128", Crystal::MIR::TypeRef::FLOAT64)
-      callee.add_param("x", Crystal::MIR::TypeRef::FLOAT64)
-      callee_builder = Crystal::MIR::Builder.new(callee)
+      callee = mod.create_function("takes_f64_arg_u128", Adamas::MIR::TypeRef::FLOAT64)
+      callee.add_param("x", Adamas::MIR::TypeRef::FLOAT64)
+      callee_builder = Adamas::MIR::Builder.new(callee)
       callee_builder.ret(0_u32)
 
-      caller = mod.create_function("call_uint128_to_f64_arg", Crystal::MIR::TypeRef::FLOAT64)
-      caller.add_param("x", Crystal::MIR::TypeRef::UINT128)
-      caller_builder = Crystal::MIR::Builder.new(caller)
-      call = caller_builder.call(callee.id, ([0_u32] of Crystal::MIR::ValueId), Crystal::MIR::TypeRef::FLOAT64)
+      caller = mod.create_function("call_uint128_to_f64_arg", Adamas::MIR::TypeRef::FLOAT64)
+      caller.add_param("x", Adamas::MIR::TypeRef::UINT128)
+      caller_builder = Adamas::MIR::Builder.new(caller)
+      call = caller_builder.call(callee.id, ([0_u32] of Adamas::MIR::ValueId), Adamas::MIR::TypeRef::FLOAT64)
       caller_builder.ret(call)
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       output = gen.generate
 
@@ -804,26 +804,26 @@ describe Crystal::MIR::LLVMIRGenerator do
     end
 
     it "uses align 4 for union payload load in union-to-float call coercion" do
-      mod = Crystal::MIR::Module.new("test")
+      mod = Adamas::MIR::Module.new("test")
 
-      union_type = mod.type_registry.create_type(Crystal::MIR::TypeKind::Union, "FloatOrNilArg", 16, 8)
-      union_ref = Crystal::MIR::TypeRef.new(union_type.id)
+      union_type = mod.type_registry.create_type(Adamas::MIR::TypeKind::Union, "FloatOrNilArg", 16, 8)
+      union_ref = Adamas::MIR::TypeRef.new(union_type.id)
       mod.register_union(
         union_ref,
-        Crystal::MIR::UnionDescriptor.new(
+        Adamas::MIR::UnionDescriptor.new(
           "FloatOrNilArg",
           [
-            Crystal::MIR::UnionVariantDescriptor.new(
+            Adamas::MIR::UnionVariantDescriptor.new(
               type_id: 0,
-              type_ref: Crystal::MIR::TypeRef::FLOAT64,
+              type_ref: Adamas::MIR::TypeRef::FLOAT64,
               full_name: "Float64",
               size: 8,
               alignment: 8,
               field_offsets: nil
             ),
-            Crystal::MIR::UnionVariantDescriptor.new(
+            Adamas::MIR::UnionVariantDescriptor.new(
               type_id: 1,
-              type_ref: Crystal::MIR::TypeRef::NIL,
+              type_ref: Adamas::MIR::TypeRef::NIL,
               full_name: "Nil",
               size: 0,
               alignment: 1,
@@ -835,18 +835,18 @@ describe Crystal::MIR::LLVMIRGenerator do
         )
       )
 
-      callee = mod.create_function("takes_union_coerced_f64", Crystal::MIR::TypeRef::FLOAT64)
-      callee.add_param("x", Crystal::MIR::TypeRef::FLOAT64)
-      callee_builder = Crystal::MIR::Builder.new(callee)
+      callee = mod.create_function("takes_union_coerced_f64", Adamas::MIR::TypeRef::FLOAT64)
+      callee.add_param("x", Adamas::MIR::TypeRef::FLOAT64)
+      callee_builder = Adamas::MIR::Builder.new(callee)
       callee_builder.ret(0_u32)
 
-      caller = mod.create_function("call_union_to_f64_arg", Crystal::MIR::TypeRef::FLOAT64)
+      caller = mod.create_function("call_union_to_f64_arg", Adamas::MIR::TypeRef::FLOAT64)
       caller.add_param("u", union_ref)
-      caller_builder = Crystal::MIR::Builder.new(caller)
-      call = caller_builder.call(callee.id, ([0_u32] of Crystal::MIR::ValueId), Crystal::MIR::TypeRef::FLOAT64)
+      caller_builder = Adamas::MIR::Builder.new(caller)
+      call = caller_builder.call(callee.id, ([0_u32] of Adamas::MIR::ValueId), Adamas::MIR::TypeRef::FLOAT64)
       caller_builder.ret(call)
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       output = gen.generate
 
@@ -858,26 +858,26 @@ describe Crystal::MIR::LLVMIRGenerator do
     end
 
     it "emits ptr phi when a union phi has ptr incoming" do
-      mod = Crystal::MIR::Module.new("phi_union_ptr")
+      mod = Adamas::MIR::Module.new("phi_union_ptr")
 
-      union_type = mod.type_registry.create_type(Crystal::MIR::TypeKind::Union, "PtrOrNil", 16, 8)
-      union_ref = Crystal::MIR::TypeRef.new(union_type.id)
+      union_type = mod.type_registry.create_type(Adamas::MIR::TypeKind::Union, "PtrOrNil", 16, 8)
+      union_ref = Adamas::MIR::TypeRef.new(union_type.id)
       mod.register_union(
         union_ref,
-        Crystal::MIR::UnionDescriptor.new(
+        Adamas::MIR::UnionDescriptor.new(
           "PtrOrNil",
           [
-            Crystal::MIR::UnionVariantDescriptor.new(
+            Adamas::MIR::UnionVariantDescriptor.new(
               type_id: 0,
-              type_ref: Crystal::MIR::TypeRef::POINTER,
+              type_ref: Adamas::MIR::TypeRef::POINTER,
               full_name: "Pointer",
               size: 8,
               alignment: 8,
               field_offsets: nil
             ),
-            Crystal::MIR::UnionVariantDescriptor.new(
+            Adamas::MIR::UnionVariantDescriptor.new(
               type_id: 1,
-              type_ref: Crystal::MIR::TypeRef::NIL,
+              type_ref: Adamas::MIR::TypeRef::NIL,
               full_name: "Nil",
               size: 0,
               alignment: 1,
@@ -889,8 +889,8 @@ describe Crystal::MIR::LLVMIRGenerator do
         )
       )
 
-      func = mod.create_function("phi_union_ptr", Crystal::MIR::TypeRef::VOID)
-      builder = Crystal::MIR::Builder.new(func)
+      func = mod.create_function("phi_union_ptr", Adamas::MIR::TypeRef::VOID)
+      builder = Adamas::MIR::Builder.new(func)
 
       entry = func.entry_block
       then_block = func.create_block
@@ -901,7 +901,7 @@ describe Crystal::MIR::LLVMIRGenerator do
       builder.branch(cond, then_block, else_block)
 
       builder.current_block = then_block
-      ptr_val = builder.alloc(Crystal::MIR::MemoryStrategy::Stack, Crystal::MIR::TypeRef::INT32, 4_u64, 4_u32)
+      ptr_val = builder.alloc(Adamas::MIR::MemoryStrategy::Stack, Adamas::MIR::TypeRef::INT32, 4_u64, 4_u32)
       wrapped_ptr = builder.union_wrap(ptr_val, 0, union_ref)
       builder.jump(merge_block)
 
@@ -916,7 +916,7 @@ describe Crystal::MIR::LLVMIRGenerator do
       phi.add_incoming(from: else_block, value: wrapped_nil)
       builder.ret
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       output = gen.generate
 
@@ -926,26 +926,26 @@ describe Crystal::MIR::LLVMIRGenerator do
     end
 
     it "emits align 4 for union payload store/load" do
-      mod = Crystal::MIR::Module.new("union_align")
+      mod = Adamas::MIR::Module.new("union_align")
 
-      union_type = mod.type_registry.create_type(Crystal::MIR::TypeKind::Union, "PtrOrNilAlign", 16, 8)
-      union_ref = Crystal::MIR::TypeRef.new(union_type.id)
+      union_type = mod.type_registry.create_type(Adamas::MIR::TypeKind::Union, "PtrOrNilAlign", 16, 8)
+      union_ref = Adamas::MIR::TypeRef.new(union_type.id)
       mod.register_union(
         union_ref,
-        Crystal::MIR::UnionDescriptor.new(
+        Adamas::MIR::UnionDescriptor.new(
           "PtrOrNilAlign",
           [
-            Crystal::MIR::UnionVariantDescriptor.new(
+            Adamas::MIR::UnionVariantDescriptor.new(
               type_id: 0,
-              type_ref: Crystal::MIR::TypeRef::POINTER,
+              type_ref: Adamas::MIR::TypeRef::POINTER,
               full_name: "Pointer",
               size: 8,
               alignment: 8,
               field_offsets: nil
             ),
-            Crystal::MIR::UnionVariantDescriptor.new(
+            Adamas::MIR::UnionVariantDescriptor.new(
               type_id: 1,
-              type_ref: Crystal::MIR::TypeRef::NIL,
+              type_ref: Adamas::MIR::TypeRef::NIL,
               full_name: "Nil",
               size: 0,
               alignment: 1,
@@ -957,14 +957,14 @@ describe Crystal::MIR::LLVMIRGenerator do
         )
       )
 
-      func = mod.create_function("union_align_payload", Crystal::MIR::TypeRef::POINTER)
-      builder = Crystal::MIR::Builder.new(func)
-      ptr_val = builder.alloc(Crystal::MIR::MemoryStrategy::Stack, Crystal::MIR::TypeRef::INT32, 4_u64, 4_u32)
+      func = mod.create_function("union_align_payload", Adamas::MIR::TypeRef::POINTER)
+      builder = Adamas::MIR::Builder.new(func)
+      ptr_val = builder.alloc(Adamas::MIR::MemoryStrategy::Stack, Adamas::MIR::TypeRef::INT32, 4_u64, 4_u32)
       wrapped = builder.union_wrap(ptr_val, 0, union_ref)
-      unwrapped = builder.emit(Crystal::MIR::UnionUnwrap.new(func.next_value_id, Crystal::MIR::TypeRef::POINTER, wrapped, 0))
+      unwrapped = builder.emit(Adamas::MIR::UnionUnwrap.new(func.next_value_id, Adamas::MIR::TypeRef::POINTER, wrapped, 0))
       builder.ret(unwrapped)
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       output = gen.generate
 
@@ -976,26 +976,26 @@ describe Crystal::MIR::LLVMIRGenerator do
     end
 
     it "emits align 4 for UInt64 union payload store/load" do
-      mod = Crystal::MIR::Module.new("union_align_u64")
+      mod = Adamas::MIR::Module.new("union_align_u64")
 
-      union_type = mod.type_registry.create_type(Crystal::MIR::TypeKind::Union, "U64OrNilAlign", 16, 8)
-      union_ref = Crystal::MIR::TypeRef.new(union_type.id)
+      union_type = mod.type_registry.create_type(Adamas::MIR::TypeKind::Union, "U64OrNilAlign", 16, 8)
+      union_ref = Adamas::MIR::TypeRef.new(union_type.id)
       mod.register_union(
         union_ref,
-        Crystal::MIR::UnionDescriptor.new(
+        Adamas::MIR::UnionDescriptor.new(
           "U64OrNilAlign",
           [
-            Crystal::MIR::UnionVariantDescriptor.new(
+            Adamas::MIR::UnionVariantDescriptor.new(
               type_id: 0,
-              type_ref: Crystal::MIR::TypeRef::UINT64,
+              type_ref: Adamas::MIR::TypeRef::UINT64,
               full_name: "UInt64",
               size: 8,
               alignment: 8,
               field_offsets: nil
             ),
-            Crystal::MIR::UnionVariantDescriptor.new(
+            Adamas::MIR::UnionVariantDescriptor.new(
               type_id: 1,
-              type_ref: Crystal::MIR::TypeRef::NIL,
+              type_ref: Adamas::MIR::TypeRef::NIL,
               full_name: "Nil",
               size: 0,
               alignment: 1,
@@ -1007,14 +1007,14 @@ describe Crystal::MIR::LLVMIRGenerator do
         )
       )
 
-      func = mod.create_function("union_align_payload_u64", Crystal::MIR::TypeRef::UINT64)
-      func.add_param("x", Crystal::MIR::TypeRef::UINT64)
-      builder = Crystal::MIR::Builder.new(func)
+      func = mod.create_function("union_align_payload_u64", Adamas::MIR::TypeRef::UINT64)
+      func.add_param("x", Adamas::MIR::TypeRef::UINT64)
+      builder = Adamas::MIR::Builder.new(func)
       wrapped = builder.union_wrap(0_u32, 0, union_ref)
-      unwrapped = builder.emit(Crystal::MIR::UnionUnwrap.new(func.next_value_id, Crystal::MIR::TypeRef::UINT64, wrapped, 0))
+      unwrapped = builder.emit(Adamas::MIR::UnionUnwrap.new(func.next_value_id, Adamas::MIR::TypeRef::UINT64, wrapped, 0))
       builder.ret(unwrapped)
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       output = gen.generate
 
@@ -1026,34 +1026,34 @@ describe Crystal::MIR::LLVMIRGenerator do
     end
 
     it "generates RC increment and decrement" do
-      mod = Crystal::MIR::Module.new("test")
-      func = mod.create_function("rc_test", Crystal::MIR::TypeRef::VOID)
-      func.add_param("ptr", Crystal::MIR::TypeRef::POINTER)
+      mod = Adamas::MIR::Module.new("test")
+      func = mod.create_function("rc_test", Adamas::MIR::TypeRef::VOID)
+      func.add_param("ptr", Adamas::MIR::TypeRef::POINTER)
 
-      builder = Crystal::MIR::Builder.new(func)
+      builder = Adamas::MIR::Builder.new(func)
       builder.rc_inc(0_u32)
       builder.rc_dec(0_u32)
       builder.ret
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       output = gen.generate
 
       # Parameters use their name directly
-      output.should contain("call void @__crystal_v2_rc_inc(ptr %ptr)")
-      output.should contain("call void @__crystal_v2_rc_dec(ptr %ptr, ptr null)")
+      output.should contain("call void @__adamas_rc_inc(ptr %ptr)")
+      output.should contain("call void @__adamas_rc_dec(ptr %ptr, ptr null)")
     end
 
     it "generates atomic RC increment with atomicrmw" do
-      mod = Crystal::MIR::Module.new("test")
-      func = mod.create_function("atomic_rc_inc", Crystal::MIR::TypeRef::VOID)
-      func.add_param("ptr", Crystal::MIR::TypeRef::POINTER)
+      mod = Adamas::MIR::Module.new("test")
+      func = mod.create_function("atomic_rc_inc", Adamas::MIR::TypeRef::VOID)
+      func.add_param("ptr", Adamas::MIR::TypeRef::POINTER)
 
-      builder = Crystal::MIR::Builder.new(func)
+      builder = Adamas::MIR::Builder.new(func)
       builder.rc_inc(0_u32, atomic: true)
       builder.ret
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       output = gen.generate
 
@@ -1062,19 +1062,19 @@ describe Crystal::MIR::LLVMIRGenerator do
       output.should contain("atomicrmw add")
       output.should contain("seq_cst")
       # Should NOT call external function
-      output.should_not contain("call void @__crystal_v2_rc_inc_atomic")
+      output.should_not contain("call void @__adamas_rc_inc_atomic")
     end
 
     it "generates atomic RC decrement with conditional free" do
-      mod = Crystal::MIR::Module.new("test")
-      func = mod.create_function("atomic_rc_dec", Crystal::MIR::TypeRef::VOID)
-      func.add_param("ptr", Crystal::MIR::TypeRef::POINTER)
+      mod = Adamas::MIR::Module.new("test")
+      func = mod.create_function("atomic_rc_dec", Adamas::MIR::TypeRef::VOID)
+      func.add_param("ptr", Adamas::MIR::TypeRef::POINTER)
 
-      builder = Crystal::MIR::Builder.new(func)
+      builder = Adamas::MIR::Builder.new(func)
       builder.rc_dec(0_u32, atomic: true)
       builder.ret
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       output = gen.generate
 
@@ -1090,16 +1090,16 @@ describe Crystal::MIR::LLVMIRGenerator do
     end
 
     it "generates TSan instrumentation for load/store when enabled" do
-      mod = Crystal::MIR::Module.new("test")
-      func = mod.create_function("tsan_test", Crystal::MIR::TypeRef::VOID)
-      func.add_param("ptr", Crystal::MIR::TypeRef::POINTER)
+      mod = Adamas::MIR::Module.new("test")
+      func = mod.create_function("tsan_test", Adamas::MIR::TypeRef::VOID)
+      func.add_param("ptr", Adamas::MIR::TypeRef::POINTER)
 
-      builder = Crystal::MIR::Builder.new(func)
-      loaded = builder.load(0_u32, Crystal::MIR::TypeRef::INT32)
+      builder = Adamas::MIR::Builder.new(func)
+      loaded = builder.load(0_u32, Adamas::MIR::TypeRef::INT32)
       builder.store(0_u32, loaded)
       builder.ret
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       gen.emit_tsan = true
       output = gen.generate
@@ -1120,16 +1120,16 @@ describe Crystal::MIR::LLVMIRGenerator do
     end
 
     it "does not generate TSan instrumentation when disabled" do
-      mod = Crystal::MIR::Module.new("test")
-      func = mod.create_function("no_tsan", Crystal::MIR::TypeRef::VOID)
-      func.add_param("ptr", Crystal::MIR::TypeRef::POINTER)
+      mod = Adamas::MIR::Module.new("test")
+      func = mod.create_function("no_tsan", Adamas::MIR::TypeRef::VOID)
+      func.add_param("ptr", Adamas::MIR::TypeRef::POINTER)
 
-      builder = Crystal::MIR::Builder.new(func)
-      loaded = builder.load(0_u32, Crystal::MIR::TypeRef::INT32)
+      builder = Adamas::MIR::Builder.new(func)
+      loaded = builder.load(0_u32, Adamas::MIR::TypeRef::INT32)
       builder.store(0_u32, loaded)
       builder.ret
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       gen.emit_tsan = false
       output = gen.generate
@@ -1141,16 +1141,16 @@ describe Crystal::MIR::LLVMIRGenerator do
     end
 
     it "generates TSan acquire/release for atomic RC" do
-      mod = Crystal::MIR::Module.new("test")
-      func = mod.create_function("tsan_atomic_rc", Crystal::MIR::TypeRef::VOID)
-      func.add_param("ptr", Crystal::MIR::TypeRef::POINTER)
+      mod = Adamas::MIR::Module.new("test")
+      func = mod.create_function("tsan_atomic_rc", Adamas::MIR::TypeRef::VOID)
+      func.add_param("ptr", Adamas::MIR::TypeRef::POINTER)
 
-      builder = Crystal::MIR::Builder.new(func)
+      builder = Adamas::MIR::Builder.new(func)
       builder.rc_inc(0_u32, atomic: true)
       builder.rc_dec(0_u32, atomic: true)
       builder.ret
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       gen.emit_tsan = true
       output = gen.generate
@@ -1161,18 +1161,18 @@ describe Crystal::MIR::LLVMIRGenerator do
     end
 
     it "generates binary operations" do
-      mod = Crystal::MIR::Module.new("test")
-      func = mod.create_function("binop_test", Crystal::MIR::TypeRef::INT32)
-      func.add_param("a", Crystal::MIR::TypeRef::INT32)
-      func.add_param("b", Crystal::MIR::TypeRef::INT32)
+      mod = Adamas::MIR::Module.new("test")
+      func = mod.create_function("binop_test", Adamas::MIR::TypeRef::INT32)
+      func.add_param("a", Adamas::MIR::TypeRef::INT32)
+      func.add_param("b", Adamas::MIR::TypeRef::INT32)
 
-      builder = Crystal::MIR::Builder.new(func)
-      sum = builder.add(0_u32, 1_u32, Crystal::MIR::TypeRef::INT32)
-      diff = builder.sub(0_u32, 1_u32, Crystal::MIR::TypeRef::INT32)
-      prod = builder.mul(0_u32, 1_u32, Crystal::MIR::TypeRef::INT32)
+      builder = Adamas::MIR::Builder.new(func)
+      sum = builder.add(0_u32, 1_u32, Adamas::MIR::TypeRef::INT32)
+      diff = builder.sub(0_u32, 1_u32, Adamas::MIR::TypeRef::INT32)
+      prod = builder.mul(0_u32, 1_u32, Adamas::MIR::TypeRef::INT32)
       builder.ret(prod)
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       output = gen.generate
 
@@ -1182,17 +1182,17 @@ describe Crystal::MIR::LLVMIRGenerator do
     end
 
     it "generates conditional branch" do
-      mod = Crystal::MIR::Module.new("test")
-      func = mod.create_function("branch_test", Crystal::MIR::TypeRef::INT32)
-      func.add_param("cond", Crystal::MIR::TypeRef::BOOL)
-      func.add_param("a", Crystal::MIR::TypeRef::INT32)
-      func.add_param("b", Crystal::MIR::TypeRef::INT32)
+      mod = Adamas::MIR::Module.new("test")
+      func = mod.create_function("branch_test", Adamas::MIR::TypeRef::INT32)
+      func.add_param("cond", Adamas::MIR::TypeRef::BOOL)
+      func.add_param("a", Adamas::MIR::TypeRef::INT32)
+      func.add_param("b", Adamas::MIR::TypeRef::INT32)
 
       then_block = func.create_block
       else_block = func.create_block
       exit_block = func.create_block
 
-      builder = Crystal::MIR::Builder.new(func)
+      builder = Adamas::MIR::Builder.new(func)
       builder.branch(0_u32, then_block, else_block)
 
       builder.current_block = then_block
@@ -1204,7 +1204,7 @@ describe Crystal::MIR::LLVMIRGenerator do
       builder.current_block = exit_block
       builder.ret(1_u32)
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       output = gen.generate
 
@@ -1215,9 +1215,9 @@ describe Crystal::MIR::LLVMIRGenerator do
 
   describe "type metadata generation" do
     it "generates __crystal_type_count global" do
-      mod = Crystal::MIR::Module.new("test")
+      mod = Adamas::MIR::Module.new("test")
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = true
       output = gen.generate
 
@@ -1225,9 +1225,9 @@ describe Crystal::MIR::LLVMIRGenerator do
     end
 
     it "generates __crystal_type_info array" do
-      mod = Crystal::MIR::Module.new("test")
+      mod = Adamas::MIR::Module.new("test")
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = true
       output = gen.generate
 
@@ -1236,9 +1236,9 @@ describe Crystal::MIR::LLVMIRGenerator do
     end
 
     it "generates __crystal_type_strings table" do
-      mod = Crystal::MIR::Module.new("test")
+      mod = Adamas::MIR::Module.new("test")
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = true
       output = gen.generate
 
@@ -1246,9 +1246,9 @@ describe Crystal::MIR::LLVMIRGenerator do
     end
 
     it "includes primitive types in metadata" do
-      mod = Crystal::MIR::Module.new("test")
+      mod = Adamas::MIR::Module.new("test")
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = true
       output = gen.generate
 
@@ -1258,19 +1258,19 @@ describe Crystal::MIR::LLVMIRGenerator do
     end
 
     it "generates field info for struct types" do
-      mod = Crystal::MIR::Module.new("test")
+      mod = Adamas::MIR::Module.new("test")
 
       # Create a struct type with fields
       struct_type = mod.type_registry.create_type(
-        Crystal::MIR::TypeKind::Struct,
+        Adamas::MIR::TypeKind::Struct,
         "Point",
         8_u64,
         4_u32
       )
-      struct_type.add_field("x", Crystal::MIR::TypeRef::INT32, 0_u32)
-      struct_type.add_field("y", Crystal::MIR::TypeRef::INT32, 4_u32)
+      struct_type.add_field("x", Adamas::MIR::TypeRef::INT32, 0_u32)
+      struct_type.add_field("y", Adamas::MIR::TypeRef::INT32, 4_u32)
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = true
       output = gen.generate
 
@@ -1279,20 +1279,20 @@ describe Crystal::MIR::LLVMIRGenerator do
     end
 
     it "emits large homogeneous tuples as DW_TAG_array_type with a DISubrange" do
-      mod = Crystal::MIR::Module.new("test")
+      mod = Adamas::MIR::Module.new("test")
       tuple_type = mod.type_registry.create_type(
-        Crystal::MIR::TypeKind::Tuple,
+        Adamas::MIR::TypeKind::Tuple,
         "HugeUInt64Tuple",
         1301_u64 * 8_u64,
         8_u32
       )
-      uint64_type = mod.type_registry.get(Crystal::MIR::TypeRef::UINT64)
+      uint64_type = mod.type_registry.get(Adamas::MIR::TypeRef::UINT64)
       uint64_type.should_not be_nil
       1301.times do
         tuple_type.add_element_type(uint64_type.not_nil!)
       end
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       gen.emit_debug_info = true
       output = gen.generate
@@ -1303,35 +1303,35 @@ describe Crystal::MIR::LLVMIRGenerator do
     end
 
     it "deduplicates colliding lexical block metadata ids" do
-      mod = Crystal::MIR::Module.new("test")
-      ctx = Crystal::MIR::DwarfDebugContext.new(mod, Crystal::MIR::LLVMTypeMapper.new(mod.type_registry))
+      mod = Adamas::MIR::Module.new("test")
+      ctx = Adamas::MIR::DwarfDebugContext.new(mod, Adamas::MIR::LLVMTypeMapper.new(mod.type_registry))
       assigned = {} of Int32 => String
       first_key = "lexblock:300001524:3"
       second_key = "lexblock:300002527:9"
 
       raw_first = ctx.__test_stable_metadata_id(
         first_key,
-        Crystal::MIR::DwarfDebugContext::LEXICAL_BLOCK_ID_BASE,
-        Crystal::MIR::DwarfDebugContext::LEXICAL_BLOCK_ID_SPAN
+        Adamas::MIR::DwarfDebugContext::LEXICAL_BLOCK_ID_BASE,
+        Adamas::MIR::DwarfDebugContext::LEXICAL_BLOCK_ID_SPAN
       )
       raw_second = ctx.__test_stable_metadata_id(
         second_key,
-        Crystal::MIR::DwarfDebugContext::LEXICAL_BLOCK_ID_BASE,
-        Crystal::MIR::DwarfDebugContext::LEXICAL_BLOCK_ID_SPAN
+        Adamas::MIR::DwarfDebugContext::LEXICAL_BLOCK_ID_BASE,
+        Adamas::MIR::DwarfDebugContext::LEXICAL_BLOCK_ID_SPAN
       )
       raw_first.should eq(raw_second)
 
       unique_first = ctx.__test_unique_stable_metadata_id(
         assigned,
         first_key,
-        Crystal::MIR::DwarfDebugContext::LEXICAL_BLOCK_ID_BASE,
-        Crystal::MIR::DwarfDebugContext::LEXICAL_BLOCK_ID_SPAN
+        Adamas::MIR::DwarfDebugContext::LEXICAL_BLOCK_ID_BASE,
+        Adamas::MIR::DwarfDebugContext::LEXICAL_BLOCK_ID_SPAN
       )
       unique_second = ctx.__test_unique_stable_metadata_id(
         assigned,
         second_key,
-        Crystal::MIR::DwarfDebugContext::LEXICAL_BLOCK_ID_BASE,
-        Crystal::MIR::DwarfDebugContext::LEXICAL_BLOCK_ID_SPAN
+        Adamas::MIR::DwarfDebugContext::LEXICAL_BLOCK_ID_BASE,
+        Adamas::MIR::DwarfDebugContext::LEXICAL_BLOCK_ID_SPAN
       )
 
       unique_first.should_not eq(unique_second)
@@ -1341,15 +1341,15 @@ describe Crystal::MIR::LLVMIRGenerator do
 
   describe "synchronization primitives" do
     it "generates atomic load with memory ordering" do
-      mod = Crystal::MIR::Module.new("test")
-      func = mod.create_function("atomic_load_test", Crystal::MIR::TypeRef::INT64)
-      func.add_param("ptr", Crystal::MIR::TypeRef::POINTER)
+      mod = Adamas::MIR::Module.new("test")
+      func = mod.create_function("atomic_load_test", Adamas::MIR::TypeRef::INT64)
+      func.add_param("ptr", Adamas::MIR::TypeRef::POINTER)
 
-      builder = Crystal::MIR::Builder.new(func)
-      result = builder.atomic_load(0_u32, Crystal::MIR::TypeRef::INT64, Crystal::MIR::MemoryOrdering::Acquire)
+      builder = Adamas::MIR::Builder.new(func)
+      result = builder.atomic_load(0_u32, Adamas::MIR::TypeRef::INT64, Adamas::MIR::MemoryOrdering::Acquire)
       builder.ret(result)
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       output = gen.generate
 
@@ -1358,16 +1358,16 @@ describe Crystal::MIR::LLVMIRGenerator do
     end
 
     it "generates atomic store with memory ordering" do
-      mod = Crystal::MIR::Module.new("test")
-      func = mod.create_function("atomic_store_test", Crystal::MIR::TypeRef::VOID)
-      func.add_param("ptr", Crystal::MIR::TypeRef::POINTER)
-      func.add_param("val", Crystal::MIR::TypeRef::INT64)
+      mod = Adamas::MIR::Module.new("test")
+      func = mod.create_function("atomic_store_test", Adamas::MIR::TypeRef::VOID)
+      func.add_param("ptr", Adamas::MIR::TypeRef::POINTER)
+      func.add_param("val", Adamas::MIR::TypeRef::INT64)
 
-      builder = Crystal::MIR::Builder.new(func)
-      builder.atomic_store(0_u32, 1_u32, Crystal::MIR::MemoryOrdering::Release)
+      builder = Adamas::MIR::Builder.new(func)
+      builder.atomic_store(0_u32, 1_u32, Adamas::MIR::MemoryOrdering::Release)
       builder.ret
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       output = gen.generate
 
@@ -1376,17 +1376,17 @@ describe Crystal::MIR::LLVMIRGenerator do
     end
 
     it "generates atomic compare-and-swap" do
-      mod = Crystal::MIR::Module.new("test")
-      func = mod.create_function("atomic_cas_test", Crystal::MIR::TypeRef::INT64)
-      func.add_param("ptr", Crystal::MIR::TypeRef::POINTER)
-      func.add_param("expected", Crystal::MIR::TypeRef::INT64)
-      func.add_param("desired", Crystal::MIR::TypeRef::INT64)
+      mod = Adamas::MIR::Module.new("test")
+      func = mod.create_function("atomic_cas_test", Adamas::MIR::TypeRef::INT64)
+      func.add_param("ptr", Adamas::MIR::TypeRef::POINTER)
+      func.add_param("expected", Adamas::MIR::TypeRef::INT64)
+      func.add_param("desired", Adamas::MIR::TypeRef::INT64)
 
-      builder = Crystal::MIR::Builder.new(func)
-      result = builder.atomic_cas(0_u32, 1_u32, 2_u32, Crystal::MIR::TypeRef::INT64)
+      builder = Adamas::MIR::Builder.new(func)
+      result = builder.atomic_cas(0_u32, 1_u32, 2_u32, Adamas::MIR::TypeRef::INT64)
       builder.ret(result)
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       output = gen.generate
 
@@ -1396,16 +1396,16 @@ describe Crystal::MIR::LLVMIRGenerator do
     end
 
     it "generates atomic read-modify-write operations" do
-      mod = Crystal::MIR::Module.new("test")
-      func = mod.create_function("atomic_rmw_test", Crystal::MIR::TypeRef::INT64)
-      func.add_param("ptr", Crystal::MIR::TypeRef::POINTER)
-      func.add_param("val", Crystal::MIR::TypeRef::INT64)
+      mod = Adamas::MIR::Module.new("test")
+      func = mod.create_function("atomic_rmw_test", Adamas::MIR::TypeRef::INT64)
+      func.add_param("ptr", Adamas::MIR::TypeRef::POINTER)
+      func.add_param("val", Adamas::MIR::TypeRef::INT64)
 
-      builder = Crystal::MIR::Builder.new(func)
-      result = builder.atomic_rmw(Crystal::MIR::AtomicRMWOp::Add, 0_u32, 1_u32, Crystal::MIR::TypeRef::INT64)
+      builder = Adamas::MIR::Builder.new(func)
+      result = builder.atomic_rmw(Adamas::MIR::AtomicRMWOp::Add, 0_u32, 1_u32, Adamas::MIR::TypeRef::INT64)
       builder.ret(result)
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       output = gen.generate
 
@@ -1414,14 +1414,14 @@ describe Crystal::MIR::LLVMIRGenerator do
     end
 
     it "generates memory fence" do
-      mod = Crystal::MIR::Module.new("test")
-      func = mod.create_function("fence_test", Crystal::MIR::TypeRef::VOID)
+      mod = Adamas::MIR::Module.new("test")
+      func = mod.create_function("fence_test", Adamas::MIR::TypeRef::VOID)
 
-      builder = Crystal::MIR::Builder.new(func)
-      builder.fence(Crystal::MIR::MemoryOrdering::AcqRel)
+      builder = Adamas::MIR::Builder.new(func)
+      builder.fence(Adamas::MIR::MemoryOrdering::AcqRel)
       builder.ret
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       output = gen.generate
 
@@ -1429,71 +1429,71 @@ describe Crystal::MIR::LLVMIRGenerator do
     end
 
     it "generates mutex lock/unlock calls" do
-      mod = Crystal::MIR::Module.new("test")
-      func = mod.create_function("mutex_test", Crystal::MIR::TypeRef::VOID)
-      func.add_param("mutex", Crystal::MIR::TypeRef::POINTER)
+      mod = Adamas::MIR::Module.new("test")
+      func = mod.create_function("mutex_test", Adamas::MIR::TypeRef::VOID)
+      func.add_param("mutex", Adamas::MIR::TypeRef::POINTER)
 
-      builder = Crystal::MIR::Builder.new(func)
+      builder = Adamas::MIR::Builder.new(func)
       builder.mutex_lock(0_u32)
       builder.mutex_unlock(0_u32)
       builder.ret
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       output = gen.generate
 
-      output.should contain("call void @__crystal_v2_mutex_lock")
-      output.should contain("call void @__crystal_v2_mutex_unlock")
+      output.should contain("call void @__adamas_mutex_lock")
+      output.should contain("call void @__adamas_mutex_unlock")
     end
 
     it "generates mutex trylock call" do
-      mod = Crystal::MIR::Module.new("test")
-      func = mod.create_function("trylock_test", Crystal::MIR::TypeRef::BOOL)
-      func.add_param("mutex", Crystal::MIR::TypeRef::POINTER)
+      mod = Adamas::MIR::Module.new("test")
+      func = mod.create_function("trylock_test", Adamas::MIR::TypeRef::BOOL)
+      func.add_param("mutex", Adamas::MIR::TypeRef::POINTER)
 
-      builder = Crystal::MIR::Builder.new(func)
+      builder = Adamas::MIR::Builder.new(func)
       result = builder.mutex_trylock(0_u32)
       builder.ret(result)
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       output = gen.generate
 
-      output.should contain("call i1 @__crystal_v2_mutex_trylock")
+      output.should contain("call i1 @__adamas_mutex_trylock")
     end
 
     it "generates channel send/receive/close calls" do
-      mod = Crystal::MIR::Module.new("test")
-      func = mod.create_function("channel_test", Crystal::MIR::TypeRef::POINTER)
-      func.add_param("channel", Crystal::MIR::TypeRef::POINTER)
-      func.add_param("data", Crystal::MIR::TypeRef::POINTER)
+      mod = Adamas::MIR::Module.new("test")
+      func = mod.create_function("channel_test", Adamas::MIR::TypeRef::POINTER)
+      func.add_param("channel", Adamas::MIR::TypeRef::POINTER)
+      func.add_param("data", Adamas::MIR::TypeRef::POINTER)
 
-      builder = Crystal::MIR::Builder.new(func)
+      builder = Adamas::MIR::Builder.new(func)
       builder.channel_send(0_u32, 1_u32)
-      result = builder.channel_receive(0_u32, Crystal::MIR::TypeRef::POINTER)
+      result = builder.channel_receive(0_u32, Adamas::MIR::TypeRef::POINTER)
       builder.channel_close(0_u32)
       builder.ret(result)
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       output = gen.generate
 
-      output.should contain("call void @__crystal_v2_channel_send")
-      output.should contain("call ptr @__crystal_v2_channel_receive")
-      output.should contain("call void @__crystal_v2_channel_close")
+      output.should contain("call void @__adamas_channel_send")
+      output.should contain("call ptr @__adamas_channel_receive")
+      output.should contain("call void @__adamas_channel_close")
     end
 
     it "generates TSan annotations for mutex operations" do
-      mod = Crystal::MIR::Module.new("test")
-      func = mod.create_function("mutex_tsan_test", Crystal::MIR::TypeRef::VOID)
-      func.add_param("mutex", Crystal::MIR::TypeRef::POINTER)
+      mod = Adamas::MIR::Module.new("test")
+      func = mod.create_function("mutex_tsan_test", Adamas::MIR::TypeRef::VOID)
+      func.add_param("mutex", Adamas::MIR::TypeRef::POINTER)
 
-      builder = Crystal::MIR::Builder.new(func)
+      builder = Adamas::MIR::Builder.new(func)
       builder.mutex_lock(0_u32)
       builder.mutex_unlock(0_u32)
       builder.ret
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       gen.emit_tsan = true
       output = gen.generate
@@ -1503,17 +1503,17 @@ describe Crystal::MIR::LLVMIRGenerator do
     end
 
     it "generates TSan annotations for channel operations" do
-      mod = Crystal::MIR::Module.new("test")
-      func = mod.create_function("channel_tsan_test", Crystal::MIR::TypeRef::POINTER)
-      func.add_param("channel", Crystal::MIR::TypeRef::POINTER)
-      func.add_param("data", Crystal::MIR::TypeRef::POINTER)
+      mod = Adamas::MIR::Module.new("test")
+      func = mod.create_function("channel_tsan_test", Adamas::MIR::TypeRef::POINTER)
+      func.add_param("channel", Adamas::MIR::TypeRef::POINTER)
+      func.add_param("data", Adamas::MIR::TypeRef::POINTER)
 
-      builder = Crystal::MIR::Builder.new(func)
+      builder = Adamas::MIR::Builder.new(func)
       builder.channel_send(0_u32, 1_u32)
-      result = builder.channel_receive(0_u32, Crystal::MIR::TypeRef::POINTER)
+      result = builder.channel_receive(0_u32, Adamas::MIR::TypeRef::POINTER)
       builder.ret(result)
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       gen.emit_tsan = true
       output = gen.generate
@@ -1524,12 +1524,12 @@ describe Crystal::MIR::LLVMIRGenerator do
     end
 
     it "keeps widened primitive override results consistent with the declared function return type" do
-      mod = Crystal::MIR::Module.new("test")
-      func = mod.create_function("UInt32#+$UInt64", Crystal::MIR::TypeRef::UINT32)
-      func.add_param("self", Crystal::MIR::TypeRef::UINT32)
-      func.add_param("other", Crystal::MIR::TypeRef::UINT64)
+      mod = Adamas::MIR::Module.new("test")
+      func = mod.create_function("UInt32#+$UInt64", Adamas::MIR::TypeRef::UINT32)
+      func.add_param("self", Adamas::MIR::TypeRef::UINT32)
+      func.add_param("other", Adamas::MIR::TypeRef::UINT64)
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       output = gen.generate
 
@@ -1542,68 +1542,68 @@ describe Crystal::MIR::LLVMIRGenerator do
     end
 
     it "inlines zeroed Crystal::Hasher allocation in key_hash overrides" do
-      mod = Crystal::MIR::Module.new("test")
+      mod = Adamas::MIR::Module.new("test")
       mod.type_registry.create_type(
-        Crystal::MIR::TypeKind::Struct,
+        Adamas::MIR::TypeKind::Struct,
         "Crystal::Hasher",
         16_u64,
         8_u32
       )
 
-      func = mod.create_function("Hash(Int32, Int32)#key_hash$Int32", Crystal::MIR::TypeRef::INT32)
-      func.add_param("self", Crystal::MIR::TypeRef::POINTER)
-      func.add_param("key", Crystal::MIR::TypeRef::INT32)
+      func = mod.create_function("Hash(Int32, Int32)#key_hash$Int32", Adamas::MIR::TypeRef::INT32)
+      func.add_param("self", Adamas::MIR::TypeRef::POINTER)
+      func.add_param("key", Adamas::MIR::TypeRef::INT32)
 
-      builder = Crystal::MIR::Builder.new(func)
-      zero = builder.const_int(0_i64, Crystal::MIR::TypeRef::INT32)
+      builder = Adamas::MIR::Builder.new(func)
+      zero = builder.const_int(0_i64, Adamas::MIR::TypeRef::INT32)
       builder.ret(zero)
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       output = gen.generate
 
       output.should contain("define i32 @Hash$LInt32$C$_Int32$R$Hkey_hash$$Int32")
-      output.should contain("call ptr @__crystal_v2_malloc64(i64 24)")
+      output.should contain("call ptr @__adamas_malloc64(i64 24)")
       output.should contain("call void @llvm.memset.p0.i64(ptr %hasher, i8 0, i64 16, i1 false)")
       output.should_not contain("call ptr @Crystal$CCHasher$Dnew(i64 0, i64 0)")
       output.should_not contain("call i64 @Crystal$CCHasher$Hresult(ptr %hasher2)")
     end
 
     it "delegates tuple key_hash overrides to generic Tuple#hash with a live hasher" do
-      mod = Crystal::MIR::Module.new("test")
+      mod = Adamas::MIR::Module.new("test")
       mod.type_registry.create_type(
-        Crystal::MIR::TypeKind::Struct,
+        Adamas::MIR::TypeKind::Struct,
         "Crystal::Hasher",
         16_u64,
         8_u32
       )
 
       tuple_type = mod.type_registry.create_type(
-        Crystal::MIR::TypeKind::Tuple,
+        Adamas::MIR::TypeKind::Tuple,
         "Tuple(Float64)",
         8_u64,
         8_u32
       )
-      float64_type = mod.type_registry.get(Crystal::MIR::TypeRef::FLOAT64)
+      float64_type = mod.type_registry.get(Adamas::MIR::TypeRef::FLOAT64)
       float64_type.should_not be_nil
       tuple_type.add_element_type(float64_type.not_nil!)
-      tuple_ref = Crystal::MIR::TypeRef.new(tuple_type.id)
+      tuple_ref = Adamas::MIR::TypeRef.new(tuple_type.id)
 
-      tuple_hash = mod.create_function("Tuple#hash", Crystal::MIR::TypeRef::POINTER)
+      tuple_hash = mod.create_function("Tuple#hash", Adamas::MIR::TypeRef::POINTER)
       tuple_hash.add_param("self", tuple_ref)
-      tuple_hash.add_param("hasher", Crystal::MIR::TypeRef::POINTER)
-      tuple_hash_builder = Crystal::MIR::Builder.new(tuple_hash)
+      tuple_hash.add_param("hasher", Adamas::MIR::TypeRef::POINTER)
+      tuple_hash_builder = Adamas::MIR::Builder.new(tuple_hash)
       tuple_hash_builder.ret(1_u32)
 
-      func = mod.create_function("Hash(Tuple(Float64), Nil)#key_hash$Tuple(Float64)", Crystal::MIR::TypeRef::INT32)
-      func.add_param("self", Crystal::MIR::TypeRef::POINTER)
+      func = mod.create_function("Hash(Tuple(Float64), Nil)#key_hash$Tuple(Float64)", Adamas::MIR::TypeRef::INT32)
+      func.add_param("self", Adamas::MIR::TypeRef::POINTER)
       func.add_param("key", tuple_ref)
 
-      builder = Crystal::MIR::Builder.new(func)
-      zero = builder.const_int(0_i64, Crystal::MIR::TypeRef::INT32)
+      builder = Adamas::MIR::Builder.new(func)
+      zero = builder.const_int(0_i64, Adamas::MIR::TypeRef::INT32)
       builder.ret(zero)
 
-      gen = Crystal::MIR::LLVMIRGenerator.new(mod)
+      gen = Adamas::MIR::LLVMIRGenerator.new(mod)
       gen.emit_type_metadata = false
       output = gen.generate
 
@@ -1614,41 +1614,41 @@ describe Crystal::MIR::LLVMIRGenerator do
   end
 end
 
-describe Crystal::MIR::TypeRegistry do
+describe Adamas::MIR::TypeRegistry do
   it "pre-registers primitive types" do
-    registry = Crystal::MIR::TypeRegistry.new
+    registry = Adamas::MIR::TypeRegistry.new
 
-    int32 = registry.get(Crystal::MIR::TypeRef::INT32)
+    int32 = registry.get(Adamas::MIR::TypeRef::INT32)
     int32.should_not be_nil
     int32.not_nil!.name.should eq("Int32")
-    int32.not_nil!.kind.should eq(Crystal::MIR::TypeKind::Int32)
+    int32.not_nil!.kind.should eq(Adamas::MIR::TypeKind::Int32)
     int32.not_nil!.size.should eq(4)
   end
 
   it "creates custom types" do
-    registry = Crystal::MIR::TypeRegistry.new
+    registry = Adamas::MIR::TypeRegistry.new
 
-    point = registry.create_type(Crystal::MIR::TypeKind::Struct, "Point", 8_u64, 4_u32)
+    point = registry.create_type(Adamas::MIR::TypeKind::Struct, "Point", 8_u64, 4_u32)
     point.id.should be >= 100  # Custom types start at ID 100
     point.name.should eq("Point")
-    point.kind.should eq(Crystal::MIR::TypeKind::Struct)
+    point.kind.should eq(Adamas::MIR::TypeKind::Struct)
   end
 
   it "looks up types by name" do
-    registry = Crystal::MIR::TypeRegistry.new
+    registry = Adamas::MIR::TypeRegistry.new
 
     int32 = registry.get_by_name("Int32")
     int32.should_not be_nil
-    int32.not_nil!.id.should eq(Crystal::MIR::TypeRef::INT32.id)
+    int32.not_nil!.id.should eq(Adamas::MIR::TypeRef::INT32.id)
   end
 end
 
-describe Crystal::MIR::Type do
+describe Adamas::MIR::Type do
   it "supports adding fields" do
-    type = Crystal::MIR::Type.new(100_u32, Crystal::MIR::TypeKind::Struct, "Point", 8_u64, 4_u32)
+    type = Adamas::MIR::Type.new(100_u32, Adamas::MIR::TypeKind::Struct, "Point", 8_u64, 4_u32)
 
-    type.add_field("x", Crystal::MIR::TypeRef::INT32, 0_u32)
-    type.add_field("y", Crystal::MIR::TypeRef::INT32, 4_u32)
+    type.add_field("x", Adamas::MIR::TypeRef::INT32, 0_u32)
+    type.add_field("y", Adamas::MIR::TypeRef::INT32, 4_u32)
 
     type.fields.should_not be_nil
     type.fields.not_nil!.size.should eq(2)
@@ -1657,8 +1657,8 @@ describe Crystal::MIR::Type do
   end
 
   it "detects value types" do
-    struct_type = Crystal::MIR::Type.new(100_u32, Crystal::MIR::TypeKind::Struct, "Point", 8_u64, 4_u32)
-    class_type = Crystal::MIR::Type.new(101_u32, Crystal::MIR::TypeKind::Reference, "Object", 8_u64, 8_u32)
+    struct_type = Adamas::MIR::Type.new(100_u32, Adamas::MIR::TypeKind::Struct, "Point", 8_u64, 4_u32)
+    class_type = Adamas::MIR::Type.new(101_u32, Adamas::MIR::TypeKind::Reference, "Object", 8_u64, 8_u32)
 
     struct_type.is_value_type?.should be_true
     class_type.is_value_type?.should be_false

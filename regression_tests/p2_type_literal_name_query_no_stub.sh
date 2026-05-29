@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-COMPILER="${1:-bin/crystal_v2}"
+COMPILER="${1:-bin/adamas}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP_DIR="$(mktemp -d /tmp/cv2_type_literal_name_query.XXXXXX)"
 SRC="$TMP_DIR/type_literal_name_query.cr"

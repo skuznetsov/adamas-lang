@@ -6,7 +6,7 @@ if [ $# -lt 1 ]; then
   exit 1
 fi
 
-ROOT="/Users/sergey/Projects/Crystal/crystal_v2_repo"
+ROOT="/Users/sergey/Projects/Crystal/adamas_repo"
 COMPILER="$1"
 MAX_RSS_BYTES="${2:-67108864}" # 64 MB default ceiling for the debug oracle
 SRC="$ROOT/regression_tests/stage2_arc_tree_rss_oracle.cr"

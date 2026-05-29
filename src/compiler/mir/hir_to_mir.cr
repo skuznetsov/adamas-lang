@@ -13,7 +13,7 @@ require "./mir"
 require "../hir/hir"
 require "../hir/memory_strategy"
 
-module Crystal
+module Adamas
   module MIR
     # ═══════════════════════════════════════════════════════════════════════════
     # HIR TO MIR LOWERING
@@ -21,11 +21,11 @@ module Crystal
 
     class HIRToMIRLowering
       getter hir_module : HIR::Module
-      getter mir_module : Crystal::MIR::Module
+      getter mir_module : Adamas::MIR::Module
 
       private alias VDispatchCandidate = NamedTuple(
         type_id: Int32,
-        func: Crystal::MIR::Function?,
+        func: Adamas::MIR::Function?,
         type_ref: TypeRef?,     # for Union unwrap
         variant_id: Int32?,     # for Union unwrap
         dispatch_class: String? # for nested class dispatch
@@ -75,7 +75,7 @@ module Crystal
 
       # Current function being lowered
       @current_hir_func : HIR::Function?
-      @current_mir_func : Crystal::MIR::Function?
+      @current_mir_func : Adamas::MIR::Function?
       @builder : Builder?
       @current_lowering_func_name : String = ""
       @slab_frame_enabled : Bool
@@ -85,17 +85,17 @@ module Crystal
 
       # Index: base_name (before "$") → first matching MIR function.
       # Eliminates O(N) linear scans during fuzzy call resolution.
-      @function_by_base_name : ::Hash(String, Crystal::MIR::Function) = {} of String => Crystal::MIR::Function
-      @functions_by_base_name_all : ::Hash(String, ::Array(Crystal::MIR::Function)) = {} of String => ::Array(Crystal::MIR::Function)
+      @function_by_base_name : ::Hash(String, Adamas::MIR::Function) = {} of String => Adamas::MIR::Function
+      @functions_by_base_name_all : ::Hash(String, ::Array(Adamas::MIR::Function)) = {} of String => ::Array(Adamas::MIR::Function)
 
       # Index: class_name → Array of functions belonging to that class.
       # Eliminates O(N) full-scan of all functions during virtual dispatch.
-      @functions_by_class : ::Hash(String, ::Array(Crystal::MIR::Function)) = {} of String => ::Array(Crystal::MIR::Function)
+      @functions_by_class : ::Hash(String, ::Array(Adamas::MIR::Function)) = {} of String => ::Array(Adamas::MIR::Function)
 
       # Caches for virtual dispatch (avoid repeated hierarchy traversals)
       @subclass_cache : ::Hash(String, ::Array(String)) = {} of String => ::Array(String)
       @module_includers_cache : ::Hash(String, ::Array(String)) = {} of String => ::Array(String)
-      @resolve_virtual_cache : ::Hash({String, String, Int32?, Bool}, Crystal::MIR::Function?) = {} of {String, String, Int32?, Bool} => Crystal::MIR::Function?
+      @resolve_virtual_cache : ::Hash({String, String, Int32?, Bool}, Adamas::MIR::Function?) = {} of {String, String, Int32?, Bool} => Adamas::MIR::Function?
 
       # Reusable buffer for virtual dispatch candidates to avoid repeated array
       # allocations that cause heavy GC pressure in the Boehm collector.
@@ -157,7 +157,7 @@ module Crystal
       def initialize(@hir_module : HIR::Module, *, slab_frame : Bool = false)
         trace = mir_setup_trace?
         STDERR.puts "[MIR_INIT] begin" if trace
-        @mir_module = Crystal::MIR::Module.new(@hir_module.name)
+        @mir_module = Adamas::MIR::Module.new(@hir_module.name)
         @mir_module.source_file = @hir_module.name
         STDERR.puts "[MIR_INIT] mir_module" if trace
         @value_map = {} of HIR::ValueId => ValueId
@@ -251,7 +251,7 @@ module Crystal
 
       # Prepare stubs and indices for all functions (serial, fast).
       # Call this before lower() or lower_bodies_range().
-      def prepare(progress : Bool = false) : Crystal::MIR::Module
+      def prepare(progress : Bool = false) : Adamas::MIR::Module
         finalize_pointer_backed_union_layouts
         build_proc_carrier_index
 
@@ -294,7 +294,7 @@ module Crystal
           dollar_idx = name.index('$')
           base = dollar_idx ? name[0, dollar_idx] : name
           @function_by_base_name[base] = func unless @function_by_base_name.has_key?(base)
-          (@functions_by_base_name_all[base] ||= [] of Crystal::MIR::Function) << func
+          (@functions_by_base_name_all[base] ||= [] of Adamas::MIR::Function) << func
 
           hash_idx = name.index('#')
           dot_idx = name.index('.')
@@ -305,7 +305,7 @@ module Crystal
                     end
           if sep_idx
             class_name = name[0, sep_idx]
-            (@functions_by_class[class_name] ||= [] of Crystal::MIR::Function) << func
+            (@functions_by_class[class_name] ||= [] of Adamas::MIR::Function) << func
           end
         end
 
@@ -402,7 +402,7 @@ module Crystal
         # Only canonical names (no "$" arity/type-suffix) are considered, so an
         # abstract symbol like "Node#span" is matched against subclass canonical
         # functions like "MacroIfNode#span".
-        method_owners = {} of String => ::Array(::Tuple(String, Crystal::MIR::Function))
+        method_owners = {} of String => ::Array(::Tuple(String, Adamas::MIR::Function))
         @mir_module.functions.each do |f|
           name = f.name
           hash_idx = name.index('#')
@@ -413,7 +413,7 @@ module Crystal
           next if PRIMITIVE_OVERRIDE_METHOD_SUFFIXES.includes?(method_part)
           owner = name.byte_slice(0, hash_idx)
           next if owner.empty?
-          (method_owners[method_part] ||= [] of ::Tuple(String, Crystal::MIR::Function)) << {owner, f}
+          (method_owners[method_part] ||= [] of ::Tuple(String, Adamas::MIR::Function)) << {owner, f}
         end
 
         generated = 0
@@ -439,8 +439,8 @@ module Crystal
       private def synthesize_class_dispatch_for_abstract(
         class_name : String,
         method_suffix : String,
-        candidates : ::Array(::Tuple(String, Crystal::MIR::Function))
-      ) : Crystal::MIR::Function?
+        candidates : ::Array(::Tuple(String, Adamas::MIR::Function))
+      ) : Adamas::MIR::Function?
         func_name = "#{class_name}##{method_suffix}"
         return nil if @mir_module.get_function(func_name)
 
@@ -495,7 +495,7 @@ module Crystal
         dispatch_func
       end
 
-      def lower(progress : Bool = false) : Crystal::MIR::Module
+      def lower(progress : Bool = false) : Adamas::MIR::Module
         prepare(progress)
         lower_all_bodies(progress)
         synthesize_abstract_method_dispatchers(progress)
@@ -605,13 +605,13 @@ module Crystal
       # in different contexts (e.g., .new vs initialize).  Only one is registered
       # via register_union_types; this method ensures ALL union TypeRefs in the
       # HIR type descriptor table resolve correctly in the MIR type registry.
-      def register_union_type_aliases(type_descriptors : ::Array(Crystal::HIR::TypeDescriptor))
+      def register_union_type_aliases(type_descriptors : ::Array(Adamas::HIR::TypeDescriptor))
         registered_count = 0
         idx = 0
         while idx < type_descriptors.size
           desc = type_descriptors.unsafe_fetch(idx)
           if desc.kind == HIR::TypeKind::Union
-            hir_ref = Crystal::HIR::TypeRef.new(Crystal::HIR::TypeRef::FIRST_USER_TYPE + idx.to_u32)
+            hir_ref = Adamas::HIR::TypeRef.new(Adamas::HIR::TypeRef::FIRST_USER_TYPE + idx.to_u32)
             mir_ref = convert_type(hir_ref)
 
             unless @mir_module.type_registry.get(mir_ref)
@@ -643,7 +643,7 @@ module Crystal
 
       # Register class/struct types with their fields
       # This allows LLVM backend to generate proper struct types
-      def register_class_types(class_infos : ::Hash(String, Crystal::HIR::ClassInfo))
+      def register_class_types(class_infos : ::Hash(String, Adamas::HIR::ClassInfo))
         class_infos.each do |class_name, info|
           # Skip primitive types - they should not be registered as struct types
           # (their LLVM types are handled by the TypeRef case statement)
@@ -698,12 +698,12 @@ module Crystal
 
       # Register enum types so the LLVM backend maps them to i32 instead of ptr.
       # Enums in Crystal are integer types (i32 by default).
-      def register_enum_types(enum_names : ::Set(String), type_descriptors : ::Array(Crystal::HIR::TypeDescriptor))
+      def register_enum_types(enum_names : ::Set(String), type_descriptors : ::Array(Adamas::HIR::TypeDescriptor))
         idx = 0
         while idx < type_descriptors.size
           desc = type_descriptors.unsafe_fetch(idx)
           if enum_names.includes?(desc.name)
-            hir_ref = Crystal::HIR::TypeRef.new(Crystal::HIR::TypeRef::FIRST_USER_TYPE + idx.to_u32)
+            hir_ref = Adamas::HIR::TypeRef.new(Adamas::HIR::TypeRef::FIRST_USER_TYPE + idx.to_u32)
             mir_ref = convert_type(hir_ref)
             unless @mir_module.type_registry.get(mir_ref)
               @mir_module.type_registry.create_type_with_id(
@@ -721,12 +721,12 @@ module Crystal
 
       # Register module types so module literals can be represented as runtime singletons.
       # This prevents lowering module values as null pointers (which breaks vdispatch).
-      def register_module_types(type_descriptors : ::Array(Crystal::HIR::TypeDescriptor))
+      def register_module_types(type_descriptors : ::Array(Adamas::HIR::TypeDescriptor))
         idx = 0
         while idx < type_descriptors.size
           desc = type_descriptors.unsafe_fetch(idx)
-          if desc.kind == Crystal::HIR::TypeKind::Module
-            hir_ref = Crystal::HIR::TypeRef.new(Crystal::HIR::TypeRef::FIRST_USER_TYPE + idx.to_u32)
+          if desc.kind == Adamas::HIR::TypeKind::Module
+            hir_ref = Adamas::HIR::TypeRef.new(Adamas::HIR::TypeRef::FIRST_USER_TYPE + idx.to_u32)
             mir_ref = convert_type(hir_ref)
 
             unless @mir_module.type_registry.get(mir_ref)
@@ -749,12 +749,12 @@ module Crystal
       # Without this, codegen can't recover runtime type ids for Array(T)/Pointer(T)
       # specializations and falls back to 0, which breaks dynamic dispatch on values
       # returned from unions/calls (for example Hash#[] -> Array(Tuple(...))#size).
-      def register_container_types(type_descriptors : ::Array(Crystal::HIR::TypeDescriptor))
+      def register_container_types(type_descriptors : ::Array(Adamas::HIR::TypeDescriptor))
         idx = 0
         while idx < type_descriptors.size
           desc = type_descriptors.unsafe_fetch(idx)
           if mir_kind = canonical_container_kind_for_descriptor(desc)
-            hir_ref = Crystal::HIR::TypeRef.new(Crystal::HIR::TypeRef::FIRST_USER_TYPE + idx.to_u32)
+            hir_ref = Adamas::HIR::TypeRef.new(Adamas::HIR::TypeRef::FIRST_USER_TYPE + idx.to_u32)
             mir_ref = convert_type(hir_ref)
             existing_mir_type = @mir_module.type_registry.get(mir_ref)
             if ENV["DEBUG_CONTAINER_REGISTER"]? && (desc.name.includes?("Array(") || desc.name.includes?("Pointer("))
@@ -796,13 +796,13 @@ module Crystal
         refresh_container_element_types(type_descriptors)
       end
 
-      private def canonical_container_kind_for_descriptor(desc : Crystal::HIR::TypeDescriptor) : TypeKind?
+      private def canonical_container_kind_for_descriptor(desc : Adamas::HIR::TypeDescriptor) : TypeKind?
         case desc.kind
-        when Crystal::HIR::TypeKind::Pointer
+        when Adamas::HIR::TypeKind::Pointer
           if desc.name == "Pointer" || desc.name.starts_with?("Pointer(")
             TypeKind::Pointer
           end
-        when Crystal::HIR::TypeKind::Array
+        when Adamas::HIR::TypeKind::Array
           if desc.name.starts_with?("Array(")
             TypeKind::Array
           end
@@ -813,12 +813,12 @@ module Crystal
 
       # Register tuple/named tuple types from HIR descriptors.
       # This enables tuple element access to lower as struct GEPs instead of array layout.
-      def register_tuple_types(type_descriptors : ::Array(Crystal::HIR::TypeDescriptor))
+      def register_tuple_types(type_descriptors : ::Array(Adamas::HIR::TypeDescriptor))
         idx = 0
         while idx < type_descriptors.size
           desc = type_descriptors.unsafe_fetch(idx)
-          if desc.kind == Crystal::HIR::TypeKind::Tuple || desc.kind == Crystal::HIR::TypeKind::NamedTuple
-            hir_ref = Crystal::HIR::TypeRef.new(Crystal::HIR::TypeRef::FIRST_USER_TYPE + idx.to_u32)
+          if desc.kind == Adamas::HIR::TypeKind::Tuple || desc.kind == Adamas::HIR::TypeKind::NamedTuple
+            hir_ref = Adamas::HIR::TypeRef.new(Adamas::HIR::TypeRef::FIRST_USER_TYPE + idx.to_u32)
             mir_ref = convert_type(hir_ref)
             existing_mir_type = @mir_module.type_registry.get(mir_ref)
 
@@ -879,13 +879,13 @@ module Crystal
         refresh_container_element_types(type_descriptors)
       end
 
-      private def refresh_container_element_types(type_descriptors : ::Array(Crystal::HIR::TypeDescriptor)) : Nil
+      private def refresh_container_element_types(type_descriptors : ::Array(Adamas::HIR::TypeDescriptor)) : Nil
         idx = 0
         while idx < type_descriptors.size
           desc = type_descriptors.unsafe_fetch(idx)
           if canonical_container_kind_for_descriptor(desc)
             if elem_hir_ref = desc.type_params.first?
-              hir_ref = Crystal::HIR::TypeRef.new(Crystal::HIR::TypeRef::FIRST_USER_TYPE + idx.to_u32)
+              hir_ref = Adamas::HIR::TypeRef.new(Adamas::HIR::TypeRef::FIRST_USER_TYPE + idx.to_u32)
               mir_type = @mir_module.type_registry.get(convert_type(hir_ref))
               if mir_type
                 elem_storage_hir_ref = storage_hir_type_ref(elem_hir_ref, type_descriptors)
@@ -911,20 +911,20 @@ module Crystal
       # Generic Slice(UInt8) followed by Struct Slice(UInt8)). Array/Pointer
       # storage must use the concrete descriptor when it exists; otherwise MIR
       # falls back to pointer-sized slots for inline structs.
-      private def storage_hir_type_ref(type_ref : Crystal::HIR::TypeRef, type_descriptors : ::Array(Crystal::HIR::TypeDescriptor)) : Crystal::HIR::TypeRef
-        return type_ref if type_ref.id < Crystal::HIR::TypeRef::FIRST_USER_TYPE
+      private def storage_hir_type_ref(type_ref : Adamas::HIR::TypeRef, type_descriptors : ::Array(Adamas::HIR::TypeDescriptor)) : Adamas::HIR::TypeRef
+        return type_ref if type_ref.id < Adamas::HIR::TypeRef::FIRST_USER_TYPE
 
-        idx = (type_ref.id - Crystal::HIR::TypeRef::FIRST_USER_TYPE).to_i32
+        idx = (type_ref.id - Adamas::HIR::TypeRef::FIRST_USER_TYPE).to_i32
         return type_ref if idx < 0 || idx >= type_descriptors.size
 
         desc = type_descriptors.unsafe_fetch(idx)
-        return type_ref unless desc.kind == Crystal::HIR::TypeKind::Generic
+        return type_ref unless desc.kind == Adamas::HIR::TypeKind::Generic
 
         concrete_idx = 0
         while concrete_idx < type_descriptors.size
           candidate = type_descriptors.unsafe_fetch(concrete_idx)
-          if candidate.name == desc.name && candidate.kind != Crystal::HIR::TypeKind::Generic
-            return Crystal::HIR::TypeRef.new(Crystal::HIR::TypeRef::FIRST_USER_TYPE + concrete_idx.to_u32)
+          if candidate.name == desc.name && candidate.kind != Adamas::HIR::TypeKind::Generic
+            return Adamas::HIR::TypeRef.new(Adamas::HIR::TypeRef::FIRST_USER_TYPE + concrete_idx.to_u32)
           end
           concrete_idx += 1
         end
@@ -938,11 +938,11 @@ module Crystal
         ((value + a - 1) // a) * a
       end
 
-      private def container_layout_for_descriptor(desc : Crystal::HIR::TypeDescriptor, type_descriptors : ::Array(Crystal::HIR::TypeDescriptor)) : {UInt64, UInt32}
+      private def container_layout_for_descriptor(desc : Adamas::HIR::TypeDescriptor, type_descriptors : ::Array(Adamas::HIR::TypeDescriptor)) : {UInt64, UInt32}
         case desc.kind
-        when Crystal::HIR::TypeKind::Pointer
+        when Adamas::HIR::TypeKind::Pointer
           {pointer_word_bytes_u64, pointer_word_align_u32}
-        when Crystal::HIR::TypeKind::Array
+        when Adamas::HIR::TypeKind::Array
           if desc.name.starts_with?("StaticArray(")
             elem_type = desc.type_params.first?.try { |ref| @mir_module.type_registry.get(convert_type(storage_hir_type_ref(ref, type_descriptors))) }
             elem_size = container_elem_storage_size_u64(elem_type)
@@ -1184,7 +1184,7 @@ module Crystal
             runtime_header_backed_union_variant?(type)
           else
             # Variant type not in registry — possibly an ivar-qualified type name
-            # like "Crystal::HIR::AstToHir::class_name:String". Extract the base
+            # like "Adamas::HIR::AstToHir::class_name:String". Extract the base
             # type after the last single colon (not part of ::) and check whether
             # it carries a runtime type header.
             variant_name_is_runtime_header_backed?(variant.full_name)
@@ -1422,8 +1422,8 @@ module Crystal
         end
       end
 
-      private def to_mir_source_location(location : HIR::SourceLocation) : Crystal::MIR::SourceLocation
-        Crystal::MIR::SourceLocation.new(location.path, location.line, location.column)
+      private def to_mir_source_location(location : HIR::SourceLocation) : Adamas::MIR::SourceLocation
+        Adamas::MIR::SourceLocation.new(location.path, location.line, location.column)
       end
 
       private def hir_scope_depth(hir_func : HIR::Function, sid : UInt32) : Int32
@@ -1481,7 +1481,7 @@ module Crystal
         hir_innermost_scope_for_source_line(hir_func, loc)
       end
 
-      private def record_mir_value_location(hir_func : HIR::Function, hir_id : HIR::ValueId, mir_func : Crystal::MIR::Function, mir_id : ValueId) : Nil
+      private def record_mir_value_location(hir_func : HIR::Function, hir_id : HIR::ValueId, mir_func : Adamas::MIR::Function, mir_id : ValueId) : Nil
         # Source locations are debug metadata. Keep them opt-in during
         # bootstrap because self-hosted stage2 can corrupt Hash-backed debug
         # metadata even when semantic lowering is otherwise valid.
@@ -1499,7 +1499,7 @@ module Crystal
         end
       end
 
-      private def propagate_debug_scope_metadata(hir_func : HIR::Function, mir_func : Crystal::MIR::Function) : Nil
+      private def propagate_debug_scope_metadata(hir_func : HIR::Function, mir_func : Adamas::MIR::Function) : Nil
         hir_func.scopes.each do |scope|
           next if scope.kind == HIR::ScopeKind::Function
           if loc = hir_func.scope_opening_location?(scope.id)
@@ -1511,7 +1511,7 @@ module Crystal
         end
       end
 
-      private def propagate_debug_local_bindings(hir_func : HIR::Function, mir_func : Crystal::MIR::Function) : Nil
+      private def propagate_debug_local_bindings(hir_func : HIR::Function, mir_func : Adamas::MIR::Function) : Nil
         hir_func.debug_local_bindings.each do |binding|
           next unless slot_id = @value_map[binding.local_id]?
           next unless value_id = @value_map[binding.value_id]?
@@ -1996,7 +1996,7 @@ module Crystal
         # Only reference-typed results from functions that return +1 ownership.
         # Skip values used in other blocks (cross-block) — they're still alive.
         # Skip values that were MOVED (ownership transferred to a field/constructor).
-        # Use index iteration, not `Array#each`: self-hosted crystal_v2 can resolve
+        # Use index iteration, not `Array#each`: self-hosted adamas can resolve
         # `each` on generic Array(Tuple(...)) to unlowered Indexable(T)#each$block
         # (abort stub) during stage2 no-prelude smoke.
         arc_i = 0
@@ -2059,9 +2059,9 @@ module Crystal
             lower_call(hir_value)
           when HIR::ExternCall
             lower_hir_extern_call(hir_value)
-          when Crystal::HIR::BinaryOperation
+          when Adamas::HIR::BinaryOperation
             lower_binary_op(hir_value)
-          when Crystal::HIR::UnaryOperation
+          when Adamas::HIR::UnaryOperation
             lower_unary_op(hir_value)
           when HIR::Cast
             lower_cast(hir_value)
@@ -3397,7 +3397,7 @@ module Crystal
         end
 
         # Check if this is an external/runtime call
-        if call.method_name.starts_with?("__crystal_v2_")
+        if call.method_name.starts_with?("__adamas_")
           return builder.extern_call(call.method_name, args, convert_type(call.type))
         end
 
@@ -3718,13 +3718,13 @@ module Crystal
         if args.size == 2 # self (IO) + float value
           _mn = call.method_name
           float_extern = if _mn.includes?("puts$Float64")
-                           "__crystal_v2_print_float64_ln"
+                           "__adamas_print_float64_ln"
                          elsif _mn.includes?("puts$Float32")
-                           "__crystal_v2_print_float32_ln"
+                           "__adamas_print_float32_ln"
                          elsif _mn.includes?("print$Float64")
-                           "__crystal_v2_print_float64"
+                           "__adamas_print_float64"
                          elsif _mn.includes?("print$Float32")
-                           "__crystal_v2_print_float32"
+                           "__adamas_print_float32"
                          else
                            nil
                          end
@@ -3906,18 +3906,18 @@ module Crystal
                        end
             extern_name = case arg_type
                           when TypeRef::INT32, TypeRef::UINT32, TypeRef::CHAR
-                            "__crystal_v2_print_int32_ln"
+                            "__adamas_print_int32_ln"
                           when TypeRef::INT64, TypeRef::UINT64
-                            "__crystal_v2_print_int64_ln"
+                            "__adamas_print_int64_ln"
                           when TypeRef::FLOAT32
-                            "__crystal_v2_print_float32_ln"
+                            "__adamas_print_float32_ln"
                           when TypeRef::FLOAT64
-                            "__crystal_v2_print_float64_ln"
+                            "__adamas_print_float64_ln"
                           when TypeRef::STRING, TypeRef::POINTER
-                            "__crystal_v2_puts"
+                            "__adamas_puts"
                           else
                             # Default to int32 for unknown numeric types
-                            "__crystal_v2_print_int32_ln"
+                            "__adamas_print_int32_ln"
                           end
             return builder.extern_call(extern_name, args, TypeRef::VOID)
           end
@@ -3936,15 +3936,15 @@ module Crystal
                        end
             extern_name = case arg_type
                           when TypeRef::INT32, TypeRef::UINT32, TypeRef::CHAR
-                            "__crystal_v2_print_int32"
+                            "__adamas_print_int32"
                           when TypeRef::INT64, TypeRef::UINT64
-                            "__crystal_v2_print_int64"
+                            "__adamas_print_int64"
                           when TypeRef::FLOAT32
-                            "__crystal_v2_print_float32"
+                            "__adamas_print_float32"
                           when TypeRef::FLOAT64
-                            "__crystal_v2_print_float64"
+                            "__adamas_print_float64"
                           else
-                            "__crystal_v2_print_int32"
+                            "__adamas_print_int32"
                           end
             return builder.extern_call(extern_name, args, TypeRef::VOID)
           end
@@ -4199,7 +4199,7 @@ module Crystal
       # Unified vdispatch body generator - handles both Union and Class dispatch
       # Returns the phi node if return type is non-void, nil otherwise
       private def generate_vdispatch_body(
-        dispatch_func : Crystal::MIR::Function,
+        dispatch_func : Adamas::MIR::Function,
         dispatch_builder : Builder,
         param_values : ::Array(ValueId),
         candidates : ::Array(VDispatchCandidate),
@@ -4508,7 +4508,7 @@ module Crystal
                 type_id:        variant_id,
                 type_ref:       variant_mir_ref,
                 variant_id:     variant_id,
-                func:           nil.as(Crystal::MIR::Function?),
+                func:           nil.as(Adamas::MIR::Function?),
                 dispatch_class: variant_name,
               }
               existing_variant_ids.add(variant_id)
@@ -4869,7 +4869,7 @@ module Crystal
           all_classes = [base] + subclasses_for(base)
           # Track classes that had no MIR function found — we'll fill them in
           # with the nearest parent's implementation in a second pass.
-          missing_classes = [] of {String, Crystal::MIR::Type}
+          missing_classes = [] of {String, Adamas::MIR::Type}
           all_classes.each do |class_name|
             func_name = "#{class_name}##{method_suffix}"
             func = @mir_module.get_function(func_name)
@@ -4915,7 +4915,7 @@ module Crystal
               end
             end
             missing_classes.each do |class_name, mir_type|
-              fallback_func = nil.as(Crystal::MIR::Function?)
+              fallback_func = nil.as(Adamas::MIR::Function?)
               # Walk up the class hierarchy from the missing class
               current = class_name
               walked = ::Set(String).new
@@ -4995,14 +4995,14 @@ module Crystal
         method_suffix : String,
         receiver_type : TypeRef,
         call : HIR::Call,
-      ) : Crystal::MIR::Function?
+      ) : Adamas::MIR::Function?
         dispatch_name = "__vdispatch__#{class_name}##{method_suffix}"
         if existing = @mir_module.get_function(dispatch_name)
           return existing
         end
 
         # Gather candidates from class hierarchy
-        old_candidates = [] of NamedTuple(type_id: Int32, func: Crystal::MIR::Function)
+        old_candidates = [] of NamedTuple(type_id: Int32, func: Adamas::MIR::Function)
         ([class_name] + subclasses_for(class_name)).each do |name|
           if func = resolve_virtual_method_for_class(name, method_suffix, call.args.size)
             next unless mir_type = @mir_module.type_registry.get_by_name(name)
@@ -5066,7 +5066,7 @@ module Crystal
         method_suffix : String,
         arg_count : Int32? = nil,
         allow_module_method : Bool = false,
-      ) : Crystal::MIR::Function?
+      ) : Adamas::MIR::Function?
         cache_key = {class_name, method_suffix, arg_count, allow_module_method}
         if @resolve_virtual_cache.has_key?(cache_key)
           return @resolve_virtual_cache[cache_key]
@@ -5129,7 +5129,7 @@ module Crystal
         method_suffix : String,
         arg_count : Int32?,
         allow_module_method : Bool,
-      ) : Crystal::MIR::Function?
+      ) : Adamas::MIR::Function?
         # Pre-compute the base method name (before '$') once
         has_explicit_suffix = method_suffix.includes?('$')
         base_method = if dollar = method_suffix.index('$')
@@ -5151,7 +5151,7 @@ module Crystal
           if (func = @mir_module.get_function(exact_name)) &&
              (arg_count.nil? || func.params.size == arg_count + 1)
             # Check for naming collision using class index instead of full scan
-            longer_match = nil.as(Crystal::MIR::Function?)
+            longer_match = nil.as(Adamas::MIR::Function?)
             if class_funcs = @functions_by_class[current]?
               class_funcs.each do |candidate|
                 if default_arg_variant_name?(candidate.name, exact_name)
@@ -5207,7 +5207,7 @@ module Crystal
               io << current; io << '#'; io << base_method
             end
             if class_funcs = @functions_by_class[current]?
-              candidates = [] of Crystal::MIR::Function
+              candidates = [] of Adamas::MIR::Function
               class_funcs.each do |candidate|
                 next unless same_method_family_name?(candidate.name, instance_prefix)
                 next unless candidate.params.size == arg_count + 1
@@ -5220,7 +5220,7 @@ module Crystal
                 io << current; io << '.'; io << base_method
               end
               if class_funcs2 = @functions_by_class[current]?
-                candidates = [] of Crystal::MIR::Function
+                candidates = [] of Adamas::MIR::Function
                 class_funcs2.each do |candidate|
                   next unless same_method_family_name?(candidate.name, module_prefix)
                   next unless candidate.params.size == arg_count
@@ -5261,7 +5261,7 @@ module Crystal
         method_suffix : String,
         arg_count : Int32,
         have_candidate : ::Set(String),
-      ) : Crystal::MIR::Function?
+      ) : Adamas::MIR::Function?
         # Check parent itself first
         parent_func_name = "#{parent_class}##{method_suffix}"
         if func = @mir_module.get_function(parent_func_name)
@@ -5313,12 +5313,12 @@ module Crystal
       end
 
       private def normalize_compiler_collection_type_name(name : String) : String
-        if name.starts_with?("Crystal::MIR::Array(")
-          "Array(" + name["Crystal::MIR::Array(".bytesize..]
-        elsif name.starts_with?("Crystal::MIR::Hash(")
-          "Hash(" + name["Crystal::MIR::Hash(".bytesize..]
-        elsif name.starts_with?("Crystal::MIR::Set(")
-          "Set(" + name["Crystal::MIR::Set(".bytesize..]
+        if name.starts_with?("Adamas::MIR::Array(")
+          "Array(" + name["Adamas::MIR::Array(".bytesize..]
+        elsif name.starts_with?("Adamas::MIR::Hash(")
+          "Hash(" + name["Adamas::MIR::Hash(".bytesize..]
+        elsif name.starts_with?("Adamas::MIR::Set(")
+          "Set(" + name["Adamas::MIR::Set(".bytesize..]
         else
           name
         end
@@ -6943,7 +6943,7 @@ module Crystal
           # Only `raise exception_obj` passes the exception directly.
           exc_type = @hir_value_types[exc]?
           if exc_type && exc_type.id == HIR::TypeRef::STRING.id
-            builder.extern_call("__crystal_v2_raise_msg", [exc_val], TypeRef::VOID)
+            builder.extern_call("__adamas_raise_msg", [exc_val], TypeRef::VOID)
           elsif exc_type.nil? || exc_type.id == HIR::TypeRef::VOID.id
             # Exception creation wasn't properly compiled (e.g., File::Error.from_errno
             # expands to complex macro/factory code our compiler can't fully handle).
@@ -6956,16 +6956,16 @@ module Crystal
             # raise deterministically (null checks, default returns, etc.).
             return exc_val
           else
-            builder.extern_call("__crystal_v2_raise", [exc_val], TypeRef::VOID)
+            builder.extern_call("__adamas_raise", [exc_val], TypeRef::VOID)
           end
         elsif msg = raise_inst.message
           # Raise with message string
           msg_val = builder.const_string(msg)
-          builder.extern_call("__crystal_v2_raise_msg", [msg_val], TypeRef::VOID)
+          builder.extern_call("__adamas_raise_msg", [msg_val], TypeRef::VOID)
         else
           # Re-raise current exception
           empty_args = ::Array(ValueId).new
-          builder.extern_call("__crystal_v2_reraise", empty_args, TypeRef::VOID)
+          builder.extern_call("__adamas_reraise", empty_args, TypeRef::VOID)
         end
       end
 
@@ -6974,7 +6974,7 @@ module Crystal
 
         # Get current exception from runtime
         empty_args = ::Array(ValueId).new
-        builder.extern_call("__crystal_v2_get_exception", empty_args, TypeRef::POINTER)
+        builder.extern_call("__adamas_get_exception", empty_args, TypeRef::POINTER)
       end
 
       private def lower_try_begin(try_begin : HIR::TryBegin) : ValueId
@@ -7023,7 +7023,7 @@ module Crystal
 
         # Call malloc
         args = [total_size]
-        builder.extern_call("__crystal_v2_malloc64", args, TypeRef::POINTER)
+        builder.extern_call("__adamas_malloc64", args, TypeRef::POINTER)
       end
 
       private def lower_pointer_load(load : HIR::PointerLoad) : ValueId
@@ -7209,7 +7209,7 @@ module Crystal
         byte_count = builder.mul(size_i64, elem_size_val, TypeRef::INT64)
 
         args = [ptr, byte_count]
-        builder.extern_call("__crystal_v2_realloc64", args, TypeRef::POINTER)
+        builder.extern_call("__adamas_realloc64", args, TypeRef::POINTER)
       end
 
       private def lower_address_of(addr_of : HIR::AddressOf) : ValueId
@@ -7339,7 +7339,7 @@ module Crystal
         synthetic = mir_func.create_block
         set_block_map(hir_block_id, synthetic)
 
-        if ::CrystalV2::Compiler::BootstrapEnv.get?("CRYSTAL2_STAGE2_DEBUG") == "1"
+        if ::Adamas::Compiler::BootstrapEnv.get?("CRYSTAL2_STAGE2_DEBUG") == "1"
           STDERR.puts "[MIR_MISSING_BLOCK] func=#{@current_lowering_func_name} hir_block=#{hir_block_id} synthetic=#{synthetic}"
         end
 

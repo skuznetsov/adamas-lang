@@ -2,7 +2,7 @@ require "spec"
 
 require "../../src/compiler/frontend/parser"
 
-describe "CrystalV2::Compiler::Frontend::Parser" do
+describe "Adamas::Compiler::Frontend::Parser" do
   describe "Phase 77: Class variable type declarations (@@var : Type)" do
     it "parses simple class variable declaration" do
       source = <<-CRYSTAL
@@ -11,23 +11,23 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       class_node = arena[program.roots[0]]
-      CrystalV2::Compiler::Frontend.node_kind(class_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Class)
+      Adamas::Compiler::Frontend.node_kind(class_node).should eq(Adamas::Compiler::Frontend::NodeKind::Class)
 
-      body = CrystalV2::Compiler::Frontend.node_class_body(class_node).not_nil!
+      body = Adamas::Compiler::Frontend.node_class_body(class_node).not_nil!
       body.size.should eq(1)
 
       decl = arena[body[0]]
-      CrystalV2::Compiler::Frontend.node_kind(decl).should eq(CrystalV2::Compiler::Frontend::NodeKind::ClassVarDecl)
+      Adamas::Compiler::Frontend.node_kind(decl).should eq(Adamas::Compiler::Frontend::NodeKind::ClassVarDecl)
 
-      String.new(decl.as(CrystalV2::Compiler::Frontend::ClassVarDeclNode).name).should eq("@@count")
-      String.new(decl.as(CrystalV2::Compiler::Frontend::ClassVarDeclNode).type).should eq("Int32")
+      String.new(decl.as(Adamas::Compiler::Frontend::ClassVarDeclNode).name).should eq("@@count")
+      String.new(decl.as(Adamas::Compiler::Frontend::ClassVarDeclNode).type).should eq("Int32")
     end
 
     it "parses class variable declaration with String type" do
@@ -37,19 +37,19 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       class_node = arena[program.roots[0]]
-      body = CrystalV2::Compiler::Frontend.node_class_body(class_node).not_nil!
+      body = Adamas::Compiler::Frontend.node_class_body(class_node).not_nil!
       decl = arena[body[0]]
 
-      CrystalV2::Compiler::Frontend.node_kind(decl).should eq(CrystalV2::Compiler::Frontend::NodeKind::ClassVarDecl)
-      String.new(decl.as(CrystalV2::Compiler::Frontend::ClassVarDeclNode).name).should eq("@@name")
-      String.new(decl.as(CrystalV2::Compiler::Frontend::ClassVarDeclNode).type).should eq("String")
+      Adamas::Compiler::Frontend.node_kind(decl).should eq(Adamas::Compiler::Frontend::NodeKind::ClassVarDecl)
+      String.new(decl.as(Adamas::Compiler::Frontend::ClassVarDeclNode).name).should eq("@@name")
+      String.new(decl.as(Adamas::Compiler::Frontend::ClassVarDeclNode).type).should eq("String")
     end
 
     it "parses multiple class variable declarations" do
@@ -61,28 +61,28 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       class_node = arena[program.roots[0]]
-      body = CrystalV2::Compiler::Frontend.node_class_body(class_node).not_nil!
+      body = Adamas::Compiler::Frontend.node_class_body(class_node).not_nil!
       body.size.should eq(3)
 
       decl1 = arena[body[0]]
-      CrystalV2::Compiler::Frontend.node_kind(decl1).should eq(CrystalV2::Compiler::Frontend::NodeKind::ClassVarDecl)
-      String.new(decl1.as(CrystalV2::Compiler::Frontend::ClassVarDeclNode).name).should eq("@@count")
-      String.new(decl1.as(CrystalV2::Compiler::Frontend::ClassVarDeclNode).type).should eq("Int32")
+      Adamas::Compiler::Frontend.node_kind(decl1).should eq(Adamas::Compiler::Frontend::NodeKind::ClassVarDecl)
+      String.new(decl1.as(Adamas::Compiler::Frontend::ClassVarDeclNode).name).should eq("@@count")
+      String.new(decl1.as(Adamas::Compiler::Frontend::ClassVarDeclNode).type).should eq("Int32")
 
       decl2 = arena[body[1]]
-      String.new(decl2.as(CrystalV2::Compiler::Frontend::ClassVarDeclNode).name).should eq("@@name")
-      String.new(decl2.as(CrystalV2::Compiler::Frontend::ClassVarDeclNode).type).should eq("String")
+      String.new(decl2.as(Adamas::Compiler::Frontend::ClassVarDeclNode).name).should eq("@@name")
+      String.new(decl2.as(Adamas::Compiler::Frontend::ClassVarDeclNode).type).should eq("String")
 
       decl3 = arena[body[2]]
-      String.new(decl3.as(CrystalV2::Compiler::Frontend::ClassVarDeclNode).name).should eq("@@flag")
-      String.new(decl3.as(CrystalV2::Compiler::Frontend::ClassVarDeclNode).type).should eq("Bool")
+      String.new(decl3.as(Adamas::Compiler::Frontend::ClassVarDeclNode).name).should eq("@@flag")
+      String.new(decl3.as(Adamas::Compiler::Frontend::ClassVarDeclNode).type).should eq("Bool")
     end
 
     it "parses class variable with underscores" do
@@ -92,16 +92,16 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       arena = program.arena
       class_node = arena[program.roots[0]]
-      body = CrystalV2::Compiler::Frontend.node_class_body(class_node).not_nil!
+      body = Adamas::Compiler::Frontend.node_class_body(class_node).not_nil!
       decl = arena[body[0]]
 
-      CrystalV2::Compiler::Frontend.node_kind(decl).should eq(CrystalV2::Compiler::Frontend::NodeKind::ClassVarDecl)
-      String.new(decl.as(CrystalV2::Compiler::Frontend::ClassVarDeclNode).name).should eq("@@my_class_var")
+      Adamas::Compiler::Frontend.node_kind(decl).should eq(Adamas::Compiler::Frontend::NodeKind::ClassVarDecl)
+      String.new(decl.as(Adamas::Compiler::Frontend::ClassVarDeclNode).name).should eq("@@my_class_var")
     end
 
     it "parses class variable with custom type" do
@@ -111,17 +111,17 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       arena = program.arena
       class_node = arena[program.roots[0]]
-      body = CrystalV2::Compiler::Frontend.node_class_body(class_node).not_nil!
+      body = Adamas::Compiler::Frontend.node_class_body(class_node).not_nil!
       decl = arena[body[0]]
 
-      CrystalV2::Compiler::Frontend.node_kind(decl).should eq(CrystalV2::Compiler::Frontend::NodeKind::ClassVarDecl)
-      String.new(decl.as(CrystalV2::Compiler::Frontend::ClassVarDeclNode).name).should eq("@@manager")
-      String.new(decl.as(CrystalV2::Compiler::Frontend::ClassVarDeclNode).type).should eq("Manager")
+      Adamas::Compiler::Frontend.node_kind(decl).should eq(Adamas::Compiler::Frontend::NodeKind::ClassVarDecl)
+      String.new(decl.as(Adamas::Compiler::Frontend::ClassVarDeclNode).name).should eq("@@manager")
+      String.new(decl.as(Adamas::Compiler::Frontend::ClassVarDeclNode).type).should eq("Manager")
     end
 
     it "parses class variable alongside methods" do
@@ -135,19 +135,19 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       arena = program.arena
       class_node = arena[program.roots[0]]
-      body = CrystalV2::Compiler::Frontend.node_class_body(class_node).not_nil!
+      body = Adamas::Compiler::Frontend.node_class_body(class_node).not_nil!
       body.size.should eq(2)
 
       decl = arena[body[0]]
-      CrystalV2::Compiler::Frontend.node_kind(decl).should eq(CrystalV2::Compiler::Frontend::NodeKind::ClassVarDecl)
+      Adamas::Compiler::Frontend.node_kind(decl).should eq(Adamas::Compiler::Frontend::NodeKind::ClassVarDecl)
 
       method = arena[body[1]]
-      CrystalV2::Compiler::Frontend.node_kind(method).should eq(CrystalV2::Compiler::Frontend::NodeKind::Def)
+      Adamas::Compiler::Frontend.node_kind(method).should eq(Adamas::Compiler::Frontend::NodeKind::Def)
     end
 
     it "parses class variable alongside instance variables" do
@@ -158,21 +158,21 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       arena = program.arena
       class_node = arena[program.roots[0]]
-      body = CrystalV2::Compiler::Frontend.node_class_body(class_node).not_nil!
+      body = Adamas::Compiler::Frontend.node_class_body(class_node).not_nil!
       body.size.should eq(2)
 
       ivar = arena[body[0]]
-      CrystalV2::Compiler::Frontend.node_kind(ivar).should eq(CrystalV2::Compiler::Frontend::NodeKind::InstanceVarDecl)
-      String.new(ivar.as(CrystalV2::Compiler::Frontend::InstanceVarDeclNode).name).should eq("@instance")
+      Adamas::Compiler::Frontend.node_kind(ivar).should eq(Adamas::Compiler::Frontend::NodeKind::InstanceVarDecl)
+      String.new(ivar.as(Adamas::Compiler::Frontend::InstanceVarDeclNode).name).should eq("@instance")
 
       cvar = arena[body[1]]
-      CrystalV2::Compiler::Frontend.node_kind(cvar).should eq(CrystalV2::Compiler::Frontend::NodeKind::ClassVarDecl)
-      String.new(cvar.as(CrystalV2::Compiler::Frontend::ClassVarDeclNode).name).should eq("@@class_var")
+      Adamas::Compiler::Frontend.node_kind(cvar).should eq(Adamas::Compiler::Frontend::NodeKind::ClassVarDecl)
+      String.new(cvar.as(Adamas::Compiler::Frontend::ClassVarDeclNode).name).should eq("@@class_var")
     end
   end
 end

@@ -8,15 +8,15 @@ puts
 
 # Check type sizes
 puts "Basic types:"
-puts "  ExprId size:     #{sizeof(CrystalV2::Compiler::Frontend::ExprId)} bytes"
-puts "  Span size:       #{sizeof(CrystalV2::Compiler::Frontend::Span)} bytes"
+puts "  ExprId size:     #{sizeof(Adamas::Compiler::Frontend::ExprId)} bytes"
+puts "  Span size:       #{sizeof(Adamas::Compiler::Frontend::Span)} bytes"
 puts "  String size:     #{sizeof(String)} bytes (pointer)"
-puts "  Array(ExprId):   #{sizeof(Array(CrystalV2::Compiler::Frontend::ExprId))} bytes (pointer)"
+puts "  Array(ExprId):   #{sizeof(Array(Adamas::Compiler::Frontend::ExprId))} bytes (pointer)"
 puts
 
 # Check instance sizes of some concrete node classes
 puts "Node class instance sizes (approximate):"
-AST = CrystalV2::Compiler::Frontend
+AST = Adamas::Compiler::Frontend
 
 # We can estimate based on field count
 puts "  IntegerLiteral: ExprId(4) + Span(8) + value(8) + negative(1) = ~21 + header"

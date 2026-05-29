@@ -15,8 +15,8 @@ require "../src/compiler/semantic/types/union_type"
 require "../src/compiler/semantic/types/type_context"
 require "../src/compiler/semantic/type_inference_engine"
 
-include CrystalV2::Compiler::Frontend
-include CrystalV2::Compiler::Semantic
+include Adamas::Compiler::Frontend
+include Adamas::Compiler::Semantic
 
 # Helper: Parse source and run full semantic pipeline
 private def infer_types(source : String)
@@ -50,7 +50,7 @@ describe TypeInferenceEngine do
 
         arena = program.arena
         class_node = arena[program.roots[0]]
-        body = CrystalV2::Compiler::Frontend.node_class_body(class_node).not_nil!
+        body = Adamas::Compiler::Frontend.node_class_body(class_node).not_nil!
         decl_id = body[0]
 
         decl_type = engine.context.get_type(decl_id)
@@ -70,7 +70,7 @@ describe TypeInferenceEngine do
 
         arena = program.arena
         class_node = arena[program.roots[0]]
-        body = CrystalV2::Compiler::Frontend.node_class_body(class_node).not_nil!
+        body = Adamas::Compiler::Frontend.node_class_body(class_node).not_nil!
 
         decl1_type = engine.context.get_type(body[0])
         decl1_type.should_not be_nil

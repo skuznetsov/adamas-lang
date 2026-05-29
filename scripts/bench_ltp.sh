@@ -2,7 +2,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-bin="${root}/bin/crystal_v2"
+bin="${root}/bin/adamas"
 
 if [[ ! -x "$bin" ]]; then
   echo "error: ${bin} not found or not executable" >&2

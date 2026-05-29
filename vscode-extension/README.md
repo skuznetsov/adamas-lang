@@ -1,6 +1,6 @@
 # Crystal V2 Language Server for VS Code
 
-VS Code extension for CrystalV2 Language Server Protocol support.
+VS Code extension for Adamas Language Server Protocol support.
 
 The LSP server is currently the stable user-facing part of Crystal V2. The
 compiler/codegen pipeline is still beta, so the extension is the recommended
@@ -37,16 +37,16 @@ being fixed.
 ### Step 1: Install or Build an LSP Server
 
 ```bash
-cd /path/to/crystal_v2
+cd /path/to/adamas
 ./build_lsp.sh
 ```
 
-This creates the executable `bin/crystal_v2_lsp`.
+This creates the executable `bin/adamas_lsp`.
 
 By default the extension discovers `crystal2` on `PATH` and launches
 `crystal2 tool lsp`, so the original `crystal` compiler can remain installed
-side by side. If `crystal2` is not available it tries `crystal_v2 tool lsp`,
-then `crystal_v2_lsp`.
+side by side. If `crystal2` is not available it tries `adamas tool lsp`,
+then `adamas_lsp`.
 
 Extension settings override discovery:
 
@@ -131,13 +131,13 @@ If something doesn't work:
 
 1. **Check LSP server is built:**
    ```bash
-   ls -lh crystal_v2/bin/crystal_v2_lsp
+   ls -lh adamas/bin/adamas_lsp
    ```
 
 2. **Run LSP server manually to verify:**
    ```bash
-   cd crystal_v2
-   ./bin/crystal_v2_lsp
+   cd adamas
+   ./bin/adamas_lsp
    ```
 
    Send test input:
@@ -159,7 +159,7 @@ If something doesn't work:
 
 ## Performance
 
-CrystalV2 Formatter:
+Adamas Formatter:
 - **35ms** average for 6479-line file
 - **54% faster** than original Crystal formatter
 - **18.8x less code** (280 vs 5260 lines)

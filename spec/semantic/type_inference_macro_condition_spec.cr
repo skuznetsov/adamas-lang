@@ -12,15 +12,15 @@ require "../../src/compiler/semantic/resolvers/name_resolver"
 require "../../src/compiler/semantic/analyzer"
 require "../../src/compiler/semantic/type_inference_engine"
 
-alias Frontend = CrystalV2::Compiler::Frontend
-alias Semantic = CrystalV2::Compiler::Semantic
+alias Frontend = Adamas::Compiler::Frontend
+alias Semantic = Adamas::Compiler::Semantic
 
 private def infer_macro_condition_types(source : String, enabled_flags : Array(String))
   lexer = Frontend::Lexer.new(source)
   parser = Frontend::Parser.new(lexer)
   program = parser.parse_program
 
-  flags = CrystalV2::Runtime.target_flags.dup
+  flags = Adamas::Runtime.target_flags.dup
   enabled_flags.each { |flag| flags << flag }
   context = Semantic::Context.new(Semantic::SymbolTable.new, flags)
 

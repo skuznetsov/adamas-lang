@@ -8,7 +8,7 @@ require "../../src/compiler/semantic/symbol_table"
 require "../../src/compiler/semantic/collectors/symbol_collector"
 require "../../src/compiler/semantic/type_inference_engine"
 
-include CrystalV2::Compiler
+include Adamas::Compiler
 
 describe "Phase 98: Method Overload Resolution" do
   # ==================================================================

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-COMPILER="${1:-./bin/crystal_v2}"
+COMPILER="${1:-./bin/adamas}"
 KEEP_TMP="${KEEP_TMP:-0}"
 
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/member_getter_lowering.XXXXXX")"

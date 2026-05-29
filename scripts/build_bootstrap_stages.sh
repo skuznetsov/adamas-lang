@@ -7,7 +7,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-OUT_DIR="${BOOTSTRAP_STAGE_OUT:-/tmp/crystal_v2_bootstrap_stages}"
+OUT_DIR="${BOOTSTRAP_STAGE_OUT:-/tmp/adamas_bootstrap_stages}"
 STAGES="${BOOTSTRAP_CHAIN_STAGES:-5}"
 
 usage() {
@@ -16,7 +16,7 @@ Usage:
   scripts/build_bootstrap_stages.sh [--out DIR] [--stages N] [bootstrap_chain args...]
 
 Default:
-  --out /tmp/crystal_v2_bootstrap_stages --stages 5
+  --out /tmp/adamas_bootstrap_stages --stages 5
 
 Stable names created inside DIR:
   s1_bootstrap -> cv2_s1

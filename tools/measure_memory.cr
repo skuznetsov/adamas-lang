@@ -16,7 +16,7 @@ GC.collect
 before = memory_mb
 puts "Before parsing: #{before.round(2)} MB"
 
-loader = CrystalV2::Compiler::FileLoader.new
+loader = Adamas::Compiler::FileLoader.new
 program = loader.load_with_requires(PRELUDE)
 
 GC.collect

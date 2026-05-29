@@ -8,12 +8,12 @@ puts "File: parser.cr"
 puts "Size: #{source.bytesize} bytes (#{source.lines.size} lines)"
 puts ""
 
-# Benchmark CrystalV2 formatter (10 runs)
-puts "=== CrystalV2 Token-based Formatter ==="
+# Benchmark Adamas formatter (10 runs)
+puts "=== Adamas Token-based Formatter ==="
 times = [] of Float64
 10.times do |i|
   start = Time.instant
-  formatted = CrystalV2::Compiler::Formatter.format(source)
+  formatted = Adamas::Compiler::Formatter.format(source)
   elapsed = Time.instant - start
   times << elapsed.total_milliseconds
   print "." if i % 2 == 0

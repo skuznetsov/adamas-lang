@@ -7,7 +7,7 @@
 #
 # See docs/codegen_architecture.md for full specification.
 
-module Crystal::HIR
+module Adamas::HIR
   # ═══════════════════════════════════════════════════════════════════════════
   # IDENTIFIERS
   # ═══════════════════════════════════════════════════════════════════════════
@@ -333,7 +333,7 @@ module Crystal::HIR
 
     def to_s(io : IO) : Nil
       io << "%" << @id << " = array_literal ["
-      Crystal::HIR.write_value_id_list(io, @elements)
+      Adamas::HIR.write_value_id_list(io, @elements)
       io << "] : " << @element_type.id
     end
   end
@@ -350,7 +350,7 @@ module Crystal::HIR
 
     def to_s(io : IO) : Nil
       io << "%" << @id << " = string_interpolation ["
-      Crystal::HIR.write_value_id_list(io, @parts)
+      Adamas::HIR.write_value_id_list(io, @parts)
       io << "]"
     end
   end
@@ -419,7 +419,7 @@ module Crystal::HIR
       io << " " << @type.id
       unless @constructor_args.empty?
         io << "("
-        Crystal::HIR.write_value_id_list(io, @constructor_args)
+        Adamas::HIR.write_value_id_list(io, @constructor_args)
         io << ")"
       end
     end
@@ -688,12 +688,12 @@ module Crystal::HIR
       method_name : String,
       args : Array(ValueId),
     ) : Call
-      if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
+      if ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
         STDERR.puts "[CALL_CTOR_TRACE] factory=without_receiver before id=#{id} method=#{method_name} args=#{args.size}"
       end
       call = new(id, type, "")
       call.configure_without_receiver(method_name, args)
-      if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
+      if ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
         STDERR.puts "[CALL_CTOR_TRACE] factory=without_receiver after method=#{call.method_name} args=#{call.args.size}"
       end
       call
@@ -730,7 +730,7 @@ module Crystal::HIR
       if ENV.has_key?("CRYSTAL_V2_TRACE_CALL_CTOR")
         STDERR.puts "[CALL_CTOR_TRACE_ENV] overload=no_receiver_arity4 before id=#{id} method=#{method_name} args=#{args.size}"
       end
-      if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
+      if ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
         STDERR.puts "[CALL_CTOR_TRACE] overload=no_receiver_arity4 before id=#{id} method=#{method_name} args=#{args.size}"
       end
       @receiver_value = NO_RECEIVER
@@ -741,7 +741,7 @@ module Crystal::HIR
       if ENV.has_key?("CRYSTAL_V2_TRACE_CALL_CTOR")
         STDERR.puts "[CALL_CTOR_TRACE_ENV] overload=no_receiver_arity4 after method=#{@method_name} args=#{@args.size} recv=#{@receiver_value} block=#{@block_value} virtual=#{@virtual}"
       end
-      if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
+      if ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
         STDERR.puts "[CALL_CTOR_TRACE] overload=no_receiver_arity4 after method=#{@method_name} args=#{@args.size} recv=#{@receiver_value} block=#{@block_value} virtual=#{@virtual}"
       end
     end
@@ -754,7 +754,7 @@ module Crystal::HIR
       virtual : Bool,
     )
       super(id, type)
-      if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
+      if ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
         STDERR.puts "[CALL_CTOR_TRACE] overload=no_receiver_arity5 before id=#{id} method=#{method_name} args=#{args.size} virtual=#{virtual}"
       end
       @receiver_value = NO_RECEIVER
@@ -762,7 +762,7 @@ module Crystal::HIR
       @args = args
       @block_value = NO_BLOCK
       @virtual = virtual
-      if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
+      if ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
         STDERR.puts "[CALL_CTOR_TRACE] overload=no_receiver_arity5 after method=#{@method_name} args=#{@args.size} recv=#{@receiver_value} block=#{@block_value} virtual=#{@virtual}"
       end
     end
@@ -776,7 +776,7 @@ module Crystal::HIR
       virtual : Bool = false,
     )
       super(id, type)
-      if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
+      if ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
         STDERR.puts "[CALL_CTOR_TRACE] overload=receiver before id=#{id} receiver=#{receiver} method=#{method_name} args=#{args.size} virtual=#{virtual}"
       end
       @receiver_value = receiver
@@ -784,7 +784,7 @@ module Crystal::HIR
       @args = args
       @block_value = NO_BLOCK
       @virtual = virtual
-      if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
+      if ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
         STDERR.puts "[CALL_CTOR_TRACE] overload=receiver after method=#{@method_name} args=#{@args.size} recv=#{@receiver_value} block=#{@block_value} virtual=#{@virtual}"
       end
     end
@@ -798,7 +798,7 @@ module Crystal::HIR
       virtual : Bool = false,
     )
       super(id, type)
-      if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
+      if ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
         STDERR.puts "[CALL_CTOR_TRACE] overload=nil_receiver before id=#{id} method=#{method_name} args=#{args.size} virtual=#{virtual}"
       end
       @receiver_value = NO_RECEIVER
@@ -806,7 +806,7 @@ module Crystal::HIR
       @args = args
       @block_value = NO_BLOCK
       @virtual = virtual
-      if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
+      if ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
         STDERR.puts "[CALL_CTOR_TRACE] overload=nil_receiver after method=#{@method_name} args=#{@args.size} recv=#{@receiver_value} block=#{@block_value} virtual=#{@virtual}"
       end
     end
@@ -820,7 +820,7 @@ module Crystal::HIR
       virtual : Bool = false,
     )
       super(id, type)
-      if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
+      if ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
         STDERR.puts "[CALL_CTOR_TRACE] overload=block before id=#{id} method=#{method_name} args=#{args.size} block=#{block} virtual=#{virtual}"
       end
       @receiver_value = NO_RECEIVER
@@ -828,7 +828,7 @@ module Crystal::HIR
       @args = args
       @block_value = block
       @virtual = virtual
-      if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
+      if ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
         STDERR.puts "[CALL_CTOR_TRACE] overload=block after method=#{@method_name} args=#{@args.size} recv=#{@receiver_value} block=#{@block_value} virtual=#{@virtual}"
       end
     end
@@ -843,7 +843,7 @@ module Crystal::HIR
       virtual : Bool = false,
     )
       super(id, type)
-      if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
+      if ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
         STDERR.puts "[CALL_CTOR_TRACE] overload=receiver_block before id=#{id} receiver=#{receiver} method=#{method_name} args=#{args.size} block=#{block} virtual=#{virtual}"
       end
       @receiver_value = receiver
@@ -851,7 +851,7 @@ module Crystal::HIR
       @args = args
       @block_value = block
       @virtual = virtual
-      if ::CrystalV2::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
+      if ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
         STDERR.puts "[CALL_CTOR_TRACE] overload=receiver_block after method=#{@method_name} args=#{@args.size} recv=#{@receiver_value} block=#{@block_value} virtual=#{@virtual}"
       end
     end
@@ -945,7 +945,7 @@ module Crystal::HIR
         io << "%" << @receiver_value << "."
       end
       io << @method_name << "("
-      Crystal::HIR.write_value_id_list(io, @args)
+      Adamas::HIR.write_value_id_list(io, @args)
       io << ")"
       io << " : " << @type.id
       io << " [virtual]" if @virtual
@@ -973,7 +973,7 @@ module Crystal::HIR
 
     def to_s(io : IO) : Nil
       io << "%" << @id << " = extern_call @" << @extern_name << "("
-      Crystal::HIR.write_value_id_list(io, @args)
+      Adamas::HIR.write_value_id_list(io, @args)
       io << ")"
       io << " : " << @type.id
       io << " [varargs]" if @varargs
@@ -996,7 +996,7 @@ module Crystal::HIR
       end
       unless @args.empty?
         io << " "
-        Crystal::HIR.write_value_id_list(io, @args)
+        Adamas::HIR.write_value_id_list(io, @args)
       end
       io << " : " << @type.id
     end
@@ -1587,7 +1587,7 @@ module Crystal::HIR
       end
       unless @locals.empty?
         io << " locals=["
-        Crystal::HIR.write_value_id_list(io, @locals)
+        Adamas::HIR.write_value_id_list(io, @locals)
         io << "]"
       end
     end
@@ -2849,7 +2849,7 @@ module Crystal::HIR
       io << kind_name(@kind) << " " << @name
       unless @type_params.empty?
         io << "("
-        Crystal::HIR.write_type_ref_id_list(io, @type_params)
+        Adamas::HIR.write_type_ref_id_list(io, @type_params)
         io << ")"
       end
     end

@@ -34,27 +34,27 @@ module SemanticTokensSpecHelper
   end
 
   def self.collect(program, source)
-    server = CrystalV2::Compiler::LSP::Server.new
+    server = Adamas::Compiler::LSP::Server.new
     server.collect_semantic_tokens(program, source)
   end
 
   def self.collect_source(source : String)
-    parser = CrystalV2::Compiler::Frontend::Parser.new(
-      CrystalV2::Compiler::Frontend::Lexer.new(source)
+    parser = Adamas::Compiler::Frontend::Parser.new(
+      Adamas::Compiler::Frontend::Lexer.new(source)
     )
     program = parser.parse_program
     collect(program, source)
   end
 
   def self.collect_source_with_symbols(source : String)
-    parser = CrystalV2::Compiler::Frontend::Parser.new(
-      CrystalV2::Compiler::Frontend::Lexer.new(source)
+    parser = Adamas::Compiler::Frontend::Parser.new(
+      Adamas::Compiler::Frontend::Lexer.new(source)
     )
     program = parser.parse_program
-    analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+    analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
     analyzer.collect_symbols
     result = analyzer.resolve_names(defer_method_body_receiverless_candidates: true)
-    server = CrystalV2::Compiler::LSP::Server.new
+    server = Adamas::Compiler::LSP::Server.new
     server.collect_semantic_tokens(
       program,
       source,
@@ -82,11 +82,11 @@ module SemanticTokensSpecHelper
   end
 
   def self.collect_range(program, source, range)
-    server = CrystalV2::Compiler::LSP::Server.new
+    server = Adamas::Compiler::LSP::Server.new
     server.collect_semantic_tokens(program, source, nil, nil, nil, nil, range)
   end
 
-  def self.decode(tokens : CrystalV2::Compiler::LSP::SemanticTokens, source : String)
+  def self.decode(tokens : Adamas::Compiler::LSP::SemanticTokens, source : String)
     data = tokens.data
     line = 0
     start = 0
@@ -107,8 +107,8 @@ module SemanticTokensSpecHelper
 
   it "highlights members and nested identifiers" do
     source = "a = foo.bar(b[0]) { x }\n"
-    parser = CrystalV2::Compiler::Frontend::Parser.new(
-      CrystalV2::Compiler::Frontend::Lexer.new(source)
+    parser = Adamas::Compiler::Frontend::Parser.new(
+      Adamas::Compiler::Frontend::Lexer.new(source)
     )
     program = parser.parse_program
     tokens = SemanticTokensSpecHelper.collect(program, source)
@@ -129,8 +129,8 @@ module SemanticTokensSpecHelper
 
   it "highlights control flow keywords" do
     source = "if cond\n  begin\n    do_something\n  end\nend\n"
-    parser = CrystalV2::Compiler::Frontend::Parser.new(
-      CrystalV2::Compiler::Frontend::Lexer.new(source)
+    parser = Adamas::Compiler::Frontend::Parser.new(
+      Adamas::Compiler::Frontend::Lexer.new(source)
     )
     program = parser.parse_program
     tokens = SemanticTokensSpecHelper.collect(program, source)
@@ -195,8 +195,8 @@ module SemanticTokensSpecHelper
 
   it "highlights symbol literals in hash access" do
     source = "options[:accel_usage_log] = true\n"
-    parser = CrystalV2::Compiler::Frontend::Parser.new(
-      CrystalV2::Compiler::Frontend::Lexer.new(source)
+    parser = Adamas::Compiler::Frontend::Parser.new(
+      Adamas::Compiler::Frontend::Lexer.new(source)
     )
     program = parser.parse_program
     tokens = SemanticTokensSpecHelper.collect(program, source)
@@ -231,8 +231,8 @@ module SemanticTokensSpecHelper
 
   it "lexically marks symbol literals inside string interpolation" do
     source = %("#{:foo}")
-    lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-    parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+    lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+    parser = Adamas::Compiler::Frontend::Parser.new(lexer)
     program = parser.parse_program
     tokens = SemanticTokensSpecHelper.collect(program, source)
     decoded = SemanticTokensSpecHelper.decode(tokens, source)
@@ -243,8 +243,8 @@ module SemanticTokensSpecHelper
 
   it "skips trivia while preserving lexical symbols and strings" do
     source = "# if Fake\nVALUE = :speed\ntext = \"done\"\n"
-    parser = CrystalV2::Compiler::Frontend::Parser.new(
-      CrystalV2::Compiler::Frontend::Lexer.new(source)
+    parser = Adamas::Compiler::Frontend::Parser.new(
+      Adamas::Compiler::Frontend::Lexer.new(source)
     )
     program = parser.parse_program
     tokens = SemanticTokensSpecHelper.collect(program, source)
@@ -260,13 +260,13 @@ module SemanticTokensSpecHelper
 
   it "limits semantic token range responses to the requested visible window" do
     source = "alpha = 1\nbeta = foo.bar(:speed)\ngamma = \"done\"\n"
-    parser = CrystalV2::Compiler::Frontend::Parser.new(
-      CrystalV2::Compiler::Frontend::Lexer.new(source)
+    parser = Adamas::Compiler::Frontend::Parser.new(
+      Adamas::Compiler::Frontend::Lexer.new(source)
     )
     program = parser.parse_program
-    range = CrystalV2::Compiler::LSP::Range.new(
-      CrystalV2::Compiler::LSP::Position.new(1, 0),
-      CrystalV2::Compiler::LSP::Position.new(1, source.lines[1].bytesize)
+    range = Adamas::Compiler::LSP::Range.new(
+      Adamas::Compiler::LSP::Position.new(1, 0),
+      Adamas::Compiler::LSP::Position.new(1, source.lines[1].bytesize)
     )
 
     tokens = SemanticTokensSpecHelper.collect_range(program, source, range)
@@ -282,7 +282,7 @@ module SemanticTokensSpecHelper
   end
 
   it "advertises semantic token range support" do
-    capabilities = CrystalV2::Compiler::LSP::ServerCapabilities.new
+    capabilities = Adamas::Compiler::LSP::ServerCapabilities.new
     provider = capabilities.semantic_tokens_provider.not_nil!
 
     provider["range"].as_bool.should be_true

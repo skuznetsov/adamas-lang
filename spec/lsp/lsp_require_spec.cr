@@ -4,7 +4,7 @@ require "random/secure"
 
 require "./support/server_helper"
 
-describe CrystalV2::Compiler::LSP::Server do
+describe Adamas::Compiler::LSP::Server do
   around_each do |example|
     previous = ENV["CRYSTALV2_LSP_FORCE_STUB"]?
     ENV["CRYSTALV2_LSP_FORCE_STUB"] = "1"
@@ -45,18 +45,18 @@ describe CrystalV2::Compiler::LSP::Server do
       end
       CR
 
-      server = CrystalV2::Compiler::LSP::Server.new(IO::Memory.new, IO::Memory.new)
+      server = Adamas::Compiler::LSP::Server.new(IO::Memory.new, IO::Memory.new)
       diagnostics, program, _type_context, _identifier_symbols, symbol_table, requires =
         server.spec_analyze_document(File.read(main_path), base_dir, main_path)
 
       requires.should eq([helper_path])
       dep_symbol = symbol_table.try(&.lookup("Dep"))
       dep_symbol.should_not be_nil
-      dep_symbol.should be_a(CrystalV2::Compiler::Semantic::ModuleSymbol)
+      dep_symbol.should be_a(Adamas::Compiler::Semantic::ModuleSymbol)
 
-      helper_symbol = dep_symbol.as(CrystalV2::Compiler::Semantic::ModuleSymbol).scope.lookup("Helper")
+      helper_symbol = dep_symbol.as(Adamas::Compiler::Semantic::ModuleSymbol).scope.lookup("Helper")
       helper_symbol.should_not be_nil
-      helper_symbol.should be_a(CrystalV2::Compiler::Semantic::ClassSymbol)
+      helper_symbol.should be_a(Adamas::Compiler::Semantic::ClassSymbol)
 
       diagnostics.should be_empty
     ensure

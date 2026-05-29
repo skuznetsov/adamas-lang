@@ -8,23 +8,23 @@ require "../../src/compiler/semantic/analyzer"
 describe "LSP DocumentSymbol" do
   describe "SymbolKind enum" do
     it "has correct values for common kinds" do
-      CrystalV2::Compiler::LSP::SymbolKind::Class.value.should eq(5)
-      CrystalV2::Compiler::LSP::SymbolKind::Method.value.should eq(6)
-      CrystalV2::Compiler::LSP::SymbolKind::Variable.value.should eq(13)
-      CrystalV2::Compiler::LSP::SymbolKind::Function.value.should eq(12)
+      Adamas::Compiler::LSP::SymbolKind::Class.value.should eq(5)
+      Adamas::Compiler::LSP::SymbolKind::Method.value.should eq(6)
+      Adamas::Compiler::LSP::SymbolKind::Variable.value.should eq(13)
+      Adamas::Compiler::LSP::SymbolKind::Function.value.should eq(12)
     end
   end
 
   describe "DocumentSymbol struct" do
     it "creates basic document symbol" do
-      range = CrystalV2::Compiler::LSP::Range.new(
-        start: CrystalV2::Compiler::LSP::Position.new(0, 0),
-        end: CrystalV2::Compiler::LSP::Position.new(5, 3)
+      range = Adamas::Compiler::LSP::Range.new(
+        start: Adamas::Compiler::LSP::Position.new(0, 0),
+        end: Adamas::Compiler::LSP::Position.new(5, 3)
       )
 
-      doc_sym = CrystalV2::Compiler::LSP::DocumentSymbol.new(
+      doc_sym = Adamas::Compiler::LSP::DocumentSymbol.new(
         name: "MyClass",
-        kind: CrystalV2::Compiler::LSP::SymbolKind::Class.value,
+        kind: Adamas::Compiler::LSP::SymbolKind::Class.value,
         range: range,
         selection_range: range
       )
@@ -36,26 +36,26 @@ describe "LSP DocumentSymbol" do
     end
 
     it "supports hierarchical children" do
-      parent_range = CrystalV2::Compiler::LSP::Range.new(
-        start: CrystalV2::Compiler::LSP::Position.new(0, 0),
-        end: CrystalV2::Compiler::LSP::Position.new(10, 3)
+      parent_range = Adamas::Compiler::LSP::Range.new(
+        start: Adamas::Compiler::LSP::Position.new(0, 0),
+        end: Adamas::Compiler::LSP::Position.new(10, 3)
       )
 
-      child_range = CrystalV2::Compiler::LSP::Range.new(
-        start: CrystalV2::Compiler::LSP::Position.new(1, 2),
-        end: CrystalV2::Compiler::LSP::Position.new(3, 5)
+      child_range = Adamas::Compiler::LSP::Range.new(
+        start: Adamas::Compiler::LSP::Position.new(1, 2),
+        end: Adamas::Compiler::LSP::Position.new(3, 5)
       )
 
-      child = CrystalV2::Compiler::LSP::DocumentSymbol.new(
+      child = Adamas::Compiler::LSP::DocumentSymbol.new(
         name: "initialize",
-        kind: CrystalV2::Compiler::LSP::SymbolKind::Method.value,
+        kind: Adamas::Compiler::LSP::SymbolKind::Method.value,
         range: child_range,
         selection_range: child_range
       )
 
-      parent = CrystalV2::Compiler::LSP::DocumentSymbol.new(
+      parent = Adamas::Compiler::LSP::DocumentSymbol.new(
         name: "MyClass",
-        kind: CrystalV2::Compiler::LSP::SymbolKind::Class.value,
+        kind: Adamas::Compiler::LSP::SymbolKind::Class.value,
         range: parent_range,
         selection_range: parent_range,
         children: [child]
@@ -68,14 +68,14 @@ describe "LSP DocumentSymbol" do
     end
 
     it "serializes to JSON correctly" do
-      range = CrystalV2::Compiler::LSP::Range.new(
-        start: CrystalV2::Compiler::LSP::Position.new(0, 0),
-        end: CrystalV2::Compiler::LSP::Position.new(5, 3)
+      range = Adamas::Compiler::LSP::Range.new(
+        start: Adamas::Compiler::LSP::Position.new(0, 0),
+        end: Adamas::Compiler::LSP::Position.new(5, 3)
       )
 
-      doc_sym = CrystalV2::Compiler::LSP::DocumentSymbol.new(
+      doc_sym = Adamas::Compiler::LSP::DocumentSymbol.new(
         name: "calculate",
-        kind: CrystalV2::Compiler::LSP::SymbolKind::Method.value,
+        kind: Adamas::Compiler::LSP::SymbolKind::Method.value,
         range: range,
         selection_range: range,
         detail: "(x : Int32, y : Int32) : Int32"
@@ -102,11 +102,11 @@ describe "LSP DocumentSymbol" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
 
       # Find Calculator class symbol
@@ -115,12 +115,12 @@ describe "LSP DocumentSymbol" do
       calc_symbol = calc_symbol.not_nil!
 
       # Create DocumentSymbol from it
-      doc_sym = CrystalV2::Compiler::LSP::DocumentSymbol.from_symbol(calc_symbol, program)
+      doc_sym = Adamas::Compiler::LSP::DocumentSymbol.from_symbol(calc_symbol, program)
       doc_sym.should_not be_nil
       doc_sym = doc_sym.not_nil!
 
       doc_sym.name.should eq("Calculator")
-      doc_sym.kind.should eq(CrystalV2::Compiler::LSP::SymbolKind::Class.value)
+      doc_sym.kind.should eq(Adamas::Compiler::LSP::SymbolKind::Class.value)
       doc_sym.children.should_not be_nil
     end
 
@@ -131,11 +131,11 @@ describe "LSP DocumentSymbol" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
 
       # Find calculate method symbol
@@ -144,12 +144,12 @@ describe "LSP DocumentSymbol" do
       calc_symbol = calc_symbol.not_nil!
 
       # Create DocumentSymbol from it
-      doc_sym = CrystalV2::Compiler::LSP::DocumentSymbol.from_symbol(calc_symbol, program)
+      doc_sym = Adamas::Compiler::LSP::DocumentSymbol.from_symbol(calc_symbol, program)
       doc_sym.should_not be_nil
       doc_sym = doc_sym.not_nil!
 
       doc_sym.name.should eq("calculate")
-      doc_sym.kind.should eq(CrystalV2::Compiler::LSP::SymbolKind::Method.value)
+      doc_sym.kind.should eq(Adamas::Compiler::LSP::SymbolKind::Method.value)
       doc_sym.detail.should_not be_nil
       detail = doc_sym.detail.not_nil!
       detail.should contain("x : Int32")
@@ -161,11 +161,11 @@ describe "LSP DocumentSymbol" do
       x = 42
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       analyzer.resolve_names
 
@@ -175,12 +175,12 @@ describe "LSP DocumentSymbol" do
       x_symbol = x_symbol.not_nil!
 
       # Create DocumentSymbol from it
-      doc_sym = CrystalV2::Compiler::LSP::DocumentSymbol.from_symbol(x_symbol, program)
+      doc_sym = Adamas::Compiler::LSP::DocumentSymbol.from_symbol(x_symbol, program)
       doc_sym.should_not be_nil
       doc_sym = doc_sym.not_nil!
 
       doc_sym.name.should eq("x")
-      doc_sym.kind.should eq(CrystalV2::Compiler::LSP::SymbolKind::Variable.value)
+      doc_sym.kind.should eq(Adamas::Compiler::LSP::SymbolKind::Variable.value)
     end
 
     it "expands OverloadSetSymbol into individual methods" do
@@ -194,11 +194,11 @@ describe "LSP DocumentSymbol" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
 
       # Find greet symbol (should be OverloadSetSymbol)
@@ -207,7 +207,7 @@ describe "LSP DocumentSymbol" do
       greet_symbol = greet_symbol.not_nil!
 
       # Should be an OverloadSetSymbol
-      greet_symbol.should be_a(CrystalV2::Compiler::Semantic::OverloadSetSymbol)
+      greet_symbol.should be_a(Adamas::Compiler::Semantic::OverloadSetSymbol)
     end
 
     it "handles nested class hierarchy" do
@@ -225,11 +225,11 @@ describe "LSP DocumentSymbol" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
 
       # Find Outer class symbol
@@ -238,7 +238,7 @@ describe "LSP DocumentSymbol" do
       outer_symbol = outer_symbol.not_nil!
 
       # Create DocumentSymbol
-      doc_sym = CrystalV2::Compiler::LSP::DocumentSymbol.from_symbol(outer_symbol, program)
+      doc_sym = Adamas::Compiler::LSP::DocumentSymbol.from_symbol(outer_symbol, program)
       doc_sym.should_not be_nil
       doc_sym = doc_sym.not_nil!
 
@@ -278,11 +278,11 @@ describe "LSP DocumentSymbol" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       result = analyzer.resolve_names
       identifier_symbols = result.identifier_symbols
@@ -290,10 +290,10 @@ describe "LSP DocumentSymbol" do
       # Method should be in symbol table
       method_symbol = analyzer.global_context.symbol_table.lookup("process_loop")
       method_symbol.should_not be_nil
-      method_symbol.should be_a(CrystalV2::Compiler::Semantic::MethodSymbol)
+      method_symbol.should be_a(Adamas::Compiler::Semantic::MethodSymbol)
 
       # Variables inside method (with control flow) should be resolvable
-      method_sym = method_symbol.as(CrystalV2::Compiler::Semantic::MethodSymbol)
+      method_sym = method_symbol.as(Adamas::Compiler::Semantic::MethodSymbol)
       counter_symbol = method_sym.scope.lookup("counter")
       counter_symbol.should_not be_nil
 

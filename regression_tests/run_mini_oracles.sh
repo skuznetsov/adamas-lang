@@ -7,7 +7,7 @@ Usage:
   regression_tests/run_mini_oracles.sh [compiler] [test1.cr test2.cr ...]
 
 Defaults:
-  compiler: bin/crystal_v2
+  compiler: bin/adamas
   tests:
     regression_tests/file_join_splat.cr
     regression_tests/forall_nil_union_return.cr
@@ -27,20 +27,20 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   exit 0
 fi
 
-COMPILER="${1:-bin/crystal_v2}"
+COMPILER="${1:-bin/adamas}"
 if [[ $# -gt 0 ]]; then
   shift
 fi
 
 if [[ ! -x "$COMPILER" ]]; then
   echo "ERROR: Compiler not found at $COMPILER" >&2
-  echo "Build with: crystal build src/crystal_v2.cr -o bin/crystal_v2 --error-trace" >&2
+  echo "Build with: crystal build src/adamas.cr -o bin/adamas --error-trace" >&2
   exit 2
 fi
 
 TIMEOUT_SECS="${MINI_ORACLE_TIMEOUT:-10}"
 MAX_MEM_MB="${MINI_ORACLE_MAX_MEM:-512}"
-TMP_ROOT="${TMPDIR:-/tmp}/crystal_v2_mini_oracles"
+TMP_ROOT="${TMPDIR:-/tmp}/adamas_mini_oracles"
 mkdir -p "$TMP_ROOT"
 
 DEFAULT_TESTS=(

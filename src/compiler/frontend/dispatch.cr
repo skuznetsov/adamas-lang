@@ -7,7 +7,7 @@
 # Solution: Use NodeKind enum for O(1) dispatch without pattern matching.
 #           NodeKind is already defined for each node type.
 
-module CrystalV2
+module Adamas
   module Compiler
     module Frontend
       # Dispatch table for extracting child expressions from nodes.

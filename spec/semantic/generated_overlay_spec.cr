@@ -1,9 +1,9 @@
 require "spec"
 require "../../src/compiler/semantic/generated_overlay"
 
-describe CrystalV2::Compiler::Semantic::GeneratedOverlay do
+describe Adamas::Compiler::Semantic::GeneratedOverlay do
   it "builds an empty overlay through the explicit constructor" do
-    overlay = CrystalV2::Compiler::Semantic::GeneratedOverlay.empty
+    overlay = Adamas::Compiler::Semantic::GeneratedOverlay.empty
 
     overlay.node_file_paths.should be_empty
     overlay.top_level_roots.should be_empty
@@ -14,12 +14,12 @@ describe CrystalV2::Compiler::Semantic::GeneratedOverlay do
   end
 
   it "duplicates overlay collections defensively" do
-    root_id = CrystalV2::Compiler::Frontend::ExprId.new(10)
-    node_id = CrystalV2::Compiler::Frontend::ExprId.new(12)
-    origin_id = CrystalV2::Compiler::Frontend::ExprId.new(4)
-    macro_def_id = CrystalV2::Compiler::Frontend::ExprId.new(1)
+    root_id = Adamas::Compiler::Frontend::ExprId.new(10)
+    node_id = Adamas::Compiler::Frontend::ExprId.new(12)
+    origin_id = Adamas::Compiler::Frontend::ExprId.new(4)
+    macro_def_id = Adamas::Compiler::Frontend::ExprId.new(1)
 
-    overlay = CrystalV2::Compiler::Semantic::GeneratedOverlay.new(
+    overlay = Adamas::Compiler::Semantic::GeneratedOverlay.new(
       {10 => "/tmp/main.cr", 12 => "/tmp/main.cr"},
       [root_id],
       {10 => "def alpha\nend\n"},
@@ -30,11 +30,11 @@ describe CrystalV2::Compiler::Semantic::GeneratedOverlay do
 
     copy = overlay.dup
     copy.node_file_paths[10] = "/tmp/other.cr"
-    copy.top_level_roots << CrystalV2::Compiler::Frontend::ExprId.new(99)
+    copy.top_level_roots << Adamas::Compiler::Frontend::ExprId.new(99)
     copy.root_sources[10] = "changed"
     copy.root_by_node[12] = 11
-    copy.root_origins[10] = CrystalV2::Compiler::Frontend::ExprId.new(7)
-    copy.root_macro_defs[10] = CrystalV2::Compiler::Frontend::ExprId.new(8)
+    copy.root_origins[10] = Adamas::Compiler::Frontend::ExprId.new(7)
+    copy.root_macro_defs[10] = Adamas::Compiler::Frontend::ExprId.new(8)
 
     overlay.node_file_paths[10].should eq("/tmp/main.cr")
     overlay.top_level_roots.should eq([root_id])
@@ -46,13 +46,13 @@ describe CrystalV2::Compiler::Semantic::GeneratedOverlay do
 
   it "builds a defensive snapshot from mutable collections" do
     node_file_paths = {10 => "/tmp/main.cr"}
-    top_level_roots = [CrystalV2::Compiler::Frontend::ExprId.new(10)]
+    top_level_roots = [Adamas::Compiler::Frontend::ExprId.new(10)]
     root_sources = {10 => "def alpha\nend\n"}
     root_by_node = {12 => 10}
-    root_origins = {10 => CrystalV2::Compiler::Frontend::ExprId.new(4)}
-    root_macro_defs = {10 => CrystalV2::Compiler::Frontend::ExprId.new(1)}
+    root_origins = {10 => Adamas::Compiler::Frontend::ExprId.new(4)}
+    root_macro_defs = {10 => Adamas::Compiler::Frontend::ExprId.new(1)}
 
-    overlay = CrystalV2::Compiler::Semantic::GeneratedOverlay.snapshot(
+    overlay = Adamas::Compiler::Semantic::GeneratedOverlay.snapshot(
       node_file_paths,
       top_level_roots,
       root_sources,
@@ -69,10 +69,10 @@ describe CrystalV2::Compiler::Semantic::GeneratedOverlay do
     root_macro_defs.clear
 
     overlay.node_file_paths[10].should eq("/tmp/main.cr")
-    overlay.top_level_roots.should eq([CrystalV2::Compiler::Frontend::ExprId.new(10)])
+    overlay.top_level_roots.should eq([Adamas::Compiler::Frontend::ExprId.new(10)])
     overlay.root_sources[10].should eq("def alpha\nend\n")
     overlay.root_by_node[12].should eq(10)
-    overlay.root_origins[10].should eq(CrystalV2::Compiler::Frontend::ExprId.new(4))
-    overlay.root_macro_defs[10].should eq(CrystalV2::Compiler::Frontend::ExprId.new(1))
+    overlay.root_origins[10].should eq(Adamas::Compiler::Frontend::ExprId.new(4))
+    overlay.root_macro_defs[10].should eq(Adamas::Compiler::Frontend::ExprId.new(1))
   end
 end

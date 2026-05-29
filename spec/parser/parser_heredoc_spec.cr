@@ -2,7 +2,7 @@ require "spec"
 
 require "../../src/compiler/frontend/parser"
 
-describe "CrystalV2::Compiler::Frontend::Parser" do
+describe "Adamas::Compiler::Frontend::Parser" do
   describe "Heredoc literals" do
     it "parses a simple heredoc" do
       source = <<-CRYSTAL
@@ -12,17 +12,17 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       HERE
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       assign = arena[program.roots[0]]
-      CrystalV2::Compiler::Frontend.node_kind(assign).should eq(CrystalV2::Compiler::Frontend::NodeKind::Assign)
+      Adamas::Compiler::Frontend.node_kind(assign).should eq(Adamas::Compiler::Frontend::NodeKind::Assign)
 
-      value = arena[CrystalV2::Compiler::Frontend.node_assign_value(assign).not_nil!]
-      CrystalV2::Compiler::Frontend.node_kind(value).should eq(CrystalV2::Compiler::Frontend::NodeKind::String)
+      value = arena[Adamas::Compiler::Frontend.node_assign_value(assign).not_nil!]
+      Adamas::Compiler::Frontend.node_kind(value).should eq(Adamas::Compiler::Frontend::NodeKind::String)
     end
 
     it "parses heredoc with interpolation as a string node" do
@@ -33,17 +33,17 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       HERE
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(2)
       arena = program.arena
 
       assign = arena[program.roots[1]]
-      CrystalV2::Compiler::Frontend.node_kind(assign).should eq(CrystalV2::Compiler::Frontend::NodeKind::Assign)
+      Adamas::Compiler::Frontend.node_kind(assign).should eq(Adamas::Compiler::Frontend::NodeKind::Assign)
 
-      value = arena[CrystalV2::Compiler::Frontend.node_assign_value(assign).not_nil!]
-      CrystalV2::Compiler::Frontend.node_kind(value).should eq(CrystalV2::Compiler::Frontend::NodeKind::String)
+      value = arena[Adamas::Compiler::Frontend.node_assign_value(assign).not_nil!]
+      Adamas::Compiler::Frontend.node_kind(value).should eq(Adamas::Compiler::Frontend::NodeKind::String)
     end
   end
 end

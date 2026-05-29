@@ -4,7 +4,7 @@ require "random/secure"
 
 require "./support/server_helper"
 
-describe CrystalV2::Compiler::LSP::Server do
+describe Adamas::Compiler::LSP::Server do
   around_each do |example|
     prev = ENV["CRYSTALV2_LSP_FORCE_STUB"]?
     ENV["CRYSTALV2_LSP_FORCE_STUB"] = "1"
@@ -41,7 +41,7 @@ describe CrystalV2::Compiler::LSP::Server do
     end
     CR
 
-    server = CrystalV2::Compiler::LSP::Server.new(IO::Memory.new, IO::Memory.new, CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false))
+    server = Adamas::Compiler::LSP::Server.new(IO::Memory.new, IO::Memory.new, Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false))
     source = File.read(main_path)
     uri = server.spec_store_document(source, dir, main_path)
 

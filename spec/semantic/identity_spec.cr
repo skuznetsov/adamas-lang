@@ -6,7 +6,7 @@ require "../../src/compiler/semantic/identity/dry_run_tracker"
 require "../../src/compiler/semantic/identity/def_instance_key"
 
 module IdentitySpec
-  include CrystalV2::Compiler::Semantic
+  include Adamas::Compiler::Semantic
 
   # ── SemanticTypeId ──
 

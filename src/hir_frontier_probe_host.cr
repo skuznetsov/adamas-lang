@@ -3,9 +3,9 @@ require "./compiler/frontend/parser"
 require "./compiler/hir/ast_to_hir"
 
 module HIRFrontierProbeHost
-  alias ArenaLike = CrystalV2::Compiler::Frontend::ArenaLike
-  alias ExprId = CrystalV2::Compiler::Frontend::ExprId
-  alias FrontendNode = CrystalV2::Compiler::Frontend::Node
+  alias ArenaLike = Adamas::Compiler::Frontend::ArenaLike
+  alias ExprId = Adamas::Compiler::Frontend::ExprId
+  alias FrontendNode = Adamas::Compiler::Frontend::Node
 
   record ParsedUnit,
     arena : ArenaLike,
@@ -18,7 +18,7 @@ module HIRFrontierProbeHost
     node : FrontendNode,
   ) : FrontendNode
     current = node
-    while current.is_a?(CrystalV2::Compiler::Frontend::VisibilityModifierNode)
+    while current.is_a?(Adamas::Compiler::Frontend::VisibilityModifierNode)
       current = arena[current.expression]
     end
     current
@@ -26,10 +26,10 @@ module HIRFrontierProbeHost
 
   def self.require_path_from_node(
     arena : ArenaLike,
-    node : CrystalV2::Compiler::Frontend::RequireNode,
+    node : Adamas::Compiler::Frontend::RequireNode,
   ) : String?
     path_node = arena[node.path]
-    return nil unless path_node.is_a?(CrystalV2::Compiler::Frontend::StringNode)
+    return nil unless path_node.is_a?(Adamas::Compiler::Frontend::StringNode)
     String.new(path_node.value)
   end
 
@@ -53,8 +53,8 @@ module HIRFrontierProbeHost
     loaded.add(abs_path)
 
     source = File.read(abs_path)
-    lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-    parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+    lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+    parser = Adamas::Compiler::Frontend::Parser.new(lexer)
     roots = parser.parse_program_roots
     arena = parser.arena
     units << ParsedUnit.new(arena, roots, abs_path, source)
@@ -62,7 +62,7 @@ module HIRFrontierProbeHost
     roots.each do |expr_id|
       next if expr_id.invalid?
       node = unwrap_visibility(arena, arena[expr_id])
-      next unless node.is_a?(CrystalV2::Compiler::Frontend::RequireNode)
+      next unless node.is_a?(Adamas::Compiler::Frontend::RequireNode)
       next unless required_path = require_path_from_node(arena, node)
       next unless resolved_path = resolve_require(abs_path, required_path)
       parse_file_recursive(resolved_path, loaded, units)
@@ -79,15 +79,15 @@ module HIRFrontierProbeHost
       next if expr_id.invalid?
       node = unwrap_visibility(arena, arena[expr_id])
       case node
-      when CrystalV2::Compiler::Frontend::ClassNode
+      when Adamas::Compiler::Frontend::ClassNode
         name = String.new(node.name)
         type_names.add(name)
         class_kinds << {name, node.is_struct == true}
-      when CrystalV2::Compiler::Frontend::ModuleNode
+      when Adamas::Compiler::Frontend::ModuleNode
         type_names.add(String.new(node.name))
-      when CrystalV2::Compiler::Frontend::EnumNode
+      when Adamas::Compiler::Frontend::EnumNode
         type_names.add(String.new(node.name))
-      when CrystalV2::Compiler::Frontend::AliasNode
+      when Adamas::Compiler::Frontend::AliasNode
         type_names.add(String.new(node.name))
       end
     end
@@ -112,8 +112,8 @@ module HIRFrontierProbeHost
       collect_top_level_names(unit.arena, unit.roots, type_names, class_kinds)
     end
 
-    hir_module = Crystal::HIR::Module.new("probe")
-    converter = Crystal::HIR::AstToHir.new(
+    hir_module = Adamas::HIR::Module.new("probe")
+    converter = Adamas::HIR::AstToHir.new(
       units.first.arena,
       "probe",
       sources_by_arena,
@@ -131,15 +131,15 @@ module HIRFrontierProbeHost
         next if expr_id.invalid?
         node = unwrap_visibility(unit.arena, unit.arena[expr_id])
         case node
-        when CrystalV2::Compiler::Frontend::ModuleNode
+        when Adamas::Compiler::Frontend::ModuleNode
           converter.register_module(node)
-        when CrystalV2::Compiler::Frontend::ClassNode
+        when Adamas::Compiler::Frontend::ClassNode
           converter.register_class(node)
-        when CrystalV2::Compiler::Frontend::EnumNode
+        when Adamas::Compiler::Frontend::EnumNode
           converter.register_enum(node)
-        when CrystalV2::Compiler::Frontend::AliasNode
+        when Adamas::Compiler::Frontend::AliasNode
           converter.register_alias(node)
-        when CrystalV2::Compiler::Frontend::MacroDefNode
+        when Adamas::Compiler::Frontend::MacroDefNode
           converter.register_macro(node)
         end
       end

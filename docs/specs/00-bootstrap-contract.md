@@ -27,8 +27,8 @@ SHOULD run only after the near-term gate is clean.
 | Stage | Meaning |
 |-------|---------|
 | `original` | The upstream Crystal compiler used as source semantic oracle. |
-| `stage1` | Host-built `src/crystal_v2.cr` compiler. |
-| `s2b` | Compiler produced by `stage1` from `src/crystal_v2.cr`. |
+| `stage1` | Host-built `src/adamas.cr` compiler. |
+| `s2b` | Compiler produced by `stage1` from `src/adamas.cr`. |
 | `s3b+` | Later self-hosted compilers produced by the previous generated stage. |
 
 `stage1` and generated stages MAY differ in debug metadata, temporary symbol
@@ -119,8 +119,8 @@ against the original compiler, `stage1`, produced `s2`, or all three.
 The main integration gate is:
 
 ```bash
-crystal build src/crystal_v2.cr -o /tmp/cv2_stage1 --error-trace
-scripts/run_safe.sh /tmp/cv2_stage1 300 4096 src/crystal_v2.cr -o /tmp/cv2_s2/cv2_s2
+crystal build src/adamas.cr -o /tmp/cv2_stage1 --error-trace
+scripts/run_safe.sh /tmp/cv2_stage1 300 4096 src/adamas.cr -o /tmp/cv2_s2/cv2_s2
 ```
 
 The produced compiler MUST then pass the fast guards relevant to the changed

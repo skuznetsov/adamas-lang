@@ -1,9 +1,9 @@
 require "../src/compiler/frontend/lexer"
 require "../src/compiler/frontend/parser"
 
-include CrystalV2::Compiler
+include Adamas::Compiler
 
-PARSER_FILE = "/Users/sergey/Projects/Crystal/crystal/crystal_v2/src/compiler/frontend/parser.cr"
+PARSER_FILE = "/Users/sergey/Projects/Crystal/crystal/adamas/src/compiler/frontend/parser.cr"
 
 puts "=== Single File Parser Benchmark (Release) ==="
 puts "File: parser.cr"

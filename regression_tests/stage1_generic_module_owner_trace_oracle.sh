@@ -23,7 +23,7 @@ cat >"$wrapper" <<EOF
 set -euo pipefail
 export DEBUG_TRACE_EACH_WITH_INDEX=1
 export DEBUG_CALL_LOOKUP=each_with_index
-exec "$compiler" "$repo_root/src/crystal_v2.cr" --release --emit mir >"$stdout_log" 2>"$stderr_log"
+exec "$compiler" "$repo_root/src/adamas.cr" --release --emit mir >"$stdout_log" 2>"$stderr_log"
 EOF
 chmod +x "$wrapper"
 

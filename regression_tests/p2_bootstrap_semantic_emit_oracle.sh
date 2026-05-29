@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-COMPILER="${1:-$ROOT_DIR/bin/crystal_v2}"
+COMPILER="${1:-$ROOT_DIR/bin/adamas}"
 SRC="$ROOT_DIR/regression_tests/bootstrap_semantic_corpus.cr"
 
 if [[ ! -x "$COMPILER" ]]; then

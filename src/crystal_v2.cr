@@ -10,15 +10,15 @@ require "./compiler/cli"
   end
 {% end %}
 
-trace_bootstrap = CrystalV2::Compiler::BootstrapEnv.get?("STAGE2_BOOTSTRAP_TRACE") == "1"
+trace_bootstrap = Adamas::Compiler::BootstrapEnv.get?("STAGE2_BOOTSTRAP_TRACE") == "1"
 
 begin
-  if CrystalV2::Compiler::LSP::ToolDispatch.tool_lsp?(ARGV)
-    exit CrystalV2::Compiler::LSP::ToolDispatch.exec_lsp(ARGV)
+  if Adamas::Compiler::LSP::ToolDispatch.tool_lsp?(ARGV)
+    exit Adamas::Compiler::LSP::ToolDispatch.exec_lsp(ARGV)
   end
 
   STDERR.puts "[BOOTSTRAP_TRACE] main: cli.new" if trace_bootstrap
-  cli = CrystalV2::Compiler::CLI.new(ARGV)
+  cli = Adamas::Compiler::CLI.new(ARGV)
   STDERR.puts "[BOOTSTRAP_TRACE] main: cli.run" if trace_bootstrap
   exit_code = cli.run
   STDERR.puts "[BOOTSTRAP_TRACE] main: exit_code=#{exit_code}" if trace_bootstrap

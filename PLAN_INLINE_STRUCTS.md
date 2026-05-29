@@ -38,7 +38,7 @@ end
 - [ ] Struct copy semantics: assignment = memcpy, not pointer copy
 
 ### Phase 3: Constructors (llvm_backend.cr + ast_to_hir.cr)
-- [ ] Struct `.new`: alloca on stack, not __crystal_v2_malloc64
+- [ ] Struct `.new`: alloca on stack, not __adamas_malloc64
 - [ ] Struct initialize: write fields inline
 - [ ] field_storage_size: return INLINE size for structs (not pointer size)
   - Revert the `< pointer_word_bytes` → `!= pointer_word_bytes` change

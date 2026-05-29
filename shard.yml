@@ -1,4 +1,4 @@
-name: crystal_v2
+name: adamas
 version: 0.1.0
 
 authors:
@@ -12,8 +12,8 @@ description: |
   Experimental next-generation Crystal compiler bootstrap.
 
 targets:
-  crystal_v2:
-    main: src/crystal_v2.cr
+  adamas:
+    main: src/adamas.cr
 
 dependencies:
   # Dependencies will be added iteratively as subsystems come online.

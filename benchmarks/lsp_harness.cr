@@ -5,7 +5,7 @@ require "json"
 require "option_parser"
 require "uri"
 
-module CrystalV2
+module Adamas
   module Benchmarks
     module LSPHarness
       DEFAULT_TIMEOUT = 8.0
@@ -986,7 +986,7 @@ module CrystalV2
       end
 
       struct Options
-        property server : Array(String) = ["./bin/crystal_v2_lsp"]
+        property server : Array(String) = ["./bin/adamas_lsp"]
         property timeout : Float64 = DEFAULT_TIMEOUT
         property scenario : Array(FileScenario) = DEFAULT_SCENARIO
         property verbose : Bool = false
@@ -998,9 +998,9 @@ module CrystalV2
         options = Options.new
 
         parser = OptionParser.new do |opts|
-          opts.banner = "Usage: crystal run crystal_v2/benchmarks/lsp_harness.cr -- [options]"
+          opts.banner = "Usage: crystal run adamas/benchmarks/lsp_harness.cr -- [options]"
 
-          opts.on("-s PATH", "--server=PATH", "Path to LSP server executable (default: ./bin/crystal_v2_lsp)") do |path|
+          opts.on("-s PATH", "--server=PATH", "Path to LSP server executable (default: ./bin/adamas_lsp)") do |path|
             options.server = path.split(' ')
           end
 
@@ -1121,4 +1121,4 @@ module CrystalV2
   end
 end
 
-CrystalV2::Benchmarks::LSPHarness.run
+Adamas::Benchmarks::LSPHarness.run

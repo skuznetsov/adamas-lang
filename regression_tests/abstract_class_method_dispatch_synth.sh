@@ -23,7 +23,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-COMPILER="${1:-$ROOT_DIR/bin/crystal_v2}"
+COMPILER="${1:-$ROOT_DIR/bin/adamas}"
 LLVM_BACKEND="$ROOT_DIR/src/compiler/mir/llvm_backend.cr"
 HIR_TO_MIR="$ROOT_DIR/src/compiler/mir/hir_to_mir.cr"
 TMP_DIR="$(mktemp -d /tmp/abstract_class_method_dispatch_synth_XXXXXX)"
@@ -43,9 +43,9 @@ trap cleanup EXIT
 
 # Structural guard 1: the hardcoded fallback that referenced a nonexistent
 # T-suffixed vdispatch symbol must stay deleted.
-if grep -nF '__vdispatch__CrystalV2$CCCompiler$CCFrontend$CCNode$Hspan$$T' "$LLVM_BACKEND" >/dev/null; then
+if grep -nF '__vdispatch__Adamas$CCCompiler$CCFrontend$CCNode$Hspan$$T' "$LLVM_BACKEND" >/dev/null; then
   echo "abstract_class_method_dispatch_synth_failed: hardcoded Node\$Hspan vdispatch fallback reintroduced in llvm_backend.cr" >&2
-  grep -nF '__vdispatch__CrystalV2$CCCompiler$CCFrontend$CCNode$Hspan$$T' "$LLVM_BACKEND" >&2
+  grep -nF '__vdispatch__Adamas$CCCompiler$CCFrontend$CCNode$Hspan$$T' "$LLVM_BACKEND" >&2
   exit 1
 fi
 

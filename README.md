@@ -23,7 +23,7 @@ Crystal combines Ruby's expressiveness with static typing and native performance
 
 The **Crystal V2 LSP server is the most stable part of the project today**.
 It has a focused regression suite and is usable through the VS Code extension
-or through `crystal_v2 tool lsp` when pointed at a built LSP server.
+or through `adamas tool lsp` when pointed at a built LSP server.
 
 The **compiler/codegen pipeline is still beta**. It is useful for experiments,
 no-prelude oracles, reduced repros, and bootstrap work, but it is not yet a
@@ -145,10 +145,10 @@ scripts/run_safe.sh ./my_program 5 512
 bash regression_tests/run_all.sh /path/to/stage1 8
 
 # Quick debug build for fast iteration
-crystal build src/crystal_v2.cr -o bin/crystal_v2 --error-trace
+crystal build src/adamas.cr -o bin/adamas --error-trace
 
 # No-prelude oracle for fast debugging
-bin/crystal_v2 test.cr --no-prelude -o test_bin
+bin/adamas test.cr --no-prelude -o test_bin
 ```
 
 ## Language Server
@@ -161,13 +161,13 @@ project without depending on compiler bootstrap stability.
 ./build_lsp.sh
 
 # Or build the compiler and launch the sibling LSP server through tool mode
-crystal build src/crystal_v2.cr -o bin/crystal_v2 --error-trace
-bin/crystal_v2 tool lsp
+crystal build src/adamas.cr -o bin/adamas --error-trace
+bin/adamas tool lsp
 ```
 
 The VS Code extension lives in `vscode-extension/`. By default it discovers
 `crystal2` on `PATH` and launches `crystal2 tool lsp`. If that is not
-available it tries `crystal_v2 tool lsp`, then `crystal_v2_lsp`. The extension
+available it tries `adamas tool lsp`, then `adamas_lsp`. The extension
 settings override discovery:
 
 ```json
@@ -214,9 +214,9 @@ formatting, rename, and call hierarchy.
 ## Project Structure
 
 ```
-crystal_v2_repo/
+adamas_repo/
 ├── src/
-│   ├── crystal_v2.cr              # Entry point
+│   ├── adamas.cr              # Entry point
 │   └── compiler/
 │       ├── cli.cr                 # CLI, file loading, compilation orchestration
 │       ├── frontend/              # Lexer, Parser, AST, Arena system

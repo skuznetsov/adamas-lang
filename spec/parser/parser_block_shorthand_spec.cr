@@ -2,14 +2,14 @@ require "spec"
 
 require "../../src/compiler/frontend/parser"
 
-describe "CrystalV2::Compiler::Frontend::Parser" do
+describe "Adamas::Compiler::Frontend::Parser" do
   describe "Phase 101: &. block shorthand (PRODUCTION-READY)" do
     it "parses simple block shorthand: try &.method" do
       source = <<-CRYSTAL
       obj.try &.method
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
@@ -18,7 +18,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       # AST structure: Call(Call(obj, try), args: [Block(|__arg0| Call(__arg0, method))])
       arena = program.arena
       call_node = arena[program.roots[0]]
-      CrystalV2::Compiler::Frontend.node_kind(call_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Call)
+      Adamas::Compiler::Frontend.node_kind(call_node).should eq(Adamas::Compiler::Frontend::NodeKind::Call)
     end
 
     it "parses block shorthand with method chaining: try &.first.second" do
@@ -26,7 +26,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       obj.try &.first.second
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
@@ -38,7 +38,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       obj.try &.method(1, 2)
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
@@ -50,7 +50,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       map.transform_values &.to_s
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
@@ -62,7 +62,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       type.types?.try &.each_value
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
@@ -74,7 +74,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       items.map &.process.transform
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
@@ -86,7 +86,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       array.map &.[0]
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
@@ -98,7 +98,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       source.lines[idx+1]?.try(&.includes?("->"))
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
@@ -110,7 +110,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       numbers.map &.+(1)
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
@@ -123,7 +123,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       obj&.method
       CRYSTAL
 
-      parser1 = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source1))
+      parser1 = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source1))
       program1 = parser1.parse_program
 
       program1.roots.size.should eq(1)
@@ -134,7 +134,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       obj.try &.method
       CRYSTAL
 
-      parser2 = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source2))
+      parser2 = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source2))
       program2 = parser2.parse_program
 
       program2.roots.size.should eq(1)
@@ -150,7 +150,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
@@ -162,7 +162,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       items.map &.process.filter &.valid?
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
@@ -174,7 +174,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       result = array.map &.to_s
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
@@ -186,7 +186,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       items.select &.valid?
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
@@ -198,7 +198,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       items.each &.save!
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
@@ -210,7 +210,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       all_break_vars.try(&.all? &.has_key?(name))
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
@@ -222,7 +222,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       all_break_vars.try(&.any? &.[name]?.try &.nil_if_read?)
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)

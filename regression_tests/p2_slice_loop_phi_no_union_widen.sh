@@ -11,7 +11,7 @@
 
 set -e
 
-COMPILER="${1:-bin/crystal_v2}"
+COMPILER="${1:-bin/adamas}"
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
 

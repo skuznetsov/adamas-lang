@@ -126,9 +126,9 @@ that stronger anchor before concluding that a function was not entered.
 
 For produced-stage crashes, breakpoint these runtime edges early when relevant:
 
-- `__crystal_v2_raise`
-- `__crystal_v2_raise_msg`
-- `__crystal_v2_reraise`
+- `__adamas_raise`
+- `__adamas_raise_msg`
+- `__adamas_reraise`
 - the first function named in the suspected tail, for example `compile_llvm_ir`
   or `file_sha256`
 

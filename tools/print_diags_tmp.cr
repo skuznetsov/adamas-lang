@@ -5,13 +5,13 @@ require "../src/compiler/frontend/parser"
 path = ARGV[0]?
 abort "usage: print_diags <file>" unless path
 source = File.read(path)
-lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-tokens = [] of CrystalV2::Compiler::Frontend::Token
+lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+tokens = [] of Adamas::Compiler::Frontend::Token
 lexer.each_token(skip_trivia: false) { |t| tokens << t }
 
 # Recreate parser with pre-tokenized lexer's result
-sub_lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-  parser = CrystalV2::Compiler::Frontend::Parser.new(sub_lexer, recovery_mode: ENV["CRYSTAL_V2_LSP_RECOVERY"]? == "1")
+sub_lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+  parser = Adamas::Compiler::Frontend::Parser.new(sub_lexer, recovery_mode: ENV["CRYSTAL_V2_LSP_RECOVERY"]? == "1")
 parser.parse_program
 
 if ENV["PRINT_TOKENS"]? == "1"

@@ -14,7 +14,7 @@
 
 require "../semantic/types/type_index"
 
-module CrystalV2
+module Adamas
   module Compiler
     module LSP
       # Cached state for a single file
@@ -148,7 +148,7 @@ module CrystalV2
           cache_dir = ENV["XDG_CACHE_HOME"]? || File.join(ENV["HOME"]? || "/tmp", ".cache")
           # Use hash of project root for unique filename
           hash = fnv_hash(project_root)
-          File.join(cache_dir, "crystal_v2_lsp", "projects", "#{hash}.cache")
+          File.join(cache_dir, "adamas_lsp", "projects", "#{hash}.cache")
         end
 
         def self.cacheable_project_file?(path : String, project_root : String) : Bool

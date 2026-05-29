@@ -28,11 +28,11 @@ timeouts = [] of String
 
 files.each do |file|
   src = File.read(file)
-  lex = CrystalV2::Compiler::Frontend::Lexer.new(src)
-  parser = CrystalV2::Compiler::Frontend::Parser.new(lex, recovery_mode: true)
+  lex = Adamas::Compiler::Frontend::Lexer.new(src)
+  parser = Adamas::Compiler::Frontend::Parser.new(lex, recovery_mode: true)
 
   if timeout_span
-    CrystalV2::Compiler::Frontend::Watchdog.enable!("Timeout while scanning #{file}", timeout_span)
+    Adamas::Compiler::Frontend::Watchdog.enable!("Timeout while scanning #{file}", timeout_span)
   end
 
   begin
@@ -40,10 +40,10 @@ files.each do |file|
     errs = parser.diagnostics.size
     total += errs
     reports << {file, errs} if errs > 0
-  rescue CrystalV2::Compiler::Frontend::Watchdog::TimeoutError
+  rescue Adamas::Compiler::Frontend::Watchdog::TimeoutError
     timeouts << file
   ensure
-    CrystalV2::Compiler::Frontend::Watchdog.disable! if timeout_span
+    Adamas::Compiler::Frontend::Watchdog.disable! if timeout_span
   end
 end
 

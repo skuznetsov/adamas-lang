@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-COMPILER="${1:-$ROOT_DIR/bin/crystal_v2}"
+COMPILER="${1:-$ROOT_DIR/bin/adamas}"
 SOURCE="$ROOT_DIR/regression_tests/combined/test_no_prelude_interpolation.cr"
 TMP_DIR="$(mktemp -d /tmp/p2_generated_stage2_interp_XXXXXX)"
 GENERATED_S2="$TMP_DIR/generated_s2"
@@ -24,7 +24,7 @@ if [[ ! -x "$COMPILER" ]]; then
 fi
 
 "$ROOT_DIR/scripts/run_safe.sh" "$COMPILER" 420 4096 \
-  "$ROOT_DIR/src/crystal_v2.cr" -o "$GENERATED_S2" >"$BUILD_LOG" 2>&1
+  "$ROOT_DIR/src/adamas.cr" -o "$GENERATED_S2" >"$BUILD_LOG" 2>&1
 
 if [[ ! -x "$GENERATED_S2" ]]; then
   echo "p2_generated_stage2_no_prelude_interp_failed: missing generated stage2 compiler" >&2

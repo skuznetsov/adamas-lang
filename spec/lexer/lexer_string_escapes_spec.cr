@@ -2,26 +2,26 @@ require "spec"
 
 require "../../src/compiler/frontend/parser"
 
-describe "CrystalV2::Compiler::Frontend::Parser" do
+describe "Adamas::Compiler::Frontend::Parser" do
   describe "Phase 54: String escape sequences (PRODUCTION-READY)" do
     it "parses string with \\n newline escape" do
       source = <<-CRYSTAL
       x = "hello\\nworld"
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       assign = arena[program.roots[0]]
-      CrystalV2::Compiler::Frontend.node_kind(assign).should eq(CrystalV2::Compiler::Frontend::NodeKind::Assign)
+      Adamas::Compiler::Frontend.node_kind(assign).should eq(Adamas::Compiler::Frontend::NodeKind::Assign)
 
       # Value is string with processed escape
-      string = arena[CrystalV2::Compiler::Frontend.node_assign_value(assign).not_nil!]
-      CrystalV2::Compiler::Frontend.node_kind(string).should eq(CrystalV2::Compiler::Frontend::NodeKind::String)
-      String.new(CrystalV2::Compiler::Frontend.node_literal(string).not_nil!).should eq("hello\nworld")
+      string = arena[Adamas::Compiler::Frontend.node_assign_value(assign).not_nil!]
+      Adamas::Compiler::Frontend.node_kind(string).should eq(Adamas::Compiler::Frontend::NodeKind::String)
+      String.new(Adamas::Compiler::Frontend.node_literal(string).not_nil!).should eq("hello\nworld")
     end
 
     it "parses string with \\t tab escape" do
@@ -29,15 +29,15 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       x = "name\\tvalue"
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       assign = arena[program.roots[0]]
-      string = arena[CrystalV2::Compiler::Frontend.node_assign_value(assign).not_nil!]
-      String.new(CrystalV2::Compiler::Frontend.node_literal(string).not_nil!).should eq("name\tvalue")
+      string = arena[Adamas::Compiler::Frontend.node_assign_value(assign).not_nil!]
+      String.new(Adamas::Compiler::Frontend.node_literal(string).not_nil!).should eq("name\tvalue")
     end
 
     it "parses string with \\r carriage return escape" do
@@ -45,15 +45,15 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       x = "line1\\rline2"
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       assign = arena[program.roots[0]]
-      string = arena[CrystalV2::Compiler::Frontend.node_assign_value(assign).not_nil!]
-      String.new(CrystalV2::Compiler::Frontend.node_literal(string).not_nil!).should eq("line1\rline2")
+      string = arena[Adamas::Compiler::Frontend.node_assign_value(assign).not_nil!]
+      String.new(Adamas::Compiler::Frontend.node_literal(string).not_nil!).should eq("line1\rline2")
     end
 
     it "parses string with \\\\ backslash escape" do
@@ -61,15 +61,15 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       x = "path\\\\to\\\\file"
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       assign = arena[program.roots[0]]
-      string = arena[CrystalV2::Compiler::Frontend.node_assign_value(assign).not_nil!]
-      String.new(CrystalV2::Compiler::Frontend.node_literal(string).not_nil!).should eq("path\\to\\file")
+      string = arena[Adamas::Compiler::Frontend.node_assign_value(assign).not_nil!]
+      String.new(Adamas::Compiler::Frontend.node_literal(string).not_nil!).should eq("path\\to\\file")
     end
 
     it "parses string with \\\" quote escape" do
@@ -77,15 +77,15 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       x = "He said \\"Hello\\""
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       assign = arena[program.roots[0]]
-      string = arena[CrystalV2::Compiler::Frontend.node_assign_value(assign).not_nil!]
-      String.new(CrystalV2::Compiler::Frontend.node_literal(string).not_nil!).should eq("He said \"Hello\"")
+      string = arena[Adamas::Compiler::Frontend.node_assign_value(assign).not_nil!]
+      String.new(Adamas::Compiler::Frontend.node_literal(string).not_nil!).should eq("He said \"Hello\"")
     end
 
     it "parses string with \\0 null escape" do
@@ -93,15 +93,15 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       x = "before\\0after"
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       assign = arena[program.roots[0]]
-      string = arena[CrystalV2::Compiler::Frontend.node_assign_value(assign).not_nil!]
-      String.new(CrystalV2::Compiler::Frontend.node_literal(string).not_nil!).should eq("before\0after")
+      string = arena[Adamas::Compiler::Frontend.node_assign_value(assign).not_nil!]
+      String.new(Adamas::Compiler::Frontend.node_literal(string).not_nil!).should eq("before\0after")
     end
 
     it "parses string with multiple escape sequences" do
@@ -109,15 +109,15 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       x = "line1\\nline2\\tindented\\r\\n"
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       assign = arena[program.roots[0]]
-      string = arena[CrystalV2::Compiler::Frontend.node_assign_value(assign).not_nil!]
-      String.new(CrystalV2::Compiler::Frontend.node_literal(string).not_nil!).should eq("line1\nline2\tindented\r\n")
+      string = arena[Adamas::Compiler::Frontend.node_assign_value(assign).not_nil!]
+      String.new(Adamas::Compiler::Frontend.node_literal(string).not_nil!).should eq("line1\nline2\tindented\r\n")
     end
 
     it "parses string without escapes (fast path)" do
@@ -125,15 +125,15 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       x = "simple string"
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       assign = arena[program.roots[0]]
-      string = arena[CrystalV2::Compiler::Frontend.node_assign_value(assign).not_nil!]
-      String.new(CrystalV2::Compiler::Frontend.node_literal(string).not_nil!).should eq("simple string")
+      string = arena[Adamas::Compiler::Frontend.node_assign_value(assign).not_nil!]
+      String.new(Adamas::Compiler::Frontend.node_literal(string).not_nil!).should eq("simple string")
     end
 
     it "parses string with unknown escape (keeps as is)" do
@@ -141,16 +141,16 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       x = "test\\xunknown"
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       assign = arena[program.roots[0]]
-      string = arena[CrystalV2::Compiler::Frontend.node_assign_value(assign).not_nil!]
+      string = arena[Adamas::Compiler::Frontend.node_assign_value(assign).not_nil!]
       # Unknown escape \x should be kept as \x
-      String.new(CrystalV2::Compiler::Frontend.node_literal(string).not_nil!).should eq("test\\xunknown")
+      String.new(Adamas::Compiler::Frontend.node_literal(string).not_nil!).should eq("test\\xunknown")
     end
 
     it "parses escaped strings in array" do
@@ -158,24 +158,24 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       arr = ["line1\\nline2", "tab\\there"]
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       assign = arena[program.roots[0]]
-      array = arena[CrystalV2::Compiler::Frontend.node_assign_value(assign).not_nil!]
-      CrystalV2::Compiler::Frontend.node_kind(array).should eq(CrystalV2::Compiler::Frontend::NodeKind::ArrayLiteral)
+      array = arena[Adamas::Compiler::Frontend.node_assign_value(assign).not_nil!]
+      Adamas::Compiler::Frontend.node_kind(array).should eq(Adamas::Compiler::Frontend::NodeKind::ArrayLiteral)
 
-      elements = CrystalV2::Compiler::Frontend.node_array_elements(array).not_nil!
+      elements = Adamas::Compiler::Frontend.node_array_elements(array).not_nil!
       elements.size.should eq(2)
 
       str1 = arena[elements[0]]
-      String.new(CrystalV2::Compiler::Frontend.node_literal(str1).not_nil!).should eq("line1\nline2")
+      String.new(Adamas::Compiler::Frontend.node_literal(str1).not_nil!).should eq("line1\nline2")
 
       str2 = arena[elements[1]]
-      String.new(CrystalV2::Compiler::Frontend.node_literal(str2).not_nil!).should eq("tab\there")
+      String.new(Adamas::Compiler::Frontend.node_literal(str2).not_nil!).should eq("tab\there")
     end
 
     it "parses escaped string in method call" do
@@ -183,21 +183,21 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       puts("hello\\nworld")
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       call = arena[program.roots[0]]
-      CrystalV2::Compiler::Frontend.node_kind(call).should eq(CrystalV2::Compiler::Frontend::NodeKind::Call)
+      Adamas::Compiler::Frontend.node_kind(call).should eq(Adamas::Compiler::Frontend::NodeKind::Call)
 
-      args = CrystalV2::Compiler::Frontend.node_args(call).not_nil!
+      args = Adamas::Compiler::Frontend.node_args(call).not_nil!
       args.size.should eq(1)
 
       string = arena[args[0]]
-      CrystalV2::Compiler::Frontend.node_kind(string).should eq(CrystalV2::Compiler::Frontend::NodeKind::String)
-      String.new(CrystalV2::Compiler::Frontend.node_literal(string).not_nil!).should eq("hello\nworld")
+      Adamas::Compiler::Frontend.node_kind(string).should eq(Adamas::Compiler::Frontend::NodeKind::String)
+      String.new(Adamas::Compiler::Frontend.node_literal(string).not_nil!).should eq("hello\nworld")
     end
 
     it "parses all supported escapes together" do
@@ -205,15 +205,15 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       x = "\\n\\t\\r\\\\\\\"\\0"
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       assign = arena[program.roots[0]]
-      string = arena[CrystalV2::Compiler::Frontend.node_assign_value(assign).not_nil!]
-      String.new(CrystalV2::Compiler::Frontend.node_literal(string).not_nil!).should eq("\n\t\r\\\"\0")
+      string = arena[Adamas::Compiler::Frontend.node_assign_value(assign).not_nil!]
+      String.new(Adamas::Compiler::Frontend.node_literal(string).not_nil!).should eq("\n\t\r\\\"\0")
     end
 
     it "parses empty string" do
@@ -221,15 +221,15 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       x = ""
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       assign = arena[program.roots[0]]
-      string = arena[CrystalV2::Compiler::Frontend.node_assign_value(assign).not_nil!]
-      String.new(CrystalV2::Compiler::Frontend.node_literal(string).not_nil!).should eq("")
+      string = arena[Adamas::Compiler::Frontend.node_assign_value(assign).not_nil!]
+      String.new(Adamas::Compiler::Frontend.node_literal(string).not_nil!).should eq("")
     end
 
     it "parses string with escape at start" do
@@ -237,15 +237,15 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       x = "\\nstart"
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       assign = arena[program.roots[0]]
-      string = arena[CrystalV2::Compiler::Frontend.node_assign_value(assign).not_nil!]
-      String.new(CrystalV2::Compiler::Frontend.node_literal(string).not_nil!).should eq("\nstart")
+      string = arena[Adamas::Compiler::Frontend.node_assign_value(assign).not_nil!]
+      String.new(Adamas::Compiler::Frontend.node_literal(string).not_nil!).should eq("\nstart")
     end
 
     it "parses string with escape at end" do
@@ -253,15 +253,15 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       x = "end\\n"
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       assign = arena[program.roots[0]]
-      string = arena[CrystalV2::Compiler::Frontend.node_assign_value(assign).not_nil!]
-      String.new(CrystalV2::Compiler::Frontend.node_literal(string).not_nil!).should eq("end\n")
+      string = arena[Adamas::Compiler::Frontend.node_assign_value(assign).not_nil!]
+      String.new(Adamas::Compiler::Frontend.node_literal(string).not_nil!).should eq("end\n")
     end
 
     it "parses multiple strings with different escapes" do
@@ -271,7 +271,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       c = "third\\\\"
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(3)
@@ -279,16 +279,16 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
 
       # Check all three assignments
       assign1 = arena[program.roots[0]]
-      str1 = arena[CrystalV2::Compiler::Frontend.node_assign_value(assign1).not_nil!]
-      String.new(CrystalV2::Compiler::Frontend.node_literal(str1).not_nil!).should eq("first\n")
+      str1 = arena[Adamas::Compiler::Frontend.node_assign_value(assign1).not_nil!]
+      String.new(Adamas::Compiler::Frontend.node_literal(str1).not_nil!).should eq("first\n")
 
       assign2 = arena[program.roots[1]]
-      str2 = arena[CrystalV2::Compiler::Frontend.node_assign_value(assign2).not_nil!]
-      String.new(CrystalV2::Compiler::Frontend.node_literal(str2).not_nil!).should eq("second\t")
+      str2 = arena[Adamas::Compiler::Frontend.node_assign_value(assign2).not_nil!]
+      String.new(Adamas::Compiler::Frontend.node_literal(str2).not_nil!).should eq("second\t")
 
       assign3 = arena[program.roots[2]]
-      str3 = arena[CrystalV2::Compiler::Frontend.node_assign_value(assign3).not_nil!]
-      String.new(CrystalV2::Compiler::Frontend.node_literal(str3).not_nil!).should eq("third\\")
+      str3 = arena[Adamas::Compiler::Frontend.node_assign_value(assign3).not_nil!]
+      String.new(Adamas::Compiler::Frontend.node_literal(str3).not_nil!).should eq("third\\")
     end
   end
 end

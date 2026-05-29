@@ -1,4 +1,4 @@
-module CrystalV2
+module Adamas
   module Compiler
     module LSP
       class SemanticTokenDiskCache
@@ -9,7 +9,7 @@ module CrystalV2
         def self.cache_path(file_path : String) : String
           cache_dir = ENV["XDG_CACHE_HOME"]? || File.join(ENV["HOME"]? || "/tmp", ".cache")
           hash = fnv_hash(file_path).to_s(16)
-          File.join(cache_dir, "crystal_v2_lsp", "semantic_tokens", "v#{VERSION}", "#{hash}.json")
+          File.join(cache_dir, "adamas_lsp", "semantic_tokens", "v#{VERSION}", "#{hash}.json")
         end
 
         def self.load(file_path : String, source_mtime_ns : Int64, source_size : UInt64) : String?

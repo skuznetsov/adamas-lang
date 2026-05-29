@@ -6,7 +6,7 @@
 # If present, the runner checks that marker appears in output.
 # Otherwise, just checks for clean exit (code 0).
 
-COMPILER="${1:-bin/crystal_v2}"
+COMPILER="${1:-bin/adamas}"
 JOBS="${2:-4}"
 TIMEOUT=10
 MAX_MEM=512
@@ -14,7 +14,7 @@ BIN_DIR="regression_tests/bin"
 
 if [ ! -x "$COMPILER" ]; then
   echo "ERROR: Compiler not found at $COMPILER"
-  echo "Build with: crystal build src/crystal_v2.cr -o bin/crystal_v2 --error-trace"
+  echo "Build with: crystal build src/adamas.cr -o bin/adamas --error-trace"
   exit 1
 fi
 

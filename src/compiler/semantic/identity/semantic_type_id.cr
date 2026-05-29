@@ -9,7 +9,7 @@
 # It is used in DefInstanceKey for semantic caching and must NOT leak
 # into HIR TypeRef or mangled names.
 
-module CrystalV2::Compiler::Semantic
+module Adamas::Compiler::Semantic
   # Canonical semantic type identity — interned, collision-free.
   struct SemanticTypeId
     getter id : UInt32

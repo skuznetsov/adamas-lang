@@ -25,8 +25,8 @@ scanned = 0
 
 files.each_with_index do |file, idx|
   source = File.read(file)
-  lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-  parser = CrystalV2::Compiler::Frontend::Parser.new(lexer, recovery_mode: ENV["CRYSTAL_V2_LSP_RECOVERY"]? == "1")
+  lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+  parser = Adamas::Compiler::Frontend::Parser.new(lexer, recovery_mode: ENV["CRYSTAL_V2_LSP_RECOVERY"]? == "1")
   begin
     # Optional watchdog to prevent hangs on individual files during a global
     # scan. Enable with environment:
@@ -34,19 +34,19 @@ files.each_with_index do |file, idx|
     # By default SCAN_TIMEOUT falls back to 0.1 seconds if not provided.
     if ENV["ENABLE_WATCHDOG"]? || ENV["SCAN_TIMEOUT"]?
       timeout_s = (ENV["SCAN_TIMEOUT"]? || "0.1").to_f
-      CrystalV2::Compiler::Frontend::Watchdog.enable!(
+      Adamas::Compiler::Frontend::Watchdog.enable!(
         "count_parser_diagnostics timeout for #{file}",
         timeout_s.seconds
       )
     end
 
     parser.parse_program
-  rescue ex : CrystalV2::Compiler::Frontend::Watchdog::TimeoutError
+  rescue ex : Adamas::Compiler::Frontend::Watchdog::TimeoutError
     STDERR.puts "Watchdog timeout while parsing #{file} (##{idx}): #{ex.message}"
     STDERR.puts ex.backtrace?.try(&.join('\n'))
     exit 1
   ensure
-    CrystalV2::Compiler::Frontend::Watchdog.disable!
+    Adamas::Compiler::Frontend::Watchdog.disable!
   end
 
   errs = parser.diagnostics.size

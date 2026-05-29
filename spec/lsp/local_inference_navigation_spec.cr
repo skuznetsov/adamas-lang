@@ -54,10 +54,10 @@ describe "LSP local inference and navigation" do
       CR
       File.write(path, source)
 
-      server = CrystalV2::Compiler::LSP::Server.new(
+      server = Adamas::Compiler::LSP::Server.new(
         IO::Memory.new,
         IO::Memory.new,
-        CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
+        Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
       )
       uri = server.spec_store_document(source, dir, path)
 
@@ -110,10 +110,10 @@ describe "LSP local inference and navigation" do
       CR
       File.write(path, source)
 
-      server = CrystalV2::Compiler::LSP::Server.new(
+      server = Adamas::Compiler::LSP::Server.new(
         IO::Memory.new,
         IO::Memory.new,
-        CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
+        Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
       )
       uri = server.spec_store_document(source, dir, path)
 
@@ -149,10 +149,10 @@ describe "LSP local inference and navigation" do
       CR
       File.write(main_path, main_source)
 
-      server = CrystalV2::Compiler::LSP::Server.new(
+      server = Adamas::Compiler::LSP::Server.new(
         IO::Memory.new,
         IO::Memory.new,
-        CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
+        Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
       )
       uri = server.spec_store_document(main_source, dir, main_path)
 

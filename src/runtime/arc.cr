@@ -15,7 +15,7 @@
 # The user pointer points to the start of Object Data.
 # RC operations use negative offset to access the header.
 
-module Crystal::Runtime
+module Adamas::Runtime
   # ARC header size in bytes
   ARC_HEADER_SIZE = 16_u64
 
@@ -216,41 +216,41 @@ end
 # Exported functions for LLVM IR calls
 # These use C calling convention and are the symbols referenced in llvm_backend.cr
 #
-# Note: We use __crystal_v2_* prefix to avoid conflicts with standard runtime.
+# Note: We use __adamas_* prefix to avoid conflicts with standard runtime.
 
 # Increment reference count
-fun __crystal_v2_rc_inc(ptr : Void*) : Void
-  Crystal::Runtime.rc_inc(ptr)
+fun __adamas_rc_inc(ptr : Void*) : Void
+  Adamas::Runtime.rc_inc(ptr)
 end
 
 # Atomic increment
-fun __crystal_v2_rc_inc_atomic(ptr : Void*) : Void
-  Crystal::Runtime.rc_inc_atomic(ptr)
+fun __adamas_rc_inc_atomic(ptr : Void*) : Void
+  Adamas::Runtime.rc_inc_atomic(ptr)
 end
 
 # Decrement reference count, optionally call destructor
-fun __crystal_v2_rc_dec(ptr : Void*, destructor : Void*) : Void
-  Crystal::Runtime.rc_dec(ptr, destructor)
+fun __adamas_rc_dec(ptr : Void*, destructor : Void*) : Void
+  Adamas::Runtime.rc_dec(ptr, destructor)
 end
 
 # Atomic decrement
-fun __crystal_v2_rc_dec_atomic(ptr : Void*, destructor : Void*) : Void
-  Crystal::Runtime.rc_dec_atomic(ptr, destructor)
+fun __adamas_rc_dec_atomic(ptr : Void*, destructor : Void*) : Void
+  Adamas::Runtime.rc_dec_atomic(ptr, destructor)
 end
 
 # Allocate ARC-managed object
-fun __crystal_v2_arc_alloc(size : UInt64, type_id : UInt32) : Void*
-  Crystal::Runtime.arc_alloc(size, type_id)
+fun __adamas_arc_alloc(size : UInt64, type_id : UInt32) : Void*
+  Adamas::Runtime.arc_alloc(size, type_id)
 end
 
 # Get current reference count (for debugging)
-fun __crystal_v2_rc_get(ptr : Void*) : UInt64
-  Crystal::Runtime.rc_get(ptr)
+fun __adamas_rc_get(ptr : Void*) : UInt64
+  Adamas::Runtime.rc_get(ptr)
 end
 
 # Check if object is valid (not freed)
-fun __crystal_v2_rc_is_valid(ptr : Void*) : Bool
+fun __adamas_rc_is_valid(ptr : Void*) : Bool
   return false if ptr.null?
-  rc = Crystal::Runtime.rc_get(ptr)
-  rc > 0 && rc < Crystal::Runtime::RC_STATIC
+  rc = Adamas::Runtime.rc_get(ptr)
+  rc > 0 && rc < Adamas::Runtime::RC_STATIC
 end

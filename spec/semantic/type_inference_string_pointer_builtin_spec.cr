@@ -12,8 +12,8 @@ require "../../src/compiler/semantic/types/type"
 require "../../src/compiler/semantic/type_inference_engine"
 
 module TypeInferenceStringPointerBuiltinSpecAliases
-  alias Frontend = CrystalV2::Compiler::Frontend
-  alias Semantic = CrystalV2::Compiler::Semantic
+  alias Frontend = Adamas::Compiler::Frontend
+  alias Semantic = Adamas::Compiler::Semantic
 end
 
 include TypeInferenceStringPointerBuiltinSpecAliases
@@ -33,7 +33,7 @@ private def infer_types_for_string_pointer_builtin(source : String)
   {analyzer, engine}
 end
 
-describe CrystalV2::Compiler::Semantic::TypeInferenceEngine do
+describe Adamas::Compiler::Semantic::TypeInferenceEngine do
   it "resolves Pointer#memcmp results through String compare-style bodies" do
     source = <<-CRYSTAL
       class String

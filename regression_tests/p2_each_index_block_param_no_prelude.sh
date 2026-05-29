@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-COMPILER="${1:-$ROOT_DIR/bin/crystal_v2}"
+COMPILER="${1:-$ROOT_DIR/bin/adamas}"
 TMP_DIR="$(mktemp -d /tmp/p2_each_index_block_param_XXXXXX)"
 SOURCE="$TMP_DIR/repro.cr"
 OUT="$TMP_DIR/out"

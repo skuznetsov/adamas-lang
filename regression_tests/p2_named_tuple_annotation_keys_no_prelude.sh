@@ -8,7 +8,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-COMPILER="${1:-$ROOT_DIR/bin/crystal_v2}"
+COMPILER="${1:-$ROOT_DIR/bin/adamas}"
 
 if [[ ! -x "$COMPILER" ]]; then
   echo "ERROR: compiler not found: $COMPILER" >&2
@@ -41,7 +41,7 @@ class Array(T) < Reference
   end
 end
 
-module CrystalV2
+module Adamas
   module Compiler
     module Frontend
       class Span
@@ -62,7 +62,7 @@ module CrystalV2
   end
 end
 
-CrystalV2::Compiler::Frontend.probe
+Adamas::Compiler::Frontend.probe
 CR
 
 BOOTSTRAP_IR_TIMEOUT_SEC="${BOOTSTRAP_IR_TIMEOUT_SEC:-60}" \

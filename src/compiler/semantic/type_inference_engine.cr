@@ -22,7 +22,7 @@ require "./macro_expander"
 require "../frontend/ast"
 require "../../runtime"
 
-module CrystalV2
+module Adamas
   module Compiler
     module Semantic
       alias NumberKind = Frontend::NumberKind

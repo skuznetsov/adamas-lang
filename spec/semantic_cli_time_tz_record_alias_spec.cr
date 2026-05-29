@@ -30,12 +30,12 @@ private def with_semantic_compile_env_for_tz_alias(&)
   end
 end
 
-describe CrystalV2::Compiler::CLI do
+describe Adamas::Compiler::CLI do
   it "keeps semantic compile prepass green for stdlib record union aliases inside class-owned module reopens" do
     with_temp_semantic_compile_project({
       "main.cr" => <<-'CRYSTAL',
-        require "/Users/sergey/Projects/Crystal/crystal_v2_repo/src/stdlib/object/properties"
-        require "/Users/sergey/Projects/Crystal/crystal_v2_repo/src/stdlib/macros"
+        require "/Users/sergey/Projects/Crystal/adamas_repo/src/stdlib/object/properties"
+        require "/Users/sergey/Projects/Crystal/adamas_repo/src/stdlib/macros"
 
         struct Object
         end
@@ -97,7 +97,7 @@ describe CrystalV2::Compiler::CLI do
       status = 1
 
       with_semantic_compile_env_for_tz_alias do
-        cli = CrystalV2::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
+        cli = Adamas::Compiler::CLI.new([main_path, "--no-prelude", "--stats", "--verbose", "--no-link", "-o", output_path])
         status = cli.run(out_io: out_io, err_io: err_io)
       end
 

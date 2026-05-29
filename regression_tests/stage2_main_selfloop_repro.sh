@@ -4,14 +4,14 @@ set -euo pipefail
 if [ $# -lt 1 ]; then
   echo "Usage: $0 <stage2_compiler> [probe_wait_sec] [source]" >&2
   echo "  probe_wait_sec: seconds to wait before LLDB probe (default: 15)" >&2
-  echo "  source: source to compile (default: src/crystal_v2.cr)" >&2
+  echo "  source: source to compile (default: src/adamas.cr)" >&2
   exit 2
 fi
 
 COMPILER="$1"
 PROBE_WAIT_SEC="${2:-15}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SOURCE="${3:-$ROOT_DIR/src/crystal_v2.cr}"
+SOURCE="${3:-$ROOT_DIR/src/adamas.cr}"
 
 OUT_DIR="${TMPDIR:-/tmp}/stage2_main_selfloop_repro"
 RUN_LOG="$OUT_DIR/compile.log"

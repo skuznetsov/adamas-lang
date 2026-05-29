@@ -2,7 +2,7 @@
 # Run all regression test suites: original (68) + combined (20)
 # Usage: ./regression_tests/run_all_suites.sh [path-to-compiler] [parallelism]
 
-COMPILER="${1:-bin/crystal_v2}"
+COMPILER="${1:-bin/adamas}"
 JOBS="${2:-4}"
 
 echo "========================================"

@@ -25,27 +25,27 @@ write_probe() {
 require "${ROOT_DIR}/src/compiler/bootstrap_shims"
 require "${ROOT_DIR}/src/compiler/frontend/ast"
 
-span = CrystalV2::Compiler::Frontend::Span.zero
+span = Adamas::Compiler::Frontend::Span.zero
 CR
 
   if [[ "$mode" == "direct" ]]; then
     cat >>"$path" <<'CR'
-node = CrystalV2::Compiler::Frontend::MacroIfNode.new(
+node = Adamas::Compiler::Frontend::MacroIfNode.new(
   span,
-  CrystalV2::Compiler::Frontend::ExprId.new(0),
-  CrystalV2::Compiler::Frontend::ExprId.new(1),
+  Adamas::Compiler::Frontend::ExprId.new(0),
+  Adamas::Compiler::Frontend::ExprId.new(1),
   nil
 )
-base = node.as(CrystalV2::Compiler::Frontend::Node)
+base = node.as(Adamas::Compiler::Frontend::Node)
 CR
   else
     cat >>"$path" <<'CR'
-arena = CrystalV2::Compiler::Frontend::AstArena.new
+arena = Adamas::Compiler::Frontend::AstArena.new
 id = arena.add_typed(
-  CrystalV2::Compiler::Frontend::MacroIfNode.new(
+  Adamas::Compiler::Frontend::MacroIfNode.new(
     span,
-    CrystalV2::Compiler::Frontend::ExprId.new(0),
-    CrystalV2::Compiler::Frontend::ExprId.new(1),
+    Adamas::Compiler::Frontend::ExprId.new(0),
+    Adamas::Compiler::Frontend::ExprId.new(1),
     nil
   )
 )
@@ -55,10 +55,10 @@ CR
 
   cat >>"$path" <<'CR'
 puts base.node_kind
-puts CrystalV2::Compiler::Frontend.node_kind(base)
-puts base.is_a?(CrystalV2::Compiler::Frontend::MacroIfNode)
+puts Adamas::Compiler::Frontend.node_kind(base)
+puts base.is_a?(Adamas::Compiler::Frontend::MacroIfNode)
 case base
-when CrystalV2::Compiler::Frontend::MacroIfNode
+when Adamas::Compiler::Frontend::MacroIfNode
   puts true
 else
   puts false

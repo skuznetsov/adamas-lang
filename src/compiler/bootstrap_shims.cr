@@ -13,7 +13,7 @@ def lnct
   0_i64
 end
 
-module CrystalV2::Compiler::BootstrapEnv
+module Adamas::Compiler::BootstrapEnv
   def self.get?(key : String) : String?
     # V2 BOOTSTRAP: ENV module constant access crashes V2-compiled binaries.
     # Use LibC.getenv directly to bypass ENV completely.

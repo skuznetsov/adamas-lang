@@ -2,72 +2,72 @@ require "spec"
 
 require "../../src/compiler/frontend/parser"
 
-describe "CrystalV2::Compiler::Frontend::Parser" do
+describe "Adamas::Compiler::Frontend::Parser" do
   describe "Phase 65: Require statement (PRODUCTION-READY)" do
     it "parses require with string literal" do
       source = "require \"spec\""
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       require_node = arena[program.roots[0]]
-      CrystalV2::Compiler::Frontend.node_kind(require_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Require)
+      Adamas::Compiler::Frontend.node_kind(require_node).should eq(Adamas::Compiler::Frontend::NodeKind::Require)
 
       # Path should be a string literal
-      path = arena[CrystalV2::Compiler::Frontend.node_require_path(require_node).not_nil!]
-      CrystalV2::Compiler::Frontend.node_kind(path).should eq(CrystalV2::Compiler::Frontend::NodeKind::String)
-      String.new(CrystalV2::Compiler::Frontend.node_literal(path).not_nil!).should eq("spec")
+      path = arena[Adamas::Compiler::Frontend.node_require_path(require_node).not_nil!]
+      Adamas::Compiler::Frontend.node_kind(path).should eq(Adamas::Compiler::Frontend::NodeKind::String)
+      String.new(Adamas::Compiler::Frontend.node_literal(path).not_nil!).should eq("spec")
     end
 
     it "parses require with relative path" do
       source = "require \"./local_file\""
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       require_node = arena[program.roots[0]]
-      CrystalV2::Compiler::Frontend.node_kind(require_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Require)
+      Adamas::Compiler::Frontend.node_kind(require_node).should eq(Adamas::Compiler::Frontend::NodeKind::Require)
 
-      path = arena[CrystalV2::Compiler::Frontend.node_require_path(require_node).not_nil!]
-      String.new(CrystalV2::Compiler::Frontend.node_literal(path).not_nil!).should eq("./local_file")
+      path = arena[Adamas::Compiler::Frontend.node_require_path(require_node).not_nil!]
+      String.new(Adamas::Compiler::Frontend.node_literal(path).not_nil!).should eq("./local_file")
     end
 
     it "parses require with absolute path" do
       source = "require \"/usr/lib/crystal\""
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       require_node = arena[program.roots[0]]
-      CrystalV2::Compiler::Frontend.node_kind(require_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Require)
+      Adamas::Compiler::Frontend.node_kind(require_node).should eq(Adamas::Compiler::Frontend::NodeKind::Require)
 
-      path = arena[CrystalV2::Compiler::Frontend.node_require_path(require_node).not_nil!]
-      String.new(CrystalV2::Compiler::Frontend.node_literal(path).not_nil!).should eq("/usr/lib/crystal")
+      path = arena[Adamas::Compiler::Frontend.node_require_path(require_node).not_nil!]
+      String.new(Adamas::Compiler::Frontend.node_literal(path).not_nil!).should eq("/usr/lib/crystal")
     end
 
     it "parses require with nested path" do
       source = "require \"compiler/frontend/parser\""
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       require_node = arena[program.roots[0]]
-      CrystalV2::Compiler::Frontend.node_kind(require_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Require)
+      Adamas::Compiler::Frontend.node_kind(require_node).should eq(Adamas::Compiler::Frontend::NodeKind::Require)
 
-      path = arena[CrystalV2::Compiler::Frontend.node_require_path(require_node).not_nil!]
-      String.new(CrystalV2::Compiler::Frontend.node_literal(path).not_nil!).should eq("compiler/frontend/parser")
+      path = arena[Adamas::Compiler::Frontend.node_require_path(require_node).not_nil!]
+      String.new(Adamas::Compiler::Frontend.node_literal(path).not_nil!).should eq("compiler/frontend/parser")
     end
 
     it "parses multiple require statements" do
@@ -77,7 +77,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       require "./local"
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(3)
@@ -85,37 +85,37 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
 
       # First require
       req1 = arena[program.roots[0]]
-      CrystalV2::Compiler::Frontend.node_kind(req1).should eq(CrystalV2::Compiler::Frontend::NodeKind::Require)
-      path1 = arena[CrystalV2::Compiler::Frontend.node_require_path(req1).not_nil!]
-      String.new(CrystalV2::Compiler::Frontend.node_literal(path1).not_nil!).should eq("spec")
+      Adamas::Compiler::Frontend.node_kind(req1).should eq(Adamas::Compiler::Frontend::NodeKind::Require)
+      path1 = arena[Adamas::Compiler::Frontend.node_require_path(req1).not_nil!]
+      String.new(Adamas::Compiler::Frontend.node_literal(path1).not_nil!).should eq("spec")
 
       # Second require
       req2 = arena[program.roots[1]]
-      CrystalV2::Compiler::Frontend.node_kind(req2).should eq(CrystalV2::Compiler::Frontend::NodeKind::Require)
-      path2 = arena[CrystalV2::Compiler::Frontend.node_require_path(req2).not_nil!]
-      String.new(CrystalV2::Compiler::Frontend.node_literal(path2).not_nil!).should eq("compiler")
+      Adamas::Compiler::Frontend.node_kind(req2).should eq(Adamas::Compiler::Frontend::NodeKind::Require)
+      path2 = arena[Adamas::Compiler::Frontend.node_require_path(req2).not_nil!]
+      String.new(Adamas::Compiler::Frontend.node_literal(path2).not_nil!).should eq("compiler")
 
       # Third require
       req3 = arena[program.roots[2]]
-      CrystalV2::Compiler::Frontend.node_kind(req3).should eq(CrystalV2::Compiler::Frontend::NodeKind::Require)
-      path3 = arena[CrystalV2::Compiler::Frontend.node_require_path(req3).not_nil!]
-      String.new(CrystalV2::Compiler::Frontend.node_literal(path3).not_nil!).should eq("./local")
+      Adamas::Compiler::Frontend.node_kind(req3).should eq(Adamas::Compiler::Frontend::NodeKind::Require)
+      path3 = arena[Adamas::Compiler::Frontend.node_require_path(req3).not_nil!]
+      String.new(Adamas::Compiler::Frontend.node_literal(path3).not_nil!).should eq("./local")
     end
 
     it "parses require with wildcard" do
       source = "require \"./*\""
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       require_node = arena[program.roots[0]]
-      CrystalV2::Compiler::Frontend.node_kind(require_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Require)
+      Adamas::Compiler::Frontend.node_kind(require_node).should eq(Adamas::Compiler::Frontend::NodeKind::Require)
 
-      path = arena[CrystalV2::Compiler::Frontend.node_require_path(require_node).not_nil!]
-      String.new(CrystalV2::Compiler::Frontend.node_literal(path).not_nil!).should eq("./*")
+      path = arena[Adamas::Compiler::Frontend.node_require_path(require_node).not_nil!]
+      String.new(Adamas::Compiler::Frontend.node_literal(path).not_nil!).should eq("./*")
     end
 
     it "parses require followed by code" do
@@ -124,7 +124,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       x = 1
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(2)
@@ -132,11 +132,11 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
 
       # First statement: require
       req = arena[program.roots[0]]
-      CrystalV2::Compiler::Frontend.node_kind(req).should eq(CrystalV2::Compiler::Frontend::NodeKind::Require)
+      Adamas::Compiler::Frontend.node_kind(req).should eq(Adamas::Compiler::Frontend::NodeKind::Require)
 
       # Second statement: assignment
       assign = arena[program.roots[1]]
-      CrystalV2::Compiler::Frontend.node_kind(assign).should eq(CrystalV2::Compiler::Frontend::NodeKind::Assign)
+      Adamas::Compiler::Frontend.node_kind(assign).should eq(Adamas::Compiler::Frontend::NodeKind::Assign)
     end
 
     it "parses require inside class" do
@@ -146,59 +146,59 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       class_node = arena[program.roots[0]]
-      CrystalV2::Compiler::Frontend.node_kind(class_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Class)
+      Adamas::Compiler::Frontend.node_kind(class_node).should eq(Adamas::Compiler::Frontend::NodeKind::Class)
 
-      body = CrystalV2::Compiler::Frontend.node_class_body(class_node).not_nil!
+      body = Adamas::Compiler::Frontend.node_class_body(class_node).not_nil!
       body.size.should eq(1)
 
       req = arena[body[0]]
-      CrystalV2::Compiler::Frontend.node_kind(req).should eq(CrystalV2::Compiler::Frontend::NodeKind::Require)
+      Adamas::Compiler::Frontend.node_kind(req).should eq(Adamas::Compiler::Frontend::NodeKind::Require)
     end
 
     it "parses require with string interpolation (advanced)" do
       source = "require \"foo_\#{version}\""
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       require_node = arena[program.roots[0]]
-      CrystalV2::Compiler::Frontend.node_kind(require_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Require)
+      Adamas::Compiler::Frontend.node_kind(require_node).should eq(Adamas::Compiler::Frontend::NodeKind::Require)
 
       # Path should be string interpolation node
-      path = arena[CrystalV2::Compiler::Frontend.node_require_path(require_node).not_nil!]
-      CrystalV2::Compiler::Frontend.node_kind(path).should eq(CrystalV2::Compiler::Frontend::NodeKind::StringInterpolation)
+      path = arena[Adamas::Compiler::Frontend.node_require_path(require_node).not_nil!]
+      Adamas::Compiler::Frontend.node_kind(path).should eq(Adamas::Compiler::Frontend::NodeKind::StringInterpolation)
     end
 
     it "preserves UTF-8 text pieces in require string interpolation" do
       source = "require \"префикс_\#{version}_хвост\""
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       require_node = arena[program.roots[0]]
-      path = arena[CrystalV2::Compiler::Frontend.node_require_path(require_node).not_nil!]
-      CrystalV2::Compiler::Frontend.node_kind(path).should eq(CrystalV2::Compiler::Frontend::NodeKind::StringInterpolation)
+      path = arena[Adamas::Compiler::Frontend.node_require_path(require_node).not_nil!]
+      Adamas::Compiler::Frontend.node_kind(path).should eq(Adamas::Compiler::Frontend::NodeKind::StringInterpolation)
 
-      pieces = CrystalV2::Compiler::Frontend.node_string_pieces(path).not_nil!
+      pieces = Adamas::Compiler::Frontend.node_string_pieces(path).not_nil!
       pieces.size.should eq(3)
-      pieces[0].kind.should eq(CrystalV2::Compiler::Frontend::StringPiece::Kind::Text)
+      pieces[0].kind.should eq(Adamas::Compiler::Frontend::StringPiece::Kind::Text)
       pieces[0].text.should eq("префикс_")
-      pieces[1].kind.should eq(CrystalV2::Compiler::Frontend::StringPiece::Kind::Expression)
+      pieces[1].kind.should eq(Adamas::Compiler::Frontend::StringPiece::Kind::Expression)
       pieces[1].expr.should_not be_nil
-      pieces[2].kind.should eq(CrystalV2::Compiler::Frontend::StringPiece::Kind::Text)
+      pieces[2].kind.should eq(Adamas::Compiler::Frontend::StringPiece::Kind::Text)
       pieces[2].text.should eq("_хвост")
     end
 
@@ -213,7 +213,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(3)
@@ -221,10 +221,10 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
 
       # First two should be requires
       req1 = arena[program.roots[0]]
-      CrystalV2::Compiler::Frontend.node_kind(req1).should eq(CrystalV2::Compiler::Frontend::NodeKind::Require)
+      Adamas::Compiler::Frontend.node_kind(req1).should eq(Adamas::Compiler::Frontend::NodeKind::Require)
 
       req2 = arena[program.roots[1]]
-      CrystalV2::Compiler::Frontend.node_kind(req2).should eq(CrystalV2::Compiler::Frontend::NodeKind::Require)
+      Adamas::Compiler::Frontend.node_kind(req2).should eq(Adamas::Compiler::Frontend::NodeKind::Require)
 
       # Third statement exists (don't care about exact type - could be Call or Identifier depending on parser state)
       program.roots[2].should_not be_nil

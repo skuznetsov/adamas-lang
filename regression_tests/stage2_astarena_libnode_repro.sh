@@ -25,11 +25,11 @@ cat >"$SRC" <<CR
 require "${ROOT_DIR}/src/compiler/bootstrap_shims"
 require "${ROOT_DIR}/src/compiler/frontend/ast"
 
-span = CrystalV2::Compiler::Frontend::Span.zero
-arena = CrystalV2::Compiler::Frontend::AstArena.new
-body = [CrystalV2::Compiler::Frontend::ExprId.new(7)]
+span = Adamas::Compiler::Frontend::Span.zero
+arena = Adamas::Compiler::Frontend::AstArena.new
+body = [Adamas::Compiler::Frontend::ExprId.new(7)]
 id = arena.add_typed(
-  CrystalV2::Compiler::Frontend::LibNode.new(
+  Adamas::Compiler::Frontend::LibNode.new(
     span,
     "__MacroContext__".to_slice,
     body
@@ -37,10 +37,10 @@ id = arena.add_typed(
 )
 base = arena[id]
 puts base.node_kind
-puts CrystalV2::Compiler::Frontend.node_kind(base)
-puts base.is_a?(CrystalV2::Compiler::Frontend::LibNode)
+puts Adamas::Compiler::Frontend.node_kind(base)
+puts base.is_a?(Adamas::Compiler::Frontend::LibNode)
 case base
-when CrystalV2::Compiler::Frontend::LibNode
+when Adamas::Compiler::Frontend::LibNode
   puts true
   puts String.new(base.name)
   puts base.body.try(&.size) || 0

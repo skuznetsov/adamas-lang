@@ -1,6 +1,6 @@
 # Test file I/O needed for bootstrap
 # EXPECT: file_io_ok
-path = "/tmp/test_output_crystal_v2.txt"
+path = "/tmp/test_output_adamas.txt"
 File.write(path, "hello from crystal v2\n")
 content = File.read(path)
 puts content.chomp

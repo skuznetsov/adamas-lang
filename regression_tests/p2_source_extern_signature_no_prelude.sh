@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-compiler="${1:-bin/crystal_v2}"
+compiler="${1:-bin/adamas}"
 workdir="$(mktemp -d "${TMPDIR:-/tmp}/crystalv2-source-extern.XXXXXX")"
 trap 'rm -rf "$workdir"' EXIT
 

@@ -2,12 +2,12 @@ require "spec"
 
 require "../../src/compiler/frontend/parser"
 
-describe "CrystalV2::Compiler::Frontend::Parser" do
+describe "Adamas::Compiler::Frontend::Parser" do
   describe "macro syntax errors" do
     it "rejects empty external name" do
       source = %(macro foo("" y); end)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(
-        CrystalV2::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(
+        Adamas::Compiler::Frontend::Lexer.new(source)
       )
       parser.parse_program
 
@@ -16,8 +16,8 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
 
     it "rejects named args before bare splat" do
       source = %(macro foo(x, *); 1; end)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(
-        CrystalV2::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(
+        Adamas::Compiler::Frontend::Lexer.new(source)
       )
       parser.parse_program
 
@@ -26,8 +26,8 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
 
     it "rejects double splat followed by positional" do
       source = %(macro foo(**x, y); end)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(
-        CrystalV2::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(
+        Adamas::Compiler::Frontend::Lexer.new(source)
       )
       parser.parse_program
 
@@ -36,8 +36,8 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
 
     it "rejects macro with receiver" do
       source = %(macro Foo.bar; end)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(
-        CrystalV2::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(
+        Adamas::Compiler::Frontend::Lexer.new(source)
       )
       parser.parse_program
 

@@ -54,7 +54,7 @@
         "crystalv2.lsp.serverPath": {
           "type": "string",
           "default": "",
-          "description": "Path to the Crystal V2 language server executable or compiler. Overrides automatic PATH discovery. Empty tries crystal2, crystal_v2, then crystal_v2_lsp."
+          "description": "Path to the Crystal V2 language server executable or compiler. Overrides automatic PATH discovery. Empty tries crystal2, adamas, then adamas_lsp."
         },
         "crystalv2.lsp.serverArgs": {
           "type": "array",
@@ -62,7 +62,7 @@
           "items": {
             "type": "string"
           },
-          "description": "Arguments passed to the configured language server executable. For compiler tool mode use [\"tool\", \"lsp\"]. Empty serverPath auto-adds [\"tool\", \"lsp\"] for crystal2/crystal_v2."
+          "description": "Arguments passed to the configured language server executable. For compiler tool mode use [\"tool\", \"lsp\"]. Empty serverPath auto-adds [\"tool\", \"lsp\"] for crystal2/adamas."
         }
       }
     },

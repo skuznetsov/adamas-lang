@@ -3,14 +3,14 @@ require "../src/compiler/frontend/parser"
 require "../src/compiler/frontend/watchdog"
 
 module ScanParser
-  alias Watchdog = CrystalV2::Compiler::Frontend::Watchdog
+  alias Watchdog = Adamas::Compiler::Frontend::Watchdog
 
   TIMEOUT = (ENV["SCAN_WATCHDOG_TIMEOUT"]? || "30").to_f.seconds
 
   def self.parse_file(path : String)
     source = File.read(path)
-    lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-    parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+    lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+    parser = Adamas::Compiler::Frontend::Parser.new(lexer)
     parser.parse_program
   end
 
@@ -39,7 +39,7 @@ files.each_with_index do |file, idx|
     ScanParser.with_watchdog("parsing #{file}") do
       ScanParser.parse_file(file)
     end
-  rescue e : CrystalV2::Compiler::Frontend::Watchdog::TimeoutError
+  rescue e : Adamas::Compiler::Frontend::Watchdog::TimeoutError
     STDERR.puts "Watchdog triggered: #{e.message}"
     raise e
   end

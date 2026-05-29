@@ -5,12 +5,12 @@ require "../spec_helper"
 # These tests exercise the full compilation pipeline: Parse → HIR → MIR → LLVM IR
 
 module CodegenTestHelper
-  COMPILER_PATH = File.expand_path("../../bin/crystal_v2", __DIR__)
+  COMPILER_PATH = File.expand_path("../../bin/adamas", __DIR__)
 
   # Helper to compile and execute, returning stdout
   def self.compile_and_run(source : String) : String
-    tmp_cr = "/tmp/crystal_v2_test_#{Random.rand(100000)}.cr"
-    tmp_exe = "/tmp/crystal_v2_test_#{Random.rand(100000)}"
+    tmp_cr = "/tmp/adamas_test_#{Random.rand(100000)}.cr"
+    tmp_exe = "/tmp/adamas_test_#{Random.rand(100000)}"
 
     File.write(tmp_cr, source)
 

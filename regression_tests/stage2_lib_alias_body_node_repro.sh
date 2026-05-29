@@ -37,7 +37,7 @@ if rg -Fq "[LIB_MEMBER] lib=L pass=types idx=1/1 kind=AliasNode detail=A" "$LOG"
   exit 0
 fi
 
-if rg -Fq "[LIB_MEMBER] lib=L pass=types idx=1/1 kind=CrystalV2::Compiler::Frontend::Node detail=A" "$LOG"; then
+if rg -Fq "[LIB_MEMBER] lib=L pass=types idx=1/1 kind=Adamas::Compiler::Frontend::Node detail=A" "$LOG"; then
   echo "reproduced: stage2 parsed the lib alias body into a generic Frontend::Node carrier"
   exit 1
 fi

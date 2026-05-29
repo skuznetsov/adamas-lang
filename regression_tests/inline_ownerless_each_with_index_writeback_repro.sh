@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-COMPILER="${1:-./bin/crystal_v2}"
+COMPILER="${1:-./bin/adamas}"
 KEEP_TMP="${KEEP_TMP:-0}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN_SAFE="$REPO_ROOT/scripts/run_safe.sh"

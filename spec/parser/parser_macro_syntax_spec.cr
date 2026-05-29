@@ -3,22 +3,22 @@ require "spec"
 require "../../src/compiler/frontend/ast"
 require "../../src/compiler/frontend/parser"
 
-describe "CrystalV2::Compiler::Frontend::Parser" do
+describe "Adamas::Compiler::Frontend::Parser" do
   describe "Macro syntax (parser-level)" do
     it "parses macro expression interpolation" do
       source = "value = {{FOO}}"
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       assign = arena[program.roots[0]]
-      CrystalV2::Compiler::Frontend.node_kind(assign).should eq(CrystalV2::Compiler::Frontend::NodeKind::Assign)
+      Adamas::Compiler::Frontend.node_kind(assign).should eq(Adamas::Compiler::Frontend::NodeKind::Assign)
 
-      value = arena[CrystalV2::Compiler::Frontend.node_assign_value(assign).not_nil!]
-      CrystalV2::Compiler::Frontend.node_kind(value).should eq(CrystalV2::Compiler::Frontend::NodeKind::MacroExpression)
+      value = arena[Adamas::Compiler::Frontend.node_assign_value(assign).not_nil!]
+      Adamas::Compiler::Frontend.node_kind(value).should eq(Adamas::Compiler::Frontend::NodeKind::MacroExpression)
     end
 
     it "parses macro control block with nested expression as a macro if" do
@@ -30,18 +30,18 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       {% end %}
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       macro_if = arena[program.roots[0]]
-      CrystalV2::Compiler::Frontend.node_kind(macro_if).should eq(CrystalV2::Compiler::Frontend::NodeKind::MacroIf)
+      Adamas::Compiler::Frontend.node_kind(macro_if).should eq(Adamas::Compiler::Frontend::NodeKind::MacroIf)
 
-      macro_if_node = macro_if.as(CrystalV2::Compiler::Frontend::MacroIfNode)
+      macro_if_node = macro_if.as(Adamas::Compiler::Frontend::MacroIfNode)
       then_body = arena[macro_if_node.then_body]
-      CrystalV2::Compiler::Frontend.node_kind(then_body).should eq(CrystalV2::Compiler::Frontend::NodeKind::MacroLiteral)
+      Adamas::Compiler::Frontend.node_kind(then_body).should eq(Adamas::Compiler::Frontend::NodeKind::MacroLiteral)
     end
 
     it "captures require statements inside macro control blocks" do
@@ -51,20 +51,20 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       {% end %}
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       macro_if = arena[program.roots[0]]
-      CrystalV2::Compiler::Frontend.node_kind(macro_if).should eq(CrystalV2::Compiler::Frontend::NodeKind::MacroIf)
+      Adamas::Compiler::Frontend.node_kind(macro_if).should eq(Adamas::Compiler::Frontend::NodeKind::MacroIf)
 
-      macro_if_node = macro_if.as(CrystalV2::Compiler::Frontend::MacroIfNode)
+      macro_if_node = macro_if.as(Adamas::Compiler::Frontend::MacroIfNode)
       macro_literal = arena[macro_if_node.then_body]
-      CrystalV2::Compiler::Frontend.node_kind(macro_literal).should eq(CrystalV2::Compiler::Frontend::NodeKind::MacroLiteral)
+      Adamas::Compiler::Frontend.node_kind(macro_literal).should eq(Adamas::Compiler::Frontend::NodeKind::MacroLiteral)
 
-      pieces = CrystalV2::Compiler::Frontend.node_macro_pieces(macro_literal).not_nil!
+      pieces = Adamas::Compiler::Frontend.node_macro_pieces(macro_literal).not_nil!
       text = pieces.compact_map(&.text).join
       text.should contain("require")
       text.should contain("./unix/file_descriptor")
@@ -87,7 +87,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       parser.diagnostics.should be_empty
@@ -95,9 +95,9 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
 
       arena = program.arena
       macro_def = arena[program.roots[0]]
-      CrystalV2::Compiler::Frontend.node_kind(macro_def).should eq(CrystalV2::Compiler::Frontend::NodeKind::MacroDef)
+      Adamas::Compiler::Frontend.node_kind(macro_def).should eq(Adamas::Compiler::Frontend::NodeKind::MacroDef)
 
-      macro_name = CrystalV2::Compiler::Frontend.node_macro_name(macro_def).not_nil!
+      macro_name = Adamas::Compiler::Frontend.node_macro_name(macro_def).not_nil!
       String.new(macro_name).should eq("spawn")
     end
 
@@ -118,25 +118,25 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       parser.diagnostics.should be_empty
       program.roots.size.should eq(1)
 
       arena = program.arena
-      class_node = arena[program.roots.first].as(CrystalV2::Compiler::Frontend::ClassNode)
+      class_node = arena[program.roots.first].as(Adamas::Compiler::Frontend::ClassNode)
       class_body = class_node.body.not_nil!
 
       class_body.size.should eq(3)
 
       macro_if = arena[class_body[0]]
-      CrystalV2::Compiler::Frontend.node_kind(macro_if).should eq(CrystalV2::Compiler::Frontend::NodeKind::MacroIf)
+      Adamas::Compiler::Frontend.node_kind(macro_if).should eq(Adamas::Compiler::Frontend::NodeKind::MacroIf)
 
       protected_def = arena[class_body[1]]
-      CrystalV2::Compiler::Frontend.node_kind(protected_def).should eq(CrystalV2::Compiler::Frontend::NodeKind::Def)
-      String.new(CrystalV2::Compiler::Frontend.node_def_name(protected_def).not_nil!).should eq("new_internal")
-      CrystalV2::Compiler::Frontend.node_def_visibility(protected_def).should eq(CrystalV2::Compiler::Frontend::Visibility::Protected)
+      Adamas::Compiler::Frontend.node_kind(protected_def).should eq(Adamas::Compiler::Frontend::NodeKind::Def)
+      String.new(Adamas::Compiler::Frontend.node_def_name(protected_def).not_nil!).should eq("new_internal")
+      Adamas::Compiler::Frontend.node_def_visibility(protected_def).should eq(Adamas::Compiler::Frontend::Visibility::Protected)
     end
   end
 end

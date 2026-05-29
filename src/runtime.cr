@@ -1,6 +1,6 @@
 require "set"
 
-module CrystalV2
+module Adamas
   module Runtime
     @@target_flags : Set(String)?
 

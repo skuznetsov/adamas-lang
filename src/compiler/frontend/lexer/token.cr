@@ -1,7 +1,7 @@
 require "../span"
 require "../ast"  # For NumberKind
 
-module CrystalV2
+module Adamas
   module Compiler
     module Frontend
       struct Token

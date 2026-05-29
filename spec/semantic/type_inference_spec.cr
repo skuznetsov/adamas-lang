@@ -18,13 +18,13 @@ require "../../src/compiler/semantic/types/type_context"
 require "../../src/compiler/semantic/type_inference_engine"
 
 module TypeInferenceSpecAliases
-  alias Frontend = CrystalV2::Compiler::Frontend
-  alias Semantic = CrystalV2::Compiler::Semantic
-  alias StringPiece = CrystalV2::Compiler::Frontend::StringPiece
+  alias Frontend = Adamas::Compiler::Frontend
+  alias Semantic = Adamas::Compiler::Semantic
+  alias StringPiece = Adamas::Compiler::Frontend::StringPiece
 end
 
 include TypeInferenceSpecAliases
-include CrystalV2::Compiler::Semantic
+include Adamas::Compiler::Semantic
 
 # Helper: Parse source and run full semantic pipeline
 private def infer_types(source : String)
@@ -2992,7 +2992,7 @@ describe Semantic::TypeInferenceEngine do
 
       # Get return statement from method body
       def_node = program.arena[program.roots[0]]
-      body = CrystalV2::Compiler::Frontend.node_def_body(def_node)
+      body = Adamas::Compiler::Frontend.node_def_body(def_node)
       body.should_not be_nil
       return_expr_id = body.not_nil![0]
 
@@ -3013,7 +3013,7 @@ describe Semantic::TypeInferenceEngine do
 
       # Get return statement from method body
       def_node = program.arena[program.roots[0]]
-      body = CrystalV2::Compiler::Frontend.node_def_body(def_node)
+      body = Adamas::Compiler::Frontend.node_def_body(def_node)
       body.should_not be_nil
       return_expr_id = body.not_nil![0]
 
@@ -3035,17 +3035,17 @@ describe Semantic::TypeInferenceEngine do
 
       # Get if statement from method body
       def_node = program.arena[program.roots[0]]
-      body = CrystalV2::Compiler::Frontend.node_def_body(def_node)
+      body = Adamas::Compiler::Frontend.node_def_body(def_node)
       body.should_not be_nil
       if_expr_id = body.not_nil![0]
-      if_node = program.arena[if_expr_id].as(CrystalV2::Compiler::Frontend::IfNode)
+      if_node = program.arena[if_expr_id].as(Adamas::Compiler::Frontend::IfNode)
 
       # Check that then branch is a return statement
       then_branch = if_node.then_body
       then_branch.should_not be_nil
       return_expr_id = then_branch.not_nil![0]
       return_node = program.arena[return_expr_id]
-      CrystalV2::Compiler::Frontend.node_kind(return_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Return)
+      Adamas::Compiler::Frontend.node_kind(return_node).should eq(Adamas::Compiler::Frontend::NodeKind::Return)
 
       # Return statement should have String type
       return_type = engine.context.get_type(return_expr_id)
@@ -3069,10 +3069,10 @@ describe Semantic::TypeInferenceEngine do
 
       # Get while statement from method body
       def_node = program.arena[program.roots[0]]
-      body = CrystalV2::Compiler::Frontend.node_def_body(def_node)
+      body = Adamas::Compiler::Frontend.node_def_body(def_node)
       body.should_not be_nil
       while_expr_id = body.not_nil![1]  # Second statement (after x = 0)
-      while_node = program.arena[while_expr_id].as(CrystalV2::Compiler::Frontend::WhileNode)
+      while_node = program.arena[while_expr_id].as(Adamas::Compiler::Frontend::WhileNode)
 
       # Check that while body contains an if with return
       while_body = while_node.body
@@ -3080,14 +3080,14 @@ describe Semantic::TypeInferenceEngine do
 
       # Find the if statement in the while body
       if_expr_id = while_body.not_nil![1]  # Second statement in while (after x = x + 1)
-      if_node = program.arena[if_expr_id].as(CrystalV2::Compiler::Frontend::IfNode)
+      if_node = program.arena[if_expr_id].as(Adamas::Compiler::Frontend::IfNode)
 
       # Check return in if then branch
       then_branch = if_node.then_body
       then_branch.should_not be_nil
       return_expr_id = then_branch.not_nil![0]
       return_node = program.arena[return_expr_id]
-      CrystalV2::Compiler::Frontend.node_kind(return_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Return)
+      Adamas::Compiler::Frontend.node_kind(return_node).should eq(Adamas::Compiler::Frontend::NodeKind::Return)
 
       # Return statement should have Int32 type
       return_type = engine.context.get_type(return_expr_id)
@@ -3108,18 +3108,18 @@ describe Semantic::TypeInferenceEngine do
 
       # Get method body
       def_node = program.arena[program.roots[0]]
-      body = CrystalV2::Compiler::Frontend.node_def_body(def_node)
+      body = Adamas::Compiler::Frontend.node_def_body(def_node)
       body.should_not be_nil
 
       # First if with return
-      if1_node = program.arena[body.not_nil![0]].as(CrystalV2::Compiler::Frontend::IfNode)
+      if1_node = program.arena[body.not_nil![0]].as(Adamas::Compiler::Frontend::IfNode)
       return1_id = if1_node.then_body.not_nil![0]
       return1_type = engine.context.get_type(return1_id)
       return1_type.should be_a(PrimitiveType)
       return1_type.as(PrimitiveType).name.should eq("String")
 
       # Second if with return
-      if2_node = program.arena[body.not_nil![1]].as(CrystalV2::Compiler::Frontend::IfNode)
+      if2_node = program.arena[body.not_nil![1]].as(Adamas::Compiler::Frontend::IfNode)
       return2_id = if2_node.then_body.not_nil![0]
       return2_type = engine.context.get_type(return2_id)
       return2_type.should be_a(PrimitiveType)
@@ -3171,9 +3171,9 @@ describe Semantic::TypeInferenceEngine do
       program, analyzer, engine = infer_types(source)
 
       # Get self expression from method body
-      class_node = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::ClassNode)
+      class_node = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::ClassNode)
       def_node = program.arena[class_node.body.not_nil![0]]
-      self_expr_id = CrystalV2::Compiler::Frontend.node_def_body(def_node).not_nil![0]
+      self_expr_id = Adamas::Compiler::Frontend.node_def_body(def_node).not_nil![0]
 
       # Check self has InstanceType(Dog)
       self_type = engine.context.get_type(self_expr_id)
@@ -3197,19 +3197,19 @@ describe Semantic::TypeInferenceEngine do
       program, analyzer, engine = infer_types(source)
 
       # Get both methods
-      class_node = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::ClassNode)
+      class_node = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::ClassNode)
       class_body = class_node.body.not_nil!
 
       # Check step1 returns self
       def1_node = program.arena[class_body[0]]
-      self1_expr_id = CrystalV2::Compiler::Frontend.node_def_body(def1_node).not_nil![0]
+      self1_expr_id = Adamas::Compiler::Frontend.node_def_body(def1_node).not_nil![0]
       self1_type = engine.context.get_type(self1_expr_id)
       self1_type.should be_a(InstanceType)
       self1_type.as(InstanceType).class_symbol.name.should eq("Builder")
 
       # Check step2 returns self
       def2_node = program.arena[class_body[1]]
-      self2_expr_id = CrystalV2::Compiler::Frontend.node_def_body(def2_node).not_nil![0]
+      self2_expr_id = Adamas::Compiler::Frontend.node_def_body(def2_node).not_nil![0]
       self2_type = engine.context.get_type(self2_expr_id)
       self2_type.should be_a(InstanceType)
       self2_type.as(InstanceType).class_symbol.name.should eq("Builder")
@@ -3233,17 +3233,17 @@ describe Semantic::TypeInferenceEngine do
       program, analyzer, engine = infer_types(source)
 
       # Get Dog's self
-      dog_class = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::ClassNode)
+      dog_class = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::ClassNode)
       dog_def = program.arena[dog_class.body.not_nil![0]]
-      dog_self_id = CrystalV2::Compiler::Frontend.node_def_body(dog_def).not_nil![0]
+      dog_self_id = Adamas::Compiler::Frontend.node_def_body(dog_def).not_nil![0]
       dog_self_type = engine.context.get_type(dog_self_id)
       dog_self_type.should be_a(InstanceType)
       dog_self_type.as(InstanceType).class_symbol.name.should eq("Dog")
 
       # Get Cat's self
-      cat_class = program.arena[program.roots[1]].as(CrystalV2::Compiler::Frontend::ClassNode)
+      cat_class = program.arena[program.roots[1]].as(Adamas::Compiler::Frontend::ClassNode)
       cat_def = program.arena[cat_class.body.not_nil![0]]
-      cat_self_id = CrystalV2::Compiler::Frontend.node_def_body(cat_def).not_nil![0]
+      cat_self_id = Adamas::Compiler::Frontend.node_def_body(cat_def).not_nil![0]
       cat_self_type = engine.context.get_type(cat_self_id)
       cat_self_type.should be_a(InstanceType)
       cat_self_type.as(InstanceType).class_symbol.name.should eq("Cat")
@@ -3262,14 +3262,14 @@ describe Semantic::TypeInferenceEngine do
       program, analyzer, engine = infer_types(source)
 
       # Get method body
-      class_node = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::ClassNode)
+      class_node = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::ClassNode)
       def_node = program.arena[class_node.body.not_nil![0]]
-      def_body = CrystalV2::Compiler::Frontend.node_def_body(def_node).not_nil!
+      def_body = Adamas::Compiler::Frontend.node_def_body(def_node).not_nil!
 
       # First statement is if (with postfix)
-      if_node = program.arena[def_body[0]].as(CrystalV2::Compiler::Frontend::IfNode)
+      if_node = program.arena[def_body[0]].as(Adamas::Compiler::Frontend::IfNode)
       return_node = program.arena[if_node.then_body.not_nil![0]]
-      self1_id = CrystalV2::Compiler::Frontend.node_return_value(return_node).not_nil!
+      self1_id = Adamas::Compiler::Frontend.node_return_value(return_node).not_nil!
       self1_type = engine.context.get_type(self1_id)
       self1_type.should be_a(InstanceType)
       self1_type.as(InstanceType).class_symbol.name.should eq("Node")
@@ -3296,7 +3296,7 @@ describe Semantic::TypeInferenceEngine do
       program, analyzer, engine = infer_types(source)
 
       # Get msg assignment
-      msg_assign = program.arena[program.roots[1]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      msg_assign = program.arena[program.roots[1]].as(Adamas::Compiler::Frontend::AssignNode)
       interpolated_str_id = msg_assign.value.not_nil!
       interpolated_type = engine.context.get_type(interpolated_str_id)
 
@@ -3314,9 +3314,9 @@ describe Semantic::TypeInferenceEngine do
       program, analyzer, engine = infer_types(source)
 
       # Get result assignment
-      result_assign = program.arena[program.roots[2]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      result_assign = program.arena[program.roots[2]].as(Adamas::Compiler::Frontend::AssignNode)
       interpolated_str_id = result_assign.value.not_nil!
-      interpolated_node = program.arena[interpolated_str_id].as(CrystalV2::Compiler::Frontend::StringInterpolationNode)
+      interpolated_node = program.arena[interpolated_str_id].as(Adamas::Compiler::Frontend::StringInterpolationNode)
 
       # Check the interpolated string type
       interpolated_type = engine.context.get_type(interpolated_str_id)
@@ -3343,9 +3343,9 @@ describe Semantic::TypeInferenceEngine do
       program, analyzer, engine = infer_types(source)
 
       # Get text assignment
-      text_assign = program.arena[program.roots[3]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      text_assign = program.arena[program.roots[3]].as(Adamas::Compiler::Frontend::AssignNode)
       interpolated_str_id = text_assign.value.not_nil!
-      interpolated_node = program.arena[interpolated_str_id].as(CrystalV2::Compiler::Frontend::StringInterpolationNode)
+      interpolated_node = program.arena[interpolated_str_id].as(Adamas::Compiler::Frontend::StringInterpolationNode)
 
       # Check overall type
       interpolated_type = engine.context.get_type(interpolated_str_id)
@@ -3372,7 +3372,7 @@ describe Semantic::TypeInferenceEngine do
       program, analyzer, engine = infer_types(source)
 
       # Get full assignment
-      full_assign = program.arena[program.roots[2]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      full_assign = program.arena[program.roots[2]].as(Adamas::Compiler::Frontend::AssignNode)
       full_str_id = full_assign.value.not_nil!
       full_type = engine.context.get_type(full_str_id)
 
@@ -3380,7 +3380,7 @@ describe Semantic::TypeInferenceEngine do
       full_type.as(PrimitiveType).name.should eq("String")
 
       # Get inner assignment
-      inner_assign = program.arena[program.roots[1]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      inner_assign = program.arena[program.roots[1]].as(Adamas::Compiler::Frontend::AssignNode)
       inner_str_id = inner_assign.value.not_nil!
       inner_type = engine.context.get_type(inner_str_id)
 
@@ -3407,12 +3407,12 @@ describe Semantic::TypeInferenceEngine do
       program, analyzer, engine = infer_types(source)
 
       # Get class node
-      class_node = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::ClassNode)
+      class_node = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::ClassNode)
       class_body = class_node.body.not_nil!
 
       # Find introduce method (should be third method)
       introduce_def = program.arena[class_body[2]]
-      introduce_body = CrystalV2::Compiler::Frontend.node_def_body(introduce_def).not_nil!
+      introduce_body = Adamas::Compiler::Frontend.node_def_body(introduce_def).not_nil!
       interpolated_str_id = introduce_body[0]
 
       # Check interpolated string type
@@ -3421,7 +3421,7 @@ describe Semantic::TypeInferenceEngine do
       interpolated_type.as(PrimitiveType).name.should eq("String")
 
       # Check interpolation contains method call
-      interpolated_node = program.arena[interpolated_str_id].as(CrystalV2::Compiler::Frontend::StringInterpolationNode)
+      interpolated_node = program.arena[interpolated_str_id].as(Adamas::Compiler::Frontend::StringInterpolationNode)
       pieces = interpolated_node.pieces.not_nil!
 
       # Should have: "I am ", @name, " and I say ", bark call
@@ -3442,7 +3442,7 @@ describe Semantic::TypeInferenceEngine do
       program, analyzer, engine = infer_types(source)
 
       # Get array assignment
-      arr_assign = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      arr_assign = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::AssignNode)
       array_id = arr_assign.value.not_nil!
       array_type = engine.context.get_type(array_id)
 
@@ -3458,7 +3458,7 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
 
-      arr_assign = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      arr_assign = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::AssignNode)
       array_id = arr_assign.value.not_nil!
       array_type = engine.context.get_type(array_id)
 
@@ -3473,7 +3473,7 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
 
-      arr_assign = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      arr_assign = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::AssignNode)
       array_id = arr_assign.value.not_nil!
       array_type = engine.context.get_type(array_id)
 
@@ -3489,7 +3489,7 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
 
-      arr_assign = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      arr_assign = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::AssignNode)
       array_id = arr_assign.value.not_nil!
       array_type = engine.context.get_type(array_id)
 
@@ -3507,7 +3507,7 @@ describe Semantic::TypeInferenceEngine do
       program, analyzer, engine = infer_types(source)
 
       # Get x assignment
-      x_assign = program.arena[program.roots[1]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      x_assign = program.arena[program.roots[1]].as(Adamas::Compiler::Frontend::AssignNode)
       index_expr_id = x_assign.value.not_nil!
       index_type = engine.context.get_type(index_expr_id)
 
@@ -3522,7 +3522,7 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
 
-      arr_assign = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      arr_assign = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::AssignNode)
       array_id = arr_assign.value.not_nil!
       array_type = engine.context.get_type(array_id)
 
@@ -3541,7 +3541,7 @@ describe Semantic::TypeInferenceEngine do
       program, analyzer, engine = infer_types(source)
 
       # Get len assignment
-      len_assign = program.arena[program.roots[1]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      len_assign = program.arena[program.roots[1]].as(Adamas::Compiler::Frontend::AssignNode)
       size_call_id = len_assign.value.not_nil!
       size_type = engine.context.get_type(size_call_id)
 
@@ -3557,7 +3557,7 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
 
-      empty_assign = program.arena[program.roots[1]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      empty_assign = program.arena[program.roots[1]].as(Adamas::Compiler::Frontend::AssignNode)
       empty_call_id = empty_assign.value.not_nil!
       empty_type = engine.context.get_type(empty_call_id)
 
@@ -3575,7 +3575,7 @@ describe Semantic::TypeInferenceEngine do
       program, analyzer, engine = infer_types(source)
 
       # Check first
-      f_assign = program.arena[program.roots[1]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      f_assign = program.arena[program.roots[1]].as(Adamas::Compiler::Frontend::AssignNode)
       first_id = f_assign.value.not_nil!
       first_type = engine.context.get_type(first_id)
 
@@ -3583,7 +3583,7 @@ describe Semantic::TypeInferenceEngine do
       first_type.as(PrimitiveType).name.should eq("Int32")
 
       # Check last
-      l_assign = program.arena[program.roots[2]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      l_assign = program.arena[program.roots[2]].as(Adamas::Compiler::Frontend::AssignNode)
       last_id = l_assign.value.not_nil!
       last_type = engine.context.get_type(last_id)
 
@@ -3599,7 +3599,7 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
 
-      result_assign = program.arena[program.roots[1]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      result_assign = program.arena[program.roots[1]].as(Adamas::Compiler::Frontend::AssignNode)
       push_id = result_assign.value.not_nil!
       push_type = engine.context.get_type(push_id)
 
@@ -3626,7 +3626,7 @@ describe Semantic::TypeInferenceEngine do
       analyzer.name_resolver_diagnostics.should be_empty
       engine.diagnostics.should be_empty
 
-      result_assign = program.arena[program.roots[2]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      result_assign = program.arena[program.roots[2]].as(Adamas::Compiler::Frontend::AssignNode)
       chain_id = result_assign.value.not_nil!
       chain_type = engine.context.get_type(chain_id)
 
@@ -3647,7 +3647,7 @@ describe Semantic::TypeInferenceEngine do
       analyzer.name_resolver_diagnostics.should be_empty
       engine.diagnostics.should be_empty
 
-      def_node = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::DefNode)
+      def_node = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::DefNode)
       call_id = def_node.body.not_nil!.first
       call_type = engine.context.get_type(call_id)
 
@@ -3743,7 +3743,7 @@ describe Semantic::TypeInferenceEngine do
       analyzer.name_resolver_diagnostics.should be_empty
       engine.diagnostics.should be_empty
 
-      result_assign = program.arena[program.roots[1]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      result_assign = program.arena[program.roots[1]].as(Adamas::Compiler::Frontend::AssignNode)
       result_type = engine.context.get_type(result_assign.value.not_nil!)
       result_type.should be_a(ArrayType)
     end
@@ -3763,7 +3763,7 @@ describe Semantic::TypeInferenceEngine do
       analyzer.name_resolver_diagnostics.should be_empty
       engine.diagnostics.should be_empty
 
-      result_assign = program.arena[program.roots[1]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      result_assign = program.arena[program.roots[1]].as(Adamas::Compiler::Frontend::AssignNode)
       result_type = engine.context.get_type(result_assign.value.not_nil!)
       result_type.should be_a(TupleType)
       result_type.as(TupleType).element_types.size.should eq(2)
@@ -3784,7 +3784,7 @@ describe Semantic::TypeInferenceEngine do
       analyzer.name_resolver_diagnostics.should be_empty
       engine.diagnostics.should be_empty
 
-      result_assign = program.arena[program.roots[1]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      result_assign = program.arena[program.roots[1]].as(Adamas::Compiler::Frontend::AssignNode)
       result_type = engine.context.get_type(result_assign.value.not_nil!)
       result_type.should be_a(PrimitiveType)
       result_type.as(PrimitiveType).name.should eq("String")
@@ -3805,7 +3805,7 @@ describe Semantic::TypeInferenceEngine do
       analyzer.name_resolver_diagnostics.should be_empty
       engine.diagnostics.should be_empty
 
-      value_assign = program.arena[program.roots[1]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      value_assign = program.arena[program.roots[1]].as(Adamas::Compiler::Frontend::AssignNode)
       value_type = engine.context.get_type(value_assign.value.not_nil!)
       value_type.should be_a(PrimitiveType)
       value_type.as(PrimitiveType).name.should eq("String")
@@ -3839,7 +3839,7 @@ describe Semantic::TypeInferenceEngine do
       analyzer.name_resolver_diagnostics.should be_empty
       engine.diagnostics.should be_empty
 
-      value_assign = program.arena[program.roots.last].as(CrystalV2::Compiler::Frontend::AssignNode)
+      value_assign = program.arena[program.roots.last].as(Adamas::Compiler::Frontend::AssignNode)
       value_type = engine.context.get_type(value_assign.value.not_nil!)
       value_type.should be_a(InstanceType)
       value_type.as(InstanceType).class_symbol.name.should eq("FileDescriptor")
@@ -4125,7 +4125,7 @@ describe Semantic::TypeInferenceEngine do
 
       # Check that yields have Nil type
       def_node = program.arena[program.roots[0]]
-      body = CrystalV2::Compiler::Frontend.node_def_body(def_node).not_nil!
+      body = Adamas::Compiler::Frontend.node_def_body(def_node).not_nil!
       yield1 = engine.context.get_type(body[0])
       yield1.as(PrimitiveType).name.should eq("Nil")
     end
@@ -4171,7 +4171,7 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
       # Get the call with block
-      call_node = program.arena[program.roots[1]].as(CrystalV2::Compiler::Frontend::CallNode)
+      call_node = program.arena[program.roots[1]].as(Adamas::Compiler::Frontend::CallNode)
       block_id = call_node.block.not_nil!
       block_type = engine.context.get_type(block_id)
 
@@ -4193,7 +4193,7 @@ describe Semantic::TypeInferenceEngine do
       program.roots.size.should eq(2)
 
       # Empty block returns Nil
-      call_node = program.arena[program.roots[1]].as(CrystalV2::Compiler::Frontend::CallNode)
+      call_node = program.arena[program.roots[1]].as(Adamas::Compiler::Frontend::CallNode)
       block_id = call_node.block.not_nil!
       block_type = engine.context.get_type(block_id)
       block_type.as(PrimitiveType).name.should eq("Nil")
@@ -4341,9 +4341,9 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
       # Find the break statement
-      while_node = program.arena[program.roots[1]].as(CrystalV2::Compiler::Frontend::WhileNode)
+      while_node = program.arena[program.roots[1]].as(Adamas::Compiler::Frontend::WhileNode)
       body = while_node.body.not_nil!
-      if_node = program.arena[body[1]].as(CrystalV2::Compiler::Frontend::IfNode)
+      if_node = program.arena[body[1]].as(Adamas::Compiler::Frontend::IfNode)
       then_branch = if_node.then_body.not_nil!
       break_id = then_branch[0]
       break_type = engine.context.get_type(break_id)
@@ -4360,9 +4360,9 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
       # Find the break statement
-      assign_node = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::AssignNode)
       while_id = assign_node.value.not_nil!
-      while_node = program.arena[while_id].as(CrystalV2::Compiler::Frontend::WhileNode)
+      while_node = program.arena[while_id].as(Adamas::Compiler::Frontend::WhileNode)
       body = while_node.body.not_nil!
       break_id = body[0]
       break_type = engine.context.get_type(break_id)
@@ -4384,9 +4384,9 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
       # Find the next statement
-      while_node = program.arena[program.roots[1]].as(CrystalV2::Compiler::Frontend::WhileNode)
+      while_node = program.arena[program.roots[1]].as(Adamas::Compiler::Frontend::WhileNode)
       body = while_node.body.not_nil!
-      if_node = program.arena[body[1]].as(CrystalV2::Compiler::Frontend::IfNode)
+      if_node = program.arena[body[1]].as(Adamas::Compiler::Frontend::IfNode)
       then_branch = if_node.then_body.not_nil!
       next_id = then_branch[0]
       next_type = engine.context.get_type(next_id)
@@ -4431,9 +4431,9 @@ describe Semantic::TypeInferenceEngine do
       CRYSTAL
 
       program, analyzer, engine = infer_types(source)
-      assign_node = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::AssignNode)
       while_id = assign_node.value.not_nil!
-      while_node = program.arena[while_id].as(CrystalV2::Compiler::Frontend::WhileNode)
+      while_node = program.arena[while_id].as(Adamas::Compiler::Frontend::WhileNode)
       body = while_node.body.not_nil!
       break_id = body[0]
       break_type = engine.context.get_type(break_id)
@@ -4451,7 +4451,7 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
       # Find the assignment
-      assign_node = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::AssignNode)
       range_id = assign_node.value.not_nil!
       range_type = engine.context.get_type(range_id)
 
@@ -4468,7 +4468,7 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
       # Find the assignment
-      assign_node = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::AssignNode)
       range_id = assign_node.value.not_nil!
       range_type = engine.context.get_type(range_id)
 
@@ -4487,7 +4487,7 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
       # Find the range assignment (third statement)
-      assign_node = program.arena[program.roots[2]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[2]].as(Adamas::Compiler::Frontend::AssignNode)
       range_id = assign_node.value.not_nil!
       range_type = engine.context.get_type(range_id)
 
@@ -4504,7 +4504,7 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
       # Find the assignment
-      assign_node = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::AssignNode)
       range_id = assign_node.value.not_nil!
       range_type = engine.context.get_type(range_id)
 
@@ -4521,22 +4521,22 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
       # Find the assignment
-      assign_node = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::AssignNode)
       range_id = assign_node.value.not_nil!
 
       # Should be Range node, not Binary
       range_node = program.arena[range_id]
-      CrystalV2::Compiler::Frontend.node_kind(range_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Range)
+      Adamas::Compiler::Frontend.node_kind(range_node).should eq(Adamas::Compiler::Frontend::NodeKind::Range)
 
       # Begin should be Binary (1 + 2)
-      begin_id = CrystalV2::Compiler::Frontend.node_range_begin(range_node).not_nil!
+      begin_id = Adamas::Compiler::Frontend.node_range_begin(range_node).not_nil!
       begin_node = program.arena[begin_id]
-      CrystalV2::Compiler::Frontend.node_kind(begin_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Binary)
+      Adamas::Compiler::Frontend.node_kind(begin_node).should eq(Adamas::Compiler::Frontend::NodeKind::Binary)
 
       # End should be Binary (5 + 3)
-      end_id = CrystalV2::Compiler::Frontend.node_range_end(range_node).not_nil!
+      end_id = Adamas::Compiler::Frontend.node_range_end(range_node).not_nil!
       end_node = program.arena[end_id]
-      CrystalV2::Compiler::Frontend.node_kind(end_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Binary)
+      Adamas::Compiler::Frontend.node_kind(end_node).should eq(Adamas::Compiler::Frontend::NodeKind::Binary)
     end
 
     it "infers Range with mixed types" do
@@ -4546,7 +4546,7 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
       # Find the assignment
-      assign_node = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::AssignNode)
       range_id = assign_node.value.not_nil!
       range_type = engine.context.get_type(range_id)
 
@@ -4565,7 +4565,7 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
       # Find the assignment
-      assign_node = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::AssignNode)
       hash_id = assign_node.value.not_nil!
       hash_type = engine.context.get_type(hash_id)
 
@@ -4582,7 +4582,7 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
       # Find the assignment
-      assign_node = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::AssignNode)
       hash_id = assign_node.value.not_nil!
       hash_type = engine.context.get_type(hash_id)
 
@@ -4603,7 +4603,7 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
       # Find the assignment
-      assign_node = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::AssignNode)
       hash_id = assign_node.value.not_nil!
       hash_type = engine.context.get_type(hash_id)
 
@@ -4620,7 +4620,7 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
       # Find the assignment
-      assign_node = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::AssignNode)
       hash_id = assign_node.value.not_nil!
       hash_type = engine.context.get_type(hash_id)
 
@@ -4637,7 +4637,7 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
       # Find the assignment
-      assign_node = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::AssignNode)
       hash_id = assign_node.value.not_nil!
       hash_type = engine.context.get_type(hash_id)
 
@@ -4661,7 +4661,7 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
       # Find the hash assignment (third statement)
-      assign_node = program.arena[program.roots[2]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[2]].as(Adamas::Compiler::Frontend::AssignNode)
       hash_id = assign_node.value.not_nil!
       hash_type = engine.context.get_type(hash_id)
 
@@ -4681,7 +4681,7 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
       # Find x assignment (second statement)
-      assign_node = program.arena[program.roots[1]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[1]].as(Adamas::Compiler::Frontend::AssignNode)
       index_id = assign_node.value.not_nil!
       index_type = engine.context.get_type(index_id)
 
@@ -4698,7 +4698,7 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
       # Find y assignment
-      assign_node = program.arena[program.roots[1]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[1]].as(Adamas::Compiler::Frontend::AssignNode)
       index_id = assign_node.value.not_nil!
       index_type = engine.context.get_type(index_id)
 
@@ -4719,12 +4719,12 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
       # Find assignment (second statement)
-      assign_node = program.arena[program.roots[1]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[1]].as(Adamas::Compiler::Frontend::AssignNode)
 
       # Should be Assign node with Index target
 
       target_node = program.arena[assign_node.target.not_nil!]
-      CrystalV2::Compiler::Frontend.node_kind(target_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Index)
+      Adamas::Compiler::Frontend.node_kind(target_node).should eq(Adamas::Compiler::Frontend::NodeKind::Index)
 
       # Assignment returns the value type (Int32)
       value_id = assign_node.value.not_nil!
@@ -4741,7 +4741,7 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
       # Find s assignment
-      assign_node = program.arena[program.roots[1]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[1]].as(Adamas::Compiler::Frontend::AssignNode)
       index_id = assign_node.value.not_nil!
       index_type = engine.context.get_type(index_id)
 
@@ -4793,9 +4793,9 @@ describe Semantic::TypeInferenceEngine do
       analyzer.resolve_names.diagnostics.should be_empty
       engine.diagnostics.should be_empty
 
-      regex_class = program.arena[program.roots.last].as(CrystalV2::Compiler::Frontend::ClassNode)
+      regex_class = program.arena[program.roots.last].as(Adamas::Compiler::Frontend::ClassNode)
       sample_def_id = regex_class.body.not_nil!.last
-      sample_def = program.arena[sample_def_id].as(CrystalV2::Compiler::Frontend::DefNode)
+      sample_def = program.arena[sample_def_id].as(Adamas::Compiler::Frontend::DefNode)
       expr_id = sample_def.body.not_nil!.last
       expr_type = engine.context.get_type(expr_id)
 
@@ -4813,7 +4813,7 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
       # Get assignment
-      assign_node = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::AssignNode)
 
       # Get tuple literal
       tuple_id = assign_node.value.not_nil!
@@ -4839,7 +4839,7 @@ describe Semantic::TypeInferenceEngine do
       CRYSTAL
 
       program, analyzer, engine = infer_types(source)
-      assign_node = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::AssignNode)
       tuple_id = assign_node.value.not_nil!
       tuple_type = engine.context.get_type(tuple_id).as(TupleType)
 
@@ -4858,21 +4858,21 @@ describe Semantic::TypeInferenceEngine do
       program, analyzer, engine = infer_types(source)
 
       # x = t[0] should be Int32
-      x_assign = program.arena[program.roots[1]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      x_assign = program.arena[program.roots[1]].as(Adamas::Compiler::Frontend::AssignNode)
       x_value_id = x_assign.value.not_nil!
       x_type = engine.context.get_type(x_value_id)
       x_type.should be_a(PrimitiveType)
       x_type.as(PrimitiveType).name.should eq("Int32")
 
       # y = t[1] should be String
-      y_assign = program.arena[program.roots[2]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      y_assign = program.arena[program.roots[2]].as(Adamas::Compiler::Frontend::AssignNode)
       y_value_id = y_assign.value.not_nil!
       y_type = engine.context.get_type(y_value_id)
       y_type.should be_a(PrimitiveType)
       y_type.as(PrimitiveType).name.should eq("String")
 
       # z = t[2] should be Bool
-      z_assign = program.arena[program.roots[3]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      z_assign = program.arena[program.roots[3]].as(Adamas::Compiler::Frontend::AssignNode)
       z_value_id = z_assign.value.not_nil!
       z_type = engine.context.get_type(z_value_id)
       z_type.should be_a(PrimitiveType)
@@ -4896,7 +4896,7 @@ describe Semantic::TypeInferenceEngine do
       CRYSTAL
 
       program, analyzer, engine = infer_types(source)
-      assign_node = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::AssignNode)
       tuple_id = assign_node.value.not_nil!
       tuple_type = engine.context.get_type(tuple_id).as(TupleType)
 
@@ -4917,7 +4917,7 @@ describe Semantic::TypeInferenceEngine do
       CRYSTAL
 
       program, analyzer, engine = infer_types(source)
-      assign_node = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::AssignNode)
       symbol_id = assign_node.value.not_nil!
       symbol_type = engine.context.get_type(symbol_id)
 
@@ -4936,7 +4936,7 @@ describe Semantic::TypeInferenceEngine do
 
       # Check each symbol assignment
       [0, 1, 2].each do |i|
-        assign_node = program.arena[program.roots[i]].as(CrystalV2::Compiler::Frontend::AssignNode)
+        assign_node = program.arena[program.roots[i]].as(Adamas::Compiler::Frontend::AssignNode)
         symbol_id = assign_node.value.not_nil!
         symbol_type = engine.context.get_type(symbol_id)
 
@@ -4951,7 +4951,7 @@ describe Semantic::TypeInferenceEngine do
       CRYSTAL
 
       program, analyzer, engine = infer_types(source)
-      assign_node = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::AssignNode)
       hash_id = assign_node.value.not_nil!
       hash_type = engine.context.get_type(hash_id).as(HashType)
 
@@ -4969,7 +4969,7 @@ describe Semantic::TypeInferenceEngine do
       CRYSTAL
 
       program, analyzer, engine = infer_types(source)
-      assign_node = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::AssignNode)
       array_id = assign_node.value.not_nil!
       array_type = engine.context.get_type(array_id).as(ArrayType)
 
@@ -4989,10 +4989,10 @@ describe Semantic::TypeInferenceEngine do
       # The method definition should be parsed correctly
       # (colon used for type annotation, not symbol)
       def_node = program.arena[program.roots[0]]
-      CrystalV2::Compiler::Frontend.node_kind(def_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Def)
+      Adamas::Compiler::Frontend.node_kind(def_node).should eq(Adamas::Compiler::Frontend::NodeKind::Def)
 
       # Method body contains symbol
-      body_expr_id = CrystalV2::Compiler::Frontend.node_def_body(def_node).not_nil![0]
+      body_expr_id = Adamas::Compiler::Frontend.node_def_body(def_node).not_nil![0]
       body_type = engine.context.get_type(body_expr_id)
       body_type.should be_a(PrimitiveType)
       body_type.as(PrimitiveType).name.should eq("Symbol")
@@ -5010,7 +5010,7 @@ describe Semantic::TypeInferenceEngine do
       program, analyzer, engine = infer_types(source)
 
       # Get the second assignment (y = !x)
-      assign_node = program.arena[program.roots[1]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[1]].as(Adamas::Compiler::Frontend::AssignNode)
       not_expr_id = assign_node.value.not_nil!
       not_type = engine.context.get_type(not_expr_id)
 
@@ -5026,7 +5026,7 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
 
-      assign_node = program.arena[program.roots[1]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[1]].as(Adamas::Compiler::Frontend::AssignNode)
       not_expr_id = assign_node.value.not_nil!
       not_type = engine.context.get_type(not_expr_id)
 
@@ -5042,7 +5042,7 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
 
-      assign_node = program.arena[program.roots[1]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[1]].as(Adamas::Compiler::Frontend::AssignNode)
       not_expr_id = assign_node.value.not_nil!
       not_type = engine.context.get_type(not_expr_id)
 
@@ -5058,7 +5058,7 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
 
-      assign_node = program.arena[program.roots[1]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[1]].as(Adamas::Compiler::Frontend::AssignNode)
       not_expr_id = assign_node.value.not_nil!
       not_type = engine.context.get_type(not_expr_id)
 
@@ -5074,7 +5074,7 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
 
-      assign_node = program.arena[program.roots[1]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[1]].as(Adamas::Compiler::Frontend::AssignNode)
       neg_expr_id = assign_node.value.not_nil!
       neg_type = engine.context.get_type(neg_expr_id)
 
@@ -5090,7 +5090,7 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
 
-      assign_node = program.arena[program.roots[1]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[1]].as(Adamas::Compiler::Frontend::AssignNode)
       plus_expr_id = assign_node.value.not_nil!
       plus_type = engine.context.get_type(plus_expr_id)
 
@@ -5106,7 +5106,7 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
 
-      assign_node = program.arena[program.roots[1]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[1]].as(Adamas::Compiler::Frontend::AssignNode)
       double_not_id = assign_node.value.not_nil!
       double_not_type = engine.context.get_type(double_not_id)
 
@@ -5125,7 +5125,7 @@ describe Semantic::TypeInferenceEngine do
       program, analyzer, engine = infer_types(source)
 
       # Get the if statement
-      if_node = program.arena[program.roots[1]].as(CrystalV2::Compiler::Frontend::IfNode)
+      if_node = program.arena[program.roots[1]].as(Adamas::Compiler::Frontend::IfNode)
       condition_id = if_node.condition.not_nil!
       condition_type = engine.context.get_type(condition_id)
 
@@ -5143,7 +5143,7 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
 
-      assign_node = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::AssignNode)
       mod_expr_id = assign_node.value.not_nil!
       mod_type = engine.context.get_type(mod_expr_id)
 
@@ -5158,7 +5158,7 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
 
-      assign_node = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::AssignNode)
       mod_expr_id = assign_node.value.not_nil!
       mod_type = engine.context.get_type(mod_expr_id)
 
@@ -5175,7 +5175,7 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
 
-      assign_node = program.arena[program.roots[2]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[2]].as(Adamas::Compiler::Frontend::AssignNode)
       mod_expr_id = assign_node.value.not_nil!
       mod_type = engine.context.get_type(mod_expr_id)
 
@@ -5190,7 +5190,7 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
 
-      assign_node = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::AssignNode)
       add_expr_id = assign_node.value.not_nil!
       add_type = engine.context.get_type(add_expr_id)
 
@@ -5205,16 +5205,16 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
 
-      assign_node = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::AssignNode)
       expr_id = assign_node.value.not_nil!
-      expr_node = program.arena[expr_id].as(CrystalV2::Compiler::Frontend::BinaryNode)
+      expr_node = program.arena[expr_id].as(Adamas::Compiler::Frontend::BinaryNode)
 
       # Should parse as 10 + (7 % 3), not (10 + 7) % 3
       Frontend.node_operator_string(expr_node).should eq("+")
 
       # Right side should be modulo
       right_id = expr_node.right
-      right_node = program.arena[right_id].as(CrystalV2::Compiler::Frontend::BinaryNode)
+      right_node = program.arena[right_id].as(Adamas::Compiler::Frontend::BinaryNode)
       Frontend.node_operator_string(right_node).should eq("%")
     end
   end
@@ -5228,7 +5228,7 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
 
-      assign_node = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::AssignNode)
       exp_expr_id = assign_node.value.not_nil!
       exp_type = engine.context.get_type(exp_expr_id)
 
@@ -5243,7 +5243,7 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
 
-      assign_node = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::AssignNode)
       exp_expr_id = assign_node.value.not_nil!
       exp_type = engine.context.get_type(exp_expr_id)
 
@@ -5260,7 +5260,7 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
 
-      assign_node = program.arena[program.roots[2]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[2]].as(Adamas::Compiler::Frontend::AssignNode)
       exp_expr_id = assign_node.value.not_nil!
       exp_type = engine.context.get_type(exp_expr_id)
 
@@ -5275,16 +5275,16 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
 
-      assign_node = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::AssignNode)
       expr_id = assign_node.value.not_nil!
-      expr_node = program.arena[expr_id].as(CrystalV2::Compiler::Frontend::BinaryNode)
+      expr_node = program.arena[expr_id].as(Adamas::Compiler::Frontend::BinaryNode)
 
       # Should parse as 2 * (3 ** 2), not (2 * 3) ** 2
       Frontend.node_operator_string(expr_node).should eq("*")
 
       # Right side should be exponentiation
       right_id = expr_node.right
-      right_node = program.arena[right_id].as(CrystalV2::Compiler::Frontend::BinaryNode)
+      right_node = program.arena[right_id].as(Adamas::Compiler::Frontend::BinaryNode)
       Frontend.node_operator_string(right_node).should eq("**")
     end
 
@@ -5295,16 +5295,16 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
 
-      assign_node = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::AssignNode)
       add_expr_id = assign_node.value.not_nil!
-      add_node = program.arena[add_expr_id].as(CrystalV2::Compiler::Frontend::BinaryNode)
+      add_node = program.arena[add_expr_id].as(Adamas::Compiler::Frontend::BinaryNode)
 
       # Should parse as (2 ** 3) + 1
       Frontend.node_operator_string(add_node).should eq("+")
 
       # Left side should be exponentiation
       left_id = add_node.left
-      left_node = program.arena[left_id].as(CrystalV2::Compiler::Frontend::BinaryNode)
+      left_node = program.arena[left_id].as(Adamas::Compiler::Frontend::BinaryNode)
       Frontend.node_operator_string(left_node).should eq("**")
     end
 
@@ -5315,7 +5315,7 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
 
-      assign_node = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::AssignNode)
       expr_id = assign_node.value.not_nil!
       expr_type = engine.context.get_type(expr_id)
 
@@ -5336,11 +5336,11 @@ describe Semantic::TypeInferenceEngine do
       program, analyzer, engine = infer_types(source)
 
       # Second statement is compound assignment desugared to x = x + 5
-      assign_node = program.arena[program.roots[1]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[1]].as(Adamas::Compiler::Frontend::AssignNode)
 
       # Value should be a binary expression (x + 5)
       value_id = assign_node.value.not_nil!
-      value_node = program.arena[value_id].as(CrystalV2::Compiler::Frontend::BinaryNode)
+      value_node = program.arena[value_id].as(Adamas::Compiler::Frontend::BinaryNode)
       Frontend.node_operator_string(value_node).should eq("+")
 
       # Type should be Int32
@@ -5357,9 +5357,9 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
 
-      assign_node = program.arena[program.roots[1]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[1]].as(Adamas::Compiler::Frontend::AssignNode)
       value_id = assign_node.value.not_nil!
-      value_node = program.arena[value_id].as(CrystalV2::Compiler::Frontend::BinaryNode)
+      value_node = program.arena[value_id].as(Adamas::Compiler::Frontend::BinaryNode)
 
       Frontend.node_operator_string(value_node).should eq("-")
 
@@ -5375,9 +5375,9 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
 
-      assign_node = program.arena[program.roots[1]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[1]].as(Adamas::Compiler::Frontend::AssignNode)
       value_id = assign_node.value.not_nil!
-      value_node = program.arena[value_id].as(CrystalV2::Compiler::Frontend::BinaryNode)
+      value_node = program.arena[value_id].as(Adamas::Compiler::Frontend::BinaryNode)
 
       Frontend.node_operator_string(value_node).should eq("*")
 
@@ -5393,9 +5393,9 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
 
-      assign_node = program.arena[program.roots[1]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[1]].as(Adamas::Compiler::Frontend::AssignNode)
       value_id = assign_node.value.not_nil!
-      value_node = program.arena[value_id].as(CrystalV2::Compiler::Frontend::BinaryNode)
+      value_node = program.arena[value_id].as(Adamas::Compiler::Frontend::BinaryNode)
 
       Frontend.node_operator_string(value_node).should eq("/")
 
@@ -5411,9 +5411,9 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
 
-      assign_node = program.arena[program.roots[1]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[1]].as(Adamas::Compiler::Frontend::AssignNode)
       value_id = assign_node.value.not_nil!
-      value_node = program.arena[value_id].as(CrystalV2::Compiler::Frontend::BinaryNode)
+      value_node = program.arena[value_id].as(Adamas::Compiler::Frontend::BinaryNode)
 
       Frontend.node_operator_string(value_node).should eq("%")
 
@@ -5429,9 +5429,9 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
 
-      assign_node = program.arena[program.roots[1]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[1]].as(Adamas::Compiler::Frontend::AssignNode)
       value_id = assign_node.value.not_nil!
-      value_node = program.arena[value_id].as(CrystalV2::Compiler::Frontend::BinaryNode)
+      value_node = program.arena[value_id].as(Adamas::Compiler::Frontend::BinaryNode)
 
       Frontend.node_operator_string(value_node).should eq("**")
 
@@ -5447,7 +5447,7 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
 
-      assign_node = program.arena[program.roots[1]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[1]].as(Adamas::Compiler::Frontend::AssignNode)
       value_id = assign_node.value.not_nil!
 
       value_type = engine.context.get_type(value_id)
@@ -5462,11 +5462,11 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
 
-      assign_node = program.arena[program.roots[1]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[1]].as(Adamas::Compiler::Frontend::AssignNode)
       target = assign_node.target.not_nil!
       target_node = program.arena[target]
 
-      CrystalV2::Compiler::Frontend.node_kind(target_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::InstanceVar)
+      Adamas::Compiler::Frontend.node_kind(target_node).should eq(Adamas::Compiler::Frontend::NodeKind::InstanceVar)
     end
   end
 
@@ -5479,9 +5479,9 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
 
-      assign_node = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::AssignNode)
       and_expr_id = assign_node.value.not_nil!
-      and_node = program.arena[and_expr_id].as(CrystalV2::Compiler::Frontend::BinaryNode)
+      and_node = program.arena[and_expr_id].as(Adamas::Compiler::Frontend::BinaryNode)
 
       Frontend.node_operator_string(and_node).should eq("&")
 
@@ -5497,9 +5497,9 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
 
-      assign_node = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::AssignNode)
       or_expr_id = assign_node.value.not_nil!
-      or_node = program.arena[or_expr_id].as(CrystalV2::Compiler::Frontend::BinaryNode)
+      or_node = program.arena[or_expr_id].as(Adamas::Compiler::Frontend::BinaryNode)
 
       Frontend.node_operator_string(or_node).should eq("|")
       or_type = engine.context.get_type(or_expr_id)
@@ -5513,9 +5513,9 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
 
-      assign_node = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::AssignNode)
       xor_expr_id = assign_node.value.not_nil!
-      xor_node = program.arena[xor_expr_id].as(CrystalV2::Compiler::Frontend::BinaryNode)
+      xor_node = program.arena[xor_expr_id].as(Adamas::Compiler::Frontend::BinaryNode)
 
       Frontend.node_operator_string(xor_node).should eq("^")
       xor_type = engine.context.get_type(xor_expr_id)
@@ -5529,11 +5529,11 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
 
-      assign_node = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::AssignNode)
       not_expr_id = assign_node.value.not_nil!
       not_node = program.arena[not_expr_id]
 
-      CrystalV2::Compiler::Frontend.node_kind(not_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Unary)
+      Adamas::Compiler::Frontend.node_kind(not_node).should eq(Adamas::Compiler::Frontend::NodeKind::Unary)
       Frontend.node_operator_string(not_node).should eq("~")
 
       not_type = engine.context.get_type(not_expr_id)
@@ -5548,7 +5548,7 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
 
-      assign_node = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::AssignNode)
       expr_id = assign_node.value.not_nil!
       expr_type = engine.context.get_type(expr_id)
 
@@ -5564,9 +5564,9 @@ describe Semantic::TypeInferenceEngine do
       program, analyzer, engine = infer_types(source)
 
       # Should parse as 5 | (3 & 1) based on precedence
-      assign_node = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::AssignNode)
       expr_id = assign_node.value.not_nil!
-      expr_node = program.arena[expr_id].as(CrystalV2::Compiler::Frontend::BinaryNode)
+      expr_node = program.arena[expr_id].as(Adamas::Compiler::Frontend::BinaryNode)
 
       # Both have same precedence (6), so left-to-right: (5 | 3) & 1
       # Actually, let's just check it parses and types correctly
@@ -5583,7 +5583,7 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
 
-      assign_node = program.arena[program.roots[2]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[2]].as(Adamas::Compiler::Frontend::AssignNode)
       and_expr_id = assign_node.value.not_nil!
 
       and_type = engine.context.get_type(and_expr_id)
@@ -5599,13 +5599,13 @@ describe Semantic::TypeInferenceEngine do
       program, analyzer, engine = infer_types(source)
 
       # First is logical AND (returns Bool)
-      assign1 = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign1 = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::AssignNode)
       logical_id = assign1.value.not_nil!
       logical_type = engine.context.get_type(logical_id)
       logical_type.as(PrimitiveType).name.should eq("Bool")
 
       # Second is bitwise AND (returns Int32)
-      assign2 = program.arena[program.roots[1]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign2 = program.arena[program.roots[1]].as(Adamas::Compiler::Frontend::AssignNode)
       bitwise_id = assign2.value.not_nil!
       bitwise_type = engine.context.get_type(bitwise_id)
       bitwise_type.as(PrimitiveType).name.should eq("Int32")
@@ -5621,9 +5621,9 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
 
-      assign_node = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::AssignNode)
       shift_expr_id = assign_node.value.not_nil!
-      shift_node = program.arena[shift_expr_id].as(CrystalV2::Compiler::Frontend::BinaryNode)
+      shift_node = program.arena[shift_expr_id].as(Adamas::Compiler::Frontend::BinaryNode)
 
       Frontend.node_operator_string(shift_node).should eq(">>")
 
@@ -5639,7 +5639,7 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
 
-      assign_node = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::AssignNode)
       shift_expr_id = assign_node.value.not_nil!
 
       # Right operand is the shift, left is unary minus
@@ -5657,7 +5657,7 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
 
-      assign_node = program.arena[program.roots[2]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[2]].as(Adamas::Compiler::Frontend::AssignNode)
       shift_expr_id = assign_node.value.not_nil!
 
       shift_type = engine.context.get_type(shift_expr_id)
@@ -5687,7 +5687,7 @@ describe Semantic::TypeInferenceEngine do
 
       # Should parse as 8 >> (2 + 1) since >> and + have same precedence
       # Actually left-to-right: (8 >> 2) + 1
-      assign_node = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::AssignNode)
       expr_id = assign_node.value.not_nil!
 
       # Just verify it parses and types correctly
@@ -5703,9 +5703,9 @@ describe Semantic::TypeInferenceEngine do
       program, analyzer, engine = infer_types(source)
 
       # Should parse as 32 >> (2 * 2) since * has higher precedence
-      assign_node = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::AssignNode)
       expr_id = assign_node.value.not_nil!
-      expr_node = program.arena[expr_id].as(CrystalV2::Compiler::Frontend::BinaryNode)
+      expr_node = program.arena[expr_id].as(Adamas::Compiler::Frontend::BinaryNode)
 
       Frontend.node_operator_string(expr_node).should eq(">>")
 
@@ -5722,13 +5722,13 @@ describe Semantic::TypeInferenceEngine do
       program, analyzer, engine = infer_types(source)
 
       # First is right shift (returns Int32)
-      assign1 = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign1 = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::AssignNode)
       shift_id = assign1.value.not_nil!
       shift_type = engine.context.get_type(shift_id)
       shift_type.as(PrimitiveType).name.should eq("Int32")
 
       # Second is comparison (returns Bool)
-      assign2 = program.arena[program.roots[1]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign2 = program.arena[program.roots[1]].as(Adamas::Compiler::Frontend::AssignNode)
       comp_id = assign2.value.not_nil!
       comp_type = engine.context.get_type(comp_id)
       comp_type.as(PrimitiveType).name.should eq("Bool")
@@ -5741,7 +5741,7 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
 
-      assign_node = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::AssignNode)
       shift_expr_id = assign_node.value.not_nil!
 
       shift_type = engine.context.get_type(shift_expr_id)
@@ -5759,9 +5759,9 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
 
-      assign_node = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::AssignNode)
       ternary_id = assign_node.value.not_nil!
-      ternary_node = program.arena[ternary_id].as(CrystalV2::Compiler::Frontend::TernaryNode)
+      ternary_node = program.arena[ternary_id].as(Adamas::Compiler::Frontend::TernaryNode)
 
 
       ternary_type = engine.context.get_type(ternary_id)
@@ -5776,7 +5776,7 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
 
-      assign_node = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::AssignNode)
       ternary_id = assign_node.value.not_nil!
 
       ternary_type = engine.context.get_type(ternary_id)
@@ -5797,7 +5797,7 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
 
-      assign_node = program.arena[program.roots[1]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[1]].as(Adamas::Compiler::Frontend::AssignNode)
       ternary_id = assign_node.value.not_nil!
 
       ternary_type = engine.context.get_type(ternary_id)
@@ -5812,9 +5812,9 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
 
-      assign_node = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::AssignNode)
       ternary_id = assign_node.value.not_nil!
-      outer_ternary = program.arena[ternary_id].as(CrystalV2::Compiler::Frontend::TernaryNode)
+      outer_ternary = program.arena[ternary_id].as(Adamas::Compiler::Frontend::TernaryNode)
 
       # Outer ternary: true ? 1 : (false ? 2 : 3)
 
@@ -5834,14 +5834,14 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
 
-      assign_node = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::AssignNode)
       ternary_id = assign_node.value.not_nil!
-      ternary_node = program.arena[ternary_id].as(CrystalV2::Compiler::Frontend::TernaryNode)
+      ternary_node = program.arena[ternary_id].as(Adamas::Compiler::Frontend::TernaryNode)
 
       # Should parse as: (1 + 1 > 0) ? 100 : 200
 
       condition_id = ternary_node.condition.not_nil!
-      condition_node = program.arena[condition_id].as(CrystalV2::Compiler::Frontend::BinaryNode)
+      condition_node = program.arena[condition_id].as(Adamas::Compiler::Frontend::BinaryNode)
 
       ternary_type = engine.context.get_type(ternary_id)
       ternary_type.should be_a(PrimitiveType)
@@ -5855,7 +5855,7 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
 
-      assign_node = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::AssignNode)
       ternary_id = assign_node.value.not_nil!
 
       ternary_type = engine.context.get_type(ternary_id)
@@ -5870,7 +5870,7 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
 
-      assign_node = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::AssignNode)
       ternary_id = assign_node.value.not_nil!
 
       ternary_type = engine.context.get_type(ternary_id)
@@ -5888,14 +5888,14 @@ describe Semantic::TypeInferenceEngine do
 
       program, analyzer, engine = infer_types(source)
 
-      assign_node = program.arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::AssignNode)
+      assign_node = program.arena[program.roots[0]].as(Adamas::Compiler::Frontend::AssignNode)
       add_expr_id = assign_node.value.not_nil!
-      add_node = program.arena[add_expr_id].as(CrystalV2::Compiler::Frontend::BinaryNode)
+      add_node = program.arena[add_expr_id].as(Adamas::Compiler::Frontend::BinaryNode)
 
       # Should be Binary(+) with left = Grouping(Ternary)
 
       left_id = add_node.left
-      left_node = program.arena[left_id].as(CrystalV2::Compiler::Frontend::GroupingNode)
+      left_node = program.arena[left_id].as(Adamas::Compiler::Frontend::GroupingNode)
 
       # Inside grouping is ternary
       inner_id = left_node.expression

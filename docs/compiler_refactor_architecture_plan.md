@@ -339,7 +339,7 @@ Every phase must define a small acceptance gate before implementation.
 Minimum gates:
 
 - compiler host build:
-  - `crystal build src/crystal_v2.cr -o /tmp/cv2_refactor_gate --error-trace`
+  - `crystal build src/adamas.cr -o /tmp/cv2_refactor_gate --error-trace`
 - safe compile/run for selected reducers:
   - `scripts/run_safe.sh /tmp/cv2_refactor_gate ...`
 - normalized `.ll` comparison for the touched backend surface

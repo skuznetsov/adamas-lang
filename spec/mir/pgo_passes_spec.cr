@@ -9,30 +9,30 @@ require "../../src/compiler/mir/pgo_passes"
 
 module PGOTestHelpers
   def self.create_test_module
-    Crystal::MIR::Module.new("test")
+    Adamas::MIR::Module.new("test")
   end
 
   def self.create_empty_profile
-    Crystal::MIR::ProfileData.new
+    Adamas::MIR::ProfileData.new
   end
 
-  def self.create_function_with_virtual_call(mod : Crystal::MIR::Module) : {Crystal::MIR::Function, Crystal::MIR::IndirectCall}
+  def self.create_function_with_virtual_call(mod : Adamas::MIR::Module) : {Adamas::MIR::Function, Adamas::MIR::IndirectCall}
     # Create target function that could be called
-    target = mod.create_function("Animal::speak", Crystal::MIR::TypeRef::INT32)
+    target = mod.create_function("Animal::speak", Adamas::MIR::TypeRef::INT32)
 
     # Create caller function with indirect call
-    func = mod.create_function("call_speak", Crystal::MIR::TypeRef::INT32)
-    builder = Crystal::MIR::Builder.new(func)
+    func = mod.create_function("call_speak", Adamas::MIR::TypeRef::INT32)
+    builder = Adamas::MIR::Builder.new(func)
 
     # Simulate: result = animal.speak() via vtable
-    vtable_ptr = builder.const_int(0x1000_i64, Crystal::MIR::TypeRef::POINTER)
+    vtable_ptr = builder.const_int(0x1000_i64, Adamas::MIR::TypeRef::POINTER)
 
     # Create indirect call manually since builder doesn't have it
-    call = Crystal::MIR::IndirectCall.new(
+    call = Adamas::MIR::IndirectCall.new(
       func.next_value_id,
-      Crystal::MIR::TypeRef::INT32,
+      Adamas::MIR::TypeRef::INT32,
       vtable_ptr,
-      [] of Crystal::MIR::ValueId
+      [] of Adamas::MIR::ValueId
     )
     func.get_block(func.entry_block).add(call)
     builder.ret(call.id)
@@ -40,22 +40,22 @@ module PGOTestHelpers
     {func, call}
   end
 
-  def self.create_function_with_rc_around_call(mod : Crystal::MIR::Module) : Crystal::MIR::Function
+  def self.create_function_with_rc_around_call(mod : Adamas::MIR::Module) : Adamas::MIR::Function
     # Create callee
-    callee = mod.create_function("process_string", Crystal::MIR::TypeRef::VOID)
+    callee = mod.create_function("process_string", Adamas::MIR::TypeRef::VOID)
 
     # Create caller with rc_inc before call and rc_dec after
-    func = mod.create_function("caller", Crystal::MIR::TypeRef::VOID)
-    builder = Crystal::MIR::Builder.new(func)
+    func = mod.create_function("caller", Adamas::MIR::TypeRef::VOID)
+    builder = Adamas::MIR::Builder.new(func)
 
     # Allocate an ARC object
-    ptr = builder.alloc(Crystal::MIR::MemoryStrategy::ARC, Crystal::MIR::TypeRef::STRING)
+    ptr = builder.alloc(Adamas::MIR::MemoryStrategy::ARC, Adamas::MIR::TypeRef::STRING)
 
     # rc_inc before call
     builder.rc_inc(ptr)
 
     # Call
-    builder.call(callee.id, [ptr], Crystal::MIR::TypeRef::VOID)
+    builder.call(callee.id, [ptr], Adamas::MIR::TypeRef::VOID)
 
     # rc_dec after call
     builder.rc_dec(ptr)
@@ -65,18 +65,18 @@ module PGOTestHelpers
     func
   end
 
-  def self.create_function_with_allocations(mod : Crystal::MIR::Module) : Crystal::MIR::Function
-    func = mod.create_function("allocator", Crystal::MIR::TypeRef::VOID)
-    builder = Crystal::MIR::Builder.new(func)
+  def self.create_function_with_allocations(mod : Adamas::MIR::Module) : Adamas::MIR::Function
+    func = mod.create_function("allocator", Adamas::MIR::TypeRef::VOID)
+    builder = Adamas::MIR::Builder.new(func)
 
     # Stack allocation
-    _stack_ptr = builder.alloc(Crystal::MIR::MemoryStrategy::Stack, Crystal::MIR::TypeRef::INT32)
+    _stack_ptr = builder.alloc(Adamas::MIR::MemoryStrategy::Stack, Adamas::MIR::TypeRef::INT32)
 
     # Slab allocation
-    _slab_ptr = builder.alloc(Crystal::MIR::MemoryStrategy::Slab, Crystal::MIR::TypeRef::STRING)
+    _slab_ptr = builder.alloc(Adamas::MIR::MemoryStrategy::Slab, Adamas::MIR::TypeRef::STRING)
 
     # ARC allocation
-    _arc_ptr = builder.alloc(Crystal::MIR::MemoryStrategy::ARC, Crystal::MIR::TypeRef::POINTER)
+    _arc_ptr = builder.alloc(Adamas::MIR::MemoryStrategy::ARC, Adamas::MIR::TypeRef::POINTER)
 
     builder.ret
 
@@ -84,18 +84,18 @@ module PGOTestHelpers
   end
 end
 
-describe Crystal::MIR do
+describe Adamas::MIR do
   # ═══════════════════════════════════════════════════════════════════════════
   # DEVIRTUALIZATION PASS TESTS
   # ═══════════════════════════════════════════════════════════════════════════
 
-  describe Crystal::MIR::DevirtualizationPass do
+  describe Adamas::MIR::DevirtualizationPass do
     it "does not devirtualize without profile data" do
       mod = PGOTestHelpers.create_test_module
       func, _call = PGOTestHelpers.create_function_with_virtual_call(mod)
       profile = PGOTestHelpers.create_empty_profile
 
-      pass = Crystal::MIR::DevirtualizationPass.new(func, mod, profile)
+      pass = Adamas::MIR::DevirtualizationPass.new(func, mod, profile)
       stats = pass.run
 
       stats.calls_devirtualized.should eq(0)
@@ -111,7 +111,7 @@ describe Crystal::MIR do
       cs = profile.add_call_site(call_site_id, "call_speak", "Animal::speak", is_virtual: true)
       cs.call_count = 50 # Below MIN_CALL_COUNT threshold of 100
 
-      pass = Crystal::MIR::DevirtualizationPass.new(func, mod, profile)
+      pass = Adamas::MIR::DevirtualizationPass.new(func, mod, profile)
       stats = pass.run
 
       stats.calls_devirtualized.should eq(0)
@@ -130,7 +130,7 @@ describe Crystal::MIR do
       cs.target_distribution["Cat::speak"] = 350
       cs.target_distribution["Bird::speak"] = 350
 
-      pass = Crystal::MIR::DevirtualizationPass.new(func, mod, profile)
+      pass = Adamas::MIR::DevirtualizationPass.new(func, mod, profile)
       stats = pass.run
 
       stats.calls_devirtualized.should eq(0)
@@ -138,7 +138,7 @@ describe Crystal::MIR do
 
     it "devirtualizes with dominant target above threshold" do
       mod = PGOTestHelpers.create_test_module
-      _target_func = mod.create_function("Dog::speak", Crystal::MIR::TypeRef::INT32)
+      _target_func = mod.create_function("Dog::speak", Adamas::MIR::TypeRef::INT32)
       func, call = PGOTestHelpers.create_function_with_virtual_call(mod)
       profile = PGOTestHelpers.create_empty_profile
 
@@ -151,7 +151,7 @@ describe Crystal::MIR do
 
       original_block_count = func.blocks.size
 
-      pass = Crystal::MIR::DevirtualizationPass.new(func, mod, profile)
+      pass = Adamas::MIR::DevirtualizationPass.new(func, mod, profile)
       stats = pass.run
 
       stats.calls_devirtualized.should eq(1)
@@ -165,7 +165,7 @@ describe Crystal::MIR do
 
     it "keeps an indirect fallback path for non-dominant targets" do
       mod = PGOTestHelpers.create_test_module
-      _target_func = mod.create_function("Dog::speak", Crystal::MIR::TypeRef::INT32)
+      _target_func = mod.create_function("Dog::speak", Adamas::MIR::TypeRef::INT32)
       func, call = PGOTestHelpers.create_function_with_virtual_call(mod)
       profile = PGOTestHelpers.create_empty_profile
 
@@ -175,17 +175,17 @@ describe Crystal::MIR do
       cs.target_distribution["Dog::speak"] = 900
       cs.target_distribution["Cat::speak"] = 100
 
-      pass = Crystal::MIR::DevirtualizationPass.new(func, mod, profile)
+      pass = Adamas::MIR::DevirtualizationPass.new(func, mod, profile)
       stats = pass.run
 
       stats.calls_devirtualized.should eq(1)
-      func.blocks.any? { |block| block.terminator.is_a?(Crystal::MIR::Branch) }.should be_true
-      func.blocks.any? { |block| block.instructions.any? { |inst| inst.is_a?(Crystal::MIR::IndirectCall) } }.should be_true
+      func.blocks.any? { |block| block.terminator.is_a?(Adamas::MIR::Branch) }.should be_true
+      func.blocks.any? { |block| block.instructions.any? { |inst| inst.is_a?(Adamas::MIR::IndirectCall) } }.should be_true
     end
 
     it "records devirtualization statistics correctly" do
       mod = PGOTestHelpers.create_test_module
-      _target = mod.create_function("Cat::meow", Crystal::MIR::TypeRef::INT32)
+      _target = mod.create_function("Cat::meow", Adamas::MIR::TypeRef::INT32)
       func, call = PGOTestHelpers.create_function_with_virtual_call(mod)
       profile = PGOTestHelpers.create_empty_profile
 
@@ -195,7 +195,7 @@ describe Crystal::MIR do
       cs.target_distribution["Cat::meow"] = 4800
       cs.target_distribution["Dog::bark"] = 200
 
-      pass = Crystal::MIR::DevirtualizationPass.new(func, mod, profile)
+      pass = Adamas::MIR::DevirtualizationPass.new(func, mod, profile)
       stats = pass.run
 
       stats.calls_devirtualized.should eq(1)
@@ -208,7 +208,7 @@ describe Crystal::MIR do
   # CROSS-FUNCTION RC ELISION PASS TESTS
   # ═══════════════════════════════════════════════════════════════════════════
 
-  describe Crystal::MIR::CrossFunctionRCElisionPass do
+  describe Adamas::MIR::CrossFunctionRCElisionPass do
     it "does not elide without profile data" do
       mod = PGOTestHelpers.create_test_module
       func = PGOTestHelpers.create_function_with_rc_around_call(mod)
@@ -216,7 +216,7 @@ describe Crystal::MIR do
 
       original_count = func.blocks.first.instructions.size
 
-      pass = Crystal::MIR::CrossFunctionRCElisionPass.new(func, mod, profile)
+      pass = Adamas::MIR::CrossFunctionRCElisionPass.new(func, mod, profile)
       stats = pass.run
 
       stats.rc_ops_elided.should eq(0)
@@ -229,7 +229,7 @@ describe Crystal::MIR do
       profile = PGOTestHelpers.create_empty_profile
 
       # Find the call instruction and add profile data
-      call_inst = func.blocks.first.instructions.find { |i| i.is_a?(Crystal::MIR::Call) }
+      call_inst = func.blocks.first.instructions.find { |i| i.is_a?(Adamas::MIR::Call) }
       call_inst.should_not be_nil
 
       if call_inst
@@ -238,7 +238,7 @@ describe Crystal::MIR do
         cs.call_count = 10000 # Hot call site
       end
 
-      pass = Crystal::MIR::CrossFunctionRCElisionPass.new(func, mod, profile)
+      pass = Adamas::MIR::CrossFunctionRCElisionPass.new(func, mod, profile)
       stats = pass.run
 
       # Should identify the rc_inc/rc_dec pair as a candidate
@@ -247,18 +247,18 @@ describe Crystal::MIR do
 
     it "does not elide for virtual calls with many targets" do
       mod = PGOTestHelpers.create_test_module
-      func = mod.create_function("test_virtual", Crystal::MIR::TypeRef::VOID)
-      builder = Crystal::MIR::Builder.new(func)
+      func = mod.create_function("test_virtual", Adamas::MIR::TypeRef::VOID)
+      builder = Adamas::MIR::Builder.new(func)
       profile = PGOTestHelpers.create_empty_profile
 
-      ptr = builder.alloc(Crystal::MIR::MemoryStrategy::ARC, Crystal::MIR::TypeRef::STRING)
+      ptr = builder.alloc(Adamas::MIR::MemoryStrategy::ARC, Adamas::MIR::TypeRef::STRING)
       builder.rc_inc(ptr)
 
       # Simulate virtual call
-      vtable = builder.const_int(0x2000_i64, Crystal::MIR::TypeRef::POINTER)
-      call = Crystal::MIR::IndirectCall.new(
+      vtable = builder.const_int(0x2000_i64, Adamas::MIR::TypeRef::POINTER)
+      call = Adamas::MIR::IndirectCall.new(
         func.next_value_id,
-        Crystal::MIR::TypeRef::VOID,
+        Adamas::MIR::TypeRef::VOID,
         vtable,
         [ptr]
       )
@@ -276,7 +276,7 @@ describe Crystal::MIR do
       cs.target_distribution["TargetC"] = 2500
       cs.target_distribution["TargetD"] = 2500
 
-      pass = Crystal::MIR::CrossFunctionRCElisionPass.new(func, mod, profile)
+      pass = Adamas::MIR::CrossFunctionRCElisionPass.new(func, mod, profile)
       stats = pass.run
 
       # Should not elide due to multiple virtual targets
@@ -288,13 +288,13 @@ describe Crystal::MIR do
   # MEMORY STRATEGY REFINEMENT PASS TESTS
   # ═══════════════════════════════════════════════════════════════════════════
 
-  describe Crystal::MIR::MemoryStrategyRefinementPass do
+  describe Adamas::MIR::MemoryStrategyRefinementPass do
     it "does not refine without profile data" do
       mod = PGOTestHelpers.create_test_module
       func = PGOTestHelpers.create_function_with_allocations(mod)
       profile = PGOTestHelpers.create_empty_profile
 
-      pass = Crystal::MIR::MemoryStrategyRefinementPass.new(func, profile)
+      pass = Adamas::MIR::MemoryStrategyRefinementPass.new(func, profile)
       stats = pass.run
 
       stats.allocations_refined.should eq(0)
@@ -306,14 +306,14 @@ describe Crystal::MIR do
       profile = PGOTestHelpers.create_empty_profile
 
       # Find first alloc and add profile with low sample count
-      alloc = func.blocks.first.instructions.find { |i| i.is_a?(Crystal::MIR::Alloc) }
+      alloc = func.blocks.first.instructions.find { |i| i.is_a?(Adamas::MIR::Alloc) }
       if alloc
         site_id = (func.id.to_u64 << 32) | alloc.id.to_u64
         site = profile.add_site(site_id, "allocator")
         site.alloc_count = 50 # Below MIN_SAMPLES of 100
       end
 
-      pass = Crystal::MIR::MemoryStrategyRefinementPass.new(func, profile)
+      pass = Adamas::MIR::MemoryStrategyRefinementPass.new(func, profile)
       stats = pass.run
 
       stats.allocations_refined.should eq(0)
@@ -321,16 +321,16 @@ describe Crystal::MIR do
 
     it "suggests Stack→Slab promotion for high escape rate" do
       mod = PGOTestHelpers.create_test_module
-      func = mod.create_function("escaper", Crystal::MIR::TypeRef::VOID)
-      builder = Crystal::MIR::Builder.new(func)
+      func = mod.create_function("escaper", Adamas::MIR::TypeRef::VOID)
+      builder = Adamas::MIR::Builder.new(func)
       profile = PGOTestHelpers.create_empty_profile
 
       # Create stack allocation
-      _alloc_id = builder.alloc(Crystal::MIR::MemoryStrategy::Stack, Crystal::MIR::TypeRef::INT32)
+      _alloc_id = builder.alloc(Adamas::MIR::MemoryStrategy::Stack, Adamas::MIR::TypeRef::INT32)
       builder.ret
 
       # Add profile showing high escape rate
-      alloc_inst = func.blocks.first.instructions.find { |i| i.is_a?(Crystal::MIR::Alloc) }
+      alloc_inst = func.blocks.first.instructions.find { |i| i.is_a?(Adamas::MIR::Alloc) }
       if alloc_inst
         site_id = (func.id.to_u64 << 32) | alloc_inst.id.to_u64
         site = profile.add_site(site_id, "escaper")
@@ -339,26 +339,26 @@ describe Crystal::MIR do
         site.total_lifetime = 500_000 # Short lifetime
       end
 
-      pass = Crystal::MIR::MemoryStrategyRefinementPass.new(func, profile)
+      pass = Adamas::MIR::MemoryStrategyRefinementPass.new(func, profile)
       stats = pass.run
 
       stats.allocations_refined.should eq(1)
-      stats.refinements.first.original.should eq(Crystal::MIR::MemoryStrategy::Stack)
-      stats.refinements.first.refined.should eq(Crystal::MIR::MemoryStrategy::Slab)
+      stats.refinements.first.original.should eq(Adamas::MIR::MemoryStrategy::Stack)
+      stats.refinements.first.refined.should eq(Adamas::MIR::MemoryStrategy::Slab)
     end
 
     it "suggests AtomicARC→ARC demotion when no thread sharing" do
       mod = PGOTestHelpers.create_test_module
-      func = mod.create_function("no_sharing", Crystal::MIR::TypeRef::VOID)
-      builder = Crystal::MIR::Builder.new(func)
+      func = mod.create_function("no_sharing", Adamas::MIR::TypeRef::VOID)
+      builder = Adamas::MIR::Builder.new(func)
       profile = PGOTestHelpers.create_empty_profile
 
       # Create AtomicARC allocation
-      _alloc_id = builder.alloc(Crystal::MIR::MemoryStrategy::AtomicARC, Crystal::MIR::TypeRef::STRING)
+      _alloc_id = builder.alloc(Adamas::MIR::MemoryStrategy::AtomicARC, Adamas::MIR::TypeRef::STRING)
       builder.ret
 
       # Add profile showing no thread sharing
-      alloc_inst = func.blocks.first.instructions.find { |i| i.is_a?(Crystal::MIR::Alloc) }
+      alloc_inst = func.blocks.first.instructions.find { |i| i.is_a?(Adamas::MIR::Alloc) }
       if alloc_inst
         site_id = (func.id.to_u64 << 32) | alloc_inst.id.to_u64
         site = profile.add_site(site_id, "no_sharing")
@@ -367,26 +367,26 @@ describe Crystal::MIR do
         site.escape_count = 100
       end
 
-      pass = Crystal::MIR::MemoryStrategyRefinementPass.new(func, profile)
+      pass = Adamas::MIR::MemoryStrategyRefinementPass.new(func, profile)
       stats = pass.run
 
       stats.allocations_refined.should eq(1)
-      stats.refinements.first.original.should eq(Crystal::MIR::MemoryStrategy::AtomicARC)
-      stats.refinements.first.refined.should eq(Crystal::MIR::MemoryStrategy::ARC)
+      stats.refinements.first.original.should eq(Adamas::MIR::MemoryStrategy::AtomicARC)
+      stats.refinements.first.refined.should eq(Adamas::MIR::MemoryStrategy::ARC)
     end
 
     it "suggests any→AtomicARC promotion when thread sharing detected" do
       mod = PGOTestHelpers.create_test_module
-      func = mod.create_function("shared", Crystal::MIR::TypeRef::VOID)
-      builder = Crystal::MIR::Builder.new(func)
+      func = mod.create_function("shared", Adamas::MIR::TypeRef::VOID)
+      builder = Adamas::MIR::Builder.new(func)
       profile = PGOTestHelpers.create_empty_profile
 
       # Create ARC allocation
-      _alloc_id = builder.alloc(Crystal::MIR::MemoryStrategy::ARC, Crystal::MIR::TypeRef::STRING)
+      _alloc_id = builder.alloc(Adamas::MIR::MemoryStrategy::ARC, Adamas::MIR::TypeRef::STRING)
       builder.ret
 
       # Add profile showing thread sharing
-      alloc_inst = func.blocks.first.instructions.find { |i| i.is_a?(Crystal::MIR::Alloc) }
+      alloc_inst = func.blocks.first.instructions.find { |i| i.is_a?(Adamas::MIR::Alloc) }
       if alloc_inst
         site_id = (func.id.to_u64 << 32) | alloc_inst.id.to_u64
         site = profile.add_site(site_id, "shared")
@@ -394,24 +394,24 @@ describe Crystal::MIR do
         site.thread_share_count = 50 # 5% thread sharing
       end
 
-      pass = Crystal::MIR::MemoryStrategyRefinementPass.new(func, profile)
+      pass = Adamas::MIR::MemoryStrategyRefinementPass.new(func, profile)
       stats = pass.run
 
       stats.allocations_refined.should eq(1)
-      stats.refinements.first.original.should eq(Crystal::MIR::MemoryStrategy::ARC)
-      stats.refinements.first.refined.should eq(Crystal::MIR::MemoryStrategy::AtomicARC)
+      stats.refinements.first.original.should eq(Adamas::MIR::MemoryStrategy::ARC)
+      stats.refinements.first.refined.should eq(Adamas::MIR::MemoryStrategy::AtomicARC)
     end
 
     it "suggests ARC→Slab demotion for short-lived non-escaping objects" do
       mod = PGOTestHelpers.create_test_module
-      func = mod.create_function("short_lived", Crystal::MIR::TypeRef::VOID)
-      builder = Crystal::MIR::Builder.new(func)
+      func = mod.create_function("short_lived", Adamas::MIR::TypeRef::VOID)
+      builder = Adamas::MIR::Builder.new(func)
       profile = PGOTestHelpers.create_empty_profile
 
-      _alloc_id = builder.alloc(Crystal::MIR::MemoryStrategy::ARC, Crystal::MIR::TypeRef::INT64)
+      _alloc_id = builder.alloc(Adamas::MIR::MemoryStrategy::ARC, Adamas::MIR::TypeRef::INT64)
       builder.ret
 
-      alloc_inst = func.blocks.first.instructions.find { |i| i.is_a?(Crystal::MIR::Alloc) }
+      alloc_inst = func.blocks.first.instructions.find { |i| i.is_a?(Adamas::MIR::Alloc) }
       if alloc_inst
         site_id = (func.id.to_u64 << 32) | alloc_inst.id.to_u64
         site = profile.add_site(site_id, "short_lived")
@@ -420,23 +420,23 @@ describe Crystal::MIR do
         site.total_lifetime = 1_000_000 # avg = 100, well under threshold
       end
 
-      pass = Crystal::MIR::MemoryStrategyRefinementPass.new(func, profile)
+      pass = Adamas::MIR::MemoryStrategyRefinementPass.new(func, profile)
       stats = pass.run
 
       stats.allocations_refined.should eq(1)
-      stats.refinements.first.refined.should eq(Crystal::MIR::MemoryStrategy::Slab)
+      stats.refinements.first.refined.should eq(Adamas::MIR::MemoryStrategy::Slab)
     end
 
     it "records refinement reasons" do
       mod = PGOTestHelpers.create_test_module
-      func = mod.create_function("with_reason", Crystal::MIR::TypeRef::VOID)
-      builder = Crystal::MIR::Builder.new(func)
+      func = mod.create_function("with_reason", Adamas::MIR::TypeRef::VOID)
+      builder = Adamas::MIR::Builder.new(func)
       profile = PGOTestHelpers.create_empty_profile
 
-      _alloc_id = builder.alloc(Crystal::MIR::MemoryStrategy::Stack, Crystal::MIR::TypeRef::INT32)
+      _alloc_id = builder.alloc(Adamas::MIR::MemoryStrategy::Stack, Adamas::MIR::TypeRef::INT32)
       builder.ret
 
-      alloc_inst = func.blocks.first.instructions.find { |i| i.is_a?(Crystal::MIR::Alloc) }
+      alloc_inst = func.blocks.first.instructions.find { |i| i.is_a?(Adamas::MIR::Alloc) }
       if alloc_inst
         site_id = (func.id.to_u64 << 32) | alloc_inst.id.to_u64
         site = profile.add_site(site_id, "with_reason")
@@ -445,7 +445,7 @@ describe Crystal::MIR do
         site.total_lifetime = 500_000
       end
 
-      pass = Crystal::MIR::MemoryStrategyRefinementPass.new(func, profile)
+      pass = Adamas::MIR::MemoryStrategyRefinementPass.new(func, profile)
       stats = pass.run
 
       stats.refinements.first.reason.should contain("escape_rate")
@@ -456,14 +456,14 @@ describe Crystal::MIR do
   # PGO PIPELINE TESTS
   # ═══════════════════════════════════════════════════════════════════════════
 
-  describe Crystal::MIR::PGOPipeline do
+  describe Adamas::MIR::PGOPipeline do
     it "runs all passes on a module" do
       mod = PGOTestHelpers.create_test_module
       _func1 = PGOTestHelpers.create_function_with_allocations(mod)
       _func2 = PGOTestHelpers.create_function_with_rc_around_call(mod)
       profile = PGOTestHelpers.create_empty_profile
 
-      pipeline = Crystal::MIR::PGOPipeline.new(mod, profile)
+      pipeline = Adamas::MIR::PGOPipeline.new(mod, profile)
       stats = pipeline.run
 
       # With empty profile, should have no optimizations
@@ -478,13 +478,13 @@ describe Crystal::MIR do
       # to verify the memory refinement logic works
       count = 0
       3.times do |i|
-        func = mod.create_function("func_#{i}", Crystal::MIR::TypeRef::VOID)
-        builder = Crystal::MIR::Builder.new(func)
-        _alloc_id = builder.alloc(Crystal::MIR::MemoryStrategy::Stack, Crystal::MIR::TypeRef::INT32)
+        func = mod.create_function("func_#{i}", Adamas::MIR::TypeRef::VOID)
+        builder = Adamas::MIR::Builder.new(func)
+        _alloc_id = builder.alloc(Adamas::MIR::MemoryStrategy::Stack, Adamas::MIR::TypeRef::INT32)
         builder.ret
 
         # Get the alloc instruction and register profile data
-        alloc_inst = func.blocks.first.instructions.find { |inst| inst.is_a?(Crystal::MIR::Alloc) }
+        alloc_inst = func.blocks.first.instructions.find { |inst| inst.is_a?(Adamas::MIR::Alloc) }
         if alloc_inst
           site_id = (func.id.to_u64 << 32) | alloc_inst.id.to_u64
           site = profile.add_site(site_id, "func_#{i}")
@@ -493,7 +493,7 @@ describe Crystal::MIR do
           site.total_lifetime = 500_000  # avg = 500, under threshold
 
           # Run refinement pass immediately for this function
-          pass = Crystal::MIR::MemoryStrategyRefinementPass.new(func, profile)
+          pass = Adamas::MIR::MemoryStrategyRefinementPass.new(func, profile)
           stats = pass.run
           count += stats.allocations_refined
         end
@@ -506,7 +506,7 @@ describe Crystal::MIR do
       mod = PGOTestHelpers.create_test_module
       profile = PGOTestHelpers.create_empty_profile
 
-      pipeline = Crystal::MIR::PGOPipeline.new(mod, profile)
+      pipeline = Adamas::MIR::PGOPipeline.new(mod, profile)
       stats = pipeline.run
 
       io = IO::Memory.new
@@ -531,7 +531,7 @@ describe Crystal::MIR do
       profile = PGOTestHelpers.create_empty_profile
 
       stats = mod.optimize_with_profile(profile)
-      stats.should be_a(Crystal::MIR::PGOStats)
+      stats.should be_a(Adamas::MIR::PGOStats)
     end
 
     it "Function#optimize_with_profile runs PGO on single function" do
@@ -540,7 +540,7 @@ describe Crystal::MIR do
       profile = PGOTestHelpers.create_empty_profile
 
       stats = func.optimize_with_profile(mod, profile)
-      stats.should be_a(Crystal::MIR::PGOStats)
+      stats.should be_a(Adamas::MIR::PGOStats)
     end
   end
 
@@ -548,17 +548,17 @@ describe Crystal::MIR do
   # STATS STRUCTURE TESTS
   # ═══════════════════════════════════════════════════════════════════════════
 
-  describe Crystal::MIR::DevirtualizationStats do
+  describe Adamas::MIR::DevirtualizationStats do
     it "initializes with zero values" do
-      stats = Crystal::MIR::DevirtualizationStats.new
+      stats = Adamas::MIR::DevirtualizationStats.new
       stats.calls_devirtualized.should eq(0)
       stats.targets.should be_empty
     end
 
     it "formats output correctly" do
-      stats = Crystal::MIR::DevirtualizationStats.new
+      stats = Adamas::MIR::DevirtualizationStats.new
       stats.calls_devirtualized = 2
-      stats.targets << Crystal::MIR::DevirtualizedTarget.new("caller", "Dog::speak", 0.95, 5000_u64)
+      stats.targets << Adamas::MIR::DevirtualizedTarget.new("caller", "Dog::speak", 0.95, 5000_u64)
 
       io = IO::Memory.new
       stats.to_s(io)
@@ -570,29 +570,29 @@ describe Crystal::MIR do
     end
   end
 
-  describe Crystal::MIR::CrossFunctionRCStats do
+  describe Adamas::MIR::CrossFunctionRCStats do
     it "initializes with zero values" do
-      stats = Crystal::MIR::CrossFunctionRCStats.new
+      stats = Adamas::MIR::CrossFunctionRCStats.new
       stats.rc_ops_elided.should eq(0)
       stats.elision_candidates.should be_empty
     end
   end
 
-  describe Crystal::MIR::MemoryRefinementStats do
+  describe Adamas::MIR::MemoryRefinementStats do
     it "initializes with zero values" do
-      stats = Crystal::MIR::MemoryRefinementStats.new
+      stats = Adamas::MIR::MemoryRefinementStats.new
       stats.allocations_refined.should eq(0)
       stats.refinements.should be_empty
     end
 
     it "formats refinements correctly" do
-      stats = Crystal::MIR::MemoryRefinementStats.new
+      stats = Adamas::MIR::MemoryRefinementStats.new
       stats.allocations_refined = 1
-      stats.refinements << Crystal::MIR::StrategyRefinement.new(
+      stats.refinements << Adamas::MIR::StrategyRefinement.new(
         123_u64,
         "test_func",
-        Crystal::MIR::MemoryStrategy::Stack,
-        Crystal::MIR::MemoryStrategy::Slab,
+        Adamas::MIR::MemoryStrategy::Stack,
+        Adamas::MIR::MemoryStrategy::Slab,
         0.85,
         "escape_rate=15%"
       )
@@ -607,9 +607,9 @@ describe Crystal::MIR do
     end
   end
 
-  describe Crystal::MIR::PGOStats do
+  describe Adamas::MIR::PGOStats do
     it "calculates total optimizations" do
-      stats = Crystal::MIR::PGOStats.new
+      stats = Adamas::MIR::PGOStats.new
       stats.devirtualization.calls_devirtualized = 5
       stats.rc_elision.rc_ops_elided = 10
       stats.memory_refinement.allocations_refined = 3

@@ -16,7 +16,7 @@ make_source_file() {
   cat >"$path" <<'EOF'
 require "./compiler/bootstrap_shims"
 
-trace_bootstrap = CrystalV2::Compiler::BootstrapEnv.get?("STAGE2_BOOTSTRAP_TRACE") == "1"
+trace_bootstrap = Adamas::Compiler::BootstrapEnv.get?("STAGE2_BOOTSTRAP_TRACE") == "1"
 
 begin
   STDERR.puts "x"

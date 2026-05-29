@@ -10,7 +10,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STAGE1="$1"
 STAGE2="$2"
 WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/stage2_full_parse_macro_expander.XXXXXX")"
-FULL_SRC="$ROOT_DIR/src/crystal_v2.cr"
+FULL_SRC="$ROOT_DIR/src/adamas.cr"
 MACRO_EXPANDER_SRC="$ROOT_DIR/src/compiler/semantic/macro_expander.cr"
 
 cleanup() {

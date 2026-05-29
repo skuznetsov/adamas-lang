@@ -8,7 +8,7 @@
 require "./hir"
 require "./taint_analysis"
 
-module Crystal::HIR
+module Adamas::HIR
   # Result of escape analysis for a function
   class EscapeSummary
     # Which parameters escape and how?

@@ -1,6 +1,6 @@
 #!/usr/bin/env crystal
 # Compare presence of key parsing/lexing features between original Crystal parser
-# (src/compiler/crystal/syntax/*.cr) and the v2 parser (crystal_v2/src/compiler/frontend/*.cr).
+# (src/compiler/crystal/syntax/*.cr) and the v2 parser (adamas/src/compiler/frontend/*.cr).
 # This tool searches for indicative code patterns and reports PASS/FAIL per side.
 
 require "../src/compiler/frontend/watchdog"
@@ -37,7 +37,7 @@ def report(feature : Feature)
   puts "  v2      : #{f2 ? "PASS" : "FAIL"} (#{feature.file2})"
 end
 
-# Resolve roots dynamically so the script works inside crystal_v2_repo with a sibling crystal/ checkout.
+# Resolve roots dynamically so the script works inside adamas_repo with a sibling crystal/ checkout.
 project_root = File.expand_path("..", __DIR__)
 upstream_root = ENV["CRYSTAL_UPSTREAM_ROOT"]? || File.expand_path("../crystal", project_root)
 v2_root = ENV["CRYSTAL_V2_ROOT"]? || project_root

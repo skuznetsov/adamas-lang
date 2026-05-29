@@ -2,7 +2,7 @@ require "spec"
 
 require "./support/server_helper"
 
-describe CrystalV2::Compiler::LSP::Server do
+describe Adamas::Compiler::LSP::Server do
   it "folds begin block stopping before rescue" do
     source = <<-CR
     begin
@@ -12,7 +12,7 @@ describe CrystalV2::Compiler::LSP::Server do
     end
     CR
 
-    server = CrystalV2::Compiler::LSP::Server.new(IO::Memory.new, IO::Memory.new, CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false))
+    server = Adamas::Compiler::LSP::Server.new(IO::Memory.new, IO::Memory.new, Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false))
     _diags, program, _tc, _ids, _symtab, _req = server.spec_analyze_document(source, nil, "/tmp/fold_rescue.cr")
 
     ranges = server.spec_collect_folding_ranges(program)
@@ -33,7 +33,7 @@ describe CrystalV2::Compiler::LSP::Server do
     end
     CR
 
-    server = CrystalV2::Compiler::LSP::Server.new(IO::Memory.new, IO::Memory.new, CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false))
+    server = Adamas::Compiler::LSP::Server.new(IO::Memory.new, IO::Memory.new, Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false))
     _diags, program, _tc, _ids, _symtab, _req = server.spec_analyze_document(source, nil, "/tmp/fold_rescue.cr")
     ranges = server.spec_collect_folding_ranges(program)
 
@@ -54,7 +54,7 @@ describe CrystalV2::Compiler::LSP::Server do
     end
     CR
 
-    server = CrystalV2::Compiler::LSP::Server.new(IO::Memory.new, IO::Memory.new, CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false))
+    server = Adamas::Compiler::LSP::Server.new(IO::Memory.new, IO::Memory.new, Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false))
     _diags, program, _tc, _ids, _symtab, _req = server.spec_analyze_document(source, nil, "/tmp/fold_rescue.cr")
     ranges = server.spec_collect_folding_ranges(program)
 
@@ -77,7 +77,7 @@ describe CrystalV2::Compiler::LSP::Server do
     end
     CR
 
-    server = CrystalV2::Compiler::LSP::Server.new(IO::Memory.new, IO::Memory.new, CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false))
+    server = Adamas::Compiler::LSP::Server.new(IO::Memory.new, IO::Memory.new, Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false))
     _diags, program, _tc, _ids, _symtab, _req = server.spec_analyze_document(source, nil, "/tmp/fold_else.cr")
     ranges = server.spec_collect_folding_ranges(program)
 
@@ -109,7 +109,7 @@ describe CrystalV2::Compiler::LSP::Server do
     end
     CR
 
-    server = CrystalV2::Compiler::LSP::Server.new(IO::Memory.new, IO::Memory.new, CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false))
+    server = Adamas::Compiler::LSP::Server.new(IO::Memory.new, IO::Memory.new, Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false))
     _diags, program, _tc, _ids, _symtab, _req = server.spec_analyze_document(source, nil, "/tmp/fold_ensure_only.cr")
     ranges = server.spec_collect_folding_ranges(program)
 

@@ -2,7 +2,7 @@
 
 require "../src/compiler/frontend/ast"
 
-alias F = CrystalV2::Compiler::Frontend
+alias F = Adamas::Compiler::Frontend
 
 arena = F::AstArena.new
 items = [] of Tuple(F::ExprId, F::ArenaLike)

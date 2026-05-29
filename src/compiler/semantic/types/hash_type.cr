@@ -1,6 +1,6 @@
 require "./type"
 
-module CrystalV2
+module Adamas
   module Compiler
     module Semantic
       # Represents a Hash generic type: Hash(K, V)

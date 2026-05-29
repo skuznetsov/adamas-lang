@@ -9,19 +9,19 @@ require "../../src/compiler/semantic/analyzer"
 describe "LSP InlayHint" do
   describe "InlayHintKind enum" do
     it "has correct values" do
-      CrystalV2::Compiler::LSP::InlayHintKind::Type.value.should eq(1)
-      CrystalV2::Compiler::LSP::InlayHintKind::Parameter.value.should eq(2)
+      Adamas::Compiler::LSP::InlayHintKind::Type.value.should eq(1)
+      Adamas::Compiler::LSP::InlayHintKind::Parameter.value.should eq(2)
     end
   end
 
   describe "InlayHint struct" do
     it "creates basic inlay hint" do
-      position = CrystalV2::Compiler::LSP::Position.new(line: 5, character: 10)
+      position = Adamas::Compiler::LSP::Position.new(line: 5, character: 10)
 
-      hint = CrystalV2::Compiler::LSP::InlayHint.new(
+      hint = Adamas::Compiler::LSP::InlayHint.new(
         position: position,
         label: ": Int32",
-        kind: CrystalV2::Compiler::LSP::InlayHintKind::Type.value
+        kind: Adamas::Compiler::LSP::InlayHintKind::Type.value
       )
 
       hint.position.line.should eq(5)
@@ -31,12 +31,12 @@ describe "LSP InlayHint" do
     end
 
     it "supports padding options" do
-      position = CrystalV2::Compiler::LSP::Position.new(line: 0, character: 0)
+      position = Adamas::Compiler::LSP::Position.new(line: 0, character: 0)
 
-      hint = CrystalV2::Compiler::LSP::InlayHint.new(
+      hint = Adamas::Compiler::LSP::InlayHint.new(
         position: position,
         label: "value: ",
-        kind: CrystalV2::Compiler::LSP::InlayHintKind::Parameter.value,
+        kind: Adamas::Compiler::LSP::InlayHintKind::Parameter.value,
         padding_left: true,
         padding_right: false
       )
@@ -46,12 +46,12 @@ describe "LSP InlayHint" do
     end
 
     it "serializes to JSON correctly" do
-      position = CrystalV2::Compiler::LSP::Position.new(line: 3, character: 7)
+      position = Adamas::Compiler::LSP::Position.new(line: 3, character: 7)
 
-      hint = CrystalV2::Compiler::LSP::InlayHint.new(
+      hint = Adamas::Compiler::LSP::InlayHint.new(
         position: position,
         label: ": String",
-        kind: CrystalV2::Compiler::LSP::InlayHintKind::Type.value
+        kind: Adamas::Compiler::LSP::InlayHintKind::Type.value
       )
 
       json = hint.to_json
@@ -64,13 +64,13 @@ describe "LSP InlayHint" do
 
   describe "InlayHintParams struct" do
     it "creates params with required fields" do
-      text_doc = CrystalV2::Compiler::LSP::TextDocumentIdentifier.new(uri: "file:///test.cr")
-      range = CrystalV2::Compiler::LSP::Range.new(
-        start: CrystalV2::Compiler::LSP::Position.new(0, 0),
-        end: CrystalV2::Compiler::LSP::Position.new(10, 0)
+      text_doc = Adamas::Compiler::LSP::TextDocumentIdentifier.new(uri: "file:///test.cr")
+      range = Adamas::Compiler::LSP::Range.new(
+        start: Adamas::Compiler::LSP::Position.new(0, 0),
+        end: Adamas::Compiler::LSP::Position.new(10, 0)
       )
 
-      params = CrystalV2::Compiler::LSP::InlayHintParams.new(
+      params = Adamas::Compiler::LSP::InlayHintParams.new(
         text_document: text_doc,
         range: range
       )
@@ -81,13 +81,13 @@ describe "LSP InlayHint" do
     end
 
     it "serializes to JSON correctly" do
-      text_doc = CrystalV2::Compiler::LSP::TextDocumentIdentifier.new(uri: "file:///test.cr")
-      range = CrystalV2::Compiler::LSP::Range.new(
-        start: CrystalV2::Compiler::LSP::Position.new(0, 0),
-        end: CrystalV2::Compiler::LSP::Position.new(5, 0)
+      text_doc = Adamas::Compiler::LSP::TextDocumentIdentifier.new(uri: "file:///test.cr")
+      range = Adamas::Compiler::LSP::Range.new(
+        start: Adamas::Compiler::LSP::Position.new(0, 0),
+        end: Adamas::Compiler::LSP::Position.new(5, 0)
       )
 
-      params = CrystalV2::Compiler::LSP::InlayHintParams.new(
+      params = Adamas::Compiler::LSP::InlayHintParams.new(
         text_document: text_doc,
         range: range
       )
@@ -104,11 +104,11 @@ describe "LSP InlayHint" do
       x = 10
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       result = analyzer.resolve_names
       identifier_symbols = result.identifier_symbols
@@ -122,7 +122,7 @@ describe "LSP InlayHint" do
       # Find 'x' variable symbol
       x_symbol = analyzer.global_context.symbol_table.lookup("x")
       x_symbol.should_not be_nil
-      x_symbol.should be_a(CrystalV2::Compiler::Semantic::VariableSymbol)
+      x_symbol.should be_a(Adamas::Compiler::Semantic::VariableSymbol)
     end
 
     it "type inference runs without errors" do
@@ -132,11 +132,11 @@ describe "LSP InlayHint" do
       z = 3.14
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       result = analyzer.resolve_names
       identifier_symbols = result.identifier_symbols
@@ -153,11 +153,11 @@ describe "LSP InlayHint" do
       42
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       result = analyzer.resolve_names
       identifier_symbols = result.identifier_symbols
@@ -182,11 +182,11 @@ describe "LSP InlayHint" do
       result = calculate(10, 20)
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       result = analyzer.resolve_names
 
@@ -196,9 +196,9 @@ describe "LSP InlayHint" do
       calc_symbol = analyzer.global_context.symbol_table.lookup("calculate")
       calc_symbol.should_not be_nil
       calc_symbol = calc_symbol.not_nil!
-      calc_symbol.should be_a(CrystalV2::Compiler::Semantic::MethodSymbol)
+      calc_symbol.should be_a(Adamas::Compiler::Semantic::MethodSymbol)
 
-      method_symbol = calc_symbol.as(CrystalV2::Compiler::Semantic::MethodSymbol)
+      method_symbol = calc_symbol.as(Adamas::Compiler::Semantic::MethodSymbol)
 
       # Method should have 2 parameters
       method_symbol.params.size.should eq(2)
@@ -219,11 +219,11 @@ describe "LSP InlayHint" do
       result = add(multiply(2, 3), 5)
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       result = analyzer.resolve_names
 
@@ -244,11 +244,11 @@ describe "LSP InlayHint" do
       message = greet("World")
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       result = analyzer.resolve_names
 
@@ -258,9 +258,9 @@ describe "LSP InlayHint" do
       greet_symbol = analyzer.global_context.symbol_table.lookup("greet")
       greet_symbol.should_not be_nil
       greet_symbol = greet_symbol.not_nil!
-      greet_symbol.should be_a(CrystalV2::Compiler::Semantic::MethodSymbol)
+      greet_symbol.should be_a(Adamas::Compiler::Semantic::MethodSymbol)
 
-      method_symbol = greet_symbol.as(CrystalV2::Compiler::Semantic::MethodSymbol)
+      method_symbol = greet_symbol.as(Adamas::Compiler::Semantic::MethodSymbol)
 
       # Method should have 1 parameter
       method_symbol.params.size.should eq(1)
@@ -276,11 +276,11 @@ describe "LSP InlayHint" do
       x = get_value
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       result = analyzer.resolve_names
 
@@ -290,9 +290,9 @@ describe "LSP InlayHint" do
       get_value_symbol = analyzer.global_context.symbol_table.lookup("get_value")
       get_value_symbol.should_not be_nil
       get_value_symbol = get_value_symbol.not_nil!
-      get_value_symbol.should be_a(CrystalV2::Compiler::Semantic::MethodSymbol)
+      get_value_symbol.should be_a(Adamas::Compiler::Semantic::MethodSymbol)
 
-      method_symbol = get_value_symbol.as(CrystalV2::Compiler::Semantic::MethodSymbol)
+      method_symbol = get_value_symbol.as(Adamas::Compiler::Semantic::MethodSymbol)
 
       # Method should have 0 parameters
       method_symbol.params.size.should eq(0)
@@ -307,11 +307,11 @@ describe "LSP InlayHint" do
       z = 30
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       result = analyzer.resolve_names
       identifier_symbols = result.identifier_symbols
@@ -322,7 +322,7 @@ describe "LSP InlayHint" do
       # Test range filtering: only line 0 (first line)
       in_range_count = 0
       identifier_symbols.each do |expr_id, symbol|
-        if symbol.is_a?(CrystalV2::Compiler::Semantic::VariableSymbol)
+        if symbol.is_a?(Adamas::Compiler::Semantic::VariableSymbol)
           if expr_id == symbol.node_id
             node = program.arena[expr_id]
             # Check if node is on line 0 (1-indexed in span, so line 1)
@@ -342,11 +342,11 @@ describe "LSP InlayHint" do
       c = 3
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       result = analyzer.resolve_names
       identifier_symbols = result.identifier_symbols
@@ -357,7 +357,7 @@ describe "LSP InlayHint" do
       # Test range: lines 0-1 (first two lines)
       in_range_count = 0
       identifier_symbols.each do |expr_id, symbol|
-        if symbol.is_a?(CrystalV2::Compiler::Semantic::VariableSymbol)
+        if symbol.is_a?(Adamas::Compiler::Semantic::VariableSymbol)
           if expr_id == symbol.node_id
             node = program.arena[expr_id]
             # Lines 1-2 in 1-indexed span
@@ -377,11 +377,11 @@ describe "LSP InlayHint" do
       x = 10
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       result = analyzer.resolve_names
 
@@ -415,11 +415,11 @@ describe "LSP InlayHint" do
       z = 30
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       analyzer.resolve_names
 
@@ -450,11 +450,11 @@ describe "LSP InlayHint" do
       y = "test"
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       result = analyzer.resolve_names
       identifier_symbols = result.identifier_symbols
@@ -481,21 +481,21 @@ describe "LSP InlayHint" do
       result = add(5, 10)
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       result = analyzer.resolve_names
 
       # Method should be in symbol table
       add_symbol = analyzer.global_context.symbol_table.lookup("add")
       add_symbol.should_not be_nil
-      add_symbol.should be_a(CrystalV2::Compiler::Semantic::MethodSymbol)
+      add_symbol.should be_a(Adamas::Compiler::Semantic::MethodSymbol)
 
       # Method should have parameters
-      method_symbol = add_symbol.as(CrystalV2::Compiler::Semantic::MethodSymbol)
+      method_symbol = add_symbol.as(Adamas::Compiler::Semantic::MethodSymbol)
       method_symbol.params.size.should eq(2)
 
       # Result variable should be in symbol table
@@ -514,11 +514,11 @@ describe "LSP InlayHint" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       result = analyzer.resolve_names
       identifier_symbols = result.identifier_symbols
@@ -546,11 +546,11 @@ describe "LSP InlayHint" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       result = analyzer.resolve_names
       identifier_symbols = result.identifier_symbols

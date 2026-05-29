@@ -1,6 +1,6 @@
 # Formatter Benchmark Results
 
-Comparison between original Crystal formatter and CrystalV2 token-based formatter.
+Comparison between original Crystal formatter and Adamas token-based formatter.
 
 ## Test File
 - **File**: `src/compiler/crystal/syntax/parser.cr`
@@ -15,7 +15,7 @@ Comparison between original Crystal formatter and CrystalV2 token-based formatte
 - **Max**: 61.09 ms
 - **Code size**: ~5,260 lines
 
-### CrystalV2 Token-based Formatter
+### Adamas Token-based Formatter
 - **Average**: 34.78 ms
 - **Min**: 33.08 ms
 - **Max**: 38.08 ms
@@ -23,7 +23,7 @@ Comparison between original Crystal formatter and CrystalV2 token-based formatte
 
 ## Performance Comparison
 
-| Metric | Original | CrystalV2 | Improvement |
+| Metric | Original | Adamas | Improvement |
 |--------|----------|-----------|-------------|
 | Average time | 53.41 ms | 34.78 ms | **1.54x faster** |
 | Min time | 51.63 ms | 33.08 ms | **1.56x faster** |

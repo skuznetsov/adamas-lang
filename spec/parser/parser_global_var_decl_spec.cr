@@ -2,22 +2,22 @@ require "spec"
 
 require "../../src/compiler/frontend/parser"
 
-describe "CrystalV2::Compiler::Frontend::Parser" do
+describe "Adamas::Compiler::Frontend::Parser" do
   describe "Phase 77: Global variable type declarations ($var : Type)" do
     it "parses simple global variable declaration" do
       source = "$count : Int32"
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       decl = arena[program.roots[0]]
-      CrystalV2::Compiler::Frontend.node_kind(decl).should eq(CrystalV2::Compiler::Frontend::NodeKind::GlobalVarDecl)
-      decl.should be_a(CrystalV2::Compiler::Frontend::GlobalVarDeclNode)
+      Adamas::Compiler::Frontend.node_kind(decl).should eq(Adamas::Compiler::Frontend::NodeKind::GlobalVarDecl)
+      decl.should be_a(Adamas::Compiler::Frontend::GlobalVarDeclNode)
 
-      global_decl = decl.as(CrystalV2::Compiler::Frontend::GlobalVarDeclNode)
+      global_decl = decl.as(Adamas::Compiler::Frontend::GlobalVarDeclNode)
       global_decl.name.should eq("$count".to_slice)
       global_decl.type.should eq("Int32".to_slice)
     end
@@ -25,15 +25,15 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
     it "parses global variable declaration with String type" do
       source = "$name : String"
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       arena = program.arena
       decl = arena[program.roots[0]]
 
-      CrystalV2::Compiler::Frontend.node_kind(decl).should eq(CrystalV2::Compiler::Frontend::NodeKind::GlobalVarDecl)
-      decl.should be_a(CrystalV2::Compiler::Frontend::GlobalVarDeclNode)
-      global_decl = decl.as(CrystalV2::Compiler::Frontend::GlobalVarDeclNode)
+      Adamas::Compiler::Frontend.node_kind(decl).should eq(Adamas::Compiler::Frontend::NodeKind::GlobalVarDecl)
+      decl.should be_a(Adamas::Compiler::Frontend::GlobalVarDeclNode)
+      global_decl = decl.as(Adamas::Compiler::Frontend::GlobalVarDeclNode)
 
       global_decl.name.should eq("$name".to_slice)
       global_decl.type.should eq("String".to_slice)
@@ -46,21 +46,21 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       $flag : Bool
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(3)
       arena = program.arena
 
-      decl1 = arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::GlobalVarDeclNode)
+      decl1 = arena[program.roots[0]].as(Adamas::Compiler::Frontend::GlobalVarDeclNode)
       decl1.name.should eq("$count".to_slice)
       decl1.type.should eq("Int32".to_slice)
 
-      decl2 = arena[program.roots[1]].as(CrystalV2::Compiler::Frontend::GlobalVarDeclNode)
+      decl2 = arena[program.roots[1]].as(Adamas::Compiler::Frontend::GlobalVarDeclNode)
       decl2.name.should eq("$name".to_slice)
       decl2.type.should eq("String".to_slice)
 
-      decl3 = arena[program.roots[2]].as(CrystalV2::Compiler::Frontend::GlobalVarDeclNode)
+      decl3 = arena[program.roots[2]].as(Adamas::Compiler::Frontend::GlobalVarDeclNode)
       decl3.name.should eq("$flag".to_slice)
       decl3.type.should eq("Bool".to_slice)
     end
@@ -68,11 +68,11 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
     it "parses global variable with underscores" do
       source = "$my_global_var : Int32"
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       arena = program.arena
-      decl = arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::GlobalVarDeclNode)
+      decl = arena[program.roots[0]].as(Adamas::Compiler::Frontend::GlobalVarDeclNode)
 
       decl.name.should eq("$my_global_var".to_slice)
       decl.type.should eq("Int32".to_slice)
@@ -81,11 +81,11 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
     it "parses global variable with custom type" do
       source = "$manager : Manager"
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       arena = program.arena
-      decl = arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::GlobalVarDeclNode)
+      decl = arena[program.roots[0]].as(Adamas::Compiler::Frontend::GlobalVarDeclNode)
 
       decl.name.should eq("$manager".to_slice)
       decl.type.should eq("Manager".to_slice)
@@ -98,30 +98,30 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       $name : String
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(3)
       arena = program.arena
 
       first_decl = arena[program.roots[0]]
-      CrystalV2::Compiler::Frontend.node_kind(first_decl).should eq(CrystalV2::Compiler::Frontend::NodeKind::GlobalVarDecl)
+      Adamas::Compiler::Frontend.node_kind(first_decl).should eq(Adamas::Compiler::Frontend::NodeKind::GlobalVarDecl)
 
       assign = arena[program.roots[1]]
-      CrystalV2::Compiler::Frontend.node_kind(assign).should eq(CrystalV2::Compiler::Frontend::NodeKind::Assign)
+      Adamas::Compiler::Frontend.node_kind(assign).should eq(Adamas::Compiler::Frontend::NodeKind::Assign)
 
       last_decl = arena[program.roots[2]]
-      CrystalV2::Compiler::Frontend.node_kind(last_decl).should eq(CrystalV2::Compiler::Frontend::NodeKind::GlobalVarDecl)
+      Adamas::Compiler::Frontend.node_kind(last_decl).should eq(Adamas::Compiler::Frontend::NodeKind::GlobalVarDecl)
     end
 
     it "parses global variable with suffix" do
       source = "$debug? : Bool"
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       arena = program.arena
-      decl = arena[program.roots[0]].as(CrystalV2::Compiler::Frontend::GlobalVarDeclNode)
+      decl = arena[program.roots[0]].as(Adamas::Compiler::Frontend::GlobalVarDeclNode)
 
       decl.name.should eq("$debug?".to_slice)
       decl.type.should eq("Bool".to_slice)

@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Run crystal_v2 under LLDB with scripts/lldb_macro_body_trace.py (macro body completion trace).
+# Run adamas under LLDB with scripts/lldb_macro_body_trace.py (macro body completion trace).
 #
 # Usage:
-#   scripts/run_lldb_macro_body_trace.sh /path/to/crystal_v2 scripts/macro_dump_stdlib_heavy_carrier.cr
+#   scripts/run_lldb_macro_body_trace.sh /path/to/adamas scripts/macro_dump_stdlib_heavy_carrier.cr
 #
 # Filter repeated producers (examples — match JSONL oracle keys):
 #   CRYSTAL_V2_LLDB_MB_FILTER_PATH_SUBSTR=byte_format.cr \
 #   CRYSTAL_V2_LLDB_MB_FILTER_PIECES=35 \
 #   CRYSTAL_V2_LLDB_MB_MAX_STOPS=8 \
-#   scripts/run_lldb_macro_body_trace.sh bin/crystal_v2 scripts/macro_dump_stdlib_heavy_carrier.cr
+#   scripts/run_lldb_macro_body_trace.sh bin/adamas scripts/macro_dump_stdlib_heavy_carrier.cr
 #
 # object.cr L609-616 / pieces=7:
 #   CRYSTAL_V2_LLDB_MB_FILTER_PATH_SUBSTR=object.cr \
@@ -34,13 +34,13 @@
 # Immediate giant diagnostic (stderr JSON, no lldb): CRYSTAL_V2_MACRO_BODY_GIANT_DIAG=1
 # (see macro_expander.cr / maybe_record_macro_body_output).
 #
-# Requires: crystal_v2 built with --debug (same as lldb_smoke / local DWARF work).
+# Requires: adamas built with --debug (same as lldb_smoke / local DWARF work).
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-COMPILER="${1:?path to crystal_v2 binary}"
+COMPILER="${1:?path to adamas binary}"
 CARRIER="${2:?path to carrier .cr}"
-OUT="${3:-/tmp/crystal_v2_lldb_macro_carrier_out}"
+OUT="${3:-/tmp/adamas_lldb_macro_carrier_out}"
 
 export CRYSTAL_V2_MACRO_BODY_OUTPUT_STATS_DUMP="${CRYSTAL_V2_MACRO_BODY_OUTPUT_STATS_DUMP:-1}"
 

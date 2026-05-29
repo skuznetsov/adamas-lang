@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-compiler="${1:-bin/crystal_v2}"
+compiler="${1:-bin/adamas}"
 tmpdir="$(mktemp -d /tmp/cv2_qualified_module_ns.XXXXXX)"
 trap 'rm -rf "$tmpdir"' EXIT
 

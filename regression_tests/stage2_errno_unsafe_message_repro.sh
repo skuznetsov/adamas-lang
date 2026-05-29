@@ -27,7 +27,7 @@ set -e
 
 if grep -q '\[DEF_ARENA\] base=Errno#unsafe_message' "$LOG_FILE" &&
    ! grep -q '\[DEF_ARENA\] base=Errno.value' "$LOG_FILE" &&
-   grep -q 'CrystalV2::Compiler::Frontend::Node:last=CrystalV2::Compiler::Frontend::Node' "$LOG_FILE"; then
+   grep -q 'Adamas::Compiler::Frontend::Node:last=Adamas::Compiler::Frontend::Node' "$LOG_FILE"; then
   echo "reproduced: stage2 corrupted Errno#unsafe_message before reaching Errno.value"
   exit 0
 fi

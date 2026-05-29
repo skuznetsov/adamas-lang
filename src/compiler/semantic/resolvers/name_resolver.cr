@@ -4,7 +4,7 @@ require "../symbol_table"
 require "../symbol"
 require "../generated_overlay"
 
-module CrystalV2
+module Adamas
   module Compiler
     module Semantic
       class NameResolver

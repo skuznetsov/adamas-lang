@@ -1,6 +1,6 @@
 # `ast_to_hir.cr` — audit index (no full re-read)
 
-**Source:** `src/compiler/hir/ast_to_hir.cr` in the `crystal_v2_repo` repository (`bootstrap-benchmark` branch).  
+**Source:** `src/compiler/hir/ast_to_hir.cr` in the `adamas_repo` repository (`bootstrap-benchmark` branch).  
 **Size:** 74,660 lines (single file).  
 **Generated:** automated structure scan + spot reads; after editing the source file, regenerate the “Statistics” and “lower_* index” sections.
 

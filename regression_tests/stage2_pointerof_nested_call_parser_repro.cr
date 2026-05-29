@@ -1,8 +1,8 @@
-module Crystal::HIR
+module Adamas::HIR
   class Stage2PointerofNestedCallParserRepro
     private def register_module_instance_methods_for(
       class_name : String,
-      include_node : CrystalV2::Compiler::Frontend::IncludeNode,
+      include_node : Adamas::Compiler::Frontend::IncludeNode,
       defined_full_names : Set(String),
       defined_class_method_full_names : Set(String),
       visited : Set(String),
@@ -59,7 +59,7 @@ module Crystal::HIR
               @arena = macro_arena
               begin
                 macro_body = macro_arena[macro_def.body]
-                if macro_body.is_a?(CrystalV2::Compiler::Frontend::MacroLiteralNode)
+                if macro_body.is_a?(Adamas::Compiler::Frontend::MacroLiteralNode)
                   if raw_text = macro_literal_raw_text(macro_body)
                     expanded = expand_flag_macro_text(raw_text) || raw_text
                     if parsed = parse_macro_literal_class_body(expanded)

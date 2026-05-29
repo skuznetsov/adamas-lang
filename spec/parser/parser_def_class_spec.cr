@@ -2,7 +2,7 @@ require "spec"
 
 require "../../src/compiler/frontend/parser"
 
-describe CrystalV2::Compiler::Frontend::Parser do
+describe Adamas::Compiler::Frontend::Parser do
   it "parses simple def with params and body" do
     source = <<-CR
       def greet(name)
@@ -10,11 +10,11 @@ describe CrystalV2::Compiler::Frontend::Parser do
       end
     CR
 
-    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
     program = parser.parse_program
 
     program.roots.size.should eq(1)
-    def_node = program.arena[program.roots.first].as(CrystalV2::Compiler::Frontend::DefNode)
+    def_node = program.arena[program.roots.first].as(Adamas::Compiler::Frontend::DefNode)
     String.new(def_node.name).should eq("greet")
     def_node.params.not_nil!.map { |p| String.new(p.name.not_nil!) }.should eq(["name"])
     def_node.body.not_nil!.size.should eq(1)
@@ -27,11 +27,11 @@ describe CrystalV2::Compiler::Frontend::Parser do
       end
     CR
 
-    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
     program = parser.parse_program
 
     program.roots.size.should eq(1)
-    class_node = program.arena[program.roots.first].as(CrystalV2::Compiler::Frontend::ClassNode)
+    class_node = program.arena[program.roots.first].as(Adamas::Compiler::Frontend::ClassNode)
     String.new(class_node.name).should eq("Greeter")
     class_node.body.not_nil!.size.should eq(1)
   end
@@ -44,11 +44,11 @@ describe CrystalV2::Compiler::Frontend::Parser do
       end
     CR
 
-    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
     program = parser.parse_program
 
     program.roots.size.should eq(1)
-    def_node = program.arena[program.roots.first].as(CrystalV2::Compiler::Frontend::DefNode)
+    def_node = program.arena[program.roots.first].as(Adamas::Compiler::Frontend::DefNode)
 
     params = def_node.params.not_nil!
     params.size.should eq(1)
@@ -63,11 +63,11 @@ describe CrystalV2::Compiler::Frontend::Parser do
       end
     CR
 
-    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
     program = parser.parse_program
 
     program.roots.size.should eq(1)
-    def_node = program.arena[program.roots.first].as(CrystalV2::Compiler::Frontend::DefNode)
+    def_node = program.arena[program.roots.first].as(Adamas::Compiler::Frontend::DefNode)
 
     params = def_node.params.not_nil!
     params.size.should eq(2)
@@ -84,11 +84,11 @@ describe CrystalV2::Compiler::Frontend::Parser do
       end
     CR
 
-    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
     program = parser.parse_program
 
     program.roots.size.should eq(1)
-    def_node = program.arena[program.roots.first].as(CrystalV2::Compiler::Frontend::DefNode)
+    def_node = program.arena[program.roots.first].as(Adamas::Compiler::Frontend::DefNode)
 
     params = def_node.params.not_nil!
     params.size.should eq(3)
@@ -107,11 +107,11 @@ describe CrystalV2::Compiler::Frontend::Parser do
       end
     CR
 
-    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
     program = parser.parse_program
 
     program.roots.size.should eq(1)
-    def_node = program.arena[program.roots.first].as(CrystalV2::Compiler::Frontend::DefNode)
+    def_node = program.arena[program.roots.first].as(Adamas::Compiler::Frontend::DefNode)
 
     params = def_node.params.not_nil!
     params.size.should eq(0)
@@ -125,11 +125,11 @@ describe CrystalV2::Compiler::Frontend::Parser do
       end
     CR
 
-    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
     program = parser.parse_program
 
     program.roots.size.should eq(1)
-    def_node = program.arena[program.roots.first].as(CrystalV2::Compiler::Frontend::DefNode)
+    def_node = program.arena[program.roots.first].as(Adamas::Compiler::Frontend::DefNode)
 
     return_type = def_node.return_type
     return_type.should_not be_nil
@@ -143,11 +143,11 @@ describe CrystalV2::Compiler::Frontend::Parser do
       end
     CR
 
-    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
     program = parser.parse_program
 
     program.roots.size.should eq(1)
-    def_node = program.arena[program.roots.first].as(CrystalV2::Compiler::Frontend::DefNode)
+    def_node = program.arena[program.roots.first].as(Adamas::Compiler::Frontend::DefNode)
 
     # Check params
     params = def_node.params.not_nil!
@@ -168,11 +168,11 @@ describe CrystalV2::Compiler::Frontend::Parser do
       end
     CR
 
-    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
     program = parser.parse_program
 
     program.roots.size.should eq(1)
-    def_node = program.arena[program.roots.first].as(CrystalV2::Compiler::Frontend::DefNode)
+    def_node = program.arena[program.roots.first].as(Adamas::Compiler::Frontend::DefNode)
 
     return_type = def_node.return_type
     return_type.should_not be_nil
@@ -183,7 +183,7 @@ describe CrystalV2::Compiler::Frontend::Parser do
     body.not_nil!.size.should eq(1)
 
     body_node = program.arena[body.not_nil!.first]
-    CrystalV2::Compiler::Frontend.node_kind(body_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Ternary)
+    Adamas::Compiler::Frontend.node_kind(body_node).should eq(Adamas::Compiler::Frontend::NodeKind::Ternary)
   end
 
   it "keeps parenthesized do blocks inside def bodies after simple return types" do
@@ -201,15 +201,15 @@ describe CrystalV2::Compiler::Frontend::Parser do
       end
     CR
 
-    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
     program = parser.parse_program
 
     program.roots.size.should eq(1)
-    class_node = program.arena[program.roots.first].as(CrystalV2::Compiler::Frontend::ClassNode)
+    class_node = program.arena[program.roots.first].as(Adamas::Compiler::Frontend::ClassNode)
     body = class_node.body.not_nil!
     body.size.should eq(2)
 
-    empty_def = program.arena[body[1]].as(CrystalV2::Compiler::Frontend::DefNode)
+    empty_def = program.arena[body[1]].as(Adamas::Compiler::Frontend::DefNode)
     return_type = empty_def.return_type
     return_type.should_not be_nil
     String.new(return_type.not_nil!).should eq("Bool")
@@ -220,8 +220,8 @@ describe CrystalV2::Compiler::Frontend::Parser do
 
     first_stmt = program.arena[empty_body.not_nil!.first]
     second_stmt = program.arena[empty_body.not_nil!.last]
-    CrystalV2::Compiler::Frontend.node_kind(first_stmt).should eq(CrystalV2::Compiler::Frontend::NodeKind::Call)
-    CrystalV2::Compiler::Frontend.node_kind(second_stmt).should eq(CrystalV2::Compiler::Frontend::NodeKind::Bool)
+    Adamas::Compiler::Frontend.node_kind(first_stmt).should eq(Adamas::Compiler::Frontend::NodeKind::Call)
+    Adamas::Compiler::Frontend.node_kind(second_stmt).should eq(Adamas::Compiler::Frontend::NodeKind::Bool)
   end
 
   it "parses top-level singleton defs with path receivers" do
@@ -231,11 +231,11 @@ describe CrystalV2::Compiler::Frontend::Parser do
       end
     CR
 
-    parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+    parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
     program = parser.parse_program
 
     program.roots.size.should eq(1)
-    def_node = program.arena[program.roots.first].as(CrystalV2::Compiler::Frontend::DefNode)
+    def_node = program.arena[program.roots.first].as(Adamas::Compiler::Frontend::DefNode)
     String.new(def_node.name).should eq("utc")
     String.new(def_node.receiver.not_nil!).should eq("Time::Location")
     def_node.body.not_nil!.size.should eq(1)

@@ -6,7 +6,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-COMPILER="${1:-$ROOT_DIR/bin/crystal_v2}"
+COMPILER="${1:-$ROOT_DIR/bin/adamas}"
 
 if [[ ! -x "$COMPILER" ]]; then
   echo "ERROR: compiler not found: $COMPILER" >&2
@@ -41,7 +41,7 @@ if [[ ! -s "$HIR" ]]; then
   exit 1
 fi
 
-for intrinsic in __crystal_v2_string_eq __crystal_v2_select_ptr; do
+for intrinsic in __adamas_string_eq __adamas_select_ptr; do
   if ! grep -q "$intrinsic" "$HIR"; then
     echo "p2 backend intrinsic boundary regression: $intrinsic missing from HIR" >&2
     cat "$HIR" >&2

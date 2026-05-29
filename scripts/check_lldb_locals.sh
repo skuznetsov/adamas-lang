@@ -2,8 +2,8 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-compiler="${1:-/tmp/crystal_v2_dwarf_check}"
-work_dir="$(mktemp -d "${TMPDIR:-/tmp}/crystal_v2_lldb_locals.XXXXXX")"
+compiler="${1:-/tmp/adamas_dwarf_check}"
+work_dir="$(mktemp -d "${TMPDIR:-/tmp}/adamas_lldb_locals.XXXXXX")"
 trap 'rm -rf "$work_dir"' EXIT
 
 require_contains() {

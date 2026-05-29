@@ -3,10 +3,10 @@ require "spec"
 require "../../src/main"
 require "../../src/compiler/lsp/server"
 
-describe CrystalV2::Compiler::LSP::Server do
+describe Adamas::Compiler::LSP::Server do
   describe "#find_call_context" do
     it "finds call context immediately after opening paren" do
-      server = CrystalV2::Compiler::LSP::Server.new
+      server = Adamas::Compiler::LSP::Server.new
       text = "result = compute(10)"
       line = 0
       character = 17  # After '('
@@ -21,7 +21,7 @@ describe CrystalV2::Compiler::LSP::Server do
     end
 
     it "calculates active parameter after first comma" do
-      server = CrystalV2::Compiler::LSP::Server.new
+      server = Adamas::Compiler::LSP::Server.new
       text = "result = compute(10, 20)"
       line = 0
       character = 21  # After ', '
@@ -35,7 +35,7 @@ describe CrystalV2::Compiler::LSP::Server do
     end
 
     it "calculates active parameter after second comma" do
-      server = CrystalV2::Compiler::LSP::Server.new
+      server = Adamas::Compiler::LSP::Server.new
       text = "result = compute(10, 20, \"test\")"
       line = 0
       character = 29  # After second comma
@@ -49,7 +49,7 @@ describe CrystalV2::Compiler::LSP::Server do
     end
 
     it "handles incomplete calls with trailing comma" do
-      server = CrystalV2::Compiler::LSP::Server.new
+      server = Adamas::Compiler::LSP::Server.new
       text = "result = compute(10,"
       line = 0
       character = 20  # After comma at end
@@ -63,7 +63,7 @@ describe CrystalV2::Compiler::LSP::Server do
     end
 
     it "skips nested parentheses" do
-      server = CrystalV2::Compiler::LSP::Server.new
+      server = Adamas::Compiler::LSP::Server.new
       text = "result = outer(inner(10),"
       line = 0
       character = 25  # After comma in outer call
@@ -77,7 +77,7 @@ describe CrystalV2::Compiler::LSP::Server do
     end
 
     it "returns nil when no opening paren found" do
-      server = CrystalV2::Compiler::LSP::Server.new
+      server = Adamas::Compiler::LSP::Server.new
       text = "result = 10 + 20"
       line = 0
       character = 10
@@ -89,7 +89,7 @@ describe CrystalV2::Compiler::LSP::Server do
 
   describe "#extract_method_name_before" do
     it "extracts simple method name" do
-      server = CrystalV2::Compiler::LSP::Server.new
+      server = Adamas::Compiler::LSP::Server.new
       line = "result = compute(10)"
       pos = 16  # Position of '('
 
@@ -98,7 +98,7 @@ describe CrystalV2::Compiler::LSP::Server do
     end
 
     it "extracts method name with whitespace before paren" do
-      server = CrystalV2::Compiler::LSP::Server.new
+      server = Adamas::Compiler::LSP::Server.new
       line = "result = compute  (10)"
       pos = 18  # Position of '('
 
@@ -107,7 +107,7 @@ describe CrystalV2::Compiler::LSP::Server do
     end
 
     it "extracts method name with underscores" do
-      server = CrystalV2::Compiler::LSP::Server.new
+      server = Adamas::Compiler::LSP::Server.new
       line = "result = my_method_123(10)"
       pos = 22  # Position of '('
 
@@ -116,7 +116,7 @@ describe CrystalV2::Compiler::LSP::Server do
     end
 
     it "returns nil when no identifier before paren" do
-      server = CrystalV2::Compiler::LSP::Server.new
+      server = Adamas::Compiler::LSP::Server.new
       line = "result = (10 + 20)"
       pos = 9  # Position of '('
 
@@ -128,11 +128,11 @@ describe CrystalV2::Compiler::LSP::Server do
   describe "SignatureInformation" do
     it "creates signature with parameters" do
       params = [
-        CrystalV2::Compiler::LSP::ParameterInformation.new(label: "x : Int32"),
-        CrystalV2::Compiler::LSP::ParameterInformation.new(label: "y : Int32")
+        Adamas::Compiler::LSP::ParameterInformation.new(label: "x : Int32"),
+        Adamas::Compiler::LSP::ParameterInformation.new(label: "y : Int32")
       ]
 
-      sig = CrystalV2::Compiler::LSP::SignatureInformation.new(
+      sig = Adamas::Compiler::LSP::SignatureInformation.new(
         label: "compute(x : Int32, y : Int32) : Int32",
         parameters: params
       )
@@ -146,7 +146,7 @@ describe CrystalV2::Compiler::LSP::Server do
     end
 
     it "creates signature without parameters" do
-      sig = CrystalV2::Compiler::LSP::SignatureInformation.new(
+      sig = Adamas::Compiler::LSP::SignatureInformation.new(
         label: "get_value() : Int32",
         parameters: nil
       )
@@ -159,22 +159,22 @@ describe CrystalV2::Compiler::LSP::Server do
   describe "SignatureHelp structure" do
     it "creates complete signature help response" do
       sigs = [
-        CrystalV2::Compiler::LSP::SignatureInformation.new(
+        Adamas::Compiler::LSP::SignatureInformation.new(
           label: "compute(x : Int32) : Int32",
           parameters: [
-            CrystalV2::Compiler::LSP::ParameterInformation.new(label: "x : Int32")
+            Adamas::Compiler::LSP::ParameterInformation.new(label: "x : Int32")
           ]
         ),
-        CrystalV2::Compiler::LSP::SignatureInformation.new(
+        Adamas::Compiler::LSP::SignatureInformation.new(
           label: "compute(x : Int32, y : Int32) : Int32",
           parameters: [
-            CrystalV2::Compiler::LSP::ParameterInformation.new(label: "x : Int32"),
-            CrystalV2::Compiler::LSP::ParameterInformation.new(label: "y : Int32")
+            Adamas::Compiler::LSP::ParameterInformation.new(label: "x : Int32"),
+            Adamas::Compiler::LSP::ParameterInformation.new(label: "y : Int32")
           ]
         )
       ]
 
-      help = CrystalV2::Compiler::LSP::SignatureHelp.new(
+      help = Adamas::Compiler::LSP::SignatureHelp.new(
         signatures: sigs,
         active_signature: 0,
         active_parameter: 1
@@ -186,14 +186,14 @@ describe CrystalV2::Compiler::LSP::Server do
     end
 
     it "serializes to JSON correctly" do
-      sig = CrystalV2::Compiler::LSP::SignatureInformation.new(
+      sig = Adamas::Compiler::LSP::SignatureInformation.new(
         label: "compute(x : Int32) : Int32",
         parameters: [
-          CrystalV2::Compiler::LSP::ParameterInformation.new(label: "x : Int32")
+          Adamas::Compiler::LSP::ParameterInformation.new(label: "x : Int32")
         ]
       )
 
-      help = CrystalV2::Compiler::LSP::SignatureHelp.new(
+      help = Adamas::Compiler::LSP::SignatureHelp.new(
         signatures: [sig],
         active_signature: 0,
         active_parameter: 0
@@ -221,11 +221,11 @@ describe CrystalV2::Compiler::LSP::Server do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
-      analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program)
+      analyzer = Adamas::Compiler::Semantic::Analyzer.new(program)
       analyzer.collect_symbols
       result = analyzer.resolve_names
       identifier_symbols = result.identifier_symbols
@@ -233,7 +233,7 @@ describe CrystalV2::Compiler::LSP::Server do
       # Method should be in symbol table
       helper_symbol = analyzer.global_context.symbol_table.lookup("helper")
       helper_symbol.should_not be_nil
-      helper_symbol.should be_a(CrystalV2::Compiler::Semantic::MethodSymbol)
+      helper_symbol.should be_a(Adamas::Compiler::Semantic::MethodSymbol)
 
       # Call to helper - now includes method name in definition after type inference improvements
       helper_call_count = identifier_symbols.count { |_, sym| sym == helper_symbol }

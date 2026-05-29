@@ -20,7 +20,7 @@ require "../frontend/ast"
 require "../frontend/lexer"
 require "../frontend/parser"
 
-module CrystalV2
+module Adamas
   module Compiler
     module LSP
       # Tracks which symbols depend on which files

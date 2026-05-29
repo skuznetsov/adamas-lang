@@ -1,6 +1,6 @@
 require "../src/compiler/lsp/server"
 
-module CrystalV2::Compiler::LSP
+module Adamas::Compiler::LSP
   class Server
     def spec_analyze(path)
       source = File.read(path)
@@ -9,8 +9,8 @@ module CrystalV2::Compiler::LSP
   end
 end
 
-server = CrystalV2::Compiler::LSP::Server.new(IO::Memory.new, IO::Memory.new)
-path = "crystal_v2/benchmarks/bench_parser_single.cr"
+server = Adamas::Compiler::LSP::Server.new(IO::Memory.new, IO::Memory.new)
+path = "adamas/benchmarks/bench_parser_single.cr"
 _, program, type_context, identifier_symbols, symbol_table, requires = server.spec_analyze(path)
 source = File.read(path)
 tokens = server.collect_semantic_tokens(program, source, identifier_symbols, type_context, symbol_table, path)

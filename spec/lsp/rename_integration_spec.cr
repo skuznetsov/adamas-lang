@@ -4,7 +4,7 @@ require "random/secure"
 
 require "./support/server_helper"
 
-describe CrystalV2::Compiler::LSP::Server do
+describe Adamas::Compiler::LSP::Server do
   it "renames a constant across files" do
     dir = File.join(Dir.tempdir, "lsp_rename_#{Random::Secure.hex(6)}")
     FileUtils.mkdir_p(dir)
@@ -29,7 +29,7 @@ describe CrystalV2::Compiler::LSP::Server do
     CR
     File.write(main_path, source)
 
-    server = CrystalV2::Compiler::LSP::Server.new(IO::Memory.new, IO::Memory.new, CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false))
+    server = Adamas::Compiler::LSP::Server.new(IO::Memory.new, IO::Memory.new, Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false))
     uri = server.spec_store_document(source, dir, main_path)
 
     line_idx = source.lines.index { |l| l.includes?("Helper") }.not_nil!
@@ -48,7 +48,7 @@ describe CrystalV2::Compiler::LSP::Server do
 
   it "rejects rename on prelude/stdlib symbols" do
     source = "Time.now\n"
-    server = CrystalV2::Compiler::LSP::Server.new(IO::Memory.new, IO::Memory.new, CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false, prelude_symbol_only: true))
+    server = Adamas::Compiler::LSP::Server.new(IO::Memory.new, IO::Memory.new, Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false, prelude_symbol_only: true))
     uri = server.spec_store_document(source, nil, "/tmp/rename_stdlib.cr")
 
     result = server.spec_rename(uri, 0, 0, "FooTime")

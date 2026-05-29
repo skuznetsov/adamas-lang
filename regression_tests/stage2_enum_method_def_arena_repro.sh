@@ -41,7 +41,7 @@ set -e
 
 if grep -q '\[DEF_ARENA\] base=E.value' "$LOG_FILE" &&
    grep -q 'fit=true' "$LOG_FILE" &&
-   grep -q 'first=CrystalV2::Compiler::Frontend::Node:last=CrystalV2::Compiler::Frontend::Node' "$LOG_FILE" &&
+   grep -q 'first=Adamas::Compiler::Frontend::Node:last=Adamas::Compiler::Frontend::Node' "$LOG_FILE" &&
    [[ "$RC" -ne 0 ]]; then
   echo "reproduced: stage2 accepted a corrupt enum method arena with generic body nodes"
   exit 0

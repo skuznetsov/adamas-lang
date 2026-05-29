@@ -6,8 +6,8 @@ require "../../src/compiler/frontend/parser"
 require "../../src/compiler/semantic/analyzer"
 require "../../src/compiler/semantic/type_inference_engine"
 
-alias ScopedAliasFrontend = CrystalV2::Compiler::Frontend
-alias ScopedAliasSemantic = CrystalV2::Compiler::Semantic
+alias ScopedAliasFrontend = Adamas::Compiler::Frontend
+alias ScopedAliasSemantic = Adamas::Compiler::Semantic
 
 private def infer_scoped_alias_source(source : String)
   lexer = ScopedAliasFrontend::Lexer.new(source)

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-COMPILER="${1:-./bin/crystal_v2}"
+COMPILER="${1:-./bin/adamas}"
 KEEP_TMP="${KEEP_TMP:-0}"
 
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/contextual_builtin_generic_cache.XXXXXX")"
@@ -18,7 +18,7 @@ cleanup() {
 trap cleanup EXIT
 
 cat >"$SRC" <<'CR'
-module CrystalV2
+module Adamas
   module Compiler
     module Frontend
       struct ExprId
@@ -45,7 +45,7 @@ module CrystalV2
   end
 end
 
-frontend = CrystalV2::Compiler::Frontend::DefNode.new([CrystalV2::Compiler::Frontend::ExprId.new(1)])
+frontend = Adamas::Compiler::Frontend::DefNode.new([Adamas::Compiler::Frontend::ExprId.new(1)])
 frontend_body = frontend.body
 
 puts frontend_body.not_nil!.first.index
@@ -74,8 +74,8 @@ echo "member_call traces:"
 member_lines="$(grep '\[MEMBER_CALL\]' "$COMPILE_ERR" | tr -d '\r' || true)"
 printf '%s\n' "$member_lines"
 
-if grep -Fq 'name=CrystalV2::Compiler::Frontend::DefNode#body' <<<"$member_lines" &&
-   grep -Fq 'return=Nil | Array(CrystalV2::Compiler::Frontend::ExprId)' <<<"$member_lines"; then
+if grep -Fq 'name=Adamas::Compiler::Frontend::DefNode#body' <<<"$member_lines" &&
+   grep -Fq 'return=Nil | Array(Adamas::Compiler::Frontend::ExprId)' <<<"$member_lines"; then
   echo "not reproduced"
   exit 1
 fi

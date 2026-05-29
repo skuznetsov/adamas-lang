@@ -5,9 +5,9 @@ require "../../src/compiler/hir/taint_analysis"
 require "../../src/compiler/frontend/parser"
 require "../../src/compiler/frontend/lexer"
 
-private def parse(code : String) : {CrystalV2::Compiler::Frontend::ArenaLike, Array(CrystalV2::Compiler::Frontend::ExprId)}
-  lexer = CrystalV2::Compiler::Frontend::Lexer.new(code)
-  parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+private def parse(code : String) : {Adamas::Compiler::Frontend::ArenaLike, Array(Adamas::Compiler::Frontend::ExprId)}
+  lexer = Adamas::Compiler::Frontend::Lexer.new(code)
+  parser = Adamas::Compiler::Frontend::Parser.new(lexer)
   result = parser.parse_program
   {result.arena, result.roots}
 end
@@ -15,22 +15,22 @@ end
 private def lower_named_function(
   code : String,
   name : String
-) : {Crystal::HIR::Module, Crystal::HIR::Function}
+) : {Adamas::HIR::Module, Adamas::HIR::Function}
   arena, exprs = parse(code)
-  converter = Crystal::HIR::AstToHir.new(arena)
+  converter = Adamas::HIR::AstToHir.new(arena)
 
-  class_nodes = [] of CrystalV2::Compiler::Frontend::ClassNode
-  enum_nodes = [] of CrystalV2::Compiler::Frontend::EnumNode
-  def_nodes = [] of CrystalV2::Compiler::Frontend::DefNode
+  class_nodes = [] of Adamas::Compiler::Frontend::ClassNode
+  enum_nodes = [] of Adamas::Compiler::Frontend::EnumNode
+  def_nodes = [] of Adamas::Compiler::Frontend::DefNode
 
   exprs.each do |expr_id|
     node = arena[expr_id]
     case node
-    when CrystalV2::Compiler::Frontend::ClassNode
+    when Adamas::Compiler::Frontend::ClassNode
       class_nodes << node
-    when CrystalV2::Compiler::Frontend::EnumNode
+    when Adamas::Compiler::Frontend::EnumNode
       enum_nodes << node
-    when CrystalV2::Compiler::Frontend::DefNode
+    when Adamas::Compiler::Frontend::DefNode
       def_nodes << node
     end
   end
@@ -47,12 +47,12 @@ private def lower_named_function(
 end
 
 private def find_call_by_prefix(
-  func : Crystal::HIR::Function,
+  func : Adamas::HIR::Function,
   prefix : String
-) : Crystal::HIR::Call
+) : Adamas::HIR::Call
   func.blocks.each do |block|
     block.instructions.each do |inst|
-      next unless inst.is_a?(Crystal::HIR::Call)
+      next unless inst.is_a?(Adamas::HIR::Call)
       return inst if inst.method_name.starts_with?(prefix)
     end
   end
@@ -83,11 +83,11 @@ describe "method effect summaries" do
     CRYSTAL
 
     hir_mod, func = lower_named_function(code, "foo")
-    analyzer = Crystal::HIR::EscapeAnalyzer.new(func, nil, hir_mod)
+    analyzer = Adamas::HIR::EscapeAnalyzer.new(func, nil, hir_mod)
     analyzer.analyze
 
     call = find_call_by_prefix(func, "Data.new")
-    call.lifetime.should eq(Crystal::HIR::LifetimeTag::ArgEscape)
+    call.lifetime.should eq(Adamas::HIR::LifetimeTag::ArgEscape)
   end
 
   it "uses @[ThreadShared] to taint call arguments" do
@@ -113,7 +113,7 @@ describe "method effect summaries" do
     CRYSTAL
 
     hir_mod, func = lower_named_function(code, "foo")
-    analyzer = Crystal::HIR::TaintAnalyzer.new(func, nil, hir_mod)
+    analyzer = Adamas::HIR::TaintAnalyzer.new(func, nil, hir_mod)
     analyzer.analyze
 
     call = find_call_by_prefix(func, "Data.new")
@@ -143,7 +143,7 @@ describe "method effect summaries" do
     CRYSTAL
 
     hir_mod, func = lower_named_function(code, "foo")
-    analyzer = Crystal::HIR::TaintAnalyzer.new(func, nil, hir_mod)
+    analyzer = Adamas::HIR::TaintAnalyzer.new(func, nil, hir_mod)
     analyzer.analyze
 
     call = find_call_by_prefix(func, "Data.new")

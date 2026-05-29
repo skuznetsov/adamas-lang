@@ -3,15 +3,15 @@ require "../../src/compiler/hir/hir"
 require "../../src/compiler/hir/taint_analysis"
 
 # Helper to create a simple function for testing
-private def create_function(name : String = "test") : {Crystal::HIR::Module, Crystal::HIR::Function}
-  mod = Crystal::HIR::Module.new
-  func = mod.create_function(name, Crystal::HIR::TypeRef::VOID)
+private def create_function(name : String = "test") : {Adamas::HIR::Module, Adamas::HIR::Function}
+  mod = Adamas::HIR::Module.new
+  func = mod.create_function(name, Adamas::HIR::TypeRef::VOID)
   {mod, func}
 end
 
 # Mock TypeInfoProvider for cycle detection tests
 class MockTypeInfoProvider
-  include Crystal::HIR::TypeInfoProvider
+  include Adamas::HIR::TypeInfoProvider
 
   @types : Hash(String, Hash(String, String))
   @acyclic_types : Set(String)
@@ -32,7 +32,7 @@ class MockTypeInfoProvider
   end
 end
 
-describe Crystal::HIR::TaintAnalyzer do
+describe Adamas::HIR::TaintAnalyzer do
   # ═══════════════════════════════════════════════════════════════════════════
   # CYCLE DETECTION
   # ═══════════════════════════════════════════════════════════════════════════
@@ -46,9 +46,9 @@ describe Crystal::HIR::TaintAnalyzer do
 
       mod, func = create_function
       entry = func.get_block(func.entry_block)
-      entry.terminator = Crystal::HIR::Return.new(nil)
+      entry.terminator = Adamas::HIR::Return.new(nil)
 
-      analyzer = Crystal::HIR::TaintAnalyzer.new(func, type_info)
+      analyzer = Adamas::HIR::TaintAnalyzer.new(func, type_info)
       analyzer.analyze
 
       analyzer.cyclic?("Node").should be_true
@@ -64,9 +64,9 @@ describe Crystal::HIR::TaintAnalyzer do
 
       mod, func = create_function
       entry = func.get_block(func.entry_block)
-      entry.terminator = Crystal::HIR::Return.new(nil)
+      entry.terminator = Adamas::HIR::Return.new(nil)
 
-      analyzer = Crystal::HIR::TaintAnalyzer.new(func, type_info)
+      analyzer = Adamas::HIR::TaintAnalyzer.new(func, type_info)
       analyzer.analyze
 
       analyzer.cyclic?("A").should be_true
@@ -81,9 +81,9 @@ describe Crystal::HIR::TaintAnalyzer do
 
       mod, func = create_function
       entry = func.get_block(func.entry_block)
-      entry.terminator = Crystal::HIR::Return.new(nil)
+      entry.terminator = Adamas::HIR::Return.new(nil)
 
-      analyzer = Crystal::HIR::TaintAnalyzer.new(func, type_info)
+      analyzer = Adamas::HIR::TaintAnalyzer.new(func, type_info)
       analyzer.analyze
 
       analyzer.cyclic?("Node").should be_true
@@ -96,9 +96,9 @@ describe Crystal::HIR::TaintAnalyzer do
 
       mod, func = create_function
       entry = func.get_block(func.entry_block)
-      entry.terminator = Crystal::HIR::Return.new(nil)
+      entry.terminator = Adamas::HIR::Return.new(nil)
 
-      analyzer = Crystal::HIR::TaintAnalyzer.new(func, type_info)
+      analyzer = Adamas::HIR::TaintAnalyzer.new(func, type_info)
       analyzer.analyze
 
       analyzer.cyclic?("Node").should be_false
@@ -113,9 +113,9 @@ describe Crystal::HIR::TaintAnalyzer do
 
       mod, func = create_function
       entry = func.get_block(func.entry_block)
-      entry.terminator = Crystal::HIR::Return.new(nil)
+      entry.terminator = Adamas::HIR::Return.new(nil)
 
-      analyzer = Crystal::HIR::TaintAnalyzer.new(func, type_info)
+      analyzer = Adamas::HIR::TaintAnalyzer.new(func, type_info)
       analyzer.analyze
 
       analyzer.cyclic?("Container").should be_false
@@ -131,14 +131,14 @@ describe Crystal::HIR::TaintAnalyzer do
 
       # Create a TypeRef that maps to "Node"
       # For testing, we'll use a custom type ID
-      node_type = Crystal::HIR::TypeRef.new(1000_u32)  # Custom ID
+      node_type = Adamas::HIR::TypeRef.new(1000_u32)  # Custom ID
 
       # Register type name mapping (normally done by module)
       # For now, we test with the known behavior
 
-      entry.terminator = Crystal::HIR::Return.new(nil)
+      entry.terminator = Adamas::HIR::Return.new(nil)
 
-      analyzer = Crystal::HIR::TaintAnalyzer.new(func, cyclic_types)
+      analyzer = Adamas::HIR::TaintAnalyzer.new(func, cyclic_types)
       analyzer.analyze
 
       # Verify cyclic types are tracked
@@ -155,9 +155,9 @@ describe Crystal::HIR::TaintAnalyzer do
       # Array of primitives cannot form cycles
       mod, func = create_function
       entry = func.get_block(func.entry_block)
-      entry.terminator = Crystal::HIR::Return.new(nil)
+      entry.terminator = Adamas::HIR::Return.new(nil)
 
-      analyzer = Crystal::HIR::TaintAnalyzer.new(func, Set(String).new)
+      analyzer = Adamas::HIR::TaintAnalyzer.new(func, Set(String).new)
       analyzer.analyze
 
       # Test the internal helper via cyclic_type_name? behavior
@@ -174,9 +174,9 @@ describe Crystal::HIR::TaintAnalyzer do
 
       mod, func = create_function
       entry = func.get_block(func.entry_block)
-      entry.terminator = Crystal::HIR::Return.new(nil)
+      entry.terminator = Adamas::HIR::Return.new(nil)
 
-      analyzer = Crystal::HIR::TaintAnalyzer.new(func, cyclic_types)
+      analyzer = Adamas::HIR::TaintAnalyzer.new(func, cyclic_types)
       analyzer.analyze
 
       analyzer.cyclic?("Node").should be_true
@@ -187,9 +187,9 @@ describe Crystal::HIR::TaintAnalyzer do
     it "Hash(String, Int32) is NOT cyclic (primitive values)" do
       mod, func = create_function
       entry = func.get_block(func.entry_block)
-      entry.terminator = Crystal::HIR::Return.new(nil)
+      entry.terminator = Adamas::HIR::Return.new(nil)
 
-      analyzer = Crystal::HIR::TaintAnalyzer.new(func, Set(String).new)
+      analyzer = Adamas::HIR::TaintAnalyzer.new(func, Set(String).new)
       analyzer.analyze
 
       analyzer.cyclic?("Hash(String, Int32)").should be_false
@@ -198,9 +198,9 @@ describe Crystal::HIR::TaintAnalyzer do
     it "Int32? is NOT cyclic (nilable primitive)" do
       mod, func = create_function
       entry = func.get_block(func.entry_block)
-      entry.terminator = Crystal::HIR::Return.new(nil)
+      entry.terminator = Adamas::HIR::Return.new(nil)
 
-      analyzer = Crystal::HIR::TaintAnalyzer.new(func, Set(String).new)
+      analyzer = Adamas::HIR::TaintAnalyzer.new(func, Set(String).new)
       analyzer.analyze
 
       analyzer.cyclic?("Int32?").should be_false
@@ -211,9 +211,9 @@ describe Crystal::HIR::TaintAnalyzer do
 
       mod, func = create_function
       entry = func.get_block(func.entry_block)
-      entry.terminator = Crystal::HIR::Return.new(nil)
+      entry.terminator = Adamas::HIR::Return.new(nil)
 
-      analyzer = Crystal::HIR::TaintAnalyzer.new(func, cyclic_types)
+      analyzer = Adamas::HIR::TaintAnalyzer.new(func, cyclic_types)
       analyzer.analyze
 
       analyzer.cyclic?("Node").should be_true
@@ -223,9 +223,9 @@ describe Crystal::HIR::TaintAnalyzer do
     it "primitive types are never cyclic" do
       mod, func = create_function
       entry = func.get_block(func.entry_block)
-      entry.terminator = Crystal::HIR::Return.new(nil)
+      entry.terminator = Adamas::HIR::Return.new(nil)
 
-      analyzer = Crystal::HIR::TaintAnalyzer.new(func, Set(String).new)
+      analyzer = Adamas::HIR::TaintAnalyzer.new(func, Set(String).new)
       analyzer.analyze
 
       analyzer.cyclic?("Int32").should be_false
@@ -247,16 +247,16 @@ describe Crystal::HIR::TaintAnalyzer do
       entry = func.get_block(func.entry_block)
 
       # %0 = allocate String
-      str = Crystal::HIR::Allocate.new(func.next_value_id, Crystal::HIR::TypeRef::STRING)
+      str = Adamas::HIR::Allocate.new(func.next_value_id, Adamas::HIR::TypeRef::STRING)
       entry.add(str)
 
       # %1 = call str.to_unsafe()
-      call = Crystal::HIR::Call.new(func.next_value_id, Crystal::HIR::TypeRef::VOID, str.id, "to_unsafe", [] of Crystal::HIR::ValueId)
+      call = Adamas::HIR::Call.new(func.next_value_id, Adamas::HIR::TypeRef::VOID, str.id, "to_unsafe", [] of Adamas::HIR::ValueId)
       entry.add(call)
 
-      entry.terminator = Crystal::HIR::Return.new(nil)
+      entry.terminator = Adamas::HIR::Return.new(nil)
 
-      analyzer = Crystal::HIR::TaintAnalyzer.new(func)
+      analyzer = Adamas::HIR::TaintAnalyzer.new(func)
       analyzer.analyze
 
       str.taints.ffi_exposed?.should be_true
@@ -268,20 +268,20 @@ describe Crystal::HIR::TaintAnalyzer do
       entry = func.get_block(func.entry_block)
 
       # %0 = allocate String
-      str = Crystal::HIR::Allocate.new(func.next_value_id, Crystal::HIR::TypeRef::STRING)
+      str = Adamas::HIR::Allocate.new(func.next_value_id, Adamas::HIR::TypeRef::STRING)
       entry.add(str)
 
       # %1 = copy %0
-      copy = Crystal::HIR::Copy.new(func.next_value_id, str.type, str.id)
+      copy = Adamas::HIR::Copy.new(func.next_value_id, str.type, str.id)
       entry.add(copy)
 
       # %2 = call copy.to_unsafe()
-      call = Crystal::HIR::Call.new(func.next_value_id, Crystal::HIR::TypeRef::VOID, copy.id, "to_unsafe", [] of Crystal::HIR::ValueId)
+      call = Adamas::HIR::Call.new(func.next_value_id, Adamas::HIR::TypeRef::VOID, copy.id, "to_unsafe", [] of Adamas::HIR::ValueId)
       entry.add(call)
 
-      entry.terminator = Crystal::HIR::Return.new(nil)
+      entry.terminator = Adamas::HIR::Return.new(nil)
 
-      analyzer = Crystal::HIR::TaintAnalyzer.new(func)
+      analyzer = Adamas::HIR::TaintAnalyzer.new(func)
       analyzer.analyze
 
       str.taints.ffi_exposed?.should be_true
@@ -292,16 +292,16 @@ describe Crystal::HIR::TaintAnalyzer do
 
       entry = func.get_block(func.entry_block)
 
-      ptr = Crystal::HIR::Allocate.new(func.next_value_id, Crystal::HIR::TypeRef.new(100_u32))
+      ptr = Adamas::HIR::Allocate.new(func.next_value_id, Adamas::HIR::TypeRef.new(100_u32))
       entry.add(ptr)
 
       # extern_call @puts(ptr)
-      call = Crystal::HIR::ExternCall.new(func.next_value_id, Crystal::HIR::TypeRef::VOID, "puts", [ptr.id])
+      call = Adamas::HIR::ExternCall.new(func.next_value_id, Adamas::HIR::TypeRef::VOID, "puts", [ptr.id])
       entry.add(call)
 
-      entry.terminator = Crystal::HIR::Return.new(nil)
+      entry.terminator = Adamas::HIR::Return.new(nil)
 
-      analyzer = Crystal::HIR::TaintAnalyzer.new(func)
+      analyzer = Adamas::HIR::TaintAnalyzer.new(func)
       analyzer.analyze
 
       ptr.taints.ffi_exposed?.should be_true
@@ -315,16 +315,16 @@ describe Crystal::HIR::TaintAnalyzer do
       entry = func.get_block(func.entry_block)
 
       # %0 = allocate Data
-      data = Crystal::HIR::Allocate.new(func.next_value_id, Crystal::HIR::TypeRef.new(100_u32))
+      data = Adamas::HIR::Allocate.new(func.next_value_id, Adamas::HIR::TypeRef.new(100_u32))
       entry.add(data)
 
       # %1 = call spawn(data)
-      call = Crystal::HIR::Call.new(func.next_value_id, Crystal::HIR::TypeRef::VOID, nil, "spawn", [data.id])
+      call = Adamas::HIR::Call.new(func.next_value_id, Adamas::HIR::TypeRef::VOID, nil, "spawn", [data.id])
       entry.add(call)
 
-      entry.terminator = Crystal::HIR::Return.new(nil)
+      entry.terminator = Adamas::HIR::Return.new(nil)
 
-      analyzer = Crystal::HIR::TaintAnalyzer.new(func)
+      analyzer = Adamas::HIR::TaintAnalyzer.new(func)
       analyzer.analyze
 
       # All spawn args cross fiber boundaries and are thread-shared
@@ -337,22 +337,22 @@ describe Crystal::HIR::TaintAnalyzer do
       entry = func.get_block(func.entry_block)
 
       # %0 = allocate Data
-      data = Crystal::HIR::Allocate.new(func.next_value_id, Crystal::HIR::TypeRef.new(100_u32))
+      data = Adamas::HIR::Allocate.new(func.next_value_id, Adamas::HIR::TypeRef.new(100_u32))
       entry.add(data)
 
       # %1 = copy %0
-      copy = Crystal::HIR::Copy.new(func.next_value_id, data.type, data.id)
+      copy = Adamas::HIR::Copy.new(func.next_value_id, data.type, data.id)
       entry.add(copy)
 
       # %2 = call channel.send(copy)
-      channel = Crystal::HIR::Allocate.new(func.next_value_id, Crystal::HIR::TypeRef.new(101_u32))
+      channel = Adamas::HIR::Allocate.new(func.next_value_id, Adamas::HIR::TypeRef.new(101_u32))
       entry.add(channel)
-      call = Crystal::HIR::Call.new(func.next_value_id, Crystal::HIR::TypeRef::VOID, channel.id, "send", [copy.id])
+      call = Adamas::HIR::Call.new(func.next_value_id, Adamas::HIR::TypeRef::VOID, channel.id, "send", [copy.id])
       entry.add(call)
 
-      entry.terminator = Crystal::HIR::Return.new(nil)
+      entry.terminator = Adamas::HIR::Return.new(nil)
 
-      analyzer = Crystal::HIR::TaintAnalyzer.new(func)
+      analyzer = Adamas::HIR::TaintAnalyzer.new(func)
       analyzer.analyze
 
       data.taints.thread_shared?.should be_true
@@ -364,25 +364,25 @@ describe Crystal::HIR::TaintAnalyzer do
       entry = func.get_block(func.entry_block)
 
       # %0 = allocate Data
-      data = Crystal::HIR::Allocate.new(func.next_value_id, Crystal::HIR::TypeRef.new(100_u32))
+      data = Adamas::HIR::Allocate.new(func.next_value_id, Adamas::HIR::TypeRef.new(100_u32))
       entry.add(data)
 
-      closure_scope = func.create_scope(Crystal::HIR::ScopeKind::Closure, func.scopes[0].id)
+      closure_scope = func.create_scope(Adamas::HIR::ScopeKind::Closure, func.scopes[0].id)
       block_id = func.create_block(closure_scope)
       block = func.get_block(block_id)
 
       # %1 = copy %0 inside block (capture)
-      copy = Crystal::HIR::Copy.new(func.next_value_id, data.type, data.id)
+      copy = Adamas::HIR::Copy.new(func.next_value_id, data.type, data.id)
       block.add(copy)
-      block.terminator = Crystal::HIR::Return.new(copy.id)
+      block.terminator = Adamas::HIR::Return.new(copy.id)
 
       # %2 = call spawn { ... }
-      call = Crystal::HIR::Call.new(func.next_value_id, Crystal::HIR::TypeRef::VOID, nil, "spawn", [] of Crystal::HIR::ValueId, block_id)
+      call = Adamas::HIR::Call.new(func.next_value_id, Adamas::HIR::TypeRef::VOID, nil, "spawn", [] of Adamas::HIR::ValueId, block_id)
       entry.add(call)
 
-      entry.terminator = Crystal::HIR::Return.new(nil)
+      entry.terminator = Adamas::HIR::Return.new(nil)
 
-      analyzer = Crystal::HIR::TaintAnalyzer.new(func)
+      analyzer = Adamas::HIR::TaintAnalyzer.new(func)
       analyzer.analyze
 
       data.taints.thread_shared?.should be_true
@@ -394,19 +394,19 @@ describe Crystal::HIR::TaintAnalyzer do
       entry = func.get_block(func.entry_block)
 
       # %0 = allocate Data
-      data = Crystal::HIR::Allocate.new(func.next_value_id, Crystal::HIR::TypeRef.new(100_u32))
+      data = Adamas::HIR::Allocate.new(func.next_value_id, Adamas::HIR::TypeRef.new(100_u32))
       entry.add(data)
 
       # %1 = call channel.send(data)
-      channel = Crystal::HIR::Allocate.new(func.next_value_id, Crystal::HIR::TypeRef.new(101_u32))
+      channel = Adamas::HIR::Allocate.new(func.next_value_id, Adamas::HIR::TypeRef.new(101_u32))
       entry.add(channel)
 
-      call = Crystal::HIR::Call.new(func.next_value_id, Crystal::HIR::TypeRef::VOID, channel.id, "send", [data.id])
+      call = Adamas::HIR::Call.new(func.next_value_id, Adamas::HIR::TypeRef::VOID, channel.id, "send", [data.id])
       entry.add(call)
 
-      entry.terminator = Crystal::HIR::Return.new(nil)
+      entry.terminator = Adamas::HIR::Return.new(nil)
 
-      analyzer = Crystal::HIR::TaintAnalyzer.new(func)
+      analyzer = Adamas::HIR::TaintAnalyzer.new(func)
       analyzer.analyze
 
       data.taints.thread_shared?.should be_true
@@ -418,16 +418,16 @@ describe Crystal::HIR::TaintAnalyzer do
       entry = func.get_block(func.entry_block)
 
       # %0 = allocate Data
-      data = Crystal::HIR::Allocate.new(func.next_value_id, Crystal::HIR::TypeRef.new(100_u32))
+      data = Adamas::HIR::Allocate.new(func.next_value_id, Adamas::HIR::TypeRef.new(100_u32))
       entry.add(data)
 
       # %1 = class_var_set @@cache = data
-      class_var_set = Crystal::HIR::ClassVarSet.new(func.next_value_id, Crystal::HIR::TypeRef::VOID, "MyClass", "cache", data.id)
+      class_var_set = Adamas::HIR::ClassVarSet.new(func.next_value_id, Adamas::HIR::TypeRef::VOID, "MyClass", "cache", data.id)
       entry.add(class_var_set)
 
-      entry.terminator = Crystal::HIR::Return.new(nil)
+      entry.terminator = Adamas::HIR::Return.new(nil)
 
-      analyzer = Crystal::HIR::TaintAnalyzer.new(func)
+      analyzer = Adamas::HIR::TaintAnalyzer.new(func)
       analyzer.analyze
 
       data.taints.thread_shared?.should be_true
@@ -439,24 +439,24 @@ describe Crystal::HIR::TaintAnalyzer do
       entry = func.get_block(func.entry_block)
 
       # %0 = allocate Data (captured in closure)
-      data = Crystal::HIR::Allocate.new(func.next_value_id, Crystal::HIR::TypeRef.new(100_u32))
+      data = Adamas::HIR::Allocate.new(func.next_value_id, Adamas::HIR::TypeRef.new(100_u32))
       entry.add(data)
 
       closure_block = func.create_block(func.scopes[0].id)
-      func.get_block(closure_block).terminator = Crystal::HIR::Return.new(nil)
+      func.get_block(closure_block).terminator = Adamas::HIR::Return.new(nil)
 
       # %1 = make_closure capturing data
-      captures = [Crystal::HIR::CapturedVar.new(data.id, "data", by_reference: false)]
-      closure = Crystal::HIR::MakeClosure.new(func.next_value_id, Crystal::HIR::TypeRef.new(50_u32), closure_block, captures)
+      captures = [Adamas::HIR::CapturedVar.new(data.id, "data", by_reference: false)]
+      closure = Adamas::HIR::MakeClosure.new(func.next_value_id, Adamas::HIR::TypeRef.new(50_u32), closure_block, captures)
       entry.add(closure)
 
       # %2 = spawn(closure) - closure becomes ThreadShared
-      spawn_call = Crystal::HIR::Call.new(func.next_value_id, Crystal::HIR::TypeRef::VOID, nil, "spawn", [closure.id])
+      spawn_call = Adamas::HIR::Call.new(func.next_value_id, Adamas::HIR::TypeRef::VOID, nil, "spawn", [closure.id])
       entry.add(spawn_call)
 
-      entry.terminator = Crystal::HIR::Return.new(nil)
+      entry.terminator = Adamas::HIR::Return.new(nil)
 
-      analyzer = Crystal::HIR::TaintAnalyzer.new(func)
+      analyzer = Adamas::HIR::TaintAnalyzer.new(func)
       analyzer.analyze
 
       # Closure is passed to spawn → ThreadShared
@@ -471,26 +471,26 @@ describe Crystal::HIR::TaintAnalyzer do
       entry = func.get_block(func.entry_block)
 
       # %0 = allocate MutableState (captured by reference)
-      state = Crystal::HIR::Allocate.new(func.next_value_id, Crystal::HIR::TypeRef.new(100_u32))
+      state = Adamas::HIR::Allocate.new(func.next_value_id, Adamas::HIR::TypeRef.new(100_u32))
       entry.add(state)
 
       closure_block = func.create_block(func.scopes[0].id)
-      func.get_block(closure_block).terminator = Crystal::HIR::Return.new(nil)
+      func.get_block(closure_block).terminator = Adamas::HIR::Return.new(nil)
 
       # Capture by reference - even more dangerous for thread sharing
-      captures = [Crystal::HIR::CapturedVar.new(state.id, "state", by_reference: true)]
-      closure = Crystal::HIR::MakeClosure.new(func.next_value_id, Crystal::HIR::TypeRef.new(50_u32), closure_block, captures)
+      captures = [Adamas::HIR::CapturedVar.new(state.id, "state", by_reference: true)]
+      closure = Adamas::HIR::MakeClosure.new(func.next_value_id, Adamas::HIR::TypeRef.new(50_u32), closure_block, captures)
       entry.add(closure)
 
       # Pass closure through channel (also triggers ThreadShared)
-      channel = Crystal::HIR::Allocate.new(func.next_value_id, Crystal::HIR::TypeRef.new(101_u32))
+      channel = Adamas::HIR::Allocate.new(func.next_value_id, Adamas::HIR::TypeRef.new(101_u32))
       entry.add(channel)
-      send_call = Crystal::HIR::Call.new(func.next_value_id, Crystal::HIR::TypeRef::VOID, channel.id, "send", [closure.id])
+      send_call = Adamas::HIR::Call.new(func.next_value_id, Adamas::HIR::TypeRef::VOID, channel.id, "send", [closure.id])
       entry.add(send_call)
 
-      entry.terminator = Crystal::HIR::Return.new(nil)
+      entry.terminator = Adamas::HIR::Return.new(nil)
 
-      analyzer = Crystal::HIR::TaintAnalyzer.new(func)
+      analyzer = Adamas::HIR::TaintAnalyzer.new(func)
       analyzer.analyze
 
       closure.taints.thread_shared?.should be_true
@@ -507,12 +507,12 @@ describe Crystal::HIR::TaintAnalyzer do
       entry = func.get_block(func.entry_block)
 
       # %0 = allocate Data
-      data = Crystal::HIR::Allocate.new(func.next_value_id, Crystal::HIR::TypeRef.new(100_u32))
+      data = Adamas::HIR::Allocate.new(func.next_value_id, Adamas::HIR::TypeRef.new(100_u32))
       entry.add(data)
 
-      entry.terminator = Crystal::HIR::Return.new(nil)
+      entry.terminator = Adamas::HIR::Return.new(nil)
 
-      analyzer = Crystal::HIR::TaintAnalyzer.new(func)
+      analyzer = Adamas::HIR::TaintAnalyzer.new(func)
       analyzer.analyze
 
       data.taints.mutable?.should be_true
@@ -524,19 +524,19 @@ describe Crystal::HIR::TaintAnalyzer do
       entry = func.get_block(func.entry_block)
 
       # %0 = literal 42
-      lit = Crystal::HIR::Literal.new(func.next_value_id, Crystal::HIR::TypeRef::INT32, 42_i64)
+      lit = Adamas::HIR::Literal.new(func.next_value_id, Adamas::HIR::TypeRef::INT32, 42_i64)
       entry.add(lit)
 
       closure_block = func.create_block(func.scopes[0].id)
 
       # Capture by reference
-      captures = [Crystal::HIR::CapturedVar.new(lit.id, "x", by_reference: true)]
-      closure = Crystal::HIR::MakeClosure.new(func.next_value_id, Crystal::HIR::TypeRef.new(50_u32), closure_block, captures)
+      captures = [Adamas::HIR::CapturedVar.new(lit.id, "x", by_reference: true)]
+      closure = Adamas::HIR::MakeClosure.new(func.next_value_id, Adamas::HIR::TypeRef.new(50_u32), closure_block, captures)
       entry.add(closure)
 
-      entry.terminator = Crystal::HIR::Return.new(nil)
+      entry.terminator = Adamas::HIR::Return.new(nil)
 
-      analyzer = Crystal::HIR::TaintAnalyzer.new(func)
+      analyzer = Adamas::HIR::TaintAnalyzer.new(func)
       analyzer.analyze
 
       lit.taints.mutable?.should be_true
@@ -554,20 +554,20 @@ describe Crystal::HIR::TaintAnalyzer do
       entry = func.get_block(func.entry_block)
 
       # %0 = allocate (will be FFI exposed)
-      original = Crystal::HIR::Allocate.new(func.next_value_id, Crystal::HIR::TypeRef.new(100_u32))
+      original = Adamas::HIR::Allocate.new(func.next_value_id, Adamas::HIR::TypeRef.new(100_u32))
       entry.add(original)
 
       # Mark as FFI exposed
-      ffi_call = Crystal::HIR::Call.new(func.next_value_id, Crystal::HIR::TypeRef::VOID, original.id, "to_unsafe", [] of Crystal::HIR::ValueId)
+      ffi_call = Adamas::HIR::Call.new(func.next_value_id, Adamas::HIR::TypeRef::VOID, original.id, "to_unsafe", [] of Adamas::HIR::ValueId)
       entry.add(ffi_call)
 
       # %2 = copy %0
-      copy = Crystal::HIR::Copy.new(func.next_value_id, Crystal::HIR::TypeRef.new(100_u32), original.id)
+      copy = Adamas::HIR::Copy.new(func.next_value_id, Adamas::HIR::TypeRef.new(100_u32), original.id)
       entry.add(copy)
 
-      entry.terminator = Crystal::HIR::Return.new(nil)
+      entry.terminator = Adamas::HIR::Return.new(nil)
 
-      analyzer = Crystal::HIR::TaintAnalyzer.new(func)
+      analyzer = Adamas::HIR::TaintAnalyzer.new(func)
       analyzer.analyze
 
       original.taints.ffi_exposed?.should be_true
@@ -583,30 +583,30 @@ describe Crystal::HIR::TaintAnalyzer do
       merge_block = func.create_block(func.scopes[0].id)
 
       # Entry: branch
-      cond = Crystal::HIR::Literal.new(func.next_value_id, Crystal::HIR::TypeRef::BOOL, true)
+      cond = Adamas::HIR::Literal.new(func.next_value_id, Adamas::HIR::TypeRef::BOOL, true)
       entry.add(cond)
-      entry.terminator = Crystal::HIR::Branch.new(cond.id, then_block, else_block)
+      entry.terminator = Adamas::HIR::Branch.new(cond.id, then_block, else_block)
 
       # Then: create FFI-exposed value
-      alloc_a = Crystal::HIR::Allocate.new(func.next_value_id, Crystal::HIR::TypeRef.new(100_u32))
+      alloc_a = Adamas::HIR::Allocate.new(func.next_value_id, Adamas::HIR::TypeRef.new(100_u32))
       func.get_block(then_block).add(alloc_a)
-      ffi_call = Crystal::HIR::Call.new(func.next_value_id, Crystal::HIR::TypeRef::VOID, alloc_a.id, "to_unsafe", [] of Crystal::HIR::ValueId)
+      ffi_call = Adamas::HIR::Call.new(func.next_value_id, Adamas::HIR::TypeRef::VOID, alloc_a.id, "to_unsafe", [] of Adamas::HIR::ValueId)
       func.get_block(then_block).add(ffi_call)
-      func.get_block(then_block).terminator = Crystal::HIR::Jump.new(merge_block)
+      func.get_block(then_block).terminator = Adamas::HIR::Jump.new(merge_block)
 
       # Else: create normal value
-      alloc_b = Crystal::HIR::Allocate.new(func.next_value_id, Crystal::HIR::TypeRef.new(100_u32))
+      alloc_b = Adamas::HIR::Allocate.new(func.next_value_id, Adamas::HIR::TypeRef.new(100_u32))
       func.get_block(else_block).add(alloc_b)
-      func.get_block(else_block).terminator = Crystal::HIR::Jump.new(merge_block)
+      func.get_block(else_block).terminator = Adamas::HIR::Jump.new(merge_block)
 
       # Merge: phi
-      phi = Crystal::HIR::Phi.new(func.next_value_id, Crystal::HIR::TypeRef.new(100_u32))
+      phi = Adamas::HIR::Phi.new(func.next_value_id, Adamas::HIR::TypeRef.new(100_u32))
       phi.add_incoming(then_block, alloc_a.id)
       phi.add_incoming(else_block, alloc_b.id)
       func.get_block(merge_block).add(phi)
-      func.get_block(merge_block).terminator = Crystal::HIR::Return.new(nil)
+      func.get_block(merge_block).terminator = Adamas::HIR::Return.new(nil)
 
-      analyzer = Crystal::HIR::TaintAnalyzer.new(func)
+      analyzer = Adamas::HIR::TaintAnalyzer.new(func)
       analyzer.analyze
 
       # alloc_a is FFI exposed
@@ -622,26 +622,26 @@ describe Crystal::HIR::TaintAnalyzer do
       entry = func.get_block(func.entry_block)
 
       # %0 = allocate Container
-      container = Crystal::HIR::Allocate.new(func.next_value_id, Crystal::HIR::TypeRef.new(100_u32))
+      container = Adamas::HIR::Allocate.new(func.next_value_id, Adamas::HIR::TypeRef.new(100_u32))
       entry.add(container)
 
       # %1 = allocate Data (will be thread-shared)
-      data = Crystal::HIR::Allocate.new(func.next_value_id, Crystal::HIR::TypeRef.new(101_u32))
+      data = Adamas::HIR::Allocate.new(func.next_value_id, Adamas::HIR::TypeRef.new(101_u32))
       entry.add(data)
 
       # Mark data as thread-shared via channel send
-      channel = Crystal::HIR::Allocate.new(func.next_value_id, Crystal::HIR::TypeRef.new(102_u32))
+      channel = Adamas::HIR::Allocate.new(func.next_value_id, Adamas::HIR::TypeRef.new(102_u32))
       entry.add(channel)
-      send_call = Crystal::HIR::Call.new(func.next_value_id, Crystal::HIR::TypeRef::VOID, channel.id, "send", [data.id])
+      send_call = Adamas::HIR::Call.new(func.next_value_id, Adamas::HIR::TypeRef::VOID, channel.id, "send", [data.id])
       entry.add(send_call)
 
       # %3 = field_set container.@data = data
-      field_set = Crystal::HIR::FieldSet.new(func.next_value_id, Crystal::HIR::TypeRef::VOID, container.id, "@data", data.id)
+      field_set = Adamas::HIR::FieldSet.new(func.next_value_id, Adamas::HIR::TypeRef::VOID, container.id, "@data", data.id)
       entry.add(field_set)
 
-      entry.terminator = Crystal::HIR::Return.new(nil)
+      entry.terminator = Adamas::HIR::Return.new(nil)
 
-      analyzer = Crystal::HIR::TaintAnalyzer.new(func)
+      analyzer = Adamas::HIR::TaintAnalyzer.new(func)
       analyzer.analyze
 
       data.taints.thread_shared?.should be_true
@@ -661,25 +661,25 @@ describe Crystal::HIR::TaintAnalyzer do
       entry = func.get_block(func.entry_block)
 
       # Create some tainted values
-      data1 = Crystal::HIR::Allocate.new(func.next_value_id, Crystal::HIR::TypeRef.new(100_u32))
+      data1 = Adamas::HIR::Allocate.new(func.next_value_id, Adamas::HIR::TypeRef.new(100_u32))
       entry.add(data1)
 
-      data2 = Crystal::HIR::Allocate.new(func.next_value_id, Crystal::HIR::TypeRef.new(101_u32))
+      data2 = Adamas::HIR::Allocate.new(func.next_value_id, Adamas::HIR::TypeRef.new(101_u32))
       entry.add(data2)
 
       # Make data1 FFI-exposed
-      ffi_call = Crystal::HIR::Call.new(func.next_value_id, Crystal::HIR::TypeRef::VOID, data1.id, "to_unsafe", [] of Crystal::HIR::ValueId)
+      ffi_call = Adamas::HIR::Call.new(func.next_value_id, Adamas::HIR::TypeRef::VOID, data1.id, "to_unsafe", [] of Adamas::HIR::ValueId)
       entry.add(ffi_call)
 
       # Make data2 thread-shared via channel send
-      channel = Crystal::HIR::Allocate.new(func.next_value_id, Crystal::HIR::TypeRef.new(102_u32))
+      channel = Adamas::HIR::Allocate.new(func.next_value_id, Adamas::HIR::TypeRef.new(102_u32))
       entry.add(channel)
-      send_call = Crystal::HIR::Call.new(func.next_value_id, Crystal::HIR::TypeRef::VOID, channel.id, "send", [data2.id])
+      send_call = Adamas::HIR::Call.new(func.next_value_id, Adamas::HIR::TypeRef::VOID, channel.id, "send", [data2.id])
       entry.add(send_call)
 
-      entry.terminator = Crystal::HIR::Return.new(nil)
+      entry.terminator = Adamas::HIR::Return.new(nil)
 
-      analyzer = Crystal::HIR::TaintAnalyzer.new(func)
+      analyzer = Adamas::HIR::TaintAnalyzer.new(func)
       analyzer.analyze
 
       summary = analyzer.taint_summary
@@ -693,20 +693,20 @@ describe Crystal::HIR::TaintAnalyzer do
 
       entry = func.get_block(func.entry_block)
 
-      data = Crystal::HIR::Allocate.new(func.next_value_id, Crystal::HIR::TypeRef.new(100_u32))
+      data = Adamas::HIR::Allocate.new(func.next_value_id, Adamas::HIR::TypeRef.new(100_u32))
       entry.add(data)
 
-      channel = Crystal::HIR::Allocate.new(func.next_value_id, Crystal::HIR::TypeRef.new(101_u32))
+      channel = Adamas::HIR::Allocate.new(func.next_value_id, Adamas::HIR::TypeRef.new(101_u32))
       entry.add(channel)
-      send_call = Crystal::HIR::Call.new(func.next_value_id, Crystal::HIR::TypeRef::VOID, channel.id, "send", [data.id])
+      send_call = Adamas::HIR::Call.new(func.next_value_id, Adamas::HIR::TypeRef::VOID, channel.id, "send", [data.id])
       entry.add(send_call)
 
-      entry.terminator = Crystal::HIR::Return.new(nil)
+      entry.terminator = Adamas::HIR::Return.new(nil)
 
-      analyzer = Crystal::HIR::TaintAnalyzer.new(func)
+      analyzer = Adamas::HIR::TaintAnalyzer.new(func)
       analyzer.analyze
 
-      thread_shared = analyzer.values_with_taint(Crystal::HIR::Taint::ThreadShared)
+      thread_shared = analyzer.values_with_taint(Adamas::HIR::Taint::ThreadShared)
       thread_shared.should contain(data.id)
     end
   end
@@ -716,10 +716,10 @@ describe Crystal::HIR::TaintAnalyzer do
       mod, func = create_function
 
       entry = func.get_block(func.entry_block)
-      entry.terminator = Crystal::HIR::Return.new(nil)
+      entry.terminator = Adamas::HIR::Return.new(nil)
 
       analyzer = func.analyze_taints
-      analyzer.should be_a(Crystal::HIR::TaintAnalyzer)
+      analyzer.should be_a(Adamas::HIR::TaintAnalyzer)
     end
   end
 end

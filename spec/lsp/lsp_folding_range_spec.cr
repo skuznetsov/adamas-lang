@@ -9,7 +9,7 @@ require "../../src/compiler/semantic/analyzer"
 describe "LSP Folding Range" do
   describe "FoldingRange struct" do
     it "creates folding range with required fields" do
-      range = CrystalV2::Compiler::LSP::FoldingRange.new(
+      range = Adamas::Compiler::LSP::FoldingRange.new(
         start_line: 0,
         end_line: 5
       )
@@ -23,7 +23,7 @@ describe "LSP Folding Range" do
     end
 
     it "creates folding range with all optional fields" do
-      range = CrystalV2::Compiler::LSP::FoldingRange.new(
+      range = Adamas::Compiler::LSP::FoldingRange.new(
         start_line: 1,
         end_line: 10,
         start_character: 0,
@@ -41,7 +41,7 @@ describe "LSP Folding Range" do
     end
 
     it "serializes to JSON with camelCase" do
-      range = CrystalV2::Compiler::LSP::FoldingRange.new(
+      range = Adamas::Compiler::LSP::FoldingRange.new(
         start_line: 2,
         end_line: 8,
         kind: "comment"
@@ -56,15 +56,15 @@ describe "LSP Folding Range" do
 
   describe "FoldingRangeParams struct" do
     it "creates params with text document" do
-      text_doc = CrystalV2::Compiler::LSP::TextDocumentIdentifier.new(uri: "file:///test.cr")
-      params = CrystalV2::Compiler::LSP::FoldingRangeParams.new(text_document: text_doc)
+      text_doc = Adamas::Compiler::LSP::TextDocumentIdentifier.new(uri: "file:///test.cr")
+      params = Adamas::Compiler::LSP::FoldingRangeParams.new(text_document: text_doc)
 
       params.text_document.uri.should eq("file:///test.cr")
     end
 
     it "serializes to JSON with camelCase" do
-      text_doc = CrystalV2::Compiler::LSP::TextDocumentIdentifier.new(uri: "file:///test.cr")
-      params = CrystalV2::Compiler::LSP::FoldingRangeParams.new(text_document: text_doc)
+      text_doc = Adamas::Compiler::LSP::TextDocumentIdentifier.new(uri: "file:///test.cr")
+      params = Adamas::Compiler::LSP::FoldingRangeParams.new(text_document: text_doc)
 
       json = params.to_json
       json.should contain("\"textDocument\"")
@@ -81,8 +81,8 @@ describe "LSP Folding Range" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
       # Method spans multiple lines (0-3), so should create folding range
@@ -100,13 +100,13 @@ describe "LSP Folding Range" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
       program.roots.should_not be_empty
       root = program.arena[program.roots[0]]
-      root.should be_a(CrystalV2::Compiler::Frontend::ClassNode)
+      root.should be_a(Adamas::Compiler::Frontend::ClassNode)
     end
 
     # CRITICAL: Control flow tests (learned from bug fix!)
@@ -120,17 +120,17 @@ describe "LSP Folding Range" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
       program.roots.should_not be_empty
       root = program.arena[program.roots[0]]
-      root.should be_a(CrystalV2::Compiler::Frontend::IfNode)
+      root.should be_a(Adamas::Compiler::Frontend::IfNode)
 
       # Multi-line if should fold
       # Parser gives 1-indexed line numbers (line 0 in source = line 1 in parser)
-      if_node = root.as(CrystalV2::Compiler::Frontend::IfNode)
+      if_node = root.as(Adamas::Compiler::Frontend::IfNode)
       if_node.span.start_line.should be >= 1
       if_node.span.end_line.should be > if_node.span.start_line
     end
@@ -143,13 +143,13 @@ describe "LSP Folding Range" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
       program.roots.should_not be_empty
       root = program.arena[program.roots[0]]
-      root.should be_a(CrystalV2::Compiler::Frontend::WhileNode)
+      root.should be_a(Adamas::Compiler::Frontend::WhileNode)
     end
 
     it "creates folding range for unless statement" do
@@ -160,13 +160,13 @@ describe "LSP Folding Range" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
       program.roots.should_not be_empty
       root = program.arena[program.roots[0]]
-      root.should be_a(CrystalV2::Compiler::Frontend::UnlessNode)
+      root.should be_a(Adamas::Compiler::Frontend::UnlessNode)
     end
 
     it "creates folding range for until loop" do
@@ -177,13 +177,13 @@ describe "LSP Folding Range" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
       program.roots.should_not be_empty
       root = program.arena[program.roots[0]]
-      root.should be_a(CrystalV2::Compiler::Frontend::UntilNode)
+      root.should be_a(Adamas::Compiler::Frontend::UntilNode)
     end
 
     it "creates folding range for loop block" do
@@ -194,13 +194,13 @@ describe "LSP Folding Range" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
       program.roots.should_not be_empty
       root = program.arena[program.roots[0]]
-      root.should be_a(CrystalV2::Compiler::Frontend::LoopNode)
+      root.should be_a(Adamas::Compiler::Frontend::LoopNode)
     end
 
     it "handles nested control flow correctly" do
@@ -212,16 +212,16 @@ describe "LSP Folding Range" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
       program.roots.should_not be_empty
       root = program.arena[program.roots[0]]
-      root.should be_a(CrystalV2::Compiler::Frontend::IfNode)
+      root.should be_a(Adamas::Compiler::Frontend::IfNode)
 
       # Should have nested while inside if
-      if_node = root.as(CrystalV2::Compiler::Frontend::IfNode)
+      if_node = root.as(Adamas::Compiler::Frontend::IfNode)
       if_node.then_body.should_not be_empty
     end
 
@@ -230,8 +230,8 @@ describe "LSP Folding Range" do
       x = if y > 0 then 1 else 0 end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
       # Single line, so span.start_line == span.end_line
@@ -255,8 +255,8 @@ describe "LSP Folding Range" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
       # Should have:
@@ -267,7 +267,7 @@ describe "LSP Folding Range" do
       # - Unless folding range (5-7)
       program.roots.should_not be_empty
       root = program.arena[program.roots[0]]
-      root.should be_a(CrystalV2::Compiler::Frontend::ClassNode)
+      root.should be_a(Adamas::Compiler::Frontend::ClassNode)
     end
 
     # CRITICAL: Test actual 0-indexed conversion (LSP requirement!)
@@ -281,12 +281,12 @@ describe "LSP Folding Range" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
       root = program.arena[program.roots[0]]
-      def_node = root.as(CrystalV2::Compiler::Frontend::DefNode)
+      def_node = root.as(Adamas::Compiler::Frontend::DefNode)
 
       # Parser gives 1-indexed: first line of source = line 1 (not 0)
       # This is EXPECTED from parser - conversion happens in collect_folding_ranges
@@ -301,12 +301,12 @@ describe "LSP Folding Range" do
       end
       CRYSTAL
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
       root = program.arena[program.roots[0]]
-      if_node = root.as(CrystalV2::Compiler::Frontend::IfNode)
+      if_node = root.as(Adamas::Compiler::Frontend::IfNode)
 
       # Parser: 1-indexed
       parser_start = if_node.span.start_line  # Will be 1
@@ -334,12 +334,12 @@ describe "LSP Folding Range" do
       # Source with explicit line structure
       source = "def calculate\n  x = 1\n  y = 2\n  x + y\nend\n"
 
-      lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-      parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+      lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+      parser = Adamas::Compiler::Frontend::Parser.new(lexer)
       program = parser.parse_program
 
       root = program.arena[program.roots[0]]
-      def_node = root.as(CrystalV2::Compiler::Frontend::DefNode)
+      def_node = root.as(Adamas::Compiler::Frontend::DefNode)
 
       # Parser spans (1-indexed):
       # Line 1: "def calculate"

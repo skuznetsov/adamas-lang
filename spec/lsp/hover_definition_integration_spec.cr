@@ -20,7 +20,7 @@ private def lsp_line_char(source : String, needle : String, occurrence : Int32 =
   {line, target - line_start - 1}
 end
 
-describe CrystalV2::Compiler::LSP::Server do
+describe Adamas::Compiler::LSP::Server do
   around_each do |example|
     prev = ENV["CRYSTALV2_LSP_FORCE_STUB"]?
     ENV["CRYSTALV2_LSP_FORCE_STUB"] = "1"
@@ -52,7 +52,7 @@ describe CrystalV2::Compiler::LSP::Server do
     CR
     File.write(path, source)
 
-    server = CrystalV2::Compiler::LSP::Server.new(IO::Memory.new, IO::Memory.new, CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false))
+    server = Adamas::Compiler::LSP::Server.new(IO::Memory.new, IO::Memory.new, Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false))
     uri = server.spec_store_document(source, dir, path)
 
     bar_offset = source.index("Bar").not_nil!
@@ -83,10 +83,10 @@ describe CrystalV2::Compiler::LSP::Server do
     CR
     File.write(path, source)
 
-    default_server = CrystalV2::Compiler::LSP::Server.new(
+    default_server = Adamas::Compiler::LSP::Server.new(
       IO::Memory.new,
       IO::Memory.new,
-      CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
+      Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
     )
     default_uri = default_server.spec_store_document(source, dir, path)
 
@@ -99,10 +99,10 @@ describe CrystalV2::Compiler::LSP::Server do
     contents = hover["result"]["contents"]["value"].as_s
     contents.includes?("reference").should be_false
 
-    opt_in_server = CrystalV2::Compiler::LSP::Server.new(
+    opt_in_server = Adamas::Compiler::LSP::Server.new(
       IO::Memory.new,
       IO::Memory.new,
-      CrystalV2::Compiler::LSP::ServerConfig.new(
+      Adamas::Compiler::LSP::ServerConfig.new(
         background_indexing: false,
         project_cache: false,
         hover_reference_count: true
@@ -128,10 +128,10 @@ describe CrystalV2::Compiler::LSP::Server do
     File.write(path, source)
     File.write(helper_path, "class Helper; end\n")
 
-    server = CrystalV2::Compiler::LSP::Server.new(
+    server = Adamas::Compiler::LSP::Server.new(
       IO::Memory.new,
       IO::Memory.new,
-      CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
+      Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
     )
     uri = server.spec_store_document(source, dir, path)
     server.spec_clear_dependency_documents
@@ -166,10 +166,10 @@ describe CrystalV2::Compiler::LSP::Server do
     CR
     File.write(path, source)
 
-    server = CrystalV2::Compiler::LSP::Server.new(
+    server = Adamas::Compiler::LSP::Server.new(
       IO::Memory.new,
       IO::Memory.new,
-      CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
+      Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
     )
     uri = server.spec_store_document(source, dir, path)
 
@@ -208,10 +208,10 @@ describe CrystalV2::Compiler::LSP::Server do
     CR
     File.write(path, source)
 
-    server = CrystalV2::Compiler::LSP::Server.new(
+    server = Adamas::Compiler::LSP::Server.new(
       IO::Memory.new,
       IO::Memory.new,
-      CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
+      Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
     )
     uri = server.spec_store_document(source, dir, path)
 
@@ -239,10 +239,10 @@ describe CrystalV2::Compiler::LSP::Server do
     CR
     File.write(path, source)
 
-    server = CrystalV2::Compiler::LSP::Server.new(
+    server = Adamas::Compiler::LSP::Server.new(
       IO::Memory.new,
       IO::Memory.new,
-      CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
+      Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
     )
     uri = server.spec_store_document(source, dir, path)
 
@@ -268,10 +268,10 @@ describe CrystalV2::Compiler::LSP::Server do
     CR
     File.write(path, source)
 
-    server = CrystalV2::Compiler::LSP::Server.new(
+    server = Adamas::Compiler::LSP::Server.new(
       IO::Memory.new,
       IO::Memory.new,
-      CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
+      Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
     )
     uri = server.spec_store_document(source, dir, path)
 
@@ -307,10 +307,10 @@ describe CrystalV2::Compiler::LSP::Server do
     CR
     File.write(path, source)
 
-    server = CrystalV2::Compiler::LSP::Server.new(
+    server = Adamas::Compiler::LSP::Server.new(
       IO::Memory.new,
       IO::Memory.new,
-      CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
+      Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
     )
     uri = server.spec_store_document(source, dir, path)
 
@@ -350,10 +350,10 @@ describe CrystalV2::Compiler::LSP::Server do
     CR
     File.write(path, source)
 
-    server = CrystalV2::Compiler::LSP::Server.new(
+    server = Adamas::Compiler::LSP::Server.new(
       IO::Memory.new,
       IO::Memory.new,
-      CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
+      Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
     )
     uri = server.spec_store_document(source, dir, path)
 
@@ -389,10 +389,10 @@ describe CrystalV2::Compiler::LSP::Server do
     CR
     File.write(path, source)
 
-    server = CrystalV2::Compiler::LSP::Server.new(
+    server = Adamas::Compiler::LSP::Server.new(
       IO::Memory.new,
       IO::Memory.new,
-      CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
+      Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
     )
     uri = server.spec_store_document(source, dir, path)
 
@@ -411,10 +411,10 @@ describe CrystalV2::Compiler::LSP::Server do
     instant_path = File.expand_path("../../../crystal/src/time/instant.cr", __DIR__)
     source = File.read(instant_path)
 
-    server = CrystalV2::Compiler::LSP::Server.new(
+    server = Adamas::Compiler::LSP::Server.new(
       IO::Memory.new,
       IO::Memory.new,
-      CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
+      Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
     )
     uri = server.spec_store_document(source, File.dirname(instant_path), instant_path)
 
@@ -447,10 +447,10 @@ describe CrystalV2::Compiler::LSP::Server do
     CR
     File.write(path, source)
 
-    server = CrystalV2::Compiler::LSP::Server.new(
+    server = Adamas::Compiler::LSP::Server.new(
       IO::Memory.new,
       IO::Memory.new,
-      CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
+      Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
     )
     uri = server.spec_store_document(source, dir, path)
     server.spec_document_symbol_cache_size(uri).should eq(5)
@@ -483,10 +483,10 @@ describe CrystalV2::Compiler::LSP::Server do
     CR
     File.write(path, source)
 
-    server = CrystalV2::Compiler::LSP::Server.new(
+    server = Adamas::Compiler::LSP::Server.new(
       IO::Memory.new,
       IO::Memory.new,
-      CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
+      Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
     )
     uri = server.spec_did_open_document(source, path)
     server.spec_document_symbol_cache_size(uri).should eq(0)
@@ -520,10 +520,10 @@ describe CrystalV2::Compiler::LSP::Server do
     CR
     File.write(path, source)
 
-    server = CrystalV2::Compiler::LSP::Server.new(
+    server = Adamas::Compiler::LSP::Server.new(
       IO::Memory.new,
       IO::Memory.new,
-      CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
+      Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
     )
     uri = server.spec_did_open_document(source, path)
     server.spec_document_expr_index_built?(uri).should be_false

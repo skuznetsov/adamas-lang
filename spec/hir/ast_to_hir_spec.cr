@@ -4,7 +4,7 @@ require "../../src/compiler/frontend/parser"
 require "../../src/compiler/frontend/lexer"
 
 # Test-only access to private parsing helpers (keeps production API small).
-class Crystal::HIR::AstToHir
+class Adamas::HIR::AstToHir
   def __test_split_generic_type_args(params_str : String) : Array(String)
     split_generic_type_args(params_str)
   end
@@ -17,15 +17,15 @@ class Crystal::HIR::AstToHir
     lower_function_if_needed(name)
   end
 
-  def __test_get_function_return_type(name : String) : Crystal::HIR::TypeRef
+  def __test_get_function_return_type(name : String) : Adamas::HIR::TypeRef
     get_function_return_type(name)
   end
 
-  def __test_type_ref_for_name(name : String) : Crystal::HIR::TypeRef
+  def __test_type_ref_for_name(name : String) : Adamas::HIR::TypeRef
     type_ref_for_name(name)
   end
 
-  def __test_get_type_name_from_ref(type_ref : Crystal::HIR::TypeRef) : String
+  def __test_get_type_name_from_ref(type_ref : Adamas::HIR::TypeRef) : String
     get_type_name_from_ref(type_ref)
   end
 
@@ -53,21 +53,21 @@ class Crystal::HIR::AstToHir
     @pending_function_queue.includes?(name)
   end
 
-  def __test_remember_callsite_arg_types(name : String, arg_types : Array(Crystal::HIR::TypeRef), has_block : Bool = false) : Nil
+  def __test_remember_callsite_arg_types(name : String, arg_types : Array(Adamas::HIR::TypeRef), has_block : Bool = false) : Nil
     remember_callsite_arg_types(name, arg_types, has_block: has_block)
   end
 
   def __test_repair_partial_untyped_call_types_from_history(
     lookup_name : String,
-    node : CrystalV2::Compiler::Frontend::DefNode,
-    call_types : Array(Crystal::HIR::TypeRef),
-  ) : Array(Crystal::HIR::TypeRef)
+    node : Adamas::Compiler::Frontend::DefNode,
+    call_types : Array(Adamas::HIR::TypeRef),
+  ) : Array(Adamas::HIR::TypeRef)
     repair_partial_untyped_call_types_from_history(lookup_name, node, call_types)
   end
 
   def __test_missing_required_runtime_param_types?(
-    node : CrystalV2::Compiler::Frontend::DefNode,
-    call_types : Array(Crystal::HIR::TypeRef),
+    node : Adamas::Compiler::Frontend::DefNode,
+    call_types : Array(Adamas::HIR::TypeRef),
   ) : Bool
     missing_required_runtime_param_types?(node, call_types)
   end
@@ -85,70 +85,70 @@ class Crystal::HIR::AstToHir
 
   def __test_constant_literal_int_value(name : String) : Int64?
     value = @constant_literal_values[name]?
-    return nil unless value.is_a?(CrystalV2::Compiler::Semantic::MacroNumberValue)
+    return nil unless value.is_a?(Adamas::Compiler::Semantic::MacroNumberValue)
     raw = value.value
     raw.is_a?(Int64) ? raw : nil
   end
 end
 
 # Helper to parse Crystal code and get AST
-private def parse(code : String) : {CrystalV2::Compiler::Frontend::ArenaLike, Array(CrystalV2::Compiler::Frontend::ExprId)}
-  lexer = CrystalV2::Compiler::Frontend::Lexer.new(code)
-  parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+private def parse(code : String) : {Adamas::Compiler::Frontend::ArenaLike, Array(Adamas::Compiler::Frontend::ExprId)}
+  lexer = Adamas::Compiler::Frontend::Lexer.new(code)
+  parser = Adamas::Compiler::Frontend::Parser.new(lexer)
   result = parser.parse_program
   {result.arena, result.roots}
 end
 
 # Helper to parse and lower a function
-private def lower_function(code : String) : Crystal::HIR::Function
+private def lower_function(code : String) : Adamas::HIR::Function
   arena, exprs = parse(code)
-  converter = Crystal::HIR::AstToHir.new(arena)
+  converter = Adamas::HIR::AstToHir.new(arena)
 
   # Find DefNode
   def_expr = exprs.find do |expr_id|
-    arena[expr_id].is_a?(CrystalV2::Compiler::Frontend::DefNode)
+    arena[expr_id].is_a?(Adamas::Compiler::Frontend::DefNode)
   end
 
   raise "No function definition found" unless def_expr
-  def_node = arena[def_expr].as(CrystalV2::Compiler::Frontend::DefNode)
+  def_node = arena[def_expr].as(Adamas::Compiler::Frontend::DefNode)
 
   converter.lower_def(def_node)
 end
 
-private def lower_function_with_converter(code : String) : {Crystal::HIR::Function, Crystal::HIR::AstToHir}
+private def lower_function_with_converter(code : String) : {Adamas::HIR::Function, Adamas::HIR::AstToHir}
   arena, exprs = parse(code)
-  converter = Crystal::HIR::AstToHir.new(arena)
+  converter = Adamas::HIR::AstToHir.new(arena)
 
   def_expr = exprs.find do |expr_id|
-    arena[expr_id].is_a?(CrystalV2::Compiler::Frontend::DefNode)
+    arena[expr_id].is_a?(Adamas::Compiler::Frontend::DefNode)
   end
 
   raise "No function definition found" unless def_expr
-  def_node = arena[def_expr].as(CrystalV2::Compiler::Frontend::DefNode)
+  def_node = arena[def_expr].as(Adamas::Compiler::Frontend::DefNode)
 
   {converter.lower_def(def_node), converter}
 end
 
-private def lower_program(code : String) : Crystal::HIR::AstToHir
+private def lower_program(code : String) : Adamas::HIR::AstToHir
   arena, exprs = parse(code)
-  converter = Crystal::HIR::AstToHir.new(arena)
+  converter = Adamas::HIR::AstToHir.new(arena)
   converter.arena = arena
 
-  enum_nodes = [] of CrystalV2::Compiler::Frontend::EnumNode
-  module_nodes = [] of CrystalV2::Compiler::Frontend::ModuleNode
-  class_nodes = [] of CrystalV2::Compiler::Frontend::ClassNode
-  def_nodes = [] of CrystalV2::Compiler::Frontend::DefNode
+  enum_nodes = [] of Adamas::Compiler::Frontend::EnumNode
+  module_nodes = [] of Adamas::Compiler::Frontend::ModuleNode
+  class_nodes = [] of Adamas::Compiler::Frontend::ClassNode
+  def_nodes = [] of Adamas::Compiler::Frontend::DefNode
 
   exprs.each do |expr_id|
     node = arena[expr_id]
     case node
-    when CrystalV2::Compiler::Frontend::EnumNode
+    when Adamas::Compiler::Frontend::EnumNode
       enum_nodes << node
-    when CrystalV2::Compiler::Frontend::ModuleNode
+    when Adamas::Compiler::Frontend::ModuleNode
       module_nodes << node
-    when CrystalV2::Compiler::Frontend::ClassNode
+    when Adamas::Compiler::Frontend::ClassNode
       class_nodes << node
-    when CrystalV2::Compiler::Frontend::DefNode
+    when Adamas::Compiler::Frontend::DefNode
       def_nodes << node
     end
   end
@@ -165,29 +165,29 @@ private def lower_program(code : String) : Crystal::HIR::AstToHir
   converter
 end
 
-private def lower_program_with_main(code : String) : Crystal::HIR::AstToHir
+private def lower_program_with_main(code : String) : Adamas::HIR::AstToHir
   arena, exprs = parse(code)
-  converter = Crystal::HIR::AstToHir.new(arena)
+  converter = Adamas::HIR::AstToHir.new(arena)
   converter.arena = arena
 
-  enum_nodes = [] of CrystalV2::Compiler::Frontend::EnumNode
-  module_nodes = [] of CrystalV2::Compiler::Frontend::ModuleNode
-  class_nodes = [] of CrystalV2::Compiler::Frontend::ClassNode
-  def_nodes = [] of CrystalV2::Compiler::Frontend::DefNode
+  enum_nodes = [] of Adamas::Compiler::Frontend::EnumNode
+  module_nodes = [] of Adamas::Compiler::Frontend::ModuleNode
+  class_nodes = [] of Adamas::Compiler::Frontend::ClassNode
+  def_nodes = [] of Adamas::Compiler::Frontend::DefNode
   main_exprs = [] of UInt64
 
   exprs.each do |expr_id|
     node = arena[expr_id]
     case node
-    when CrystalV2::Compiler::Frontend::EnumNode
+    when Adamas::Compiler::Frontend::EnumNode
       enum_nodes << node
-    when CrystalV2::Compiler::Frontend::ModuleNode
+    when Adamas::Compiler::Frontend::ModuleNode
       module_nodes << node
-    when CrystalV2::Compiler::Frontend::ClassNode
+    when Adamas::Compiler::Frontend::ClassNode
       class_nodes << node
-    when CrystalV2::Compiler::Frontend::DefNode
+    when Adamas::Compiler::Frontend::DefNode
       def_nodes << node
-    when CrystalV2::Compiler::Frontend::CallNode
+    when Adamas::Compiler::Frontend::CallNode
       main_exprs << expr_id.index.to_u64
     end
   end
@@ -206,30 +206,30 @@ private def lower_program_with_main(code : String) : Crystal::HIR::AstToHir
   converter
 end
 
-private def lower_program_with_sources(code : String) : Crystal::HIR::AstToHir
+private def lower_program_with_sources(code : String) : Adamas::HIR::AstToHir
   arena, exprs = parse(code)
   sources_by_arena = {arena.object_id.to_u64 => code}
-  converter = Crystal::HIR::AstToHir.new(arena, sources_by_arena: sources_by_arena)
+  converter = Adamas::HIR::AstToHir.new(arena, sources_by_arena: sources_by_arena)
   converter.arena = arena
 
-  module_nodes = [] of CrystalV2::Compiler::Frontend::ModuleNode
-  class_nodes = [] of CrystalV2::Compiler::Frontend::ClassNode
-  def_nodes = [] of CrystalV2::Compiler::Frontend::DefNode
-  macro_nodes = [] of CrystalV2::Compiler::Frontend::MacroDefNode
+  module_nodes = [] of Adamas::Compiler::Frontend::ModuleNode
+  class_nodes = [] of Adamas::Compiler::Frontend::ClassNode
+  def_nodes = [] of Adamas::Compiler::Frontend::DefNode
+  macro_nodes = [] of Adamas::Compiler::Frontend::MacroDefNode
   main_exprs = [] of UInt64
 
   exprs.each do |expr_id|
     node = arena[expr_id]
     case node
-    when CrystalV2::Compiler::Frontend::ModuleNode
+    when Adamas::Compiler::Frontend::ModuleNode
       module_nodes << node
-    when CrystalV2::Compiler::Frontend::ClassNode
+    when Adamas::Compiler::Frontend::ClassNode
       class_nodes << node
-    when CrystalV2::Compiler::Frontend::DefNode
+    when Adamas::Compiler::Frontend::DefNode
       def_nodes << node
-    when CrystalV2::Compiler::Frontend::MacroDefNode
+    when Adamas::Compiler::Frontend::MacroDefNode
       macro_nodes << node
-    when CrystalV2::Compiler::Frontend::CallNode
+    when Adamas::Compiler::Frontend::CallNode
       main_exprs << expr_id.index.to_u64
     end
   end
@@ -248,15 +248,15 @@ private def lower_program_with_sources(code : String) : Crystal::HIR::AstToHir
 end
 
 # Helper to get HIR text output
-private def hir_text(func : Crystal::HIR::Function) : String
+private def hir_text(func : Adamas::HIR::Function) : String
   String.build { |io| func.to_s(io) }
 end
 
-describe Crystal::HIR::AstToHir do
+describe Adamas::HIR::AstToHir do
   describe "slice hardening" do
     it "returns nil for unreadable slices instead of crashing" do
       arena, _ = parse("def foo; 1; end")
-      converter = Crystal::HIR::AstToHir.new(arena)
+      converter = Adamas::HIR::AstToHir.new(arena)
       bogus = Slice.new(Pointer(UInt8).new(0x6e6f6974_u64), 4)
 
       converter.__test_safe_slice_to_string(bogus).should be_nil
@@ -276,7 +276,7 @@ describe Crystal::HIR::AstToHir do
           end
         end
 
-        module Crystal::MIR
+        module Adamas::MIR
           def self.probe
             seen = ::Set(String).new
             seen.includes?("x")
@@ -284,18 +284,18 @@ describe Crystal::HIR::AstToHir do
         end
       CRYSTAL
 
-      func = converter.module.functions.find { |f| f.name == "Crystal::MIR.probe$arity0" }
+      func = converter.module.functions.find { |f| f.name == "Adamas::MIR.probe$arity0" }
       func.should_not be_nil
 
       text = hir_text(func.not_nil!)
       text.should contain("call ::Set(String).new()")
-      text.should_not contain("__crystal_v2_string_includes_string")
+      text.should_not contain("__adamas_string_includes_string")
 
       new_call = func.not_nil!.blocks[0].instructions.find do |inst|
-        inst.is_a?(Crystal::HIR::Call) && inst.as(Crystal::HIR::Call).method_name.ends_with?(".new")
+        inst.is_a?(Adamas::HIR::Call) && inst.as(Adamas::HIR::Call).method_name.ends_with?(".new")
       end
       new_call.should_not be_nil
-      desc = converter.module.get_type_descriptor(new_call.not_nil!.as(Crystal::HIR::Call).type)
+      desc = converter.module.get_type_descriptor(new_call.not_nil!.as(Adamas::HIR::Call).type)
       desc.should_not be_nil
       desc.not_nil!.name.should contain("Set(String)")
     end
@@ -312,7 +312,7 @@ describe Crystal::HIR::AstToHir do
           end
         end
 
-        module Crystal::MIR
+        module Adamas::MIR
           class HIRToMIRLowering
             def prepare
               seen_names = ::Set(String).new
@@ -322,12 +322,12 @@ describe Crystal::HIR::AstToHir do
         end
       CRYSTAL
 
-      func = converter.module.functions.find { |f| f.name == "Crystal::MIR::HIRToMIRLowering#prepare$arity0" }
+      func = converter.module.functions.find { |f| f.name == "Adamas::MIR::HIRToMIRLowering#prepare$arity0" }
       func.should_not be_nil
 
       text = hir_text(func.not_nil!)
       text.should contain("call ::Set(String).new()")
-      text.should_not contain("__crystal_v2_string_includes_string")
+      text.should_not contain("__adamas_string_includes_string")
     end
 
     it "does not drift ::Set(String).new receivers into nested Set types" do
@@ -342,7 +342,7 @@ describe Crystal::HIR::AstToHir do
           end
         end
 
-        module Crystal::MIR
+        module Adamas::MIR
           class Set(T)
             def self.new
               uninitialized self
@@ -362,23 +362,23 @@ describe Crystal::HIR::AstToHir do
         end
       CRYSTAL
 
-      func = converter.module.functions.find { |f| f.name == "Crystal::MIR::HIRToMIRLowering#prepare$arity0" }
+      func = converter.module.functions.find { |f| f.name == "Adamas::MIR::HIRToMIRLowering#prepare$arity0" }
       func.should_not be_nil
 
       new_call = func.not_nil!.blocks[0].instructions.find do |inst|
-        inst.is_a?(Crystal::HIR::Call) && inst.as(Crystal::HIR::Call).method_name.ends_with?(".new")
+        inst.is_a?(Adamas::HIR::Call) && inst.as(Adamas::HIR::Call).method_name.ends_with?(".new")
       end
       new_call.should_not be_nil
 
-      new_desc = converter.module.get_type_descriptor(new_call.not_nil!.as(Crystal::HIR::Call).type)
+      new_desc = converter.module.get_type_descriptor(new_call.not_nil!.as(Adamas::HIR::Call).type)
       new_desc.should_not be_nil
       new_desc.not_nil!.name.should eq("Set(String)")
 
       includes_call = func.not_nil!.blocks[0].instructions.find do |inst|
-        inst.is_a?(Crystal::HIR::Call) && inst.as(Crystal::HIR::Call).method_name.includes?("includes?")
+        inst.is_a?(Adamas::HIR::Call) && inst.as(Adamas::HIR::Call).method_name.includes?("includes?")
       end
       includes_call.should_not be_nil
-      includes_call.not_nil!.as(Crystal::HIR::Call).method_name.should eq("Set(String)#includes?$String")
+      includes_call.not_nil!.as(Adamas::HIR::Call).method_name.should eq("Set(String)#includes?$String")
     end
   end
 
@@ -451,7 +451,7 @@ describe Crystal::HIR::AstToHir do
       text = hir_text(func)
 
       # Should have Int64 type
-      func.blocks[0].instructions.first.type.should eq(Crystal::HIR::TypeRef::INT64)
+      func.blocks[0].instructions.first.type.should eq(Adamas::HIR::TypeRef::INT64)
     end
   end
 
@@ -569,7 +569,7 @@ describe Crystal::HIR::AstToHir do
     it "lowers typed parameters" do
       func = lower_function("def foo(x : Int32); x; end")
 
-      func.params[0].type.should eq(Crystal::HIR::TypeRef::INT32)
+      func.params[0].type.should eq(Adamas::HIR::TypeRef::INT32)
     end
   end
 
@@ -580,7 +580,7 @@ describe Crystal::HIR::AstToHir do
       param.should_not be_nil
       desc = converter.module.get_type_descriptor(param.not_nil!.type)
       desc.should_not be_nil
-      desc.not_nil!.kind.should eq(Crystal::HIR::TypeKind::Proc)
+      desc.not_nil!.kind.should eq(Adamas::HIR::TypeKind::Proc)
     end
   end
 
@@ -819,15 +819,15 @@ describe Crystal::HIR::AstToHir do
     it "lowers function with return type" do
       func = lower_function("def foo : Int32; 42; end")
 
-      func.return_type.should eq(Crystal::HIR::TypeRef::INT32)
+      func.return_type.should eq(Adamas::HIR::TypeRef::INT32)
     end
 
     it "lowers function with multiple parameters" do
       func = lower_function("def foo(a : Int32, b : String, c); end")
 
       func.params.size.should eq(3)
-      func.params[0].type.should eq(Crystal::HIR::TypeRef::INT32)
-      func.params[1].type.should eq(Crystal::HIR::TypeRef::STRING)
+      func.params[0].type.should eq(Adamas::HIR::TypeRef::INT32)
+      func.params[1].type.should eq(Adamas::HIR::TypeRef::STRING)
     end
   end
 
@@ -864,9 +864,9 @@ describe Crystal::HIR::AstToHir do
       func.should_not be_nil
 
       call = func.not_nil!.blocks.flat_map(&.instructions)
-        .find { |inst| inst.is_a?(Crystal::HIR::Call) }
+        .find { |inst| inst.is_a?(Adamas::HIR::Call) }
       call.should_not be_nil
-      call.not_nil!.as(Crystal::HIR::Call).method_name.should eq("Signal#reset")
+      call.not_nil!.as(Adamas::HIR::Call).method_name.should eq("Signal#reset")
     end
 
     it "applies default args for member access calls" do
@@ -887,9 +887,9 @@ describe Crystal::HIR::AstToHir do
       func.should_not be_nil
 
       call = func.not_nil!.blocks.flat_map(&.instructions)
-        .find { |inst| inst.is_a?(Crystal::HIR::Call) && inst.as(Crystal::HIR::Call).method_name.includes?("Foo#bar") }
+        .find { |inst| inst.is_a?(Adamas::HIR::Call) && inst.as(Adamas::HIR::Call).method_name.includes?("Foo#bar") }
       call.should_not be_nil
-      call.not_nil!.as(Crystal::HIR::Call).args.size.should eq(2)
+      call.not_nil!.as(Adamas::HIR::Call).args.size.should eq(2)
     end
 
     it "binds default params before inline yield lowering" do
@@ -981,9 +981,9 @@ describe Crystal::HIR::AstToHir do
       func.should_not be_nil
 
       call = func.not_nil!.blocks.flat_map(&.instructions)
-        .find { |inst| inst.is_a?(Crystal::HIR::Call) }
+        .find { |inst| inst.is_a?(Adamas::HIR::Call) }
       call.should_not be_nil
-      call_name = call.not_nil!.as(Crystal::HIR::Call).method_name
+      call_name = call.not_nil!.as(Adamas::HIR::Call).method_name
       call_name.should contain("Foo.malloc$Int32")
       call_name.should_not contain("block")
     end
@@ -1000,7 +1000,7 @@ describe Crystal::HIR::AstToHir do
       text = hir_text(func)
 
       text.should contain("extern_call")
-      text.should contain("__crystal_v2_print_int32_ln")
+      text.should contain("__adamas_print_int32_ln")
     end
 
     it "lowers index access" do
@@ -1063,10 +1063,10 @@ describe Crystal::HIR::AstToHir do
     it "lowers standalone proc literals without make_closure wrappers" do
       func = lower_function("def foo; -> { 1 }; end")
 
-      closure = func.blocks.flat_map(&.instructions).find { |i| i.is_a?(Crystal::HIR::MakeClosure) }
+      closure = func.blocks.flat_map(&.instructions).find { |i| i.is_a?(Adamas::HIR::MakeClosure) }
       closure.should be_nil
 
-      func.blocks.flat_map(&.instructions).any? { |i| i.is_a?(Crystal::HIR::FuncPointer) }.should be_true
+      func.blocks.flat_map(&.instructions).any? { |i| i.is_a?(Adamas::HIR::FuncPointer) }.should be_true
     end
   end
 
@@ -1129,7 +1129,7 @@ describe Crystal::HIR::AstToHir do
       text = hir_text(func)
 
       text.should contain("is_a")
-      text.should contain("__crystal_v2_select_ptr")
+      text.should contain("__adamas_select_ptr")
     end
 
     it "lowers is_a? check" do
@@ -1216,13 +1216,13 @@ describe Crystal::HIR::AstToHir do
       # test function as unreachable rather than materializing a Nil literal.
 
       arena, exprs = parse("class Foo; end")
-      converter = Crystal::HIR::AstToHir.new(arena)
+      converter = Adamas::HIR::AstToHir.new(arena)
 
       class_expr = exprs.first
       class_node = arena[class_expr]
 
-      func = converter.module.create_function("test", Crystal::HIR::TypeRef::VOID)
-      ctx = Crystal::HIR::LoweringContext.new(func, converter.module, arena)
+      func = converter.module.create_function("test", Adamas::HIR::TypeRef::VOID)
+      ctx = Adamas::HIR::LoweringContext.new(func, converter.module, arena)
 
       converter.lower_node(ctx, class_node)
       hir_text(func).should contain("unreachable")
@@ -1238,29 +1238,29 @@ describe Crystal::HIR::AstToHir do
       func = lower_function("def foo; 42; end")
 
       literal = func.blocks[0].instructions.first
-      literal.lifetime.should eq(Crystal::HIR::LifetimeTag::StackLocal)
+      literal.lifetime.should eq(Adamas::HIR::LifetimeTag::StackLocal)
     end
 
     it "marks parameters as HeapEscape (conservative)" do
       func = lower_function("def foo(x); x; end")
 
-      func.params[0].lifetime.should eq(Crystal::HIR::LifetimeTag::HeapEscape)
+      func.params[0].lifetime.should eq(Adamas::HIR::LifetimeTag::HeapEscape)
     end
 
     it "marks array literals as StackLocal initially" do
       func = lower_function("def foo; [1, 2, 3]; end")
 
-      arr = func.blocks.flat_map(&.instructions).find { |i| i.is_a?(Crystal::HIR::ArrayLiteral) }
+      arr = func.blocks.flat_map(&.instructions).find { |i| i.is_a?(Adamas::HIR::ArrayLiteral) }
       arr.should_not be_nil
-      arr.not_nil!.lifetime.should eq(Crystal::HIR::LifetimeTag::StackLocal)
+      arr.not_nil!.lifetime.should eq(Adamas::HIR::LifetimeTag::StackLocal)
     end
 
     it "marks class var access as GlobalEscape" do
       func = lower_function("def foo; @@x; end")
 
-      class_var = func.blocks.flat_map(&.instructions).find { |i| i.is_a?(Crystal::HIR::ClassVarGet) }
+      class_var = func.blocks.flat_map(&.instructions).find { |i| i.is_a?(Adamas::HIR::ClassVarGet) }
       class_var.should_not be_nil
-      class_var.not_nil!.lifetime.should eq(Crystal::HIR::LifetimeTag::GlobalEscape)
+      class_var.not_nil!.lifetime.should eq(Adamas::HIR::LifetimeTag::GlobalEscape)
     end
   end
 
@@ -1273,27 +1273,27 @@ describe Crystal::HIR::AstToHir do
       func = lower_function("def foo; 1; end")
 
       func.scopes.size.should be >= 1
-      func.scopes[0].kind.should eq(Crystal::HIR::ScopeKind::Function)
+      func.scopes[0].kind.should eq(Adamas::HIR::ScopeKind::Function)
     end
 
     it "creates block scope for if" do
       func = lower_function("def foo; if true; 1; end; end")
 
-      block_scopes = func.scopes.select { |s| s.kind == Crystal::HIR::ScopeKind::Block }
+      block_scopes = func.scopes.select { |s| s.kind == Adamas::HIR::ScopeKind::Block }
       block_scopes.size.should be >= 1
     end
 
     it "creates loop scope for while" do
       func = lower_function("def foo; while true; 1; end; end")
 
-      loop_scopes = func.scopes.select { |s| s.kind == Crystal::HIR::ScopeKind::Loop }
+      loop_scopes = func.scopes.select { |s| s.kind == Adamas::HIR::ScopeKind::Loop }
       loop_scopes.size.should be >= 1
     end
 
     it "keeps proc literals as standalone functions without parent closure scopes" do
       func = lower_function("def foo; -> { 1 }; end")
 
-      closure_scopes = func.scopes.select { |s| s.kind == Crystal::HIR::ScopeKind::Closure }
+      closure_scopes = func.scopes.select { |s| s.kind == Adamas::HIR::ScopeKind::Closure }
       closure_scopes.should be_empty
     end
 
@@ -1353,10 +1353,10 @@ describe Crystal::HIR::AstToHir do
       func.should_not be_nil
 
       call = func.not_nil!.blocks.flat_map(&.instructions)
-        .find { |inst| inst.is_a?(Crystal::HIR::Call) && inst.as(Crystal::HIR::Call).method_name.includes?("#value") }
+        .find { |inst| inst.is_a?(Adamas::HIR::Call) && inst.as(Adamas::HIR::Call).method_name.includes?("#value") }
       call.should_not be_nil
 
-      recv_id = call.not_nil!.as(Crystal::HIR::Call).receiver
+      recv_id = call.not_nil!.as(Adamas::HIR::Call).receiver
       recv_id.should_not be_nil
 
       recv = func.not_nil!.blocks.flat_map(&.instructions).find { |inst| inst.id == recv_id }
@@ -1399,10 +1399,10 @@ describe Crystal::HIR::AstToHir do
       func.should_not be_nil
 
       call = func.not_nil!.blocks.flat_map(&.instructions)
-        .find { |inst| inst.is_a?(Crystal::HIR::Call) && inst.as(Crystal::HIR::Call).method_name.includes?("#value") }
+        .find { |inst| inst.is_a?(Adamas::HIR::Call) && inst.as(Adamas::HIR::Call).method_name.includes?("#value") }
       call.should_not be_nil
 
-      call.not_nil!.as(Crystal::HIR::Call).method_name.should contain("Box#value")
+      call.not_nil!.as(Adamas::HIR::Call).method_name.should contain("Box#value")
     end
   end
 
@@ -1429,10 +1429,10 @@ describe Crystal::HIR::AstToHir do
       func.should_not be_nil
 
       call = func.not_nil!.blocks.flat_map(&.instructions)
-        .find { |inst| inst.is_a?(Crystal::HIR::Call) }
+        .find { |inst| inst.is_a?(Adamas::HIR::Call) }
       call.should_not be_nil
 
-      call.not_nil!.as(Crystal::HIR::Call).method_name.should contain("Box#value")
+      call.not_nil!.as(Adamas::HIR::Call).method_name.should contain("Box#value")
     end
 
     it "does not guess when includers are ambiguous" do
@@ -1464,10 +1464,10 @@ describe Crystal::HIR::AstToHir do
       func.should_not be_nil
 
       call = func.not_nil!.blocks.flat_map(&.instructions)
-        .find { |inst| inst.is_a?(Crystal::HIR::Call) }
+        .find { |inst| inst.is_a?(Adamas::HIR::Call) }
       call.should_not be_nil
 
-      call_name = call.not_nil!.as(Crystal::HIR::Call).method_name
+      call_name = call.not_nil!.as(Adamas::HIR::Call).method_name
       call_name.should_not contain("Box#value")
       call_name.should_not contain("Bag#value")
     end
@@ -1500,10 +1500,10 @@ describe Crystal::HIR::AstToHir do
       func.should_not be_nil
 
       call = func.not_nil!.blocks.flat_map(&.instructions)
-        .find { |inst| inst.is_a?(Crystal::HIR::Call) }
+        .find { |inst| inst.is_a?(Adamas::HIR::Call) }
       call.should_not be_nil
 
-      call_name = call.not_nil!.as(Crystal::HIR::Call).method_name
+      call_name = call.not_nil!.as(Adamas::HIR::Call).method_name
       call_name.should contain("M.foo")
     end
 
@@ -1537,10 +1537,10 @@ describe Crystal::HIR::AstToHir do
       func.should_not be_nil
 
       call = func.not_nil!.blocks.flat_map(&.instructions)
-        .find { |inst| inst.is_a?(Crystal::HIR::Call) }
+        .find { |inst| inst.is_a?(Adamas::HIR::Call) }
       call.should_not be_nil
 
-      call.not_nil!.as(Crystal::HIR::Call).method_name.should contain("Box#value")
+      call.not_nil!.as(Adamas::HIR::Call).method_name.should contain("Box#value")
     end
 
     # TODO: Module-typed receiver resolution needs virtual dispatch enhancements
@@ -1573,10 +1573,10 @@ describe Crystal::HIR::AstToHir do
       func.should_not be_nil
 
       call = func.not_nil!.blocks.flat_map(&.instructions)
-        .find { |inst| inst.is_a?(Crystal::HIR::Call) }
+        .find { |inst| inst.is_a?(Adamas::HIR::Call) }
       call.should_not be_nil
 
-      call.not_nil!.as(Crystal::HIR::Call).method_name.should contain("Box#value")
+      call.not_nil!.as(Adamas::HIR::Call).method_name.should contain("Box#value")
     end
   end
 
@@ -1646,10 +1646,10 @@ describe Crystal::HIR::AstToHir do
       func.should_not be_nil
 
       call = func.not_nil!.blocks.flat_map(&.instructions)
-        .find { |inst| inst.is_a?(Crystal::HIR::Call) && inst.as(Crystal::HIR::Call).method_name.includes?("map_like") }
+        .find { |inst| inst.is_a?(Adamas::HIR::Call) && inst.as(Adamas::HIR::Call).method_name.includes?("map_like") }
       call.should_not be_nil
 
-      desc = converter.module.get_type_descriptor(call.not_nil!.as(Crystal::HIR::Call).type)
+      desc = converter.module.get_type_descriptor(call.not_nil!.as(Adamas::HIR::Call).type)
       desc.should_not be_nil
       desc.not_nil!.name.should eq("Array(Int32)")
     end
@@ -1708,15 +1708,15 @@ describe Crystal::HIR::AstToHir do
       func.should_not be_nil
 
       array_lit = func.not_nil!.blocks.flat_map(&.instructions)
-        .find { |inst| inst.is_a?(Crystal::HIR::ArrayLiteral) }
+        .find { |inst| inst.is_a?(Adamas::HIR::ArrayLiteral) }
       array_lit.should_not be_nil
 
-      element_type = array_lit.not_nil!.as(Crystal::HIR::ArrayLiteral).element_type
+      element_type = array_lit.not_nil!.as(Adamas::HIR::ArrayLiteral).element_type
       desc = converter.module.get_type_descriptor(element_type)
       if desc
         desc.not_nil!.name.should eq("Int32")
       else
-        element_type.should eq(Crystal::HIR::TypeRef::INT32)
+        element_type.should eq(Adamas::HIR::TypeRef::INT32)
       end
     end
   end
@@ -1741,7 +1741,7 @@ describe Crystal::HIR::AstToHir do
       converter = lower_program(code)
       func = converter.module.functions.find { |f| f.name == "Box(Int32)#value" }
       func.should_not be_nil
-      func.not_nil!.return_type.should eq(Crystal::HIR::TypeRef::INT32)
+      func.not_nil!.return_type.should eq(Adamas::HIR::TypeRef::INT32)
     end
   end
 
@@ -1904,7 +1904,7 @@ describe Crystal::HIR::AstToHir do
       func = lower_function("def foo(x : Bool); if x; 1; else; 2; end; end")
 
       func.blocks.each do |block|
-        block.terminator.should_not be_a(Crystal::HIR::Unreachable)
+        block.terminator.should_not be_a(Adamas::HIR::Unreachable)
       end
     end
 
@@ -1916,7 +1916,7 @@ describe Crystal::HIR::AstToHir do
 
       # Entry should end with branch
       entry = func.get_block(func.entry_block)
-      entry.terminator.should be_a(Crystal::HIR::Branch)
+      entry.terminator.should be_a(Adamas::HIR::Branch)
     end
 
     it "creates correct CFG for while" do
@@ -1927,17 +1927,17 @@ describe Crystal::HIR::AstToHir do
       func.blocks.size.should be >= 3
 
       # Should have at least one Jump back (loop)
-      jumps = func.blocks.count { |b| b.terminator.is_a?(Crystal::HIR::Jump) }
+      jumps = func.blocks.count { |b| b.terminator.is_a?(Adamas::HIR::Jump) }
       jumps.should be >= 1
     end
 
     it "phi nodes have correct incoming edges" do
       func = lower_function("def foo(x : Bool); if x; 1; else; 2; end; end")
 
-      phi = func.blocks.flat_map(&.instructions).find { |i| i.is_a?(Crystal::HIR::Phi) }
+      phi = func.blocks.flat_map(&.instructions).find { |i| i.is_a?(Adamas::HIR::Phi) }
       phi.should_not be_nil
 
-      phi_node = phi.not_nil!.as(Crystal::HIR::Phi)
+      phi_node = phi.not_nil!.as(Adamas::HIR::Phi)
       phi_node.incoming.size.should eq(2)  # then and else branches
     end
   end
@@ -1960,11 +1960,11 @@ describe Crystal::HIR::AstToHir do
       func.should_not be_nil
 
       params = func.not_nil!.blocks.flat_map(&.instructions)
-        .select { |inst| inst.is_a?(Crystal::HIR::Parameter) }
-      ptr_param = params.find { |inst| inst.as(Crystal::HIR::Parameter).name == "ptr" }
+        .select { |inst| inst.is_a?(Adamas::HIR::Parameter) }
+      ptr_param = params.find { |inst| inst.as(Adamas::HIR::Parameter).name == "ptr" }
       ptr_param.should_not be_nil
 
-      param_type = ptr_param.not_nil!.as(Crystal::HIR::Parameter).type
+      param_type = ptr_param.not_nil!.as(Adamas::HIR::Parameter).type
       desc = converter.module.get_type_descriptor(param_type)
       desc.should_not be_nil
       desc.not_nil!.name.should eq("Pointer(Int32)")
@@ -1992,16 +1992,16 @@ describe Crystal::HIR::AstToHir do
       func.should_not be_nil
 
       params = func.not_nil!.blocks.flat_map(&.instructions)
-        .select { |inst| inst.is_a?(Crystal::HIR::Parameter) }
-      value_param = params.find { |inst| inst.as(Crystal::HIR::Parameter).name == "value" }
+        .select { |inst| inst.is_a?(Adamas::HIR::Parameter) }
+      value_param = params.find { |inst| inst.as(Adamas::HIR::Parameter).name == "value" }
       value_param.should_not be_nil
 
-      param_type = value_param.not_nil!.as(Crystal::HIR::Parameter).type
+      param_type = value_param.not_nil!.as(Adamas::HIR::Parameter).type
       desc = converter.module.get_type_descriptor(param_type)
       if desc
         desc.not_nil!.name.should eq("Int32")
       else
-        param_type.should eq(Crystal::HIR::TypeRef::INT32)
+        param_type.should eq(Adamas::HIR::TypeRef::INT32)
       end
     end
 
@@ -2029,18 +2029,18 @@ describe Crystal::HIR::AstToHir do
       bar.should_not be_nil
 
       foo_calls = foo.not_nil!.blocks.flat_map(&.instructions)
-        .select { |inst| inst.is_a?(Crystal::HIR::Call) }
-        .map { |inst| inst.as(Crystal::HIR::Call).method_name }
+        .select { |inst| inst.is_a?(Adamas::HIR::Call) }
+        .map { |inst| inst.as(Adamas::HIR::Call).method_name }
       bar_calls = bar.not_nil!.blocks.flat_map(&.instructions)
-        .select { |inst| inst.is_a?(Crystal::HIR::Call) }
-        .map { |inst| inst.as(Crystal::HIR::Call).method_name }
+        .select { |inst| inst.is_a?(Adamas::HIR::Call) }
+        .map { |inst| inst.as(Adamas::HIR::Call).method_name }
 
       foo_calls.any? { |name| name.includes?("to_i") }.should be_false
       bar_calls.any? { |name| name.includes?("value") }.should be_false
 
       foo_literals = foo.not_nil!.blocks.flat_map(&.instructions)
-        .select { |inst| inst.is_a?(Crystal::HIR::Literal) }
-        .map { |inst| inst.as(Crystal::HIR::Literal).value }
+        .select { |inst| inst.is_a?(Adamas::HIR::Literal) }
+        .map { |inst| inst.as(Adamas::HIR::Literal).value }
 
       foo_literals.includes?(3_i64).should be_true
     end
@@ -2071,7 +2071,7 @@ describe Crystal::HIR::AstToHir do
   describe "generic arg splitting" do
     it "does not treat braced proc type args as a proc continuation" do
       arena, _exprs = parse("1")
-      converter = Crystal::HIR::AstToHir.new(arena)
+      converter = Adamas::HIR::AstToHir.new(arena)
 
       converter.__test_split_generic_type_args("String, {String, _} ->")
         .should eq(["String", "{String, _} ->"])
@@ -2250,15 +2250,15 @@ describe Crystal::HIR::AstToHir do
       foo.should_not be_nil
 
       exit_term = foo.not_nil!.get_block(foo.not_nil!.entry_block).terminator
-      exit_term.should be_a(Crystal::HIR::Return)
-      return_value = exit_term.as(Crystal::HIR::Return).value
+      exit_term.should be_a(Adamas::HIR::Return)
+      return_value = exit_term.as(Adamas::HIR::Return).value
       return_value.should_not be_nil
 
       return_copy = foo.not_nil!.blocks.flat_map(&.instructions).find do |inst|
-        inst.is_a?(Crystal::HIR::Copy) && inst.id == return_value
+        inst.is_a?(Adamas::HIR::Copy) && inst.id == return_value
       end
       return_copy.should_not be_nil
-      return_copy.not_nil!.as(Crystal::HIR::Copy).source.should_not eq(foo.not_nil!.params.first.id)
+      return_copy.not_nil!.as(Adamas::HIR::Copy).source.should_not eq(foo.not_nil!.params.first.id)
     end
 
     it "materializes inherited struct instance dispatch under the concrete owner" do
@@ -2342,7 +2342,7 @@ describe Crystal::HIR::AstToHir do
 
     it "marks deferred concrete callees as lazy-rta call targets" do
       arena = parse("1")[0]
-      converter = Crystal::HIR::AstToHir.new(arena)
+      converter = Adamas::HIR::AstToHir.new(arena)
       converter.arena = arena
 
       converter.__test_queue_pending_inside_lowering("Array(Point)#inspect$IO")
@@ -2355,7 +2355,7 @@ describe Crystal::HIR::AstToHir do
 
     it "keeps duplicate deferred callee recording exact-name idempotent" do
       arena = parse("1")[0]
-      converter = Crystal::HIR::AstToHir.new(arena)
+      converter = Adamas::HIR::AstToHir.new(arena)
       converter.arena = arena
 
       converter.__test_queue_pending_inside_lowering("Array(Point)#inspect$IO")
@@ -2728,7 +2728,7 @@ describe Crystal::HIR::AstToHir do
 
       text = hir_text(main.not_nil!)
       text.should contain("Array(Point)#inspect() : 15")
-      text.should contain("__crystal_v2_print_string_ln")
+      text.should contain("__adamas_print_string_ln")
       text.should_not contain("IO#puts$Nil")
     end
 
@@ -2850,18 +2850,18 @@ describe Crystal::HIR::AstToHir do
         end
       CRYSTAL
 
-      converter = Crystal::HIR::AstToHir.new(arena)
+      converter = Adamas::HIR::AstToHir.new(arena)
       converter.arena = arena
 
-      def_expr = exprs.find { |expr_id| arena[expr_id].is_a?(CrystalV2::Compiler::Frontend::DefNode) }
+      def_expr = exprs.find { |expr_id| arena[expr_id].is_a?(Adamas::Compiler::Frontend::DefNode) }
       def_expr.should_not be_nil
-      def_node = arena[def_expr.not_nil!].as(CrystalV2::Compiler::Frontend::DefNode)
+      def_node = arena[def_expr.not_nil!].as(Adamas::Compiler::Frontend::DefNode)
 
       converter.register_function(def_node)
 
       int32_ref = converter.__test_type_ref_for_name("Int32")
-      nil_ref = Crystal::HIR::TypeRef::NIL
-      partial = [Crystal::HIR::TypeRef::VOID, nil_ref]
+      nil_ref = Adamas::HIR::TypeRef::NIL
+      partial = [Adamas::HIR::TypeRef::VOID, nil_ref]
 
       converter.__test_missing_required_runtime_param_types?(def_node, partial).should be_true
       converter.__test_remember_callsite_arg_types("wait_like", [int32_ref, nil_ref])
@@ -2882,12 +2882,12 @@ describe Crystal::HIR::AstToHir do
         end
       CRYSTAL
 
-      converter = Crystal::HIR::AstToHir.new(arena)
+      converter = Adamas::HIR::AstToHir.new(arena)
       converter.arena = arena
 
-      class_expr = exprs.find { |expr_id| arena[expr_id].is_a?(CrystalV2::Compiler::Frontend::ClassNode) }
+      class_expr = exprs.find { |expr_id| arena[expr_id].is_a?(Adamas::Compiler::Frontend::ClassNode) }
       class_expr.should_not be_nil
-      class_node = arena[class_expr.not_nil!].as(CrystalV2::Compiler::Frontend::ClassNode)
+      class_node = arena[class_expr.not_nil!].as(Adamas::Compiler::Frontend::ClassNode)
 
       converter.register_class(class_node)
       converter.lower_class(class_node)
@@ -3297,14 +3297,14 @@ describe Crystal::HIR::AstToHir do
       use_func.should_not be_nil
 
       pick_call = use_func.not_nil!.blocks.flat_map(&.instructions).find do |inst|
-        inst.is_a?(Crystal::HIR::Call) && inst.as(Crystal::HIR::Call).method_name.starts_with?("Worker#pick")
+        inst.is_a?(Adamas::HIR::Call) && inst.as(Adamas::HIR::Call).method_name.starts_with?("Worker#pick")
       end
       pick_call.should_not be_nil
 
-      call_type = pick_call.not_nil!.as(Crystal::HIR::Call).type
+      call_type = pick_call.not_nil!.as(Adamas::HIR::Call).type
       call_desc = converter.module.get_type_descriptor(call_type)
       call_desc.should_not be_nil
-      call_desc.not_nil!.kind.should eq(Crystal::HIR::TypeKind::Union)
+      call_desc.not_nil!.kind.should eq(Adamas::HIR::TypeKind::Union)
       call_desc.not_nil!.name.should contain("Tuple(Int32, Int32)")
       call_desc.not_nil!.name.should contain("Tuple(Int32, Nil)")
     end
@@ -3337,14 +3337,14 @@ describe Crystal::HIR::AstToHir do
         use_func.should_not be_nil
 
         section_call = use_func.not_nil!.blocks.flat_map(&.instructions).find do |inst|
-          inst.is_a?(Crystal::HIR::Call) && inst.as(Crystal::HIR::Call).method_name.starts_with?("Worker#read_section?")
+          inst.is_a?(Adamas::HIR::Call) && inst.as(Adamas::HIR::Call).method_name.starts_with?("Worker#read_section?")
         end
         section_call.should_not be_nil
 
-        call_type = section_call.not_nil!.as(Crystal::HIR::Call).type
+        call_type = section_call.not_nil!.as(Adamas::HIR::Call).type
         type_name = converter.__test_get_type_name_from_ref(call_type)
         call_desc = converter.module.get_type_descriptor(call_type)
-        call_desc.try(&.kind).should eq(Crystal::HIR::TypeKind::Union)
+        call_desc.try(&.kind).should eq(Adamas::HIR::TypeKind::Union)
         type_name.should contain("Int32")
         type_name.should contain("Nil")
         type_name.should_not eq("Bool")
@@ -3387,12 +3387,12 @@ describe Crystal::HIR::AstToHir do
         use_func.should_not be_nil
 
         section_index = use_func.not_nil!.blocks[0].instructions.index! do |inst|
-          inst.is_a?(Crystal::HIR::Call) && inst.as(Crystal::HIR::Call).method_name.starts_with?("Worker#read_section?")
+          inst.is_a?(Adamas::HIR::Call) && inst.as(Adamas::HIR::Call).method_name.starts_with?("Worker#read_section?")
         end
-        original_call = use_func.not_nil!.blocks[0].instructions[section_index].as(Crystal::HIR::Call)
-        use_func.not_nil!.blocks[0].instructions[section_index] = Crystal::HIR::Call.new(
+        original_call = use_func.not_nil!.blocks[0].instructions[section_index].as(Adamas::HIR::Call)
+        use_func.not_nil!.blocks[0].instructions[section_index] = Adamas::HIR::Call.new(
           original_call.id,
-          Crystal::HIR::TypeRef::BOOL,
+          Adamas::HIR::TypeRef::BOOL,
           original_call.receiver,
           original_call.method_name,
           original_call.args,
@@ -3402,10 +3402,10 @@ describe Crystal::HIR::AstToHir do
 
         converter.__test_repair_stale_call_return_types
 
-        repaired_call = use_func.not_nil!.blocks[0].instructions[section_index].as(Crystal::HIR::Call)
+        repaired_call = use_func.not_nil!.blocks[0].instructions[section_index].as(Adamas::HIR::Call)
         repaired_desc = converter.module.get_type_descriptor(repaired_call.type)
         repaired_desc.should_not be_nil
-        repaired_desc.not_nil!.kind.should eq(Crystal::HIR::TypeKind::Union)
+        repaired_desc.not_nil!.kind.should eq(Adamas::HIR::TypeKind::Union)
         repaired_desc.not_nil!.name.should contain("Nil")
         repaired_desc.not_nil!.name.should contain("Int32")
       ensure
@@ -3575,9 +3575,9 @@ describe Crystal::HIR::AstToHir do
       init = converter.module.function_by_name("StackBox#initialize$Pointer(Void)_Int32")
       init.should_not be_nil
 
-      pointer_add = init.not_nil!.blocks.flat_map(&.instructions).find(&.is_a?(Crystal::HIR::PointerAdd))
+      pointer_add = init.not_nil!.blocks.flat_map(&.instructions).find(&.is_a?(Adamas::HIR::PointerAdd))
       pointer_add.should_not be_nil
-      pointer_add.not_nil!.as(Crystal::HIR::PointerAdd).element_type.should eq(Crystal::HIR::TypeRef::UINT8)
+      pointer_add.not_nil!.as(Adamas::HIR::PointerAdd).element_type.should eq(Adamas::HIR::TypeRef::UINT8)
     end
   end
 

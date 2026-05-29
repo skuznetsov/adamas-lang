@@ -1,6 +1,6 @@
 require "./type"
 
-module CrystalV2
+module Adamas
   module Compiler
     module Semantic
       # Represents an unbound type parameter (e.g., T, U, K, V)

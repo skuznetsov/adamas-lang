@@ -2,7 +2,7 @@
 # EXPECT: bootstrap_hir_done
 # This tests struct/class patterns, enums, and the instruction hierarchy
 
-module CrystalV2
+module Adamas
   module Compiler
     module HIR
       struct TypeRef
@@ -180,26 +180,26 @@ module CrystalV2
 end
 
 # Build a simple function: add(a: Int32, b: Int32) -> Int32
-func = CrystalV2::Compiler::HIR::Function.new("add", CrystalV2::Compiler::HIR::TypeRef::INT32)
+func = Adamas::Compiler::HIR::Function.new("add", Adamas::Compiler::HIR::TypeRef::INT32)
 entry = func.create_block
 
 # Parameters
 a_id = func.next_value_id
-a = CrystalV2::Compiler::HIR::Local.new(a_id, CrystalV2::Compiler::HIR::TypeRef::INT32, "a", 0, false)
+a = Adamas::Compiler::HIR::Local.new(a_id, Adamas::Compiler::HIR::TypeRef::INT32, "a", 0, false)
 func.get_block(entry).add(a)
 
 b_id = func.next_value_id
-b = CrystalV2::Compiler::HIR::Local.new(b_id, CrystalV2::Compiler::HIR::TypeRef::INT32, "b", 0, false)
+b = Adamas::Compiler::HIR::Local.new(b_id, Adamas::Compiler::HIR::TypeRef::INT32, "b", 0, false)
 func.get_block(entry).add(b)
 
 # a + b
 sum_id = func.next_value_id
-sum = CrystalV2::Compiler::HIR::BinaryOperation.new(sum_id, CrystalV2::Compiler::HIR::TypeRef::INT32, CrystalV2::Compiler::HIR::BinaryOp::Add, a_id, b_id)
+sum = Adamas::Compiler::HIR::BinaryOperation.new(sum_id, Adamas::Compiler::HIR::TypeRef::INT32, Adamas::Compiler::HIR::BinaryOp::Add, a_id, b_id)
 func.get_block(entry).add(sum)
 
 # return sum
 ret_id = func.next_value_id
-ret = CrystalV2::Compiler::HIR::Return.new(ret_id, sum_id)
+ret = Adamas::Compiler::HIR::Return.new(ret_id, sum_id)
 func.get_block(entry).add(ret)
 func.get_block(entry).terminator_kind = 3  # return
 
@@ -213,14 +213,14 @@ count_binops = 0
 count_returns = 0
 count_other = 0
 func.get_block(entry).instructions.each do |inst|
-  if inst.is_a?(CrystalV2::Compiler::HIR::Local)
-    l = inst.as(CrystalV2::Compiler::HIR::Local)
+  if inst.is_a?(Adamas::Compiler::HIR::Local)
+    l = inst.as(Adamas::Compiler::HIR::Local)
     puts "  local #{l.name}"
     count_locals += 1
-  elsif inst.is_a?(CrystalV2::Compiler::HIR::BinaryOperation)
+  elsif inst.is_a?(Adamas::Compiler::HIR::BinaryOperation)
     puts "  binop"
     count_binops += 1
-  elsif inst.is_a?(CrystalV2::Compiler::HIR::Return)
+  elsif inst.is_a?(Adamas::Compiler::HIR::Return)
     puts "  return"
     count_returns += 1
   else
@@ -231,14 +231,14 @@ end
 puts "locals=#{count_locals} binops=#{count_binops} returns=#{count_returns}"
 
 # Verify TypeRef struct equality
-t1 = CrystalV2::Compiler::HIR::TypeRef::INT32
-t2 = CrystalV2::Compiler::HIR::TypeRef::INT32
-t3 = CrystalV2::Compiler::HIR::TypeRef::STRING
+t1 = Adamas::Compiler::HIR::TypeRef::INT32
+t2 = Adamas::Compiler::HIR::TypeRef::INT32
+t3 = Adamas::Compiler::HIR::TypeRef::STRING
 puts "eq=#{t1 == t2}"
 puts "ne=#{t1 == t3}"
 
 # Verify enum values
-puts "add_val=#{CrystalV2::Compiler::HIR::BinaryOp::Add.value}"
-puts "sub_val=#{CrystalV2::Compiler::HIR::BinaryOp::Sub.value}"
+puts "add_val=#{Adamas::Compiler::HIR::BinaryOp::Add.value}"
+puts "sub_val=#{Adamas::Compiler::HIR::BinaryOp::Sub.value}"
 
 puts "bootstrap_hir_done"

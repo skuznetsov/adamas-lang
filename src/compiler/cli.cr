@@ -73,10 +73,10 @@ class OptionParser
 end
 
 # Module aliases for convenience
-alias HIR = Crystal::HIR
-alias MIR = Crystal::MIR
+alias HIR = Adamas::HIR
+alias MIR = Adamas::MIR
 
-module CrystalV2
+module Adamas
   module Compiler
     VERSION = "0.1.0-dev"
 
@@ -988,7 +988,7 @@ module CrystalV2
         stage2_debug("[STAGE2_DEBUG] raw args size=#{@args.size}", err_io)
         stage2_debug("[STAGE2_DEBUG] run start args_size=#{@args.size}", err_io)
         mm_stack_threshold_invalid = false
-        parser_help = "Usage: crystal_v2 [options] <source.cr>\n\nOptions:"
+        parser_help = "Usage: adamas [options] <source.cr>\n\nOptions:"
         parser : OptionParser | Nil = nil
         parser_text = parser_help
 
@@ -1002,14 +1002,14 @@ module CrystalV2
         elsif (minimal_parser = env_get("CRYSTAL2_MINIMAL_PARSER"))
           if minimal_parser == "2"
             parser = OptionParser.new do |p|
-              p.banner = "Usage: crystal_v2 [options] <source.cr>\n\nOptions:"
+              p.banner = "Usage: adamas [options] <source.cr>\n\nOptions:"
               p.on("--release", "Compile in release mode (-O3)") { options.optimize = 3; options.release = true }
               p.on("--version", "Show version") { options.show_version = true }
               p.on("-h", "--help", "Show this message") { options.show_help = true; options.help_text = p.to_s }
             end
           else
             parser = OptionParser.new do |p|
-              p.banner = "Usage: crystal_v2 [options] <source.cr>\n\nOptions:"
+              p.banner = "Usage: adamas [options] <source.cr>\n\nOptions:"
               p.on("-o FILE", "--output FILE", "Output file name") { |f| options.output = f }
               p.on("--release", "Compile in release mode (-O3)") { options.optimize = 3; options.release = true }
               p.on("--version", "Show version") { options.show_version = true }
@@ -1018,7 +1018,7 @@ module CrystalV2
             end
         else
           parser = OptionParser.new do |p|
-            p.banner = "Usage: crystal_v2 [options] <source.cr>\n\nOptions:"
+            p.banner = "Usage: adamas [options] <source.cr>\n\nOptions:"
 
             # Output options (Crystal-compatible)
             p.on("-o FILE", "--output FILE", "Output file name") { |f| options.output = f }
@@ -1120,7 +1120,7 @@ module CrystalV2
         if show_version
           LibC.write(2, "[RUNPROBE] 7\n".to_unsafe, 13)
           stage2_debug("[STAGE2_DEBUG] options.show_version=true", err_io)
-          out_io.puts "crystal_v2 #{VERSION}"
+          out_io.puts "adamas #{VERSION}"
           return 0
         end
 
@@ -2514,10 +2514,10 @@ module CrystalV2
         hir_converter.constant_literal_values.each_key do |full_name|
           macro_value = hir_converter.constant_literal_values[full_name]
           if mir_setup_trace && const_literal_idx < 4
-            bootstrap_trace_puts "[MIR_SETUP] constant_literal idx=#{const_literal_idx} key_class=#{full_name.class.name} key_bytes=#{full_name.bytesize} value_class=#{macro_value.class.name} is_num=#{macro_value.is_a?(CrystalV2::Compiler::Semantic::MacroNumberValue) ? 1 : 0} is_bool=#{macro_value.is_a?(CrystalV2::Compiler::Semantic::MacroBoolValue) ? 1 : 0}"
+            bootstrap_trace_puts "[MIR_SETUP] constant_literal idx=#{const_literal_idx} key_class=#{full_name.class.name} key_bytes=#{full_name.bytesize} value_class=#{macro_value.class.name} is_num=#{macro_value.is_a?(Adamas::Compiler::Semantic::MacroNumberValue) ? 1 : 0} is_bool=#{macro_value.is_a?(Adamas::Compiler::Semantic::MacroBoolValue) ? 1 : 0}"
           end
           const_literal_idx += 1
-          next unless macro_value.is_a?(CrystalV2::Compiler::Semantic::MacroNumberValue)
+          next unless macro_value.is_a?(Adamas::Compiler::Semantic::MacroNumberValue)
           # Skip float constants — they can't be stored as Int64 initial values
           next if macro_value.value.is_a?(Float64)
           owner = hir_converter.constant_literal_owners[full_name]? || "Object"
@@ -2706,8 +2706,8 @@ module CrystalV2
         # Keyed by {lib_name, fun_name}. Also build a by-name-only fallback
         # for cases where the same C function is registered under a different
         # Crystal lib name (e.g. LibMachVMAst vs LibMachVM both wrap mach_task_self).
-        extern_map = {} of Tuple(String, String) => Crystal::HIR::ExternFunction
-        extern_by_name = {} of String => Crystal::HIR::ExternFunction
+        extern_map = {} of Tuple(String, String) => Adamas::HIR::ExternFunction
+        extern_by_name = {} of String => Adamas::HIR::ExternFunction
         hir_module.extern_functions.each do |ef|
           if lib_name = ef.lib_name
             extern_map[{lib_name, ef.name}] = ef
@@ -2729,7 +2729,7 @@ module CrystalV2
         const_init = {} of String => (Float64 | Int64)
         hir_converter.constant_literal_values.each_key do |name|
           value = hir_converter.constant_literal_values[name]
-          if value.is_a?(CrystalV2::Compiler::Semantic::MacroNumberValue)
+          if value.is_a?(Adamas::Compiler::Semantic::MacroNumberValue)
             # Convert constant name (Math::PI) to global name (Math__classvar__PI)
             owner = hir_converter.constant_literal_owners[name]? || "Object"
             const_name = hir_converter.constant_literal_names[name]? || name
@@ -3332,7 +3332,7 @@ module CrystalV2
           when "pkg_config"
             next if value.empty?
             pkg_args = ["pkg-config", "--libs", value] of String
-            output, ok = run_command_capture_output(pkg_args, "/tmp/crystal_v2_pkg_config_#{digest_string(value)}_#{Process.pid}.log")
+            output, ok = run_command_capture_output(pkg_args, "/tmp/adamas_pkg_config_#{digest_string(value)}_#{Process.pid}.log")
             output = output.strip
             if ok && !output.empty?
               output.split.each do |flag|
@@ -3365,7 +3365,7 @@ module CrystalV2
             expanded = if value.starts_with?("`") && value.ends_with?("`")
                          cmd = value[1..-2]
                          shell_args = ["sh", "-c", cmd] of String
-                         shell_output, shell_ok = run_command_capture_output(shell_args, "/tmp/crystal_v2_ldflags_#{digest_string(cmd)}_#{Process.pid}.log")
+                         shell_output, shell_ok = run_command_capture_output(shell_args, "/tmp/adamas_ldflags_#{digest_string(cmd)}_#{Process.pid}.log")
                          shell_ok ? shell_output.strip : ""
                        else
                          value
@@ -4110,7 +4110,7 @@ module CrystalV2
       private def require_cache_path(file_path : String) : String
         cache_dir = env_get("XDG_CACHE_HOME") || path_join(BootstrapEnv.get("HOME", "/tmp"), ".cache")
         hash = digest_string("v3:#{file_path}")
-        path_join(cache_dir, "crystal_v2", "requires", "#{hash}.req")
+        path_join(cache_dir, "adamas", "requires", "#{hash}.req")
       end
 
       private def load_require_cache(file_path : String) : Array(String)?
@@ -7512,4 +7512,4 @@ module CrystalV2
 end
 
 # Main entry point - only run when this file is the entry point, not when loaded as a library
-# Use crystal_v2.cr or main.cr as entry points instead
+# Use adamas.cr or main.cr as entry points instead

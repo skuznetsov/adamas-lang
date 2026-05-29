@@ -5,27 +5,27 @@ require "../../src/compiler/hir/ast_to_hir"
 require "../../src/compiler/mir/hir_to_mir"
 
 # Parse Crystal code and return arena + roots
-private def parse(code : String) : {CrystalV2::Compiler::Frontend::ArenaLike, Array(CrystalV2::Compiler::Frontend::ExprId)}
-  lexer = CrystalV2::Compiler::Frontend::Lexer.new(code)
-  parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+private def parse(code : String) : {Adamas::Compiler::Frontend::ArenaLike, Array(Adamas::Compiler::Frontend::ExprId)}
+  lexer = Adamas::Compiler::Frontend::Lexer.new(code)
+  parser = Adamas::Compiler::Frontend::Parser.new(lexer)
   result = parser.parse_program
   {result.arena, result.roots}
 end
 
 # Build MIR module with registered class/struct/union layouts (no function lowering).
-private def build_mir_module(code : String) : Crystal::MIR::Module
+private def build_mir_module(code : String) : Adamas::MIR::Module
   arena, exprs = parse(code)
-  converter = Crystal::HIR::AstToHir.new(arena)
+  converter = Adamas::HIR::AstToHir.new(arena)
 
-  class_nodes = [] of CrystalV2::Compiler::Frontend::ClassNode
-  enum_nodes = [] of CrystalV2::Compiler::Frontend::EnumNode
+  class_nodes = [] of Adamas::Compiler::Frontend::ClassNode
+  enum_nodes = [] of Adamas::Compiler::Frontend::EnumNode
 
   exprs.each do |expr_id|
     node = arena[expr_id]
     case node
-    when CrystalV2::Compiler::Frontend::ClassNode
+    when Adamas::Compiler::Frontend::ClassNode
       class_nodes << node
-    when CrystalV2::Compiler::Frontend::EnumNode
+    when Adamas::Compiler::Frontend::EnumNode
       enum_nodes << node
     end
   end
@@ -33,7 +33,7 @@ private def build_mir_module(code : String) : Crystal::MIR::Module
   enum_nodes.each { |n| converter.register_enum(n) }
   class_nodes.each { |n| converter.register_class(n) }
 
-  mir_lowering = Crystal::MIR::HIRToMIRLowering.new(converter.module)
+  mir_lowering = Adamas::MIR::HIRToMIRLowering.new(converter.module)
   mir_lowering.register_union_types(converter.union_descriptors)
   mir_lowering.register_class_types(converter.class_info)
   mir_lowering.mir_module
@@ -139,7 +139,7 @@ describe "MIR ABI layout sanity" do
     union_type.size.should eq(16)
     union_type.alignment.should eq(8)
 
-    descriptor = mir_mod.get_union_descriptor(Crystal::MIR::TypeRef.new(union_type.id)).not_nil!
+    descriptor = mir_mod.get_union_descriptor(Adamas::MIR::TypeRef.new(union_type.id)).not_nil!
     descriptor.payload_offset.should eq(8)
     descriptor.max_payload_size.should eq(8)
   end
@@ -157,7 +157,7 @@ describe "MIR ABI layout sanity" do
     union_type.size.should eq(32)
     union_type.alignment.should eq(16)
 
-    descriptor = mir_mod.get_union_descriptor(Crystal::MIR::TypeRef.new(union_type.id)).not_nil!
+    descriptor = mir_mod.get_union_descriptor(Adamas::MIR::TypeRef.new(union_type.id)).not_nil!
     descriptor.payload_offset.should eq(16)
     descriptor.max_payload_size.should eq(16)
   end

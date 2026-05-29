@@ -2,7 +2,7 @@ require "spec"
 
 require "../../src/compiler/frontend/parser"
 
-describe "CrystalV2::Compiler::Frontend::Parser" do
+describe "Adamas::Compiler::Frontend::Parser" do
   describe "Phase 29: Exception handling" do
     it "parses begin with rescue" do
       source = <<-CRYSTAL
@@ -13,21 +13,21 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
         end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       begin_node = arena[program.roots.first]
-      CrystalV2::Compiler::Frontend.node_kind(begin_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Begin)
+      Adamas::Compiler::Frontend.node_kind(begin_node).should eq(Adamas::Compiler::Frontend::NodeKind::Begin)
 
       # Check begin body
-      body = CrystalV2::Compiler::Frontend.node_begin_body(begin_node).not_nil!
+      body = Adamas::Compiler::Frontend.node_begin_body(begin_node).not_nil!
       body.size.should eq(1)
 
       # Check rescue clause
-      rescue_clauses = CrystalV2::Compiler::Frontend.node_rescue_clauses(begin_node).not_nil!
+      rescue_clauses = Adamas::Compiler::Frontend.node_rescue_clauses(begin_node).not_nil!
       rescue_clauses.size.should eq(1)
       rescue_clauses[0].body.size.should eq(1)
     end
@@ -41,17 +41,17 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
         end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       begin_node = arena[program.roots.first]
-      CrystalV2::Compiler::Frontend.node_kind(begin_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Begin)
+      Adamas::Compiler::Frontend.node_kind(begin_node).should eq(Adamas::Compiler::Frontend::NodeKind::Begin)
 
       # Check rescue clause with type
-      rescue_clauses = CrystalV2::Compiler::Frontend.node_rescue_clauses(begin_node).not_nil!
+      rescue_clauses = Adamas::Compiler::Frontend.node_rescue_clauses(begin_node).not_nil!
       rescue_clauses.size.should eq(1)
 
       rescue_clause = rescue_clauses[0]
@@ -69,7 +69,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
         end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
@@ -77,7 +77,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
 
       begin_node = arena[program.roots.first]
 
-      rescue_clauses = begin_node.as(CrystalV2::Compiler::Frontend::BeginNode).rescue_clauses.not_nil!
+      rescue_clauses = begin_node.as(Adamas::Compiler::Frontend::BeginNode).rescue_clauses.not_nil!
       rescue_clauses.size.should eq(1)
 
       rescue_clause = rescue_clauses[0]
@@ -95,7 +95,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
         end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
@@ -103,7 +103,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
 
       begin_node = arena[program.roots.first]
 
-      rescue_clauses = begin_node.as(CrystalV2::Compiler::Frontend::BeginNode).rescue_clauses.not_nil!
+      rescue_clauses = begin_node.as(Adamas::Compiler::Frontend::BeginNode).rescue_clauses.not_nil!
       rescue_clause = rescue_clauses[0]
 
       exception_type = rescue_clause.exception_type.not_nil!
@@ -126,7 +126,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
         end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
@@ -134,7 +134,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
 
       begin_node = arena[program.roots.first]
 
-      rescue_clauses = begin_node.as(CrystalV2::Compiler::Frontend::BeginNode).rescue_clauses.not_nil!
+      rescue_clauses = begin_node.as(Adamas::Compiler::Frontend::BeginNode).rescue_clauses.not_nil!
       rescue_clauses.size.should eq(3)
 
       # First rescue: RuntimeError
@@ -156,7 +156,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
         end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
@@ -165,10 +165,10 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       begin_node = arena[program.roots.first]
 
       # No rescue clauses
-      begin_node.as(CrystalV2::Compiler::Frontend::BeginNode).rescue_clauses.should be_nil
+      begin_node.as(Adamas::Compiler::Frontend::BeginNode).rescue_clauses.should be_nil
 
       # Has ensure body
-      ensure_body = CrystalV2::Compiler::Frontend.node_ensure_body(begin_node).not_nil!
+      ensure_body = Adamas::Compiler::Frontend.node_ensure_body(begin_node).not_nil!
       ensure_body.size.should eq(1)
     end
 
@@ -183,7 +183,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
         end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
@@ -192,11 +192,11 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       begin_node = arena[program.roots.first]
 
       # Has rescue
-      rescue_clauses = begin_node.as(CrystalV2::Compiler::Frontend::BeginNode).rescue_clauses.not_nil!
+      rescue_clauses = begin_node.as(Adamas::Compiler::Frontend::BeginNode).rescue_clauses.not_nil!
       rescue_clauses.size.should eq(1)
 
       # Has ensure
-      ensure_body = CrystalV2::Compiler::Frontend.node_ensure_body(begin_node).not_nil!
+      ensure_body = Adamas::Compiler::Frontend.node_ensure_body(begin_node).not_nil!
       ensure_body.size.should eq(1)
     end
 
@@ -205,18 +205,18 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
         raise "error message"
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       raise_node = arena[program.roots.first]
-      CrystalV2::Compiler::Frontend.node_kind(raise_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Raise)
+      Adamas::Compiler::Frontend.node_kind(raise_node).should eq(Adamas::Compiler::Frontend::NodeKind::Raise)
 
-      raise_value = CrystalV2::Compiler::Frontend.node_raise_value(raise_node).not_nil!
+      raise_value = Adamas::Compiler::Frontend.node_raise_value(raise_node).not_nil!
       value_node = arena[raise_value]
-      CrystalV2::Compiler::Frontend.node_kind(value_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::String)
+      Adamas::Compiler::Frontend.node_kind(value_node).should eq(Adamas::Compiler::Frontend::NodeKind::String)
     end
 
     it "parses bare raise (re-raise)" do
@@ -228,22 +228,22 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
         end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       begin_node = arena[program.roots.first]
-      rescue_clauses = begin_node.as(CrystalV2::Compiler::Frontend::BeginNode).rescue_clauses.not_nil!
+      rescue_clauses = begin_node.as(Adamas::Compiler::Frontend::BeginNode).rescue_clauses.not_nil!
 
       # Rescue body contains raise
       rescue_body = rescue_clauses[0].body
       rescue_body.size.should eq(1)
 
       raise_node = arena[rescue_body[0]]
-      CrystalV2::Compiler::Frontend.node_kind(raise_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Raise)
-      CrystalV2::Compiler::Frontend.node_raise_value(raise_node).should be_nil  # Bare raise
+      Adamas::Compiler::Frontend.node_kind(raise_node).should eq(Adamas::Compiler::Frontend::NodeKind::Raise)
+      Adamas::Compiler::Frontend.node_raise_value(raise_node).should be_nil  # Bare raise
     end
   end
 end

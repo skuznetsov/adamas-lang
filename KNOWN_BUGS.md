@@ -9,7 +9,7 @@ doesn't have to re-derive context.
   `in?` fallback guard (commit `28036d5c`, 2026-04-16) — that fix closed an
   HIR bloat path, this is a distinct RTA/lowering gap.
 - **Reducer (committed)**: `regression_tests/in_array_stub_repro.sh`
-  - Stable command: `regression_tests/in_array_stub_repro.sh bin/crystal_v2`
+  - Stable command: `regression_tests/in_array_stub_repro.sh bin/adamas`
   - Exits 0 while the bug reproduces (STUB observed), exits 1 once fixed.
   - Self-contained source (also embedded in the script):
     ```crystal

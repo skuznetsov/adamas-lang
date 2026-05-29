@@ -1,7 +1,7 @@
 require "./type"
 require "../symbol"
 
-module CrystalV2
+module Adamas
   module Compiler
     module Semantic
       # Represents an enum type (the enum itself, not an instance)

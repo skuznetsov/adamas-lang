@@ -2,9 +2,9 @@ require "spec"
 
 require "../../src/compiler/frontend/parser"
 
-alias Frontend = CrystalV2::Compiler::Frontend
+alias Frontend = Adamas::Compiler::Frontend
 
-describe "CrystalV2::Compiler::Frontend::Parser" do
+describe "Adamas::Compiler::Frontend::Parser" do
   describe "Phase 90A: select/when (concurrent channel operations - parser only)" do
     it "parses basic select with single when branch" do
       source = <<-CRYSTAL
@@ -14,7 +14,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
@@ -43,7 +43,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
@@ -69,7 +69,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
@@ -81,7 +81,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
 
       # Condition should be assignment expression
       condition_node = arena[branches[0].condition]
-      CrystalV2::Compiler::Frontend.node_kind(condition_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Assign)
+      Adamas::Compiler::Frontend.node_kind(condition_node).should eq(Adamas::Compiler::Frontend::NodeKind::Assign)
     end
 
     it "parses select with else clause" do
@@ -94,7 +94,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
@@ -118,7 +118,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
@@ -138,7 +138,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
@@ -150,7 +150,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
 
       # Condition should be method call (send)
       condition_node = arena[branches[0].condition]
-      CrystalV2::Compiler::Frontend.node_kind(condition_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Call)
+      Adamas::Compiler::Frontend.node_kind(condition_node).should eq(Adamas::Compiler::Frontend::NodeKind::Call)
     end
 
     it "parses select with timeout condition" do
@@ -161,7 +161,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
@@ -173,7 +173,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
 
       # Condition should be method call (timeout)
       condition_node = arena[branches[0].condition]
-      CrystalV2::Compiler::Frontend.node_kind(condition_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Call)
+      Adamas::Compiler::Frontend.node_kind(condition_node).should eq(Adamas::Compiler::Frontend::NodeKind::Call)
     end
 
     it "parses select inside method definition" do
@@ -186,14 +186,14 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       method_node = arena[program.roots[0]]
-      method_body = CrystalV2::Compiler::Frontend.node_def_body(method_node).not_nil!
+      method_body = Adamas::Compiler::Frontend.node_def_body(method_node).not_nil!
       method_body.size.should eq(1)
 
       # Method body contains select
@@ -212,16 +212,16 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       class_node = arena[program.roots[0]]
-      class_body = CrystalV2::Compiler::Frontend.node_class_body(class_node).not_nil!
+      class_body = Adamas::Compiler::Frontend.node_class_body(class_node).not_nil!
       method_node = arena[class_body[0]]
-      method_body = CrystalV2::Compiler::Frontend.node_def_body(method_node).not_nil!
+      method_body = Adamas::Compiler::Frontend.node_def_body(method_node).not_nil!
 
       # Method body contains select
       select_node = arena[method_body[0]].as(Frontend::SelectNode)
@@ -237,7 +237,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
@@ -259,7 +259,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
@@ -271,7 +271,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
 
       # Condition is assignment with receive? call
       condition_node = arena[branches[0].condition]
-      CrystalV2::Compiler::Frontend.node_kind(condition_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Assign)
+      Adamas::Compiler::Frontend.node_kind(condition_node).should eq(Adamas::Compiler::Frontend::NodeKind::Assign)
     end
 
     it "parses select with mixed operations" do
@@ -288,7 +288,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
@@ -315,7 +315,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
@@ -339,17 +339,17 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       assign_node = arena[program.roots[0]]
-      CrystalV2::Compiler::Frontend.node_kind(assign_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Assign)
+      Adamas::Compiler::Frontend.node_kind(assign_node).should eq(Adamas::Compiler::Frontend::NodeKind::Assign)
 
       # Assignment value is select
-      select_id = CrystalV2::Compiler::Frontend.node_assign_value(assign_node).not_nil!
+      select_id = Adamas::Compiler::Frontend.node_assign_value(assign_node).not_nil!
       select_node = arena[select_id].as(Frontend::SelectNode)
     end
 
@@ -362,7 +362,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
@@ -387,7 +387,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
@@ -399,7 +399,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
 
       # Condition should be assignment
       condition_node = arena[branches[0].condition]
-      CrystalV2::Compiler::Frontend.node_kind(condition_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Assign)
+      Adamas::Compiler::Frontend.node_kind(condition_node).should eq(Adamas::Compiler::Frontend::NodeKind::Assign)
     end
 
     it "parses select in loop" do
@@ -414,14 +414,14 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       loop_node = arena[program.roots[0]]
-      loop_body = CrystalV2::Compiler::Frontend.node_loop_body(loop_node).not_nil!
+      loop_body = Adamas::Compiler::Frontend.node_loop_body(loop_node).not_nil!
 
       # Loop body contains select
       select_node = arena[loop_body[0]].as(Frontend::SelectNode)
@@ -435,7 +435,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
       end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)

@@ -18,24 +18,24 @@ mkdir -p "$BIN_DIR"
 case "$MODE" in
   debug|d)
     echo "Building in DEBUG mode (fast compile)..."
-    crystal build "$PROJECT_ROOT/src/crystal_v2.cr" \
-      -o "$BIN_DIR/crystal_v2" \
+    crystal build "$PROJECT_ROOT/src/adamas.cr" \
+      -o "$BIN_DIR/adamas" \
       ${BOOTSTRAP_FAST_FLAG} \
       --no-debug \
       2>&1
-    echo "Done: $BIN_DIR/crystal_v2"
+    echo "Done: $BIN_DIR/adamas"
     ;;
 
   release|r)
     echo "Building in RELEASE mode (optimized)..."
     OPT_LEVEL="${CRYSTAL_V2_OPT_LEVEL:-2}"
     echo "Using -O${OPT_LEVEL} (O3 unstable in deep yield inlining)"
-    crystal build "$PROJECT_ROOT/src/crystal_v2.cr" \
-      -o "$BIN_DIR/crystal_v2" \
+    crystal build "$PROJECT_ROOT/src/adamas.cr" \
+      -o "$BIN_DIR/adamas" \
       -O"${OPT_LEVEL}" \
       ${BOOTSTRAP_FAST_FLAG} \
       2>&1
-    echo "Done: $BIN_DIR/crystal_v2"
+    echo "Done: $BIN_DIR/adamas"
     ;;
 
   *)

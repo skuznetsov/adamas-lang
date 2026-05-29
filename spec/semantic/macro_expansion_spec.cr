@@ -7,7 +7,7 @@ require "../../src/compiler/semantic/context"
 require "../../src/compiler/semantic/symbol_table"
 require "../../src/compiler/semantic/collectors/symbol_collector"
 
-include CrystalV2::Compiler
+include Adamas::Compiler
 
 describe "Phase 87B-2: General Macro Expansion" do
   # ==================================================================

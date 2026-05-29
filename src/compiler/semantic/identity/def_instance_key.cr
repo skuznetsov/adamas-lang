@@ -16,7 +16,7 @@
 require "./semantic_type_id"
 require "./def_identity"
 
-module CrystalV2::Compiler::Semantic
+module Adamas::Compiler::Semantic
   struct DefInstanceKey
     getter def_identity : DefIdentity
     getter receiver_type : SemanticTypeId?

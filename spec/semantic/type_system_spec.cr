@@ -11,7 +11,7 @@ require "../../src/compiler/semantic/types/proc_type"
 require "../../src/compiler/semantic/types/named_tuple_type"
 require "../../src/compiler/semantic/types/pointer_type"
 
-include CrystalV2::Compiler
+include Adamas::Compiler
 
 private def infer_types(source : String)
   lexer = Frontend::Lexer.new(source)

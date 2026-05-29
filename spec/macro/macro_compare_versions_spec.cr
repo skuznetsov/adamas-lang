@@ -6,34 +6,34 @@ require "../../src/runtime"
 private def expand_macro_with_context(
   source : String,
   macro_name : String,
-  flags : Set(String) = CrystalV2::Runtime.target_flags
-) : {String, Array(CrystalV2::Compiler::Semantic::Diagnostic)}
-  lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-  parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+  flags : Set(String) = Adamas::Runtime.target_flags
+) : {String, Array(Adamas::Compiler::Semantic::Diagnostic)}
+  lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+  parser = Adamas::Compiler::Frontend::Parser.new(lexer)
   program = parser.parse_program
 
-  context = CrystalV2::Compiler::Semantic::Context.new(
-    CrystalV2::Compiler::Semantic::SymbolTable.new,
+  context = Adamas::Compiler::Semantic::Context.new(
+    Adamas::Compiler::Semantic::SymbolTable.new,
     flags
   )
 
-  analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program, context)
+  analyzer = Adamas::Compiler::Semantic::Analyzer.new(program, context)
   analyzer.collect_symbols
 
   symbol = context.symbol_table.lookup_macro(macro_name)
   symbol.should_not be_nil
 
-  expander = CrystalV2::Compiler::Semantic::MacroExpander.new(
+  expander = Adamas::Compiler::Semantic::MacroExpander.new(
     program,
     program.arena,
     context.flags,
     symbol_table: context.symbol_table
   )
 
-  expr_id = expander.expand(symbol.not_nil!, [] of CrystalV2::Compiler::Frontend::ExprId)
+  expr_id = expander.expand(symbol.not_nil!, [] of Adamas::Compiler::Frontend::ExprId)
   node = program.arena[expr_id]
   {
-    CrystalV2::Compiler::Frontend.node_literal_string(node) || expander.last_output.to_s.strip,
+    Adamas::Compiler::Frontend.node_literal_string(node) || expander.last_output.to_s.strip,
     expander.diagnostics.dup,
   }
 end
@@ -41,22 +41,22 @@ end
 private def expand_first_top_level_macro_text(
   source : String,
   *,
-  flags : Set(String) = CrystalV2::Runtime.target_flags,
+  flags : Set(String) = Adamas::Runtime.target_flags,
   scope_name : String? = nil
-) : {String, Array(CrystalV2::Compiler::Semantic::Diagnostic)}
-  lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-  parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+) : {String, Array(Adamas::Compiler::Semantic::Diagnostic)}
+  lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+  parser = Adamas::Compiler::Frontend::Parser.new(lexer)
   program = parser.parse_program
 
-  context = CrystalV2::Compiler::Semantic::Context.new(
-    CrystalV2::Compiler::Semantic::SymbolTable.new,
+  context = Adamas::Compiler::Semantic::Context.new(
+    Adamas::Compiler::Semantic::SymbolTable.new,
     flags
   )
 
-  analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program, context)
+  analyzer = Adamas::Compiler::Semantic::Analyzer.new(program, context)
   analyzer.collect_symbols
 
-  expander = CrystalV2::Compiler::Semantic::MacroExpander.new(
+  expander = Adamas::Compiler::Semantic::MacroExpander.new(
     program,
     program.arena,
     context.flags,
@@ -64,30 +64,30 @@ private def expand_first_top_level_macro_text(
   )
 
   scope = if scope_name
-            context.symbol_table.lookup(scope_name).as(CrystalV2::Compiler::Semantic::ModuleSymbol).scope
+            context.symbol_table.lookup(scope_name).as(Adamas::Compiler::Semantic::ModuleSymbol).scope
           else
             context.symbol_table
           end
 
   target_id = if scope_name
                 lib_node = program.roots
-                  .map { |id| program.arena[id].as?(CrystalV2::Compiler::Frontend::LibNode) }
+                  .map { |id| program.arena[id].as?(Adamas::Compiler::Frontend::LibNode) }
                   .compact
                   .find { |node| String.new(node.name) == scope_name }
                 lib_node.should_not be_nil
-                body = lib_node.not_nil!.body || [] of CrystalV2::Compiler::Frontend::ExprId
+                body = lib_node.not_nil!.body || [] of Adamas::Compiler::Frontend::ExprId
                 body.find do |id|
                   node = program.arena[id]
-                  node.is_a?(CrystalV2::Compiler::Frontend::MacroLiteralNode) ||
-                    node.is_a?(CrystalV2::Compiler::Frontend::MacroIfNode) ||
-                    node.is_a?(CrystalV2::Compiler::Frontend::MacroForNode)
+                  node.is_a?(Adamas::Compiler::Frontend::MacroLiteralNode) ||
+                    node.is_a?(Adamas::Compiler::Frontend::MacroIfNode) ||
+                    node.is_a?(Adamas::Compiler::Frontend::MacroForNode)
                 end
               else
                 program.roots.find do |id|
                   node = program.arena[id]
-                  node.is_a?(CrystalV2::Compiler::Frontend::MacroLiteralNode) ||
-                    node.is_a?(CrystalV2::Compiler::Frontend::MacroIfNode) ||
-                    node.is_a?(CrystalV2::Compiler::Frontend::MacroForNode)
+                  node.is_a?(Adamas::Compiler::Frontend::MacroLiteralNode) ||
+                    node.is_a?(Adamas::Compiler::Frontend::MacroIfNode) ||
+                    node.is_a?(Adamas::Compiler::Frontend::MacroForNode)
                 end
               end
 
@@ -202,28 +202,28 @@ describe "Macro compare_versions evaluation" do
     end
     CR
 
-    lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-    parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+    lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+    parser = Adamas::Compiler::Frontend::Parser.new(lexer)
     program = parser.parse_program
 
-    context = CrystalV2::Compiler::Semantic::Context.new(
-      CrystalV2::Compiler::Semantic::SymbolTable.new,
+    context = Adamas::Compiler::Semantic::Context.new(
+      Adamas::Compiler::Semantic::SymbolTable.new,
       Set(String).new
     )
 
-    analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program, context)
+    analyzer = Adamas::Compiler::Semantic::Analyzer.new(program, context)
     analyzer.collect_symbols
 
-    lib_symbol = context.symbol_table.lookup("LibGC").as(CrystalV2::Compiler::Semantic::ModuleSymbol)
+    lib_symbol = context.symbol_table.lookup("LibGC").as(Adamas::Compiler::Semantic::ModuleSymbol)
     lib_node = program.roots
-      .map { |id| program.arena[id].as?(CrystalV2::Compiler::Frontend::LibNode) }
+      .map { |id| program.arena[id].as?(Adamas::Compiler::Frontend::LibNode) }
       .compact
       .find { |node| String.new(node.name) == "LibGC" }
     lib_node.should_not be_nil
 
-    body = lib_node.not_nil!.body || [] of CrystalV2::Compiler::Frontend::ExprId
+    body = lib_node.not_nil!.body || [] of Adamas::Compiler::Frontend::ExprId
     target_id = body.find do |id|
-      program.arena[id].is_a?(CrystalV2::Compiler::Frontend::MacroIfNode)
+      program.arena[id].is_a?(Adamas::Compiler::Frontend::MacroIfNode)
     end
     target_id.should_not be_nil
 
@@ -235,14 +235,14 @@ describe "Macro compare_versions evaluation" do
     {% end %}
     CR
 
-    expander = CrystalV2::Compiler::Semantic::MacroExpander.new(
+    expander = Adamas::Compiler::Semantic::MacroExpander.new(
       program,
       program.arena,
       Set(String).new,
       symbol_table: context.symbol_table,
       macro_source: current_macro_body
     )
-    expander.macro_source_provider = ->(node_id : CrystalV2::Compiler::Frontend::ExprId) { source.as(String?) }
+    expander.macro_source_provider = ->(node_id : Adamas::Compiler::Frontend::ExprId) { source.as(String?) }
 
     result = expander.expand_top_level_text(target_id.not_nil!, scope: lib_symbol.scope)
     expander.diagnostics.should be_empty
@@ -270,26 +270,26 @@ describe "Macro compare_versions evaluation" do
 
   it "expands raw-text lib macro literals that compare Crystal::LLVM_VERSION" do
     source = File.read("src/stdlib/math/libm.cr")
-    lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-    parser = CrystalV2::Compiler::Frontend::Parser.new(lexer)
+    lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+    parser = Adamas::Compiler::Frontend::Parser.new(lexer)
     program = parser.parse_program
 
-    context = CrystalV2::Compiler::Semantic::Context.new(
-      CrystalV2::Compiler::Semantic::SymbolTable.new,
+    context = Adamas::Compiler::Semantic::Context.new(
+      Adamas::Compiler::Semantic::SymbolTable.new,
       Set(String).new
     )
 
-    analyzer = CrystalV2::Compiler::Semantic::Analyzer.new(program, context)
+    analyzer = Adamas::Compiler::Semantic::Analyzer.new(program, context)
     analyzer.collect_symbols
 
-    lib_symbol = context.symbol_table.lookup("LibM").as(CrystalV2::Compiler::Semantic::ModuleSymbol)
+    lib_symbol = context.symbol_table.lookup("LibM").as(Adamas::Compiler::Semantic::ModuleSymbol)
     lib_node = program.roots
-      .map { |id| program.arena[id].as?(CrystalV2::Compiler::Frontend::LibNode) }
+      .map { |id| program.arena[id].as?(Adamas::Compiler::Frontend::LibNode) }
       .compact
       .find { |node| String.new(node.name) == "LibM" }
     lib_node.should_not be_nil
 
-    body = lib_node.not_nil!.body || [] of CrystalV2::Compiler::Frontend::ExprId
+    body = lib_node.not_nil!.body || [] of Adamas::Compiler::Frontend::ExprId
     target_id = body.find do |id|
       node = program.arena[id]
       node.span.start_line == 92
@@ -297,10 +297,10 @@ describe "Macro compare_versions evaluation" do
     target_id.should_not be_nil
 
     target = program.arena[target_id.not_nil!]
-    target.should be_a(CrystalV2::Compiler::Frontend::MacroLiteralNode)
-    target.as(CrystalV2::Compiler::Frontend::MacroLiteralNode).pieces.size.should eq(1)
+    target.should be_a(Adamas::Compiler::Frontend::MacroLiteralNode)
+    target.as(Adamas::Compiler::Frontend::MacroLiteralNode).pieces.size.should eq(1)
 
-    expander = CrystalV2::Compiler::Semantic::MacroExpander.new(
+    expander = Adamas::Compiler::Semantic::MacroExpander.new(
       program,
       program.arena,
       Set(String).new,

@@ -13,8 +13,8 @@ files_with_errors = [] of String
 files.each_with_index do |path, idx|
   begin
     source = File.read(path)
-    lexer = CrystalV2::Compiler::Frontend::Lexer.new(source)
-    parser = CrystalV2::Compiler::Frontend::Parser.new(lexer, recovery_mode: true)
+    lexer = Adamas::Compiler::Frontend::Lexer.new(source)
+    parser = Adamas::Compiler::Frontend::Parser.new(lexer, recovery_mode: true)
     parser.parse_program
 
     if parser.diagnostics.size > 0

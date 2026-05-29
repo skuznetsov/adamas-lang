@@ -9,7 +9,7 @@ require "./hir"
 require "./escape_analysis"
 require "./taint_analysis"
 
-module Crystal::HIR
+module Adamas::HIR
   # Extend Allocate with strategy slot (only when memory_strategy is loaded)
   class Allocate
     property memory_strategy : MemoryStrategy? = nil

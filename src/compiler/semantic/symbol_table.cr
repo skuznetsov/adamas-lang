@@ -1,7 +1,7 @@
 require "set"
 require "./symbol"
 
-module CrystalV2
+module Adamas
   module Compiler
     module Semantic
       record IncludedModuleRef, symbol : ModuleSymbol, type_arg_names : Array(String)? = nil do

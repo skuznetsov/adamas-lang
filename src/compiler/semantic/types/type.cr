@@ -1,4 +1,4 @@
-module CrystalV2
+module Adamas
   module Compiler
     module Semantic
       # Base class for all types in the type system

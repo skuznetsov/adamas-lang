@@ -31,7 +31,7 @@ editing code. §10 invariants remain useful; use `docs/closure_env_abi_p1_plan.m
 
 ```
 src/compiler/hir/ast_to_hir.cr:44048
-  when CrystalV2::Compiler::Frontend::SpawnNode
+  when Adamas::Compiler::Frontend::SpawnNode
     lower_spawn(ctx, node)
 ```
 
@@ -246,7 +246,7 @@ proc's fn ptr.
 bb2:
   %r5 = getelementptr i8, ptr %self, i32 128     ; @proc ivar
   %r6 = load ptr, ptr %r5                         ; fn ptr
-  call void @__crystal_v2_null_fn_guard(ptr %r6)
+  call void @__adamas_null_fn_guard(ptr %r6)
   %r7 = call ptr %r6()                            ; ZERO-ARG indirect call
 ```
 
@@ -324,7 +324,7 @@ Design:
   - Return `{fn_ptr, env_ptr}` bundle (as a V2-internal 16-byte struct).
 - Spawn call routing:
   - Replace the V2-side call to stdlib `spawn$$...(name, same_thread, block)`
-    with a V2 intrinsic `__crystal_v2_spawn_with_env(name, fn_ptr, env_ptr)`
+    with a V2 intrinsic `__adamas_spawn_with_env(name, fn_ptr, env_ptr)`
     implemented in the V2 runtime (C/Crystal shim that creates a Fiber whose
     `@proc` calls `fn_ptr(env_ptr)`).
   - OR keep calling stdlib `spawn` but teach V2's lowering of
@@ -348,7 +348,7 @@ Files/functions:
   - Possibly `lower_func_pointer` stays untouched — non-spawn procs keep
     their current shape.
 - `src/runtime/` (V2 runtime Crystal/C): add
-  `__crystal_v2_spawn_with_env(name, fn, env)` which allocates a Fiber whose
+  `__adamas_spawn_with_env(name, fn, env)` which allocates a Fiber whose
   main calls `fn(env)`.
 - `src/compiler/llvm_backend/...`: if we introduce a V2-internal 2-word Proc
   struct it needs type descriptor + lowering. If we keep it V2-spawn-only and
@@ -376,7 +376,7 @@ Compat risks:
   proc entry.
 
 Verification:
-- `regression_tests/spawn_capture_block_param_repro.sh bin/crystal_v2` → exit 1
+- `regression_tests/spawn_capture_block_param_repro.sh bin/adamas` → exit 1
   (bug fixed).
 - `examples/bench_comprehensive.cr` → `Fibers: 4 producers, total=799980000`.
 - `regression_tests/channel_ping_pong_repro.cr` → still passes.
@@ -459,7 +459,7 @@ Justification:
 Risks Option A explicitly accepts:
 - If written-capture + spawn is exercised, current cell-shared semantics
   persist. Document, do not silently change.
-- V2 spawn intrinsic (`__crystal_v2_spawn_with_env`) introduces a second
+- V2 spawn intrinsic (`__adamas_spawn_with_env`) introduces a second
   path through fiber creation. Keep it minimal (delegate Fiber allocation
   and scheduling to stdlib by wrapping `fn_ptr` + `env_ptr` inside a
   Crystal-shaped thunk if possible).
@@ -491,7 +491,7 @@ Awaiting review before editing HIR/MIR/LLVM.
 
 GPT review, correctly:
 
-> Option A hand-waves `__crystal_v2_spawn_with_env(fn, env)` but does not
+> Option A hand-waves `__adamas_spawn_with_env(fn, env)` but does not
 > explain where `env_ptr` lives between the spawn call and `Fiber#run`'s
 > zero-arg `%proc()`. A per-callsite thunk cannot carry per-instance env:
 > all dynamic spawns from the same lexical site share the same thunk
@@ -1055,7 +1055,7 @@ are not committed.
 ### 9.8 Verification list (final)
 
 Mandatory green after P2:
-- `regression_tests/spawn_capture_block_param_repro.sh bin/crystal_v2`
+- `regression_tests/spawn_capture_block_param_repro.sh bin/adamas`
   → exit 1 (fixed), then converted/added as a normal green `.cr` test.
 - `examples/bench_comprehensive.cr`:
   - Ping-pong final=500000

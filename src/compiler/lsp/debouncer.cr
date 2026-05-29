@@ -3,7 +3,7 @@
 # Coalesces rapid changes to avoid unnecessary work.
 # When multiple changes arrive in quick succession, only the last one is processed.
 
-module CrystalV2
+module Adamas
   module Compiler
     module LSP
       # Pending change to be processed

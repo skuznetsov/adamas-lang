@@ -2,7 +2,7 @@ require "./src/compiler/frontend/lexer"
 require "./src/compiler/frontend/parser"
 require "./src/compiler/frontend/ast"
 
-include CrystalV2::Compiler::Frontend
+include Adamas::Compiler::Frontend
 
 # Benchmark parsing multiple files
 files = ARGV

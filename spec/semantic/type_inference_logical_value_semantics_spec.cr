@@ -10,8 +10,8 @@ require "../../src/compiler/semantic/resolvers/name_resolver"
 require "../../src/compiler/semantic/analyzer"
 require "../../src/compiler/semantic/type_inference_engine"
 
-alias Frontend = CrystalV2::Compiler::Frontend
-alias Semantic = CrystalV2::Compiler::Semantic
+alias Frontend = Adamas::Compiler::Frontend
+alias Semantic = Adamas::Compiler::Semantic
 
 private def infer_logical_value_types(source : String)
   lexer = Frontend::Lexer.new(source)

@@ -6,7 +6,7 @@ if [ $# -lt 1 ]; then
   exit 1
 fi
 
-ROOT="/Users/sergey/Projects/Crystal/crystal_v2_repo"
+ROOT="/Users/sergey/Projects/Crystal/adamas_repo"
 COMPILER="$1"
 SRC="$ROOT/regression_tests/stage2_io_puts_bare_oracle.cr"
 WORKDIR="$(mktemp -d /tmp/stage2_io_puts_bare.XXXXXX)"

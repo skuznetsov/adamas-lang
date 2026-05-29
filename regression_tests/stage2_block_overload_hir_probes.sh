@@ -9,7 +9,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC="$ROOT_DIR/regression_tests/stage2_block_overload_hir_probes.cr"
-CC="${1:-"$ROOT_DIR/bin/crystal_v2"}"
+CC="${1:-"$ROOT_DIR/bin/adamas"}"
 WORKDIR="$(mktemp -d "${TMPDIR:-/tmp}/stage2_block_overload_hir_probes.XXXXXX")"
 
 cleanup() {

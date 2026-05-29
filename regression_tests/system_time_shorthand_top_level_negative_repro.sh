@@ -2,11 +2,11 @@
 # Top-level `System::Time` must not use the forked `Crystal::System::Time` shorthand
 # (that shorthand applies only under `Crystal::*`). Expect compile failure like reference Crystal.
 #
-# Usage: ./regression_tests/system_time_shorthand_top_level_negative_repro.sh ./bin/crystal_v2
+# Usage: ./regression_tests/system_time_shorthand_top_level_negative_repro.sh ./bin/adamas
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CC="${1:-"$ROOT_DIR/bin/crystal_v2"}"
+CC="${1:-"$ROOT_DIR/bin/adamas"}"
 
 if [[ ! -x "$CC" ]]; then
   echo "error: compiler not executable: $CC" >&2

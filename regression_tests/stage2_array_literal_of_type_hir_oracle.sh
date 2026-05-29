@@ -73,7 +73,7 @@ normalize_focus() {
   local output="$2"
 
   sed -E 's/^([[:space:]]*)type\.[0-9]+/\1type.N/' "$input" \
-    | grep -E 'CallNode|NamedArgument|Array\(CrystalV2::Compiler::Frontend::NamedArgument\)' \
+    | grep -E 'CallNode|NamedArgument|Array\(Adamas::Compiler::Frontend::NamedArgument\)' \
     >"$output"
 }
 

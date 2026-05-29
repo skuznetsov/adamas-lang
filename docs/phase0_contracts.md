@@ -316,7 +316,7 @@ A shadow run is green when:
 
 ```crystal
 # In bootstrap_shims.cr or cli.cr:
-module CrystalV2::Compiler
+module Adamas::Compiler
   SEMANTIC_COMPILE = BootstrapEnv.enabled?("CRYSTAL_V2_SEMANTIC_COMPILE")
   SEMANTIC_SHADOW  = BootstrapEnv.enabled?("CRYSTAL_V2_SEMANTIC_SHADOW")
   SEMANTIC_ASSERT_NO_LEGACY = BootstrapEnv.enabled?("CRYSTAL_V2_SEMANTIC_ASSERT_NO_LEGACY_QUEUE")
@@ -324,7 +324,7 @@ end
 
 # Kill-switch assertions (add to legacy paths):
 private def assert_no_legacy_queue!
-  if CrystalV2::Compiler::SEMANTIC_ASSERT_NO_LEGACY
+  if Adamas::Compiler::SEMANTIC_ASSERT_NO_LEGACY
     raise "KILL-SWITCH: legacy queue machinery invoked under semantic compile flag"
   end
 end

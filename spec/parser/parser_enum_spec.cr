@@ -2,7 +2,7 @@ require "spec"
 
 require "../../src/compiler/frontend/parser"
 
-describe "CrystalV2::Compiler::Frontend::Parser" do
+describe "Adamas::Compiler::Frontend::Parser" do
   describe "Phase 33: Enum definition (PRODUCTION-READY)" do
     it "parses empty enum" do
       source = <<-CRYSTAL
@@ -10,21 +10,21 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
         end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(1)
       arena = program.arena
 
       enum_node = arena[program.roots.first]
-      CrystalV2::Compiler::Frontend.node_kind(enum_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Enum)
+      Adamas::Compiler::Frontend.node_kind(enum_node).should eq(Adamas::Compiler::Frontend::NodeKind::Enum)
 
-      enum_name = String.new(CrystalV2::Compiler::Frontend.node_enum_name(enum_node).not_nil!)
+      enum_name = String.new(Adamas::Compiler::Frontend.node_enum_name(enum_node).not_nil!)
       enum_name.should eq("Status")
 
-      CrystalV2::Compiler::Frontend.node_enum_base_type(enum_node).should be_nil
+      Adamas::Compiler::Frontend.node_enum_base_type(enum_node).should be_nil
 
-      members = CrystalV2::Compiler::Frontend.node_enum_members(enum_node).not_nil!
+      members = Adamas::Compiler::Frontend.node_enum_members(enum_node).not_nil!
       members.size.should eq(0)
     end
 
@@ -37,14 +37,14 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
         end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       arena = program.arena
       enum_node = arena[program.roots.first]
-      CrystalV2::Compiler::Frontend.node_kind(enum_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Enum)
+      Adamas::Compiler::Frontend.node_kind(enum_node).should eq(Adamas::Compiler::Frontend::NodeKind::Enum)
 
-      members = CrystalV2::Compiler::Frontend.node_enum_members(enum_node).not_nil!
+      members = Adamas::Compiler::Frontend.node_enum_members(enum_node).not_nil!
       members.size.should eq(3)
 
       String.new(members[0].name).should eq("Red")
@@ -66,21 +66,21 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
         end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       arena = program.arena
       enum_node = arena[program.roots.first]
-      CrystalV2::Compiler::Frontend.node_kind(enum_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Enum)
+      Adamas::Compiler::Frontend.node_kind(enum_node).should eq(Adamas::Compiler::Frontend::NodeKind::Enum)
 
-      members = CrystalV2::Compiler::Frontend.node_enum_members(enum_node).not_nil!
+      members = Adamas::Compiler::Frontend.node_enum_members(enum_node).not_nil!
       members.size.should eq(3)
 
       # Low = 1
       String.new(members[0].name).should eq("Low")
       members[0].value.should_not be_nil
       value_node = arena[members[0].value.not_nil!]
-      CrystalV2::Compiler::Frontend.node_kind(value_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Number)
+      Adamas::Compiler::Frontend.node_kind(value_node).should eq(Adamas::Compiler::Frontend::NodeKind::Number)
 
       # Medium = 5
       String.new(members[1].name).should eq("Medium")
@@ -99,20 +99,20 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
         end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       arena = program.arena
       enum_node = arena[program.roots.first]
-      CrystalV2::Compiler::Frontend.node_kind(enum_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Enum)
+      Adamas::Compiler::Frontend.node_kind(enum_node).should eq(Adamas::Compiler::Frontend::NodeKind::Enum)
 
-      enum_name = String.new(CrystalV2::Compiler::Frontend.node_enum_name(enum_node).not_nil!)
+      enum_name = String.new(Adamas::Compiler::Frontend.node_enum_name(enum_node).not_nil!)
       enum_name.should eq("Status")
 
-      base_type = String.new(CrystalV2::Compiler::Frontend.node_enum_base_type(enum_node).not_nil!)
+      base_type = String.new(Adamas::Compiler::Frontend.node_enum_base_type(enum_node).not_nil!)
       base_type.should eq("Int32")
 
-      members = CrystalV2::Compiler::Frontend.node_enum_members(enum_node).not_nil!
+      members = Adamas::Compiler::Frontend.node_enum_members(enum_node).not_nil!
       members.size.should eq(2)
     end
 
@@ -126,11 +126,11 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
         end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       arena = program.arena
-      enum_node = arena[program.roots.first].as(CrystalV2::Compiler::Frontend::EnumNode)
+      enum_node = arena[program.roots.first].as(Adamas::Compiler::Frontend::EnumNode)
 
       members = enum_node.members
       members.size.should eq(4)
@@ -161,16 +161,16 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
         end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       arena = program.arena
-      enum_node = arena[program.roots.first].as(CrystalV2::Compiler::Frontend::EnumNode)
+      enum_node = arena[program.roots.first].as(Adamas::Compiler::Frontend::EnumNode)
 
       base_type = String.new(enum_node.base_type.not_nil!)
       base_type.should eq("Int32")
 
-      members = CrystalV2::Compiler::Frontend.node_enum_members(enum_node).not_nil!
+      members = Adamas::Compiler::Frontend.node_enum_members(enum_node).not_nil!
       members.size.should eq(3)
 
       members.each do |member|
@@ -188,21 +188,21 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
         end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       arena = program.arena
       class_node = arena[program.roots.first]
-      CrystalV2::Compiler::Frontend.node_kind(class_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Class)
+      Adamas::Compiler::Frontend.node_kind(class_node).should eq(Adamas::Compiler::Frontend::NodeKind::Class)
 
-      class_body = CrystalV2::Compiler::Frontend.node_class_body(class_node).not_nil!
+      class_body = Adamas::Compiler::Frontend.node_class_body(class_node).not_nil!
       class_body.size.should eq(1)
 
       # Nested enum
       enum_node = arena[class_body[0]]
-      CrystalV2::Compiler::Frontend.node_kind(enum_node).should eq(CrystalV2::Compiler::Frontend::NodeKind::Enum)
+      Adamas::Compiler::Frontend.node_kind(enum_node).should eq(Adamas::Compiler::Frontend::NodeKind::Enum)
 
-      enum_name = String.new(CrystalV2::Compiler::Frontend.node_enum_name(enum_node).not_nil!)
+      enum_name = String.new(Adamas::Compiler::Frontend.node_enum_name(enum_node).not_nil!)
       enum_name.should eq("Status")
     end
 
@@ -219,7 +219,7 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
         end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       program.roots.size.should eq(2)
@@ -227,13 +227,13 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
 
       # First enum
       enum1 = arena[program.roots[0]]
-      CrystalV2::Compiler::Frontend.node_kind(enum1).should eq(CrystalV2::Compiler::Frontend::NodeKind::Enum)
-      String.new(CrystalV2::Compiler::Frontend.node_enum_name(enum1).not_nil!).should eq("Color")
+      Adamas::Compiler::Frontend.node_kind(enum1).should eq(Adamas::Compiler::Frontend::NodeKind::Enum)
+      String.new(Adamas::Compiler::Frontend.node_enum_name(enum1).not_nil!).should eq("Color")
 
       # Second enum
       enum2 = arena[program.roots[1]]
-      CrystalV2::Compiler::Frontend.node_kind(enum2).should eq(CrystalV2::Compiler::Frontend::NodeKind::Enum)
-      String.new(CrystalV2::Compiler::Frontend.node_enum_name(enum2).not_nil!).should eq("Status")
+      Adamas::Compiler::Frontend.node_kind(enum2).should eq(Adamas::Compiler::Frontend::NodeKind::Enum)
+      String.new(Adamas::Compiler::Frontend.node_enum_name(enum2).not_nil!).should eq("Status")
     end
 
     it "parses enum with expression values" do
@@ -246,11 +246,11 @@ describe "CrystalV2::Compiler::Frontend::Parser" do
         end
       CRYSTAL
 
-      parser = CrystalV2::Compiler::Frontend::Parser.new(CrystalV2::Compiler::Frontend::Lexer.new(source))
+      parser = Adamas::Compiler::Frontend::Parser.new(Adamas::Compiler::Frontend::Lexer.new(source))
       program = parser.parse_program
 
       arena = program.arena
-      enum_node = arena[program.roots.first].as(CrystalV2::Compiler::Frontend::EnumNode)
+      enum_node = arena[program.roots.first].as(Adamas::Compiler::Frontend::EnumNode)
 
       members = enum_node.members
       members.size.should eq(4)

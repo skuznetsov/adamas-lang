@@ -6,7 +6,7 @@ require "random/secure"
 require "../../src/compiler/lsp/unified_project"
 require "../../src/compiler/lsp/project_cache"
 
-describe CrystalV2::Compiler::LSP::ProjectCacheLoader do
+describe Adamas::Compiler::LSP::ProjectCacheLoader do
   describe "TypeIndex-only cache (v5)" do
     it "saves and loads single file with TypeIndex" do
       root = File.join(Dir.tempdir, "cache_typeindex_test_#{Random::Secure.hex(6)}")
@@ -23,15 +23,15 @@ describe CrystalV2::Compiler::LSP::ProjectCacheLoader do
       File.write(path, source)
 
       # Create project and analyze
-      project = CrystalV2::Compiler::LSP::UnifiedProjectState.new
+      project = Adamas::Compiler::LSP::UnifiedProjectState.new
       project.update_file(path, source)
 
       # Save cache (writes TypeIndex, no JSON expr_types)
-      CrystalV2::Compiler::LSP::ProjectCacheLoader.save_to_cache(project, root)
+      Adamas::Compiler::LSP::ProjectCacheLoader.save_to_cache(project, root)
 
       # Load into fresh project
-      fresh = CrystalV2::Compiler::LSP::UnifiedProjectState.new
-      result = CrystalV2::Compiler::LSP::ProjectCacheLoader.load_from_cache(fresh, root)
+      fresh = Adamas::Compiler::LSP::UnifiedProjectState.new
+      result = Adamas::Compiler::LSP::ProjectCacheLoader.load_from_cache(fresh, root)
 
       result[:valid_count].should eq(1)
       result[:invalid_paths].should be_empty
@@ -51,14 +51,14 @@ describe CrystalV2::Compiler::LSP::ProjectCacheLoader do
       path2 = File.join(src_dir, "file2.cr")
       File.write(path2, "y = \"hello\"")
 
-      project = CrystalV2::Compiler::LSP::UnifiedProjectState.new
+      project = Adamas::Compiler::LSP::UnifiedProjectState.new
       project.update_file(path1, File.read(path1))
       project.update_file(path2, File.read(path2))
 
-      CrystalV2::Compiler::LSP::ProjectCacheLoader.save_to_cache(project, root)
+      Adamas::Compiler::LSP::ProjectCacheLoader.save_to_cache(project, root)
 
-      fresh = CrystalV2::Compiler::LSP::UnifiedProjectState.new
-      result = CrystalV2::Compiler::LSP::ProjectCacheLoader.load_from_cache(fresh, root)
+      fresh = Adamas::Compiler::LSP::UnifiedProjectState.new
+      result = Adamas::Compiler::LSP::ProjectCacheLoader.load_from_cache(fresh, root)
 
       result[:valid_count].should eq(2)
       fresh.files.size.should eq(2)
@@ -77,22 +77,22 @@ describe CrystalV2::Compiler::LSP::ProjectCacheLoader do
       File.write(compiler_path, "module CompilerFile\nend\n")
       File.write(stdlib_path, "class Array\nend\n")
 
-      project = CrystalV2::Compiler::LSP::UnifiedProjectState.new
-      project.files[compiler_path] = CrystalV2::Compiler::LSP::FileAnalysisState.new(
+      project = Adamas::Compiler::LSP::UnifiedProjectState.new
+      project.files[compiler_path] = Adamas::Compiler::LSP::FileAnalysisState.new(
         path: compiler_path,
         mtime: File.info(compiler_path).modification_time,
         symbols: ["CompilerFile"]
       )
-      project.files[stdlib_path] = CrystalV2::Compiler::LSP::FileAnalysisState.new(
+      project.files[stdlib_path] = Adamas::Compiler::LSP::FileAnalysisState.new(
         path: stdlib_path,
         mtime: File.info(stdlib_path).modification_time,
         symbols: ["Array"]
       )
 
-      cache = CrystalV2::Compiler::LSP::ProjectCache.from_project(project, root)
+      cache = Adamas::Compiler::LSP::ProjectCache.from_project(project, root)
       cache.files.map(&.path).should eq([compiler_path])
-      CrystalV2::Compiler::LSP::ProjectCache.cacheable_project_file?(compiler_path, root).should be_true
-      CrystalV2::Compiler::LSP::ProjectCache.cacheable_project_file?(stdlib_path, root).should be_false
+      Adamas::Compiler::LSP::ProjectCache.cacheable_project_file?(compiler_path, root).should be_true
+      Adamas::Compiler::LSP::ProjectCache.cacheable_project_file?(stdlib_path, root).should be_false
     ensure
       FileUtils.rm_rf(root) if root
     end
@@ -104,16 +104,16 @@ describe CrystalV2::Compiler::LSP::ProjectCacheLoader do
       path = File.join(src_dir, "test.cr")
       File.write(path, "a = 1")
 
-      project = CrystalV2::Compiler::LSP::UnifiedProjectState.new
+      project = Adamas::Compiler::LSP::UnifiedProjectState.new
       project.update_file(path, "a = 1")
 
       # Manually set some cached types
       project.cached_expr_types[path] = {0 => "Int32", 1 => "Int32"}
 
-      CrystalV2::Compiler::LSP::ProjectCacheLoader.save_to_cache(project, root)
+      Adamas::Compiler::LSP::ProjectCacheLoader.save_to_cache(project, root)
 
-      fresh = CrystalV2::Compiler::LSP::UnifiedProjectState.new
-      CrystalV2::Compiler::LSP::ProjectCacheLoader.load_from_cache(fresh, root)
+      fresh = Adamas::Compiler::LSP::UnifiedProjectState.new
+      Adamas::Compiler::LSP::ProjectCacheLoader.load_from_cache(fresh, root)
 
       # Types should be restored from TypeIndex
       fresh.cached_expr_types[path]?.should_not be_nil
@@ -130,12 +130,12 @@ describe CrystalV2::Compiler::LSP::ProjectCacheLoader do
 
       # Manually create an old v4 cache file (will be rejected)
       cache_dir = ENV["XDG_CACHE_HOME"]? || File.join(ENV["HOME"]? || "/tmp", ".cache")
-      cache_path = File.join(cache_dir, "crystal_v2_lsp", "projects")
+      cache_path = File.join(cache_dir, "adamas_lsp", "projects")
       FileUtils.mkdir_p(cache_path)
 
       # The load will fail on version mismatch, returning 0 valid files
-      fresh = CrystalV2::Compiler::LSP::UnifiedProjectState.new
-      result = CrystalV2::Compiler::LSP::ProjectCacheLoader.load_from_cache(fresh, root)
+      fresh = Adamas::Compiler::LSP::UnifiedProjectState.new
+      result = Adamas::Compiler::LSP::ProjectCacheLoader.load_from_cache(fresh, root)
 
       # No cache exists, so 0 valid files
       result[:valid_count].should eq(0)

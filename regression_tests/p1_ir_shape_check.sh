@@ -168,7 +168,7 @@ grep -Eq 'store ptr %[A-Za-z0-9_.]+, ptr %[A-Za-z0-9_.]+' "$PROC_OBJECT_WINDOW" 
 CALL_WINDOW="$TMPDIR/proc_call.ll"
 sed -n "${STORE_LINE},$((STORE_LINE + 90))p" "$LL" > "$CALL_WINDOW"
 
-grep -Eq '__crystal_v2_null_fn_guard' "$CALL_WINDOW" ||
+grep -Eq '__adamas_null_fn_guard' "$CALL_WINDOW" ||
   fail "heap Proc dispatch does not guard the loaded function pointer"
 
 grep -Eq 'call .*%[A-Za-z0-9_.]+\(ptr %[A-Za-z0-9_.]+\)' "$CALL_WINDOW" ||

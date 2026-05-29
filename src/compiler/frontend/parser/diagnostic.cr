@@ -1,6 +1,6 @@
 require "../ast"
 
-module CrystalV2
+module Adamas
   module Compiler
     module Frontend
       struct RelatedSpan

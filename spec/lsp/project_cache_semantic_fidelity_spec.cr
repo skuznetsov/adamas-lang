@@ -72,10 +72,10 @@ describe "LSP project cache semantic fidelity" do
       CR
       File.write(main_path, main_source)
 
-      baseline = CrystalV2::Compiler::LSP::Server.new(
+      baseline = Adamas::Compiler::LSP::Server.new(
         IO::Memory.new,
         IO::Memory.new,
-        CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
+        Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
       )
       baseline_uri = baseline.spec_store_document(main_source, src_dir, main_path)
       sig_line, sig_char = lsp_line_char(main_source, "value(", at_end: true)
@@ -90,15 +90,15 @@ describe "LSP project cache semantic fidelity" do
       baseline_definition = baseline.spec_definition(baseline_uri, definition_line, definition_char)
       baseline_definition["result"].as_a.first["uri"].as_s.should contain("helper.cr")
 
-      project = CrystalV2::Compiler::LSP::UnifiedProjectState.new
+      project = Adamas::Compiler::LSP::UnifiedProjectState.new
       project.update_file(helper_path, helper_source)
       project.update_file(main_path, main_source)
-      CrystalV2::Compiler::LSP::ProjectCacheLoader.save_to_cache(project, root)
+      Adamas::Compiler::LSP::ProjectCacheLoader.save_to_cache(project, root)
 
-      cached = CrystalV2::Compiler::LSP::Server.new(
+      cached = Adamas::Compiler::LSP::Server.new(
         IO::Memory.new,
         IO::Memory.new,
-        CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: true)
+        Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: true)
       )
       cached_uri = cached.spec_did_open_document(main_source, main_path)
       cached_sig = cached.spec_signature_help(cached_uri, sig_line, sig_char)
@@ -134,24 +134,24 @@ describe "LSP project cache semantic fidelity" do
       CR
       File.write(path, source)
 
-      baseline = CrystalV2::Compiler::LSP::Server.new(
+      baseline = Adamas::Compiler::LSP::Server.new(
         IO::Memory.new,
         IO::Memory.new,
-        CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
+        Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false)
       )
       baseline_uri = baseline.spec_store_document(source, src_dir, path)
       definition_line, definition_char = lsp_line_char(source, "handle_completion(1")
       baseline_definition = baseline.spec_definition(baseline_uri, definition_line, definition_char)
       baseline_definition["result"].as_a.size.should eq(1)
 
-      project = CrystalV2::Compiler::LSP::UnifiedProjectState.new
+      project = Adamas::Compiler::LSP::UnifiedProjectState.new
       project.update_file(path, source)
-      CrystalV2::Compiler::LSP::ProjectCacheLoader.save_to_cache(project, root)
+      Adamas::Compiler::LSP::ProjectCacheLoader.save_to_cache(project, root)
 
-      cached = CrystalV2::Compiler::LSP::Server.new(
+      cached = Adamas::Compiler::LSP::Server.new(
         IO::Memory.new,
         IO::Memory.new,
-        CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: true)
+        Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: true)
       )
       cached_uri = cached.spec_did_open_document(source, path)
       cached.spec_set_prelude_loading(true)
@@ -200,14 +200,14 @@ describe "LSP project cache semantic fidelity" do
       CR
       File.write(main_path, main_source)
 
-      project = CrystalV2::Compiler::LSP::UnifiedProjectState.new
+      project = Adamas::Compiler::LSP::UnifiedProjectState.new
       project.update_file(main_path, main_source)
-      CrystalV2::Compiler::LSP::ProjectCacheLoader.save_to_cache(project, root)
+      Adamas::Compiler::LSP::ProjectCacheLoader.save_to_cache(project, root)
 
-      cached = CrystalV2::Compiler::LSP::Server.new(
+      cached = Adamas::Compiler::LSP::Server.new(
         IO::Memory.new,
         IO::Memory.new,
-        CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: true)
+        Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: true)
       )
       cached_uri = cached.spec_did_open_document(main_source, main_path)
 
@@ -253,20 +253,20 @@ describe "LSP project cache semantic fidelity" do
       CR
       File.write(path, source)
 
-      project = CrystalV2::Compiler::LSP::UnifiedProjectState.new
+      project = Adamas::Compiler::LSP::UnifiedProjectState.new
       project.update_file(path, source)
-      CrystalV2::Compiler::LSP::ProjectCacheLoader.save_to_cache(project, root)
-      prewarm = CrystalV2::Compiler::LSP::Server.new(
+      Adamas::Compiler::LSP::ProjectCacheLoader.save_to_cache(project, root)
+      prewarm = Adamas::Compiler::LSP::Server.new(
         IO::Memory.new,
         IO::Memory.new,
-        CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false, ast_cache: true)
+        Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false, ast_cache: true)
       )
       prewarm.spec_did_open_document(source, path)
 
-      cached = CrystalV2::Compiler::LSP::Server.new(
+      cached = Adamas::Compiler::LSP::Server.new(
         IO::Memory.new,
         IO::Memory.new,
-        CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: true)
+        Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: true)
       )
       cached_uri = cached.spec_did_open_document(source, path)
       cached.spec_identifier_symbols_built?(cached_uri).should be_false
@@ -322,21 +322,21 @@ describe "LSP project cache semantic fidelity" do
       CR
       File.write(path, source)
 
-      project = CrystalV2::Compiler::LSP::UnifiedProjectState.new
+      project = Adamas::Compiler::LSP::UnifiedProjectState.new
       project.update_file(helper_path, helper_source)
       project.update_file(path, source)
-      CrystalV2::Compiler::LSP::ProjectCacheLoader.save_to_cache(project, root)
-      prewarm = CrystalV2::Compiler::LSP::Server.new(
+      Adamas::Compiler::LSP::ProjectCacheLoader.save_to_cache(project, root)
+      prewarm = Adamas::Compiler::LSP::Server.new(
         IO::Memory.new,
         IO::Memory.new,
-        CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false, ast_cache: true)
+        Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false, ast_cache: true)
       )
       prewarm.spec_did_open_document(source, path)
 
-      rename_server = CrystalV2::Compiler::LSP::Server.new(
+      rename_server = Adamas::Compiler::LSP::Server.new(
         IO::Memory.new,
         IO::Memory.new,
-        CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: true)
+        Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: true)
       )
       rename_uri = rename_server.spec_did_open_document(source, path)
       rename_server.spec_document_ast_loaded?(rename_uri).should be_false
@@ -347,10 +347,10 @@ describe "LSP project cache semantic fidelity" do
       rename_server.spec_document_ast_loaded?(rename_uri).should be_true
       rename_server.spec_identifier_symbols_built?(rename_uri).should be_true
 
-      definition_server = CrystalV2::Compiler::LSP::Server.new(
+      definition_server = Adamas::Compiler::LSP::Server.new(
         IO::Memory.new,
         IO::Memory.new,
-        CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: true)
+        Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: true)
       )
       definition_uri = definition_server.spec_did_open_document(source, path)
       definition_server.spec_document_ast_loaded?(definition_uri).should be_false
@@ -360,10 +360,10 @@ describe "LSP project cache semantic fidelity" do
       definition["result"].as_a.size.should eq(1)
       definition_server.spec_document_ast_loaded?(definition_uri).should be_false
 
-      hover_server = CrystalV2::Compiler::LSP::Server.new(
+      hover_server = Adamas::Compiler::LSP::Server.new(
         IO::Memory.new,
         IO::Memory.new,
-        CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: true)
+        Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: true)
       )
       hover_uri = hover_server.spec_did_open_document(source, path)
       hover_server.spec_document_ast_loaded?(hover_uri).should be_false
@@ -372,10 +372,10 @@ describe "LSP project cache semantic fidelity" do
       hover["result"]["contents"]["value"].as_s.should contain("def self.target")
       hover_server.spec_document_ast_loaded?(hover_uri).should be_false
 
-      member_definition_server = CrystalV2::Compiler::LSP::Server.new(
+      member_definition_server = Adamas::Compiler::LSP::Server.new(
         IO::Memory.new,
         IO::Memory.new,
-        CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: true)
+        Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: true)
       )
       member_definition_uri = member_definition_server.spec_did_open_document(source, path)
       member_definition_server.spec_document_ast_loaded?(member_definition_uri).should be_false
@@ -386,10 +386,10 @@ describe "LSP project cache semantic fidelity" do
       member_definition["result"].as_a.first["uri"].as_s.should contain("helper.cr")
       member_definition_server.spec_document_ast_loaded?(member_definition_uri).should be_false
 
-      member_hover_server = CrystalV2::Compiler::LSP::Server.new(
+      member_hover_server = Adamas::Compiler::LSP::Server.new(
         IO::Memory.new,
         IO::Memory.new,
-        CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: true)
+        Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: true)
       )
       member_hover_uri = member_hover_server.spec_did_open_document(source, path)
       member_hover_server.spec_document_ast_loaded?(member_hover_uri).should be_false
@@ -398,10 +398,10 @@ describe "LSP project cache semantic fidelity" do
       member_hover["result"]["contents"]["value"].as_s.should contain("def value")
       member_hover_server.spec_document_ast_loaded?(member_hover_uri).should be_false
 
-      signature_server = CrystalV2::Compiler::LSP::Server.new(
+      signature_server = Adamas::Compiler::LSP::Server.new(
         IO::Memory.new,
         IO::Memory.new,
-        CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: true)
+        Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: true)
       )
       signature_uri = signature_server.spec_did_open_document(source, path)
       signature_server.spec_document_ast_loaded?(signature_uri).should be_false
@@ -412,10 +412,10 @@ describe "LSP project cache semantic fidelity" do
       signature["result"]["signatures"].as_a.first["label"].as_s.should contain("scale : Int32")
       signature_server.spec_document_ast_loaded?(signature_uri).should be_false
 
-      completion_server = CrystalV2::Compiler::LSP::Server.new(
+      completion_server = Adamas::Compiler::LSP::Server.new(
         IO::Memory.new,
         IO::Memory.new,
-        CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: true)
+        Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: true)
       )
       completion_uri = completion_server.spec_did_open_document(source, path)
       completion_server.spec_document_ast_loaded?(completion_uri).should be_false
@@ -425,10 +425,10 @@ describe "LSP project cache semantic fidelity" do
       completion["result"].as_a.map { |item| item["label"].as_s }.should contain("value")
       completion_server.spec_document_ast_loaded?(completion_uri).should be_false
 
-      symbols_server = CrystalV2::Compiler::LSP::Server.new(
+      symbols_server = Adamas::Compiler::LSP::Server.new(
         IO::Memory.new,
         IO::Memory.new,
-        CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: true)
+        Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: true)
       )
       symbols_uri = symbols_server.spec_did_open_document(source, path)
       symbols_server.spec_document_ast_loaded?(symbols_uri).should be_false
@@ -437,10 +437,10 @@ describe "LSP project cache semantic fidelity" do
       symbols["result"].as_a.map { |entry| entry["name"].as_s }.should contain("Entry")
       symbols_server.spec_document_ast_loaded?(symbols_uri).should be_false
 
-      folding_server = CrystalV2::Compiler::LSP::Server.new(
+      folding_server = Adamas::Compiler::LSP::Server.new(
         IO::Memory.new,
         IO::Memory.new,
-        CrystalV2::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: true)
+        Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: true)
       )
       folding_uri = folding_server.spec_did_open_document(source, path)
       folding_server.spec_document_ast_loaded?(folding_uri).should be_false

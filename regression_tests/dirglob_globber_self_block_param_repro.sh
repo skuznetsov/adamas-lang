@@ -29,7 +29,7 @@
 # tracked separately.
 set -euo pipefail
 
-COMPILER="${1:-./bin/crystal_v2}"
+COMPILER="${1:-./bin/adamas}"
 KEEP_TMP="${KEEP_TMP:-0}"
 
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/dirglob_globber_self.XXXXXX")"
@@ -66,7 +66,7 @@ if [[ $compile_status -ne 0 ]]; then
   exit 2
 fi
 
-# crystal_v2 writes the LL alongside the requested output binary
+# adamas writes the LL alongside the requested output binary
 LL="$BIN.ll"
 if [[ ! -s "$LL" ]]; then
   echo "missing or empty LL: $LL"

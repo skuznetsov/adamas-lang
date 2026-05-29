@@ -1,6 +1,6 @@
 require "../spec_helper"
 
-describe "CrystalV2::Compiler::Frontend::Parser - begin/rescue/ensure" do
+describe "Adamas::Compiler::Frontend::Parser - begin/rescue/ensure" do
   it "parses begin/end block" do
     source = <<-CRYSTAL
       begin

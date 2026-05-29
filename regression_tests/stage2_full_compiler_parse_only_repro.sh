@@ -8,7 +8,7 @@ fi
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 COMPILER="$1"
-SOURCE="${2:-"$ROOT/src/crystal_v2.cr"}"
+SOURCE="${2:-"$ROOT/src/adamas.cr"}"
 ITERATIONS="${3:-5}"
 OUT_DIR="${TMPDIR:-/tmp}/stage2_full_compiler_parse_only_repro.$$"
 LOG="$OUT_DIR/run.log"

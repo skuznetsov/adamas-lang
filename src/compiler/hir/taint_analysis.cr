@@ -7,7 +7,7 @@
 
 require "./hir"
 
-module Crystal::HIR
+module Adamas::HIR
   # Abstract interface for type information (to avoid circular deps)
   module TypeInfoProvider
     abstract def class_names : Array(String)

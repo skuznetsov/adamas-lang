@@ -2,7 +2,7 @@ require "../frontend/ast"
 require "./symbol_table"
 require "./symbol"
 
-module CrystalV2
+module Adamas
   module Compiler
     module Semantic
       enum CompileShadowDeclarationOrigin
