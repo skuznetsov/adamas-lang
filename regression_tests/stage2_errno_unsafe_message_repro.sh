@@ -20,7 +20,7 @@ cd "$ROOT"
 set +e
 DEBUG_ENUM_ARENA=Errno \
 DEBUG_DEF_ARENA=Errno \
-CRYSTAL_V2_STOP_AFTER_HIR=1 \
+ADAMAS_STOP_AFTER_HIR=1 \
   "$BIN" --no-prelude "$SRC" -o "$OUT_BIN" >"$LOG_FILE" 2>&1
 RC=$?
 set -e

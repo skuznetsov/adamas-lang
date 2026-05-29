@@ -41,7 +41,7 @@ for literal in "${LITERALS[@]}"; do
   {
     echo "#!/usr/bin/env bash"
     echo "set -euo pipefail"
-    echo "export CRYSTAL_V2_STOP_AFTER_PARSE=1"
+    echo "export ADAMAS_STOP_AFTER_PARSE=1"
     printf 'exec %q ' "$COMPILER"
     printf '%q ' --release --no-prelude
     printf '%q ' "$src" -o "$out"

@@ -9,7 +9,7 @@ PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BIN_DIR="$PROJECT_ROOT/bin"
 BOOTSTRAP_FAST_FLAG=""
 
-if [[ "${CRYSTAL_V2_BOOTSTRAP_FAST:-}" == "1" || "${CRYSTAL_V2_BOOTSTRAP_FAST:-}" == "true" ]]; then
+if [[ "${ADAMAS_BOOTSTRAP_FAST:-}" == "1" || "${ADAMAS_BOOTSTRAP_FAST:-}" == "true" ]]; then
   BOOTSTRAP_FAST_FLAG="-Dbootstrap_fast"
 fi
 
@@ -28,7 +28,7 @@ case "$MODE" in
 
   release|r)
     echo "Building in RELEASE mode (optimized)..."
-    OPT_LEVEL="${CRYSTAL_V2_OPT_LEVEL:-2}"
+    OPT_LEVEL="${ADAMAS_OPT_LEVEL:-2}"
     echo "Using -O${OPT_LEVEL} (O3 unstable in deep yield inlining)"
     crystal build "$PROJECT_ROOT/src/adamas.cr" \
       -o "$BIN_DIR/adamas" \

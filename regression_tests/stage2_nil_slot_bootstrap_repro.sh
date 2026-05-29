@@ -26,7 +26,7 @@ OUT="$WORKDIR/stage2_debug_nilslot"
 cat > "$WRAPPER" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
-export CRYSTAL2_STAGE2_DEBUG=1
+export ADAMAS_STAGE2_DEBUG=1
 exec "$STAGE1_BIN" src/adamas.cr -o "$OUT"
 EOF
 chmod +x "$WRAPPER"

@@ -1,4 +1,4 @@
-# Heavy carrier for CRYSTAL_V2_MACRO_BODY_OUTPUT_STATS_DUMP comparison runs.
+# Heavy carrier for ADAMAS_MACRO_BODY_OUTPUT_STATS_DUMP comparison runs.
 # Many local macro expansions + default prelude (stdlib macro mix).
 macro gen_methods(count)
   {% for i in 1..count %}

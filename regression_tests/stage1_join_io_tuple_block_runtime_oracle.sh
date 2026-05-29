@@ -22,8 +22,8 @@ trap cleanup EXIT
 cat >"$compile_wrap" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
-export CRYSTAL_V2_LLVM_WORKERS=1
-export CRYSTAL_V2_LLVM_REUSE_BLOCK_BUFFER=1
+export ADAMAS_LLVM_WORKERS=1
+export ADAMAS_LLVM_REUSE_BLOCK_BUFFER=1
 exec "$compiler" "$repo_root/regression_tests/stage1_join_io_tuple_block_runtime_oracle.cr" -o "$bin"
 EOF
 chmod +x "$compile_wrap"

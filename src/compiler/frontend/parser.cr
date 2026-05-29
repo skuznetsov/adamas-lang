@@ -137,12 +137,12 @@ module Adamas
 
         def initialize(lexer : Lexer, *, recovery_mode : Bool = false)
           @source = lexer.source
-          @parser_init_trace_enabled = ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_PARSER_INIT_TRACE")
-          @trace_abstract_char_enabled = ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_ABSTRACT_CHAR")
-          @trace_token_preload_enabled = ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_TOKEN_PRELOAD") && @source.bytesize <= 128
-          keep_trivia = ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_PARSER_KEEP_TRIVIA")
+          @parser_init_trace_enabled = ::Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_PARSER_INIT_TRACE")
+          @trace_abstract_char_enabled = ::Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_TRACE_ABSTRACT_CHAR")
+          @trace_token_preload_enabled = ::Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_TRACE_TOKEN_PRELOAD") && @source.bytesize <= 128
+          keep_trivia = ::Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_PARSER_KEEP_TRIVIA")
           parser_init_trace("ctor1 start bytes=#{@source.bytesize}")
-          preload_capacity = if ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_DISABLE_PARSER_PRELOAD")
+          preload_capacity = if ::Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_DISABLE_PARSER_PRELOAD")
                                parser_init_trace("ctor1 preload disabled")
                                0
                              else
@@ -332,12 +332,12 @@ module Adamas
         # Used by macro expander to add parsed nodes to existing arena
         def initialize(lexer : Lexer, @arena : ArenaLike, *, recovery_mode : Bool = false)
           @source = lexer.source
-          @parser_init_trace_enabled = ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_PARSER_INIT_TRACE")
-          @trace_abstract_char_enabled = ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_ABSTRACT_CHAR")
-          @trace_token_preload_enabled = ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_TOKEN_PRELOAD") && @source.bytesize <= 128
-          keep_trivia = ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_PARSER_KEEP_TRIVIA")
+          @parser_init_trace_enabled = ::Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_PARSER_INIT_TRACE")
+          @trace_abstract_char_enabled = ::Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_TRACE_ABSTRACT_CHAR")
+          @trace_token_preload_enabled = ::Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_TRACE_TOKEN_PRELOAD") && @source.bytesize <= 128
+          keep_trivia = ::Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_PARSER_KEEP_TRIVIA")
           parser_init_trace("ctor2 start bytes=#{@source.bytesize}")
-          preload_capacity = if ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_DISABLE_PARSER_PRELOAD")
+          preload_capacity = if ::Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_DISABLE_PARSER_PRELOAD")
                                parser_init_trace("ctor2 preload disabled")
                                0
                              else
@@ -394,7 +394,7 @@ module Adamas
           # growable containers.
           root_indexes = SmallVec(Int32, 64).new
           while current_token.kind != Token::Kind::EOF
-            if ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_ROOT_LOOP")
+            if ::Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_TRACE_ROOT_LOOP")
               STDERR.puts "[ROOT_LOOP] start token=#{current_token.kind} index=#{@index}"
             end
             # Ensure global progress and allow watchdog to interrupt if needed
@@ -406,7 +406,7 @@ module Adamas
               macro_def = parse_macro_definition
               unless macro_def.invalid?
                 root_indexes << macro_def.index
-                if ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_ROOT_LOOP")
+                if ::Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_TRACE_ROOT_LOOP")
                   STDERR.puts "[ROOT_LOOP] push branch=macrodef expr=#{macro_def.index} token=#{current_token.kind} index=#{@index}"
                 end
               end
@@ -421,7 +421,7 @@ module Adamas
               macro_ctrl = parse_percent_macro_control
               unless macro_ctrl.invalid?
                 root_indexes << macro_ctrl.index
-                if ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_ROOT_LOOP")
+                if ::Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_TRACE_ROOT_LOOP")
                   STDERR.puts "[ROOT_LOOP] push branch=macroctrl expr=#{macro_ctrl.index} token=#{current_token.kind} index=#{@index}"
                 end
               end
@@ -454,7 +454,7 @@ module Adamas
             if node
               unless node.invalid?
                 root_indexes << node.index
-                if ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_ROOT_LOOP")
+                if ::Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_TRACE_ROOT_LOOP")
                   STDERR.puts "[ROOT_LOOP] push branch=fastpath expr=#{node.index} token=#{current_token.kind} index=#{@index}"
                 end
               end
@@ -500,7 +500,7 @@ module Adamas
                      end
               unless node.invalid?
                 root_indexes << node.index
-                if ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_ROOT_LOOP")
+                if ::Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_TRACE_ROOT_LOOP")
                   STDERR.puts "[ROOT_LOOP] push branch=definition expr=#{node.index} token=#{current_token.kind} index=#{@index}"
                 end
               end
@@ -512,7 +512,7 @@ module Adamas
             expr = parse_statement
             unless expr.invalid?
               root_indexes << expr.index
-              if ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_ROOT_LOOP")
+              if ::Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_TRACE_ROOT_LOOP")
                 STDERR.puts "[ROOT_LOOP] push branch=statement expr=#{expr.index} token=#{current_token.kind} index=#{@index}"
               end
             end
@@ -1253,7 +1253,7 @@ module Adamas
         # Normalize brace-like `{{ ... }}` sequences once after token preload so
         # the parser never mutates Array(Token) during current_token hot-paths.
         private def normalize_preloaded_macro_expr_braces! : Nil
-          return if ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_DISABLE_MACRO_EXPR_BRACE_SYNTH")
+          return if ::Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_DISABLE_MACRO_EXPR_BRACE_SYNTH")
           return if @tokens.empty?
 
           brace_like_starts = Hash(Int32, Bool).new
@@ -2380,7 +2380,7 @@ module Adamas
         private def parse_def(is_abstract : Bool = false, visibility : Visibility? = nil) : ExprId
           def_token = current_token
           trace_abstract_char("parse_def.enter", def_token) { "abstract=#{is_abstract ? 1 : 0}" }
-          if false && ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_DEF_STATE")
+          if false && ::Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_TRACE_DEF_STATE")
             STDERR.puts "[DEF_STATE] phase=enter line=#{def_token.span.start_line + 1} token=#{def_token.kind} paren=#{@paren_depth} no_type=#{@no_type_declaration} call_args=#{@parsing_call_args} macro_mode=#{@macro_mode}"
           end
           advance
@@ -2496,7 +2496,7 @@ module Adamas
             end
           end
 
-          if false && ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_DEF_STATE")
+          if false && ::Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_TRACE_DEF_STATE")
             STDERR.puts "[DEF_STATE] phase=name line=#{def_token.span.start_line + 1} name=#{String.new(method_name_slice)} paren=#{@paren_depth} no_type=#{@no_type_declaration} call_args=#{@parsing_call_args} macro_mode=#{@macro_mode}"
           end
           params = parse_method_params
@@ -2513,7 +2513,7 @@ module Adamas
               STDERR.puts "[PARSE_DEF_PARAMS] name=#{method_debug_name} count=#{params.size} typed=#{typed_count} blocks=#{block_count}"
             end
           end
-          if false && ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_DEF_STATE")
+          if false && ::Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_TRACE_DEF_STATE")
             STDERR.puts "[DEF_STATE] phase=params line=#{def_token.span.start_line + 1} name=#{String.new(method_name_slice)} paren=#{@paren_depth} no_type=#{@no_type_declaration} call_args=#{@parsing_call_args} macro_mode=#{@macro_mode}"
           end
 
@@ -3467,7 +3467,7 @@ module Adamas
         end
 
         private def stable_identifier_name_slice(slice : Slice(UInt8)) : Slice(UInt8)
-          if ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_STABLE_IDENTIFIER_NO_POOL")
+          if ::Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_STABLE_IDENTIFIER_NO_POOL")
             slice
           else
             @string_pool.intern(slice)
@@ -3475,7 +3475,7 @@ module Adamas
         end
 
         private def trace_stable_identifier_enabled?(span : Span) : Bool
-          return false unless ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_STABLE_IDENTIFIER")
+          return false unless ::Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_TRACE_STABLE_IDENTIFIER")
 
           line = span.start_line
           line >= 550 && line <= 590
@@ -3517,14 +3517,14 @@ module Adamas
         end
 
         private def trace_call_args_depth(event : String, token : Token? = nil) : Nil
-          return unless ENV.has_key?("CRYSTAL_V2_TRACE_CALL_ARGS")
+          return unless ENV.has_key?("ADAMAS_TRACE_CALL_ARGS")
 
           tok = token || current_token
           STDERR.puts "[CALL_ARGS] event=#{event} depth=#{@parsing_call_args} token=#{tok.kind} line=#{tok.span.start_line + 1}:#{tok.span.start_column + 1} index=#{@index}"
         end
 
         private def trace_abstract_char_enabled? : Bool
-          ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_ABSTRACT_CHAR")
+          ::Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_TRACE_ABSTRACT_CHAR")
         end
 
         private def trace_abstract_char(event : String, token : Token? = nil, extra : String? = nil) : Nil
@@ -3573,7 +3573,7 @@ module Adamas
         end
 
         private def trace_macro_def_enabled? : Bool
-          ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_MACRO_DEF")
+          ::Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_TRACE_MACRO_DEF")
         end
 
         private def trace_macro_def(event : String, token : Token? = nil, depth : Int32? = nil, extra : String? = nil) : Nil
@@ -3593,7 +3593,7 @@ module Adamas
             trace_abstract_char("stable_identifier.source", token) { "source_size=#{span_slice.size}" }
             trace_stable_identifier_path(token.span, token, "source", span_slice)
             unless span_slice.empty?
-              if ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_STABLE_IDENTIFIER_SOURCE_DIRECT")
+              if ::Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_STABLE_IDENTIFIER_SOURCE_DIRECT")
                 return span_slice
               end
               return @string_pool.intern(span_slice)
@@ -8084,7 +8084,7 @@ module Adamas
           return PREFIX_ERROR unless parsed_name
           name_segments = parsed_name[0]
           absolute_name = parsed_name[1]
-          trace_parse_module = ENV.has_key?("CRYSTAL_V2_TRACE_PARSE_MODULE") && name_segments.size > 1
+          trace_parse_module = ENV.has_key?("ADAMAS_TRACE_PARSE_MODULE") && name_segments.size > 1
           if trace_parse_module
             segment_names = name_segments.map { |segment| String.new(segment) }
             parser_raw_trace_puts "[PARSE_MODULE] phase=segments size=#{segment_names.size} names=#{segment_names.join("::")}"
@@ -10416,7 +10416,7 @@ module Adamas
           when Token::Kind::Char
             # Phase 56: Character literals
             trace_abstract_char("parse_prefix.char", token)
-            if ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_CHAR_SOURCE_REBUILD")
+            if ::Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_CHAR_SOURCE_REBUILD")
               if rebuilt = rebuild_char_literal_from_span(token.span)
                 advance
                 rebuilt
@@ -15031,7 +15031,7 @@ current_token.kind == Token::Kind::Identifier &&
           prev_end = previous_span.end_offset
           next_start = next_span.start_offset
           if prev_end < 0 || next_start < prev_end || prev_end > source_size || next_start > source_size
-            if ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_MACRO_GAP")
+            if ::Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_TRACE_MACRO_GAP")
               STDERR.puts "[MACRO_GAP] skip prev_end=#{prev_end} next_start=#{next_start} source_size=#{source_size}"
             end
             return false

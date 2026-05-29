@@ -41,7 +41,7 @@ if [[ $# -gt 0 ]] && [[ "$1" != -* ]]; then
   shift
 fi
 
-PIPELINE_CACHE="${CRYSTAL_V2_PIPELINE_CACHE:-0}"
+PIPELINE_CACHE="${ADAMAS_PIPELINE_CACHE:-0}"
 mkdir -p "$CACHE_DIR"
 
 echo "[stage2] mode=$MODE"
@@ -51,5 +51,5 @@ echo "[stage2] pipeline_cache=$PIPELINE_CACHE"
 echo "[stage2] out=$OUT_BIN"
 
 CRYSTAL_CACHE_DIR="$CACHE_DIR" \
-CRYSTAL_V2_PIPELINE_CACHE="$PIPELINE_CACHE" \
+ADAMAS_PIPELINE_CACHE="$PIPELINE_CACHE" \
   "$STAGE1_COMPILER" "$SRC" "${RELEASE_FLAG[@]}" -o "$OUT_BIN" "$@"

@@ -68,7 +68,7 @@ See `notes/business_logic/README.md` for the index of focused snapshots.
 - Build with hooks:
   - `crystal build -Ddebug_hooks src/adamas.cr -o bin/adamas_debug`
 - Run with filters:
-  - `CRYSTAL_V2_DEBUG_HOOKS=1 CRYSTAL_V2_DEBUG_HOOKS_FILTER=call.class_receiver.unresolved ./bin/adamas_debug <file>`
+  - `ADAMAS_DEBUG_HOOKS=1 ADAMAS_DEBUG_HOOKS_FILTER=call.class_receiver.unresolved ./bin/adamas_debug <file>`
 
 ## Quick Failure Triage
 - Missing symbols in full-prelude bootstrap: see TODO missing-symbols list.

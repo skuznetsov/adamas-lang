@@ -32,7 +32,7 @@ run_case() {
   cat >"$wrapper" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
-exec env CRYSTAL_V2_STOP_AFTER_PARSE=1 "$COMPILER" --release --no-prelude "$src" -o "$out"
+exec env ADAMAS_STOP_AFTER_PARSE=1 "$COMPILER" --release --no-prelude "$src" -o "$out"
 EOF
   chmod +x "$wrapper"
 

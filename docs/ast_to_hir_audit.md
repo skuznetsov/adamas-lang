@@ -30,7 +30,7 @@
 ## 3. `LoweringContext` — fixed facts
 
 - Holds **`@function`**, **`@module`**, **`@arena`**, current block, scope stack, type cache, maps `value_id → type` and `value_id → Value`.
-- **`emit` / `emit_to_block`**: for `Literal(nil)` with a user type — tracks `@type_literal_values`; optional trace **`CRYSTAL_V2_TRACE_SHOVEL_TYPES`** for one debug-only function.
+- **`emit` / `emit_to_block`**: for `Literal(nil)` with a user type — tracks `@type_literal_values`; optional trace **`ADAMAS_TRACE_SHOVEL_TYPES`** for one debug-only function.
 - **`get_type(String)`**: maps primitive names to `TypeRef::*`, otherwise `intern_type` via descriptor.
 
 ---
@@ -122,10 +122,10 @@ Useful searches in the file:
 
 ## 9. Environment variables (overview)
 
-- Unique **`CRYSTAL_V2_*`**: **22** (see `rg -o 'CRYSTAL_V2_[A-Z0-9_]+' ast_to_hir.cr | sort -u`).
+- Unique **`ADAMAS_*`**: **22** (see `rg -o 'ADAMAS_[A-Z0-9_]+' ast_to_hir.cr | sort -u`).
 - Unique **`DEBUG_*`**: **372** — fine-grained debugging; full list only via `rg`, not duplicated here.
 
-Examples of `CRYSTAL_V2_*`: `CRYSTAL_V2_TRACE_SHOVEL_TYPES`, `CRYSTAL_V2_DUMP_LAYOUTS`, `CRYSTAL_V2_LAZY_RTA`, `CRYSTAL_V2_MISSING_TRACE`, `CRYSTAL_V2_TRY_INLINE_MAX`, …
+Examples of `ADAMAS_*`: `ADAMAS_TRACE_SHOVEL_TYPES`, `ADAMAS_DUMP_LAYOUTS`, `ADAMAS_LAZY_RTA`, `ADAMAS_MISSING_TRACE`, `ADAMAS_TRY_INLINE_MAX`, …
 
 ---
 

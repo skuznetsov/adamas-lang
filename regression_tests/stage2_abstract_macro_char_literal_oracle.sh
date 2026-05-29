@@ -90,12 +90,12 @@ compare_phase() {
   fi
 }
 
-run_phase "stage1" "$STAGE1" "hir" "CRYSTAL_V2_STOP_AFTER_HIR" "hir" --emit hir
-run_phase "stage2" "$STAGE2" "hir" "CRYSTAL_V2_STOP_AFTER_HIR" "hir" --emit hir
+run_phase "stage1" "$STAGE1" "hir" "ADAMAS_STOP_AFTER_HIR" "hir" --emit hir
+run_phase "stage2" "$STAGE2" "hir" "ADAMAS_STOP_AFTER_HIR" "hir" --emit hir
 compare_phase "hir" "hir"
 
-run_phase "stage1" "$STAGE1" "mir" "CRYSTAL_V2_STOP_AFTER_MIR" "mir" --emit mir --no-link
-run_phase "stage2" "$STAGE2" "mir" "CRYSTAL_V2_STOP_AFTER_MIR" "mir" --emit mir --no-link
+run_phase "stage1" "$STAGE1" "mir" "ADAMAS_STOP_AFTER_MIR" "mir" --emit mir --no-link
+run_phase "stage2" "$STAGE2" "mir" "ADAMAS_STOP_AFTER_MIR" "mir" --emit mir --no-link
 compare_phase "mir" "mir"
 
 run_phase "stage1" "$STAGE1" "ll" "" "ll" --emit llvm-ir --no-link

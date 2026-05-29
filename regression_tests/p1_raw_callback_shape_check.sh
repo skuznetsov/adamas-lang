@@ -91,7 +91,7 @@ RUN_STDOUT=$(awk '
 [[ "$RUN_STDOUT" == "4" ]] ||
   fail "runtime probe expected stdout 4, got $(printf '%q' "$RUN_STDOUT")"
 
-CRYSTAL_V2_STOP_AFTER_HIR=1 "$COMPILER" "$SRC" --emit hir -o "$HIR_BASE" \
+ADAMAS_STOP_AFTER_HIR=1 "$COMPILER" "$SRC" --emit hir -o "$HIR_BASE" \
   >"$TMPDIR/hir.out" 2>"$TMPDIR/hir.err" ||
   inconclusive "failed to emit HIR ($(tail -20 "$TMPDIR/hir.err" | tr '\n' ' '))"
 

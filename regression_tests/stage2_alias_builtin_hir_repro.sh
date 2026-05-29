@@ -33,8 +33,8 @@ run_hir() {
   {
     echo "#!/usr/bin/env bash"
     echo "set -euo pipefail"
-    echo "export CRYSTAL_V2_STOP_AFTER_HIR=1"
-    echo "export CRYSTAL_V2_TRACE_ALIAS_ROOT=1"
+    echo "export ADAMAS_STOP_AFTER_HIR=1"
+    echo "export ADAMAS_TRACE_ALIAS_ROOT=1"
     printf 'exec %q ' "$compiler"
     printf '%q ' "$SRC" --release --no-prelude --emit hir -o "$WORKDIR/${label}_out"
     echo

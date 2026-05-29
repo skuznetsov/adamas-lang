@@ -688,12 +688,12 @@ module Adamas::HIR
       method_name : String,
       args : Array(ValueId),
     ) : Call
-      if ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
+      if ::Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_TRACE_CALL_CTOR")
         STDERR.puts "[CALL_CTOR_TRACE] factory=without_receiver before id=#{id} method=#{method_name} args=#{args.size}"
       end
       call = new(id, type, "")
       call.configure_without_receiver(method_name, args)
-      if ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
+      if ::Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_TRACE_CALL_CTOR")
         STDERR.puts "[CALL_CTOR_TRACE] factory=without_receiver after method=#{call.method_name} args=#{call.args.size}"
       end
       call
@@ -727,10 +727,10 @@ module Adamas::HIR
       args : Array(ValueId),
     )
       super(id, type)
-      if ENV.has_key?("CRYSTAL_V2_TRACE_CALL_CTOR")
+      if ENV.has_key?("ADAMAS_TRACE_CALL_CTOR")
         STDERR.puts "[CALL_CTOR_TRACE_ENV] overload=no_receiver_arity4 before id=#{id} method=#{method_name} args=#{args.size}"
       end
-      if ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
+      if ::Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_TRACE_CALL_CTOR")
         STDERR.puts "[CALL_CTOR_TRACE] overload=no_receiver_arity4 before id=#{id} method=#{method_name} args=#{args.size}"
       end
       @receiver_value = NO_RECEIVER
@@ -738,10 +738,10 @@ module Adamas::HIR
       @args = args
       @block_value = NO_BLOCK
       @virtual = false
-      if ENV.has_key?("CRYSTAL_V2_TRACE_CALL_CTOR")
+      if ENV.has_key?("ADAMAS_TRACE_CALL_CTOR")
         STDERR.puts "[CALL_CTOR_TRACE_ENV] overload=no_receiver_arity4 after method=#{@method_name} args=#{@args.size} recv=#{@receiver_value} block=#{@block_value} virtual=#{@virtual}"
       end
-      if ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
+      if ::Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_TRACE_CALL_CTOR")
         STDERR.puts "[CALL_CTOR_TRACE] overload=no_receiver_arity4 after method=#{@method_name} args=#{@args.size} recv=#{@receiver_value} block=#{@block_value} virtual=#{@virtual}"
       end
     end
@@ -754,7 +754,7 @@ module Adamas::HIR
       virtual : Bool,
     )
       super(id, type)
-      if ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
+      if ::Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_TRACE_CALL_CTOR")
         STDERR.puts "[CALL_CTOR_TRACE] overload=no_receiver_arity5 before id=#{id} method=#{method_name} args=#{args.size} virtual=#{virtual}"
       end
       @receiver_value = NO_RECEIVER
@@ -762,7 +762,7 @@ module Adamas::HIR
       @args = args
       @block_value = NO_BLOCK
       @virtual = virtual
-      if ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
+      if ::Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_TRACE_CALL_CTOR")
         STDERR.puts "[CALL_CTOR_TRACE] overload=no_receiver_arity5 after method=#{@method_name} args=#{@args.size} recv=#{@receiver_value} block=#{@block_value} virtual=#{@virtual}"
       end
     end
@@ -776,7 +776,7 @@ module Adamas::HIR
       virtual : Bool = false,
     )
       super(id, type)
-      if ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
+      if ::Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_TRACE_CALL_CTOR")
         STDERR.puts "[CALL_CTOR_TRACE] overload=receiver before id=#{id} receiver=#{receiver} method=#{method_name} args=#{args.size} virtual=#{virtual}"
       end
       @receiver_value = receiver
@@ -784,7 +784,7 @@ module Adamas::HIR
       @args = args
       @block_value = NO_BLOCK
       @virtual = virtual
-      if ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
+      if ::Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_TRACE_CALL_CTOR")
         STDERR.puts "[CALL_CTOR_TRACE] overload=receiver after method=#{@method_name} args=#{@args.size} recv=#{@receiver_value} block=#{@block_value} virtual=#{@virtual}"
       end
     end
@@ -798,7 +798,7 @@ module Adamas::HIR
       virtual : Bool = false,
     )
       super(id, type)
-      if ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
+      if ::Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_TRACE_CALL_CTOR")
         STDERR.puts "[CALL_CTOR_TRACE] overload=nil_receiver before id=#{id} method=#{method_name} args=#{args.size} virtual=#{virtual}"
       end
       @receiver_value = NO_RECEIVER
@@ -806,7 +806,7 @@ module Adamas::HIR
       @args = args
       @block_value = NO_BLOCK
       @virtual = virtual
-      if ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
+      if ::Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_TRACE_CALL_CTOR")
         STDERR.puts "[CALL_CTOR_TRACE] overload=nil_receiver after method=#{@method_name} args=#{@args.size} recv=#{@receiver_value} block=#{@block_value} virtual=#{@virtual}"
       end
     end
@@ -820,7 +820,7 @@ module Adamas::HIR
       virtual : Bool = false,
     )
       super(id, type)
-      if ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
+      if ::Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_TRACE_CALL_CTOR")
         STDERR.puts "[CALL_CTOR_TRACE] overload=block before id=#{id} method=#{method_name} args=#{args.size} block=#{block} virtual=#{virtual}"
       end
       @receiver_value = NO_RECEIVER
@@ -828,7 +828,7 @@ module Adamas::HIR
       @args = args
       @block_value = block
       @virtual = virtual
-      if ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
+      if ::Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_TRACE_CALL_CTOR")
         STDERR.puts "[CALL_CTOR_TRACE] overload=block after method=#{@method_name} args=#{@args.size} recv=#{@receiver_value} block=#{@block_value} virtual=#{@virtual}"
       end
     end
@@ -843,7 +843,7 @@ module Adamas::HIR
       virtual : Bool = false,
     )
       super(id, type)
-      if ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
+      if ::Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_TRACE_CALL_CTOR")
         STDERR.puts "[CALL_CTOR_TRACE] overload=receiver_block before id=#{id} receiver=#{receiver} method=#{method_name} args=#{args.size} block=#{block} virtual=#{virtual}"
       end
       @receiver_value = receiver
@@ -851,7 +851,7 @@ module Adamas::HIR
       @args = args
       @block_value = block
       @virtual = virtual
-      if ::Adamas::Compiler::BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_CALL_CTOR")
+      if ::Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_TRACE_CALL_CTOR")
         STDERR.puts "[CALL_CTOR_TRACE] overload=receiver_block after method=#{@method_name} args=#{@args.size} recv=#{@receiver_value} block=#{@block_value} virtual=#{@virtual}"
       end
     end

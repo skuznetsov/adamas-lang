@@ -41,7 +41,7 @@ run_parse_only() {
   cat >"$wrapper" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
-export CRYSTAL_V2_STOP_AFTER_PARSE=1
+export ADAMAS_STOP_AFTER_PARSE=1
 exec "$compiler" --release --no-prelude --no-ast-cache "$src" -o "$out"
 EOF
   chmod +x "$wrapper"

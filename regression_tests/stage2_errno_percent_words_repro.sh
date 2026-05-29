@@ -20,7 +20,7 @@ cd "$ROOT"
 set +e
 DEBUG_MACRO_FOR=1 \
 DEBUG_PERCENT_WORDS=1 \
-CRYSTAL_V2_STOP_AFTER_HIR=1 \
+ADAMAS_STOP_AFTER_HIR=1 \
   "$BIN" --no-prelude "$SRC" -o "$OUT_BIN" >"$LOG_FILE" 2>&1
 RC=$?
 set -e

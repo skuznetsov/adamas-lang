@@ -13,8 +13,8 @@ end
 CR
 
 log="$tmpdir/repro.log"
-CRYSTAL_V2_STOP_AFTER_HIR=1 \
-CRYSTAL_V2_TRACE_CLASS_FRONTIER=1 \
+ADAMAS_STOP_AFTER_HIR=1 \
+ADAMAS_TRACE_CLASS_FRONTIER=1 \
   scripts/run_safe.sh "$compiler" 20 1024 "$tmpdir/repro.cr" --no-prelude -o "$tmpdir/repro" \
   >"$log" 2>&1
 

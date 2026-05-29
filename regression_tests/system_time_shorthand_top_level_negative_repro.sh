@@ -30,7 +30,7 @@ CR
 
 set +e
 # shellcheck disable=SC2090
-env -u CRYSTAL_V2_STOP_AFTER_HIR "$CC" "$SRC" -o "$OUT" >/dev/null 2>"$WORKDIR/err.log"
+env -u ADAMAS_STOP_AFTER_HIR "$CC" "$SRC" -o "$OUT" >/dev/null 2>"$WORKDIR/err.log"
 status=$?
 set -e
 

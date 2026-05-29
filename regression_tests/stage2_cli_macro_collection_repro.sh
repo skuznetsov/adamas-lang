@@ -26,7 +26,7 @@ puts 1
 CR
 
 set +e
-env STAGE2_DEBUG=1 CRYSTAL_V2_STOP_AFTER_HIR=1 \
+env STAGE2_DEBUG=1 ADAMAS_STOP_AFTER_HIR=1 \
   "$BIN" --release "$SRC" -o "$OUT_BIN" >"$LOG" 2>&1
 rc=$?
 set -e

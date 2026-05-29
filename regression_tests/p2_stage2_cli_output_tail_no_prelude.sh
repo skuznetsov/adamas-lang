@@ -64,7 +64,7 @@ bin_log="$tmpdir/bin.log"
 bin_out="$tmpdir/repro_bin"
 
 set +e
-CRYSTAL_V2_TRACE_STDERR=1 "$ROOT_DIR/scripts/run_safe.sh" "$compiler" 60 4096 \
+ADAMAS_TRACE_STDERR=1 "$ROOT_DIR/scripts/run_safe.sh" "$compiler" 60 4096 \
   "$tmpdir/repro.cr" --no-prelude -o "$bin_out" \
   >"$bin_log" 2>&1
 bin_rc=$?

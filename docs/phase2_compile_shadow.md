@@ -4,8 +4,8 @@
 
 This spike adds a **shadow-only** compile-side semantic prepass behind:
 
-- `CRYSTAL_V2_SEMANTIC_SHADOW=1`
-- optional strict mode: `CRYSTAL_V2_SEMANTIC_SHADOW_STRICT=1`
+- `ADAMAS_SEMANTIC_SHADOW=1`
+- optional strict mode: `ADAMAS_SEMANTIC_SHADOW_STRICT=1`
 
 On the current tree, strict mode now also treats two shadow-parity drifts as
 hard failures:
@@ -19,7 +19,7 @@ telemetry.
 CLI regression coverage now also locks the green strict-mode success path for
 both parity families: a malformed parser carrier still succeeds when
 `parse_diag_gaps=0`, and a declaration-parity carrier still succeeds when
-`declaration_gaps=0` under `CRYSTAL_V2_SEMANTIC_SHADOW_STRICT=1`.
+`declaration_gaps=0` under `ADAMAS_SEMANTIC_SHADOW_STRICT=1`.
 
 It does **not** change compile output or lowering behavior.
 It only verifies that the existing semantic stack can analyze a compile-like

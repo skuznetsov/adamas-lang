@@ -28,8 +28,8 @@ require "crystal/system/windows"
 CR
 
 set +e
-CRYSTAL_V2_STOP_AFTER_PARSE=1 \
-CRYSTAL_V2_PARSE_TRACE=1 \
+ADAMAS_STOP_AFTER_PARSE=1 \
+ADAMAS_PARSE_TRACE=1 \
 "$COMPILER" "$SRC" --emit hir --no-prelude --no-ast-cache --verbose -o "$OUT" >"$STDOUT_LOG" 2>"$STDERR_LOG"
 compile_status=$?
 set -e

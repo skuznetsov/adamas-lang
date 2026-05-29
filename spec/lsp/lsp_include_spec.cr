@@ -6,15 +6,15 @@ require "./support/server_helper"
 
 describe Adamas::Compiler::LSP::Server do
   around_each do |example|
-    previous = ENV["CRYSTALV2_LSP_FORCE_STUB"]?
-    ENV["CRYSTALV2_LSP_FORCE_STUB"] = "1"
+    previous = ENV["ADAMAS_LSP_FORCE_STUB"]?
+    ENV["ADAMAS_LSP_FORCE_STUB"] = "1"
     begin
       example.run
     ensure
       if previous
-        ENV["CRYSTALV2_LSP_FORCE_STUB"] = previous
+        ENV["ADAMAS_LSP_FORCE_STUB"] = previous
       else
-        ENV.delete("CRYSTALV2_LSP_FORCE_STUB")
+        ENV.delete("ADAMAS_LSP_FORCE_STUB")
       end
     end
   end

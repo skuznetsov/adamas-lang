@@ -230,7 +230,7 @@ Tasks:
   - bytes emitted by family
   - number of call-arg fixups
   - number of string joins still used in backend hot paths
-- Add a grep-friendly `CRYSTAL_V2_LLVM_WRITER_TRACE=1` trace for one function.
+- Add a grep-friendly `ADAMAS_LLVM_WRITER_TRACE=1` trace for one function.
 
 Exit criteria:
 
@@ -309,7 +309,7 @@ Exit criteria:
 
 - Parallel and single-worker LLVM output are normalized-equivalent.
 - Worker output no longer relies on implicit string concatenation order.
-- `CRYSTAL_V2_LLVM_WORKERS=1` and default worker count both pass selected
+- `ADAMAS_LLVM_WORKERS=1` and default worker count both pass selected
   compile/run reducers.
 
 ### Phase 5: HIR service extraction
@@ -344,7 +344,7 @@ Minimum gates:
   - `scripts/run_safe.sh /tmp/cv2_refactor_gate ...`
 - normalized `.ll` comparison for the touched backend surface
 - at least one negative/adversary check:
-  - run the same reducer with `CRYSTAL_V2_LLVM_WORKERS=1`
+  - run the same reducer with `ADAMAS_LLVM_WORKERS=1`
   - run with debug metadata enabled if the phase touches metadata
   - compare against original Crystal for user-visible runtime formatting
 

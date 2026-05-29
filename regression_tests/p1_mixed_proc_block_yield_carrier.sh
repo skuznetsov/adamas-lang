@@ -29,7 +29,7 @@ end
 r(->(x : Int32) { }, &->{})
 CR
 
-CRYSTAL_V2_DISABLE_INLINE_YIELD=1 \
+ADAMAS_DISABLE_INLINE_YIELD=1 \
   "$COMPILER" "$SRC" --no-prelude --emit hir --no-link -o "$OUT" >"$HIR_LOG" 2>&1
 
 if ! grep -Eq '%[0-9]+ = yield' "$OUT.hir"; then
@@ -64,7 +64,7 @@ if ! grep -Eq 'make_proc fn=%[0-9]+ env=%[0-9]+ : [0-9]+' "$OUT.hir"; then
   exit 1
 fi
 
-CRYSTAL_V2_DISABLE_INLINE_YIELD=1 CRYSTAL_V2_PROC_CARRIER_TRACE=1 \
+ADAMAS_DISABLE_INLINE_YIELD=1 ADAMAS_PROC_CARRIER_TRACE=1 \
   "$COMPILER" "$SRC" --no-prelude -o "$BIN" >"$TRACE_LOG" 2>&1
 
 if ! grep -Eq '\[PROC_CARRIER\] yield func=r[$]Proc_block target='"$block_param_id"' carrier=RawFnptrCallback' "$TRACE_LOG"; then

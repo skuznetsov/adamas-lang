@@ -8,14 +8,14 @@
 #
 # Usage (from repo root, after building crystal_v2 with --debug):
 #
-#   export CRYSTAL_V2_MACRO_BODY_OUTPUT_STATS_DUMP=1   # optional; same compile as oracle
-#   export CRYSTAL_V2_LLDB_MB_FILTER_PATH_SUBSTR=byte_format.cr
-#   export CRYSTAL_V2_LLDB_MB_FILTER_PIECES=35
+#   export ADAMAS_MACRO_BODY_OUTPUT_STATS_DUMP=1   # optional; same compile as oracle
+#   export ADAMAS_LLDB_MB_FILTER_PATH_SUBSTR=byte_format.cr
+#   export ADAMAS_LLDB_MB_FILTER_PIECES=35
 #   # Optional exact span match (from JSONL span_start_line / span_end_line):
-#   # export CRYSTAL_V2_LLDB_MB_FILTER_START_LINE=123
-#   # export CRYSTAL_V2_LLDB_MB_FILTER_END_LINE=165
-#   export CRYSTAL_V2_LLDB_MB_MAX_STOPS=50
-#   export CRYSTAL_V2_LLDB_MB_BT_DEPTH=12
+#   # export ADAMAS_LLDB_MB_FILTER_START_LINE=123
+#   # export ADAMAS_LLDB_MB_FILTER_END_LINE=165
+#   export ADAMAS_LLDB_MB_MAX_STOPS=50
+#   export ADAMAS_LLDB_MB_BT_DEPTH=12
 #
 #   lldb -b -o 'command script import scripts/lldb_macro_body_trace.py' \
 #        -o 'macro-body-trace-setup' \
@@ -103,12 +103,12 @@ def _body_node_ptr(frame: lldb.SBFrame) -> int:
 
 
 def _completion_handler(frame: lldb.SBFrame, bp_loc, extra_args, internal_dict) -> bool:
-    substr = _env_opt_str("CRYSTAL_V2_LLDB_MB_FILTER_PATH_SUBSTR")
-    pieces_filter = _env_opt_str("CRYSTAL_V2_LLDB_MB_FILTER_PIECES")
-    line_start_f = _env_opt_str("CRYSTAL_V2_LLDB_MB_FILTER_START_LINE")
-    line_end_f = _env_opt_str("CRYSTAL_V2_LLDB_MB_FILTER_END_LINE")
-    max_stops = _env_int("CRYSTAL_V2_LLDB_MB_MAX_STOPS", 0)
-    bt_depth = _env_int("CRYSTAL_V2_LLDB_MB_BT_DEPTH", 12)
+    substr = _env_opt_str("ADAMAS_LLDB_MB_FILTER_PATH_SUBSTR")
+    pieces_filter = _env_opt_str("ADAMAS_LLDB_MB_FILTER_PIECES")
+    line_start_f = _env_opt_str("ADAMAS_LLDB_MB_FILTER_START_LINE")
+    line_end_f = _env_opt_str("ADAMAS_LLDB_MB_FILTER_END_LINE")
+    max_stops = _env_int("ADAMAS_LLDB_MB_MAX_STOPS", 0)
+    bt_depth = _env_int("ADAMAS_LLDB_MB_BT_DEPTH", 12)
 
     pieces_v = frame.FindVariable("pieces_count")
     pieces = pieces_v.GetValueAsSigned() if pieces_v.IsValid() else -1
@@ -154,7 +154,7 @@ def _completion_handler(frame: lldb.SBFrame, bp_loc, extra_args, internal_dict) 
         print(f"  #{d} {fr.GetFunctionName()} @ {fr.GetLineEntry()}")
 
     if max_stops > 0 and n >= max_stops:
-        print(f"[macro-body-completion] reached CRYSTAL_V2_LLDB_MB_MAX_STOPS={max_stops}, stopping.")
+        print(f"[macro-body-completion] reached ADAMAS_LLDB_MB_MAX_STOPS={max_stops}, stopping.")
         return True
     return False
 
@@ -174,11 +174,11 @@ def macro_body_trace_setup(
     bp.SetScriptCallbackFunction("lldb_macro_body_trace._completion_handler")
     msg = (
         f"macro-body-trace: breakpoint on macro_expander.cr:1402 (maybe_record → dump) "
-        f"(id={bp.GetID()}), filter_path_substr={_env_opt_str('CRYSTAL_V2_LLDB_MB_FILTER_PATH_SUBSTR')!r} "
-        f"filter_pieces={_env_opt_str('CRYSTAL_V2_LLDB_MB_FILTER_PIECES')!r} "
-        f"filter_span={_env_opt_str('CRYSTAL_V2_LLDB_MB_FILTER_START_LINE')!r}-"
-        f"{_env_opt_str('CRYSTAL_V2_LLDB_MB_FILTER_END_LINE')!r} "
-        f"max_stops={_env_int('CRYSTAL_V2_LLDB_MB_MAX_STOPS', 0)}"
+        f"(id={bp.GetID()}), filter_path_substr={_env_opt_str('ADAMAS_LLDB_MB_FILTER_PATH_SUBSTR')!r} "
+        f"filter_pieces={_env_opt_str('ADAMAS_LLDB_MB_FILTER_PIECES')!r} "
+        f"filter_span={_env_opt_str('ADAMAS_LLDB_MB_FILTER_START_LINE')!r}-"
+        f"{_env_opt_str('ADAMAS_LLDB_MB_FILTER_END_LINE')!r} "
+        f"max_stops={_env_int('ADAMAS_LLDB_MB_MAX_STOPS', 0)}"
     )
     result.AppendMessage(msg)
 

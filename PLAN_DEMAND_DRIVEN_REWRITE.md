@@ -100,7 +100,7 @@ Tasks:
   - Method effect summaries, lifetimes, taints, class hierarchy
   - Extern tables, lib structs, enum info
   - Generic template data
-- [ ] Create feature flag: `CRYSTAL_V2_SEMANTIC_COMPILE=1`
+- [ ] Create feature flag: `ADAMAS_SEMANTIC_COMPILE=1`
   - When off: current AstToHir pipeline (default)
   - When on: new semantic → HIR builder pipeline
 - [ ] Bridge: make AstToHir queryable for type info from semantic stack
@@ -173,7 +173,7 @@ Bridge: initially delegates to AstToHir for complex cases, gradually takes over.
 
 - [ ] Shadow mode: run both pipelines, compare HIR output
 - [ ] Regression tests pass with new pipeline
-- [ ] Feature flag rollout: `CRYSTAL_V2_SEMANTIC_COMPILE=1` default
+- [ ] Feature flag rollout: `ADAMAS_SEMANTIC_COMPILE=1` default
 - [ ] Remove AstToHir from compile path
 - [ ] Unify check + compile semantic paths
 

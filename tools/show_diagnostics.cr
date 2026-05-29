@@ -27,12 +27,12 @@ lexer = Adamas::Compiler::Frontend::Lexer.new(source)
 # Optional streaming mode for large files to avoid pre-tokenization stalls
 begin
   # Use streaming to avoid pre-tokenization stalls on large files
-  ENV["CRYSTAL_V2_PARSER_STREAM"] = "1" if ENV["CRYSTAL_V2_PARSER_STREAM"].nil?
+  ENV["ADAMAS_PARSER_STREAM"] = "1" if ENV["ADAMAS_PARSER_STREAM"].nil?
 rescue KeyError
   # Some stdlib Env impls require rescue for writes; ignore
 end
 
-parser = Adamas::Compiler::Frontend::Parser.new(lexer, recovery_mode: ENV["CRYSTAL_V2_LSP_RECOVERY"]? == "1")
+parser = Adamas::Compiler::Frontend::Parser.new(lexer, recovery_mode: ENV["ADAMAS_LSP_RECOVERY"]? == "1")
 
 # Optional prelude parse into shared arena to seed constants (best-effort, skip errors)
 if prelude && File.exists?(prelude)

@@ -1144,7 +1144,7 @@ Status: opt-in diagnostic only; no codegen or runtime behavior changed.
 
 Applied:
 
-- `CRYSTAL_V2_BLOCK_CALL_DIAGNOSTIC=1` now emits a non-fatal
+- `ADAMAS_BLOCK_CALL_DIAGNOSTIC=1` now emits a non-fatal
   `[CLOSURE_ABI]` diagnostic for implicit untyped `&block` params whose body
   contains direct `block.call`.
 - `regression_tests/p1_block_call_diagnostic.sh` verifies that the diagnostic

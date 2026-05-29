@@ -5,9 +5,9 @@ require "./support/server_helper"
 describe Adamas::Compiler::LSP::Server do
 
   it "reports parser diagnostics on invalid code" do
-    prev_sem = ENV["CRYSTALV2_LSP_ENABLE_SEMANTIC_DIAGNOSTICS"]?
-    ENV["CRYSTALV2_LSP_ENABLE_SEMANTIC_DIAGNOSTICS"] = "1"
-    ENV.delete("CRYSTALV2_LSP_FORCE_STUB")
+    prev_sem = ENV["ADAMAS_LSP_ENABLE_SEMANTIC_DIAGNOSTICS"]?
+    ENV["ADAMAS_LSP_ENABLE_SEMANTIC_DIAGNOSTICS"] = "1"
+    ENV.delete("ADAMAS_LSP_FORCE_STUB")
     source = "Foo.bar\n"
     server = Adamas::Compiler::LSP::Server.new(IO::Memory.new, IO::Memory.new, Adamas::Compiler::LSP::ServerConfig.new(background_indexing: false, project_cache: false, parser_recovery_mode: false))
 
@@ -17,9 +17,9 @@ describe Adamas::Compiler::LSP::Server do
     diagnostics.should_not be_empty
   ensure
     if prev_sem
-      ENV["CRYSTALV2_LSP_ENABLE_SEMANTIC_DIAGNOSTICS"] = prev_sem
+      ENV["ADAMAS_LSP_ENABLE_SEMANTIC_DIAGNOSTICS"] = prev_sem
     else
-      ENV.delete("CRYSTALV2_LSP_ENABLE_SEMANTIC_DIAGNOSTICS")
+      ENV.delete("ADAMAS_LSP_ENABLE_SEMANTIC_DIAGNOSTICS")
     end
   end
 end

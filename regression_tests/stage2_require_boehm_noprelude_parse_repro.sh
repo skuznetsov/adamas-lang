@@ -12,7 +12,7 @@ source_file="$repo_root/regression_tests/stage2_require_boehm_noprelude_parse_re
 log_dir=$(mktemp -d "${TMPDIR:-/tmp}/stage2_require_boehm_noprelude_parse_repro.XXXXXX")
 
 set +e
-env CRYSTAL_V2_STOP_AFTER_PARSE=1 \
+env ADAMAS_STOP_AFTER_PARSE=1 \
   "$repo_root/scripts/timeout_sample_lldb.sh" \
   -t 60 -m 4096 -s 5 -l 10 -n 8 --no-series \
   -o "$log_dir" \

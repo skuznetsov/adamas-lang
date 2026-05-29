@@ -26,7 +26,7 @@ LOG="$WORKDIR/primitives_parse.log"
 cat >"$WRAPPER" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
-export CRYSTAL_V2_STOP_AFTER_PARSE=1
+export ADAMAS_STOP_AFTER_PARSE=1
 exec "$COMPILER" --release --no-ast-cache "$ROOT_DIR/src/stdlib/primitives.cr" -o "$WORKDIR/primitives_parse.out"
 EOF
 chmod +x "$WRAPPER"

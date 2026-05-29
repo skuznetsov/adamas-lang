@@ -36,7 +36,7 @@ if grep -Eq '\[CLOSURE_ABI\]' "$QUIET_LOG"; then
   exit 1
 fi
 
-CRYSTAL_V2_BLOCK_CALL_DIAGNOSTIC=1 \
+ADAMAS_BLOCK_CALL_DIAGNOSTIC=1 \
   "$COMPILER" "$SRC" --no-prelude --emit hir --no-link -o "$OUT.trace" >"$TRACE_LOG" 2>&1
 
 if ! grep -Eq '\[CLOSURE_ABI\] implicit &block with \.call in each: raw fnptr and heap Proc carriers are not unified; alias tracking is not implemented\.' "$TRACE_LOG"; then

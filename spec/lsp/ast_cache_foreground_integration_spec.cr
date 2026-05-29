@@ -10,10 +10,10 @@ describe "LSP AST cache foreground document loading" do
     FileUtils.mkdir_p(dir)
 
     prev_ast_cache = ENV["LSP_AST_CACHE"]?
-    prev_config = ENV["CRYSTALV2_LSP_CONFIG"]?
+    prev_config = ENV["ADAMAS_LSP_CONFIG"]?
 
     ENV.delete("LSP_AST_CACHE")
-    ENV.delete("CRYSTALV2_LSP_CONFIG")
+    ENV.delete("ADAMAS_LSP_CONFIG")
     Adamas::Compiler::LSP::ServerConfig.load.ast_cache.should be_true
 
     ENV["LSP_AST_CACHE"] = "0"
@@ -22,7 +22,7 @@ describe "LSP AST cache foreground document loading" do
     config_path = File.join(dir, "lsp.json")
     File.write(config_path, %({"ast_cache":false}))
     ENV.delete("LSP_AST_CACHE")
-    ENV["CRYSTALV2_LSP_CONFIG"] = config_path
+    ENV["ADAMAS_LSP_CONFIG"] = config_path
     Adamas::Compiler::LSP::ServerConfig.load.ast_cache.should be_false
   ensure
     if prev_ast_cache
@@ -32,9 +32,9 @@ describe "LSP AST cache foreground document loading" do
     end
 
     if prev_config
-      ENV["CRYSTALV2_LSP_CONFIG"] = prev_config
+      ENV["ADAMAS_LSP_CONFIG"] = prev_config
     else
-      ENV.delete("CRYSTALV2_LSP_CONFIG")
+      ENV.delete("ADAMAS_LSP_CONFIG")
     end
 
     FileUtils.rm_rf(dir) if dir

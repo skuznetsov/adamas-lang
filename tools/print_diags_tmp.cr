@@ -11,7 +11,7 @@ lexer.each_token(skip_trivia: false) { |t| tokens << t }
 
 # Recreate parser with pre-tokenized lexer's result
 sub_lexer = Adamas::Compiler::Frontend::Lexer.new(source)
-  parser = Adamas::Compiler::Frontend::Parser.new(sub_lexer, recovery_mode: ENV["CRYSTAL_V2_LSP_RECOVERY"]? == "1")
+  parser = Adamas::Compiler::Frontend::Parser.new(sub_lexer, recovery_mode: ENV["ADAMAS_LSP_RECOVERY"]? == "1")
 parser.parse_program
 
 if ENV["PRINT_TOKENS"]? == "1"

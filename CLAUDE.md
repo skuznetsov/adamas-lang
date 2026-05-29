@@ -18,7 +18,7 @@ bin/adamas /tmp/test_hello.cr                                  # compile test
 scripts/run_safe.sh /tmp/test_hello 5 512                          # run safely
 ```
 - Debug crash: `lldb --batch -o 'run' -k 'bt 30' -k 'quit' /tmp/test_hello`
-- Eager HIR (debug): `CRYSTAL_V2_EAGER_HIR=1 bin/adamas ...`
+- Eager HIR (debug): `ADAMAS_EAGER_HIR=1 bin/adamas ...`
 
 ## Critical Rules
 - **NEVER modify stdlib files** — must be 100% compatible with original Crystal stdlib at `../crystal/src`

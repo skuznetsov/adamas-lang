@@ -12,9 +12,9 @@ CR
 
 log="$tmpdir/repro.log"
 set +e
-CRYSTAL_V2_STOP_AFTER_PARSE=1 \
-CRYSTAL_V2_PIPELINE_CACHE=0 \
-CRYSTAL_V2_LLVM_CACHE=0 \
+ADAMAS_STOP_AFTER_PARSE=1 \
+ADAMAS_PIPELINE_CACHE=0 \
+ADAMAS_LLVM_CACHE=0 \
   "$root_dir/scripts/run_safe.sh" "$compiler" 60 2048 \
     "$tmpdir/repro.cr" --no-prelude -o "$tmpdir/repro" \
     >"$log" 2>&1

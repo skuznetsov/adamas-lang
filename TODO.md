@@ -311,7 +311,7 @@ now mostly request shapes that genuinely need identifier maps, member/qualified
 call precision outside the text fast path, and first full semantic-token
 response transport before a client has a current delta result id.
 After LM-630, `adamas tool lsp` is available as a thin launcher for a
-sibling `adamas_lsp` binary or `CRYSTAL_V2_LSP_SERVER`, and the VS Code
+sibling `adamas_lsp` binary or `ADAMAS_LSP_SERVER`, and the VS Code
 extension can be configured with `crystalv2.lsp.serverPath` plus
 `crystalv2.lsp.serverArgs` while keeping the old default direct binary path.
 After LM-631, cached lightweight opens also serve hover and definition for
@@ -477,7 +477,7 @@ full-prelude `puts 42` smoke no longer stops at
 at `STUB CALLED: Indexable$LT$R$Hequals$Q$$Indexable_block`. Boundary: the new
 no-prelude guard still cannot pass on produced `s2` because it hits that
 separate `Indexable#equals?` block-stub frontier before IR emission. The
-`CRYSTAL_V2_TRACE_CLASS_FRONTIER=1` diagnostic env perturbs the produced
+`ADAMAS_TRACE_CLASS_FRONTIER=1` diagnostic env perturbs the produced
 full-prelude smoke into a pre-scan timeout, so prefer the untraced abort stub as
 the next primary frontier unless the trace path is being debugged directly.
 
@@ -512,7 +512,7 @@ Current full-prelude `puts 42` frontier moved past `Crystal::SpinLock` /
 segfaults during module registration in
 `Hash(String, MacroValue)#key_hash` from `assign_macro_iter_vars` /
 `process_macro_for_in_module` / `record_constants_in_body`. With
-`CRYSTAL_V2_TRACE_CLASS_FRONTIER=1`, the same smoke timed out in pre-scan under
+`ADAMAS_TRACE_CLASS_FRONTIER=1`, the same smoke timed out in pre-scan under
 the 60s gate, so the untraced lldb backtrace is the cleaner next anchor.
 
 Stage2 module macro-for iter-var checkpoint (2026-05-19): after LM-574,
@@ -1029,8 +1029,8 @@ whitelisting `entries_size`. Evidence: `crystal build src/adamas.cr -o
 `regression_tests/p2_visibility_protected_namespace_no_prelude.sh
 /private/tmp/cv2_protected_namespace`;
 `regression_tests/p2_visibility_private_accessor_no_prelude.sh
-/private/tmp/cv2_protected_namespace`; `CRYSTAL_V2_STOP_AFTER_HIR=1
-CRYSTAL_V2_PHASE_STATS=1 scripts/run_safe.sh /private/tmp/cv2_protected_namespace
+/private/tmp/cv2_protected_namespace`; `ADAMAS_STOP_AFTER_HIR=1
+ADAMAS_PHASE_STATS=1 scripts/run_safe.sh /private/tmp/cv2_protected_namespace
 180 4096 src/adamas.cr -o /private/tmp/cv2_protected_namespace_s2` exits 0
 after ~145s. Boundary: this unblocks HIR completion but does not solve the
 remaining `lower_missing` fanout (`615 -> 35882`, ~159s), which is the next
@@ -1243,10 +1243,10 @@ canonical `s1 -> s2` still times out at 300s after `[ALLOC_FLUSH] Generated 98
 deferred allocators`, producing only a partial `cv2_s2.ll` (~3.7MB in this run).
 Follow-up phase splitting shows the visible timeout is downstream of HIR volume,
 not allocator flush itself: full-source `STOP_AFTER_HIR` with
-`CRYSTAL_V2_PHASE_STATS=1` reports `lower_missing.initial: 17836 -> 43126
+`ADAMAS_PHASE_STATS=1` reports `lower_missing.initial: 17836 -> 43126
 (+25290) in 144271.9ms`, while stale-call repair, receiver repair, deferred
 allocators, and final fixed-point missing together add only about 400 functions
-and about 11s. `CRYSTAL_V2_STOP_AFTER_MIR=1` still times out at 300s while
+and about 11s. `ADAMAS_STOP_AFTER_MIR=1` still times out at 300s while
 lowering `Body 20001/35221`, so the next root is the concrete-call demand
 volume created by the initial missing-target sweep; MIR/allocator symptoms are
 secondary until that reachable HIR set shrinks.
@@ -1437,7 +1437,7 @@ Direct `s1 -> s2` previously produced a stage2 compiler in the focused gate:
 
 ```bash
 crystal build src/adamas.cr -o /tmp/cv2_hir_emit_stop --error-trace
-CRYSTAL_V2_PHASE_STATS=1 \
+ADAMAS_PHASE_STATS=1 \
   scripts/run_safe.sh /tmp/cv2_hir_emit_stop 300 4096 \
     src/adamas.cr -o /tmp/cv2_s2_hir_emit_stop
 ```
@@ -1454,7 +1454,7 @@ success as stale for the canonical bootstrap gate until the IR over-materialized
 helper graph is reduced.
 
 AST demand-filter checkpoint (2026-04-28): the default AST reachability path is
-still conservative/all-defs unless `CRYSTAL_V2_AST_FILTER_DEMAND=1` is set.
+still conservative/all-defs unless `ADAMAS_AST_FILTER_DEMAND=1` is set.
 The opt-in demand scanner now walks packed `main_exprs`, builds a method-name
 worklist, gates candidate owners by constructed/always-reachable types, and
 feeds the existing AST filter. It is a diagnostic scaffold, not the default
@@ -1470,7 +1470,7 @@ before `lower_missing`, not to filter concrete missing calls blindly. Guard:
 `regression_tests/p2_ast_filter_demand_no_prelude.sh`.
 
 LLVM reachability checkpoint (2026-04-28): backend function reachability is now
-available only under `CRYSTAL_V2_LLVM_REACHABILITY=1`; the default remains the
+available only under `ADAMAS_LLVM_REACHABILITY=1`; the default remains the
 previous emit-all behavior. On the full compiler, opt-in backend RTA prunes
 `9959` MIR functions (`37792` total -> `27833` emitted) and reduces the
 progress-run `.ll` artifact from the previous `189MB` shape to `146MB`, but
@@ -1841,8 +1841,8 @@ Expected current signals:
 Latest generated-stage2 frontier:
 
 - `s1 -> s2b` builds with `/tmp/cv2_puts` in about `241s`.
-- Opt-in LLVM tail diagnostics (`CRYSTAL_V2_TRACE_STDERR=1
-  CRYSTAL_V2_LLVM_REACHABILITY=1 CRYSTAL_V2_LLVM_TAIL_STATS=1`) show that
+- Opt-in LLVM tail diagnostics (`ADAMAS_TRACE_STDERR=1
+  ADAMAS_LLVM_REACHABILITY=1 ADAMAS_LLVM_TAIL_STATS=1`) show that
   the backend tail helpers are not the current timeout root: on the full
   compiler build, `generate(io)` reaches `finalize_enter` after emitting about
   `180.6MB` of LLVM IR. `emit_type_name_table` is the largest tail-size jump
@@ -2059,8 +2059,8 @@ pending-budget oracle.
   bootstrap smoke executed them unconditionally and exposed broad
   `ArenaLike`/nilable helper symbols. Inlining only the first wrapper moved the
   stub one layer deeper to `canonical_def_identity_for_body_infer`; the accepted
-  fix gates canonical identity calculation behind `CRYSTAL_V2_PHASE0_METRICS`
-  or `CRYSTAL_V2_IDENTITY_DRY_RUN`, preserving opt-in metrics/dry-run while
+  fix gates canonical identity calculation behind `ADAMAS_PHASE0_METRICS`
+  or `ADAMAS_IDENTITY_DRY_RUN`, preserving opt-in metrics/dry-run while
   removing default nonsemantic work. Current evidence: `crystal build
   src/adamas.cr -o /tmp/cv2_phase0_gated_candidate --error-trace` passed;
   `scripts/build_bootstrap_stages.sh --stages 2 --out

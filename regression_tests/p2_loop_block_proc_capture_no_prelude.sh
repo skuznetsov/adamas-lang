@@ -55,7 +55,7 @@ end
 drive
 CR
 
-CRYSTAL_V2_STOP_AFTER_HIR=1 DEBUG_BLOCK_PROC_CAPTURES=1 \
+ADAMAS_STOP_AFTER_HIR=1 DEBUG_BLOCK_PROC_CAPTURES=1 \
   "$ROOT_DIR/scripts/run_safe.sh" "$COMPILER" 60 1024 \
   "$SRC" --no-prelude --emit hir -o "$OUT" >"$LOG" 2>&1
 

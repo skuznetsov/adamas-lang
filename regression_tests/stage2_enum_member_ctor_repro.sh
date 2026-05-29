@@ -35,7 +35,7 @@ run_hir() {
     echo "set -euo pipefail"
     echo "export DEBUG_ENUM_ARENA=Kind"
     echo "export DEBUG_ENUM_SOURCE=1"
-    echo "export CRYSTAL_V2_STOP_AFTER_HIR=1"
+    echo "export ADAMAS_STOP_AFTER_HIR=1"
     printf 'exec %q ' "$compiler"
     printf '%q ' "$SRC" --release --no-prelude --no-ast-cache --emit hir -o "$WORKDIR/${label}_out"
     echo

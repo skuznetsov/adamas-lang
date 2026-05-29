@@ -12,7 +12,7 @@ begin
   # Use streaming mode for the v2 parser during full-tree scans to avoid
   # pre-tokenizing entire files up front. This significantly reduces memory
   # pressure and can improve throughput on large stdlib files like array.cr.
-  ENV["CRYSTAL_V2_PARSER_STREAM"] = "1" if ENV["CRYSTAL_V2_PARSER_STREAM"]?.nil?
+  ENV["ADAMAS_PARSER_STREAM"] = "1" if ENV["ADAMAS_PARSER_STREAM"]?.nil?
 rescue KeyError
   # Some stdlib Env implementations may raise on writes; ignore and fall back
   # to non-streaming mode in that case.
@@ -26,7 +26,7 @@ scanned = 0
 files.each_with_index do |file, idx|
   source = File.read(file)
   lexer = Adamas::Compiler::Frontend::Lexer.new(source)
-  parser = Adamas::Compiler::Frontend::Parser.new(lexer, recovery_mode: ENV["CRYSTAL_V2_LSP_RECOVERY"]? == "1")
+  parser = Adamas::Compiler::Frontend::Parser.new(lexer, recovery_mode: ENV["ADAMAS_LSP_RECOVERY"]? == "1")
   begin
     # Optional watchdog to prevent hangs on individual files during a global
     # scan. Enable with environment:

@@ -27,7 +27,7 @@ end
 CR
 
 set +e
-env DEBUG_LIB_MEMBER=L CRYSTAL_V2_STOP_AFTER_HIR=1 \
+env DEBUG_LIB_MEMBER=L ADAMAS_STOP_AFTER_HIR=1 \
   "$BIN" --no-prelude "$SRC" -o "$OUT_BIN" >"$LOG" 2>&1
 rc=$?
 set -e

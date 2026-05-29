@@ -156,7 +156,7 @@ self-host code can treat a `Slice(UInt8)` argument as a heap-backed/invalid
 slot and crash before the code validates the underlying address. Adversary:
 applying a raw `readable_address?` check to every `pointerof(slice)` slot is
 not correct; a host no-prelude enum-setter reducer then fails in `lower_main`
-with `Index out of bounds`, and `CRYSTAL_V2_TRUST_SLICE_ADDR=1` restores exit
+with `Index out of bounds`, and `ADAMAS_TRUST_SLICE_ADDR=1` restores exit
 0 but emits wrong method names (`ErrnoTest.()` / `ErrnoTest.=`). Next root
 step: implement a dual-representation slice decoder or source-first extraction
 at the vulnerable call sites, and keep `safe_slice_to_string` from calling
@@ -272,7 +272,7 @@ protected access through hierarchy/generic-base/same-top-namespace checks.
 Evidence: `crystal build src/adamas.cr -o /private/tmp/cv2_protected_namespace
 --error-trace`; `p2_visibility_protected_namespace_no_prelude.sh` and
 `p2_visibility_private_accessor_no_prelude.sh` pass with that compiler;
-`CRYSTAL_V2_STOP_AFTER_HIR=1 CRYSTAL_V2_PHASE_STATS=1 scripts/run_safe.sh
+`ADAMAS_STOP_AFTER_HIR=1 ADAMAS_PHASE_STATS=1 scripts/run_safe.sh
 /private/tmp/cv2_protected_namespace 180 4096 src/adamas.cr -o
 /private/tmp/cv2_protected_namespace_s2` exits 0 after ~145s. Boundary:
 `lower_missing` still fanouts from `615 -> 35882` in ~159s; that is the next
@@ -496,14 +496,14 @@ unless new evidence appears. {F/G/R: 0.93/0.54/0.94} [verified]
 [LM-485|verified]: The canonical `s1 -> s2` timeout is visible after allocator
 flush, but the measured primary supplier is the initial missing-target sweep,
 not allocator generation or repair fixed points. A phase-split
-`CRYSTAL_V2_STOP_AFTER_HIR=1 CRYSTAL_V2_PHASE_STATS=1` run using
+`ADAMAS_STOP_AFTER_HIR=1 ADAMAS_PHASE_STATS=1` run using
 `/tmp/cv2_phase_split_check` reports:
 `process_pending: 3159 -> 17572 (+14413)`, `emit_tracked_sigs: 17572 -> 17836
 (+264)`, `lower_missing.initial: 17836 -> 43126 (+25290) in 144271.9ms`,
 `repair_stale_calls: +26`, `repair_receiver_calls: +217`,
 `deferred_allocators: +5`, and `final_missing.fixed_point: +110`. The same
 run exits `STOP_AFTER_HIR` in about 220s. A separate
-`CRYSTAL_V2_STOP_AFTER_MIR=1` run still times out at 300s during
+`ADAMAS_STOP_AFTER_MIR=1` run still times out at 300s during
 `Pass 2: Lowering 35221 function bodies... Body 20001/35221`, so MIR is
 processing the large reachable set created upstream. Refuted branches:
 pre-sizing MIR `@cross_block_values` did not move the full bootstrap frontier,
@@ -560,15 +560,15 @@ this stage2 stall is explained. {F/G/R: 0.93/0.50/0.95} [verified]
 to a HIR pending-lowering queue explosion, not a stuck top-level expression.
 `DEBUG_MAIN=1 DEBUG_MAIN_PROGRESS_EVERY=1` showed all 30 main expressions start
 and return; expr 29 took about `9.3s`, expr 30 took about `80.9s`, and stage2
-still timed out. A focused rerun with `CRYSTAL_V2_STOP_AFTER_HIR=1
-CRYSTAL_V2_PHASE_STATS=1 CRYSTAL_V2_LOWER_PROGRESS=1` timed out before the
+still timed out. A focused rerun with `ADAMAS_STOP_AFTER_HIR=1
+ADAMAS_PHASE_STATS=1 ADAMAS_LOWER_PROGRESS=1` timed out before the
 STOP_AFTER_HIR gate but entered `process_pending_lower_functions`: the queue
 reached about `78k` entries (`idx=9877/78012`, `idx=12022/76438`) and visible
 entries were broad compiler-container `#inspect`, `#to_s`, and `#object_id`
 instantiations. Boundary: stop chasing `lower_main` expr 30; localize pending
 queue producers. {F/G/R: 0.94/0.55/0.96} [verified]
 
-[LM-465|verified]: `CRYSTAL_V2_PENDING_EXPLOSION_TRACE=1` identifies the first
+[LM-465|verified]: `ADAMAS_PENDING_EXPLOSION_TRACE=1` identifies the first
 observed deep Array `#inspect` enqueue during the stage2 pending explosion.
 Evidence: a build of `/tmp/cv2_pending_trace_ctx` succeeded, and the focused
 run emitted `[PENDING_EXPLOSION] first deep Array inspect enqueued source=defer
@@ -723,8 +723,8 @@ sentinels, not bootstrap proof. {F/G/R: 0.92/0.45/0.94} [verified]
 producer families before the 120s timeout. With
 `DEBUG_PENDING_SOURCES=1 DEBUG_PENDING_SOURCES_SAMPLES=1
 DEBUG_PENDING_SOURCES_EVERY=5000 DEBUG_PENDING_SOURCES_TOP=15
-CRYSTAL_V2_PENDING_EXPLOSION_TRACE=1 CRYSTAL_V2_STOP_AFTER_HIR=1
-CRYSTAL_V2_PHASE_STATS=1 CRYSTAL_V2_LOWER_PROGRESS=1`, the focused run timed
+ADAMAS_PENDING_EXPLOSION_TRACE=1 ADAMAS_STOP_AFTER_HIR=1
+ADAMAS_PHASE_STATS=1 ADAMAS_LOWER_PROGRESS=1`, the focused run timed
 out as expected but printed `[PENDING_SOURCES]` snapshots at queue
 `5000..35000`. At queue `35000`, the dominant families were `Array#to_s: 5479`,
 `Array#inspect: 5476`, `Array#exec_recursive: 5448`, `Array#object_id: 2741`,
@@ -736,13 +736,13 @@ target the source of recursive formatting demand, not another isolated
 [LM-508|verified]: The opt-in AST demand reachability filter reduces the early
 all-defs supply phase but does not yet fix the canonical bootstrap graph size.
 Patch state: default `compute_ast_reachable_functions` remains conservative
-unless `CRYSTAL_V2_AST_FILTER_DEMAND=1`; the opt-in path scans packed
+unless `ADAMAS_AST_FILTER_DEMAND=1`; the opt-in path scans packed
 `main_exprs`, walks reachable method names, gates candidate owners by
 constructed/always-reachable types, and feeds the existing AST filter. Evidence:
 `regression_tests/p2_ast_filter_demand_no_prelude.sh /tmp/cv2_ast_demand2`
 prints `p2_ast_filter_demand_no_prelude_ok process_delta=2
 lower_missing_delta=45 total=92`; full `STOP_AFTER_HIR` with
-`CRYSTAL_V2_AST_FILTER=1 CRYSTAL_V2_AST_FILTER_DEMAND=1` exits 0 and shifts
+`ADAMAS_AST_FILTER=1 ADAMAS_AST_FILTER_DEMAND=1` exits 0 and shifts
 phase stats from baseline `process_pending +14371, lower_missing +25702,
 43471 total` to `process_pending +4148, lower_missing +35210, 43091 total`.
 `DEBUG_MISSING_SUMMARY=1` identifies the compensating concrete-call demand as
@@ -753,7 +753,7 @@ serialization/formatting/hash bodies enter HIR before the concrete missing-call
 sweep. {F/G/R: 0.91/0.58/0.93} [verified]
 
 [LM-509|verified]: LLVM backend reachability pruning is now exposed behind
-`CRYSTAL_V2_LLVM_REACHABILITY=1` but remains default-off. Evidence:
+`ADAMAS_LLVM_REACHABILITY=1` but remains default-off. Evidence:
 `regression_tests/p2_llvm_reachability_no_prelude.sh /tmp/cv2_llvm_reach`
 prints `p2_llvm_reachability_no_prelude_ok ... emitting 5 functions`;
 full compiler progress run with the env enabled reaches backend RTA and emits
@@ -850,7 +850,7 @@ fall back to the generic module block owner. The fix keeps
 `yield_receiver_base_name(ctx.type_of(receiver_id))` for block-target lookup,
 canonicalization, and block emit lookup. Evidence:
 `DEBUG_CALL_TRACE=reverse_each DEBUG_HOOK_FILTER=reverse_each
-CRYSTAL_V2_STOP_AFTER_HIR=1 scripts/run_safe.sh /tmp/cv2_commit_candidate 300
+ADAMAS_STOP_AFTER_HIR=1 scripts/run_safe.sh /tmp/cv2_commit_candidate 300
 4096 src/adamas.cr -o /tmp/cv2_commit_candidate_reverse_stop` exited 0,
 and grep found no `Indexable(T)#reverse_each$block` trace while concrete
 `Array(...)#reverse_each$block` targets were lowered. {F/G/R:
@@ -864,7 +864,7 @@ parent classes, and missed defaulted module methods such as
 included-module chain with `find_module_def_recursive_with_owner` and preserves
 the found arena for parameter/default reads. Evidence:
 `DEBUG_CALL_TRACE=each_with_index DEBUG_HOOK_FILTER=each_with_index
-CRYSTAL_V2_STOP_AFTER_HIR=1 scripts/run_safe.sh /tmp/cv2_commit_candidate 300
+ADAMAS_STOP_AFTER_HIR=1 scripts/run_safe.sh /tmp/cv2_commit_candidate 300
 4096 src/adamas.cr -o /tmp/cv2_commit_candidate_each_stop` exited 0 and
 showed repeated `after_args ... args=0` followed by `after_defaults ... args=1`
 for concrete Array/Slice calls. {F/G/R: 0.93/0.62/0.94} [verified]
@@ -875,7 +875,7 @@ duplicating `Hash::Entry` field layout in the backend while V2's entry payloads
 and offsets are owned by the type registry and normal lowering. The fix disables
 `emit_hash_string_linear_scan_override` and lets HIR/MIR lowering emit the real
 method body. Evidence: full self-compile with
-`CRYSTAL_V2_PHASE_STATS=1 scripts/run_safe.sh /tmp/cv2_commit_candidate 300
+`ADAMAS_PHASE_STATS=1 scripts/run_safe.sh /tmp/cv2_commit_candidate 300
 4096 src/adamas.cr -o /tmp/cv2_s2_commit_candidate` exited 0, the generated
 LL had no `direct small Hash linear scan` marker and no
 `Hash$LString$C$_Nil$R$Hupdate_linear_scan`, and
@@ -898,7 +898,7 @@ Fourth, splat parameters must be rebound as tuple locals inside method bodies;
 `Dir.glob$..._block_splat` now allocates a tuple for `patterns` and no longer
 self-recurses. Evidence: `crystal build src/adamas.cr -o
 /tmp/cv2_splat_tuple_guard --error-trace` exited 0;
-`CRYSTAL_V2_STOP_AFTER_MIR=1 scripts/run_safe.sh /tmp/cv2_splat_tuple_guard
+`ADAMAS_STOP_AFTER_MIR=1 scripts/run_safe.sh /tmp/cv2_splat_tuple_guard
 300 4096 src/adamas.cr --emit mir --no-link -o
 /tmp/cv2_splat_tuple_guard_mir` exited 0; and
 `regression_tests/p2_selfhost_stage2_shape_guard.sh /tmp/cv2_splat_tuple_guard`
@@ -931,9 +931,9 @@ flow narrowing across `type.is_a?(PrimitiveType) && type.name...`; explicit
 `PrimitiveType` casting makes HIR emit `PrimitiveType#name -> String` followed
 by `String#ends_with?`, not stale `Hash(...HIR::Value)#ends_with?`. Evidence:
 `crystal build src/adamas.cr -o /tmp/cv2_primitive_metaclass_narrow
---error-trace` exited 0; `CRYSTAL_V2_STOP_AFTER_HIR=1 ... --emit hir --no-link`
+--error-trace` exited 0; `ADAMAS_STOP_AFTER_HIR=1 ... --emit hir --no-link`
 showed the explicit cast and `String#ends_with?$String`;
-`CRYSTAL_V2_STOP_AFTER_MIR=1 ... --emit mir --no-link` exited 0 and showed
+`ADAMAS_STOP_AFTER_MIR=1 ... --emit mir --no-link` exited 0 and showed
 `PrimitiveType#name` plus `call @... : Bool`; full stage2 build produced
 `/tmp/cv2_s2_primitive_metaclass_narrow`; and
 `regression_tests/p2_selfhost_stage2_shape_guard.sh
@@ -969,7 +969,7 @@ eagerly force the corrected callee body during fallback. Evidence:
 `crystal build src/adamas.cr -o /tmp/cv2_dirglob_rootfix3 --error-trace`
 exited 0; mini `Dir.glob` HIR emit under `scripts/run_safe.sh` no longer
 contains `Dir.glob$Path | String_File::MatchOptions_Bool_block_splat`; full
-`CRYSTAL_V2_STOP_AFTER_HIR=1 ... src/adamas.cr --emit hir --no-link`
+`ADAMAS_STOP_AFTER_HIR=1 ... src/adamas.cr --emit hir --no-link`
 exited 0 after about `189s`; `regression_tests/p2_bootstrap_semantic_emit_oracle.sh
 /tmp/cv2_dirglob_rootfix3` and
 `regression_tests/p2_selfhost_stage2_shape_guard.sh /tmp/cv2_dirglob_rootfix3`
@@ -990,7 +990,7 @@ forwarding. Evidence: `crystal build src/adamas.cr -o
 /tmp/cv2_dirglob_scalar_guard --error-trace` exited 0; a mini scalar
 `Dir.glob` HIR emit showed the wrapper calling `Dir.glob$Enumerable...` with a
 tuple local and no `String#each$block`; full
-`CRYSTAL_V2_STOP_AFTER_HIR=1 ... src/adamas.cr --emit hir --no-link`
+`ADAMAS_STOP_AFTER_HIR=1 ... src/adamas.cr --emit hir --no-link`
 exited 0 after about `187s`; `regression_tests/p2_bootstrap_semantic_emit_oracle.sh
 /tmp/cv2_dirglob_scalar_guard` and
 `regression_tests/p2_selfhost_stage2_shape_guard.sh /tmp/cv2_dirglob_scalar_guard`
@@ -1040,7 +1040,7 @@ The safe fix is not a broad stale-Pending requeue: that was tested and rejected
 because it reopens the deep generic formatting/iterator fan-out and times out.
 Instead, this specific leaf guard bypasses nested deferral and is lowered
 immediately. Evidence: `crystal build src/adamas.cr -o /tmp/cv2_guardleaf
---error-trace` exited 0; `CRYSTAL_V2_STOP_AFTER_HIR=1 scripts/run_safe.sh
+--error-trace` exited 0; `ADAMAS_STOP_AFTER_HIR=1 scripts/run_safe.sh
 /tmp/cv2_guardleaf 300 4096 src/adamas.cr -o /tmp/cv2_guardleaf_stop`
 exited 0 after about `197s`; `--emit hir --no-link` produced a HIR body
 `func @Adamas::Compiler::Semantic::TypeInferenceEngine#guard_watchdog!`
@@ -1482,7 +1482,7 @@ Evidence:
   -> `dead_nil_branch_after_splat_ok`
 - `regression_tests/named_arg_after_splat_type_alignment.sh /tmp/cv2_nil_branch_fix`
   -> `named_arg_after_splat_type_alignment_ok`
-- `CRYSTAL_V2_STOP_AFTER_HIR=1 CRYSTAL_V2_PHASE_STATS=1
+- `ADAMAS_STOP_AFTER_HIR=1 ADAMAS_PHASE_STATS=1
   DEBUG_PENDING_SOURCES=1 ... scripts/run_safe.sh /tmp/cv2_nil_branch_fix 300
   4096 src/adamas.cr -o /tmp/cv2_nil_branch_stop_hir` -> `[EXIT: 0]`;
   `lower_missing` remains large (`17775 -> 46442`, `+28667`), proving this
@@ -1513,7 +1513,7 @@ Evidence:
   /tmp/cv2_rta_declared_method` ->
   `p2_pending_budget_no_prelude_ok process_delta=3 emit_delta=4
   lower_missing_delta=44 total=92 max_queue=57`.
-- `CRYSTAL_V2_STOP_AFTER_HIR=1 CRYSTAL_V2_PHASE_STATS=1
+- `ADAMAS_STOP_AFTER_HIR=1 ADAMAS_PHASE_STATS=1
   DEBUG_PENDING_SOURCES=1 ... scripts/run_safe.sh /tmp/cv2_rta_declared_method
   300 4096 src/adamas.cr -o /tmp/cv2_rta_decl_stop_hir` -> `[EXIT: 0]`;
   `lower_missing` improved from `+28667` to `+25702`, and `Array` function
@@ -1547,8 +1547,8 @@ over-materialized helper graph / large-IR corridor, not to the wrapper.
 {F/G/R: 0.96/0.8/0.95} [verified]
 
 [LM-508|verified]: The late LLVM backend timeout hypothesis was narrowed by
-opt-in tail-generation timing. `CRYSTAL_V2_LLVM_TAIL_STATS=1` is intentionally
-paired with `CRYSTAL_V2_TRACE_STDERR=1` because the probes use
+opt-in tail-generation timing. `ADAMAS_LLVM_TAIL_STATS=1` is intentionally
+paired with `ADAMAS_TRACE_STDERR=1` because the probes use
 `bootstrap_trace_puts`; without the trace env the diagnostic remains silent.
 On the full compiler stage2 attempt with LLVM reachability enabled, backend
 generation reported `RTA kept: 27806 (pruned 9921)` from `37727` MIR functions,
@@ -1565,8 +1565,8 @@ Evidence:
   -> exit 0.
 - `regression_tests/p2_llvm_tail_stats_no_prelude.sh /tmp/cv2_tail_stats`
   -> `p2_llvm_tail_stats_no_prelude_ok phase=type_name_table ...`.
-- `CRYSTAL_V2_TRACE_STDERR=1 CRYSTAL_V2_LLVM_REACHABILITY=1
-  CRYSTAL_V2_LLVM_TAIL_STATS=1 scripts/run_safe.sh /tmp/cv2_tail_stats 300
+- `ADAMAS_TRACE_STDERR=1 ADAMAS_LLVM_REACHABILITY=1
+  ADAMAS_LLVM_TAIL_STATS=1 scripts/run_safe.sh /tmp/cv2_tail_stats 300
   4096 src/adamas.cr -o /tmp/cv2_tail_stats_trace_s2` -> expected
   timeout, but the log contains `[STAGE2_TRACE] step5: generate done` before
   `[KILL] Timeout`.
@@ -1658,11 +1658,11 @@ Evidence:
 
 - `crystal build src/adamas.cr -o /tmp/cv2_vtarget_mir --error-trace`
   -> exit 0.
-- `CRYSTAL_V2_STOP_AFTER_HIR=1 scripts/run_safe.sh /tmp/cv2_vtarget_fix 300
+- `ADAMAS_STOP_AFTER_HIR=1 scripts/run_safe.sh /tmp/cv2_vtarget_fix 300
   4096 src/adamas.cr --emit hir --no-link -o /tmp/cv2_vtarget_fix_hir`
   -> exit 0; final HIR retained
   `Crystal::EventLoop::Polling#close$Crystal::System::FileDescriptor`.
-- `CRYSTAL_V2_TRACE_STDERR=1 scripts/run_safe.sh /tmp/cv2_vtarget_mir 360
+- `ADAMAS_TRACE_STDERR=1 scripts/run_safe.sh /tmp/cv2_vtarget_mir 360
   4096 src/adamas.cr --emit llvm-ir --no-link -o /tmp/cv2_vtarget_mir_ir`
   -> exit 0; `IO::FileDescriptor#system_close` calls
   `__vdispatch__Crystal$CCEventLoop$Hclose$$IO$CCFileDescriptor$$T329`, the
@@ -2702,7 +2702,7 @@ Evidence:
 
 - `crystal build src/adamas.cr -o /tmp/cv2_final_boundary_candidate
   --error-trace` passed.
-- `CRYSTAL_V2_STOP_AFTER_HIR=1 DEBUG_CALL_TRACE='to_unsafe,null_ptr'
+- `ADAMAS_STOP_AFTER_HIR=1 DEBUG_CALL_TRACE='to_unsafe,null_ptr'
   scripts/run_safe.sh /tmp/cv2_final_boundary_candidate 300 4096
   src/adamas.cr -o /tmp/cv2_final_boundary_s2_hir` exited 0; grep found
   no `Hash(String, Hash(UInt32, Crystal::HIR::Value))#to_unsafe` or
@@ -2835,8 +2835,8 @@ Findings:
   This showed the exposed helper chain was diagnostic bookkeeping, not the
   semantic body-inference root.
 - `@phase0_body_infer_counts` is only emitted when
-  `CRYSTAL_V2_PHASE0_METRICS` is enabled, and the identity tracker exists only
-  under `CRYSTAL_V2_IDENTITY_DRY_RUN`. Default bootstrap smoke needs neither.
+  `ADAMAS_PHASE0_METRICS` is enabled, and the identity tracker exists only
+  under `ADAMAS_IDENTITY_DRY_RUN`. Default bootstrap smoke needs neither.
 - The fix computes canonical body-inference identity only when phase0 metrics
   or identity dry-run is enabled. Default compilation still infers return
   types, but no longer pays the diagnostic identity-helper cost.
@@ -2852,8 +2852,8 @@ Evidence:
   `infer_concrete_return_type_from_body_inner(Array(ExprId), String, String,
   ArenaLike, Bool)`.
 
-Boundary: opt-in `CRYSTAL_V2_PHASE0_METRICS` and
-`CRYSTAL_V2_IDENTITY_DRY_RUN` paths still need their own targeted verification
+Boundary: opt-in `ADAMAS_PHASE0_METRICS` and
+`ADAMAS_IDENTITY_DRY_RUN` paths still need their own targeted verification
 before relying on body-inference identity counts under generated stage2.
 {F/G/R: 0.91/0.62/0.90} [verified]
 
@@ -2870,8 +2870,8 @@ Findings:
   so it is useful as coverage but not evidence that the dirty implementation is
   required.
 - The dirty implementation was refuted by a clean-vs-dirty full-source
-  comparison: clean HEAD `CRYSTAL_V2_STOP_AFTER_HIR=1
-  CRYSTAL_V2_PHASE_STATS=1 scripts/run_safe.sh /tmp/cv2_clean_head_candidate
+  comparison: clean HEAD `ADAMAS_STOP_AFTER_HIR=1
+  ADAMAS_PHASE_STATS=1 scripts/run_safe.sh /tmp/cv2_clean_head_candidate
   300 4096 src/adamas.cr -o /tmp/cv2_clean_head_stop_hir` exits 0 after
   about 145s, while the dirty narrowing patch exits 1 after about 34s with
   `ExprId out of bounds: 1684105331`.
@@ -2963,7 +2963,7 @@ Findings:
   lowering).
 - The first no-edit debug attempt was refuted as evidence: setting
   `DEBUG_INFER_CRASH`, `DEBUG_REG_CONCRETE_PHASE`, or
-  `CRYSTAL_V2_TRACE_CLASS_FRONTIER` changes the generated-stage2 failure
+  `ADAMAS_TRACE_CLASS_FRONTIER` changes the generated-stage2 failure
   timing and can report older enum-looking crashes. lldb with redirected child
   stdout/stderr is the stronger signal for this frontier.
 
@@ -3236,7 +3236,7 @@ Evidence:
 - `scripts/run_safe.sh /tmp/cv2_nested_module_params_candidate 300 4096
   src/adamas.cr -o /tmp/cv2_direct_nested_module_params/cv2_s2` built
   generated `cv2_s2` in ~155s with `[EXIT: 0]`.
-- `CRYSTAL_V2_TRACE_CLASS_FRONTIER=1` on the generated compiler now advances
+- `ADAMAS_TRACE_CLASS_FRONTIER=1` on the generated compiler now advances
   past `Float::Float::ParsedNumberStringT` and reaches
   `Float::Float::Bigint` before the next crash.
 - Fresh lldb shows the new frontier is not `each_param` or
@@ -3356,7 +3356,7 @@ Evidence:
   `p2_nested_module_registration_no_prelude.sh`,
   `p2_enum_class_setter_return_infer_no_prelude.sh`, and
   `p2_visibility_private_accessor_no_prelude.sh`.
-- `DEBUG_INIT_PARAMS=UnionDescriptor CRYSTAL_V2_STOP_AFTER_HIR=1
+- `DEBUG_INIT_PARAMS=UnionDescriptor ADAMAS_STOP_AFTER_HIR=1
   scripts/run_safe.sh /tmp/cv2_macro_param_source_candidate2 300 4096
   src/adamas.cr -o /tmp/cv2_uniondesc_trace_candidate2/cv2_s2_stop_hir`
   showed full recovered params:
@@ -3494,7 +3494,7 @@ Evidence:
 - Plain generated `s2` full-prelude `puts 42` smoke remains red:
   `scripts/run_safe.sh /tmp/cv2_ivar_param_preseed_s2/cv2_s2 60 4096
   /tmp/cv2_ivar_param_preseed_s2/hello.cr -o ...` exits 139.
-- `CRYSTAL_V2_TRACE_CLASS_FRONTIER=1` on that produced compiler reaches nested
+- `ADAMAS_TRACE_CLASS_FRONTIER=1` on that produced compiler reaches nested
   module/class registration and crashes at `Float::Float::ParsedNumberStringT`.
 
 Current interpretation:
@@ -3634,7 +3634,7 @@ Context: compiler/bootstrap/codegen, 2026-05-05, `codegen`.
 Root cause and fix:
 
 - After LM-553, produced `s2` full-prelude `puts 42` no longer trapped in module
-  registration, but `CRYSTAL_V2_TRACE_CLASS_FRONTIER=1` showed polluted
+  registration, but `ADAMAS_TRACE_CLASS_FRONTIER=1` showed polluted
   `Float::FastFloat.to_f64?` and `to_f32?` signatures:
   `raw=String resolved=Float::FastFloat::String` and
   `raw=Bool resolved=Float::FastFloat::Bool`.
@@ -3697,7 +3697,7 @@ Observed frontier:
 - After LM-554, produced `s2` full-prelude `puts 42` still times out in class
   registration, but the previous `Float::FastFloat::String` / `Bool` signature
   pollution is gone.
-- A temporary `CRYSTAL_V2_TRACE_CLASS_INDEX` build showed the produced compiler
+- A temporary `ADAMAS_TRACE_CLASS_INDEX` build showed the produced compiler
   completed class registration through `Bool` and then stalled at
   `class register before idx=25/104 name=Char`.
 - Existing `DEBUG_REG_CONCRETE_PHASE=Char` localized the stall to
@@ -4341,7 +4341,7 @@ Boundary:
   GPT Spark and Cursor both classified the primitive-owner demand as a separate
   upstream unresolved-call/dispatch problem.
 - Produced `s2` still does not pass full-prelude `puts 42`: running
-  `CRYSTAL_V2_TRACE_CLASS_FRONTIER=1 scripts/run_safe.sh
+  `ADAMAS_TRACE_CLASS_FRONTIER=1 scripts/run_safe.sh
   /private/tmp/cv2_each_key_s2/cv2_s2 60 4096 /private/tmp/cv2_hello.cr -o
   /private/tmp/cv2_hello_bin` exits 139 during early HIR setup, after
   `[STAGE2_DEBUG] pre-scan class/module loops start`.
@@ -4402,7 +4402,7 @@ Evidence:
   `global ptr null`, but its initializer path now contains
   `store ptr %r3930, ptr @Float$CCFastFloat$CCPowers__classvar__POWER_OF_FIVE_128`
   and no `call void @Slice$LUInt64$R$Dliteral...`.
-- `CRYSTAL_V2_TRACE_CLASS_FRONTIER=1 scripts/run_safe.sh
+- `ADAMAS_TRACE_CLASS_FRONTIER=1 scripts/run_safe.sh
   /private/tmp/cv2_slice_literal_fmt_s2/cv2_s2 60 4096
   /private/tmp/cv2_hello.cr -o /private/tmp/cv2_slice_literal_fmt_hello_bin`
   advanced past the previous
@@ -4487,7 +4487,7 @@ Boundary:
   currently aborts at the separate
   `Indexable$LT$R$Hequals$Q$$Indexable_block` frontier before the guard can
   emit IR.
-- `CRYSTAL_V2_TRACE_CLASS_FRONTIER=1` perturbs the produced full-prelude smoke
+- `ADAMAS_TRACE_CLASS_FRONTIER=1` perturbs the produced full-prelude smoke
   into a pre-scan timeout; the untraced `Indexable#equals?` block stub is the
   cleaner next frontier.
 - The remaining `Adamas::Compiler::CLI#file_sha256$String` MIR optimizer
@@ -4540,7 +4540,7 @@ Evidence:
   `STUB CALLED: Indexable$LT$R$Hequals$Q$$Indexable_block`; patched produced
   `s2` gets past that abort and exposes a later segfault.
 - Produced-s2 full-prelude `puts 42` with
-  `CRYSTAL_V2_TRACE_CLASS_FRONTIER=1` now advances past the prior
+  `ADAMAS_TRACE_CLASS_FRONTIER=1` now advances past the prior
   `Float::FastFloat::ParsedNumberStringT` / `Indexable#equals?` frontier and
   segfaults during `Crystal::SpinLock` registration after
   `concrete_after_pass0`.
@@ -4683,7 +4683,7 @@ Evidence:
   reaches module register idx=51/114 after the focused macro-for reducer
   passes. lldb under the 90s safe timeout did not reach the crash, so the next
   full-prelude stack is not yet captured. With
-  `CRYSTAL_V2_TRACE_CLASS_FRONTIER=1`, the frontier reaches File nested error
+  `ADAMAS_TRACE_CLASS_FRONTIER=1`, the frontier reaches File nested error
   classes before the traced run exits 133.
 
 Refuted branch:
@@ -5673,7 +5673,7 @@ Accepted change:
 - Normal parser construction now uses a byte-size token-capacity estimate
   instead of lexing the source once just for capacity.
 - The old exact counting path remains available for the tiny
-  `CRYSTAL_V2_TRACE_TOKEN_PRELOAD` trace mode, where preserving token-preload
+  `ADAMAS_TRACE_TOKEN_PRELOAD` trace mode, where preserving token-preload
   diagnostics is more useful than avoiding the extra pass.
 - The heuristic is intentionally conservative enough to avoid the 4096MB memory
   regression seen with a more aggressive `/6` estimate during host compiler
@@ -7463,7 +7463,7 @@ Trust: {F/G/R: 0.89/0.44/0.89} [verified]
 
 The compiler entry point now recognizes `tool lsp` before normal compile-mode
 argument parsing and execs a sibling `adamas_lsp` binary, or an explicit
-`CRYSTAL_V2_LSP_SERVER` path. This keeps the bootstrap compiler binary from
+`ADAMAS_LSP_SERVER` path. This keeps the bootstrap compiler binary from
 embedding `src/compiler/lsp/server.cr` while still exposing the Crystal-style
 tool command shape. The VS Code extension remains backward-compatible with its
 default `../bin/adamas_lsp` path and now also supports
@@ -7672,7 +7672,7 @@ Evidence:
 
 Adversary notes:
 
-- Settings are authoritative: PATH discovery and `CRYSTAL_V2_LSP_SERVER` are
+- Settings are authoritative: PATH discovery and `ADAMAS_LSP_SERVER` are
   skipped when `crystalv2.lsp.serverPath` is set.
 - Missing configured paths fail closed before `LanguageClient.start()`, so VS
   Code does not attempt to spawn a nonexistent LSP server.
@@ -8771,7 +8771,7 @@ Evidence:
 
 Refuted/limited evidence:
 
-- `CRYSTAL_V2_TRACE_CLASS_FRONTIER=1` materially perturbs this frontier. A
+- `ADAMAS_TRACE_CLASS_FRONTIER=1` materially perturbs this frontier. A
   traced safe-wrapper run reached `lower_main` before exit 139, while an
   untraced lldb run stopped in `type_ref_for_name_inner` from
   `annotation_type_ref` during class registration. Treat trace-only progress as
@@ -8961,7 +8961,7 @@ Evidence:
 
 - Clean produced `s2` from `c405b862` crashed on a no-prelude reducer with
   top-level numeric constants using `--emit llvm-ir --no-link`.
-- The same reducer passed `CRYSTAL_V2_STOP_AFTER_MIR=1`, proving MIR lowering
+- The same reducer passed `ADAMAS_STOP_AFTER_MIR=1`, proving MIR lowering
   was complete and the crash was in LLVM generation.
 - Temporary backend tracing localized the crash to `emit_global_variables`;
   temporary CLI tracing showed the constant-literal export path produced an
@@ -9132,7 +9132,7 @@ Evidence:
 
 Refuted/limited evidence:
 
-- `CRYSTAL_V2_TRACE_STDERR`/`bootstrap_trace_puts` is not reliable for
+- `ADAMAS_TRACE_STDERR`/`bootstrap_trace_puts` is not reliable for
   produced-s2 localization here; it can emit blank lines and materially perturb
   timing.
 - Temporary `stage2_debug` pre-scan/module-name instrumentation was useful for

@@ -39,7 +39,7 @@ run_phase() {
       {
         echo "#!/usr/bin/env bash"
         echo "set -euo pipefail"
-        echo "export CRYSTAL_V2_STOP_AFTER_MIR=1"
+        echo "export ADAMAS_STOP_AFTER_MIR=1"
         printf 'exec %q ' "$compiler"
         printf '%q ' --release --no-prelude --no-ast-cache --emit mir --no-link
         printf '%q ' "$WORKDIR/${case_name}.cr" -o "$out_base"

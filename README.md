@@ -185,10 +185,10 @@ formatting, rename, and call hierarchy.
 
 | Variable | Description |
 |----------|-------------|
-| `CRYSTAL_V2_DUMP_LAYOUTS=Pattern` | Dump class field layouts to stderr |
-| `CRYSTAL_V2_STOP_AFTER_PARSE=1` | Stop after parsing (for stage2 debugging) |
-| `CRYSTAL_V2_EAGER_HIR=1` | Disable lazy HIR lowering |
-| `CRYSTAL_V2_DEBUG_FIXUP=1` | Trace class ivar fixup |
+| `ADAMAS_DUMP_LAYOUTS=Pattern` | Dump class field layouts to stderr |
+| `ADAMAS_STOP_AFTER_PARSE=1` | Stop after parsing (for stage2 debugging) |
+| `ADAMAS_EAGER_HIR=1` | Disable lazy HIR lowering |
+| `ADAMAS_DEBUG_FIXUP=1` | Trace class ivar fixup |
 | `CRYSTAL_PATH=path` | Override bundled stdlib path |
 
 ---

@@ -261,7 +261,7 @@ module Adamas
             env_flags.split(",").each { |f| compiler_flags << f.strip unless f.strip.empty? }
           end
 
-          if config_path = ENV["CRYSTALV2_LSP_CONFIG"]?
+          if config_path = ENV["ADAMAS_LSP_CONFIG"]?
             begin
               raw = File.read(config_path)
               data = if config_path.ends_with?(".yml") || config_path.ends_with?(".yaml")
@@ -3620,7 +3620,7 @@ module Adamas
         end
 
         private def semantic_diagnostics_enabled? : Bool
-          ENV["CRYSTALV2_LSP_ENABLE_SEMANTIC_DIAGNOSTICS"]? == "1"
+          ENV["ADAMAS_LSP_ENABLE_SEMANTIC_DIAGNOSTICS"]? == "1"
         end
 
         private def filter_required_files(*, requirements : Array(String), includes_compiler : Bool) : Array(String)

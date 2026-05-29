@@ -206,8 +206,8 @@ be verified anchors, not broad opinions.
   paths. The body-inference metric identity chain was diagnostic-only, but
   default generated stage2 still executed it and exposed broad helper symbols
   (`record_phase0_body_infer_walk`, then `canonical_def_identity_for_body_infer`).
-  Gate canonical identity work on `CRYSTAL_V2_PHASE0_METRICS` or
-  `CRYSTAL_V2_IDENTITY_DRY_RUN`; otherwise diagnostics become bootstrap
+  Gate canonical identity work on `ADAMAS_PHASE0_METRICS` or
+  `ADAMAS_IDENTITY_DRY_RUN`; otherwise diagnostics become bootstrap
   dependencies.
 
 - `body_ids_match_arena?` looked source-safe because it accepted

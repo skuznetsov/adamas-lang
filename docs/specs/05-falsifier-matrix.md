@@ -46,7 +46,7 @@ Each non-refuted row has a phase pressure:
 | G2 | Empty or repeated generic owner names such as `Iterator::` or `Indexable::Indexable::...` are invalid. | `02-generic-template-registration.md` section 3 | Add trace/IR guard that fails on empty owner suffixes or repeated adjacent owner segments in generated stage. | next-touch | [MISSING-FALSIFIER] |
 | G3 | Generic template and instance keys must be semantic keys, not rendered strings. | `02-generic-template-registration.md` section 3 | Add key-rendering oracle that compares canonical key fields against rendered names for nested generic owners. | pre-s2-clean | [MISSING-FALSIFIER] |
 | G4 | Broad source-gated generic-template body scan is not an acceptable fix. | `02-generic-template-registration.md` section 5 | Reverted experiment regressed earlier around `Crystal::PointerLinkedList` / trace paths. | current | [REFUTED] |
-| G5 | Produced `s2` full-prelude `puts 42` must get past the later generic/template registration frontier. | `TODO.md`, LM-559 | `CRYSTAL_V2_TRACE_CLASS_FRONTIER=1 scripts/run_safe.sh <produced-s2> 60 4096 /tmp/hello.cr -o /tmp/hello_bin`. | pre-s2-clean | [FRONTIER] |
+| G5 | Produced `s2` full-prelude `puts 42` must get past the later generic/template registration frontier. | `TODO.md`, LM-559 | `ADAMAS_TRACE_CLASS_FRONTIER=1 scripts/run_safe.sh <produced-s2> 60 4096 /tmp/hello.cr -o /tmp/hello_bin`. | pre-s2-clean | [FRONTIER] |
 
 ## 5. MIR Call ABI
 

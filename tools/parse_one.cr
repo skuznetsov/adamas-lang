@@ -5,6 +5,6 @@ abort "Usage: parse_one <file>" unless ARGV.size == 1
 path = ARGV[0]
 source = File.read(path)
 lexer = Adamas::Compiler::Frontend::Lexer.new(source)
-parser = Adamas::Compiler::Frontend::Parser.new(lexer, recovery_mode: ENV["CRYSTAL_V2_LSP_RECOVERY"]? == "1")
+parser = Adamas::Compiler::Frontend::Parser.new(lexer, recovery_mode: ENV["ADAMAS_LSP_RECOVERY"]? == "1")
 parser.parse_program
 puts "parsed #{path}"

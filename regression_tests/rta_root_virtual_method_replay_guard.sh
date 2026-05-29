@@ -45,7 +45,7 @@ Unrelated.new.touch
 print_exception(MyError.new)
 CR
 
-CRYSTAL_V2_STOP_AFTER_HIR=1 \
+ADAMAS_STOP_AFTER_HIR=1 \
   "$ROOT_DIR/scripts/run_safe.sh" "$COMPILER" 30 512 \
     "$TMP_DIR/repro.cr" --no-prelude --emit hir --no-link -o "$TMP_DIR/out" \
     > "$TMP_DIR/compile.log" 2>&1

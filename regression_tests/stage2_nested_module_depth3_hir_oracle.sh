@@ -35,7 +35,7 @@ run_hir() {
   {
     echo "#!/usr/bin/env bash"
     echo "set -euo pipefail"
-    echo "export CRYSTAL_V2_STOP_AFTER_HIR=1"
+    echo "export ADAMAS_STOP_AFTER_HIR=1"
     printf 'exec %q ' "$compiler"
     printf '%q ' --release --no-prelude --no-ast-cache --emit hir
     printf '%q ' "$SRC" -o "$out_base"

@@ -22,18 +22,18 @@ private def lsp_line_char(source : String, needle : String, occurrence : Int32 =
 end
 
 private def with_lsp_project_cache_env(&)
-  prev_stub = ENV["CRYSTALV2_LSP_FORCE_STUB"]?
+  prev_stub = ENV["ADAMAS_LSP_FORCE_STUB"]?
   prev_xdg = ENV["XDG_CACHE_HOME"]?
   cache_dir = File.join(Dir.tempdir, "lsp_project_cache_env_#{Random::Secure.hex(6)}")
   FileUtils.mkdir_p(cache_dir)
-  ENV["CRYSTALV2_LSP_FORCE_STUB"] = "1"
+  ENV["ADAMAS_LSP_FORCE_STUB"] = "1"
   ENV["XDG_CACHE_HOME"] = cache_dir
   yield
 ensure
   if prev_stub
-    ENV["CRYSTALV2_LSP_FORCE_STUB"] = prev_stub
+    ENV["ADAMAS_LSP_FORCE_STUB"] = prev_stub
   else
-    ENV.delete("CRYSTALV2_LSP_FORCE_STUB")
+    ENV.delete("ADAMAS_LSP_FORCE_STUB")
   end
 
   if prev_xdg

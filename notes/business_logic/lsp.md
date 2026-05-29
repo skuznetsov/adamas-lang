@@ -23,8 +23,8 @@
 - `LSP_PROJECT_CACHE=0/1`: read/write project cache.
 - `LSP_DEBOUNCE_MS=...`: debounce for diagnostics.
 - `LSP_WATCHDOG_TIMEOUT_MS=...`: request watchdog timeout.
-- `CRYSTALV2_LSP_CONFIG=/path.yml`: config file path.
-- `CRYSTALV2_LSP_ENABLE_SEMANTIC_DIAGNOSTICS=1`: enable semantic diagnostics.
+- `ADAMAS_LSP_CONFIG=/path.yml`: config file path.
+- `ADAMAS_LSP_ENABLE_SEMANTIC_DIAGNOSTICS=1`: enable semantic diagnostics.
 
 ## Quick Troubleshooting
 - Long didOpen: check `LSP_DEBUG` output + project cache status.

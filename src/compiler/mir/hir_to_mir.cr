@@ -145,7 +145,7 @@ module Adamas
 
       @[AlwaysInline]
       private def mir_setup_trace? : Bool
-        ENV.has_key?("CRYSTAL_V2_MIR_SETUP_TRACE") || ENV.has_key?("CRYSTAL2_MIR_SETUP_TRACE")
+        ENV.has_key?("ADAMAS_MIR_SETUP_TRACE") || ENV.has_key?("ADAMAS_MIR_SETUP_TRACE")
       end
 
       # Statistics
@@ -188,7 +188,7 @@ module Adamas
 
       @[AlwaysInline]
       private def mir_lower_trace? : Bool
-        ENV.has_key?("CRYSTAL_V2_MIR_LOWER_TRACE") || ENV.has_key?("CRYSTAL2_MIR_LOWER_TRACE")
+        ENV.has_key?("ADAMAS_MIR_LOWER_TRACE") || ENV.has_key?("ADAMAS_MIR_LOWER_TRACE")
       end
 
       # ─────────────────────────────────────────────────────────────────────────
@@ -317,7 +317,7 @@ module Adamas
         build_owned_return_set
         total = @hir_module.functions.size
         STDERR.puts "    Pass 2: Lowering #{total} function bodies..." if progress
-        profile_mir = ENV.has_key?("CRYSTAL_V2_MIR_PROFILE")
+        profile_mir = ENV.has_key?("ADAMAS_MIR_PROFILE")
         processed = ::Set(String).new
         slow_funcs = [] of Tuple(String, Float64) if profile_mir
         @hir_module.functions.each_with_index do |hir_func, idx|
@@ -1485,7 +1485,7 @@ module Adamas
         # Source locations are debug metadata. Keep them opt-in during
         # bootstrap because self-hosted stage2 can corrupt Hash-backed debug
         # metadata even when semantic lowering is otherwise valid.
-        return unless ENV["CRYSTAL_V2_ENABLE_MIR_VALUE_LOCATIONS"]? == "1"
+        return unless ENV["ADAMAS_ENABLE_MIR_VALUE_LOCATIONS"]? == "1"
 
         if loc = hir_func.value_location(hir_id)
           if mir_func.value_location(mir_id).nil?
@@ -2483,7 +2483,7 @@ module Adamas
       # Uses interprocedural fixed-point analysis tracing return values back to origins.
       private def build_owned_return_set
         @owned_return_funcs = ::Set(String).new
-        debug_owned = ENV.has_key?("CRYSTAL_V2_OWNED_RETURN_TRACE")
+        debug_owned = ENV.has_key?("ADAMAS_OWNED_RETURN_TRACE")
         initial_func_count = @hir_module.functions.size
 
         # Build instruction map per function for fast lookup
@@ -3999,7 +3999,7 @@ module Adamas
             return builder.call(func.id, coerced_args, call_return_type)
           end
         end
-        if ENV.has_key?("CRYSTAL_V2_UNRESOLVED_CALL_TRACE")
+        if ENV.has_key?("ADAMAS_UNRESOLVED_CALL_TRACE")
           recv_type = call.has_receiver? ? @hir_value_types[call.receiver_value]? : nil
           recv_name = hir_type_name(recv_type)
           STDERR.puts "[UNRESOLVED_CALL] func=#{@current_lowering_func_name} method=#{call.method_name} base=#{base_method_name} recv=#{recv_name} virtual=#{call.virtual} args=#{call.args.size}"
@@ -6448,7 +6448,7 @@ module Adamas
           return builder.const_nil
         end
         yield_carrier = @hir_value_carriers[block_param_id]? || ProcCarrier::Unknown
-        if ENV.has_key?("CRYSTAL_V2_PROC_CARRIER_TRACE")
+        if ENV.has_key?("ADAMAS_PROC_CARRIER_TRACE")
           STDERR.puts "[PROC_CARRIER] yield func=#{@current_lowering_func_name} target=#{block_param_id} carrier=#{yield_carrier}"
         end
         # MIR_YIELD_DISPATCH_MODE: raw_fnptr_only
@@ -7339,7 +7339,7 @@ module Adamas
         synthetic = mir_func.create_block
         set_block_map(hir_block_id, synthetic)
 
-        if ::Adamas::Compiler::BootstrapEnv.get?("CRYSTAL2_STAGE2_DEBUG") == "1"
+        if ::Adamas::Compiler::BootstrapEnv.get?("ADAMAS_STAGE2_DEBUG") == "1"
           STDERR.puts "[MIR_MISSING_BLOCK] func=#{@current_lowering_func_name} hir_block=#{hir_block_id} synthetic=#{synthetic}"
         end
 

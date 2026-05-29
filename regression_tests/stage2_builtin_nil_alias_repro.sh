@@ -27,8 +27,8 @@ fi
 cat >"$WRAPPER" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
-export CRYSTAL_V2_STOP_AFTER_HIR=1
-export CRYSTAL_V2_TRUST_SLICE_ADDR=1
+export ADAMAS_STOP_AFTER_HIR=1
+export ADAMAS_TRUST_SLICE_ADDR=1
 export DEBUG_CLASS_ARENA='Crystal::Once::Operation'
 export DEBUG_CLASS_REPAIR='Crystal::Once::Operation'
 export DEBUG_REG_CONCRETE_PHASE='Crystal::Once::Operation'

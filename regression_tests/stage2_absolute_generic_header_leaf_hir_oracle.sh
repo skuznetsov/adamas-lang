@@ -23,7 +23,7 @@ run_compiler() {
 set -euo pipefail
 cd "$ROOT_DIR"
 export DEBUG_GENERIC_TEMPLATE=1
-export CRYSTAL_V2_STOP_AFTER_HIR=1
+export ADAMAS_STOP_AFTER_HIR=1
 "$compiler" "$SRC" --release --no-prelude --no-ast-cache --emit hir -o /tmp/${label}.hir
 EOF
   chmod +x "$wrapper"

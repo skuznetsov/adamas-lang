@@ -35,7 +35,7 @@ run_parse_only() {
   {
     echo "#!/usr/bin/env bash"
     echo "set -euo pipefail"
-    echo "export CRYSTAL_V2_STOP_AFTER_PARSE=1"
+    echo "export ADAMAS_STOP_AFTER_PARSE=1"
     printf 'exec %q ' "$compiler"
     printf '%q ' "$source_file" --release -o "$WORKDIR/${label}_out"
     echo

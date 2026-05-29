@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build adamas from two git commits in detached worktrees, run the same
-# carrier.cr with CRYSTAL_V2_MACRO_BODY_OUTPUT_STATS_DUMP=1, extract JSONL, and
+# carrier.cr with ADAMAS_MACRO_BODY_OUTPUT_STATS_DUMP=1, extract JSONL, and
 # diff with macro_body_output_stats_tool.py (--span-key if paths differ).
 #
 # Usage (from repo root):
@@ -54,8 +54,8 @@ echo "[2/4] crystal build $COMMIT_B -> $BIN_B"
 OUT_A="/tmp/macro_cmp_out_a_$$"
 OUT_B="/tmp/macro_cmp_out_b_$$"
 echo "[3/4] DUMP compile carrier (both)"
-CRYSTAL_V2_MACRO_BODY_OUTPUT_STATS_DUMP=1 "$BIN_A" "$CARRIER" -o "$OUT_A" 2> "$ERR_A"
-CRYSTAL_V2_MACRO_BODY_OUTPUT_STATS_DUMP=1 "$BIN_B" "$CARRIER" -o "$OUT_B" 2> "$ERR_B"
+ADAMAS_MACRO_BODY_OUTPUT_STATS_DUMP=1 "$BIN_A" "$CARRIER" -o "$OUT_A" 2> "$ERR_A"
+ADAMAS_MACRO_BODY_OUTPUT_STATS_DUMP=1 "$BIN_B" "$CARRIER" -o "$OUT_B" 2> "$ERR_B"
 rm -f "$OUT_A" "$OUT_B"
 
 echo "[4/4] extract + diff --span-key (ignores macro_file path drift)"

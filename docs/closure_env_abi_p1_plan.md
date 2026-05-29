@@ -67,7 +67,7 @@ carrier. Guards: `p1_no_prelude_yield_carrier_trace.sh` checks the basic
 `&block` trace, `p1_mixed_proc_block_yield_carrier.sh` checks a non-block Proc
 parameter before `&block`, and `p1_hybrid_boundary_guard.sh` checks that
 `infer_block_param_id` consults `param.is_block` before `TypeKind::Proc`.
-Diagnostic slice (2026-04-20): `CRYSTAL_V2_BLOCK_CALL_DIAGNOSTIC=1` emits a
+Diagnostic slice (2026-04-20): `ADAMAS_BLOCK_CALL_DIAGNOSTIC=1` emits a
 non-fatal trace for implicit untyped `&block` params whose body contains direct
 `block.call`. This records the current raw-vs-heap carrier limitation without
 changing codegen. Alias forms such as `x = block; x.call(...)` remain an open
@@ -1429,7 +1429,7 @@ each capture entry must show `boxed|by_val`, `slot=<type_id>`,
 slot/payload disagree with the `boxed|by_val` tag, is a violation.
 
 Shape checks (run against `/tmp/p1_repro.hir`, produced with
-`CRYSTAL_V2_DUMP_HIR=1` or equivalent):
+`ADAMAS_DUMP_HIR=1` or equivalent):
 
 ```bash
 # Every capture must carry the full metadata triple:

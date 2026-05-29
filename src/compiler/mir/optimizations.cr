@@ -909,7 +909,7 @@ module Adamas::MIR
     getter function : Function
     getter propagated : Int32 = 0
     @assume_dominates : Bool = false
-    @@cp_phase_timing_enabled : Bool = ENV["CRYSTAL_V2_CP_PHASE_TIMING"]? == "1"
+    @@cp_phase_timing_enabled : Bool = ENV["ADAMAS_CP_PHASE_TIMING"]? == "1"
     @@cp_phase_time_totals : ::Hash(String, Float64) = ::Hash(String, Float64).new(0.0)
     @@cp_phase_call_counts : ::Hash(String, Int32) = ::Hash(String, Int32).new(0)
     @@cp_phase_timing_lock : Mutex = Mutex.new
@@ -1976,7 +1976,7 @@ module Adamas::MIR
 
     getter function : Function
     getter stats : OptimizationStats
-    @@pass_timing_enabled : Bool = ENV["CRYSTAL_V2_MIR_PASS_TIMING"]? == "1"
+    @@pass_timing_enabled : Bool = ENV["ADAMAS_MIR_PASS_TIMING"]? == "1"
     @@pass_time_totals : ::Hash(String, Float64) = ::Hash(String, Float64).new(0.0)
     @@pass_call_counts : ::Hash(String, Int32) = ::Hash(String, Int32).new(0)
     @@pass_timing_lock : Mutex = Mutex.new

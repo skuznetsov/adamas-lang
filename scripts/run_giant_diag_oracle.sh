@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run adamas on macro dump carriers with CRYSTAL_V2_MACRO_BODY_GIANT_DIAG=1 and print
+# Run adamas on macro dump carriers with ADAMAS_MACRO_BODY_GIANT_DIAG=1 and print
 # only immediate giant JSON lines (stderr) — quick oracle without LLDB.
 #
 # Does not change compilation semantics (observability only).
@@ -9,14 +9,14 @@
 #   scripts/run_giant_diag_oracle.sh [path/to/adamas]
 #
 # Optional (exported before invoking this script):
-#   CRYSTAL_V2_MACRO_BODY_GIANT_DIAG=1          # default: 1
-#   CRYSTAL_V2_MACRO_BODY_GIANT_SINGLE_BYTES
-#   CRYSTAL_V2_MACRO_BODY_GIANT_CUMULATIVE_BYTES
+#   ADAMAS_MACRO_BODY_GIANT_DIAG=1          # default: 1
+#   ADAMAS_MACRO_BODY_GIANT_SINGLE_BYTES
+#   ADAMAS_MACRO_BODY_GIANT_CUMULATIVE_BYTES
 #
 # For long compiles, wrap the compiler with scripts/run_safe.sh if needed.
 #
 # Bootstrap spot-check (optional, slow): same env, then
-#   CRYSTAL_V2_MACRO_BODY_GIANT_DIAG=1 bin/adamas src/adamas.cr -o /tmp/cv2_boot.out
+#   ADAMAS_MACRO_BODY_GIANT_DIAG=1 bin/adamas src/adamas.cr -o /tmp/cv2_boot.out
 # and look for macro_body_giant on stderr — expect primitives giant on the prelude path.
 set -uo pipefail
 
@@ -26,7 +26,7 @@ STAGING="${TMPDIR:-/tmp}/adamas_giant_oracle_$$"
 mkdir -p "$STAGING"
 trap 'rm -rf "$STAGING"' EXIT
 
-export CRYSTAL_V2_MACRO_BODY_GIANT_DIAG="${CRYSTAL_V2_MACRO_BODY_GIANT_DIAG:-1}"
+export ADAMAS_MACRO_BODY_GIANT_DIAG="${ADAMAS_MACRO_BODY_GIANT_DIAG:-1}"
 
 if [[ ! -x "$COMPILER" ]]; then
   echo "error: not an executable compiler: $COMPILER" >&2
@@ -41,7 +41,7 @@ CARRIERS=(
 
 echo "=== GIANT_DIAG oracle ==="
 echo "compiler=$COMPILER"
-echo "CRYSTAL_V2_MACRO_BODY_GIANT_DIAG=$CRYSTAL_V2_MACRO_BODY_GIANT_DIAG"
+echo "ADAMAS_MACRO_BODY_GIANT_DIAG=$ADAMAS_MACRO_BODY_GIANT_DIAG"
 echo ""
 
 any_giant=0

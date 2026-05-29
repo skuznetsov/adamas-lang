@@ -35,9 +35,9 @@ run_hir() {
   {
     echo "#!/usr/bin/env bash"
     echo "set -euo pipefail"
-    echo "export CRYSTAL_V2_STOP_AFTER_HIR=1"
+    echo "export ADAMAS_STOP_AFTER_HIR=1"
     if [[ "$label" == "stage2" ]]; then
-      echo "export CRYSTAL_V2_TRUST_SLICE_ADDR=1"
+      echo "export ADAMAS_TRUST_SLICE_ADDR=1"
     fi
     printf 'exec %q ' "$compiler"
     printf '%q ' --release --no-prelude --no-ast-cache --emit hir

@@ -17,9 +17,9 @@ for attempt in $(seq 1 "$ATTEMPTS"); do
 
   set +e
   env \
-    CRYSTAL_V2_STOP_AFTER_PARSE=1 \
-    CRYSTAL_V2_PIPELINE_CACHE=0 \
-    CRYSTAL_V2_LLVM_CACHE=0 \
+    ADAMAS_STOP_AFTER_PARSE=1 \
+    ADAMAS_PIPELINE_CACHE=0 \
+    ADAMAS_LLVM_CACHE=0 \
     "$REPO_ROOT/scripts/timeout_sample_lldb.sh" \
     -t 30 -m 2048 -s 1 -l 5 -n 8 --no-series \
     -o "$log_dir" \

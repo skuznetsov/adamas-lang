@@ -11,7 +11,7 @@ repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 log_dir=$(mktemp -d "${TMPDIR:-/tmp}/stage2_nested_macro_method_missing_repro.XXXXXX")
 
 set +e
-/usr/bin/time -p env CRYSTAL_V2_STOP_AFTER_HIR=1 \
+/usr/bin/time -p env ADAMAS_STOP_AFTER_HIR=1 \
   "$repo_root/scripts/timeout_sample_lldb.sh" \
   -t 60 -m 4096 -s 5 -l 10 -n 8 --no-series \
   -o "$log_dir" \

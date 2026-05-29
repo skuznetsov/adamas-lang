@@ -73,10 +73,10 @@ module Adamas
       end
 
       # :nodoc:
-      # Env CRYSTAL_V2_MACRO_BODY_OUTPUT_STATS_DUMP=1: one JSON object per macro body key at process exit
+      # Env ADAMAS_MACRO_BODY_OUTPUT_STATS_DUMP=1: one JSON object per macro body key at process exit
       # (global aggregate across all MacroExpander instances). Sorted by cumulative_bytes desc, then key fields.
       # Does not change compilation; use with stderr redirect for clean JSONL. Complements threshold logging
-      # from CRYSTAL_V2_MACRO_BODY_OUTPUT_STATS=1.
+      # from ADAMAS_MACRO_BODY_OUTPUT_STATS=1.
       module MacroBodyOutputStatsDump
         @@mutex = Mutex.new
         @@rows = {} of String => Row
@@ -94,7 +94,7 @@ module Adamas
           single_bytes_last : Int64
 
         def self.enabled? : Bool
-          ENV["CRYSTAL_V2_MACRO_BODY_OUTPUT_STATS_DUMP"]? == "1"
+          ENV["ADAMAS_MACRO_BODY_OUTPUT_STATS_DUMP"]? == "1"
         end
 
         def self.ensure_at_exit : Nil
@@ -192,14 +192,14 @@ module Adamas
         getter diagnostics : Array(Diagnostic)
         getter last_output : String? = nil
 
-        # Env CRYSTAL_V2_MACRO_BODY_OUTPUT_STATS=1: log macro bodies whose expansion output is huge
+        # Env ADAMAS_MACRO_BODY_OUTPUT_STATS=1: log macro bodies whose expansion output is huge
         # (single expansion or cumulative per span/piece-count key). For hunting String::Builder runaway.
         # Each line includes macro_file=... (path passed as macro_source_path from AstToHir / CLI).
         # call_count is expansions of the same macro body key (span + pieces + body_id); compare across V2 vs baseline runs.
-        # Env CRYSTAL_V2_MACRO_BODY_OUTPUT_STATS_DUMP=1: end-of-process JSONL dump of all keys (see MacroBodyOutputStatsDump).
-        # Env CRYSTAL_V2_MACRO_BODY_GIANT_DIAG=1: immediate JSON line to stderr when single or cumulative
-        # expansion size crosses CRYSTAL_V2_MACRO_BODY_GIANT_SINGLE_BYTES (default 500_000) or
-        # CRYSTAL_V2_MACRO_BODY_GIANT_CUMULATIVE_BYTES (default 1_000_000). Diagnostic only — does not truncate output.
+        # Env ADAMAS_MACRO_BODY_OUTPUT_STATS_DUMP=1: end-of-process JSONL dump of all keys (see MacroBodyOutputStatsDump).
+        # Env ADAMAS_MACRO_BODY_GIANT_DIAG=1: immediate JSON line to stderr when single or cumulative
+        # expansion size crosses ADAMAS_MACRO_BODY_GIANT_SINGLE_BYTES (default 500_000) or
+        # ADAMAS_MACRO_BODY_GIANT_CUMULATIVE_BYTES (default 1_000_000). Diagnostic only — does not truncate output.
         @macro_body_output_stats : Bool
         @macro_body_stat_single_threshold : Int64
         @macro_body_stat_cumulative_threshold : Int64
@@ -233,14 +233,14 @@ module Adamas
           @macro_source_provider = nil.as(Proc(Frontend::ExprId, String?)?)
           @source_sink = source_sink
           @string_pool = @program.string_pool
-          @macro_body_output_stats = ENV["CRYSTAL_V2_MACRO_BODY_OUTPUT_STATS"]? == "1"
-          @macro_body_stat_single_threshold = ENV["CRYSTAL_V2_MACRO_BODY_STAT_THRESHOLD"]?.try(&.to_i64?) || 100_000_i64
-          @macro_body_stat_cumulative_threshold = ENV["CRYSTAL_V2_MACRO_BODY_STAT_CUMULATIVE"]?.try(&.to_i64?) || 1_000_000_i64
+          @macro_body_output_stats = ENV["ADAMAS_MACRO_BODY_OUTPUT_STATS"]? == "1"
+          @macro_body_stat_single_threshold = ENV["ADAMAS_MACRO_BODY_STAT_THRESHOLD"]?.try(&.to_i64?) || 100_000_i64
+          @macro_body_stat_cumulative_threshold = ENV["ADAMAS_MACRO_BODY_STAT_CUMULATIVE"]?.try(&.to_i64?) || 1_000_000_i64
           @macro_body_cumulative_bytes = {} of String => Int64
           @macro_body_call_count = {} of String => Int32
-          @macro_body_giant_diag = ENV["CRYSTAL_V2_MACRO_BODY_GIANT_DIAG"]? == "1"
-          @macro_body_giant_single_bytes = ENV["CRYSTAL_V2_MACRO_BODY_GIANT_SINGLE_BYTES"]?.try(&.to_i64?) || 500_000_i64
-          @macro_body_giant_cumulative_bytes = ENV["CRYSTAL_V2_MACRO_BODY_GIANT_CUMULATIVE_BYTES"]?.try(&.to_i64?) || 1_000_000_i64
+          @macro_body_giant_diag = ENV["ADAMAS_MACRO_BODY_GIANT_DIAG"]? == "1"
+          @macro_body_giant_single_bytes = ENV["ADAMAS_MACRO_BODY_GIANT_SINGLE_BYTES"]?.try(&.to_i64?) || 500_000_i64
+          @macro_body_giant_cumulative_bytes = ENV["ADAMAS_MACRO_BODY_GIANT_CUMULATIVE_BYTES"]?.try(&.to_i64?) || 1_000_000_i64
           MacroBodyOutputStatsDump.ensure_at_exit if MacroBodyOutputStatsDump.enabled?
         end
 

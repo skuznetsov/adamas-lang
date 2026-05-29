@@ -19,7 +19,7 @@ cd "$ROOT"
 
 set +e
 DEBUG_LIB_CLASS_REPAIR=LibC::PthreadAttrT \
-CRYSTAL_V2_STOP_AFTER_HIR=1 \
+ADAMAS_STOP_AFTER_HIR=1 \
   "$BIN" --no-prelude "$SRC" -o "$OUT_BIN" >"$LOG_FILE" 2>&1
 RC=$?
 set -e

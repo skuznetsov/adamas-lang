@@ -8,7 +8,7 @@
 # when ExprId is available at the call site. Falls back to DryRunInstanceKey
 # (with DryRunDefKey using node.object_id) when ExprId is not yet plumbed.
 #
-# Enable with: CRYSTAL_V2_IDENTITY_DRY_RUN=1
+# Enable with: ADAMAS_IDENTITY_DRY_RUN=1
 
 require "./semantic_type_id"
 require "./def_identity"

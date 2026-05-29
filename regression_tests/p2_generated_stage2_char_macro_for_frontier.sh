@@ -24,7 +24,7 @@ printf 'puts 42\n' > "$src"
 set +e
 (
   cd "$repo_root"
-  CRYSTAL_V2_TRACE_CLASS_FRONTIER=1 \
+  ADAMAS_TRACE_CLASS_FRONTIER=1 \
     scripts/run_safe.sh "$compiler" 60 4096 "$src" -o "$out_bin"
 ) >"$log" 2>&1
 status=$?

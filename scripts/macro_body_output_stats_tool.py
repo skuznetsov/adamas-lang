@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Extract / sort / diff CRYSTAL_V2_MACRO_BODY_OUTPUT_STATS_DUMP JSONL (stderr-mixed or clean).
+# Extract / sort / diff ADAMAS_MACRO_BODY_OUTPUT_STATS_DUMP JSONL (stderr-mixed or clean).
 # Compare branches using stable_key = macro_file + span lines + pieces_count (not body_id).
 #
 # Usage:

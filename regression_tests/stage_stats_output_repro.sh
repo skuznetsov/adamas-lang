@@ -21,9 +21,9 @@ puts 1 + 2
 CR
 
 set +e
-CRYSTAL_V2_PIPELINE_CACHE=0 "$COMPILER" "$SRC" -s --no-link -o "$BIN" >"$OUT_STATS" 2>"$ERR_STATS"
+ADAMAS_PIPELINE_CACHE=0 "$COMPILER" "$SRC" -s --no-link -o "$BIN" >"$OUT_STATS" 2>"$ERR_STATS"
 status_stats=$?
-CRYSTAL_V2_PIPELINE_CACHE=0 "$COMPILER" "$SRC" -s --verbose --no-link -o "$BIN" >"$OUT_VERBOSE" 2>"$ERR_VERBOSE"
+ADAMAS_PIPELINE_CACHE=0 "$COMPILER" "$SRC" -s --verbose --no-link -o "$BIN" >"$OUT_VERBOSE" 2>"$ERR_VERBOSE"
 status_verbose=$?
 set -e
 

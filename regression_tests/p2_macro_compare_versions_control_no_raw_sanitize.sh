@@ -21,7 +21,7 @@ trap 'rm -rf "$tmpdir"' EXIT
 log="$tmpdir/repro.log"
 DEBUG_CONST_LIT_WRITE=1 \
 DEBUG_MACRO_STRIP_HOT=512 \
-CRYSTAL_V2_STOP_AFTER_HIR=1 \
+ADAMAS_STOP_AFTER_HIR=1 \
   scripts/run_safe.sh "$compiler" 20 1024 "$tmpdir/repro.cr" --no-prelude -o "$tmpdir/repro" \
   >"$log" 2>&1
 

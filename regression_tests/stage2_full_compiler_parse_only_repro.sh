@@ -21,7 +21,7 @@ rcs=()
 for ((i = 1; i <= ITERATIONS; i++)); do
   OUT="$OUT_DIR/out_$i"
   set +e
-  env CRYSTAL_V2_STOP_AFTER_PARSE=1 \
+  env ADAMAS_STOP_AFTER_PARSE=1 \
     "$COMPILER" "$SOURCE" --release -o "$OUT" >>"$LOG" 2>&1
   rc=$?
   set -e

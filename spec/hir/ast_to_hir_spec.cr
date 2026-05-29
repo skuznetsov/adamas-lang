@@ -3312,8 +3312,8 @@ describe Adamas::HIR::AstToHir do
 
   describe "block-dependent query return inference" do
     it "keeps block-return-dependent query calls typed from the block instead of Bool" do
-      previous = ENV["CRYSTAL_V2_DISABLE_INLINE_YIELD"]?
-      ENV["CRYSTAL_V2_DISABLE_INLINE_YIELD"] = "1"
+      previous = ENV["ADAMAS_DISABLE_INLINE_YIELD"]?
+      ENV["ADAMAS_DISABLE_INLINE_YIELD"] = "1"
       begin
         converter = lower_program_with_main(<<-CRYSTAL)
           class Worker
@@ -3350,16 +3350,16 @@ describe Adamas::HIR::AstToHir do
         type_name.should_not eq("Bool")
       ensure
         if previous
-          ENV["CRYSTAL_V2_DISABLE_INLINE_YIELD"] = previous
+          ENV["ADAMAS_DISABLE_INLINE_YIELD"] = previous
         else
-          ENV.delete("CRYSTAL_V2_DISABLE_INLINE_YIELD")
+          ENV.delete("ADAMAS_DISABLE_INLINE_YIELD")
         end
       end
     end
 
     it "repairs stale direct call types from finalized callee returns" do
-      previous = ENV["CRYSTAL_V2_DISABLE_INLINE_YIELD"]?
-      ENV["CRYSTAL_V2_DISABLE_INLINE_YIELD"] = "1"
+      previous = ENV["ADAMAS_DISABLE_INLINE_YIELD"]?
+      ENV["ADAMAS_DISABLE_INLINE_YIELD"] = "1"
       begin
         converter = lower_program_with_sources(<<-CRYSTAL)
           class Worker
@@ -3410,9 +3410,9 @@ describe Adamas::HIR::AstToHir do
         repaired_desc.not_nil!.name.should contain("Int32")
       ensure
         if previous
-          ENV["CRYSTAL_V2_DISABLE_INLINE_YIELD"] = previous
+          ENV["ADAMAS_DISABLE_INLINE_YIELD"] = previous
         else
-          ENV.delete("CRYSTAL_V2_DISABLE_INLINE_YIELD")
+          ENV.delete("ADAMAS_DISABLE_INLINE_YIELD")
         end
       end
     end

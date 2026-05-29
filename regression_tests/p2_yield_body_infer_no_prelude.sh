@@ -36,7 +36,7 @@ end
 use_spin
 CR
 
-CRYSTAL_V2_STOP_AFTER_HIR=1 "$COMPILER" "$TMP_DIR/yield_body_infer.cr" \
+ADAMAS_STOP_AFTER_HIR=1 "$COMPILER" "$TMP_DIR/yield_body_infer.cr" \
   --no-prelude --emit hir -o "$TMP_DIR/out" > "$TMP_DIR/compile.log" 2>&1
 
 spin_type="$(awk '/= Struct SpinLike$/ { sub(/^type[.]/, "", $1); print $1; exit }' "$TMP_DIR/out.hir")"

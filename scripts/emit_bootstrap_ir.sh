@@ -57,7 +57,7 @@ run_emit() {
       {
         echo "#!/usr/bin/env bash"
         echo "set -euo pipefail"
-        echo "export CRYSTAL_V2_STOP_AFTER_HIR=1"
+        echo "export ADAMAS_STOP_AFTER_HIR=1"
         printf 'exec'
         printf ' %q' "$COMPILER" "$SRC" --no-prelude --no-link --emit hir -o "$stem" "$@"
         echo
@@ -67,7 +67,7 @@ run_emit() {
       {
         echo "#!/usr/bin/env bash"
         echo "set -euo pipefail"
-        echo "export CRYSTAL_V2_STOP_AFTER_MIR=1"
+        echo "export ADAMAS_STOP_AFTER_MIR=1"
         printf 'exec'
         printf ' %q' "$COMPILER" "$SRC" --no-prelude --no-link --emit mir -o "$stem" "$@"
         echo

@@ -29,7 +29,7 @@ ARTIFACT="${OUT_BASE}.mir"
 {
   echo "#!/usr/bin/env bash"
   echo "set -euo pipefail"
-  echo "export CRYSTAL_V2_STOP_AFTER_MIR=1"
+  echo "export ADAMAS_STOP_AFTER_MIR=1"
   printf 'exec %q ' "$COMPILER"
   printf '%q ' --release --no-prelude --no-ast-cache --emit mir --no-link
   printf '%q ' "$SRC" -o "$OUT_BASE"

@@ -6,17 +6,17 @@ require "./support/server_helper"
 
 describe "LSP AST cache dependency loading" do
   around_each do |example|
-    prev_stub = ENV["CRYSTALV2_LSP_FORCE_STUB"]?
+    prev_stub = ENV["ADAMAS_LSP_FORCE_STUB"]?
     prev_ast_cache = ENV["LSP_AST_CACHE"]?
-    ENV["CRYSTALV2_LSP_FORCE_STUB"] = "1"
+    ENV["ADAMAS_LSP_FORCE_STUB"] = "1"
     ENV["LSP_AST_CACHE"] = "1"
     begin
       example.run
     ensure
       if prev_stub
-        ENV["CRYSTALV2_LSP_FORCE_STUB"] = prev_stub
+        ENV["ADAMAS_LSP_FORCE_STUB"] = prev_stub
       else
-        ENV.delete("CRYSTALV2_LSP_FORCE_STUB")
+        ENV.delete("ADAMAS_LSP_FORCE_STUB")
       end
 
       if prev_ast_cache

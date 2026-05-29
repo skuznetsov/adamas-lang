@@ -119,7 +119,7 @@ Required normalized comparison includes:
 
 ### 4.1 Primary flag
 
-`CRYSTAL_V2_SEMANTIC_COMPILE=1`
+`ADAMAS_SEMANTIC_COMPILE=1`
 
 - `0` or unset: legacy compile path
 - `1`: new semantic compile path
@@ -128,9 +128,9 @@ Required normalized comparison includes:
 
 Recommended auxiliary flags:
 
-- `CRYSTAL_V2_SEMANTIC_SHADOW=1`
-- `CRYSTAL_V2_SEMANTIC_ASSERT_NO_LEGACY_QUEUE=1`
-- `CRYSTAL_V2_SEMANTIC_DUMP_NORMALIZED=1`
+- `ADAMAS_SEMANTIC_SHADOW=1`
+- `ADAMAS_SEMANTIC_ASSERT_NO_LEGACY_QUEUE=1`
+- `ADAMAS_SEMANTIC_DUMP_NORMALIZED=1`
 
 ## 5. Phases
 
@@ -286,7 +286,7 @@ Must emit:
 Exit criteria:
 - new HIR builder passes normalized shadow compare against legacy path on
   reducer suite
-- `CRYSTAL_V2_SEMANTIC_ASSERT_NO_LEGACY_QUEUE=1` stays green
+- `ADAMAS_SEMANTIC_ASSERT_NO_LEGACY_QUEUE=1` stays green
 
 ### Phase 6: Shadow Rollout
 
@@ -354,7 +354,7 @@ A shadow run is green only if:
 
 ## 7. Kill-Switch Rules
 
-Under `CRYSTAL_V2_SEMANTIC_COMPILE=1`, fail immediately if:
+Under `ADAMAS_SEMANTIC_COMPILE=1`, fail immediately if:
 
 - `emit_all_tracked_signatures` executes
 - `process_pending_lower_functions` executes

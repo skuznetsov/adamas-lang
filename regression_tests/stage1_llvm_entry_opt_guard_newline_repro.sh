@@ -33,7 +33,7 @@ cat > "$SRC" <<'CR'
 puts 1
 CR
 
-CRYSTAL_V2_PIPELINE_CACHE=0 "$COMPILER" "$SRC" --release --no-link -o "$OUT" >/dev/null 2>"$TMP_DIR/build.err"
+ADAMAS_PIPELINE_CACHE=0 "$COMPILER" "$SRC" --release --no-link -o "$OUT" >/dev/null 2>"$TMP_DIR/build.err"
 
 if ! perl -0ne 'exit(index($_, "\n") >= 0 ? 0 : 1)' "$LL"; then
   echo "reproduced (entry opt guard flattened LLVM IR into a single line)"

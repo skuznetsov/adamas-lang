@@ -2,7 +2,7 @@
 # Tier-1 guard for opt-in LLVM backend reachability pruning.
 #
 # The default backend path still emits all MIR functions. This guard only proves
-# that CRYSTAL_V2_LLVM_REACHABILITY=1 reaches the backend RTA path on a small
+# that ADAMAS_LLVM_REACHABILITY=1 reaches the backend RTA path on a small
 # no-prelude corpus and still emits LLVM IR.
 set -euo pipefail
 
@@ -24,7 +24,7 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 OUT="$TMP_DIR/corpus"
 LOG="$TMP_DIR/run_safe.log"
 
-CRYSTAL_V2_LLVM_REACHABILITY=1 \
+ADAMAS_LLVM_REACHABILITY=1 \
   "$ROOT_DIR/scripts/run_safe.sh" "$COMPILER" "$TIMEOUT_SEC" "$MEM_MB" \
     "$SRC" --no-prelude --emit llvm-ir --no-link --progress -o "$OUT" >"$LOG" 2>&1
 

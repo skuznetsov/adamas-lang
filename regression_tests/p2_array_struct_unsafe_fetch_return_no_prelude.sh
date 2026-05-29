@@ -42,7 +42,7 @@ e = arr.unsafe_fetch(0)
 puts e.type_id
 CR
 
-CRYSTAL_V2_STOP_AFTER_HIR=1 \
+ADAMAS_STOP_AFTER_HIR=1 \
   "$ROOT_DIR/scripts/run_safe.sh" "$COMPILER" 20 1024 \
     "$SRC" --no-prelude --emit hir --no-link -o "$OUT" >"$LOG" 2>&1
 

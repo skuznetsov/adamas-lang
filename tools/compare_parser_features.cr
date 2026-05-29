@@ -40,7 +40,7 @@ end
 # Resolve roots dynamically so the script works inside adamas_repo with a sibling crystal/ checkout.
 project_root = File.expand_path("..", __DIR__)
 upstream_root = ENV["CRYSTAL_UPSTREAM_ROOT"]? || File.expand_path("../crystal", project_root)
-v2_root = ENV["CRYSTAL_V2_ROOT"]? || project_root
+v2_root = ENV["ADAMAS_ROOT"]? || project_root
 
 original_parser = File.join(upstream_root, "src/compiler/crystal/syntax/parser.cr")
 original_lexer  = File.join(upstream_root, "src/compiler/crystal/syntax/lexer.cr")

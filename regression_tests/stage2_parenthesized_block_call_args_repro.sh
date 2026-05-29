@@ -21,8 +21,8 @@ trap cleanup EXIT
 cat >"$wrapper" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
-export CRYSTAL_V2_STOP_AFTER_PARSE=1
-export CRYSTAL_V2_TRACE_DEF_STATE=1
+export ADAMAS_STOP_AFTER_PARSE=1
+export ADAMAS_TRACE_DEF_STATE=1
 exec "$compiler" "$source_file" --no-prelude
 EOF
 chmod +x "$wrapper"

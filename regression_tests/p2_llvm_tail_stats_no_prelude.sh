@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Tier-1 guard for opt-in LLVM backend tail-generation diagnostics.
 #
-# The diagnostic is trace-gated: CRYSTAL_V2_LLVM_TAIL_STATS selects the timing
-# probes, while CRYSTAL_V2_TRACE_STDERR makes bootstrap_trace_puts visible.
+# The diagnostic is trace-gated: ADAMAS_LLVM_TAIL_STATS selects the timing
+# probes, while ADAMAS_TRACE_STDERR makes bootstrap_trace_puts visible.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -23,9 +23,9 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 OUT="$TMP_DIR/corpus"
 LOG="$TMP_DIR/run_safe.log"
 
-CRYSTAL_V2_TRACE_STDERR=1 \
-CRYSTAL_V2_LLVM_REACHABILITY=1 \
-CRYSTAL_V2_LLVM_TAIL_STATS=1 \
+ADAMAS_TRACE_STDERR=1 \
+ADAMAS_LLVM_REACHABILITY=1 \
+ADAMAS_LLVM_TAIL_STATS=1 \
   "$ROOT_DIR/scripts/run_safe.sh" "$COMPILER" "$TIMEOUT_SEC" "$MEM_MB" \
     "$SRC" --no-prelude --emit llvm-ir --no-link --progress -o "$OUT" >"$LOG" 2>&1
 

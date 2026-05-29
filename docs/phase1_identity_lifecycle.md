@@ -78,7 +78,7 @@ would be cache hits if a DefInstanceKey cache existed.
 **Behavior guarantee:** The tracker changes NO compilation behavior.
 It only observes and reports statistics.
 
-**Activation:** `CRYSTAL_V2_IDENTITY_DRY_RUN=1` environment variable.
+**Activation:** `ADAMAS_IDENTITY_DRY_RUN=1` environment variable.
 
 **Output:** After compilation, dumps to STDERR:
 ```

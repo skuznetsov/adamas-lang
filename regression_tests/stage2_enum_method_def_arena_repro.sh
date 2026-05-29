@@ -34,7 +34,7 @@ set +e
 DEBUG_DEF_ARENA=E \
 DEBUG_SET_FTYPE=E.value \
 DEBUG_INFER_BODY_NAME=value \
-CRYSTAL_V2_STOP_AFTER_HIR=1 \
+ADAMAS_STOP_AFTER_HIR=1 \
   "$BIN" --no-prelude "$SRC" -o "$OUT_BIN" >"$LOG_FILE" 2>&1
 RC=$?
 set -e

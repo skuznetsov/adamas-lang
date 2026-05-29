@@ -16,16 +16,16 @@ private def with_temp_semantic_compile_project(files : Hash(String, String), &)
 end
 
 private def with_semantic_compile_env_for_tz_alias(&)
-  previous = ENV["CRYSTAL_V2_SEMANTIC_COMPILE"]?
-  ENV["CRYSTAL_V2_SEMANTIC_COMPILE"] = "1"
+  previous = ENV["ADAMAS_SEMANTIC_COMPILE"]?
+  ENV["ADAMAS_SEMANTIC_COMPILE"] = "1"
 
   begin
     yield
   ensure
     if previous
-      ENV["CRYSTAL_V2_SEMANTIC_COMPILE"] = previous
+      ENV["ADAMAS_SEMANTIC_COMPILE"] = previous
     else
-      ENV.delete("CRYSTAL_V2_SEMANTIC_COMPILE")
+      ENV.delete("ADAMAS_SEMANTIC_COMPILE")
     end
   end
 end

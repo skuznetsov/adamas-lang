@@ -3,7 +3,7 @@
 # when multiple block overloads exist; two positional args + block must not collapse
 # to a one-arg block overload.
 #
-# The wrapper sets CRYSTAL_V2_STOP_AFTER_HIR=1 locally. Unset CRYSTAL_V2_STOP_AFTER_HIR
+# The wrapper sets ADAMAS_STOP_AFTER_HIR=1 locally. Unset ADAMAS_STOP_AFTER_HIR
 # in the parent shell when doing a full compile/link of other programs.
 set -euo pipefail
 
@@ -27,7 +27,7 @@ WRAPPER="$WORKDIR/run.sh"
 {
   echo "#!/usr/bin/env bash"
   echo "set -euo pipefail"
-  echo "export CRYSTAL_V2_STOP_AFTER_HIR=1"
+  echo "export ADAMAS_STOP_AFTER_HIR=1"
   printf 'exec %q ' "$CC"
   printf '%q ' --emit hir "$SRC" -o "$OUT"
   echo

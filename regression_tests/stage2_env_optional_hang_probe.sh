@@ -16,7 +16,7 @@ PROBE_DIR="$OUT_DIR/probe"
 mkdir -p "$OUT_DIR"
 
 cat > "$SRC" <<'CR'
-key = "CRYSTAL_V2_MISSING_KEY_REPRO_#{Process.pid}"
+key = "ADAMAS_MISSING_KEY_REPRO_#{Process.pid}"
 val = ENV[key]?
 puts(val.nil? ? "nil" : val)
 puts ENV.fetch(key, "fallback")

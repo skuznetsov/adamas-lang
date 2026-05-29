@@ -1785,7 +1785,7 @@ module Adamas::MIR
 
   class LLVMIRGenerator
     private def bootstrap_trace_puts(value = "") : Nil
-      return if ::Adamas::Compiler::BootstrapEnv.get?("CRYSTAL_V2_TRACE_STDERR").nil?
+      return if ::Adamas::Compiler::BootstrapEnv.get?("ADAMAS_TRACE_STDERR").nil?
       Crystal::System.print_error "%s\n", value.to_s
     end
 
@@ -1799,7 +1799,7 @@ module Adamas::MIR
     end
 
     private def llvm_entry_opt_guard_enabled? : Bool
-      raw = (::Adamas::Compiler::BootstrapEnv.get?("CRYSTAL_V2_LLVM_ENTRY_OPT_GUARD") || "").strip.downcase
+      raw = (::Adamas::Compiler::BootstrapEnv.get?("ADAMAS_LLVM_ENTRY_OPT_GUARD") || "").strip.downcase
       return true if raw.empty?
       !(raw == "0" || raw == "false" || raw == "off")
     end
@@ -1822,7 +1822,7 @@ module Adamas::MIR
     end
 
     private def emit_function_definition_header(return_type : String, mangled_name : String, param_types : Array(String)) : Nil
-      emit_function_trace = bootstrap_env_enabled?("CRYSTAL_V2_EMIT_FUNCTION_TRACE", "CRYSTAL2_EMIT_FUNCTION_TRACE") && mangled_name == "__adamas_main"
+      emit_function_trace = bootstrap_env_enabled?("ADAMAS_EMIT_FUNCTION_TRACE", "ADAMAS_EMIT_FUNCTION_TRACE") && mangled_name == "__adamas_main"
       attrs = if llvm_entry_opt_guard_enabled? && llvm_entry_guard_target_name?(mangled_name)
                 " noinline optnone"
               else
@@ -2478,9 +2478,9 @@ module Adamas::MIR
       @union_variant_entries = [] of UnionVariantInfoEntry
       @string_table = IO::Memory.new
       @string_offsets = {} of String => UInt32
-      @reuse_function_block_buffer = bootstrap_env_enabled?("CRYSTAL_V2_LLVM_REUSE_BLOCK_BUFFER", "CRYSTAL2_LLVM_REUSE_BLOCK_BUFFER")
+      @reuse_function_block_buffer = bootstrap_env_enabled?("ADAMAS_LLVM_REUSE_BLOCK_BUFFER", "ADAMAS_LLVM_REUSE_BLOCK_BUFFER")
       @function_block_output = IO::Memory.new
-      @debug_emit_anchors = bootstrap_env_enabled?("CRYSTAL_V2_DEBUG_EMIT", "CRYSTAL2_DEBUG_EMIT")
+      @debug_emit_anchors = bootstrap_env_enabled?("ADAMAS_DEBUG_EMIT", "ADAMAS_DEBUG_EMIT")
       @dwarf_debug = DwarfDebugContext.new(@module, @type_mapper)
     end
 
@@ -2904,7 +2904,7 @@ module Adamas::MIR
       # Pre-register symbol name strings so they get included in string constants
       @module.symbol_names.each { |name| get_or_create_string_global(name) }
 
-      tail_stats = bootstrap_env_enabled?("CRYSTAL_V2_LLVM_TAIL_STATS")
+      tail_stats = bootstrap_env_enabled?("ADAMAS_LLVM_TAIL_STATS")
 
       # Emit string constants at end (LLVM allows globals anywhere)
       STDERR.puts "  [LLVM] emit_string_constants..." if @progress
@@ -2984,13 +2984,13 @@ module Adamas::MIR
           (@union_variant_entries.size.to_i64 * 128_i64)
         io_memory_safety_limit = 2_000_000_000_i64
         estimated_total_metadata_bytes = estimated_type_metadata_bytes + estimated_union_metadata_bytes
-        metadata_trace = bootstrap_env_enabled?("CRYSTAL2_LLVM_METADATA_TRACE", "CRYSTAL_V2_LLVM_METADATA_TRACE")
+        metadata_trace = bootstrap_env_enabled?("ADAMAS_LLVM_METADATA_TRACE", "ADAMAS_LLVM_METADATA_TRACE")
         if metadata_trace
           bootstrap_trace_puts "  [LLVM_META] emit=#{@emit_type_metadata} types=#{@type_info_entries.size} fields=#{@field_info_entries.size} unions=#{@union_info_entries.size} strings_pos=#{@string_table.pos} current_pos=#{current_pos} est_total=#{estimated_total_metadata_bytes}"
         end
 
         if current_pos + estimated_total_metadata_bytes >= io_memory_safety_limit
-          if @progress || bootstrap_env_enabled?("CRYSTAL2_STAGE2_DEBUG")
+          if @progress || bootstrap_env_enabled?("ADAMAS_STAGE2_DEBUG")
             bootstrap_trace_puts "  [LLVM] skip metadata: output=#{current_pos} est_meta=#{estimated_total_metadata_bytes} limit=#{io_memory_safety_limit}"
           end
           bootstrap_trace_puts "  [LLVM_META] skipped_by_limit" if metadata_trace
@@ -3009,7 +3009,7 @@ module Adamas::MIR
             bootstrap_trace_puts "  [LLVM_META] after_union pos=#{metadata_output.pos}" if metadata_trace
           rescue ex : IO::EOFError
             metadata_ok = false
-            if @progress || bootstrap_env_enabled?("CRYSTAL2_STAGE2_DEBUG")
+            if @progress || bootstrap_env_enabled?("ADAMAS_STAGE2_DEBUG")
               bootstrap_trace_puts "  [LLVM] metadata emission skipped after EOF: #{ex.message}"
             end
             bootstrap_trace_puts "  [LLVM_META] eof=#{ex.message}" if metadata_trace
@@ -3088,7 +3088,7 @@ module Adamas::MIR
       # When a Call instruction's type is non-void and the callee is still void,
       # upgrade to that observed call-site type.
       # V2 BOOTSTRAP: ENV access crashes V2-compiled binaries.
-      if true # was: !ENV["CRYSTAL_V2_NO_PRECOMPUTE_P2"]?
+      if true # was: !ENV["ADAMAS_NO_PRECOMPUTE_P2"]?
         func_idx = 0
         while func_idx < functions.size
           func = functions.unsafe_fetch(func_idx)
@@ -3109,7 +3109,7 @@ module Adamas::MIR
                     existing = @emitted_function_return_types[callee_mangled]?
                     if existing == "void"
                       @emitted_function_return_types[callee_mangled] = call_type
-                      STDERR.puts "  [PRECOMPUTE-P2] #{callee_mangled}: void → #{call_type}" if ENV["CRYSTAL_V2_PRECOMPUTE_DEBUG"]?
+                      STDERR.puts "  [PRECOMPUTE-P2] #{callee_mangled}: void → #{call_type}" if ENV["ADAMAS_PRECOMPUTE_DEBUG"]?
                     end
                   end
                 end
@@ -5953,7 +5953,7 @@ module Adamas::MIR
     end
 
     private def emit_type_definitions
-      typedef_trace = bootstrap_env_enabled?("CRYSTAL2_LLVM_TYPEDEF_TRACE", "CRYSTAL_V2_LLVM_TYPEDEF_TRACE")
+      typedef_trace = bootstrap_env_enabled?("ADAMAS_LLVM_TYPEDEF_TRACE", "ADAMAS_LLVM_TYPEDEF_TRACE")
       # Emit proc type
       emit_raw "%__crystal_proc = type { ptr, ptr }\n"
       bootstrap_trace_puts "  [LLVM_TYPEDEF] total_types=#{@module.type_registry.types.size}" if typedef_trace
@@ -6084,7 +6084,7 @@ module Adamas::MIR
     end
 
     private def emit_runtime_declarations
-      runtime_decl_trace = bootstrap_env_enabled?("CRYSTAL_V2_RUNTIME_DECL_TRACE", "CRYSTAL2_RUNTIME_DECL_TRACE")
+      runtime_decl_trace = bootstrap_env_enabled?("ADAMAS_RUNTIME_DECL_TRACE", "ADAMAS_RUNTIME_DECL_TRACE")
       bootstrap_trace_puts "  [RT_DECL] begin" if runtime_decl_trace
       # External C library functions
       emit_raw "declare ptr @malloc(i64)\n"
@@ -9215,7 +9215,7 @@ module Adamas::MIR
 
       # Entry point: main() calls __adamas_main()
       emit_raw "; Program entry point\n"
-      if ENV.has_key?("CRYSTAL_V2_DEBUG_MAIN")
+      if ENV.has_key?("ADAMAS_DEBUG_MAIN")
         emit_raw "@.dbg_main_enter = private unnamed_addr constant [13 x i8] c\"[MAIN_ENTER]\\0A\\00\"\n"
         emit_raw "@.dbg_main_exit = private unnamed_addr constant [12 x i8] c\"[MAIN_EXIT]\\0A\\00\"\n"
         emit_raw "define i32 @main(i32 %argc, ptr %argv) {\n"
@@ -12723,7 +12723,7 @@ module Adamas::MIR
 
     private def emit_function(func : Function)
       mangled_name = mangle_function_name(func.name)
-      emit_function_trace = bootstrap_env_enabled?("CRYSTAL_V2_EMIT_FUNCTION_TRACE", "CRYSTAL2_EMIT_FUNCTION_TRACE") && func.name == "__adamas_main"
+      emit_function_trace = bootstrap_env_enabled?("ADAMAS_EMIT_FUNCTION_TRACE", "ADAMAS_EMIT_FUNCTION_TRACE") && func.name == "__adamas_main"
 
       if emit_builtin_override(func)
         # Builtin overrides emit raw LLVM directly and can return before the regular
@@ -13131,7 +13131,7 @@ module Adamas::MIR
       block_ir_output = block_output
       @output = saved_output
       @toplevel_output = nil
-      block_copy_trace = ENV["CRYSTAL2_LLVM_BLOCK_COPY_TRACE"]? || ENV["CRYSTAL_V2_LLVM_BLOCK_COPY_TRACE"]?
+      block_copy_trace = ENV["ADAMAS_LLVM_BLOCK_COPY_TRACE"]? || ENV["ADAMAS_LLVM_BLOCK_COPY_TRACE"]?
       if block_copy_trace
         STDERR.puts "[LLVM_BLOCK_COPY] func=#{func.name} buffered_bytes=#{block_ir_output.pos}"
       end
@@ -13218,7 +13218,7 @@ module Adamas::MIR
           emit_raw "\n"
         end
       rescue ex : IO::EOFError
-        if ENV["CRYSTAL2_STAGE2_DEBUG"]? == "1" || ENV["STAGE2_BOOTSTRAP_TRACE"]?
+        if ENV["ADAMAS_STAGE2_DEBUG"]? == "1" || ENV["STAGE2_BOOTSTRAP_TRACE"]?
           STDERR.puts "[LLVM_EMIT_EOF] func=#{func.name} blocks=#{func.blocks.size} hoisted_allocas=#{hoisted_allocas.size}"
         end
         raise ex
@@ -14300,7 +14300,7 @@ module Adamas::MIR
       @dominance_out_time.clear
       return if func.blocks.size <= 1
 
-      dom_trace = (ENV["CRYSTAL_V2_DOM_TRACE"]? || ENV["CRYSTAL2_DOM_TRACE"]?) && func.name == "__adamas_main"
+      dom_trace = (ENV["ADAMAS_DOM_TRACE"]? || ENV["ADAMAS_DOM_TRACE"]?) && func.name == "__adamas_main"
 
       STDERR.puts "[DOM] compute_predecessors:start" if dom_trace
       func.compute_predecessors
@@ -15649,7 +15649,7 @@ module Adamas::MIR
         elsif @constant_values.has_key?(inst.id) || @emitted_value_names.includes?(name) || @emitted_value_types.has_key?(name)
           emit_cross_block_slot_store(inst.id, name, slot_name)
         else
-          if ENV["CRYSTAL2_STAGE2_DEBUG"]? == "1" || ENV["STAGE2_BOOTSTRAP_TRACE"]?
+          if ENV["ADAMAS_STAGE2_DEBUG"]? == "1" || ENV["STAGE2_BOOTSTRAP_TRACE"]?
             STDERR.puts "[LLVM_MISSING_VALUE] func=#{@current_func_name} inst=#{inst.class.name} id=#{inst.id} slot=%#{slot_name}"
           end
           emit_cross_block_slot_default_store(inst.id, slot_name)
@@ -15844,15 +15844,15 @@ module Adamas::MIR
     end
 
     private def emit_constant(inst : Constant, name : String)
-      if ENV["CRYSTAL2_TRACE_EMIT_CONSTANT"]?
+      if ENV["ADAMAS_TRACE_EMIT_CONSTANT"]?
         STDERR.puts "[EMIT_CONST] start id=#{inst.id} type_id=#{inst.type.id}"
       end
       type = @type_mapper.llvm_type(inst.type)
-      STDERR.puts "[EMIT_CONST] after llvm_type=#{type}" if ENV["CRYSTAL2_TRACE_EMIT_CONSTANT"]?
+      STDERR.puts "[EMIT_CONST] after llvm_type=#{type}" if ENV["ADAMAS_TRACE_EMIT_CONSTANT"]?
 
       # Handle string constants specially
       if inst.type == TypeRef::STRING && (v = inst.string_value)
-        STDERR.puts "[EMIT_CONST] string constant" if ENV["CRYSTAL2_TRACE_EMIT_CONSTANT"]?
+        STDERR.puts "[EMIT_CONST] string constant" if ENV["ADAMAS_TRACE_EMIT_CONSTANT"]?
         global_name = get_or_create_string_global(v)
         # String constant is a pointer to the global
         @constant_values[inst.id] = global_name
@@ -15860,19 +15860,19 @@ module Adamas::MIR
         @value_types[inst.id] = TypeRef::POINTER
         return
       end
-      STDERR.puts "[EMIT_CONST] after string check" if ENV["CRYSTAL2_TRACE_EMIT_CONSTANT"]?
+      STDERR.puts "[EMIT_CONST] after string check" if ENV["ADAMAS_TRACE_EMIT_CONSTANT"]?
 
       # Module literal constants use stable singleton globals, not null pointers.
       # This keeps module-typed virtual dispatch safe (no null type_id load).
       if @module.module_type?(inst.type) && inst.value.is_a?(Nil)
-        STDERR.puts "[EMIT_CONST] module singleton constant" if ENV["CRYSTAL2_TRACE_EMIT_CONSTANT"]?
+        STDERR.puts "[EMIT_CONST] module singleton constant" if ENV["ADAMAS_TRACE_EMIT_CONSTANT"]?
         global_name = module_singleton_global_for(inst.type)
         @constant_values[inst.id] = global_name
         emit "#{name} = bitcast ptr #{global_name} to ptr"
         @value_types[inst.id] = TypeRef::POINTER
         return
       end
-      STDERR.puts "[EMIT_CONST] after module check" if ENV["CRYSTAL2_TRACE_EMIT_CONSTANT"]?
+      STDERR.puts "[EMIT_CONST] after module check" if ENV["ADAMAS_TRACE_EMIT_CONSTANT"]?
 
       value = case inst.type
               when TypeRef::FLOAT32, TypeRef::FLOAT64
@@ -15886,17 +15886,17 @@ module Adamas::MIR
               else
                 inst.int_value.to_s
               end
-      STDERR.puts "[EMIT_CONST] after value=#{value}" if ENV["CRYSTAL2_TRACE_EMIT_CONSTANT"]?
+      STDERR.puts "[EMIT_CONST] after value=#{value}" if ENV["ADAMAS_TRACE_EMIT_CONSTANT"]?
 
       # For pointer types, use "null" instead of "0"
       if type == "ptr" && value == "0"
         value = "null"
       end
-      STDERR.puts "[EMIT_CONST] after ptr-zero normalize value=#{value}" if ENV["CRYSTAL2_TRACE_EMIT_CONSTANT"]?
+      STDERR.puts "[EMIT_CONST] after ptr-zero normalize value=#{value}" if ENV["ADAMAS_TRACE_EMIT_CONSTANT"]?
 
       # Store constant for inlining at use sites
       @constant_values[inst.id] = value
-      STDERR.puts "[EMIT_CONST] after constant_values store" if ENV["CRYSTAL2_TRACE_EMIT_CONSTANT"]?
+      STDERR.puts "[EMIT_CONST] after constant_values store" if ENV["ADAMAS_TRACE_EMIT_CONSTANT"]?
       pointer_like_constant = type == "void" || value == "null" || type == "ptr"
       static_array_type = nil.as(Type?)
       if pointer_like_constant
@@ -15908,7 +15908,7 @@ module Adamas::MIR
       # Generate real instruction so phi nodes can reference it
       # Using add 0, X is a common LLVM idiom for materializing constants
       if type.includes?(".union")
-        STDERR.puts "[EMIT_CONST] branch union" if ENV["CRYSTAL2_TRACE_EMIT_CONSTANT"]?
+        STDERR.puts "[EMIT_CONST] branch union" if ENV["ADAMAS_TRACE_EMIT_CONSTANT"]?
         # Union types can't use add instruction - create zeroinit union
         base_name = name.lstrip('%')
         emit "%#{base_name}.ptr = alloca #{type}, align 8"
@@ -15916,9 +15916,9 @@ module Adamas::MIR
         emit "store #{type} zeroinitializer, ptr %#{base_name}.ptr"
         emit "#{name} = load #{type}, ptr %#{base_name}.ptr"
         @value_types[inst.id] = inst.type
-        STDERR.puts "[EMIT_CONST] after union materialize" if ENV["CRYSTAL2_TRACE_EMIT_CONSTANT"]?
+        STDERR.puts "[EMIT_CONST] after union materialize" if ENV["ADAMAS_TRACE_EMIT_CONSTANT"]?
       elsif sa_type = static_array_type
-        STDERR.puts "[EMIT_CONST] branch staticarray null" if ENV["CRYSTAL2_TRACE_EMIT_CONSTANT"]?
+        STDERR.puts "[EMIT_CONST] branch staticarray null" if ENV["ADAMAS_TRACE_EMIT_CONSTANT"]?
         # uninitialized StaticArray(T, N) — emit stack alloca.
         # Parse element type and count from name, look up element size from registry.
         total_bytes = sa_type.size
@@ -15936,30 +15936,30 @@ module Adamas::MIR
         # Override constant_values so call sites use the alloca ptr, not "null"
         @constant_values[inst.id] = name
         @value_types[inst.id] = TypeRef::POINTER
-        STDERR.puts "[EMIT_CONST] after staticarray materialize" if ENV["CRYSTAL2_TRACE_EMIT_CONSTANT"]?
+        STDERR.puts "[EMIT_CONST] after staticarray materialize" if ENV["ADAMAS_TRACE_EMIT_CONSTANT"]?
       elsif pointer_like_constant
-        STDERR.puts "[EMIT_CONST] branch ptr/null" if ENV["CRYSTAL2_TRACE_EMIT_CONSTANT"]?
+        STDERR.puts "[EMIT_CONST] branch ptr/null" if ENV["ADAMAS_TRACE_EMIT_CONSTANT"]?
         # void/null/ptr constants are treated as ptr type in LLVM
         # Must emit real instruction (not comment) so phi nodes can reference it
         emit "#{name} = inttoptr i64 0 to ptr"
         @value_types[inst.id] = TypeRef::POINTER
         @inttoptr_value_ids.add(inst.id)
-        STDERR.puts "[EMIT_CONST] after ptr/null materialize" if ENV["CRYSTAL2_TRACE_EMIT_CONSTANT"]?
+        STDERR.puts "[EMIT_CONST] after ptr/null materialize" if ENV["ADAMAS_TRACE_EMIT_CONSTANT"]?
       elsif type == "double" || type == "float"
-        STDERR.puts "[EMIT_CONST] branch float" if ENV["CRYSTAL2_TRACE_EMIT_CONSTANT"]?
+        STDERR.puts "[EMIT_CONST] branch float" if ENV["ADAMAS_TRACE_EMIT_CONSTANT"]?
         # Float/double constants use fadd - ensure value is proper float literal
         float_value = value == "0" ? "0.0" : value
         float_value = "#{float_value}.0" if float_value.matches?(/^\d+$/)  # Add .0 if just digits
         emit "#{name} = fadd #{type} 0.0, #{float_value}"
         @value_types[inst.id] = inst.type
-        STDERR.puts "[EMIT_CONST] after float materialize" if ENV["CRYSTAL2_TRACE_EMIT_CONSTANT"]?
+        STDERR.puts "[EMIT_CONST] after float materialize" if ENV["ADAMAS_TRACE_EMIT_CONSTANT"]?
       else
-        STDERR.puts "[EMIT_CONST] branch intlike" if ENV["CRYSTAL2_TRACE_EMIT_CONSTANT"]?
+        STDERR.puts "[EMIT_CONST] branch intlike" if ENV["ADAMAS_TRACE_EMIT_CONSTANT"]?
         emit "#{name} = add #{type} 0, #{value}"
-        STDERR.puts "[EMIT_CONST] after add emit" if ENV["CRYSTAL2_TRACE_EMIT_CONSTANT"]?
+        STDERR.puts "[EMIT_CONST] after add emit" if ENV["ADAMAS_TRACE_EMIT_CONSTANT"]?
         # Track actual constant type
         @value_types[inst.id] = inst.type
-        STDERR.puts "[EMIT_CONST] after value_types store" if ENV["CRYSTAL2_TRACE_EMIT_CONSTANT"]?
+        STDERR.puts "[EMIT_CONST] after value_types store" if ENV["ADAMAS_TRACE_EMIT_CONSTANT"]?
       end
     end
 
@@ -15967,7 +15967,7 @@ module Adamas::MIR
     private def parallel_llvm_workers : Int32
       # V2 BOOTSTRAP: ENV access crashes V2-compiled binaries.
       # Use BootstrapEnv for safe access.
-      if val = ::Adamas::Compiler::BootstrapEnv.get?("CRYSTAL_V2_LLVM_WORKERS")
+      if val = ::Adamas::Compiler::BootstrapEnv.get?("ADAMAS_LLVM_WORKERS")
         return val.to_i? || 1
       end
       # Default: use available cores (capped at 8)
@@ -15979,7 +15979,7 @@ module Adamas::MIR
 
     # Sequential function emission (original path)
     private def emit_functions_sequential(functions : ::Array(Function))
-      snapshot_every = ::Adamas::Compiler::BootstrapEnv.get?("CRYSTAL_V2_LLVM_MEM_SNAPSHOT_EVERY").try(&.to_i?)
+      snapshot_every = ::Adamas::Compiler::BootstrapEnv.get?("ADAMAS_LLVM_MEM_SNAPSHOT_EVERY").try(&.to_i?)
       functions.each_with_index do |func, idx|
         if @progress && (idx % 100 == 0 || idx == functions.size - 1)
           STDERR.puts "    Emitting function #{idx + 1}/#{functions.size}: #{func.name}"
@@ -15999,16 +15999,16 @@ module Adamas::MIR
     private def emit_memory_snapshot(current_index : Int32, total_functions : Int32) : Nil
       stats = GC.stats
       prof = GC.prof_stats
-      detail = bootstrap_env_enabled?("CRYSTAL_V2_LLVM_MEM_DETAIL", "CRYSTAL2_LLVM_MEM_DETAIL")
-      structural = bootstrap_env_enabled?("CRYSTAL_V2_LLVM_HASH_STRUCT_DETAIL", "CRYSTAL2_LLVM_HASH_STRUCT_DETAIL")
-      func_structural = bootstrap_env_enabled?("CRYSTAL_V2_LLVM_FUNC_STATE_STRUCT", "CRYSTAL2_LLVM_FUNC_STATE_STRUCT")
-      module_structural = bootstrap_env_enabled?("CRYSTAL_V2_LLVM_MODULE_STRUCT", "CRYSTAL2_LLVM_MODULE_STRUCT")
-      emit_text_detail = bootstrap_env_enabled?("CRYSTAL_V2_LLVM_EMIT_TEXT_DETAIL", "CRYSTAL2_LLVM_EMIT_TEXT_DETAIL")
-      arg_string_detail = bootstrap_env_enabled?("CRYSTAL_V2_LLVM_ARG_STRING_DETAIL", "CRYSTAL2_LLVM_ARG_STRING_DETAIL")
-      value_ref_detail = bootstrap_env_enabled?("CRYSTAL_V2_LLVM_VALUE_REF_DETAIL", "CRYSTAL2_LLVM_VALUE_REF_DETAIL")
-      inst_mix_detail = bootstrap_env_enabled?("CRYSTAL_V2_LLVM_INST_MIX_DETAIL", "CRYSTAL2_LLVM_INST_MIX_DETAIL")
-      inst_text_detail = bootstrap_env_enabled?("CRYSTAL_V2_LLVM_INST_TEXT_DETAIL", "CRYSTAL2_LLVM_INST_TEXT_DETAIL")
-      name_churn_detail = bootstrap_env_enabled?("CRYSTAL_V2_LLVM_NAME_CHURN_DETAIL", "CRYSTAL2_LLVM_NAME_CHURN_DETAIL")
+      detail = bootstrap_env_enabled?("ADAMAS_LLVM_MEM_DETAIL", "ADAMAS_LLVM_MEM_DETAIL")
+      structural = bootstrap_env_enabled?("ADAMAS_LLVM_HASH_STRUCT_DETAIL", "ADAMAS_LLVM_HASH_STRUCT_DETAIL")
+      func_structural = bootstrap_env_enabled?("ADAMAS_LLVM_FUNC_STATE_STRUCT", "ADAMAS_LLVM_FUNC_STATE_STRUCT")
+      module_structural = bootstrap_env_enabled?("ADAMAS_LLVM_MODULE_STRUCT", "ADAMAS_LLVM_MODULE_STRUCT")
+      emit_text_detail = bootstrap_env_enabled?("ADAMAS_LLVM_EMIT_TEXT_DETAIL", "ADAMAS_LLVM_EMIT_TEXT_DETAIL")
+      arg_string_detail = bootstrap_env_enabled?("ADAMAS_LLVM_ARG_STRING_DETAIL", "ADAMAS_LLVM_ARG_STRING_DETAIL")
+      value_ref_detail = bootstrap_env_enabled?("ADAMAS_LLVM_VALUE_REF_DETAIL", "ADAMAS_LLVM_VALUE_REF_DETAIL")
+      inst_mix_detail = bootstrap_env_enabled?("ADAMAS_LLVM_INST_MIX_DETAIL", "ADAMAS_LLVM_INST_MIX_DETAIL")
+      inst_text_detail = bootstrap_env_enabled?("ADAMAS_LLVM_INST_TEXT_DETAIL", "ADAMAS_LLVM_INST_TEXT_DETAIL")
+      name_churn_detail = bootstrap_env_enabled?("ADAMAS_LLVM_NAME_CHURN_DETAIL", "ADAMAS_LLVM_NAME_CHURN_DETAIL")
       snapshot = String.build do |io|
         io << "  [LLVM_MEM] idx=" << current_index << "/" << total_functions
         io << " heap=" << stats.heap_size
@@ -19201,7 +19201,7 @@ module Adamas::MIR
       is_forward_ref = !val_emitted && !val_is_const && def_inst && @value_types.has_key?(val) && !is_void_value
 
       if (!val_emitted || is_void_value) && !val_is_const && !is_forward_ref
-        if ENV["CRYSTAL_V2_NULL_PHI_TRACE"]? && is_ptr_type
+        if ENV["ADAMAS_NULL_PHI_TRACE"]? && is_ptr_type
           def_kind = def_inst ? def_inst.class.name.split("::").last : "?"
           val_t = val_type_for_void ? @type_mapper.llvm_type(val_type_for_void) : "nil"
           STDERR.puts "[NULL_PHI] func=#{@current_func_name} phi=#{phi_name} val=r#{val} type=#{val_t} def=#{def_kind} reason=generic_undef_ptr emitted=#{val_emitted} void=#{is_void_value} const=#{val_is_const} fwdref=#{is_forward_ref} block=#{block}"
@@ -19222,7 +19222,7 @@ module Adamas::MIR
         fwd_val_type_str = fwd_val_type ? @type_mapper.llvm_type(fwd_val_type) : nil
         if fwd_val_type_str && fwd_val_type_str != phi_type &&
            !(fwd_val_type_str == "ptr" && phi_type == "ptr")
-          if ENV["CRYSTAL_V2_NULL_PHI_TRACE"]? && is_ptr_type
+          if ENV["ADAMAS_NULL_PHI_TRACE"]? && is_ptr_type
             def_kind = def_inst ? def_inst.class.name.split("::").last : "?"
             STDERR.puts "[NULL_PHI] func=#{@current_func_name} phi=#{phi_name} val=r#{val} type=#{fwd_val_type_str} def=#{def_kind} reason=fwd_type_mismatch_ptr block=#{block}"
           end
@@ -19264,7 +19264,7 @@ module Adamas::MIR
         ref = value_ref(val)
         ref == "null" ? "[0, %#{block_label}]" : "[#{ref}, %#{block_label}]"
       elsif is_ptr_type && val_type_str && val_type_str.starts_with?('i') && !val_type_str.includes?(".union")
-        if ENV["CRYSTAL_V2_NULL_PHI_TRACE"]?
+        if ENV["ADAMAS_NULL_PHI_TRACE"]?
           def_kind = def_inst ? def_inst.class.name.split("::").last : "?"
           STDERR.puts "[NULL_PHI] func=#{@current_func_name} phi=#{phi_name} val=r#{val} type=#{val_type_str} def=#{def_kind} reason=generic_int_in_ptr block=#{block}"
         end
@@ -19284,7 +19284,7 @@ module Adamas::MIR
         elsif ref == "null" && is_union_type
           ref = "zeroinitializer"
         elsif (ref == "0" || ref.starts_with?("%r")) && is_ptr_type && val_type_str && val_type_str.starts_with?('i')
-          if ENV["CRYSTAL_V2_NULL_PHI_TRACE"]?
+          if ENV["ADAMAS_NULL_PHI_TRACE"]?
             def_kind = def_inst ? def_inst.class.name.split("::").last : "?"
             STDERR.puts "[NULL_PHI] func=#{@current_func_name} phi=#{phi_name} val=r#{val} type=#{val_type_str} def=#{def_kind} reason=generic_valueref_int_to_ptr ref=#{ref} block=#{block}"
           end
@@ -19446,14 +19446,14 @@ module Adamas::MIR
               if extract_info = @phi_union_to_ptr_extracts[{block, val}]?
                 "[%#{extract_info[0]}, %#{block_name.call(block)}]"
               else
-                if ENV["CRYSTAL_V2_NULL_PHI_TRACE"]?
+                if ENV["ADAMAS_NULL_PHI_TRACE"]?
                   STDERR.puts "[NULL_PHI] func=#{@current_func_name} phi=#{name} val=r#{val} type=#{val_type_str} def=? reason=prepass_union_no_extract block=#{block}"
                 end
                 "[null, %#{block_name.call(block)}]"
               end
             elsif val_type_str && val_type_str.starts_with?('i') && !val_type_str.includes?(".union")
               # Int value can't be used in ptr phi - use null
-              if ENV["CRYSTAL_V2_NULL_PHI_TRACE"]?
+              if ENV["ADAMAS_NULL_PHI_TRACE"]?
                 def_inst_trace = find_def_inst(val)
                 def_kind = def_inst_trace ? def_inst_trace.class.name.split("::").last : "?"
                 STDERR.puts "[NULL_PHI] func=#{@current_func_name} phi=#{name} val=r#{val} type=#{val_type_str} def=#{def_kind} reason=prepass_int_in_ptr_phi block=#{block}"
@@ -19465,7 +19465,7 @@ module Adamas::MIR
             val_is_const = @constant_values.has_key?(val)
             if !val_emitted && !val_is_const
               # Undefined value in prepass ptr phi - use null
-              if ENV["CRYSTAL_V2_NULL_PHI_TRACE"]?
+              if ENV["ADAMAS_NULL_PHI_TRACE"]?
                 def_inst_trace = find_def_inst(val)
                 def_kind = def_inst_trace ? def_inst_trace.class.name.split("::").last : "?"
                 STDERR.puts "[NULL_PHI] func=#{@current_func_name} phi=#{name} val=r#{val} type=#{val_type_str} def=#{def_kind} reason=prepass_undef_in_ptr_phi block=#{block}"
@@ -19632,14 +19632,14 @@ module Adamas::MIR
               if extract_info = @phi_union_to_ptr_extracts[{block, val}]?
                 "[%#{extract_info[0]}, %#{block_name.call(block)}]"
               else
-                if ENV["CRYSTAL_V2_NULL_PHI_TRACE"]?
+                if ENV["ADAMAS_NULL_PHI_TRACE"]?
                   STDERR.puts "[NULL_PHI] func=#{@current_func_name} phi=#{name} val=r#{val} type=#{val_type_str} def=? reason=union_no_extract block=#{block}"
                 end
                 "[null, %#{block_name.call(block)}]"
               end
             elsif val_type_str && val_type_str.starts_with?('i') && !val_type_str.includes?(".union")
               # Int value in ptr phi - use null
-              if ENV["CRYSTAL_V2_NULL_PHI_TRACE"]?
+              if ENV["ADAMAS_NULL_PHI_TRACE"]?
                 def_inst_trace = find_def_inst(val)
                 def_kind = def_inst_trace ? def_inst_trace.class.name.split("::").last : "?"
                 STDERR.puts "[NULL_PHI] func=#{@current_func_name} phi=#{name} val=r#{val} type=#{val_type_str} def=#{def_kind} reason=int_in_ptr_phi block=#{block}"
@@ -19650,7 +19650,7 @@ module Adamas::MIR
               "[null, %#{block_name.call(block)}]"
             elsif val_type_str == "void"
               # Void value (from void call) can't be used in ptr phi - use null
-              if ENV["CRYSTAL_V2_NULL_PHI_TRACE"]?
+              if ENV["ADAMAS_NULL_PHI_TRACE"]?
                 STDERR.puts "[NULL_PHI] func=#{@current_func_name} phi=#{name} val=r#{val} type=void reason=void_in_ptr_phi block=#{block}"
               end
               "[null, %#{block_name.call(block)}]"
@@ -19660,7 +19660,7 @@ module Adamas::MIR
               val_is_const = @constant_values.has_key?(val)
               if !val_emitted && !val_is_const
                 # Undefined value in ptr phi - use null
-                if ENV["CRYSTAL_V2_NULL_PHI_TRACE"]?
+                if ENV["ADAMAS_NULL_PHI_TRACE"]?
                   def_inst_trace = find_def_inst(val)
                   def_kind = def_inst_trace ? def_inst_trace.class.name.split("::").last : "?"
                   STDERR.puts "[NULL_PHI] func=#{@current_func_name} phi=#{name} val=r#{val} type=#{val_type_str} def=#{def_kind} reason=undef_in_ptr_phi block=#{block}"
@@ -25356,7 +25356,7 @@ module Adamas::MIR
         llvm_type = @cross_block_slot_types[id]? ||
           (val_type ? @type_mapper.llvm_type(val_type) : "i64")
         llvm_type = "i64" if llvm_type == "void"
-        if ENV["CRYSTAL_V2_SLOT_UNION_MISMATCH_TRACE"]? == "1" && val_type
+        if ENV["ADAMAS_SLOT_UNION_MISMATCH_TRACE"]? == "1" && val_type
           expected_llvm = @type_mapper.llvm_type(val_type)
           if expected_llvm.includes?(".union") && !llvm_type.includes?(".union")
             STDERR.puts "[SLOT_UNION_MISMATCH] func=#{@current_func_name} val=#{id} slot=#{llvm_type} expected=#{expected_llvm}"
@@ -26310,7 +26310,7 @@ module Adamas::MIR
         (union_variant_entries.size.to_i64 * 128_i64)
       io_memory_safety_limit = 2_000_000_000_i64
       if current_pos + estimated_union_metadata_bytes >= io_memory_safety_limit
-        if @progress || ENV["CRYSTAL2_STAGE2_DEBUG"]?
+        if @progress || ENV["ADAMAS_STAGE2_DEBUG"]?
           STDERR.puts "  [LLVM] skip union metadata: output=#{current_pos} est_union_meta=#{estimated_union_metadata_bytes} limit=#{io_memory_safety_limit}"
         end
         return

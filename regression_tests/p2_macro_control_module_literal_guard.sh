@@ -36,7 +36,7 @@ cat >"$SOURCE" <<'CR'
 Crystal::EventLoop.current.after_fork
 CR
 
-CRYSTAL_V2_STOP_AFTER_HIR=1 "$ROOT_DIR/scripts/run_safe.sh" "$COMPILER" 120 2048 \
+ADAMAS_STOP_AFTER_HIR=1 "$ROOT_DIR/scripts/run_safe.sh" "$COMPILER" 120 2048 \
   "$SOURCE" --emit hir --no-link -o "$OUT" >"$LOG" 2>&1
 
 if [[ ! -f "$OUT.hir" ]]; then

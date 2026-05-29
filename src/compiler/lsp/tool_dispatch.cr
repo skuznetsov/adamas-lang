@@ -4,7 +4,7 @@ module Adamas
       module ToolDispatch
         extend self
 
-        SERVER_ENV = "CRYSTAL_V2_LSP_SERVER"
+        SERVER_ENV = "ADAMAS_LSP_SERVER"
 
         def tool_lsp?(args : Array(String)) : Bool
           args.size >= 2 && (args[0] == "tool" || args[0] == "tools") && args[1] == "lsp"

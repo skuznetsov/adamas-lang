@@ -29,7 +29,7 @@ printf '1.5\n' >"$SRC"
 cat >"$WRAPPER" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
-exec env CRYSTAL_V2_STOP_AFTER_PARSE=1 "$COMPILER" "$SRC" -o "$OUT" --no-prelude
+exec env ADAMAS_STOP_AFTER_PARSE=1 "$COMPILER" "$SRC" -o "$OUT" --no-prelude
 EOF
 chmod +x "$WRAPPER"
 

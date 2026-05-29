@@ -12,7 +12,7 @@ CR
 
 log="$tmpdir/hello.log"
 set +e
-CRYSTAL_V2_TRACE_CLASS_FRONTIER=1 \
+ADAMAS_TRACE_CLASS_FRONTIER=1 \
 DEBUG_GENERIC_TEMPLATE=1 \
   "$root_dir/scripts/run_safe.sh" "$compiler" 120 4096 "$tmpdir/hello.cr" -o "$tmpdir/hello_bin" \
   >"$log" 2>&1

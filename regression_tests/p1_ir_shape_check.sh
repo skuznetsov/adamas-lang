@@ -79,7 +79,7 @@ extract_body() {
   ' "$src_file" > "$dest_file"
 }
 
-CRYSTAL_V2_STOP_AFTER_HIR=1 "$COMPILER" "$SRC" --emit hir -o "$OUT_BASE" \
+ADAMAS_STOP_AFTER_HIR=1 "$COMPILER" "$SRC" --emit hir -o "$OUT_BASE" \
   >"$TMPDIR/hir.out" 2>"$TMPDIR/hir.err" ||
   inconclusive "failed to emit HIR ($(tail -20 "$TMPDIR/hir.err" | tr '\n' ' '))"
 

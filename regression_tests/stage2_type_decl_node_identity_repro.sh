@@ -27,7 +27,7 @@ EOF
 cd "$ROOT"
 
 set +e
-CRYSTAL_V2_STOP_AFTER_HIR=1 \
+ADAMAS_STOP_AFTER_HIR=1 \
   "$BIN" --no-prelude "$SRC_FILE" -o "$OUT_BIN" >"$LOG_FILE" 2>&1
 RC=$?
 set -e

@@ -38,7 +38,7 @@ CR
 set +e
 (
   cd "$repo_root"
-  export CRYSTAL_V2_STOP_AFTER_HIR=1
+  export ADAMAS_STOP_AFTER_HIR=1
   "$compiler" --emit hir "$src" -o "$out_base"
 ) >"$compile_log" 2>&1
 compile_status=$?

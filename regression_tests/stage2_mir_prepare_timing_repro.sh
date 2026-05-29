@@ -12,7 +12,7 @@ source_file="$repo_root/regression_tests/stage2_mir_prepare_timing_repro.cr"
 log_dir=$(mktemp -d "${TMPDIR:-/tmp}/stage2_mir_prepare_timing_repro.XXXXXX")
 
 set +e
-env CRYSTAL_V2_STOP_AFTER_MIR=1 \
+env ADAMAS_STOP_AFTER_MIR=1 \
   "$repo_root/scripts/timeout_sample_lldb.sh" \
   -t 60 -m 8192 -s 5 -l 10 -n 8 --no-series \
   -o "$log_dir" \

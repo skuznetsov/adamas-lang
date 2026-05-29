@@ -95,7 +95,7 @@ module Adamas
       @llvm_cache_misses : Int32 = 0
       @pipeline_cache_hits : Int32 = 0
       @pipeline_cache_misses : Int32 = 0
-      @parse_trace : Bool = BootstrapEnv.enabled?("CRYSTAL_V2_PARSE_TRACE")
+      @parse_trace : Bool = BootstrapEnv.enabled?("ADAMAS_PARSE_TRACE")
 
       # Resolve stdlib path: CRYSTAL_PATH env var (first component) > compiled-in default.
       # Deferred to runtime so V2-compiled binaries don't crash in constant init.
@@ -301,19 +301,19 @@ module Adamas
       end
 
       private def semantic_shadow_enabled? : Bool
-        BootstrapEnv.enabled?("CRYSTAL_V2_SEMANTIC_SHADOW")
+        BootstrapEnv.enabled?("ADAMAS_SEMANTIC_SHADOW")
       end
 
       private def semantic_compile_enabled? : Bool
-        BootstrapEnv.enabled?("CRYSTAL_V2_SEMANTIC_COMPILE")
+        BootstrapEnv.enabled?("ADAMAS_SEMANTIC_COMPILE")
       end
 
       private def semantic_shadow_strict? : Bool
-        BootstrapEnv.enabled?("CRYSTAL_V2_SEMANTIC_SHADOW_STRICT")
+        BootstrapEnv.enabled?("ADAMAS_SEMANTIC_SHADOW_STRICT")
       end
 
       private def bootstrap_trace_puts(value = "") : Nil
-        return unless env_enabled?("CRYSTAL_V2_TRACE_STDERR")
+        return unless env_enabled?("ADAMAS_TRACE_STDERR")
         Crystal::System.print_error "%s\n", value.to_s
       end
 
@@ -407,7 +407,7 @@ module Adamas
         b : Int32? = nil,
         c : Int32? = nil,
       ) : Nil
-        return unless env_enabled?("CRYSTAL_V2_TRACE_STDERR")
+        return unless env_enabled?("ADAMAS_TRACE_STDERR")
         Crystal::System.print_error "[PARSED_CLASS] phase=%s", phase
         Crystal::System.print_error " file=%s", abs_path
         Crystal::System.print_error " key=%s", key
@@ -427,7 +427,7 @@ module Adamas
         arena : Frontend::ArenaLike,
         exprs : Array(Frontend::ExprId)
       ) : Nil
-        filter = env_get("CRYSTAL_V2_TRACE_PARSED_CLASS")
+        filter = env_get("ADAMAS_TRACE_PARSED_CLASS")
         return unless filter
         i = 0
         while i < exprs.size
@@ -442,7 +442,7 @@ module Adamas
         arena : Frontend::ArenaLike,
         node : Frontend::ClassNode
       ) : Nil
-        filter = env_get("CRYSTAL_V2_TRACE_PARSED_CLASS")
+        filter = env_get("ADAMAS_TRACE_PARSED_CLASS")
         return unless filter
         should_trace = filter == "*" || slice_equals_string?(node.name, filter)
         return unless should_trace
@@ -455,7 +455,7 @@ module Adamas
           if member_id.index >= 0 && member_id.index < arena.size
             member = arena[member_id]
             trace_parsed_class_line(phase, abs_path, "member", i, member_id.index, Frontend.node_kind(member).value)
-            if env_enabled?("CRYSTAL_V2_TRACE_PARSED_CLASS_MEMBERS")
+            if env_enabled?("ADAMAS_TRACE_PARSED_CLASS_MEMBERS")
               case member
               when Frontend::DefNode
                 name = slice_to_string(member.name) || "(nil)"
@@ -532,7 +532,7 @@ module Adamas
               if member_id.index >= 0 && member_id.index < arena.size
                 member = arena[member_id]
                 trace_parsed_class_line(phase, abs_path, "member", i, member_id.index, Frontend.node_kind(member).value)
-                if env_enabled?("CRYSTAL_V2_TRACE_PARSED_CLASS_MEMBERS")
+                if env_enabled?("ADAMAS_TRACE_PARSED_CLASS_MEMBERS")
                   case member
                   when Frontend::DefNode
                     name = slice_to_string(member.name) || "(nil)"
@@ -945,9 +945,9 @@ module Adamas
 
       {% if flag?(:debug_hooks) %}
       private def setup_debug_hooks : Nil
-        return unless env_enabled?("CRYSTAL_V2_DEBUG_HOOKS")
+        return unless env_enabled?("ADAMAS_DEBUG_HOOKS")
 
-        filter = env_get("CRYSTAL_V2_DEBUG_HOOKS_FILTER")
+        filter = env_get("ADAMAS_DEBUG_HOOKS_FILTER")
         io = STDERR
         emit = ->(event : String, data : String) do
           if filter && !event.includes?(filter) && !data.includes?(filter)
@@ -994,12 +994,12 @@ module Adamas
 
         bootstrap_trace_puts "[S2_RUN] before parse_args_safe"; STDERR.flush
         LibC.write(2, "[RUNPROBE] 4\n".to_unsafe, 13)
-        if !env_enabled?("CRYSTAL2_USE_OPTION_PARSER") || env_enabled?("CRYSTAL2_SAFE_PARSER")
+        if !env_enabled?("ADAMAS_USE_OPTION_PARSER") || env_enabled?("ADAMAS_SAFE_PARSER")
           status = parse_args_safe(pointerof(options), parser_help, err_io)
           LibC.write(2, "[RUNPROBE] 5\n".to_unsafe, 13)
           bootstrap_trace_puts "[S2_RUN] parse_args_safe done status=#{status}"; STDERR.flush
           return status if status != 0
-        elsif (minimal_parser = env_get("CRYSTAL2_MINIMAL_PARSER"))
+        elsif (minimal_parser = env_get("ADAMAS_MINIMAL_PARSER"))
           if minimal_parser == "2"
             parser = OptionParser.new do |p|
               p.banner = "Usage: adamas [options] <source.cr>\n\nOptions:"
@@ -1223,7 +1223,7 @@ module Adamas
         property ast_cache : Bool = false
         {% end %}
         property llvm_opt : Bool = true
-        property llvm_cache : Bool = (BootstrapEnv.get?("CRYSTAL_V2_LLVM_CACHE") || "1") != "0"
+        property llvm_cache : Bool = (BootstrapEnv.get?("ADAMAS_LLVM_CACHE") || "1") != "0"
         # V2 BOOTSTRAP: Disable pipeline cache — Dir.current/File.expand_path call
         # check_no_null_byte which is broken in stage2.
         property pipeline_cache : Bool = false
@@ -1252,7 +1252,7 @@ module Adamas
         parser = begin
           Frontend::Parser.new(lexer)
         rescue ex : IndexError
-          if env_enabled?("CRYSTAL_V2_PARSER_INDEX_TRACE") || env_enabled?("CRYSTAL2_PARSER_INDEX_TRACE")
+          if env_enabled?("ADAMAS_PARSER_INDEX_TRACE") || env_enabled?("ADAMAS_PARSER_INDEX_TRACE")
             bt = ex.backtrace?.try(&.first(30).join("\n")) || "(no backtrace)"
             raise "Parser init index error while parsing #{path}\n#{ex.message}\n#{bt}"
           end
@@ -1402,7 +1402,7 @@ module Adamas
         # Iterating tuple payloads here is diagnostic-only and has triggered
         # stage2 instability in self-hosted builds.
         total_exprs = 0
-        stop_after_parse = BootstrapEnv.enabled?("CRYSTAL_V2_STOP_AFTER_PARSE")
+        stop_after_parse = BootstrapEnv.enabled?("ADAMAS_STOP_AFTER_PARSE")
         debug_trace_enabled = env_enabled?("STAGE2_DEBUG") || env_enabled?("STAGE2_BOOTSTRAP_TRACE")
         if options.verbose
           log(options, out_io, "  Files: #{all_arenas.size}, Expressions: #{total_exprs}")
@@ -1412,7 +1412,7 @@ module Adamas
         end
 
         if stop_after_parse
-          log(options, out_io, "  Stop after parse (CRYSTAL_V2_STOP_AFTER_PARSE)")
+          log(options, out_io, "  Stop after parse (ADAMAS_STOP_AFTER_PARSE)")
           emit_timings(options, out_io, timings, total_start)
           return 0
         end
@@ -1587,7 +1587,7 @@ module Adamas
         hir_converter.bootstrap_reset_constructor_tail
         bootstrap_trace_puts "[S2_HIR_SETUP] phase=converter_bound"; STDERR.flush
         stage2_debug("[STAGE2_DEBUG] hir converter created", err_io)
-        const_map_trace = BootstrapEnv.enabled?("CRYSTAL_V2_CONST_MAP_TRACE")
+        const_map_trace = BootstrapEnv.enabled?("ADAMAS_CONST_MAP_TRACE")
         if const_map_trace
           bootstrap_trace_puts "[CONST_MAP] phase=hir_converter_created literals=#{hir_converter.constant_literal_values.size} types=#{hir_converter.constant_types.size}"
           bootstrap_trace_puts "[CONST_MAP] ids_a const_lit=#{hir_converter.debug_const_lit_object_id} const_types=#{hir_converter.debug_const_types_object_id} const_defs=#{hir_converter.debug_const_defs_object_id} nested=#{hir_converter.debug_nested_type_names_object_id}"
@@ -1982,7 +1982,7 @@ module Adamas
         bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_after_log_modules modules=#{module_nodes.size}"; STDERR.flush
         module_count = module_nodes.size
         stage2_debug("[STAGE2_DEBUG] module register start count=#{module_count}", err_io)
-        reg_type_profile = BootstrapEnv.enabled?("CRYSTAL_V2_REG_TYPE_PROFILE")
+        reg_type_profile = BootstrapEnv.enabled?("ADAMAS_REG_TYPE_PROFILE")
         i = 0
         while i < module_count
           bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_module_before_fetch idx=#{i}"; STDERR.flush
@@ -1996,7 +1996,7 @@ module Adamas
           bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_module_before_name idx=#{i}"; STDERR.flush
           module_name = String.new(n.name)
           bootstrap_trace_puts "[S2_HIR_SETUP] phase=pass1_module_after_name idx=#{i} name=#{module_name}"; STDERR.flush
-          if options.progress && env_enabled?("CRYSTAL_V2_PROGRESS_MODULE_NAMES")
+          if options.progress && env_enabled?("ADAMAS_PROGRESS_MODULE_NAMES")
             bootstrap_trace_puts "\n    Module #{i + 1}/#{module_nodes.size}: #{module_name}"
           end
           reg_t0 = Time.instant if reg_type_profile
@@ -2207,19 +2207,19 @@ module Adamas
 
         after_lower_main = hir_mod.function_count
         bootstrap_trace_puts "  lower_main done, #{after_lower_main} functions" if options.progress
-        bootstrap_trace_puts "[PHASE_STATS] After lower_main: #{after_lower_main} functions" if BootstrapEnv.enabled?("CRYSTAL_V2_PHASE_STATS")
+        bootstrap_trace_puts "[PHASE_STATS] After lower_main: #{after_lower_main} functions" if BootstrapEnv.enabled?("ADAMAS_PHASE_STATS")
 
         # Pass 2.5: AST reachability pre-filter (experimental, opt-in)
         # AST reachability pre-filter: skip functions whose method name was never
-        # seen transitively from main. Enable with CRYSTAL_V2_AST_FILTER=1.
-        if BootstrapEnv.enabled?("CRYSTAL_V2_AST_FILTER")
+        # seen transitively from main. Enable with ADAMAS_AST_FILTER=1.
+        if BootstrapEnv.enabled?("ADAMAS_AST_FILTER")
           ast_filter_start = Time.instant
           ast_result = hir_converter.compute_ast_reachable_functions(main_exprs)
           hir_converter.set_ast_reachable_filter(ast_result[:defs], ast_result[:method_names], ast_result[:owner_types], ast_result[:method_bases])
-          if BootstrapEnv.enabled?("CRYSTAL_V2_PHASE_STATS")
+          if BootstrapEnv.enabled?("ADAMAS_PHASE_STATS")
             bootstrap_trace_puts "[PHASE_STATS] AST filter: #{ast_result[:defs].size}/#{hir_converter.function_defs_count} defs reachable, #{ast_result[:method_names].size} method names in #{(Time.instant - ast_filter_start).total_milliseconds.round(1)}ms"
           end
-        elsif BootstrapEnv.enabled?("CRYSTAL_V2_PHASE_STATS")
+        elsif BootstrapEnv.enabled?("ADAMAS_PHASE_STATS")
           # Just compute for analysis, don't activate filter
           ast_filter_start = Time.instant
           ast_result = hir_converter.compute_ast_reachable_functions(main_exprs)
@@ -2277,7 +2277,7 @@ module Adamas
         reachable = hir_module.reachable_function_names(["__adamas_main", "main"])
         if !reachable.empty? && reachable.size < hir_module.functions.size
           total_before = hir_module.functions.size
-          if BootstrapEnv.enabled?("CRYSTAL_V2_RTA_PRUNED_DUMP")
+          if BootstrapEnv.enabled?("ADAMAS_RTA_PRUNED_DUMP")
             pruned_owners = Hash(String, Int32).new(0)
             hir_module.functions.each do |func|
               unless reachable.includes?(func.name)
@@ -2305,7 +2305,7 @@ module Adamas
           discarded = total_before - hir_module.functions.size
           rta_msg = "  Reachable functions: #{hir_module.functions.size}/#{total_before} (discarded #{discarded}, #{(discarded * 100.0 / total_before).round(1)}%)"
           log(options, out_io, rta_msg)
-          bootstrap_trace_puts "[PHASE_STATS] RTA: #{rta_msg.strip}" if BootstrapEnv.enabled?("CRYSTAL_V2_PHASE_STATS")
+          bootstrap_trace_puts "[PHASE_STATS] RTA: #{rta_msg.strip}" if BootstrapEnv.enabled?("ADAMAS_PHASE_STATS")
         end
         timings["hir_rta"] = (Time.instant - rta_start).total_milliseconds if options.stats
         timings["hir_reachable_funcs"] = hir_module.functions.size.to_f if options.stats
@@ -2316,12 +2316,12 @@ module Adamas
 
         # Phase 0 metrics dump — AFTER allocator flush AND RTA pruning
         # so total_hir_functions reflects final emitted shape.
-        if BootstrapEnv.enabled?("CRYSTAL_V2_PHASE0_METRICS")
+        if BootstrapEnv.enabled?("ADAMAS_PHASE0_METRICS")
           hir_converter.dump_phase0_metrics(STDERR)
         end
 
         # Phase 1: identity dry-run stats (side-channel, no behavior change)
-        if BootstrapEnv.enabled?("CRYSTAL_V2_IDENTITY_DRY_RUN")
+        if BootstrapEnv.enabled?("ADAMAS_IDENTITY_DRY_RUN")
           if tracker = hir_converter.identity_tracker
             tracker.dump(STDERR)
           end
@@ -2355,8 +2355,8 @@ module Adamas
           log(options, out_io, "  Wrote: #{hir_file}")
         end
 
-        if BootstrapEnv.enabled?("CRYSTAL_V2_STOP_AFTER_HIR")
-          log(options, out_io, "  Stop after HIR (CRYSTAL_V2_STOP_AFTER_HIR)")
+        if BootstrapEnv.enabled?("ADAMAS_STOP_AFTER_HIR")
+          log(options, out_io, "  Stop after HIR (ADAMAS_STOP_AFTER_HIR)")
           emit_timings(options, out_io, timings, total_start)
           return 0
         end
@@ -2483,7 +2483,7 @@ module Adamas
         bootstrap_trace_puts "[STAGE2_TRACE] step4: MIR lowering start"
         STDERR.flush
         mir_start = Time.instant
-        mir_setup_trace = BootstrapEnv.enabled?("CRYSTAL_V2_MIR_SETUP_TRACE") || BootstrapEnv.enabled?("CRYSTAL2_MIR_SETUP_TRACE")
+        mir_setup_trace = BootstrapEnv.enabled?("ADAMAS_MIR_SETUP_TRACE") || BootstrapEnv.enabled?("ADAMAS_MIR_SETUP_TRACE")
         bootstrap_trace_puts "[STAGE2_TRACE] step4: before lowering.new"; STDERR.flush
         mir_lowering = MIR::HIRToMIRLowering.new(hir_module, slab_frame: options.slab_frame)
         bootstrap_trace_puts "[STAGE2_TRACE] step4: lowering initialized"; STDERR.flush
@@ -2562,10 +2562,10 @@ module Adamas
         # Fused parallel mode: MIR lowering + optimization + LLVM emission in one parallel step.
         # Default off — fused mode has correctness issues with worker-side state (symbols,
         # module singletons, etc.) that get lost across fork boundaries.
-        # Enable with CRYSTAL_V2_FUSED_PARALLEL=1 for experimentation.
-        fused_parallel = (BootstrapEnv.get?("CRYSTAL_V2_FUSED_PARALLEL") || "0") != "0"
+        # Enable with ADAMAS_FUSED_PARALLEL=1 for experimentation.
+        fused_parallel = (BootstrapEnv.get?("ADAMAS_FUSED_PARALLEL") || "0") != "0"
 
-        if fused_parallel && !options.emit_mir && !BootstrapEnv.enabled?("CRYSTAL_V2_STOP_AFTER_MIR")
+        if fused_parallel && !options.emit_mir && !BootstrapEnv.enabled?("ADAMAS_STOP_AFTER_MIR")
           # Fused path: prepare stubs only, defer body lowering to parallel LLVM workers
           bootstrap_trace_puts "  Preparing #{hir_module.functions.size} MIR function stubs..." if options.progress
           bootstrap_trace_puts "[MIR_SETUP] prepare stubs count=#{hir_module.functions.size}" if mir_setup_trace
@@ -2615,7 +2615,7 @@ module Adamas
           timings["mir_funcs"] = mir_module.functions.size.to_f if options.stats
 
           # Optimize MIR — deferred to LLVM workers when parallel (saves ~700ms)
-          workers_available = (BootstrapEnv.get?("CRYSTAL_V2_LLVM_WORKERS").try(&.to_i?) || System.cpu_count).clamp(1, 8) > 1
+          workers_available = (BootstrapEnv.get?("ADAMAS_LLVM_WORKERS").try(&.to_i?) || System.cpu_count).clamp(1, 8) > 1
           if options.mir_opt && !workers_available
             # Serial fallback: optimize here when no parallel workers
             log(options, out_io, "  Optimizing MIR (serial)...")
@@ -2672,8 +2672,8 @@ module Adamas
             log(options, out_io, "  Wrote: #{mir_file}")
           end
 
-          if BootstrapEnv.enabled?("CRYSTAL_V2_STOP_AFTER_MIR")
-            log(options, out_io, "  Stop after MIR (CRYSTAL_V2_STOP_AFTER_MIR)")
+          if BootstrapEnv.enabled?("ADAMAS_STOP_AFTER_MIR")
+            log(options, out_io, "  Stop after MIR (ADAMAS_STOP_AFTER_MIR)")
             emit_timings(options, out_io, timings, total_start)
             return 0
           end
@@ -2684,7 +2684,7 @@ module Adamas
         bootstrap_trace_puts "[STAGE2_TRACE] step5: LLVM IR generation start"; STDERR.flush
         log(options, out_io, "\n[5/6] Generating LLVM IR...")
         llvm_start = Time.instant
-        llvm_setup_trace = BootstrapEnv.enabled?("CRYSTAL_V2_LLVM_SETUP_TRACE") || BootstrapEnv.enabled?("CRYSTAL2_LLVM_SETUP_TRACE")
+        llvm_setup_trace = BootstrapEnv.enabled?("ADAMAS_LLVM_SETUP_TRACE") || BootstrapEnv.enabled?("ADAMAS_LLVM_SETUP_TRACE")
         bootstrap_trace_puts "[STAGE2_TRACE] step5: before generator.new"; STDERR.flush
         llvm_gen = MIR::LLVMIRGenerator.new(mir_module)
         bootstrap_trace_puts "[STAGE2_TRACE] step5: generator.new done"; STDERR.flush
@@ -2695,7 +2695,7 @@ module Adamas
         llvm_gen.emit_debug_info = debug_info_enabled
         llvm_gen.progress = options.progress
         bootstrap_trace_puts "[STAGE2_TRACE] step5: flags3"; STDERR.flush
-        llvm_gen.reachability = BootstrapEnv.enabled?("CRYSTAL_V2_LLVM_REACHABILITY")
+        llvm_gen.reachability = BootstrapEnv.enabled?("ADAMAS_LLVM_REACHABILITY")
         bootstrap_trace_puts "[STAGE2_TRACE] step5: flags4"; STDERR.flush
         llvm_gen.no_prelude = options.no_prelude
         bootstrap_trace_puts "[STAGE2_TRACE] step5: flags5"; STDERR.flush
@@ -2770,7 +2770,7 @@ module Adamas
           return 0
         else
           llvm_ir = llvm_gen.generate
-          if BootstrapEnv.enabled?("CRYSTAL_V2_TRACE_STDERR")
+          if BootstrapEnv.enabled?("ADAMAS_TRACE_STDERR")
             LibC.write(2, "[STAGE2_TRACE] step5: generate done\n".to_unsafe, 36_u64)
           end
 
@@ -2871,7 +2871,7 @@ module Adamas
         emit_timings(options, out_io, timings, total_start)
         return 1
       rescue ex
-        if env_get("CRYSTAL2_STAGE2_DEBUG") == "1"
+        if env_get("ADAMAS_STAGE2_DEBUG") == "1"
           err_io.puts "error: #{ex.class}: #{ex.message.inspect}"
           emit_backtrace_lines(err_io, ex.backtrace)
         else
@@ -2903,11 +2903,11 @@ module Adamas
 
       private def debug_info_requested?(options : Options) : Bool
         return options.debug if options.debug_explicit
-        env_enabled?("CRYSTAL_V2_DEBUG_EMIT") || env_enabled?("CRYSTAL2_DEBUG_EMIT")
+        env_enabled?("ADAMAS_DEBUG_EMIT") || env_enabled?("ADAMAS_DEBUG_EMIT")
       end
 
       private def preserve_debug_object_file?(options : Options) : Bool
-        keep_requested = env_enabled?("CRYSTAL_V2_KEEP_DEBUG_OBJECT") || env_enabled?("CRYSTAL2_KEEP_DEBUG_OBJECT")
+        keep_requested = env_enabled?("ADAMAS_KEEP_DEBUG_OBJECT") || env_enabled?("ADAMAS_KEEP_DEBUG_OBJECT")
         {% if flag?(:darwin) %}
           keep_requested || debug_info_requested?(options)
         {% else %}
@@ -3080,11 +3080,11 @@ module Adamas
                    when 2 then "-O2"
                    else        "-O3"
                    end
-        opt_bisect_limit = (env_get("CRYSTAL_V2_LLVM_OPT_BISECT_LIMIT") || "").strip
+        opt_bisect_limit = (env_get("ADAMAS_LLVM_OPT_BISECT_LIMIT") || "").strip
         opt_bisect_flag = ""
         unless opt_bisect_limit.empty?
           unless opt_bisect_limit.matches?(/\A-?\d+\z/)
-            err_io.puts "error: invalid CRYSTAL_V2_LLVM_OPT_BISECT_LIMIT (expected integer)"
+            err_io.puts "error: invalid ADAMAS_LLVM_OPT_BISECT_LIMIT (expected integer)"
             return 1
           end
           opt_bisect_flag = " -opt-bisect-limit=#{opt_bisect_limit}"
@@ -3264,7 +3264,7 @@ module Adamas
             {% if flag?(:darwin) %}
               clang_args << "-Wl,-stack_size,0x4000000"
             {% end %}
-            if extra = BootstrapEnv.get?("CRYSTAL_V2_EXTRA_LINK_FLAGS")
+            if extra = BootstrapEnv.get?("ADAMAS_EXTRA_LINK_FLAGS")
               extra.split.each { |flag| clang_args << flag }
             end
             clang_cmd = command_args_display(clang_args)
@@ -3283,7 +3283,7 @@ module Adamas
             {% if flag?(:darwin) %}
               link_args << "-Wl,-stack_size,0x4000000"
             {% end %}
-            if extra = BootstrapEnv.get?("CRYSTAL_V2_EXTRA_LINK_FLAGS")
+            if extra = BootstrapEnv.get?("ADAMAS_EXTRA_LINK_FLAGS")
               extra.split.each { |flag| link_args << flag }
             end
             link_cmd = command_args_display(link_args)
@@ -3313,7 +3313,7 @@ module Adamas
       end
 
       private def llvm_entry_opt_guard_enabled? : Bool
-        raw = (env_get("CRYSTAL_V2_LLVM_ENTRY_OPT_GUARD") || "").strip.downcase
+        raw = (env_get("ADAMAS_LLVM_ENTRY_OPT_GUARD") || "").strip.downcase
         return true if raw.empty?
         !(raw == "0" || raw == "false" || raw == "off")
       end
@@ -3631,7 +3631,7 @@ module Adamas
           end
           res.dup
         rescue ex : IndexError
-          if env_enabled?("CRYSTAL_V2_PARSER_INDEX_TRACE") || env_enabled?("CRYSTAL2_PARSER_INDEX_TRACE")
+          if env_enabled?("ADAMAS_PARSER_INDEX_TRACE") || env_enabled?("ADAMAS_PARSER_INDEX_TRACE")
             bt = ex.backtrace?.try(&.first(30).join("\n")) || "(no backtrace)"
             raise "Parser index error while parsing #{abs_path}\n#{ex.message}\n#{bt}"
           end
@@ -3650,7 +3650,7 @@ module Adamas
         if @parse_trace
           bootstrap_trace_puts "[REQSCAN] #{abs_path} exprs=#{expr_count}"
         end
-        if env_enabled?("CRYSTAL_V2_PARSE_ROOTS_TRACE")
+        if env_enabled?("ADAMAS_PARSE_ROOTS_TRACE")
           expr_i = 0
           while expr_i < expr_count
             expr_id = exprs.unsafe_fetch(expr_i)
@@ -4288,7 +4288,7 @@ module Adamas
           end
         end
         node = arena[expr_id]
-        if env_enabled?("CRYSTAL2_COLLECT_TRACE")
+        if env_enabled?("ADAMAS_COLLECT_TRACE")
           bootstrap_trace_puts "[COLLECT] depth=#{depth} expr=#{expr_id.index} kind=#{Frontend.node_kind(node)} macrodef=#{node.is_a?(Frontend::MacroDefNode)} arena_size=#{arena.size}"
         end
         if collect_main_exprs && standalone_end_recovery_root?(node, source)

@@ -30,8 +30,8 @@ CR
 
 DEBUG_MISSING_SUMMARY=1 \
 DEBUG_MISSING_TOP=30 \
-CRYSTAL_V2_STOP_AFTER_HIR=1 \
-CRYSTAL_V2_PHASE_STATS=1 \
+ADAMAS_STOP_AFTER_HIR=1 \
+ADAMAS_PHASE_STATS=1 \
   "$ROOT_DIR/scripts/run_safe.sh" "$COMPILER" 30 1024 \
     "$SRC" --no-prelude --emit hir --no-link -o "$OUT" >"$LOG" 2>&1
 

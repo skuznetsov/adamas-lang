@@ -17,7 +17,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-CRYSTAL_V2_STOP_AFTER_MIR=1 \
+ADAMAS_STOP_AFTER_MIR=1 \
   "$ROOT/scripts/run_safe.sh" "$COMPILER" 300 4096 \
   "$ROOT/src/adamas.cr" --emit mir --no-link -o "$OUT_PREFIX" \
   >"$LOG" 2>&1

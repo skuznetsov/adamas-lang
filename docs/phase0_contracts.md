@@ -62,7 +62,7 @@ These are passed separately through CLI orchestration:
 
 ## 2. Legacy Supply-Driven Metrics
 
-### 2.1 Implemented metrics (CRYSTAL_V2_PHASE0_METRICS=1)
+### 2.1 Implemented metrics (ADAMAS_PHASE0_METRICS=1)
 
 | Metric name in output | Counter variable | Where incremented | What it measures |
 |----------------------|-----------------|-------------------|-----------------|
@@ -96,7 +96,7 @@ These are passed separately through CLI orchestration:
 [PHASE0] total_hir_functions=N
 ```
 
-Dump is triggered by `CRYSTAL_V2_PHASE0_METRICS=1` and occurs AFTER
+Dump is triggered by `ADAMAS_PHASE0_METRICS=1` and occurs AFTER
 allocator flush and RTA pruning (in cli.cr, post-RTA section).
 
 Notes:
@@ -317,9 +317,9 @@ A shadow run is green when:
 ```crystal
 # In bootstrap_shims.cr or cli.cr:
 module Adamas::Compiler
-  SEMANTIC_COMPILE = BootstrapEnv.enabled?("CRYSTAL_V2_SEMANTIC_COMPILE")
-  SEMANTIC_SHADOW  = BootstrapEnv.enabled?("CRYSTAL_V2_SEMANTIC_SHADOW")
-  SEMANTIC_ASSERT_NO_LEGACY = BootstrapEnv.enabled?("CRYSTAL_V2_SEMANTIC_ASSERT_NO_LEGACY_QUEUE")
+  SEMANTIC_COMPILE = BootstrapEnv.enabled?("ADAMAS_SEMANTIC_COMPILE")
+  SEMANTIC_SHADOW  = BootstrapEnv.enabled?("ADAMAS_SEMANTIC_SHADOW")
+  SEMANTIC_ASSERT_NO_LEGACY = BootstrapEnv.enabled?("ADAMAS_SEMANTIC_ASSERT_NO_LEGACY_QUEUE")
 end
 
 # Kill-switch assertions (add to legacy paths):

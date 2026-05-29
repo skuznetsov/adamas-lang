@@ -16,54 +16,54 @@ private def with_temp_shadow_project(files : Hash(String, String), &)
 end
 
 private def with_semantic_shadow_env(&)
-  previous = ENV["CRYSTAL_V2_SEMANTIC_SHADOW"]?
-  ENV["CRYSTAL_V2_SEMANTIC_SHADOW"] = "1"
+  previous = ENV["ADAMAS_SEMANTIC_SHADOW"]?
+  ENV["ADAMAS_SEMANTIC_SHADOW"] = "1"
 
   begin
     yield
   ensure
     if previous
-      ENV["CRYSTAL_V2_SEMANTIC_SHADOW"] = previous
+      ENV["ADAMAS_SEMANTIC_SHADOW"] = previous
     else
-      ENV.delete("CRYSTAL_V2_SEMANTIC_SHADOW")
+      ENV.delete("ADAMAS_SEMANTIC_SHADOW")
     end
   end
 end
 
 private def with_semantic_compile_env(&)
-  previous = ENV["CRYSTAL_V2_SEMANTIC_COMPILE"]?
-  ENV["CRYSTAL_V2_SEMANTIC_COMPILE"] = "1"
+  previous = ENV["ADAMAS_SEMANTIC_COMPILE"]?
+  ENV["ADAMAS_SEMANTIC_COMPILE"] = "1"
 
   begin
     yield
   ensure
     if previous
-      ENV["CRYSTAL_V2_SEMANTIC_COMPILE"] = previous
+      ENV["ADAMAS_SEMANTIC_COMPILE"] = previous
     else
-      ENV.delete("CRYSTAL_V2_SEMANTIC_COMPILE")
+      ENV.delete("ADAMAS_SEMANTIC_COMPILE")
     end
   end
 end
 
 private def with_semantic_shadow_strict_env(&)
-  previous_shadow = ENV["CRYSTAL_V2_SEMANTIC_SHADOW"]?
-  previous_strict = ENV["CRYSTAL_V2_SEMANTIC_SHADOW_STRICT"]?
-  ENV["CRYSTAL_V2_SEMANTIC_SHADOW"] = "1"
-  ENV["CRYSTAL_V2_SEMANTIC_SHADOW_STRICT"] = "1"
+  previous_shadow = ENV["ADAMAS_SEMANTIC_SHADOW"]?
+  previous_strict = ENV["ADAMAS_SEMANTIC_SHADOW_STRICT"]?
+  ENV["ADAMAS_SEMANTIC_SHADOW"] = "1"
+  ENV["ADAMAS_SEMANTIC_SHADOW_STRICT"] = "1"
 
   begin
     yield
   ensure
     if previous_shadow
-      ENV["CRYSTAL_V2_SEMANTIC_SHADOW"] = previous_shadow
+      ENV["ADAMAS_SEMANTIC_SHADOW"] = previous_shadow
     else
-      ENV.delete("CRYSTAL_V2_SEMANTIC_SHADOW")
+      ENV.delete("ADAMAS_SEMANTIC_SHADOW")
     end
 
     if previous_strict
-      ENV["CRYSTAL_V2_SEMANTIC_SHADOW_STRICT"] = previous_strict
+      ENV["ADAMAS_SEMANTIC_SHADOW_STRICT"] = previous_strict
     else
-      ENV.delete("CRYSTAL_V2_SEMANTIC_SHADOW_STRICT")
+      ENV.delete("ADAMAS_SEMANTIC_SHADOW_STRICT")
     end
   end
 end
