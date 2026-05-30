@@ -975,28 +975,20 @@ module Adamas
 
       def run(*, out_io : IO = STDOUT, err_io : IO = STDERR) : Int32
         # stage2_debug is unconditional (required for stage2 stability — see method comment)
-        LibC.write(2, "[RUNPROBE] 0\n".to_unsafe, 13)
         bootstrap_trace_puts "[S2_RUN] start args=#{@args.size}"; STDERR.flush
-        LibC.write(2, "[RUNPROBE] 1\n".to_unsafe, 13)
         @args.each_with_index do |arg, i|
           bootstrap_trace_puts "[S2_RUN] arg[#{i}]=#{arg.bytesize}b '#{arg}'"; STDERR.flush
         end
-        LibC.write(2, "[RUNPROBE] 2\n".to_unsafe, 13)
         options = Options.new
-        LibC.write(2, "[RUNPROBE] 3\n".to_unsafe, 13)
         bootstrap_trace_puts "[S2_RUN] options created"; STDERR.flush
-        stage2_debug("[STAGE2_DEBUG] raw args size=#{@args.size}", err_io)
-        stage2_debug("[STAGE2_DEBUG] run start args_size=#{@args.size}", err_io)
         mm_stack_threshold_invalid = false
         parser_help = "Usage: adamas [options] <source.cr>\n\nOptions:"
         parser : OptionParser | Nil = nil
         parser_text = parser_help
 
         bootstrap_trace_puts "[S2_RUN] before parse_args_safe"; STDERR.flush
-        LibC.write(2, "[RUNPROBE] 4\n".to_unsafe, 13)
         if !env_enabled?("ADAMAS_USE_OPTION_PARSER") || env_enabled?("ADAMAS_SAFE_PARSER")
           status = parse_args_safe(pointerof(options), parser_help, err_io)
-          LibC.write(2, "[RUNPROBE] 5\n".to_unsafe, 13)
           bootstrap_trace_puts "[S2_RUN] parse_args_safe done status=#{status}"; STDERR.flush
           return status if status != 0
         elsif (minimal_parser = env_get("ADAMAS_MINIMAL_PARSER"))
@@ -1013,7 +1005,7 @@ module Adamas
               p.on("-o FILE", "--output FILE", "Output file name") { |f| options.output = f }
               p.on("--release", "Compile in release mode (-O3)") { options.optimize = 3; options.release = true }
               p.on("--version", "Show version") { options.show_version = true }
-              p.on("-h", "--help", "Show this message") { options.show_help = true; options.help_text = p.to_s }
+              p.on("-h", "--help", "Show this message") { options.show_help = true; options.help_text = p.to_s; puts p }
             end
             end
         else
@@ -1114,11 +1106,8 @@ module Adamas
           setup_debug_hooks
         {% end %}
 
-        LibC.write(2, "[RUNPROBE] 6\n".to_unsafe, 13)
         show_version = options.show_version
-        LibC.write(2, "[RUNPROBE] 6b\n".to_unsafe, 14)
         if show_version
-          LibC.write(2, "[RUNPROBE] 7\n".to_unsafe, 13)
           stage2_debug("[STAGE2_DEBUG] options.show_version=true", err_io)
           out_io.puts "adamas #{VERSION}"
           return 0
@@ -1127,7 +1116,7 @@ module Adamas
         stage2_debug("[STAGE2_DEBUG] after show_version, show_help=#{options.show_help}", err_io)
         if options.show_help
           stage2_debug("[STAGE2_DEBUG] showing help", err_io)
-          out_io.puts options.help_text
+          out_io.puts parser
           return 0
         end
 
