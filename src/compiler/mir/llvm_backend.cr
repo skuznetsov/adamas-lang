@@ -20464,6 +20464,14 @@ module Adamas::MIR
                         end
                       end
                     else
+                      # No default_value: this param is REQUIRED but the call supplies no
+                      # argument for it. Padding with null/0 silently masks an arity-mismatch
+                      # resolution bug (e.g. 0-arg `obj.hash` binding 1-param `hash(hasher)` →
+                      # null self). Surface it loudly so the real defect is visible instead of
+                      # corrupting/segfaulting at runtime.
+                      if ENV["ADAMAS_NULLPAD_PROBE"]?
+                        STDERR.puts "[NULLPAD_REQUIRED] callee=#{callee_name} idx=#{i}/#{callee_func.params.size} param=#{param.name} llvm=#{param_llvm} caller=#{@current_func_name}"
+                      end
                       case param_llvm
                       when "i1"    then "i1 0"
                       when "ptr"
