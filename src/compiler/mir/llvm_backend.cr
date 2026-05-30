@@ -3329,6 +3329,7 @@ module Adamas::MIR
       already_declared << "__adamas_string_gsub" << "__adamas_string_gsub_char" << "__adamas_string_byte_slice"
       already_declared << "__adamas_array_join_int32"
       already_declared << "__adamas_string_bytesize" << "__adamas_string_byte_at"
+      already_declared << "__adamas_string_to_unsafe"
       already_declared << "__adamas_array_new_filled_i32" << "__adamas_array_new_filled_bool"
       already_declared << "__adamas_array_concat"
       already_declared << "__adamas_hash_new"
@@ -3987,6 +3988,18 @@ module Adamas::MIR
       # should forward to the registered real extern name (e.g. llvm.sqrt.f64).
       if (extern = try_resolve_extern_from_mangled(name))
         return emit_extern_forwarding_stub(name, extern, return_type, arg_count, arg_types)
+      end
+
+      # String#to_unsafe — in --no-prelude there is no stdlib body, so this would
+      # otherwise emit an abort stub. Emit the real pointerof(@c) (data at offset 12)
+      # so explicit `str.to_unsafe` (e.g. to a C function) works. In prelude the real
+      # stdlib body exists and this stub path is never reached.
+      if name == "String$Hto_unsafe"
+        return "; String#to_unsafe — no-prelude builtin override (pointerof(@c) = data@12)\n" \
+               "define ptr @String$Hto_unsafe(ptr %self) {\n" \
+               "  %data = getelementptr i8, ptr %self, i32 12\n" \
+               "  ret ptr %data\n" \
+               "}\n"
       end
 
       # Pointer#puts(Tuple(String)) — arises when V2 infers a block argument as Pointer
@@ -6870,6 +6883,14 @@ module Adamas::MIR
       emit_raw "  %byte = load i8, ptr %byte_ptr\n"
       emit_raw "  %ch = zext i8 %byte to i32\n"
       emit_raw "  ret i32 %ch\n"
+      emit_raw "}\n\n"
+
+      # String#to_unsafe → Pointer(UInt8) (pointerof(@c): data at offset 12).
+      # Always available so --no-prelude C calls can coerce String args to char*
+      # without depending on a stdlib String#to_unsafe body (which is absent there).
+      emit_raw "define ptr @__adamas_string_to_unsafe(ptr %self) {\n"
+      emit_raw "  %data = getelementptr i8, ptr %self, i32 12\n"
+      emit_raw "  ret ptr %data\n"
       emit_raw "}\n\n"
 
       # String#index(String, offset) → i32 (-1 if not found, byte index otherwise)
