@@ -290,6 +290,21 @@ spread across `function_full_name_for_def` / `mangle_function_name` / the
 > virtual/module target loops (isolated), splat-packing helpers last (they reshape
 > args before the resolver call — higher pre/post-pack confusion risk). M0
 > separate.
+> **M3j landed** — the value-receiver static dispatch site (`concrete_base`, for
+> Tuple/NamedTuple/Struct/Primitive receivers inside `call_virtual && receiver_id`)
+> converted to direct `resolve_call_input`, same pattern. Full regression green
+> (combined 31/31, oracle PASS/exited-cleanly, RESINPUT_SEEN invariant 67039, all
+> mismatches 0, M3E/M3F/M3H/M3I counts unchanged, reducers 139, NULLPAD intact).
+> CAVEAT (status COMPLETED, not execution-verified, as for M3g): the site is COLD
+> - M3J_SITE_SEEN=0 on the direct-hash reducer AND across all 31 combined/*.cr
+> (the corpus's value receivers resolve via earlier paths before this candidate
+> loop). Correctness rests on structural identity to the hot M3e/M3h/M3i
+> conversions, 0 mismatches, the build type-checking, full regression, and the
+> logical fact that a cold path cannot alter runtime. (An oracle run measured 66s;
+> attributed to the session's external run_safe load, not M3j — a cold site cannot
+> slow compilation, and RESINPUT_SEEN is unchanged.) 8 of 10 lower_call lookup
+> sites now route through resolve_call_input. Remaining: module_base_name loop,
+> then splat-packing helpers / ensure_double_splat_arg last. M0 separate.
 
 Each commit is independently revertible and gated on the falsifiers in §5. The
 ordering front-loads inert scaffolding and instrumentation so behavior changes
