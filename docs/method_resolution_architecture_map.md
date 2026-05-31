@@ -334,6 +334,18 @@ spread across `function_full_name_for_def` / `mangle_function_name` / the
 > call-time identity minting, per the refuted-experiment lesson). Remaining legacy
 > lookup callers (non_splat_match, ensure_double_splat_arg) can convert opportun-
 > istically. M0 (MIR had_source_default) separate.
+> **M3m landed** — the `non_splat_match` lookup in `pack_splat_args_for_call`
+> converted to direct `resolve_call_input` (same locals at that point:
+> func_name/args.size/arg_types, literal has_splat=false, no named args). Hot:
+> M3M_SITE_SEEN=4386. Verified no regression via the environment-robust signals
+> (full-oracle run is unreliable this session — its run_safe wrapper hangs under
+> external run_safe load): RESINPUT_SEEN unchanged at 67039 on the reducer AND
+> IDENTICAL at 142208 on the generic-heavy oracle source (== the M3l baseline that
+> passed the oracle), so the generated code and resolution are unchanged;
+> RESINPUT/CALLSHAPE/MIKEY mismatch=0; combined 31/31; reducers 139; NULLPAD
+> intact. (The oracle runtime "not reproduced" check is satisfied transitively:
+> M3m's oracle-source resolution is byte-identical to M3l's, which passed.) Only
+> `ensure_double_splat_arg` remains on the legacy wrapper among the splat helpers.
 
 Each commit is independently revertible and gated on the falsifiers in §5. The
 ordering front-loads inert scaffolding and instrumentation so behavior changes
