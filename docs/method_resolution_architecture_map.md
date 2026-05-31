@@ -242,6 +242,17 @@ spread across `function_full_name_for_def` / `mangle_function_name` / the
 > intact. Next: convert the remaining ~9 lower_call lookup sites one/few at a time,
 > then the resolver identity can begin to drive materialization (fix path). M0
 > stays a separate axis.
+> **M3f landed** — two more `lower_call` lookup sites converted to direct
+> `resolve_call_input`, same pattern as M3e: the class/module refine
+> (`full_method_name`, `call_has_splat`) and the PathNode member-access refine
+> (`path_base`, `has_splat`). Wrapper semantics preserved per site; one resolver
+> call each; cache keys/materialization unchanged. Both fire on the direct-hash
+> reducer (M3F_SITE_SEEN: class_refine=1046, path_refine=200), total RESINPUT_SEEN
+> unchanged at 67039 (no double/missed call), all mismatches 0, combined 31/31,
+> oracle PASS, reducers 139, NULLPAD intact. Remaining lower_call lookup sites
+> (~7: union/module rematch, block fallback, splat-packing helpers, generic
+> fallbacks) convert next in small groups, then the resolver identity drives
+> materialization (fix path). M0 remains a separate axis.
 
 Each commit is independently revertible and gated on the falsifiers in §5. The
 ordering front-loads inert scaffolding and instrumentation so behavior changes
