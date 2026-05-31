@@ -314,6 +314,26 @@ spread across `function_full_name_for_def` / `mangle_function_name` / the
 > intact. 9 of 10 lower_call lookup sites now route through resolve_call_input.
 > The last lower_call site lives in the splat-packing path (reshapes args before
 > the resolver) — isolated commit, done last. M0 separate.
+> **M3l landed** — the FIRST (pre-pack) lookup in `pack_splat_args_for_call`
+> converted to direct `resolve_call_input`, using the pre-pack args.size/arg_types,
+> the helper's func_name/call_has_splat/call_has_named_args, and no named args
+> (canonical_named_arg_names(nil)); unreadable -> nil, one call. The helper's later
+> `non_splat_match` lookup and `ensure_double_splat_arg` are NOT converted. Hot:
+> M3L_SITE_SEEN=8780. Verified: RESINPUT_SEEN unchanged at 67039 (reducer) AND
+> IDENTICAL at 142208 on the generic-heavy oracle source for both M3k and M3l —
+> conclusively ruling out the monomorphization loop on the very code that risks it;
+> RESINPUT/CALLSHAPE/MIKEY mismatch=0; combined 31/31; reducers 139; NULLPAD
+> intact. (A first full-oracle run measured 116s; isolated to the flaky run_safe
+> wrapper thrashing under heavy external run_safe load — a direct compile of the
+> oracle source was 51s vs the M3k baseline 49s, and the RESINPUT count is
+> identical, so there is no regression.) This completes the migration's
+> lookup-site conversion phase: every lower_call lookup site plus the splat-pack
+> entry now routes through resolve_call_input (the resolver's structured input).
+> Next: resolver identity drives materialization (the fix path for the
+> arity-shadow hash bug, via a name-stable Resolution/MethodInstanceKey — no
+> call-time identity minting, per the refuted-experiment lesson). Remaining legacy
+> lookup callers (non_splat_match, ensure_double_splat_arg) can convert opportun-
+> istically. M0 (MIR had_source_default) separate.
 
 Each commit is independently revertible and gated on the falsifiers in §5. The
 ordering front-loads inert scaffolding and instrumentation so behavior changes
