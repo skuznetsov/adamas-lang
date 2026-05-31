@@ -228,6 +228,20 @@ spread across `function_full_name_for_def` / `mangle_function_name` / the
 > Next: M3e — one concrete `lower_call` lookup site builds CallResolutionInput from
 > its final legacy locals and calls `resolve_call_input` directly (first real
 > consumption, controlled blast radius), then broaden; M0 remains a separate axis.
+> **M3e landed** — the FIRST real consumption: the main final lookup site in
+> `lower_call` (`lookup_function_def_for_call(lookup_name, args.size, …)`, which
+> serves the instance/member path including the hash bug) now builds a
+> CallResolutionInput from its final legacy locals and calls `resolve_call_input`
+> directly, preserving wrapper semantics verbatim (nil for an unreadable name,
+> canonicalized named args, exactly one call so the resolver's cache/last-result
+> state is not double-mutated). Only this one site converted; cache keys and
+> materialization unchanged. Verified: M3E_SITE_SEEN=8672 on the direct-hash
+> reducer (406 hash-related — confirms the site serves the hash path), and total
+> RESINPUT_SEEN unchanged at 67039 (no double-call, no missed call); RESINPUT/
+> CALLSHAPE/MIKEY mismatch=0; combined 31/31; oracle PASS; reducers 139; NULLPAD
+> intact. Next: convert the remaining ~9 lower_call lookup sites one/few at a time,
+> then the resolver identity can begin to drive materialization (fix path). M0
+> stays a separate axis.
 
 Each commit is independently revertible and gated on the falsifiers in §5. The
 ordering front-loads inert scaffolding and instrumentation so behavior changes
