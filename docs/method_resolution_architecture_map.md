@@ -253,6 +253,18 @@ spread across `function_full_name_for_def` / `mangle_function_name` / the
 > (~7: union/module rematch, block fallback, splat-packing helpers, generic
 > fallbacks) convert next in small groups, then the resolver identity drives
 > materialization (fix path). M0 remains a separate axis.
+> **M3g landed** — two LATE-REPAIR sites converted to direct `resolve_call_input`,
+> same pattern: the receiver `resolved_base` repair and the final `base_method_name`
+> rematch. Full regression green (combined 31/31, oracle PASS, RESINPUT_SEEN
+> invariant 67039, all mismatches 0, reducers 139, NULLPAD intact). CAVEAT: both
+> sites are COLD — `M3G_SITE_SEEN` fired 0 on the direct-hash reducer AND across
+> the whole `combined/*.cr` corpus (they are fallback paths only hit on specific
+> resolution-failure scenarios). Non-vacuity is therefore not demonstrable on the
+> current corpus; correctness rests on (a) structural identity to the proven
+> M3e/M3f conversions, (b) 0 mismatches everywhere, (c) the build type-checking,
+> (d) full regression showing no behavior change. Status: COMPLETED, not
+> execution-verified. A targeted reducer that forces a receiver-inheritance repair
+> / mangled-name rematch would upgrade this to verified; deferred.
 
 Each commit is independently revertible and gated on the falsifiers in §5. The
 ordering front-loads inert scaffolding and instrumentation so behavior changes
