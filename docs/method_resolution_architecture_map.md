@@ -265,6 +265,18 @@ spread across `function_full_name_for_def` / `mangle_function_name` / the
 > (d) full regression showing no behavior change. Status: COMPLETED, not
 > execution-verified. A targeted reducer that forces a receiver-inheritance repair
 > / mangled-name rematch would upgrade this to verified; deferred.
+> **M3h landed** — the `explicit_new` lookup site converted to direct
+> `resolve_call_input`, preserving `prefer_allocator_new_call -> nil`, the literal
+> `has_splat=false`, the unreadable-name guard, and canonical named args. Unlike
+> M3g this site is HOT: M3H_SITE_SEEN=527 on the direct-hash reducer (Foo.new
+> path). Verified: RESINPUT_SEEN invariant 67039; M3E 8672 / M3F class_refine 1046
+> unchanged; RESINPUT/CALLSHAPE/MIKEY mismatch=0; combined 31/31; oracle PASS at
+> 46.7s. (A first oracle run measured 80.6s at 96% cpu; isolated to external load
+> from another session's run_safe busy-poll — a clean re-run returned 46.7s at
+> 109% cpu, and the unchanged RESINPUT_SEEN count rules out an algorithmic
+> regression.) reducers 139, NULLPAD intact. 6 of 10 lower_call lookup sites now
+> route through resolve_call_input. Next: direct_block_entry, then virtual/module
+> target loops and splat helpers (denser, isolated commits). M0 separate.
 
 Each commit is independently revertible and gated on the falsifiers in §5. The
 ordering front-loads inert scaffolding and instrumentation so behavior changes
