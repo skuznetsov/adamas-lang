@@ -362,6 +362,34 @@ spread across `function_full_name_for_def` / `mangle_function_name` / the
 > driving materialization (the arity-shadow hash fix) — which gets its own design
 > round (name-stable Resolution/MethodInstanceKey, no call-time minting). M0 (MIR
 > had_source_default) remains a separate axis.
+>
+> ### M4 sequence (behavior change gated behind diagnostics; Quadrumvirate-planned)
+> The fix is NOT a direct edit to lower_function_if_needed_impl — that risks
+> re-encoding the string-soup inside Resolution. Instead an explicit binding model
+> is built first, then a scoped fix:
+> - **M4a (landed):** `resolve_call_resolution(input) : Resolution?` is now the
+>   resolver's structured return; `resolve_call_input` is a thin adapter unwrapping
+>   it to the legacy {name, def} via `method_instance_symbol(res.key)`. The tuple
+>   core (`resolve_call_tuple`) is unchanged. Behavior byte-identical:
+>   RESOLUTION_MISMATCH=0 across 54596 (reducer) + 109060 (oracle source)
+>   resolutions (the verbatim-carrier key round-trips to the exact selected name);
+>   RESINPUT_SEEN 67039 / oracle-src 142208 unchanged; combined 31/31; reducers
+>   139; NULLPAD intact. `ADAMAS_RESOLUTION_ASSERT` adds the parity + non-vacuity
+>   lines. NOTE: res.key is still a verbatim symbol carrier, NOT a semantic
+>   identity — materialization/registration must not key off it yet.
+> - **M4b (next, no behavior):** at the main lower_call site, record a
+>   ResolutionBinding (family / selected / materialize / emit names + selected
+>   required/param-count vs call arg-count) and log BINDING_DANGEROUS when the
+>   emitted/materialized target is a required-param def called with too few args.
+>   `/tmp/h_direct_hash.cr` must show exactly the scoped dangerous hit.
+> - **M4c (scoped behavior):** fix ONLY the arity-shadow class — when arg_count <
+>   required for the selected/materialized def AND a compatible inherited zero-arg
+>   candidate exists, bind emit/materialize to that existing inherited candidate.
+>   No new names minted, no per-call type names synthesized.
+> - **M4d (after M4c green):** narrow should_register_base_name? for $arityN untyped
+>   required defs, with population instrumentation first (do NOT make this the first
+>   behavior step — banning bare alias for all untyped defs risks breaking generic
+>   APIs that rely on base-name materialization).
 
 Each commit is independently revertible and gated on the falsifiers in §5. The
 ordering front-loads inert scaffolding and instrumentation so behavior changes
