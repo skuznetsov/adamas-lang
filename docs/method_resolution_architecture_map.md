@@ -201,6 +201,21 @@ spread across `function_full_name_for_def` / `mangle_function_name` / the
 > M0 (needs MIR `had_source_default`, separate commit after review), then full M3
 > (route the call name through CallShape once it is proven complete + byte-stable;
 > target empty IR diff).
+> **M3c landed** — a `CallResolutionInput` sidecar capturing the EXACT lookup-input
+> tuple (func_name, arg_count, arg_types, has_block, has_splat, has_named,
+> named_names) at the single resolver chokepoint (entry of
+> `lookup_function_def_for_call`), the precise input full M3 must reproduce.
+> Committed `RESINPUT_SEEN` non-vacuity (67039 on the direct-hash compile),
+> round-trip completeness check = 0, `empty_name` invariant = 0, combined 31/31,
+> oracle PASS, reducers 139, NULLPAD intact. NOT consumed.
+> Two findings for full M3: (1) callsite `**` is folded into args+named by
+> `ensure_double_splat_arg` BEFORE the resolver, so has_double_splat is NOT a
+> distinct resolver-input axis — it is carried by has_named/named_names; (2)
+> `has_named` does NOT imply `named_names` present (534 cases: `to_s(io)` / `.new`
+> wrappers pass call_has_named_args=true with nil/empty names) — the
+> CallShape→resolver mapping must allow has_named with no explicit names. The M3c
+> sidecar is at the resolver entry (not the ~10 individual lower_call lookup
+> sites): identical tuple, one stable point, superset coverage.
 
 Each commit is independently revertible and gated on the falsifiers in §5. The
 ordering front-loads inert scaffolding and instrumentation so behavior changes
