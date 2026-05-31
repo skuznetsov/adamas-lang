@@ -189,9 +189,18 @@ spread across `function_full_name_for_def` / `mangle_function_name` / the
 > direct-hash reducer) and behavior-preserving (combined 31/31, oracle PASS,
 > reducers still segfault, NULLPAD blocker intact). NOT consumed: arg_types and
 > receiver_type are deferred to M3 proper, and the M2 `resolved_suffix` key is
-> verbatim carriage only — neither may drive owner/method/materialization. Next:
+> verbatim carriage only — neither may drive owner/method/materialization.
+> **M3b landed** — a COMPLETE `CallShape` sidecar at the post-arg-lowering point
+> in `lower_call` (arg_types + receiver_type now populated, unlike M3a's empty
+> front shape), with a committed `CALLSHAPE_SEEN` non-vacuity line and a
+> front-vs-complete cross-check (block/splat/named survive lowering). Verified:
+> 8677 SEEN constructions on the direct-hash reducer (7623 with a populated
+> receiver, 8411 with args), 0 CALLSHAPE_MISMATCH, combined 31/31, oracle PASS,
+> reducers still segfault, NULLPAD blocker intact. Still NOT consumed; the bare
+> method name is deliberately not cross-checked (legacy rewrites it). Next:
 > M0 (needs MIR `had_source_default`, separate commit after review), then full M3
-> (route the call name through CallShape, target empty IR diff).
+> (route the call name through CallShape once it is proven complete + byte-stable;
+> target empty IR diff).
 
 Each commit is independently revertible and gated on the falsifiers in §5. The
 ordering front-loads inert scaffolding and instrumentation so behavior changes
