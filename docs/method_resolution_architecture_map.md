@@ -277,6 +277,19 @@ spread across `function_full_name_for_def` / `mangle_function_name` / the
 > regression.) reducers 139, NULLPAD intact. 6 of 10 lower_call lookup sites now
 > route through resolve_call_input. Next: direct_block_entry, then virtual/module
 > target loops and splat helpers (denser, isolated commits). M0 separate.
+> **M3i landed** — the `direct_block_entry` lookup site (receiver block calls)
+> converted to direct `resolve_call_input`, preserving the enclosing
+> receiver/block guard, arg_count=call_args.size (NOT args.size), has_block=true,
+> has_splat=false, lookup_arg_types exactly, the unreadable-name guard, and
+> canonical named args; one call. `lookup_block_function_def_for_call` deliberately
+> NOT converted in this commit. Hot: M3I_SITE_SEEN=69 on the direct-hash reducer
+> (Indexable(T)#fetch, Slice(UInt8)#rindex). Verified: RESINPUT_SEEN invariant
+> 67039; M3E/M3F/M3H counts unchanged; RESINPUT/CALLSHAPE/MIKEY mismatch=0;
+> combined 31/31; oracle PASS at 51.9s/107% cpu; reducers 139; NULLPAD intact.
+> 7 of 10 lower_call lookup sites now route through resolve_call_input. Next:
+> virtual/module target loops (isolated), splat-packing helpers last (they reshape
+> args before the resolver call — higher pre/post-pack confusion risk). M0
+> separate.
 
 Each commit is independently revertible and gated on the falsifiers in §5. The
 ordering front-loads inert scaffolding and instrumentation so behavior changes
