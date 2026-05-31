@@ -216,6 +216,18 @@ spread across `function_full_name_for_def` / `mangle_function_name` / the
 > CallShape→resolver mapping must allow has_named with no explicit names. The M3c
 > sidecar is at the resolver entry (not the ~10 individual lower_call lookup
 > sites): identical tuple, one stable point, superset coverage.
+> **M3d landed** — the resolver now CONSUMES the structured input internally:
+> `resolve_call_input(input : CallResolutionInput)` holds the former
+> `lookup_function_def_for_call` body (legacy locals destructured from the input);
+> the public `lookup_function_def_for_call(func_name, …)` is now a thin wrapper
+> that guards, canonicalizes named args, builds the input, and delegates. All ~30
+> external callers and the internal recursive calls are unchanged. No CallShape
+> mapping yet; behavior-equivalent — diagnostics byte-identical to M3c
+> (RESINPUT_SEEN=67039, named_no_names=534), combined 31/31, oracle PASS, reducers
+> 139, NULLPAD intact. The stale "a named call must carry names" comment is fixed.
+> Next: M3e — one concrete `lower_call` lookup site builds CallResolutionInput from
+> its final legacy locals and calls `resolve_call_input` directly (first real
+> consumption, controlled blast radius), then broaden; M0 remains a separate axis.
 
 Each commit is independently revertible and gated on the falsifiers in §5. The
 ordering front-loads inert scaffolding and instrumentation so behavior changes
