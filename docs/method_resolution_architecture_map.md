@@ -305,6 +305,15 @@ spread across `function_full_name_for_def` / `mangle_function_name` / the
 > slow compilation, and RESINPUT_SEEN is unchanged.) 8 of 10 lower_call lookup
 > sites now route through resolve_call_input. Remaining: module_base_name loop,
 > then splat-packing helpers / ensure_double_splat_arg last. M0 separate.
+> **M3k landed** — the `module_base_name` virtual/generic-module target loop site
+> converted to direct `resolve_call_input`, same pattern (unreadable -> nil,
+> canonical named args, one call). Hot: M3K_SITE_SEEN=206 on the direct-hash
+> reducer (e.g. ENV.fetch module dispatch). Verified: RESINPUT_SEEN invariant
+> 67039; M3E/M3F/M3H/M3I counts unchanged; RESINPUT/CALLSHAPE/MIKEY mismatch=0;
+> combined 31/31; oracle clean exit at 50.2s/106% cpu; reducers 139; NULLPAD
+> intact. 9 of 10 lower_call lookup sites now route through resolve_call_input.
+> The last lower_call site lives in the splat-packing path (reshapes args before
+> the resolver) — isolated commit, done last. M0 separate.
 
 Each commit is independently revertible and gated on the falsifiers in §5. The
 ordering front-loads inert scaffolding and instrumentation so behavior changes
