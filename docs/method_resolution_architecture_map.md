@@ -346,6 +346,22 @@ spread across `function_full_name_for_def` / `mangle_function_name` / the
 > intact. (The oracle runtime "not reproduced" check is satisfied transitively:
 > M3m's oracle-source resolution is byte-identical to M3l's, which passed.) Only
 > `ensure_double_splat_arg` remains on the legacy wrapper among the splat helpers.
+> **M3n landed** — the `ensure_double_splat_arg` lookup converted to direct
+> `resolve_call_input` (same locals: func_name/args.size/arg_types, literal
+> has_splat=false, no named args). Hot: M3N_SITE_SEEN=8796. Verified no regression
+> via the robust signals: RESINPUT_SEEN unchanged at 67039 (reducer) AND IDENTICAL
+> at 142208 on the generic-heavy oracle source; RESINPUT/CALLSHAPE/MIKEY
+> mismatch=0; combined 31/31; reducers 139; NULLPAD intact. (Oracle runtime "not
+> reproduced" holds transitively via the identical oracle-source resolution.)
+>
+> **Lookup-routing phase truly complete now**: every lower_call lookup site AND
+> all three splat helpers (pack-entry, non_splat_match, ensure_double_splat_arg)
+> route through resolve_call_input. The resolver consumes a structured
+> CallResolutionInput at every reachable call path; nothing mints identity at call
+> time. This is the clean base for the behavior-changing step — resolver identity
+> driving materialization (the arity-shadow hash fix) — which gets its own design
+> round (name-stable Resolution/MethodInstanceKey, no call-time minting). M0 (MIR
+> had_source_default) remains a separate axis.
 
 Each commit is independently revertible and gated on the falsifiers in §5. The
 ordering front-loads inert scaffolding and instrumentation so behavior changes
