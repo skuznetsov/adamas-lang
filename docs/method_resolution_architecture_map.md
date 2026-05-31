@@ -377,11 +377,27 @@ spread across `function_full_name_for_def` / `mangle_function_name` / the
 >   139; NULLPAD intact. `ADAMAS_RESOLUTION_ASSERT` adds the parity + non-vacuity
 >   lines. NOTE: res.key is still a verbatim symbol carrier, NOT a semantic
 >   identity — materialization/registration must not key off it yet.
-> - **M4b (next, no behavior):** at the main lower_call site, record a
->   ResolutionBinding (family / selected / materialize / emit names + selected
->   required/param-count vs call arg-count) and log BINDING_DANGEROUS when the
->   emitted/materialized target is a required-param def called with too few args.
->   `/tmp/h_direct_hash.cr` must show exactly the scoped dangerous hit.
+> - **M4b (landed, no behavior):** ResolutionBinding diagnostic at the main
+>   lower_call site (family/selected/primary/emit names + selected
+>   required/param-count/splat/double-splat vs call arg-count), env-gated by
+>   ADAMAS_BINDING_ASSERT, with BINDING_DANGEROUS = selected def needs more required
+>   args than the call supplies and no splat. Verified diagnostic-only: combined
+>   31/31, reducer segfault 139, NULLPAD 1, RESOLUTION parity 0 (all byte-identical
+>   to baseline on the recreated reducer).
+>   **POPULATION FINDING (refutes the M4c-at-binding-site premise):** BINDING_SEEN
+>   =7964 but BINDING_DANGEROUS=0 on the reducer AND across the whole combined
+>   corpus, and the main site NEVER selects Foo#hash (count 0). Reason: the scored
+>   resolver (resolve_call_tuple) already filters `next if arg_count < required`, so
+>   the call-SELECTION binding is arity-safe by construction. The arity-shadow
+>   danger therefore is NOT at call selection — it lives in the arity-BLIND paths:
+>   `resolve_method_with_inheritance` (the full_method_name override) +
+>   `lower_function_if_needed_impl` materialization (bare `Foo#hash` bound to the
+>   1-param body) + the backend null-pad. The outer 0-arg `f.hash` bypasses the
+>   main resolver entirely. **=> M4c must target the arity-blind override /
+>   materialization path, not the main binding site.** (Measurement-integrity note:
+>   an initial M4b run read reducer EXIT 0 / NULLPAD 0 — traced to /tmp being wiped
+>   mid-session, the reducers were recreated and the red baseline 139/NULLPAD 1
+>   restored before trusting any reducer signal.)
 > - **M4c (scoped behavior):** fix ONLY the arity-shadow class — when arg_count <
 >   required for the selected/materialized def AND a compatible inherited zero-arg
 >   candidate exists, bind emit/materialize to that existing inherited candidate.
