@@ -181,8 +181,17 @@ spread across `function_full_name_for_def` / `mangle_function_name` / the
 > `MethodInstanceKey` that round-trips to the FULL selected name (incl.
 > `$arity`/splat/block/named), verified non-vacuous (362 suffixed names) and
 > behavior-preserving (combined 31/31, oracle PASS, reducers unchanged). Both are
-> env-gated/inert; selection and materialization are untouched. Next: M0 (needs
-> MIR `had_source_default`, separate commit after review), then M3.
+> env-gated/inert; selection and materialization are untouched.
+> **M3a landed** — a `CallShape` sidecar at the front of `lower_call`, gathering
+> the source-shape facts (method/block/named/splat) the resolver consumes, with
+> an `ADAMAS_CALLSHAPE_ASSERT` gather-invariant check (real Identifier/MemberAccess
+> call ⇒ non-empty method name), verified non-vacuous (9106 constructions on the
+> direct-hash reducer) and behavior-preserving (combined 31/31, oracle PASS,
+> reducers still segfault, NULLPAD blocker intact). NOT consumed: arg_types and
+> receiver_type are deferred to M3 proper, and the M2 `resolved_suffix` key is
+> verbatim carriage only — neither may drive owner/method/materialization. Next:
+> M0 (needs MIR `had_source_default`, separate commit after review), then full M3
+> (route the call name through CallShape, target empty IR diff).
 
 Each commit is independently revertible and gated on the falsifiers in §5. The
 ordering front-loads inert scaffolding and instrumentation so behavior changes
