@@ -175,6 +175,15 @@ spread across `function_full_name_for_def` / `mangle_function_name` / the
 
 ## 3. Migration plan (small, safe, ordered commits)
 
+> Progress: **M1 landed** (`ca75ecab`) — structs + `method_instance_symbol`
+> (base-mangle parity) + `ADAMAS_MIKEY_ASSERT` guard. **M2 landed** —
+> `Resolution` sidecar in `lookup_function_def_for_call` with a verbatim-suffix
+> `MethodInstanceKey` that round-trips to the FULL selected name (incl.
+> `$arity`/splat/block/named), verified non-vacuous (362 suffixed names) and
+> behavior-preserving (combined 31/31, oracle PASS, reducers unchanged). Both are
+> env-gated/inert; selection and materialization are untouched. Next: M0 (needs
+> MIR `had_source_default`, separate commit after review), then M3.
+
 Each commit is independently revertible and gated on the falsifiers in §5. The
 ordering front-loads inert scaffolding and instrumentation so behavior changes
 come last and minimally.
