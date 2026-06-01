@@ -476,14 +476,33 @@ spread across `function_full_name_for_def` / `mangle_function_name` / the
 >   So the bug is broad (any user/value type with an untyped hash(hasher) and a
 >   direct 0-arg `.hash` call), not Foo-specific, and the regression-safe adversary
 >   baseline is just String#hash-0-arg + Hash-key usage.
-> - **M4c3 (next, FIRST behavior change — registration refuse + materialization
->   redirect, together):** keep the NARROW registration refuse AND, at the
->   materializer / bare-request resolution, when a bare 0-arg family request would
->   bind an untyped required>0 body and an inherited 0-arg method exists, bind/emit
->   the inherited 0-arg monomorph (e.g. Object#hash) instead. No name minting.
->   Full DoD as before + adversary = String#hash-0-arg & Hash(String)/Hash(Tuple)
->   stay green (bonus if Tuple/Reference/Slice 0-arg also get fixed). Backend
->   null-pad -> fail-loud is the separate safety-net (M0/M4d).
+> - **M4c3 (landed — FIRST behavior change; VERIFIED fix of the primary
+>   arity-shadow, no regression):** coupled fix.
+>   (1) Registration: should_register_base_name? refuses the NARROW bare-slot claim
+>   (untyped + required>0 + full!=base + inherited 0-arg exists), freeing the bare
+>   family slot. (2) Materializer: in lower_function_if_needed_impl, a BARE
+>   instance request with lookup_expected_param_count==0 whose current candidate is
+>   an untyped required>0 body (no splat) and for which an inherited 0-arg target
+>   exists is REDIRECTED to that inherited target (bare_inherited_exact, e.g.
+>   Object#hash). No name minting; uses the existing inherited target path.
+>   RESULTS (verified on recreated reducers): h_struct (Hash(Foo,Int32)) now exits 0
+>   and prints 2 (the s2b-relevant path); `{1,2}.hash` and `Slice(UInt8).new(2).hash`
+>   went 139 -> 0 (bonus); scoped Foo$Hhash hasher NULLPAD 1 -> 0;
+>   BASE_SLOT_REFUSED Foo#hash=1, MAT_BINDING_REDIRECT Foo#hash=1,
+>   MAT_BINDING_DANGEROUS Foo#hash=0; combined 31/31; oracle clean + no runaway
+>   (RESOLUTION_MISMATCH=0); no regression (String#hash, Hash(String)/Hash(Tuple)
+>   usage stay 0). The primary arity-shadow null-pad is RESOLVED.
+>   REMAINING (separate secondary bug, NOT arity-shadow): a DIRECT 0-arg `.hash`
+>   that computes via Object#hash -> `hash(Crystal::Hasher.new).result` now aborts
+>   134 with `STUB CALLED: UInt64$Hresult` — the `.result` call dispatches to a
+>   UInt64 stub (the chained @x.hash(hasher) return is mis-typed). This hits
+>   `/tmp/h_direct_hash.cr` (f.hash) and `R.new.hash`, but NOT the Hash-key path
+>   (h_struct prints 2). It is the long-documented secondary `.result` bug, now the
+>   sole remaining blocker on direct `.hash` and the next target (M4d).
+> - **M4d (next):** fix the secondary `STUB CALLED: UInt64$Hresult` — the return
+>   type of the hash-protocol chain so Object#hash's `.result` dispatches to
+>   Crystal::Hasher#result, not the numeric stub. Then the backend null-pad ->
+>   fail-loud safety-net.
 > - **M4d (after M4c green):** narrow should_register_base_name? for $arityN untyped
 >   required defs, with population instrumentation first (do NOT make this the first
 >   behavior step — banning bare alias for all untyped defs risks breaking generic
