@@ -615,6 +615,25 @@ spread across `function_full_name_for_def` / `mangle_function_name` / the
 > short-TypeRef SHORT->FQ delegation to the sibling key-only methods (find_entry
 > family, and key_hash if it surfaces), passing the ptr key as-is (NOT casting to
 > i32 like the u32-alias path) and converting the return.
+>
+> **M4g (landed — behavior) — short TypeRef Hash key-only siblings SHORT->FQ:**
+> `emit_short_typeref_hash_keyonly_delegate_override` covers the (self, key) family
+> {key_hash, find_entry, find_entry_with_index, find_entry_with_index_linear_scan}
+> with the same short->FQ approach as M4f (pure-short name, existing FQ counterpart,
+> matching key LLVM type, ptr key passed as-is, return bridged via store/load when
+> the LLVM names differ). Verified: M4d reducers green, combined 31/31, and s2b's
+> `Hash(MIR::TypeRef)#find_entry_with_index -> __vdispatch__Object#hash` trap is GONE
+> (the whole short-TypeRef Hash hash-vdispatch family — upsert + key-only — is now
+> resolved). With M4f, s2b passes all the short-TypeRef Hash hash traps.
+> NEW deeper crash (classified as M4h, NOT a regression and NOT a hash issue): s2b
+> now SIGSEGVs (EXC_BAD_ACCESS at a packed garbage address like 0x206c694e0000000e)
+> in `Adamas::HIR::AstToHir#union_all_reference_types?(MIR::UnionDescriptor)`, still
+> at module register idx=3/52 / register_union_descriptor. This is the documented
+> union_all_reference_types? / concatenated-32-bit-garbage family (see
+> memory/s2b_hasher_null_self_blocker.md and LANDMARKS) — a reference-type-analysis
+> pointer bug, independent of the Hash hash dispatch. M4h is its own investigation;
+> the memory notes prior union_all_reference_types? fixes risked regressions, so it
+> needs care.
 > - **M4d (after M4c green):** narrow should_register_base_name? for $arityN untyped
 >   required defs, with population instrumentation first (do NOT make this the first
 >   behavior step — banning bare alias for all untyped defs risks breaking generic

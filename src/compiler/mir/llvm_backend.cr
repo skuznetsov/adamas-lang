@@ -10594,6 +10594,10 @@ module Adamas::MIR
         return true
       end
 
+      if emit_short_typeref_hash_keyonly_delegate_override(func, mangled)
+        return true
+      end
+
       if emit_hash_string_linear_scan_override(func, mangled)
         return true
       end
@@ -11932,6 +11936,57 @@ module Adamas::MIR
       emit_raw "define #{ret_llvm} @#{mangled}(ptr %self, #{key_llvm} %key, #{val_llvm} %value) {\n"
       emit_raw "entry:\n"
       emit_raw "  %raw = call #{canonical_ret} @#{fq}(ptr %self, #{tgt_key_llvm} %key, #{tgt_val_llvm} %value)\n"
+      if canonical_ret == ret_llvm
+        emit_raw "  ret #{ret_llvm} %raw\n"
+      else
+        emit_raw "  %ret.slot = alloca #{canonical_ret}, align 8\n"
+        emit_raw "  store #{canonical_ret} %raw, ptr %ret.slot\n"
+        emit_raw "  %ret = load #{ret_llvm}, ptr %ret.slot\n"
+        emit_raw "  ret #{ret_llvm} %ret\n"
+      end
+      emit_raw "}\n\n"
+      true
+    end
+
+    # M4g: the key-only siblings of the M4f upsert case. The same short
+    # `Hash(MIR::TypeRef|HIR::TypeRef, V)` whose #upsert was delegated also emits
+    # #key_hash / #find_entry / #find_entry_with_index /
+    # #find_entry_with_index_linear_scan, each inlining the broken
+    # Object#hash(Crystal::Hasher) vdispatch. These are (self, key) methods, so
+    # delegate to the FQ specialization passing the ptr key AS-IS (NOT cast to i32
+    # like the u32-alias path — the TypeRef key is a ptr-to-wrapper), bridging the
+    # return via store/load only when the LLVM return type names differ. Same guards
+    # as M4f: pure-short name, existing FQ counterpart, matching key LLVM type.
+    private def emit_short_typeref_hash_keyonly_delegate_override(func : Function, mangled : String) : Bool
+      return false unless mangled.includes?("Hash$L")
+      is_keyonly = mangled.includes?("$Hkey_hash$$") ||
+                   mangled.includes?("$Hfind_entry$$") ||
+                   mangled.includes?("$Hfind_entry_with_index$$") ||
+                   mangled.includes?("$Hfind_entry_with_index_linear_scan$$")
+      return false unless is_keyonly
+      return false unless func.params.size == 2
+      short_typeref = (mangled.includes?("MIR$CCTypeRef") && !mangled.includes?("Adamas$CCMIR$CCTypeRef")) ||
+                      (mangled.includes?("HIR$CCTypeRef") && !mangled.includes?("Adamas$CCHIR$CCTypeRef"))
+      return false unless short_typeref
+      return false if mangled.includes?("Adamas$CC")
+
+      fq = mangled.gsub("MIR$CC", "Adamas$CCMIR$CC").gsub("HIR$CC", "Adamas$CCHIR$CC")
+      return false if fq == mangled
+      target_func = @module.functions.find { |f| mangle_function_name(f.name) == fq }
+      return false unless target_func
+      return false unless target_func.params.size == 2
+
+      key_llvm = @type_mapper.llvm_type(func.params[1].type)
+      tgt_key_llvm = @type_mapper.llvm_type(target_func.params[1].type)
+      return false unless key_llvm == tgt_key_llvm
+
+      ret_llvm = @type_mapper.llvm_type(func.return_type)
+      canonical_ret = @type_mapper.llvm_type(target_func.return_type)
+
+      emit_raw "; #{mangled} — M4g delegate short TypeRef Hash key-only method to FQ specialization\n"
+      emit_raw "define #{ret_llvm} @#{mangled}(ptr %self, #{key_llvm} %key) {\n"
+      emit_raw "entry:\n"
+      emit_raw "  %raw = call #{canonical_ret} @#{fq}(ptr %self, #{tgt_key_llvm} %key)\n"
       if canonical_ret == ret_llvm
         emit_raw "  ret #{ret_llvm} %raw\n"
       else
