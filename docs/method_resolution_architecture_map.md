@@ -439,13 +439,31 @@ spread across `function_full_name_for_def` / `mangle_function_name` / the
 >   the bare slot, so no 0-arg monomorph is generated there). So M4c's precise
 >   signature is "untyped-param def claims the bare slot AND the inherited 0-arg
 >   monomorph is consequently absent" — NOT "any untyped base" and NOT the raw 216.
-> - **M4c (REDIRECTED):** not at HIR call binding/emit (proven empty by M4b/M4b').
->   Target materialization + registration: stop the untyped `hash(hasher)` def from
->   claiming the bare `Foo#hash` slot (so the inherited 0-arg Object#hash monomorph
->   is generated there), via should_register_base_name?/lower_function_if_needed_impl,
->   with population instrumentation first. Still: no call-time name minting; choose
->   existing registered keys. The backend null-pad becoming fail-loud (M0/M4d) is the
->   safety net that converts any residual arity-shadow into a hard error.
+> - **M4c1 (landed, diagnostic-only):** narrow-predicate probe. Adds
+>   `inherited_zero_arg_method_exists?(base_name)` (checks Object directly + the
+>   ancestor chain for a 0-arg method of the same name) and splits the SHADOW log
+>   into BASE_SLOT_SHADOW_NARROW (untyped + required>0 + full!=base + an inherited
+>   0-arg method exists — the M4c refuse target) vs BASE_SLOT_SHADOW_BROAD (benign;
+>   must NOT be perturbed). Diagnostic-only: combined 31/31, reducer 139, NULLPAD 1.
+>   FINDING: NARROW=100 (vs BROAD 2289), Foo#hash included; the NARROW set is 99
+>   `hash` + 1 `not_nil!`. CAVEAT: NARROW still contains stdlib `hash` families that
+>   WORK at runtime (String#hash, Reference#hash, Tuple#hash, Slice#hash,
+>   Pointer#hash, …). So "untyped + inherited-0-arg-exists" does NOT separate the
+>   crashing Foo#hash from the working String#hash — the real crash trigger is a
+>   0-arg `.hash` CALL on the value (which `puts f.hash` does for Foo but the corpus
+>   never does for String), not the registration. Refusing the bare claim for all
+>   100 is plausibly safe (the bare slot becomes the correct inherited 0-arg
+>   Object#hash monomorph for every one of them) but MUST be empirically validated,
+>   not assumed.
+> - **M4c2 (next, FIRST behavior change):** flip should_register_base_name? to refuse
+>   the bare-slot claim for the NARROW set, then run the full DoD: h_direct_hash &
+>   h_struct exit 0 (no segfault), scoped Foo$Hhash hasher NULLPAD -> 0,
+>   BASE_SLOT_SHADOW_NARROW.*Foo#hash gone (or BASE_SLOT_REFUSED), MAT_BINDING_
+>   DANGEROUS.*Foo#hash gone, combined 31/31, oracle clean, AND an adversary sample
+>   of the other ~99 NARROW families to confirm no benign regression (especially
+>   that String/Reference/Tuple hashing still works). If any benign family breaks,
+>   narrow the predicate further rather than forcing it. Backend null-pad ->
+>   fail-loud lands as a separate small safety-net commit (M0/M4d).
 > - **M4d (after M4c green):** narrow should_register_base_name? for $arityN untyped
 >   required defs, with population instrumentation first (do NOT make this the first
 >   behavior step — banning bare alias for all untyped defs risks breaking generic
