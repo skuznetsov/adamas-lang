@@ -593,6 +593,28 @@ spread across `function_full_name_for_def` / `mangle_function_name` / the
 > the struct-i32-field bypass), passing key/value as-is (ptr/ptr) and converting the
 > return union struct name. M4f (behavior) follows after design review; each
 > iteration is a ~345s s2b rebuild.
+>
+> **M4f (landed — behavior) — short TypeRef Hash#upsert SHORT->FQ delegation:**
+> `emit_short_typeref_hash_upsert_delegate_override` (before generic emission). For a
+> pure-short `Hash(MIR::TypeRef|HIR::TypeRef, V)#upsert` it canonicalizes the
+> namespace tokens (`MIR$CC`->`Adamas$CCMIR$CC`, `HIR$CC`->`Adamas$CCHIR$CC`),
+> requires the FQ counterpart to exist with matching key/value LLVM types
+> (ptr/ptr), calls the FQ upsert with the ptr self/key/value unchanged, and bridges
+> the differently-named-but-same-layout return union via an explicit stack
+> store/load. NOT a UInt32 delegation; NOT a generic vdispatch fallback. Verified:
+> M4d reducers green (f.hash exit 0, Hash(Foo)=>2), combined 31/31, and the s2b
+> **#upsert trap is GONE** — the lldb backtrace no longer shows
+> `Hash(MIR::TypeRef,...)#upsert` calling the Object#hash vdispatch.
+> NEW deeper crash (classified as M4g, NOT a regression): s2b now traps at the SAME
+> `__vdispatch__Object#hash(Crystal::Hasher)` but from
+> `Hash(MIR::TypeRef, MIR::UnionDescriptor)#find_entry_with_index` — a SIBLING short
+> Hash method that also inlines the broken hash. The u32-alias delegation covers the
+> whole method family (find_entry / find_entry_with_index /
+> find_entry_with_index_linear_scan / upsert); M4f deliberately did upsert only to
+> validate the approach. M4f's approach is now validated, so M4g extends the
+> short-TypeRef SHORT->FQ delegation to the sibling key-only methods (find_entry
+> family, and key_hash if it surfaces), passing the ptr key as-is (NOT casting to
+> i32 like the u32-alias path) and converting the return.
 > - **M4d (after M4c green):** narrow should_register_base_name? for $arityN untyped
 >   required defs, with population instrumentation first (do NOT make this the first
 >   behavior step — banning bare alias for all untyped defs risks breaking generic

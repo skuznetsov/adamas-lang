@@ -10590,6 +10590,10 @@ module Adamas::MIR
         return true
       end
 
+      if emit_short_typeref_hash_upsert_delegate_override(func, mangled)
+        return true
+      end
+
       if emit_hash_string_linear_scan_override(func, mangled)
         return true
       end
@@ -11885,6 +11889,59 @@ module Adamas::MIR
       end
 
       false
+    end
+
+    # M4f: a SHORT-namespace `Hash(MIR::TypeRef|HIR::TypeRef, V)#upsert` inlines the
+    # broken `Object#hash(Crystal::Hasher)` vdispatch (s2b trap), whereas the
+    # fully-qualified `Adamas::MIR/HIR::TypeRef` specialization hashes the id
+    # correctly (struct-i32-field bypass). M4f0 proved the two have identical
+    # key/value LLVM types (ptr/ptr) — only the return Hash::Entry union STRUCT NAME
+    # differs (layout-identical). Delegate the short upsert to the FQ specialization,
+    # passing the ptr self/key/value unchanged and bridging the differently-named
+    # return union via an explicit stack store/load (named structs are distinct LLVM
+    # types even with identical layout, so the conversion must be explicit). Scoped
+    # to #upsert only, pure-short names, and an existing FQ counterpart with matching
+    # key/value LLVM types. NOT a UInt32 delegation (the key is a ptr-to-wrapper, not
+    # i32) and NOT a generic vdispatch fallback.
+    private def emit_short_typeref_hash_upsert_delegate_override(func : Function, mangled : String) : Bool
+      return false unless func.params.size >= 3
+      return false unless mangled.includes?("$Hupsert$$") && mangled.includes?("Hash$L")
+      short_typeref = (mangled.includes?("MIR$CCTypeRef") && !mangled.includes?("Adamas$CCMIR$CCTypeRef")) ||
+                      (mangled.includes?("HIR$CCTypeRef") && !mangled.includes?("Adamas$CCHIR$CCTypeRef"))
+      return false unless short_typeref
+      # Only pure-short compiler names, so canonicalizing the namespace tokens cannot
+      # double-prefix an already-qualified token.
+      return false if mangled.includes?("Adamas$CC")
+
+      fq = mangled.gsub("MIR$CC", "Adamas$CCMIR$CC").gsub("HIR$CC", "Adamas$CCHIR$CC")
+      return false if fq == mangled
+      target_func = @module.functions.find { |f| mangle_function_name(f.name) == fq }
+      return false unless target_func
+      return false unless target_func.params.size >= 3
+
+      key_llvm = @type_mapper.llvm_type(func.params[1].type)
+      val_llvm = @type_mapper.llvm_type(func.params[2].type)
+      tgt_key_llvm = @type_mapper.llvm_type(target_func.params[1].type)
+      tgt_val_llvm = @type_mapper.llvm_type(target_func.params[2].type)
+      return false unless key_llvm == tgt_key_llvm && val_llvm == tgt_val_llvm
+
+      ret_llvm = @type_mapper.llvm_type(func.return_type)
+      canonical_ret = @type_mapper.llvm_type(target_func.return_type)
+
+      emit_raw "; #{mangled} — M4f delegate short TypeRef Hash#upsert to FQ specialization\n"
+      emit_raw "define #{ret_llvm} @#{mangled}(ptr %self, #{key_llvm} %key, #{val_llvm} %value) {\n"
+      emit_raw "entry:\n"
+      emit_raw "  %raw = call #{canonical_ret} @#{fq}(ptr %self, #{tgt_key_llvm} %key, #{tgt_val_llvm} %value)\n"
+      if canonical_ret == ret_llvm
+        emit_raw "  ret #{ret_llvm} %raw\n"
+      else
+        emit_raw "  %ret.slot = alloca #{canonical_ret}, align 8\n"
+        emit_raw "  store #{canonical_ret} %raw, ptr %ret.slot\n"
+        emit_raw "  %ret = load #{ret_llvm}, ptr %ret.slot\n"
+        emit_raw "  ret #{ret_llvm} %ret\n"
+      end
+      emit_raw "}\n\n"
+      true
     end
 
     private def emit_hash_string_linear_scan_override(func : Function, mangled : String) : Bool
