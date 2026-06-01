@@ -574,6 +574,25 @@ spread across `function_full_name_for_def` / `mangle_function_name` / the
 > UPSERT path for the short `MIR::TypeRef`/`HIR::TypeRef` alias — either delegate the
 > short upsert to the FQ struct specialization, or emit a direct id-field hash in
 > upsert — without a generic vdispatch fallback and without minting names.
+>
+> **M4f0 (landed, diagnostic-only) — LAYOUT ANSWER:** an env-gated UPSERT_PROBE
+> (`ADAMAS_UPSERT_PROBE`) at the backend function-emission dispatcher logs every
+> `Hash(...TypeRef...)#upsert`'s key/value/return LLVM types + short-vs-FQ. From the
+> s2b build:
+> - crashing SHORT `Hash(MIR::TypeRef, MIR::UnionDescriptor)#upsert`: key=**ptr**,
+>   val=ptr, ret `Hash::Entry(MIR::TypeRef, MIR::UnionDescriptor)` union.
+> - FQ `Hash(Adamas::MIR::TypeRef, Adamas::MIR::UnionDescriptor)#upsert`: key=**ptr**,
+>   val=ptr, ret `Hash::Entry(Adamas::MIR::TypeRef, Adamas::MIR::UnionDescriptor)` union.
+> - the existing u32-alias delegation target (HIR::ValueId etc.): key=**i32**.
+> CONCLUSION: short and FQ TypeRef Hash specializations have IDENTICAL key/value LLVM
+> types (ptr/ptr) — only the return Hash::Entry union STRUCT NAME differs
+> (layout-identical entry: TypeRef-ptr key + value-ptr). The TypeRef key is a
+> ptr-to-wrapper, NOT i32, so delegating it to the UInt32 upsert (the u32-alias path)
+> would be WRONG. Safe M4f = a SHORT->FQ delegation: call the FQ
+> `Hash(Adamas::MIR::TypeRef, ...)` method (whose key_hash already hashes the id via
+> the struct-i32-field bypass), passing key/value as-is (ptr/ptr) and converting the
+> return union struct name. M4f (behavior) follows after design review; each
+> iteration is a ~345s s2b rebuild.
 > - **M4d (after M4c green):** narrow should_register_base_name? for $arityN untyped
 >   required defs, with population instrumentation first (do NOT make this the first
 >   behavior step — banning bare alias for all untyped defs risks breaking generic

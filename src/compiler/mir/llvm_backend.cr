@@ -10571,6 +10571,21 @@ module Adamas::MIR
         return true
       end
 
+      # M4f0 (diagnostic-only; docs/method_resolution_architecture_map.md): layout
+      # probe for Hash(...TypeRef...)#upsert. Logs the short-vs-FQ key namespace and
+      # the key/value/return LLVM types so the M4f fix can decide whether the short
+      # MIR/HIR::TypeRef upsert is layout-compatible with the FQ specialization
+      # (safe to delegate) or needs a direct id-field-hash override. Inert unless
+      # ADAMAS_UPSERT_PROBE; emits nothing into the IR.
+      if ENV.has_key?("ADAMAS_UPSERT_PROBE") && mangled.includes?("$Hupsert$$") &&
+         mangled.includes?("TypeRef") && mangled.includes?("Hash$L")
+        m4f0_key = func.params.size >= 2 ? @type_mapper.llvm_type(func.params[1].type) : "?"
+        m4f0_val = func.params.size >= 3 ? @type_mapper.llvm_type(func.params[2].type) : "?"
+        m4f0_ret = @type_mapper.llvm_type(func.return_type)
+        m4f0_fq = mangled.includes?("Adamas$CC") ? 1 : 0
+        STDERR.puts "[UPSERT_PROBE] fq=#{m4f0_fq} key=#{m4f0_key} val=#{m4f0_val} ret=#{m4f0_ret} params=#{func.params.size} mangled=#{mangled}"
+      end
+
       if emit_compiler_u32_alias_hash_delegate_override(func, mangled)
         return true
       end
