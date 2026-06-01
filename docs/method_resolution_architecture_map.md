@@ -549,6 +549,31 @@ spread across `function_full_name_for_def` / `mangle_function_name` / the
 > Tuple/Reference/Slice `.hash` all work. Remaining migration follow-ups
 > (independent of this blocker): backend null-pad -> fail-loud safety-net (M0/M4d
 > guard); full M3 routing of CallShape; the broader resolver-identity promotion.
+>
+> ### s2b next-blocker (post-`.hash`-fix): the MIR::TypeRef Hash#upsert vdispatch trap
+> Re-bootstrapping s2b with the M4c3+M4d stage1 confirmed the `.hash` null-self
+> blocker is gone (s2b now reaches module register idx=3/52 / register_union_descriptor),
+> but a NEW trap surfaced: EXIT 133 `brk #1` in
+> `__vdispatch__Object$Hhash$$Crystal$CCHasher$$T2159`, called from
+> `Hash(MIR::TypeRef, MIR::UnionDescriptor)#upsert` (frame #1; NO key_hash frame).
+> **M4e ATTEMPT (reverted): extending the key_hash delegate (concrete_value_key_hash_delegate_target)
+> with a canonical-FQ-name fallback did NOT fix it** — combined 31/31 and the
+> M4d reducers stayed green, but s2b still trapped at the SAME upsert vdispatch.
+> Localization: (1) the trap is in `#upsert`'s INLINED hash, and the key_hash
+> override is gated on `$Hkey_hash$$`, so the key_hash fix never reaches upsert;
+> (2) the existing UPSERT alias-delegation (llvm_backend.cr:11846,
+> `$Hupsert$$#{alias_token}_` -> delegate to the canonical `UInt32` upsert by casting
+> the key to i32) only covers u32-ALIAS keys (HIR::ValueId etc.), NOT the i32-WRAPPER
+> STRUCT key `MIR::TypeRef` (a struct with an `id` field); (3) the SHORT `MIR::TypeRef`
+> produces a separate Hash specialization from the fully-qualified
+> `Adamas::MIR::TypeRef` (whose key_hash does get the struct-i32-field bypass), and
+> the KEYHASH probe fired only for `canonical=Tuple` cases — suggesting the short
+> instantiation's key_type.name may itself be short, so a key_type.name-derived
+> canonical target is a no-op there. FIX DIRECTION (needs design review; each
+> iteration costs a ~345s s2b rebuild): extend the i32-wrapper-struct bypass to the
+> UPSERT path for the short `MIR::TypeRef`/`HIR::TypeRef` alias — either delegate the
+> short upsert to the FQ struct specialization, or emit a direct id-field hash in
+> upsert — without a generic vdispatch fallback and without minting names.
 > - **M4d (after M4c green):** narrow should_register_base_name? for $arityN untyped
 >   required defs, with population instrumentation first (do NOT make this the first
 >   behavior step — banning bare alias for all untyped defs risks breaking generic
