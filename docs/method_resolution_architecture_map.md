@@ -499,10 +499,34 @@ spread across `function_full_name_for_def` / `mangle_function_name` / the
 >   `/tmp/h_direct_hash.cr` (f.hash) and `R.new.hash`, but NOT the Hash-key path
 >   (h_struct prints 2). It is the long-documented secondary `.result` bug, now the
 >   sole remaining blocker on direct `.hash` and the next target (M4d).
-> - **M4d (next):** fix the secondary `STUB CALLED: UInt64$Hresult` — the return
->   type of the hash-protocol chain so Object#hash's `.result` dispatches to
->   Crystal::Hasher#result, not the numeric stub. Then the backend null-pad ->
->   fail-loud safety-net.
+> - **M4d (localized; fix pending GPT design review):** the secondary
+>   `STUB CALLED: UInt64$Hresult`. LOCALIZED from the generated .ll:
+>   - `@Foo$Hhash` (the redirected Object#hash 0-arg monomorph for Foo) body:
+>     ```
+>     %r2 = call ptr @Foo$Hhash$$Crystal$CCHasher(ptr %self, ptr %r1)  ; returns ptr (Hasher)
+>     call void @UInt64$Hresult(ptr %r2)                              ; .result -> UInt64 stub (WRONG); %r2 IS a Hasher ptr
+>     ret i64 0                                                        ; bogus
+>     ```
+>   - The resolved `@Foo$Hhash$$Crystal$CCHasher` genuinely RETURNS ptr (Hasher):
+>     its body is `@x.hash(hasher)` -> `@UInt32$Hhash$$Crystal$CCHasher(...)` which
+>     returns ptr. So at the function level the chain correctly threads the hasher.
+>   - The bug is purely the `.result` CALLSITE type inference inside the Object#hash
+>     monomorph body: the inner `hash(hasher)` expression is typed UInt64 (not
+>     Crystal::Hasher), so `.result` dispatches to UInt64#result instead of
+>     Crystal::Hasher#result.
+>   - DISCRIMINATOR: types whose Object#hash monomorph calls the inner hash via the
+>     `__vdispatch__Object$Hhash$$Crystal$CCHasher` path (Object/Struct/Tuple/
+>     UInt32/Exception::CallStack) infer the return as Crystal::Hasher -> correct
+>     `Crystal$CCHasher$Hresult`. Types whose monomorph calls a DIRECT
+>     `@<T>$Hhash$$Crystal$CCHasher` (Foo, Random::PCG32) mis-infer the inner-hash
+>     return as UInt64 -> `UInt64$Hresult` stub. So the DIRECT-call return-type
+>     inference for the inner `hash(hasher)` inside the monomorphized Object#hash
+>     body drops the resolved function's actual ptr/Hasher return and substitutes
+>     UInt64. FIX DIRECTION: when lowering the inner `hash(hasher)` in the Object#hash
+>     monomorph as a direct call, type the call expression with the resolved
+>     function's return type (Crystal::Hasher) so `.result` dispatches correctly.
+>     Hits direct `.hash` (f.hash, R.new.hash); does NOT hit the Hash-key path
+>     (h_struct prints 2). Backend null-pad -> fail-loud is the later safety-net.
 > - **M4d (after M4c green):** narrow should_register_base_name? for $arityN untyped
 >   required defs, with population instrumentation first (do NOT make this the first
 >   behavior step — banning bare alias for all untyped defs risks breaking generic
