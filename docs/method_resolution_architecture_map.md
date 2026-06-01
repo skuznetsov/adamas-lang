@@ -527,6 +527,28 @@ spread across `function_full_name_for_def` / `mangle_function_name` / the
 >     function's return type (Crystal::Hasher) so `.result` dispatches correctly.
 >     Hits direct `.hash` (f.hash, R.new.hash); does NOT hit the Hash-key path
 >     (h_struct prints 2). Backend null-pad -> fail-loud is the later safety-net.
+> - **M4d (landed — VERIFIED; the arity-shadow hash blocker is now FULLY fixed):**
+>   `get_function_return_type` gains a scoped hash-protocol rule. For a TYPED
+>   hash-protocol name (`hash_protocol_typed_name?` = method short name "hash" + a
+>   Crystal::Hasher suffix, i.e. name != base_name), the return type is
+>   Crystal::Hasher, set on the typed name only. This stops the typed
+>   `hash(hasher)` return from falling back to the bare `#hash` base-return cache
+>   (UInt64), which had made Object#hash's `hash(hasher).result` dispatch `.result`
+>   to UInt64#result (the stub). The bare `#hash` (name == base_name) is untouched
+>   and keeps its UInt64 return, and @function_base_return_types is not polluted.
+>   RESULTS: `/tmp/h_direct_hash.cr` (f.hash) now exits 0 and prints a real hash;
+>   `R.new.hash`, `{1,2}.hash`, `Slice(UInt8).new(2).hash` exit 0; h_struct still
+>   prints 2; String#hash and Hash(String)/Hash(Tuple) usage stay 0; scoped
+>   Foo$Hhash hasher NULLPAD = 0; combined 31/31; oracle clean, no runaway
+>   (oracle-source RESINPUT_SEEN 141447 ~ baseline, CALLSHAPE_MISMATCH=0). The
+>   STUB CALLED: UInt64$Hresult is gone.
+>
+> **STATUS: the s2b arity-shadow `.hash` null-self blocker is RESOLVED at source
+> level** (M4c3 registration-refuse + materializer-redirect for the bare 0-arg
+> slot, M4d hash-protocol typed return). Direct `.hash`, `Hash(UserType)` keys, and
+> Tuple/Reference/Slice `.hash` all work. Remaining migration follow-ups
+> (independent of this blocker): backend null-pad -> fail-loud safety-net (M0/M4d
+> guard); full M3 routing of CallShape; the broader resolver-identity promotion.
 > - **M4d (after M4c green):** narrow should_register_base_name? for $arityN untyped
 >   required defs, with population instrumentation first (do NOT make this the first
 >   behavior step — banning bare alias for all untyped defs risks breaking generic
