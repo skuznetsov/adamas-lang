@@ -398,10 +398,31 @@ spread across `function_full_name_for_def` / `mangle_function_name` / the
 >   an initial M4b run read reducer EXIT 0 / NULLPAD 0 — traced to /tmp being wiped
 >   mid-session, the reducers were recreated and the red baseline 139/NULLPAD 1
 >   restored before trusting any reducer signal.)
-> - **M4c (scoped behavior):** fix ONLY the arity-shadow class — when arg_count <
->   required for the selected/materialized def AND a compatible inherited zero-arg
->   candidate exists, bind emit/materialize to that existing inherited candidate.
->   No new names minted, no per-call type names synthesized.
+> - **M4b' (landed, diagnostic-only):** an EMIT_BINDING probe at the main lower_call
+>   emit chokepoint (where every resolved call becomes a Call with emit_method_name
+>   + final args — both target and arg-count known), env-gated by
+>   ADAMAS_LOWER_BINDING_ASSERT, with LOWER_BINDING_DANGEROUS = emit target's def
+>   needs more required args than supplied, no splat. Verified diagnostic-only:
+>   combined 31/31, reducer 139, NULLPAD 1, RESOLUTION parity 0.
+>   **ROUTE FINDING (refutes M4c-at-HIR entirely):** EMIT_BINDING_SEEN=7370 (5524
+>   from __adamas_main) but LOWER_BINDING_DANGEROUS=0, and the ONLY Foo emit at this
+>   chokepoint is the INTERNAL `@x.hash(hasher)` (caller=Foo#hash -> UInt32#hash).
+>   There is NO `emit=Foo#hash` from __adamas_main here, yet the NULLPAD probe shows
+>   __adamas_main calling Foo$Hhash with 1 arg (idx 1/2 hasher). Conclusion: the
+>   arity-shadow danger is NOT representable at HIR call-binding OR emit — both are
+>   arity-clean. It is realized at MIR/backend, when the emitted bare name binds to
+>   the 2-param materialized @Foo$Hhash body and the backend null-pads the missing
+>   hasher. So the fix levers are MATERIALIZATION (don't bind the 2-param body to the
+>   bare Foo#hash slot a 0-arg call hits / also emit the inherited Object#hash
+>   monomorph), REGISTRATION (should_register_base_name?), and BACKEND fail-loud —
+>   NOT an HIR call-site M4c.
+> - **M4c (REDIRECTED):** not at HIR call binding/emit (proven empty by M4b/M4b').
+>   Target materialization + registration: stop the untyped `hash(hasher)` def from
+>   claiming the bare `Foo#hash` slot (so the inherited 0-arg Object#hash monomorph
+>   is generated there), via should_register_base_name?/lower_function_if_needed_impl,
+>   with population instrumentation first. Still: no call-time name minting; choose
+>   existing registered keys. The backend null-pad becoming fail-loud (M0/M4d) is the
+>   safety net that converts any residual arity-shadow into a hard error.
 > - **M4d (after M4c green):** narrow should_register_base_name? for $arityN untyped
 >   required defs, with population instrumentation first (do NOT make this the first
 >   behavior step — banning bare alias for all untyped defs risks breaking generic
