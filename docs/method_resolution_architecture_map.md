@@ -416,6 +416,29 @@ spread across `function_full_name_for_def` / `mangle_function_name` / the
 >   bare Foo#hash slot a 0-arg call hits / also emit the inherited Object#hash
 >   monomorph), REGISTRATION (should_register_base_name?), and BACKEND fail-loud —
 >   NOT an HIR call-site M4c.
+> - **M4c0 (landed, diagnostic-only):** the materialization/registration probes that
+>   finally CAUGHT the route (unlike the empty HIR M4b/M4b'). In
+>   should_register_base_name?: BASE_SLOT_CLAIM / BASE_SLOT_SHADOW (an untyped-param
+>   def with required>0 claiming the bare family slot). In lower_function_if_needed_impl
+>   at the override decision: MAT_BINDING_SEEN / MAT_BINDING_DANGEROUS (a BARE
+>   requested family name materializing a body whose required > the expected arg
+>   count, no splat). Env-gated by ADAMAS_REGMAT_ASSERT; diagnostic-only (combined
+>   31/31, reducer 139, NULLPAD 1).
+>   **CONFIRMED ROUTE for Foo#hash:** BASE_SLOT_SHADOW `base=Foo#hash
+>   full=Foo#hash$arity1 params=1 untyped=1` (the untyped hash(hasher) claims the
+>   bare slot) + MAT_BINDING_DANGEROUS `requested=Foo#hash materialize=Foo#hash
+>   req=1 expected=0 bare=1` (the 0-arg bare request materializes the 1-required
+>   body). This is the registration+materialization origin the backend later
+>   null-pads.
+>   **POPULATION CAVEAT (do not blanket-fix):** BASE_SLOT_SHADOW=2389,
+>   MAT_BINDING_DANGEROUS=216 — broad, and most are benign (String#hash,
+>   Reference#hash, Tuple#hash also appear yet work at runtime). The discriminator
+>   between the crashing Foo#hash and the working String#hash is: String's
+>   hash(hasher) is TYPED (mangles to $Crystal::Hasher, leaving the bare slot free
+>   for the inherited 0-arg Object#hash monomorph), whereas Foo's is UNTYPED (claims
+>   the bare slot, so no 0-arg monomorph is generated there). So M4c's precise
+>   signature is "untyped-param def claims the bare slot AND the inherited 0-arg
+>   monomorph is consequently absent" — NOT "any untyped base" and NOT the raw 216.
 > - **M4c (REDIRECTED):** not at HIR call binding/emit (proven empty by M4b/M4b').
 >   Target materialization + registration: stop the untyped `hash(hasher)` def from
 >   claiming the bare `Foo#hash` slot (so the inherited 0-arg Object#hash monomorph
