@@ -455,15 +455,35 @@ spread across `function_full_name_for_def` / `mangle_function_name` / the
 >   100 is plausibly safe (the bare slot becomes the correct inherited 0-arg
 >   Object#hash monomorph for every one of them) but MUST be empirically validated,
 >   not assumed.
-> - **M4c2 (next, FIRST behavior change):** flip should_register_base_name? to refuse
->   the bare-slot claim for the NARROW set, then run the full DoD: h_direct_hash &
->   h_struct exit 0 (no segfault), scoped Foo$Hhash hasher NULLPAD -> 0,
->   BASE_SLOT_SHADOW_NARROW.*Foo#hash gone (or BASE_SLOT_REFUSED), MAT_BINDING_
->   DANGEROUS.*Foo#hash gone, combined 31/31, oracle clean, AND an adversary sample
->   of the other ~99 NARROW families to confirm no benign regression (especially
->   that String/Reference/Tuple hashing still works). If any benign family breaks,
->   narrow the predicate further rather than forcing it. Backend null-pad ->
->   fail-loud lands as a separate small safety-net commit (M0/M4d).
+> - **M4c2 (ATTEMPTED + REVERTED — registration-refuse alone is insufficient):**
+>   flipped should_register_base_name? to refuse the bare-slot claim for the NARROW
+>   set. Result: BASE_SLOT_REFUSED fired for Foo#hash (the untyped hash(hasher) no
+>   longer claims the bare slot), but the crash was NOT fixed — h_direct_hash still
+>   segfaulted 139, NULLPAD Foo$Hhash hasher still 1, MAT_BINDING_DANGEROUS Foo#hash
+>   still 1. So freeing the registration slot does NOT cause the inherited 0-arg
+>   Object#hash monomorph to be generated there; the MATERIALIZER
+>   (lower_function_if_needed_impl) still resolves the bare Foo#hash request to the
+>   untyped req=1 def. Reverted (revertible probe). This empirically confirms the
+>   coupled #1-naming + #2-resolution structure: the fix needs BOTH the registration
+>   refuse AND a materialization-level redirect (when the bare 0-arg family request
+>   hits a refused/required-untyped slot, materialize/bind the inherited 0-arg
+>   Object#hash monomorph instead of the untyped body).
+>   ADVERSARY DATA gathered en route (baseline, pre-flip): 0-arg `.hash` already
+>   crashes for MANY types beyond Foo — `{1,2}.hash` (Tuple), `R.new.hash` (a user
+>   Reference subclass), `Slice(UInt8).new(2).hash` all segfault 139 on baseline.
+>   Only `"abc".hash` (String, primitive fast path) and Hash-key usage
+>   (String/Tuple, which call hash(hasher) 1-arg internally, never 0-arg bare) work.
+>   So the bug is broad (any user/value type with an untyped hash(hasher) and a
+>   direct 0-arg `.hash` call), not Foo-specific, and the regression-safe adversary
+>   baseline is just String#hash-0-arg + Hash-key usage.
+> - **M4c3 (next, FIRST behavior change — registration refuse + materialization
+>   redirect, together):** keep the NARROW registration refuse AND, at the
+>   materializer / bare-request resolution, when a bare 0-arg family request would
+>   bind an untyped required>0 body and an inherited 0-arg method exists, bind/emit
+>   the inherited 0-arg monomorph (e.g. Object#hash) instead. No name minting.
+>   Full DoD as before + adversary = String#hash-0-arg & Hash(String)/Hash(Tuple)
+>   stay green (bonus if Tuple/Reference/Slice 0-arg also get fixed). Backend
+>   null-pad -> fail-loud is the separate safety-net (M0/M4d).
 > - **M4d (after M4c green):** narrow should_register_base_name? for $arityN untyped
 >   required defs, with population instrumentation first (do NOT make this the first
 >   behavior step — banning bare alias for all untyped defs risks breaking generic
