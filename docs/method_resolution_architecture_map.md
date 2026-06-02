@@ -594,7 +594,17 @@ spread across `function_full_name_for_def` / `mangle_function_name` / the
 > return union struct name. M4f (behavior) follows after design review; each
 > iteration is a ~345s s2b rebuild.
 >
-> **M4f (landed — behavior) — short TypeRef Hash#upsert SHORT->FQ delegation:**
+> **PROVISIONAL (M4h0 correction):** M4f/M4g below are `provisional / hash-dispatch-only
+> / value-round-trip REFUTED`. They removed the `Object#hash` vdispatch trap on the
+> short-TypeRef Hash path, but M4h0 (`40d3f2f6`) proved the short->FQ delegation does
+> NOT preserve VALUE round-trip — `Hash(MIR::TypeRef, MIR::UnionDescriptor)#[]?` returns
+> the value's first field instead of the value (see the M4h0 block below). Keep them as
+> a bootstrap fallback (they advanced the frontier and are on origin/main); do NOT call
+> them "fully safe" or "validated" until a value round-trip oracle covers them, and do
+> NOT extend this delegation to more Hash value accesses. The "M4f's approach is now
+> validated" phrasing below means only "the vdispatch trap is gone", NOT value-safe.
+>
+> **M4f (landed — behavior, PROVISIONAL) — short TypeRef Hash#upsert SHORT->FQ delegation:**
 > `emit_short_typeref_hash_upsert_delegate_override` (before generic emission). For a
 > pure-short `Hash(MIR::TypeRef|HIR::TypeRef, V)#upsert` it canonicalizes the
 > namespace tokens (`MIR$CC`->`Adamas$CCMIR$CC`, `HIR$CC`->`Adamas$CCHIR$CC`),
@@ -616,7 +626,7 @@ spread across `function_full_name_for_def` / `mangle_function_name` / the
 > family, and key_hash if it surfaces), passing the ptr key as-is (NOT casting to
 > i32 like the u32-alias path) and converting the return.
 >
-> **M4g (landed — behavior) — short TypeRef Hash key-only siblings SHORT->FQ:**
+> **M4g (landed — behavior, PROVISIONAL) — short TypeRef Hash key-only siblings SHORT->FQ:**
 > `emit_short_typeref_hash_keyonly_delegate_override` covers the (self, key) family
 > {key_hash, find_entry, find_entry_with_index, find_entry_with_index_linear_scan}
 > with the same short->FQ approach as M4f (pure-short name, existing FQ counterpart,
@@ -625,15 +635,32 @@ spread across `function_full_name_for_def` / `mangle_function_name` / the
 > `Hash(MIR::TypeRef)#find_entry_with_index -> __vdispatch__Object#hash` trap is GONE
 > (the whole short-TypeRef Hash hash-vdispatch family — upsert + key-only — is now
 > resolved). With M4f, s2b passes all the short-TypeRef Hash hash traps.
-> NEW deeper crash (classified as M4h, NOT a regression and NOT a hash issue): s2b
-> now SIGSEGVs (EXC_BAD_ACCESS at a packed garbage address like 0x206c694e0000000e)
-> in `Adamas::HIR::AstToHir#union_all_reference_types?(MIR::UnionDescriptor)`, still
-> at module register idx=3/52 / register_union_descriptor. This is the documented
-> union_all_reference_types? / concatenated-32-bit-garbage family (see
-> memory/s2b_hasher_null_self_blocker.md and LANDMARKS) — a reference-type-analysis
-> pointer bug, independent of the Hash hash dispatch. M4h is its own investigation;
-> the memory notes prior union_all_reference_types? fixes risked regressions, so it
-> needs care.
+> NEW deeper crash (classified as M4h, NOT a regression): s2b now SIGSEGVs
+> (EXC_BAD_ACCESS at a packed garbage address like 0x206c694e0000000e) in
+> `Adamas::HIR::AstToHir#union_all_reference_types?(MIR::UnionDescriptor)`, at module
+> register idx=3/52 / register_union_descriptor.
+>
+> **M4h0 (landed, diagnostic-only — `40d3f2f6`) — CLASSIFICATION CORRECTED:** the
+> earlier "NOT a hash issue / independent of the Hash dispatch" label was REFUTED.
+> `union_all_reference_types?` is the victim, not the cause. lldb + an env-gated
+> readback probe (`ADAMAS_M4H_PROBE`, in register_union_descriptor) prove the
+> `descriptor` argument is actually a `String` (the union's name, e.g. "Nil | Bool" =
+> field 0 of the record), and `.variants` then reads offset 8 of that String and
+> faults. Three readbacks of `total_size` right after the store isolate it:
+> `local.ts=12` and `arr.ts=12` (the record is valid and a non-Hash Array round-trips
+> it) while `hash.ts` comes back garbage (2017796220 / 1866604668 for
+> 'Nil | Exception' / 'Nil | Bool'). So **`Hash(MIR::TypeRef, MIR::UnionDescriptor)#[]?`
+> returns the record's FIRST FIELD (`name : String`), not the record pointer — a
+> one-extra-load VALUE corruption. KEY matching is correct (each union finds its own
+> entry); only the VALUE is over-dereferenced.** This is squarely the short-TypeRef
+> `Hash(MIR::TypeRef, V)` value path that M4f/M4g delegated — a Hash value-readback
+> corruption, NOT a reference-type-analysis pointer bug independent of Hash.
+> Next: **M4h1a annotation-origin probe** (a FALSIFIER of where the short vs FQ
+> `MIR::TypeRef` identity split is born — NOT yet a "canonicalizer"). Do NOT fix the
+> M4g return-bridge as the primary path: the delegation shares the SAME `self` Hash
+> object between short and FQ specializations, so the bridge only reinterprets the
+> RETURNED entry, not in-place storage/read. See
+> memory/m4h_union_descriptor_hash_value_confusion.md.
 > - **M4d (after M4c green):** narrow should_register_base_name? for $arityN untyped
 >   required defs, with population instrumentation first (do NOT make this the first
 >   behavior step — banning bare alias for all untyped defs risks breaking generic
