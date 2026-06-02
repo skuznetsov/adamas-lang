@@ -2103,6 +2103,15 @@ pending-budget oracle.
    canonicalization/stub issue. Diagnostic-first lldb on the faulting load. Repro
    /tmp/s2b_m4i1b_rel on /tmp/m4h_repro.cr. See memory/m4h_union_descriptor_hash_value_confusion.md.
 
+0b. (2026-06-02) M4j0 — DWARF debug-info emitter generates DUPLICATE metadata IDs, blocking
+   `-g` s2b debugging. Repro: `ADAMAS_DEBUG_EMIT=1 scripts/build_stage2_cached.sh release <stage1>
+   /tmp/s2b_dbg` fails at LLVM opt:
+   `error: Metadata id is already used !... = !DILocation(line: 14130, column: 15, scope: !...)`.
+   `llvm_backend.cr` has a `unique_location_id`, so this may be a cross-section / global metadata
+   ID collision rather than a plain DILocation duplicate. SEPARATE diagnostic from M4i2 — do NOT
+   let it gate the bootstrap; it only matters as a tooling unblock (would give source lines for
+   runtime crashes like M4i2). Pursue only if the M4i2 file-probe does not pin the source.
+
 1. Root-cause the generated-stage2 full-prelude plain-smoke frontier now past
    registration-time block/yield body inference. The enum/class body-inference
    corridor was advanced by: typed `ArenaLike` resolution for
