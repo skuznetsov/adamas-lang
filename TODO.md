@@ -2071,6 +2071,22 @@ pending-budget oracle.
 
 ## Next Work
 
+0. (2026-06-02) M4h family root-caused + narrow fix landed (`2444b2e0`, COMPLETED not
+   VERIFIED). The s2b `union_all_reference_types?` SIGSEGV is a short-TypeRef Hash value
+   confusion: the resolver minted a SHORT ghost identity for compiler-internal `MIR::X`/`HIR::X`
+   (anchored short-circuit in `resolve_type_name_in_context_impl`), whose hash/==/id are never
+   materialized. M4h2b canonicalizes {MIR,HIR}::{TypeRef,UnionDescriptor} to FQ before the
+   short-circuit (134 canon, combined 31/31). **Blocked on TWO pre-existing bootstrap issues
+   before the union fix can be validated on a running s2b** (both proven NOT caused by M4h2):
+   (a) a freshly-built RELEASE stage1 SIGSEGVs in the parser
+   (`parse_block_body_with_optional_rescue`) while building s2b — M4h2c control: clean
+   origin/main release stage1 crashes identically; `ld64.lld` ignores `-stack_size` here
+   (LANDMARKS); likely a fresh-release parser stack overflow vs the stable older `bin/adamas`.
+   (b) debug s2b dies at startup on the `Crystal::Hasher` null-self blocker before union
+   registration. Fix EITHER to get a builder/runtime that reaches union, then confirm
+   `ADAMAS_M4H_PROBE` `hash.ts==local.ts==arr.ts`. See
+   memory/m4h_union_descriptor_hash_value_confusion.md.
+
 1. Root-cause the generated-stage2 full-prelude plain-smoke frontier now past
    registration-time block/yield body inference. The enum/class body-inference
    corridor was advanced by: typed `ArenaLike` resolution for
