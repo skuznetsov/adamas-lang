@@ -12,6 +12,23 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-M4i0|verified]: Fresh RELEASE stage1 SIGSEGV'd in the recursive-descent parser
+(`parse_block_body_with_optional_rescue`) while building s2b. Root: `crystal build`
+links with the bundled `ld64.lld`, which IGNORES `-Wl,-stack_size` ("not yet
+implemented" warning), so stage1 got the default 8MB macOS main-thread stack (LC_MAIN
+stacksize 0) and overflowed parsing the large self-hosted source; release frames are
+bigger than debug, so only release crashed, and the older stable `bin/adamas` predated
+the source growth. Proof: bare `clang -Wl,-stack_size,0x10000000` via the SYSTEM
+`/usr/bin/ld` sets LC_MAIN stacksize, but `crystal build --link-flags=-Wl,-stack_size`
+-> ld64.lld -> stacksize 0; adding `-fuse-ld=/usr/bin/ld` -> 64MB. Fix (build contract,
+`scripts/build_stage1_original_cached.sh`, Darwin): force
+`--link-flags="-fuse-ld=/usr/bin/ld -Wl,-stack_size,0x4000000"`. Binaries this compiler
+later produces already use `clang -> system ld` via cli.cr, so s2b/s3b inherit the 64MB
+stack; only the `crystal build` step needed the override. Verified: recipe s1b
+`otool -l | grep LC_MAIN` stacksize=64MB; release s1b builds s2b (S2B_EXIT=0); combined
+31/31. (M4h2 release s2b then advanced past the union_all_reference_types? crash to a new
+`lower_main`/`set_synthetic_main_definition_location` blocker — M4i1.)
+
 [LM-557|verified]: Generated stage2 semantic no-codegen checks now survive
 ordinary method definitions, typed/untyped parameters, return annotations,
 splat params, and the primitive `Proc#call(*args : *T) : R` signature. Root

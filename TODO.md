@@ -2078,14 +2078,21 @@ pending-budget oracle.
    materialized. M4h2b canonicalizes {MIR,HIR}::{TypeRef,UnionDescriptor} to FQ before the
    short-circuit (134 canon, combined 31/31). **Blocked on TWO pre-existing bootstrap issues
    before the union fix can be validated on a running s2b** (both proven NOT caused by M4h2):
-   (a) a freshly-built RELEASE stage1 SIGSEGVs in the parser
-   (`parse_block_body_with_optional_rescue`) while building s2b — M4h2c control: clean
-   origin/main release stage1 crashes identically; `ld64.lld` ignores `-stack_size` here
-   (LANDMARKS); likely a fresh-release parser stack overflow vs the stable older `bin/adamas`.
-   (b) debug s2b dies at startup on the `Crystal::Hasher` null-self blocker before union
-   registration. Fix EITHER to get a builder/runtime that reaches union, then confirm
-   `ADAMAS_M4H_PROBE` `hash.ts==local.ts==arr.ts`. See
-   memory/m4h_union_descriptor_hash_value_confusion.md.
+   (a) [FIXED — M4i0] a freshly-built RELEASE stage1 SIGSEGV'd in the parser
+   (`parse_block_body_with_optional_rescue`) building s2b: `crystal build` links with ld64.lld
+   which IGNORES `-stack_size`, so stage1 got the default 8MB main stack and the recursive
+   parser overflowed on the large source. Fix in `scripts/build_stage1_original_cached.sh`:
+   on Darwin force `--link-flags="-fuse-ld=/usr/bin/ld -Wl,-stack_size,0x4000000"` (system ld
+   honors it -> 64MB). Validated: recipe s1b otool stacksize=64MB; release s1b builds s2b
+   (S2B_EXIT=0); s2b inherits 64MB via cli.cr's clang->system-ld. The M4h2 release s2b no
+   longer crashes at union_all_reference_types? — frontier moved to (c).
+   (b) debug s2b dies at startup on the `Crystal::Hasher` null-self blocker (deprioritized;
+   release corridor is the target).
+   (c) NEW frontier (M4i1): release s2b now SIGABRT/SIGSEGV (non-deterministic) in
+   `set_synthetic_main_definition_location` <- `lower_main` building `puts 1`, before union
+   registration (so ADAMAS_M4H_PROBE didn't re-fire; hash.ts==local==arr was confirmed earlier
+   on the M4h1a FQ s2b). Diagnostic-first: memory/arena/lifetime, not a missing method.
+   See memory/m4h_union_descriptor_hash_value_confusion.md.
 
 1. Root-cause the generated-stage2 full-prelude plain-smoke frontier now past
    registration-time block/yield body inference. The enum/class body-inference
