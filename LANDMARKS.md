@@ -29,6 +29,21 @@ stack; only the `crystal build` step needed the override. Verified: recipe s1b
 31/31. (M4h2 release s2b then advanced past the union_all_reference_types? crash to a new
 `lower_main`/`set_synthetic_main_definition_location` blocker — M4i1.)
 
+[LM-M4i1b|verified]: The compiler-internal nested namespace invariant — `MIR::X` / `HIR::X`
+inside the Adamas compiler must resolve to ONE identity, the FQ `Adamas::MIR::X` /
+`Adamas::HIR::X`. The type-name resolver's anchored short-circuit minted a distinct SHORT
+"ghost" identity whose methods are never materialized; this is the root of the whole M4h/M4i
+family (M4h0 union value confusion; M4i1 `STUB CALLED: HIR::Function#definition_location=`).
+Fix (`2b95eae2`): `registered_compiler_nested_type_alias` canonicalizes any MIR/HIR head whose
+`Adamas::<name>` is already registered (`type_name_exists?` guard — never invents a name, never
+rewrites Crystal:: or a user program's own top-level MIR/HIR). Earlier narrowing was reverted:
+its justification ("broad destabilizes release") was the pre-existing parser stack overflow
+fixed by LM-M4i0, not canonicalization. Verified: 474 canon / 60 unique / HIR::Function 32x /
+adversary 0 non-MIR-HIR; combined 31/31; release s2b on `puts 1` stops aborting on the ghost
+setter and advances into lowering the actual call. NEW frontier M4i2: NULL-pointer deref in
+`lower_call` (`ldr x8,[x8]`, x8=0x0) lowering `puts 1` — a null struct-field/ExprId in the
+program-lowering path, classified separately.
+
 [LM-557|verified]: Generated stage2 semantic no-codegen checks now survive
 ordinary method definitions, typed/untyped parameters, return annotations,
 splat params, and the primitive `Proc#call(*args : *T) : R` signature. Root

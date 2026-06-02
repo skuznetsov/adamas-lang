@@ -2088,11 +2088,20 @@ pending-budget oracle.
    longer crashes at union_all_reference_types? — frontier moved to (c).
    (b) debug s2b dies at startup on the `Crystal::Hasher` null-self blocker (deprioritized;
    release corridor is the target).
-   (c) NEW frontier (M4i1): release s2b now SIGABRT/SIGSEGV (non-deterministic) in
-   `set_synthetic_main_definition_location` <- `lower_main` building `puts 1`, before union
-   registration (so ADAMAS_M4H_PROBE didn't re-fire; hash.ts==local==arr was confirmed earlier
-   on the M4h1a FQ s2b). Diagnostic-first: memory/arena/lifetime, not a missing method.
-   See memory/m4h_union_descriptor_hash_value_confusion.md.
+   (c) [FIXED — M4i1b `2b95eae2`] M4i1 was NOT arena: the release s2b abort in
+   `set_synthetic_main_definition_location` was `STUB CALLED: HIR::Function#definition_location=`
+   — the SAME short ghost-identity class as M4h, where the narrow M4h2b allowlist left
+   `HIR::Function` (and other compiler-internal MIR/HIR types) as unmaterialized ghosts. Fix:
+   re-widen `registered_compiler_nested_type_alias` to the whole MIR/HIR family (drop the narrow
+   allowlist; keep the `type_name_exists?("Adamas::<name>")` guard that protects user programs).
+   474 canon, HIR::Function present, adversary 0 outside MIR/HIR, combined 31/31. s2b on `puts 1`
+   no longer aborts on the setter and now progresses INTO lowering the actual `puts 1` call.
+   (d) NEW frontier (M4i2): NULL-pointer deref in `lower_call` lowering the `puts 1` call —
+   faulting `ldr x8, [x8]` with x8=0x0 (EXC_BAD_ACCESS address=0x0; non-deterministic, also
+   0x16ba9bc9a). bt: lower_call <- lower_expr <- lower_node <- lower_expr <- lower_main. A null
+   struct-field/ExprId in the program-lowering path (CLAUDE.md "Null ExprId structs"), NOT a
+   canonicalization/stub issue. Diagnostic-first lldb on the faulting load. Repro
+   /tmp/s2b_m4i1b_rel on /tmp/m4h_repro.cr. See memory/m4h_union_descriptor_hash_value_confusion.md.
 
 1. Root-cause the generated-stage2 full-prelude plain-smoke frontier now past
    registration-time block/yield body inference. The enum/class body-inference
