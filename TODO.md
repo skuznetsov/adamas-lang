@@ -2118,6 +2118,8 @@ pending-budget oracle.
    lower_call ArrayNew strides 11x4/23x8 -> 2x4/29x8/3x1; ASAN `puts 1` heap-buffer-overflow in
    Array(...TypeRef)#dup GONE; combined 31/31; 4 p2 stride guards green (ExprId stays 8); no
    regression (HEAD and fix crash at the same pre-existing frontier). See LM-M4i2d.
+   Adversary-scan clean: source->result stride class closed for map/map_with_index only;
+   select/reject (source->source), zip (tuple_type), hash keys/values are all correct.
    NEXT frontier (separate, pre-existing, NOT M4i2d): wild/null element deref iterating an
    `Array(Tuple(String, Int32))` after `sort!` in lower_call while lowering the `puts 1` call
    (HEAD lower_call+126880 / fix +126736, same fault). See

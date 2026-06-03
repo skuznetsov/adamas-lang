@@ -81,6 +81,10 @@ non-ASAN limp to the same spot. combined 31/31; p2_array_heap_struct_dup_stride 
 _value_union_storage / _pointer_void_byte_stride all green (ExprId stays 8). NEXT frontier
 (separate, pre-existing): the Array(Tuple(String,Int32)) sort!+deref null/wild element in lower_call
 while lowering the `puts 1` call. Trust {F/G/R: 0.88/0.55/0.9}.
+Adversary-scan (post-fix, clean): all 6 `ArrayNew` sites + dynamic transforms reviewed —
+`select`/`reject` are source->source (element_type both sides, correct), `zip` allocates
+`tuple_type`, hash keys/values use the stored key/value type; the source->result element-stride
+class is closed for `map`/`map_with_index` only, no other latent crash of this class.
 
 [LM-557|verified]: Generated stage2 semantic no-codegen checks now survive
 ordinary method definitions, typed/untyped parameters, return annotations,
