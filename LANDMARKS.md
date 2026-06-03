@@ -44,6 +44,19 @@ setter and advances into lowering the actual call. NEW frontier M4i2: NULL-point
 `lower_call` (`ldr x8,[x8]`, x8=0x0) lowering `puts 1` — a null struct-field/ExprId in the
 program-lowering path, classified separately.
 
+[LM-M4i2c|verified]: The "floating" non-deterministic s2b crash (which surfaced at lower_call /
+collect_return_types / CLI#compile depending on build layout) is ONE root: a
+`heap-buffer-overflow READ of size 8` in `Array(Adamas::HIR::TypeRef)#dup`, caught by ASAN
+(build s2b with `ADAMAS_EXTRA_LINK_FLAGS="-fsanitize=address"` via cli.cr; toolchain works, no GC
+conflict). The calloc'd element buffer is 4 bytes (HIR::TypeRef is a 4-byte struct, `id : Int32`)
+but dup's memcpy uses an 8-byte element stride, over-reading one element of adjacent heap; that
+garbage then propagates and crashes elsewhere (hence "floating"). Allocated in lower_call
+(+0x179d8). => an Array-of-struct element-size/stride codegen bug, NOT arena lifetime / null
+ExprId. A source-level milestone file-probe was the WRONG tool (it perturbed the crash site); ASAN
+catching the corruption at its source was decisive. Fix (M4i2d, pending): align the
+Array(HIR::TypeRef) allocation stride with the dup/copy stride. Repro: /tmp/s2b_asan under
+ASAN_OPTIONS; report /tmp/m4i2c_asan_report.txt.
+
 [LM-557|verified]: Generated stage2 semantic no-codegen checks now survive
 ordinary method definitions, typed/untyped parameters, return annotations,
 splat params, and the primitive `Proc#call(*args : *T) : R` signature. Root

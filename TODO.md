@@ -2096,12 +2096,18 @@ pending-budget oracle.
    allowlist; keep the `type_name_exists?("Adamas::<name>")` guard that protects user programs).
    474 canon, HIR::Function present, adversary 0 outside MIR/HIR, combined 31/31. s2b on `puts 1`
    no longer aborts on the setter and now progresses INTO lowering the actual `puts 1` call.
-   (d) NEW frontier (M4i2): NULL-pointer deref in `lower_call` lowering the `puts 1` call —
-   faulting `ldr x8, [x8]` with x8=0x0 (EXC_BAD_ACCESS address=0x0; non-deterministic, also
-   0x16ba9bc9a). bt: lower_call <- lower_expr <- lower_node <- lower_expr <- lower_main. A null
-   struct-field/ExprId in the program-lowering path (CLAUDE.md "Null ExprId structs"), NOT a
-   canonicalization/stub issue. Diagnostic-first lldb on the faulting load. Repro
-   /tmp/s2b_m4i1b_rel on /tmp/m4h_repro.cr. See memory/m4h_union_descriptor_hash_value_confusion.md.
+   (d) NEW frontier (M4i2) — ROOT VERIFIED by ASAN (M4i2c): the floating, non-deterministic s2b
+   crash (seen at lower_call / collect_return_types / CLI#compile across builds) is a
+   `heap-buffer-overflow READ of size 8` in `Array(Adamas::HIR::TypeRef)#dup` (-> memcpy). The
+   calloc buffer is 4 bytes; dup reads 8 bytes 0-after it. `HIR::TypeRef` is a 4-byte struct
+   (`id : Int32`) but dup/memcpy uses an 8-byte ELEMENT STRIDE -> over-read of adjacent heap ->
+   garbage -> floating downstream crashes. Allocated in lower_call (+0x179d8). So it is an
+   Array-of-struct element-size/stride codegen bug (CLAUDE.md "element stride"/struct-as-pointer),
+   NOT arena-lifetime or a null ExprId. M4i2c milestone file-probe was FALSIFIED (probe shifted the
+   crash; reverted). ASAN via ADAMAS_EXTRA_LINK_FLAGS=-fsanitize=address works (no GC conflict).
+   NEXT M4i2d (behavior fix, CAUTION): make the Array(HIR::TypeRef) alloc stride and dup stride
+   agree. Repro /tmp/s2b_asan under ASAN_OPTIONS; report /tmp/m4i2c_asan_report.txt. See
+   memory/m4h_union_descriptor_hash_value_confusion.md.
 
 0b. (2026-06-02) M4j0 — DWARF debug-info emitter generates DUPLICATE metadata IDs, blocking
    `-g` s2b debugging. Repro: `ADAMAS_DEBUG_EMIT=1 scripts/build_stage2_cached.sh release <stage1>
