@@ -3146,6 +3146,13 @@ module Adamas
         desc.name.starts_with?("Array(") || desc.name.starts_with?("StaticArray(")
       end
 
+      private def hir_type_is_slice_container?(type : HIR::TypeRef) : Bool
+        return false if type.id < HIR::TypeRef::FIRST_USER_TYPE
+        desc = @hir_module.get_type_descriptor(type)
+        return false unless desc
+        desc.name.starts_with?("Slice(")
+      end
+
       private def hir_type_is_lib_struct?(type : HIR::TypeRef) : Bool
         return false if type.id < HIR::TypeRef::FIRST_USER_TYPE
         desc = @hir_module.get_type_descriptor(type)
@@ -3261,7 +3268,7 @@ module Adamas
         # Array(T) buffers still store T inline.
         container_type : MIR::TypeRef? = nil
         if obj_hir_type = @hir_value_types[idx.object]?
-          if hir_type_is_array_container?(obj_hir_type)
+          if hir_type_is_array_container?(obj_hir_type) || hir_type_is_slice_container?(obj_hir_type)
             container_type = convert_type(obj_hir_type)
           elsif hir_type_is_inline_pointer_tuple?(obj_hir_type)
             container_type = convert_type(obj_hir_type)
@@ -3299,7 +3306,7 @@ module Adamas
         # Array(T) buffers still store T inline.
         container_type : MIR::TypeRef? = nil
         if obj_hir_type = @hir_value_types[idx.object]?
-          if hir_type_is_array_container?(obj_hir_type)
+          if hir_type_is_array_container?(obj_hir_type) || hir_type_is_slice_container?(obj_hir_type)
             container_type = convert_type(obj_hir_type)
           end
         end
