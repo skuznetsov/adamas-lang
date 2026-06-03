@@ -57,6 +57,31 @@ catching the corruption at its source was decisive. Fix (M4i2d, pending): align 
 Array(HIR::TypeRef) allocation stride with the dup/copy stride. Repro: /tmp/s2b_asan under
 ASAN_OPTIONS; report /tmp/m4i2c_asan_report.txt.
 
+[LM-M4i2d|verified]: M4i2c root FIXED. Precise root (refines M4i2c): the 4-byte source buffer that
+`Array(Adamas::HIR::TypeRef)#dup` over-read was produced by `lower_array_map_dynamic` /
+`lower_array_map_with_index_dynamic` (ast_to_hir.cr). The dynamic inline `Array#map` lowering emits
+the result `ArrayNew` with the SOURCE element type's container stride, then stores the BLOCK-RESULT
+values. In the s2b crash that was `arg_value_ids.map { |id| ctx.type_of(id) }`: source
+`Array(ValueId)` = 4-byte inline (UInt32), result `Array(TypeRef)` = 8-byte heap pointers (V2
+struct-as-pointer). Buffer malloc'd `count*4`, elements stored at stride 8 -> heap overflow on store
+and on the later `dup` copy. The generic `Array(TypeRef)` corridor (initialize/push/index/dup/
+resize) was already uniformly 8-byte; the container-storage helpers were correct (TypeRef->8,
+ValueId->4). So this is NOT a dup change, NOT an ExprId/tuple/union storage change, and NOT the
+global inline-struct ABI — it is the map lowering feeding the wrong element type to ArrayNew. Fix:
+made `HIR::ArrayNew#element_type` settable and, once the block-result store type is known, patch
+`new_array.element_type = set_type` in both dynamic-map lowerings so alloc stride == IndexSet store
+stride == read/dup stride. MIR/LLVM lowering runs in a later pass, so the post-loop mutation is safe.
+Evidence: s2b IR `lower_call` ArrayNew buffer strides went 11x4/23x8 -> 2x4/29x8/3x1 (9 under-sized
+map buffers corrected; the residual 4/1 are genuine inline-result maps). ASAN s2b on `puts 1`: the
+`heap-buffer-overflow READ in Array(...TypeRef)#dup` is GONE. No regression: HEAD and fixed s2b both
+crash at the SAME pre-existing deterministic non-ASAN frontier — a wild/null element deref iterating
+an `Array(Tuple(String, Int32))` after `sort!` in `lower_call` (HEAD lower_call+126880 addr
+0x1675cb59a; fix +126736 addr 0x1675fb59a) — the dup over-read previously returned garbage that let
+non-ASAN limp to the same spot. combined 31/31; p2_array_heap_struct_dup_stride / _tuple_storage /
+_value_union_storage / _pointer_void_byte_stride all green (ExprId stays 8). NEXT frontier
+(separate, pre-existing): the Array(Tuple(String,Int32)) sort!+deref null/wild element in lower_call
+while lowering the `puts 1` call. Trust {F/G/R: 0.88/0.55/0.9}.
+
 [LM-557|verified]: Generated stage2 semantic no-codegen checks now survive
 ordinary method definitions, typed/untyped parameters, return annotations,
 splat params, and the primitive `Proc#call(*args : *T) : R` signature. Root

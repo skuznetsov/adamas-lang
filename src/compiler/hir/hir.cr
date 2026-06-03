@@ -655,7 +655,11 @@ module Adamas::HIR
   # Returns pointer to new array struct { i32 type_id, i32 size, [capacity x T] }
   class ArrayNew < Value
     getter capacity_value : ValueId
-    getter element_type : TypeRef
+    # Settable: the dynamic map/transform lowerings emit the ArrayNew before the
+    # block result type is known, then patch the element type once the stored
+    # value type is determined so the buffer stride (capacity * elem_size) matches
+    # the IndexSet store stride and subsequent reads. See lower_array_map_dynamic.
+    property element_type : TypeRef
 
     def initialize(id : ValueId, @element_type : TypeRef, @capacity_value : ValueId)
       super(id, TypeRef::VOID)

@@ -2105,8 +2105,22 @@ pending-budget oracle.
    Array-of-struct element-size/stride codegen bug (CLAUDE.md "element stride"/struct-as-pointer),
    NOT arena-lifetime or a null ExprId. M4i2c milestone file-probe was FALSIFIED (probe shifted the
    crash; reverted). ASAN via ADAMAS_EXTRA_LINK_FLAGS=-fsanitize=address works (no GC conflict).
-   NEXT M4i2d (behavior fix, CAUTION): make the Array(HIR::TypeRef) alloc stride and dup stride
-   agree. Repro /tmp/s2b_asan under ASAN_OPTIONS; report /tmp/m4i2c_asan_report.txt. See
+   M4i2d (FIXED, VERIFIED): precise root was `lower_array_map_dynamic` /
+   `lower_array_map_with_index_dynamic` (ast_to_hir.cr) emitting the result `ArrayNew` with the
+   SOURCE element stride while storing the BLOCK-RESULT values. The s2b case:
+   `arg_value_ids.map { |id| ctx.type_of(id) }` — source `Array(ValueId)` (4-byte inline UInt32),
+   result `Array(TypeRef)` (8-byte heap ptr). Buffer malloc'd count*4, stores at stride 8 ->
+   heap overflow read later by `dup`. NOT a dup/ExprId/tuple/union storage change and NOT the
+   global inline-struct ABI: the container-storage helpers were already correct (TypeRef->8,
+   ValueId->4) and the generic Array(TypeRef) corridor was uniformly 8-byte. Fix: HIR::ArrayNew
+   `element_type` is now settable; both dynamic-map lowerings patch `new_array.element_type =
+   set_type` once the store type is known, so alloc==store==read/dup stride. Evidence: s2b IR
+   lower_call ArrayNew strides 11x4/23x8 -> 2x4/29x8/3x1; ASAN `puts 1` heap-buffer-overflow in
+   Array(...TypeRef)#dup GONE; combined 31/31; 4 p2 stride guards green (ExprId stays 8); no
+   regression (HEAD and fix crash at the same pre-existing frontier). See LM-M4i2d.
+   NEXT frontier (separate, pre-existing, NOT M4i2d): wild/null element deref iterating an
+   `Array(Tuple(String, Int32))` after `sort!` in lower_call while lowering the `puts 1` call
+   (HEAD lower_call+126880 / fix +126736, same fault). See
    memory/m4h_union_descriptor_hash_value_confusion.md.
 
 0b. (2026-06-02) M4j0 — DWARF debug-info emitter generates DUPLICATE metadata IDs, blocking
