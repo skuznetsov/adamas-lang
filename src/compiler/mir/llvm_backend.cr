@@ -647,6 +647,10 @@ module Adamas::MIR
       @file_definitions = {} of Int32 => String
       @assigned_location_ids = {} of Int32 => String
       @assigned_lexical_block_ids = {} of Int32 => String
+      # M4j0: DILocalVariable ids must be de-duplicated like locations/lexical-blocks. The
+      # bare hash (stable_metadata_id) collides within LOCAL_VAR_ID_SPAN at s2b scale, emitting
+      # the same `!id = !DILocalVariable` twice -> LLVM opt rejects ("Metadata id is already used").
+      @assigned_local_var_ids = {} of Int32 => String
       @debug_type_ids = {} of TypeRef => Int32
       @type_definitions = {} of Int32 => String
       @namespace_ids = {} of String => Int32
@@ -958,7 +962,10 @@ module Adamas::MIR
     end
 
     private def local_variable_id(func : Function, slot_id : ValueId) : Int32
-      stable_metadata_id("local:#{func.id}:#{slot_id}", LOCAL_VAR_ID_BASE, LOCAL_VAR_ID_SPAN)
+      # M4j0: de-dup via the shared registry so distinct (func, slot) pairs that hash-collide get
+      # re-salted to unique ids. The key is stable, so repeat calls for the same (func, slot)
+      # return the same id (define/reference stay consistent).
+      unique_stable_metadata_id(@assigned_local_var_ids, "local:#{func.id}:#{slot_id}", LOCAL_VAR_ID_BASE, LOCAL_VAR_ID_SPAN)
     end
 
     private def register_global_variable(
