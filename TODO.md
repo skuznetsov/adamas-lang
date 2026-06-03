@@ -2120,10 +2120,16 @@ pending-budget oracle.
    regression (HEAD and fix crash at the same pre-existing frontier). See LM-M4i2d.
    Adversary-scan clean: source->result stride class closed for map/map_with_index only;
    select/reject (source->source), zip (tuple_type), hash keys/values are all correct.
-   NEXT frontier (separate, pre-existing, NOT M4i2d): wild/null element deref iterating an
-   `Array(Tuple(String, Int32))` after `sort!` in lower_call while lowering the `puts 1` call
-   (HEAD lower_call+126880 / fix +126736, same fault). See
-   memory/m4h_union_descriptor_hash_value_confusion.md.
+   M4i3 (FIXED on minimal oracle, s2b gate pending): tuple container storage policy for
+   Array/Slice + Pointer#value=. Root: Slice#[]=/insert_head!/merge! used Array object layout
+   (buffer @ offset 16) on Slice values (@pointer @ offset 8); insert_head! stored through null.
+   Also: ref-carrying Array(Tuple) and merge `out.value=` must use pointer slots / store ptr, not
+   memcpy tuple body into slots; primitive Array(Tuple) literals now memcpy inline into buffers
+   (LM-663). Evidence: lldb `insert_head!` null deref fixed; `Array(Tuple(UInt32,UInt32))` sort
+   repro no longer SIGSEGV; no-prelude `arr[0][1]` prints 3; combined 31/31; p2 stride guards green.
+   Remaining: full-prelude s2b `puts 1` not re-verified this session (s2 compile hit SIGSEGV during
+   class register ~idx 3/92 or >600s timeout); sort oracle still prints wrong order (1,1,1 not
+   1,2,3) — separate correctness follow-up. See LM-M4i3.
 
 0b. (2026-06-02) M4j0 — DWARF debug-info emitter generates DUPLICATE metadata IDs, blocking
    `-g` s2b debugging. Repro: `ADAMAS_DEBUG_EMIT=1 scripts/build_stage2_cached.sh release <stage1>

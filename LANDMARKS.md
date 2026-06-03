@@ -57,6 +57,25 @@ catching the corruption at its source was decisive. Fix (M4i2d, pending): align 
 Array(HIR::TypeRef) allocation stride with the dup/copy stride. Repro: /tmp/s2b_asan under
 ASAN_OPTIONS; report /tmp/m4i2c_asan_report.txt.
 
+[LM-M4i3|verified]: Tuple container storage policy — Slice layout + inline primitive tuple sort.
+Root A (Slice layout): `IndexSet`/`ArrayGet`/`ArraySet` on `Slice(T)` used Crystal `Array` field
+offsets (size @4, buffer @16); Slice struct has size @0, data ptr @8. `Slice(Tuple(...))#sort!` →
+`merge_sort!` → `insert_head!` getelementptr'd slice @16 → null buffer → SIGSEGV. Fix: detect
+`Slice(...)` in `container_mir_is_slice?`; use size @0 and data ptr @8 for Slice.
+Root B (storage policy): ref-carrying `Array(Tuple)` uses pointer-slot ABI; inline primitive tuples
+(`inline_primitive_tuple_type?`) use byte-stride inline storage. `emit_array_literal` memcpy
+primitive tuples inline. `emit_array_get`/`emit_array_set` combined `inline_container_struct_type?
+|| inline_primitive_tuple_type?` for byte-stride GEP. `emit_store` removed wrong `store ptr` branch
+for non-slot destinations (always falls through to memcpy). `emit_gep_dynamic` marks inline
+primitive tuple GEPs as `@inline_tuple_gep_aliases` (not pointer-slots).
+Root C (value semantics): `Slice(T)#unsafe_fetch` for inline primitive tuple returned a direct GEP
+alias into the buffer; insertion sort `v = unsafe_fetch(j)` aliased buffer[j] and was corrupted
+when `unsafe_put(j, unsafe_fetch(j-1))` shifted elements. Fix: `emit_builtin_override` intercepts
+`Slice$L...$R$Hunsafe_fetch$$Int32` and emits malloc+memcpy (heap copy), restoring value semantics.
+Evidence: `regression_tests/array_tuple_sort_runtime_repro.sh` prints 1/2/3 (was 1/1/1 then
+1/1/2); p2 guards green; combined 31/31. Full-prelude s2b not re-gated (separate frontier).
+Trust {F/G/R: 0.90/0.65/0.90} [verified].
+
 [LM-M4i2d|verified]: M4i2c root FIXED. Precise root (refines M4i2c): the 4-byte source buffer that
 `Array(Adamas::HIR::TypeRef)#dup` over-read was produced by `lower_array_map_dynamic` /
 `lower_array_map_with_index_dynamic` (ast_to_hir.cr). The dynamic inline `Array#map` lowering emits

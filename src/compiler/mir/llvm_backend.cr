@@ -1819,7 +1819,11 @@ module Adamas::MIR
 
     private def inline_pointer_aggregate_type?(type_ref : TypeRef) : Bool
       return false unless type = @module.type_registry.get(type_ref)
-      type.kind.tuple? || type.name.starts_with?("StaticArray(")
+      return true if type.name.starts_with?("StaticArray(")
+      # Only primitive/enum tuple payloads are stored as inline bytes at *ptr.
+      # Ref-carrying tuples (String, unions, structs) live behind pointer slots in
+      # Array/Slice buffers — see LM-630/LM-663 and container_elem_storage_size.
+      inline_primitive_tuple_type?(type)
     end
 
     private def inline_pointer_aggregate_size(type_ref : TypeRef) : UInt64
@@ -2084,6 +2088,11 @@ module Adamas::MIR
     # to the tuple bytes. Loading from such a slot must dereference (`load ptr`), not alias.
     # FieldGet on inline-storage struct fields uses gep+0 alias instead (the field IS the bytes).
     @ptr_aggregate_buffer_slots : ::Set(ValueId) = ::Set(ValueId).new
+    # GepDynamic results for inline-primitive-tuple Pointer(T) arithmetic. These are direct
+    # aliases into a Slice/Array buffer. Loading through such a ptr must return a heap copy
+    # (not gep+0 alias) so that subsequent writes to the same buffer slot do not corrupt the
+    # loaded value (the insertion-sort aliasing bug: v = unsafe_fetch(j) then unsafe_put(j,...)).
+    @inline_tuple_gep_aliases : ::Set(ValueId) = ::Set(ValueId).new
     # When a ptrtoint from a heap pointer to a small int (<64 bits) would truncate
     # the address, we skip emitting the ptrtoint and alias the result to the original
     # ptr. Downstream zext/inttoptr chain is also skipped. Maps ValueId → "ptr %name".
@@ -2708,6 +2717,17 @@ module Adamas::MIR
       name.starts_with?("Slice(") ||
         name.starts_with?("StaticArray(") ||
         name.starts_with?("Hash::Entry(")
+    end
+
+    # True when ArrayGet/ArraySet targets a Slice(T) value (not Array/StaticArray).
+    private def container_mir_is_slice?(container_type_ref : TypeRef?, value_type_ref : TypeRef?) : Bool
+      if container_type_ref && (type = @module.type_registry.get(container_type_ref))
+        return true if type.name.starts_with?("Slice(")
+      end
+      if value_type_ref && (type = @module.type_registry.get(value_type_ref))
+        return true if type.name.starts_with?("Slice(")
+      end
+      false
     end
 
     private def llvm_store_size_bytes(llvm_type : String) : Int32
@@ -9405,6 +9425,31 @@ module Adamas::MIR
       if mangled.starts_with?("Fiber$Dswapcontext")
         emit_fiber_swapcontext_override(mangled)
         return true
+      end
+      # Slice(T)#unsafe_fetch where T is an inline primitive tuple: return a heap copy.
+      # Normal MIR lowering returns a direct GEP alias into the Slice buffer, which breaks
+      # insertion sort: `v = unsafe_fetch(j)` is aliased into the buffer and corrupted when
+      # the sort shifts elements (value-semantics violation). A heap copy restores value
+      # semantics so `v` survives subsequent unsafe_put writes to the same buffer slot.
+      if mangled.starts_with?("Slice$L") && mangled.ends_with?("$Hunsafe_fetch$$Int32")
+        if ret_mir = @module.type_registry.get(func.return_type)
+          if inline_primitive_tuple_type?(ret_mir)
+            tuple_size = ret_mir.size > 0 ? ret_mir.size : 8_u64
+            emit_raw "; #{mangled} — heap-copy override: value semantics for inline primitive tuple\n"
+            emit_raw "define ptr @#{mangled}(ptr %self, i32 %index) {\n"
+            emit_raw "entry:\n"
+            emit_raw "  %buf_field = getelementptr i8, ptr %self, i32 8\n"
+            emit_raw "  %buf = load ptr, ptr %buf_field\n"
+            emit_raw "  %idx64 = sext i32 %index to i64\n"
+            emit_raw "  %byte_off = mul i64 %idx64, #{tuple_size}\n"
+            emit_raw "  %slot = getelementptr i8, ptr %buf, i64 %byte_off\n"
+            emit_raw "  %copy = call ptr @__adamas_malloc64(i64 #{tuple_size})\n"
+            emit_raw "  call void @llvm.memcpy.p0.p0.i64(ptr %copy, ptr %slot, i64 #{tuple_size}, i1 false)\n"
+            emit_raw "  ret ptr %copy\n"
+            emit_raw "}\n\n"
+            return true
+          end
+        end
       end
       # Thread::Mutex in V2 allocates only 12 bytes (8-byte prefix + 4-byte type_id), but
       # pthread_mutex_t needs 64 bytes. Also Hinitialize inits a STACK-local mutex instead of
@@ -17048,14 +17093,27 @@ module Adamas::MIR
       end
 
       if inline_pointer_aggregate_type?(inst.type)
-        # Two ABIs collide here:
-        #  (a) Pointer(Tuple) buffer slot: PointerArith produced a ptr-stride slot whose
-        #      value is a heap pointer to the aggregate. Must dereference (`load ptr`).
-        #  (b) Inline struct field (e.g. `String::Formatter#@args`) or local stack tuple:
-        #      the source ptr already points at the inline bytes — alias as `gep+0`.
-        # @ptr_aggregate_buffer_slots is populated by emit_gep_dynamic for case (a).
+        # Three ABIs for reading a Tuple/Struct aggregate pointer:
+        #  (a) Ref-carrying tuple pointer-slot: ptr-stride GEP result whose slot stores
+        #      a heap pointer to the aggregate. Must dereference (`load ptr`).
+        #  (b) Inline primitive tuple buffer alias: byte-stride GEP result that points
+        #      directly into a Slice/Array buffer. Must heap-copy so subsequent writes to
+        #      the same buffer slot do not corrupt the loaded value (insertion-sort aliasing).
+        #  (c) Inline struct field or local stack tuple: ptr already points at stable bytes
+        #      — alias as `gep+0`.
+        # @ptr_aggregate_buffer_slots  (a): populated by emit_gep_dynamic for ref-carrying.
+        # @inline_tuple_gep_aliases    (b): populated by emit_gep_dynamic for inline primitive.
         if @ptr_aggregate_buffer_slots.includes?(inst.ptr)
           emit "#{name} = load ptr, ptr #{ptr}"
+        elsif @inline_tuple_gep_aliases.includes?(inst.ptr)
+          # Heap-copy the inline tuple bytes so the caller gets a stable value.
+          if mir_type = @module.type_registry.get(inst.type)
+            copy_size = mir_type.size > 0 ? mir_type.size : 8_u64
+            emit "#{name} = call ptr @__adamas_malloc64(i64 #{copy_size})"
+            emit "call void @llvm.memcpy.p0.p0.i64(ptr #{name}, ptr #{ptr}, i64 #{copy_size}, i1 false)"
+          else
+            emit "#{name} = getelementptr i8, ptr #{ptr}, i32 0"
+          end
         else
           emit "#{name} = getelementptr i8, ptr #{ptr}, i32 0"
         end
@@ -17445,11 +17503,18 @@ module Adamas::MIR
       if element_type == "ptr" && inst.element_type.id > TypeRef::POINTER.id
         if mir_type = @module.type_registry.get(inst.element_type)
           if mir_type.kind.tuple?
-            struct_elem_size = 0
-            # Mark this slot so emit_load knows to dereference the ptr (load ptr) rather
-            # than alias as gep+0. Inline tuple struct fields use FieldGet, not GEP, so
-            # this is specifically the Pointer(Tuple) buffer-slot case.
-            @ptr_aggregate_buffer_slots << inst.id
+            if inline_primitive_tuple_type?(mir_type)
+              # Primitive-only tuple: inline byte storage. Use element size so
+              # use_byte_gep fires for non-ptr-sized tuples. Do NOT mark as a
+              # pointer slot — emit_store must use memcpy. Mark as a buffer alias
+              # so emit_load makes a heap copy (prevents aliasing bugs in sort/swap).
+              struct_elem_size = mir_type.size.to_i32
+              @inline_tuple_gep_aliases << inst.id
+            else
+              struct_elem_size = 0
+              # Ref-carrying tuple: pointer-slot ABI. Mark so emit_load dereferences.
+              @ptr_aggregate_buffer_slots << inst.id
+            end
           end
         end
       end
@@ -23428,6 +23493,7 @@ module Adamas::MIR
       # Array(T) buffers store their bytes inline.
       elem_byte_size = container_elem_storage_size_u64(elem_mir_for_storage)
       inline_struct_element = inline_container_struct_type?(elem_mir_for_storage)
+      inline_primitive_tuple_element = inline_primitive_tuple_type?(elem_mir_for_storage)
       inline_union_element = elem_mir_for_storage && elem_mir_for_storage.kind.union? && elem_mir_for_storage.size > pointer_word_bytes_u64
 
       capacity = size < 4 ? 4 : size  # minimum capacity like Crystal's Array
@@ -23483,15 +23549,15 @@ module Adamas::MIR
         original_element_type = "ptr" if original_element_type == "void"
       end
       inst.elements.each_with_index do |elem_id, idx|
-        if inline_struct_element || inline_union_element
+        if inline_struct_element || inline_union_element || inline_primitive_tuple_element
           byte_offset = idx.to_u64 * elem_byte_size
           emit "%#{base_name}.elem#{idx}_ptr = getelementptr i8, ptr %#{base_name}.buf, i64 #{byte_offset}"
         else
           emit "%#{base_name}.elem#{idx}_ptr = getelementptr #{element_type}, ptr %#{base_name}.buf, i32 #{idx}"
         end
         # If original element was void, store null; otherwise store actual value
-        if original_element_type == "void"
-          if inline_struct_element || inline_union_element
+          if original_element_type == "void"
+          if inline_struct_element || inline_union_element || inline_primitive_tuple_element
             emit "call void @llvm.memset.p0.i64(ptr %#{base_name}.elem#{idx}_ptr, i8 0, i64 #{elem_byte_size}, i1 false)"
           else
             emit "store ptr null, ptr %#{base_name}.elem#{idx}_ptr"
@@ -23580,6 +23646,19 @@ module Adamas::MIR
               emit "call void @llvm.memset.p0.i64(ptr %#{base_name}.elem#{idx}_ptr, i8 0, i64 #{elem_byte_size}, i1 false)"
             else
               emit "store #{element_type} #{normalize_union_value(elem_val, element_type)}, ptr %#{base_name}.elem#{idx}_ptr"
+            end
+          elsif inline_primitive_tuple_element
+            if elem_val == "null" || elem_val == "0"
+              emit "call void @llvm.memset.p0.i64(ptr %#{base_name}.elem#{idx}_ptr, i8 0, i64 #{elem_byte_size}, i1 false)"
+            else
+              source_ptr = elem_val
+              source_type = actual_elem_type_str || element_type
+              if source_type != "ptr"
+                emit "%#{base_name}.elem#{idx}_src = alloca #{source_type}, align 8"
+                emit "store #{source_type} #{normalize_union_value(elem_val, source_type)}, ptr %#{base_name}.elem#{idx}_src"
+                source_ptr = "%#{base_name}.elem#{idx}_src"
+              end
+              emit "call void @llvm.memcpy.p0.p0.i64(ptr %#{base_name}.elem#{idx}_ptr, ptr #{source_ptr}, i64 #{elem_byte_size}, i1 false)"
             end
           else
             emit "store #{element_type} #{elem_val}, ptr %#{base_name}.elem#{idx}_ptr"
@@ -24160,11 +24239,13 @@ module Adamas::MIR
           end
         end
       end
+      is_slice_container = container_mir_is_slice?(inst.container_type, array_value_type)
       normalized_index = index
       unless is_static_array
         # Crystal Array supports negative indices counting from the end.
         # Direct buffer GEP must normalize them before indexing.
-        emit "%#{base_name}.size_addr = getelementptr i8, ptr #{array_ptr}, i32 4"
+        size_offset = is_slice_container ? 0 : 4
+        emit "%#{base_name}.size_addr = getelementptr i8, ptr #{array_ptr}, i32 #{size_offset}"
         emit "%#{base_name}.size = load i32, ptr %#{base_name}.size_addr"
         emit "%#{base_name}.idx_neg = icmp slt i32 #{index}, 0"
         emit "%#{base_name}.idx_fixed = add i32 #{index}, %#{base_name}.size"
@@ -24179,8 +24260,9 @@ module Adamas::MIR
         emit "%#{base_name}.elem_ptr = getelementptr #{element_type}, ptr #{array_ptr}, i32 #{index}"
         emit "#{name} = load #{element_type}, ptr %#{base_name}.elem_ptr"
       else
-        # Load buffer pointer from Crystal Array layout (offset 16 = @buffer field)
-        emit "%#{base_name}.buf_addr = getelementptr i8, ptr #{array_ptr}, i32 16"
+        # Array: @buffer at offset 16. Slice: @pointer data ptr at offset 8 (see Slice#to_unsafe).
+        buf_offset = is_slice_container ? 8 : 16
+        emit "%#{base_name}.buf_addr = getelementptr i8, ptr #{array_ptr}, i32 #{buf_offset}"
         emit "%#{base_name}.buf = load ptr, ptr %#{base_name}.buf_addr"
         # Inline-stored unions have MIR size = 4 (tid) + alignment-padding + max payload,
         # but LLVM's natural sizeof of `{i32, [N x i32]}` lacks the alignment padding.
@@ -24417,9 +24499,11 @@ module Adamas::MIR
       # Tuple elements are value types represented as ptr in current ABI.
       # When writing into Array buffers, the incoming ptr often references a
       # transient stack slot. Persist by copying tuple bytes to heap first.
+      # Primitive-only tuples are stored inline (byte-stride), so the ArraySet
+      # path below will memcpy directly to the buffer slot — no heap copy needed.
       if element_type == "ptr" && value != "null"
         if elem_mir = @module.type_registry.get(inst.element_type)
-          if elem_mir.kind.tuple? && elem_mir.size > 0
+          if elem_mir.kind.tuple? && elem_mir.size > 0 && !inline_primitive_tuple_type?(elem_mir)
             tuple_copy_size = elem_mir.size.to_u64
             emit "%#{base_name}.tuple_copy = call ptr @__adamas_malloc64(i64 #{tuple_copy_size})"
             emit "call void @llvm.memcpy.p0.p0.i64(ptr %#{base_name}.tuple_copy, ptr #{value}, i64 #{tuple_copy_size}, i1 false)"
@@ -24447,11 +24531,13 @@ module Adamas::MIR
         end
       end
 
+      is_slice_container = container_mir_is_slice?(inst.container_type, array_value_type)
       normalized_index = index
       unless is_static_array
         # Crystal Array supports negative indices counting from the end.
         # Direct buffer GEP must normalize them before indexing.
-        emit "%#{base_name}.size_addr = getelementptr i8, ptr #{array_ptr}, i32 4"
+        size_offset = is_slice_container ? 0 : 4
+        emit "%#{base_name}.size_addr = getelementptr i8, ptr #{array_ptr}, i32 #{size_offset}"
         emit "%#{base_name}.size = load i32, ptr %#{base_name}.size_addr"
         emit "%#{base_name}.idx_neg = icmp slt i32 #{index}, 0"
         emit "%#{base_name}.idx_fixed = add i32 #{index}, %#{base_name}.size"
@@ -24464,8 +24550,8 @@ module Adamas::MIR
         emit "%#{base_name}.elem_ptr = getelementptr #{element_type}, ptr #{array_ptr}, i32 #{index}"
         emit "store #{element_type} #{value}, ptr %#{base_name}.elem_ptr"
       else
-        # Load buffer pointer from Crystal Array layout (offset 16 = @buffer field)
-        emit "%#{base_name}.buf_addr = getelementptr i8, ptr #{array_ptr}, i32 16"
+        buf_offset = is_slice_container ? 8 : 16
+        emit "%#{base_name}.buf_addr = getelementptr i8, ptr #{array_ptr}, i32 #{buf_offset}"
         emit "%#{base_name}.buf = load ptr, ptr %#{base_name}.buf_addr"
         # See emit_array_get for the rationale: inline-stored unions need byte-stride
         # GEP (=MIR size) so writes land at the same offsets the buffer was sized for.
