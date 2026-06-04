@@ -1,6 +1,6 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-05-24
+Updated: 2026-06-04
 Branch: `main`
 
 This is the active working backlog only. Historical detail is in git history,
@@ -2206,6 +2206,24 @@ pending-budget oracle.
    frontier M4i6g: ASAN SEGV/null read in
    `Slice(UInt8)#cmp(Tuple(String, Int32), Tuple(String, Int32), Proc)` while
    compiling s2 `puts 1`.
+   M4i6g (FIXED/VERIFIED advance): block forwarding now recognizes the same
+   mangled block suffix forms as the resolver (`$block`, typed `_block`, and
+   arity/splat variants) and forwards `&block` as a heap Proc carrier, not as a
+   raw function pointer. Root: `Array(Tuple(String, Int32))#sort!$block`
+   forwarded a null block to `Slice#sort!$block`; the first raw-forwarding
+   experiment changed that to a high-PC BUS because `Slice#cmp` expects a heap
+   Proc object `{fn, env}` and read machine-code bytes as the Proc header.
+   Evidence: final host build green; ordinary `puts 1` compile/run prints 1;
+   IR for `Array(Tuple(String, Int32))#sort!$block` allocates a Proc object,
+   stores `%block` at offset 0 and null env at offset 8, then calls
+   `Slice#sort!$block` with that object; tuple-sort reducer compile/run prints
+   1/2/3; p2 tuple/stride guards green; combined 31/31. ASAN s2 `puts 1` no
+   longer reports the old null/raw block ABI frontier and advances past
+   `lower_main`. NEW frontier M4i6h: invalid/wild `MIR::Type*` in
+   `MIR::Type#add_element_type` during `HIRToMIRLowering#register_tuple_types`
+   (lldb sample: `self=0x559`), and a separate ASAN sample saw a packed/wild
+   `HIR::TypeRef` in `HIR::Module#get_type_descriptor`; treat this as the next
+   tuple/type-descriptor memory/layout frontier, not as a block forwarding bug.
 
 0b. (2026-06-02) M4j0 — DWARF debug-info emitter generates DUPLICATE metadata IDs, blocking
    `-g` s2b debugging. Repro: `ADAMAS_DEBUG_EMIT=1 scripts/build_stage2_cached.sh release <stage1>

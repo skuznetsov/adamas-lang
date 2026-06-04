@@ -202,6 +202,28 @@ combined 31/31. NEXT frontier (M4i6g): ASAN SEGV/null read in
 `Slice(UInt8)#cmp(Tuple(String, Int32), Tuple(String, Int32), Proc)` while
 compiling s2 `puts 1`. Trust {F/G/R: 0.90/0.62/0.90}.
 
+[LM-M4i6g|verified]: Block-pass forwarding must use the resolver/mangler's block
+suffix semantics and the runtime Proc carrier ABI. Root: the old forwarding
+guard checked only `ends_with?("_block")`, so methods mangled as `$block` (for
+example `Array(Tuple(String, Int32))#sort!$block`) did not forward `&block` and
+called `Slice#sort!$block` with null. A raw-forwarding experiment proved the
+second invariant: `Slice(UInt8)#cmp(..., Proc)` loads a heap Proc object
+`{fn, env}`; passing the raw block function pointer made it read machine-code
+bytes as the Proc header and produced a high-PC BUS. Fix: accept block suffixes
+via `method_suffix` + `suffix_has_block_flag?`, wrap the forwarded block value in
+`HIR::MakeProc(fn, nil_env)`, and pass that Proc object as the callee's block
+argument. Evidence: final host build `/tmp/adamas_m4i6g_block_pass_forward_v2_s1_final`
+passed; ordinary `puts 1` compile/run prints 1; IR for
+`Array(Tuple(String, Int32))#sort!$block` allocates a Proc object, stores
+`%block` at offset 0 and null env at offset 8, then calls `Slice#sort!$block`
+with that object; `regression_tests/array_tuple_sort_runtime_repro.sh` compile/run
+prints 1/2/3; p2 tuple/stride guards green; combined 31/31. ASAN s2 `puts 1`
+advances past the old null/raw block frontier and past `lower_main`. NEXT
+frontier (M4i6h): invalid/wild type descriptor state during tuple registration
+(`MIR::Type#add_element_type`, sample `self=0x559`; separate ASAN sample:
+packed/wild `HIR::TypeRef` in `HIR::Module#get_type_descriptor`). Trust
+{F/G/R: 0.88/0.58/0.88}.
+
 [LM-557|verified]: Generated stage2 semantic no-codegen checks now survive
 ordinary method definitions, typed/untyped parameters, return annotations,
 splat params, and the primitive `Proc#call(*args : *T) : R` signature. Root
