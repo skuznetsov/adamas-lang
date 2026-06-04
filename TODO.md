@@ -2120,16 +2120,31 @@ pending-budget oracle.
    regression (HEAD and fix crash at the same pre-existing frontier). See LM-M4i2d.
    Adversary-scan clean: source->result stride class closed for map/map_with_index only;
    select/reject (source->source), zip (tuple_type), hash keys/values are all correct.
-   M4i3 (FIXED on minimal oracle, s2b gate pending): tuple container storage policy for
-   Array/Slice + Pointer#value=. Root: Slice#[]=/insert_head!/merge! used Array object layout
-   (buffer @ offset 16) on Slice values (@pointer @ offset 8); insert_head! stored through null.
-   Also: ref-carrying Array(Tuple) and merge `out.value=` must use pointer slots / store ptr, not
-   memcpy tuple body into slots; primitive Array(Tuple) literals now memcpy inline into buffers
-   (LM-663). Evidence: lldb `insert_head!` null deref fixed; `Array(Tuple(UInt32,UInt32))` sort
-   repro no longer SIGSEGV; no-prelude `arr[0][1]` prints 3; combined 31/31; p2 stride guards green.
-   Remaining: full-prelude s2b `puts 1` not re-verified this session (s2 compile hit SIGSEGV during
-   class register ~idx 3/92 or >600s timeout); sort oracle still prints wrong order (1,1,1 not
-   1,2,3) — separate correctness follow-up. See LM-M4i3.
+   M4i3 (FIXED): tuple container storage policy for Array/Slice + Pointer#value=. Root:
+   Slice#[]=/insert_head!/merge! used Array object layout (buffer @ offset 16) on Slice
+   values (@pointer @ offset 8); insert_head! stored through null. Also: ref-carrying
+   Array(Tuple) and merge `out.value=` must use pointer slots / store ptr, not memcpy
+   tuple body into slots; primitive Array(Tuple) literals now memcpy inline into buffers
+   (LM-663). Evidence: lldb `insert_head!` null deref fixed; `Array(Tuple(UInt32,UInt32))`
+   sort repro prints 1,2,3; no-prelude `arr[0][1]` prints 3; combined 31/31; p2 stride
+   guards green. See LM-M4i3.
+   M4i5 (FIXED): split String `#hash` ABI (bare UInt64 vs typed `Crystal::Hasher`
+   protocol) and compute HIR tuple/named-tuple field storage sizes for Hash::Entry
+   layout. This removed the String-hash ABI corruption and the
+   `Hash::Entry(Tuple(String, UInt64, UInt64, Int32), Set(String))` 32-byte key memcpy
+   into a 24-byte entry body. Evidence: combined 31/31, String#hash reducer, tuple-sort
+   reducer, p2 storage guards, direct s2 compiler build, and ASAN no longer reporting the
+   old Hash::Entry initialize overflow.
+   M4i6a (FIXED/VERIFIED advance): constructor return-type pinning in `lower_call` no
+   longer uses `owner_candidates.uniq!`, `sort_by! { ... }`, or `find { ... }`; it
+   preserves FQ-first/dedup/class-info/type-ref semantics with explicit while loops. This
+   removes the ASAN `lower_call+0x690f8` null deref through the
+   `Array(Tuple(String, Int32))#sort!$block` corridor. Evidence: host build, combined
+   31/31, p2 guards, tuple-sort reducer, ordinary `puts 1` compile/run green; ASAN s2b
+   advances past the old null deref. NEW frontier M4i6b: ASAN now reports
+   `__adamas_ptr_copy+0x14` heap-buffer-overflow after `lower_main` (source allocation
+   8 bytes, caller frame missing). Next step: add an env/file probe to `__adamas_ptr_copy`
+   with return-address, src/dest/count/elem_size, then map the caller to source.
 
 0b. (2026-06-02) M4j0 — DWARF debug-info emitter generates DUPLICATE metadata IDs, blocking
    `-g` s2b debugging. Repro: `ADAMAS_DEBUG_EMIT=1 scripts/build_stage2_cached.sh release <stage1>

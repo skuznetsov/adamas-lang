@@ -105,6 +105,23 @@ Adversary-scan (post-fix, clean): all 6 `ArrayNew` sites + dynamic transforms re
 `tuple_type`, hash keys/values use the stored key/value type; the source->result element-stride
 class is closed for `map`/`map_with_index` only, no other latent crash of this class.
 
+[LM-M4i6a|verified]: Constructor return-type pinning no longer depends on bootstrap-hot
+`Array#sort_by!` / `Array#find` block helpers. The s2b ASAN `puts 1` frontier after M4i5
+was a null deref at `AstToHir#lower_call+0x690f8`; disassembly showed the path inside
+`method_name == "new"` owner-candidate handling, immediately around
+`Array(Tuple(String, Int32))#sort!$block`, `Array(String)#size`, and
+`Hash(String, ClassInfo)#has_key?`. This was not trusted as a general tuple-sort fix:
+the accepted change preserves the existing candidate semantics (fully-qualified owners
+first, duplicate removal, prefer `@class_info`, then `type_ref_for_name`) but uses explicit
+while-loop scans instead of `uniq!`, `sort_by!`, and `find`. Evidence: host build
+`/tmp/adamas_m4i6_owner_candidates_s1` passed; combined 31/31; p2 tuple/stride guards green;
+`array_tuple_sort_runtime_repro.sh` compile/run prints 1/2/3; ordinary `puts 1` compile/run
+prints 1; ASAN s2b no longer reports the old `lower_call+0x690f8` SEGV and advances to a
+new `__adamas_ptr_copy` heap-buffer-overflow after `lower_main`. NEXT frontier (M4i6b):
+localize the bad `Pointer#copy_from/copy_to` helper call; ASAN reports source allocation
+8 bytes and `__adamas_ptr_copy+0x14` over-reading via `memcpy`, with no caller frame.
+Trust {F/G/R: 0.86/0.50/0.86}.
+
 [LM-557|verified]: Generated stage2 semantic no-codegen checks now survive
 ordinary method definitions, typed/untyped parameters, return annotations,
 splat params, and the primitive `Proc#call(*args : *T) : R` signature. Root
