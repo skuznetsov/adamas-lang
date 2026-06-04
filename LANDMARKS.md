@@ -176,21 +176,31 @@ in `Array(Tuple(String, Adamas::HIR::TypeRef, Nil|Int64, Nil|String,
 Nil|Adamas::HIR::SourceLocation))#push`, reading 64 bytes at the end of a
 64-byte buffer. Trust {F/G/R: 0.86/0.58/0.88}.
 
-[LM-M4i6e|verified]: HIR call-boundary tuple coercion fixes the nested tuple
-layout mismatch feeding wide `Array(Tuple(...))#push` containers. Root: some
-call sites built a narrow tuple object such as `Tuple(String, HIR::TypeRef,
-Int64, String, SourceLocation?)` and passed it to a parameter/container expecting
-`Tuple(String, HIR::TypeRef, Int64?, String?, SourceLocation?)`; generated
-`Array#<<` then copied the wide 64-byte payload from a 56-byte tuple body.
-Fix: `coerce_args_to_param_types` tries `try_coerce_tuple_to_tuple` before
-numeric casts whenever source and parameter types differ. Evidence: host build
-`/tmp/adamas_m4i6e_hir_tuple_coerce_s1`; combined 31/31; p2 tuple/stride guards
-green; `array_tuple_sort_runtime_repro.sh` compile/run prints 1/2/3; ordinary
-`puts 1` compile/run prints 1; ASAN stage2 build succeeds; ASAN s2b `puts 1`
-no longer reports the old `Array(Tuple(...))#push` heap-buffer-overflow. NEXT
-frontier (M4i6f): ASAN SEGV/null read in
+[LM-M4i6e|partial]: HIR parameter-type tuple coercion was necessary but not
+sufficient for the nested tuple layout mismatch feeding wide
+`Array(Tuple(...))#push` containers. Host gates passed, but hostile lldb/IR
+review of `/tmp/adamas_m4i6e_hir_tuple_coerce_asan_s2compiler` still found a
+remaining path where a narrow tuple body was passed to a wide `Array#<<`.
+Trace showed why: the receiver was `Array(Tuple(...wide...))`, but the selected
+method suffix was still derived from the narrow argument, so parameter-only
+coercion saw matching source/target types. Trust {F/G/R: 0.86/0.62/0.88}.
+
+[LM-M4i6f|verified]: Container writes must coerce the stored value to the
+receiver container element type before emitting `Array/Slice#<<`. Root:
+container storage layout is owned by the receiver element type, not by the
+selected method suffix when lazy resolution still carries a narrow argument
+shape. Fix: `lower_binary` and receiver-call `<<` paths route the value through
+`coerce_arg_to_container_element_type`, which uses existing tuple/union coercion
+to rebuild narrow tuples into the declared container element layout. Evidence:
+host build `/tmp/adamas_m4i6f_container_write_coerce_s1`; ordinary `puts 1`
+compile/run prints 1; ASAN stage2 build succeeds; IR for `__crystal_block_proc_92`
+now allocates a 72-byte wide tuple and passes it to
+`Array(Tuple(...SourceLocation))#<<`; ASAN s2b `puts 1` no longer reports the old
+`Array(Tuple(...SourceLocation))#push` heap-buffer-overflow; p2 tuple/stride
+guards green; `array_tuple_sort_runtime_repro.sh` compile/run prints 1/2/3;
+combined 31/31. NEXT frontier (M4i6g): ASAN SEGV/null read in
 `Slice(UInt8)#cmp(Tuple(String, Int32), Tuple(String, Int32), Proc)` while
-compiling s2 `puts 1`. Trust {F/G/R: 0.84/0.50/0.86}.
+compiling s2 `puts 1`. Trust {F/G/R: 0.90/0.62/0.90}.
 
 [LM-557|verified]: Generated stage2 semantic no-codegen checks now survive
 ordinary method definitions, typed/untyped parameters, return annotations,

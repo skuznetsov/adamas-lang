@@ -2186,17 +2186,24 @@ pending-budget oracle.
    `Array(Tuple(String, Adamas::HIR::TypeRef, Nil|Int64, Nil|String,
    Nil|Adamas::HIR::SourceLocation))#push`, reading 64 bytes at the end of a
    64-byte buffer.
-   M4i6e (FIXED/VERIFIED advance): call arguments with tuple source/parameter
-   shape mismatches now try `try_coerce_tuple_to_tuple` before numeric casts in
-   `coerce_args_to_param_types`. This rebuilds nested tuple literals such as
-   `Tuple(String, HIR::TypeRef, Int64, String, SourceLocation?)` into the
-   declared parameter layout `Tuple(String, HIR::TypeRef, Int64?, String?,
-   SourceLocation?)` before `Array#<<`, instead of passing a narrow heap tuple
-   to a wide tuple container. Evidence: host build green, combined 31/31, p2
-   tuple/stride guards green, tuple-sort reducer compile/run prints 1/2/3,
-   ordinary `puts 1` compile/run prints 1, ASAN stage2 build succeeds, and ASAN
-   s2b `puts 1` no longer reports the old `Array(Tuple(...))#push`
-   heap-buffer-overflow. NEW frontier M4i6f: ASAN SEGV/null read in
+   M4i6e (PARTIAL): call arguments with tuple source/parameter shape mismatches
+   now try `try_coerce_tuple_to_tuple` before numeric casts in
+   `coerce_args_to_param_types`. Host gates were green, but hostile lldb/IR
+   review later showed one remaining lazy `Array#<<` path: the receiver was
+   `Array(Tuple(...wide...))`, while the selected method suffix was still
+   derived from the narrow source tuple, so parameter-only coercion was a no-op
+   and the backend later normalized the call to the wide container slot.
+   M4i6f (FIXED/VERIFIED advance): container writes now coerce the stored value
+   to the receiver container element type before emitting `Array/Slice#<<`.
+   This rebuilds `Tuple(String, HIR::TypeRef, Int64, String?,
+   SourceLocation?)` into the declared storage layout
+   `Tuple(String, HIR::TypeRef, Int64?, String?, SourceLocation?)` before
+   `Array#<<`, instead of passing a narrow heap tuple to a wide tuple container.
+   Evidence: host build green, combined 31/31, p2 tuple/stride guards green,
+   tuple-sort reducer compile/run prints 1/2/3, ordinary `puts 1` compile/run
+   prints 1, ASAN stage2 build succeeds, and ASAN s2b `puts 1` no longer reports
+   the old `Array(Tuple(...SourceLocation))#push` heap-buffer-overflow. NEW
+   frontier M4i6g: ASAN SEGV/null read in
    `Slice(UInt8)#cmp(Tuple(String, Int32), Tuple(String, Int32), Proc)` while
    compiling s2 `puts 1`.
 
