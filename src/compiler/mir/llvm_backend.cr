@@ -11943,6 +11943,12 @@ module Adamas::MIR
         "Crystal$CCHIR$CCFunctionId",
         "Crystal$CCHIR$CCTypeId",
         "Crystal$CCHIR$CCStringId",
+        "Adamas$CCHIR$CCValueId",
+        "Adamas$CCHIR$CCBlockId",
+        "Adamas$CCHIR$CCScopeId",
+        "Adamas$CCHIR$CCFunctionId",
+        "Adamas$CCHIR$CCTypeId",
+        "Adamas$CCHIR$CCStringId",
         "MIR$CCValueId",
         "MIR$CCBlockId",
         "MIR$CCFunctionId",
@@ -11951,6 +11957,10 @@ module Adamas::MIR
         "Crystal$CCMIR$CCBlockId",
         "Crystal$CCMIR$CCFunctionId",
         "Crystal$CCMIR$CCTypeId",
+        "Adamas$CCMIR$CCValueId",
+        "Adamas$CCMIR$CCBlockId",
+        "Adamas$CCMIR$CCFunctionId",
+        "Adamas$CCMIR$CCTypeId",
       }
 
       idx = 0
@@ -12462,6 +12472,10 @@ module Adamas::MIR
         "Set$LCrystal$CCMIR$CCTypeRef$R",
         "$CCSet$LCrystal$CCHIR$CCTypeRef$R",
         "Set$LCrystal$CCHIR$CCTypeRef$R",
+        "$CCSet$LAdamas$CCMIR$CCTypeRef$R",
+        "Set$LAdamas$CCMIR$CCTypeRef$R",
+        "$CCSet$LAdamas$CCHIR$CCTypeRef$R",
+        "Set$LAdamas$CCHIR$CCTypeRef$R",
       }
 
       idx = 0
@@ -12471,6 +12485,8 @@ module Adamas::MIR
           target = mangled.sub(prefix, "Set$LUInt32$R")
           target = target.sub("$$Crystal$CCMIR$CCTypeRef", "$$UInt32")
           target = target.sub("$$Crystal$CCHIR$CCTypeRef", "$$UInt32")
+          target = target.sub("$$Adamas$CCMIR$CCTypeRef", "$$UInt32")
+          target = target.sub("$$Adamas$CCHIR$CCTypeRef", "$$UInt32")
           target = target.sub("$$TypeRef", "$$UInt32")
           if target_func = @func_by_name[target]?
             return {target, target_func}
@@ -12526,6 +12542,14 @@ module Adamas::MIR
         "$CCSet$LCrystal$CCMIR$CCBlockId$R",
         "$CCSet$LCrystal$CCMIR$CCFunctionId$R",
         "$CCSet$LCrystal$CCMIR$CCTypeRef$R",
+        "$CCSet$LAdamas$CCHIR$CCValueId$R",
+        "$CCSet$LAdamas$CCHIR$CCBlockId$R",
+        "$CCSet$LAdamas$CCHIR$CCFunctionId$R",
+        "$CCSet$LAdamas$CCHIR$CCTypeRef$R",
+        "$CCSet$LAdamas$CCMIR$CCValueId$R",
+        "$CCSet$LAdamas$CCMIR$CCBlockId$R",
+        "$CCSet$LAdamas$CCMIR$CCFunctionId$R",
+        "$CCSet$LAdamas$CCMIR$CCTypeRef$R",
       }
 
       idx = 0
@@ -12551,6 +12575,12 @@ module Adamas::MIR
         "$Hkey_hash$$Crystal$CCHIR$CCFunctionId",
         "$Hkey_hash$$Crystal$CCHIR$CCTypeId",
         "$Hkey_hash$$Crystal$CCHIR$CCStringId",
+        "$Hkey_hash$$Adamas$CCHIR$CCValueId",
+        "$Hkey_hash$$Adamas$CCHIR$CCBlockId",
+        "$Hkey_hash$$Adamas$CCHIR$CCScopeId",
+        "$Hkey_hash$$Adamas$CCHIR$CCFunctionId",
+        "$Hkey_hash$$Adamas$CCHIR$CCTypeId",
+        "$Hkey_hash$$Adamas$CCHIR$CCStringId",
         "$Hkey_hash$$MIR$CCValueId",
         "$Hkey_hash$$MIR$CCBlockId",
         "$Hkey_hash$$MIR$CCFunctionId",
@@ -12559,6 +12589,10 @@ module Adamas::MIR
         "$Hkey_hash$$Crystal$CCMIR$CCBlockId",
         "$Hkey_hash$$Crystal$CCMIR$CCFunctionId",
         "$Hkey_hash$$Crystal$CCMIR$CCTypeId",
+        "$Hkey_hash$$Adamas$CCMIR$CCValueId",
+        "$Hkey_hash$$Adamas$CCMIR$CCBlockId",
+        "$Hkey_hash$$Adamas$CCMIR$CCFunctionId",
+        "$Hkey_hash$$Adamas$CCMIR$CCTypeId",
       }
 
       idx = 0

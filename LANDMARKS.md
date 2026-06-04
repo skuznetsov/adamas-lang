@@ -157,6 +157,25 @@ the `Set(ValueId).new` null deref; likely another compiler-internal collection/
 storage corridor related to the broader PLAN_INLINE_STRUCTS migration. Trust
 {F/G/R: 0.84/0.42/0.86}.
 
+[LM-M4i6d|verified]: Backend compiler-UInt32-alias delegates now recognize
+`Adamas::HIR::*` / `Adamas::MIR::*` names produced by the M4i1b broad
+canonicalization, not only short and `Crystal::HIR/MIR::*` names. Root: the
+ASAN M4i6c frontier was `$CCSet$LAdamas$CCHIR$CCValueId$R.new(ptr null)`; because
+`compiler_u32_alias_set_owner?` did not match the Adamas-qualified owner, the
+raw generated body treated the nil default-capacity pointer as an `Int32` and
+called `Set(UInt32)#initialize$arity1`. Fix: extend alias token/prefix/suffix
+sets for Set.new, Set TypeRef delegation, Hash key-hash, and root Set aliases to
+the Adamas-qualified HIR/MIR compiler ids. Evidence: host build
+`/tmp/adamas_m4i6d_set_alias_s1`; combined 31/31; p2 tuple/stride guards green;
+`array_tuple_sort_runtime_repro.sh` compile/run prints 1/2/3; ordinary `puts 1`
+compile/run prints 1; ASAN s2b `puts 1` no longer reports the old Set(ValueId)
+null deref, and the generated IR emits
+`$CCSet$LAdamas$CCHIR$CCValueId$R$Dnew` as a delegate to
+`Set$LUInt32$R$Dnew(ptr null)`. NEXT frontier (M4i6e): ASAN heap-buffer-overflow
+in `Array(Tuple(String, Adamas::HIR::TypeRef, Nil|Int64, Nil|String,
+Nil|Adamas::HIR::SourceLocation))#push`, reading 64 bytes at the end of a
+64-byte buffer. Trust {F/G/R: 0.86/0.58/0.88}.
+
 [LM-557|verified]: Generated stage2 semantic no-codegen checks now survive
 ordinary method definitions, typed/untyped parameters, return annotations,
 splat params, and the primitive `Proc#call(*args : *T) : R` signature. Root

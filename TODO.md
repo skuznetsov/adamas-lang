@@ -2171,6 +2171,21 @@ pending-budget oracle.
    `Set(Adamas::HIR::ValueId).new` after `lower_main`. NEW frontier M4i6d:
    null deref inside `Set(ValueId).new`, likely another compiler-internal
    collection/storage corridor.
+   M4i6d (FIXED/VERIFIED advance): after M4i1b broad canonicalization,
+   root-qualified compiler id sets use `Adamas::HIR/MIR::*` names, but backend
+   UInt32-alias delegates still recognized only short/`Crystal::HIR/MIR::*`.
+   As a result `$CCSet$LAdamas$CCHIR$CCValueId$R.new` was emitted as the raw
+   `Set(UInt32).new(initial_capacity)` path and read the nil default-capacity
+   pointer as an `Int32`. Fix: extend compiler UInt32-alias set/key-hash/TypeRef
+   delegate recognition to `Adamas::HIR/MIR::*`. Evidence: host build green,
+   combined 31/31, p2 tuple/stride guards green, tuple-sort reducer prints 1/2/3,
+   ordinary `puts 1` compile/run prints 1; ASAN s2b `puts 1` no longer reports
+   the old `$CCSet$LAdamas$CCHIR$CCValueId$R.new` null deref, and IR now emits
+   that root alias as a delegate to `Set(UInt32).new(nil capacity)`. NEW frontier
+   M4i6e: ASAN heap-buffer-overflow in
+   `Array(Tuple(String, Adamas::HIR::TypeRef, Nil|Int64, Nil|String,
+   Nil|Adamas::HIR::SourceLocation))#push`, reading 64 bytes at the end of a
+   64-byte buffer.
 
 0b. (2026-06-02) M4j0 — DWARF debug-info emitter generates DUPLICATE metadata IDs, blocking
    `-g` s2b debugging. Repro: `ADAMAS_DEBUG_EMIT=1 scripts/build_stage2_cached.sh release <stage1>
