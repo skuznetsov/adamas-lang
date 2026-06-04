@@ -176,6 +176,22 @@ in `Array(Tuple(String, Adamas::HIR::TypeRef, Nil|Int64, Nil|String,
 Nil|Adamas::HIR::SourceLocation))#push`, reading 64 bytes at the end of a
 64-byte buffer. Trust {F/G/R: 0.86/0.58/0.88}.
 
+[LM-M4i6e|verified]: HIR call-boundary tuple coercion fixes the nested tuple
+layout mismatch feeding wide `Array(Tuple(...))#push` containers. Root: some
+call sites built a narrow tuple object such as `Tuple(String, HIR::TypeRef,
+Int64, String, SourceLocation?)` and passed it to a parameter/container expecting
+`Tuple(String, HIR::TypeRef, Int64?, String?, SourceLocation?)`; generated
+`Array#<<` then copied the wide 64-byte payload from a 56-byte tuple body.
+Fix: `coerce_args_to_param_types` tries `try_coerce_tuple_to_tuple` before
+numeric casts whenever source and parameter types differ. Evidence: host build
+`/tmp/adamas_m4i6e_hir_tuple_coerce_s1`; combined 31/31; p2 tuple/stride guards
+green; `array_tuple_sort_runtime_repro.sh` compile/run prints 1/2/3; ordinary
+`puts 1` compile/run prints 1; ASAN stage2 build succeeds; ASAN s2b `puts 1`
+no longer reports the old `Array(Tuple(...))#push` heap-buffer-overflow. NEXT
+frontier (M4i6f): ASAN SEGV/null read in
+`Slice(UInt8)#cmp(Tuple(String, Int32), Tuple(String, Int32), Proc)` while
+compiling s2 `puts 1`. Trust {F/G/R: 0.84/0.50/0.86}.
+
 [LM-557|verified]: Generated stage2 semantic no-codegen checks now survive
 ordinary method definitions, typed/untyped parameters, return annotations,
 splat params, and the primitive `Proc#call(*args : *T) : R` signature. Root
