@@ -2145,6 +2145,19 @@ pending-budget oracle.
    `__adamas_ptr_copy+0x14` heap-buffer-overflow after `lower_main` (source allocation
    8 bytes, caller frame missing). Next step: add an env/file probe to `__adamas_ptr_copy`
    with return-address, src/dest/count/elem_size, then map the caller to source.
+   M4i6b (FIXED/VERIFIED advance): `__adamas_ptr_copy` return-address probe mapped the
+   ASAN over-read to `Array(Adamas::HIR::TypeRef)#[]?(Int32, Int32)`, called through
+   `Array(TypeRef)#[]?(Range)` from inlined TypeRef tail slices in `lower_def` and
+   `lower_module_method`. The accepted fix avoids the generic Range slice corridor for
+   compiler-internal TypeRef tails: `type_ref_array_tail` manually copies tail elements
+   using `type_ref_array_fetch_or_void`, and the known TypeRef `[1..]` sites now use it
+   (`expand_flat_block_param_types`, unbound instance wrappers, inline-yield tuple
+   expansion, proc tuple destructuring). Evidence: host build green, combined 31/31,
+   p2 tuple/stride guards green, tuple-sort reducer compile/run prints 1/2/3, ordinary
+   `puts 1` compile/run prints 1; ASAN s2b `puts 1` no longer reports the old
+   `Array(TypeRef)#[]?` heap-buffer-overflow and advances past `lower_main`. NEW
+   frontier M4i6c: null `String#bytesize` after `lower_main` (`x0=0`, read at 0x4),
+   likely a separate null String/metadata corridor.
 
 0b. (2026-06-02) M4j0 — DWARF debug-info emitter generates DUPLICATE metadata IDs, blocking
    `-g` s2b debugging. Repro: `ADAMAS_DEBUG_EMIT=1 scripts/build_stage2_cached.sh release <stage1>

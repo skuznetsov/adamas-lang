@@ -122,6 +122,24 @@ localize the bad `Pointer#copy_from/copy_to` helper call; ASAN reports source al
 8 bytes and `__adamas_ptr_copy+0x14` over-reading via `memcpy`, with no caller frame.
 Trust {F/G/R: 0.86/0.50/0.86}.
 
+[LM-M4i6b|verified]: TypeRef tail slices no longer route through the generic
+`Array(TypeRef)#[]?(Range)` storage corridor in bootstrap-hot HIR paths. The M4i6a ASAN
+frontier (`__adamas_ptr_copy` heap-buffer-overflow after `lower_main`, source allocation
+8 bytes) was localized with a temporary return-address probe: bad caller
+`0x1008cc9c0` mapped to `Array(Adamas::HIR::TypeRef)#[]?(Int32, Int32)`, and the only
+real Range callsites were inlined into `AstToHir#lower_module_method` and `AstToHir#lower_def`.
+Source correlation: TypeRef `[1..]` tails in tuple/block/proc lowering. Fix:
+`type_ref_array_tail` manually copies tail elements via `type_ref_array_fetch_or_void`, and
+the TypeRef-tail sites (`expand_flat_block_param_types`, unbound instance wrappers,
+inline-yield tuple expansion, proc tuple destructuring) use it instead of `[1..]`. This is a
+bounded bridge toward PLAN_INLINE_STRUCTS: it removes a fragile generic Array/Range storage
+dependency without changing the global struct ABI. Evidence: host build
+`/tmp/adamas_m4i6b_type_ref_tail_s1`; combined 31/31; p2 tuple/stride guards green;
+`array_tuple_sort_runtime_repro.sh` compile/run prints 1/2/3; ordinary `puts 1` compile/run
+prints 1; ASAN s2b `puts 1` no longer reports the old `Array(TypeRef)#[]?` over-read and
+advances past `lower_main` to a new null `String#bytesize` frontier (M4i6c). Trust
+{F/G/R: 0.86/0.55/0.86}.
+
 [LM-557|verified]: Generated stage2 semantic no-codegen checks now survive
 ordinary method definitions, typed/untyped parameters, return annotations,
 splat params, and the primitive `Proc#call(*args : *T) : R` signature. Root
