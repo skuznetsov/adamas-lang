@@ -140,6 +140,23 @@ prints 1; ASAN s2b `puts 1` no longer reports the old `Array(TypeRef)#[]?` over-
 advances past `lower_main` to a new null `String#bytesize` frontier (M4i6c). Trust
 {F/G/R: 0.86/0.55/0.86}.
 
+[LM-M4i6c|verified]: Advisory enum tracking now guards against null generated
+`String` type names before calling `String#empty?`. The M4i6b ASAN frontier after
+`lower_main` was `String#bytesize -> String#empty? -> AstToHir#track_enum_value ->
+lower_method -> lower_function_if_needed_impl`, with `x0=0`/null receiver. Fix:
+`track_enum_value` returns immediately when `type_name.unsafe_as(UInt64) == 0_u64`;
+non-null names still follow the existing `empty?` and enum-candidate logic. This is
+advisory metadata only: a null type name cannot identify a real enum, so the guard
+prevents a crash without claiming to repair the upstream metadata/storage corridor.
+Evidence: host build `/tmp/adamas_m4i6c_track_enum_s1`; combined 31/31; p2 tuple/
+stride guards green; `array_tuple_sort_runtime_repro.sh` compile/run prints 1/2/3;
+ordinary `puts 1` compile/run prints 1; ASAN s2b `puts 1` no longer reports the old
+`String#bytesize`/`track_enum_value` SEGV and advances to a new null deref in
+`Set(Adamas::HIR::ValueId).new` after `lower_main`. NEXT frontier (M4i6d): localize
+the `Set(ValueId).new` null deref; likely another compiler-internal collection/
+storage corridor related to the broader PLAN_INLINE_STRUCTS migration. Trust
+{F/G/R: 0.84/0.42/0.86}.
+
 [LM-557|verified]: Generated stage2 semantic no-codegen checks now survive
 ordinary method definitions, typed/untyped parameters, return annotations,
 splat params, and the primitive `Proc#call(*args : *T) : R` signature. Root

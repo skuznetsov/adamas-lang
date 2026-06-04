@@ -2158,6 +2158,19 @@ pending-budget oracle.
    `Array(TypeRef)#[]?` heap-buffer-overflow and advances past `lower_main`. NEW
    frontier M4i6c: null `String#bytesize` after `lower_main` (`x0=0`, read at 0x4),
    likely a separate null String/metadata corridor.
+   M4i6c (FIXED/VERIFIED advance): advisory enum-value tracking now rejects a null
+   generated `String` before calling `String#empty?`. The lldb/ASAN frontier before
+   the fix was `String#bytesize -> String#empty? -> AstToHir#track_enum_value ->
+   lower_method -> lower_function_if_needed_impl`, with the `String` receiver null.
+   This path only records enum metadata for values, so skipping a null type name
+   preserves non-null behavior and avoids treating corrupted/absent metadata as a
+   real enum type. Evidence: host build green, combined 31/31, p2 tuple/stride
+   guards green, tuple-sort reducer compile/run prints 1/2/3, ordinary `puts 1`
+   compile/run prints 1; ASAN s2b `puts 1` no longer reports the old
+   `String#bytesize`/`track_enum_value` crash and advances to
+   `Set(Adamas::HIR::ValueId).new` after `lower_main`. NEW frontier M4i6d:
+   null deref inside `Set(ValueId).new`, likely another compiler-internal
+   collection/storage corridor.
 
 0b. (2026-06-02) M4j0 — DWARF debug-info emitter generates DUPLICATE metadata IDs, blocking
    `-g` s2b debugging. Repro: `ADAMAS_DEBUG_EMIT=1 scripts/build_stage2_cached.sh release <stage1>
