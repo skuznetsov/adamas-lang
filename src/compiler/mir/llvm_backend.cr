@@ -14,6 +14,7 @@
 # use LLVM::Module directly for better performance.
 
 require "./mir"
+require "../layout_probe"
 
 module Adamas::MIR
   class ::Hash(K, V)
@@ -2671,6 +2672,34 @@ module Adamas::MIR
     end
 
     private def container_elem_storage_size_u64(elem_type : Type?) : UInt64
+      size = container_elem_storage_size_u64_impl(elem_type)
+      if elem_type && Adamas::LayoutProbe.enabled?
+        log_container_elem_decision(elem_type, size)
+      end
+      size
+    end
+
+    # LayoutDecision sidecar (diagnostic only, see layout_probe.cr).
+    private def log_container_elem_decision(elem_type : Type, size : UInt64) : Nil
+      storage =
+        if elem_type.kind.primitive? || elem_type.kind.enum?
+          "InlineBytes"
+        elsif elem_type.kind.union? && elem_type.size > pointer_word_bytes_u64
+          "InlineBytes"
+        elsif inline_primitive_tuple_type?(elem_type) || inline_container_struct_type?(elem_type)
+          "InlineBytes"
+        elsif elem_type.kind.struct? || elem_type.kind.tuple?
+          "PointerCarrier"
+        else
+          "PointerReference"
+        end
+      Adamas::LayoutProbe.log(
+        "llvm", "container_elem_storage_size", "container-element", "layout",
+        elem_type.name, elem_type.id.to_i64, storage, size.to_i64, elem_type.size.to_i64
+      )
+    end
+
+    private def container_elem_storage_size_u64_impl(elem_type : Type?) : UInt64
       return pointer_word_bytes_u64 unless elem_type
 
       is_inline = elem_type.kind.primitive? || elem_type.kind.enum?

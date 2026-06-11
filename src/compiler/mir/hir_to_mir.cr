@@ -12,6 +12,7 @@
 require "./mir"
 require "../hir/hir"
 require "../hir/memory_strategy"
+require "../layout_probe"
 
 module Adamas
   module MIR
@@ -2747,6 +2748,35 @@ module Adamas
       # Field Access Lowering
       # ─────────────────────────────────────────────────────────────────────────
 
+      # LayoutDecision sidecar helpers (diagnostic only, see layout_probe.cr).
+      private def probe_field_event(site : String, context : String, role : String,
+                                    hir_type : HIR::TypeRef, storage : String,
+                                    access_size : Int64,
+                                    declared : TypeRef? = nil, effective : TypeRef? = nil) : Nil
+        Adamas::LayoutProbe.log(
+          "mir", site, context, role,
+          hir_type_name(hir_type), hir_type.id.to_i64, storage,
+          -1_i64, access_size,
+          declared ? probe_mir_type_label(declared) : "",
+          effective ? probe_mir_type_label(effective) : ""
+        )
+      end
+
+      private def probe_mir_type_label(type_ref : TypeRef) : String
+        if t = @mir_module.type_registry.get(type_ref)
+          "#{t.name}##{t.id}"
+        else
+          "type_ref:#{type_ref}"
+        end
+      end
+
+      private def probe_mir_type_size(type_ref : TypeRef) : Int64
+        if t = @mir_module.type_registry.get(type_ref)
+          return t.size.to_i64 if t.size > 0
+        end
+        pointer_word_bytes_u64.to_i64
+      end
+
       private def lower_field_get(field : HIR::FieldGet) : ValueId
         builder = @builder.not_nil!
         # Nil-typed fields are zero-sized and have no storage.
@@ -2768,23 +2798,40 @@ module Adamas
           inline_size = hir_type_inline_size(field.type)
           if inline_size > pointer_word_bytes_i32
             @inline_struct_ptrs << field.id
+            if Adamas::LayoutProbe.enabled?
+              probe_field_event("lower_field_get.inline_struct", "field-get", "consumer",
+                field.type, "BorrowedAddress", inline_size.to_i64)
+            end
             return field_ptr
           end
         end
         if @inline_struct_ptrs.includes?(field.object) && hir_type_is_struct?(field.type)
           @inline_struct_ptrs << field.id
+          if Adamas::LayoutProbe.enabled?
+            probe_field_event("lower_field_get.propagated", "field-get", "consumer",
+              field.type, "BorrowedAddress", -1_i64)
+          end
           field_ptr
         elsif hir_type_is_static_array?(field.type)
           # StaticArray is always inline in its parent — return GEP pointer directly
           @inline_struct_ptrs << field.id
+          if Adamas::LayoutProbe.enabled?
+            probe_field_event("lower_field_get.static_array", "field-get", "consumer",
+              field.type, "BorrowedAddress", -1_i64)
+          end
           field_ptr
         elsif hir_type_is_lib_struct?(field.type)
           # Lib struct fields are stored inline (via memcopy in FieldSet).
           # Return the GEP pointer directly — the data is at the field address.
           @inline_struct_ptrs << field.id
+          if Adamas::LayoutProbe.enabled?
+            probe_field_event("lower_field_get.lib_struct", "field-get", "consumer",
+              field.type, "BorrowedAddress", -1_i64)
+          end
           field_ptr
         else
           field_mir_type = convert_type(field.type)
+          probe_declared_type = field_mir_type
 
           # CRITICAL: If field_mir_type maps to an all-ref union, override to POINTER.
           # All-ref unions are stored as raw pointers (no union discriminator).
@@ -2828,6 +2875,11 @@ module Adamas
                           field_descriptor = @mir_module.get_union_descriptor(field_mir_type)
                           field_is_allref = field_descriptor ? all_ref_union_descriptor?(field_descriptor) : true
                           if field_is_allref
+                            if Adamas::LayoutProbe.enabled?
+                              probe_field_event("lower_field_get.payload4", "field-get", "consumer",
+                                field.type, "InlineBytes", probe_mir_type_size(found_field.type_ref),
+                                field_mir_type, found_field.type_ref)
+                            end
                             # GEP past the union header to the payload and load from there.
                             # The LLVM union type is {i32, [N x i32]} with payload at offset 4
                             # (sizeof(i32) header).
@@ -2842,7 +2894,20 @@ module Adamas
             end
           end
 
-          builder.load(field_ptr, actual_load_type)
+          loaded = builder.load(field_ptr, actual_load_type)
+          if Adamas::LayoutProbe.enabled?
+            storage = if hir_type_is_struct?(field.type)
+                        "PointerCarrier"
+                      elsif actual_load_type == TypeRef::POINTER
+                        "PointerReference"
+                      else
+                        "InlineBytes"
+                      end
+            probe_field_event("lower_field_get.load", "field-get", "consumer",
+              field.type, storage, probe_mir_type_size(actual_load_type),
+              probe_declared_type, actual_load_type)
+          end
+          loaded
         end
       end
 
@@ -2922,6 +2987,10 @@ module Adamas
                           hir_type_inline_size(field_hir_type).to_u64
                         end
           if struct_size > 0
+            if Adamas::LayoutProbe.enabled?
+              probe_field_event("lower_field_store.memcopy", "field-set", "producer",
+                field_hir_type, "InlineBytes", struct_size.to_i64)
+            end
             builder.memcopy(field_ptr, value, struct_size)
             return value
           end
@@ -2973,6 +3042,19 @@ module Adamas
               end
             end
           end
+        end
+
+        if Adamas::LayoutProbe.enabled?
+          storage = if hir_type_is_struct?(field_hir_type) && !hir_type_is_lib_struct?(field_hir_type)
+                      "PointerCarrier"
+                    elsif actual_field_type == TypeRef::POINTER
+                      "PointerReference"
+                    else
+                      "InlineBytes"
+                    end
+          probe_field_event("lower_field_store.store", "field-set", "producer",
+            field_hir_type, storage, probe_mir_type_size(actual_field_type),
+            field_mir_type, actual_field_type)
         end
 
         # Create store with optional field_type annotation so the LLVM backend
