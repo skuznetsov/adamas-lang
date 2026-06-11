@@ -32,6 +32,7 @@ module Adamas
     @@enabled : Bool? = nil
     @@out : ::File? = nil
     @@seen : ::Set(String)? = nil
+    @@trace : Array(String)? = nil
 
     # Lazy ENV access inside a method: module-constant ENV reads crash
     # V2-compiled binaries (see CRYSTAL_PATH note in project memory).
@@ -42,6 +43,39 @@ module Adamas
       enabled = !value.nil? && value != "" && value != "0"
       @@enabled = enabled
       enabled
+    end
+
+    # Registration-trace filter (B0 diagnostic): ADAMAS_LAYOUT_PROBE_TRACE is a
+    # comma-separated list of type-name substrings (e.g. "Slice(UInt8),Atomic(").
+    # Registration/update events are logged only for matching names, keeping the
+    # hot paths (intern_type, type_size) effectively free when unset.
+    def self.trace_enabled? : Bool
+      !trace_patterns.empty?
+    end
+
+    def self.trace_match?(name : String) : Bool
+      pats = trace_patterns
+      return false if pats.empty?
+      pats.each do |pat|
+        return true if name.includes?(pat)
+      end
+      false
+    end
+
+    private def self.trace_patterns : Array(String)
+      cached = @@trace
+      return cached unless cached.nil?
+      pats = [] of String
+      if enabled?
+        if raw = ENV["ADAMAS_LAYOUT_PROBE_TRACE"]?
+          raw.split(',') do |part|
+            stripped = part.strip
+            pats << stripped unless stripped.empty?
+          end
+        end
+      end
+      @@trace = pats
+      pats
     end
 
     def self.log(phase : String, site : String, context : String, role : String,

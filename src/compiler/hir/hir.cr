@@ -7,6 +7,8 @@
 #
 # See docs/codegen_architecture.md for full specification.
 
+require "../layout_probe"
+
 module Adamas::HIR
   # ═══════════════════════════════════════════════════════════════════════════
   # IDENTIFIERS
@@ -2651,13 +2653,38 @@ module Adamas::HIR
         created
       end
       bucket.each do |entry|
-        return entry[2] if entry[0] == kind_key && entry[1] == desc.type_params
+        if entry[0] == kind_key && entry[1] == desc.type_params
+          if Adamas::LayoutProbe.trace_enabled? && Adamas::LayoutProbe.trace_match?(desc.name)
+            Adamas::LayoutProbe.log(
+              phase: "hir", site: "intern_type.hit", context: "registration", role: "registry",
+              type_name: desc.name, type_id: entry[2].id.to_i64,
+              storage: "kind=#{desc.kind}", slot_size: desc.type_params.size.to_i64,
+              access_size: bucket.size.to_i64)
+          end
+          return entry[2]
+        end
       end
       # Add new type
       id = @next_type_id
       @next_type_id += 1
       @types << desc
       ref = TypeRef.new(id)
+      if Adamas::LayoutProbe.trace_enabled? && Adamas::LayoutProbe.trace_match?(desc.name)
+        site = bucket.empty? ? "intern_type.new" : "intern_type.ghost"
+        existing = String.build do |io|
+          bucket.each_with_index do |entry, i|
+            io << ';' if i > 0
+            io << "id=" << entry[2].id << " kind_key=" << entry[0] << " params=" << entry[1].size
+          end
+        end
+        Adamas::LayoutProbe.log(
+          phase: "hir", site: site, context: "registration", role: "registry",
+          type_name: desc.name, type_id: id.to_i64,
+          storage: "kind=#{desc.kind}", slot_size: desc.type_params.size.to_i64,
+          access_size: bucket.size.to_i64,
+          declared: existing.empty? ? "" : "existing:#{existing}",
+          effective: "params:#{desc.type_params.map(&.id).join(",")}")
+      end
       bucket << {kind_key, desc.type_params.dup, ref}
       ref
     end
