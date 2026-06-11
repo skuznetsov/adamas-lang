@@ -64,6 +64,34 @@ Owners whose ivars reference the late-monomorphized struct keep their stale
 slots. MIR later lowers stores via the concrete 16-byte view → 16-byte memcopy
 into an 8-byte slot → adjacent-field corruption (proven by the reducer).
 
+## B1a0 ledger evidence (ADAMAS_LAYOUT_PROBE_LEDGER=1)
+
+Non-dedup, sequence-numbered event ledger (B0's dedup hid event order). New
+rows: `layout_dep` (owner class, ivar, field type, type_size branch, slot),
+`layout_dep.stale_owner` (emitted on every `@class_info` write for a type that
+previously fed a ref_fallback slot), `layout_dep.healed` (a later re-layout of
+the same owner#ivar resolved through a real branch). With the ledger on, ALL
+probe rows go through the seq writer, so order is preserved end to end.
+
+Reducer compile, the stale dependency proven in one file:
+
+- Holder is laid out 4× (`register_concrete_class` final realign + align
+  passes), every time `Holder#@bytes <- Slice(UInt8) ref_fallback slot=8`
+  (seq 3449, 5199, 6854, 8508).
+- `Slice(UInt8)` class_info completes only at seq 8718+ (size 0 -> 16),
+  emitting `stale_owner:Holder#@bytes` on each subsequent write.
+- Holder's LAST layout event is seq 8510 — nothing re-lays it out after the
+  completion, and no `healed` row for `Holder#@bytes` ever appears.
+- Positive control: the healed mechanism does fire 6× (Time::Span, Time,
+  Char::Reader x3, Path owners) — `align_all_class_ivars` convergence heals
+  owners whose field types complete BEFORE the global align; the hole is
+  strictly types completing after it (late monomorphizations during lowering).
+- Scope note for B1c: `stale_owner` rows are dominated by classes and
+  pointers (String, IO, Pointer(...)) for which the 8-byte fallback is the
+  CORRECT field size; the corruption family is the value-struct subset
+  (Slice(UInt8), Atomic(Int32), ...). The flip must filter to value-like
+  structs, not ban the class fallback.
+
 ## Proposed freeze/update rule (B1 — NOT flipped yet)
 
 Flip order chosen so each step is independently falsifiable by the probe:

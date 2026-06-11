@@ -30,9 +30,11 @@
 module Adamas
   module LayoutProbe
     @@enabled : Bool? = nil
+    @@ledger : Bool? = nil
     @@out : ::File? = nil
     @@seen : ::Set(String)? = nil
     @@trace : Array(String)? = nil
+    @@seq : Int64 = 0_i64
 
     # Lazy ENV access inside a method: module-constant ENV reads crash
     # V2-compiled binaries (see CRYSTAL_PATH note in project memory).
@@ -43,6 +45,38 @@ module Adamas
       enabled = !value.nil? && value != "" && value != "0"
       @@enabled = enabled
       enabled
+    end
+
+    # Layout-dependency ledger (B1a0 diagnostic): ADAMAS_LAYOUT_PROBE_LEDGER=1
+    # turns on NON-deduplicated, sequence-numbered events recording which owner
+    # layouts consumed which field-type sizes (and through which type_size
+    # branch). Dedup-free because B1 needs the ORDER of events, not just the
+    # set. Requires ADAMAS_LAYOUT_PROBE=1 as well.
+    def self.ledger_enabled? : Bool
+      cached = @@ledger
+      return cached unless cached.nil?
+      value = ENV["ADAMAS_LAYOUT_PROBE_LEDGER"]?
+      ledger = enabled? && !value.nil? && value != "" && value != "0"
+      @@ledger = ledger
+      ledger
+    end
+
+    # Non-dedup event row: same 11 columns as log() plus a 12th `seq:<n>`
+    # column. Order of rows in the file is the order of events.
+    def self.log_event(phase : String, site : String, context : String, role : String,
+                       type_name : String, type_id : Int64,
+                       storage : String, slot_size : Int64, access_size : Int64,
+                       declared : String = "", effective : String = "") : Nil
+      return unless ledger_enabled?
+      seq = @@seq
+      @@seq = seq + 1_i64
+      io = output
+      io << phase << '\t' << site << '\t' << context << '\t' << role << '\t'
+      io << type_name << '\t' << type_id << '\t' << storage << '\t'
+      io << slot_size << '\t' << access_size << '\t' << declared << '\t' << effective
+      io << '\t' << "seq:" << seq << '\n'
+      io.flush
+      nil
     end
 
     # Registration-trace filter (B0 diagnostic): ADAMAS_LAYOUT_PROBE_TRACE is a
@@ -83,6 +117,14 @@ module Adamas
                  storage : String, slot_size : Int64, access_size : Int64,
                  declared : String = "", effective : String = "") : Nil
       return unless enabled?
+      # Ledger mode needs EVENT ORDER, so dedup would hide exactly what B1
+      # diagnostics look for (repeated registrations, re-resolutions). Route
+      # every row through the sequence-numbered non-dedup writer instead.
+      if ledger_enabled?
+        log_event(phase, site, context, role, type_name, type_id,
+          storage, slot_size, access_size, declared, effective)
+        return
+      end
       row = String.build do |io|
         io << phase << '\t' << site << '\t' << context << '\t' << role << '\t'
         io << type_name << '\t' << type_id << '\t' << storage << '\t'
