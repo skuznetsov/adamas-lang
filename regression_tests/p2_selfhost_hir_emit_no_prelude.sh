@@ -43,8 +43,8 @@ if [[ ! -s "$OUT.hir" ]]; then
   exit 1
 fi
 
-if ! grep -q 'func @__crystal_main' "$OUT.hir"; then
-  echo "p2 selfhost HIR emit regression: HIR artifact missing __crystal_main" >&2
+if ! grep -q 'func @__adamas_main' "$OUT.hir"; then
+  echo "p2 selfhost HIR emit regression: HIR artifact missing __adamas_main" >&2
   cat "$OUT.hir" >&2
   exit 1
 fi
