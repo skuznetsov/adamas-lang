@@ -92,7 +92,53 @@ Reducer compile, the stale dependency proven in one file:
   (Slice(UInt8), Atomic(Int32), ...). The flip must filter to value-like
   structs, not ban the class fallback.
 
-## Proposed freeze/update rule (B1 — NOT flipped yet)
+## B1a SHIPPED: pre-lowering forced monomorphization (not mid-lowering relayout)
+
+The flip landed as `force_monomorphize_ref_fallback_types`, called from
+`fixup_inherited_ivars` immediately BEFORE the final `align_all_class_ivars`
+pass. The always-on owner/ivar layout context records every
+`type_size.ref_fallback` consumption into `@layout_ref_fallback_owners`
+(field-type name -> owner set); at the fixed pre-lowering point, every
+recorded key that still has no class_info, parses as a generic
+instantiation, and whose template is a **value struct** is force-
+monomorphized (fixpoint: new registrations may record new deps). The
+existing align convergence pass then recomputes all dependent owners
+against real sizes. Ledger confirms: `Holder#@bytes` now gets a
+`layout_dep.healed` row and lays out via `struct_by_id slot=16`.
+
+Three branches were falsified empirically on the way:
+
+- **Mid-lowering relayout cascade (REJECTED, empirically)**: re-laying-out
+  dependent owners + invalidating their lowered bodies from inside
+  `register_concrete_class` breaks functions already in progress — they
+  keep mixed old/new offsets (`invalidate_lowered_layout_functions`
+  necessarily skips in-progress lowering). Observed: `IO::FileDescriptor`
+  (holds `Atomic(Int32)`) relaid mid-pipeline → hello-world printed NUL
+  garbage. Layout updates after lowering has started are unsound, period.
+- **Unfiltered force-mono (REJECTED, empirically)**: forcing ALL generic
+  fallback keys (classes included) ballooned stage2 self-compile past the
+  4096MB `run_safe` budget (killed at 4.34GB / 204s,
+  `p2_generated_stage2_no_prelude_puts_guard`). Class fields are
+  pointer-sized — the fallback was already correct for them, so the
+  struct filter (`GenericClassTemplate#is_struct`) is both the
+  correctness-scope and the memory fix.
+- **Forcing magic bases (REJECTED, empirically)**: even with the struct
+  filter, forcing `StaticArray(UInt64, BIGINT_LIMBS)` (constant size arg,
+  unresolved at that point) minted a bogus specialization whose lowered
+  `map$$block` emitted invalid LLVM (`inttoptr ptr -> ptr`) — llc failed
+  the whole stage2 self-build
+  (`p2_generated_stage2_lookup_lazy_enum_no_prelude`, A/B-confirmed
+  against the `8241cf76` baseline). StaticArray/Tuple/Proc/Pointer/Union
+  have dedicated layout paths (sa_size branch, tuple element offsets,
+  pointer word) and are skip-listed; variadic Tuple could additionally
+  raise on template arity.
+
+Residual hole (accepted, diagnosed by ledger): owners REGISTERED during
+lowering whose struct field types monomorphize even later still get stale
+slots — same family, now strictly narrower. The B1c on-demand
+registration step is the structural close for that.
+
+## Proposed freeze/update rule (B1 — original proposal, B1a now shipped)
 
 Flip order chosen so each step is independently falsifiable by the probe:
 
