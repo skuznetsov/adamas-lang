@@ -1762,7 +1762,7 @@ module Adamas::MIR
     def add_phi(phi : Phi)
       # Phi nodes must come first
       phi_count = @instructions.count { |i| i.is_a?(Phi) }
-      @instructions.insert(phi_count, phi)
+      @instructions.insert(phi_count, phi.as(Value))
     end
 
     def to_s(io : IO) : Nil

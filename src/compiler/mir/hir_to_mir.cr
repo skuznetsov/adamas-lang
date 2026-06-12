@@ -23,13 +23,22 @@ module Adamas
       getter hir_module : HIR::Module
       getter mir_module : Adamas::MIR::Module
 
-      private alias VDispatchCandidate = NamedTuple(
-        type_id: Int32,
-        func: Adamas::MIR::Function?,
-        type_ref: TypeRef?,     # for Union unwrap
-        variant_id: Int32?,     # for Union unwrap
-        dispatch_class: String? # for nested class dispatch
-      )
+      private class VDispatchCandidate
+        getter type_id : Int32
+        getter func : Adamas::MIR::Function?
+        getter type_ref : TypeRef?
+        getter variant_id : Int32?
+        getter dispatch_class : String?
+
+        def initialize(
+          @type_id : Int32,
+          @func : Adamas::MIR::Function?,
+          @type_ref : TypeRef?,
+          @variant_id : Int32?,
+          @dispatch_class : String?,
+        )
+        end
+      end
 
       private alias TrivialStructInitStore = NamedTuple(
         field: HIR::FieldSet,
@@ -97,10 +106,6 @@ module Adamas
       @module_includers_cache : ::Hash(String, ::Array(String)) = {} of String => ::Array(String)
       @resolve_virtual_cache : ::Hash({String, String, Int32?, Bool}, Adamas::MIR::Function?) = {} of {String, String, Int32?, Bool} => Adamas::MIR::Function?
 
-      # Reusable buffer for virtual dispatch candidates to avoid repeated array
-      # allocations that cause heavy GC pressure in the Boehm collector.
-      @vdispatch_candidates_buf = ::Array(VDispatchCandidate).new(initial_capacity: 16)
-
       # Memory strategy (note: we use inline selection, not global assigner)
 
       # Track HIR values that point to inline struct data (from Pointer(Struct).value).
@@ -126,7 +131,9 @@ module Adamas
       @moved_values : ::Set(HIR::ValueId) = ::Set(HIR::ValueId).new
 
       # Remaining uses of each value in the current block (for last-use detection).
-      @remaining_uses : ::Hash(HIR::ValueId, Int32) = ::Hash(HIR::ValueId, Int32).new(0)
+      # HIR::ValueId is a dense UInt32 id, so an indexed array avoids routing this
+      # bootstrap-hot counter through Hash(UInt32, Int32) storage paths.
+      @remaining_uses : ::Array(Int32) = [] of Int32
 
       # Values that are used outside their defining block — must NOT be rc_dec'd at block end.
       @cross_block_values : ::Set(HIR::ValueId) = ::Set(HIR::ValueId).new
@@ -860,16 +867,18 @@ module Adamas
                 end
               end
             else
-              mir_type = @mir_module.type_registry.create_type_with_id(
+              @mir_module.type_registry.create_type_with_id(
                 mir_ref.id,
                 TypeKind::Tuple,
                 desc.name,
                 size,
                 align
               )
-              element_refs.each do |elem_ref|
-                elem_type = @mir_module.type_registry.get(elem_ref) || @mir_module.type_registry.get(TypeRef::POINTER)
-                mir_type.add_element_type(elem_type) if elem_type
+              if created_mir_type = @mir_module.type_registry.get(mir_ref)
+                element_refs.each do |elem_ref|
+                  elem_type = @mir_module.type_registry.get(elem_ref) || @mir_module.type_registry.get(TypeRef::POINTER)
+                  created_mir_type.add_element_type(elem_type) if elem_type
+                end
               end
             end
           end
@@ -1276,7 +1285,8 @@ module Adamas
         return false unless elements && !elements.empty?
 
         elements.all? do |element|
-          (element.kind.primitive? || element.kind.enum?) && element.size > 0
+          ((element.kind.primitive? || element.kind.enum?) && element.size > 0) ||
+            inline_primitive_tuple_type?(element)
         end
       end
 
@@ -1953,6 +1963,24 @@ module Adamas
       # Block Lowering
       # ─────────────────────────────────────────────────────────────────────────
 
+      private def increment_remaining_use(id : HIR::ValueId) : Nil
+        idx = id.to_i
+        return if idx < 0
+
+        while idx >= @remaining_uses.size
+          @remaining_uses << 0
+        end
+
+        @remaining_uses[idx] = @remaining_uses.unsafe_fetch(idx) + 1
+      end
+
+      private def remaining_use_count(id : HIR::ValueId) : Int32
+        idx = id.to_i
+        return 0 if idx < 0 || idx >= @remaining_uses.size
+
+        @remaining_uses.unsafe_fetch(idx)
+      end
+
       private def lower_block(hir_block : HIR::Block)
         builder = @builder.not_nil!
         mir_block_id = mir_block_for(hir_block.id)
@@ -1964,7 +1992,7 @@ module Adamas
 
         # Pre-scan: count how many times each HIR value is used as an operand.
         # Used for ownership transfer: last use in a FieldSet → move semantics.
-        @remaining_uses = ::Hash(HIR::ValueId, Int32).new(0)
+        @remaining_uses = [] of Int32
         instructions = hir_block.instructions
         inst_idx = 0
         while inst_idx < instructions.size
@@ -1973,7 +2001,7 @@ module Adamas
           op_idx = 0
           while op_idx < operands.size
             op = operands.unsafe_fetch(op_idx)
-            @remaining_uses[op] = (@remaining_uses[op]? || 0) + 1
+            increment_remaining_use(op)
             op_idx += 1
           end
           inst_idx += 1
@@ -2962,7 +2990,7 @@ module Adamas
         if value_hir_id && !@hir_constant_values.includes?(value_hir_id)
           if value_hir_type = @hir_value_types[value_hir_id]?
             if type_needs_rc?(convert_type(value_hir_type))
-              is_last_use = (@remaining_uses[value_hir_id]? || 0) <= 0
+              is_last_use = remaining_use_count(value_hir_id) <= 0
               is_owned_temp = @block_arc_temps.any? { |(hid, _)| hid == value_hir_id }
               if is_last_use && is_owned_temp && !@cross_block_values.includes?(value_hir_id)
                 # MOVE: transfer ownership, skip rc_inc, mark for skipping rc_dec
@@ -3110,7 +3138,7 @@ module Adamas
 
       # Check if a HIR TypeRef refers to a struct (value type).
       # Includes generic struct instantiations like Slice(UInt8), Tuple(X,Y).
-      private def hir_type_is_struct?(type : HIR::TypeRef) : Bool
+      private def hir_type_is_struct?(type : Adamas::HIR::TypeRef) : Bool
         return false if type.id < HIR::TypeRef::FIRST_USER_TYPE
         desc = @hir_module.get_type_descriptor(type)
         return false unless desc
@@ -3132,28 +3160,28 @@ module Adamas
         false
       end
 
-      private def hir_type_is_static_array?(type : HIR::TypeRef) : Bool
+      private def hir_type_is_static_array?(type : Adamas::HIR::TypeRef) : Bool
         return false if type.id < HIR::TypeRef::FIRST_USER_TYPE
         desc = @hir_module.get_type_descriptor(type)
         return false unless desc
         desc.name.starts_with?("StaticArray(")
       end
 
-      private def hir_type_is_array_container?(type : HIR::TypeRef) : Bool
+      private def hir_type_is_array_container?(type : Adamas::HIR::TypeRef) : Bool
         return false if type.id < HIR::TypeRef::FIRST_USER_TYPE
         desc = @hir_module.get_type_descriptor(type)
         return false unless desc
         desc.name.starts_with?("Array(") || desc.name.starts_with?("StaticArray(")
       end
 
-      private def hir_type_is_slice_container?(type : HIR::TypeRef) : Bool
+      private def hir_type_is_slice_container?(type : Adamas::HIR::TypeRef) : Bool
         return false if type.id < HIR::TypeRef::FIRST_USER_TYPE
         desc = @hir_module.get_type_descriptor(type)
         return false unless desc
         desc.name.starts_with?("Slice(")
       end
 
-      private def hir_type_is_lib_struct?(type : HIR::TypeRef) : Bool
+      private def hir_type_is_lib_struct?(type : Adamas::HIR::TypeRef) : Bool
         return false if type.id < HIR::TypeRef::FIRST_USER_TYPE
         desc = @hir_module.get_type_descriptor(type)
         return false unless desc
@@ -3162,7 +3190,7 @@ module Adamas
         lib_set.includes?(desc.name) || lib_set.any? { |ls| ls.ends_with?("::#{desc.name}") || desc.name.ends_with?("::#{ls.split("::").last}") }
       end
 
-      private def hir_type_lib_struct_size(type : HIR::TypeRef) : UInt64
+      private def hir_type_lib_struct_size(type : Adamas::HIR::TypeRef) : UInt64
         mir_ref = convert_type(type)
         if mir_type = @mir_module.type_registry.get(mir_ref)
           return mir_type.size if mir_type.size > 0
@@ -3172,7 +3200,7 @@ module Adamas
 
       # C lib struct layout must be present in the MIR type registry before pointer ops.
       # A size of 0 means layout was not computed — do not emit malloc(0) or GEP with stride 0.
-      private def require_lib_struct_byte_size(type : HIR::TypeRef) : UInt64
+      private def require_lib_struct_byte_size(type : Adamas::HIR::TypeRef) : UInt64
         sz = hir_type_lib_struct_size(type)
         return sz if sz > 0
         desc = @hir_module.get_type_descriptor(type)
@@ -3181,7 +3209,7 @@ module Adamas
       end
 
       # Get the inline size of a struct type (from class_info via MIR type registry).
-      private def hir_type_inline_size(type : HIR::TypeRef) : Int32
+      private def hir_type_inline_size(type : Adamas::HIR::TypeRef) : Int32
         mir_ref = convert_type(type)
         if mir_type = @mir_module.type_registry.get(mir_ref)
           return mir_type.size.to_i32 if mir_type.size > 0
@@ -3189,8 +3217,12 @@ module Adamas
         0
       end
 
-      private def hir_type_is_inline_container_struct?(type : HIR::TypeRef?) : Bool
+      private def hir_type_is_inline_container_struct?(type : Adamas::HIR::TypeRef?) : Bool
         return false unless type
+        hir_type_is_inline_container_struct?(type)
+      end
+
+      private def hir_type_is_inline_container_struct?(type : Adamas::HIR::TypeRef) : Bool
         desc = @hir_module.get_type_descriptor(type)
         return false unless desc
         # Do not include Tuple/NamedTuple here. V2 currently stores tuple values as
@@ -3202,7 +3234,7 @@ module Adamas
         inline_container_struct_type?(@mir_module.type_registry.get(mir_ref))
       end
 
-      private def hir_type_is_inline_pointer_tuple?(type : HIR::TypeRef?) : Bool
+      private def hir_type_is_inline_pointer_tuple?(type : Adamas::HIR::TypeRef?) : Bool
         return false unless type
         desc = @hir_module.get_type_descriptor(type)
         return false unless desc
@@ -3218,7 +3250,7 @@ module Adamas
       end
 
       # Resolve MIR element type for HIR Pointer(T).
-      private def pointer_element_mir_type(pointer_hir_type : HIR::TypeRef?) : TypeRef?
+      private def pointer_element_mir_type(pointer_hir_type : Adamas::HIR::TypeRef?) : TypeRef?
         return nil unless pointer_hir_type
         desc = @hir_module.get_type_descriptor(pointer_hir_type)
         return nil unless desc
@@ -3237,7 +3269,7 @@ module Adamas
       end
 
       # HIR element type T for Pointer(T) — used for lib-struct stride and memcpy paths.
-      private def pointer_element_hir_type(pointer_hir_type : HIR::TypeRef?) : HIR::TypeRef?
+      private def pointer_element_hir_type(pointer_hir_type : Adamas::HIR::TypeRef?) : Adamas::HIR::TypeRef?
         return nil unless pointer_hir_type
         desc = @hir_module.get_type_descriptor(pointer_hir_type)
         return nil unless desc
@@ -3357,7 +3389,11 @@ module Adamas
 
         # Get arguments
         begin
-          args = call.args.map { |arg| get_value(arg) }
+          # Avoid Array#map here during bootstrap. Stage2 can produce a null
+          # Array object for empty map results in this hot call-lowering path;
+          # explicit construction keeps the MIR argument carrier concrete.
+          args = ::Array(ValueId).new(call.args.size)
+          call.args.each { |arg| args << get_value(arg) }
         rescue ex : IndexError
           raise "Index error getting args for call to #{call.method_name}: #{ex.message}"
         end
@@ -3854,7 +3890,8 @@ module Adamas
           end
           callee_id = func.id
           # Build hir_args that matches mir_args ordering (receiver first, then explicit args)
-          hir_args_for_coerce = if call.has_receiver?
+          call_has_receiver = call.has_receiver?
+          hir_args_for_coerce = if call_has_receiver
                                   [call.receiver_value] + call.args
                                 else
                                   call.args
@@ -3865,39 +3902,61 @@ module Adamas
           # argument before coercion to keep call ABI aligned with callee params.
           callee_param_count = func.params.size
           drop_dispatch_receiver = should_drop_dispatch_receiver?(
-            call.has_receiver? ? call.receiver_value : nil,
+            call_has_receiver,
+            call_has_receiver ? call.receiver_value : 0_u32,
             method_name_str,
             args,
             func,
             hir_args_for_coerce
           )
 
-          effective_args = args
-          effective_hir_args = hir_args_for_coerce
           if drop_dispatch_receiver
             effective_args = args[1, callee_param_count]
             effective_hir_args = call.args
-          end
-          if callee_param_count < effective_args.size
-            effective_args = effective_args[0, callee_param_count]
-            effective_hir_args = effective_hir_args[0, callee_param_count]? || effective_hir_args
-          end
+            if callee_param_count < effective_args.size
+              effective_args = effective_args[0, callee_param_count]
+              effective_hir_args = effective_hir_args[0, callee_param_count]? || effective_hir_args
+            end
 
-          if stack_value = lower_stack_local_struct_allocator_call(call, func, effective_args, effective_hir_args)
-            return stack_value
-          end
+            if stack_value = lower_stack_local_struct_allocator_call(call, func, effective_args, effective_hir_args)
+              return stack_value
+            end
 
-          coerced_args = coerce_call_args(builder, effective_args, effective_hir_args, func)
-          call_return_type = func.return_type
-          hir_call_return_type = convert_type(call.type)
-          if is_union_type?(hir_call_return_type) && !is_union_type?(func.return_type)
-            # Keep HIR-level union contract when callee ABI is scalar/pointer.
-            # Backend will wrap ABI result into expected union shape.
-            call_return_type = hir_call_return_type
-          elsif call_return_type == TypeRef::VOID && hir_call_return_type != TypeRef::VOID
-            call_return_type = hir_call_return_type
+            coerced_args = coerce_call_args(builder, effective_args, effective_hir_args, func)
+            call_return_type = func.return_type
+            hir_call_return_type = convert_type(call.type)
+            if is_union_type?(hir_call_return_type) && !is_union_type?(func.return_type)
+              # Keep HIR-level union contract when callee ABI is scalar/pointer.
+              # Backend will wrap ABI result into expected union shape.
+              call_return_type = hir_call_return_type
+            elsif call_return_type == TypeRef::VOID && hir_call_return_type != TypeRef::VOID
+              call_return_type = hir_call_return_type
+            end
+            return builder.call(callee_id, coerced_args, call_return_type)
+          else
+            effective_args = args
+            effective_hir_args = hir_args_for_coerce
+            if callee_param_count < effective_args.size
+              effective_args = effective_args[0, callee_param_count]
+              effective_hir_args = effective_hir_args[0, callee_param_count]? || effective_hir_args
+            end
+
+            if stack_value = lower_stack_local_struct_allocator_call(call, func, effective_args, effective_hir_args)
+              return stack_value
+            end
+
+            coerced_args = coerce_call_args(builder, effective_args, effective_hir_args, func)
+            call_return_type = func.return_type
+            hir_call_return_type = convert_type(call.type)
+            if is_union_type?(hir_call_return_type) && !is_union_type?(func.return_type)
+              # Keep HIR-level union contract when callee ABI is scalar/pointer.
+              # Backend will wrap ABI result into expected union shape.
+              call_return_type = hir_call_return_type
+            elsif call_return_type == TypeRef::VOID && hir_call_return_type != TypeRef::VOID
+              call_return_type = hir_call_return_type
+            end
+            return builder.call(callee_id, coerced_args, call_return_type)
           end
-          return builder.call(callee_id, coerced_args, call_return_type)
         end
 
         # Built-in print functions (fallback only when no user-defined function exists).
@@ -4276,8 +4335,8 @@ module Adamas
         shared_class_blocks = {} of FunctionId => BlockId
         candidates.each do |candidate|
           case_block = nil.as(BlockId?)
-          if kind.class? && candidate[:dispatch_class].nil?
-            if func = candidate[:func]
+          if kind.class? && candidate.dispatch_class.nil?
+            if func = candidate.func
               if existing = shared_class_blocks[func.id]?
                 case_block = existing
               else
@@ -4300,10 +4359,10 @@ module Adamas
           # For union dispatch: use type_ref.id (global MIR type ID) to match
           # what emit_union_wrap stores as the discriminator via variant_global_id().
           # For class dispatch: type_id already IS the global runtime type_id.
-          case_id = if kind.union? && (tref = candidate[:type_ref])
+          case_id = if kind.union? && (tref = candidate.type_ref)
                       tref.id.to_i64
                     else
-                      candidate[:type_id].to_i64
+                      candidate.type_id.to_i64
                     end
           cases << {case_id, case_block.not_nil!}
         end
@@ -4321,12 +4380,12 @@ module Adamas
           cand_args = param_values.dup
 
           # Union: unwrap receiver to concrete type
-          if kind.union? && candidate[:type_ref] && candidate[:variant_id]
+          if kind.union? && candidate.type_ref && candidate.variant_id
             unwrap = MIR::UnionUnwrap.new(
               dispatch_builder.next_id,
-              candidate[:type_ref].not_nil!,
+              candidate.type_ref.not_nil!,
               param_values[0],
-              candidate[:variant_id].not_nil!,
+              candidate.variant_id.not_nil!,
               false
             )
             dispatch_builder.emit(unwrap)
@@ -4334,12 +4393,12 @@ module Adamas
           end
 
           # Get the function to call (may need nested dispatch for union containing class hierarchy)
-          call_func = candidate[:func]
-          if call_func.nil? && candidate[:dispatch_class] && method_suffix && hir_call
+          call_func = candidate.func
+          if call_func.nil? && candidate.dispatch_class && method_suffix && hir_call
             call_func = ensure_class_dispatch_for_union(
-              candidate[:dispatch_class].not_nil!,
+              candidate.dispatch_class.not_nil!,
               method_suffix,
-              candidate[:type_ref] || TypeRef::POINTER,
+              candidate.type_ref || TypeRef::POINTER,
               hir_call
             )
           end
@@ -4348,12 +4407,14 @@ module Adamas
             callee_param_count = call_func.params.size
             coerced_args = cand_args
             if hir_call
-              recv_id = hir_call.has_receiver? ? hir_call.receiver_value : nil
-              hir_args_with_receiver = hir_call.has_receiver? ? [hir_call.receiver_value] + hir_call.args : hir_call.args
+              hir_call_has_receiver = hir_call.has_receiver?
+              recv_id = hir_call_has_receiver ? hir_call.receiver_value : 0_u32
+              hir_args_with_receiver = hir_call_has_receiver ? [hir_call.receiver_value] + hir_call.args : hir_call.args
               # Module/class dispatch can route to static methods whose signature
               # does not include receiver `self`. Also guard against leaked
               # dispatch receivers where only shifted arg alignment matches ABI.
               drop_dispatch_receiver = should_drop_dispatch_receiver?(
+                hir_call_has_receiver,
                 recv_id,
                 call_func.name,
                 cand_args,
@@ -4455,13 +4516,13 @@ module Adamas
               desc.variants.each do |variant|
                 next if variant.full_name == "Nil" || variant.full_name.starts_with?('*')
                 if func = resolve_virtual_method_for_class(variant.full_name, method_suffix, call.args.size)
-                  old_candidates << {
-                    type_id:        variant.type_id,
-                    type_ref:       variant.type_ref,
-                    variant_id:     variant.type_id,
-                    func:           func,
-                    dispatch_class: nil.as(String?),
-                  }
+                  old_candidates << VDispatchCandidate.new(
+                    type_id: variant.type_id,
+                    type_ref: variant.type_ref,
+                    variant_id: variant.type_id,
+                    func: func,
+                    dispatch_class: nil,
+                  )
                 end
               end
               generic_union_ref = ref
@@ -4476,7 +4537,7 @@ module Adamas
         if recv_desc.kind == HIR::TypeKind::Union
           existing_variant_ids = ::Set(Int32).new
           old_candidates.each do |c|
-            if variant_id = c[:variant_id]
+            if variant_id = c.variant_id
               existing_variant_ids.add(variant_id)
             end
           end
@@ -4501,24 +4562,24 @@ module Adamas
             next if existing_variant_ids.includes?(variant_id)
 
             if func = resolve_virtual_method_for_class(variant_name, method_suffix, call.args.size)
-              old_candidates << {
-                type_id:        variant_id,
-                type_ref:       variant_mir_ref,
-                variant_id:     variant_id,
-                func:           func,
-                dispatch_class: nil.as(String?),
-              }
+              old_candidates << VDispatchCandidate.new(
+                type_id: variant_id,
+                type_ref: variant_mir_ref,
+                variant_id: variant_id,
+                func: func,
+                dispatch_class: nil,
+              )
               existing_variant_ids.add(variant_id)
             elsif (mir_type = @mir_module.type_registry.get_by_name(variant_name)) &&
                   !mir_type.is_value_type? &&
                   !subclasses_for(variant_name).empty?
-              old_candidates << {
-                type_id:        variant_id,
-                type_ref:       variant_mir_ref,
-                variant_id:     variant_id,
-                func:           nil.as(Adamas::MIR::Function?),
+              old_candidates << VDispatchCandidate.new(
+                type_id: variant_id,
+                type_ref: variant_mir_ref,
+                variant_id: variant_id,
+                func: nil,
                 dispatch_class: variant_name,
-              }
+              )
               existing_variant_ids.add(variant_id)
             end
           end
@@ -4548,7 +4609,7 @@ module Adamas
         unanimous_candidate_ret = nil.as(TypeRef?)
         mixed_candidate_rets = false
         old_candidates.each do |c|
-          next unless f = c[:func]
+          next unless f = c.func
           cand_ret = f.return_type
           next if cand_ret == TypeRef::VOID
           first_candidate_ret ||= cand_ret
@@ -4598,16 +4659,7 @@ module Adamas
 
         dispatch_builder = Builder.new(dispatch_func)
 
-        # Convert to unified candidate format
-        candidates = old_candidates.map do |c|
-          VDispatchCandidate.new(
-            type_id: c[:type_id],
-            func: c[:func],
-            type_ref: c[:type_ref],
-            variant_id: c[:variant_id],
-            dispatch_class: c[:dispatch_class]
-          )
-        end
+        candidates = old_candidates
 
         # Determine dispatch kind:
         # - All-ref unions (every variant is a class/Nil) use Class dispatch
@@ -4834,8 +4886,11 @@ module Adamas
         method_suffix : String,
         arg_count : Int32,
       ) : ::Array(VDispatchCandidate)
-        candidates = @vdispatch_candidates_buf
-        candidates.clear
+        # Keep this bootstrap-hot path off the reusable ivar buffer. Stage2 has
+        # miscompiled/mis-lowered `clear` on this generic Array carrier, leaving
+        # a stale large size with a small capacity and causing Array#push to
+        # write past the buffer during s3 lowering.
+        candidates = [] of VDispatchCandidate
 
         if recv_desc.kind == HIR::TypeKind::Union
           mir_union_ref = convert_type(recv_type)
@@ -4852,23 +4907,23 @@ module Adamas
                 if ENV["DEBUG_VDISPATCH_UNION"]? && method_suffix == "next_power_of_two"
                   STDERR.puts "[VDISPATCH_UNION] candidate=#{variant.full_name} func=#{func.name}"
                 end
-                candidates << {
-                  type_id:        variant.type_id,
-                  type_ref:       variant.type_ref,
-                  variant_id:     variant.type_id,
-                  func:           func,
+                candidates << VDispatchCandidate.new(
+                  type_id: variant.type_id,
+                  type_ref: variant.type_ref,
+                  variant_id: variant.type_id,
+                  func: func,
                   dispatch_class: nil,
-                }
+                )
               elsif (mir_type = @mir_module.type_registry.get_by_name(variant.full_name)) &&
                     !mir_type.is_value_type? &&
                     !subclasses_for(variant.full_name).empty?
-                candidates << {
-                  type_id:        variant.type_id,
-                  type_ref:       variant.type_ref,
-                  variant_id:     variant.type_id,
-                  func:           nil,
+                candidates << VDispatchCandidate.new(
+                  type_id: variant.type_id,
+                  type_ref: variant.type_ref,
+                  variant_id: variant.type_id,
+                  func: nil,
                   dispatch_class: variant.full_name,
-                }
+                )
               end
             end
           end
@@ -4891,13 +4946,13 @@ module Adamas
             func = func || resolve_virtual_method_for_class(class_name, method_suffix, arg_count)
             if func
               next unless mir_type = @mir_module.type_registry.get_by_name(class_name)
-              candidates << {
-                type_id:        mir_type.id.to_i32,
-                type_ref:       TypeRef.new(mir_type.id),
-                variant_id:     mir_type.id.to_i32,
-                func:           func,
+              candidates << VDispatchCandidate.new(
+                type_id: mir_type.id.to_i32,
+                type_ref: TypeRef.new(mir_type.id),
+                variant_id: mir_type.id.to_i32,
+                func: func,
                 dispatch_class: nil,
-              }
+              )
             else
               # No function found for this class — record for fallback pass.
               # Only reference types: value types can't appear in class dispatch.
@@ -4916,7 +4971,7 @@ module Adamas
             # Build a set of class names that already have candidates
             have_candidate = ::Set(String).new
             candidates.each do |c|
-              if type_ref = c[:type_ref]
+              if type_ref = c.type_ref
                 if mt = @mir_module.type_registry.get(type_ref)
                   have_candidate.add(mt.name)
                 end
@@ -4944,13 +4999,13 @@ module Adamas
                 if ENV["DEBUG_VDISPATCH_FALLBACK"]?
                   STDERR.puts "[VDISPATCH_FALLBACK] #{class_name}##{method_suffix} → #{ff.name}"
                 end
-                candidates << {
-                  type_id:        mir_type.id.to_i32,
-                  type_ref:       TypeRef.new(mir_type.id),
-                  variant_id:     mir_type.id.to_i32,
-                  func:           ff,
+                candidates << VDispatchCandidate.new(
+                  type_id: mir_type.id.to_i32,
+                  type_ref: TypeRef.new(mir_type.id),
+                  variant_id: mir_type.id.to_i32,
+                  func: ff,
                   dispatch_class: nil,
-                }
+                )
               end
             end
           end
@@ -4984,13 +5039,13 @@ module Adamas
                          @mir_module.type_registry.get_by_name(class_name)
               next unless mir_type
               next if mir_type.is_value_type?
-              candidates << {
-                type_id:        mir_type.id.to_i32,
-                type_ref:       TypeRef.new(mir_type.id),
-                variant_id:     mir_type.id.to_i32,
-                func:           func,
+              candidates << VDispatchCandidate.new(
+                type_id: mir_type.id.to_i32,
+                type_ref: TypeRef.new(mir_type.id),
+                variant_id: mir_type.id.to_i32,
+                func: func,
                 dispatch_class: nil,
-              }
+              )
             end
           end
         end
@@ -5377,22 +5432,44 @@ module Adamas
               return inst.type if inst.id == mir_id
             end
           end
-          mir_func.params.each_with_index do |param, idx|
-            return param.type if idx.to_u32 == mir_id
-          end
+          return mir_param_type_at_or_void(mir_func, mir_id)
         end
         nil
       end
 
+      # Non-nil variant for bootstrap-sensitive paths. Returning TypeRef::VOID
+      # avoids generating a broad TypeRef? union carrier in callers.
+      private def get_mir_value_type_or_void(mir_id : ValueId) : TypeRef
+        if mir_func = @current_mir_func
+          mir_func.blocks.each do |block|
+            block.instructions.each do |inst|
+              return inst.type if inst.id == mir_id
+            end
+          end
+          return mir_param_type_at_or_void(mir_func, mir_id)
+        end
+        TypeRef::VOID
+      end
+
+      private def mir_param_type_at_or_void(mir_func : MIR::Function, idx : UInt32) : TypeRef
+        params = mir_func.params
+        return TypeRef::VOID if idx >= params.size
+
+        # Avoid Array(Parameter)#[]? in generated bootstrap compilers: Parameter is
+        # a struct carrier and the nilable fetch path can widen to an unrelated union.
+        params.unsafe_fetch(idx.to_i).type
+      end
+
       private def should_drop_dispatch_receiver?(
-        receiver : HIR::ValueId?,
+        has_receiver : Bool,
+        receiver : HIR::ValueId,
         method_name : String,
         mir_args : ::Array(ValueId),
         callee_func : MIR::Function,
         hir_args_with_receiver : ::Array(HIR::ValueId),
       ) : Bool
         callee_param_count = callee_func.params.size
-        return false unless receiver
+        return false unless has_receiver
         return false unless callee_param_count <= mir_args.size - 1
 
         # Explicit class/module calls are static at ABI level (no receiver param).
@@ -5445,6 +5522,24 @@ module Adamas
           variant_type.kind == TypeKind::Array
       end
 
+      @[AlwaysInline]
+      private def uint32_array_present?(values : ::Array(UInt32)) : Bool
+        raw = pointerof(values).as(UInt64*).value
+        raw >= 4096_u64 && raw <= 0x0000_7FFF_FFFF_FFFF_u64
+      end
+
+      @[AlwaysInline]
+      private def uint32_array_size_or_zero(values : ::Array(UInt32)) : Int32
+        return 0 unless uint32_array_present?(values)
+        values.size
+      end
+
+      @[AlwaysInline]
+      private def uint32_array_fetch_or_zero(values : ::Array(UInt32), idx : Int32) : UInt32
+        return 0_u32 if idx < 0 || idx >= uint32_array_size_or_zero(values)
+        values.unsafe_fetch(idx)
+      end
+
       # Coerce call arguments to match function parameter types
       # This handles concrete type -> union type coercion (e.g., Int32 -> Int32 | Nil)
       private def coerce_call_args(
@@ -5456,21 +5551,28 @@ module Adamas
         params = func.params
         result = [] of ValueId
 
-        mir_args.each_with_index do |mir_arg, idx|
+        mir_arg_count = uint32_array_size_or_zero(mir_args)
+        hir_arg_count = uint32_array_size_or_zero(hir_args)
+        idx = 0
+        while idx < mir_arg_count
+          mir_arg = uint32_array_fetch_or_zero(mir_args, idx)
           begin
-            param = params[idx]?
-            unless param
+            if idx >= params.size
               # More args than params - pass through
               result << mir_arg
+              idx += 1
               next
             end
+            # Parameter is a struct carrier; use explicit bounds + unsafe_fetch
+            # instead of []? to keep the generated path monomorphic.
+            param = params.unsafe_fetch(idx)
 
-            arg_type = get_mir_value_type(mir_arg) ||
-                       if idx < hir_args.size
-                         get_arg_type(hir_args[idx])
-                       else
-                         TypeRef::INT32 # Fallback
-                       end
+            arg_type = get_mir_value_type_or_void(mir_arg)
+            if arg_type == TypeRef::VOID && idx < hir_arg_count
+              arg_type = get_arg_type(uint32_array_fetch_or_zero(hir_args, idx))
+            elsif arg_type == TypeRef::VOID
+              arg_type = TypeRef::INT32 # Fallback
+            end
             param_type = param.type
 
             # Check if coercion needed: different types and param is a union
@@ -5485,8 +5587,9 @@ module Adamas
               result << mir_arg
             end
           rescue ex : IndexError
-            raise "Index error in coerce_call_args for #{func.name} at arg #{idx}: mir_args.size=#{mir_args.size} params.size=#{params.size} hir_args.size=#{hir_args.size}\n#{ex.message}"
+            raise "Index error in coerce_call_args for #{func.name} at arg #{idx}: mir_args.size=#{mir_arg_count} params.size=#{params.size} hir_args.size=#{hir_arg_count}\n#{ex.message}"
           end
+          idx += 1
         end
 
         result
@@ -6675,7 +6778,7 @@ module Adamas
         unless @hir_constant_values.includes?(wrap.value)
           if value_hir_type = @hir_value_types[wrap.value]?
             if type_needs_rc?(convert_type(value_hir_type)) && union_variant_owns_reference_payload?(union_type, variant_type_id)
-              is_last_use = (@remaining_uses[wrap.value]? || 0) <= 0
+              is_last_use = remaining_use_count(wrap.value) <= 0
               is_owned_temp = false
               arc_idx = 0
               while arc_idx < @block_arc_temps.size

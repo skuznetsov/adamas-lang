@@ -152,6 +152,7 @@ module Adamas::MIR
     @llvm_type_miss_output_bytes : Int64 = 0_i64
     # Union descriptors for detecting all-reference-type unions (stored as ptr, not struct)
     property union_descriptors : Hash(TypeRef, UnionDescriptor)?
+    property union_descriptor_entries : ::Array(UnionDescriptorEntry)?
 
     def initialize(@type_registry : TypeRegistry)
       @type_ref_cache = ::Hash(TypeRef, String).new
@@ -166,15 +167,7 @@ module Adamas::MIR
       return false unless descs
       desc = descs[type_ref]?
       return false unless desc
-      desc.variants.all? do |variant|
-        next true if variant.type_ref == TypeRef::NIL || variant.type_ref == TypeRef::VOID
-        type = @type_registry.get(variant.type_ref)
-        if type
-          runtime_header_backed_union_variant?(type)
-        else
-          variant_name_is_runtime_header_backed?(variant.full_name)
-        end
-      end
+      all_ref_union_descriptor?(desc)
     end
 
     def llvm_type(type_ref : TypeRef) : String
@@ -324,20 +317,15 @@ module Adamas::MIR
     # Uses the union_descriptors if available, otherwise falls back to checking
     # each pipe-separated variant name in the type registry.
     private def is_all_ref_union_by_name?(name : String) : Bool
-      # Fast path: check union descriptors if available
-      if descs = @union_descriptors
-        descs.each_value do |desc|
-          next unless desc.name == name
-          return desc.variants.all? do |variant|
-            next true if variant.type_ref == TypeRef::NIL || variant.type_ref == TypeRef::VOID
-            type = @type_registry.get(variant.type_ref)
-            if type
-              runtime_header_backed_union_variant?(type)
-            else
-              # Variant type not in registry — check ivar-qualified name
-              variant_name_is_runtime_header_backed?(variant.full_name)
-            end
-          end
+      # Fast path: check union descriptors if available. Use the sidecar entry
+      # array instead of Hash#each_value; generated stage2 compilers have hit
+      # block/Hash iteration mislowering here when most descriptor names do not match.
+      if entries = @union_descriptor_entries
+        idx = 0
+        while idx < entries.size
+          desc = entries.unsafe_fetch(idx).descriptor
+          return all_ref_union_descriptor?(desc) if desc.name == name
+          idx += 1
         end
       end
       # Fallback: parse the union name "A | B | Nil" and check each in registry
@@ -351,6 +339,25 @@ module Adamas::MIR
           variant_name_is_runtime_header_backed?(stripped)
         end
       end
+    end
+
+    private def all_ref_union_descriptor?(desc : UnionDescriptor) : Bool
+      variants = desc.variants
+      idx = 0
+      while idx < variants.size
+        variant = variants.unsafe_fetch(idx)
+        unless variant.type_ref == TypeRef::NIL || variant.type_ref == TypeRef::VOID
+          type = @type_registry.get(variant.type_ref)
+          if type
+            return false unless runtime_header_backed_union_variant?(type)
+          else
+            # Variant type not in registry — check ivar-qualified name
+            return false unless variant_name_is_runtime_header_backed?(variant.full_name)
+          end
+        end
+        idx += 1
+      end
+      true
     end
 
     # Raw-pointer union ABI is only valid when each non-nil variant carries its
@@ -1790,6 +1797,34 @@ module Adamas::MIR
     end
   end
 
+  private class TypeRefUsageContexts
+    def initialize
+      @present = [] of Int32
+      @types = [] of TypeRef
+    end
+
+    def []?(id : ValueId) : TypeRef?
+      idx = id.to_i
+      return nil if idx < 0 || idx >= @present.size
+      return nil if @present.unsafe_fetch(idx) == 0
+
+      @types.unsafe_fetch(idx)
+    end
+
+    def []=(id : ValueId, type : TypeRef) : Nil
+      idx = id.to_i
+      return if idx < 0
+
+      while idx >= @present.size
+        @present << 0
+        @types << TypeRef::VOID
+      end
+
+      @present[idx] = 1
+      @types[idx] = type
+    end
+  end
+
   class LLVMIRGenerator
     private def bootstrap_trace_puts(value = "") : Nil
       return if ::Adamas::Compiler::BootstrapEnv.get?("ADAMAS_TRACE_STDERR").nil?
@@ -2064,6 +2099,8 @@ module Adamas::MIR
     @no_prelude_string_builder_shl_string_stub_emitted : Bool = false
     @emitted_function_return_types : Hash(String, String) = {} of String => String  # Track emitted function return types for call-site consistency
     @undefined_externs : Hash(String, String) = {} of String => String  # Track undefined extern calls (name => return_type)
+    @undefined_extern_names : Array(String) = [] of String
+    @undefined_extern_return_types : Array(String) = [] of String
     @called_crystal_functions : Hash(String, {String, Int32, Array(String)}) = {} of String => {String, Int32, Array(String)}  # Track called Crystal functions (name => {return_type, arg_count, arg_types}) for missing declaration generation
     @global_name_mapping : Hash(String, String) = {} of String => String  # Map original global names to renamed names
     @global_declared_types : Hash(String, String) = {} of String => String  # Global name -> declared LLVM type
@@ -2200,8 +2237,24 @@ module Adamas::MIR
 
     private def function_by_id(id : FunctionId) : Function?
       idx = id.to_i
-      return nil if idx < 0 || idx >= @func_by_id.size
-      @func_by_id.unsafe_fetch(idx)
+      if idx >= 0 && idx < @func_by_id.size
+        if func = @func_by_id.unsafe_fetch(idx)
+          return func
+        end
+      end
+
+      # Self-hosting can currently produce sparse or stale dense-id indexes while
+      # the function list itself remains correct. Keep id lookup exact, but fall
+      # back to the authoritative function list instead of minting a fake funcN
+      # external that later fails at link time.
+      func_idx = 0
+      functions = @module.functions
+      while func_idx < functions.size
+        func = functions.unsafe_fetch(func_idx)
+        return func if func.id == id
+        func_idx += 1
+      end
+      nil
     end
 
     private def lookup_module_function_for_extern(
@@ -2463,6 +2516,7 @@ module Adamas::MIR
       @type_mapper = LLVMTypeMapper.new(@module.type_registry)
       bootstrap_trace_puts "[LLVM_INIT] type_mapper done"
       @type_mapper.union_descriptors = @module.union_descriptors
+      @type_mapper.union_descriptor_entries = @module.union_descriptor_entries
       @output = IO::Memory.new
       bootstrap_trace_puts "[LLVM_INIT] output done"
       @indent = 0
@@ -2698,16 +2752,17 @@ module Adamas::MIR
       pointer_word_bytes_u64
     end
 
-    private def inline_primitive_tuple_type?(elem_type : Type?) : Bool
-      return false unless elem_type
-      return false unless elem_type.kind.tuple? && elem_type.size > 0
-      elements = elem_type.element_types
-      return false unless elements && !elements.empty?
+      private def inline_primitive_tuple_type?(elem_type : Type?) : Bool
+        return false unless elem_type
+        return false unless elem_type.kind.tuple? && elem_type.size > 0
+        elements = elem_type.element_types
+        return false unless elements && !elements.empty?
 
-      elements.all? do |element|
-        (element.kind.primitive? || element.kind.enum?) && element.size > 0
+        elements.all? do |element|
+          ((element.kind.primitive? || element.kind.enum?) && element.size > 0) ||
+            inline_primitive_tuple_type?(element)
+        end
       end
-    end
 
     private def inline_container_struct_type?(elem_type : Type?) : Bool
       return false unless elem_type
@@ -2982,6 +3037,12 @@ module Adamas::MIR
       # Emit declarations for undefined extern calls
       STDERR.puts "  [LLVM] emit_undefined_extern_declarations..." if @progress
       tail_t0 = Time.instant if tail_stats
+      emit_io_file_descriptor_new_int32_fallback_if_needed
+      if tail_stats
+        bootstrap_trace_puts "[LLVM_TAIL_GEN] phase=io_fd_new_fallback_pre_externs ms=#{(Time.instant - tail_t0.not_nil!).total_milliseconds.round(1)} out=#{@output.pos}"
+      end
+
+      tail_t0 = Time.instant if tail_stats
       emit_undefined_extern_declarations
       if tail_stats
         bootstrap_trace_puts "[LLVM_TAIL_GEN] phase=undefined_externs ms=#{(Time.instant - tail_t0.not_nil!).total_milliseconds.round(1)} out=#{@output.pos} undef=#{@undefined_externs.size}"
@@ -2990,6 +3051,12 @@ module Adamas::MIR
       # Emit stubs for any Crystal functions called but not defined.
       # This catches functions that exist in MIR but were skipped during emission
       # (e.g., due to unresolved type patterns or transitive skip propagation).
+      tail_t0 = Time.instant if tail_stats
+      emit_io_file_descriptor_new_int32_fallback_if_needed
+      if tail_stats
+        bootstrap_trace_puts "[LLVM_TAIL_GEN] phase=io_fd_new_fallback ms=#{(Time.instant - tail_t0.not_nil!).total_milliseconds.round(1)} out=#{@output.pos}"
+      end
+
       tail_t0 = Time.instant if tail_stats
       emit_missing_crystal_function_stubs
       if tail_stats
@@ -3360,6 +3427,7 @@ module Adamas::MIR
       already_declared << "__adamas_string_to_unsafe"
       already_declared << "__adamas_array_new_filled_i32" << "__adamas_array_new_filled_bool"
       already_declared << "__adamas_array_concat"
+      already_declared << "__adamas_runtime_string_from_cstr" << "__adamas_runtime_program_name" << "__adamas_runtime_argv"
       already_declared << "__adamas_hash_new"
       already_declared << "__adamas_ptr_copy" << "__adamas_ptr_move"
       already_declared << "__adamas_sort_i32_array" << "__adamas_sort_string_array"
@@ -3378,18 +3446,19 @@ module Adamas::MIR
       # Avoid redeclaring in fallback passes.
       already_declared << "ttyname_r" << "fcntl"
       add_runtime_declared_extern_names(already_declared)
+      bare_iter_idx = 0
+      while bare_iter_idx < BARE_ITERATOR_METHODS.size
+        already_declared << BARE_ITERATOR_METHODS.unsafe_fetch(bare_iter_idx)
+        bare_iter_idx += 1
+      end
       # Skip any function starting with __adamas_ (runtime functions)
       runtime_prefix = "__adamas_"
 
-      undefined_snapshot = [] of {String, String}
-      @undefined_externs.each do |name, return_type|
-        undefined_snapshot << {name, return_type}
-      end
-
       emit_raw "\n; Forward declarations for undefined external functions\n"
       undefined_idx = 0
-      while undefined_idx < undefined_snapshot.size
-        name, return_type = undefined_snapshot.unsafe_fetch(undefined_idx)
+      while undefined_idx < @undefined_extern_names.size
+        name = @undefined_extern_names.unsafe_fetch(undefined_idx)
+        return_type = @undefined_extern_return_types.unsafe_fetch(undefined_idx)
         undefined_idx += 1
         # Skip if already emitted or declared
         next if already_declared.includes?(name)
@@ -3407,7 +3476,6 @@ module Adamas::MIR
           better_ret = call_info[0]
           return_type = better_ret if return_type == "void" && better_ret != "void"
         end
-
         # Tuple#[] — the dead-code stub returns 0 which breaks tuple case/when
         # matching (e.g., `case {num, precision}` in Int#to_s).
         # Implement as i32 element access: ptr + index * 4.
@@ -3478,6 +3546,49 @@ module Adamas::MIR
           end
         end
       end
+    end
+
+    private def emit_io_file_descriptor_new_int32_fallback_if_needed : Nil
+      name = "IO$CCFileDescriptor$Dnew$$Int32"
+      return if @emitted_functions.includes?(name)
+
+      io_fd_type = @module.type_registry.get_by_name("IO::FileDescriptor")
+      io_fd_tid = io_fd_type.try(&.id.to_i32) || 0
+      emit_raw "\n; IO::FileDescriptor.new(Int32) — bootstrap fallback for runtime stdio constants\n"
+      emit_raw "define ptr @#{name}(i32 %handle) {\n"
+      emit_raw "entry:\n"
+      emit_raw "  %raw = call ptr @__adamas_malloc64(i64 176)\n"
+      emit_raw "  store i64 1, ptr %raw, align 8\n"
+      emit_raw "  %obj = getelementptr i8, ptr %raw, i64 8\n"
+      emit_raw "  store i32 #{io_fd_tid}, ptr %obj\n"
+      emit_raw "  %fd.raw = call ptr @__adamas_malloc64(i64 12)\n"
+      emit_raw "  store i64 9223372036854775807, ptr %fd.raw, align 8\n"
+      emit_raw "  %fd.obj = getelementptr i8, ptr %fd.raw, i64 8\n"
+      emit_raw "  store i32 %handle, ptr %fd.obj\n"
+      emit_raw "  %fd.slot = getelementptr i8, ptr %obj, i32 56\n"
+      emit_raw "  store ptr %fd.obj, ptr %fd.slot\n"
+      emit_raw "  %close.slot = getelementptr i8, ptr %obj, i32 64\n"
+      emit_raw "  store i1 1, ptr %close.slot\n"
+      emit_raw "  %closed.slot = getelementptr i8, ptr %obj, i32 104\n"
+      emit_raw "  store i1 0, ptr %closed.slot\n"
+      emit_raw "  %in.buf = getelementptr i8, ptr %obj, i32 112\n"
+      emit_raw "  store ptr null, ptr %in.buf\n"
+      emit_raw "  %out.buf = getelementptr i8, ptr %obj, i32 120\n"
+      emit_raw "  store ptr null, ptr %out.buf\n"
+      emit_raw "  %in.rem = getelementptr i8, ptr %obj, i32 128\n"
+      emit_raw "  store ptr null, ptr %in.rem\n"
+      emit_raw "  %out.count = getelementptr i8, ptr %obj, i32 152\n"
+      emit_raw "  store i32 0, ptr %out.count\n"
+      emit_raw "  %sync = getelementptr i8, ptr %obj, i32 157\n"
+      emit_raw "  store i1 1, ptr %sync\n"
+      emit_raw "  %read.buffering = getelementptr i8, ptr %obj, i32 158\n"
+      emit_raw "  store i1 0, ptr %read.buffering\n"
+      emit_raw "  %buffer.size = getelementptr i8, ptr %obj, i32 160\n"
+      emit_raw "  store i32 32768, ptr %buffer.size\n"
+      emit_raw "  ret ptr %obj\n"
+      emit_raw "}\n\n"
+      @emitted_functions << name
+      @emitted_function_return_types[name] = "ptr"
     end
 
     private def emit_missing_crystal_function_stubs
@@ -3573,6 +3684,14 @@ module Adamas::MIR
         missing << {name, info[0], info[1], info[2]}
       end
       missing
+    end
+
+    private def record_undefined_extern(name : String, return_type : String) : Nil
+      return if @undefined_externs.has_key?(name)
+
+      @undefined_externs[name] = return_type
+      @undefined_extern_names << name
+      @undefined_extern_return_types << return_type
     end
 
     private def register_called_crystal_functions_from_ir(ir : String) : Nil
@@ -4016,6 +4135,38 @@ module Adamas::MIR
       # should forward to the registered real extern name (e.g. llvm.sqrt.f64).
       if (extern = try_resolve_extern_from_mangled(name))
         return emit_extern_forwarding_stub(name, extern, return_type, arg_count, arg_types)
+      end
+
+      # Root-qualified top-level methods can still reach the missing-body path as
+      # `$CCFoo...` even though call emission canonicalizes them to `Foo...`.
+      # Delegate the alias instead of emitting an abort stub for a body that
+      # already exists under the canonical top-level symbol.
+      if rooted_delegate = rooted_top_level_delegate_target(name)
+        target = rooted_delegate[0]
+        if target != name
+          target_return_type = if target_func = rooted_delegate[1]
+                                 actual = @type_mapper.llvm_type(target_func.return_type)
+                                 actual == "void" ? (@emitted_function_return_types[target]? || return_type) : (@emitted_function_return_types[target]? || actual)
+                               else
+                                 @emitted_function_return_types[target]? || return_type
+                               end
+          param_list = arg_types.map_with_index { |type, idx| "#{type} %arg#{idx}" }.join(", ")
+          call_args = arg_types.map_with_index { |type, idx| "#{type} %arg#{idx}" }.join(", ")
+
+          return String.build do |io|
+            io << "; " << name << " — delegate root-qualified top-level alias to " << target << "\n"
+            io << "define " << target_return_type << " @" << name << "(" << param_list << ") {\n"
+            io << "entry:\n"
+            if target_return_type == "void"
+              io << "  call void @" << target << "(" << call_args << ")\n"
+              io << "  ret void\n"
+            else
+              io << "  %r = call " << target_return_type << " @" << target << "(" << call_args << ")\n"
+              io << "  ret " << target_return_type << " %r\n"
+            end
+            io << "}\n"
+          end
+        end
       end
 
       # String#to_unsafe — in --no-prelude there is no stdlib body, so this would
@@ -5030,25 +5181,130 @@ module Adamas::MIR
                      (0...arg_count).map { |i| "ptr %arg#{i}" }.join(", ")
                    end
 
+      # Bootstrap bridge: full-prelude synthetic main can currently degrade
+      # `Exception::CallStack.skip(__FILE__)` into `Int32#skip(String)` after HIR
+      # lowering has already selected the correct class method. Treat this metadata
+      # call as a no-op here so bootstrap can advance, while no-prelude tests still
+      # verify the real `Exception::CallStack.skip` emission path.
+      if name.starts_with?("Int32$Hskip$$")
+        return String.build do |io|
+          io << "; bootstrap no-op for mis-lowered Exception::CallStack.skip: " << name << "\n"
+          io << "define " << return_type << " @" << name << "(" << param_list << ") {\n"
+          case return_type
+          when "void"
+            io << "  ret void\n"
+          when "ptr"
+            io << "  ret ptr null\n"
+          when "i1"
+            io << "  ret i1 false\n"
+          when "i8", "i16", "i32", "i64", "i128"
+            io << "  ret " << return_type << " 0\n"
+          when "float"
+            io << "  ret float 0.0\n"
+          when "double"
+            io << "  ret double 0.0\n"
+          else
+            io << "  ret " << return_type << " zeroinitializer\n"
+          end
+          io << "}\n"
+        end
+      end
+
+      if name.starts_with?("Int32$Hflag$Q$$")
+        return String.build do |io|
+          io << "; bootstrap no-op for mis-lowered macro flag?: " << name << "\n"
+          io << "define i1 @" << name << "(" << param_list << ") {\n"
+          io << "  ret i1 false\n"
+          io << "}\n"
+        end
+      end
+
+      if name.starts_with?("Int32$Hfrom_stdio$$")
+        return String.build do |io|
+          io << "; bootstrap no-op for duplicate stdio constant initializer: " << name << "\n"
+          io << "define " << return_type << " @" << name << "(" << param_list << ") {\n"
+          case return_type
+          when "void"
+            io << "  ret void\n"
+          when "ptr"
+            io << "  ret ptr null\n"
+          when "i1"
+            io << "  ret i1 false\n"
+          when "i8", "i16", "i32", "i64", "i128"
+            io << "  ret " << return_type << " 0\n"
+          when "float"
+            io << "  ret float 0.0\n"
+          when "double"
+            io << "  ret double 0.0\n"
+          else
+            io << "  ret " << return_type << " zeroinitializer\n"
+          end
+          io << "}\n"
+        end
+      end
+
+      # IO::Buffered#flush returns self after writing pending bytes. The stage2
+      # compiler already writes stdout/stderr through direct Slice(UInt8) syscall
+      # overrides, but the flush body can remain unmaterialized during bootstrap
+      # shutdown. Preserve the return contract instead of aborting after output.
+      if name == "IO$CCFileDescriptor$Hflush" || name == "File$Hflush"
+        return String.build do |io|
+          io << "; bootstrap flush bridge for unmaterialized IO::Buffered#flush: " << name << "\n"
+          io << "define " << return_type << " @" << name << "(" << param_list << ") {\n"
+          if return_type == "void"
+            io << "  ret void\n"
+          elsif return_type == "ptr"
+            io << "  ret ptr %arg0\n"
+          else
+            io << "  ret " << return_type << " zeroinitializer\n"
+          end
+          io << "}\n"
+        end
+      end
+
+      if name.starts_with?("Pointer$H$SHL$$") && arg_count >= 2
+        value_type = arg_types.size > 1 ? arg_types.unsafe_fetch(1) : "ptr"
+        ptr_int = pointer_sized_int_llvm_type
+        return String.build do |io|
+          io << "; missing Pointer#<< storage stub: " << name << "\n"
+          io << "define " << return_type << " @" << name << "(" << param_list << ") {\n"
+          io << "  store " << value_type << " %arg1, ptr %arg0\n"
+          io << "  %next = getelementptr i8, ptr %arg0, " << ptr_int << " " << pointer_word_bytes_u64 << "\n"
+          if return_type == "ptr"
+            io << "  ret ptr %next\n"
+          elsif return_type == "void"
+            io << "  ret void\n"
+          else
+            io << "  ret " << return_type << " zeroinitializer\n"
+          end
+          io << "}\n"
+        end
+      end
+
       if ret_stmt
-        "; stub for dead-code method: #{name}\n" \
-        "define #{return_type} @#{name}(#{param_list}) {\n" \
-        "  #{ret_stmt}\n" \
-        "}\n"
+        return String.build do |io|
+          io << "; stub for dead-code method: " << name << "\n"
+          io << "define " << return_type << " @" << name << "(" << param_list << ") {\n"
+          io << "  " << ret_stmt << "\n"
+          io << "}\n"
+        end
       else
         # Emit abort stub with method name printed to stderr
         escaped_name = name.gsub("\\", "\\\\").gsub("\"", "\\\"")
         str_size = escaped_name.bytesize + 15  # "STUB CALLED: " (13) + \n (1) + \0 (1)
-        str_id = name.hash.abs
-        str_const = "@.stub_name_#{str_id} = private constant [#{str_size} x i8] c\"STUB CALLED: #{escaped_name}\\0A\\00\""
-        "; ABORT stub for unlowered method: #{name}\n" \
-        "#{str_const}\n" \
-        "define #{return_type} @#{name}(#{param_list}) {\n" \
-        "  %fmt = getelementptr [#{str_size} x i8], ptr @.stub_name_#{str_id}, i32 0, i32 0\n" \
-        "  call i32 @dprintf(i32 2, ptr %fmt)\n" \
-        "  call void @abort()\n" \
-        "  unreachable\n" \
-        "}\n"
+        str_hash_text = name.hash.to_s
+        str_id_text = str_hash_text.starts_with?("-") ? "n#{str_hash_text.byte_slice(1, str_hash_text.bytesize - 1)}" : str_hash_text
+        str_const = "@.stub_name_#{str_id_text} = private constant [#{str_size} x i8] c\"STUB CALLED: #{escaped_name}\\0A\\00\""
+        return String.build do |io|
+          io << "; ABORT stub for unlowered method: " << name << "\n"
+          io << str_const << "\n"
+          io << "define " << return_type << " @" << name << "(" << param_list << ") {\n"
+          io << "  %fmt = getelementptr [" << str_size << " x i8], ptr @.stub_name_" << str_id_text << ", i32 0, i32 0\n"
+          io << "  call i32 @dprintf(i32 2, ptr %fmt)\n"
+          io << "  call void @abort()\n"
+          io << "  unreachable\n"
+          io << "}\n"
+        end
       end
     end
 
@@ -5114,7 +5370,7 @@ module Adamas::MIR
       # Emit the real extern declaration
       if real_name.starts_with?("llvm.")
         decl = emit_llvm_intrinsic_declaration(real_name) || "declare #{return_type} @#{real_name}(#{arg_types.join(", ")})"
-        @undefined_externs[real_name] = return_type
+        record_undefined_extern(real_name, return_type)
       else
         decl = "declare #{return_type} @#{real_name}(#{arg_types.join(", ")})"
       end
@@ -5749,10 +6005,10 @@ module Adamas::MIR
       # Emit defined globals (deduplicate — MIR may register the same global multiple times)
       emitted_globals = ::Set(String).new
       @module.globals.each do |global|
-        llvm_type = @type_mapper.llvm_type(global.type)
-        llvm_type = "ptr" if llvm_type == "void"
         initial = global.initial_value || 0_i64
         mangled_name = @type_mapper.mangle_name(global.name)
+        llvm_type = runtime_top_level_global_llvm_type(mangled_name) || @type_mapper.llvm_type(global.type)
+        llvm_type = "ptr" if llvm_type == "void"
         next if emitted_globals.includes?(mangled_name)
         emitted_globals << mangled_name
         actual_name = mangled_name
@@ -5796,7 +6052,7 @@ module Adamas::MIR
       referenced_globals.each do |name, type_ref|
         # Skip if it conflicts with a function name (likely a method accessor, not a variable)
         next if function_names.includes?(name)
-        llvm_type = @type_mapper.llvm_type(type_ref)
+        llvm_type = runtime_top_level_global_llvm_type(name) || @type_mapper.llvm_type(type_ref)
         llvm_type = "ptr" if llvm_type == "void"
         @global_declared_types[name] = llvm_type
         # Check for constant initial value (e.g., Math::PI = 3.14159...)
@@ -5896,6 +6152,20 @@ module Adamas::MIR
         end
       else
         append_output(s)
+      end
+    end
+
+    private def runtime_top_level_global_llvm_type(mangled_name : String) : String?
+      case mangled_name
+      when "Object__classvar__STDIN",
+           "Object__classvar__STDOUT",
+           "Object__classvar__STDERR",
+           "Object__classvar__PROGRAM_NAME",
+           "Object__classvar__ARGV",
+           "Object__classvar__ARGF"
+        "ptr"
+      else
+        nil
       end
     end
 
@@ -7268,6 +7538,90 @@ module Adamas::MIR
       emit_raw "  %tid = load i32, ptr %self\n"
       emit_raw "  %result = call ptr @__adamas_create_substring(ptr %data_start, i32 %final_count, i32 %tid)\n"
       emit_raw "  ret ptr %result\n"
+      emit_raw "}\n\n"
+
+      # Bootstrap startup helpers for top-level runtime constants. Keep this
+      # path independent from normal String.new / Array.new resolution because
+      # stage2 can still mis-resolve these startup expressions to Int32.new.
+      emit_raw "define ptr @__adamas_runtime_string_from_cstr(ptr %chars) {\n"
+      emit_raw "entry:\n"
+      emit_raw "  %is_null = icmp eq ptr %chars, null\n"
+      emit_raw "  br i1 %is_null, label %ret_empty, label %strlen_block\n"
+      emit_raw "strlen_block:\n"
+      emit_raw "  %len64 = call i64 @strlen(ptr %chars)\n"
+      emit_raw "  %len = trunc i64 %len64 to i32\n"
+      emit_raw "  %is_empty = icmp sle i32 %len, 0\n"
+      emit_raw "  br i1 %is_empty, label %ret_empty, label %alloc_block\n"
+      emit_raw "alloc_block:\n"
+      emit_raw "  %alloc_i32 = add i32 %len, 21\n"
+      emit_raw "  %alloc = zext i32 %alloc_i32 to i64\n"
+      emit_raw "  %raw = call ptr @__adamas_malloc64(i64 %alloc)\n"
+      emit_raw "  store i64 9223372036854775807, ptr %raw, align 8\n"
+      emit_raw "  %str = getelementptr i8, ptr %raw, i64 8\n"
+      emit_raw "  store i32 #{@string_type_id}, ptr %str\n"
+      emit_raw "  %bs_ptr = getelementptr i8, ptr %str, i32 4\n"
+      emit_raw "  store i32 %len, ptr %bs_ptr\n"
+      emit_raw "  %sz_ptr = getelementptr i8, ptr %str, i32 8\n"
+      emit_raw "  store i32 %len, ptr %sz_ptr\n"
+      emit_raw "  %data = getelementptr i8, ptr %str, i32 12\n"
+      emit_raw "  %copy_len = zext i32 %len to i64\n"
+      emit_raw "  call void @llvm.memcpy.p0.p0.i64(ptr %data, ptr %chars, i64 %copy_len, i1 false)\n"
+      emit_raw "  %null_pos = getelementptr i8, ptr %data, i32 %len\n"
+      emit_raw "  store i8 0, ptr %null_pos\n"
+      emit_raw "  ret ptr %str\n"
+      emit_raw "ret_empty:\n"
+      emit_raw "  ret ptr @.str.empty\n"
+      emit_raw "}\n\n"
+
+      emit_raw "define ptr @__adamas_runtime_program_name(ptr %argv) {\n"
+      emit_raw "entry:\n"
+      emit_raw "  %argv_null = icmp eq ptr %argv, null\n"
+      emit_raw "  br i1 %argv_null, label %ret_empty, label %load_arg0\n"
+      emit_raw "load_arg0:\n"
+      emit_raw "  %arg0 = load ptr, ptr %argv\n"
+      emit_raw "  %result = call ptr @__adamas_runtime_string_from_cstr(ptr %arg0)\n"
+      emit_raw "  ret ptr %result\n"
+      emit_raw "ret_empty:\n"
+      emit_raw "  ret ptr @.str.empty\n"
+      emit_raw "}\n\n"
+
+      emit_raw "define ptr @__adamas_runtime_argv(i32 %argc, ptr %argv) {\n"
+      emit_raw "entry:\n"
+      emit_raw "  %argv_null = icmp eq ptr %argv, null\n"
+      emit_raw "  %raw_count = sub i32 %argc, 1\n"
+      emit_raw "  %raw_neg = icmp slt i32 %raw_count, 0\n"
+      emit_raw "  %nonneg_count = select i1 %raw_neg, i32 0, i32 %raw_count\n"
+      emit_raw "  %count = select i1 %argv_null, i32 0, i32 %nonneg_count\n"
+      emit_raw "  %cap_small = icmp slt i32 %count, 4\n"
+      emit_raw "  %cap = select i1 %cap_small, i32 4, i32 %count\n"
+      emit_raw "  %arr = call ptr @__adamas_malloc64(i64 24)\n"
+      emit_raw "  store i32 #{array_runtime_type_id_for_element(TypeRef::STRING)}, ptr %arr\n"
+      emit_raw "  %size_ptr = getelementptr i8, ptr %arr, i32 4\n"
+      emit_raw "  store i32 %count, ptr %size_ptr\n"
+      emit_raw "  %cap_ptr = getelementptr i8, ptr %arr, i32 8\n"
+      emit_raw "  store i32 %cap, ptr %cap_ptr\n"
+      emit_raw "  %off_ptr = getelementptr i8, ptr %arr, i32 12\n"
+      emit_raw "  store i32 0, ptr %off_ptr\n"
+      emit_raw "  %buf_bytes_i32 = mul i32 %cap, 8\n"
+      emit_raw "  %buf_bytes = zext i32 %buf_bytes_i32 to i64\n"
+      emit_raw "  %buf = call ptr @__adamas_malloc64(i64 %buf_bytes)\n"
+      emit_raw "  %buf_ptr = getelementptr i8, ptr %arr, i32 16\n"
+      emit_raw "  store ptr %buf, ptr %buf_ptr\n"
+      emit_raw "  %empty = icmp sle i32 %count, 0\n"
+      emit_raw "  br i1 %empty, label %done, label %loop\n"
+      emit_raw "loop:\n"
+      emit_raw "  %i = phi i32 [0, %entry], [%next, %loop]\n"
+      emit_raw "  %argv_idx = add i32 %i, 1\n"
+      emit_raw "  %arg_slot = getelementptr ptr, ptr %argv, i32 %argv_idx\n"
+      emit_raw "  %arg_cstr = load ptr, ptr %arg_slot\n"
+      emit_raw "  %arg_str = call ptr @__adamas_runtime_string_from_cstr(ptr %arg_cstr)\n"
+      emit_raw "  %dst = getelementptr ptr, ptr %buf, i32 %i\n"
+      emit_raw "  store ptr %arg_str, ptr %dst\n"
+      emit_raw "  %next = add i32 %i, 1\n"
+      emit_raw "  %again = icmp slt i32 %next, %count\n"
+      emit_raw "  br i1 %again, label %loop, label %done\n"
+      emit_raw "done:\n"
+      emit_raw "  ret ptr %arr\n"
       emit_raw "}\n\n"
 
       # Array#sum for Int32 — loops over Crystal Array buffer and sums elements
@@ -9426,6 +9780,28 @@ module Adamas::MIR
         emit_fiber_swapcontext_override(mangled)
         return true
       end
+      # Primitive identity constructor. During bootstrap the HIR/MIR path can
+      # materialize Int32.new(Int32) with a ptr-typed argument carrying the raw
+      # integer via inttoptr, then lower the stdlib body into an unrelated enum
+      # conversion. Emit the primitive identity directly.
+      if mangled == "Int32$Hnew$$Int32"
+        emit_raw "; Int32.new(Int32) — primitive identity constructor override\n"
+        emit_raw "define i32 @#{mangled}(ptr %value) {\n"
+        emit_raw "entry:\n"
+        emit_raw "  %raw = ptrtoint ptr %value to i64\n"
+        emit_raw "  %trunc = trunc i64 %raw to i32\n"
+        emit_raw "  ret i32 %trunc\n"
+        emit_raw "}\n\n"
+        return true
+      end
+      if mangled == "Int32$Hnew$$Array$LString$R_IO$CCFileDescriptor"
+        emit_raw "; Int32.new(Array(String), IO::FileDescriptor) — bootstrap dead-prefix override\n"
+        emit_raw "define i32 @#{mangled}(ptr %value, i32 %base, i1 %whitespace, i1 %underscore, i1 %prefix, i1 %strict, i1 %leading_zero_is_octal) {\n"
+        emit_raw "entry:\n"
+        emit_raw "  ret i32 0\n"
+        emit_raw "}\n\n"
+        return true
+      end
       # Slice(T)#unsafe_fetch where T is an inline primitive tuple: return a heap copy.
       # Normal MIR lowering returns a direct GEP alias into the Slice buffer, which breaks
       # insertion sort: `v = unsafe_fetch(j)` is aliased into the buffer and corrupted when
@@ -9441,6 +9817,29 @@ module Adamas::MIR
             emit_raw "  %buf_field = getelementptr i8, ptr %self, i32 8\n"
             emit_raw "  %buf = load ptr, ptr %buf_field\n"
             emit_raw "  %idx64 = sext i32 %index to i64\n"
+            emit_raw "  %byte_off = mul i64 %idx64, #{tuple_size}\n"
+            emit_raw "  %slot = getelementptr i8, ptr %buf, i64 %byte_off\n"
+            emit_raw "  %copy = call ptr @__adamas_malloc64(i64 #{tuple_size})\n"
+            emit_raw "  call void @llvm.memcpy.p0.p0.i64(ptr %copy, ptr %slot, i64 #{tuple_size}, i1 false)\n"
+            emit_raw "  ret ptr %copy\n"
+            emit_raw "}\n\n"
+            return true
+          end
+        end
+      end
+      if mangled.starts_with?("Array$L") && mangled.ends_with?("$Hunsafe_fetch$$Int32")
+        if ret_mir = @module.type_registry.get(func.return_type)
+          if inline_primitive_tuple_type?(ret_mir)
+            tuple_size = ret_mir.size > 0 ? ret_mir.size : 8_u64
+            emit_raw "; #{mangled} — heap-copy override: value semantics for inline primitive tuple\n"
+            emit_raw "define ptr @#{mangled}(ptr %self, i32 %index) {\n"
+            emit_raw "entry:\n"
+            emit_raw "  %off_field = getelementptr i8, ptr %self, i32 12\n"
+            emit_raw "  %offset = load i32, ptr %off_field\n"
+            emit_raw "  %physical = add i32 %offset, %index\n"
+            emit_raw "  %buf_field = getelementptr i8, ptr %self, i32 16\n"
+            emit_raw "  %buf = load ptr, ptr %buf_field\n"
+            emit_raw "  %idx64 = sext i32 %physical to i64\n"
             emit_raw "  %byte_off = mul i64 %idx64, #{tuple_size}\n"
             emit_raw "  %slot = getelementptr i8, ptr %buf, i64 %byte_off\n"
             emit_raw "  %copy = call ptr @__adamas_malloc64(i64 #{tuple_size})\n"
@@ -10552,6 +10951,32 @@ module Adamas::MIR
         return true
       end
 
+      # IO::FileDescriptor#write(Slice(UInt8)) — stage2 debug output reaches this
+      # before the generic Indexable#size path is reliably materialized. Use the
+      # concrete Slice layout directly (size @0, pointer @8) and ignore the byte
+      # count because the Crystal method returns Nil.
+      if mangled == "IO$CCFileDescriptor$Hwrite$$arity1" ||
+         mangled == "IO$CCFileDescriptor$Hwrite$$Slice$LUInt8$R" ||
+         mangled == "File$Hwrite$$Slice$LUInt8$R"
+        emit_raw "; #{mangled} — direct syscall write(Slice(UInt8)) override\n"
+        emit_raw "define void @#{mangled}(ptr %self, ptr %slice) {\n"
+        emit_raw "entry:\n"
+        emit_raw "  %fd = call i32 @IO$CCFileDescriptor$Hfd(ptr %self)\n"
+        emit_raw "  %size = load i32, ptr %slice\n"
+        emit_raw "  %is_zero = icmp eq i32 %size, 0\n"
+        emit_raw "  br i1 %is_zero, label %ret_done, label %do_write\n"
+        emit_raw "do_write:\n"
+        emit_raw "  %buf_ptr_ptr = getelementptr i8, ptr %slice, i32 8\n"
+        emit_raw "  %buf_ptr = load ptr, ptr %buf_ptr_ptr\n"
+        emit_raw "  %size64 = zext i32 %size to i64\n"
+        emit_raw "  %nbytes = call i64 @write(i32 %fd, ptr %buf_ptr, i64 %size64)\n"
+        emit_raw "  br label %ret_done\n"
+        emit_raw "ret_done:\n"
+        emit_raw "  ret void\n"
+        emit_raw "}\n\n"
+        return true
+      end
+
       # IO::FileDescriptor#gets(Char, Bool) — bypass broken buffered IO.
       # Read byte-by-byte using direct syscall until delimiter found.
       # Returns Nil | String union.
@@ -10960,7 +11385,8 @@ module Adamas::MIR
       # Hash#key_hash for HIR::TypeRef keys — struct with single id : UInt32 at offset 0.
       # Structs are heap-allocated and passed by pointer; vdispatch fails because structs lack type_id.
       # Fix: load the id field and hash it as UInt32.
-      if mangled.ends_with?("$Hkey_hash$$Crystal$CCHIR$CCTypeRef") && mangled.includes?("Hash$L")
+      if (mangled.ends_with?("$Hkey_hash$$Crystal$CCHIR$CCTypeRef") ||
+         mangled.ends_with?("$Hkey_hash$$Adamas$CCHIR$CCTypeRef")) && mangled.includes?("Hash$L")
         emit_raw "; #{mangled} — direct HIR::TypeRef hash override (bypass vdispatch)\n"
         emit_raw "define i32 @#{mangled}(ptr %self, ptr %key) {\n"
         emit_raw "entry:\n"
@@ -10986,7 +11412,8 @@ module Adamas::MIR
       end
 
       # Hash#key_hash for MIR::TypeRef keys — same struct layout as HIR::TypeRef.
-      if mangled.ends_with?("$Hkey_hash$$Crystal$CCMIR$CCTypeRef") && mangled.includes?("Hash$L")
+      if (mangled.ends_with?("$Hkey_hash$$Crystal$CCMIR$CCTypeRef") ||
+         mangled.ends_with?("$Hkey_hash$$Adamas$CCMIR$CCTypeRef")) && mangled.includes?("Hash$L")
         emit_raw "; #{mangled} — direct MIR::TypeRef hash override (bypass vdispatch)\n"
         emit_raw "define i32 @#{mangled}(ptr %self, ptr %key) {\n"
         emit_raw "entry:\n"
@@ -13261,6 +13688,31 @@ module Adamas::MIR
         return
       end
 
+      # Pointer(T)#<<(value) — store one element at self and return the advanced
+      # pointer when the caller uses the appender-style result. This is needed for
+      # Array(T)#<< paths where T is a V2 struct carried as a pointer slot.
+      if mangled_name.includes?("Pointer$H$SHL$$") && func.params.size >= 2
+        elem_size = pointer_word_bytes_u64
+        value_param = func.params[1]
+        value_name = @value_names[value_param.index]? || "value"
+        value_llvm = @type_mapper.llvm_type(value_param.type)
+        ptr_int = pointer_sized_int_llvm_type
+
+        emit_raw "define #{return_type} @#{mangled_name}(#{param_types.join(", ")}) {\n"
+        emit_raw "entry:\n"
+        emit_raw "  store #{value_llvm} %#{value_name}, ptr %self\n"
+        emit_raw "  %next = getelementptr i8, ptr %self, #{ptr_int} #{elem_size}\n"
+        if return_type == "ptr"
+          emit_raw "  ret ptr %next\n"
+        elsif return_type == "void"
+          emit_raw "  ret void\n"
+        else
+          emit_raw "  ret #{return_type} zeroinitializer\n"
+        end
+        emit_raw "}\n\n"
+        return
+      end
+
       # Pointer(T)#clear(count) — zero the pointer buffer itself.
       # Important: in our ABI Pointer(Struct) commonly stores pointer slots (8-byte
       # entries), not inline struct payloads. Clearing through the first element pointer
@@ -13303,6 +13755,11 @@ module Adamas::MIR
           emit_raw "  %count_int = add #{ptr_int} 0, 0\n"
         end
 
+        emit_raw "  %is_null = icmp eq ptr %self, null\n"
+        emit_raw "  %is_zero = icmp eq #{ptr_int} %count_int, 0\n"
+        emit_raw "  %skip_clear = or i1 %is_null, %is_zero\n"
+        emit_raw "  br i1 %skip_clear, label %ret_done, label %do_clear\n"
+        emit_raw "do_clear:\n"
         emit_raw "  %bytes = mul #{ptr_int} %count_int, #{elem_size}\n"
         if ptr_int == "i64"
           emit_raw "  %bytes_i64 = add i64 %bytes, 0\n"
@@ -13310,6 +13767,8 @@ module Adamas::MIR
           emit_raw "  %bytes_i64 = zext #{ptr_int} %bytes to i64\n"
         end
         emit_raw "  call void @llvm.memset.p0.i64(ptr %self, i8 0, i64 %bytes_i64, i1 false)\n"
+        emit_raw "  br label %ret_done\n"
+        emit_raw "ret_done:\n"
         emit_raw "  ret void\n"
         emit_raw "}\n\n"
         return
@@ -14549,8 +15008,8 @@ module Adamas::MIR
     end
 
     # Collect usage contexts to infer types (ptr vs int types)
-    private def collect_usage_contexts(func : Function) : Hash(UInt32, TypeRef)
-      contexts = ::Hash(UInt32, TypeRef).new
+    private def collect_usage_contexts(func : Function) : TypeRefUsageContexts
+      contexts = TypeRefUsageContexts.new
 
       func.blocks.each do |block|
         block.instructions.each do |inst|
@@ -16616,8 +17075,11 @@ module Adamas::MIR
 
     private def undefined_extern_bytes : Int64
       total = 0_i64
-      @undefined_externs.each do |name, ret_type|
-        total += name.bytesize + ret_type.bytesize
+      idx = 0
+      while idx < @undefined_extern_names.size
+        total += @undefined_extern_names.unsafe_fetch(idx).bytesize
+        total += @undefined_extern_return_types.unsafe_fetch(idx).bytesize
+        idx += 1
       end
       total
     end
@@ -16825,8 +17287,12 @@ module Adamas::MIR
               end
             end
             # Undefined externs
-            @undefined_externs.each do |name, ret_type|
+            undefined_idx = 0
+            while undefined_idx < @undefined_extern_names.size
+              name = @undefined_extern_names.unsafe_fetch(undefined_idx)
+              ret_type = @undefined_extern_return_types.unsafe_fetch(undefined_idx)
               f.puts "EXT\t#{name}\t#{ret_type}"
+              undefined_idx += 1
             end
             # Called crystal functions
             @called_crystal_functions.each do |name, info|
@@ -16965,7 +17431,7 @@ module Adamas::MIR
               end
             when "EXT"
               next if parts.size < 3
-              @undefined_externs[parts[1]] ||= parts[2]
+              record_undefined_extern(parts[1], parts[2])
             when "CCF"
               next if parts.size < 5
               name = parts[1]
@@ -20155,7 +20621,7 @@ module Adamas::MIR
                       undefined_name = "func#{inst.callee}"
                       ret_type = @type_mapper.llvm_type(inst.type)
                       ret_type = "ptr" if ret_type == "void"  # Use ptr for void to be safe
-                      @undefined_externs[undefined_name] = ret_type unless @undefined_externs.has_key?(undefined_name)
+                      record_undefined_extern(undefined_name, ret_type)
                       undefined_name
                     end
       raw_callee_name = callee_func.try(&.name)
@@ -22298,7 +22764,7 @@ module Adamas::MIR
 
       if !matching_func
         # Function not found - track for later declaration
-        @undefined_externs[mangled_extern_name] = return_type unless @undefined_externs.has_key?(mangled_extern_name)
+        record_undefined_extern(mangled_extern_name, return_type)
       end
 
       # Fallback: use prepass-determined type or minimal heuristics for constructors
@@ -22600,6 +23066,9 @@ module Adamas::MIR
       mangled_global = @type_mapper.mangle_name(inst.global_name)
       # Use renamed global if it was renamed to avoid function name conflict
       actual_global = @global_name_mapping[mangled_global]? || mangled_global
+      if forced_type = runtime_top_level_global_llvm_type(actual_global) || runtime_top_level_global_llvm_type(mangled_global)
+        llvm_type = forced_type
+      end
       # Can't load void - use ptr instead
       if llvm_type == "void"
         llvm_type = "ptr"
@@ -22625,6 +23094,14 @@ module Adamas::MIR
       # Get value type from the stored value
       val = value_ref(inst.value)
       llvm_type = @type_mapper.llvm_type(inst.type)
+      mangled_global = @type_mapper.mangle_name(inst.global_name)
+      # Use renamed global if it was renamed to avoid function name conflict
+      actual_global = @global_name_mapping[mangled_global]? || mangled_global
+      forced_runtime_global = false
+      if forced_type = runtime_top_level_global_llvm_type(actual_global) || runtime_top_level_global_llvm_type(mangled_global)
+        forced_runtime_global = true
+        llvm_type = forced_type
+      end
 
       # Get actual type of the value being stored
       val_type = @value_types[inst.value]?
@@ -22648,6 +23125,13 @@ module Adamas::MIR
       if llvm_type == "void"
         llvm_type = "ptr"
         val = "null" if val == "null" || val.starts_with?("%r") # likely void value
+      end
+
+      if forced_runtime_global
+        current_val_type = actual_val_type || val_type_str
+        if val == "null" || (current_val_type && current_val_type.starts_with?('i') && !current_val_type.includes?('.'))
+          return
+        end
       end
 
       # Early check: if the value is a union and the global is declared as the same
@@ -22744,10 +23228,6 @@ module Adamas::MIR
           record_emitted_type(val, "ptr")
         end
       end
-      mangled_global = @type_mapper.mangle_name(inst.global_name)
-      # Use renamed global if it was renamed to avoid function name conflict
-      actual_global = @global_name_mapping[mangled_global]? || mangled_global
-
       # Reconcile store type with global's declared type to prevent type mismatches
       declared_type = @global_declared_types[actual_global]? || @global_declared_types[mangled_global]?
       if declared_type && declared_type != llvm_type
@@ -22777,6 +23257,21 @@ module Adamas::MIR
             val = normalize_union_value(val, declared_type)
           end
           llvm_type = declared_type
+        elsif declared_type == "ptr" && llvm_type.starts_with?('i') && !llvm_type.includes?('.')
+          if val == "0"
+            val = "null"
+          elsif val.starts_with?('%')
+            c = @cond_counter
+            @cond_counter += 1
+            emit "%gs_decl_i2p.#{c} = inttoptr #{llvm_type} #{val} to ptr"
+            val = "%gs_decl_i2p.#{c}"
+          else
+            c = @cond_counter
+            @cond_counter += 1
+            emit "%gs_decl_i2p.#{c} = inttoptr #{llvm_type} #{val} to ptr"
+            val = "%gs_decl_i2p.#{c}"
+          end
+          llvm_type = "ptr"
         elsif declared_type.includes?(".union") && llvm_type.includes?(".union")
           # Both unions but different — reinterpret through memory
           c = @cond_counter
@@ -22815,6 +23310,9 @@ module Adamas::MIR
       end
 
       val = normalize_value_for_store_type(val, llvm_type)
+      if forced_runtime_global && (val == "null" || val.starts_with?("%global_inttoptr"))
+        return
+      end
       emit "store #{llvm_type} #{val}, ptr @#{actual_global}"
     end
 

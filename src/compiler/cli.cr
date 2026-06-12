@@ -2487,7 +2487,8 @@ module Adamas
           info.class_vars.each do |cvar|
             global_name = MIR::HIRToMIRLowering.class_var_global_name(class_name, cvar.name)
             debug_info = hir_converter.global_debug_infos[global_name]?
-            globals << {global_name, cvar.type, cvar.initial_value, debug_info.try(&.display_name), debug_info.try(&.location)}
+            global_type = runtime_top_level_constant_global_type(hir_converter, class_name, cvar.name, cvar.type)
+            globals << {global_name, global_type, cvar.initial_value, debug_info.try(&.display_name), debug_info.try(&.location)}
           end
         end
         bootstrap_trace_puts "[MIR_SETUP] class_vars scan done globals=#{globals.size}" if mir_setup_trace
@@ -2912,6 +2913,17 @@ module Adamas
           io << owner
           io << "__classvar__"
           io << const_name
+        end
+      end
+
+      private def runtime_top_level_constant_global_type(hir_converter, owner : String, const_name : String, fallback : HIR::TypeRef) : HIR::TypeRef
+        return fallback unless owner == "Object"
+        case const_name
+        when "STDIN", "STDOUT", "STDERR", "PROGRAM_NAME", "ARGV", "ARGF"
+          resolved = hir_converter.runtime_deferred_top_level_constant_storage_type(const_name)
+          resolved == HIR::TypeRef::VOID ? fallback : resolved
+        else
+          fallback
         end
       end
 

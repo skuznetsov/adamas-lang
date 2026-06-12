@@ -167,24 +167,31 @@ module Adamas::MIR
           if store_site.nil? || !no_alias_ids.includes?(store_site)
             # Unknown store target - could alias anything, be conservative
             # But use TBAA: keep pending incs for types that CANNOT alias
-            pending_incs.reject! do |pending_ptr, _|
+            pending_keys_to_drop = [] of ValueId
+            pending_incs.each do |pending_ptr, _|
               pending_site = alloc_site[pending_ptr]?
-              next true unless pending_site  # No site info → conservative reject
+              if !pending_site
+                pending_keys_to_drop << pending_ptr
+                next
+              end
 
               # Keep if from known noalias alloc that hasn't escaped
-              next false if no_alias_ids.includes?(pending_site) && !escaped_allocs.includes?(pending_ptr)
+              next if no_alias_ids.includes?(pending_site) && !escaped_allocs.includes?(pending_ptr)
 
               # TBAA: If we know the store type, check type compatibility
               if store_type
                 pending_type = alloc_type[pending_site]?
                 if pending_type && !store_type.may_alias_type?(pending_type)
                   # Types cannot alias (e.g., Int32* vs MyClass*) → keep pending inc
-                  next false
+                  next
                 end
               end
 
               # Conservative: reject (may alias)
-              true
+              pending_keys_to_drop << pending_ptr
+            end
+            pending_keys_to_drop.each do |pending_ptr|
+              pending_incs.delete(pending_ptr)
             end
           end
           # If store is to a known noalias allocation, it only affects that allocation's
@@ -319,7 +326,8 @@ module Adamas::MIR
         changed = false
 
         @function.blocks.each do |block|
-          block.instructions.reject! do |inst|
+          kept = [] of Value
+          block.instructions.each do |inst|
             inst_index = inst.id.to_i
             inst_uses = inst_index < use_counts_len ? use_counts[inst_index] : 0
             if !has_side_effects?(inst) && inst_uses == 0
@@ -332,11 +340,12 @@ module Adamas::MIR
               end
               @eliminated += 1
               changed = true
-              true  # remove
             else
-              false  # keep
+              kept << inst
             end
           end
+          block.instructions.clear
+          kept.each { |inst| block.instructions << inst }
         end
       end
 
@@ -1023,7 +1032,13 @@ module Adamas::MIR
             value_id = canonical(inst.value, replacements)
             if site = alloc_site[ptr_id]?
               if no_alias_sites.includes?(site)
-                last_store.reject! { |key, _| alloc_site[key]? == site }
+                keys_to_drop = [] of ValueId
+                last_store.each do |key, _|
+                  keys_to_drop << key if alloc_site[key]? == site
+                end
+                keys_to_drop.each do |key|
+                  last_store.delete(key)
+                end
               else
                 last_store.clear
               end
@@ -1133,9 +1148,11 @@ module Adamas::MIR
       end
       end
 
+      applied = 0
       timed_cp_phase("run_apply_replacements") do
-        apply_replacements(replacements)
+        applied = apply_replacements(replacements)
       end
+      applied
     end
 
     def apply_replacements(replacements : Hash(ValueId, ValueId), *, assume_dominates : Bool = false) : Int32
@@ -2396,7 +2413,10 @@ module Adamas::MIR
 
     # Per-value use counts for corridor tracing.
     # LTPEngine only needs exposure/cardinality, not the full def-use payload.
-    @use_map : ::Hash(ValueId, Int32)
+    # Keep this as a dense ValueId side table instead of Hash(ValueId, Int32):
+    # stage2 may reach LTPEngine before all primitive-key Hash specializations
+    # have been materialized.
+    @use_counts : ::Array(Int32)
     # Alias map for pointer canonicalization
     @alias_map : ::Hash(ValueId, ValueId)
     # NoAlias set (values that don't alias anything)
@@ -2409,7 +2429,7 @@ module Adamas::MIR
       @potential_trace = [] of LTPPotential
       @debug = false
       @frame_kind = FrameKind::Primary
-      @use_map = ::Hash(ValueId, Int32).new
+      @use_counts = [] of Int32
       @alias_map = ::Hash(ValueId, ValueId).new
       @no_alias_ids = ::Set(ValueId).new
     end
@@ -2423,13 +2443,13 @@ module Adamas::MIR
       @final_potential = compute_frame_potential
       @potential_trace << @final_potential
 
-      log "LTP Engine start: #{@final_potential}"
+      log { "LTP Engine start: #{@final_potential}" }
 
       while @iterations < max_iters
         # BR-1: Find trigger window
         window = find_window
         unless window
-          log "  Iter #{@iterations}: No window found. Trying dual frame..."
+          log { "  Iter #{@iterations}: No window found. Trying dual frame..." }
           if try_dual_frame
             build_analysis_maps
             @final_potential = compute_frame_potential
@@ -2440,17 +2460,17 @@ module Adamas::MIR
           break
         end
 
-        log "  Iter #{@iterations}: Window = #{window}"
+        log { "  Iter #{@iterations}: Window = #{window}" }
 
         # BR-2: Trace corridor from window
         corridor = trace_corridor(window)
-        log "    Corridor: #{corridor}"
+        log { "    Corridor: #{corridor}" }
 
         # Find best legal move (priority: S > L > D > C)
         move = find_best_move(window, corridor)
 
         if move
-          log "    Applying: #{move}"
+          log { "    Applying: #{move}" }
 
           # Apply the move
           apply_move(move)
@@ -2462,34 +2482,34 @@ module Adamas::MIR
 
           # BR-3: Verify strict decrease
           if new_potential >= @final_potential
-            log "    WARNING: Potential did not decrease! Trying dual frame..."
+            log { "    WARNING: Potential did not decrease! Trying dual frame..." }
             # BR-4: Try dual frame (escape-based analysis)
             if !try_dual_frame
-              log "    Dual frame exhausted. Stopping."
+              log { "    Dual frame exhausted. Stopping." }
               break
             end
           end
 
           @final_potential = new_potential
           @potential_trace << @final_potential
-          log "    New potential: #{@final_potential}"
+          log { "    New potential: #{@final_potential}" }
         else
-          log "    No legal move found. Trying Collapse..."
+          log { "    No legal move found. Trying Collapse..." }
           # Try Collapse (DCE) as fallback
           collapsed = try_collapse_move
           if collapsed > 0
-            log "    Collapsed #{collapsed} dead instructions"
+            log { "    Collapsed #{collapsed} dead instructions" }
             build_analysis_maps
             @final_potential = compute_frame_potential
             @potential_trace << @final_potential
           else
-            log "    Nothing to collapse. Trying dual frame..."
+            log { "    Nothing to collapse. Trying dual frame..." }
             if try_dual_frame
               build_analysis_maps
               @final_potential = compute_frame_potential
               @potential_trace << @final_potential
             else
-              log "    Dual frame exhausted. Stopping."
+              log { "    Dual frame exhausted. Stopping." }
               break
             end
           end
@@ -2498,8 +2518,8 @@ module Adamas::MIR
         @iterations += 1
       end
 
-      log "LTP Engine done: #{@iterations} iterations, #{@moves_applied.size} moves"
-      log "Final potential: #{@final_potential}"
+      log { "LTP Engine done: #{@iterations} iterations, #{@moves_applied.size} moves" }
+      log { "Final potential: #{@final_potential}" }
 
       @final_potential
     end
@@ -2520,7 +2540,7 @@ module Adamas::MIR
             ptr = canonical_ptr(inst.ptr)
             next unless @no_alias_ids.includes?(ptr)
 
-            exposure = (@use_map[ptr]? || 0)
+            exposure = use_count(ptr)
 
             if exposure > best_exposure
               best_exposure = exposure
@@ -2683,7 +2703,7 @@ module Adamas::MIR
           case inst
           when RCIncrement
             if canonical_ptr(inst.ptr) == ptr
-              exp = (@use_map[ptr]? || 0)
+              exp = use_count(ptr)
               competing_windows << Window.new(inst, block, idx, exp, ptr)
             end
           end
@@ -2766,11 +2786,11 @@ module Adamas::MIR
       build_analysis_maps
       post = compute_frame_potential
       if post < pre
-        log "    Dual frame (CF): folded #{folded} constants, Φ #{pre} → #{post}"
+        log { "    Dual frame (CF): folded #{folded} constants, Phi #{pre} -> #{post}" }
         return true
       end
 
-      log "    Dual frame (CF) made changes but did not decrease Φ"
+      log { "    Dual frame (CF) made changes but did not decrease Phi" }
       false
     end
 
@@ -2786,12 +2806,12 @@ module Adamas::MIR
       post = compute_curvature_potential
 
       if post < pre
-        log "    Dual frame (curvature): rc=#{rc}, dce=#{dce}, Φ #{pre} → #{post}"
+        log { "    Dual frame (curvature): rc=#{rc}, dce=#{dce}, Phi #{pre} -> #{post}" }
         @frame_kind = FrameKind::Curvature
         return true
       end
 
-      log "    Dual frame (curvature) made changes but did not decrease Φ"
+      log { "    Dual frame (curvature) made changes but did not decrease Phi" }
       false
     end
 
@@ -2805,7 +2825,7 @@ module Adamas::MIR
       corner_mismatch = 0     # P: conflicts/bad patterns
       area = 0                # |Δ|: total instructions
 
-      windows_by_ptr = ::Hash(ValueId, Int32).new(0)
+      windows_by_ptr = [] of Int32
 
       @function.blocks.each do |block|
         area += block.instructions.size
@@ -2815,12 +2835,12 @@ module Adamas::MIR
           when RCIncrement
             ptr = canonical_ptr(inst.ptr)
             window_overlap += 1
-            windows_by_ptr[ptr] += 1
+            increment_count(windows_by_ptr, ptr)
 
           when RCDecrement
             ptr = canonical_ptr(inst.ptr)
             window_overlap += 1
-            windows_by_ptr[ptr] += 1
+            increment_count(windows_by_ptr, ptr)
 
           when IndirectCall
             # Indirect calls are "corner mismatches" - uncertainty
@@ -2834,7 +2854,7 @@ module Adamas::MIR
       end
 
       # Count tied windows (multiple RC ops on same ptr)
-      windows_by_ptr.each_value do |count|
+      windows_by_ptr.each do |count|
         if count > 1
           tie_plateau += count - 1
         end
@@ -2867,7 +2887,7 @@ module Adamas::MIR
           ptr = canonical_ptr(inst.ptr)
           next unless @no_alias_ids.includes?(ptr)
 
-          exposure = (@use_map[ptr]? || 0)
+          exposure = use_count(ptr)
           window = Window.new(inst, block, idx, exposure, ptr)
           corridor = trace_corridor(window)
 
@@ -2911,7 +2931,7 @@ module Adamas::MIR
     # ═══════════════════════════════════════════════════════════════════════════
 
     private def build_analysis_maps
-      @use_map.clear
+      @use_counts.clear
       @alias_map.clear
       @no_alias_ids.clear
 
@@ -2919,7 +2939,7 @@ module Adamas::MIR
         block.instructions.each_with_index do |inst, idx|
           # Build use map
           inst.operands.each do |op|
-            @use_map[op] = (@use_map[op]? || 0) + 1
+            increment_use_count(op)
           end
 
           # Build alias map and no_alias set
@@ -2953,8 +2973,29 @@ module Adamas::MIR
       current
     end
 
-    private def log(msg : String)
-      puts msg if @debug
+    private def use_count(id : ValueId) : Int32
+      idx = id.to_i
+      return 0 if idx < 0 || idx >= @use_counts.size
+      @use_counts.unsafe_fetch(idx)
+    end
+
+    private def increment_use_count(id : ValueId) : Nil
+      increment_count(@use_counts, id)
+    end
+
+    private def increment_count(counts : Array(Int32), id : ValueId) : Nil
+      idx = id.to_i
+      while idx >= counts.size
+        counts << 0
+      end
+      counts[idx] = counts.unsafe_fetch(idx) + 1
+    end
+
+    private def log(&)
+      # Keep LTPEngine silent in bootstrap builds. Stage2 can misread the
+      # debug ivar and evaluate logging-only string interpolation, which pulls
+      # broken struct/Object#to_s vdispatch into the optimizer path.
+      nil
     end
   end
 

@@ -119,10 +119,14 @@ module Adamas::HIR
       # Build type graph: class_name → field types
       type_graph = {} of String => Array(String)
       type_info.class_names.each do |class_name|
-        field_types = type_info.instance_var_types(class_name).values.compact.flat_map do |type_ann|
-          extract_type_references(type_ann)
+        field_types = [] of String
+        type_info.instance_var_types(class_name).each_value do |type_ann|
+          next unless type_ann
+          extract_type_references(type_ann).each do |type_ref|
+            field_types << type_ref unless field_types.includes?(type_ref)
+          end
         end
-        type_graph[class_name] = field_types.uniq
+        type_graph[class_name] = field_types
       end
 
       type_graph.each_key do |name|
