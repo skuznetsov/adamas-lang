@@ -44,7 +44,7 @@ CR
 "$ROOT_DIR/scripts/run_safe.sh" "$COMPILER" 30 2048 \
   "$TRIVIAL_SRC" --no-prelude --emit llvm-ir --no-link -o "$TRIVIAL_OUT" >"$LOG" 2>&1
 
-awk '/^define void @__crystal_main/{inside=1} inside{print} inside && /^}/{exit}' "$TRIVIAL_OUT.ll" >"$MAIN_IR"
+awk '/^define void @__adamas_main/{inside=1} inside{print} inside && /^}/{exit}' "$TRIVIAL_OUT.ll" >"$MAIN_IR"
 
 if grep -Eq 'call .*@Pair\$Hinitialize' "$MAIN_IR"; then
   echo "expected trivial stack-local Pair.new to inline initializer field stores" >&2
@@ -77,7 +77,7 @@ CR
 "$ROOT_DIR/scripts/run_safe.sh" "$COMPILER" 30 2048 \
   "$CUSTOM_SRC" --no-prelude --emit llvm-ir --no-link -o "$CUSTOM_OUT" >"$LOG" 2>&1
 
-awk '/^define void @__crystal_main/{inside=1} inside{print} inside && /^}/{exit}' "$CUSTOM_OUT.ll" >"$CUSTOM_MAIN_IR"
+awk '/^define void @__adamas_main/{inside=1} inside{print} inside && /^}/{exit}' "$CUSTOM_OUT.ll" >"$CUSTOM_MAIN_IR"
 
 if ! grep -Eq 'call .*@Pair\$Hinitialize' "$CUSTOM_MAIN_IR"; then
   echo "expected non-trivial initialize body to stay as a real initializer call" >&2
@@ -103,7 +103,7 @@ CR
 "$ROOT_DIR/scripts/run_safe.sh" "$COMPILER" 30 2048 \
   "$PADDED_SRC" --no-prelude --emit llvm-ir --no-link -o "$PADDED_OUT" >"$LOG" 2>&1
 
-awk '/^define void @__crystal_main/{inside=1} inside{print} inside && /^}/{exit}' "$PADDED_OUT.ll" >"$PADDED_MAIN_IR"
+awk '/^define void @__adamas_main/{inside=1} inside{print} inside && /^}/{exit}' "$PADDED_OUT.ll" >"$PADDED_MAIN_IR"
 
 if grep -Eq 'call .*@Padded\$Hinitialize' "$PADDED_MAIN_IR"; then
   echo "expected padded trivial initializer to inline direct field stores" >&2

@@ -12,6 +12,7 @@
 require "./mir"
 require "../hir/hir"
 require "../hir/memory_strategy"
+require "../layout_probe"
 
 module Adamas
   module MIR
@@ -111,6 +112,27 @@ module Adamas
       # Track HIR values that point to inline struct data (from Pointer(Struct).value).
       # These need special FieldGet handling: GEP without load for struct-typed fields.
       @inline_struct_ptrs : ::Set(HIR::ValueId) = ::Set(HIR::ValueId).new
+
+      # Interprocedural stack-arg safety cache for struct constructor promotion:
+      # "callee_name|param_idx" -> StackWalkStatus (param never leaks / never
+      # leaks but is returned to the caller / leaks). Module-lifetime (callee
+      # analysis is independent of the current function); entries are only
+      # written after the callee's HIR body exists, so lazily-lowered callees
+      # that are still absent stay uncached and conservatively unsafe.
+      @stack_safe_callee_param_cache : Hash(String, StackWalkStatus) = Hash(String, StackWalkStatus).new
+      @stack_safe_callee_in_progress : ::Set(String) = ::Set(String).new
+
+      # Return-alias summaries: "callee_name|param_idx" -> may the callee's
+      # return value alias that parameter (`def me; self; end`, builder-style
+      # `hash(hasher)` returning the hasher). Module-lifetime like the cache
+      # above. Cycles answer conservative TRUE (a recursive callee may return
+      # its own parameter through the cycle).
+      @callee_return_alias_cache : Hash(String, Bool) = Hash(String, Bool).new
+      @callee_return_alias_in_progress : ::Set(String) = ::Set(String).new
+
+      # Per-function HIR value-definition maps (ValueId -> defining instruction)
+      # for the backward may-alias walk; keyed by function name, built lazily.
+      @hir_defs_cache : Hash(String, Hash(HIR::ValueId, HIR::Value)) = Hash(String, Hash(HIR::ValueId, HIR::Value)).new
 
       # ARC cleanup: track stack slots holding ARC-allocated pointers per function
       # so we can emit rc_dec at return points. Each slot is initialized to null
@@ -2775,6 +2797,35 @@ module Adamas
       # Field Access Lowering
       # ─────────────────────────────────────────────────────────────────────────
 
+      # LayoutDecision sidecar helpers (diagnostic only, see layout_probe.cr).
+      private def probe_field_event(site : String, context : String, role : String,
+                                    hir_type : HIR::TypeRef, storage : String,
+                                    access_size : Int64,
+                                    declared : TypeRef? = nil, effective : TypeRef? = nil) : Nil
+        Adamas::LayoutProbe.log(
+          "mir", site, context, role,
+          hir_type_name(hir_type), hir_type.id.to_i64, storage,
+          -1_i64, access_size,
+          declared ? probe_mir_type_label(declared) : "",
+          effective ? probe_mir_type_label(effective) : ""
+        )
+      end
+
+      private def probe_mir_type_label(type_ref : TypeRef) : String
+        if t = @mir_module.type_registry.get(type_ref)
+          "#{t.name}##{t.id}"
+        else
+          "type_ref:#{type_ref}"
+        end
+      end
+
+      private def probe_mir_type_size(type_ref : TypeRef) : Int64
+        if t = @mir_module.type_registry.get(type_ref)
+          return t.size.to_i64 if t.size > 0
+        end
+        pointer_word_bytes_u64.to_i64
+      end
+
       private def lower_field_get(field : HIR::FieldGet) : ValueId
         builder = @builder.not_nil!
         # Nil-typed fields are zero-sized and have no storage.
@@ -2796,23 +2847,40 @@ module Adamas
           inline_size = hir_type_inline_size(field.type)
           if inline_size > pointer_word_bytes_i32
             @inline_struct_ptrs << field.id
+            if Adamas::LayoutProbe.enabled?
+              probe_field_event("lower_field_get.inline_struct", "field-get", "consumer",
+                field.type, "BorrowedAddress", inline_size.to_i64)
+            end
             return field_ptr
           end
         end
         if @inline_struct_ptrs.includes?(field.object) && hir_type_is_struct?(field.type)
           @inline_struct_ptrs << field.id
+          if Adamas::LayoutProbe.enabled?
+            probe_field_event("lower_field_get.propagated", "field-get", "consumer",
+              field.type, "BorrowedAddress", -1_i64)
+          end
           field_ptr
         elsif hir_type_is_static_array?(field.type)
           # StaticArray is always inline in its parent — return GEP pointer directly
           @inline_struct_ptrs << field.id
+          if Adamas::LayoutProbe.enabled?
+            probe_field_event("lower_field_get.static_array", "field-get", "consumer",
+              field.type, "BorrowedAddress", -1_i64)
+          end
           field_ptr
         elsif hir_type_is_lib_struct?(field.type)
           # Lib struct fields are stored inline (via memcopy in FieldSet).
           # Return the GEP pointer directly — the data is at the field address.
           @inline_struct_ptrs << field.id
+          if Adamas::LayoutProbe.enabled?
+            probe_field_event("lower_field_get.lib_struct", "field-get", "consumer",
+              field.type, "BorrowedAddress", -1_i64)
+          end
           field_ptr
         else
           field_mir_type = convert_type(field.type)
+          probe_declared_type = field_mir_type
 
           # CRITICAL: If field_mir_type maps to an all-ref union, override to POINTER.
           # All-ref unions are stored as raw pointers (no union discriminator).
@@ -2856,6 +2924,11 @@ module Adamas
                           field_descriptor = @mir_module.get_union_descriptor(field_mir_type)
                           field_is_allref = field_descriptor ? all_ref_union_descriptor?(field_descriptor) : true
                           if field_is_allref
+                            if Adamas::LayoutProbe.enabled?
+                              probe_field_event("lower_field_get.payload4", "field-get", "consumer",
+                                field.type, "InlineBytes", probe_mir_type_size(found_field.type_ref),
+                                field_mir_type, found_field.type_ref)
+                            end
                             # GEP past the union header to the payload and load from there.
                             # The LLVM union type is {i32, [N x i32]} with payload at offset 4
                             # (sizeof(i32) header).
@@ -2870,7 +2943,20 @@ module Adamas
             end
           end
 
-          builder.load(field_ptr, actual_load_type)
+          loaded = builder.load(field_ptr, actual_load_type)
+          if Adamas::LayoutProbe.enabled?
+            storage = if hir_type_is_struct?(field.type)
+                        "PointerCarrier"
+                      elsif actual_load_type == TypeRef::POINTER
+                        "PointerReference"
+                      else
+                        "InlineBytes"
+                      end
+            probe_field_event("lower_field_get.load", "field-get", "consumer",
+              field.type, storage, probe_mir_type_size(actual_load_type),
+              probe_declared_type, actual_load_type)
+          end
+          loaded
         end
       end
 
@@ -2950,6 +3036,10 @@ module Adamas
                           hir_type_inline_size(field_hir_type).to_u64
                         end
           if struct_size > 0
+            if Adamas::LayoutProbe.enabled?
+              probe_field_event("lower_field_store.memcopy", "field-set", "producer",
+                field_hir_type, "InlineBytes", struct_size.to_i64)
+            end
             builder.memcopy(field_ptr, value, struct_size)
             return value
           end
@@ -3001,6 +3091,19 @@ module Adamas
               end
             end
           end
+        end
+
+        if Adamas::LayoutProbe.enabled?
+          storage = if hir_type_is_struct?(field_hir_type) && !hir_type_is_lib_struct?(field_hir_type)
+                      "PointerCarrier"
+                    elsif actual_field_type == TypeRef::POINTER
+                      "PointerReference"
+                    else
+                      "InlineBytes"
+                    end
+          probe_field_event("lower_field_store.store", "field-set", "producer",
+            field_hir_type, storage, probe_mir_type_size(actual_field_type),
+            field_mir_type, actual_field_type)
         end
 
         # Create store with optional field_type annotation so the LLVM backend
@@ -5601,9 +5704,21 @@ module Adamas
         args : ::Array(ValueId),
         hir_args : ::Array(HIR::ValueId),
       ) : ValueId?
-        return nil unless call.lifetime == HIR::LifetimeTag::StackLocal
-        return nil unless init_func = stack_promotable_struct_allocator_initializer(allocator_func)
-        return nil unless stack_local_struct_constructor_uses_safe?(call.id)
+        trace = ENV["ADAMAS_STACK_PROMO_TRACE"]?
+        trace = nil unless trace && allocator_func.name.includes?(trace)
+        unless call.lifetime == HIR::LifetimeTag::StackLocal
+          STDERR.puts "[STACK_PROMO] #{@current_hir_func.try(&.name)} #{allocator_func.name}: reject lifetime=#{call.lifetime}" if trace
+          return nil
+        end
+        unless init_func = stack_promotable_struct_allocator_initializer(allocator_func)
+          STDERR.puts "[STACK_PROMO] #{@current_hir_func.try(&.name)} #{allocator_func.name}: reject zero-init gate" if trace
+          return nil
+        end
+        unless stack_local_struct_constructor_uses_safe?(call.id)
+          STDERR.puts "[STACK_PROMO] #{@current_hir_func.try(&.name)} #{allocator_func.name}: reject uses-walk" if trace
+          return nil
+        end
+        STDERR.puts "[STACK_PROMO] #{@current_hir_func.try(&.name)} #{allocator_func.name}: PROMOTED" if trace
 
         mir_type_ref = allocator_func.return_type
         mir_type = @mir_module.type_registry.get(mir_type_ref)
@@ -5657,83 +5772,388 @@ module Adamas
       end
 
       private def stack_promotable_struct_allocator_initializer(allocator_func : MIR::Function) : MIR::Function?
-        init_name = initializer_name_for_allocator_name(allocator_func.name)
-        return nil unless init_name
+        init_base = initializer_name_for_allocator_name(allocator_func.name)
+        return nil unless init_base
 
         mir_type = @mir_module.type_registry.get(allocator_func.return_type)
         return nil unless mir_type && mir_type.kind.struct?
 
+        # The allocator body names the real initializer overload — it may carry
+        # an arg-type suffix the allocator name lacks (default args make the
+        # call site 0-ary: `Crystal::Hasher.new` calls
+        # `Crystal::Hasher#initialize$UInt64_UInt64`).
+        init_name = hir_struct_allocator_zero_init_call_name(
+          allocator_func.name,
+          init_base,
+          allocator_func.return_type
+        )
+        return nil unless init_name
+
         init_func = @mir_module.get_function(init_name)
         return nil unless init_func
         return nil unless init_func.params.size == allocator_func.params.size + 1
-
-        return nil unless hir_struct_allocator_zero_init_only?(
-                            allocator_func.name,
-                            init_name,
-                            allocator_func.return_type
-                          )
         init_func
+      end
+
+      # Bounds the interprocedural stack-arg safety walk. Recursion cycles are
+      # rejected via @stack_safe_callee_in_progress; this only caps pathological
+      # call-chain depth so the walk stays cheap.
+      STACK_STRUCT_ARG_SAFETY_MAX_DEPTH = 6
+
+      # Bounds the backward may-alias walk used for return-alias summaries.
+      # Exhaustion answers conservative TRUE (assume aliasing).
+      HIR_MAY_ALIAS_MAX_DEPTH = 16
+
+      # Tri-state result of the stack-safety use walk.
+      private enum StackWalkStatus : UInt8
+        # Some use leaks the pointer (or cannot be proven safe).
+        Unsafe
+        # Every use keeps the pointer inside the walked function.
+        Safe
+        # Every use is safe, but the pointer is (or may be) handed back to the
+        # caller via return; only produced when the walk allows returns
+        # (callee parameter summaries).
+        SafeReturned
       end
 
       private def stack_local_struct_constructor_uses_safe?(
         value_id : HIR::ValueId,
-        visited = ::Set(HIR::ValueId).new,
       ) : Bool
-        return false if visited.includes?(value_id)
-        visited << value_id
-
         hir_func = @current_hir_func
         return false unless hir_func
+        hir_value_stack_safety(
+          hir_func, value_id, ::Set(HIR::ValueId).new,
+          STACK_STRUCT_ARG_SAFETY_MAX_DEPTH, allow_return: false).safe?
+      end
 
-        hir_func.blocks.each do |block|
+      # Walks every use of value_id inside func and reports whether a stack
+      # pointer stays safe: field access on it, method calls with it as
+      # receiver or as an argument whose callee provably never leaks that
+      # parameter, and copies whose uses are recursively safe. Call results
+      # that may alias the tracked pointer (`def me; self; end`) are walked
+      # too. With allow_return the pointer may flow into a Return terminator;
+      # that path reports SafeReturned so callers track the result alias.
+      private def hir_value_stack_safety(
+        func : HIR::Function,
+        value_id : HIR::ValueId,
+        visited : ::Set(HIR::ValueId),
+        depth : Int32,
+        allow_return : Bool,
+      ) : StackWalkStatus
+        return StackWalkStatus::Unsafe if visited.includes?(value_id)
+        visited << value_id
+
+        returned = false
+        func.blocks.each do |block|
           block.instructions.each do |inst|
             next unless hir_instruction_used_values(inst).includes?(value_id)
 
             case inst
             when HIR::Copy
-              return false unless stack_local_struct_constructor_uses_safe?(inst.id, visited)
+              status = hir_value_stack_safety(func, inst.id, visited, depth, allow_return)
+              return StackWalkStatus::Unsafe if status.unsafe?
+              returned = true if status.safe_returned?
             when HIR::FieldGet
-              return false unless inst.object == value_id
+              return StackWalkStatus::Unsafe unless inst.object == value_id
             when HIR::FieldSet
-              return false unless inst.object == value_id
+              return StackWalkStatus::Unsafe unless inst.object == value_id
             when HIR::Call
-              if inst.has_receiver? && inst.receiver_value == value_id
-                next
-              end
-              return false unless generated_struct_allocator_hir_call?(inst)
+              status = stack_safety_at_call_use(func, inst, value_id, visited, depth, allow_return)
+              return StackWalkStatus::Unsafe if status.unsafe?
+              returned = true if status.safe_returned?
             else
-              return false
+              return StackWalkStatus::Unsafe
             end
           end
 
           if hir_terminator_used_values(block.terminator).includes?(value_id)
-            return false
+            term = block.terminator
+            if allow_return && term.is_a?(HIR::Return) && term.value == value_id
+              returned = true
+            else
+              return StackWalkStatus::Unsafe
+            end
           end
         end
 
-        true
+        returned ? StackWalkStatus::SafeReturned : StackWalkStatus::Safe
+      end
+
+      # A call uses the tracked pointer. Argument positions are safe only when
+      # the exact callee is known (non-virtual, body present, arity match) and
+      # never leaks that parameter. Receiver positions keep the trust the
+      # promotion has always extended (the callee treats self as borrowed
+      # storage). In both cases the callee may hand the pointer BACK as its
+      # return value (`def me; self; end`, `hash(hasher)` returning the
+      # hasher); when it can, the call result is an alias of the struct and
+      # its uses are walked with the same rules.
+      private def stack_safety_at_call_use(
+        func : HIR::Function,
+        call : HIR::Call,
+        value_id : HIR::ValueId,
+        visited : ::Set(HIR::ValueId),
+        depth : Int32,
+        allow_return : Bool,
+      ) : StackWalkStatus
+        result_alias = false
+
+        if call.args.includes?(value_id) && !generated_struct_allocator_hir_call?(call)
+          return StackWalkStatus::Unsafe if depth <= 0
+          return StackWalkStatus::Unsafe if call.virtual
+          callee = @hir_module.function_by_name(call.method_name)
+          return StackWalkStatus::Unsafe unless callee
+          return StackWalkStatus::Unsafe if callee.blocks.empty?
+          receiver_offset = call.has_receiver? ? 1 : 0
+          return StackWalkStatus::Unsafe unless callee.params.size == call.args.size + receiver_offset
+
+          call.args.each_with_index do |arg, idx|
+            next unless arg == value_id
+            status = callee_param_stack_safety(callee, idx + receiver_offset, depth)
+            return StackWalkStatus::Unsafe if status.unsafe?
+            result_alias = true if status.safe_returned?
+          end
+        end
+
+        if call.has_receiver? && call.receiver_value == value_id
+          if stack_alias_capable_type?(call.type)
+            callee = call.virtual ? nil : @hir_module.function_by_name(call.method_name)
+            if callee && !callee.blocks.empty?
+              result_alias = true if callee_returns_alias_of_param?(callee, 0)
+            else
+              # Unknown or virtual receiver call whose result can carry the
+              # pointer: assume the result aliases the receiver.
+              result_alias = true
+            end
+          end
+        end
+
+        return StackWalkStatus::Safe unless result_alias
+
+        hir_value_stack_safety(func, call.id, visited, depth, allow_return)
+      end
+
+      private def callee_param_stack_safety(
+        func : HIR::Function,
+        param_idx : Int32,
+        depth : Int32,
+      ) : StackWalkStatus
+        param = func.params[param_idx]?
+        return StackWalkStatus::Unsafe unless param
+
+        key = "#{func.name}|#{param_idx}"
+        if cached = @stack_safe_callee_param_cache[key]?
+          return cached
+        end
+        # Recursion cycle: an in-progress query cannot prove safety. Not cached —
+        # the same param may still prove safe when queried from a non-cyclic root.
+        return StackWalkStatus::Unsafe if @stack_safe_callee_in_progress.includes?(key)
+
+        @stack_safe_callee_in_progress << key
+        begin
+          result = hir_value_stack_safety(
+            func, param.id, ::Set(HIR::ValueId).new, depth - 1, allow_return: true)
+        ensure
+          @stack_safe_callee_in_progress.delete(key)
+        end
+        @stack_safe_callee_param_cache[key] = result
+        result
+      end
+
+      # May the callee's return value alias its param_idx-th parameter?
+      # Backward walk from each Return value through copies/phis/casts/union
+      # ops/field reads and call summaries. Conservative TRUE on cycles and
+      # depth exhaustion; FALSE only when every return provably produces a
+      # value independent of the parameter.
+      private def callee_returns_alias_of_param?(
+        func : HIR::Function,
+        param_idx : Int32,
+      ) : Bool
+        param = func.params[param_idx]?
+        return true unless param
+
+        key = "#{func.name}|#{param_idx}"
+        cached = @callee_return_alias_cache[key]?
+        return cached unless cached.nil?
+        # Summary cycle: a recursive callee may return its own parameter
+        # through the cycle; assume it does. Not cached.
+        return true if @callee_return_alias_in_progress.includes?(key)
+
+        @callee_return_alias_in_progress << key
+        result = false
+        begin
+          defs = hir_function_defs(func)
+          func.blocks.each do |block|
+            term = block.terminator
+            next unless term.is_a?(HIR::Return)
+            value = term.value
+            next unless value
+            if hir_value_may_alias?(func, defs, value, param.id,
+                 ::Set(HIR::ValueId).new, HIR_MAY_ALIAS_MAX_DEPTH)
+              result = true
+              break
+            end
+          end
+        ensure
+          @callee_return_alias_in_progress.delete(key)
+        end
+        @callee_return_alias_cache[key] = result
+        result
+      end
+
+      # Backward may-alias: can value_id carry the same pointer as target?
+      # The visited set is path-local (added on entry, removed on exit) so
+      # diamond-shaped phi webs stay precise while cycles terminate.
+      private def hir_value_may_alias?(
+        func : HIR::Function,
+        defs : Hash(HIR::ValueId, HIR::Value),
+        value_id : HIR::ValueId,
+        target : HIR::ValueId,
+        visited : ::Set(HIR::ValueId),
+        depth : Int32,
+      ) : Bool
+        return true if value_id == target
+        return true if depth <= 0 # exhausted: assume aliasing
+        return false if visited.includes?(value_id)
+        visited << value_id
+
+        begin
+          inst = defs[value_id]?
+          # No defining instruction: another parameter or an untracked value.
+          # Direct target equality was already checked above.
+          return false unless inst
+          # A value whose type cannot hold a pointer (loaded Int64 field,
+          # comparison result, ...) cannot carry the tracked pointer onward.
+          return false unless stack_alias_capable_type?(inst.type)
+
+          case inst
+          when HIR::Copy
+            hir_value_may_alias?(func, defs, inst.source, target, visited, depth - 1)
+          when HIR::Phi
+            inst.incoming.any? do |(_, incoming_value)|
+              hir_value_may_alias?(func, defs, incoming_value, target, visited, depth - 1)
+            end
+          when HIR::FieldGet
+            # An interior pointer read from the tracked struct is treated as
+            # an alias of it (conservative).
+            hir_value_may_alias?(func, defs, inst.object, target, visited, depth - 1)
+          when HIR::Cast
+            hir_value_may_alias?(func, defs, inst.value, target, visited, depth - 1)
+          when HIR::UnionWrap
+            hir_value_may_alias?(func, defs, inst.value, target, visited, depth - 1)
+          when HIR::UnionUnwrap
+            hir_value_may_alias?(func, defs, inst.union_value, target, visited, depth - 1)
+          when HIR::Call
+            hir_call_result_may_alias?(func, defs, inst, target, visited, depth)
+          else
+            false
+          end
+        ensure
+          visited.delete(value_id)
+        end
+      end
+
+      private def hir_call_result_may_alias?(
+        func : HIR::Function,
+        defs : Hash(HIR::ValueId, HIR::Value),
+        call : HIR::Call,
+        target : HIR::ValueId,
+        visited : ::Set(HIR::ValueId),
+        depth : Int32,
+      ) : Bool
+        callee = call.virtual ? nil : @hir_module.function_by_name(call.method_name)
+        if callee && !callee.blocks.empty?
+          receiver_offset = call.has_receiver? ? 1 : 0
+          return true unless callee.params.size == call.args.size + receiver_offset
+          if call.has_receiver?
+            if hir_value_may_alias?(func, defs, call.receiver_value, target, visited, depth - 1)
+              return true if callee_returns_alias_of_param?(callee, 0)
+            end
+          end
+          call.args.each_with_index do |arg, idx|
+            if hir_value_may_alias?(func, defs, arg, target, visited, depth - 1)
+              return true if callee_returns_alias_of_param?(callee, idx + receiver_offset)
+            end
+          end
+          false
+        else
+          # Unknown or virtual callee: if any operand may alias the target and
+          # the result type can carry a pointer, assume the result aliases it.
+          return false unless stack_alias_capable_type?(call.type)
+          if call.has_receiver?
+            return true if hir_value_may_alias?(func, defs, call.receiver_value, target, visited, depth - 1)
+          end
+          call.args.any? do |arg|
+            hir_value_may_alias?(func, defs, arg, target, visited, depth - 1)
+          end
+        end
+      end
+
+      # A call result can only carry the tracked stack pointer onward when its
+      # type can hold a pointer to the struct: primitives (`sum : Int64`) and
+      # class references (always independently heap-allocated) cannot, so
+      # receiver calls returning them never create a result alias.
+      private def stack_alias_capable_type?(type : HIR::TypeRef) : Bool
+        if type.id < HIR::TypeRef::FIRST_USER_TYPE
+          # Builtin types have no descriptor. Only the generic pointer can
+          # carry a struct pointer; numeric/bool/char/nil/symbol values and
+          # String references cannot.
+          return type == HIR::TypeRef::POINTER
+        end
+        desc = @hir_module.get_type_descriptor(type)
+        return true unless desc
+        case desc.kind
+        when HIR::TypeKind::Primitive, HIR::TypeKind::Class
+          false
+        else
+          true
+        end
+      end
+
+      private def hir_function_defs(func : HIR::Function) : Hash(HIR::ValueId, HIR::Value)
+        if cached = @hir_defs_cache[func.name]?
+          return cached
+        end
+        defs = Hash(HIR::ValueId, HIR::Value).new
+        func.blocks.each do |block|
+          block.instructions.each do |inst|
+            defs[inst.id] = inst
+          end
+        end
+        @hir_defs_cache[func.name] = defs
+        defs
       end
 
       private def generated_struct_allocator_hir_call?(call : HIR::Call) : Bool
         return false unless call.method_name.includes?(".new")
         desc = @hir_module.get_type_descriptor(call.type)
         return false unless desc && desc.kind == HIR::TypeKind::Struct
-        init_name = initializer_name_for_allocator_name(call.method_name)
-        return false unless init_name
+        init_base = initializer_name_for_allocator_name(call.method_name)
+        return false unless init_base
 
-        hir_struct_allocator_zero_init_only?(call.method_name, init_name, convert_type(call.type))
+        !hir_struct_allocator_zero_init_call_name(call.method_name, init_base, convert_type(call.type)).nil?
       end
 
-      private def hir_struct_allocator_zero_init_only?(
+      # The allocator's initializer call may carry an arg-type suffix the
+      # allocator name lacks (`X.new` calling `X#initialize$UInt64_UInt64`
+      # when defaults fill the args), so match on the un-suffixed base.
+      private def allocator_initializer_name_match?(method_name : String, init_base : String) : Bool
+        return false unless method_name.starts_with?(init_base)
+        method_name.size == init_base.size || method_name[init_base.size]? == '$'
+      end
+
+      # Checks the allocator body is zero-init-only (Allocate + zero field
+      # stores + a single initialize call on the allocation + return of the
+      # allocation) and returns the actual initializer method name it calls.
+      private def hir_struct_allocator_zero_init_call_name(
         allocator_name : String,
-        init_name : String,
+        init_base : String,
         mir_return_type : TypeRef,
-      ) : Bool
+      ) : String?
         hir_func = @hir_module.function_by_name(allocator_name)
-        return false unless hir_func
+        return nil unless hir_func
 
         entry = hir_func.blocks.first?
-        return false unless entry
+        return nil unless entry
 
         alloc_inst = nil.as(HIR::Allocate?)
         init_call = nil.as(HIR::Call?)
@@ -5750,23 +6170,25 @@ module Adamas
           when HIR::Literal
             zero_values << inst.id if hir_zero_literal?(inst)
           when HIR::FieldSet
-            return false unless zero_values.includes?(inst.value) || zero_allocs.includes?(inst.value)
+            return nil unless zero_values.includes?(inst.value) || zero_allocs.includes?(inst.value)
           when HIR::Call
-            if inst.has_receiver? && alloc_inst && inst.receiver_value == alloc_inst.not_nil!.id && inst.method_name == init_name
+            if inst.has_receiver? && alloc_inst && inst.receiver_value == alloc_inst.not_nil!.id &&
+               allocator_initializer_name_match?(inst.method_name, init_base)
               init_call = inst
               break
             end
-            return false
+            return nil
           end
         end
 
-        return false unless alloc_inst && init_call
+        return nil unless alloc_inst && init_call
         case term = entry.terminator
         when HIR::Return
-          term.value == alloc_inst.not_nil!.id
+          return nil unless term.value == alloc_inst.not_nil!.id
         else
-          false
+          return nil
         end
+        init_call.not_nil!.method_name
       end
 
       private def trivial_struct_initializer_stores(

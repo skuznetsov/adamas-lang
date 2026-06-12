@@ -24,6 +24,7 @@ MAKE_IR="$TMP_DIR/make_pair.ll"
 ARG_SRC="$TMP_DIR/arg_escape_guard.cr"
 ARG_OUT="$TMP_DIR/arg_escape_guard"
 ARG_MAIN_IR="$TMP_DIR/arg_escape_guard_main.ll"
+ARG_ESC_IR="$TMP_DIR/arg_escape_guard_esc.ll"
 
 cat >"$SRC" <<'CR'
 struct Pair
@@ -61,17 +62,17 @@ if [[ ! -s "$OUT.ll" ]]; then
   exit 1
 fi
 
-awk '/^define void @__crystal_main/{inside=1} inside{print} inside && /^}/{exit}' "$OUT.ll" >"$MAIN_IR"
+awk '/^define void @__adamas_main/{inside=1} inside{print} inside && /^}/{exit}' "$OUT.ll" >"$MAIN_IR"
 awk '/^define ptr @make_pair/{inside=1} inside{print} inside && /^}/{exit}' "$OUT.ll" >"$MAKE_IR"
 
 if grep -Eq 'call ptr @(Pair|Quad)\$Dnew' "$MAIN_IR"; then
-  echo "expected stack-local struct constructors to be inlined in __crystal_main" >&2
+  echo "expected stack-local struct constructors to be inlined in __adamas_main" >&2
   cat "$MAIN_IR" >&2
   exit 1
 fi
 
 if ! grep -Eq 'alloca %Pair' "$MAIN_IR" || ! grep -Eq 'alloca %Quad' "$MAIN_IR"; then
-  echo "expected __crystal_main to allocate local Pair and Quad values on the stack" >&2
+  echo "expected __adamas_main to allocate local Pair and Quad values on the stack" >&2
   cat "$MAIN_IR" >&2
   exit 1
 fi
@@ -92,21 +93,51 @@ struct Pair
   end
 end
 
+class Stash
+  @@last : Pair? = nil
+
+  def self.keep(pair : Pair)
+    @@last = pair
+  end
+end
+
 def consume(pair : Pair) : Int64
   pair.sum
 end
 
-v = consume(Pair.new(1_i64, 2_i64))
+def use_safe : Int64
+  consume(Pair.new(1_i64, 2_i64))
+end
+
+def use_escaping : Int64
+  p = Pair.new(3_i64, 4_i64)
+  Stash.keep(p)
+  p.sum
+end
+
+v = use_safe + use_escaping
 CR
 
 "$ROOT_DIR/scripts/run_safe.sh" "$COMPILER" 30 2048 \
   "$ARG_SRC" --no-prelude --emit llvm-ir --no-link -o "$ARG_OUT" >"$LOG" 2>&1
 
-awk '/^define void @__crystal_main/{inside=1} inside{print} inside && /^}/{exit}' "$ARG_OUT.ll" >"$ARG_MAIN_IR"
-if ! grep -Eq 'call ptr @Pair\$Dnew' "$ARG_MAIN_IR"; then
-  echo "expected arbitrary method argument constructor to keep the heap allocator call" >&2
+awk '/^define i64 @use_safe/{inside=1} inside{print} inside && /^}/{exit}' "$ARG_OUT.ll" >"$ARG_MAIN_IR"
+if grep -Eq 'call ptr @Pair\$Dnew' "$ARG_MAIN_IR"; then
+  echo "expected non-leaking callee argument constructor to be stack-promoted" >&2
+  cat "$ARG_MAIN_IR" >&2
+  exit 1
+fi
+if ! grep -Eq 'alloca %Pair' "$ARG_MAIN_IR"; then
+  echo "expected stack allocation for argument to non-leaking callee" >&2
   cat "$ARG_MAIN_IR" >&2
   exit 1
 fi
 
-echo "not reproduced: stack-local struct .new is inlined while escaping/unsafe-arg .new stays heap-backed"
+awk '/^define i64 @use_escaping/{inside=1} inside{print} inside && /^}/{exit}' "$ARG_OUT.ll" >"$ARG_ESC_IR"
+if ! grep -Eq 'call ptr @Pair\$Dnew' "$ARG_ESC_IR"; then
+  echo "expected pointer-leaking callee argument constructor to keep the heap allocator call" >&2
+  cat "$ARG_ESC_IR" >&2
+  exit 1
+fi
+
+echo "not reproduced: stack-local struct .new is inlined while escaping-arg .new stays heap-backed"
