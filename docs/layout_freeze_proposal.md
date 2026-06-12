@@ -138,6 +138,51 @@ lowering whose struct field types monomorphize even later still get stale
 slots — same family, now strictly narrower. The B1c on-demand
 registration step is the structural close for that.
 
+## B1c SHIPPED: on-demand monomorphization in the type_size fallback
+
+Evidence pass after B1a (reducer-compile ledger): every owner#ivar whose
+LAST `layout_dep` was `ref_fallback` either healed or its field type is a
+class/pointer (8 correct) — the only struct leftovers were `Proc`
+(pointer-carrier by design). All layout events ended before the first MIR
+field event, i.e. the PRE-lowering family was fully closed. The residual
+family was then reproduced live (`late_owner_generic_struct_field_slot_repro`):
+a generic owner monomorphized only during body lowering
+(`LateOwner(Int64)`) consumed `type_size(MyPair(Int64))` before that
+struct had class_info — ref_fallback slot=8 for a 16-byte struct,
+`stale_owner` with no `healed` row, runtime garbage from `@pair`. B1b
+(intern kind-upgrade) cannot reduce this family: the slot is born from a
+MISSING class_info, not from ghost-id confusion — so B1c shipped first
+(matching the agreed exception to the B1b-first default).
+
+Mechanism: when the `type_size` reference fallback fires while an owner
+layout is being computed (`@layout_owner_context` set), the field type is
+run through the same candidate filter as the B1a fixpoint
+(`try_monomorphize_layout_candidate`: alias-resolve, generic split, magic-
+base skip-list, `template.is_struct`) and monomorphized ON DEMAND, so the
+owner's FIRST layout is already correct — no relayout needed (relayout
+after lowering started is unsound, see B1a falsification #1).
+
+Guards, each empirically motivated:
+
+- **Armed only after the B1a fixpoint** (`@layout_on_demand_mono_armed`).
+  Firing during initial prelude registration monomorphized against
+  INCOMPLETE templates/reopenings: the partial specialization poisoned
+  `@monomorphized`, the real instantiation never registered, `Slice(UInt8)`
+  vanished from class_info, owners deflated (IO::FileDescriptor 168→160),
+  and hello-world flaked SIGBUS in malloc (heap corruption) ~6/10. Before
+  arming, the fallback records into `@layout_ref_fallback_owners` exactly
+  as under B1a.
+- **`@suppress_monomorphization` respected** — suppressed registration
+  phases keep recording-only behavior.
+- **Re-entrancy set** (`@layout_mono_in_progress`) breaks self/mutual
+  recursion cycles.
+- **Owner context nil-swapped** around the nested monomorphization so the
+  nested registration does not attribute its own field-size consumption to
+  the outer owner.
+- `align_all_class_ivars` now iterates a key SNAPSHOT: the on-demand path
+  can insert new class_info entries mid-pass, and inserting into a Hash
+  being iterated is unsafe; the convergence loop picks up knock-on changes.
+
 ## Proposed freeze/update rule (B1 — original proposal, B1a now shipped)
 
 Flip order chosen so each step is independently falsifiable by the probe:
