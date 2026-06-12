@@ -64,25 +64,30 @@ module M
   end
 end
 
+# Wrapper pins the call-site static type to exactly Node, independent of any
+# present or future HIR narrowing of `x : Node = Subtype.new` locals. This is
+# the same shape as the stage2 trigger (node_literal(node : Node) parameter).
+def route(n : Node) : Int32?
+  M.lit(n)
+end
+
 # Case 1: runtime subtype with explicit overload must dispatch to it.
-a : Node = IdentifierNode.new(42)
-ra = M.lit(a)
-exit 1 unless ra == 42
+exit 1 unless route(IdentifierNode.new(42)) == 42
 
 # Case 2: runtime subtype WITHOUT explicit overload must hit the fallback.
-b : Node = OtherNode.new
-rb = M.lit(b)
-exit 2 unless rb.nil?
+exit 2 unless route(OtherNode.new).nil?
 
 # Case 3: deeper runtime type dispatches to nearest ancestor overload.
-c : Node = SpecialIdentifierNode.new(7)
-rc = M.lit(c)
-exit 3 unless rc == 7
+exit 3 unless route(SpecialIdentifierNode.new(7)) == 7
 
 # Case 4: static subtype call still binds directly.
 d = IdentifierNode.new(5)
-rd = M.lit(d)
-exit 4 unless rd == 5
+exit 4 unless M.lit(d) == 5
+
+# Case 5: parent-class-annotated local (narrowing-sensitive form; also fails
+# pre-fix as of 6ee649a2 — kept as a second, independent trigger shape).
+a : Node = IdentifierNode.new(42)
+exit 5 unless M.lit(a) == 42
 
 exit 0
 CR
@@ -103,10 +108,11 @@ if [[ "$code" -eq 0 ]]; then
 fi
 
 case "$code" in
-  1) echo "open bug reproduced: subtype arg bound the parent-class fallback overload (case 1)" >&2 ;;
+  1) echo "open bug reproduced: Node-typed param bound the parent-class fallback overload (case 1)" >&2 ;;
   2) echo "regression: fallback overload not reached for unmatched subtype (case 2)" >&2 ;;
   3) echo "regression: deep subtype missed nearest ancestor overload (case 3)" >&2 ;;
   4) echo "regression: static subtype call broken (case 4)" >&2 ;;
+  5) echo "open bug reproduced: Node-annotated local bound the fallback overload (case 5)" >&2 ;;
   *) echo "reducer binary failed (exit $code)" >&2; cat "$RUN_LOG" >&2 ;;
 esac
 exit 1
