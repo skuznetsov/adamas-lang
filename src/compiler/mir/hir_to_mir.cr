@@ -4556,7 +4556,63 @@ module Adamas
               end
             end
 
-            call_val = dispatch_builder.call(call_func.id, coerced_args, dispatch_func.return_type)
+            # Type the branch call with the CALLEE's return type and wrap the
+            # result into the dispatch union explicitly. Typing the call as
+            # the wrapper's (often wide) union loses the concrete type: the
+            # backend then stamps a wrong static type_id when wrapping
+            # bare-ptr results (first variant with a matching LLVM type). An
+            # explicit UnionWrap keeps the phi union-typed, and emit_union_wrap
+            # reads the object header at runtime for ptr payloads with
+            # multiple reference variants, stamping the correct global id.
+            branch_ret = call_func.return_type
+            target_ret = dispatch_func.return_type
+            wrap_variant_id = nil.as(Int32?)
+            if branch_ret != target_ret && branch_ret != TypeRef::VOID &&
+               (target_desc = @mir_module.get_union_descriptor(target_ret))
+              target_desc.variants.each do |v|
+                if v.type_ref == branch_ret
+                  wrap_variant_id = v.type_id
+                  break
+                end
+              end
+              if wrap_variant_id.nil?
+                # Callee returns a type that is not itself a variant: either a
+                # header-backed sub-union (e.g. Nil|String inside a wider
+                # union) or a subclass of a class variant. Both lower to a
+                # bare ptr whose object header carries the type id. Pick any
+                # reference variant as the static fallback; the backend's
+                # runtime header read overrides it for non-matching objects.
+                # Pointer(T) variants are excluded: they have no header.
+                branch_header_backed =
+                  if branch_desc = @mir_module.get_union_descriptor(branch_ret)
+                    branch_desc.variants.all? do |bv|
+                      next true if bv.type_ref == TypeRef::NIL || bv.type_ref == TypeRef::VOID
+                      bt = @mir_module.type_registry.get(bv.type_ref)
+                      !!(bt && (bt.kind.reference? || bt.kind.array?))
+                    end
+                  else
+                    bt = @mir_module.type_registry.get(branch_ret)
+                    !!(bt && (bt.kind.reference? || bt.kind.array?))
+                  end
+                if branch_header_backed
+                  target_desc.variants.each do |v|
+                    next if v.type_ref == TypeRef::NIL || v.type_ref == TypeRef::VOID
+                    vt = @mir_module.type_registry.get(v.type_ref)
+                    if vt && (vt.kind.reference? || vt.kind.array?)
+                      wrap_variant_id = v.type_id
+                      break
+                    end
+                  end
+                end
+              end
+            end
+
+            if wrap_id = wrap_variant_id
+              raw_val = dispatch_builder.call(call_func.id, coerced_args, branch_ret)
+              call_val = dispatch_builder.union_wrap(raw_val, wrap_id, target_ret)
+            else
+              call_val = dispatch_builder.call(call_func.id, coerced_args, target_ret)
+            end
             if phi && call_val != 0_u32
               phi.add_incoming(from: case_block, value: call_val)
             end

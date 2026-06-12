@@ -6460,6 +6460,10 @@ module Adamas::MIR
       end
       bootstrap_trace_puts "  [RT_DECL] after pcre2 decls" if runtime_decl_trace
 
+      # Constant-zero i32 used as a null-safe load source when reading a union
+      # discriminator from an object header at runtime (null payload = Nil = 0).
+      emit_raw "@__adamas_nil_tid = private constant i32 0\n"
+
       # Format strings for printing
       emit_raw "@.int_fmt = private constant [4 x i8] c\"%d\\0A\\00\"\n"
       emit_raw "@.int_fmt_no_nl = private constant [3 x i8] c\"%d\\00\"\n"
@@ -16499,6 +16503,34 @@ module Adamas::MIR
       end
     end
 
+    # True when a value statically typed as `type_ref` is lowered as a bare
+    # pointer whose pointee carries the global type id in its header word:
+    # a single class, or a union whose non-nil variants are all classes/arrays.
+    # Pointer(T) payloads have no header, so unions containing them don't qualify.
+    private def runtime_header_tid_readable?(type_ref : TypeRef) : Bool
+      if desc = @module.union_descriptors[type_ref]?
+        return desc.variants.all? do |v|
+          next true if v.type_ref == TypeRef::NIL || v.type_ref == TypeRef::VOID
+          t = @module.type_registry.get(v.type_ref)
+          !!(t && (t.kind.reference? || t.kind.array?))
+        end
+      end
+      info = @module.type_registry.get(type_ref)
+      !!(info && (info.kind.reference? || info.kind.array?))
+    end
+
+    # Wrapping a bare-ptr value into a union when the value's static type is
+    # itself an all-reference union (e.g. Nil|String element of a shared
+    # Indexable(T) path): no static discriminator exists — read the type id
+    # from the object header at runtime; null payload means Nil (id 0).
+    # Branchless: select a constant-zero global as the load source for null.
+    private def emit_runtime_header_tid(base : String, val : String) : String
+      emit "%#{base}.rt_tid_null = icmp eq ptr #{val}, null"
+      emit "%#{base}.rt_tid_src = select i1 %#{base}.rt_tid_null, ptr @__adamas_nil_tid, ptr #{val}"
+      emit "%#{base}.rt_tid = load i32, ptr %#{base}.rt_tid_src"
+      "%#{base}.rt_tid"
+    end
+
     private def emit_cross_block_slot_store(inst_id : ValueId, name : String, slot_name : String)
       val_type = @value_types[inst_id]?
       return unless val_type
@@ -16544,20 +16576,24 @@ module Adamas::MIR
           store_type = slot_llvm_type
         elsif slot_llvm_type.includes?(".union") && !llvm_type.includes?(".union")
           # Compute correct variant type_id for value type within the union
-          slot_wrap_tid = 0
+          slot_wrap_tid = "0"
           slot_type_ref_for_wrap = @cross_block_slot_type_refs[inst_id]?
           if slot_type_ref_for_wrap && val_type
             if wrap_desc = @module.union_descriptors[slot_type_ref_for_wrap]?
               if matching = wrap_desc.variants.find { |v| v.type_ref == val_type }
-                slot_wrap_tid = matching.type_ref.id.to_i32  # Use global type_ref.id
+                slot_wrap_tid = matching.type_ref.id.to_i32.to_s  # Use global type_ref.id
+              elsif llvm_type == "ptr" && runtime_header_tid_readable?(val_type)
+                # Value is a bare-ptr class/all-ref-union: no static discriminator
+                # exists — read the type id from the object header at runtime.
+                slot_wrap_tid = emit_runtime_header_tid("#{base}.wrap", name)
               else
                 # Fallback: match by LLVM type, then first non-Nil variant
                 by_llvm = wrap_desc.variants.find { |v| v.full_name != "Nil" && @type_mapper.llvm_type(v.type_ref) == llvm_type }
                 if by_llvm
-                  slot_wrap_tid = by_llvm.type_ref.id.to_i32
+                  slot_wrap_tid = by_llvm.type_ref.id.to_i32.to_s
                 else
                   non_nil = wrap_desc.variants.find { |v| v.full_name != "Nil" }
-                  slot_wrap_tid = non_nil.type_ref.id.to_i32 if non_nil
+                  slot_wrap_tid = non_nil.type_ref.id.to_i32.to_s if non_nil
                 end
               end
             end
@@ -19384,25 +19420,30 @@ module Adamas::MIR
 
         # Check if source is null/nil - create nil union
         is_nil_cast = value == "null" || src_type == "void" || src_type_ref == TypeRef::VOID
-        variant_type_id = 0
+        variant_type_id = "0"
         if desc = @module.union_descriptors[inst.type]?
           if is_nil_cast
-            nil_variant = desc.variants.find { |v| v.full_name == "Nil" || v.full_name == "Void" }
-            variant_type_id = 0  # Nil always uses discriminator 0
+            variant_type_id = "0"  # Nil always uses discriminator 0
           else
             matched_variant = desc.variants.find { |v| v.type_ref == src_type_ref }
-            unless matched_variant
-              matched_variant = desc.variants.find do |v|
-                @type_mapper.llvm_type(v.type_ref) == src_type
+            if !matched_variant && src_type == "ptr" && src_type_ref && runtime_header_tid_readable?(src_type_ref)
+              # Bare-ptr class/all-ref-union source: discriminator must come
+              # from the object header at runtime, not a static variant guess.
+              variant_type_id = emit_runtime_header_tid(base_name, value)
+            else
+              unless matched_variant
+                matched_variant = desc.variants.find do |v|
+                  @type_mapper.llvm_type(v.type_ref) == src_type
+                end
               end
+              unless matched_variant
+                matched_variant = desc.variants.find { |v| v.full_name != "Nil" && v.full_name != "Void" }
+              end
+              variant_type_id = matched_variant ? matched_variant.type_ref.id.to_i32.to_s : "1"
             end
-            unless matched_variant
-              matched_variant = desc.variants.find { |v| v.full_name != "Nil" && v.full_name != "Void" }
-            end
-            variant_type_id = matched_variant ? matched_variant.type_ref.id.to_i32 : 1
           end
         else
-          variant_type_id = is_nil_cast ? 0 : 1
+          variant_type_id = is_nil_cast ? "0" : "1"
         end
         if is_nil_cast
           emit "store i32 #{variant_type_id}, ptr %#{base_name}.type_id_ptr"
@@ -21771,24 +21812,23 @@ module Adamas::MIR
                    @cond_counter += 1
                    # Look up correct variant type_id from union descriptor
                    variant_type_id = if val == "null"
-                     if desc = @module.union_descriptors[param_type]?
-                       nil_variant = desc.variants.find { |v| v.full_name == "Nil" }
-                       0  # Nil always uses discriminator 0
-                     else
-                       0
-                     end
+                     "0"  # Nil always uses discriminator 0
                    else
                      if desc = @module.union_descriptors[param_type]?
                        matching_variant = desc.variants.find { |v| v.type_ref == actual_type }
                        if matching_variant
-                         matching_variant.type_ref.id.to_i32  # Use global type_ref.id
+                         matching_variant.type_ref.id.to_i32.to_s  # Use global type_ref.id
+                       elsif actual_type && runtime_header_tid_readable?(actual_type)
+                         # Bare-ptr class/all-ref-union value: discriminator must
+                         # come from the object header at runtime.
+                         emit_runtime_header_tid("ptr_to_union.#{c}", val)
                        else
                          # Fallback: find first non-Nil variant
                          non_nil = desc.variants.find { |v| v.full_name != "Nil" }
-                         non_nil ? non_nil.type_ref.id.to_i32 : 1
+                         non_nil ? non_nil.type_ref.id.to_i32.to_s : "1"
                        end
                      else
-                       1
+                       "1"
                      end
                    end
                    if val == "null"
