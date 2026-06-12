@@ -434,13 +434,17 @@ module Adamas::HIR
 
     private def is_virtual_call?(call : Call) : Bool
       # Conservative by default: treat as virtual unless we can prove otherwise.
-      return false unless call.receiver
+      recv_id = call.receiver
+      return false unless recv_id
       return true if call.virtual
 
       if type_info = @type_info
-        if recv = @definitions[call.receiver]?
+        # The receiver may be a parameter (most commonly self in `hash(hasher)`
+        # forwarding wrappers) — parameters live in @param_by_id, not
+        # @definitions.
+        if recv = @definitions[recv_id]? || @param_by_id[recv_id]?
           if kind = type_info.type_kind_for(recv.type)
-            return false if kind.in?(TypeKind::Struct, TypeKind::Primitive)
+            return false if kind.in?(TypeKind::Struct, TypeKind::Primitive, TypeKind::Pointer)
           end
         end
       end
