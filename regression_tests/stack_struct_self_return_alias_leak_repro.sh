@@ -67,7 +67,8 @@ b = stay
 v = a.sum + b
 CR
 
-"$COMPILER" "$SRC" --no-prelude --emit llvm-ir --no-link -o "$OUT" >"$LOG" 2>&1 || {
+"$ROOT_DIR/scripts/run_safe.sh" "$COMPILER" 30 2048 \
+  "$SRC" --no-prelude --emit llvm-ir --no-link -o "$OUT" >"$LOG" 2>&1 || {
   echo "compile failed" >&2
   cat "$LOG" >&2
   exit 2
