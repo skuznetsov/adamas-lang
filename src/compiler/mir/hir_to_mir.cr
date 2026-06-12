@@ -108,6 +108,14 @@ module Adamas
       # These need special FieldGet handling: GEP without load for struct-typed fields.
       @inline_struct_ptrs : ::Set(HIR::ValueId) = ::Set(HIR::ValueId).new
 
+      # Interprocedural stack-arg safety cache for struct constructor promotion:
+      # "callee_name\0param_idx" -> param never leaks the pointer. Module-lifetime
+      # (callee analysis is independent of the current function); entries are only
+      # written after the callee's HIR body exists, so lazily-lowered callees that
+      # are still absent stay uncached and conservatively unsafe.
+      @stack_safe_callee_param_cache : Hash(String, Bool) = Hash(String, Bool).new
+      @stack_safe_callee_in_progress : ::Set(String) = ::Set(String).new
+
       # ARC cleanup: track stack slots holding ARC-allocated pointers per function
       # so we can emit rc_dec at return points. Each slot is initialized to null
       # at function entry and stores the ARC pointer after allocation.
@@ -5654,32 +5662,54 @@ module Adamas
         init_func
       end
 
+      # Bounds the interprocedural stack-arg safety walk. Recursion cycles are
+      # rejected via @stack_safe_callee_in_progress; this only caps pathological
+      # call-chain depth so the walk stays cheap.
+      STACK_STRUCT_ARG_SAFETY_MAX_DEPTH = 6
+
       private def stack_local_struct_constructor_uses_safe?(
         value_id : HIR::ValueId,
         visited = ::Set(HIR::ValueId).new,
       ) : Bool
+        hir_func = @current_hir_func
+        return false unless hir_func
+        hir_value_uses_safe_for_stack_struct?(
+          hir_func, value_id, visited, STACK_STRUCT_ARG_SAFETY_MAX_DEPTH)
+      end
+
+      # True when every use of value_id inside func keeps a stack pointer safe:
+      # field access on it, method calls with it as receiver (same trust level
+      # the promotion has always extended to receivers), copies whose uses are
+      # recursively safe, and arguments to calls whose callee provably never
+      # leaks that parameter (stack_struct_call_arg_positions_safe?).
+      private def hir_value_uses_safe_for_stack_struct?(
+        func : HIR::Function,
+        value_id : HIR::ValueId,
+        visited : ::Set(HIR::ValueId),
+        depth : Int32,
+      ) : Bool
         return false if visited.includes?(value_id)
         visited << value_id
 
-        hir_func = @current_hir_func
-        return false unless hir_func
-
-        hir_func.blocks.each do |block|
+        func.blocks.each do |block|
           block.instructions.each do |inst|
             next unless hir_instruction_used_values(inst).includes?(value_id)
 
             case inst
             when HIR::Copy
-              return false unless stack_local_struct_constructor_uses_safe?(inst.id, visited)
+              return false unless hir_value_uses_safe_for_stack_struct?(func, inst.id, visited, depth)
             when HIR::FieldGet
               return false unless inst.object == value_id
             when HIR::FieldSet
               return false unless inst.object == value_id
             when HIR::Call
-              if inst.has_receiver? && inst.receiver_value == value_id
-                next
-              end
-              return false unless generated_struct_allocator_hir_call?(inst)
+              arg_safe = !inst.args.includes?(value_id) ||
+                         generated_struct_allocator_hir_call?(inst) ||
+                         stack_struct_call_arg_positions_safe?(inst, value_id, depth)
+              return false unless arg_safe
+              next if inst.has_receiver? && inst.receiver_value == value_id
+              next if inst.args.includes?(value_id)
+              return false
             else
               return false
             end
@@ -5691,6 +5721,57 @@ module Adamas
         end
 
         true
+      end
+
+      # The struct pointer is passed as a plain argument: safe only when the
+      # exact callee is known and every parameter position receiving it never
+      # leaks the pointer beyond the call (no store into longer-lived objects,
+      # no return aliasing, no capture). Virtual/unknown/extern callees stay
+      # conservatively heap-backed.
+      private def stack_struct_call_arg_positions_safe?(
+        call : HIR::Call,
+        value_id : HIR::ValueId,
+        depth : Int32,
+      ) : Bool
+        return false if depth <= 0
+        return false if call.virtual
+        callee = @hir_module.function_by_name(call.method_name)
+        return false unless callee
+        return false if callee.blocks.empty?
+        receiver_offset = call.has_receiver? ? 1 : 0
+        return false unless callee.params.size == call.args.size + receiver_offset
+
+        call.args.each_with_index do |arg, idx|
+          next unless arg == value_id
+          return false unless callee_param_stack_safe?(callee, idx + receiver_offset, depth)
+        end
+        true
+      end
+
+      private def callee_param_stack_safe?(
+        func : HIR::Function,
+        param_idx : Int32,
+        depth : Int32,
+      ) : Bool
+        param = func.params[param_idx]?
+        return false unless param
+
+        key = "#{func.name}|#{param_idx}"
+        cached = @stack_safe_callee_param_cache[key]?
+        return cached unless cached.nil?
+        # Recursion cycle: an in-progress query cannot prove safety. Not cached —
+        # the same param may still prove safe when queried from a non-cyclic root.
+        return false if @stack_safe_callee_in_progress.includes?(key)
+
+        @stack_safe_callee_in_progress << key
+        begin
+          result = hir_value_uses_safe_for_stack_struct?(
+            func, param.id, ::Set(HIR::ValueId).new, depth - 1)
+        ensure
+          @stack_safe_callee_in_progress.delete(key)
+        end
+        @stack_safe_callee_param_cache[key] = result
+        result
       end
 
       private def generated_struct_allocator_hir_call?(call : HIR::Call) : Bool
