@@ -2636,6 +2636,22 @@ module Adamas::HIR
       end
     end
 
+    # B1b kind-upgrade interning. A generic name is interned as a kind=Generic
+    # placeholder when its annotation is resolved before the template is
+    # registered, and an unknown plain name is guessed as kind=Class; when the
+    # declared concrete kind arrives later for the SAME name and type params,
+    # minting a second id splits the type identity ("ghost" ids: the
+    # Slice(UInt8) slot-8-vs-16 layout family). Struct interns are always
+    # declaration-driven, so the declared kind may upgrade a placeholder/guess
+    # entry in place, keeping one stable id.
+    private def intern_kind_upgrade?(existing_key : UInt8, incoming_key : UInt8) : Bool
+      return false if existing_key == incoming_key
+      if existing_key == 11_u8 # Generic placeholder
+        return incoming_key == 1_u8 || incoming_key == 2_u8 # declared Class/Struct
+      end
+      existing_key == 1_u8 && incoming_key == 2_u8 # Class guess -> declared Struct
+    end
+
     def intern_type(desc : TypeDescriptor) : TypeRef
       if ENV["DEBUG_MALFORMED_TYPE"]? && desc.name.includes?(",") && !desc.name.includes?("(") && !desc.name.includes?("->")
         STDERR.puts "[MALFORMED_TYPE] kind=#{desc.kind} name=#{desc.name}"
@@ -2660,6 +2676,39 @@ module Adamas::HIR
               type_name: desc.name, type_id: entry[2].id.to_i64,
               storage: "kind=#{desc.kind}", slot_size: desc.type_params.size.to_i64,
               access_size: bucket.size.to_i64)
+          end
+          return entry[2]
+        end
+      end
+      # Kind-upgrade pass (B1b): same name + same params with an upgradeable
+      # kind pair reuses the existing id instead of minting a ghost. The
+      # mirror direction (a late placeholder/guess REQUEST against an existing
+      # concrete entry) is satisfied without downgrading the entry.
+      bucket.each_with_index do |entry, i|
+        next unless entry[1] == desc.type_params
+        if intern_kind_upgrade?(entry[0], kind_key)
+          ref = entry[2]
+          idx = (ref.id - TypeRef::FIRST_USER_TYPE).to_i32
+          @types[idx] = desc
+          bucket[i] = {kind_key, entry[1], ref}
+          if Adamas::LayoutProbe.trace_enabled? && Adamas::LayoutProbe.trace_match?(desc.name)
+            Adamas::LayoutProbe.log(
+              phase: "hir", site: "intern_type.upgrade", context: "registration", role: "registry",
+              type_name: desc.name, type_id: ref.id.to_i64,
+              storage: "kind=#{desc.kind}", slot_size: desc.type_params.size.to_i64,
+              access_size: bucket.size.to_i64,
+              declared: "from_kind_key:#{entry[0]}")
+          end
+          return ref
+        end
+        if intern_kind_upgrade?(kind_key, entry[0])
+          if Adamas::LayoutProbe.trace_enabled? && Adamas::LayoutProbe.trace_match?(desc.name)
+            Adamas::LayoutProbe.log(
+              phase: "hir", site: "intern_type.satisfy", context: "registration", role: "registry",
+              type_name: desc.name, type_id: entry[2].id.to_i64,
+              storage: "kind=#{desc.kind}", slot_size: desc.type_params.size.to_i64,
+              access_size: bucket.size.to_i64,
+              declared: "existing_kind_key:#{entry[0]}")
           end
           return entry[2]
         end
