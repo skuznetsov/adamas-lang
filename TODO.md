@@ -2320,3 +2320,32 @@ Architecture target:
 
 Current short-term track: bootstrap containment plus fast no-prelude oracle
 coverage, not a full compile-path switch.
+
+### LTP/WBA optimizer speedup candidates (2026-06-12 code review, NOT profiled)
+
+V2's release-compile speed advantage over original Crystal comes from the
+LTP/WBA MIR pre-optimization feeding LLVM lean IR (original's bottleneck is
+LLVM -O3 on raw IR; its frontend is fast). Keeping the optimizer itself fast
+preserves that lever. Candidates from reading `src/compiler/mir/optimizations.cr`
+— **profile first** with the built-in `--debug-profile` per-pass timing and
+A/B via `--no-ltp` / `--no-mir-opt` / `--no-llvm-opt`; only then optimize:
+
+1. Incremental analysis after LTP moves (`LTPEngine.run` ~:2483): each applied
+   move does a full `build_analysis_maps` + `compute_frame_potential` O(N)
+   rebuild, up to max_iters=10 per function; a move touches one
+   window/corridor — update affected blocks only. Biggest candidate on
+   stdlib megafunctions.
+2. Per-pass allocation churn: every pass run allocates fresh
+   `Hash(ValueId,…)`/`Array`/`Set`; pipeline loops ≤4× per function. Pool and
+   clear instead of new (zero-copy policy). Bonus: V2 struct ABI makes Hash
+   ops extra costly in s2b, so this disproportionately speeds the bootstrap
+   compiler itself.
+3. Dominance recompute in CopyPropagation (`compute_dominance_info` ~:1702):
+   recomputed per run; cache keyed on CFG version.
+4. `find_window` full rescan per LTP iteration (~:2531): collect RCIncrement
+   candidates once in `build_analysis_maps`, maintain incrementally.
+5. `PeepholePass` lacks a hint gate (pipeline ~:2067): only pass that runs
+   unconditionally even with zero candidates.
+
+Healthy as-is (do not touch without a profile): hint-gated passes, DCE-2 only
+after DCE-1 progress, `optimize_with_potential` monotone-potential break.
