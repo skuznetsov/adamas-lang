@@ -10083,12 +10083,23 @@ module Adamas::MIR
           emit_raw "  %val = load #{elem_llvm}, ptr %elem_ptr, align #{elem_stride}\n"
           emit_raw "  %new_idx = add i32 %arg_idx, 1\n"
           emit_raw "  store i32 %new_idx, ptr %arg_idx_ptr\n"
-          emit_raw "  %result = alloca #{ret_type}\n"
-          emit_raw "  store #{ret_type} zeroinitializer, ptr %result\n"
-          emit_raw "  %pay_ptr = getelementptr #{ret_type}, ptr %result, i32 0, i32 1\n"
-          emit_raw "  store #{elem_llvm} %val, ptr %pay_ptr, align 4\n"
-          emit_raw "  %ret = load #{ret_type}, ptr %result\n"
-          emit_raw "  ret #{ret_type} %ret\n"
+          if is_union_type?(func.return_type)
+            emit_raw "  %result = alloca #{ret_type}\n"
+            emit_raw "  store #{ret_type} zeroinitializer, ptr %result\n"
+            emit_raw "  %pay_ptr = getelementptr #{ret_type}, ptr %result, i32 0, i32 1\n"
+            emit_raw "  store #{elem_llvm} %val, ptr %pay_ptr, align 4\n"
+            emit_raw "  %ret = load #{ret_type}, ptr %result\n"
+            emit_raw "  ret #{ret_type} %ret\n"
+          elsif ret_type == elem_llvm
+            # Precise scalar return (call site re-qualified the block target):
+            # no union wrapping, hand back the loaded element directly.
+            emit_raw "  ret #{elem_llvm} %val\n"
+          else
+            # Scalar-but-different ABI (e.g. boxed ptr): heap-box the element.
+            emit_raw "  %box = call ptr @GC_malloc_atomic(i64 #{elem_stride})\n"
+            emit_raw "  store #{elem_llvm} %val, ptr %box\n"
+            emit_raw "  ret ptr %box\n"
+          end
           emit_raw "}\n\n"
           return true
         end
