@@ -70540,7 +70540,13 @@ module Adamas::HIR
               class_type_ref = type_ref_for_name(class_name)
               if class_type_ref != TypeRef::VOID
                 ptr_id = lower_expr(ctx, call_args[0])
-                type_id_lit = Literal.new(ctx.next_id, TypeRef::INT32, class_type_ref.id.to_i64)
+                # The runtime type_id header uses MIR (runtime) ids, which differ
+                # from raw HIR TypeRef ids (HIR STRING=15 vs MIR STRING=16, user
+                # types offset by +20). Translate through the single source of
+                # truth so this baked literal matches what convert_type emits
+                # everywhere else; otherwise the wrong header leaks at runtime.
+                runtime_type_id = MIR::TypeRef.from_hir(class_type_ref).id.to_i64
+                type_id_lit = Literal.new(ctx.next_id, TypeRef::INT32, runtime_type_id)
                 ctx.emit(type_id_lit)
                 ctx.register_type(type_id_lit.id, TypeRef::INT32)
                 store = PointerStore.new(ctx.next_id, TypeRef::VOID, ptr_id, type_id_lit.id)

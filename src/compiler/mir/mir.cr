@@ -337,6 +337,46 @@ module Adamas::MIR
     SYMBOL  = new(17_u32)
     POINTER = new(18_u32)  # Generic pointer type
 
+    # Canonical HIR TypeRef id -> MIR (runtime) TypeRef id translation.
+    #
+    # HIR and MIR use DIFFERENT primitive id layouts (HIR places NIL at 16,
+    # MIR places NIL at 1, which shifts BOOL..STRING by one), and user types
+    # are offset by +20 when crossing into MIR. Any code that needs the runtime
+    # type id of an HIR TypeRef (e.g. baking a type_id header literal) MUST go
+    # through this method instead of using `hir_ref.id` directly, otherwise the
+    # raw HIR id leaks into the runtime where MIR ids are expected.
+    #
+    # This is the single source of truth; HIRToMIRLowering#convert_type
+    # delegates here so the two never drift.
+    def self.from_hir(hir_type : HIR::TypeRef) : TypeRef
+      return VOID if hir_type.null_ptr?
+      hir_type_id = hir_type.id
+      case hir_type_id
+      when HIR::TypeRef::VOID.id    then VOID
+      when HIR::TypeRef::BOOL.id    then BOOL
+      when HIR::TypeRef::INT8.id    then INT8
+      when HIR::TypeRef::INT16.id   then INT16
+      when HIR::TypeRef::INT32.id   then INT32
+      when HIR::TypeRef::INT64.id   then INT64
+      when HIR::TypeRef::INT128.id  then INT128
+      when HIR::TypeRef::UINT8.id   then UINT8
+      when HIR::TypeRef::UINT16.id  then UINT16
+      when HIR::TypeRef::UINT32.id  then UINT32
+      when HIR::TypeRef::UINT64.id  then UINT64
+      when HIR::TypeRef::UINT128.id then UINT128
+      when HIR::TypeRef::FLOAT32.id then FLOAT32
+      when HIR::TypeRef::FLOAT64.id then FLOAT64
+      when HIR::TypeRef::CHAR.id    then CHAR
+      when HIR::TypeRef::STRING.id  then STRING
+      when HIR::TypeRef::NIL.id     then NIL
+      when HIR::TypeRef::SYMBOL.id  then SYMBOL
+      when HIR::TypeRef::POINTER.id then POINTER
+      else
+        # User-defined types: offset by primitive count.
+        new(hir_type_id + 20_u32)
+      end
+    end
+
     def ==(other : TypeRef) : Bool
       @id == other.id
     end
