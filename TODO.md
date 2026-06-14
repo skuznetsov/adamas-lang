@@ -2071,6 +2071,37 @@ pending-budget oracle.
 
 ## Next Work
 
+0aa. (2026-06-14) Current frontier = s2b STARTUP repr-flip (String<->Slice).
+   lldb-VERIFIED root (memory `s2b-startup-crash-rc-overfree-refuted`): a
+   header-less pointer INTO the source buffer is written into a `String`-typed
+   SLOT (`HIR::Call#method_name` class field, `DefParamInfo#type_annotation`
+   struct field); consumers (`parse_method_name_compact`, `ascii_suffix_bytes?`,
+   `String#byte_at`) read the "header" as source ASCII -> huge bytesize -> OOB
+   read. ASLR-gated non-determinism (deterministic overshoot; ASLR decides
+   mapped vs unmapped). Baseline ~7/8 crash on `src/adamas.cr`. RC-over-free
+   REFUTED (no-op-free A/B identical). Allocating helpers (substring/byte_slice/
+   String.new(slice)) are correct; the bug is the SLOT receiving a Slice/source
+   pointer at a union/phi/struct-ABI boundary.
+   PLAN C (user-chosen): (A) producer localization, then (B) MIR load/store-size
+   verifier. (A) IN PROGRESS: badstr probe (env `ADAMAS_BADSTR_PROBE`, throwaway,
+   stash `throwaway-s2b-heisenbug-probes`) hooks all 11 `HIR::Call` ctors with
+   `HIR.badstr_probe_write` -> logs `[BADSTR-WRITE] <where>` at the producer;
+   self-calibrates on the live V2 header word (==16) so stage1 stays silent.
+   Build debug s2b with probe, run on `src/adamas.cr` to capture first bad write.
+
+0a-side. (2026-06-14, SHIPPED `56ae947b`) Found+fixed en route: macro
+   `{% for x in @type.instance_vars %}` (and @type.methods) never iterated in the
+   HIR lowering path (`macro_for_iterable_values_with_context` had no
+   MemberAccessNode/CallNode case) -> stdlib `Struct#==`/`#hash`/`#to_s` collapsed
+   -> `Hash(SomeStruct,V)` merged all distinct keys into one bucket (incl.
+   compiler-internal `CallSignature`). Fix delegates to new
+   `MacroExpander#evaluate_for_iterable`. Gates: combined 31/31, originals 157/157;
+   regression `struct_type_instance_vars_for_loop_repro.cr`. NOTE: likely
+   INDEPENDENT of the 0aa repr-flip crash (different mechanism) — measure impact
+   on s2b crash rate, do not assume it fixes the Heisenbug. Named-type reflection
+   (`Foo.instance_vars`) in method bodies is a separate, still-open gap (needs
+   expander symbol-table wiring).
+
 0. (2026-06-02) M4h family root-caused + narrow fix landed (`2444b2e0`, COMPLETED not
    VERIFIED). The s2b `union_all_reference_types?` SIGSEGV is a short-TypeRef Hash value
    confusion: the resolver minted a SHORT ghost identity for compiler-internal `MIR::X`/`HIR::X`
