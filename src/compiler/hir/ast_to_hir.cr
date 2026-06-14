@@ -87952,6 +87952,14 @@ module Adamas::HIR
               if info = split_generic_base_and_args(type_name)
                 base_name, lookup_base_name = resolve_generic_base_names(info.base)
                 type_args = split_generic_type_args(info.args).map do |arg|
+                  # Resolve each arg in the current scope BEFORE substitution so a
+                  # bare nested type name (e.g. `TypeRef` inside `Adamas::MIR`) is
+                  # qualified to its FQ form here, at the instantiation site. Without
+                  # this the bare name leaks into monomorphization and gets re-resolved
+                  # against foreign scopes (Hash/Reference/Hasher/...) into a phantom
+                  # like `Hash::TypeRef`, whose methods are never materialized -> STUB.
+                  # Mirrors the Generic-receiver branch above.
+                  arg = resolve_type_name_in_context(arg)
                   arg = substitute_type_params_in_type_name(arg)
                   normalize_tuple_literal_type_name(arg)
                 end
