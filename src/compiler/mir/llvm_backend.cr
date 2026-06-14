@@ -17786,7 +17786,26 @@ module Adamas::MIR
 
       # Packed-scalar shortcut: if the pointer was created by inttoptr (packed integer),
       # recovering the value via ptrtoint avoids loading from a bogus address.
-      if @inttoptr_value_ids.includes?(inst.ptr) && type != "ptr" && !type.includes?(".union")
+      #
+      # CAUTION: this shortcut must NOT fire for a genuine `Pointer(T)` produced by
+      # `unsafe_as(Pointer(T))` (which also lowers to inttoptr and is tagged in
+      # @inttoptr_value_ids). Such a pointer is a real address that must be
+      # dereferenced via `load`; emitting `ptrtoint` would return the address bits
+      # instead of the pointed-to value. A packed scalar is always carried in an
+      # untyped/generic pointer slot (nil or Void element_type), so a concrete
+      # non-void element_type is the discriminator for a real address.
+      # See memory: s2b-startup-crash-rc-overfree-refuted (emit_load root cause).
+      ptr_is_typed_pointer = false
+      if ptr_type_ref
+        if ptd = @module.type_registry.get(ptr_type_ref)
+          if ptd.kind.pointer?
+            if elem = ptd.element_type
+              ptr_is_typed_pointer = elem.id != TypeRef::VOID.id
+            end
+          end
+        end
+      end
+      if @inttoptr_value_ids.includes?(inst.ptr) && type != "ptr" && !type.includes?(".union") && !ptr_is_typed_pointer
         emit "#{name} = ptrtoint ptr #{ptr} to #{type}"
       else
         emit "#{name} = load #{type}, ptr #{ptr}"
