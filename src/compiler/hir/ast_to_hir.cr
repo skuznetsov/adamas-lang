@@ -73221,6 +73221,24 @@ module Adamas::HIR
         end
       end
 
+      # Handle Array#compact_map { |x| expr } intrinsic.
+      # This bypasses the stdlib `[] of typeof((yield element).not_nil!)` path,
+      # which V2 mis-infers and degrades the result element type to
+      # Pointer(Void) (same class of failure the zip/sum intrinsics avoid).
+      # The result element type is the block return type with Nil stripped.
+      if method_name == "compact_map"
+        if receiver_id
+          if blk_expr = block_expr
+            blk_node = @arena[blk_expr]
+            if blk_node.is_a?(Adamas::Compiler::Frontend::BlockNode)
+              if array_intrinsic_receiver?(ctx, receiver_id)
+                return lower_array_compact_map_dynamic(ctx, receiver_id, blk_node)
+              end
+            end
+          end
+        end
+      end
+
       # Handle Array#includes?(value) intrinsic for non-String arrays
       if method_name == "includes?" && receiver_id && args.size == 1
         if array_intrinsic_receiver?(ctx, receiver_id)
@@ -83712,6 +83730,153 @@ module Adamas::HIR
       ctx.current_block = exit_block
       set_size = ArraySetSize.new(ctx.next_id, TypeRef::VOID, new_array.id, result_count_phi.id)
       ctx.emit(set_size)
+
+      new_array.id
+    end
+
+    # Lower Array#compact_map { |x| expr } intrinsic.
+    #
+    # Semantics (matches stdlib Enumerable#compact_map): run the block for each
+    # source element, drop nil results, and collect the non-nil results into a
+    # NEW array whose element type is the block return type with Nil removed.
+    #
+    # Rationale for the intrinsic: the stdlib body is
+    #   ary = [] of typeof((yield element).not_nil!)
+    # and V2's `typeof(...not_nil!)` inference degrades that element type to
+    # Pointer(Void) under generic block lowering, so a later `.reject(&.empty?)`
+    # on the result resolves to `Pointer(Void)#empty?` (STUB CALLED). Computing
+    # the element type directly from the lowered block result avoids that path.
+    private def lower_array_compact_map_dynamic(
+      ctx : LoweringContext,
+      array_id : ValueId,
+      block : Adamas::Compiler::Frontend::BlockNode,
+    ) : ValueId
+      param_name = block.params.try(&.first?).try(&.name).try { |n| String.new(n) } || "__cmap_elem"
+
+      element_type = array_element_type_for_value(ctx, array_id, TypeRef::INT32)
+      source_type = ctx.type_of(array_id)
+
+      # Source size = max capacity for the result.
+      size_val = ArraySize.new(ctx.next_id, TypeRef::INT32, array_id)
+      ctx.emit(size_val)
+
+      # Allocate the result with source-size capacity. The element_type is a
+      # placeholder; it is patched to the (nil-stripped) block result type once
+      # the block has been lowered, mirroring lower_array_map_dynamic.
+      new_array = ArrayNew.new(ctx.next_id, element_type, size_val.id)
+      ctx.emit(new_array)
+      ctx.register_type(new_array.id, source_type)
+
+      entry_block = ctx.current_block
+      zero = Literal.new(ctx.next_id, TypeRef::INT32, 0_i64)
+      ctx.emit(zero)
+
+      cond_block = ctx.create_block
+      body_block = ctx.create_block
+      copy_block = ctx.create_block
+      incr_block = ctx.create_block
+      exit_block = ctx.create_block
+
+      ctx.terminate(Jump.new(cond_block))
+
+      # Condition block: i < size
+      ctx.current_block = cond_block
+      index_phi = Phi.new(ctx.next_id, TypeRef::INT32)
+      index_phi.add_incoming(entry_block, zero.id)
+      ctx.emit(index_phi)
+
+      result_count_phi = Phi.new(ctx.next_id, TypeRef::INT32)
+      result_count_phi.add_incoming(entry_block, zero.id)
+      ctx.emit(result_count_phi)
+
+      cmp = BinaryOperation.new(ctx.next_id, TypeRef::BOOL, BinaryOp::Lt, index_phi.id, size_val.id)
+      ctx.emit(cmp)
+      ctx.terminate(Branch.new(cmp.id, body_block, exit_block))
+
+      # Body block: read source element, run block, decide push.
+      ctx.current_block = body_block
+      ctx.push_scope(ScopeKind::Block)
+
+      index_get = IndexGet.new(ctx.next_id, element_type, array_id, index_phi.id)
+      ctx.emit(index_get)
+      ctx.register_type(index_get.id, element_type)
+      ctx.register_local(param_name, index_get.id)
+
+      result_value = lower_body(ctx, block.body)
+      # current_block may have advanced past body_block (e.g. ternary merge).
+      body_end_block = ctx.current_block
+
+      # Count value carried out of copy_block (result_count + 1 when a value was
+      # actually pushed). Defaults to the unchanged count for the degenerate
+      # no-value case so the copy_block predecessor edge stays well-formed.
+      pushed_count = result_count_phi.id
+
+      if result_value
+        block_result_type = ctx.type_of(result_value)
+        # Element type = block result type with Nil removed (Crystal: `.not_nil!`).
+        store_type = non_nil_type_for_union(block_result_type) || block_result_type
+        if store_type.id == 0 || store_type == TypeRef::VOID || store_type == TypeRef::NIL
+          store_type = element_type
+        end
+        # Size the result buffer for the stored element type (see
+        # lower_array_map_dynamic for the stride-overflow rationale).
+        new_array.element_type = store_type
+
+        # `unless v.nil?` — true when the value IS nil; skip those. For a
+        # non-nilable block result lower_nil_check_intrinsic yields a literal
+        # false, so every element is pushed.
+        is_nil = lower_nil_check_intrinsic(ctx, result_value, block_result_type)
+        ctx.terminate(Branch.new(is_nil, incr_block, copy_block))
+
+        # Copy block: unwrap non-nil value and store at the result count.
+        ctx.current_block = copy_block
+        stored_value = lower_not_nil_intrinsic(ctx, result_value, block_result_type)
+        if ctx.type_of(stored_value) != store_type
+          stored_value = coerce_value_to_type(ctx, stored_value, store_type)
+        end
+        index_set = IndexSet.new(ctx.next_id, store_type, new_array.id, result_count_phi.id, stored_value)
+        ctx.emit(index_set)
+        one_copy = Literal.new(ctx.next_id, TypeRef::INT32, 1_i64)
+        ctx.emit(one_copy)
+        new_count = BinaryOperation.new(ctx.next_id, TypeRef::INT32, BinaryOp::Add, result_count_phi.id, one_copy.id)
+        ctx.emit(new_count)
+        pushed_count = new_count.id
+        ctx.terminate(Jump.new(incr_block))
+      else
+        # Degenerate: block produced no value. body_end falls through to incr;
+        # copy_block stays a valid (unreachable) block.
+        ctx.terminate(Jump.new(incr_block))
+        ctx.current_block = copy_block
+        ctx.terminate(Jump.new(incr_block))
+      end
+
+      ctx.pop_scope
+
+      # Incr block: advance index and carry the result count.
+      ctx.current_block = incr_block
+      count_incr_phi = Phi.new(ctx.next_id, TypeRef::INT32)
+      # Skip edge (nil result) carries the unchanged count from body_end_block.
+      count_incr_phi.add_incoming(body_end_block, result_count_phi.id)
+      count_incr_phi.add_incoming(copy_block, pushed_count)
+      ctx.emit(count_incr_phi)
+
+      one_incr = Literal.new(ctx.next_id, TypeRef::INT32, 1_i64)
+      ctx.emit(one_incr)
+      new_i = BinaryOperation.new(ctx.next_id, TypeRef::INT32, BinaryOp::Add, index_phi.id, one_incr.id)
+      ctx.emit(new_i)
+
+      index_phi.add_incoming(incr_block, new_i.id)
+      result_count_phi.add_incoming(incr_block, count_incr_phi.id)
+      ctx.terminate(Jump.new(cond_block))
+
+      # Exit block: set result size and register the result array type.
+      ctx.current_block = exit_block
+      set_size = ArraySetSize.new(ctx.next_id, TypeRef::VOID, new_array.id, result_count_phi.id)
+      ctx.emit(set_size)
+
+      if array_type = array_type_for_element_type(new_array.element_type)
+        ctx.register_type(new_array.id, array_type)
+      end
 
       new_array.id
     end
