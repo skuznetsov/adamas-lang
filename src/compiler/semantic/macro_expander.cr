@@ -422,6 +422,41 @@ module Adamas
           end
         end
 
+        # Evaluate a `{% for %}` iterable expression (e.g. `@type.instance_vars`,
+        # `@type.methods`) into concrete MacroValues, resolving type-reflection
+        # against the given owner_type. The HIR lowering path reimplements iterable
+        # resolution for literal forms (array/hash/range) but cannot evaluate the
+        # reflection forms, so it delegates here. Returns nil when the expression is
+        # not a recognizable macro iterable so callers can fall back; any diagnostics
+        # produced by a fallback miss are rolled back to avoid spurious errors.
+        def evaluate_for_iterable(
+          expr_id : ExprId,
+          *,
+          variables : Hash(String, MacroValue),
+          owner_type : ClassSymbol? = nil,
+          scope : SymbolTable? = nil,
+        ) : Array(MacroValue)?
+          return nil if @depth >= MAX_DEPTH
+
+          diag_mark = @diagnostics.size
+          @depth += 1
+          begin
+            context = Context.new(variables, {} of String => String, owner_type, @depth, @flags, nil, scope)
+            iterable_node = node_for_expr?(expr_id)
+            result = iterable_node ? evaluate_iterable_to_macro_values(iterable_node, context, expr_id) : nil
+            if result.nil?
+              # Roll back diagnostics emitted by an unhandled iterable so the caller's
+              # silent fallback behavior is preserved.
+              while @diagnostics.size > diag_mark
+                @diagnostics.pop
+              end
+            end
+            result
+          ensure
+            @depth -= 1
+          end
+        end
+
         # Expand a top-level macro control-flow node and reparse the result into AST.
         # Supports MacroLiteralNode, MacroIfNode, and MacroForNode.
         def expand_top_level(node_id : ExprId, *, variables : Hash(String, MacroValue) = {} of String => MacroValue, owner_type : ClassSymbol? = nil, scope : SymbolTable? = nil) : ExprId

@@ -54925,6 +54925,20 @@ module Adamas::HIR
           end
         end
         return values
+      when Adamas::Compiler::Frontend::MemberAccessNode,
+           Adamas::Compiler::Frontend::CallNode
+        # Type-reflection iterables such as `@type.instance_vars` / `@type.methods`
+        # are not literal nodes; the local cases above cannot evaluate them. Delegate
+        # to the macro expander, which resolves them against owner_type. Without this,
+        # `{% for ivar in @type.instance_vars %}` never iterates, so stdlib
+        # `Struct#==` / `Struct#hash` / `Struct#to_s` silently expand to empty and
+        # auto struct equality/hashing is broken in compiled output.
+        return expander.evaluate_for_iterable(
+          iterable_id,
+          variables: vars,
+          owner_type: owner_type,
+          scope: owner_type.try(&.scope),
+        )
       end
 
       nil
