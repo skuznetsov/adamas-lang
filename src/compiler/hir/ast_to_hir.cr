@@ -82568,6 +82568,15 @@ module Adamas::HIR
         end
       end
 
+      # Pre-create increment-merge phis (one per mutable var) so an in-body `next` can
+      # wire its value into them. They live in incr_block and merge the body-exit,
+      # deleted-entry skip, and `next` paths — mirroring the two-phi scheme already used
+      # by times/upto/downto/range/Array#each.
+      incr_phi_nodes = {} of String => Phi
+      phi_nodes.each do |var_name, phi|
+        incr_phi_nodes[var_name] = Phi.new(ctx.next_id, phi.type)
+      end
+
       # Compare: index < entries_total (handles empty hash: 0 < 0 → false → exit)
       cmp = BinaryOperation.new(ctx.next_id, TypeRef::BOOL, BinaryOp::Lt, index_phi.id, entries_total.id)
       ctx.emit(cmp)
@@ -82624,7 +82633,7 @@ module Adamas::HIR
       end
       @loop_exit_stack << exit_block
       @loop_cond_stack << incr_block
-      @loop_phi_stack << phi_nodes
+      @loop_phi_stack << incr_phi_nodes
       @loop_break_info_stack << [] of {BlockId, Hash(String, ValueId)}
       begin
         lower_body(ctx, block.body)
@@ -82645,26 +82654,27 @@ module Adamas::HIR
       ctx.current_block = skip_block
       ctx.terminate(Jump.new(incr_block))
 
-      # Increment block - merge skip and exec paths
+      # Increment block - merge skip, exec, and `next` paths via the incr-phi
       ctx.current_block = incr_block
+      incr_phi_nodes.each_value { |phi| ctx.emit(phi) }
 
-      # Merge PHIs for mutable vars (exec path may have updated them, skip path didn't)
-      incr_merged = {} of String => ValueId
+      # Each incr-phi merges: the body fall-through edge (post_exec_block), the
+      # deleted-entry skip edge (skip_block — accumulator unchanged), and any `next`
+      # edges (already wired by lower_next, since @loop_phi_stack held incr_phi_nodes).
       assigned_vars.each do |var_name|
-        if phi = phi_nodes[var_name]?
-          updated_val = post_exec_values[var_name]?
-          if updated_val && updated_val != phi.id
-            # Variable was modified in block body — need merge PHI
-            var_type = ctx.type_of(phi.id)
-            merge_phi = Phi.new(ctx.next_id, var_type)
-            merge_phi.add_incoming(post_exec_block, updated_val)
-            merge_phi.add_incoming(skip_block, phi.id)
-            ctx.emit(merge_phi)
-            incr_merged[var_name] = merge_phi.id
-          else
-            incr_merged[var_name] = phi.id
-          end
-        end
+        next unless phi = phi_nodes[var_name]?
+        next unless incr_phi = incr_phi_nodes[var_name]?
+        updated_val = post_exec_values[var_name]?
+        # When every body path took `next`, the fall-through block is control-flow-dead;
+        # its accumulator value is undef, so wire the unchanged loop-head value instead.
+        body_incoming = if updated_val && updated_val != phi.id && !control_flow_dead_block?(ctx, post_exec_block)
+                          updated_val
+                        else
+                          phi.id
+                        end
+        incr_phi.add_incoming(post_exec_block, body_incoming)
+        incr_phi.add_incoming(skip_block, phi.id)
+        phi.add_incoming(incr_block, incr_phi.id)
       end
 
       one = Literal.new(ctx.next_id, TypeRef::INT32, 1_i64)
@@ -82673,15 +82683,6 @@ module Adamas::HIR
       ctx.emit(new_i)
 
       index_phi.add_incoming(incr_block, new_i.id)
-
-      # Patch cond_block mutable var phis with merged values
-      assigned_vars.each do |var_name|
-        if phi = phi_nodes[var_name]?
-          if val = incr_merged[var_name]?
-            phi.add_incoming(incr_block, val)
-          end
-        end
-      end
 
       ctx.terminate(Jump.new(cond_block))
 

@@ -21,9 +21,10 @@
 #
 # NOTE — out of scope for this reducer (separate root causes, tracked separately):
 #   * Hash#each + `next` — different phi topology in lower_hash_each_dynamic.
+#     NOW FIXED in a follow-up commit; asserted by hash_each_next_accum_repro.sh.
 #   * Nested inline-yield + `next` — forces closure proc materialization, which
 #     routes the accumulator through the broken global closure-cell mechanism.
-# These stay broken and are intentionally NOT asserted here.
+#     Still broken; intentionally NOT asserted here.
 set -euo pipefail
 
 COMPILER="${1:-./bin/adamas}"
