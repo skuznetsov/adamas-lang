@@ -1,6 +1,6 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-06-04
+Updated: 2026-06-14
 Branch: `main`
 
 This is the active working backlog only. Historical detail is in git history,
@@ -2088,6 +2088,25 @@ pending-budget oracle.
    `HIR.badstr_probe_write` -> logs `[BADSTR-WRITE] <where>` at the producer;
    self-calibrates on the live V2 header word (==16) so stage1 stays silent.
    Build debug s2b with probe, run on `src/adamas.cr` to capture first bad write.
+
+0ab. (2026-06-14, SHIPPED `652a629a`) Producer fixed for the 0aa repr-flip:
+   `Array#each_with_index` dropped loop-carried accumulation. `parse_def_receiver_name`
+   sums part sizes through `each_with_index` (`total += part.size`); the DIRECT
+   accumulation became a self-referential header phi (back-edge read via post-pop
+   `lookup_local`, which reverts block-scope writes to the header phi) -> `total=0`
+   -> `Bytes.new(0)` under-alloc -> source-pointer-in-String-slot overflow. Fix:
+   two-phi scheme + dual body-exit resolution (pre-pop snapshot if it advanced past
+   the header phi, else post-pop lookup for nested inline-yield). Reducer
+   `regression_tests/array_each_with_index_accum_repro.sh` (direct c1-c3 + nested
+   c4-c5). Suite 158/158 + 31/31. Memory `each-with-index-accum-drop-fix`.
+   NOTE: measure s2b crash-rate impact; do NOT assume it alone clears the Heisenbug
+   (the repr-flip SLOT bug may also be reached by other producers).
+   FAMILY FOLLOW-UP (latent, NOT fixed): the same snapshot-only back-patch drops
+   nested inline-yield accumulation in 7 sibling intrinsic loops — `times`,
+   `upto/downto`, `range each`, `array each` (static+dynamic), `string each_char`.
+   VERIFIED broken (`3.times do |i| yield i end`+`count+=1` -> 0). Proper fix:
+   shared dual-resolution helper routed through all back-patches (CAUTION-tier,
+   full-suite gate). This is a correctness hole (stdlib sum/reduce/count idioms).
 
 0a-side. (2026-06-14, SHIPPED `56ae947b`) Found+fixed en route: macro
    `{% for x in @type.instance_vars %}` (and @type.methods) never iterated in the
