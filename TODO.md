@@ -1,6 +1,6 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-06-14
+Updated: 2026-06-15
 Branch: `main`
 
 This is the active working backlog only. Historical detail is in git history,
@@ -2122,6 +2122,32 @@ pending-budget oracle.
    computes the right value but runtime=0); lead = loop exit phi references the
    fall-through-only value, not the next/fall-through merge (incr-phi). Memory
    `loop-next-exit-phi-drop-bug`. Repros in /tmp/loopfam (advall.cr, advdirect.cr).
+
+0ac. (2026-06-15, SHIPPED `cb25a911`) Globber union-array late-generic template
+   stride OOB — a CONTRIBUTING layer of the 0aa s2b startup crash (NOT the whole
+   thing). `emit_dead_code_stub` synthesizes `Array(T)#<<`/`#push`/`#unsafe_fetch`
+   bodies for generics RTA references but never lowers. Three oracles disagreed on
+   the union slot stride: realloc grew by `llvm_store_size_bytes` (hardcodes 16 for
+   any `.union`), store/read used a typed `getelementptr <union>, ptr %buf, i64 %idx`
+   (= LLVM sizeof 20 for `{i32,[4 x i32]}`), while the array literal alloc +
+   emit_array_get read used the MIR size (`container_elem_storage_size_u64` = 24).
+   For Dir::Globber's PatternType union the buffer was grown by 16, written at 20,
+   read at 24 -> Array#<< OOB -> heap corruption in Globber#single_compile. Fix:
+   route both templates' realloc + store/read strides through
+   `container_elem_storage_size_u64` and emit byte-offset gep (`%byte_off = mul i64
+   %idx64, <stride>` + `getelementptr i8, ptr %buf, i64 %byte_off`); shared
+   `array_element_mir_type_from_mangled_method` helper. gmalloc-VERIFIED: the old
+   binary crashes deterministically in `Globber#single_compile`, the fixed binary
+   sails past into normal prelude parsing. Suite 158/158 + 31/31. IR-form guard
+   `regression_tests/array_late_generic_union_stride_repro.sh` (validated separator:
+   pre-fix build emits the typed direct-index store, fixed build emits 0).
+   DOES NOT fully clear the Heisenbug: the non-deterministic pass3/lower_main
+   segfault persists (~30%, present in pre-fix builds too — single_compile was only
+   the gmalloc-deterministic EARLY manifestation; the runtime crash was always at
+   codegen pass3). A/B N=40: OLD 15ok/16segv/9other -> NEW(fix) 21ok/12segv/7other.
+   The remaining pass3 crash is the next layer of 0aa (whole-backend window after
+   `pass3 after lower_main call`; likely the repr-flip String-slot family). Memory
+   `s2b-startup-crash-rc-overfree-refuted`.
 
 0a-side. (2026-06-14, SHIPPED `56ae947b`) Found+fixed en route: macro
    `{% for x in @type.instance_vars %}` (and @type.methods) never iterated in the
