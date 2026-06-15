@@ -2162,6 +2162,26 @@ pending-budget oracle.
    (`Foo.instance_vars`) in method bodies is a separate, still-open gap (needs
    expander symbol-table wiring).
 
+0a-side2. (2026-06-15, SHIPPED `421bed2f`) Found+fixed en route: `Pointer(T).new(
+   integer_address).value` returned `address & 0xFF` instead of loading from memory.
+   The element type T was dropped, so the inttoptr result was typed as a bare/UInt8
+   `Pointer`; `emit_load`'s packed-scalar shortcut (llvm_backend.cr:~17831 — fires
+   when `@inttoptr_value_ids.includes? && !ptr_is_typed_pointer`) then emitted
+   `ptrtoint ptr to <elem>` instead of a real `load`. Fixed all 3 lowering paths by
+   deriving the result element type from the owner via `method_owner(owner) ->
+   Pointer(T)`: call-site path (`lower_pointer_new_intrinsic` now takes `owner_name`,
+   threaded at all 3 call sites as `target_name`/`full_method_name`), with-prelude
+   path (result type had resolved to the method *Class* type `Pointer(Int32).new$UInt64`,
+   which naive `rchop(".new")` could not strip — `method_owner` handles the suffix),
+   and the no-prelude intrinsic `lower_primitive_pointer_new_intrinsic` (with
+   `@current_class` fallback). `to_unsafe`/`malloc`/`.as(T*)` were never affected
+   (concrete element type). Verified runtime: 777 / 1234567890123 / 65 (with-prelude),
+   exit 123 (no-prelude). Regression `regression_tests/pointer_new_value_load_repro.sh`.
+   Gates 158/158 + 31/31 (identical to baseline). NOTE: OFF the 0aa #4 crash path
+   (that uses `.as(UInt64*).value`), but it DID corrupt the in-s2b badstr probe (which
+   read tid headers via `Pointer.new(addr).value`) — those tid numbers were artifacts;
+   use external lldb for #4. Memory `pointer-new-value-element-drop-fix`.
+
 0. (2026-06-02) M4h family root-caused + narrow fix landed (`2444b2e0`, COMPLETED not
    VERIFIED). The s2b `union_all_reference_types?` SIGSEGV is a short-TypeRef Hash value
    confusion: the resolver minted a SHORT ghost identity for compiler-internal `MIR::X`/`HIR::X`
