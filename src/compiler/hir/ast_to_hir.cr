@@ -82924,6 +82924,16 @@ module Adamas::HIR
       ctx.register_local(index_param_name, index_phi.id)
       ctx.register_type(index_phi.id, TypeRef::INT32)
 
+      # Separate phi per loop-carried var, materialized in the increment block.
+      # The header phi (cond_block) takes its back-edge from these incr phis,
+      # which in turn merge the body-exit value and any `next` jumps. Mirrors
+      # lower_array_each_intrinsic; required so the accumulator is threaded
+      # correctly instead of becoming a self-referential header phi.
+      incr_phi_nodes = {} of String => Phi
+      phi_nodes.each do |var_name, phi|
+        incr_phi_nodes[var_name] = Phi.new(ctx.next_id, phi.type)
+      end
+
       pushed_inline = false
       if !inline_vars.empty?
         @inline_loop_vars_stack << inline_vars
@@ -82932,7 +82942,7 @@ module Adamas::HIR
       end
       @loop_exit_stack << exit_block
       @loop_cond_stack << incr_block
-      @loop_phi_stack << phi_nodes
+      @loop_phi_stack << incr_phi_nodes
       @loop_break_info_stack << [] of {BlockId, Hash(String, ValueId)}
       begin
         lower_body(ctx, block.body)
@@ -82943,11 +82953,22 @@ module Adamas::HIR
         @loop_phi_stack.pop?
       end
       break_info = @loop_break_info_stack.pop
+      # Snapshot the body's directly-updated values BEFORE popping the block
+      # scope. For a direct block-scope update (`t += x`), ctx.lookup_local after
+      # pop_scope would resolve the var back to the header phi (the block scope's
+      # writes are reverted on pop), so the back-edge must be read here. Vars
+      # updated only inside a nested inline-yield body are NOT visible yet (see
+      # the back-patch below, which falls back to the post-pop lookup for them).
+      body_exit_outer_vals = snapshot_block_scope_phi_values(ctx, assigned_vars, phi_nodes)
+      body_exit_block = ctx.current_block
       ctx.pop_scope
       ctx.terminate(Jump.new(incr_block))
 
       # Increment block
       ctx.current_block = incr_block
+      incr_phi_nodes.each_value do |phi|
+        ctx.emit(phi)
+      end
       one = Literal.new(ctx.next_id, TypeRef::INT32, 1_i64)
       ctx.emit(one)
       new_i = BinaryOperation.new(ctx.next_id, TypeRef::INT32, BinaryOp::Add, index_phi.id, one.id)
@@ -82955,12 +82976,32 @@ module Adamas::HIR
 
       index_phi.add_incoming(incr_block, new_i.id)
 
-      # Patch mutable var phis
+      # Patch mutable var phis. The incr phi merges the body-exit value of each
+      # loop-carried var; the header phi takes its loop back-edge from the incr
+      # phi. Resolving the body-exit value has two cases:
+      #   * Direct block-scope update (`t += x` written in this block): the
+      #     pre-pop snapshot holds the updated SSA value, distinct from the
+      #     header phi.
+      #   * Nested inline-yield update (the block body is `yield ...` and the
+      #     caller block does the `+=`): the write happens in a child scope and
+      #     only propagates to the enclosing scope after pop_scope, so the
+      #     pre-pop snapshot still resolves to the header phi. Fall back to the
+      #     post-pop lookup, which sees the merged value (this preserves the
+      #     pre-existing nested-yield behavior; without it the accumulator
+      #     would self-reference through the incr phi and never advance).
       assigned_vars.each do |var_name|
-        if phi = phi_nodes[var_name]?
-          if updated_val = resolve_loop_updated_value(ctx, var_name, inline_vars)
-            phi.add_incoming(incr_block, updated_val)
+        next unless phi = phi_nodes[var_name]?
+        next unless incr_phi = incr_phi_nodes[var_name]?
+        snapshot_val = body_exit_outer_vals[var_name]?
+        updated_val =
+          if snapshot_val && snapshot_val != phi.id
+            snapshot_val
+          else
+            resolve_loop_updated_value(ctx, var_name, inline_vars)
           end
+        if updated_val
+          incr_phi.add_incoming(body_exit_block, updated_val)
+          phi.add_incoming(incr_block, incr_phi.id)
         end
       end
 
