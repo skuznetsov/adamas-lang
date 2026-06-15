@@ -19,9 +19,10 @@
 # phi is one iteration stale at exit; the inline caller-local is re-pointed at the
 # exit phi so a nested accumulator picks up the final value, not the penultimate.
 #
-# NOTE: String#each_char nested (the 8th loop) is a SEPARATE, still-open root cause
-# (its lowering builds no inline_vars phi for the accumulator) and is intentionally
-# NOT asserted here. The DIRECT String#each_char case works and IS covered (d8).
+# String#each_char (the 8th loop) is now also threaded: lower_string_each_char_intrinsic
+# was given the same inline_vars plumbing as lower_array_each_dynamic (lookup_local_for_phi
+# + caller-local pointing + @inline_loop_vars_stack push + resolve_loop_backedge_value), so
+# both the DIRECT (d8) and NESTED inline-yield (n8) cases accumulate correctly.
 set -euo pipefail
 
 COMPILER="${1:-./bin/adamas}"
@@ -112,8 +113,14 @@ end
 n7 = 0
 g_hash { |k, v| n7 += v }                       # 30
 
+def g_each_char
+  "abc".each_char { |c| yield c }
+end
+n8 = 0
+g_each_char { |c| n8 += 1 }                     # 3
+
 STDERR.puts "D: #{d1} #{d2} #{d3} #{d4} #{d5} #{d6} #{d7} #{d8}"
-STDERR.puts "N: #{n1} #{n2} #{n3} #{n4} #{n5} #{n6} #{n7}"
+STDERR.puts "N: #{n1} #{n2} #{n3} #{n4} #{n5} #{n6} #{n7} #{n8}"
 STDERR.flush
 CR
 
@@ -143,7 +150,7 @@ echo "stderr:"
 printf '%s\n' "$stderr_text"
 
 expected="D: 3 6 6 6 60 60 30 3
-N: 3 6 6 6 60 60 30"
+N: 3 6 6 6 60 60 30 3"
 
 if [[ "$stderr_text" == "$expected" ]]; then
   echo "fixed: loop-family nested inline-yield accumulation threaded correctly"

@@ -84646,9 +84646,13 @@ module Adamas::HIR
 
       # Collect variables assigned in the block body for phi tracking
       assigned_vars = collect_assigned_vars(block.body)
+      assigned_vars = assigned_vars.reject { |v| v == param_name }
+      # Track which loop-carried vars come from an inlined caller frame (nested
+      # inline-yield), so they resolve through the inline back-edge machinery.
+      inline_vars = Set(String).new
       initial_values = {} of String => ValueId
       assigned_vars.each do |var_name|
-        if val = ctx.lookup_local(var_name)
+        if val = lookup_local_for_phi(ctx, var_name, inline_vars)
           initial_values[var_name] = val
         end
       end
@@ -84685,6 +84689,12 @@ module Adamas::HIR
           ctx.emit(phi)
           phi_nodes[var_name] = phi
           ctx.register_local(var_name, phi.id)
+          # For nested inline-yield accumulators, point the caller-frame local at
+          # the header phi so reads inside the (forwarded) block body see the phi,
+          # not the stale loop-entry value.
+          if inline_vars.includes?(var_name)
+            @inline_caller_locals_stack[-1][var_name] = phi.id
+          end
         end
       end
 
@@ -84702,6 +84712,12 @@ module Adamas::HIR
       ctx.register_type(char_val.id, TypeRef::CHAR)
       ctx.register_local(param_name, char_val.id)
 
+      pushed_inline = false
+      if !inline_vars.empty?
+        @inline_loop_vars_stack << inline_vars
+        pushed_inline = true
+        inline_vars.each { |name| @inline_loop_var_backedge_values.delete(name) }
+      end
       @loop_exit_stack << exit_block
       @loop_cond_stack << incr_block
       @loop_phi_stack << phi_nodes
@@ -84709,6 +84725,7 @@ module Adamas::HIR
       begin
         lower_body(ctx, block.body)
       ensure
+        @inline_loop_vars_stack.pop? if pushed_inline
         @loop_exit_stack.pop?
         @loop_cond_stack.pop?
         @loop_phi_stack.pop?
@@ -84719,13 +84736,7 @@ module Adamas::HIR
       # restores a locals snapshot where these names map back to the phi itself, so a naive
       # lookup_local after pop would miss the SSA value produced inside the block body (e.g.
       # count after `count += 1 if ...`), producing a self-referential phi [%9, %9].
-      body_exit_outer_vals = {} of String => ValueId
-      assigned_vars.each do |var_name|
-        next unless phi_nodes[var_name]?
-        if v = ctx.lookup_local(var_name)
-          body_exit_outer_vals[var_name] = v
-        end
-      end
+      body_exit_outer_vals = snapshot_block_scope_phi_values(ctx, assigned_vars, phi_nodes)
       ctx.pop_scope
 
       # Check if the body already terminated (e.g., via `return` from enclosing method).
@@ -84745,13 +84756,14 @@ module Adamas::HIR
       new_i = BinaryOperation.new(ctx.next_id, TypeRef::INT32, BinaryOp::Add, index_phi.id, one.id)
       ctx.emit(new_i)
       index_phi.add_incoming(incr_block, new_i.id)
-      # Also forward outer variable phis through incr block
+      # Also forward outer variable phis through incr block. Route through the shared
+      # helper so nested inline-yield accumulators (block body is `yield c`, caller
+      # block does the `+=`) use the post-pop back-edge value, not just the pre-pop
+      # snapshot (which still resolves to the header phi for the nested case).
       phi_nodes.each do |var_name, phi|
-        if updated_val = body_exit_outer_vals[var_name]?
-          # Don't re-add if it was already added from body_exit_block
-          unless updated_val == phi.id
-            phi.add_incoming(incr_block, updated_val)
-          end
+        updated_val = resolve_loop_backedge_value(ctx, var_name, phi, body_exit_outer_vals, inline_vars)
+        if updated_val && updated_val != phi.id
+          phi.add_incoming(incr_block, updated_val)
         end
       end
       ctx.terminate(Jump.new(cond_block))
