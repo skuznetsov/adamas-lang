@@ -33003,8 +33003,25 @@ module Adamas::HIR
       mangled_name : String,
     ) : ValueId?
       return nil unless args.size == 1
-      # Pointer(T).new(address : UInt64) → inttoptr
+      # Pointer(T).new(address : UInt64) → inttoptr, typed as Pointer(T).
+      #
+      # The owner's element type is authoritative: `Pointer(T).new` returns
+      # Pointer(T) by definition. Trusting `return_type` alone can yield a
+      # generic/UInt8 pointer (the element type is dropped), which makes
+      # emit_load misclassify the inttoptr result as a packed scalar and lower
+      # `.value` to `ptrtoint ptr to <elem>` (returning address & 0xFF) instead
+      # of a real `load`. Mirror lower_primitive_pointer_malloc's owner-derived
+      # element typing so the result is a properly-typed Pointer(T).
+      pointer_owner = method_owner(mangled_name)
+      if (!pointer_owner || !pointer_owner.starts_with?("Pointer(")) &&
+         (current = @current_class) && current.starts_with?("Pointer(")
+        pointer_owner = current
+      end
       result_type = return_type == TypeRef::VOID ? TypeRef::POINTER : return_type
+      if pointer_owner && pointer_owner.starts_with?("Pointer(")
+        owner_type = type_ref_for_name(pointer_owner)
+        result_type = owner_type unless owner_type == TypeRef::VOID
+      end
       cast = Cast.new(ctx.next_id, result_type, args[0], result_type)
       ctx.emit(cast)
       ctx.register_type(cast.id, result_type)
@@ -56999,7 +57016,7 @@ module Adamas::HIR
       extern_call.id
     end
 
-    private def lower_pointer_new_intrinsic(ctx : LoweringContext, arg_ids : Array(ValueId)) : ValueId?
+    private def lower_pointer_new_intrinsic(ctx : LoweringContext, arg_ids : Array(ValueId), owner_name : String? = nil) : ValueId?
       return nil unless arg_ids.size == 1
 
       addr_id = arg_ids[0]
@@ -57012,12 +57029,27 @@ module Adamas::HIR
         addr_type = TypeRef::UINT64
       end
 
+      # Derive the result element type from the owner: `Pointer(T).new` returns
+      # Pointer(T). Without this the cast lands on a bare/UInt8 Pointer, the
+      # element type is dropped, and emit_load misclassifies the inttoptr result
+      # as a packed scalar — lowering `.value` to `ptrtoint ptr to <elem>`
+      # (address & 0xFF) instead of a real `load`.
+      result_ptr_type = TypeRef::POINTER
+      if owner_name
+        owner = method_owner(owner_name)
+        owner = owner_name if owner.empty?
+        if owner.starts_with?("Pointer(")
+          resolved = type_ref_for_name(owner)
+          result_ptr_type = resolved unless resolved == TypeRef::VOID
+        end
+      end
+
       return addr_id if addr_type == TypeRef::POINTER
 
       if numeric_primitive?(addr_type)
-        cast = Cast.new(ctx.next_id, TypeRef::POINTER, addr_id, TypeRef::POINTER)
+        cast = Cast.new(ctx.next_id, result_ptr_type, addr_id, result_ptr_type)
         ctx.emit(cast)
-        ctx.register_type(cast.id, TypeRef::POINTER)
+        ctx.register_type(cast.id, result_ptr_type)
         return cast.id
       end
 
@@ -73917,7 +73949,7 @@ module Adamas::HIR
       if receiver_id.nil? && method_name == "new"
         target_name = full_method_name || base_method_name
         if target_name == "Pointer.new" || target_name.starts_with?("Pointer(")
-          if lowered = lower_pointer_new_intrinsic(ctx, args)
+          if lowered = lower_pointer_new_intrinsic(ctx, args, target_name)
             return lowered
           end
         end
@@ -74606,7 +74638,7 @@ module Adamas::HIR
 
       if receiver_id.nil? && method_name == "new" && args.size == 1
         if mangled_method_name.starts_with?("Pointer_") && mangled_method_name.ends_with?("__new")
-          if lowered = lower_pointer_new_intrinsic(ctx, args)
+          if lowered = lower_pointer_new_intrinsic(ctx, args, full_method_name)
             return lowered
           end
         end
@@ -76246,7 +76278,7 @@ module Adamas::HIR
       end
 
       if full_method_name && (full_method_name == "Pointer.new" || full_method_name.starts_with?("Pointer(")) && method_name == "new" && args.size == 1
-        if lowered = lower_pointer_new_intrinsic(ctx, args)
+        if lowered = lower_pointer_new_intrinsic(ctx, args, full_method_name)
           if full_method_name.starts_with?("Pointer(")
             pointer_type_name = full_method_name.rchop(".new")
             pointer_type_ref = type_ref_for_name(pointer_type_name)
