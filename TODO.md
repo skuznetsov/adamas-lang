@@ -2101,12 +2101,27 @@ pending-budget oracle.
    c4-c5). Suite 158/158 + 31/31. Memory `each-with-index-accum-drop-fix`.
    NOTE: measure s2b crash-rate impact; do NOT assume it alone clears the Heisenbug
    (the repr-flip SLOT bug may also be reached by other producers).
-   FAMILY FOLLOW-UP (latent, NOT fixed): the same snapshot-only back-patch drops
-   nested inline-yield accumulation in 7 sibling intrinsic loops — `times`,
-   `upto/downto`, `range each`, `array each` (static+dynamic), `string each_char`.
-   VERIFIED broken (`3.times do |i| yield i end`+`count+=1` -> 0). Proper fix:
-   shared dual-resolution helper routed through all back-patches (CAUTION-tier,
-   full-suite gate). This is a correctness hole (stdlib sum/reduce/count idioms).
+   FAMILY FOLLOW-UP (SHIPPED 2026-06-14, branch `loop-family-nested-accum-fix`):
+   extracted shared `resolve_loop_backedge_value` helper (pre-pop snapshot if it
+   advanced past the header phi, else post-pop resolve) and routed it through
+   `times`, `range each`, `array each` (static+dynamic), `upto/downto` (Part A
+   back-edge + Part B exit phi), and DRY-refactored `each_with_index`. upto/downto
+   additionally re-point `@inline_caller_locals_stack[-1][var]` at the exit phi at
+   loop exit (they exit via the increment block, so the header phi the inline
+   caller-local was pointed at on entry is one iteration stale). hash#each was
+   already correct (resolve path + cond-block exit). Reducer
+   `regression_tests/loop_family_nested_accum_repro.sh` (direct d1-d8 + nested
+   n1-n7). Gates 158/158 + 31/31. Memory `each-with-index-accum-drop-fix`.
+   TWO CARVE-OUTS (separate root causes, NOT in this commit):
+   (1) `string each_char` nested-yield accumulation: `lower_string_each_char_intrinsic`
+   uses plain `ctx.lookup_local` (84651) not `lookup_local_for_phi`, so no phi is
+   created for a nested accumulator -> stays at init. Needs the inline_vars phi
+   plumbing the array lowerings have. Direct each_char works.
+   (2) `next` inside a loop block freezes the accumulator at init for upto/downto/hash
+   (direct) and ALL loops (nested). VERIFIED downstream of HIR (no-prelude HIR
+   computes the right value but runtime=0); lead = loop exit phi references the
+   fall-through-only value, not the next/fall-through merge (incr-phi). Memory
+   `loop-next-exit-phi-drop-bug`. Repros in /tmp/loopfam (advall.cr, advdirect.cr).
 
 0a-side. (2026-06-14, SHIPPED `56ae947b`) Found+fixed en route: macro
    `{% for x in @type.instance_vars %}` (and @type.methods) never iterated in the

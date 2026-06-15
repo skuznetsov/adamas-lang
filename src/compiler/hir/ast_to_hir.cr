@@ -62772,6 +62772,34 @@ module Adamas::HIR
       values
     end
 
+    # Resolve the loop-carried back-edge value for `var_name`, handling both the
+    # direct and nested inline-yield cases (see lower_array_each_with_index_dynamic
+    # for the full rationale). Two cases:
+    #   * Direct block-scope update (`t += x` written in the loop block): the
+    #     pre-pop snapshot holds the updated SSA value, distinct from the header
+    #     phi -> use it.
+    #   * Nested inline-yield update (the block body is `yield ...` and the caller
+    #     block does the `+=`): the write lands in a child scope and only
+    #     propagates to the enclosing scope after pop_scope, so the pre-pop
+    #     snapshot still resolves to the header phi. Fall back to the post-pop
+    #     resolve (which also consults @inline_loop_var_backedge_values); without
+    #     it the accumulator would self-reference and never advance.
+    # Returns nil when the var has no resolvable updated value.
+    private def resolve_loop_backedge_value(
+      ctx : LoweringContext,
+      var_name : String,
+      phi : Phi,
+      body_exit_outer_vals : Hash(String, ValueId),
+      inline_vars : Set(String),
+    ) : ValueId?
+      snapshot_val = body_exit_outer_vals[var_name]?
+      if snapshot_val && snapshot_val != phi.id
+        snapshot_val
+      else
+        resolve_loop_updated_value(ctx, var_name, inline_vars)
+      end
+    end
+
     private def snapshot_inline_caller_locals_for_return(caller_locals : Hash(String, ValueId)) : Hash(String, ValueId)
       snapshot = caller_locals.dup
       if loop_vars = inline_loop_vars_union
@@ -81455,15 +81483,12 @@ module Adamas::HIR
 
       # Patch mutable variable phi nodes - incoming from incr_block (the actual predecessor of cond_block)
       assigned_vars.each do |var_name|
-        if incr_phi = incr_phi_nodes[var_name]?
-          if updated_val = body_exit_outer_vals[var_name]?
-            incr_phi.add_incoming(body_exit_block, updated_val)
-          end
-        end
-        if phi = phi_nodes[var_name]?
-          if incr_phi = incr_phi_nodes[var_name]?
-            phi.add_incoming(incr_block, incr_phi.id)
-          end
+        next unless phi = phi_nodes[var_name]?
+        next unless incr_phi = incr_phi_nodes[var_name]?
+        updated_val = resolve_loop_backedge_value(ctx, var_name, phi, body_exit_outer_vals, inline_vars)
+        if updated_val
+          incr_phi.add_incoming(body_exit_block, updated_val)
+          phi.add_incoming(incr_block, incr_phi.id)
         end
       end
 
@@ -81609,10 +81634,10 @@ module Adamas::HIR
       ctx.register_type(continue_cmp.id, TypeRef::BOOL)
 
       assigned_vars.each do |var_name|
-        if incr_phi = incr_phi_nodes[var_name]?
-          if updated_val = body_exit_outer_vals[var_name]?
-            incr_phi.add_incoming(body_exit_block, updated_val)
-          end
+        next unless phi = phi_nodes[var_name]?
+        next unless incr_phi = incr_phi_nodes[var_name]?
+        if updated_val = resolve_loop_backedge_value(ctx, var_name, phi, body_exit_outer_vals, inline_vars)
+          incr_phi.add_incoming(body_exit_block, updated_val)
         end
       end
 
@@ -81642,7 +81667,7 @@ module Adamas::HIR
       phi_nodes.each do |var_name, cond_phi|
         exit_phi = Phi.new(ctx.next_id, cond_phi.type)
         exit_phi.add_incoming(cond_block, cond_phi.id)
-        if updated_val = body_exit_outer_vals[var_name]?
+        if updated_val = resolve_loop_backedge_value(ctx, var_name, cond_phi, body_exit_outer_vals, inline_vars)
           exit_phi.add_incoming(incr_block, updated_val)
         else
           exit_phi.add_incoming(incr_block, cond_phi.id)
@@ -81656,6 +81681,14 @@ module Adamas::HIR
         end
         ctx.emit(exit_phi)
         ctx.register_local(var_name, exit_phi.id)
+        # upto/downto exit via the incr block, so the header phi (which the inline
+        # caller local was pointed at on loop entry) is one iteration stale. Re-point
+        # the caller local at the exit phi so a nested-yield accumulator picks up the
+        # final value rather than the second-to-last. (cond-exit loops like each/times
+        # do not need this: their header phi already holds the final value.)
+        if inline_vars.includes?(var_name) && !@inline_caller_locals_stack.empty?
+          @inline_caller_locals_stack[-1][var_name] = exit_phi.id
+        end
       end
 
       nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
@@ -81774,15 +81807,12 @@ module Adamas::HIR
 
       # Patch mutable var phis
       assigned_vars.each do |var_name|
-        if incr_phi = incr_phi_nodes[var_name]?
-          if updated_val = body_exit_outer_vals[var_name]?
-            incr_phi.add_incoming(body_exit_block, updated_val)
-          end
-        end
-        if phi = phi_nodes[var_name]?
-          if incr_phi = incr_phi_nodes[var_name]?
-            phi.add_incoming(incr_block, incr_phi.id)
-          end
+        next unless phi = phi_nodes[var_name]?
+        next unless incr_phi = incr_phi_nodes[var_name]?
+        updated_val = resolve_loop_backedge_value(ctx, var_name, phi, body_exit_outer_vals, inline_vars)
+        if updated_val
+          incr_phi.add_incoming(body_exit_block, updated_val)
+          phi.add_incoming(incr_block, incr_phi.id)
         end
       end
 
@@ -81970,15 +82000,12 @@ module Adamas::HIR
 
       # Patch mutable var phis
       assigned_vars.each do |var_name|
-        if incr_phi = incr_phi_nodes[var_name]?
-          if updated_val = body_exit_outer_vals[var_name]?
-            incr_phi.add_incoming(body_exit_block, updated_val)
-          end
-        end
-        if phi = phi_nodes[var_name]?
-          if incr_phi = incr_phi_nodes[var_name]?
-            phi.add_incoming(incr_block, incr_phi.id)
-          end
+        next unless phi = phi_nodes[var_name]?
+        next unless incr_phi = incr_phi_nodes[var_name]?
+        updated_val = resolve_loop_backedge_value(ctx, var_name, phi, body_exit_outer_vals, inline_vars)
+        if updated_val
+          incr_phi.add_incoming(body_exit_block, updated_val)
+          phi.add_incoming(incr_block, incr_phi.id)
         end
       end
 
@@ -82169,15 +82196,12 @@ module Adamas::HIR
 
       # Patch mutable var phis
       assigned_vars.each do |var_name|
-        if incr_phi = incr_phi_nodes[var_name]?
-          if updated_val = body_exit_outer_vals[var_name]?
-            incr_phi.add_incoming(body_exit_block, updated_val)
-          end
-        end
-        if phi = phi_nodes[var_name]?
-          if incr_phi = incr_phi_nodes[var_name]?
-            phi.add_incoming(incr_block, incr_phi.id)
-          end
+        next unless phi = phi_nodes[var_name]?
+        next unless incr_phi = incr_phi_nodes[var_name]?
+        updated_val = resolve_loop_backedge_value(ctx, var_name, phi, body_exit_outer_vals, inline_vars)
+        if updated_val
+          incr_phi.add_incoming(body_exit_block, updated_val)
+          phi.add_incoming(incr_block, incr_phi.id)
         end
       end
 
@@ -82976,29 +83000,14 @@ module Adamas::HIR
 
       index_phi.add_incoming(incr_block, new_i.id)
 
-      # Patch mutable var phis. The incr phi merges the body-exit value of each
-      # loop-carried var; the header phi takes its loop back-edge from the incr
-      # phi. Resolving the body-exit value has two cases:
-      #   * Direct block-scope update (`t += x` written in this block): the
-      #     pre-pop snapshot holds the updated SSA value, distinct from the
-      #     header phi.
-      #   * Nested inline-yield update (the block body is `yield ...` and the
-      #     caller block does the `+=`): the write happens in a child scope and
-      #     only propagates to the enclosing scope after pop_scope, so the
-      #     pre-pop snapshot still resolves to the header phi. Fall back to the
-      #     post-pop lookup, which sees the merged value (this preserves the
-      #     pre-existing nested-yield behavior; without it the accumulator
-      #     would self-reference through the incr phi and never advance).
+      # Patch mutable var phis: the incr phi merges the body-exit value of each
+      # loop-carried var (resolve_loop_backedge_value handles the direct vs nested
+      # inline-yield distinction), and the header phi takes its loop back-edge
+      # from the incr phi.
       assigned_vars.each do |var_name|
         next unless phi = phi_nodes[var_name]?
         next unless incr_phi = incr_phi_nodes[var_name]?
-        snapshot_val = body_exit_outer_vals[var_name]?
-        updated_val =
-          if snapshot_val && snapshot_val != phi.id
-            snapshot_val
-          else
-            resolve_loop_updated_value(ctx, var_name, inline_vars)
-          end
+        updated_val = resolve_loop_backedge_value(ctx, var_name, phi, body_exit_outer_vals, inline_vars)
         if updated_val
           incr_phi.add_incoming(body_exit_block, updated_val)
           phi.add_incoming(incr_block, incr_phi.id)
