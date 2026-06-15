@@ -2840,14 +2840,18 @@ module Adamas::MIR
       end
     end
 
-    private def array_element_llvm_type_from_mangled_method(name : String) : String?
+    private def array_element_mir_type_from_mangled_method(name : String) : Type?
       match = name.match(/\AArray\$L(.+)\$R\$H/)
       return nil unless match
 
       elem_mangled = match[1]
-      elem_type = @module.type_registry.types.find do |type|
+      @module.type_registry.types.find do |type|
         @type_mapper.mangle_name(type.name) == elem_mangled
       end
+    end
+
+    private def array_element_llvm_type_from_mangled_method(name : String) : String?
+      elem_type = array_element_mir_type_from_mangled_method(name)
       return nil unless elem_type
 
       elem_llvm = @type_mapper.llvm_type(TypeRef.new(elem_type.id))
@@ -4422,7 +4426,17 @@ module Adamas::MIR
          arg_count == 2
         elem_type = arg_types.size > 1 ? arg_types[1] : "ptr"
         elem_type = "ptr" if elem_type.empty? || elem_type == "void"
-        elem_size = llvm_store_size_bytes(elem_type)
+        # Keep the append stride in lock-step with the array literal allocation,
+        # emit_array_get reads, PointerStore and realloc — all of which size and
+        # address slots via container_elem_storage_size_u64 (= the MIR element
+        # size). The LLVM-natural size of an inline union ({i32,[N x i32]}) drops
+        # the alignment padding the MIR size carries, and llvm_store_size_bytes
+        # hardcodes 16 for any `.union`; both diverge from the 24-byte slot the
+        # buffer is allocated/read at, so a `getelementptr %union` store writes
+        # across slot boundaries and the realloc undersizes the buffer → heap OOB
+        # on grow (the s2b Globber PatternType append crash).
+        elem_mir = array_element_mir_type_from_mangled_method(name)
+        stride = elem_mir ? container_elem_storage_size_u64(elem_mir).to_i64 : llvm_store_size_bytes(elem_type).to_i64
         return "; #{name} — primitive Array#<<(T) for late generic append bodies\n" \
                "define ptr @#{name}(ptr %self, #{elem_type} %value) {\n" \
                "entry:\n" \
@@ -4439,7 +4453,7 @@ module Adamas::MIR
                "  %buf_field_g = getelementptr i8, ptr %self, i32 16\n" \
                "  %old_buf = load ptr, ptr %buf_field_g\n" \
                "  %new_cap64 = sext i32 %new_cap to i64\n" \
-               "  %new_bytes = mul i64 %new_cap64, #{elem_size}\n" \
+               "  %new_bytes = mul i64 %new_cap64, #{stride}\n" \
                "  %new_buf = call ptr @__adamas_realloc64(ptr %old_buf, i64 %new_bytes)\n" \
                "  store ptr %new_buf, ptr %buf_field_g\n" \
                "  store i32 %new_cap, ptr %cap_ptr\n" \
@@ -4448,7 +4462,8 @@ module Adamas::MIR
                "  %buf_field = getelementptr i8, ptr %self, i32 16\n" \
                "  %buf = load ptr, ptr %buf_field\n" \
                "  %idx64 = sext i32 %size to i64\n" \
-               "  %slot = getelementptr #{elem_type}, ptr %buf, i64 %idx64\n" \
+               "  %byte_off = mul i64 %idx64, #{stride}\n" \
+               "  %slot = getelementptr i8, ptr %buf, i64 %byte_off\n" \
                "  store #{elem_type} %value, ptr %slot\n" \
                "  %new_size = add i32 %size, 1\n" \
                "  store i32 %new_size, ptr %size_ptr\n" \
@@ -4459,8 +4474,15 @@ module Adamas::MIR
       if name.starts_with?("Array$") &&
          name.ends_with?("$Hunsafe_fetch$$Int32") &&
          arg_count == 2
+        elem_mir = array_element_mir_type_from_mangled_method(name)
         elem_type = array_element_llvm_type_from_mangled_method(name) || return_type
         elem_type = "ptr" if elem_type.empty? || elem_type == "void"
+        # Mirror the append stride: inline unions/aggregates are stored at the MIR
+        # element size (container_elem_storage_size_u64), which carries alignment
+        # padding the LLVM-natural sizeof drops. Reading via `getelementptr %union`
+        # would stride by the smaller LLVM size and read across slot boundaries
+        # (the s2b Globber `list[-1]` garbage read). Byte-offset by the MIR stride.
+        stride = elem_mir ? container_elem_storage_size_u64(elem_mir).to_i64 : llvm_store_size_bytes(elem_type).to_i64
         return "; #{name} — primitive Array#unsafe_fetch(Int32) for late generic fetch bodies\n" \
                "define #{elem_type} @#{name}(ptr %self, i32 %index) {\n" \
                "entry:\n" \
@@ -4473,7 +4495,8 @@ module Adamas::MIR
                "  %buf_field = getelementptr i8, ptr %self, i32 16\n" \
                "  %buf = load ptr, ptr %buf_field\n" \
                "  %idx64 = sext i32 %physical_index to i64\n" \
-               "  %slot = getelementptr #{elem_type}, ptr %buf, i64 %idx64\n" \
+               "  %byte_off = mul i64 %idx64, #{stride}\n" \
+               "  %slot = getelementptr i8, ptr %buf, i64 %byte_off\n" \
                "  %value = load #{elem_type}, ptr %slot\n" \
                "  ret #{elem_type} %value\n" \
                "ret_zero:\n" \
