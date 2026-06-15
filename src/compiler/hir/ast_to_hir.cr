@@ -81487,7 +81487,14 @@ module Adamas::HIR
         next unless incr_phi = incr_phi_nodes[var_name]?
         updated_val = resolve_loop_backedge_value(ctx, var_name, phi, body_exit_outer_vals, inline_vars)
         if updated_val
-          incr_phi.add_incoming(body_exit_block, updated_val)
+          # An unconditional `next` (or every path through the body taking `next`)
+          # leaves the body fall-through block unreachable. Its accumulator value is
+          # undef in SSA, so wiring it as the incr-phi incoming makes the backend read
+          # garbage. On that dead edge the accumulator never advanced past the
+          # loop-head value, so use the header phi instead. (lower_next already added
+          # the live next-path incoming for the reachable path(s) into incr_block.)
+          incoming = control_flow_dead_block?(ctx, body_exit_block) ? phi.id : updated_val
+          incr_phi.add_incoming(body_exit_block, incoming)
           phi.add_incoming(incr_block, incr_phi.id)
         end
       end
@@ -81637,7 +81644,10 @@ module Adamas::HIR
         next unless phi = phi_nodes[var_name]?
         next unless incr_phi = incr_phi_nodes[var_name]?
         if updated_val = resolve_loop_backedge_value(ctx, var_name, phi, body_exit_outer_vals, inline_vars)
-          incr_phi.add_incoming(body_exit_block, updated_val)
+          # See the dead body-exit note in lower_times_intrinsic: on an unreachable
+          # fall-through edge use the header phi, not the undef body value.
+          incoming = control_flow_dead_block?(ctx, body_exit_block) ? phi.id : updated_val
+          incr_phi.add_incoming(body_exit_block, incoming)
         end
       end
 
@@ -81667,8 +81677,14 @@ module Adamas::HIR
       phi_nodes.each do |var_name, cond_phi|
         exit_phi = Phi.new(ctx.next_id, cond_phi.type)
         exit_phi.add_incoming(cond_block, cond_phi.id)
-        if updated_val = resolve_loop_backedge_value(ctx, var_name, cond_phi, body_exit_outer_vals, inline_vars)
-          exit_phi.add_incoming(incr_block, updated_val)
+        # The loop exits via the increment block, whose incr-phi already merges
+        # every predecessor edge into it (the fall-through body exit AND any `next`
+        # blocks). Reference that incr-phi directly. resolve_loop_backedge_value
+        # yields the fall-through-only accumulator value, which is undef in SSA when
+        # the exit edge is reached after a `next` (the value was never computed on
+        # that path) -> backend phi-slot lowering of the non-dominating value reads 0.
+        if incr_phi = incr_phi_nodes[var_name]?
+          exit_phi.add_incoming(incr_block, incr_phi.id)
         else
           exit_phi.add_incoming(incr_block, cond_phi.id)
         end
@@ -81811,7 +81827,14 @@ module Adamas::HIR
         next unless incr_phi = incr_phi_nodes[var_name]?
         updated_val = resolve_loop_backedge_value(ctx, var_name, phi, body_exit_outer_vals, inline_vars)
         if updated_val
-          incr_phi.add_incoming(body_exit_block, updated_val)
+          # An unconditional `next` (or every path through the body taking `next`)
+          # leaves the body fall-through block unreachable. Its accumulator value is
+          # undef in SSA, so wiring it as the incr-phi incoming makes the backend read
+          # garbage. On that dead edge the accumulator never advanced past the
+          # loop-head value, so use the header phi instead. (lower_next already added
+          # the live next-path incoming for the reachable path(s) into incr_block.)
+          incoming = control_flow_dead_block?(ctx, body_exit_block) ? phi.id : updated_val
+          incr_phi.add_incoming(body_exit_block, incoming)
           phi.add_incoming(incr_block, incr_phi.id)
         end
       end
@@ -82004,7 +82027,14 @@ module Adamas::HIR
         next unless incr_phi = incr_phi_nodes[var_name]?
         updated_val = resolve_loop_backedge_value(ctx, var_name, phi, body_exit_outer_vals, inline_vars)
         if updated_val
-          incr_phi.add_incoming(body_exit_block, updated_val)
+          # An unconditional `next` (or every path through the body taking `next`)
+          # leaves the body fall-through block unreachable. Its accumulator value is
+          # undef in SSA, so wiring it as the incr-phi incoming makes the backend read
+          # garbage. On that dead edge the accumulator never advanced past the
+          # loop-head value, so use the header phi instead. (lower_next already added
+          # the live next-path incoming for the reachable path(s) into incr_block.)
+          incoming = control_flow_dead_block?(ctx, body_exit_block) ? phi.id : updated_val
+          incr_phi.add_incoming(body_exit_block, incoming)
           phi.add_incoming(incr_block, incr_phi.id)
         end
       end
@@ -82200,7 +82230,14 @@ module Adamas::HIR
         next unless incr_phi = incr_phi_nodes[var_name]?
         updated_val = resolve_loop_backedge_value(ctx, var_name, phi, body_exit_outer_vals, inline_vars)
         if updated_val
-          incr_phi.add_incoming(body_exit_block, updated_val)
+          # An unconditional `next` (or every path through the body taking `next`)
+          # leaves the body fall-through block unreachable. Its accumulator value is
+          # undef in SSA, so wiring it as the incr-phi incoming makes the backend read
+          # garbage. On that dead edge the accumulator never advanced past the
+          # loop-head value, so use the header phi instead. (lower_next already added
+          # the live next-path incoming for the reachable path(s) into incr_block.)
+          incoming = control_flow_dead_block?(ctx, body_exit_block) ? phi.id : updated_val
+          incr_phi.add_incoming(body_exit_block, incoming)
           phi.add_incoming(incr_block, incr_phi.id)
         end
       end
@@ -83009,7 +83046,14 @@ module Adamas::HIR
         next unless incr_phi = incr_phi_nodes[var_name]?
         updated_val = resolve_loop_backedge_value(ctx, var_name, phi, body_exit_outer_vals, inline_vars)
         if updated_val
-          incr_phi.add_incoming(body_exit_block, updated_val)
+          # An unconditional `next` (or every path through the body taking `next`)
+          # leaves the body fall-through block unreachable. Its accumulator value is
+          # undef in SSA, so wiring it as the incr-phi incoming makes the backend read
+          # garbage. On that dead edge the accumulator never advanced past the
+          # loop-head value, so use the header phi instead. (lower_next already added
+          # the live next-path incoming for the reachable path(s) into incr_block.)
+          incoming = control_flow_dead_block?(ctx, body_exit_block) ? phi.id : updated_val
+          incr_phi.add_incoming(body_exit_block, incoming)
           phi.add_incoming(incr_block, incr_phi.id)
         end
       end
