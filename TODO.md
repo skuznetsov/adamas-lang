@@ -2182,6 +2182,38 @@ pending-budget oracle.
    read tid headers via `Pointer.new(addr).value`) — those tid numbers were artifacts;
    use external lldb for #4. Memory `pointer-new-value-element-drop-fix`.
 
+0a-side3. (2026-06-15, SHIPPED `9f5e4acc`) Found+fixed en route: macro-built
+   `Slice(T).literal` tables (the stdlib `String::CHAR_TO_DIGIT` pattern) collapsed
+   to a single element. FIVE independent root causes: (1) the parser kept only the
+   FIRST statement of a multi-statement `{% ... %}` directive and fast-forwarded over
+   the rest (table-builder mutations never ran); (2) the macro evaluator lacked
+   `Array#each`/`each_with_index`, `MacroArrayValue#[]=`, and Range-as-value
+   materialization (`(0...256).map { ... }`); (3) the class-body macro-if "flag text"
+   fast path did not thread macro locals (`{% table = ... %}`) into a later
+   `{{ table.splat }}`; (4) `pack_splat_args_for_call` packed the splat into a Tuple
+   for the `slice_literal` primitive, collapsing it to one element; (5) negative
+   literals (`-1`) in the macro-reparsed builder mis-lowered because UnaryNode operator
+   text was read via stale source-span extraction (offsets relative to the transient
+   reparse buffer) -> garbage char -> `1.<garbage>()` STUB. Fixed by owning
+   UnaryNode.operator bytes (`@operator_str`) and preferring them. CHAR_TO_DIGIT is now
+   a correct 256-element slice. Reducer `regression_tests/macro_slice_literal_table_repro.sh`
+   (positive-fill flag-path + CHAR_TO_DIGIT-shaped negative-fill). Gates 158/158 + 31/31.
+
+0a-side4. (2026-06-15, SHIPPED `c92aa559`) Found+fixed en route: `String#to_i(base)` /
+   `to_i32(base)` dropped the base argument. The lower_call intercept matched "any args
+   count" and always emitted the decimal-only `__adamas_string_to_i` intrinsic, so every
+   non-decimal conversion parsed as base 10 (`"ff".to_i(16)` -> 0, `"101".to_i(2)` -> 101,
+   `"z".to_i(36)` -> 0). apply_default_args (earlier in lower_call) already materializes the
+   first positional `base` param into args[0]; when present, route to a new base-aware
+   intrinsic `__adamas_string_to_i_base` (strtol with runtime base, args[0] cast to Int32).
+   No-arg decimal fast path unchanged. strtol covers bases 2..36; base 62 not handled.
+   Reducer `regression_tests/string_to_i_base_repro.sh` (255/12/5/35/15/42). Gates: combined
+   31/31, originals 157/158. The one failure (`stage2_dir_glob_dir_probe`) is the pre-existing
+   non-deterministic lower_main repr-flip crash (0aa), NOT this change: A/B N=24 baseline
+   (incl. CHAR_TO_DIGIT fix) 1 crash, with-diff 2 crash — sampling noise. CONFIRMS 0ac:
+   neither the CHAR_TO_DIGIT nor the to_i fix clears the 0aa pass3/lower_main Heisenbug
+   (~4-8% on the 3-line glob probe). #4 frontier remains the repr-flip String-slot family.
+
 0. (2026-06-02) M4h family root-caused + narrow fix landed (`2444b2e0`, COMPLETED not
    VERIFIED). The s2b `union_all_reference_types?` SIGSEGV is a short-TypeRef Hash value
    confusion: the resolver minted a SHORT ghost identity for compiler-internal `MIR::X`/`HIR::X`
