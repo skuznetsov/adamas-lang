@@ -97,21 +97,37 @@ that is the slot/access split in §4.
 
 > One owner per question. Phases READ; they do not each re-decide.
 
+**Phase-ordering correction (verified 2026-06-16, step-1 reconnaissance).** The
+single source is NOT the MIR registry — it CANNOT be, because the HIR reader
+`field_storage_size` runs *inside* `align_all_class_ivars`
+(`ast_to_hir.cr:28124`), a pure-HIR pass that completes **before** the MIR
+registry is populated. A registry-owned bit would be unreadable at the earliest
+(and offset-producing) site. The single source is therefore a **pure decision
+function** `inline_value?(kind, size, name, is_lib_struct)`, callable in all
+three phases from the type metadata each phase already has, and **memoized as a
+bit on the MIR `Type`** for the two later phases (the bit is a *cache* of the
+function, not the authority). HIR calls the function directly against its
+`class_info` view; MIR/LLVM read the memoized bit (populated at MIR `Type`
+creation from the already-aligned HIR layout — which IS the post-align fixed
+point, since HIR align happens-before MIR `Type` creation).
+
 | Question | Owner (single source) | Readers |
 |----------|----------------------|---------|
-| **repr** (`PointerReference` / `PointerCarrier` / `InlineBytes`) of type T | the **MIR type registry** — a new `repr`/`inline?` property on the registered `Type`, set ONCE at the `align_all_class_ivars` fixed point | HIR `field_storage_size_impl`, MIR `mir_field_storage_size`, LLVM `container_elem_storage_size` + `inline_container_struct_type?` |
-| **value_size** (bytes of the value itself) of T | the same registry layout (`desc.size` after final align) | all three phases |
-| **slot_size** (bytes reserved AT a given slot in a given context) | derived: `repr == InlineBytes ? value_size : pointer_word_bytes` | all three phases, via one shared helper |
-| **field offsets** within an owner | the registry's per-owner ivar layout (already the `align_all_class_ivars` output) — unchanged | all three phases |
+| **repr** (`PointerReference` / `PointerCarrier` / `InlineBytes`) of type T | a **pure predicate** `LayoutContract.inline_value?(kind, size, name, is_lib)` + repr classifier; **memoized** on the MIR `Type` for MIR/LLVM | HIR `field_storage_size_impl` (calls fn directly, pre-MIR), MIR `mir_field_storage_size` (reads memo), LLVM `container_elem_storage_size` + `inline_container_struct_type?` (reads memo) |
+| **value_size** (bytes of the value itself) of T | the HIR class_info layout (the `align_all_class_ivars` output), copied to MIR `Type.size` at creation | all three phases |
+| **slot_size** (bytes reserved AT a given slot in a given context) | derived: `inline_value? ? value_size : pointer_word_bytes` | all three phases, via one shared helper |
+| **field offsets** within an owner | the HIR class_info per-owner ivar layout (the `align_all_class_ivars` output), copied to MIR `Type` fields — unchanged | all three phases |
 
-Rationale for "registry owns repr": it is the only structure that already
-survives all three phases, is frozen at a single fixed point (step 2), and
-already carries `kind`/`size`. Putting `repr` next to `size` keeps the two
-co-decided and frozen together — the B1a falsification proved that splitting
-size across phases (relayout mid-lowering) is unsound. The LLVM string-prefix
-whitelist (`:2796`) becomes a registry-population rule, not a runtime
-name-match: at registration, a struct is marked inline iff it matches the
-inline-ABI predicate; thereafter every phase reads the bit.
+Rationale for "pure function + MIR memo": the DECISION must be identical in all
+three phases, but the HIR reader runs before any registry exists, so the
+authority has to be a function each phase can call against its own type view —
+not a shared data structure. Memoizing the result on the MIR `Type` (next to
+`size`) keeps repr and size co-frozen for the two later phases — the B1a
+falsification proved that splitting *size* across phases (relayout mid-lowering)
+is unsound; the same discipline applies to the repr bit (write once at MIR
+`Type` creation from the frozen HIR layout, never re-decide). The LLVM
+string-prefix whitelist (`:2796`) becomes the predicate's struct-family clause,
+not a runtime name-match.
 
 ---
 
@@ -176,35 +192,57 @@ the repr bit*, not a collapse of every path into one branch.
 
 ---
 
-## 6. Migration shape for step 1 (informative, not yet code)
+## 6. Migration shape for step 1 (SPLIT into 1a/1b/1c — phase-ordering correction)
 
-1. Add a `repr` (or `inline_value?`) property to the MIR registry `Type`, set at
-   the `align_all_class_ivars` fixed point. Population rule absorbs the current
-   `inline_container_struct_type?` whitelist predicate.
-2. Replace the three independent decisions with one shared helper
-   `slot_size_for(type, context)` that reads `repr` + `value_size`:
-   - HIR `field_storage_size_impl` → delegate.
-   - MIR `mir_field_storage_size` → delegate (drop the `STRING→8` special-case
-     once String's `repr = PointerReference` makes the helper return 8 anyway).
-   - LLVM `container_elem_storage_size` → delegate; `inline_container_struct_type?`
-     becomes `elem_type.inline_value?`.
-3. Keep the side-set `@inline_struct_ptrs` only if it survives as a *cache* of
-   the registry bit; otherwise retire it (it is a fourth shadow oracle).
+The step-1 reconnaissance (mini-Quadr, 2026-06-16) showed a single big-bang
+reader flip is VULNERABLE: most CROSS rows are *labels* (String field-slot
+verified to be 8 on BOTH HIR and MIR — a name divergence, not a size one), while
+the only size-affecting flip is the container-element whitelist. So step 1 is
+split into independently-gated sub-steps, smallest/safest first:
 
-**Falsifier for step 1 (from the plan table):** with `ADAMAS_LAYOUT_PROBE=1
+**1a — pure predicate + MIR memo (additive, SAFE).** Add a single pure function
+`LayoutContract.inline_value?(kind, size, name, is_lib)` (new module) reproducing
+the *current* effective decisions, plus a memoized `inline_value?` bit on the MIR
+`Type` populated at `Type` creation from the frozen HIR layout. No reader changed
+yet — the bit is computed but unused. Gate: build + suites green (no behavior
+change); the probe shows the SAME divergence set as before.
+
+**1b — label unification (no size change).** Route the three phases' LayoutProbe
+`storage` LABEL through the shared repr classifier so the same 8-byte String slot
+is labelled identically everywhere. This drives CROSS *label* rows → 0 without
+touching any slot size. Gate: probe 0 CROSS rows that are label-only; suites
+green (sizes unchanged by construction).
+
+**1c — container-element reader flip (the lone CAUTION size change).** Replace
+`inline_container_struct_type?`'s string-prefix whitelist (`:2796`) with
+`elem_type.inline_value?` (the memo bit). This is the only sub-step that can
+change a slot size (a struct family newly recognized as inline). Falsifier: no
+NEW slot/access mismatch class in the probe; combined 31/31 + originals 158/158 +
+`p2_generated_stage2_*` + s2b probe green; the `cb25a911` late-generic reducer
+stays fixed. HIR `field_storage_size_impl` and MIR `mir_field_storage_size`
+delegate to the predicate here too; the MIR `STRING→8` special-case is dropped
+only once String's `PointerReference` repr makes the helper return 8 anyway.
+
+Side-set `@inline_struct_ptrs` is kept only if it survives as a *cache* of the
+predicate; otherwise retired (it is a fourth shadow oracle).
+
+**Falsifier for step 1 overall:** with `ADAMAS_LAYOUT_PROBE=1
 ADAMAS_LAYOUT_ASSERT=1`, a hello-world compile shows **0 CROSS rows** AND no NEW
 slot/access mismatch class, while combined 31/31 + originals 158/158 +
-`p2_generated_stage2_*` + s2b probe stay green. If a CROSS row remains, the bit
-is not actually single-sourced (a phase still re-decides).
+`p2_generated_stage2_*` + s2b probe stay green. If a CROSS row remains, a phase
+still re-decides instead of calling the predicate.
 
 ---
 
 ## 7. Open risks carried into step 1
 
-- **String repr.** String is a class (`PointerReference`) but `type_size(String)`
-  returns object size; the helper must return 8 for a String *slot* while the
-  object itself is `value_size`. Verify the String header-size self-calibration
-  (`v2_string_object_header?`) is not disturbed.
+- **String repr — VERIFIED 2026-06-16.** `type_size(String)` falls to the
+  `ref_fallback` branch (`ast_to_hir.cr:38980`) and returns `pointer_word_bytes`
+  (8); MIR `mir_field_storage_size` returns 8 via its explicit `STRING` case. So
+  the String *field* slot is already 8 on BOTH sides — the CROSS row is a LABEL
+  divergence (`InlineBytes` vs `PointerReference`), closed by step 1b without any
+  size change. The String OBJECT is `value_size` bytes behind that pointer; keep
+  the header-size self-calibration (`v2_string_object_header?`) undisturbed.
 - **Freeze ordering (step 2 dependency).** The repr bit must be set at the SAME
   fixed point as final align; setting it earlier re-introduces the B1a
   mid-lowering unsound state. Step 1 writes the bit; step 2 freezes it.

@@ -2294,6 +2294,23 @@ ABI-0d. (2026-06-16, SHIPPED — Frontier SDD) Wrote `docs/abi_struct_value_sdd.
    freeze ordering (bit set at final-align fixed point, NOT earlier); late-mono types get the
    bit at registration. Next: ABI-1 (single `layout_of`, all 3 phases read).
 
+ABI-1 (PLAN, design-corrected 2026-06-16 — step-1 reconnaissance mini-Quadr). The SDD's
+   "MIR registry owns repr, all 3 phases read it" is WRONG for the HIR reader: verified
+   `field_storage_size` runs INSIDE `align_all_class_ivars` (ast_to_hir.cr:28124), a pure-HIR
+   pass that completes BEFORE the MIR registry is populated → a registry-owned bit is
+   unreadable at the earliest (offset-producing) site. CORRECTED ownership: single source =
+   a PURE PREDICATE `LayoutContract.inline_value?(kind, size, name, is_lib)` callable in all 3
+   phases, MEMOIZED as a bit on MIR `Type` for MIR/LLVM (cache, not authority). Also verified:
+   `type_size(String)`→ref_fallback→8 (ast_to_hir.cr:38980) == MIR STRING→8, so the String
+   field-slot CROSS row is LABEL-only (InlineBytes vs PointerReference), NOT a size bug;
+   real size mismatches are container-element/late-generic (0a finding corroborated). SPLIT
+   step 1 (smallest/safest first, each its own commit+gate): 1a = pure predicate + MIR memo
+   (ADDITIVE, no reader change, SAFE); 1b = unify LayoutProbe storage LABEL via shared repr
+   classifier (drives CROSS label rows→0, zero size change); 1c = container-element
+   whitelist (llvm_backend.cr:2796) → `elem_type.inline_value?` (lone CAUTION size flip).
+   Big-bang reader flip judged VULNERABLE (Adversary). Docs corrected in
+   `docs/abi_struct_value_sdd.md` §3/§6/§7. Next: code ABI-1a.
+
 0. (2026-06-02) M4h family root-caused + narrow fix landed (`2444b2e0`, COMPLETED not
    VERIFIED). The s2b `union_all_reference_types?` SIGSEGV is a short-TypeRef Hash value
    confusion: the resolver minted a SHORT ghost identity for compiler-internal `MIR::X`/`HIR::X`
