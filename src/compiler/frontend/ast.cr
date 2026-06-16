@@ -1272,8 +1272,18 @@ module Adamas
 
         getter operator : Slice(UInt8) # -, !, ~, +, etc.
         getter operand : ExprId
+        # V2 BOOTSTRAP: own the operator bytes to bypass Slice corruption.
+        # The incoming Slice(UInt8) points into the lexer/macro-reparse source
+        # buffer, which can be freed/reused between parse and HIR lowering
+        # (e.g. the transient macro `reparse` output buffer). Copying into a
+        # GC-managed String at construction time — while the source slice is
+        # still valid — keeps `operator` readable at lowering. Mirrors the
+        # NumberNode.parsed_int pattern.
+        @operator_str : String
 
-        def initialize(@span : Span, @operator : Slice(UInt8), @operand : ExprId)
+        def initialize(@span : Span, operator : Slice(UInt8), @operand : ExprId)
+          @operator_str = String.new(operator)
+          @operator = @operator_str.to_slice
         end
       end
 

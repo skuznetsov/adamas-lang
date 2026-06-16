@@ -12409,10 +12409,21 @@ module Adamas::HIR
     end
 
     private def safe_unary_operator_string(node : Adamas::Compiler::Frontend::UnaryNode) : String
-      # Prefer source-span extraction over reading node.operator fields.
-      # node.operator is a Slice(UInt8) whose heap-struct pointer can be
-      # corrupted under deep force_lower recursion; .to_unsafe/.size then
-      # dereference junk even after pointerof(slice) range guards.
+      # node.operator owns its bytes (copied into a GC String at construction —
+      # see UnaryNode#initialize), so it is reliable even under deep force_lower
+      # recursion and for macro-reparsed nodes. Prefer it.
+      #
+      # The source-span fallback below must NOT take priority: a macro-reparsed
+      # node's span offsets are relative to the transient reparse buffer, but
+      # source_for_arena(@arena) returns the main file source. Reading the main
+      # source at those offsets yields wrong-but-non-empty text (e.g. a single
+      # garbage letter), which then lowers `-1` as `1.<garbagechar>()` and aborts
+      # at runtime with STUB CALLED. This broke String::CHAR_TO_DIGIT and every
+      # non-decimal `to_i(base)`.
+      if op = safe_slice_to_string(node.operator)
+        return op unless op.empty?
+      end
+
       if source = source_for_arena(@arena)
         start = node.span.start_offset
         if start >= 0 && start < source.bytesize
@@ -12432,7 +12443,7 @@ module Adamas::HIR
         end
       end
 
-      safe_slice_to_string(node.operator) || ""
+      ""
     end
 
     private def unary_operator_matches?(node : Adamas::Compiler::Frontend::UnaryNode, op : Char) : Bool
@@ -23333,7 +23344,17 @@ module Adamas::HIR
         return
       end
 
-      if raw_text = macro_if_raw_text(node)
+      # The lightweight flag-text path (expand_flag_macro_text) does not thread
+      # macro locals such as `{% table = ... %}` into later `{{ table.splat }}`
+      # interpolations. When a branch weaves a local into an interpolation
+      # (e.g. the stdlib String::CHAR_TO_DIGIT table builder), skip the
+      # flag-text path and fall through to the condition-evaluating path below,
+      # which routes such branches through the full local-threading expander.
+      branch_needs_threading =
+        macro_branch_needs_local_threading?(node.then_body) ||
+          ((eb = node.else_body) ? macro_branch_needs_local_threading?(eb) : false)
+
+      if !branch_needs_threading && (raw_text = macro_if_raw_text(node))
         if filter = env_get("DEBUG_MACRO_LITERAL_CLASS")
           if filter == "1" || class_name.includes?(filter)
             if raw_text.includes?("def self.open") || raw_text.includes?("def open")
@@ -23398,7 +23419,10 @@ module Adamas::HIR
 
       result = try_evaluate_macro_condition(node.condition)
       if result == true
-        process_macro_body_in_class(node.then_body, class_name, ivars, offset_ref, init_capture)
+        unless macro_branch_needs_local_threading?(node.then_body) &&
+               process_threaded_macro_branch_in_class(node.then_body, class_name, ivars, offset_ref, init_capture)
+          process_macro_body_in_class(node.then_body, class_name, ivars, offset_ref, init_capture)
+        end
       elsif result == false
         if else_node = node.else_body
           else_ast = @arena[else_node]
@@ -23406,7 +23430,10 @@ module Adamas::HIR
           when Adamas::Compiler::Frontend::MacroIfNode
             process_macro_if_in_class(else_ast, class_name, ivars, offset_ref, init_capture)
           else
-            process_macro_body_in_class(else_node, class_name, ivars, offset_ref, init_capture)
+            unless macro_branch_needs_local_threading?(else_node) &&
+                   process_threaded_macro_branch_in_class(else_node, class_name, ivars, offset_ref, init_capture)
+              process_macro_body_in_class(else_node, class_name, ivars, offset_ref, init_capture)
+            end
           end
         end
       else
@@ -24169,6 +24196,128 @@ module Adamas::HIR
         STDERR.puts "[BEGIN_MACRO_CLASS] class=#{class_name} phase=body_done idx=#{begin_idx}" if trace_begin_macro
       end
       STDERR.puts "[BEGIN_MACRO_CLASS] class=#{class_name} phase=leave" if trace_begin_macro
+    end
+
+    # Does a selected macro-if branch body weave a macro local into a later
+    # interpolation? i.e. it holds both a `{% local = ... %}` statement piece
+    # and a `{{ ... }}` interpolation piece. Such bodies (e.g. the stdlib
+    # `String::CHAR_TO_DIGIT` table builder) require the full local-threading
+    # expander; the lighter flag-text path drops the local and the
+    # interpolation collapses (a splat of a missing array yields one element).
+    private def macro_branch_needs_local_threading?(body_id : ExprId) : Bool
+      body_node = @arena[body_id]
+      return false unless body_node.is_a?(Adamas::Compiler::Frontend::MacroLiteralNode)
+      has_local_assign = false
+      has_interpolation = false
+      body_node.pieces.each do |piece|
+        next unless piece.kind == Adamas::Compiler::Frontend::MacroPiece::Kind::Expression
+        expr_id = piece.expr
+        next unless expr_id
+        inner = @arena[expr_id]
+        if inner.is_a?(Adamas::Compiler::Frontend::MacroExpressionNode)
+          inner = @arena[inner.expression]
+        end
+        case inner
+        when Adamas::Compiler::Frontend::AssignNode,
+             Adamas::Compiler::Frontend::BeginNode
+          # `{% x = ... %}` (single) or a multi-statement `{% ... %}` block.
+          has_local_assign = true
+        else
+          has_interpolation = true
+        end
+      end
+      has_local_assign && has_interpolation
+    end
+
+    # Expand a class-body macro branch through the full macro expander (which
+    # threads macro locals such as `{% table = ... %}` into later
+    # `{{ table.splat }}` interpolations) and register the resulting members.
+    # Mirrors process_begin_macro_if_in_class but works on an already-selected
+    # branch body (the chosen branch of a compile-time-evaluable
+    # `{% if compare_versions(...) %}`). Returns true if it handled the body.
+    private def process_threaded_macro_branch_in_class(
+      body_id : ExprId,
+      class_name : String,
+      ivars : Array(IVarInfo)?,
+      offset_ref : Pointer(Int32)?,
+      init_capture : InitParamsCapture?,
+    ) : Bool
+      body_node = @arena[body_id]
+      return false unless body_node.is_a?(Adamas::Compiler::Frontend::MacroLiteralNode)
+
+      expander = macro_expander_for_current_context
+      owner_type = macro_owner_type_for(class_name)
+      output = expander.expand_top_level_text(body_id, owner_type: owner_type, scope: owner_type.try(&.scope))
+      return true if output.strip.empty?
+
+      expanded_id = expander.reparse_output(wrap_class_body_macro_output(output), body_id)
+      return true if expanded_id.invalid?
+
+      expanded_node = @arena[expanded_id]
+      return true unless expanded_node.is_a?(Adamas::Compiler::Frontend::ClassNode)
+
+      body = expanded_node.body || [] of ExprId
+      register_expanded_class_body_members(body, class_name, ivars, offset_ref, init_capture)
+      true
+    end
+
+    # Register the members produced by expanding a class body through the full
+    # macro expander. Shared by the threaded macro-branch path; the node-kind
+    # dispatch mirrors process_begin_macro_if_in_class.
+    private def register_expanded_class_body_members(
+      body : Array(ExprId),
+      class_name : String,
+      ivars : Array(IVarInfo)?,
+      offset_ref : Pointer(Int32)?,
+      init_capture : InitParamsCapture?,
+    )
+      body.each do |expr_id|
+        expr_node = @arena[expr_id]
+        case expr_node
+        when Adamas::Compiler::Frontend::DefNode
+          register_class_macro_def_from_expansion(expr_node, class_name, ivars, offset_ref, init_capture)
+        when Adamas::Compiler::Frontend::MacroIfNode
+          process_macro_if_in_class(expr_node, class_name, ivars, offset_ref, init_capture)
+        when Adamas::Compiler::Frontend::MacroForNode
+          process_macro_for_in_class(expr_node, class_name, ivars, offset_ref, init_capture)
+        when Adamas::Compiler::Frontend::MacroLiteralNode
+          process_macro_literal_in_class(expr_node, class_name, ivars, offset_ref, init_capture)
+        when Adamas::Compiler::Frontend::ClassNode
+          nested_name = (safe_slice_to_string(expr_node.name) || "")
+          full_nested_name = "#{class_name}::#{nested_name}"
+          register_class_with_name(expr_node, full_nested_name)
+        when Adamas::Compiler::Frontend::EnumNode
+          nested_name = (safe_slice_to_string(expr_node.name) || "")
+          full_nested_name = "#{class_name}::#{nested_name}"
+          register_enum_with_name(expr_node, full_nested_name)
+        when Adamas::Compiler::Frontend::ModuleNode
+          nested_name = (safe_slice_to_string(expr_node.name) || "")
+          full_nested_name = "#{class_name}::#{nested_name}"
+          register_nested_module(expr_node, full_nested_name)
+        when Adamas::Compiler::Frontend::GetterNode
+          register_accessors_in_class(expr_node, class_name, ivars, offset_ref)
+        when Adamas::Compiler::Frontend::SetterNode
+          register_accessors_in_class(expr_node, class_name, ivars, offset_ref)
+        when Adamas::Compiler::Frontend::PropertyNode
+          register_accessors_in_class(expr_node, class_name, ivars, offset_ref)
+        when Adamas::Compiler::Frontend::ConstantNode
+          record_constant_definition(class_name, expr_node, @arena)
+        when Adamas::Compiler::Frontend::AssignNode
+          target = @arena[expr_node.target]
+          if target.is_a?(Adamas::Compiler::Frontend::ConstantNode)
+            record_constant_definition(class_name, (safe_slice_to_string(target.name) || ""), expr_node.value, @arena)
+          end
+        when Adamas::Compiler::Frontend::CallNode
+          register_class_members_from_expansion(
+            class_name,
+            expr_id,
+            Set(String).new,
+            Set(String).new,
+            ivars,
+            offset_ref
+          )
+        end
+      end
     end
 
     private def register_accessors_in_class(
@@ -60814,6 +60963,18 @@ module Adamas::HIR
     end
 
     private def unary_operator_text(node : Adamas::Compiler::Frontend::UnaryNode) : String
+      # node.operator owns its bytes (copied into a GC String at construction —
+      # see UnaryNode#initialize), so it is reliable for every arena, including
+      # macro-reparsed nodes whose span offsets are relative to a transient
+      # reparse buffer that source_for_arena(@arena) does not return. Reading the
+      # main source at those mismatched offsets returns a wrong-but-non-empty
+      # character, which lowers `-1` as `1.<garbagechar>()` and aborts at runtime
+      # (STUB CALLED). So prefer node.operator; keep source-span extraction only
+      # as a fallback for the rare case where the slice is empty.
+      if op = safe_slice_to_string(node.operator)
+        return op unless op.empty?
+      end
+
       source = source_for_arena(@arena) || source_text_for_arena_or_file(@arena)
       if source
         if operand_arena = arena_for_expr?(node.operand)
@@ -79081,6 +79242,16 @@ module Adamas::HIR
       receiver_id : ValueId?,
       call_has_splat : Bool,
     ) : Tuple(Array(ValueId), Bool)
+      # `Slice(T).literal(*args)` is a primitive (see lower_primitive_slice_literal).
+      # Its arguments must arrive as individual elements so each becomes one slice
+      # element. Packing them into the splat Tuple here would collapse the literal
+      # to a single-element slice holding the tuple (wrong @size and garbage data),
+      # breaking e.g. String::CHAR_TO_DIGIT and all non-decimal `to_i(base)`.
+      if method_name == "literal" && full_method_name &&
+         @module.primitive_for(full_method_name) == "slice_literal"
+        return {args, false}
+      end
+
       if call_has_splat && args.size == 1
         if desc = @module.get_type_descriptor(ctx.type_of(args.first))
           if desc.kind == TypeKind::Tuple || desc.name.starts_with?("Tuple(")

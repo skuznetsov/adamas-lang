@@ -910,6 +910,14 @@ module Adamas
                 entries[key] = evaluate_to_macro_value(entry.value, context)
               end
               return MacroNamedTupleValue.new(entries)
+            elsif node.is_a?(Frontend::RangeNode)
+              # A range used as a value (e.g. `(0...256).map { ... }`) materializes
+              # to an array of its integer elements so Array-style block methods
+              # (map/select/reject/each) and indexing work.
+              if values = expand_range_to_macro_values(node, context)
+                return MacroArrayValue.new(values)
+              end
+              return macro_nil_value
             elsif node.is_a?(Frontend::BinaryNode)
               return evaluate_binary_to_macro_value(node, context)
             elsif node.is_a?(Frontend::TernaryNode)
@@ -1513,8 +1521,63 @@ module Adamas
           case member
           when "map", "select", "reject"
             return evaluate_macro_block_map(receiver, member, block, context)
+          when "each", "each_with_index"
+            return evaluate_macro_block_each(receiver, block, context)
           else
             receiver.call_method(member, args, named_args)
+          end
+        end
+
+        # `array.each { |x| ... }` / `each_with_index { |x, i| ... }`.
+        # Mirrors original Crystal `ArrayLiteral#each` (macros/methods.cr): the
+        # block body runs with STATEMENT semantics (via `evaluate_expression`)
+        # so mutating statements inside the body — notably `arr[i] = value` —
+        # take effect. Returns nil like the original.
+        private def evaluate_macro_block_each(
+          receiver : MacroValue,
+          block : Frontend::BlockNode,
+          context : Context
+        ) : MacroValue
+          case receiver
+          when MacroArrayValue
+            receiver.elements.each_with_index do |elem, idx|
+              values = [elem] of MacroValue
+              if block.params && block.params.not_nil!.size > 1
+                values << MacroNumberValue.new(idx.to_i64)
+              end
+              evaluate_block_body_statements(block, context, values)
+            end
+          when MacroNamedTupleValue
+            receiver.entries.each do |key, value|
+              values = [MacroIdValue.new(key).as(MacroValue), value]
+              evaluate_block_body_statements(block, context, values)
+            end
+          end
+          macro_nil_value
+        end
+
+        # Evaluate a block body with statement semantics: each body expression
+        # goes through `evaluate_expression`, so assignments (`x = ...`) and
+        # index assignments (`arr[i] = ...`) are applied. Block params are bound
+        # in a scoped context; because `with_variable` shallow-dups the variable
+        # map (sharing MacroValue objects), in-place mutations of a captured
+        # container persist to the enclosing scope, matching original Crystal.
+        private def evaluate_block_body_statements(
+          block : Frontend::BlockNode,
+          context : Context,
+          values : Array(MacroValue)
+        ) : Nil
+          scoped = context
+          if params = block.params
+            params.each_with_index do |param, idx|
+              next unless param_name = param.name
+              value = values[idx]? || macro_nil_value
+              scoped = scoped.with_variable(intern_name(param_name), value)
+            end
+          end
+
+          block.body.each do |expr_id|
+            evaluate_expression(expr_id, scoped)
           end
         end
 
@@ -2101,6 +2164,17 @@ module Adamas
             return evaluate_expression(node.expression, context)
           end
 
+          # A multi-statement `{% ... %}` directive parses to a sequence of
+          # statements wrapped in a BeginNode. Evaluate each with statement
+          # semantics (so assignments and side-effecting calls apply) and emit
+          # nothing — a `{% %}` directive itself produces no output text.
+          if node.is_a?(Frontend::BeginNode)
+            node.body.each do |stmt_id|
+              evaluate_expression(stmt_id, context)
+            end
+            return ""
+          end
+
           # Handle assignment in macro expressions: {% var = expr %}
           if node.is_a?(Frontend::AssignNode)
             target = node_for_expr?(node.target)
@@ -2294,6 +2368,19 @@ module Adamas
           value = evaluate_to_macro_value(value_expr, context)
 
           case container
+          when MacroArrayValue
+            # arr[i] = value (mirrors original Crystal `ArrayLiteral#[]=`).
+            # In the macro statement path `arr[i] = v` parses to an AssignNode
+            # with an IndexNode target (parse_op_assign does not rewrite it to a
+            # `[]=` call the way parse_statement does), so the in-place mutation
+            # must happen here. The array is mutated through its shared reference
+            # so the change is visible to every later `{{ arr ... }}` read.
+            if key.is_a?(MacroNumberValue)
+              idx = key.to_i.to_i32
+              elements = container.elements
+              idx += elements.size if idx < 0
+              elements[idx] = value if 0 <= idx < elements.size
+            end
           when MacroHashValue
             container.assign(key, value)
           when MacroNamedTupleValue
@@ -3458,7 +3545,7 @@ module Adamas
             iterable_node.elements.map { |elem_id| evaluate_to_macro_value(elem_id, context) }
           when Frontend::RangeNode
             # Range: 1..10
-            expand_range_to_macro_values(iterable_node)
+            expand_range_to_macro_values(iterable_node, context)
           when Frontend::IdentifierNode
             name = Frontend.node_literal_string(iterable_node)
             if name && (macro_val = context.variables[name]?)
@@ -3791,14 +3878,16 @@ module Adamas
         end
 
         # Expand range to array of MacroNumberValue
-        private def expand_range_to_macro_values(range_node : Frontend::RangeNode) : Array(MacroValue)?
+        private def expand_range_to_macro_values(range_node : Frontend::RangeNode, context : Context? = nil) : Array(MacroValue)?
           range_begin = range_node.begin_expr
           range_end = range_node.end_expr
 
-          # Evaluate bounds
-          empty_context = Context.new(flags: @flags)
-          start_str = evaluate_expression(range_begin, empty_context)
-          end_str = evaluate_expression(range_end, empty_context)
+          # Evaluate bounds in the caller's context when available so that
+          # variable bounds (e.g. `(0...n)`) resolve; fall back to an empty
+          # context for the legacy literal-only callers.
+          eval_context = context || Context.new(flags: @flags)
+          start_str = evaluate_expression(range_begin, eval_context)
+          end_str = evaluate_expression(range_end, eval_context)
 
           start_val = start_str.to_i?
           end_val = end_str.to_i?

@@ -15405,9 +15405,24 @@ current_token.kind == Token::Kind::Identifier &&
             @expect_context = "macro expression"
             @in_macro_expression = true # Enable newline skipping
 
-            # Parse a full expression allowing assignment inside {% %}
-            # This mirrors macro expression semantics (e.g., {% x = 1 %})
-            expr = parse_macro_control_assign_with_recovery(start_token)
+            # Parse one or more statements until the closing `%}`. A single
+            # `{% ... %}` directive may hold multiple statements separated by
+            # newlines or semicolons (e.g. the stdlib `String::CHAR_TO_DIGIT`
+            # table builder). Parse them all instead of keeping only the first
+            # and fast-forwarding (dropping) the rest.
+            stmts = [] of ExprId
+            stmts << parse_macro_control_assign_with_recovery(start_token)
+
+            loop do
+              skip_statement_end
+              break if macro_closing_sequence?(current_token)
+              break if current_token.kind == Token::Kind::EOF
+              before_parse = @index
+              stmts << parse_macro_control_assign_with_recovery(start_token)
+              # Advance guard: if a malformed statement made no progress, stop to
+              # avoid an infinite loop (the fast-forward below cleans up to `%}`).
+              break if @index == before_parse
+            end
 
             # CRITICAL: Skip whitespace BEFORE resetting @in_macro_expression flag
             # This allows newlines to be skipped (matching original parser behavior)
@@ -15427,6 +15442,9 @@ current_token.kind == Token::Kind::Identifier &&
             skip_whitespace = newline_escape || right_trim
 
             macro_span = start_span.cover(closing_span)
+            # Wrap multiple statements in a BeginNode so the macro evaluator runs
+            # each in sequence; a single statement is emitted directly.
+            expr = stmts.size == 1 ? stmts.first : @arena.add_typed(BeginNode.new(macro_span, stmts))
             macro_expr_id = @arena.add_typed(MacroExpressionNode.new(macro_span, expr))
             piece = MacroPiece.expression(macro_expr_id, left_trim, right_trim, macro_span)
             {piece, MACRO_EFFECT_NONE, skip_whitespace}

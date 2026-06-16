@@ -738,6 +738,21 @@ module Adamas
               end
             end
             MacroNilValue.new
+          when "[]="
+            # arr[i] = value (mirrors original Crystal `ArrayLiteral#[]=`).
+            # The index must be an in-bounds integer (no auto-grow); the array
+            # is mutated in place so the change is visible through every
+            # reference sharing this object (e.g. a `table` captured across
+            # `each` block scopes). Returns the assigned value.
+            if (idx_arg = args[0]?) && idx_arg.is_a?(MacroNumberValue) && (val = args[1]?)
+              idx = idx_arg.to_i.to_i32
+              idx += @elements.size if idx < 0
+              if 0 <= idx < @elements.size
+                @elements[idx] = val
+                return val
+              end
+            end
+            MacroNilValue.new
           when "map"
             # Basic map - returns same array for now
             # Full implementation would need block support
