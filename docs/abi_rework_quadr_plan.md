@@ -1,14 +1,25 @@
 # ABI Rework — Quadrumvirate Plan (root-cause, not symptoms)
 
-Status: **PROPOSED plan, no behavior change in this commit.**
+Status: **STRATEGY doc. Step 0a (divergence assert) BUILT + MEASURED; steps
+1/3/5 still PROPOSED and require the Frontier SDD (step 0d) before coding.**
 Branch: `abi-rework` (off `main` @ 7f18f326).
 Owner directive: fix the root cause, not symptoms. Execute step-by-step, each
 step under its own mini-Quadrumvirate, its own commit, and the full gate.
 
-This document is the durable strategy reference. Per-step execution notes go in
-`TODO.md`; durable findings go in project memory. The named source of truth for
-the *why* is `mixed-memory-model-analysis` (Сказочник / Fable 5) and
+This document is the durable strategy reference; it is NOT a line-level
+execution spec for the central CAUTION steps (1 and 3) — those get a compact
+Frontier SDD (step 0d) first. Per-step execution notes go in `TODO.md`; durable
+findings go in project memory. The named source of truth for the *why* is
+`mixed-memory-model-analysis` (Сказочник / Fable 5) and
 `docs/layout_freeze_proposal.md` (B0/B1a/B1b/B1c registry findings).
+
+> **Review reconciliation (2026-06-16, GPT adversarial pass, claims verified):**
+> §1.1's "diagnostic logger, does not assert on divergence" describes the
+> *pre-step-0 baseline*. Step 0a (committed separately) adds the
+> `ADAMAS_LAYOUT_ASSERT` divergence assert; it stays env-gated and is a no-op on
+> the default path. The review's substantive points (step 1 needs an ownership
+> SDD; step 3's verifier surface is wider than `store_size==slot_size`; step 5
+> is two fault lines) are folded into §3 below.
 
 ---
 
@@ -157,24 +168,85 @@ actual divergence frequency.
 
 ---
 
+## 2.7 Step 0a measurement (premise confirmed + metric sharpened)
+
+Built the env-gated divergence assert (`ADAMAS_LAYOUT_ASSERT`) and ran it on a
+hello-world compile (`ADAMAS_LAYOUT_PROBE=1 ADAMAS_LAYOUT_ASSERT=1`):
+
+- **18 CROSS-phase + 3 INTRA-phase storage-label divergences.** The HYP-B
+  premise ("the 3 oracles disagree") is **confirmed**, not refuted.
+- But the **label** signal is partly NOISE: HIR labels an 8-byte String-pointer
+  slot `InlineBytes` while LLVM labels the same 8-byte pointer `PointerReference`
+  — same behavior, different name. Driving labels to identical strings ≡ doing
+  step 1 (unifying the taxonomy), so the label count is a *circular* falsifier.
+- The **operational** signal is `slot_size` vs `access_size`: **22 distinct
+  `(type, phase, context)` rows have slot≠access.** They concentrate in
+  `llvm/container-element` (`Array(Row)` slot=8 acc=24, `Fiber` slot=8 acc=144,
+  `Segment64` slot=8 acc=56 …). VERIFIED at `llvm_backend.cr:2781`: non-whitelisted
+  structs get a `pointer_word_bytes` (8) slot — this is **by-design
+  PointerCarrier indirection** (8-byte pointer → N-byte value behind it), NOT a
+  direct corruption on its own.
+- **Sharpened metric:** the corruption fires only when a *producer* and a
+  *consumer* DISAGREE on whether a given `(type, context)` slot is a pointer or
+  an inline value (the `cb25a911` late-generic stride family: realloc 16 vs store
+  20 vs read 24). So the drivable invariant is **producer/consumer agreement per
+  `(type, context)`**, not bare `slot==access` and not label equality.
+
+This independently corroborates the review's claim #4 (the verifier surface is
+wider than field-slot `store_size==slot_size`) and motivates the step-0d SDD.
+
+---
+
 ## 3. Sequencing (this branch executes 0,1,2,3,5; step 4 isolation; C separate)
 
 Each step: its own mini-Quadr, its own commit, gate =
 `combined 31/31 + originals 158/158 + p2_generated_stage2_* + s2b probe`
-(plus the glob-probe A/B specifically for step 3).
+(plus the per-step reducer roster, see step 3).
+
+Step 0 is split (per review) into independently-committable sub-steps; step 5 is
+split into its two distinct fault lines.
 
 | # | Step | Tier | Mini-Quadr falsifier |
 |---|------|------|----------------------|
-| **0** | Divergence-assert in LayoutProbe + `ADAMAS_FORCE_STRATEGY=gc` bisector | diagnostic, zero risk | hello-world: how many divergences? 0 → HYP-B premise false |
-| **1** | Single `layout_of(type)→{repr, offsets}`; all 3 phases READ it (2796 whitelist → registry property) | CAUTION | probe: 0 divergence rows |
-| **2** | Registry freeze-point + assert after the final align, before MIR | CAUTION | any class_info write after freeze = abort |
-| **3** | `FieldAddr`(borrow=GEP) vs `FieldGet`(value) split + MIR verifier `store_size == slot_size` | CAUTION | glob-probe A/B: repr-flip segv → 0 (#4 should die here) |
-| **5** | Union all-ref-as-ptr → registry property; TypeRef short→FQ on MIR entry | CAUTION | M4h reducer |
+| **0a** | Divergence-assert in LayoutProbe (report + abort-on-CROSS) | diagnostic, zero risk | hello-world divergences? 0 → premise false. **Result: 18 CROSS + 22 size-mismatch → premise CONFIRMED** |
+| **0b** | `ADAMAS_FORCE_STRATEGY=gc` one-line bisector in MemoryStrategyAssigner | diagnostic, zero risk | force-GC makes a layout bug vanish → it was a strategy bug |
+| **0c** | Real type sizes in `MemoryStrategyAssigner.estimate_size` (today `DEFAULT_TYPE_SIZE=64`) | SAFE | Stack/ARC decisions stop riding fictional sizes; suite unchanged |
+| **0d** | **Frontier SDD** for the struct value ABI (gate before step 1) | doc | names repr-owner, offsets-owner, slot/access semantics, admitted/rejected surface, guard-only types |
+| **1** | Single `layout_of(type)→{repr, offsets}` per the SDD ownership; all 3 phases READ it (2796 whitelist → registry property) | CAUTION | probe: 0 CROSS rows AND no NEW slot/access mismatch class |
+| **2** | Registry freeze-point at the final-align seam: **report-only mode first, then abort**; explicit late-monomorphization-after-freeze policy | CAUTION | any class_info write after freeze in abort mode = abort |
+| **3** | `FieldAddr`(borrow=GEP) vs `FieldGet`(value) split + MIR verifier over the **full producer/consumer surface** (below) | CAUTION | **reducer roster** (below): repr-flip segv → 0 (#4 *should* die here) |
+| **5a** | Union all-ref-as-ptr → registry property | CAUTION | M4h reducer |
+| **5b** | TypeRef short→FQ on MIR entry (type identity, distinct fault line from 5a) | CAUTION | M4h reducer + no phantom TypeRef |
 | **4** | Constructors → inline + explicit CopyStruct (value semantics; kills null-self) | **isolation branch** | null-self reducer; per-type incremental |
 | **C** | Closure ABI: retire legacy `@__closure_cell_N`, then yield-carrier | separate, pairs with fibers (#3) | spawn-in-loop reducer `b8b482ba` |
 
-**Key bet:** #4 dies at step 3, BEFORE the expensive step 4. If not (step-3
-falsifier fires), pull step 4 earlier.
+### Step 3 — producer/consumer surface (verifier must cover all)
+
+Field-slot `store_size==slot_size` is necessary but NOT sufficient (the 0a
+measurement: mismatches concentrate in containers/late-templates, not fields).
+The verifier and the FieldAddr/FieldGet split must cover every value boundary:
+
+- `FieldSet` / `FieldGet` / `FieldAddr` (borrow)
+- `IndexSet` / `ArraySet` / `unsafe_fetch` / `Array#<<` late-generic templates
+- `return`, call `args`, plain `assignment`
+- closure capture (env write/read)
+- union payload store/load
+- `CopyStruct` (once step 4 lands)
+
+### Step 3 — reducer roster (acceptance, not a single test)
+
+`#4 dies at step 3` is a **HYPOTHESIS, not a promise** (trust {F:0.7,R:0.7}). A
+single glob-probe A/B is insufficient acceptance. The roster:
+
+- `stage2_dir_glob_dir_probe.cr` (the non-det repr-flip A/B)
+- `operator_slice_corrupt_guard_repro.sh` (3230c001)
+- `array_late_generic_union_stride_repro.sh` (cb25a911)
+- `pointer_new_value` load (421bed2f)
+- macro Slice-literal table (`9f5e4acc` / `c92aa559`)
+- produced-stage2 + s2b probes (`p2_generated_stage2_*`, s2b build)
+
+**Key bet:** #4 dies at step 3, BEFORE the expensive step 4. If the roster still
+segfaults after step 3, the bet is refuted → pull step 4 earlier.
 
 ---
 
