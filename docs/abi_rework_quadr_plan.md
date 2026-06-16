@@ -34,6 +34,22 @@ unequal in remaining effort:
   is dual-path retirement + the raw-callback/yield carrier. Pairs naturally
   with the fibers task.
 
+### Guiding invariant — hybrid memory model (binds every step)
+
+This rework exists IN SERVICE of the hybrid model, not against it. GC stays
+minimal; the load belongs on Stack/Slab/ARC/AtomicARC. Deterministic, verified
+layout is precisely what makes those tighter strategies SAFE to use — fixing the
+3-oracle divergence is how non-GC strategies stop being landmines. Therefore:
+
+- **No step may "fix" a repr-flip / layout bug by routing it to GC** (or by
+  expanding GC use). That masks the bug, it does not cure it. The cure is
+  correct layout (single oracle + freeze + verifier) so the value is right under
+  Stack/Slab/ARC too.
+- GC env-var / allocator effects are treated as **layout-masking artifacts**
+  until proven otherwise (see step 0b's asymmetric reading).
+- Step 4's inline-struct flip is about **value semantics**, independent of the
+  GC; it must not increase GC reliance.
+
 ---
 
 ## 1. Verified current state (code anchors, checked 2026-06-16)
@@ -209,7 +225,7 @@ split into its two distinct fault lines.
 | # | Step | Tier | Mini-Quadr falsifier |
 |---|------|------|----------------------|
 | **0a** | Divergence-assert in LayoutProbe (report + abort-on-CROSS) | diagnostic, zero risk | hello-world divergences? 0 → premise false. **Result: 18 CROSS + 22 size-mismatch → premise CONFIRMED** |
-| **0b** | `ADAMAS_FORCE_STRATEGY=gc` one-line bisector in MemoryStrategyAssigner | diagnostic, zero risk | force-GC makes a layout bug vanish → it was a strategy bug |
+| **0b** | `ADAMAS_FORCE_STRATEGY=gc` one-line bisector in MemoryStrategyAssigner | diagnostic, zero risk | asymmetric: *persists* under force-GC ⇒ NOT a strategy bug; *vanishes* ⇒ ambiguous (strategy bug OR GC-masked layout bug — hybrid model: GC effects are usually layout-masking) |
 | **0c** | Real type sizes in `MemoryStrategyAssigner.estimate_size` (today `DEFAULT_TYPE_SIZE=64`) | SAFE | Stack/ARC decisions stop riding fictional sizes; suite unchanged |
 | **0d** | **Frontier SDD** for the struct value ABI (gate before step 1) | doc | names repr-owner, offsets-owner, slot/access semantics, admitted/rejected surface, guard-only types |
 | **1** | Single `layout_of(type)→{repr, offsets}` per the SDD ownership; all 3 phases READ it (2796 whitelist → registry property) | CAUTION | probe: 0 CROSS rows AND no NEW slot/access mismatch class |
@@ -271,10 +287,20 @@ segfaults after step 3, the bet is refuted → pull step 4 earlier.
 
 - Hook real type sizes into `MemoryStrategyAssigner.estimate_size` (today
   `DEFAULT_TYPE_SIZE=64` for all user types — Stack-vs-ARC decided on fictional
-  sizes).
-- `ADAMAS_FORCE_STRATEGY=gc` one-line bisector (all → GC): "bug vanishes under
-  force-GC" instantly separates a memory-strategy bug from a layout bug. Runtime
-  equivalent today is only `DYLD_INSERT_LIBRARIES=/tmp/noopfree.dylib`.
+  sizes). **NOTE (step 0c reassessment):** `TypeDescriptor` carries no size, so a
+  "real size" must be computed from ClassInfo ivars — i.e. it *is* a layout
+  oracle. Building one now would spawn the 4th oracle the SDD warns against;
+  instead 0c CONSUMES step 1's unified `layout_of`. Deferred to a post-step-1
+  follow-up, not a step-0 lever.
+- `ADAMAS_FORCE_STRATEGY=gc` one-line bisector (all → GC). **DIAGNOSTIC ONLY,
+  never a fix — and read it under the hybrid memory model:** GC stays minimal,
+  "expand GC" is a forbidden remedy, and GC env effects are USUALLY
+  LAYOUT-MASKING artifacts (GC's larger/zeroed/aligned allocations swallow an
+  OOB write that a tighter strategy would expose). So the inference is
+  ASYMMETRIC: *persists* under force-GC ⇒ NOT a strategy bug (reliable);
+  *vanishes* ⇒ AMBIGUOUS (real strategy bug OR a masked layout bug — confirm via
+  LayoutProbe / the step-3 verifier). Runtime equivalent today is only
+  `DYLD_INSERT_LIBRARIES=/tmp/noopfree.dylib`.
 - Reliability rule (ARC is the riskiest mode): ARC/Stack only on PROVEN
   non-escape; any doubt → GC. Unknown HIR opcode defaults to HeapEscape
   (fail-safe), never "didn't see it → not escape" (fail-open).
