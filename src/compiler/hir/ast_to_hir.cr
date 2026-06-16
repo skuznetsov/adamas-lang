@@ -72837,11 +72837,26 @@ module Adamas::HIR
       end
 
       # String#to_i intercept: convert string to integer via runtime helper (strtol-based).
-      # Crystal's to_i has many default args (base, whitespace, etc.) — match any args count.
+      # Crystal's to_i has many default args; the first positional parameter is
+      # `base`, which apply_default_args (above) has already materialized into
+      # args[0] (the explicit value or the default 10). Honor it via strtol's
+      # runtime base so non-decimal conversions like "ff".to_i(16) are correct;
+      # previously the base was dropped and everything parsed as decimal.
       if (method_name == "to_i" || method_name == "to_i32") && receiver_id
         recv_type = ctx.type_of(receiver_id)
         if recv_type == TypeRef::STRING || recv_type == TypeRef::POINTER
-          ext_call = ExternCall.new(ctx.next_id, TypeRef::INT32, "__adamas_string_to_i", [receiver_id])
+          if base_arg = args[0]?
+            base_i32 = base_arg
+            unless ctx.type_of(base_arg) == TypeRef::INT32
+              cast = Cast.new(ctx.next_id, TypeRef::INT32, base_arg, TypeRef::INT32)
+              ctx.emit(cast)
+              ctx.register_type(cast.id, TypeRef::INT32)
+              base_i32 = cast.id
+            end
+            ext_call = ExternCall.new(ctx.next_id, TypeRef::INT32, "__adamas_string_to_i_base", [receiver_id, base_i32])
+          else
+            ext_call = ExternCall.new(ctx.next_id, TypeRef::INT32, "__adamas_string_to_i", [receiver_id])
+          end
           ctx.emit(ext_call)
           ctx.register_type(ext_call.id, TypeRef::INT32)
           return ext_call.id

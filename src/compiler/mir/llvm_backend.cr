@@ -7556,6 +7556,16 @@ module Adamas::MIR
       emit_raw "  ret i32 %result\n"
       emit_raw "}\n\n"
 
+      # String#to_i(base) — strtol with a runtime base. Honors the base argument
+      # of String#to_i / to_i32 (the no-arg decimal case uses the variant above).
+      # strtol supports bases 2..36; base 62 (CHAR_TO_DIGIT62) is not handled here.
+      emit_raw "define i32 @__adamas_string_to_i_base(ptr %self, i32 %base) {\n"
+      emit_raw "  %data = getelementptr i8, ptr %self, i32 12\n"
+      emit_raw "  %val = call i64 @strtol(ptr %data, ptr null, i32 %base)\n"
+      emit_raw "  %result = trunc i64 %val to i32\n"
+      emit_raw "  ret i32 %result\n"
+      emit_raw "}\n\n"
+
       # String#to_i64 — convert Crystal String to Int64 via strtol
       emit_raw "define i64 @__adamas_string_to_i64(ptr %self) {\n"
       emit_raw "  %data = getelementptr i8, ptr %self, i32 12\n"
