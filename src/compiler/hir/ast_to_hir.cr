@@ -12408,10 +12408,27 @@ module Adamas::HIR
       snippet.byte_slice(start, finish - start)
     end
 
+    # Return node.operator as a String, but only when its slice length is
+    # plausible for an operator (1-4 bytes; the longest real ones are `->`,
+    # `&-`, both 2 bytes). The #4 repr-flip can leave a corrupt {ptr, size} in
+    # the slice slot (observed size ~311 with ptr in the binary image); calling
+    # String.new on such a slice memmoves past mapped memory and segfaults. By
+    # rejecting implausible sizes here, a corrupt slice falls through to the
+    # bounded source-span path instead of dereferencing garbage. Reading the
+    # slice's `.size` is safe (no deref of the bad pointer). Returns nil when
+    # the slice is unusable or empty so callers can use their source fallback.
+    private def operator_slice_to_string?(node : Adamas::Compiler::Frontend::UnaryNode) : String?
+      op_slice = node.operator
+      return nil unless op_slice.size > 0 && op_slice.size <= 4
+      op = safe_slice_to_string(op_slice)
+      return nil if op.nil? || op.empty?
+      op
+    end
+
     private def safe_unary_operator_string(node : Adamas::Compiler::Frontend::UnaryNode) : String
       # node.operator owns its bytes (copied into a GC String at construction —
       # see UnaryNode#initialize), so it is reliable even under deep force_lower
-      # recursion and for macro-reparsed nodes. Prefer it.
+      # recursion and for macro-reparsed nodes. Prefer it (length-guarded).
       #
       # The source-span fallback below must NOT take priority: a macro-reparsed
       # node's span offsets are relative to the transient reparse buffer, but
@@ -12420,8 +12437,8 @@ module Adamas::HIR
       # garbage letter), which then lowers `-1` as `1.<garbagechar>()` and aborts
       # at runtime with STUB CALLED. This broke String::CHAR_TO_DIGIT and every
       # non-decimal `to_i(base)`.
-      if op = safe_slice_to_string(node.operator)
-        return op unless op.empty?
+      if op = operator_slice_to_string?(node)
+        return op
       end
 
       if source = source_for_arena(@arena)
@@ -60970,9 +60987,11 @@ module Adamas::HIR
       # main source at those mismatched offsets returns a wrong-but-non-empty
       # character, which lowers `-1` as `1.<garbagechar>()` and aborts at runtime
       # (STUB CALLED). So prefer node.operator; keep source-span extraction only
-      # as a fallback for the rare case where the slice is empty.
-      if op = safe_slice_to_string(node.operator)
-        return op unless op.empty?
+      # as a fallback for the rare case where the slice is empty or corrupt.
+      # operator_slice_to_string? length-guards the slice so a #4 repr-flip
+      # corrupted slot (huge size) falls through instead of crashing in memmove.
+      if op = operator_slice_to_string?(node)
+        return op
       end
 
       source = source_for_arena(@arena) || source_text_for_arena_or_file(@arena)
