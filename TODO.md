@@ -2214,6 +2214,24 @@ pending-budget oracle.
    neither the CHAR_TO_DIGIT nor the to_i fix clears the 0aa pass3/lower_main Heisenbug
    (~4-8% on the 3-line glob probe). #4 frontier remains the repr-flip String-slot family.
 
+0a-side5. (2026-06-16, SHIPPED `3230c001` + test `c61b7913`) Found+fixed en route: one
+   consumer of the 0aa repr-flip. `9f5e4acc` made `unary_operator_text` /
+   `safe_unary_operator_string` prefer `safe_slice_to_string(node.operator)` over bounded
+   source-span extraction (needed for macro-reparsed `-1` / CHAR_TO_DIGIT / to_i(base)).
+   When the #4 String<->Slice repr-flip corrupts the operator slice slot (lldb-captured
+   `{ptr=0x100000000, size=311}`), `String.new(slice)` memmoves past mapped memory and
+   SIGSEGVs in force_lower of the Dir.glob path. Fix: new `operator_slice_to_string?`
+   length-guards `node.operator` (1-4 bytes; real operators <=2: `->`, `&-`) before
+   dereferencing; reading `.size` is safe (no deref). Corrupt huge-size slice now falls
+   through to the bounded source-span path. Keeps 9f5e4acc's macro-reparse correctness.
+   A/B (glob probe, N=40 standalone, ASLR on): operator-slice SIGSEGV 3/40 -> 0/40 (+0 in
+   30 lldb tries, +0 in a 60-iter hunt). Reducer
+   `regression_tests/operator_slice_corrupt_guard_repro.sh` (manual N-iter SIGSEGV guard).
+   Gates 158/158 + 31/31. NOTE: this is a CONSUMER guard restoring the crash-safety
+   9f5e4acc removed (regression fix), NOT a 0aa root fix — the producer repr-flip remains
+   open. Residual rare rc=1 (a separate non-segfault #4 manifestation, did not reproduce
+   in 60 tries) is the next thread on the 0aa frontier.
+
 0. (2026-06-02) M4h family root-caused + narrow fix landed (`2444b2e0`, COMPLETED not
    VERIFIED). The s2b `union_all_reference_types?` SIGSEGV is a short-TypeRef Hash value
    confusion: the resolver minted a SHORT ghost identity for compiler-internal `MIR::X`/`HIR::X`
