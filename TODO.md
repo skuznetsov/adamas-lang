@@ -2232,6 +2232,30 @@ pending-budget oracle.
    open. Residual rare rc=1 (a separate non-segfault #4 manifestation, did not reproduce
    in 60 tries) is the next thread on the 0aa frontier.
 
+=== ABI REWORK TRACK (branch `abi-rework`, plan `docs/abi_rework_quadr_plan.md`) ===
+Owner directive: fix the two ABIs at root, not symptoms; HYP-B safety-net first
+(divergence assert + freeze + verifier BEFORE the inline-constructor flip).
+Sequencing 0a→0b→0c→0d(SDD)→1→2→3→5a→5b; step 4 (inline flip) on an isolation
+branch; closure ABI (C) pairs with fibers. Each step: own mini-Quadr, own commit,
+gate = combined 31/31 + originals 158/158 + p2_generated_stage2_* + s2b probe.
+
+ABI-0a. (2026-06-16, SHIPPED — divergence assert) Env-gated `ADAMAS_LAYOUT_ASSERT`
+   in `LayoutProbe.check_divergence`: when two phases (or one phase twice) record a
+   different storage CLASS for the same `type_name`, emit a `DIVERGENCE\t<CROSS|INTRA>`
+   row; abort only on CROSS in mode 2. No-op on the default path (double-gated behind
+   `enabled?`/`assert_mode>0`). MEASUREMENT (hello-world, ASSERT=1): 18 CROSS + 3 INTRA
+   label-divergences (premise CONFIRMED — the 3 oracles disagree), and 22 distinct
+   `(type,phase,context)` rows with slot_size≠access_size, CONCENTRATED in
+   `llvm/container-element` (Array(Row) 8/24, Fiber 8/144, Segment64 8/56). VERIFIED at
+   `llvm_backend.cr:2781`: non-whitelisted structs get an 8-byte pointer slot — that
+   slot≠access is by-design PointerCarrier indirection, NOT a corruption by itself. The
+   real corruption is producer/consumer DISAGREEMENT per `(type,context)` (the cb25a911
+   stride family). NOTE: label-divergence is a circular falsifier for step 1 (driving
+   labels equal ≡ unifying the taxonomy = step 1 itself); the drivable metric is
+   producer/consumer agreement. Gate: full suite (in progress at commit time).
+   Next: ABI-0b (`ADAMAS_FORCE_STRATEGY=gc` bisector), ABI-0c (real type sizes in
+   estimate_size), ABI-0d (Frontier SDD — gate before step 1).
+
 0. (2026-06-02) M4h family root-caused + narrow fix landed (`2444b2e0`, COMPLETED not
    VERIFIED). The s2b `union_all_reference_types?` SIGSEGV is a short-TypeRef Hash value
    confusion: the resolver minted a SHORT ghost identity for compiler-internal `MIR::X`/`HIR::X`

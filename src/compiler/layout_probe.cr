@@ -36,6 +36,18 @@ module Adamas
     @@trace : Array(String)? = nil
     @@seq : Int64 = 0_i64
 
+    # Divergence assert (step 0 of the ABI rework, see docs/abi_rework_quadr_plan.md).
+    # ADAMAS_LAYOUT_ASSERT=1   -> emit a DIVERGENCE row when two phases record a
+    #                            different storage CLASS for the same type_name.
+    # ADAMAS_LAYOUT_ASSERT=abort -> additionally abort on the first divergence
+    #                            (use as a hard regression gate in later steps).
+    # Requires ADAMAS_LAYOUT_PROBE=1. Storage classes compared: InlineBytes /
+    # PointerCarrier / PointerReference. BorrowedAddress is an access mode (a
+    # field-get returning an address), not a storage class, so it is ignored.
+    @@assert_mode : Int32 = -1 # -1 unknown, 0 off, 1 report, 2 abort
+    @@storage_seen : Hash(String, ::Set(String))? = nil
+    @@diverged : ::Set(String)? = nil
+
     # Lazy ENV access inside a method: module-constant ENV reads crash
     # V2-compiled binaries (see CRYSTAL_PATH note in project memory).
     def self.enabled? : Bool
@@ -112,11 +124,71 @@ module Adamas
       pats
     end
 
+    # Assert mode: 0 off, 1 report-only, 2 abort-on-first.
+    def self.assert_mode : Int32
+      cached = @@assert_mode
+      return cached unless cached < 0
+      mode = 0
+      if enabled?
+        case ENV["ADAMAS_LAYOUT_ASSERT"]?
+        when nil, "", "0" then mode = 0
+        when "abort", "2" then mode = 2
+        else                   mode = 1
+        end
+      end
+      @@assert_mode = mode
+      mode
+    end
+
+    # Track storage-class decisions per type_name across phases; when a type is
+    # recorded with two different storage classes, the three layout oracles
+    # disagree on "is a value of this type inline bytes or behind a pointer" —
+    # the root ambiguity behind the #4 repr-flip family. Emits one DIVERGENCE
+    # row per diverging type_name (deduped); aborts in mode 2.
+    private def self.check_divergence(phase : String, type_name : String, storage : String) : Nil
+      return if storage == "BorrowedAddress" # access mode, not a storage class
+      return if type_name.empty? || type_name == "Unknown"
+      seen = @@storage_seen ||= Hash(String, ::Set(String)).new
+      bucket = seen[type_name] ||= ::Set(String).new
+      before = bucket.size
+      bucket << "#{phase}=#{storage}"
+      return if bucket.size == before # nothing new for this type
+
+      # Distinct storage classes (across all phases/sites) and distinct phases.
+      classes = ::Set(String).new
+      phases = ::Set(String).new
+      bucket.each do |entry|
+        ph, _, st = entry.partition('=')
+        phases << ph
+        classes << st
+      end
+      return if classes.size < 2 # all decisions agree so far
+
+      # Re-emit when the bucket grows (a new phase/class joins), deduped on the
+      # full signature so cross-phase divergence surfaces even after an
+      # intra-phase one was already reported. INTRA = one phase self-disagrees
+      # (the B0-2 ordering hole); CROSS = phases disagree (the 3-oracle problem).
+      sig = bucket.to_a.sort.join(",")
+      diverged = @@diverged ||= ::Set(String).new
+      return if diverged.includes?(sig)
+      diverged << sig
+      kind = phases.size >= 2 ? "CROSS" : "INTRA"
+      io = output
+      io << "DIVERGENCE\t" << kind << '\t' << type_name << '\t' << bucket.to_a.sort.join(" ") << '\n'
+      io.flush
+      if assert_mode == 2 && kind == "CROSS"
+        raise "LAYOUT CROSS-PHASE DIVERGENCE for #{type_name}: " \
+              "#{bucket.to_a.sort.join(", ")} (ADAMAS_LAYOUT_ASSERT=abort)"
+      end
+      nil
+    end
+
     def self.log(phase : String, site : String, context : String, role : String,
                  type_name : String, type_id : Int64,
                  storage : String, slot_size : Int64, access_size : Int64,
                  declared : String = "", effective : String = "") : Nil
       return unless enabled?
+      check_divergence(phase, type_name, storage) if assert_mode > 0
       # Ledger mode needs EVENT ORDER, so dedup would hide exactly what B1
       # diagnostics look for (repeated registrations, re-resolutions). Route
       # every row through the sequence-numbered non-dedup writer instead.
