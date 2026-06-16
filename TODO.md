@@ -1,7 +1,7 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-06-15
-Branch: `main`
+Updated: 2026-06-16
+Branch: `abi-rework`
 
 This is the active working backlog only. Historical detail is in git history,
 especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
@@ -2353,6 +2353,30 @@ ABI-1a (2026-06-16, SHIPPED — pure predicate + MIR memo, ADDITIVE/SAFE). New
    repr may be an 8-byte nullable pointer; decide when wiring the union reader. Next: ABI-1b
    (route LayoutProbe storage LABEL through `LayoutContract.repr`, drives label CROSS→0, zero
    size change — also the runtime exercise/verification of the predicate).
+
+ABI-1c FIELD-READER HALF (2026-06-16, SHIPPED — centralize the struct-carrier threshold,
+   behavior-NEUTRAL). New `LayoutContract.user_struct_inline?(size, name)` is THE single
+   step-4 flip point for the non-lib struct-value carrier decision (today:
+   `inline_container_family?(name) || size >= POINTER_WORD_BYTES`). HIR
+   `field_storage_size_impl` (ast_to_hir.cr:~39420) now routes its small-struct →
+   8-byte-pointer-carrier decision through this predicate instead of the hardcoded
+   `storage < pointer_word_bytes_i32` outer-guard threshold (the guard drops the size test;
+   the `return pointer_word` is gated `unless user_struct_inline?`). `inline_value?`'s struct
+   clause delegates to the same helper. Result: the size split that step 4 flips for the
+   inline-struct perf win now lives in ONE place, read by HIR. SPLIT vs the SDD §6 plan: the
+   SDD bundled 1c as container-oracle flip + field-reader delegation; I split them — flipping
+   `inline_container_struct_type?` (the LLVM container whitelist) alone CORRUPTS Array(Big)
+   (Array get/set/push assume pointer stride), so that flip MOVES into step 4 (needs the
+   inline Array stride/get/set/push ABI). 1c here is field-readers ONLY. Behavior-neutral
+   proof: reproduces the prior threshold exactly (container families are empirically inert in
+   this HIR branch — not registered is_struct); probe SLOT-CONFLICT set IDENTICAL (17 types);
+   reducers byte-identical (largefield total=6, slice/small/union correct, StaticArray sa0=152
+   = unchanged PRE-EXISTING by-value corruption bug, a separate #4-adjacent lead). Gate on the
+   post-change binary: combined 31/31 + originals 158/158. Per owner directive
+   ([[abi-slot-conflict-metric-invalid]]): consolidation is the path toward the inline-struct
+   perf win (step 4), #4 fixed opportunistically on clean moves. Next consolidation: route MIR
+   `mir_field_storage_size` through the contract (affects only the coverage-check optimization,
+   behavior-safe); then ABI-1b (probe label unification); update SDD §6 to record this split.
 
 0. (2026-06-02) M4h family root-caused + narrow fix landed (`2444b2e0`, COMPLETED not
    VERIFIED). The s2b `union_all_reference_types?` SIGSEGV is a short-TypeRef Hash value

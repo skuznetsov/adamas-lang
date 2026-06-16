@@ -39417,18 +39417,23 @@ module Adamas::HIR
       # - Constructors still heap-allocate them and store ptrs
       # - FieldGet/FieldSet still use load/store ptr for them
       # This will be unified when constructors are updated to inline all structs.
-      if !c_context && storage > 0 && storage < pointer_word_bytes_i32 &&
-         type.id >= TypeRef::FIRST_USER_TYPE
+      # The small-struct -> 8-byte pointer-carrier decision is owned by the
+      # single layout source (LayoutContract.user_struct_inline?), the step-4
+      # flip point. HIR is pre-MIR (no kind), so it calls the SIZE-only predicate
+      # directly for the non-lib user-struct case it has already isolated. This
+      # reproduces the prior `storage < pointer_word_bytes_i32` threshold exactly
+      # (today: non-whitelisted small struct => carrier); step 4 flips it once.
+      if !c_context && storage > 0 && type.id >= TypeRef::FIRST_USER_TYPE
         if info = @class_info_by_type_id[type.id]?
           if info.is_struct && !@lib_structs.includes?(info.name)
-            return pointer_word_bytes_i32
+            return pointer_word_bytes_i32 unless Adamas::LayoutContract.user_struct_inline?(storage.to_u64, info.name)
           end
         else
           type_name = get_type_name_from_ref(type)
           if type_name != "Unknown"
             if info2 = @class_info[type_name]?
               if info2.is_struct && !@lib_structs.includes?(info2.name)
-                return pointer_word_bytes_i32
+                return pointer_word_bytes_i32 unless Adamas::LayoutContract.user_struct_inline?(storage.to_u64, info2.name)
               end
             end
           end

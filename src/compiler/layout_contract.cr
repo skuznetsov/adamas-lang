@@ -64,18 +64,13 @@ module Adamas
         # word; narrow unions are pointer-tagged (MIR/LLVM union payload rule).
         size > POINTER_WORD_BYTES
       when .struct?
-        # Implemented inline-container families are inline regardless of size
-        # (the LLVM inline_container_struct_type? whitelist, :2796).
-        return true if inline_container_family?(name)
         # Lib (C ABI) structs: HIR's small-struct force-to-8 block is gated on
         # !lib, so they return their value size (inline C value). They keep their
         # dedicated path (SDD §5 guard-only); their repr is inline.
         return true if is_lib
-        # V2 carrier ABI (ast_to_hir.cr:39420): a SMALL user struct (value size <
-        # pointer word) is forced to an 8-byte pointer carrier; a LARGE struct
-        # keeps its inline value size. This size split IS the current effective
-        # HIR decision and is exactly what step 4 will unify.
-        size >= POINTER_WORD_BYTES
+        # Inline-container families + the V2 carrier size-split: delegated to the
+        # SINGLE flip point so HIR (pre-MIR, no kind) and this predicate agree.
+        user_struct_inline?(size, name)
       when .tuple?
         # HIR forces small tuples/namedtuples to the pointer word (:39440);
         # large tuples keep their inline size.
@@ -94,6 +89,19 @@ module Adamas
       return Repr::PointerReference if kind.reference? || kind.pointer? ||
                                        kind.array? || kind.proc?
       inline_value?(kind, size, name, is_lib) ? Repr::InlineBytes : Repr::PointerCarrier
+    end
+
+    # THE step-4 flip point for the V2 struct-value carrier ABI. True = the
+    # NON-LIB struct value lives INLINE at its slot (slot == value_size); false =
+    # it is held via an 8-byte pointer carrier. Today: inline-container families
+    # are always inline, and a plain user struct is inline only when its value is
+    # at least a pointer word (small ones are pointer carriers, the V2 legacy
+    # ABI at ast_to_hir.cr:39420). Step 4 flips the size split to always-inline
+    # for the perf win — and because the readers (HIR field_storage_size, the MIR
+    # memo, the LLVM container oracle) all route here, that flip lands in ONE
+    # place. This is a SIZE-only predicate so HIR can call it pre-MIR (no kind).
+    def self.user_struct_inline?(size : UInt64, name : String) : Bool
+      inline_container_family?(name) || size >= POINTER_WORD_BYTES
     end
 
     # The container-element struct families with an implemented inline ABI
