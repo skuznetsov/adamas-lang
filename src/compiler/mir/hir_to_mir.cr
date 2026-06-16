@@ -1344,6 +1344,23 @@ module Adamas
         0_u64
       end
 
+      # Inline byte size of a StaticArray(T, N) value = element-storage-size(T) * N.
+      # StaticArray MIR registry entries are created by register_class_types as
+      # zero-sized Structs (ClassInfo#size is 0 — StaticArray has no ivars), so the
+      # value size must be derived from the type name. This is the single source for
+      # that computation, shared by the Alloc size path and the FieldSet memcopy so
+      # they never disagree. Returns 0 when the name is not a StaticArray.
+      private def static_array_storage_size_from_name(type_name : String) : UInt64
+        if m = type_name.match(/StaticArray\((.+),\s*(\d+)\)/)
+          elem_name = m[1].strip
+          count = m[2].to_u64
+          elem_type = @mir_module.type_registry.get_by_name(elem_name)
+          elem_size = container_elem_storage_size_u64(elem_type)
+          return elem_size * count
+        end
+        0_u64
+      end
+
       # Create function stub with params and return type (no body)
       private def create_function_stub(hir_func : HIR::Function)
         mir_return_type = convert_type(hir_func.return_type)
@@ -2342,15 +2359,10 @@ module Adamas
 
         # Fix StaticArray size: if type is StaticArray but size is 0, compute from name
         # using container storage ABI (non-inline elements occupy pointer-sized slots).
+        # Shared with the FieldSet memcopy path via static_array_storage_size_from_name.
         if alloc_size == 0
           type_name = mir_type_name.empty? ? hir_type_name : mir_type_name
-          if m = type_name.match(/StaticArray\((.+),\s*(\d+)\)/)
-            elem_name = m[1].strip
-            count = m[2].to_u64
-            elem_type = @mir_module.type_registry.get_by_name(elem_name)
-            elem_size = container_elem_storage_size_u64(elem_type)
-            alloc_size = elem_size * count
-          end
+          alloc_size = static_array_storage_size_from_name(type_name)
           alloc_size = pointer_word_bytes_u64 if alloc_size == 0
         end
 
@@ -3032,6 +3044,13 @@ module Adamas
         if use_memcopy
           struct_size = if is_lib
                           hir_type_lib_struct_size(field_hir_type)
+                        elsif is_static_array
+                          # StaticArray registry entries are zero-sized Structs (see
+                          # static_array_storage_size_from_name), so the inline byte
+                          # count must be derived from the type name; otherwise the
+                          # memcopy below is skipped and the field slot wrongly stores
+                          # the source POINTER instead of the inline value bytes.
+                          static_array_storage_size_from_name(hir_type_name(field_hir_type))
                         else
                           hir_type_inline_size(field_hir_type).to_u64
                         end

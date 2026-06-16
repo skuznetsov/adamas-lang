@@ -2378,6 +2378,26 @@ ABI-1c FIELD-READER HALF (2026-06-16, SHIPPED — centralize the struct-carrier 
    `mir_field_storage_size` through the contract (affects only the coverage-check optimization,
    behavior-safe); then ABI-1b (probe label unification); update SDD §6 to record this split.
 
+StaticArray-by-value FIELD store fix (2026-06-16, SHIPPED — a clean #4-adjacent move that
+   the ABI-1c note flagged as the "unchanged PRE-EXISTING by-value corruption bug, sa0=152").
+   Root: `StaticArray(T, N)` stored by value into a class field wrote the SOURCE POINTER's low
+   bytes into the inline slot instead of the value bytes. `register_class_types` registers
+   StaticArray MIR entries as zero-sized Structs (kind=Struct, size=0 — StaticArray has no
+   ivars), and `canonical_container_kind_for_descriptor` only matches `"Array("`, so the
+   FieldSet memcopy decision read `struct_size=0`, hit the `if struct_size > 0` guard, skipped
+   the memcopy, and fell through to a scalar `store ptr`. Fix (hir_to_mir.cr): new shared
+   `static_array_storage_size_from_name(type_name)` derives the inline byte count
+   (element-storage-size(T) * N) from the type name — the SINGLE source used by both the Alloc
+   size path (refactored, behavior-neutral) and the FieldSet memcopy `elsif is_static_array`
+   branch, so they never disagree. Kept surgical (compute at the consumer, NOT in the registry):
+   globally sizing the registry would flip `inline_container_struct_type?` (gated on `size > 0`)
+   to a 4-byte inline element stride for StaticArray container elements — a CAUTION-tier
+   Array(StaticArray) regression — so the registry stays size=0. IR proof:
+   `store ptr %sa` → `call void @llvm.memcpy.p0.p0.i64(ptr %r3, ptr %sa, i64 4, i1 false)`;
+   reducer now `sa0=7 sa3=9` (was 232/1). Regression: `static_array_field_value_roundtrip.cr`
+   (EXPECT inner0=7 inner3=9 getter0=7 getter3=9 marker=2222). Gate: combined 31/31 + originals
+   158/158.
+
 0. (2026-06-02) M4h family root-caused + narrow fix landed (`2444b2e0`, COMPLETED not
    VERIFIED). The s2b `union_all_reference_types?` SIGSEGV is a short-TypeRef Hash value
    confusion: the resolver minted a SHORT ghost identity for compiler-internal `MIR::X`/`HIR::X`
