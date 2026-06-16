@@ -228,16 +228,24 @@ cross-CONTEXT label noise). It is now in code (`layout_probe.cr` `check_divergen
   noise (String/Fiber/Atomic: slot agrees, only the storage-class NAME differs).
 
 Measurement on the struct/container/string probe `/tmp/abi_layout_probe.cr`:
-**15 SLOT-CONFLICT + 21 label DIVERGENCE.** All 15 conflicts are intra-HIR
-`field-slot` and concentrate at the **8-vs-N ptr-vs-value boundary** — the #4
-family: `Slice(UInt8)` 8/16, `Nil|String`/`Nil|IO`/`Nil|Array(String)` 8/16
-(union ptr-vs-tagged), `Time` 8/24, `Char::Reader` 8/40, `Time::Location::Zone`
-16/24. This is the B0-2 "slot born as an 8-byte ref_fallback then written with
-the N-byte value view" root, now MEASURED directly rather than inferred.
+**15 SLOT-CONFLICT + 21 label DIVERGENCE.** All 15 are intra-HIR `field-slot`.
+**Refined split (1a, 2026-06-16):** **13** are true **ptr-vs-value (8-vs-N)** repr
+conflicts — `Slice(UInt8)`/`Slice(Char)`/`Slice(Pointer(…))` 8/16, `Time` 8/24,
+`Char::Reader` 8/40, `Time::Span`/`Stackvec`/`Path` 8/16, and the `Nil|String` /
+`Nil|IO` / `Nil|Array(String)` / `Nil|Channel::TimeoutAction` /
+`Nil|EventLoop::Polling` unions 8/16. These are the B0-2 "slot born as an 8-byte
+ref_fallback then written with the N-byte value view" root and are exactly what
+the repr predicate single-sources. The remaining **2** —
+`Crystal::EventLoop::Polling::Event` 88/96 and `Time::Location::Zone` 16/24 — are
+**value-SIZE / padding** disagreements (two inline sizes for one type), NOT
+ptr-vs-value; the repr bit says inline for both, but the residual size split is
+owned by the size authority (the `align_all_class_ivars` layout, frozen in
+**step 2**), not the repr predicate.
 
-**Revised step-1 falsifier:** drive the 15 SLOT-CONFLICTs toward 0 (single-sourced
-repr per type, no 8-vs-N split for one type in one context) — a sharper, real-bug
-target than "0 CROSS label rows". The label DIVERGENCE count is incidental.
+**Revised step-1 falsifier:** drive the **13** ptr-vs-value SLOT-CONFLICTs toward 0
+(single-sourced repr per type, no 8-vs-N split for one type in one context) — a
+sharper, real-bug target than "0 CROSS label rows". The 2 size-padding conflicts
+are a step-2 target; the label DIVERGENCE count is incidental.
 
 ---
 
@@ -258,6 +266,7 @@ split into its two distinct fault lines.
 | **0c** | Real type sizes in `MemoryStrategyAssigner.estimate_size` (today `DEFAULT_TYPE_SIZE=64`) | SAFE | Stack/ARC decisions stop riding fictional sizes; suite unchanged |
 | **0d** | **Frontier SDD** → `docs/abi_struct_value_sdd.md`: registry owns `repr`, registry layout owns offsets, slot=`inline?value_size:8`, producer/consumer-agreement invariant, guard-only StaticArray/Tuple/Proc/Pointer/Union/lib **DONE** | doc | names repr-owner, offsets-owner, slot/access semantics, admitted/rejected surface, guard-only types |
 | **1** | Single repr source per the SDD (phase-ordering correction: pure predicate `inline_value?` + MIR `Type` memo, NOT a registry-only bit — HIR reader runs pre-MIR inside `align_all_class_ivars`). SPLIT: **1a** predicate+memo (additive/SAFE), **1b** label unification (no size change), **1c** container-element whitelist→predicate (lone CAUTION size flip) | CAUTION | probe: 0 CROSS rows AND no NEW slot/access mismatch class |
+| **1a** | `src/compiler/layout_contract.cr`: pure `LayoutContract.inline_value?(kind,size,name,is_lib)` reproducing the effective HIR field-slot decision + lazy-memoized `inline_value?` bit on MIR `Type`; NO reader changed (computed-but-unused) | additive, SAFE | build clean + probe UNCHANGED (15 SLOT-CONFLICT / 21 DIVERGENCE) + suites 158/158 & 31/31. **Result: behavior-neutral; refined 15→13 ptr-vs-value + 2 size-padding (§2.7.1)** |
 | **2** | Registry freeze-point at the final-align seam: **report-only mode first, then abort**; explicit late-monomorphization-after-freeze policy | CAUTION | any class_info write after freeze in abort mode = abort |
 | **3** | `FieldAddr`(borrow=GEP) vs `FieldGet`(value) split + MIR verifier over the **full producer/consumer surface** (below) | CAUTION | **reducer roster** (below): repr-flip segv → 0 (#4 *should* die here) |
 | **5a** | Union all-ref-as-ptr → registry property | CAUTION | M4h reducer |

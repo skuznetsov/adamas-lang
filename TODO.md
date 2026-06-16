@@ -2330,6 +2330,30 @@ ABI-1 (PLAN, design-corrected 2026-06-16 — step-1 reconnaissance mini-Quadr). 
    Big-bang reader flip judged VULNERABLE (Adversary). Docs corrected in
    `docs/abi_struct_value_sdd.md` §3/§6/§7. Next: code ABI-1a.
 
+ABI-1a (2026-06-16, SHIPPED — pure predicate + MIR memo, ADDITIVE/SAFE). New
+   `src/compiler/layout_contract.cr`: `Adamas::LayoutContract.inline_value?(kind, size, name,
+   is_lib)` — the single pure repr decision ("inline bytes at the slot, or 8-byte pointer?"),
+   reproducing the CURRENT effective HIR `field_storage_size_impl` decision (class ref/ptr/
+   array/proc/Nil → pointer; primitive/enum → inline; union → inline iff >pointer-word; struct
+   → inline-container family OR lib OR `size>=pointer-word`; tuple → `size>=pointer-word`).
+   Plus a `repr` 3-way label (for 1b) and `inline_container_family?` (the LLVM whitelist, for
+   1c). MIR `Type` gains a LAZY-memoized `inline_value?(is_lib=false)` caching the predicate;
+   lazy (not eager at creation) so it reads the FINAL registry size — String 8→12 and similar
+   post-creation size updates would otherwise freeze a stale small/large carrier decision.
+   NO oracle reads the bit yet (computed-but-unused → behavior-neutral by construction).
+   Required from `mir/mir.cr`. Gate: build clean; probe UNCHANGED (15 SLOT-CONFLICT + 21
+   DIVERGENCE, identical set → no behavior change); originals 158/158 + combined 31/31.
+   MEASUREMENT REFINEMENT vs 0a': of the 15 SLOT-CONFLICTs, 13 are true ptr-vs-value (8-vs-N)
+   repr conflicts the predicate single-sources (Slice* → inline-16; Time/Char::Reader/Span/
+   Stackvec/Path → inline large; Nil|* unions → inline-16); the other 2 —
+   `EventLoop::Polling::Event` 88/96 and `Time::Location::Zone` 16/24 — are value-SIZE/padding
+   disagreements, NOT repr (the predicate says inline for both; the residual size split is
+   owned by the size authority = step 2 freeze, not the repr bit). Open for 1c: nilable-
+   reference unions (`String?`) — predicate currently says inline-16 (union>8), but the correct
+   repr may be an 8-byte nullable pointer; decide when wiring the union reader. Next: ABI-1b
+   (route LayoutProbe storage LABEL through `LayoutContract.repr`, drives label CROSS→0, zero
+   size change — also the runtime exercise/verification of the predicate).
+
 0. (2026-06-02) M4h family root-caused + narrow fix landed (`2444b2e0`, COMPLETED not
    VERIFIED). The s2b `union_all_reference_types?` SIGSEGV is a short-TypeRef Hash value
    confusion: the resolver minted a SHORT ghost identity for compiler-internal `MIR::X`/`HIR::X`

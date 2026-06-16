@@ -9,6 +9,12 @@
 #
 # See docs/codegen_architecture.md Section 4 for specification.
 
+# The struct-value ABI repr contract (docs/abi_struct_value_sdd.md §3). MIR::Type
+# memoizes its `inline_value?` bit via this module. Crystal resolves the mutual
+# type references (LayoutContract reads MIR::TypeKind; MIR::Type calls
+# LayoutContract) globally, so require order is irrelevant.
+require "../layout_contract"
+
 module Adamas::MIR
   # ═══════════════════════════════════════════════════════════════════════════
   # TYPE ALIASES
@@ -159,6 +165,33 @@ module Adamas::MIR
 
     def is_value_type? : Bool
       @kind == TypeKind::Struct
+    end
+
+    # Memoized struct-value ABI repr bit (docs/abi_struct_value_sdd.md §3): true
+    # when a value of this type lives INLINE at its slot, false when the slot
+    # holds an 8-byte pointer. The authority is the pure LayoutContract function;
+    # this is only a CACHE of it for the MIR/LLVM phases (HIR calls the function
+    # directly, pre-registry).
+    #
+    # LAZY (computed on first read), not eager at creation: some types have their
+    # registry size updated after the Type is first created (e.g. String 8->12
+    # when ivars are discovered), so an eager bit could freeze a stale small/large
+    # carrier decision. Reading after the size settles avoids that hazard.
+    #
+    # `is_lib` defaults false: lib (C ABI) structs keep their dedicated path
+    # (SDD §5) and their readers pass is_lib explicitly to LayoutContract rather
+    # than relying on this memo.
+    #
+    # STEP 1a: introduced but NOT read by any oracle yet (additive/unused). Steps
+    # 1b/1c wire the readers; step 2 freezes the bit.
+    @inline_value_memo : Bool? = nil
+
+    def inline_value?(is_lib : Bool = false) : Bool
+      memo = @inline_value_memo
+      return memo unless memo.nil?
+      result = Adamas::LayoutContract.inline_value?(@kind, @size, @name, is_lib)
+      @inline_value_memo = result
+      result
     end
 
     def signed? : Bool

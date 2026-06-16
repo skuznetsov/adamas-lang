@@ -206,12 +206,20 @@ verified to be 8 on BOTH HIR and MIR — a name divergence, not a size one), whi
 the only size-affecting flip is the container-element whitelist. So step 1 is
 split into independently-gated sub-steps, smallest/safest first:
 
-**1a — pure predicate + MIR memo (additive, SAFE).** Add a single pure function
-`LayoutContract.inline_value?(kind, size, name, is_lib)` (new module) reproducing
-the *current* effective decisions, plus a memoized `inline_value?` bit on the MIR
-`Type` populated at `Type` creation from the frozen HIR layout. No reader changed
-yet — the bit is computed but unused. Gate: build + suites green (no behavior
-change); the probe shows the SAME divergence set as before.
+**1a — pure predicate + MIR memo (additive, SAFE). SHIPPED 2026-06-16.** Added the
+pure function `LayoutContract.inline_value?(kind, size, name, is_lib)`
+(`src/compiler/layout_contract.cr`) reproducing the *current* effective HIR
+field-slot decision, plus a memoized `inline_value?` bit on the MIR `Type`. The
+memo is **LAZY** (computed on first read), not eager at `Type` creation: some
+types have their registry size updated after creation (e.g. String 8→12 when
+ivars are discovered, per the CLAUDE.md note), so an eager bit could freeze a
+stale small/large carrier decision — lazy reads after the size settles. No reader
+changed yet — the bit is computed but unused. Gate met: build clean; probe shows
+the SAME divergence set (15 SLOT-CONFLICT / 21 DIVERGENCE); suites 158/158 +
+31/31. Refinement: of the 15, **13 are ptr-vs-value (8-vs-N) repr conflicts** the
+predicate single-sources; **2** (`EventLoop::Polling::Event` 88/96,
+`Time::Location::Zone` 16/24) are value-size/padding disagreements owned by the
+size authority (step 2), not the repr bit.
 
 **1b — label unification (no size change).** Route the three phases' LayoutProbe
 `storage` LABEL through the shared repr classifier so the same 8-byte String slot
