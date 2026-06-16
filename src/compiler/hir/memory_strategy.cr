@@ -155,6 +155,38 @@ module Adamas::HIR
     # Default size for user types
     DEFAULT_TYPE_SIZE = 64_u32
 
+    # ADAMAS_FORCE_STRATEGY=gc bisector (ABI rework step 0b). When set to "gc",
+    # every allocation that flows through this assigner is forced to
+    # MemoryStrategy::GC regardless of escape/taint analysis.
+    #
+    # DIAGNOSTIC ONLY, never a fix. The hybrid memory model keeps GC minimal —
+    # the load belongs on Stack/Slab/ARC/AtomicARC — and "expand GC use" is a
+    # forbidden remedy. Critically, GC env-var effects are USUALLY
+    # LAYOUT-MASKING artifacts, not cures: GC's larger, zeroed, differently
+    # aligned allocations can swallow an out-of-bounds write that would corrupt
+    # an adjacent slot under a tighter strategy. So read results ASYMMETRICALLY:
+    #   - PERSISTS under force-GC -> the cause is NOT the memory strategy
+    #     (it is layout/size/offset or logic). Reliable signal.
+    #   - VANISHES under force-GC -> AMBIGUOUS: either a real strategy bug
+    #     (ARC escape-miss / Stack-promotion / Slab lifetime) OR a layout bug
+    #     merely MASKED by GC. NOT proof of a strategy bug — confirm the layout
+    #     independently (LayoutProbe / the step-3 verifier) before concluding.
+    #
+    # No effect unless the env var equals "gc". Do NOT use on --no-gc /
+    # --no-prelude builds (no GC runtime to back it). The result is cached in a
+    # class var: reading ENV lazily inside a method avoids the module-constant
+    # ENV-read crash in self-compiled binaries (see LayoutProbe).
+    @@force_gc : Bool? = nil
+
+    def self.force_gc? : Bool
+      cached = @@force_gc
+      return cached unless cached.nil?
+      value = ENV["ADAMAS_FORCE_STRATEGY"]?
+      forced = !value.nil? && value.downcase == "gc"
+      @@force_gc = forced
+      forced
+    end
+
     def initialize(
       @function : Function,
       @config : MemoryConfig = MemoryConfig.balanced,
@@ -184,6 +216,9 @@ module Adamas::HIR
                        else
                          determine_strategy(value)
                        end
+            # ABI rework step 0b bisector: force every allocation to GC so a
+            # strategy-caused bug can be told apart from a layout-caused one.
+            strategy = MemoryStrategy::GC if MemoryStrategyAssigner.force_gc?
             @result.add(value.id, strategy)
             # Propagate strategy to value for downstream lowering
             value.memory_strategy = strategy if value.responds_to?(:memory_strategy=)

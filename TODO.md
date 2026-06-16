@@ -2256,6 +2256,24 @@ ABI-0a. (2026-06-16, SHIPPED — divergence assert) Env-gated `ADAMAS_LAYOUT_ASS
    Next: ABI-0b (`ADAMAS_FORCE_STRATEGY=gc` bisector), ABI-0c (real type sizes in
    estimate_size), ABI-0d (Frontier SDD — gate before step 1).
 
+ABI-0b. (2026-06-16, SHIPPED — force-GC bisector) `ADAMAS_FORCE_STRATEGY=gc` forces
+   every allocation through `MemoryStrategyAssigner` to `MemoryStrategy::GC`. One
+   chokepoint: override in the `assign` loop (catches both `determine_strategy` and the
+   explicit-strategy bypass); cached `self.force_gc?` reads ENV lazily (module-const
+   ENV-read crash avoidance). PGO refinement is profile-data-gated → off the default
+   path. Verified: `.ll` differs (−308 alloca under force-GC on an allocating probe),
+   compiler rc=0, default path is a guarded no-op, known-good test gives identical
+   output default vs force-GC. HYBRID-MODEL CAVEAT (owner reminder): this is DIAGNOSTIC
+   ONLY, never a fix — GC stays minimal, "expand GC" is forbidden as a remedy, and GC
+   env effects are USUALLY layout-masking artifacts. Read ASYMMETRICALLY: *persists*
+   under force-GC ⇒ NOT a strategy bug (reliable); *vanishes* ⇒ AMBIGUOUS (real strategy
+   bug OR a layout bug masked by GC's larger/zeroed/aligned allocs — confirm layout via
+   LayoutProbe / step-3 verifier). Gate: full suite (in progress at commit time).
+   ABI-0c REASSESSED: `TypeDescriptor` carries no size, so a "real size" must be computed
+   from ClassInfo ivars = a layout oracle. Building one now = the 4th oracle the SDD
+   warns against → 0c now CONSUMES step 1's `layout_of` (post-step-1 follow-up, NOT a
+   step-0 lever). Next: ABI-0d (Frontier SDD — gate before step 1).
+
 0. (2026-06-02) M4h family root-caused + narrow fix landed (`2444b2e0`, COMPLETED not
    VERIFIED). The s2b `union_all_reference_types?` SIGSEGV is a short-TypeRef Hash value
    confusion: the resolver minted a SHORT ghost identity for compiler-internal `MIR::X`/`HIR::X`
