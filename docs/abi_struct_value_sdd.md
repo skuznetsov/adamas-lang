@@ -156,6 +156,12 @@ This is strictly stronger than `slot==access` and exactly catches the
 `cb25a911` family (realloc 16 / store 20 / read 24 = three different
 `(slot,value)` views of one container element).
 
+**Implemented (2026-06-16) as the SLOT-CONFLICT signal** in `layout_probe.cr`
+`check_divergence`: per `(type, context)`, ≥2 distinct slot sizes (intra- or
+cross-phase) → SLOT-CONFLICT (abort-eligible). First measurement found 15, all at
+the 8-vs-N ptr-vs-value boundary (`Slice(UInt8)` 8/16, `Nil|String` 8/16, `Time`
+8/24 …) — the #4 family, now the concrete step-1 target. See plan §2.7.1.
+
 ---
 
 ## 5. Admitted vs rejected surface

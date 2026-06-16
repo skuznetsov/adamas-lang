@@ -2256,6 +2256,25 @@ ABI-0a. (2026-06-16, SHIPPED — divergence assert) Env-gated `ADAMAS_LAYOUT_ASS
    Next: ABI-0b (`ADAMAS_FORCE_STRATEGY=gc` bisector), ABI-0c (real type sizes in
    estimate_size), ABI-0d (Frontier SDD — gate before step 1).
 
+ABI-0a' (2026-06-16, SHIPPED — operational metric). The 0a assert keyed on `type_name`
+   alone, so it measured cross-CONTEXT label noise (18 "CROSS"), NOT the §2.7 operational
+   bug. Refined `layout_probe.cr` `check_divergence` to two signals: (1) SLOT-CONFLICT —
+   same `(type, context)` with >= 2 distinct slot sizes (intra- OR cross-phase; key includes
+   context so cross-context field-inline-vs-container-pointer never fires), abort-eligible in
+   mode 2; (2) DIVERGENCE — the old label signal, downgraded to REPORT-ONLY (verified mostly
+   label noise: String/Fiber/Atomic slot agrees, only the storage NAME differs). VERIFIED NOT
+   THEATER: first cut had a `phases_all.size>=2` gate that made it structurally inert (MIR
+   logs slot=-1; HIR=field-slot and LLVM=container-element never share a context) → removed
+   the phase-count gate so intra-phase conflicts fire. Re-measure on /tmp/abi_layout_probe.cr:
+   15 SLOT-CONFLICT + 21 label DIVERGENCE. All 15 are intra-HIR field-slot at the 8-vs-N
+   ptr-vs-value boundary = the #4 family: Slice(UInt8) 8/16, Nil|String / Nil|IO /
+   Nil|Array(String) 8/16 (union ptr-vs-tagged), Time 8/24, Char::Reader 8/40,
+   Time::Location::Zone 16/24. This is the B0-2 "slot born 8-byte ref_fallback then written
+   N-byte value view" root, MEASURED not inferred. Diagnostic-only (default path no-op:
+   `log` returns at `unless enabled?`). REVISED step-1 falsifier: drive the 15 SLOT-CONFLICTs
+   toward 0 (single-sourced repr, no 8-vs-N split for one type/context). Docs: plan §2.7.1 +
+   table 0a' row, SDD §4. Gate: full suite (running at commit time).
+
 ABI-0b. (2026-06-16, SHIPPED — force-GC bisector) `ADAMAS_FORCE_STRATEGY=gc` forces
    every allocation through `MemoryStrategyAssigner` to `MemoryStrategy::GC`. One
    chokepoint: override in the `assign` loop (catches both `determine_strategy` and the

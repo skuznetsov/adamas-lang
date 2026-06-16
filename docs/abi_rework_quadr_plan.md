@@ -212,6 +212,33 @@ hello-world compile (`ADAMAS_LAYOUT_PROBE=1 ADAMAS_LAYOUT_ASSERT=1`):
 This independently corroborates the review's claim #4 (the verifier surface is
 wider than field-slot `store_size==slot_size`) and motivates the step-0d SDD.
 
+### 2.7.1 Operational metric IMPLEMENTED (2026-06-16) + step-1 reconnaissance
+
+The §2.7 metric ("producer/consumer agreement per `(type, context)`") was only
+on paper after 0a (the 0a assert keyed on `type_name` alone → measured
+cross-CONTEXT label noise). It is now in code (`layout_probe.cr` `check_divergence`):
+
+- **SLOT-CONFLICT** (hard, abort-eligible): the SAME `(type, context)` recorded
+  with ≥2 distinct slot sizes — intra- OR cross-phase. This catches the cb25a911
+  intra-LLVM container stride family AND intra-HIR stale/ghost slots. Cross-context
+  differences (field inline vs container pointer) never reach it (the key includes
+  context).
+- **DIVERGENCE** (label, report-only, never aborts): the old type-keyed
+  storage-class divergence, kept as an informative map. Verified mostly label
+  noise (String/Fiber/Atomic: slot agrees, only the storage-class NAME differs).
+
+Measurement on the struct/container/string probe `/tmp/abi_layout_probe.cr`:
+**15 SLOT-CONFLICT + 21 label DIVERGENCE.** All 15 conflicts are intra-HIR
+`field-slot` and concentrate at the **8-vs-N ptr-vs-value boundary** — the #4
+family: `Slice(UInt8)` 8/16, `Nil|String`/`Nil|IO`/`Nil|Array(String)` 8/16
+(union ptr-vs-tagged), `Time` 8/24, `Char::Reader` 8/40, `Time::Location::Zone`
+16/24. This is the B0-2 "slot born as an 8-byte ref_fallback then written with
+the N-byte value view" root, now MEASURED directly rather than inferred.
+
+**Revised step-1 falsifier:** drive the 15 SLOT-CONFLICTs toward 0 (single-sourced
+repr per type, no 8-vs-N split for one type in one context) — a sharper, real-bug
+target than "0 CROSS label rows". The label DIVERGENCE count is incidental.
+
 ---
 
 ## 3. Sequencing (this branch executes 0,1,2,3,5; step 4 isolation; C separate)
@@ -226,6 +253,7 @@ split into its two distinct fault lines.
 | # | Step | Tier | Mini-Quadr falsifier |
 |---|------|------|----------------------|
 | **0a** | Divergence-assert in LayoutProbe (report + abort-on-CROSS) | diagnostic, zero risk | hello-world divergences? 0 → premise false. **Result: 18 CROSS + 22 size-mismatch → premise CONFIRMED** |
+| **0a′** | Refine assert to the §2.7 OPERATIONAL metric: SLOT-CONFLICT per `(type, context)` (abort) + label DIVERGENCE (report-only). See §2.7.1 | diagnostic, zero risk | detector must fire on a real conflict (not theater). **Result: 15 SLOT-CONFLICT at the 8-vs-N #4 boundary + 21 label rows → metric REAL** |
 | **0b** | `ADAMAS_FORCE_STRATEGY=gc` one-line bisector in MemoryStrategyAssigner | diagnostic, zero risk | asymmetric: *persists* under force-GC ⇒ NOT a strategy bug; *vanishes* ⇒ ambiguous (strategy bug OR GC-masked layout bug — hybrid model: GC effects are usually layout-masking) |
 | **0c** | Real type sizes in `MemoryStrategyAssigner.estimate_size` (today `DEFAULT_TYPE_SIZE=64`) | SAFE | Stack/ARC decisions stop riding fictional sizes; suite unchanged |
 | **0d** | **Frontier SDD** → `docs/abi_struct_value_sdd.md`: registry owns `repr`, registry layout owns offsets, slot=`inline?value_size:8`, producer/consumer-agreement invariant, guard-only StaticArray/Tuple/Proc/Pointer/Union/lib **DONE** | doc | names repr-owner, offsets-owner, slot/access semantics, admitted/rejected surface, guard-only types |
