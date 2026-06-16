@@ -1,7 +1,8 @@
 # ABI Rework — Quadrumvirate Plan (root-cause, not symptoms)
 
-Status: **STRATEGY doc. Step 0a (divergence assert) BUILT + MEASURED; steps
-1/3/5 still PROPOSED and require the Frontier SDD (step 0d) before coding.**
+Status: **STRATEGY doc. Steps 0a (divergence assert), 0b (force-GC bisector),
+0d (Frontier SDD → `docs/abi_struct_value_sdd.md`) DONE; steps 1/2/3/5 still
+PROPOSED, now gated on the SDD contract.**
 Branch: `abi-rework` (off `main` @ 7f18f326).
 Owner directive: fix the root cause, not symptoms. Execute step-by-step, each
 step under its own mini-Quadrumvirate, its own commit, and the full gate.
@@ -227,7 +228,7 @@ split into its two distinct fault lines.
 | **0a** | Divergence-assert in LayoutProbe (report + abort-on-CROSS) | diagnostic, zero risk | hello-world divergences? 0 → premise false. **Result: 18 CROSS + 22 size-mismatch → premise CONFIRMED** |
 | **0b** | `ADAMAS_FORCE_STRATEGY=gc` one-line bisector in MemoryStrategyAssigner | diagnostic, zero risk | asymmetric: *persists* under force-GC ⇒ NOT a strategy bug; *vanishes* ⇒ ambiguous (strategy bug OR GC-masked layout bug — hybrid model: GC effects are usually layout-masking) |
 | **0c** | Real type sizes in `MemoryStrategyAssigner.estimate_size` (today `DEFAULT_TYPE_SIZE=64`) | SAFE | Stack/ARC decisions stop riding fictional sizes; suite unchanged |
-| **0d** | **Frontier SDD** for the struct value ABI (gate before step 1) | doc | names repr-owner, offsets-owner, slot/access semantics, admitted/rejected surface, guard-only types |
+| **0d** | **Frontier SDD** → `docs/abi_struct_value_sdd.md`: registry owns `repr`, registry layout owns offsets, slot=`inline?value_size:8`, producer/consumer-agreement invariant, guard-only StaticArray/Tuple/Proc/Pointer/Union/lib **DONE** | doc | names repr-owner, offsets-owner, slot/access semantics, admitted/rejected surface, guard-only types |
 | **1** | Single `layout_of(type)→{repr, offsets}` per the SDD ownership; all 3 phases READ it (2796 whitelist → registry property) | CAUTION | probe: 0 CROSS rows AND no NEW slot/access mismatch class |
 | **2** | Registry freeze-point at the final-align seam: **report-only mode first, then abort**; explicit late-monomorphization-after-freeze policy | CAUTION | any class_info write after freeze in abort mode = abort |
 | **3** | `FieldAddr`(borrow=GEP) vs `FieldGet`(value) split + MIR verifier over the **full producer/consumer surface** (below) | CAUTION | **reducer roster** (below): repr-flip segv → 0 (#4 *should* die here) |

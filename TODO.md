@@ -2274,6 +2274,26 @@ ABI-0b. (2026-06-16, SHIPPED — force-GC bisector) `ADAMAS_FORCE_STRATEGY=gc` f
    warns against → 0c now CONSUMES step 1's `layout_of` (post-step-1 follow-up, NOT a
    step-0 lever). Next: ABI-0d (Frontier SDD — gate before step 1).
 
+ABI-0d. (2026-06-16, SHIPPED — Frontier SDD) Wrote `docs/abi_struct_value_sdd.md`, the
+   ownership contract that gates step 1 (GPT review critique #2: "single oracle" cannot be
+   coded safely without it, else step 1 mints a 4th oracle). Verified all three current
+   oracles against code: HIR `field_storage_size_impl` (ast_to_hir.cr:39412), MIR
+   `mir_field_storage_size` (hir_to_mir.cr:6353, STRING→8 special-case + no small/large
+   split), LLVM `container_elem_storage_size`/`inline_container_struct_type?`
+   (llvm_backend.cr:2756/:2796 string-prefix whitelist). Contract: the MIR type REGISTRY
+   owns the `repr` bit (PointerReference/PointerCarrier/InlineBytes), set ONCE at the
+   `align_all_class_ivars` fixed point (co-frozen with size in step 2); registry layout owns
+   offsets; `slot_size = inline? value_size : 8` via one shared helper all 3 phases READ; the
+   whitelist becomes a registration predicate, not a runtime name-match. Invariant (step-3
+   verifier): producer & consumer must AGREE on `(repr, slot_size, value_size)` per
+   `(type, context)` — strictly stronger than `slot==access`, catches the `cb25a911`
+   16/20/24 family. Guard-only (keep dedicated paths, B1a/B1c history): StaticArray, Tuple/
+   NamedTuple, Proc, Pointer, Union, lib structs. NON-GOALS: no inline flip (step 4), no new
+   size oracle (reads frozen registry). Step-1 falsifier: 0 CROSS rows + no new slot/access
+   class + suites green. Open risks carried to step 1: String slot=8 vs object value_size;
+   freeze ordering (bit set at final-align fixed point, NOT earlier); late-mono types get the
+   bit at registration. Next: ABI-1 (single `layout_of`, all 3 phases read).
+
 0. (2026-06-02) M4h family root-caused + narrow fix landed (`2444b2e0`, COMPLETED not
    VERIFIED). The s2b `union_all_reference_types?` SIGSEGV is a short-TypeRef Hash value
    confusion: the resolver minted a SHORT ghost identity for compiler-internal `MIR::X`/`HIR::X`
