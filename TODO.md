@@ -28,6 +28,32 @@ Working policy:
   patterns to catch known bad demand, but production fixes must preserve
   demanded deep shapes and remove only proven non-demand/root pollution.
 
+## Deferred Designs
+
+- **`@[Inline]` field-embedding annotation** — see
+  `docs/inline_field_annotation_sdd.md`. Status DEFERRED after a hostile
+  Quadrumvirate (2026-06-16): the idea is sound but mis-ordered. It must NOT
+  precede (1) consolidation of the 3 layout oracles through `LayoutContract`
+  (ABI-rework 1b/1c/2 — MIR `mir_field_storage_size` and LLVM
+  `inline_container_struct_type?` still bypass the contract) and (2) the #4
+  repr-flip fix, because a per-field pointer-vs-inline override on
+  un-consolidated oracles injects #4-class non-deterministic crashes. v1 scope
+  = struct fields only (= opt-in, incremental step-4, Crystal-checkable);
+  class-field embedding deferred behind an interior-ref leak check. Demand is
+  narrow (~2-3% of compiler ivars; containers/primitives dominate and are out
+  of scope) — measure access-frequency before investing.
+
+- **"struct vs class on stack" / unified object model** — see
+  `docs/class_on_stack_unified_model_review.md`. Status DEFERRED after a hostile
+  Quadrumvirate (2026-06-16): discussion record, not a plan. "struct vs class =
+  only copy semantics" is an oversimplification (identity/mutation/nil/dispatch
+  derive from copy policy); "class on stack, LLVM SROA finishes it" is false —
+  the `$Dnew` malloc is struct-gated (`hir_to_mir.cr:5800`/`:5854`), so a
+  StackLocal class still mallocs; the unified model is premature while #4 is
+  open and perf is unmeasured. Same blockers as `@[Inline]` (oracle
+  consolidation + #4 fix) plus sound interprocedural escape + non-observable
+  identity. NOT current work — current work is struct inlining (step-4).
+
 ## Current Checkpoint
 
 Latest bootstrap frontier (LM-624/625, 2026-05-23): produced `s2` builds
