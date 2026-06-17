@@ -95,13 +95,27 @@ module Adamas
     # NON-LIB struct value lives INLINE at its slot (slot == value_size); false =
     # it is held via an 8-byte pointer carrier. Today: inline-container families
     # are always inline, and a plain user struct is inline only when its value is
-    # at least a pointer word (small ones are pointer carriers, the V2 legacy
-    # ABI at ast_to_hir.cr:39420). Step 4 flips the size split to always-inline
-    # for the perf win — and because the readers (HIR field_storage_size, the MIR
-    # memo, the LLVM container oracle) all route here, that flip lands in ONE
-    # place. This is a SIZE-only predicate so HIR can call it pre-MIR (no kind).
+    # STRICTLY WIDER than a pointer word (`> POINTER_WORD_BYTES`); a struct whose
+    # value is exactly one pointer word, or smaller, is a pointer carrier (the V2
+    # legacy ABI at ast_to_hir.cr:39420).
+    #
+    # The threshold is `>` (not `>=`) to match the ACTUAL behavioural readers —
+    # MIR field access uses `inline_size > pointer_word_bytes` at
+    # hir_to_mir.cr:2860 (lower_field_get) and :3043 (lower_field_store_to_ptr),
+    # confirmed at runtime (an exactly-8-byte struct uses load/store like a
+    # pointer; a 16-byte struct uses memcopy / BorrowedAddress inline access).
+    # The previous `>=` was harmless only because an 8-byte pointer and an
+    # 8-byte inline value occupy the same slot size; but it was a latent
+    # boundary repr-flip for step-4 (HIR would lay the slot out as an inline
+    # value while MIR read it as a pointer). Aligning to `>` makes this single
+    # source agree with the readers so step 4 can flip the boundary in one place.
+    #
+    # Step 4 flips the size split to always-inline for the perf win — and because
+    # the readers (HIR field_storage_size, MIR lower_field_get/store, the LLVM
+    # container oracle) all route here, that flip lands in ONE place. This is a
+    # SIZE-only predicate so HIR can call it pre-MIR (no kind).
     def self.user_struct_inline?(size : UInt64, name : String) : Bool
-      inline_container_family?(name) || size >= POINTER_WORD_BYTES
+      inline_container_family?(name) || size > POINTER_WORD_BYTES
     end
 
     # The container-element struct families with an implemented inline ABI

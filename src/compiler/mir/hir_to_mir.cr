@@ -2857,7 +2857,10 @@ module Adamas
         # Small structs (≤ 8 bytes) are stored as scalars, need normal load.
         if hir_type_is_struct?(field.type) && !hir_type_is_lib_struct?(field.type)
           inline_size = hir_type_inline_size(field.type)
-          if inline_size > pointer_word_bytes_i32
+          # Inline storage decision via the single layout source (ABI-rework 1c),
+          # matching the symmetric lower_field_store_to_ptr routing so a field is
+          # read back exactly as it was written (no pointer-word-boundary flip).
+          if Adamas::LayoutContract.user_struct_inline?(inline_size.to_u64, hir_type_name(field.type))
             @inline_struct_ptrs << field.id
             if Adamas::LayoutProbe.enabled?
               probe_field_event("lower_field_get.inline_struct", "field-get", "consumer",
@@ -3038,9 +3041,17 @@ module Adamas
         is_crystal_struct = hir_type_is_struct?(field_hir_type) && !hir_type_is_lib_struct?(field_hir_type)
         is_lib = hir_type_is_lib_struct?(field_hir_type)
         is_static_array = hir_type_is_static_array?(field_hir_type)
-        # Only memcopy if the struct is larger than a pointer (needs inline storage)
+        # Inline storage decision routed through the single layout source
+        # (LayoutContract.user_struct_inline?, ABI-rework 1c) instead of a local
+        # `> pointer_word` threshold, so HIR/MIR cannot diverge at the
+        # pointer-word boundary (the S8 carrier/inline split, see
+        # layout_contract.cr). Behaviour-neutral: the contract uses `>` to match
+        # this reader; the family clause is redundant here (static arrays already
+        # short-circuit via is_static_array; Slice is wider than a pointer word).
         inline_size = is_crystal_struct ? hir_type_inline_size(field_hir_type).to_u64 : 0_u64
-        use_memcopy = is_lib || is_static_array || (is_crystal_struct && inline_size > pointer_word_bytes_u64)
+        use_memcopy = is_lib || is_static_array ||
+                      (is_crystal_struct &&
+                       Adamas::LayoutContract.user_struct_inline?(inline_size, hir_type_name(field_hir_type)))
         if use_memcopy
           struct_size = if is_lib
                           hir_type_lib_struct_size(field_hir_type)
