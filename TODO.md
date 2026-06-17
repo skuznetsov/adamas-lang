@@ -54,10 +54,18 @@ Working policy:
 
 ## ABI-rework: layout-oracle consolidation
 
-Goal: collapse the 3 layout oracles (HIR `field_storage_size_impl`, MIR
-`mir_field_storage_size` + field-access lowering, LLVM
-`inline_container_struct_type?`) onto the single `LayoutContract` so the #4
+Goal: collapse the layout oracles onto the single `LayoutContract` so the #4
 repr-flip family cannot live in their disagreements.
+
+IMPORTANT refinement (2026-06-16): there are TWO distinct repr regimes, not one.
+(a) **Field storage** — a struct as a class/struct FIELD: inline iff
+`user_struct_inline?` = family OR `size > pointer_word`. (b) **Container element**
+— a struct as Array/Slice ELEMENT: inline iff `inline_container_family?` ONLY; a
+>8-byte plain user struct is still a POINTER element (inlining it corrupts
+`Array(Parameter)`, llvm_backend.cr:2773). The two regimes share only the family
+sub-predicate. So "route every oracle through one repr predicate" is WRONG — it
+would inject divergence. Consolidate the shared piece (the family name-list) and
+keep the two regimes distinct.
 
 - **1c — MIR field-access readers (DONE, `66d6c015` 2026-06-16).** Routed
   `lower_field_get` (hir_to_mir.cr:2863) and `lower_field_store_to_ptr` (:3047)
@@ -75,11 +83,32 @@ repr-flip family cannot live in their disagreements.
   are already ≥8B inline (215 distinct InlineBytes). Win concentrates in
   runtime-hot structs (Atomic, SpinLock, Timers, Arena::Index); access-frequency
   still unmeasured.
-- **1b — label unification (TODO).** Route the LayoutProbe storage label through
-  `LayoutContract.repr` so a slot is named identically in every phase.
-- **2 — remaining readers (TODO).** Route MIR `mir_field_storage_size`
-  (hir_to_mir.cr:6353) and LLVM `inline_container_struct_type?`
-  (llvm_backend.cr:2796) through the contract; then freeze the bit (step 2/4).
+- **2a — LLVM container-element oracle (DONE, 2026-06-16).** Routed
+  `inline_container_struct_type?` (llvm_backend.cr:2796) through
+  `LayoutContract.inline_container_family?`, collapsing the duplicated family
+  name-list (was also at layout_contract.cr:124) onto the single source.
+  Behaviour-neutral (textually the same 3 prefixes under the same struct/size
+  gate); via the container regime, NOT `user_struct_inline?`. Guard
+  `struct_pointer_word_boundary_repro.sh`; suite 159/159 + 31/31.
+- **1b — label unification (REFRAMED, not a neutral routing).** Routing the
+  LayoutProbe container-element label through `LayoutContract.repr` is NOT
+  behaviour-neutral: `repr` encodes FIELD semantics (`user_struct_inline?`,
+  size>8 → InlineBytes) while the container-element probe uses CONTAINER
+  semantics. Doing it as-is would make the label disagree with the actual
+  storage. Needs a container-regime `repr` variant first, or leave the probe
+  label site-local. LOW priority (diagnostic only).
+- **mir_field_storage_size (REFRAMED, NOT a repr oracle).** hir_to_mir.cr:6383
+  is a SIZE helper (returns bytes, returns `desc.size` for aggregates), used
+  only in `trivial_struct_initializer_covers_all_storage?` where a wrong size is
+  fail-safe (skips the trivial-init opt, no miscompile). It is NOT a #4 repr-flip
+  source and should NOT be force-routed through the repr predicate (that would
+  change small-struct field sizes 4→8 and toggle the opt). Leave as-is; document.
+- **Next: step-4 flip.** With the field regime single-sourced (1c) and the
+  container family list single-sourced (2a), the remaining work toward the perf
+  win is the step-4 flip itself — make small (<8B) user-struct FIELDS inline at
+  `user_struct_inline?` (the one flip point), gated/measured per the demand tail
+  above. This is the Collapse move (remove the carrier box), CAUTION-tier; needs
+  the #4 producer understood first.
 
 ## Current Checkpoint
 
