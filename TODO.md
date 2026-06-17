@@ -34,9 +34,7 @@ Working policy:
   `docs/inline_field_annotation_sdd.md`. Status DEFERRED after a hostile
   Quadrumvirate (2026-06-16): the idea is sound but mis-ordered. It must NOT
   precede (1) consolidation of the 3 layout oracles through `LayoutContract`
-  (ABI-rework 1b/1c/2 — MIR `mir_field_storage_size` and LLVM
-  `inline_container_struct_type?` still bypass the contract) and (2) the #4
-  repr-flip fix, because a per-field pointer-vs-inline override on
+  and (2) the #4 repr-flip fix, because a per-field pointer-vs-inline override on
   un-consolidated oracles injects #4-class non-deterministic crashes. v1 scope
   = struct fields only (= opt-in, incremental step-4, Crystal-checkable);
   class-field embedding deferred behind an interior-ref leak check. Demand is
@@ -53,6 +51,35 @@ Working policy:
   open and perf is unmeasured. Same blockers as `@[Inline]` (oracle
   consolidation + #4 fix) plus sound interprocedural escape + non-observable
   identity. NOT current work — current work is struct inlining (step-4).
+
+## ABI-rework: layout-oracle consolidation
+
+Goal: collapse the 3 layout oracles (HIR `field_storage_size_impl`, MIR
+`mir_field_storage_size` + field-access lowering, LLVM
+`inline_container_struct_type?`) onto the single `LayoutContract` so the #4
+repr-flip family cannot live in their disagreements.
+
+- **1c — MIR field-access readers (DONE, `66d6c015` 2026-06-16).** Routed
+  `lower_field_get` (hir_to_mir.cr:2863) and `lower_field_store_to_ptr` (:3047)
+  through `LayoutContract.user_struct_inline?`. Surfaced and fixed a latent
+  pointer-word boundary divergence: HIR `user_struct_inline?` used `>= 8` while
+  the MIR readers used `> 8`, so an exactly-8-byte struct value was INLINE per
+  HIR but a POINTER CARRIER per MIR — masked only because both occupy one slot,
+  but a step-4 repr-flip in waiting. Aligned the contract to `>` (matches the
+  behavioural readers). Behaviour-neutral: LayoutProbe decision set byte-identical
+  (565 decisions); guard `struct_pointer_word_boundary_repro.sh`; suite 159/159 +
+  31/31. Per `[[abi_slot_conflict_metric_invalid]]` this is a correctness/clarity
+  consolidation, NOT itself a #4 fix.
+- **Demand (measured 2026-06-16).** step-4 target is a narrow tail: ~11 distinct
+  small (<8B) value-struct field-slots (~5% of struct types); most struct fields
+  are already ≥8B inline (215 distinct InlineBytes). Win concentrates in
+  runtime-hot structs (Atomic, SpinLock, Timers, Arena::Index); access-frequency
+  still unmeasured.
+- **1b — label unification (TODO).** Route the LayoutProbe storage label through
+  `LayoutContract.repr` so a slot is named identically in every phase.
+- **2 — remaining readers (TODO).** Route MIR `mir_field_storage_size`
+  (hir_to_mir.cr:6353) and LLVM `inline_container_struct_type?`
+  (llvm_backend.cr:2796) through the contract; then freeze the bit (step 2/4).
 
 ## Current Checkpoint
 
