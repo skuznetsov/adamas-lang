@@ -52227,7 +52227,17 @@ module Adamas::HIR
       when Adamas::Compiler::Frontend::NodeKind::Binary
         return lower_binary(ctx, node.unsafe_as(Adamas::Compiler::Frontend::BinaryNode))
       when Adamas::Compiler::Frontend::NodeKind::Unary
-        return lower_unary(ctx, node.unsafe_as(Adamas::Compiler::Frontend::UnaryNode))
+        # SplatNode has no dedicated NodeKind and shares NodeKind::Unary with
+        # UnaryNode (see ast.cr SplatNode#node_kind). The two layouts differ:
+        # UnaryNode#operand sits past the end of SplatNode's smaller allocation,
+        # so unsafe_as-casting a SplatNode to UnaryNode reads `operand` from
+        # adjacent heap (source bytes) -> a bogus ExprId ("ExprId out of bounds"
+        # / String#byte_at segv, the #4 producer). Only cast a real UnaryNode;
+        # route SplatNode to the type-safe `case node` fallthrough below, which
+        # lowers it via lower_expr(node.expr).
+        unless node.is_a?(Adamas::Compiler::Frontend::SplatNode)
+          return lower_unary(ctx, node.unsafe_as(Adamas::Compiler::Frontend::UnaryNode))
+        end
       end
       # Fall through to original case statement for remaining node types
 

@@ -1,7 +1,7 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-06-16
-Branch: `abi-rework`
+Updated: 2026-06-17
+Branch: `loop-family-nested-accum-fix` (ABI track on `abi-rework`)
 
 This is the active working backlog only. Historical detail is in git history,
 especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
@@ -2154,6 +2154,9 @@ pending-budget oracle.
 ## Next Work
 
 0aa. (2026-06-14) Current frontier = s2b STARTUP repr-flip (String<->Slice).
+   UPDATE 2026-06-17: one confirmed producer of this family FIXED — see 0a-side6
+   (SplatNode/UnaryNode NodeKind collision in lower_node; glob backtrace named it
+   directly). Re-measure the s2b/glob crash rate before assuming 0aa is closed.
    lldb-VERIFIED root (memory `s2b-startup-crash-rc-overfree-refuted`): a
    header-less pointer INTO the source buffer is written into a `String`-typed
    SLOT (`HIR::Call#method_name` class field, `DefParamInfo#type_annotation`
@@ -2313,6 +2316,46 @@ pending-budget oracle.
    9f5e4acc removed (regression fix), NOT a 0aa root fix — the producer repr-flip remains
    open. Residual rare rc=1 (a separate non-segfault #4 manifestation, did not reproduce
    in 60 tries) is the next thread on the 0aa frontier.
+
+0a-side6. (2026-06-17, SHIPPED locally — pending commit) ROOT FIX for a confirmed
+   0aa #4 producer: `SplatNode` misdispatched as `UnaryNode` in the `lower_node`
+   fast `case kind` prefilter. `SplatNode` has no dedicated `NodeKind` and shares
+   `NodeKind::Unary` with `UnaryNode` (ast.cr `SplatNode#node_kind` / static
+   `self.node_kind(SplatNode)` both return `Unary`; awk-verified Unary is the ONLY
+   many-to-one NodeKind collision). The `when NodeKind::Unary` branch
+   (ast_to_hir.cr:52229) did an unconditional `node.unsafe_as(UnaryNode)`. Layouts:
+   `SplatNode = span + expr:ExprId` (small alloc); `UnaryNode = span +
+   operator:Slice(16B) + operand:ExprId + operator_str:String`. `UnaryNode#operand`
+   sits PAST the end of SplatNode's smaller allocation, so the cast read `operand`
+   from adjacent heap (the source-text buffer) -> a bogus ExprId = the #4
+   "source-bytes-in-a-typed-slot" producer. Confirmed by the captured glob backtrace
+   (/tmp/glob4_oob_full.txt): `lower_node:52230 (NodeKind::Unary) -> lower_unary ->
+   lower_expr -> "ExprId out of bounds: 1701869637"` inside
+   `Path.new$(Path|String)_Tuple()` (the splat-param expansion in Dir.glob — the
+   exact path 0ac/0a-side5 were chasing). Fix: guard the cast —
+   `unless node.is_a?(SplatNode)` — so only a real UnaryNode is unsafe_as-cast;
+   SplatNode falls through to the type-safe `case node` arm (52399-52401) that lowers
+   it via `lower_expr(node.expr)`. +11/-1, single hunk. Deterministic reducer
+   `regression_tests/splat_node_unary_dispatch_repro.sh` (`[*t, 9]` array-literal
+   splat in a top-level-called method routes a SplatNode through the exact branch):
+   pre-fix rc=11 SIGSEGV in HIR lowering, post-fix rc=0; A/B reconfirmed on the live
+   binaries. Gate: 161/161 originals + 31/31 combined, ALL SUITES PASSED (baseline
+   was 159; suite grew, 0 new regressions). `bin/adamas` promoted to the fixed binary
+   (md5 c63f1832...); scratch `bin/adamas_dbg` removed.
+   CALIBRATED SCOPE (anti-theater): this removes ONE confirmed producer of the
+   ExprId-OOB / source-pointer-in-String-slot family — the one the glob backtrace
+   names directly. It does NOT by itself prove the whole 0aa Heisenbug is gone:
+   (a) the statistical glob probe was already in a non-reproducing layout this build
+   (clean bin/adamas 0/60), so it can neither confirm nor deny residual; (b) prior
+   notes warn the repr-flip SLOT may be reached by other producers. NEXT: re-measure
+   the `stage2_dir_glob_dir_probe` / s2b crash rate against the promoted binary to
+   quantify how much of 0aa this clears; any residual non-det pass3/lower_main segv
+   is the next 0aa layer. Stage2 robustness footnote: in self-hosted stage2 subclass
+   RTTI can be lost after arena storage (the reason the fast prefilter exists at all),
+   so worst case `is_a?(SplatNode)` returns false -> same unsafe_as as today = no
+   regression; a fully stage2-robust fix gives SplatNode its own NodeKind (4
+   cross-file consumers: dispatch.cr:34, ast_cache.cr:379/720, name_resolver.cr:128)
+   — deferred, higher blast radius. Memory `s2b-startup-crash-rc-overfree-refuted`.
 
 === ABI REWORK TRACK (branch `abi-rework`, plan `docs/abi_rework_quadr_plan.md`) ===
 Owner directive: fix the two ABIs at root, not symptoms; HYP-B safety-net first
