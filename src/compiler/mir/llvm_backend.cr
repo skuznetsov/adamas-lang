@@ -2797,10 +2797,14 @@ module Adamas::MIR
       return false unless elem_type
       return false unless elem_type.kind.struct? && elem_type.size > 0
 
-      name = elem_type.name
-      name.starts_with?("Slice(") ||
-        name.starts_with?("StaticArray(") ||
-        name.starts_with?("Hash::Entry(")
+      # Container-element inline ABI = ONLY the implemented inline-container
+      # families (NOT the field-storage `size > pointer_word` rule): a >8-byte
+      # plain user struct is still a POINTER element in Array/Slice (treating it
+      # inline corrupts arrays such as Array(Parameter), see :2773). So this
+      # routes through the contract's shared family sub-predicate rather than
+      # user_struct_inline?, collapsing the duplicated family name-list onto the
+      # single source (ABI-rework: family list lives only in LayoutContract).
+      Adamas::LayoutContract.inline_container_family?(elem_type.name)
     end
 
     # True when ArrayGet/ArraySet targets a Slice(T) value (not Array/StaticArray).
