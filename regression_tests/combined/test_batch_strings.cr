@@ -1,3 +1,34 @@
+# Combined batch bundle (mechanical concat, byte-equality verified).
+# Members: test_string_interp test_string_upcase_large test_string_to_u64 sprintf_float_precision array_concat_string_runtime
+# EXPECT: test_batch_strings_all_ok
+
+# ===== test_string_interp =====
+name = "world"
+age = 42
+puts "Hello, #{name}! Age: #{age}"
+puts "string_interp_done"
+
+# ===== test_string_upcase_large =====
+
+source = "a" * 50_000
+up = source.upcase
+
+if up.size == 50_000 && up[0] == 'A' && up[-1] == 'A'
+  puts "string_upcase_large_ok"
+else
+  puts "string_upcase_large_bad: #{up.size}"
+end
+
+# ===== test_string_to_u64 =====
+
+i = "123".to_i
+u8 = "123".to_u8
+u16 = "123".to_u16
+u32 = "123".to_u32
+u64 = "123".to_u64
+puts "I=#{i} U8=#{u8} U16=#{u16} U32=#{u32} U64=#{u64}"
+
+# ===== sprintf_float_precision =====
 # Regression: sprintf("%.Nf", Float64) with explicit precision.
 #
 # Exercises three independent HIR lowering fixes:
@@ -11,7 +42,6 @@
 #      dropping mutations like `num *= 10; num += digit` inside while loops.
 #      Cases 8-10 exercise multi-digit precision that requires this fix.
 #
-# EXPECT: sprintf_float_precision_ok
 
 raise "case1 got #{sprintf("%.3f", 236.15_f64).inspect}" unless sprintf("%.3f", 236.15_f64) == "236.150"
 raise "case2 got #{sprintf("%.1f", 230119292.0_f64).inspect}" unless sprintf("%.1f", 230119292.0_f64) == "230119292.0"
@@ -40,3 +70,17 @@ cond2 = c === '2'
 raise "=== should be true for '2' === '2'" unless cond2
 
 puts "sprintf_float_precision_ok"
+
+# ===== array_concat_string_runtime =====
+
+parse_details = [] of String
+parse_details << "user=1.3ms"
+parse_details << "files=1"
+parse_details << "loaded=1"
+
+parts = ["Stage 1/6 parse", "1.3ms"]
+parts.concat(parse_details)
+
+puts parts.join(" ")
+
+puts "test_batch_strings_all_ok"

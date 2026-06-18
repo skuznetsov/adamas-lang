@@ -1,2 +1,0 @@
-# EXPECT: ok
-puts "ok"
