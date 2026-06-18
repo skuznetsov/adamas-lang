@@ -6459,6 +6459,18 @@ module Adamas::MIR
       emit_raw "%#{name}.union = type { i32, [#{payload_i32s} x i32] }\n"
     end
 
+    # ARC-owned-String (E) gate. When enabled, dynamic-String producers allocate a
+    # headered raw+8 String with rc=1 (freeable) via __adamas_alloc_string instead of
+    # the sentinel/headerless layout, and E emits scope-end rc_dec drop sites. Default
+    # OFF → behavior is exactly D's leak-to-exit. Compile-time gate (governs emitted IR);
+    # only "1"/"true"/"on" enable it. See docs/arc_owned_string_sdd.md (P2).
+    private def arc_string_enabled? : Bool
+      raw = ::Adamas::Compiler::BootstrapEnv.get?("ADAMAS_ARC_STRING")
+      return false if raw.nil?
+      v = raw.strip.downcase
+      v == "1" || v == "true" || v == "on"
+    end
+
     private def emit_runtime_declarations
       runtime_decl_trace = bootstrap_env_enabled?("ADAMAS_RUNTIME_DECL_TRACE", "ADAMAS_RUNTIME_DECL_TRACE")
       bootstrap_trace_puts "  [RT_DECL] begin" if runtime_decl_trace
@@ -7660,6 +7672,34 @@ module Adamas::MIR
       emit_raw "ret_empty:\n"
       emit_raw "  ret ptr @.str.empty\n"
       emit_raw "}\n\n"
+
+      # E (ARC-owned String): unified headered-allocation helper. Allocates
+      # bytesize + 8 (rc) + 12 (header) + 1 (null) via libc-backed __adamas_malloc64
+      # (calloc, zeroed), stores %rc at the libc base (raw), writes type_id/bytesize/size
+      # at raw+8, and returns raw+8 (the String object pointer). Literals pass
+      # rc = INT64_MAX (sentinel, never freed); freeable dynamic strings pass rc = 1.
+      # The caller fills the data bytes at obj+12. Emitted only under the ARC-string
+      # gate; producers are migrated to call it in a later step (P2b).
+      # See docs/arc_owned_string_sdd.md §4.
+      if arc_string_enabled?
+        emit_raw "define ptr @__adamas_alloc_string(i32 %bytesize, i32 %size, i32 %tid, i64 %rc) {\n"
+        emit_raw "entry:\n"
+        emit_raw "  %alloc_i32 = add i32 %bytesize, 21\n"
+        emit_raw "  %alloc = zext i32 %alloc_i32 to i64\n"
+        emit_raw "  %raw = call ptr @__adamas_malloc64(i64 %alloc)\n"
+        emit_raw "  store i64 %rc, ptr %raw, align 8\n"
+        emit_raw "  %str = getelementptr i8, ptr %raw, i64 8\n"
+        emit_raw "  store i32 %tid, ptr %str\n"
+        emit_raw "  %bs_ptr = getelementptr i8, ptr %str, i32 4\n"
+        emit_raw "  store i32 %bytesize, ptr %bs_ptr\n"
+        emit_raw "  %sz_ptr = getelementptr i8, ptr %str, i32 8\n"
+        emit_raw "  store i32 %size, ptr %sz_ptr\n"
+        emit_raw "  %data = getelementptr i8, ptr %str, i32 12\n"
+        emit_raw "  %null_pos = getelementptr i8, ptr %data, i32 %bytesize\n"
+        emit_raw "  store i8 0, ptr %null_pos\n"
+        emit_raw "  ret ptr %str\n"
+        emit_raw "}\n\n"
+      end
 
       emit_raw "define ptr @__adamas_runtime_program_name(ptr %argv) {\n"
       emit_raw "entry:\n"
