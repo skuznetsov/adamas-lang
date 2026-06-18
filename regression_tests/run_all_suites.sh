@@ -1,9 +1,9 @@
 #!/bin/bash
-# Run all regression test suites: original (68) + combined (20)
+# Run all regression test suites: originals (regression_tests/*.cr) + combined (combined/*.cr)
 # Usage: ./regression_tests/run_all_suites.sh [path-to-compiler] [parallelism]
 
 COMPILER="${1:-bin/adamas}"
-JOBS="${2:-4}"
+JOBS="${2:-8}"   # default = performance-core count; memory per compile ~0.4GB so RAM is not the limit
 
 echo "========================================"
 echo " Crystal V2 Regression Test Suite"
