@@ -3008,6 +3008,15 @@ module Adamas::MIR
 
       emit_entrypoint_if_needed(functions_to_emit)
 
+      # Two-heap GC hazard fix (D): emit the GC-base-aware realloc wrapper only
+      # when a reachable function calls GC_realloc. That is exactly when the
+      # emit_extern_call redirect targets @__adamas_gc_aware_realloc AND when
+      # libgc is linked (a GC method is reachable), so its @GC_base/@GC_realloc
+      # references resolve. Parallel-safe: scans the shared MIR, not worker state.
+      if gc_aware_realloc_needed?(functions_to_emit)
+        emit_gc_aware_realloc_wrapper
+      end
+
       # In fused mode, module singleton globals are discovered by workers during
       # emission. Emit their declarations now that we've merged side-effects.
       if @fused_mir_lowering && !@module_singleton_globals.empty?
@@ -5130,7 +5139,7 @@ module Adamas::MIR
                  "define ptr @#{name}(ptr %self, #{llvm_type} %other) {\n" \
                  "  %self_val = load #{llvm_type}, ptr %self\n" \
                  "  %result = #{div_op} #{llvm_type} %self_val, %other\n" \
-                 "  %new = call ptr @GC_malloc_atomic(i64 #{alloc_bytes})\n" \
+                 "  %new = call ptr @__adamas_malloc64(i64 #{alloc_bytes})\n" \
                  "  store #{llvm_type} %result, ptr %new\n" \
                  "  ret ptr %new\n" \
                  "}\n"
@@ -6562,6 +6571,14 @@ module Adamas::MIR
       emit_raw "  ret ptr %new_ptr\n"
       emit_raw "}\n\n"
 
+      # Two-heap GC hazard fix (D): the GC-base-aware realloc wrapper
+      # (@__adamas_gc_aware_realloc) is emitted conditionally at the module
+      # epilogue (see emit_gc_aware_realloc_wrapper), NOT here. It references
+      # @GC_base/@GC_realloc, which only resolve when libgc is linked. libgc is
+      # linked only when a GC method is reachable, so emitting the wrapper
+      # unconditionally breaks trivial programs (e.g. `x = 1`) that never touch
+      # the GC: link fails with "Undefined symbols: _GC_base, _GC_realloc".
+
       # ARC runtime — real reference counting with null safety
       # Layout: [i64 refcount][object data...], ptr points to object data (refcount at ptr-8)
       #
@@ -7073,6 +7090,7 @@ module Adamas::MIR
       emit_raw "declare ptr @GC_malloc(i64)\n"
       emit_raw "declare ptr @GC_malloc_atomic(i64)\n"
       emit_raw "declare ptr @GC_realloc(ptr, i64)\n"
+      emit_raw "declare ptr @GC_base(ptr)\n"
       emit_raw "declare void @GC_set_handle_fork(i32)\n"
       emit_raw "declare void @GC_set_start_callback(ptr)\n"
       emit_raw "declare void @GC_set_warn_proc(ptr)\n"
@@ -9179,6 +9197,50 @@ module Adamas::MIR
 
     end
 
+    # Two-heap GC hazard fix (D): realloc must use the SAME allocator family
+    # that allocated a block. V2's object graph lives in the libc heap
+    # (emit_alloc → __adamas_malloc64), and we additionally redirect the atomic
+    # byte-buffer family (GC.malloc_atomic) to libc so no live String survives
+    # only on the Boehm heap (Boehm cannot scan libc interiors → premature
+    # free → byte_at SIGSEGV). But the scanned family (GC.malloc, e.g. GMP's
+    # custom allocator and the EventLoop arena) stays on Boehm, and those blocks
+    # are realloc'd via the same GC.realloc method. GC_base(ptr) is non-null only
+    # for Boehm-heap pointers, so it tells the two families apart at runtime:
+    # Boehm blocks → GC_realloc, libc blocks → libc realloc.
+    #
+    # Emitted only when a reachable function actually calls GC_realloc (the same
+    # condition under which libgc is linked), so trivial programs that never
+    # touch the GC do not pull in the unresolved @GC_base/@GC_realloc symbols.
+    private def emit_gc_aware_realloc_wrapper
+      emit_raw "define ptr @__adamas_gc_aware_realloc(ptr %ptr, i64 %size) noinline {\n"
+      emit_raw "entry:\n"
+      emit_raw "  %is_null = icmp eq ptr %ptr, null\n"
+      emit_raw "  br i1 %is_null, label %use_libc, label %check\n"
+      emit_raw "check:\n"
+      emit_raw "  %base = call ptr @GC_base(ptr %ptr)\n"
+      emit_raw "  %is_gc = icmp ne ptr %base, null\n"
+      emit_raw "  br i1 %is_gc, label %use_gc, label %use_libc\n"
+      emit_raw "use_gc:\n"
+      emit_raw "  %gc_ptr = call ptr @GC_realloc(ptr %ptr, i64 %size)\n"
+      emit_raw "  ret ptr %gc_ptr\n"
+      emit_raw "use_libc:\n"
+      emit_raw "  %libc_ptr = call ptr @__adamas_realloc64(ptr %ptr, i64 %size)\n"
+      emit_raw "  ret ptr %libc_ptr\n"
+      emit_raw "}\n\n"
+    end
+
+    # True when a reachable function calls the C symbol GC_realloc, which is the
+    # exact trigger for the emit_extern_call redirect to @__adamas_gc_aware_realloc.
+    private def gc_aware_realloc_needed?(functions : ::Array(Function)) : Bool
+      functions.any? do |func|
+        func.blocks.any? do |block|
+          block.instructions.any? do |inst|
+            inst.is_a?(ExternCall) && inst.extern_name == "GC_realloc"
+          end
+        end
+      end
+    end
+
     # Generate per-type ARC destructors and a universal dispatch function.
     # A destructor rc_dec's all reference-typed fields of an object before free.
     # The dispatch function reads the type_id header and calls the right destructor.
@@ -10083,7 +10145,7 @@ module Adamas::MIR
         emit_raw "  call void @Int$Hcheck_div_argument$$#{arg_type_name}(ptr %self, #{llvm_type} %other)\n"
         emit_raw "  %self_val = load #{llvm_type}, ptr %self\n"
         emit_raw "  %result = #{div_op} #{llvm_type} %self_val, %other\n"
-        emit_raw "  %new = call ptr @GC_malloc_atomic(i64 #{alloc_bytes})\n"
+        emit_raw "  %new = call ptr @__adamas_malloc64(i64 #{alloc_bytes})\n"
         emit_raw "  store #{llvm_type} %result, ptr %new\n"
         emit_raw "  ret ptr %new\n"
         emit_raw "}\n\n"
@@ -10133,7 +10195,7 @@ module Adamas::MIR
             emit_raw "  ret #{elem_llvm} %val\n"
           else
             # Scalar-but-different ABI (e.g. boxed ptr): heap-box the element.
-            emit_raw "  %box = call ptr @GC_malloc_atomic(i64 #{elem_stride})\n"
+            emit_raw "  %box = call ptr @__adamas_malloc64(i64 #{elem_stride})\n"
             emit_raw "  store #{elem_llvm} %val, ptr %box\n"
             emit_raw "  ret ptr %box\n"
           end
@@ -22543,6 +22605,22 @@ module Adamas::MIR
          !inst.extern_name.includes?('.') &&
          inst.extern_name.matches?(/\A[a-zA-Z0-9_$]+\z/)
         mangled_extern_name = inst.extern_name
+      end
+
+      # Two-heap GC hazard fix (D): redirect the atomic byte-buffer family from
+      # the Boehm heap to the libc allocator family. The boehm.cr GC.malloc_atomic
+      # / GC.realloc method bodies lower their LibGC.* calls to these C symbols;
+      # String/Builder/IO buffers flow through here. Routing them to libc keeps
+      # live Strings off the Boehm heap (Boehm cannot scan libc-resident
+      # containers that hold the only ref → premature free → byte_at SIGSEGV).
+      # __adamas_malloc64 is calloc-based (zeroes, matching Boehm). realloc goes
+      # through the GC-base-aware wrapper so scanned GC.malloc blocks (GMP, arena)
+      # still realloc via GC_realloc. The scanned GC_malloc itself is left alone.
+      case mangled_extern_name
+      when "GC_malloc_atomic"
+        mangled_extern_name = "__adamas_malloc64"
+      when "GC_realloc"
+        mangled_extern_name = "__adamas_gc_aware_realloc"
       end
 
       # Handle Pointer.new / Pointer.new! - convert integer to pointer

@@ -112,6 +112,24 @@ keep the two regimes distinct.
 
 ## Current Checkpoint
 
+**2026-06-18 — #1 s2b startup crash FIXED (two-heap GC hazard, fix D).** Branch
+`s2b-twoheap-gc-fix-D`, 7 edits all in `src/compiler/mir/llvm_backend.cr` (no
+stdlib). The atomic byte-buffer allocator family is moved off the Boehm GC heap
+onto libc so no live String/Builder/IO buffer survives only on a heap Boehm
+cannot scan through libc containers (premature free -> `String#byte_at` SIGSEGV
+at stage2 startup): `GC.malloc_atomic` -> `__adamas_malloc64` (libc calloc),
+`GC.realloc` -> `__adamas_gc_aware_realloc` (GC_base-aware: Boehm blocks via
+`GC_realloc`, libc blocks via libc realloc). Scanned `GC.malloc` (GMP, EventLoop
+arena) stays on Boehm. The wrapper is emitted at the module epilogue only when a
+reachable `ExternCall "GC_realloc"` exists (`gc_aware_realloc_needed?`) — the
+same condition that links libgc, which fixes a link bug where GC-free programs
+got `Undefined symbols: _GC_base, _GC_realloc`. Evidence: baseline pre-D s2b
+SIGSEGVs on `x=1`; D-built s2b compiles `x=1` exit 0 ~1s, output links + runs
+clean; regression suite 160/160 + 31/31; repro
+`regression_tests/gc_aware_realloc_gating_repro.sh`. NEXT: E = ARC-owned String
+(general-runtime reclamation; D's leak-to-exit semantics enable leak
+measurement to inform E). Details in `LANDMARKS.md` (LM-S2B-TWOHEAP-FIX-D).
+
 Latest bootstrap frontier (LM-624/625, 2026-05-23): produced `s2` builds
 cleanly under the safe wrapper and passes focused no-prelude guards for
 qualified nested module namespaces, `skip_file` require scanning, and
