@@ -126,9 +126,24 @@ same condition that links libgc, which fixes a link bug where GC-free programs
 got `Undefined symbols: _GC_base, _GC_realloc`. Evidence: baseline pre-D s2b
 SIGSEGVs on `x=1`; D-built s2b compiles `x=1` exit 0 ~1s, output links + runs
 clean; regression suite 160/160 + 31/31; repro
-`regression_tests/gc_aware_realloc_gating_repro.sh`. NEXT: E = ARC-owned String
-(general-runtime reclamation; D's leak-to-exit semantics enable leak
-measurement to inform E). Details in `LANDMARKS.md` (LM-S2B-TWOHEAP-FIX-D).
+`regression_tests/gc_aware_realloc_gating_repro.sh`.
+
+**E = ARC-owned String — P1 (design + baseline reducers) COMPLETE (2026-06-18).**
+SDD `docs/arc_owned_string_sdd.md` + E-R0 producer census
+`docs/arc_owned_string_er0_census.md` (two-axis: layout regime A/B + ownership).
+Key finding: dynamic Strings live in TWO layout regimes (A=headered raw+8 sentinel,
+only `String$Dnew`+`runtime_from_cstr`; B=headerless +13, ~18 other producers), and
+NO byte-buffer producer has a scope-end drop site — verified empirically via D1
+(`@owned_return_funcs` dump = 68 members, 0 byte-buffer producers). ⇒ E is TWO bodies
+of work: layout unification (cheap) + drop-site emission (the larger part + double-free
+risk). §11.7 route chosen: source-shape whitelist + backend-local `.conv` cleanup (NOT
+a type-only parallel pass). Baseline-correctness reducers E-R2..E-R11 landed + PASS at
+baseline-D: `regression_tests/arc_owned_string_baseline_repro.sh` (E-R2..E-R10, one
+compile) + `arc_owned_string_er11_s2b_repro.sh` (E-R11; full self-build opt-in
+`ADAMAS_ER11_FULL=1`). These guard P2. NEXT (P2, NOT yet authorized): add
+`__adamas_alloc_string` + `ADAMAS_ARC_STRING` env gate (default OFF), migrate producers,
+emit §11.7 whitelist drop sites + `.conv` cleanup, lock §11.6 Builder a1/a2/b by gate-ON
+measurement, run full matrix gate-ON. Details in `LANDMARKS.md` (LM-S2B-TWOHEAP-FIX-D).
 
 Latest bootstrap frontier (LM-624/625, 2026-05-23): produced `s2` builds
 cleanly under the safe wrapper and passes focused no-prelude guards for
