@@ -188,6 +188,17 @@ gated); coarse-POD over-count = 18 (confirms `struct_type_is_pod?` unfit). REVIS
 add a one-hop `.new`→`initialize` forwarding trace OR flip at the forwarded callee — decide
 after measuring `initialize`-side stores. NOT the whole arg bucket.
 
+**2026-06-19 — Stage 1a brief WRITTEN (`c79446d4`, `docs/abi_byvalue_stage1a_brief.md`),
+awaiting owner's GPT hostile review.** Verified ground truth: `Vec2$Dnew` mallocs 16B
+(8B `i64` INT64_MAX GC/RC sentinel header at `ptr-8` + 8B payload, returns payload ptr);
+the `-8` header is the rc_inc/rc_dec sentinel and structs are currently treated as STATIC
+(never rc'd, leak to exit) → by-value PODs reaching an rc path are a no-op not a crash
+(Darwin; glibc `malloc_usable_size(non-heap)` UB = hazard). **CRUX for review:** `T$Dnew`
+return ABI is per-type-GLOBAL, so the per-site census (6/12) is a FLOOR — Stage 1a needs
+Shape A (whole-type flip + new per-TYPE aggregation pass = Stage 0++) or Shape B (dual ABI
+`T$Dnew$byval`). NEXT: adversary-verify GPT critique → pick Shape A/B → build per-type
+aggregation + gated flip. Brief lists 7 hazards + DoD.
+
 **2026-06-18 — #1 s2b startup crash FIXED (two-heap GC hazard, fix D).** Branch
 `s2b-twoheap-gc-fix-D`, 7 edits all in `src/compiler/mir/llvm_backend.cr` (no
 stdlib). The atomic byte-buffer allocator family is moved off the Boehm GC heap
