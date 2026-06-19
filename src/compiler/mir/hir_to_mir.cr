@@ -552,6 +552,10 @@ module Adamas
       # predicate must recurse through struct fields and answer DEFINITELY.
       private def run_struct_byvalue_census
         tally = Hash(String, Int32).new(0)
+        arg_sub = Hash(String, Int32).new(0)   # arg sub-buckets (Stage 1 refinement)
+        fs_sub = Hash(String, Int32).new(0)     # direct field_store inline vs carrier
+        flip_eligible = 0                        # sites a POD-only flip could take TODAY
+        pod_discrepancy = 0                      # coarse-POD true but recursive-POD false
         total = 0
         verbose = Adamas::Compiler::BootstrapEnv.get?("ADAMAS_STRUCT_BYVALUE_CENSUS") == "verbose"
         @hir_module.functions.each do |func|
@@ -561,24 +565,52 @@ module Adamas
               call = inst.as(HIR::Call)
               next unless struct_ctor_call?(call)
               bucket = classify_struct_ctor_flow(func, call)
-              pod = struct_type_is_pod?(call.type) ? "pod" : "ref"
+              recursive_pod = struct_type_is_recursive_pod?(call.type)
+              coarse_pod = struct_type_is_pod?(call.type)
+              pod = coarse_pod ? "pod" : "ref"
+              pod_discrepancy += 1 if coarse_pod && !recursive_pod
               tally["#{bucket}|#{pod}"] += 1
               total += 1
               tname = hir_type_name(call.type)
+
+              # Stage 1 refinement: split the buckets the flip actually targets.
+              case bucket
+              when "field_store"
+                case field_store_site_is_inline?(func, call.id)
+                when true
+                  fs_sub["field_store_inline"] += 1
+                  flip_eligible += 1 if recursive_pod
+                when false
+                  fs_sub["field_store_carrier"] += 1
+                else
+                  fs_sub["field_store_unresolved"] += 1
+                end
+              when "arg"
+                sub = arg_subbucket_for_ctor(func, call)
+                arg_sub[sub] += 1
+                flip_eligible += 1 if sub == "arg_copy_field_only" && recursive_pod
+              end
+
               # Optional type-substring filter prints ALL buckets for matching
               # structs (decision probe); default verbose prints copy boundaries.
               if (filt = Adamas::Compiler::BootstrapEnv.get?("ADAMAS_STRUCT_BYVALUE_CENSUS_TYPE"))
                 if tname.includes?(filt)
-                  STDERR.puts "[BYVAL_CENSUS] #{bucket} #{pod} type=#{tname} in=#{func.name}"
+                  STDERR.puts "[BYVAL_CENSUS] #{bucket} #{pod} rec_pod=#{recursive_pod} type=#{tname} in=#{func.name}"
                 end
               elsif verbose && (bucket == "field_store" || bucket == "container")
-                STDERR.puts "[BYVAL_CENSUS] #{bucket} #{pod} type=#{tname} in=#{func.name}"
+                STDERR.puts "[BYVAL_CENSUS] #{bucket} #{pod} rec_pod=#{recursive_pod} type=#{tname} in=#{func.name}"
               end
             end
           end
         end
         STDERR.puts "[BYVAL_CENSUS] total_struct_ctor_sites=#{total}"
         tally.keys.sort.each { |k| STDERR.puts "[BYVAL_CENSUS]   #{k} = #{tally[k]}" }
+        STDERR.puts "[BYVAL_CENSUS] field_store split:"
+        fs_sub.keys.sort.each { |k| STDERR.puts "[BYVAL_CENSUS]   #{k} = #{fs_sub[k]}" }
+        STDERR.puts "[BYVAL_CENSUS] arg sub-buckets:"
+        arg_sub.keys.sort.each { |k| STDERR.puts "[BYVAL_CENSUS]   #{k} = #{arg_sub[k]}" }
+        STDERR.puts "[BYVAL_CENSUS] flip_eligible_sites=#{flip_eligible} (recursive-POD + inline field_store OR arg_copy_field_only)"
+        STDERR.puts "[BYVAL_CENSUS] coarse_pod_overcount=#{pod_discrepancy} (coarse POD true but recursive POD false)"
         STDERR.flush
       end
 
@@ -660,6 +692,178 @@ module Adamas
         m = call.method_name
         m.includes?("#push") || m.includes?("#<<") ||
           m.includes?("#[]=") || m.includes?("#unsafe_put")
+      end
+
+      # ── ABI rework Stage 0+: by-value eligibility predicate (GPT finding 3) ──
+      # DEFINITE recursive POD test — the fitness gate `struct_type_is_pod?`
+      # cannot be (non-recursive type_needs_rc?, optimistic default true). A
+      # struct is recursive-POD only if EVERY field is provably non-owning:
+      # primitives / enums / raw pointers (type_needs_rc? = false) or themselves
+      # recursive-POD structs. Reference / array / union / proc / tuple fields
+      # and any unknown/opaque type are conservatively NOT POD (a raw memcpy of
+      # such a struct would duplicate an owned inner pointer with no
+      # retain/release -> UAF or leak under ARC). No optimistic default: a type
+      # whose MIR entry or field list is missing answers false.
+      private def struct_type_is_recursive_pod?(hir_type : Adamas::HIR::TypeRef) : Bool
+        struct_type_is_recursive_pod_mir?(convert_type(hir_type), ::Set(UInt32).new)
+      end
+
+      private def struct_type_is_recursive_pod_mir?(mir_ref : TypeRef, seen : ::Set(UInt32)) : Bool
+        mir_type = @mir_module.type_registry.get(mir_ref)
+        return false unless mir_type
+        k = mir_type.kind
+        # Owning / non-bit-copyable aggregates: reject conservatively. Tuple is
+        # rejected in v1 (a small struct in a tuple slot is a pointer-carrier,
+        # the finding-2 hazard) even though a tuple of PODs is bitwise POD.
+        return false if k.reference? || k.array? || k.union? || k.proc? || k.tuple?
+        if k.struct?
+          return false if seen.includes?(mir_ref.id) # cycle: cannot prove POD
+          seen << mir_ref.id
+          fields = mir_type.fields
+          return false unless fields # opaque struct: not provably POD
+          return fields.all? { |f| struct_type_is_recursive_pod_mir?(f.type_ref, seen) }
+        end
+        # Scalar / enum / raw pointer: POD iff it carries no rc obligation.
+        !type_needs_rc?(mir_ref)
+      end
+
+      # Map every value defined in `func` (params + instruction results) to its
+      # HIR type. Needed because @hir_value_types is unpopulated during the
+      # census pre-pass, yet field_store_uses_inline_memcopy? needs the FieldSet
+      # OBJECT's MIR type to detect the tuple-slot carrier suppression.
+      private def hir_function_value_types(func : Adamas::HIR::Function) : ::Hash(Adamas::HIR::ValueId, Adamas::HIR::TypeRef)
+        map = ::Hash(Adamas::HIR::ValueId, Adamas::HIR::TypeRef).new
+        func.params.each { |p| map[p.id] = p.type }
+        func.blocks.each do |block|
+          block.instructions.each { |inst| map[inst.id] = inst.type }
+        end
+        map
+      end
+
+      # Classify how callee consumes its param_idx-th parameter. Reason-coded,
+      # worst-wins: ANY use that is not an own-field read or an inline-memcopy
+      # field store disqualifies (returns immediately). Only when every use is a
+      # borrowed read or a verified inline field copy does it return the eligible
+      # bucket "copy_field_only".
+      #   rejected_carrier — stored into a field that is a POINTER carrier, not an
+      #                      inline memcopy (finding 2: stack value + carrier = UAF)
+      #   write_through    — param itself written through as mutable struct storage
+      #   receiver_call    — passed as a call receiver (finding 4: not trusted)
+      #   container        — pushed into a container
+      #   forwarded        — passed onward as an arg / copied (no v1 inter-proc trace)
+      #   returned         — escapes via return
+      #   other            — any unmodelled use
+      #   copy_field_only  — >=1 inline-memcopy field store, only borrowed reads else
+      #   borrow_read      — only own-field reads
+      #   unused           — never used
+      private def classify_arg_param_consumption(callee : Adamas::HIR::Function, param_idx : Int32) : String
+        params = callee.params
+        param = params[param_idx]?
+        return "rejected" unless param
+        param_id = param.id
+        vtypes = hir_function_value_types(callee)
+        has_copy = false
+        has_borrow_read = false
+        callee.blocks.each do |block|
+          block.instructions.each do |inst|
+            next unless hir_instruction_used_values(inst).includes?(param_id)
+            case inst
+            when HIR::FieldSet
+              if inst.value == param_id
+                obj_hir = vtypes[inst.object]?
+                obj_mir = obj_hir ? convert_type(obj_hir) : nil
+                if obj_hir && field_store_uses_inline_memcopy?(inst.type, obj_mir)
+                  has_copy = true
+                else
+                  return "rejected_carrier"
+                end
+              end
+              return "write_through" if inst.object == param_id
+            when HIR::FieldGet
+              has_borrow_read = true if inst.object == param_id
+            when HIR::Call
+              if inst.has_receiver? && inst.receiver_value == param_id
+                return "receiver_call"
+              elsif container_write_call?(inst) && inst.args.includes?(param_id)
+                return "container"
+              elsif inst.args.includes?(param_id)
+                return "forwarded"
+              else
+                return "other"
+              end
+            when HIR::Copy
+              return "forwarded" if inst.source == param_id
+            else
+              return "other"
+            end
+          end
+          if hir_terminator_used_values(block.terminator).includes?(param_id)
+            term = block.terminator
+            return "returned" if term.is_a?(HIR::Return) && term.value == param_id
+            return "other"
+          end
+        end
+        return "copy_field_only" if has_copy
+        return "borrow_read" if has_borrow_read
+        "unused"
+      end
+
+      # The Stage 1 flip predicate for a struct value passed as a call argument:
+      # eligible iff the struct is definitely recursive-POD AND the callee
+      # consumes that parameter ONLY by copying it inline into a field.
+      private def param_value_is_consumed_only_by_inline_field_memcopy?(
+        callee : Adamas::HIR::Function,
+        param_idx : Int32,
+        struct_hir_type : Adamas::HIR::TypeRef,
+      ) : Bool
+        struct_type_is_recursive_pod?(struct_hir_type) &&
+          classify_arg_param_consumption(callee, param_idx) == "copy_field_only"
+      end
+
+      # Refine the coarse `arg` bucket: resolve the callee + param index for the
+      # call that consumes the ctor result and return its consumption sub-bucket
+      # (prefixed "arg_"). Returns "arg_no_callee" when the callee is virtual,
+      # unknown, body-less, or arity-mismatched — exactly the cases the flip can
+      # never prove and must skip.
+      private def arg_subbucket_for_ctor(func : Adamas::HIR::Function, ctor : Adamas::HIR::Call) : String
+        vid = ctor.id
+        func.blocks.each do |block|
+          block.instructions.each do |inst|
+            next unless inst.is_a?(HIR::Call)
+            call = inst.as(HIR::Call)
+            next if call.id == ctor.id
+            next if call.has_receiver? && call.receiver_value == vid
+            next unless call.args.includes?(vid)
+            next if container_write_call?(call)
+            return "arg_no_callee" if call.virtual
+            callee = @hir_module.function_by_name(call.method_name)
+            return "arg_no_callee" unless callee && !callee.blocks.empty?
+            receiver_offset = call.has_receiver? ? 1 : 0
+            return "arg_no_callee" unless callee.params.size == call.args.size + receiver_offset
+            arg_idx = call.args.index(vid)
+            return "arg_no_callee" unless arg_idx
+            return "arg_" + classify_arg_param_consumption(callee, arg_idx + receiver_offset)
+          end
+        end
+        "arg_unknown"
+      end
+
+      # Is the direct field_store of this ctor result an inline memcopy (true)
+      # or a pointer carrier (false)? nil when no direct field store is found.
+      private def field_store_site_is_inline?(func : Adamas::HIR::Function, ctor_vid : Adamas::HIR::ValueId) : Bool?
+        vtypes : ::Hash(Adamas::HIR::ValueId, Adamas::HIR::TypeRef)? = nil
+        func.blocks.each do |block|
+          block.instructions.each do |inst|
+            next unless inst.is_a?(HIR::FieldSet)
+            fs = inst.as(HIR::FieldSet)
+            next unless fs.value == ctor_vid && fs.object != ctor_vid
+            vtypes ||= hir_function_value_types(func)
+            obj_hir = vtypes.not_nil![fs.object]?
+            obj_mir = obj_hir ? convert_type(obj_hir) : nil
+            return obj_hir ? field_store_uses_inline_memcopy?(fs.type, obj_mir) : false
+          end
+        end
+        nil
       end
 
       # Register class variables/constants as globals
