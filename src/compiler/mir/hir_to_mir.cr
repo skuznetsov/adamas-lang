@@ -2838,6 +2838,22 @@ module Adamas
         pointer_word_bytes_u64.to_i64
       end
 
+      # A Tuple/NamedTuple element field is a *container* slot: register_tuple_types
+      # lays a (small) struct element out as a pointer-word carrier, NOT via the
+      # per-field step-4 small-struct inline regime. Detect a tuple receiver from
+      # its recorded MIR type so field get/set read/write the carrier instead of
+      # treating the slot as inline struct bytes (which corrupts under
+      # ADAMAS_INLINE_SMALL_STRUCTS=1). NamedTuples are registered as TypeKind::Tuple
+      # (see register_tuple_types), so `.tuple?` covers both.
+      private def field_receiver_is_tuple?(object_id : HIR::ValueId) : Bool
+        if obj_hir_type = @hir_value_types[object_id]?
+          if mir_type = @mir_module.type_registry.get(convert_type(obj_hir_type))
+            return mir_type.kind.tuple?
+          end
+        end
+        false
+      end
+
       private def lower_field_get(field : HIR::FieldGet) : ValueId
         builder = @builder.not_nil!
         # Nil-typed fields are zero-sized and have no storage.
@@ -2860,7 +2876,16 @@ module Adamas
           # Inline storage decision via the single layout source (ABI-rework 1c),
           # matching the symmetric lower_field_store_to_ptr routing so a field is
           # read back exactly as it was written (no pointer-word-boundary flip).
-          if Adamas::LayoutContract.user_struct_inline?(inline_size.to_u64, hir_type_name(field.type))
+          #
+          # Tuple/NamedTuple elements are the exception: register_tuple_types lays a
+          # small struct element out as a pointer-word carrier, so the step-4
+          # small-struct flip (≤ pointer word) must be suppressed for a tuple
+          # receiver or the carrier slot is misread as inline bytes. Large structs
+          # (> pointer word) are inline in both regimes, so leave them unchanged.
+          suppress_step4_tuple = inline_size.to_u64 <= pointer_word_bytes_u64 &&
+                                 field_receiver_is_tuple?(field.object)
+          if !suppress_step4_tuple &&
+             Adamas::LayoutContract.user_struct_inline?(inline_size.to_u64, hir_type_name(field.type))
             @inline_struct_ptrs << field.id
             if Adamas::LayoutProbe.enabled?
               probe_field_event("lower_field_get.inline_struct", "field-get", "consumer",
@@ -3049,8 +3074,14 @@ module Adamas
         # this reader; the family clause is redundant here (static arrays already
         # short-circuit via is_static_array; Slice is wider than a pointer word).
         inline_size = is_crystal_struct ? hir_type_inline_size(field_hir_type).to_u64 : 0_u64
+        # Symmetric to lower_field_get: a small struct stored into a Tuple/NamedTuple
+        # element slot is a pointer-word carrier (register_tuple_types), so suppress
+        # the step-4 small-struct inline memcopy for a tuple receiver. Large structs
+        # (> pointer word) are inline in both regimes, so leave them unchanged.
+        receiver_is_tuple = obj_mir_type.try { |t| @mir_module.type_registry.get(t).try(&.kind.tuple?) } || false
+        suppress_step4_tuple = is_crystal_struct && inline_size <= pointer_word_bytes_u64 && receiver_is_tuple
         use_memcopy = is_lib || is_static_array ||
-                      (is_crystal_struct &&
+                      (is_crystal_struct && !suppress_step4_tuple &&
                        Adamas::LayoutContract.user_struct_inline?(inline_size, hir_type_name(field_hir_type)))
         if use_memcopy
           struct_size = if is_lib
