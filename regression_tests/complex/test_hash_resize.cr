@@ -1,4 +1,5 @@
 # Hash resize regression test - entries lost during linear→indexed transition
+# EXPECT: hash_resize_ok
 h = {} of Int32 => Int32
 20.times do |i|
   h[i] = i * 10
