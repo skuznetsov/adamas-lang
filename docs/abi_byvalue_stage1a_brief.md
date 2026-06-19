@@ -119,6 +119,76 @@ first concrete Stage 0++ task whichever shape wins.
 
 ---
 
+## 4a. Shape C — per-site stack promotion (ALREADY EXISTS; empirically verified)
+
+A hostile review (GPT, 2026-06-19) argued the A/B framing is a false dichotomy: a
+**Shape C** already lives in the tree — `lower_stack_local_struct_allocator_call`
+(`hir_to_mir.cr:6163`, intercepted by `lower_call` at `:3973`) does per-SITE
+caller-side stack promotion and keeps the existing pointer ABI. I verified this
+claim independently with two falsifiers (`bin/adamas --emit llvm-ir`,
+`ADAMAS_STACK_PROMO_TRACE=.new`; note the MIR-level name is `T.new$...`, the
+`$Dnew` mangling is backend-only):
+
+- **Non-escaping local** `p = Particle.new(Vec2.new(1,2), Vec2.new(3,4))`:
+  `Particle.new` + both `Vec2.new` trace **PROMOTED**. IR shows `alloca %Vec2` /
+  `alloca %Particle`, inline constant stores, **zero `__adamas_malloc64`, zero
+  `call @Vec2$Dnew`/`@Particle$Dnew`**; signatures stay `(ptr, ptr)`. Shape C is
+  real and already firing.
+- **Escaping into a container** `arr << Particle.new(Vec2.new(i,i), Vec2.new(i,i))`:
+  `Particle.new` traces **reject lifetime=ArgEscape** → heap `Particle$Dnew`
+  (`__adamas_malloc64(24)`) + **two inner `__adamas_malloc64(16)` for the @pos/@vel
+  Vec2 field slots**. Only the two Vec2 *temporaries* promote.
+
+**Decisive consequence for Stage 1a.** Shape C is correct, narrow, and ABI-neutral,
+but it **does NOT close the benchmark gap**. The measured ~10×/~2× gap comes from
+structs that **escape into `Array(Particle)`** (the bench builds 3M of them). Those
+are *correctly* rejected by the lifetime walker (`ArgEscape`) because they outlive
+the frame — by definition they cannot be stack-promoted. GPT's DoD ("Particle Vec2
+mallocs → 0") only holds for non-escaping locals, which the bench does not have.
+The real lever is the **container/escape value ABI**: `Array(Particle)` must store
+Particle *values* inline (as original Crystal does) instead of pointers to heap
+Particles whose struct fields are themselves separate heap blocks — that is the
+Shape A direction, not stack promotion.
+
+So the review correctly removed the A/B-only framing (Shape C exists and should be
+acknowledged), but its recommendation to adopt Shape C *as the Stage 1a that closes
+the gap* is **VULNERABLE**: verified no-op on the actual bench. Shape C's eligibility
+extension (allow a recursive-POD struct as an inline-memcpy copy-sink — the walker
+rejects FieldSet-value today at `:6320`) remains a legitimate, correctness-neutral
+improvement for **non-escaping nested construction**, just not the perf headline.
+
+**Revised path ordering (after the 3rd-lever finding + GPT round-2 review):**
+1. **Dead default-init malloc elimination** (bounded slice, real perf signal, no
+   Array-ABI change): escaping `Particle$Dnew` does 3 heap allocs — 1 Particle + 2
+   *dead* default-init Vec2 (one per struct-typed field), each `alloc gc` +
+   memcopy'd into the field, then *immediately overwritten* by `initialize`.
+   VERIFIED origin: `ast_to_hir.cr:29679` (regular allocator) + `:30200` (overload)
+   emit `Allocate(zero-filled struct)` + `FieldSet` for every struct-typed ivar with
+   no usable default, unconditionally. MIR proof: `/tmp/bench_mir_on.mir:65958/65961`
+   (`%6/%9 = alloc gc Type#911, size=8` before `call @61` initialize). **Skip the
+   zero-struct alloc ONLY if `initialize` has a dominating, unconditional `FieldSet`
+   to that ivar before ANY read/escape of self or that field.** REJECT on:
+   `FieldGet self.@field` (read-before-write — `log(@pos)` would see garbage);
+   `call`/`yield`/`super` passing `self` (`register_self(self)` escape-before-write);
+   branch / return / raise before the store; address-of self or field;
+   union/default/fixup paths; non-POD or ref-owning struct field (until recursive
+   ownership lands). Gated default OFF. DoD: reducer shows the 2 inner Vec2 allocs
+   vanish (Particle$Dnew stays); negative reducers (read-before-write,
+   self-escape-before-write, branch-partial-write) are NOT optimized; suite + s2b
+   gate-ON; bench shows malloc-count/RSS/time delta (else the slice is not worth it).
+2. **Container/escape value ABI** (the true final perf lever, Shape A direction):
+   inline struct storage in `Array(T)` buffers + by-value/sret `T$Dnew` for escaping
+   PODs. Needs the per-type aggregation from §4. Too broad to start now (stride,
+   pointer-vs-value ABI, return ABI, Array(T) storage, self-host) — do after one
+   local win + new probes.
+3. **Shape C eligibility extension** (optional cleanup): extend
+   `stack_local_struct_constructor_uses_safe?` to accept a recursive-POD struct
+   consumed only by an inline-memcpy field store (non-escaping nested
+   `Outer.new(Inner.new(..))`). Correctness-neutral; **bench unchanged (proven)** —
+   not a perf move, do only if the cleanliness is wanted.
+
+---
+
 ## 5. Proposed mechanism (Stage 1a, gated `default OFF`)
 
 For a struct type `T` that passes the whole-type gate (Shape A) — or per safe
@@ -214,7 +284,7 @@ g. **Recursive-POD gate v1 conservatism.** Tuples are rejected (a small struct i
 - Eligibility predicate + census: `hir_to_mir.cr` Stage 0+ section
   (`struct_type_is_recursive_pod?`, `classify_arg_param_consumption`,
   `param_value_is_consumed_only_by_inline_field_memcopy?`,
-  `field_store_uses_inline_memcopy?` at `:3163`).
+  `field_store_uses_inline_memcopy?` at `:3367`).
 - Stack-promotion groundwork: `hir_to_mir.cr:6163`
   (`lower_stack_local_struct_allocator_call`); memory `struct-dnew-stack-promotion`.
 - Step-4 inline gate: `layout_contract.cr:137` (`ADAMAS_INLINE_SMALL_STRUCTS`),

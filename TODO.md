@@ -199,6 +199,35 @@ Shape A (whole-type flip + new per-TYPE aggregation pass = Stage 0++) or Shape B
 `T$Dnew$byval`). NEXT: adversary-verify GPT critique → pick Shape A/B → build per-type
 aggregation + gated flip. Brief lists 7 hazards + DoD.
 
+**2026-06-19 — GPT critique ADVERSARIALLY VERIFIED (brief §4a added).** GPT said A/B is a
+false dichotomy because **Shape C** already exists (per-site stack promotion,
+`lower_stack_local_struct_allocator_call` `hir_to_mir.cr:6163`, intercept `:3973`, ptr ABI
+kept). Verified with 2 falsifiers (`--emit llvm-ir`, `ADAMAS_STACK_PROMO_TRACE=.new` — the
+MIR name is `T.new$...`, `$Dnew` is backend-only mangling, so filtering "Dnew"=0 traces=false
+negative). All GPT anchors CONFIRMED (6163/3973/3367/6320/llvm:294). **Falsifier 1**
+(non-escaping local): `Particle.new`+`Vec2.new` PROMOTED, `alloca %Vec2`/`%Particle`, 0 malloc,
+0 `$Dnew`, ptr sigs intact. **Falsifier 2** (escaping `arr << Particle.new(...)`): `Particle.new`
+→ reject `ArgEscape` → heap `Particle$Dnew(24B)` + 2 inner `malloc64(16)` field-Vec2 slots; only
+Vec2 temporaries promote. **VERDICT: Shape C real but VULNERABLE as the gap-closer** — the
+~10×/~2× bench gap is escaping containerized Particles (`Array(Particle)`), which the lifetime
+walker *correctly* rejects (outlive frame, cannot stack-promote). Shape C = verified no-op on the
+bench. Real lever = container/escape VALUE ABI (Array stores inline struct values + sret/by-value
+`$Dnew` for escaping PODs) = Shape A direction + per-type aggregation.
+
+**3rd lever found + GPT anchors VERIFIED → PATH ORDER (revised).** Escaping `Particle$Dnew` does 3
+mallocs: 1 Particle + 2 **dead default-init Vec2** per struct field — `alloc gc Type#911 size=8` +
+memcopy into field, then `initialize` overwrites. Origin VERIFIED at `ast_to_hir.cr:29679` (regular)
++ `:30200` (overload): every struct-typed ivar with no usable default emits `Allocate(zero-struct)` +
+`FieldSet` regardless of whether `initialize` fully sets it. MIR proof `/tmp/bench_mir_on.mir:65958/65961`
+(both GPT anchors confirmed). PATH ORDER (was Shape-C-first; corrected per GPT): **(1) dead-default-init
+elimination FIRST** (bounded slice, real perf signal, no Array-ABI change) — skip the zero-struct alloc
+ONLY if `initialize` has a **dominating unconditional FieldSet** to that ivar before ANY read/escape;
+REJECT on read-before-write (`log(@pos)`), self-escape-before-write (`register_self(self)`),
+branch/return/raise before store, address-of self/field, union/fixup, non-POD/ref-owning field.
+Gated default OFF + negative reducers + suite + s2b + bench malloc/RSS/time delta. **(2) container/escape
+value ABI** later (the true final lever, too broad now: stride/return ABI/Array storage/self-host).
+**(3) Shape C eligibility extension** optional cleanup (correctness-neutral, bench unchanged — proven).
+
 **2026-06-18 — #1 s2b startup crash FIXED (two-heap GC hazard, fix D).** Branch
 `s2b-twoheap-gc-fix-D`, 7 edits all in `src/compiler/mir/llvm_backend.cr` (no
 stdlib). The atomic byte-buffer allocator family is moved off the Boehm GC heap
