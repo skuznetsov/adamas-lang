@@ -343,6 +343,9 @@ module Adamas
 
       # Lower all function bodies (serial). Call prepare() first.
       def lower_all_bodies(progress : Bool = false) : Nil
+        if Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_STRUCT_BYVALUE_CENSUS")
+          run_struct_byvalue_census
+        end
         build_owned_return_set
         total = @hir_module.functions.size
         STDERR.puts "    Pass 2: Lowering #{total} function bodies..." if progress
@@ -529,6 +532,134 @@ module Adamas
         lower_all_bodies(progress)
         synthesize_abstract_method_dispatchers(progress)
         @mir_module
+      end
+
+      # ── ABI rework Stage 0: read-only by-value struct census ────────────────
+      # Diagnostic ONLY (gate ADAMAS_STRUCT_BYVALUE_CENSUS; no codegen change).
+      # For every user-struct constructor call this classifies how the result
+      # flows, so we know the SHAPE of the population a by-value flip would face.
+      # Buckets are kept SEPARATE (field_store / container / arg / return /
+      # local / mixed) but are DIAGNOSTIC, not an eligibility verdict: the census
+      # showed the common `Particle.new(Vec2.new(...))` case lands in `arg`, not
+      # `field_store`, so no single bucket is "the flip set". Exact per-site
+      # eligibility is decided later by a dedicated escape/inline predicate
+      # (definite recursive POD + exact use_memcopy equivalence), not by these
+      # coarse counts. POD vs ref-owning is tracked because any flip must REJECT
+      # non-POD structs — a raw memcpy of a struct (transitively) holding a
+      # String/Array/ref-union copies an inner pointer with no retain/release ->
+      # UAF/leak under ARC. NOTE: struct_type_is_pod? below is the COARSE census
+      # proxy (non-recursive type_needs_rc?, true when MIR type absent); the real
+      # predicate must recurse through struct fields and answer DEFINITELY.
+      private def run_struct_byvalue_census
+        tally = Hash(String, Int32).new(0)
+        total = 0
+        verbose = Adamas::Compiler::BootstrapEnv.get?("ADAMAS_STRUCT_BYVALUE_CENSUS") == "verbose"
+        @hir_module.functions.each do |func|
+          func.blocks.each do |block|
+            block.instructions.each do |inst|
+              next unless inst.is_a?(HIR::Call)
+              call = inst.as(HIR::Call)
+              next unless struct_ctor_call?(call)
+              bucket = classify_struct_ctor_flow(func, call)
+              pod = struct_type_is_pod?(call.type) ? "pod" : "ref"
+              tally["#{bucket}|#{pod}"] += 1
+              total += 1
+              tname = hir_type_name(call.type)
+              # Optional type-substring filter prints ALL buckets for matching
+              # structs (decision probe); default verbose prints copy boundaries.
+              if (filt = Adamas::Compiler::BootstrapEnv.get?("ADAMAS_STRUCT_BYVALUE_CENSUS_TYPE"))
+                if tname.includes?(filt)
+                  STDERR.puts "[BYVAL_CENSUS] #{bucket} #{pod} type=#{tname} in=#{func.name}"
+                end
+              elsif verbose && (bucket == "field_store" || bucket == "container")
+                STDERR.puts "[BYVAL_CENSUS] #{bucket} #{pod} type=#{tname} in=#{func.name}"
+              end
+            end
+          end
+        end
+        STDERR.puts "[BYVAL_CENSUS] total_struct_ctor_sites=#{total}"
+        tally.keys.sort.each { |k| STDERR.puts "[BYVAL_CENSUS]   #{k} = #{tally[k]}" }
+        STDERR.flush
+      end
+
+      # A user (non-lib) struct constructor call (`Vec2.new(...)`).
+      private def struct_ctor_call?(call : HIR::Call) : Bool
+        return false unless call.method_name.includes?(".new")
+        desc = @hir_module.get_type_descriptor(call.type)
+        return false unless desc && desc.kind == HIR::TypeKind::Struct
+        !hir_type_is_lib_struct?(call.type)
+      end
+
+      # COARSE census proxy for POD-ness: no field whose type needs rc
+      # (reference / array / all-ref-union). Two known under-approximations make
+      # this UNFIT as a flip gate, fine only for diagnostic counts:
+      #   1. type_needs_rc? does NOT recurse through struct fields, so a struct
+      #      whose field is another struct that (transitively) holds a String is
+      #      mis-counted as POD.
+      #   2. Conservative default true when the MIR type/fields are unavailable.
+      # The real flip predicate must recurse and answer DEFINITELY (no
+      # optimistic default).
+      private def struct_type_is_pod?(type : Adamas::HIR::TypeRef) : Bool
+        mir_type = @mir_module.type_registry.get(convert_type(type))
+        return true unless mir_type
+        fields = mir_type.fields
+        return true unless fields
+        fields.none? { |f| type_needs_rc?(f.type_ref) }
+      end
+
+      # Classify how a struct ctor RESULT flows across all its uses in func.
+      # Receiver/own-field uses are borrows (ignored); only value-position uses
+      # set a bucket. Multiple distinct buckets -> "mixed"; no escaping use ->
+      # "local" (already stack-promotable today).
+      private def classify_struct_ctor_flow(func : Adamas::HIR::Function, ctor : Adamas::HIR::Call) : String
+        vid = ctor.id
+        kinds = ::Set(String).new
+        func.blocks.each do |block|
+          block.instructions.each do |inst|
+            next if inst.id == ctor.id
+            next unless hir_instruction_used_values(inst).includes?(vid)
+            case inst
+            when HIR::FieldSet
+              if inst.value == vid && inst.object != vid
+                kinds << "field_store"
+              elsif inst.object != vid
+                kinds << "other"
+              end
+            when HIR::FieldGet
+              kinds << "other" unless inst.object == vid
+            when HIR::Call
+              if inst.has_receiver? && inst.receiver_value == vid
+                # method call on the struct itself = borrow
+              elsif inst.args.includes?(vid)
+                kinds << (container_write_call?(inst) ? "container" : "arg")
+              else
+                kinds << "other"
+              end
+            when HIR::Copy
+              kinds << "copy"
+            else
+              kinds << "other"
+            end
+          end
+          if hir_terminator_used_values(block.terminator).includes?(vid)
+            term = block.terminator
+            if term.is_a?(HIR::Return) && term.value == vid
+              kinds << "return"
+            else
+              kinds << "other"
+            end
+          end
+        end
+        return "local" if kinds.empty?
+        return kinds.first if kinds.size == 1
+        "mixed"
+      end
+
+      # A container element write (Array#push / #<< / #[]= / #unsafe_put).
+      private def container_write_call?(call : Adamas::HIR::Call) : Bool
+        m = call.method_name
+        m.includes?("#push") || m.includes?("#<<") ||
+          m.includes?("#[]=") || m.includes?("#unsafe_put")
       end
 
       # Register class variables/constants as globals
