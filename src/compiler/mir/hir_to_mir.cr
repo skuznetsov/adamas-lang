@@ -709,6 +709,7 @@ module Adamas
         STDERR.puts "[BYVAL_CENSUS] flip_eligible_sites=#{flip_eligible} (recursive-POD + inline field_store OR arg_copy_field_only)"
         STDERR.puts "[BYVAL_CENSUS] coarse_pod_overcount=#{pod_discrepancy} (coarse POD true but recursive POD false)"
         run_struct_byvalue_type_aggregation
+        run_struct_byvalue_fusion_census
         STDERR.flush
       end
 
@@ -781,6 +782,78 @@ module Adamas
         end
         STDERR.puts "[BYVAL_TYPEAGG] tier totals:"
         tier_count.keys.sort_by { |k| k.to_s.underscore }.each { |k| STDERR.puts "[BYVAL_TYPEAGG]   #{k.to_s.underscore} = #{tier_count[k]}" }
+      end
+
+      # ── ABI rework Stage 0+++: placement-ctor FUSION-site census (Option C) ──
+      # The storage/aggregation census above counts how struct ctor RESULTS flow
+      # and which TYPES could flip. Neither proves the "$Dnew malloc 1→0" win,
+      # because that win is per-CALL-SITE: it only materializes where a FRESH ctor
+      # result is consumed DIRECTLY by a container write (`arr << T.new(...)`). At
+      # such a site a destination-driven placement can construct the value
+      # straight into the grown slot, deleting the boxed `T$Dnew` heap cell. This
+      # SECOND axis counts those placement-CANDIDATE boxes, per element type, split
+      # by semantic-POD eligibility — the number the storage census cannot give
+      # (GPT caveat: "a single storage census will not prove malloc 1→0").
+      #
+      # A site is a DIRECT fusion candidate iff a user-struct ctor result's SOLE
+      # value-position use is a container write (#push/#<</#[]=/#unsafe_put) —
+      # i.e. classify_struct_ctor_flow == Container. The sole-use requirement is
+      # what makes the box a clean placement candidate: no other consumer can
+      # observe the heap cell and no second slot aliases it. (Borrow reads /
+      # receiver calls on the ctor result are ignored here, exactly as the storage
+      # census treats them; the eventual transform must order placement before any
+      # such read.)
+      #
+      # CANDIDATE axis, NOT per-site proof: `container_write_call?` matches by
+      # METHOD NAME (#push/#<</#[]=/#unsafe_put), not a verified Array/Deque
+      # storage slot, so a count here is an upper bound on transformable sites —
+      # each must still be proven against the real container storage ABI before A.
+      #
+      # Only semantic-POD element types are removable (a raw memcpy of a non-POD
+      # struct would duplicate an owned inner pointer with no retain/release →
+      # UAF/leak under ARC); non-POD sole-container ctors are tallied separately as
+      # the ineligible contrast (they stay boxed / pointer-stored). Read-only;
+      # printed only under ADAMAS_STRUCT_BYVALUE_CENSUS; no codegen change.
+      private def run_struct_byvalue_fusion_census
+        fusion_pod = Hash(String, Int32).new(0)     # placement-candidate boxes: sole-container ctor + semantic-POD
+        fusion_nonpod = Hash(String, Int32).new(0)  # ineligible: sole-container ctor, non-POD (stays boxed)
+        container_writes_total = 0                   # all container writes (any element type) — context denominator
+        fresh_ctor_writes = 0                        # subset whose value is a fresh sole-use struct ctor
+
+        @hir_module.functions.each do |func|
+          func.blocks.each do |block|
+            block.instructions.each do |inst|
+              next unless inst.is_a?(HIR::Call)
+              call = inst.as(HIR::Call)
+              container_writes_total += 1 if container_write_call?(call)
+              next unless struct_ctor_call?(call)
+              next unless classify_struct_ctor_flow(func, call) == CtorFlow::Container
+              fresh_ctor_writes += 1
+              tname = hir_type_name(call.type)
+              if struct_type_is_semantic_recursive_pod?(call.type)
+                fusion_pod[tname] += 1
+              else
+                fusion_nonpod[tname] += 1
+              end
+            end
+          end
+        end
+
+        removable = fusion_pod.each_value.sum
+        ineligible = fusion_nonpod.each_value.sum
+        indirect = container_writes_total - fresh_ctor_writes
+        STDERR.puts "[BYVAL_FUSION] placement-ctor fusion sites (container << fresh sole-use ctor):"
+        STDERR.puts "[BYVAL_FUSION]   removable_box_sites=#{removable} (semantic-POD -> malloc 1->0 candidate)"
+        STDERR.puts "[BYVAL_FUSION]   ineligible_box_sites=#{ineligible} (non-POD -> stays boxed/pointer-stored)"
+        STDERR.puts "[BYVAL_FUSION]   container_writes_total=#{container_writes_total} (any elem) fresh_ctor=#{fresh_ctor_writes} indirect=#{indirect}"
+        unless fusion_pod.empty?
+          STDERR.puts "[BYVAL_FUSION] removable per type:"
+          fusion_pod.keys.sort.each { |t| STDERR.puts "[BYVAL_FUSION]   #{t} = #{fusion_pod[t]}" }
+        end
+        unless fusion_nonpod.empty?
+          STDERR.puts "[BYVAL_FUSION] ineligible (non-POD) per type:"
+          fusion_nonpod.keys.sort.each { |t| STDERR.puts "[BYVAL_FUSION]   #{t} = #{fusion_nonpod[t]}" }
+        end
       end
 
       # Refine a ctor site's coarse flow bucket the same way the per-site census

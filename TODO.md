@@ -296,10 +296,25 @@ ABI); a SEPARATE storage-aware predicate must gate memcpy/stack-promo on the cur
 lever-(i) container-aliasing UAF). DoD: reducer `recursive_pod_nested_sibling_repro.sh` (Vec2/Pair/
 Quad=true, WithString=false); dead-default reducer green; suite 131/131 + 36/36; Stage 0++ rerun
 (bench_struct_heap.cr) now classifies GC::Stats/Time::Instant/Pointer::Appender/DWARF::Register as
-pod=true. NEXT: narrow destination-driven container/value slice (per GPT) — `Array(PODStruct) <<
-PODStruct.new(...)` where the container slot becomes the ctor destination and no boxed `$Dnew` is
-created. DoD: Particle bench remaining `Particle$Dnew` malloc 1→0, Array stores payload inline,
-alias/mutation reducer shows no shared carrier. Whole-type Shape A not practical as first step.
+pod=true.
+
+**2026-06-19 — Option C: placement-fusion census axis SHIPPED** (`abi-struct-byvalue`;
+`hir_to_mir.cr` +`run_struct_byvalue_fusion_census` + reducer `byvalue_fusion_site_census_repro.sh`).
+Second, read-only census axis (gated `ADAMAS_STRUCT_BYVALUE_CENSUS`, behavior-neutral): counts
+placement-CANDIDATE boxes = a user-struct ctor whose SOLE value use is a container write
+(`classify_struct_ctor_flow == Container`), split semantic-POD (malloc 1→0 candidate) vs non-POD
+(stays boxed). CANDIDATE axis, not proof: `container_write_call?` is method-name-based (#push/#<</
+#[]=/#unsafe_put), so the count is an upper bound — each site still needs proving against the real
+container storage ABI. KEY SIGNAL: prelude baseline = `removable_box_sites=4` (UInt128×3, DWARF
+Attribute×1), `ineligible=1`, only `fresh_ctor=5` of `container_writes_total=1495`. So the isolated
+`arr << T.new(...)` placement-fusion lever is RARE in self-host — fusion-first would barely move the
+compiler. DoD: reducer green (Vec2=3, WithStr=1, named-local `arr << v` excluded); suite 131/131 +
+36/36; gate-OFF byte-neutral. NEXT (per GPT, NOT fusion-first): scoped storage ABI slice for
+`Array(semantic-POD struct)` FIRST — DoD on `struct Vec2` / `Array(Vec2)` (NB: `Particle` in
+bench_struct_heap.cr is a CLASS → reference-stored, container value ABI N/A), with MANDATORY
+copy-on-store AND copy-on-load reducers (without copy-on-load `v = arr[0]; v.mutate` interior-aliases
+the buffer — llvm_backend.cr:25121 inline branch returns the slot address). Placement fusion
+(`arr << T.new(...)`) lands later as a separate sub-slice. Whole-type Shape A not practical as first step.
 
 **2026-06-18 — #1 s2b startup crash FIXED (two-heap GC hazard, fix D).** Branch
 `s2b-twoheap-gc-fix-D`, 7 edits all in `src/compiler/mir/llvm_backend.cr` (no
