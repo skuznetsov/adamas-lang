@@ -1,7 +1,7 @@
 # Crystal V2 Bootstrap TODO
 
 Updated: 2026-06-19
-Branch: `main` (ABI-rework + s2b GC fix merged & pushed); by-value Stage 0 census on `abi-struct-byvalue`
+Branch: `main` (ABI-rework + s2b GC fix merged & pushed); by-value Stage 0+ census + eligibility predicate on `abi-struct-byvalue` (`b16bf758`)
 
 This is the active working backlog only. Historical detail is in git history,
 especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
@@ -170,6 +170,23 @@ owner, who chose merge-first): `arg` sub-census + a SEPARATE predicate
 `param_value_is_consumed_only_by_inline_field_memcopy?` (definite recursive POD +
 exact use_memcopy equivalence), rollout direct `field_store` first then exact
 `arg_param_copy_field_only`. THEN Stage 1a flip (gated, default OFF, POD-only).
+
+**2026-06-19 — Stage 0+ SHIPPED (`abi-struct-byvalue`, `b16bf758`): arg sub-census
++ by-value eligibility predicate.** Read-only/gated; suite 131/131 + 36/36; gate-OFF
+compile behavior unchanged. New: `struct_type_is_recursive_pod?` (DEFINITE recursive
+POD — recurses struct fields, rejects ref/array/union/proc/tuple/opaque, no optimistic
+default; addresses finding 3), `classify_arg_param_consumption` +
+`param_value_is_consumed_only_by_inline_field_memcopy?` (single-hop reason-coded:
+rejects pointer-carrier store [finding 2], receiver call [finding 4], forwarding,
+container, return), `field_store_site_is_inline?`, census splits. **Census (366 sites)
+RESHAPES Stage 1a:** `arg` = 82 forwarded / 46 no_callee / **0 copy_field_only** — the
+common `Particle.new(Vec2.new(..))` forwards through `.new`→`initialize`, so a one-hop
+arg predicate flips NOTHING. `field_store` inline/carrier = 8/10 (step-4 OFF) → 17/1 (ON);
+**flip_eligible = 6 (OFF) / 12 (ON)**, ALL from direct inline `field_store` (recursive-POD-
+gated); coarse-POD over-count = 18 (confirms `struct_type_is_pod?` unfit). REVISED Stage 1a:
+(1) flip direct inline `field_store` + recursive-POD FIRST (6/12 sites); (2) for `arg`,
+add a one-hop `.new`→`initialize` forwarding trace OR flip at the forwarded callee — decide
+after measuring `initialize`-side stores. NOT the whole arg bucket.
 
 **2026-06-18 — #1 s2b startup crash FIXED (two-heap GC hazard, fix D).** Branch
 `s2b-twoheap-gc-fix-D`, 7 edits all in `src/compiler/mir/llvm_backend.cr` (no
