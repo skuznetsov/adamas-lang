@@ -309,12 +309,20 @@ container storage ABI. KEY SIGNAL: prelude baseline = `removable_box_sites=4` (U
 Attribute×1), `ineligible=1`, only `fresh_ctor=5` of `container_writes_total=1495`. So the isolated
 `arr << T.new(...)` placement-fusion lever is RARE in self-host — fusion-first would barely move the
 compiler. DoD: reducer green (Vec2=3, WithStr=1, named-local `arr << v` excluded); suite 131/131 +
-36/36; gate-OFF byte-neutral. NEXT (per GPT, NOT fusion-first): scoped storage ABI slice for
-`Array(semantic-POD struct)` FIRST — DoD on `struct Vec2` / `Array(Vec2)` (NB: `Particle` in
-bench_struct_heap.cr is a CLASS → reference-stored, container value ABI N/A), with MANDATORY
-copy-on-store AND copy-on-load reducers (without copy-on-load `v = arr[0]; v.mutate` interior-aliases
-the buffer — llvm_backend.cr:25121 inline branch returns the slot address). Placement fusion
-(`arr << T.new(...)`) lands later as a separate sub-slice. Whole-type Shape A not practical as first step.
+36/36; gate-OFF byte-neutral. NEXT (per GPT, storage-first NOT fusion-first): scoped storage ABI
+slice for `Array(LEAF-storage-POD struct ≤16B)` FIRST — brief
+`docs/abi_byvalue_storage_slice_brief.md` (DESIGN checkpoint, GPT round-1 ROBUST). v1 = MIR
+`ContainerElemRepr` enum (`PointerSlot | InlineAddress | InlineValueCopy`) + new gate
+`ADAMAS_INLINE_POD_CONTAINERS` (default OFF, byte-identical) + copy-on-store + escape-aware
+copy-on-load. GATE IS leaf-storage-POD (every field primitive/enum/raw-ptr, no nested
+struct/tuple/union/ref, ≤16, non-union, non-lib), NOT semantic-POD: under step-4-OFF field ABI a
+`Vec2` FIELD is a pointer carrier (`user_struct_inline?` = `size>8`), so `Pair{Vec2,Vec2}` payload =
+two pointers → memcpy would copy pointers. semantic-POD is the FUTURE gate once field-inline (step-4)
+lands. First impl PR must be NARROW: repr enum + gate + reducers (incl. 12B `Vec3` for the
+`emit_array_new` >8 path), NO fusion, NO nested POD. Must-fix store/load sites: `emit_array_get:25121`
+(copy-on-load gap), raw `Array#<<:4453` (store-ptr corrupts payload), `unsafe_fetch:4499`
+(load-ptr returns interior). Placement fusion (`arr << T.new(...)`) lands later as a separate
+sub-slice. Whole-type Shape A not practical as first step.
 
 **2026-06-18 — #1 s2b startup crash FIXED (two-heap GC hazard, fix D).** Branch
 `s2b-twoheap-gc-fix-D`, 7 edits all in `src/compiler/mir/llvm_backend.cr` (no
