@@ -1,7 +1,7 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-06-18
-Branch: `abi-step4-inline-struct` (ABI track on `abi-rework`)
+Updated: 2026-06-19
+Branch: `main` (ABI-rework + s2b GC fix merged & pushed); by-value Stage 0 census on `abi-struct-byvalue`
 
 This is the active working backlog only. Historical detail is in git history,
 especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
@@ -139,6 +139,37 @@ keep the two regimes distinct.
     then remove the env gate.
 
 ## Current Checkpoint
+
+**2026-06-19 — ABI-rework + s2b GC fix MERGED to `main` and pushed.** Two
+revertable merge commits on `main` (now `71b707ff`, == `origin/main`):
+`d07b07d6` merges `abi-step4-inline-struct` (full ABI-rework series: LayoutContract
+consolidation 1a/1c, gated-OFF step-4 small-struct inline flip
+`ADAMAS_INLINE_SMALL_STRUCTS`, StaticArray by-value memcopy, SplatNode guard,
+docs — all default-behavior-neutral), and `71b707ff` merges
+`s2b-twoheap-gc-fix-D` (brought only `e635fbc4`, the GC two-heap redirect).
+Post-merge verification: `bin/adamas` builds clean; suites **originals 131/131 +
+combined 36/36, 0 fail** (count rebalanced vs old 158/31 by main's test-batching
+commits); `gc_aware_realloc_gating_repro` PASS; all 4 new struct/ABI repros
+(splat / struct_ivar_module_default / struct_pointer_word_boundary /
+tuple_small_struct_element) PASS. No regressions from the merge.
+
+**2026-06-19 — By-value struct ABI: Stage 0 census shipped (`abi-struct-byvalue`,
+`19e72d7d`).** Read-only diagnostic (gate `ADAMAS_STRUCT_BYVALUE_CENSUS`, default
+OFF): for every user-struct ctor call, classify result flow (field_store /
+container / arg / return / local / mixed) + POD vs ref. Decision-grade finding:
+the common `Particle.new(Vec2.new(...))` lands in `arg`, NOT `field_store`, so no
+single bucket is "the flip set" — exact eligibility is for a later escape/inline
+predicate. GPT round-2 hostile review confirmed (anchors re-verified vs live
+code): (1) `arg` too coarse — needs sub-census; (2) inline-proof must exactly
+match `lower_field_store_to_ptr`/`use_memcopy` incl. `suppress_step4_tuple`
+(else stack-alloc + pointer-carrier store = UAF); (3) `type_needs_rc?` doesn't
+recurse through struct fields + `struct_type_is_pod?` optimistic default → unfit
+as flip gate; (4) shared escape walker trusts receiver-self as borrowed without
+proving callee doesn't leak `self` — don't reuse blindly. NEXT (deferred per
+owner, who chose merge-first): `arg` sub-census + a SEPARATE predicate
+`param_value_is_consumed_only_by_inline_field_memcopy?` (definite recursive POD +
+exact use_memcopy equivalence), rollout direct `field_store` first then exact
+`arg_param_copy_field_only`. THEN Stage 1a flip (gated, default OFF, POD-only).
 
 **2026-06-18 — #1 s2b startup crash FIXED (two-heap GC hazard, fix D).** Branch
 `s2b-twoheap-gc-fix-D`, 7 edits all in `src/compiler/mir/llvm_backend.cr` (no
