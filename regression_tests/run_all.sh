@@ -7,7 +7,7 @@
 # Otherwise, just checks for clean exit (code 0).
 
 COMPILER="${1:-bin/adamas}"
-JOBS="${2:-4}"
+JOBS="${2:-8}"   # default = performance-core count; memory per compile ~0.4GB so RAM is not the limit
 TIMEOUT=10
 MAX_MEM=512
 BIN_DIR="regression_tests/bin"
