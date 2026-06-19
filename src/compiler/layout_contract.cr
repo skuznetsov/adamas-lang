@@ -115,7 +115,29 @@ module Adamas
     # container oracle) all route here, that flip lands in ONE place. This is a
     # SIZE-only predicate so HIR can call it pre-MIR (no kind).
     def self.user_struct_inline?(size : UInt64, name : String) : Bool
-      inline_container_family?(name) || size > POINTER_WORD_BYTES
+      return true if inline_container_family?(name)
+      # STEP 4 (gated, default OFF): flip small (<= pointer-word) user-struct
+      # FIELDS from the legacy 8-byte pointer-carrier to inline storage. Gate OFF
+      # is byte-identical to the legacy V2 ABI (`size > POINTER_WORD_BYTES`). All
+      # field-repr readers (HIR field_storage_size, MIR lower_field_get/store, the
+      # repr memo via inline_value?) route through this one predicate, so the flip
+      # lands coherently in a single place.
+      return true if step4_inline_small_structs?
+      size > POINTER_WORD_BYTES
+    end
+
+    # Env gate for the step-4 small-struct inline flip (ABI rework step 4).
+    # OFF (default) keeps the legacy carrier ABI; ON makes every non-lib struct
+    # field inline (the Collapse). Memoised — env is constant within a compile.
+    @@step4_inline_small_structs : Bool? = nil
+
+    def self.step4_inline_small_structs? : Bool
+      cached = @@step4_inline_small_structs
+      return cached unless cached.nil?
+      v = ::Adamas::Compiler::BootstrapEnv.get?("ADAMAS_INLINE_SMALL_STRUCTS")
+      result = (v == "1" || v == "true" || v == "on")
+      @@step4_inline_small_structs = result
+      result
     end
 
     # The container-element struct families with an implemented inline ABI
