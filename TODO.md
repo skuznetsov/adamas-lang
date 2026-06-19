@@ -1,7 +1,7 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-06-17
-Branch: `loop-family-nested-accum-fix` (ABI track on `abi-rework`)
+Updated: 2026-06-18
+Branch: `abi-step4-inline-struct` (ABI track on `abi-rework`)
 
 This is the active working backlog only. Historical detail is in git history,
 especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
@@ -109,6 +109,34 @@ keep the two regimes distinct.
   `user_struct_inline?` (the one flip point), gated/measured per the demand tail
   above. This is the Collapse move (remove the carrier box), CAUTION-tier; needs
   the #4 producer understood first.
+  - **Scaffold shipped (gated OFF), `7abbfa08`.** `ADAMAS_INLINE_SMALL_STRUCTS`
+    env gate read at COMPILE time via `LayoutContract.user_struct_inline?`;
+    gate-OFF byte-identical to baseline (no rebuild needed to toggle).
+  - **gate-ON full parity reached (2026-06-18).** Running the full matrix gate-ON
+    vs the gate-OFF baseline surfaced exactly two non-routed readers, both fixed
+    (each byte-neutral at the default gate-OFF):
+    1. A struct-typed ivar whose default degrades to a scalar literal — e.g.
+       `@__evloop_data : Arena::Index = INVALID_INDEX` collapsing to `literal 0`
+       — crashed the inline-struct field store at startup (memcpy from a scalar
+       register). Fix: `generate_allocator` (ast_to_hir.cr, both generators) now
+       routes a struct ivar whose lowered default is NOT itself a struct value to
+       a zero-struct `Allocate` (declared default still lost — separate documented
+       gap). Guard `struct_ivar_module_default_inline_repro.sh`.
+    2. A small (≤ pointer word) struct as a Tuple/NamedTuple element:
+       `register_tuple_types` keeps it a pointer-word CARRIER, but
+       `lower_field_get`/`lower_field_store_to_ptr` applied the step-4 FIELD flip
+       → the carrier slot was misread as inline bytes (repr-flip). Fix: suppress
+       only the step-4 small flip for a tuple receiver (`field_receiver_is_tuple?`
+       in hir_to_mir.cr); large structs (> pointer word) inline in both regimes
+       and are unchanged. Guard `tuple_small_struct_element_inline_repro.sh`
+       (proven bad→good on pre/post-fix binaries).
+    Result: gate-ON 131/131 + 36/36 + complex 17/19 == gate-OFF baseline (the 2
+    complex fails are the pre-existing Array#find ёжики, present on both gates).
+  - **Remaining: default-flip decision (owner call).** Flipping the shipped
+    default to ON is CAUTION-tier (ABI change, also affects s3b). Gate it on a
+    measured perf win over the runtime-hot small-struct tail
+    (Atomic/SpinLock/Timers/Arena::Index) — measure first, then owner decision;
+    then remove the env gate.
 
 ## Current Checkpoint
 
