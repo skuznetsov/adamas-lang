@@ -257,8 +257,37 @@ initialize overwrites it first. **DoD ALL MET:**
   SIGBUS (exit 138) on a struct program (= documented pre-existing GC two-heap crash, not fixed on
   this branch). NO regression from the gate.
 
-NEXT after owner sign-off: commit (one logical commit: `ast_to_hir.cr` + reducer). Then PATH ORDER
-step (2) container/escape value ABI (the true final lever).
+Step (1) COMMITTED `8076254f` (`ast_to_hir.cr` + reducer + TODO).
+
+**2026-06-19 — PATH ORDER step (2) prep: Stage 0++ per-type aggregation + enum refactor**
+(`abi-struct-byvalue`, this commit; `hir_to_mir.cr` only). Two parts, ONE logical change:
+- **Enum refactor (allocation-free classifiers):** the by-value classifiers
+  (`classify_arg_param_consumption` is the hot-path one — runs per call site when the flip
+  is enabled) now return ENUMS (`CtorFlow`/`ArgUse`/`RefinedBucket`/`ByvalTier`) instead of
+  Strings — member compares, no per-site String garbage. Snake_case display labels derived
+  ONLY at diagnostic print time (cold, gated census) via `#to_s.underscore`.
+- **Stage 0++ (`run_struct_byvalue_type_aggregation`):** read-only/gated pass that folds
+  per-SITE buckets into a per-TYPE verdict (`ByvalTier`), because `T$Dnew` is ONE function
+  per type → its return ABI is per-type-GLOBAL. Prints `[BYVAL_TYPEAGG]` under
+  `ADAMAS_STRUCT_BYVALUE_CENSUS`.
+Claim scope (narrow, per GPT): **gate-OFF behavior-neutral** (census+typeagg output
+byte-identical pre/post, suite 131/131 + 36/36, dead-default reducer green); gated census
+diagnostics changed/extended (BYVAL_TYPEAGG now always prints under the census gate).
+**Decision-grade finding:** Shape A (whole-type flip) is impractical as first step — `trivial`
+tier (whole-type-flip-safe) is tiny + perf-irrelevant (Fiber::Context/Stack, CachedPowers::Power);
+`Vec2` lands in `container` tier with MIXED flows (arg_forwarded=3 container=1 copy=1 return=1) →
+a whole-type Vec2 flip must close container + arg-forward + return + copy ABIs at once (viral).
+**Blocker found:** recursive-POD predicate has a nested-struct FALSE-NEGATIVE — `Pair{Vec2,Vec2}`
+classifies `non_pod` (NOT a step-4 carrier artifact; `ADAMAS_INLINE_SMALL_STRUCTS=1` keeps it
+non_pod). Root: struct-typed ivar's MIR field type_ref does not resolve back to the registered
+struct in `struct_type_is_recursive_pod_mir?`.
+
+NEXT (per GPT): fix the recursive-POD nested false-negative FIRST (Stage 0++ is now a decision
+instrument; a crooked classifier corrupts every downstream container/value-ABI choice). Caveat:
+keep TWO predicates distinct — **semantic recursive POD** (declared fields recursively bit-copyable;
+gates future value/container ABI) vs **current-storage POD** (current MIR layout byte-copyable without
+copying pointer carriers; gates memcpy/stack-promo). Then rerun Stage 0++, then a narrow
+container/value sub-slice. Whole-type Shape A not practical as first step by current data.
 
 **2026-06-18 — #1 s2b startup crash FIXED (two-heap GC hazard, fix D).** Branch
 `s2b-twoheap-gc-fix-D`, 7 edits all in `src/compiler/mir/llvm_backend.cr` (no

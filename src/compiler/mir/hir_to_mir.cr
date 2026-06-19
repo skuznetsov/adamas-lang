@@ -534,6 +534,100 @@ module Adamas
         @mir_module
       end
 
+      # ── ABI rework: classification enums (allocation-free) ──────────────────
+      # The by-value flip predicate `param_value_is_consumed_only_by_inline_field_memcopy?`
+      # runs once per compile when the flip is enabled, so these classifiers return
+      # ENUMS, not Strings — member compares instead of String compares, no per-site
+      # String garbage. Snake_case display labels are derived ONLY at diagnostic
+      # print time (cold, gated census path) via `#to_s.underscore`.
+
+      # How a struct ctor RESULT flows across all its uses in a function.
+      enum CtorFlow
+        FieldStore
+        Container
+        Arg
+        Return
+        Copy
+        Local
+        Mixed
+        Other
+      end
+
+      # How a callee consumes a struct-typed parameter (worst-wins). CopyFieldOnly
+      # is the only flip-eligible verdict; NoCallee/Unknown are arg-resolution
+      # outcomes used by the diagnostic sub-census.
+      enum ArgUse
+        CopyFieldOnly
+        BorrowRead
+        Unused
+        RejectedCarrier
+        WriteThrough
+        ReceiverCall
+        Container
+        Forwarded
+        Returned
+        Rejected
+        Other
+        NoCallee
+        Unknown
+      end
+
+      # Per-site refined bucket for the diagnostic census/aggregation: splits the
+      # coarse CtorFlow further (field_store → inline/carrier/unresolved, arg →
+      # arg_*). Member names are chosen so `#to_s.underscore` yields the exact
+      # legacy snake_case label (e.g. ArgCopyFieldOnly → "arg_copy_field_only").
+      enum RefinedBucket
+        FieldStoreInline
+        FieldStoreCarrier
+        FieldStoreUnresolved
+        Container
+        Return
+        Copy
+        Local
+        Mixed
+        Other
+        ArgCopyFieldOnly
+        ArgForwarded
+        ArgReturned
+        ArgWriteThrough
+        ArgReceiverCall
+        ArgContainer
+        ArgRejectedCarrier
+        ArgBorrowRead
+        ArgUnused
+        ArgRejected
+        ArgOther
+        ArgNoCallee
+        ArgUnknown
+      end
+
+      # Per-TYPE whole-flip verdict tier (Stage 0++ aggregation).
+      enum ByvalTier
+        Trivial
+        NeedsFlip
+        Container
+        Blocked
+        NonPod
+      end
+
+      private def arg_use_to_refined(u : ArgUse) : RefinedBucket
+        case u
+        in ArgUse::CopyFieldOnly   then RefinedBucket::ArgCopyFieldOnly
+        in ArgUse::BorrowRead      then RefinedBucket::ArgBorrowRead
+        in ArgUse::Unused          then RefinedBucket::ArgUnused
+        in ArgUse::RejectedCarrier then RefinedBucket::ArgRejectedCarrier
+        in ArgUse::WriteThrough    then RefinedBucket::ArgWriteThrough
+        in ArgUse::ReceiverCall    then RefinedBucket::ArgReceiverCall
+        in ArgUse::Container       then RefinedBucket::ArgContainer
+        in ArgUse::Forwarded       then RefinedBucket::ArgForwarded
+        in ArgUse::Returned        then RefinedBucket::ArgReturned
+        in ArgUse::Rejected        then RefinedBucket::ArgRejected
+        in ArgUse::Other           then RefinedBucket::ArgOther
+        in ArgUse::NoCallee        then RefinedBucket::ArgNoCallee
+        in ArgUse::Unknown         then RefinedBucket::ArgUnknown
+        end
+      end
+
       # ── ABI rework Stage 0: read-only by-value struct census ────────────────
       # Diagnostic ONLY (gate ADAMAS_STRUCT_BYVALUE_CENSUS; no codegen change).
       # For every user-struct constructor call this classifies how the result
@@ -551,13 +645,14 @@ module Adamas
       # proxy (non-recursive type_needs_rc?, true when MIR type absent); the real
       # predicate must recurse through struct fields and answer DEFINITELY.
       private def run_struct_byvalue_census
-        tally = Hash(String, Int32).new(0)
-        arg_sub = Hash(String, Int32).new(0)   # arg sub-buckets (Stage 1 refinement)
-        fs_sub = Hash(String, Int32).new(0)     # direct field_store inline vs carrier
-        flip_eligible = 0                        # sites a POD-only flip could take TODAY
-        pod_discrepancy = 0                      # coarse-POD true but recursive-POD false
+        tally = Hash(Tuple(CtorFlow, Bool), Int32).new(0)   # {flow, coarse_pod} -> count
+        arg_sub = Hash(RefinedBucket, Int32).new(0)         # arg sub-buckets (Stage 1 refinement)
+        fs_sub = Hash(RefinedBucket, Int32).new(0)          # direct field_store inline vs carrier
+        flip_eligible = 0                                   # sites a POD-only flip could take TODAY
+        pod_discrepancy = 0                                 # coarse-POD true but recursive-POD false
         total = 0
         verbose = Adamas::Compiler::BootstrapEnv.get?("ADAMAS_STRUCT_BYVALUE_CENSUS") == "verbose"
+        filt = Adamas::Compiler::BootstrapEnv.get?("ADAMAS_STRUCT_BYVALUE_CENSUS_TYPE")
         @hir_module.functions.each do |func|
           func.blocks.each do |block|
             block.instructions.each do |inst|
@@ -567,51 +662,146 @@ module Adamas
               bucket = classify_struct_ctor_flow(func, call)
               recursive_pod = struct_type_is_recursive_pod?(call.type)
               coarse_pod = struct_type_is_pod?(call.type)
-              pod = coarse_pod ? "pod" : "ref"
               pod_discrepancy += 1 if coarse_pod && !recursive_pod
-              tally["#{bucket}|#{pod}"] += 1
+              tally[{bucket, coarse_pod}] += 1
               total += 1
-              tname = hir_type_name(call.type)
 
               # Stage 1 refinement: split the buckets the flip actually targets.
               case bucket
-              when "field_store"
+              when CtorFlow::FieldStore
                 case field_store_site_is_inline?(func, call.id)
                 when true
-                  fs_sub["field_store_inline"] += 1
+                  fs_sub[RefinedBucket::FieldStoreInline] += 1
                   flip_eligible += 1 if recursive_pod
                 when false
-                  fs_sub["field_store_carrier"] += 1
+                  fs_sub[RefinedBucket::FieldStoreCarrier] += 1
                 else
-                  fs_sub["field_store_unresolved"] += 1
+                  fs_sub[RefinedBucket::FieldStoreUnresolved] += 1
                 end
-              when "arg"
+              when CtorFlow::Arg
                 sub = arg_subbucket_for_ctor(func, call)
                 arg_sub[sub] += 1
-                flip_eligible += 1 if sub == "arg_copy_field_only" && recursive_pod
+                flip_eligible += 1 if sub.arg_copy_field_only? && recursive_pod
               end
 
               # Optional type-substring filter prints ALL buckets for matching
               # structs (decision probe); default verbose prints copy boundaries.
-              if (filt = Adamas::Compiler::BootstrapEnv.get?("ADAMAS_STRUCT_BYVALUE_CENSUS_TYPE"))
+              if filt
+                tname = hir_type_name(call.type)
                 if tname.includes?(filt)
-                  STDERR.puts "[BYVAL_CENSUS] #{bucket} #{pod} rec_pod=#{recursive_pod} type=#{tname} in=#{func.name}"
+                  STDERR.puts "[BYVAL_CENSUS] #{bucket.to_s.underscore} #{coarse_pod ? "pod" : "ref"} rec_pod=#{recursive_pod} type=#{tname} in=#{func.name}"
                 end
-              elsif verbose && (bucket == "field_store" || bucket == "container")
-                STDERR.puts "[BYVAL_CENSUS] #{bucket} #{pod} rec_pod=#{recursive_pod} type=#{tname} in=#{func.name}"
+              elsif verbose && (bucket.field_store? || bucket.container?)
+                STDERR.puts "[BYVAL_CENSUS] #{bucket.to_s.underscore} #{coarse_pod ? "pod" : "ref"} rec_pod=#{recursive_pod} type=#{hir_type_name(call.type)} in=#{func.name}"
               end
             end
           end
         end
         STDERR.puts "[BYVAL_CENSUS] total_struct_ctor_sites=#{total}"
-        tally.keys.sort.each { |k| STDERR.puts "[BYVAL_CENSUS]   #{k} = #{tally[k]}" }
+        tally.keys.sort_by { |(flow, pod)| "#{flow.to_s.underscore}|#{pod ? "pod" : "ref"}" }.each do |key|
+          flow, pod = key
+          STDERR.puts "[BYVAL_CENSUS]   #{flow.to_s.underscore}|#{pod ? "pod" : "ref"} = #{tally[key]}"
+        end
         STDERR.puts "[BYVAL_CENSUS] field_store split:"
-        fs_sub.keys.sort.each { |k| STDERR.puts "[BYVAL_CENSUS]   #{k} = #{fs_sub[k]}" }
+        fs_sub.keys.sort_by { |k| k.to_s.underscore }.each { |k| STDERR.puts "[BYVAL_CENSUS]   #{k.to_s.underscore} = #{fs_sub[k]}" }
         STDERR.puts "[BYVAL_CENSUS] arg sub-buckets:"
-        arg_sub.keys.sort.each { |k| STDERR.puts "[BYVAL_CENSUS]   #{k} = #{arg_sub[k]}" }
+        arg_sub.keys.sort_by { |k| k.to_s.underscore }.each { |k| STDERR.puts "[BYVAL_CENSUS]   #{k.to_s.underscore} = #{arg_sub[k]}" }
         STDERR.puts "[BYVAL_CENSUS] flip_eligible_sites=#{flip_eligible} (recursive-POD + inline field_store OR arg_copy_field_only)"
         STDERR.puts "[BYVAL_CENSUS] coarse_pod_overcount=#{pod_discrepancy} (coarse POD true but recursive POD false)"
+        run_struct_byvalue_type_aggregation
         STDERR.flush
+      end
+
+      # ── ABI rework Stage 0++: per-TYPE aggregation (Shape A/B decision data) ──
+      # The per-site census counts FLOW per call site, but `T$Dnew` is ONE
+      # function per struct type — its return ABI is per-type-GLOBAL. A whole-type
+      # by-value flip (Shape A) changes EVERY consumer of T at once, so it is safe
+      # only when T is recursive-POD AND *every* ctor site of T lands in a bucket
+      # that a by-value value can satisfy. This pass groups all ctor sites by type
+      # and assigns each type a verdict tier so we can measure how large the
+      # whole-type-flip set actually is (vs a per-site/dual-ABI Shape B). Read-only.
+      #
+      # Tiers (recursive-POD required for any flip — a non-POD struct memcpy would
+      # duplicate an owned inner pointer with no retain/release → UAF under ARC):
+      #   trivial     — every site ∈ {local, field_store_inline}: a by-value
+      #                 $Dnew + inline field store closes it with NO inter-proc or
+      #                 container ABI change. The cheapest Shape A target.
+      #   needs_flip  — also has arg_copy_field_only / return / copy sites: needs
+      #                 the callee/return ABI to flip too (viral but bounded).
+      #   container   — has ≥1 container site (Array#push/<<): needs the container
+      #                 element-storage ABI (lever i) — the broad, separate work.
+      #   blocked     — has a carrier / forwarded / receiver / mixed / unknown site
+      #                 the whole-type flip cannot satisfy without more analysis.
+      #   non_pod     — not recursive-POD: ineligible regardless of flow.
+      private def run_struct_byvalue_type_aggregation
+        # type name -> (refined bucket -> count)
+        type_buckets = Hash(String, Hash(RefinedBucket, Int32)).new
+        type_pod = Hash(String, Bool).new
+        @hir_module.functions.each do |func|
+          func.blocks.each do |block|
+            block.instructions.each do |inst|
+              next unless inst.is_a?(HIR::Call)
+              call = inst.as(HIR::Call)
+              next unless struct_ctor_call?(call)
+              tname = hir_type_name(call.type)
+              type_pod[tname] = struct_type_is_recursive_pod?(call.type) unless type_pod.has_key?(tname)
+              buckets = (type_buckets[tname] ||= Hash(RefinedBucket, Int32).new(0))
+              buckets[refined_ctor_bucket(func, call)] += 1
+            end
+          end
+        end
+
+        safe_trivial = ::Set{RefinedBucket::Local, RefinedBucket::FieldStoreInline}
+        safe_with_flip = ::Set{
+          RefinedBucket::Local, RefinedBucket::FieldStoreInline,
+          RefinedBucket::ArgCopyFieldOnly, RefinedBucket::Return, RefinedBucket::Copy,
+        }
+
+        tier_count = Hash(ByvalTier, Int32).new(0)
+        STDERR.puts "[BYVAL_TYPEAGG] per-type verdicts (#{type_buckets.size} user struct types):"
+        type_buckets.keys.sort.each do |tname|
+          buckets = type_buckets[tname]
+          pod = type_pod[tname]? || false
+          keys = buckets.keys
+          tier =
+            if !pod
+              ByvalTier::NonPod
+            elsif keys.all? { |k| safe_trivial.includes?(k) }
+              ByvalTier::Trivial
+            elsif keys.all? { |k| safe_with_flip.includes?(k) }
+              ByvalTier::NeedsFlip
+            elsif keys.any?(&.container?)
+              ByvalTier::Container
+            else
+              ByvalTier::Blocked
+            end
+          tier_count[tier] += 1
+          dist = keys.sort_by { |k| k.to_s.underscore }.map { |k| "#{k.to_s.underscore}=#{buckets[k]}" }.join(" ")
+          STDERR.puts "[BYVAL_TYPEAGG]   #{tier.to_s.underscore} pod=#{pod} #{tname}: #{dist}"
+        end
+        STDERR.puts "[BYVAL_TYPEAGG] tier totals:"
+        tier_count.keys.sort_by { |k| k.to_s.underscore }.each { |k| STDERR.puts "[BYVAL_TYPEAGG]   #{k.to_s.underscore} = #{tier_count[k]}" }
+      end
+
+      # Refine a ctor site's coarse flow bucket the same way the per-site census
+      # does (field_store→inline/carrier/unresolved, arg→arg_* sub-bucket), so the
+      # per-type aggregation sees the precise bucket a whole-type flip must satisfy.
+      private def refined_ctor_bucket(func : Adamas::HIR::Function, call : Adamas::HIR::Call) : RefinedBucket
+        case classify_struct_ctor_flow(func, call)
+        in CtorFlow::FieldStore
+          case field_store_site_is_inline?(func, call.id)
+          when true  then RefinedBucket::FieldStoreInline
+          when false then RefinedBucket::FieldStoreCarrier
+          else            RefinedBucket::FieldStoreUnresolved
+          end
+        in CtorFlow::Arg       then arg_subbucket_for_ctor(func, call)
+        in CtorFlow::Container then RefinedBucket::Container
+        in CtorFlow::Return    then RefinedBucket::Return
+        in CtorFlow::Copy      then RefinedBucket::Copy
+        in CtorFlow::Local     then RefinedBucket::Local
+        in CtorFlow::Mixed     then RefinedBucket::Mixed
+        in CtorFlow::Other     then RefinedBucket::Other
+        end
       end
 
       # A user (non-lib) struct constructor call (`Vec2.new(...)`).
@@ -643,9 +833,9 @@ module Adamas
       # Receiver/own-field uses are borrows (ignored); only value-position uses
       # set a bucket. Multiple distinct buckets -> "mixed"; no escaping use ->
       # "local" (already stack-promotable today).
-      private def classify_struct_ctor_flow(func : Adamas::HIR::Function, ctor : Adamas::HIR::Call) : String
+      private def classify_struct_ctor_flow(func : Adamas::HIR::Function, ctor : Adamas::HIR::Call) : CtorFlow
         vid = ctor.id
-        kinds = ::Set(String).new
+        kinds = ::Set(CtorFlow).new
         func.blocks.each do |block|
           block.instructions.each do |inst|
             next if inst.id == ctor.id
@@ -653,38 +843,38 @@ module Adamas
             case inst
             when HIR::FieldSet
               if inst.value == vid && inst.object != vid
-                kinds << "field_store"
+                kinds << CtorFlow::FieldStore
               elsif inst.object != vid
-                kinds << "other"
+                kinds << CtorFlow::Other
               end
             when HIR::FieldGet
-              kinds << "other" unless inst.object == vid
+              kinds << CtorFlow::Other unless inst.object == vid
             when HIR::Call
               if inst.has_receiver? && inst.receiver_value == vid
                 # method call on the struct itself = borrow
               elsif inst.args.includes?(vid)
-                kinds << (container_write_call?(inst) ? "container" : "arg")
+                kinds << (container_write_call?(inst) ? CtorFlow::Container : CtorFlow::Arg)
               else
-                kinds << "other"
+                kinds << CtorFlow::Other
               end
             when HIR::Copy
-              kinds << "copy"
+              kinds << CtorFlow::Copy
             else
-              kinds << "other"
+              kinds << CtorFlow::Other
             end
           end
           if hir_terminator_used_values(block.terminator).includes?(vid)
             term = block.terminator
             if term.is_a?(HIR::Return) && term.value == vid
-              kinds << "return"
+              kinds << CtorFlow::Return
             else
-              kinds << "other"
+              kinds << CtorFlow::Other
             end
           end
         end
-        return "local" if kinds.empty?
+        return CtorFlow::Local if kinds.empty?
         return kinds.first if kinds.size == 1
-        "mixed"
+        CtorFlow::Mixed
       end
 
       # A container element write (Array#push / #<< / #[]= / #unsafe_put).
@@ -756,10 +946,10 @@ module Adamas
       #   copy_field_only  — >=1 inline-memcopy field store, only borrowed reads else
       #   borrow_read      — only own-field reads
       #   unused           — never used
-      private def classify_arg_param_consumption(callee : Adamas::HIR::Function, param_idx : Int32) : String
+      private def classify_arg_param_consumption(callee : Adamas::HIR::Function, param_idx : Int32) : ArgUse
         params = callee.params
         param = params[param_idx]?
-        return "rejected" unless param
+        return ArgUse::Rejected unless param
         param_id = param.id
         vtypes = hir_function_value_types(callee)
         has_copy = false
@@ -775,37 +965,37 @@ module Adamas
                 if obj_hir && field_store_uses_inline_memcopy?(inst.type, obj_mir)
                   has_copy = true
                 else
-                  return "rejected_carrier"
+                  return ArgUse::RejectedCarrier
                 end
               end
-              return "write_through" if inst.object == param_id
+              return ArgUse::WriteThrough if inst.object == param_id
             when HIR::FieldGet
               has_borrow_read = true if inst.object == param_id
             when HIR::Call
               if inst.has_receiver? && inst.receiver_value == param_id
-                return "receiver_call"
+                return ArgUse::ReceiverCall
               elsif container_write_call?(inst) && inst.args.includes?(param_id)
-                return "container"
+                return ArgUse::Container
               elsif inst.args.includes?(param_id)
-                return "forwarded"
+                return ArgUse::Forwarded
               else
-                return "other"
+                return ArgUse::Other
               end
             when HIR::Copy
-              return "forwarded" if inst.source == param_id
+              return ArgUse::Forwarded if inst.source == param_id
             else
-              return "other"
+              return ArgUse::Other
             end
           end
           if hir_terminator_used_values(block.terminator).includes?(param_id)
             term = block.terminator
-            return "returned" if term.is_a?(HIR::Return) && term.value == param_id
-            return "other"
+            return ArgUse::Returned if term.is_a?(HIR::Return) && term.value == param_id
+            return ArgUse::Other
           end
         end
-        return "copy_field_only" if has_copy
-        return "borrow_read" if has_borrow_read
-        "unused"
+        return ArgUse::CopyFieldOnly if has_copy
+        return ArgUse::BorrowRead if has_borrow_read
+        ArgUse::Unused
       end
 
       # The Stage 1 flip predicate for a struct value passed as a call argument:
@@ -817,7 +1007,7 @@ module Adamas
         struct_hir_type : Adamas::HIR::TypeRef,
       ) : Bool
         struct_type_is_recursive_pod?(struct_hir_type) &&
-          classify_arg_param_consumption(callee, param_idx) == "copy_field_only"
+          classify_arg_param_consumption(callee, param_idx).copy_field_only?
       end
 
       # Refine the coarse `arg` bucket: resolve the callee + param index for the
@@ -825,7 +1015,7 @@ module Adamas
       # (prefixed "arg_"). Returns "arg_no_callee" when the callee is virtual,
       # unknown, body-less, or arity-mismatched — exactly the cases the flip can
       # never prove and must skip.
-      private def arg_subbucket_for_ctor(func : Adamas::HIR::Function, ctor : Adamas::HIR::Call) : String
+      private def arg_subbucket_for_ctor(func : Adamas::HIR::Function, ctor : Adamas::HIR::Call) : RefinedBucket
         vid = ctor.id
         func.blocks.each do |block|
           block.instructions.each do |inst|
@@ -835,17 +1025,17 @@ module Adamas
             next if call.has_receiver? && call.receiver_value == vid
             next unless call.args.includes?(vid)
             next if container_write_call?(call)
-            return "arg_no_callee" if call.virtual
+            return RefinedBucket::ArgNoCallee if call.virtual
             callee = @hir_module.function_by_name(call.method_name)
-            return "arg_no_callee" unless callee && !callee.blocks.empty?
+            return RefinedBucket::ArgNoCallee unless callee && !callee.blocks.empty?
             receiver_offset = call.has_receiver? ? 1 : 0
-            return "arg_no_callee" unless callee.params.size == call.args.size + receiver_offset
+            return RefinedBucket::ArgNoCallee unless callee.params.size == call.args.size + receiver_offset
             arg_idx = call.args.index(vid)
-            return "arg_no_callee" unless arg_idx
-            return "arg_" + classify_arg_param_consumption(callee, arg_idx + receiver_offset)
+            return RefinedBucket::ArgNoCallee unless arg_idx
+            return arg_use_to_refined(classify_arg_param_consumption(callee, arg_idx + receiver_offset))
           end
         end
-        "arg_unknown"
+        RefinedBucket::ArgUnknown
       end
 
       # Is the direct field_store of this ctor result an inline memcopy (true)
