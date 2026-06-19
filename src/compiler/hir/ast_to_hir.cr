@@ -29613,8 +29613,13 @@ module Adamas::HIR
           unless is_lazy_getter
             # Try to resolve simple defaults without full lower_expr (avoids
             # triggering demand-driven compilation for module ivar defaults)
+            ivar_is_struct = !!(type_desc && type_desc.kind == TypeKind::Struct)
             resolved_literal = try_resolve_simple_default(default_node, default_arena, ivar.type)
-            if resolved_literal
+            # A struct-typed ivar must never be initialized from a scalar literal:
+            # under the inline-struct ABI the field store memcpy's from the value's
+            # address, so a scalar-register source crashes. Route struct ivars to
+            # the zero-struct fallback (below) instead.
+            if resolved_literal && !ivar_is_struct
               default_val = Literal.new(ctx.next_id, ivar.type, resolved_literal)
               ctx.emit(default_val)
               ivar_store = FieldSet.new(ctx.next_id, ivar.type, alloc.id, ivar.name, default_val.id, ivar.offset)
@@ -29643,6 +29648,22 @@ module Adamas::HIR
             @arena = default_arena
             @current_class = class_name
             default_id = try_lower_enum_symbol_default(ctx, class_name, ivar.type, default_node) || lower_expr(ctx, default_expr_id)
+            # If a struct-typed ivar default degraded to a non-struct scalar — an
+            # unresolvable module struct constant (e.g. Arena::INVALID_INDEX) that
+            # lower_expr collapses to `literal 0 : Int32` — storing it would memcpy
+            # from a scalar register under the inline-struct ABI (SIGSEGV). Fall
+            # back to a zero-filled struct, matching the no-default struct path and
+            # @volatile_fd. The declared default is lost either way (documented:
+            # "default ivar values from modules not yet implemented").
+            if ivar_is_struct
+              lowered_desc = @module.get_type_descriptor(ctx.type_of(default_id))
+              unless lowered_desc && lowered_desc.kind == TypeKind::Struct
+                zero_struct = Allocate.new(ctx.next_id, ivar.type, [] of ValueId, true)
+                ctx.emit(zero_struct)
+                ctx.register_type(zero_struct.id, ivar.type)
+                default_id = zero_struct.id
+              end
+            end
             ivar_store = FieldSet.new(ctx.next_id, ivar.type, alloc.id, ivar.name, default_id, ivar.offset)
             ctx.emit(ivar_store)
             @arena = saved_arena
@@ -30120,8 +30141,12 @@ module Adamas::HIR
           is_lazy_getter = default_node.is_a?(Adamas::Compiler::Frontend::BlockNode)
           unless is_lazy_getter
             # Try simple literal resolution first
+            ivar_is_struct = !!(type_desc && type_desc.kind == TypeKind::Struct)
             resolved_literal = try_resolve_simple_default(default_node, default_arena, ivar.type)
-            if resolved_literal
+            # Struct-typed ivars are never initialized from a scalar literal (the
+            # inline-struct field store memcpy's from the value's address); route
+            # them to the zero-struct fallback instead.
+            if resolved_literal && !ivar_is_struct
               default_val = Literal.new(ctx.next_id, ivar.type, resolved_literal)
               ctx.emit(default_val)
               ivar_store = FieldSet.new(ctx.next_id, ivar.type, alloc.id, ivar.name, default_val.id, ivar.offset)
@@ -30145,6 +30170,22 @@ module Adamas::HIR
             @arena = default_arena
             @current_class = class_name
             default_id = try_lower_enum_symbol_default(ctx, class_name, ivar.type, default_node) || lower_expr(ctx, default_expr_id)
+            # If a struct-typed ivar default degraded to a non-struct scalar — an
+            # unresolvable module struct constant (e.g. Arena::INVALID_INDEX) that
+            # lower_expr collapses to `literal 0 : Int32` — storing it would memcpy
+            # from a scalar register under the inline-struct ABI (SIGSEGV). Fall
+            # back to a zero-filled struct, matching the no-default struct path and
+            # @volatile_fd. The declared default is lost either way (documented:
+            # "default ivar values from modules not yet implemented").
+            if ivar_is_struct
+              lowered_desc = @module.get_type_descriptor(ctx.type_of(default_id))
+              unless lowered_desc && lowered_desc.kind == TypeKind::Struct
+                zero_struct = Allocate.new(ctx.next_id, ivar.type, [] of ValueId, true)
+                ctx.emit(zero_struct)
+                ctx.register_type(zero_struct.id, ivar.type)
+                default_id = zero_struct.id
+              end
+            end
             ivar_store = FieldSet.new(ctx.next_id, ivar.type, alloc.id, ivar.name, default_id, ivar.offset)
             ctx.emit(ivar_store)
             @arena = saved_arena
