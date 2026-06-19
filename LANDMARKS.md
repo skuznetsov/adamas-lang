@@ -44,6 +44,144 @@ setter and advances into lowering the actual call. NEW frontier M4i2: NULL-point
 `lower_call` (`ldr x8,[x8]`, x8=0x0) lowering `puts 1` — a null struct-field/ExprId in the
 program-lowering path, classified separately.
 
+[LM-S2B-TWOHEAP-FIX-D|verified 2026-06-18 {F:0.85 G:0.7 R:0.85}]: The #1 s2b startup crash is
+FIXED by D (scoped family-consistent allocator redirect), branch `s2b-twoheap-gc-fix-D`, 7 edits
+all in `src/compiler/mir/llvm_backend.cr` (NO stdlib). Atomic byte-buffer family moved off Boehm:
+`GC.malloc_atomic`→`__adamas_malloc64` (libc calloc), `GC.realloc`→`__adamas_gc_aware_realloc`
+(GC_base-aware: Boehm blocks via GC_realloc, libc via libc realloc); scanned `GC.malloc` (GMP,
+EventLoop arena) left on Boehm. The wrapper is emitted at the module epilogue ONLY when a reachable
+`ExternCall "GC_realloc"` exists (`gc_aware_realloc_needed?`) — same condition that links libgc, so
+its `@GC_base`/`@GC_realloc` resolve (fixes a self-introduced `Undefined symbols: _GC_base,_GC_realloc`
+link bug on GC-free programs). EVIDENCE: baseline `/tmp/s2b_clean` SIGSEGVs on `x=1`; `/tmp/s2b_gated`
+compiles `x=1` exit 0 ~1s, output links (88752 B, no undefined GC syms) + runs clean; suite 160/160 +
+31/31; repro `regression_tests/gc_aware_realloc_gating_repro.sh` rc=0. SUPERSEDES the in_progress
+owner-paradox / repr-flip framings below (those localized WHERE byte_at read freed memory; the
+watchpoint-proven WHO was Boehm collecting a live libc-anchored String). NEXT: E = ARC-owned String.
+
+[LM-S2B-STARTUP-OWNER|superseded 2026-06-17→resolved-by-D 2026-06-18]: The #1 s2b startup crash (byte_at SIGSEGV
+when the stage2 binary compiles even `x=1`) is a DETERMINISTIC MISCOMPILE in s2b's own
+generated code, NOT runtime memory corruption. Decisive observable (deterministic
+`/tmp/s2b_dbg2`, baked env probes, zero crash-rate dependence): for the entry call
+`Crystal.main(argc,argv){...}` inside fn `main$Int32_Pointer(Pointer(UInt8))`, s2b emits
+owner `Int32#main$...` (instance, sep `#`) where the reference emits `Crystal.main$...`
+(static, sep `.`). The bogus `Int32` owner == arg_types[0] (argc:Int32) i.e. the call
+degrades to an instance call whose owner is the receiver's type. Cascade: corrupt owner →
+bogus `Int32#new$Array(String)_IO::FileDescriptor` queued → lowering reads garbage
+`type_annotation` → `String#byte_at` SIGSEGV (corridor:
+byte_at←strip_ascii_edge_whitespace←type_ref_for_name←prefer_callsite_specialization
+(param.type_annotation)←lower_missing_call_targets).
+REFUTED this session:
+  (a) `UInt32?#nil?`/`ValueId?` "zombie-nil" UNIVERSAL miscompile — `/tmp/nilable_uint32_nil_repro.cr`
+      compiled by stage1 is CLEAN for all 4 cases (nil→nil?=true; 0_u32→nil?=false). So `.nil?` on
+      `UInt32?` is not broken in general; the earlier "receiver_id=0 vs recv_type=nil" divergence
+      conflated two different program points (BASE_METHOD@~74135 vs CALL_EMIT@~78480), not one slot.
+  (b) String↔Slice repr-flip on the receiver name — s2b reads `name=Crystal` CLEAN (probe
+      `[CRYSTAL_RECV]`), not garbage. The owner "Int32" is a clean valid type, not source bytes.
+CONFIRMED divergence (probe `[CRYSTAL_RECV]` at ast_to_hir.cr lower_call, method=="main",
+gated DEBUG_CRYSTAL_RECV=1): reference `obj_kind=Identifier name=Crystal cns=Crystal
+mod_like=true is_mod_m=true module_defs=true` vs s2b `obj_kind=(empty) name=Crystal
+cns=Crystal mod_like=true is_mod_m=FALSE module_defs=true`. Two s2b anomalies: (1)
+`obj_kind.to_s` renders EMPTY but the enum VALUE is still Identifier (since `cns=Crystal`
+got set via the Identifier branch) → a cosmetic Enum#to_s miscompile, not causal. (2)
+`is_module_method?("Crystal","main")` = `@function_types.has_key?("Crystal.main")||has_function_base?`
+returns FALSE in s2b, TRUE in reference — a String-keyed registry-lookup divergence.
+OPEN PARADOX (owner side, NOW DEMOTED — see lldb session below): s2b has `class_name_str="Crystal"`
+at the probe (line ~71646), and the intervening fallbacks (71671-71825) only SET class_name_str when
+nil — so the `if class_name_str` block at ~72038 SHOULD run
+`full_method_name = resolve_class_method_with_inheritance("Crystal","main") || "Crystal.main"`. Yet
+BASE_METHOD@~74135 showed bare `full_method_name=main`. Staged trace probes A/B/C/D (CR_A_blockend@72105,
+CR_B_pre_m3f@~73963, CR_C_pre_instref@~74010, CR_D_post_instref@~74043, gated DEBUG_CRYSTAL_RECV &&
+method=="main") to localize the reset — NOT YET REBUILT/RUN.
+
+=== 2026-06-17 lldb session on /tmp/s2b_dbg2 (DETERMINISTIC, 100% crash even under lldb) ===
+The byte_at SIGSEGV crash is RECLASSIFIED as a `type_annotation` String↔Slice REPR-FLIP that is
+*independent of* the Crystal.main owner paradox (HYP-B favored over HYP-A). Evidence:
+  * Deterministic backtrace: byte_at ← strip_ascii_edge_whitespace ← type_ref_for_name(_inner)
+    ← prefer_callsite_specialization(param_type) ← lower_function_if_needed_impl
+    ← process_pending_lower_functions ← lower_missing_call_targets ← flush_pending_functions ← CLI#compile.
+  * The corrupt `param_type` at the crash decodes to ORDINARY STDLIB SOURCE text, not the bogus
+    Int32#main target: heads = "reverse : Array(", "map_with_index!(", "compact! : self",
+    "address.to_u64!", "atomicrmw(:mi", "days[month", "...value), ordering)". So the def whose params
+    are corrupt is a legit stdlib method, NOT the owner-misresolved Int32#new$Array(String)_IO::FileDescriptor.
+  * PRODUCER/CONSUMER SPLIT (the key new fact): all three DefParamInfo construction sites are probed
+    (build_param_infos_from_params.type+.readback @36036/36046; build_param_infos.type+.readback
+    @36069/36079; nested_producer.ta_source+.readback @24908/24918) and fired ZERO BADSTR. The
+    CONSUMERS fired 39 (build_param_stats_from_infos.type @36164) + the crash one
+    (prefer_callsite_specialization.param_type @36614). So `type_annotation` is a VALID independent
+    heap String at construction and CORRUPT when the SAME cached array is re-read later.
+    `safe_slice_to_string` ends in `String.new(slice)` (ast_to_hir.cr:12227) = a real byte COPY, so
+    production cannot be a zero-copy view — confirms post-production corruption.
+  * FIELDCORR probe (@36161, within build_param_stats_from_infos): within the corrupt struct, field0
+    `name` is VALID (nm_bs=5/6), field2 `type_annotation` is the source pointer, `external_name` nil;
+    `same=true` (block-var == params[idx], i.e. STORED corruption not an iteration-copy flip). Affects
+    even SIZE-1 arrays (idx=0/1) → RULES OUT append-realloc/struct-copy-on-grow as the cause. So an
+    external write stomps field2 (offset 16) of stored DefParamInfo structs with a Slice-into-source
+    value, between production and consumption; field0 untouched.
+  * Heap addresses are NON-deterministic run-to-run (arr≈39e9 run1 vs ≈51e9 run3) although the
+    miscompile/bt is deterministic → pre-set lldb watchpoints from a prior run's address are INFEASIBLE;
+    the baked probes + deterministic bt are the working trace channel. `frame variable` yields nothing
+    (binary lacks local-var DWARF), so base_method_name must come from an in-code probe, not lldb.
+NEXT: (1) add a probe in prefer_callsite_specialization printing base_method_name/resolved_name on bad
+param_type to NAIL HYP-B (legit stdlib def). (2) Localize the WRITER: a phase-boundary validation sweep
+re-checking cached @function_param_infos_by_def_id type_annotations to find the first window where a
+valid field flips to a source pointer (watchpoints infeasible). (3) Owner paradox is a SEPARATE,
+likely non-crashing issue — keep A/B/C/D for it but do not let it block the repr-flip fix.
+=== 2026-06-17 confirmation run (s2b_dbg3, full re-instrumented) — HYP-S CONFIRMED ===
+Re-ran the producer probes (RESCAN added to build_param_infos + build_param_infos_from_params) and
+consumer probes: 39× `build_param_stats_from_infos.type` BADSTR + 1 crash, ZERO producer/readback/RESCAN
+BADSTR. All 39 fire DURING `lower_main` (between "lower_main: exprs=12" and "pass3 after lower_main").
+Crucially the SAME `build_param_stats_from_infos` runs at pass2 prime-time (`prime_param_caches_for_registered_def`)
+with 0 BADSTR ⇒ the field2 stomp happens strictly BETWEEN pass2 register and pass3 lower_main consumption.
+HYP-S (post-construction stomp of stored field2) is now the active root, superseding any "producer
+repr-flip" framing. Bisection in flight: `scan_param_caches_for_corruption(label)` CACHESCAN added to
+cli.cr at after_register_functions / before+after fixup_inherited_ivars / before_lower_main; built into
+/tmp/s2b_dbg4. Window suspects: fixup_inherited_ivars internals + lower_main deferred classvar/const init.
+CAUTION-tier fix (do not commit until mechanism pinned; remove all probes first). Reducers:
+/tmp/nilable_uint32_nil_repro.cr (refuter). Memory: [[s2b-startup-crash-rc-overfree-refuted]].
+
+=== 2026-06-17 ROOT CAUSE FOUND (lldb hardware watchpoint + code audit) — TWO-HEAP GC HAZARD ===
+The "post-construction field2 stomp" (HYP-S) is RECLASSIFIED: the writer is the Boehm GC recycling a
+live String. This is mechanism-level proof and SUPERSEDES the rate-based "GC-UAF refuted 3×" /
+"GC_DONT_GC=clean is layout-masking" notes (those refuted GC *aggressiveness*; the real defect is a
+GC-reachability gap, which they never tested).
+EVIDENCE:
+  * lldb scripted hardware WRITE watchpoint (/tmp/wp_trace.py) on the live normalized "Int" String
+    (held by @normalize_decl_cache : Hash(String,String)) fired in `GC_build_fl` (libgc free-list
+    builder) ← GC_generic_malloc_many ← GC_malloc_kind ← GC_realloc ← GC$Drealloc ←
+    String$CCBuilder$Hresize_to_capacity (during register_class → mangle_type_param_suffix). I.e. the
+    GC threads the STILL-REFERENCED String's exact block onto a free list, then a later
+    String::Builder realloc recycles it and overwrites it with source text → the cached String becomes
+    a header-less pointer-into-source → byte_at SIGSEGV at the later cache HIT.
+  * GC_DONT_GC=1: watchpoint does NOT fire, program exits cleanly (status 1, no crash). Collection is
+    necessary AND sufficient for the bug (mechanism, not crash-rate).
+WHY THE GC MISSES THE REFERENCE (code audit, llvm_backend.cr):
+  * `Pointer(T).malloc` → MIR `lower_pointer_malloc` (hir_to_mir.cr:7622) → `__adamas_malloc64`
+    (llvm_backend.cr:6540) → loads `@__adamas_calloc_fn` which is `global ptr @calloc` (libc), NEVER
+    repatched to GC anywhere (grep: only def+use sites). So Array/Hash entry buffers live in the LIBC
+    heap.
+  * stdlib `String`/`String::Builder` allocate via `GC.malloc`/`GC.realloc` (no compiler override) →
+    REAL Boehm `GC_malloc`/`GC_realloc` (backtrace-confirmed). So Strings live in the BOEHM GC heap.
+  * Boehm traces roots + its own heap only; it does NOT scan interior pointers of a libc-malloc'd
+    region (GC_base()==NULL there). A chain GC-object → libc Hash @entries buffer → GC String breaks at
+    the libc buffer ⇒ the String value is unreachable to the GC ⇒ collected while still logically live.
+  This is a TWO-HEAP cross-reference hazard, not a GC-model deficiency: a non-GC (libc) container buffer
+  holds the only reference to a GC-allocated String.
+WHY NON-DETERMINISTIC / layout-sensitive: depends on whether a collection runs between the value's last
+GC-visible reference dying (producing stack frame returns) and the cache HIT, plus whether other
+GC-scanned locations transiently hold the same String. Fully reconciles ASLR sensitivity + "crash rate
+is an invalid metric" + the field0-valid/field2-flipped pattern (field2 String value collected; field0
+name still referenced elsewhere).
+FIX is genuinely owner's call — every viable fix touches the GC/allocator boundary the owner gated
+("never expand GC use / change the GC model"): (A) original-Crystal-faithful: `Pointer(T).malloc`
+chooses GC_malloc when T has inner pointers (scanning) vs libc/atomic when pointer-free — correct &
+general but needs the matching realloc routed to GC_realloc for those buffers (broader); (B) enforce
+leak-to-exit by disabling Boehm collection at startup (GC_disable/GC_set_dont_gc) — minimal, matches the
+documented "GC=leak-to-exit" intent, raises peak memory (compiler is short-lived); (C) register the
+libc container heap as GC roots — fragile. CONSULTING OWNER before implementing (high-stakes, conflicts
+with prior conclusions + a hard constraint). Probes still in tree (uncommitted): CACHESCAN in
+ast_to_hir.cr + 4 calls in cli.cr; A/B/C/D, RESCAN, PCS_BADDEF, FIELDCORR, NDC — REMOVE before any fix.
+Watchpoint script: /tmp/wp_trace.py. Deterministic repro: /tmp/s2b_dbg4 /tmp/bis.cr.
+
 [LM-M4i2c|verified]: The "floating" non-deterministic s2b crash (which surfaced at lower_call /
 collect_return_types / CLI#compile depending on build layout) is ONE root: a
 `heap-buffer-overflow READ of size 8` in `Array(Adamas::HIR::TypeRef)#dup`, caught by ASAN
