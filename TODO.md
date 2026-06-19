@@ -228,6 +228,38 @@ Gated default OFF + negative reducers + suite + s2b + bench malloc/RSS/time delt
 value ABI** later (the true final lever, too broad now: stride/return ABI/Array storage/self-host).
 **(3) Shape C eligibility extension** optional cleanup (correctness-neutral, bench unchanged — proven).
 
+**2026-06-19 — PATH ORDER step (1) dead-default-init elimination IMPLEMENTED + VERIFIED**
+(branch `abi-struct-byvalue`). Gated
+`ADAMAS_SKIP_DEAD_DEFAULT_INIT` (default OFF). New predicate
+`initialize_unconditionally_sets_ivar?` (`ast_to_hir.cr`) scans ONLY initialize's
+**entry block** (always-executes, straight-line — branches/returns/raises live in the
+terminator or successor blocks, so any control flow auto-rejects): ACCEPT on a dominating
+`FieldSet(self.@ivar, value!=self)` reached before any read/escape; REJECT on self-FieldGet,
+Call/Yield carrying self, AddressOf/Cast of self, FieldSet storing self, or any unknown
+instruction (whitelist). Wired into both zero-struct sites — regular `generate_allocator`
+(init pre-lowered at the layout pre-lower) and `generate_allocator_overload` (lowers init
+early via `lower_function_if_needed`, since it is otherwise lowered after the gate). Skipping
+the `Allocate`+`FieldSet` is safe: the field memory already exists in the object `alloc`;
+initialize overwrites it first. **DoD ALL MET:**
+- Reducer `regression_tests/dead_default_init_elim_repro.sh`: gate OFF `Particle.new` = 2 dead
+  Vec2 allocs, gate ON = 0; 3 negatives (read-before-write, self-escape, branch-partial) kept ≥1.
+  Adversary trace confirmed negatives rejected by the **predicate** (`found=true skip=false`),
+  not a trivial nil-func pass.
+- Runtime correctness: single struct `pos=7,8 vel=9,10` and container sum identical ON vs OFF
+  (the `Array(Particle)` sum also re-exposes the pre-existing container-aliasing bug = lever (i),
+  untouched).
+- Full suite gate OFF: ALL PASSED. Full suite gate ON: **131/131 + 36/36 ALL PASSED** (identical set).
+- Bench (2M `Array(Particle)`): `Particle$Dnew` `__adamas_malloc64` **3→1** (−2/particle = −4M);
+  whole-module malloc sites 6290→6275; peak RSS **150.3MB→85.95MB = −43% (−64MB ≈ predicted
+  2·16B·2M)**; warm wall ~0.06s→~0.03s.
+- s2b gate ON: **builds** (33.88MB, 18KB SMALLER than gate-OFF 33.90MB, 223s); behaves
+  **identically** to gate-OFF s2b — both compile `x=1` cleanly (identical 88760B binary) and both
+  SIGBUS (exit 138) on a struct program (= documented pre-existing GC two-heap crash, not fixed on
+  this branch). NO regression from the gate.
+
+NEXT after owner sign-off: commit (one logical commit: `ast_to_hir.cr` + reducer). Then PATH ORDER
+step (2) container/escape value ABI (the true final lever).
+
 **2026-06-18 — #1 s2b startup crash FIXED (two-heap GC hazard, fix D).** Branch
 `s2b-twoheap-gc-fix-D`, 7 edits all in `src/compiler/mir/llvm_backend.cr` (no
 stdlib). The atomic byte-buffer allocator family is moved off the Boehm GC heap

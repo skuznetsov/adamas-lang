@@ -29376,6 +29376,69 @@ module Adamas::HIR
       end
     end
 
+    # Dead struct default-init elimination (gated; ADAMAS_SKIP_DEAD_DEFAULT_INIT).
+    #
+    # The allocator emits, for every struct-typed ivar without a usable default,
+    # a zero-filled struct Allocate + FieldSet *before* calling initialize. When
+    # initialize's first action is an unconditional FieldSet to that same ivar —
+    # with no prior read of self, no escape of self, and no intervening control
+    # flow — that pre-init store is dead: initialize overwrites it immediately.
+    # This predicate decides, conservatively and soundly, whether the pre-init
+    # alloc for `ivar_name` can be skipped.
+    #
+    # Soundness rests on scanning ONLY the entry block: it always executes and is
+    # straight-line (branches/returns/raises live in the terminator or successor
+    # blocks), so any control flow pushes the write out of the entry block and we
+    # reject (handles branch-partial writes). Any read or escape of self before
+    # the write also rejects. Unknown instruction kinds reject (whitelist).
+    private def initialize_unconditionally_sets_ivar?(init_func : Adamas::HIR::Function, ivar_name : String) : Bool
+      params = init_func.params
+      return false if params.empty?
+      return false if init_func.blocks.empty?
+      self_id = params[0].id
+      target = ivar_name.lstrip('@')
+
+      entry = init_func.get_block(init_func.entry_block)
+      entry.instructions.each do |inst|
+        case inst
+        when FieldSet
+          if inst.object == self_id
+            # Storing self into one of its own fields escapes self -> reject.
+            return false if inst.value == self_id
+            # Dominating, unconditional write to the target ivar found first.
+            return true if inst.field_name.lstrip('@') == target
+            # Benign write to a different field of self; keep scanning.
+          else
+            # Storing self into some other object escapes self -> reject.
+            return false if inst.value == self_id
+            # Unrelated store; keep scanning.
+          end
+        when FieldGet
+          # Reading any self field before the write may observe uninitialized data.
+          return false if inst.object == self_id
+        when Call
+          return false if inst.has_receiver? && inst.receiver_value == self_id
+          return false if inst.args.includes?(self_id)
+        when Yield
+          return false if inst.args.includes?(self_id)
+          tgt = inst.target
+          return false if tgt && tgt == self_id
+        when AddressOf
+          return false if inst.operand == self_id
+        when Cast
+          return false if inst.value == self_id
+        when Literal
+          # Pure constant; cannot read or escape self.
+        else
+          # Unknown instruction before the write: cannot prove it neither reads
+          # nor escapes self -> reject conservatively.
+          return false
+        end
+      end
+      # Target FieldSet not present in the entry block -> not unconditional.
+      false
+    end
+
     # Generate allocator: ClassName.new(...) -> allocates and returns instance
     private def generate_allocator(
       class_name : String,
@@ -29594,6 +29657,18 @@ module Adamas::HIR
           end
         end
       end
+
+      # Dead struct default-init elimination (gated, default OFF). When ON, fetch
+      # the (already pre-lowered) initialize so the per-ivar struct default-init
+      # alloc below can be skipped when initialize unconditionally writes it first.
+      dead_init_func : Adamas::HIR::Function? = nil
+      if env_has?("ADAMAS_SKIP_DEAD_DEFAULT_INIT")
+        if di_base = resolve_method_with_inheritance(class_name, "initialize")
+          di_types = allocator_initializer_param_types(class_name, allocator_params, call_arg_types)
+          dead_init_func = @module.function_by_name(mangle_function_name(di_base, di_types))
+        end
+      end
+
       class_info.ivars.each do |ivar|
         # Check if this is a union type by looking up the type descriptor
         type_desc = @module.get_type_descriptor(ivar.type)
@@ -29677,6 +29752,12 @@ module Adamas::HIR
         # Allocate a zero-filled struct instead to prevent null dereferences.
         is_struct_type = type_desc && type_desc.kind == TypeKind::Struct
         if is_struct_type
+          # Skip the dead zero-struct when initialize unconditionally overwrites
+          # this ivar first thing (gated; default OFF). The field memory already
+          # exists in `alloc`; initialize writes it before any read/escape.
+          if (dif = dead_init_func) && initialize_unconditionally_sets_ivar?(dif, ivar.name)
+            next
+          end
           struct_alloc = Allocate.new(ctx.next_id, ivar.type, [] of ValueId, true)
           ctx.emit(struct_alloc)
           ctx.register_type(struct_alloc.id, ivar.type)
@@ -30124,6 +30205,20 @@ module Adamas::HIR
         end
       end
 
+      # Dead struct default-init elimination (gated, default OFF). The overload's
+      # initialize is otherwise lowered after this loop; lower it now so the
+      # per-ivar struct default-init alloc below can be skipped when initialize
+      # unconditionally writes the field first.
+      dead_init_func : Adamas::HIR::Function? = nil
+      if env_has?("ADAMAS_SKIP_DEAD_DEFAULT_INIT")
+        if di_base = resolve_method_with_inheritance(class_name, "initialize")
+          di_types = allocator_initializer_param_types(class_name, allocator_params, call_arg_types)
+          di_name = matched_init_name || mangle_function_name(di_base, di_types, call_has_block)
+          lower_function_if_needed(di_name)
+          dead_init_func = @module.function_by_name(di_name)
+        end
+      end
+
       alloc = Allocate.new(ctx.next_id, class_info.type_ref, [] of ValueId, class_info.is_struct)
       ctx.emit(alloc)
       ctx.register_type(alloc.id, class_info.type_ref)
@@ -30198,6 +30293,11 @@ module Adamas::HIR
         # Allocate a zero-filled struct instead to prevent null dereferences.
         is_struct_type = type_desc && type_desc.kind == TypeKind::Struct
         if is_struct_type
+          # Skip the dead zero-struct when initialize unconditionally overwrites
+          # this ivar first thing (gated; default OFF).
+          if (dif = dead_init_func) && initialize_unconditionally_sets_ivar?(dif, ivar.name)
+            next
+          end
           struct_alloc = Allocate.new(ctx.next_id, ivar.type, [] of ValueId, true)
           ctx.emit(struct_alloc)
           ctx.register_type(struct_alloc.id, ivar.type)
