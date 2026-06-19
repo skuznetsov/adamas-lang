@@ -1,7 +1,7 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-06-15
-Branch: `main`
+Updated: 2026-06-18
+Branch: `abi-step4-inline-struct` (ABI track on `abi-rework`)
 
 This is the active working backlog only. Historical detail is in git history,
 especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
@@ -27,6 +27,116 @@ Working policy:
   hash, array, proc, and iterator shapes. Guards may use focused negative
   patterns to catch known bad demand, but production fixes must preserve
   demanded deep shapes and remove only proven non-demand/root pollution.
+
+## Deferred Designs
+
+- **`@[Inline]` field-embedding annotation** — see
+  `docs/inline_field_annotation_sdd.md`. Status DEFERRED after a hostile
+  Quadrumvirate (2026-06-16): the idea is sound but mis-ordered. It must NOT
+  precede (1) consolidation of the 3 layout oracles through `LayoutContract`
+  and (2) the #4 repr-flip fix, because a per-field pointer-vs-inline override on
+  un-consolidated oracles injects #4-class non-deterministic crashes. v1 scope
+  = struct fields only (= opt-in, incremental step-4, Crystal-checkable);
+  class-field embedding deferred behind an interior-ref leak check. Demand is
+  narrow (~2-3% of compiler ivars; containers/primitives dominate and are out
+  of scope) — measure access-frequency before investing.
+
+- **"struct vs class on stack" / unified object model** — see
+  `docs/class_on_stack_unified_model_review.md`. Status DEFERRED after a hostile
+  Quadrumvirate (2026-06-16): discussion record, not a plan. "struct vs class =
+  only copy semantics" is an oversimplification (identity/mutation/nil/dispatch
+  derive from copy policy); "class on stack, LLVM SROA finishes it" is false —
+  the `$Dnew` malloc is struct-gated (`hir_to_mir.cr:5800`/`:5854`), so a
+  StackLocal class still mallocs; the unified model is premature while #4 is
+  open and perf is unmeasured. Same blockers as `@[Inline]` (oracle
+  consolidation + #4 fix) plus sound interprocedural escape + non-observable
+  identity. NOT current work — current work is struct inlining (step-4).
+
+## ABI-rework: layout-oracle consolidation
+
+Goal: collapse the layout oracles onto the single `LayoutContract` so the #4
+repr-flip family cannot live in their disagreements.
+
+IMPORTANT refinement (2026-06-16): there are TWO distinct repr regimes, not one.
+(a) **Field storage** — a struct as a class/struct FIELD: inline iff
+`user_struct_inline?` = family OR `size > pointer_word`. (b) **Container element**
+— a struct as Array/Slice ELEMENT: inline iff `inline_container_family?` ONLY; a
+>8-byte plain user struct is still a POINTER element (inlining it corrupts
+`Array(Parameter)`, llvm_backend.cr:2773). The two regimes share only the family
+sub-predicate. So "route every oracle through one repr predicate" is WRONG — it
+would inject divergence. Consolidate the shared piece (the family name-list) and
+keep the two regimes distinct.
+
+- **1c — MIR field-access readers (DONE, `66d6c015` 2026-06-16).** Routed
+  `lower_field_get` (hir_to_mir.cr:2863) and `lower_field_store_to_ptr` (:3047)
+  through `LayoutContract.user_struct_inline?`. Surfaced and fixed a latent
+  pointer-word boundary divergence: HIR `user_struct_inline?` used `>= 8` while
+  the MIR readers used `> 8`, so an exactly-8-byte struct value was INLINE per
+  HIR but a POINTER CARRIER per MIR — masked only because both occupy one slot,
+  but a step-4 repr-flip in waiting. Aligned the contract to `>` (matches the
+  behavioural readers). Behaviour-neutral: LayoutProbe decision set byte-identical
+  (565 decisions); guard `struct_pointer_word_boundary_repro.sh`; suite 159/159 +
+  31/31. Per `[[abi_slot_conflict_metric_invalid]]` this is a correctness/clarity
+  consolidation, NOT itself a #4 fix.
+- **Demand (measured 2026-06-16).** step-4 target is a narrow tail: ~11 distinct
+  small (<8B) value-struct field-slots (~5% of struct types); most struct fields
+  are already ≥8B inline (215 distinct InlineBytes). Win concentrates in
+  runtime-hot structs (Atomic, SpinLock, Timers, Arena::Index); access-frequency
+  still unmeasured.
+- **2a — LLVM container-element oracle (DONE, 2026-06-16).** Routed
+  `inline_container_struct_type?` (llvm_backend.cr:2796) through
+  `LayoutContract.inline_container_family?`, collapsing the duplicated family
+  name-list (was also at layout_contract.cr:124) onto the single source.
+  Behaviour-neutral (textually the same 3 prefixes under the same struct/size
+  gate); via the container regime, NOT `user_struct_inline?`. Guard
+  `struct_pointer_word_boundary_repro.sh`; suite 159/159 + 31/31.
+- **1b — label unification (REFRAMED, not a neutral routing).** Routing the
+  LayoutProbe container-element label through `LayoutContract.repr` is NOT
+  behaviour-neutral: `repr` encodes FIELD semantics (`user_struct_inline?`,
+  size>8 → InlineBytes) while the container-element probe uses CONTAINER
+  semantics. Doing it as-is would make the label disagree with the actual
+  storage. Needs a container-regime `repr` variant first, or leave the probe
+  label site-local. LOW priority (diagnostic only).
+- **mir_field_storage_size (REFRAMED, NOT a repr oracle).** hir_to_mir.cr:6383
+  is a SIZE helper (returns bytes, returns `desc.size` for aggregates), used
+  only in `trivial_struct_initializer_covers_all_storage?` where a wrong size is
+  fail-safe (skips the trivial-init opt, no miscompile). It is NOT a #4 repr-flip
+  source and should NOT be force-routed through the repr predicate (that would
+  change small-struct field sizes 4→8 and toggle the opt). Leave as-is; document.
+- **Next: step-4 flip.** With the field regime single-sourced (1c) and the
+  container family list single-sourced (2a), the remaining work toward the perf
+  win is the step-4 flip itself — make small (<8B) user-struct FIELDS inline at
+  `user_struct_inline?` (the one flip point), gated/measured per the demand tail
+  above. This is the Collapse move (remove the carrier box), CAUTION-tier; needs
+  the #4 producer understood first.
+  - **Scaffold shipped (gated OFF), `7abbfa08`.** `ADAMAS_INLINE_SMALL_STRUCTS`
+    env gate read at COMPILE time via `LayoutContract.user_struct_inline?`;
+    gate-OFF byte-identical to baseline (no rebuild needed to toggle).
+  - **gate-ON full parity reached (2026-06-18).** Running the full matrix gate-ON
+    vs the gate-OFF baseline surfaced exactly two non-routed readers, both fixed
+    (each byte-neutral at the default gate-OFF):
+    1. A struct-typed ivar whose default degrades to a scalar literal — e.g.
+       `@__evloop_data : Arena::Index = INVALID_INDEX` collapsing to `literal 0`
+       — crashed the inline-struct field store at startup (memcpy from a scalar
+       register). Fix: `generate_allocator` (ast_to_hir.cr, both generators) now
+       routes a struct ivar whose lowered default is NOT itself a struct value to
+       a zero-struct `Allocate` (declared default still lost — separate documented
+       gap). Guard `struct_ivar_module_default_inline_repro.sh`.
+    2. A small (≤ pointer word) struct as a Tuple/NamedTuple element:
+       `register_tuple_types` keeps it a pointer-word CARRIER, but
+       `lower_field_get`/`lower_field_store_to_ptr` applied the step-4 FIELD flip
+       → the carrier slot was misread as inline bytes (repr-flip). Fix: suppress
+       only the step-4 small flip for a tuple receiver (`field_receiver_is_tuple?`
+       in hir_to_mir.cr); large structs (> pointer word) inline in both regimes
+       and are unchanged. Guard `tuple_small_struct_element_inline_repro.sh`
+       (proven bad→good on pre/post-fix binaries).
+    Result: gate-ON 131/131 + 36/36 + complex 17/19 == gate-OFF baseline (the 2
+    complex fails are the pre-existing Array#find ёжики, present on both gates).
+  - **Remaining: default-flip decision (owner call).** Flipping the shipped
+    default to ON is CAUTION-tier (ABI change, also affects s3b). Gate it on a
+    measured perf win over the runtime-hot small-struct tail
+    (Atomic/SpinLock/Timers/Arena::Index) — measure first, then owner decision;
+    then remove the env gate.
 
 ## Current Checkpoint
 
@@ -2072,6 +2182,9 @@ pending-budget oracle.
 ## Next Work
 
 0aa. (2026-06-14) Current frontier = s2b STARTUP repr-flip (String<->Slice).
+   UPDATE 2026-06-17: one confirmed producer of this family FIXED — see 0a-side6
+   (SplatNode/UnaryNode NodeKind collision in lower_node; glob backtrace named it
+   directly). Re-measure the s2b/glob crash rate before assuming 0aa is closed.
    lldb-VERIFIED root (memory `s2b-startup-crash-rc-overfree-refuted`): a
    header-less pointer INTO the source buffer is written into a `String`-typed
    SLOT (`HIR::Call#method_name` class field, `DefParamInfo#type_annotation`
@@ -2231,6 +2344,212 @@ pending-budget oracle.
    9f5e4acc removed (regression fix), NOT a 0aa root fix — the producer repr-flip remains
    open. Residual rare rc=1 (a separate non-segfault #4 manifestation, did not reproduce
    in 60 tries) is the next thread on the 0aa frontier.
+
+0a-side6. (2026-06-17, SHIPPED locally — pending commit) ROOT FIX for a confirmed
+   0aa #4 producer: `SplatNode` misdispatched as `UnaryNode` in the `lower_node`
+   fast `case kind` prefilter. `SplatNode` has no dedicated `NodeKind` and shares
+   `NodeKind::Unary` with `UnaryNode` (ast.cr `SplatNode#node_kind` / static
+   `self.node_kind(SplatNode)` both return `Unary`; awk-verified Unary is the ONLY
+   many-to-one NodeKind collision). The `when NodeKind::Unary` branch
+   (ast_to_hir.cr:52229) did an unconditional `node.unsafe_as(UnaryNode)`. Layouts:
+   `SplatNode = span + expr:ExprId` (small alloc); `UnaryNode = span +
+   operator:Slice(16B) + operand:ExprId + operator_str:String`. `UnaryNode#operand`
+   sits PAST the end of SplatNode's smaller allocation, so the cast read `operand`
+   from adjacent heap (the source-text buffer) -> a bogus ExprId = the #4
+   "source-bytes-in-a-typed-slot" producer. Confirmed by the captured glob backtrace
+   (/tmp/glob4_oob_full.txt): `lower_node:52230 (NodeKind::Unary) -> lower_unary ->
+   lower_expr -> "ExprId out of bounds: 1701869637"` inside
+   `Path.new$(Path|String)_Tuple()` (the splat-param expansion in Dir.glob — the
+   exact path 0ac/0a-side5 were chasing). Fix: guard the cast —
+   `unless node.is_a?(SplatNode)` — so only a real UnaryNode is unsafe_as-cast;
+   SplatNode falls through to the type-safe `case node` arm (52399-52401) that lowers
+   it via `lower_expr(node.expr)`. +11/-1, single hunk. Deterministic reducer
+   `regression_tests/splat_node_unary_dispatch_repro.sh` (`[*t, 9]` array-literal
+   splat in a top-level-called method routes a SplatNode through the exact branch):
+   pre-fix rc=11 SIGSEGV in HIR lowering, post-fix rc=0; A/B reconfirmed on the live
+   binaries. Gate: 161/161 originals + 31/31 combined, ALL SUITES PASSED (baseline
+   was 159; suite grew, 0 new regressions). `bin/adamas` promoted to the fixed binary
+   (md5 c63f1832...); scratch `bin/adamas_dbg` removed.
+   CALIBRATED SCOPE (anti-theater): this removes ONE confirmed producer of the
+   ExprId-OOB / source-pointer-in-String-slot family — the one the glob backtrace
+   names directly. It does NOT by itself prove the whole 0aa Heisenbug is gone:
+   (a) the statistical glob probe was already in a non-reproducing layout this build
+   (clean bin/adamas 0/60), so it can neither confirm nor deny residual; (b) prior
+   notes warn the repr-flip SLOT may be reached by other producers. NEXT: re-measure
+   the `stage2_dir_glob_dir_probe` / s2b crash rate against the promoted binary to
+   quantify how much of 0aa this clears; any residual non-det pass3/lower_main segv
+   is the next 0aa layer. Stage2 robustness footnote: in self-hosted stage2 subclass
+   RTTI can be lost after arena storage (the reason the fast prefilter exists at all),
+   so worst case `is_a?(SplatNode)` returns false -> same unsafe_as as today = no
+   regression; a fully stage2-robust fix gives SplatNode its own NodeKind (4
+   cross-file consumers: dispatch.cr:34, ast_cache.cr:379/720, name_resolver.cr:128)
+   — deferred, higher blast radius. Memory `s2b-startup-crash-rc-overfree-refuted`.
+
+=== ABI REWORK TRACK (branch `abi-rework`, plan `docs/abi_rework_quadr_plan.md`) ===
+Owner directive: fix the two ABIs at root, not symptoms; HYP-B safety-net first
+(divergence assert + freeze + verifier BEFORE the inline-constructor flip).
+Sequencing 0a→0b→0c→0d(SDD)→1→2→3→5a→5b; step 4 (inline flip) on an isolation
+branch; closure ABI (C) pairs with fibers. Each step: own mini-Quadr, own commit,
+gate = combined 31/31 + originals 158/158 + p2_generated_stage2_* + s2b probe.
+
+ABI-0a. (2026-06-16, SHIPPED — divergence assert) Env-gated `ADAMAS_LAYOUT_ASSERT`
+   in `LayoutProbe.check_divergence`: when two phases (or one phase twice) record a
+   different storage CLASS for the same `type_name`, emit a `DIVERGENCE\t<CROSS|INTRA>`
+   row; abort only on CROSS in mode 2. No-op on the default path (double-gated behind
+   `enabled?`/`assert_mode>0`). MEASUREMENT (hello-world, ASSERT=1): 18 CROSS + 3 INTRA
+   label-divergences (premise CONFIRMED — the 3 oracles disagree), and 22 distinct
+   `(type,phase,context)` rows with slot_size≠access_size, CONCENTRATED in
+   `llvm/container-element` (Array(Row) 8/24, Fiber 8/144, Segment64 8/56). VERIFIED at
+   `llvm_backend.cr:2781`: non-whitelisted structs get an 8-byte pointer slot — that
+   slot≠access is by-design PointerCarrier indirection, NOT a corruption by itself. The
+   real corruption is producer/consumer DISAGREEMENT per `(type,context)` (the cb25a911
+   stride family). NOTE: label-divergence is a circular falsifier for step 1 (driving
+   labels equal ≡ unifying the taxonomy = step 1 itself); the drivable metric is
+   producer/consumer agreement. Gate: full suite (in progress at commit time).
+   Next: ABI-0b (`ADAMAS_FORCE_STRATEGY=gc` bisector), ABI-0c (real type sizes in
+   estimate_size), ABI-0d (Frontier SDD — gate before step 1).
+
+ABI-0a' (2026-06-16, SHIPPED — operational metric). The 0a assert keyed on `type_name`
+   alone, so it measured cross-CONTEXT label noise (18 "CROSS"), NOT the §2.7 operational
+   bug. Refined `layout_probe.cr` `check_divergence` to two signals: (1) SLOT-CONFLICT —
+   same `(type, context)` with >= 2 distinct slot sizes (intra- OR cross-phase; key includes
+   context so cross-context field-inline-vs-container-pointer never fires), abort-eligible in
+   mode 2; (2) DIVERGENCE — the old label signal, downgraded to REPORT-ONLY (verified mostly
+   label noise: String/Fiber/Atomic slot agrees, only the storage NAME differs). VERIFIED NOT
+   THEATER: first cut had a `phases_all.size>=2` gate that made it structurally inert (MIR
+   logs slot=-1; HIR=field-slot and LLVM=container-element never share a context) → removed
+   the phase-count gate so intra-phase conflicts fire. Re-measure on /tmp/abi_layout_probe.cr:
+   15 SLOT-CONFLICT + 21 label DIVERGENCE. All 15 are intra-HIR field-slot at the 8-vs-N
+   ptr-vs-value boundary = the #4 family: Slice(UInt8) 8/16, Nil|String / Nil|IO /
+   Nil|Array(String) 8/16 (union ptr-vs-tagged), Time 8/24, Char::Reader 8/40,
+   Time::Location::Zone 16/24. This is the B0-2 "slot born 8-byte ref_fallback then written
+   N-byte value view" root, MEASURED not inferred. Diagnostic-only (default path no-op:
+   `log` returns at `unless enabled?`). REVISED step-1 falsifier: drive the 15 SLOT-CONFLICTs
+   toward 0 (single-sourced repr, no 8-vs-N split for one type/context). Docs: plan §2.7.1 +
+   table 0a' row, SDD §4. Gate: full suite (running at commit time).
+
+ABI-0b. (2026-06-16, SHIPPED — force-GC bisector) `ADAMAS_FORCE_STRATEGY=gc` forces
+   every allocation through `MemoryStrategyAssigner` to `MemoryStrategy::GC`. One
+   chokepoint: override in the `assign` loop (catches both `determine_strategy` and the
+   explicit-strategy bypass); cached `self.force_gc?` reads ENV lazily (module-const
+   ENV-read crash avoidance). PGO refinement is profile-data-gated → off the default
+   path. Verified: `.ll` differs (−308 alloca under force-GC on an allocating probe),
+   compiler rc=0, default path is a guarded no-op, known-good test gives identical
+   output default vs force-GC. HYBRID-MODEL CAVEAT (owner reminder): this is DIAGNOSTIC
+   ONLY, never a fix — GC stays minimal, "expand GC" is forbidden as a remedy, and GC
+   env effects are USUALLY layout-masking artifacts. Read ASYMMETRICALLY: *persists*
+   under force-GC ⇒ NOT a strategy bug (reliable); *vanishes* ⇒ AMBIGUOUS (real strategy
+   bug OR a layout bug masked by GC's larger/zeroed/aligned allocs — confirm layout via
+   LayoutProbe / step-3 verifier). Gate: full suite (in progress at commit time).
+   ABI-0c REASSESSED: `TypeDescriptor` carries no size, so a "real size" must be computed
+   from ClassInfo ivars = a layout oracle. Building one now = the 4th oracle the SDD
+   warns against → 0c now CONSUMES step 1's `layout_of` (post-step-1 follow-up, NOT a
+   step-0 lever). Next: ABI-0d (Frontier SDD — gate before step 1).
+
+ABI-0d. (2026-06-16, SHIPPED — Frontier SDD) Wrote `docs/abi_struct_value_sdd.md`, the
+   ownership contract that gates step 1 (GPT review critique #2: "single oracle" cannot be
+   coded safely without it, else step 1 mints a 4th oracle). Verified all three current
+   oracles against code: HIR `field_storage_size_impl` (ast_to_hir.cr:39412), MIR
+   `mir_field_storage_size` (hir_to_mir.cr:6353, STRING→8 special-case + no small/large
+   split), LLVM `container_elem_storage_size`/`inline_container_struct_type?`
+   (llvm_backend.cr:2756/:2796 string-prefix whitelist). Contract: the MIR type REGISTRY
+   owns the `repr` bit (PointerReference/PointerCarrier/InlineBytes), set ONCE at the
+   `align_all_class_ivars` fixed point (co-frozen with size in step 2); registry layout owns
+   offsets; `slot_size = inline? value_size : 8` via one shared helper all 3 phases READ; the
+   whitelist becomes a registration predicate, not a runtime name-match. Invariant (step-3
+   verifier): producer & consumer must AGREE on `(repr, slot_size, value_size)` per
+   `(type, context)` — strictly stronger than `slot==access`, catches the `cb25a911`
+   16/20/24 family. Guard-only (keep dedicated paths, B1a/B1c history): StaticArray, Tuple/
+   NamedTuple, Proc, Pointer, Union, lib structs. NON-GOALS: no inline flip (step 4), no new
+   size oracle (reads frozen registry). Step-1 falsifier: 0 CROSS rows + no new slot/access
+   class + suites green. Open risks carried to step 1: String slot=8 vs object value_size;
+   freeze ordering (bit set at final-align fixed point, NOT earlier); late-mono types get the
+   bit at registration. Next: ABI-1 (single `layout_of`, all 3 phases read).
+
+ABI-1 (PLAN, design-corrected 2026-06-16 — step-1 reconnaissance mini-Quadr). The SDD's
+   "MIR registry owns repr, all 3 phases read it" is WRONG for the HIR reader: verified
+   `field_storage_size` runs INSIDE `align_all_class_ivars` (ast_to_hir.cr:28124), a pure-HIR
+   pass that completes BEFORE the MIR registry is populated → a registry-owned bit is
+   unreadable at the earliest (offset-producing) site. CORRECTED ownership: single source =
+   a PURE PREDICATE `LayoutContract.inline_value?(kind, size, name, is_lib)` callable in all 3
+   phases, MEMOIZED as a bit on MIR `Type` for MIR/LLVM (cache, not authority). Also verified:
+   `type_size(String)`→ref_fallback→8 (ast_to_hir.cr:38980) == MIR STRING→8, so the String
+   field-slot CROSS row is LABEL-only (InlineBytes vs PointerReference), NOT a size bug;
+   real size mismatches are container-element/late-generic (0a finding corroborated). SPLIT
+   step 1 (smallest/safest first, each its own commit+gate): 1a = pure predicate + MIR memo
+   (ADDITIVE, no reader change, SAFE); 1b = unify LayoutProbe storage LABEL via shared repr
+   classifier (drives CROSS label rows→0, zero size change); 1c = container-element
+   whitelist (llvm_backend.cr:2796) → `elem_type.inline_value?` (lone CAUTION size flip).
+   Big-bang reader flip judged VULNERABLE (Adversary). Docs corrected in
+   `docs/abi_struct_value_sdd.md` §3/§6/§7. Next: code ABI-1a.
+
+ABI-1a (2026-06-16, SHIPPED — pure predicate + MIR memo, ADDITIVE/SAFE). New
+   `src/compiler/layout_contract.cr`: `Adamas::LayoutContract.inline_value?(kind, size, name,
+   is_lib)` — the single pure repr decision ("inline bytes at the slot, or 8-byte pointer?"),
+   reproducing the CURRENT effective HIR `field_storage_size_impl` decision (class ref/ptr/
+   array/proc/Nil → pointer; primitive/enum → inline; union → inline iff >pointer-word; struct
+   → inline-container family OR lib OR `size>=pointer-word`; tuple → `size>=pointer-word`).
+   Plus a `repr` 3-way label (for 1b) and `inline_container_family?` (the LLVM whitelist, for
+   1c). MIR `Type` gains a LAZY-memoized `inline_value?(is_lib=false)` caching the predicate;
+   lazy (not eager at creation) so it reads the FINAL registry size — String 8→12 and similar
+   post-creation size updates would otherwise freeze a stale small/large carrier decision.
+   NO oracle reads the bit yet (computed-but-unused → behavior-neutral by construction).
+   Required from `mir/mir.cr`. Gate: build clean; probe UNCHANGED (15 SLOT-CONFLICT + 21
+   DIVERGENCE, identical set → no behavior change); originals 158/158 + combined 31/31.
+   MEASUREMENT REFINEMENT vs 0a': of the 15 SLOT-CONFLICTs, 13 are true ptr-vs-value (8-vs-N)
+   repr conflicts the predicate single-sources (Slice* → inline-16; Time/Char::Reader/Span/
+   Stackvec/Path → inline large; Nil|* unions → inline-16); the other 2 —
+   `EventLoop::Polling::Event` 88/96 and `Time::Location::Zone` 16/24 — are value-SIZE/padding
+   disagreements, NOT repr (the predicate says inline for both; the residual size split is
+   owned by the size authority = step 2 freeze, not the repr bit). Open for 1c: nilable-
+   reference unions (`String?`) — predicate currently says inline-16 (union>8), but the correct
+   repr may be an 8-byte nullable pointer; decide when wiring the union reader. Next: ABI-1b
+   (route LayoutProbe storage LABEL through `LayoutContract.repr`, drives label CROSS→0, zero
+   size change — also the runtime exercise/verification of the predicate).
+
+ABI-1c FIELD-READER HALF (2026-06-16, SHIPPED — centralize the struct-carrier threshold,
+   behavior-NEUTRAL). New `LayoutContract.user_struct_inline?(size, name)` is THE single
+   step-4 flip point for the non-lib struct-value carrier decision (today:
+   `inline_container_family?(name) || size >= POINTER_WORD_BYTES`). HIR
+   `field_storage_size_impl` (ast_to_hir.cr:~39420) now routes its small-struct →
+   8-byte-pointer-carrier decision through this predicate instead of the hardcoded
+   `storage < pointer_word_bytes_i32` outer-guard threshold (the guard drops the size test;
+   the `return pointer_word` is gated `unless user_struct_inline?`). `inline_value?`'s struct
+   clause delegates to the same helper. Result: the size split that step 4 flips for the
+   inline-struct perf win now lives in ONE place, read by HIR. SPLIT vs the SDD §6 plan: the
+   SDD bundled 1c as container-oracle flip + field-reader delegation; I split them — flipping
+   `inline_container_struct_type?` (the LLVM container whitelist) alone CORRUPTS Array(Big)
+   (Array get/set/push assume pointer stride), so that flip MOVES into step 4 (needs the
+   inline Array stride/get/set/push ABI). 1c here is field-readers ONLY. Behavior-neutral
+   proof: reproduces the prior threshold exactly (container families are empirically inert in
+   this HIR branch — not registered is_struct); probe SLOT-CONFLICT set IDENTICAL (17 types);
+   reducers byte-identical (largefield total=6, slice/small/union correct, StaticArray sa0=152
+   = unchanged PRE-EXISTING by-value corruption bug, a separate #4-adjacent lead). Gate on the
+   post-change binary: combined 31/31 + originals 158/158. Per owner directive
+   ([[abi-slot-conflict-metric-invalid]]): consolidation is the path toward the inline-struct
+   perf win (step 4), #4 fixed opportunistically on clean moves. Next consolidation: route MIR
+   `mir_field_storage_size` through the contract (affects only the coverage-check optimization,
+   behavior-safe); then ABI-1b (probe label unification); update SDD §6 to record this split.
+
+StaticArray-by-value FIELD store fix (2026-06-16, SHIPPED — a clean #4-adjacent move that
+   the ABI-1c note flagged as the "unchanged PRE-EXISTING by-value corruption bug, sa0=152").
+   Root: `StaticArray(T, N)` stored by value into a class field wrote the SOURCE POINTER's low
+   bytes into the inline slot instead of the value bytes. `register_class_types` registers
+   StaticArray MIR entries as zero-sized Structs (kind=Struct, size=0 — StaticArray has no
+   ivars), and `canonical_container_kind_for_descriptor` only matches `"Array("`, so the
+   FieldSet memcopy decision read `struct_size=0`, hit the `if struct_size > 0` guard, skipped
+   the memcopy, and fell through to a scalar `store ptr`. Fix (hir_to_mir.cr): new shared
+   `static_array_storage_size_from_name(type_name)` derives the inline byte count
+   (element-storage-size(T) * N) from the type name — the SINGLE source used by both the Alloc
+   size path (refactored, behavior-neutral) and the FieldSet memcopy `elsif is_static_array`
+   branch, so they never disagree. Kept surgical (compute at the consumer, NOT in the registry):
+   globally sizing the registry would flip `inline_container_struct_type?` (gated on `size > 0`)
+   to a 4-byte inline element stride for StaticArray container elements — a CAUTION-tier
+   Array(StaticArray) regression — so the registry stays size=0. IR proof:
+   `store ptr %sa` → `call void @llvm.memcpy.p0.p0.i64(ptr %r3, ptr %sa, i64 4, i1 false)`;
+   reducer now `sa0=7 sa3=9` (was 232/1). Regression: `static_array_field_value_roundtrip.cr`
+   (EXPECT inner0=7 inner3=9 getter0=7 getter3=9 marker=2222). Gate: combined 31/31 + originals
+   158/158.
 
 0. (2026-06-02) M4h family root-caused + narrow fix landed (`2444b2e0`, COMPLETED not
    VERIFIED). The s2b `union_all_reference_types?` SIGSEGV is a short-TypeRef Hash value

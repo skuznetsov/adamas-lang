@@ -1344,6 +1344,23 @@ module Adamas
         0_u64
       end
 
+      # Inline byte size of a StaticArray(T, N) value = element-storage-size(T) * N.
+      # StaticArray MIR registry entries are created by register_class_types as
+      # zero-sized Structs (ClassInfo#size is 0 — StaticArray has no ivars), so the
+      # value size must be derived from the type name. This is the single source for
+      # that computation, shared by the Alloc size path and the FieldSet memcopy so
+      # they never disagree. Returns 0 when the name is not a StaticArray.
+      private def static_array_storage_size_from_name(type_name : String) : UInt64
+        if m = type_name.match(/StaticArray\((.+),\s*(\d+)\)/)
+          elem_name = m[1].strip
+          count = m[2].to_u64
+          elem_type = @mir_module.type_registry.get_by_name(elem_name)
+          elem_size = container_elem_storage_size_u64(elem_type)
+          return elem_size * count
+        end
+        0_u64
+      end
+
       # Create function stub with params and return type (no body)
       private def create_function_stub(hir_func : HIR::Function)
         mir_return_type = convert_type(hir_func.return_type)
@@ -2342,15 +2359,10 @@ module Adamas
 
         # Fix StaticArray size: if type is StaticArray but size is 0, compute from name
         # using container storage ABI (non-inline elements occupy pointer-sized slots).
+        # Shared with the FieldSet memcopy path via static_array_storage_size_from_name.
         if alloc_size == 0
           type_name = mir_type_name.empty? ? hir_type_name : mir_type_name
-          if m = type_name.match(/StaticArray\((.+),\s*(\d+)\)/)
-            elem_name = m[1].strip
-            count = m[2].to_u64
-            elem_type = @mir_module.type_registry.get_by_name(elem_name)
-            elem_size = container_elem_storage_size_u64(elem_type)
-            alloc_size = elem_size * count
-          end
+          alloc_size = static_array_storage_size_from_name(type_name)
           alloc_size = pointer_word_bytes_u64 if alloc_size == 0
         end
 
@@ -2826,6 +2838,22 @@ module Adamas
         pointer_word_bytes_u64.to_i64
       end
 
+      # A Tuple/NamedTuple element field is a *container* slot: register_tuple_types
+      # lays a (small) struct element out as a pointer-word carrier, NOT via the
+      # per-field step-4 small-struct inline regime. Detect a tuple receiver from
+      # its recorded MIR type so field get/set read/write the carrier instead of
+      # treating the slot as inline struct bytes (which corrupts under
+      # ADAMAS_INLINE_SMALL_STRUCTS=1). NamedTuples are registered as TypeKind::Tuple
+      # (see register_tuple_types), so `.tuple?` covers both.
+      private def field_receiver_is_tuple?(object_id : HIR::ValueId) : Bool
+        if obj_hir_type = @hir_value_types[object_id]?
+          if mir_type = @mir_module.type_registry.get(convert_type(obj_hir_type))
+            return mir_type.kind.tuple?
+          end
+        end
+        false
+      end
+
       private def lower_field_get(field : HIR::FieldGet) : ValueId
         builder = @builder.not_nil!
         # Nil-typed fields are zero-sized and have no storage.
@@ -2845,7 +2873,19 @@ module Adamas
         # Small structs (≤ 8 bytes) are stored as scalars, need normal load.
         if hir_type_is_struct?(field.type) && !hir_type_is_lib_struct?(field.type)
           inline_size = hir_type_inline_size(field.type)
-          if inline_size > pointer_word_bytes_i32
+          # Inline storage decision via the single layout source (ABI-rework 1c),
+          # matching the symmetric lower_field_store_to_ptr routing so a field is
+          # read back exactly as it was written (no pointer-word-boundary flip).
+          #
+          # Tuple/NamedTuple elements are the exception: register_tuple_types lays a
+          # small struct element out as a pointer-word carrier, so the step-4
+          # small-struct flip (≤ pointer word) must be suppressed for a tuple
+          # receiver or the carrier slot is misread as inline bytes. Large structs
+          # (> pointer word) are inline in both regimes, so leave them unchanged.
+          suppress_step4_tuple = inline_size.to_u64 <= pointer_word_bytes_u64 &&
+                                 field_receiver_is_tuple?(field.object)
+          if !suppress_step4_tuple &&
+             Adamas::LayoutContract.user_struct_inline?(inline_size.to_u64, hir_type_name(field.type))
             @inline_struct_ptrs << field.id
             if Adamas::LayoutProbe.enabled?
               probe_field_event("lower_field_get.inline_struct", "field-get", "consumer",
@@ -3026,12 +3066,33 @@ module Adamas
         is_crystal_struct = hir_type_is_struct?(field_hir_type) && !hir_type_is_lib_struct?(field_hir_type)
         is_lib = hir_type_is_lib_struct?(field_hir_type)
         is_static_array = hir_type_is_static_array?(field_hir_type)
-        # Only memcopy if the struct is larger than a pointer (needs inline storage)
+        # Inline storage decision routed through the single layout source
+        # (LayoutContract.user_struct_inline?, ABI-rework 1c) instead of a local
+        # `> pointer_word` threshold, so HIR/MIR cannot diverge at the
+        # pointer-word boundary (the S8 carrier/inline split, see
+        # layout_contract.cr). Behaviour-neutral: the contract uses `>` to match
+        # this reader; the family clause is redundant here (static arrays already
+        # short-circuit via is_static_array; Slice is wider than a pointer word).
         inline_size = is_crystal_struct ? hir_type_inline_size(field_hir_type).to_u64 : 0_u64
-        use_memcopy = is_lib || is_static_array || (is_crystal_struct && inline_size > pointer_word_bytes_u64)
+        # Symmetric to lower_field_get: a small struct stored into a Tuple/NamedTuple
+        # element slot is a pointer-word carrier (register_tuple_types), so suppress
+        # the step-4 small-struct inline memcopy for a tuple receiver. Large structs
+        # (> pointer word) are inline in both regimes, so leave them unchanged.
+        receiver_is_tuple = obj_mir_type.try { |t| @mir_module.type_registry.get(t).try(&.kind.tuple?) } || false
+        suppress_step4_tuple = is_crystal_struct && inline_size <= pointer_word_bytes_u64 && receiver_is_tuple
+        use_memcopy = is_lib || is_static_array ||
+                      (is_crystal_struct && !suppress_step4_tuple &&
+                       Adamas::LayoutContract.user_struct_inline?(inline_size, hir_type_name(field_hir_type)))
         if use_memcopy
           struct_size = if is_lib
                           hir_type_lib_struct_size(field_hir_type)
+                        elsif is_static_array
+                          # StaticArray registry entries are zero-sized Structs (see
+                          # static_array_storage_size_from_name), so the inline byte
+                          # count must be derived from the type name; otherwise the
+                          # memcopy below is skipped and the field slot wrongly stores
+                          # the source POINTER instead of the inline value bytes.
+                          static_array_storage_size_from_name(hir_type_name(field_hir_type))
                         else
                           hir_type_inline_size(field_hir_type).to_u64
                         end
