@@ -282,12 +282,24 @@ classifies `non_pod` (NOT a step-4 carrier artifact; `ADAMAS_INLINE_SMALL_STRUCT
 non_pod). Root: struct-typed ivar's MIR field type_ref does not resolve back to the registered
 struct in `struct_type_is_recursive_pod_mir?`.
 
-NEXT (per GPT): fix the recursive-POD nested false-negative FIRST (Stage 0++ is now a decision
-instrument; a crooked classifier corrupts every downstream container/value-ABI choice). Caveat:
-keep TWO predicates distinct — **semantic recursive POD** (declared fields recursively bit-copyable;
-gates future value/container ABI) vs **current-storage POD** (current MIR layout byte-copyable without
-copying pointer carriers; gates memcpy/stack-promo). Then rerun Stage 0++, then a narrow
-container/value sub-slice. Whole-type Shape A not practical as first step by current data.
+**2026-06-19 — recursive-POD nested false-negative FIXED** (`abi-struct-byvalue`, this commit;
+`hir_to_mir.cr` + new reducer). ROOT CAUSE (empirically pinned via a temp POD trace, then
+reverted) was NOT a type_ref resolution miss (the earlier hypothesis above is WRONG):
+`Pair{Vec2,Vec2}` resolves to `Struct/fields=2` fine. The bug: `struct_type_is_recursive_pod_mir?`
+used `seen` as an ALL-VISITED set that was never popped, so `@a:Vec2` added Vec2's id and then
+`@b:Vec2` (a SIBLING of the same POD type) hit the cycle guard and returned false → `Pair` wrongly
+`non_pod`. FIX: `seen` is now the current DFS ANCESTOR-PATH set (id removed on the way back up) — a
+real cycle is a type reachable from itself along the path, not the same POD used twice as siblings.
+Also renamed `struct_type_is_recursive_pod?` → `struct_type_is_semantic_recursive_pod?` + doc note:
+this is the SEMANTIC predicate (declared fields recursively bit-copyable; gates future value/container
+ABI); a SEPARATE storage-aware predicate must gate memcpy/stack-promo on the current layout (else
+lever-(i) container-aliasing UAF). DoD: reducer `recursive_pod_nested_sibling_repro.sh` (Vec2/Pair/
+Quad=true, WithString=false); dead-default reducer green; suite 131/131 + 36/36; Stage 0++ rerun
+(bench_struct_heap.cr) now classifies GC::Stats/Time::Instant/Pointer::Appender/DWARF::Register as
+pod=true. NEXT: narrow destination-driven container/value slice (per GPT) — `Array(PODStruct) <<
+PODStruct.new(...)` where the container slot becomes the ctor destination and no boxed `$Dnew` is
+created. DoD: Particle bench remaining `Particle$Dnew` malloc 1→0, Array stores payload inline,
+alias/mutation reducer shows no shared carrier. Whole-type Shape A not practical as first step.
 
 **2026-06-18 — #1 s2b startup crash FIXED (two-heap GC hazard, fix D).** Branch
 `s2b-twoheap-gc-fix-D`, 7 edits all in `src/compiler/mir/llvm_backend.cr` (no

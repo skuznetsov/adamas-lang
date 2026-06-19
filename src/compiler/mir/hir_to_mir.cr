@@ -660,7 +660,7 @@ module Adamas
               call = inst.as(HIR::Call)
               next unless struct_ctor_call?(call)
               bucket = classify_struct_ctor_flow(func, call)
-              recursive_pod = struct_type_is_recursive_pod?(call.type)
+              recursive_pod = struct_type_is_semantic_recursive_pod?(call.type)
               coarse_pod = struct_type_is_pod?(call.type)
               pod_discrepancy += 1 if coarse_pod && !recursive_pod
               tally[{bucket, coarse_pod}] += 1
@@ -744,7 +744,7 @@ module Adamas
               call = inst.as(HIR::Call)
               next unless struct_ctor_call?(call)
               tname = hir_type_name(call.type)
-              type_pod[tname] = struct_type_is_recursive_pod?(call.type) unless type_pod.has_key?(tname)
+              type_pod[tname] = struct_type_is_semantic_recursive_pod?(call.type) unless type_pod.has_key?(tname)
               buckets = (type_buckets[tname] ||= Hash(RefinedBucket, Int32).new(0))
               buckets[refined_ctor_bucket(func, call)] += 1
             end
@@ -894,11 +894,21 @@ module Adamas
       # such a struct would duplicate an owned inner pointer with no
       # retain/release -> UAF or leak under ARC). No optimistic default: a type
       # whose MIR entry or field list is missing answers false.
-      private def struct_type_is_recursive_pod?(hir_type : Adamas::HIR::TypeRef) : Bool
-        struct_type_is_recursive_pod_mir?(convert_type(hir_type), ::Set(UInt32).new)
+      #
+      # SCOPE: this is the SEMANTIC recursive-POD predicate — "are the DECLARED
+      # fields recursively bit-copyable?". It is NOT storage-aware: it does not
+      # check whether the CURRENT MIR layout stores a nested struct field inline
+      # vs as a pointer carrier. A type can be semantic-POD here yet still be
+      # unsafe to raw-memcpy under today's ABI if a field is laid out as a carrier
+      # (the lever-(i) container-aliasing hazard). Use this predicate to gate a
+      # future by-value/container VALUE ABI (where nested PODs are inlined); a
+      # SEPARATE storage-aware predicate must gate any memcpy/stack-promo on the
+      # current layout.
+      private def struct_type_is_semantic_recursive_pod?(hir_type : Adamas::HIR::TypeRef) : Bool
+        struct_type_is_semantic_recursive_pod_mir?(convert_type(hir_type), ::Set(UInt32).new)
       end
 
-      private def struct_type_is_recursive_pod_mir?(mir_ref : TypeRef, seen : ::Set(UInt32)) : Bool
+      private def struct_type_is_semantic_recursive_pod_mir?(mir_ref : TypeRef, seen : ::Set(UInt32)) : Bool
         mir_type = @mir_module.type_registry.get(mir_ref)
         return false unless mir_type
         k = mir_type.kind
@@ -907,11 +917,21 @@ module Adamas
         # the finding-2 hazard) even though a tuple of PODs is bitwise POD.
         return false if k.reference? || k.array? || k.union? || k.proc? || k.tuple?
         if k.struct?
-          return false if seen.includes?(mir_ref.id) # cycle: cannot prove POD
+          # `seen` is the current DFS ANCESTOR PATH, not an all-visited set: a real
+          # cycle is a type reachable from itself along the path (e.g. a struct that
+          # transitively contains itself), which cannot be proven POD. The id is
+          # removed on the way back up so two SIBLING fields of the same POD type
+          # (e.g. `Pair{@a : Vec2, @b : Vec2}`) are not mistaken for a cycle.
+          return false if seen.includes?(mir_ref.id)
           seen << mir_ref.id
           fields = mir_type.fields
-          return false unless fields # opaque struct: not provably POD
-          return fields.all? { |f| struct_type_is_recursive_pod_mir?(f.type_ref, seen) }
+          unless fields # opaque struct: not provably POD
+            seen.delete(mir_ref.id)
+            return false
+          end
+          result = fields.all? { |f| struct_type_is_semantic_recursive_pod_mir?(f.type_ref, seen) }
+          seen.delete(mir_ref.id)
+          return result
         end
         # Scalar / enum / raw pointer: POD iff it carries no rc obligation.
         !type_needs_rc?(mir_ref)
@@ -1006,7 +1026,7 @@ module Adamas
         param_idx : Int32,
         struct_hir_type : Adamas::HIR::TypeRef,
       ) : Bool
-        struct_type_is_recursive_pod?(struct_hir_type) &&
+        struct_type_is_semantic_recursive_pod?(struct_hir_type) &&
           classify_arg_param_consumption(callee, param_idx).copy_field_only?
       end
 
