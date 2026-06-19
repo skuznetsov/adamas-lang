@@ -3148,6 +3148,30 @@ module Adamas
         )
       end
 
+      # SINGLE SOURCE OF TRUTH for "does a store of a value into this field copy
+      # the inline bytes (memcopy) or store a pointer carrier?". Both the real
+      # FieldSet lowering (lower_field_store_to_ptr) and the by-value ABI
+      # eligibility predicate call this, so they cannot drift (GPT round-2
+      # finding 2: a flip that stack-allocates a struct but whose field store
+      # actually writes a pointer-carrier here = dangling pointer / UAF).
+      # Mirrors lower_field_get's symmetric carrier/inline split:
+      #   - lib struct / StaticArray fields are always inline memcopy;
+      #   - a user struct field is inline iff LayoutContract.user_struct_inline?
+      #     (size > pointer word, OR step-4 gate, OR inline_container_family);
+      #   - EXCEPT a small (<= pointer word) struct in a Tuple/NamedTuple receiver
+      #     slot is a pointer-word carrier (register_tuple_types) → NOT inline.
+      private def field_store_uses_inline_memcopy?(field_hir_type : HIR::TypeRef, obj_mir_type : TypeRef?) : Bool
+        is_crystal_struct = hir_type_is_struct?(field_hir_type) && !hir_type_is_lib_struct?(field_hir_type)
+        is_lib = hir_type_is_lib_struct?(field_hir_type)
+        is_static_array = hir_type_is_static_array?(field_hir_type)
+        inline_size = is_crystal_struct ? hir_type_inline_size(field_hir_type).to_u64 : 0_u64
+        receiver_is_tuple = obj_mir_type.try { |t| @mir_module.type_registry.get(t).try(&.kind.tuple?) } || false
+        suppress_step4_tuple = is_crystal_struct && inline_size <= pointer_word_bytes_u64 && receiver_is_tuple
+        is_lib || is_static_array ||
+          (is_crystal_struct && !suppress_step4_tuple &&
+           Adamas::LayoutContract.user_struct_inline?(inline_size, hir_type_name(field_hir_type)))
+      end
+
       private def lower_field_store_to_ptr(
         obj_ptr : ValueId,
         obj_mir_type : TypeRef?,
@@ -3193,27 +3217,13 @@ module Adamas
 
         # For struct, lib struct, and StaticArray fields with inline size > pointer size,
         # copy the data inline using memcpy. Smaller structs (≤ 8 bytes) can be stored
-        # directly as scalar values.
-        is_crystal_struct = hir_type_is_struct?(field_hir_type) && !hir_type_is_lib_struct?(field_hir_type)
+        # directly as scalar values. The inline-vs-pointer-carrier decision is
+        # single-sourced in field_store_uses_inline_memcopy? (shared with the
+        # by-value ABI eligibility predicate so they cannot drift). is_lib /
+        # is_static_array are still needed below to pick the inline byte count.
         is_lib = hir_type_is_lib_struct?(field_hir_type)
         is_static_array = hir_type_is_static_array?(field_hir_type)
-        # Inline storage decision routed through the single layout source
-        # (LayoutContract.user_struct_inline?, ABI-rework 1c) instead of a local
-        # `> pointer_word` threshold, so HIR/MIR cannot diverge at the
-        # pointer-word boundary (the S8 carrier/inline split, see
-        # layout_contract.cr). Behaviour-neutral: the contract uses `>` to match
-        # this reader; the family clause is redundant here (static arrays already
-        # short-circuit via is_static_array; Slice is wider than a pointer word).
-        inline_size = is_crystal_struct ? hir_type_inline_size(field_hir_type).to_u64 : 0_u64
-        # Symmetric to lower_field_get: a small struct stored into a Tuple/NamedTuple
-        # element slot is a pointer-word carrier (register_tuple_types), so suppress
-        # the step-4 small-struct inline memcopy for a tuple receiver. Large structs
-        # (> pointer word) are inline in both regimes, so leave them unchanged.
-        receiver_is_tuple = obj_mir_type.try { |t| @mir_module.type_registry.get(t).try(&.kind.tuple?) } || false
-        suppress_step4_tuple = is_crystal_struct && inline_size <= pointer_word_bytes_u64 && receiver_is_tuple
-        use_memcopy = is_lib || is_static_array ||
-                      (is_crystal_struct && !suppress_step4_tuple &&
-                       Adamas::LayoutContract.user_struct_inline?(inline_size, hir_type_name(field_hir_type)))
+        use_memcopy = field_store_uses_inline_memcopy?(field_hir_type, obj_mir_type)
         if use_memcopy
           struct_size = if is_lib
                           hir_type_lib_struct_size(field_hir_type)
