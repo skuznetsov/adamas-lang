@@ -163,3 +163,59 @@ the lowered module) — note an erased generic body's buffer GEP is `value_deriv
 (self typed `Indexable(T)`, not `Array(C)`), so it is NOT in `buffer_value` and
 would read the inline-stored buffer through the pointer-slot path unless
 reconciled; (d) the negative reducer above must keep producing 0 `ivc_raw`.
+
+## A′ step (c) — read-only per-type inline-value SAFE-SET (2026-06-20)
+
+Gate `ADAMAS_INLINE_VALUE_SAFE_SET_PROBE`; `run_inline_value_safe_set_probe` in
+`src/compiler/mir/hir_to_mir.cr`. Read-only (only STDERR; gate ON vs OFF LLVM IR
+byte-identical, normalized diff = 0). Closes step-3 condition (c): produces the
+per-type safe-set AND empirically settles the erased-`Indexable(T)#fetch` worry.
+
+**Per InlineValueCopy candidate C, computed from the fully-lowered MIR:**
+
+| signal        | meaning | role |
+|---------------|---------|------|
+| `bv`          | a `buffer_value` Load/Store of C exists (the `@buffer`-base chain inside an `Array(C)#` body — A′ WOULD convert) | required for SAFE |
+| `vd`          | a `value_derived` access of C exists — a Load OR Store through a raw `Pointer(C)` not on the `@buffer` chain (may alias a buffer with the wrong stride) | HAZARD → UNSAFE |
+| `erased_flow` | `Array(C)` — or an upcast `Indexable/Enumerable/Iterator/Iterable(C)` — actually FLOWS as an arg into a type-erased body (abstract-module method, or generic `Array(<unresolved param>)#…`) | HAZARD → UNSAFE (the SOUND erased gate) |
+| `mega_union`  | C appears in some shared `Indexable(T)#fetch` RETURN union | INFORMATIONAL only — over-fires, NOT a gate |
+
+**v1 SAFE-SET = `{ C | bv && !vd && !erased_flow }`.**
+
+**Key result — flow-based erased replaces the over-coarse variant signal.** The
+program-wide `Indexable(T)#unsafe_fetch` mega-union includes nearly every element
+type, so the naive variant gate (C ∈ mega-union) FALSE-POSITIVES on monomorphic
+types. On the reducer it would *wrongly exclude 3 types* (incl. `Vec2`,
+`mega_union=1`) that the flow gate correctly keeps. Flow-based keys on whether
+`Array(C)` actually flows into an erased body — which, in this compiler, it never
+does for candidate types.
+
+**Empirical: this compiler monomorphizes ALL candidate-array access → `erased_flow`
+is a sound but DORMANT guard.** The durable reducer exercises `Vec2` through
+`push`/`each`/`[]`/`map` AND every erasure-attempt form — an explicit
+`Indexable(Vec2)` parameter, an `.as(Indexable(Vec2))` cast, and a two-implementer
+abstract dispatch (`include Indexable(Vec2)` class + `Array(Vec2)`, both passed to
+one `Indexable(Vec2)` method) — and `Vec2` still classifies SAFE with
+`erased_flow=0`. Each form devirtualizes to the concrete `Array(Vec2)#…` body:
+`Vec2` flows ONLY into `Array(Vec2)#…` methods, never `Indexable`/`Enumerable`. So
+the step-3 condition-(c) repr-mismatch hazard ("an erased generic body reads the
+inline buffer through the pointer-slot path") does **not** occur for candidate
+types here. `erased_callee` IS exercised (it returns false for every concrete
+`Array(Vec2)#…` name); the upcast sub-branch stays defensively correct for a future
+where abstract container types survive to MIR. (Beyond the durable reducer, the
+same `erased_flow=0` result was observed in standalone local probes for a purely
+monomorphic struct used only via `push`+`unsafe_fetch`.)
+
+**Negative reducer (`regression_tests/inline_value_safe_set_probe.{cr,sh}`):** one
+compile asserts both poles —
+`Vec2 (bv=1 vd=0 erased_flow=0)` → **SAFE** (even under the abstract-dispatch
+forms above), and
+`Vraw (bv=1 vd=1) — value_derived access` → **UNSAFE** (a raw `Pointer(Vraw)` read
+and write, not the @buffer chain) — plus `flow-based erased=0`, mega-union would
+wrongly exclude ≥1 type, and gate-neutrality (normalized IR diff = 0).
+
+**Step-3 conditions status:** (a) DONE — leaf-gate narrowing (commit `d9dd8989`);
+(b) held — no global type-driven `Pointer(T)#<<`; (c) DONE — safe-set shipped +
+erased path proven empirically absent for candidates; (d) negative reducer keeps
+0 `ivc_raw` (no codegen consumes the label on this base). Behavior slice (step 3)
+remains owner-gated.

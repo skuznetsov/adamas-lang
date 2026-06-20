@@ -405,6 +405,11 @@ module Adamas
         if Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_ARRAY_BUFFER_PROVENANCE_PROBE")
           run_array_buffer_provenance_probe
         end
+        # A' step (c): read-only per-type inline-value SAFE-SET probe (conservative
+        # v1 = bv && !vd && !erased). Gate-OFF = no-op. See run_inline_value_safe_set_probe.
+        if Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_INLINE_VALUE_SAFE_SET_PROBE")
+          run_inline_value_safe_set_probe
+        end
       end
 
       # Lower function bodies for a range of HIR functions (for parallel workers).
@@ -1332,6 +1337,270 @@ module Adamas
           next unless h
           STDERR.puts "[ABUF_PROBE] #{c}:"
           h.keys.sort.each { |fn| STDERR.puts "[ABUF_PROBE]   #{h[fn]}x  #{fn}" }
+        end
+        STDERR.flush
+      end
+
+      # ── A' STEP (c): READ-ONLY per-type inline-value SAFE-SET probe ─────────────
+      # Gate ADAMAS_INLINE_VALUE_SAFE_SET_PROBE. Decides, per InlineValueCopy
+      # candidate element type C, whether C can be inline-stored in Array(C) WITHOUT
+      # a repr mismatch — i.e. whether every read of C's bytes goes through a path
+      # the A' behavior slice would also convert to an inline read.
+      #
+      # Per type C we compute these signals by walking the fully-lowered MIR:
+      #   bv          — a buffer_value access exists (the @buffer-base chain +
+      #                 Load/Store of C inside an Array(C)# body; A' WOULD convert).
+      #   vd          — a value_derived access exists: a Load OR Store of C through a
+      #                 raw GEP that is NOT the @buffer-base chain, e.g.
+      #                 `Pointer(C)#value`, `ptr[i] = …`, `to_unsafe[i]`, a standalone
+      #                 malloc'd Pointer(C). A' does NOT convert it, and it may alias
+      #                 an Array(C) buffer with the wrong stride → HAZARD. (The probe
+      #                 marks vd on both the load-address and the store-address side.)
+      #   erased_flow — Array(C), or an upcast wrapper Indexable/Enumerable/Iterator/
+      #                 Iterable(C), actually FLOWS as an argument into a type-erased
+      #                 body (an abstract-module method, or a generic
+      #                 `Array(<unresolved param>)#…` body). That body reads
+      #                 self.@buffer typed as the erased element, NOT C → A' does NOT
+      #                 convert it → HAZARD. This is the SOUND gate.
+      #   mega_union  — INFORMATIONAL ONLY: C appears in some shared
+      #                 `Indexable(T)#fetch` RETURN union. The program-wide mega-union
+      #                 includes nearly every element type, so this over-fires (even a
+      #                 purely-monomorphic C looks "erased"); it is reported but NOT
+      #                 used as a safe-set gate. erased_flow replaces it because it
+      #                 keys on actual Array(C) flow into an erased body, not on
+      #                 mega-union membership.
+      #
+      # v1 SAFE-SET (conservative, per owner+GPT step (c)):
+      #   { C | bv && !vd && !erased_flow }.
+      # Under-inlining is acceptable; miscompiling is not. Distinguishing a
+      # value_derived `Pointer(C)` that aliases an Array buffer (via to_unsafe) from
+      # an unrelated one needs transitive provenance — deferred; v1 treats ANY
+      # value_derived access of C as disqualifying. STRICTLY read-only.
+      private def run_inline_value_safe_set_probe
+        reg = @mir_module.type_registry
+
+        ivc_ids = ::Set(TypeId).new
+        ivc_names = Hash(TypeId, String).new
+        reg.types.each do |t|
+          if classify_container_elem_repr(t).inline_value_copy?
+            ivc_ids << t.id
+            ivc_names[t.id] = t.name
+          end
+        end
+
+        bv = ::Set(TypeId).new           # buffer_value (A'-convertible) access of C
+        vd = ::Set(TypeId).new           # value_derived access (Load or Store) of C (hazard)
+        # FLOW-based erased (the SOUND gate): Array(C) — or its upcast
+        # Indexable/Enumerable/Iterator/Iterable(C) — actually flows into a
+        # type-erased body. This is what disqualifies C, because such a body reads
+        # self.@buffer typed as the erased element, NOT as C, so A' would not
+        # convert that read → repr mismatch.
+        erased_flow = ::Set(TypeId).new
+        # VARIANT-based mega-union membership (INFORMATIONAL ONLY, not a safe-set
+        # gate): C appears in some shared `Indexable(T)#fetch` RETURN union. This
+        # over-fires — the program-wide mega-union includes nearly every element
+        # type even when Array(C) never flows into an erased body — so it is
+        # reported separately and is NOT used to exclude C from the safe-set.
+        mega_union = ::Set(TypeId).new
+        # DIAGNOSTIC: callee names that receive an Array(C) argument, per element C.
+        # Reveals which shared/erased bodies an Array(C) actually flows INTO (the
+        # real erasure boundary), so flow-based vs variant-based erased can be
+        # compared from evidence.
+        flows_into = Hash(TypeId, ::Set(String)).new
+
+        fid_to_name = Hash(FunctionId, String).new
+        @mir_module.functions.each { |f| fid_to_name[f.id] = f.name }
+
+        # "concrete" element name: registry-known OR a candidate (suffix-tolerant).
+        elem_concrete = ->(elem : String) {
+          return true unless reg.get_by_name(elem).nil?
+          ivc_names.values.any? { |n| n == elem || n.ends_with?("::#{elem}") || elem.ends_with?("::#{n}") }
+        }
+
+        # Abstract iterable wrappers: a value typed `Indexable(C)` etc. means C was
+        # upcast into a type-erased iteration path. Reading C's bytes there goes
+        # through the erased self, not Array(C).
+        abstract_iterables = ["Indexable", "Enumerable", "Iterator", "Iterable"]
+        # A callee whose body reads self.@buffer with an ERASED element type:
+        #   - an abstract-module method (self is the abstract module), OR
+        #   - a generic `Array(<unresolved param>)#…` body (element not concrete).
+        erased_callee = ->(cn : String) {
+          if abstract_iterables.any? { |p| cn.starts_with?(p) }
+            true
+          elsif (elem = census_extract_generic_arg(cn, "Array")) && census_method_part(cn)
+            !elem_concrete.call(elem)
+          else
+            false
+          end
+        }
+        # If a type name is `Wrapper(C)` for an abstract iterable wrapper and C is a
+        # candidate, return C's id (the upcast element); else nil.
+        upcast_candidate_id = ->(tname : String) : TypeId? {
+          abstract_iterables.each do |p|
+            elem = census_extract_generic_arg(tname, p)
+            next unless elem
+            et = reg.get_by_name(elem)
+            return et.id if et && ivc_ids.includes?(et.id)
+          end
+          nil
+        }
+
+        @mir_module.functions.each do |func|
+          value_type = Hash(ValueId, TypeRef).new
+          func.params.each_with_index { |p, i| value_type[i.to_u32] = p.type }
+          def_map = Hash(ValueId, MIR::Value).new
+          load_addr_type = Hash(ValueId, TypeRef).new
+          store_addr_type = Hash(ValueId, TypeRef).new
+          func.blocks.each do |b|
+            b.instructions.each do |inst|
+              def_map[inst.id] = inst
+              value_type[inst.id] = inst.type
+            end
+          end
+          func.blocks.each do |b|
+            b.instructions.each do |inst|
+              case inst
+              when MIR::Load  then load_addr_type[inst.ptr] = inst.type
+              when MIR::Store
+                vt = value_type[inst.value]?
+                store_addr_type[inst.ptr] = vt if vt
+              end
+            end
+          end
+
+          func.blocks.each do |b|
+            b.instructions.each do |inst|
+              # (1) gep_dyn value access → buffer_value vs value_derived per type.
+              if inst.is_a?(MIR::GetElementPtrDynamic)
+                gep = inst.as(MIR::GetElementPtrDynamic)
+                celem = gep.element_type
+                if ivc_ids.includes?(celem.id)
+                  direct_chain = false
+                  base_def = def_map[gep.base]?
+                  if base_def.is_a?(MIR::Load)
+                    ptr_def = def_map[base_def.as(MIR::Load).ptr]?
+                    if ptr_def.is_a?(MIR::GetElementPtr)
+                      recv_ref = value_type[ptr_def.as(MIR::GetElementPtr).base]?
+                      if recv_ref && (recv_ty = reg.get(recv_ref)) && recv_ty.name.starts_with?("Array(")
+                        arg = census_extract_generic_arg(recv_ty.name, "Array")
+                        celem_name = reg.get(celem).try(&.name)
+                        direct_chain = !!((arg && celem_name && arg == celem_name) ||
+                                          (recv_ty.element_type.try(&.id) == celem.id))
+                      end
+                    end
+                  end
+                  la = load_addr_type[gep.id]?
+                  sa = store_addr_type[gep.id]?
+                  value_access = (la && la.id == celem.id) || (sa && sa.id == celem.id)
+                  if value_access
+                    if direct_chain
+                      bv << celem.id
+                    else
+                      vd << celem.id
+                    end
+                  end
+                end
+              # (2) FLOW-based erased: does Array(C) (or an upcast wrapper of C)
+              #     flow into a type-erased body? Plus the informational
+              #     variant-based mega-union membership.
+              elsif inst.is_a?(MIR::Call)
+                call = inst.as(MIR::Call)
+                cname = fid_to_name[call.callee]?
+                if cname
+                  call.args.each do |a|
+                    at = value_type[a]?
+                    next unless at
+                    aty = reg.get(at)
+                    next unless aty
+                    # (2a) concrete Array(C) argument flow.
+                    if aty.name.starts_with?("Array(")
+                      eid = aty.element_type.try(&.id)
+                      if eid && ivc_ids.includes?(eid)
+                        (flows_into[eid] ||= ::Set(String).new) << cname
+                        # erased iff the callee body reads the buffer with an erased
+                        # element type (abstract module or generic Array(<param>)).
+                        erased_flow << eid if erased_callee.call(cname)
+                      end
+                    else
+                      # (2b) upcast wrapper argument: Indexable(C)/Enumerable(C)/… —
+                      #      C was erased into an abstract iteration interface.
+                      uid = upcast_candidate_id.call(aty.name)
+                      if uid
+                        (flows_into[uid] ||= ::Set(String).new) << "#{aty.name}->#{cname}"
+                        erased_flow << uid
+                      end
+                    end
+                  end
+                end
+                # INFORMATIONAL: variant-based mega-union membership (over-coarse).
+                if cname && (m = census_method_part(cname)) &&
+                   {"unsafe_fetch", "fetch", "[]", "[]?", "at", "unsafe_index"}.includes?(m)
+                  is_erased_body =
+                    if (elem = census_extract_generic_arg(cname, "Array"))
+                      !elem_concrete.call(elem)        # Array(<unresolved param>)#fetch
+                    else
+                      cname.starts_with?("Indexable") || cname.starts_with?("Enumerable")
+                    end
+                  if is_erased_body
+                    rty = reg.get(call.type)
+                    if rty
+                      if (vs = rty.variants)
+                        vs.each { |v| mega_union << v.id if ivc_ids.includes?(v.id) }
+                      elsif ivc_ids.includes?(rty.id)
+                        mega_union << rty.id
+                      end
+                    end
+                  end
+                end
+              end
+            end
+          end
+        end
+
+        # ── Report + the conservative v1 safe-set ──────────────────────────────
+        # v1 SAFE-SET = bv && !vd && !erased_flow. The variant-based mega_union
+        # signal is reported alongside but NOT used as a gate (it over-fires).
+        safe = [] of String
+        unsafe = [] of String
+        ivc_ids.to_a.each do |id|
+          name = ivc_names[id]? || "?"
+          has_bv = bv.includes?(id)
+          has_vd = vd.includes?(id)
+          has_ef = erased_flow.includes?(id)
+          has_mu = mega_union.includes?(id)
+          is_safe = has_bv && !has_vd && !has_ef
+          flags = "bv=#{has_bv ? 1 : 0} vd=#{has_vd ? 1 : 0} erased_flow=#{has_ef ? 1 : 0} mega_union=#{has_mu ? 1 : 0}"
+          if is_safe
+            safe << "#{name}  (#{flags})"
+          else
+            reason =
+              if !has_bv
+                "no buffer_value access (not Array-stored here)"
+              else
+                rs = [] of String
+                rs << "value_derived access" if has_vd
+                rs << "erased flow" if has_ef
+                rs.join(" + ")
+              end
+            unsafe << "#{name}  (#{flags}) — #{reason}"
+          end
+        end
+
+        # Sanity: how many would be wrongly excluded if we (incorrectly) gated on
+        # the over-coarse mega-union signal instead of the flow-based one.
+        mu_only = ivc_ids.to_a.count { |id| mega_union.includes?(id) && !erased_flow.includes?(id) && bv.includes?(id) && !vd.includes?(id) }
+
+        STDERR.puts "[SAFESET] InlineValueCopy candidates=#{ivc_ids.size}  SAFE=#{safe.size}  UNSAFE=#{unsafe.size}"
+        STDERR.puts "[SAFESET] (flow-based erased=#{erased_flow.size}; variant mega-union membership=#{mega_union.size}; types that mega-union would WRONGLY exclude vs flow=#{mu_only})"
+        STDERR.puts "[SAFESET] v1 SAFE-SET (bv && !vd && !erased_flow) — inline-store eligible:"
+        safe.sort.each { |s| STDERR.puts "[SAFESET]   #{s}" }
+        STDERR.puts "[SAFESET] UNSAFE (excluded from v1 inline-store):"
+        unsafe.sort.each { |s| STDERR.puts "[SAFESET]   #{s}" }
+        STDERR.puts "[SAFESET] DIAG — callees receiving an Array(C) argument (erasure-boundary evidence):"
+        flows_into.keys.each do |id|
+          name = ivc_names[id]? || "?"
+          STDERR.puts "[SAFESET]   #{name} flows into:"
+          flows_into[id].to_a.sort.each { |cn| STDERR.puts "[SAFESET]       #{cn}" }
         end
         STDERR.flush
       end

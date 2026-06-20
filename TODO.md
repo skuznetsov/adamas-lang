@@ -140,6 +140,25 @@ keep the two regimes distinct.
 
 ## Current Checkpoint
 
+**2026-06-20 — Step (c): read-only per-type inline-value SAFE-SET shipped (`abi-struct-byvalue`).**
+`run_inline_value_safe_set_probe` (gate `ADAMAS_INLINE_VALUE_SAFE_SET_PROBE`).
+v1 SAFE-SET = `{ C | bv && !vd && !erased_flow }`. The erased gate is FLOW-based
+(does `Array(C)` / an upcast `Indexable/Enumerable(C)` actually flow into a
+type-erased body) — it REPLACES the over-coarse variant signal (C ∈ the
+program-wide `Indexable(T)#fetch` mega-union), which would WRONGLY exclude 3 types
+incl. `Vec2`. KEY FINDING: this compiler monomorphizes ALL candidate-array access,
+so `erased_flow` stays 0 — the durable reducer exercises `Vec2` via
+push/each/[]/map AND the erasure-attempt forms (`Indexable(Vec2)` param, `.as` cast,
+two-implementer abstract dispatch) and `Vec2` still classifies SAFE; the step-3 (c)
+erased repr-mismatch hazard does NOT occur for candidate types; `erased_flow` is a
+sound but dormant guard. Reducer `regression_tests/inline_value_safe_set_probe.{cr,sh}`:
+one compile asserts `Vec2` SAFE (bv=1 vd=0 erased_flow=0, even under abstract
+dispatch) + `Vraw` UNSAFE (value_derived access — raw `Pointer(Vraw)` read+write)
++ flow-based erased=0 + mega-union over-count + gate-neutral (IR diff=0). Read-only;
+no codegen consumes the label. STEP-3 conditions: (a) DONE; (b) held; (c) DONE;
+(d) negative reducer keeps 0 `ivc_raw`.
+**Behavior slice (step 3) is owner-gated — NOT green-lit.**
+
 **2026-06-20 — Step (a): leaf-storage-POD gate narrowed (`abi-struct-byvalue`).**
 `leaf_storage_pod_struct?` no longer admits `k.pointer?` — a struct with a raw
 pointer field (Pointer::Appender, Crystal::PointerLinkedList) is NOT
