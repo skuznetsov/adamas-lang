@@ -140,6 +140,21 @@ keep the two regimes distinct.
 
 ## Current Checkpoint
 
+**2026-06-20 — A′ behavior PREFLIGHT: design/DoD packet + non-Array guard (`abi-struct-byvalue`).**
+`docs/inline_value_array_storage_behavior_plan.md` (PROPOSED, owner-gated) — the
+design/DoD packet for the behavior slice that first makes LLVM read the A′ marks
+(CAUTION/ABI). Incorporates GPT hardening: (1) ONE gate `ADAMAS_INLINE_VALUE_ARRAY_STORAGE`
+that itself runs annotation (no two-env false-mark path); (2) Array-CONTEXT stride,
+never a type-global `container_elem_storage_size_u64` flip (it is shared by
+`Pointer(T)#bytesize`/StaticArray → would re-fire the refuted type-driven slice);
+(3) atomic Array(C) family flip (alloc/realloc stride + store + copy-on-load +
+memmove/delete_at/shift), not one GEP site; (4) copy-on-load v1 = heap carrier, no
+stack fast path; (5) the reducer DoD + 48h pre-mortem. Preflight guard shipped:
+`regression_tests/inline_value_nonarray_pointer_guard.{cr,sh}` — a leaf-POD struct
+used only via `Pointer(Disc).value` (never in an Array) stays boxed: out=42, Disc
+not-marked, array_buffer_value outside=0, 0 `ivc_raw` (the invariant the type-driven
+slice violated). NEXT = behavior commit per the packet, owner-gated (NOT started).
+
 **2026-06-20 — A′ DURABLE annotation (infrastructure-only, NO behavior) (`abi-struct-byvalue`).**
 Gate `ADAMAS_INLINE_VALUE_ANNOTATE`. Materializes the step-(c) safe-set IN MIR (not
 STDERR): `populate_inline_value_safe_set` runs the SAME `{bv && !vd && !erased_flow}`

@@ -1,0 +1,139 @@
+# A′ inline-value Array storage — behavior slice plan & DoD
+
+**Status: PROPOSED (owner-gated). NOT implemented.** This is the design/DoD packet
+that must be reviewed before the first commit where LLVM reads the A′ marks — that
+read already changes the Array(C) ABI (CAUTION-tier). Risk tier: **CAUTION**
+(serialization/layout + ABI change). Branch: `abi-struct-byvalue`.
+
+## 0. Where we are (infrastructure already shipped, read-only)
+
+- `classify_container_elem_repr` / `leaf_storage_pod_struct?` — leaf-POD value
+  structs classified `InlineValueCopy` (raw-pointer-field structs excluded, commit
+  `d9dd8989`).
+- `run_array_buffer_provenance_probe` — proves the buffer-base mark set lands 0
+  times outside an `Array(C)` body (commit `22814b4f`).
+- `compute_inline_value_safe_set` + `run_inline_value_safe_set_probe` — per-type
+  safe-set `{ C | bv && !vd && !erased_flow }`, flow-based erased gate (commit
+  `20749d09`).
+- `populate_inline_value_safe_set` / `verify_inline_value_annotation` — durable
+  marks `Type#inline_value_safe` and `GetElementPtrDynamic#array_buffer_value`,
+  read by NO lowering site yet (commit `b4597141`).
+
+The behavior slice CONSUMES exactly those two marks. It does NOT re-derive
+provenance by element type/name in LLVM (that is the refuted type-driven slice).
+
+## 1. Single behavior gate that owns the annotation (GPT #1)
+
+One gate: **`ADAMAS_INLINE_VALUE_ARRAY_STORAGE`**. Turning it on MUST itself run
+`populate_inline_value_safe_set` (so the marks exist whenever lowering reads them).
+Never require two env vars (`ANNOTATE` + behavior): a behavior-on / annotate-off
+combination would read default-`false` marks and silently box everything (or worse,
+read stale marks) — a silent false-mark path. Implementation: in `lower_all_bodies`,
+`populate_inline_value_safe_set` runs if `ADAMAS_INLINE_VALUE_ARRAY_STORAGE` is set
+(in addition to the existing standalone `ADAMAS_INLINE_VALUE_ANNOTATE`). LLVM
+lowering reads the marks only when `ADAMAS_INLINE_VALUE_ARRAY_STORAGE` is set.
+
+## 2. Array-CONTEXT stride, never type-global (GPT #2)
+
+Do NOT change `container_elem_storage_size_u64_impl` (llvm_backend.cr:2756) to
+return `elem.size` for `inline_value_safe` structs. That function is shared by
+NON-Array callers — `Pointer(T)#bytesize` (~13774), `StaticArray(T,N)` alloca
+(~6416) — so a type-global flip re-introduces the refuted over-firing on
+`Pointer(T)` paths (the IO#gets_peek `switch i32` blocker; see
+`inline_value_nonarray_pointer_guard.{cr,sh}`).
+
+Instead introduce an **Array-context** stride, e.g.
+`array_inline_stride(elem) = inline_value_safe?(elem) ? elem.size : container_elem_storage_size_u64(elem)`,
+used ONLY at sites that carry Array provenance:
+- the marked `GetElementPtrDynamic` (`array_buffer_value == true`), and
+- the monomorphic `Array(C)#…` bodies / Array-literal allocation keyed by the
+  `Array(...)` container type.
+
+`Pointer(T)`, `Slice(T)`, `StaticArray`, and generic non-Array uses keep
+`container_elem_storage_size_u64` unchanged.
+
+## 3. Atomic Array(C) storage family — all sites flip together (GPT #3)
+
+"Inline-store at marked GEPs" alone is INSUFFICIENT: allocation size, store offset,
+load offset, realloc size and memmove byte counts must all agree on the same stride,
+or the buffer is under/over-sized and grows corrupt. The slice must flip the whole
+family in one commit:
+
+| site | today (plain struct) | target (inline_value_safe in Array context) |
+|---|---|---|
+| array-literal / capacity alloc | `n * 8` (ptr slot) | `n * elem.size` |
+| grow / realloc stride (`Array#<<` late-generic :4470; `resize_to_capacity`) | `cap * 8` | `cap * elem.size` |
+| store (`push`/`<<`/`[]=`; marked gep_dyn + Store; late-generic :4480) | `store ptr %value` | `memcpy(slot, value, elem.size)` |
+| load / copy-on-load (`unsafe_fetch`/`[]`; marked gep_dyn + Load; late-generic :4499) | `load ptr` | heap-carrier copy (see §4) |
+| memmove family (`delete_at`/`shift`/`insert`/`shift_buffer_by`/`root_buffer`) | byte count `n * 8` | `n * elem.size` |
+| `concat` / `ptr_copy` / `ptr_move` (`elem_size` param, :7802/:7901/:7909) | passes 8 | passes `elem.size` |
+
+The provenance probe's four categories map here: `buffer_value` = store/load sites;
+`buffer_ptr_arith` (root_buffer / shift_buffer_by / delete_at memmove) = the memmove
+family — repr-agnostic on direction but stride-dependent on byte count.
+
+## 4. Copy-on-load v1 = heap carrier (GPT #4)
+
+v1 returns each loaded element as a **heap-allocated carrier copy**
+(`[header][payload]`), matching how the rest of V2 currently passes structs by
+pointer. NO stack fast path in v1 (a stack temporary / SROA path is a separate,
+later optimization — it is also the real perf win, but it is NOT this slice).
+Rationale: a heap carrier is escape-safe by construction (it cannot dangle when the
+loaded value outlives the buffer), so v1 trades the perf win for correctness; the
+stack fast path needs escape analysis we are not landing here.
+
+## 5. DoD — reducers required before/with the behavior commit (GPT #5)
+
+Runtime reducers (run via `scripts/run_safe.sh`; observe via STDERR + flush):
+1. **Vec2 copy-on-store / copy-on-load / no-alias** — push N, read back, mutate a
+   loaded copy, confirm the buffer is unchanged (value semantics, not aliasing).
+2. **Vec3 12-byte realloc stride** — push past the initial capacity so a realloc
+   fires; confirm all elements survive the grow (stride agreement across alloc /
+   store / realloc / load).
+3. **Vraw remains boxed / not inline** — a struct excluded by the safe-set
+   (value_derived) keeps the existing pointer-slot ABI and stays correct.
+4. **raw Pointer(Vraw) / non-Array Pointer(T)#value unchanged** — the existing
+   `inline_value_nonarray_pointer_guard.{cr,sh}` (re-pointed `GATE` to the behavior
+   gate): out=42, Disc not-marked, array_buffer_value outside=0, 0 `ivc_raw`.
+5. **delete_at / shift** (if touched) — element removal preserves the remaining
+   elements at the inline stride.
+6. **Negative: Pointer(Range)/Pointer(Hasher)#value and an IO-class path** emit 0
+   `ivc_raw` — the type-driven blast-radius types are NOT inline-loaded outside an
+   Array buffer.
+
+Static / neutrality checks:
+- gate OFF: byte-identical LLVM IR vs pre-slice (the only durable safety net).
+- `ivc_raw` appears ONLY at Array(C) `array_buffer_value` sites; 0 elsewhere.
+- full A′ reducer set (`inline_value_safe_set_probe`, `inline_value_annotation_probe`,
+  `leaf_pod_struct_pointer_field_repro`, `array_buffer_provenance_marker_probe`)
+  stays green.
+- regression suites (`run_all_suites` / combined / original) no new failures.
+
+## 6. 48h pre-mortem (CAUTION-tier)
+
+- **Likely breakage:** stride disagreement between any two of {alloc, store, load,
+  realloc, memmove} → heap OOB on grow or garbage reads (the historical s2b Globber
+  PatternType crash family). **Fastest signal:** reducer 2 (realloc stride) +
+  ASAN-style OOB; and the gate-OFF byte-identical check catching accidental
+  non-gated changes.
+- **Silent miscompile:** an Array(C) read that A′ does NOT convert (an unmarked but
+  real buffer read) → reads inline bytes as a pointer. **Signal:** reducer 1 no-alias
+  + value read-back; provenance probe `buffer_value_outside_array == 0` must still
+  hold for any new access form added.
+- **Blast-radius leak:** the stride flip reaching a non-Array path. **Signal:**
+  reducer 4 + 6 (0 `ivc_raw` on Pointer/IO paths); §2 keeps
+  `container_elem_storage_size_u64` untouched.
+- **Escape / dangling:** a loaded element outliving its buffer. **Mitigation:** §4
+  heap carrier (escape-safe); no stack fast path in v1.
+- **Rollback:** single gate; gate OFF = byte-identical. Commit is isolatable on
+  `abi-struct-byvalue`; revert is one commit.
+
+## 7. Sequencing
+
+1. (this packet) plan + preflight guard reducer — review gate.
+2. Behavior commit: single gate runs annotation; `array_inline_stride` + the §3
+   family flip + §4 heap-carrier load, guarded by `array_buffer_value` &&
+   `inline_value_safe`; all §5 reducers + gate-OFF neutrality. One atomic commit
+   (the whole Array storage family, not one store/load site).
+3. Later (separate): stack fast path / SROA for the loaded carrier (the perf win),
+   and folding into the broader by-value struct ABI (C).
