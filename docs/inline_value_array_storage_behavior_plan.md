@@ -25,11 +25,15 @@ provenance by element type/name in LLVM (that is the refuted type-driven slice).
 ## 1. Single behavior gate that owns the annotation (GPT #1)
 
 One gate: **`ADAMAS_INLINE_VALUE_ARRAY_STORAGE`**. Turning it on MUST itself run
-`populate_inline_value_safe_set` (so the marks exist whenever lowering reads them).
-Never require two env vars (`ANNOTATE` + behavior): a behavior-on / annotate-off
-combination would read default-`false` marks and silently box everything (or worse,
-read stale marks) — a silent false-mark path. Implementation: in `lower_all_bodies`,
-`populate_inline_value_safe_set` runs if `ADAMAS_INLINE_VALUE_ARRAY_STORAGE` is set
+`populate_inline_value_safe_set` (so the marks exist whenever lowering reads them)
+AND `verify_inline_value_annotation` (so the `[IVANNOT]` evidence is emitted under
+this single gate too). Never require two env vars (`ANNOTATE` + behavior): a
+behavior-on / annotate-off combination would read default-`false` marks and
+silently box everything (or worse, read stale marks) — a silent false-mark path.
+Emitting `[IVANNOT]` under the behavior gate is also what lets the post-behavior
+guard (§5.4) keep its mark evidence after re-pointing `GATE` to the behavior gate.
+Implementation: in `lower_all_bodies`, `populate_inline_value_safe_set` +
+`verify_inline_value_annotation` run if `ADAMAS_INLINE_VALUE_ARRAY_STORAGE` is set
 (in addition to the existing standalone `ADAMAS_INLINE_VALUE_ANNOTATE`). LLVM
 lowering reads the marks only when `ADAMAS_INLINE_VALUE_ARRAY_STORAGE` is set.
 
@@ -72,15 +76,49 @@ The provenance probe's four categories map here: `buffer_value` = store/load sit
 `buffer_ptr_arith` (root_buffer / shift_buffer_by / delete_at memmove) = the memmove
 family — repr-agnostic on direction but stride-dependent on byte count.
 
+**The whole family is MANDATORY — no "if touched" (GPT blocker).** Once `Array(Vec2)`
+holds an inline payload, EVERY `delete_at` / `shift` / `insert` / `root_buffer` /
+`shift_buffer_by` / `ptr_move` path must use the same stride, or the first call to
+such a method is heap corruption — not an edge case. So the memmove/arith family is
+a required part of the behavior commit, not a follow-up.
+
+**Provenance for the memmove/arith family (GPT #2).** The durable per-site mark
+`array_buffer_value` covers only the value Load/Store gep_dyn — there is no
+value-access gep to mark on a memmove byte-count or a `shift_buffer_by` pointer add.
+These sites must therefore NOT be fixed type-global. They get their stride from
+`array_inline_stride(C)` applied with **Array-context provenance = the enclosing
+function is a monomorphic `Array(C)#…` body** (the census confirms
+`Array(Range(Int32,Int32))#delete_at` / `#shift_when_not_empty` are monomorphic, so
+the element type C and the Array identity are both statically present in the body).
+`array_inline_stride(C)` returns `elem.size` only when `inline_value_safe?(C)`.
+
+**Fail-closed (GPT #1 blocker, completeness).** If the analysis cannot confirm that
+EVERY mutating-family method used on an `Array(C)` in the program resolves to a
+monomorphic `Array(C)#…` body covered by `array_inline_stride` — e.g. the program
+routes an `Array(C)` through a shared/erased mutation body — then C must NOT be
+inline-stored. `erased_flow` already excludes any C whose `Array(C)` flows into a
+type-erased body; the behavior commit extends the same fail-closed stance to the
+mutation family: ship inline storage ONLY for the families actually lowered, and
+exclude any type that would reach an uncovered path.
+
 ## 4. Copy-on-load v1 = heap carrier (GPT #4)
 
-v1 returns each loaded element as a **heap-allocated carrier copy**
-(`[header][payload]`), matching how the rest of V2 currently passes structs by
-pointer. NO stack fast path in v1 (a stack temporary / SROA path is a separate,
-later optimization — it is also the real perf win, but it is NOT this slice).
-Rationale: a heap carrier is escape-safe by construction (it cannot dangle when the
-loaded value outlives the buffer), so v1 trades the perf win for correctness; the
-stack fast path needs escape analysis we are not landing here.
+v1 returns each loaded element as a **heap-allocated carrier copy in the EXISTING V2
+struct carrier layout** — `[i64 INT64_MAX sentinel header][payload]`, returning the
+pointer to the payload (`raw + 8`), exactly the 8-byte GC sentinel-at-`ptr-8`
+convention every V2 object / `$Dnew` / String allocation uses (e.g.
+llvm_backend.cr:10553-10572, `store i64 9223372036854775807, ptr %raw`). NOT
+`malloc(payload)`: a header-less buffer would make the loaded value distinguishable
+from a real `$Dnew` struct pointer and break `rc_inc`/`rc_dec` at `ptr-8` and GC
+scanning. The plan adds (or reuses) one helper, e.g.
+`emit_inline_value_load_carrier(payload_ptr, size)` → mallocs `8 + size`, stores the
+sentinel at `raw`, `memcpy(raw+8, payload_ptr, size)`, returns `raw+8`; named here so
+the behavior commit wires one helper rather than open-coding the carrier at each load
+site. NO stack fast path in v1 (a stack temporary / SROA path is a separate, later
+optimization — it is also the real perf win, but it is NOT this slice). Rationale: a
+heap carrier is escape-safe by construction (it cannot dangle when the loaded value
+outlives the buffer), so v1 trades the perf win for correctness; the stack fast path
+needs escape analysis we are not landing here.
 
 ## 5. DoD — reducers required before/with the behavior commit (GPT #5)
 
@@ -93,10 +131,14 @@ Runtime reducers (run via `scripts/run_safe.sh`; observe via STDERR + flush):
 3. **Vraw remains boxed / not inline** — a struct excluded by the safe-set
    (value_derived) keeps the existing pointer-slot ABI and stays correct.
 4. **raw Pointer(Vraw) / non-Array Pointer(T)#value unchanged** — the existing
-   `inline_value_nonarray_pointer_guard.{cr,sh}` (re-pointed `GATE` to the behavior
-   gate): out=42, Disc not-marked, array_buffer_value outside=0, 0 `ivc_raw`.
-5. **delete_at / shift** (if touched) — element removal preserves the remaining
-   elements at the inline stride.
+   `inline_value_nonarray_pointer_guard.{cr,sh}` with `GATE` re-pointed to
+   `ADAMAS_INLINE_VALUE_ARRAY_STORAGE`: out=42, Disc not-marked, array_buffer_value
+   outside=0, 0 `ivc_raw`. This requires the behavior gate to emit `[IVANNOT]`
+   (§1); otherwise the re-point loses the mark evidence.
+5. **delete_at / shift / insert (MANDATORY, not "if touched")** — element removal /
+   insertion preserves the remaining elements at the inline stride. Because the
+   memmove family is part of the atomic flip (§3), these reducers are required, not
+   conditional; a partial store/load-only flip is VULNERABLE.
 6. **Negative: Pointer(Range)/Pointer(Hasher)#value and an IO-class path** emit 0
    `ivc_raw` — the type-driven blast-radius types are NOT inline-loaded outside an
    Array buffer.
@@ -131,9 +173,13 @@ Static / neutrality checks:
 ## 7. Sequencing
 
 1. (this packet) plan + preflight guard reducer — review gate.
-2. Behavior commit: single gate runs annotation; `array_inline_stride` + the §3
-   family flip + §4 heap-carrier load, guarded by `array_buffer_value` &&
-   `inline_value_safe`; all §5 reducers + gate-OFF neutrality. One atomic commit
-   (the whole Array storage family, not one store/load site).
+2. Behavior commit: single gate runs annotation + verify (emits `[IVANNOT]`);
+   `array_inline_stride` + the §3 family flip (store/load AND the MANDATORY
+   memmove/delete_at/shift/insert/root_buffer family) + §4 heap-carrier load,
+   guarded by `array_buffer_value` && `inline_value_safe` (value sites) and by
+   monomorphic-`Array(C)#`-body + `inline_value_safe` (memmove/arith sites), with
+   fail-closed exclusion of any type reaching an uncovered path; all §5 reducers +
+   gate-OFF neutrality. One atomic commit (the whole Array storage family, not one
+   store/load site). A partial store/load-only flip is VULNERABLE and must not ship.
 3. Later (separate): stack fast path / SROA for the loaded carrier (the perf win),
    and folding into the broader by-value struct ABI (C).

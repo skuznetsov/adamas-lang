@@ -153,7 +153,13 @@ stack fast path; (5) the reducer DoD + 48h pre-mortem. Preflight guard shipped:
 `regression_tests/inline_value_nonarray_pointer_guard.{cr,sh}` — a leaf-POD struct
 used only via `Pointer(Disc).value` (never in an Array) stays boxed: out=42, Disc
 not-marked, array_buffer_value outside=0, 0 `ivc_raw` (the invariant the type-driven
-slice violated). NEXT = behavior commit per the packet, owner-gated (NOT started).
+slice violated). Packet revised per GPT review (4 blockers closed): memmove family
+is MANDATORY not "if touched" (else first delete_at/shift = heap corruption);
+buffer_ptr_arith uses an Array-context helper keyed on the monomorphic `Array(C)#`
+body (not type-global) + fail-closed exclusion; the single behavior gate emits
+`[IVANNOT]` so the guard's GATE re-point keeps mark evidence; copy-on-load reuses
+the existing `[i64 INT64_MAX header][payload]` carrier (raw+8), not malloc(payload).
+NEXT = behavior commit per the packet, owner-gated (NOT started).
 
 **2026-06-20 — A′ DURABLE annotation (infrastructure-only, NO behavior) (`abi-struct-byvalue`).**
 Gate `ADAMAS_INLINE_VALUE_ANNOTATE`. Materializes the step-(c) safe-set IN MIR (not

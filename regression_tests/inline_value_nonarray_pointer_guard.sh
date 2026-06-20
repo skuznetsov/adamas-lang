@@ -19,7 +19,9 @@ set -euo pipefail
 COMPILER="${1:-./bin/adamas}"
 SRC="regression_tests/inline_value_nonarray_pointer_guard.cr"
 RUNNER="${RUNNER:-scripts/run_safe.sh}"
-GATE="${GATE:-ADAMAS_INLINE_VALUE_ANNOTATE}"   # behavior gate once it exists
+GATE="${GATE:-ADAMAS_INLINE_VALUE_ANNOTATE}"   # re-point to ADAMAS_INLINE_VALUE_ARRAY_STORAGE
+                                               # once it exists; that gate must also
+                                               # emit [IVANNOT] (see behavior plan §1)
 KEEP_TMP="${KEEP_TMP:-0}"
 
 TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ivguard.XXXXXX")"
