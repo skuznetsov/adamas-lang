@@ -322,3 +322,30 @@ bit (not prose) gates the eventual behavior.
 stride ≠ pointer) are all classified covered for Vec3; PLUS a negative: a union /
 heterogeneous element Array (or `Array(T|U)`) shows `heterogeneous_copy` →
 `behavior_eligible=false`. Read-only / gate-OFF byte-identical.
+
+### 8.6 IMPLEMENTED (read-only, 2026-06-20) — mini-AbiFacts census
+
+Built per (b′) + GPT's strict constraints. Gate `ADAMAS_ARRAY_BULK_OP_FACTS`.
+Typed facts in `mir.cr`: `ArrayBulkOpKind`, `ArrayBulkCoverageReason`,
+`Type#inline_array_storage_eligible`, `ExternCall#array_bulk_op`, `Call#array_bulk_op`.
+Pass in `hir_to_mir.cr`: `populate_array_bulk_op_facts` + `classify_array_bulk_op`
+(extern: `__adamas_ptr_move`/`ptr_copy`, `llvm.memmove`/`memcpy`/`memset`,
+`malloc`/`realloc`) + `classify_array_bulk_call` (`Pointer(C)#clear`/`move_from`/…) +
+`compute_array_buffer_roots` + `traces_to_array_c_buffer?` + `count_is_strided?` +
+`verify_array_bulk_op_facts`.
+
+Provenance is structural via a precomputed per-body `buffer_roots` set (GPT #1/#2,
+strict): (a) the `@buffer`-ivar Load `Load(GEP(Array(C)-param, [16]))`; (b) a
+`Array(C)#to_unsafe`/`#root_buffer` Call with EXACT element match and an Array(C)
+param receiver (not Indexable/Enumerable/union); (c) a fresh `malloc`/`realloc`
+(strided size) whose result is stored INTO `self.@buffer` (the create/grow path,
+GPT #3 — realloc included). Eligibility = `inline_value_safe(C) && no
+Heterogeneous/Uncovered op` (GPT #4, composed; no concat exception). Read-only:
+gate ON vs OFF LLVM IR byte-identical.
+
+Reducer `regression_tests/inline_array_storage_facts_probe.{cr,sh}`: `Cov`
+(push/[]/delete_at/shift/insert/concat) → ELIGIBLE `[AllocRealloc Clear
+MoveCopySameElem]`; `Unc` (adds dup/reverse, which copy into a fresh non-self
+buffer) → ineligible `[… Uncovered]` — proving the refinement did NOT open a hole
+(GPT #5 fail-closed). No `ivc_raw`; gate-neutral. Standalone `Pointer(C)#value`
+stays boxed via the existing `inline_value_nonarray_pointer_guard`.

@@ -164,6 +164,35 @@ module Adamas::MIR
   end
 
   # ═══════════════════════════════════════════════════════════════════════════
+  # ABI FACTS — Array bulk-op coverage (A' mini-AbiFacts bridge)
+  # ═══════════════════════════════════════════════════════════════════════════
+  #
+  # A leaf-POD value struct C can only get inline Array(C) storage if the WHOLE
+  # bulk-op family (store/load + memmove/memcpy/memset + alloc/realloc) on the
+  # Array(C) @buffer is provably stride-consistent. These typed facts record, per
+  # bulk extern_call inside a monomorphic Array(C)# body, whether it is covered —
+  # proven STRUCTURALLY (@buffer provenance + element-stride byte count), never by
+  # name alone. A later behavior slice READS these facts and rewrites only the
+  # covered sites; an uncovered/heterogeneous op makes C fail-closed (NOT inline).
+  enum ArrayBulkOpKind
+    MoveCopySameElem  # memmove/memcpy over the Array(C) @buffer at element stride
+    Clear             # memset over the Array(C) @buffer at element stride
+    AllocRealloc      # @buffer malloc/realloc sized by capacity * element stride
+    Heterogeneous     # a copy whose source is NOT the same Array(C) representation
+    Uncovered         # provenance/stride not proven, or an unsupported bulk op
+  end
+
+  # Why a bulk op was (not) classified as covered — for the read-only census report
+  # and for fail-closed diagnostics.
+  enum ArrayBulkCoverageReason
+    Covered
+    NoBufferProvenance  # pointer arg does not trace to the self @buffer load
+    NoStrideProof       # byte count / capacity does not trace to element stride
+    HeterogeneousSource # copy source is a foreign repr (Slice/other/to_unsafe/union)
+    UnsupportedOp       # a bulk op the rewrite does not (yet) handle
+  end
+
+  # ═══════════════════════════════════════════════════════════════════════════
   # FIELD - Struct/class field definition
   # ═══════════════════════════════════════════════════════════════════════════
 
@@ -225,6 +254,14 @@ module Adamas::MIR
     # the gate that populates it is off by default, so the default path leaves it
     # false and no lowering site reads it.
     property inline_value_safe : Bool = false
+
+    # A' mini-AbiFacts: the COMPOSED behavior-eligibility bit. True iff
+    #   inline_value_safe(C) && the whole Array(C) bulk-op family is provably
+    #   covered (no Heterogeneous/Uncovered op) && no value_derived/to_unsafe escape.
+    # This — NOT inline_value_safe alone — is what a later inline-Array-storage
+    # behavior slice gates on. Default false; populated only under the facts gate;
+    # no lowering site reads it yet.
+    property inline_array_storage_eligible : Bool = false
 
     def initialize(@id, @kind, @name, @size, @alignment)
     end
@@ -1653,6 +1690,13 @@ module Adamas::MIR
     getter callee : FunctionId
     getter args : Array(ValueId)
 
+    # A' mini-AbiFacts: durable per-site classification of an Array(C) @buffer bulk
+    # op that lowers as a Call to a shared `Pointer(C)#` body (clear / move_from /
+    # copy_from / …) inside a monomorphic Array(C)# body. nil = not an Array bulk op.
+    # A later behavior slice rewrites ONLY covered call sites to a direct
+    # inline-stride op; set only under the facts gate; no lowering reads it yet.
+    property array_bulk_op : ArrayBulkOpKind? = nil
+
     def initialize(id : ValueId, type : TypeRef, @callee : FunctionId, @args : Array(ValueId))
       super(id, type)
     end
@@ -1675,6 +1719,13 @@ module Adamas::MIR
   class ExternCall < Value
     getter extern_name : String
     getter args : Array(ValueId)
+
+    # A' mini-AbiFacts: durable per-site classification of an Array(C) @buffer bulk
+    # op (memmove/memcpy/memset/malloc/realloc) found inside a monomorphic Array(C)#
+    # body. nil = not an Array bulk op (leave alone). A later behavior slice reads
+    # this to rewrite ONLY covered sites to the inline element stride — never
+    # re-deriving the classification in LLVM. Set only under the facts gate.
+    property array_bulk_op : ArrayBulkOpKind? = nil
 
     def initialize(id : ValueId, type : TypeRef, @extern_name : String, @args : Array(ValueId))
       super(id, type)

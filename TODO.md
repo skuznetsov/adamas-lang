@@ -140,6 +140,23 @@ keep the two regimes distinct.
 
 ## Current Checkpoint
 
+**2026-06-20 — A′ mini-AbiFacts: Array bulk-op coverage facts (read-only) (`abi-struct-byvalue`).**
+Gate `ADAMAS_ARRAY_BULK_OP_FACTS`. The pre-behavior infra GPT/owner GO'd, built as a
+durable typed-fact layer (aligns with the AbiFacts architecture note — minimal facts
+for this slice, not a giant oracle). Typed facts in `mir.cr`: `ArrayBulkOpKind`,
+`ArrayBulkCoverageReason`, `Type#inline_array_storage_eligible`,
+`ExternCall#array_bulk_op`, `Call#array_bulk_op`. Pass in `hir_to_mir.cr` structurally
+classifies every Array(C) @buffer bulk op (move/copy/clear/alloc/realloc) inside
+monomorphic `Array(C)#` bodies via a precomputed `buffer_roots` set (strict, GPT-
+constrained: @buffer-ivar Load; exact `Array(C)#to_unsafe`/`root_buffer` Call on an
+Array(C) param; fresh strided malloc/realloc stored into self.@buffer). Eligibility =
+`inline_value_safe(C) && no Heterogeneous/Uncovered op`. Reducer
+`inline_array_storage_facts_probe.{cr,sh}`: `Cov` (push/[]/delete_at/shift/insert/
+concat) → ELIGIBLE; `Unc` (adds dup/reverse → copy into fresh non-self buffer) →
+ineligible `[…Uncovered]` (proves the refinement did NOT open a hole, fail-closed).
+Read-only: gate-OFF IR byte-identical, no `ivc_raw`. NEXT = behavior commit per §3-§5
+(now consumes both `array_buffer_value` + the bulk-op facts), owner-gated, NOT started.
+
 **2026-06-20 — A′ behavior PREFLIGHT: design/DoD packet + non-Array guard (`abi-struct-byvalue`).**
 `docs/inline_value_array_storage_behavior_plan.md` (PROPOSED, owner-gated) — the
 design/DoD packet for the behavior slice that first makes LLVM read the A′ marks

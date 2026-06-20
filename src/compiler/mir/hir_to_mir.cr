@@ -419,6 +419,15 @@ module Adamas
           populate_inline_value_safe_set
           verify_inline_value_annotation
         end
+        # A' mini-AbiFacts: Array bulk-op coverage facts (read-only). Needs the
+        # value-safe marks first, so it also populates them. Persists per-site
+        # array_bulk_op + per-type inline_array_storage_eligible; no lowering reads
+        # them yet. Gate-OFF = no-op / byte-identical.
+        if Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_ARRAY_BULK_OP_FACTS")
+          populate_inline_value_safe_set
+          populate_array_bulk_op_facts
+          verify_array_bulk_op_facts
+        end
       end
 
       # Lower function bodies for a range of HIR functions (for parallel workers).
@@ -1689,6 +1698,307 @@ module Adamas
           end
         end
         STDERR.puts "[IVANNOT] array_buffer_value gep marks: inside Array(...) bodies=#{inside}  outside=#{outside} (outside MUST be 0)"
+        STDERR.flush
+      end
+
+      # ── A' mini-AbiFacts: Array bulk-op ABI coverage facts (read-only) ──────────
+      # Gate ADAMAS_ARRAY_BULK_OP_FACTS. Classifies every memmove/memcpy/memset/
+      # malloc/realloc extern_call INSIDE a monomorphic Array(C)# body (C an
+      # InlineValueCopy candidate) by STRUCTURAL proof — @buffer provenance + a
+      # strided byte-count — never by name alone. Persists:
+      #   ExternCall#array_bulk_op           (per-site kind, what behavior rewrites)
+      #   Type#inline_array_storage_eligible (composed bit, what behavior gates on)
+      # Fail-closed: an op without proven @buffer provenance + stride, or a copy from
+      # a foreign representation, is Heterogeneous/Uncovered and excludes C. NO
+      # lowering site reads these yet (gate OFF = byte-identical).
+      private def populate_array_bulk_op_facts
+        reg = @mir_module.type_registry
+        d = compute_inline_value_safe_set(mark_provenance: false)
+        safe_ids = d[:safe_ids]
+
+        ivc_ids = ::Set(TypeId).new
+        reg.types.each { |t| ivc_ids << t.id if classify_container_elem_repr(t).inline_value_copy? }
+
+        fid_to_name = Hash(FunctionId, String).new
+        @mir_module.functions.each { |f| fid_to_name[f.id] = f.name }
+
+        # Types with any Heterogeneous/Uncovered bulk op → fail-closed.
+        disqualified = ::Set(TypeId).new
+
+        @mir_module.functions.each do |func|
+          fname = func.name
+          next unless fname.starts_with?("Array(")
+          elem = census_extract_generic_arg(fname, "Array")
+          next unless elem
+          cty = reg.get_by_name(elem)
+          next unless cty && ivc_ids.includes?(cty.id)
+          cid = cty.id
+
+          def_map = Hash(ValueId, MIR::Value).new
+          func.blocks.each { |b| b.instructions.each { |inst| def_map[inst.id] = inst } }
+
+          # params whose static type is Array(C) (self + any Array(C) arg) — the only
+          # legitimate sources of @buffer provenance for this element type.
+          array_c_params = ::Set(ValueId).new
+          func.params.each_with_index do |p, i|
+            pt = reg.get(p.type)
+            if pt && pt.name.starts_with?("Array(") && census_extract_generic_arg(pt.name, "Array") == elem
+              array_c_params << i.to_u32
+            end
+          end
+
+          # buffer_roots = every value that is provably the Array(C) @buffer pointer:
+          # the @buffer-ivar Load, a strictly-constrained Array(C)#to_unsafe/root_buffer
+          # Call result, and a fresh malloc/realloc buffer that becomes self.@buffer.
+          buffer_roots = compute_array_buffer_roots(func, def_map, array_c_params, elem, fid_to_name)
+
+          func.blocks.each do |b|
+            b.instructions.each do |inst|
+              if inst.is_a?(MIR::ExternCall)
+                ec = inst.as(MIR::ExternCall)
+                kind = classify_array_bulk_op(ec, def_map, buffer_roots)
+                next unless kind
+                ec.array_bulk_op = kind
+                disqualified << cid if kind.heterogeneous? || kind.uncovered?
+              elsif inst.is_a?(MIR::Call)
+                call = inst.as(MIR::Call)
+                cn = fid_to_name[call.callee]?
+                next unless cn
+                kind = classify_array_bulk_call(call, cn, def_map, buffer_roots)
+                next unless kind
+                call.array_bulk_op = kind
+                disqualified << cid if kind.heterogeneous? || kind.uncovered?
+              end
+            end
+          end
+        end
+
+        reg.types.each do |t|
+          t.inline_array_storage_eligible =
+            safe_ids.includes?(t.id) && !disqualified.includes?(t.id)
+        end
+      end
+
+      # Classify one extern_call as an Array(C) @buffer bulk op, or nil if it is not a
+      # bulk intrinsic. Structural: dst/src must trace to an Array(C) @buffer load and
+      # the byte count / size must trace to a stride multiply.
+      private def classify_array_bulk_op(ec : MIR::ExternCall,
+                                         def_map : Hash(ValueId, MIR::Value),
+                                         buffer_roots : ::Set(ValueId)) : MIR::ArrayBulkOpKind?
+        name = ec.extern_name
+        if name == "__adamas_ptr_move" || name == "__adamas_ptr_copy"
+          # element-size-aware helper: (dest, src, count, elem_size). The stride is
+          # the explicit elem_size arg (the multiply is inside the helper), so the
+          # behavior rewrite just supplies the inline elem_size — no Mul to prove.
+          dst = ec.args[0]?; src = ec.args[1]?
+          return nil unless dst && src
+          return MIR::ArrayBulkOpKind::Uncovered unless traces_to_array_c_buffer?(dst, def_map, buffer_roots)
+          return MIR::ArrayBulkOpKind::Heterogeneous unless traces_to_array_c_buffer?(src, def_map, buffer_roots)
+          MIR::ArrayBulkOpKind::MoveCopySameElem
+        elsif name.starts_with?("llvm.memmove") || name.starts_with?("llvm.memcpy")
+          dst = ec.args[0]?; src = ec.args[1]?; n = ec.args[2]?
+          return nil unless dst && src && n
+          return MIR::ArrayBulkOpKind::Uncovered unless traces_to_array_c_buffer?(dst, def_map, buffer_roots) && count_is_strided?(n, def_map)
+          return MIR::ArrayBulkOpKind::Heterogeneous unless traces_to_array_c_buffer?(src, def_map, buffer_roots)
+          MIR::ArrayBulkOpKind::MoveCopySameElem
+        elsif name.starts_with?("llvm.memset")
+          dst = ec.args[0]?; n = ec.args[2]?
+          return nil unless dst && n
+          (traces_to_array_c_buffer?(dst, def_map, buffer_roots) && count_is_strided?(n, def_map)) ? MIR::ArrayBulkOpKind::Clear : MIR::ArrayBulkOpKind::Uncovered
+        elsif name == "__adamas_malloc64" || name == "malloc" || name == "calloc" || name == "GC_malloc" || name == "GC_malloc_atomic"
+          sz = ec.args[-1]?
+          return nil unless sz
+          count_is_strided?(sz, def_map) ? MIR::ArrayBulkOpKind::AllocRealloc : MIR::ArrayBulkOpKind::Uncovered
+        elsif name == "__adamas_realloc64" || name == "realloc" || name == "__crystal_realloc64" || name == "GC_realloc" || name == "__adamas_gc_aware_realloc"
+          sz = ec.args[-1]?
+          return nil unless sz
+          count_is_strided?(sz, def_map) ? MIR::ArrayBulkOpKind::AllocRealloc : MIR::ArrayBulkOpKind::Uncovered
+        else
+          nil
+        end
+      end
+
+      # Classify a Call to a shared `Pointer(C)#` bulk method (clear / move_from /
+      # copy_from / move_to / copy_to) inside an Array(C)# body, or nil if it is not
+      # such a bulk op. The element-size lives inside the shared body (bytesize), so
+      # the behavior rewrite is a call-site rewrite to a direct inline-stride op —
+      # which is sound only with proven @buffer provenance.
+      private def classify_array_bulk_call(call : MIR::Call, callee_name : String,
+                                           def_map : Hash(ValueId, MIR::Value),
+                                           buffer_roots : ::Set(ValueId)) : MIR::ArrayBulkOpKind?
+        return nil unless callee_name.starts_with?("Pointer(")
+        m = census_method_part(callee_name)
+        return nil unless m
+        recv = call.args[0]?
+        return nil unless recv
+        case m
+        when "clear"
+          traces_to_array_c_buffer?(recv, def_map, buffer_roots) ? MIR::ArrayBulkOpKind::Clear : MIR::ArrayBulkOpKind::Uncovered
+        when "move_from", "copy_from", "move_to", "copy_to", "move_from_impl", "copy_from_impl"
+          src = call.args[1]?
+          return MIR::ArrayBulkOpKind::Uncovered unless traces_to_array_c_buffer?(recv, def_map, buffer_roots)
+          return MIR::ArrayBulkOpKind::Uncovered unless src
+          traces_to_array_c_buffer?(src, def_map, buffer_roots) ? MIR::ArrayBulkOpKind::MoveCopySameElem : MIR::ArrayBulkOpKind::Heterogeneous
+        else
+          nil
+        end
+      end
+
+      # Precompute the set of values that ARE the Array(C) @buffer pointer in this
+      # body — STRICTLY (GPT-constrained), so provenance stays structural:
+      #   (a) the @buffer-ivar Load: Load(GetElementPtr(self/Array(C)-param, [16]));
+      #   (b) a constrained Array(C)#to_unsafe / #root_buffer Call whose receiver is
+      #       an Array(C) param (exact element match, not Indexable/Enumerable/union);
+      #   (c) a FRESH malloc/realloc buffer (strided size) that is then stored INTO
+      #       self.@buffer of an Array(C) param (the create/grow path) — never an
+      #       arbitrary Pointer(C).malloc.
+      private def compute_array_buffer_roots(func : MIR::Function,
+                                             def_map : Hash(ValueId, MIR::Value),
+                                             array_c_params : ::Set(ValueId),
+                                             elem : String,
+                                             fid_to_name : Hash(FunctionId, String)) : ::Set(ValueId)
+        roots = ::Set(ValueId).new
+        gep_is_self_buffer = ->(ptr : ValueId) {
+          g = def_map[ptr]?
+          g.is_a?(MIR::GetElementPtr) && array_c_params.includes?(g.as(MIR::GetElementPtr).base) &&
+            g.as(MIR::GetElementPtr).indices == [16_u32]
+        }
+        func.blocks.each do |b|
+          b.instructions.each do |inst|
+            case inst
+            when MIR::Load
+              roots << inst.id if gep_is_self_buffer.call(inst.ptr)
+            when MIR::Call
+              cn = fid_to_name[inst.callee]?
+              next unless cn
+              next unless census_extract_generic_arg(cn, "Array") == elem  # exact Array(C)
+              mp = census_method_part(cn)
+              next unless mp == "to_unsafe" || mp == "root_buffer"
+              recv = inst.args[0]?
+              roots << inst.id if recv && array_c_params.includes?(recv)
+            end
+          end
+        end
+        # (c) fresh buffers: a malloc/realloc (strided) whose result reaches a Store
+        # into self.@buffer. Walk Stores into @buffer, trace value back to the alloc.
+        func.blocks.each do |b|
+          b.instructions.each do |inst|
+            next unless inst.is_a?(MIR::Store)
+            st = inst.as(MIR::Store)
+            next unless gep_is_self_buffer.call(st.ptr)
+            if alloc = nearest_strided_alloc(st.value, def_map)
+              roots << alloc
+            end
+          end
+        end
+        roots
+      end
+
+      # Backward-trace `start` to the nearest malloc/realloc extern_call result whose
+      # size is element-strided; nil if none. (Used to admit a fresh Array(C) buffer
+      # as @buffer provenance — the create/grow path.)
+      private def nearest_strided_alloc(start : ValueId,
+                                        def_map : Hash(ValueId, MIR::Value)) : ValueId?
+        seen = ::Set(ValueId).new
+        stack = [start]
+        steps = 0
+        while (v = stack.pop?)
+          next if seen.includes?(v)
+          seen << v
+          steps += 1
+          break if steps > 4096
+          d = def_map[v]?
+          next unless d
+          if d.is_a?(MIR::ExternCall)
+            en = d.as(MIR::ExternCall).extern_name
+            if en == "__adamas_malloc64" || en == "malloc" || en == "calloc" || en == "GC_malloc" || en == "GC_malloc_atomic" ||
+               en == "__adamas_realloc64" || en == "realloc" || en == "__crystal_realloc64" || en == "GC_realloc" || en == "__adamas_gc_aware_realloc"
+              sz = d.as(MIR::ExternCall).args[-1]?
+              return v if sz && count_is_strided?(sz, def_map)
+            end
+          end
+          d.operands.each { |o| stack << o unless seen.includes?(o) }
+        end
+        nil
+      end
+
+      # True iff `start` is (or derives from) a proven Array(C) @buffer pointer —
+      # i.e. its backward def-slice reaches a value in `buffer_roots`.
+      private def traces_to_array_c_buffer?(start : ValueId,
+                                           def_map : Hash(ValueId, MIR::Value),
+                                           buffer_roots : ::Set(ValueId)) : Bool
+        seen = ::Set(ValueId).new
+        stack = [start]
+        steps = 0
+        while (v = stack.pop?)
+          next if seen.includes?(v)
+          seen << v
+          steps += 1
+          break if steps > 4096
+          return true if buffer_roots.includes?(v)
+          d = def_map[v]?
+          next unless d
+          d.operands.each { |o| stack << o unless seen.includes?(o) }
+        end
+        false
+      end
+
+      # True iff `start`'s backward def-slice contains a multiply (count * stride) —
+      # the signature of an element-strided byte count / capacity, vs a fixed size.
+      private def count_is_strided?(start : ValueId,
+                                    def_map : Hash(ValueId, MIR::Value)) : Bool
+        seen = ::Set(ValueId).new
+        stack = [start]
+        steps = 0
+        while (v = stack.pop?)
+          next if seen.includes?(v)
+          seen << v
+          steps += 1
+          break if steps > 4096
+          d = def_map[v]?
+          next unless d
+          return true if d.is_a?(MIR::BinaryOp) && d.as(MIR::BinaryOp).op == MIR::BinOp::Mul
+          d.operands.each { |o| stack << o unless seen.includes?(o) }
+        end
+        false
+      end
+
+      # Read back the PERSISTED bulk-op facts (separate pass) and report. Read-only.
+      private def verify_array_bulk_op_facts
+        reg = @mir_module.type_registry
+        ivc_types = reg.types.select { |t| classify_container_elem_repr(t).inline_value_copy? }
+
+        # per-type op-kind tallies, read from the durable ExternCall facts.
+        tally = Hash(TypeId, Hash(MIR::ArrayBulkOpKind, Int32)).new
+        @mir_module.functions.each do |func|
+          next unless func.name.starts_with?("Array(")
+          elem = census_extract_generic_arg(func.name, "Array")
+          next unless elem
+          cty = reg.get_by_name(elem)
+          next unless cty
+          cid = cty.id
+          func.blocks.each do |b|
+            b.instructions.each do |inst|
+              k = case inst
+                  when MIR::ExternCall then inst.array_bulk_op
+                  when MIR::Call       then inst.array_bulk_op
+                  else                      nil
+                  end
+              next unless k
+              (tally[cid] ||= Hash(MIR::ArrayBulkOpKind, Int32).new)[k] = ((tally[cid]?.try(&.[k]?)) || 0) + 1
+            end
+          end
+        end
+
+        eligible = ivc_types.select(&.inline_array_storage_eligible)
+        STDERR.puts "[ABIFACTS] inline_array_storage_eligible types=#{eligible.size} of #{ivc_types.size} InlineValueCopy candidates"
+        ivc_types.sort_by(&.name).each do |t|
+          ks = tally[t.id]?
+          next unless ks && !ks.empty?
+          summary = ks.to_a.sort_by { |k, _| k.to_s }.map { |k, c| "#{k}=#{c}" }.join(" ")
+          flag = t.inline_array_storage_eligible ? "ELIGIBLE" : "ineligible"
+          STDERR.puts "[ABIFACTS]   #{flag} #{t.name}  [#{summary}]"
+        end
         STDERR.flush
       end
 
