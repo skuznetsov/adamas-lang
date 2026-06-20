@@ -913,9 +913,16 @@ module Adamas
       # it does NOT recurse into struct fields, because a nested struct field is a
       # POINTER carrier under the current field ABI (user_struct_inline? = size > 8),
       # so an inline memcpy would copy pointers, not the nested bytes. A
-      # leaf-storage-POD struct has EVERY field a primitive / enum / raw pointer (no
-      # nested struct / tuple / union / ref / array / proc), size in 1..16,
+      # leaf-storage-POD struct has EVERY field a primitive / enum (no raw pointer,
+      # no nested struct / tuple / union / ref / array / proc), size in 1..16,
       # non-union (the kind guard), non-lib.
+      #
+      # Raw-pointer fields are EXCLUDED (step-(a) narrowing, 2026-06-20): a struct
+      # carrying a raw pointer (e.g. Pointer::Appender, Crystal::PointerLinkedList)
+      # is NOT value-copy-safe — inline-copying it duplicates a live interior
+      # pointer, which aliases/escapes exactly like a ref-owning struct. Such types
+      # must stay on ExistingLowering. (Only primitive/enum-leaf structs like
+      # Vec2/Vec3 and the all-numeric stdlib value structs remain InlineValueCopy.)
       private def leaf_storage_pod_struct?(type : Type) : Bool
         return false unless type.kind.struct?
         return false if type.size == 0_u64 || type.size > 16_u64
@@ -927,8 +934,8 @@ module Adamas
           ft = @mir_module.type_registry.get(f.type_ref)
           next false unless ft
           k = ft.kind
-          # leaf scalar carriers only: primitive / enum / raw pointer.
-          k.primitive? || k.enum? || k.pointer?
+          # leaf scalar carriers only: primitive / enum (NOT raw pointer).
+          k.primitive? || k.enum?
         end
       end
 

@@ -140,6 +140,20 @@ keep the two regimes distinct.
 
 ## Current Checkpoint
 
+**2026-06-20 — Step (a): leaf-storage-POD gate narrowed (`abi-struct-byvalue`).**
+`leaf_storage_pod_struct?` no longer admits `k.pointer?` — a struct with a raw
+pointer field (Pointer::Appender, Crystal::PointerLinkedList) is NOT
+value-copy-safe (inline copy duplicates a live interior pointer), so it now
+classifies as `ExistingLowering`. Classifier-only / read-only: no codegen
+consumes the label on this base (`llvm_backend.cr` has no `ivc_raw`), gate ON vs
+OFF IR byte-identical (normalized diff = 0). Reducer
+`regression_tests/leaf_pod_struct_pointer_field_repro.{cr,sh}`: Vec2/Vec3 stay
+InlineValueCopy, WithPtr (raw Pointer(Int32) field) → ExistingLowering. NEXT =
+step (c) erased reconciliation / per-type safe-set (read-only first): the set of
+types with a `buffer_value` store/read AND no erased/`value_derived` read path,
+or explicit reconciliation for erased `Indexable(T)#fetch`. Behavior-slice only
+after (c); invariant (b) held HARD — no global type-driven `Pointer(T)#<<`.
+
 **2026-06-20 — A′ provenance marker: read-only proof shipped (`abi-struct-byvalue`).**
 Step 2 of the A′ plan. `run_array_buffer_provenance_probe` (gate
 `ADAMAS_ARRAY_BUFFER_PROVENANCE_PROBE`, default OFF, STDERR-only). Refines the
