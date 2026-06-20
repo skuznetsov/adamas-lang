@@ -371,3 +371,55 @@ Three blocker-level fixes so the facts are safe for LLVM consumption:
 Reducer extended with `Esc` (raw `esc.to_unsafe` passed to an opaque `sink_ptr`) →
 ineligible despite all-covered per-site facts, proving the escape disqualifier. Cov
 stays ELIGIBLE; Unc stays ineligible (Uncovered). Read-only / gate-neutral preserved.
+
+## 9. Behavior implementation map — MECHANICAL fact consumer (GPT GO, CAUTION)
+
+Feasibility verified read-only before any edit (GPT stop-signal check = NOT
+triggered): every site that must change has the MIR instruction (and thus its fact)
+in scope; the string-template `Array#<<`/`#unsafe_fetch` fallback fires ONLY for a
+late-generic Tuple-union (a NON-eligible type) — eligible leaf-POD types use real
+MIR-walked bodies. So the backend reads facts, never re-derives provenance/stride.
+
+**Single gate `ADAMAS_INLINE_VALUE_ARRAY_STORAGE`** (gate #1): in `lower_all_bodies`
+runs `populate_inline_value_safe_set` + `populate_array_bulk_op_facts` +
+`verify_*` (emits `[IVANNOT]`/`[ABIFACTS]`). LLVM reads facts only under this gate.
+Drop the separate `ADAMAS_ARRAY_BULK_OP_FACTS` requirement for behavior.
+
+**The stride source (GPT core constraint).** Behavior NEVER patches the old
+constant. It BUILDS `new_bytes = logical_count * inline_payload_stride(C)`, where
+`inline_payload_stride(C) = elem.size` (the layout payload size). The proven
+`count * CONST` / explicit `elem_size` const is used ONLY as shape-proof that the
+site was an element-strided bulk op; `logical_count` = the NON-const operand of that
+proven multiply (or the `count` arg of `__adamas_ptr_move/copy`).
+
+**Consumption map (each reads exactly one fact; ineligible/legacy untouched):**
+
+| LLVM site | fact read | action when set |
+|---|---|---|
+| `emit_gep_dynamic(inst)` | `GetElementPtrDynamic#array_buffer_value` && elem `inline_array_storage_eligible` | byte-GEP stride = `inline_payload_stride`; mark `inst.id` in `@inline_value_gep_aliases` |
+| `emit_store(inst)` | `inst.ptr ∈ @inline_value_gep_aliases` | `memcpy(slot, value_payload, stride)` instead of `store ptr` |
+| `emit_load(inst)` | `inst.ptr ∈ @inline_value_gep_aliases` | heap carrier `[i64 INT64_MAX][payload]` (raw+8), `memcpy(raw+8, slot, stride)` — reuse the existing sentinel-carrier convention (llvm_backend.cr:10553-10572), NOT `malloc(payload)` |
+| `emit_extern_call(inst)` memmove/memcpy/memset | `ExternCall#array_bulk_op ∈ {MoveCopySameElem,Clear}` | rebuild byte count = `logical_count * stride` |
+| `emit_extern_call(inst)` `__adamas_ptr_move`/`ptr_copy` | same | substitute the `elem_size` arg = `stride` (count arg already logical) |
+| `emit_extern_call(inst)` malloc/realloc | `ExternCall#array_bulk_op == AllocRealloc` | rebuild size = `logical_count * stride` |
+| `emit_call(inst)` `Pointer(C)#clear`/`move_from`/… | `Call#array_bulk_op` | rewrite to the inline-stride op (clear=memset stride, move/copy=ptr_move stride) |
+
+**Eligible-only / atomic (gates #2, #4).** Every action is additionally gated on the
+element type's `inline_array_storage_eligible`. Ineligible types (`Unc`, `Esc`,
+non-Array `Pointer` paths, the string-template Tuple-union) take the unchanged legacy
+path. The flip is atomic: all rows land in ONE commit; a partial store/load-only
+flip is forbidden (stride mismatch on the first grow/delete_at = heap corruption).
+
+**Helper.** `inline_payload_stride(elem : Type) : UInt64 = elem.size` (the Array-
+context stride; `container_elem_storage_size_u64` / standalone `Pointer(T)` /
+`StaticArray` stay UNCHANGED — gate #3 / §2). A shared
+`emit_inline_value_load_carrier(slot, stride) -> raw+8` for the load row.
+
+**DoD reducers (gate #5, runtime via run_safe.sh):** Vec3 12-byte
+push+grow/realloc + delete_at/shift/insert/clear/concat read-back (value-correct, no
+heap OOB); Vec2 copy-on-load no-alias (mutate a loaded copy, buffer unchanged); Unc/
+Esc stay legacy (still correct); the non-Array `Pointer` guard re-pointed to the
+behavior gate; gate-OFF byte-identical; `ivc_raw` only at eligible Array(C) sites.
+
+**Stop-signal honored:** if any row needs provenance/stride NOT already in the facts,
+STOP and extend the facts — do not add a second backend oracle.
