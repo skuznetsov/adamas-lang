@@ -140,6 +140,22 @@ keep the two regimes distinct.
 
 ## Current Checkpoint
 
+**2026-06-20 — A′ facts extension: arith-gep stride + bulk logical_count (read-only) (`abi-struct-byvalue`).**
+The behavior flip hit GPT's stop-signal (backend would have to re-derive provenance/
+stride for the pointer-arith geps feeding `__adamas_ptr_move` — `getelementptr ptr`
+stride-8 — and lacked a `logical_count` to rebuild byte counts). Partial behavior was
+STASHED, facts extended instead (no backend oracle). New durable facts (gate
+`ADAMAS_ARRAY_BULK_OP_FACTS`): `GetElementPtrDynamic#array_buffer_element_stride`
+(set for EVERY @buffer-derived gep of an eligible C — value AND arith — via
+`buffer_roots`); `ExternCall/Call#array_bulk_stride` + `#array_bulk_logical_count`
+(ptr_move/copy count arg; memmove/memcpy/memset/malloc/realloc non-const Mul operand;
+Pointer#clear/move_from count arg; no count → fail-closed Uncovered). All
+eligibility-baked. Reducer: `Cov` ELIGIBLE with value+arith stride-geps + every
+covered bulk op carrying logical_count (missing=0); strides only inside `Array(...)`
+(outside=0); `Unc`/`Esc` get none; `Vec3#delete_at` arith geps now strided; gate-OFF
+byte-identical; no `ivc_raw`. All 6 A′ reducers green. NEXT = resume the atomic
+behavior flip (now a pure mechanical fact consumer), owner-gated, NOT started.
+
 **2026-06-20 — A′ mini-AbiFacts: Array bulk-op coverage facts (read-only) (`abi-struct-byvalue`).**
 Gate `ADAMAS_ARRAY_BULK_OP_FACTS`. The pre-behavior infra GPT/owner GO'd, built as a
 durable typed-fact layer (aligns with the AbiFacts architecture note — minimal facts

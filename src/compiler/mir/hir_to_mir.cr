@@ -1724,6 +1724,10 @@ module Adamas
 
         # Types with any Heterogeneous/Uncovered bulk op → fail-closed.
         disqualified = ::Set(TypeId).new
+        # Covered bulk-op sites and @buffer-derived gep sites awaiting a stride (set
+        # after eligibility is known, so the durable stride bakes in eligibility).
+        covered_bulk_sites = [] of {MIR::Value, TypeId}
+        buffer_gep_sites = [] of {MIR::GetElementPtrDynamic, TypeId}
 
         # (#3) RAW to_unsafe escape: an `Array(C)#to_unsafe` Call OUTSIDE an Array(C)#
         # body hands the bare @buffer pointer to user/opaque code, which then aliases
@@ -1780,17 +1784,49 @@ module Adamas
               if inst.is_a?(MIR::ExternCall)
                 ec = inst.as(MIR::ExternCall)
                 kind = classify_array_bulk_op(ec, def_map, buffer_roots, alloc_roots)
-                next unless kind
-                ec.array_bulk_op = kind
-                disqualified << cid if kind.heterogeneous? || kind.uncovered?
+                if kind
+                  # (b) logical count — fail-closed to Uncovered if it can't be extracted.
+                  if kind.move_copy_same_elem? || kind.clear? || kind.alloc_realloc?
+                    lc = extern_bulk_logical_count(ec, def_map)
+                    if lc
+                      ec.array_bulk_logical_count = lc
+                    else
+                      kind = MIR::ArrayBulkOpKind::Uncovered
+                    end
+                  end
+                  ec.array_bulk_op = kind
+                  if kind.heterogeneous? || kind.uncovered?
+                    disqualified << cid
+                  else
+                    covered_bulk_sites << {inst, cid}
+                  end
+                end
               elsif inst.is_a?(MIR::Call)
                 call = inst.as(MIR::Call)
                 cn = fid_to_name[call.callee]?
-                next unless cn
-                kind = classify_array_bulk_call(call, cn, def_map, buffer_roots)
-                next unless kind
-                call.array_bulk_op = kind
-                disqualified << cid if kind.heterogeneous? || kind.uncovered?
+                if cn && (kind = classify_array_bulk_call(call, cn, def_map, buffer_roots))
+                  if kind.move_copy_same_elem? || kind.clear?
+                    lc = call_bulk_logical_count(call, cn)
+                    if lc
+                      call.array_bulk_logical_count = lc
+                    else
+                      kind = MIR::ArrayBulkOpKind::Uncovered
+                    end
+                  end
+                  call.array_bulk_op = kind
+                  if kind.heterogeneous? || kind.uncovered?
+                    disqualified << cid
+                  else
+                    covered_bulk_sites << {inst, cid}
+                  end
+                end
+              elsif inst.is_a?(MIR::GetElementPtrDynamic)
+                # (a) every @buffer-derived gep_dyn of C (value-access AND pointer
+                # arithmetic) — record so the behavior slice strides it by C.size.
+                gep = inst.as(MIR::GetElementPtrDynamic)
+                if gep.element_type.id == cid && traces_to_array_c_buffer?(gep.base, def_map, buffer_roots)
+                  buffer_gep_sites << {gep, cid}
+                end
               end
             end
           end
@@ -1799,6 +1835,26 @@ module Adamas
         reg.types.each do |t|
           t.inline_array_storage_eligible =
             safe_ids.includes?(t.id) && !disqualified.includes?(t.id) && !to_unsafe_escaped.includes?(t.id)
+        end
+
+        # Bake eligibility into the durable strides: a covered bulk op / a @buffer gep
+        # gets a non-zero stride (= C.size) ONLY if C ended up eligible. The behavior
+        # slice rewrites a site iff its stride is set — a pure fact read.
+        covered_bulk_sites.each do |(inst, cid)|
+          ct = reg.get(cid)
+          next unless ct && ct.inline_array_storage_eligible
+          stride = ct.size.to_u32
+          next if stride == 0
+          case inst
+          when MIR::ExternCall then inst.array_bulk_stride = stride
+          when MIR::Call       then inst.array_bulk_stride = stride
+          end
+        end
+        buffer_gep_sites.each do |(gep, cid)|
+          ct = reg.get(cid)
+          next unless ct && ct.inline_array_storage_eligible
+          next if ct.size == 0
+          gep.array_buffer_element_stride = ct.size
         end
       end
 
@@ -1869,6 +1925,62 @@ module Adamas
         else
           nil
         end
+      end
+
+      # (b) LOGICAL element count for an extern bulk op, so the behavior slice builds
+      # `logical_count * inline_stride` (never trusting the old const). nil → the
+      # caller fail-closes the op to Uncovered.
+      private def extern_bulk_logical_count(ec : MIR::ExternCall,
+                                            def_map : Hash(ValueId, MIR::Value)) : ValueId?
+        name = ec.extern_name
+        if name == "__adamas_ptr_move" || name == "__adamas_ptr_copy"
+          ec.args[2]?                       # (dest, src, COUNT, elem_size)
+        elsif name.starts_with?("llvm.memmove") || name.starts_with?("llvm.memcpy") || name.starts_with?("llvm.memset")
+          n = ec.args[2]?                   # (dst[, src/val], BYTES, ...)
+          n ? mul_nonconst_operand(n, def_map) : nil
+        else
+          sz = ec.args[-1]?                 # malloc/realloc SIZE = cap * CONST
+          sz ? mul_nonconst_operand(sz, def_map) : nil
+        end
+      end
+
+      # (b) LOGICAL element count for a Pointer(C)# bulk Call.
+      private def call_bulk_logical_count(call : MIR::Call, callee_name : String) : ValueId?
+        case census_method_part(callee_name)
+        when "clear"
+          call.args[1]?                     # clear(COUNT) → (recv, COUNT)
+        when "move_from", "copy_from", "move_to", "copy_to", "move_from_impl", "copy_from_impl"
+          call.args[2]?                     # move_from(source, COUNT) → (recv, source, COUNT)
+        else
+          nil
+        end
+      end
+
+      # The non-constant operand of the `count * CONST` multiply that produces a byte
+      # count / size (the logical element count). Walks the backward def-slice to the
+      # nearest such Mul; nil if none (→ fail-closed).
+      private def mul_nonconst_operand(start : ValueId,
+                                       def_map : Hash(ValueId, MIR::Value)) : ValueId?
+        seen = ::Set(ValueId).new
+        stack = [start]
+        steps = 0
+        while (v = stack.pop?)
+          next if seen.includes?(v)
+          seen << v
+          steps += 1
+          break if steps > 4096
+          d = def_map[v]?
+          next unless d
+          if d.is_a?(MIR::BinaryOp) && d.as(MIR::BinaryOp).op == MIR::BinOp::Mul
+            bo = d.as(MIR::BinaryOp)
+            lc = const_operand?(bo.left, def_map)
+            rc = const_operand?(bo.right, def_map)
+            return bo.right if lc && !rc   # CONST * count → count
+            return bo.left if rc && !lc    # count * CONST → count
+          end
+          d.operands.each { |o| stack << o unless seen.includes?(o) }
+        end
+        nil
       end
 
       # Precompute the set of values that ARE the Array(C) @buffer pointer in this
@@ -2042,6 +2154,50 @@ module Adamas
           summary = ks.to_a.sort_by { |k, _| k.to_s }.map { |k, c| "#{k}=#{c}" }.join(" ")
           flag = t.inline_array_storage_eligible ? "ELIGIBLE" : "ineligible"
           STDERR.puts "[ABIFACTS]   #{flag} #{t.name}  [#{summary}]"
+        end
+
+        # (a)/(b) durable behavior facts: @buffer-gep strides (value + arith) and
+        # bulk logical counts. Prove the strides land ONLY inside Array(...) bodies
+        # and only on eligible types; raw Pointer(C) and ineligible types get none.
+        reg_by_id = Hash(TypeId, MIR::Type).new
+        reg.types.each { |t| reg_by_id[t.id] = t }
+        gep_inside = 0
+        gep_outside = 0
+        bulk_count_set = 0
+        bulk_count_missing = 0
+        per_type_stride_geps = Hash(String, Int32).new(0)
+        @mir_module.functions.each do |func|
+          in_array = func.name.starts_with?("Array(")
+          func.blocks.each do |b|
+            b.instructions.each do |inst|
+              case inst
+              when MIR::GetElementPtrDynamic
+                if st = inst.array_buffer_element_stride
+                  if in_array
+                    gep_inside += 1
+                  else
+                    gep_outside += 1
+                  end
+                  if et = reg_by_id[inst.element_type.id]?
+                    per_type_stride_geps[et.name] += 1
+                  end
+                end
+              when MIR::ExternCall
+                if inst.array_bulk_stride > 0
+                  inst.array_bulk_logical_count ? (bulk_count_set += 1) : (bulk_count_missing += 1)
+                end
+              when MIR::Call
+                if inst.array_bulk_stride > 0
+                  inst.array_bulk_logical_count ? (bulk_count_set += 1) : (bulk_count_missing += 1)
+                end
+              end
+            end
+          end
+        end
+        STDERR.puts "[ABIFACTS] @buffer-gep stride marks: inside Array(...)=#{gep_inside} outside=#{gep_outside} (outside MUST be 0)"
+        STDERR.puts "[ABIFACTS] covered bulk ops with logical_count=#{bulk_count_set} missing=#{bulk_count_missing} (missing MUST be 0)"
+        per_type_stride_geps.keys.sort.each do |n|
+          STDERR.puts "[ABIFACTS]   stride-geps #{n}=#{per_type_stride_geps[n]}"
         end
         STDERR.flush
       end

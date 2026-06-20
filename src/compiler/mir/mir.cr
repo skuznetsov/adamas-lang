@@ -1148,6 +1148,15 @@ module Adamas::MIR
     # the gate that populates it is off by default and no lowering site reads it.
     property array_buffer_value : Bool = false
 
+    # A' behavior: the inline byte stride (C.size) the behavior slice must use for
+    # this gep, eligibility baked in (nil = legacy stride, do not rewrite). Set for
+    # EVERY @buffer-derived gep_dyn of an inline_array_storage_eligible element C —
+    # BOTH value-access geps (array_buffer_value) AND pointer-ARITHMETIC geps
+    # (`@buffer + offset` feeding ptr_move/clear). emit_gep_dynamic reads ONLY this
+    # to change the stride; array_buffer_value separately decides load/store memcpy
+    # semantics. So the backend never re-derives @buffer provenance (no 2nd oracle).
+    property array_buffer_element_stride : UInt64? = nil
+
     def initialize(id : ValueId, type : TypeRef, @base : ValueId, @index : ValueId, @element_type : TypeRef, @element_byte_size : UInt64 = 0_u64)
       super(id, type)
     end
@@ -1697,6 +1706,13 @@ module Adamas::MIR
     # inline-stride op; set only under the facts gate; no lowering reads it yet.
     property array_bulk_op : ArrayBulkOpKind? = nil
 
+    # A' behavior: inline payload stride (C.size), eligibility baked in (0 = do not
+    # rewrite); and the LOGICAL element count so the rewrite builds the new byte
+    # count as `logical_count * stride`. See ExternCall for the cases. nil count on
+    # an otherwise-covered op → fail-closed (Uncovered).
+    property array_bulk_stride : UInt32 = 0_u32
+    property array_bulk_logical_count : ValueId? = nil
+
     def initialize(id : ValueId, type : TypeRef, @callee : FunctionId, @args : Array(ValueId))
       super(id, type)
     end
@@ -1726,6 +1742,17 @@ module Adamas::MIR
     # this to rewrite ONLY covered sites to the inline element stride — never
     # re-deriving the classification in LLVM. Set only under the facts gate.
     property array_bulk_op : ArrayBulkOpKind? = nil
+
+    # A' behavior: the inline payload stride (C.size), eligibility baked in (0 = do
+    # not rewrite); and the LOGICAL element count so the behavior slice builds the
+    # new byte count as `logical_count * stride` (GPT: build new, the old `count*CONST`
+    # / explicit elem_size const is shape-proof only). Cases:
+    #   __adamas_ptr_move/ptr_copy(dest,src,count,elem_size) → logical_count = count arg.
+    #   llvm.memmove/memcpy/memset(...,bytes) bytes=count*CONST → non-const operand.
+    #   malloc/realloc(size) size=cap*CONST → non-const operand.
+    # nil count on an otherwise-covered op → fail-closed (Uncovered).
+    property array_bulk_stride : UInt32 = 0_u32
+    property array_bulk_logical_count : ValueId? = nil
 
     def initialize(id : ValueId, type : TypeRef, @extern_name : String, @args : Array(ValueId))
       super(id, type)

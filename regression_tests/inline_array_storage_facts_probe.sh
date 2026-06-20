@@ -73,6 +73,31 @@ if ! printf '%s' "$esc_line" | grep -qE "^\[ABIFACTS\]   ineligible Esc "; then
   echo "FAIL: Esc not ineligible — raw to_unsafe escape was not disqualified"; echo "  got: $esc_line"; fail=1
 fi
 
+# (2c) Cov gets @buffer-gep stride marks; Esc/Unc (ineligible) get none.
+if ! grep -qE "^\[ABIFACTS\]   stride-geps Cov=[1-9][0-9]*$" "$ERR"; then
+  echo "FAIL: Cov has no @buffer-gep stride marks (value+arith geps not marked)"; fail=1
+fi
+if grep -qE "^\[ABIFACTS\]   stride-geps (Unc|Esc)=" "$ERR"; then
+  echo "FAIL: an ineligible type (Unc/Esc) received @buffer-gep stride marks"; fail=1
+fi
+
+# (2d) stride marks land ONLY inside Array(...) bodies (outside == 0, inside >= 1).
+gmarks="$(grep -E "@buffer-gep stride marks:" "$ERR" || true)"
+g_inside="$(printf '%s' "$gmarks" | grep -oE "inside Array\(\.\.\.\)=[0-9]+" | grep -oE "[0-9]+$" || echo "")"
+g_outside="$(printf '%s' "$gmarks" | grep -oE "outside=[0-9]+" | grep -oE "[0-9]+$" || echo "")"
+if [[ -z "$g_inside" || "$g_inside" -lt 1 ]]; then
+  echo "FAIL: expected >=1 @buffer-gep stride mark inside an Array(...) body (got '${g_inside:-none}')"; fail=1
+fi
+if [[ "${g_outside:-x}" != "0" ]]; then
+  echo "FAIL: @buffer-gep stride marks outside an Array body = '${g_outside:-none}' (MUST be 0)"; fail=1
+fi
+
+# (2e) every covered bulk op carries a logical_count (fail-closed: missing == 0).
+bmiss="$(grep -E "covered bulk ops with logical_count=" "$ERR" | grep -oE "missing=[0-9]+" | grep -oE "[0-9]+$" || echo "")"
+if [[ "${bmiss:-x}" != "0" ]]; then
+  echo "FAIL: covered bulk ops missing a logical_count = '${bmiss:-none}' (MUST be 0)"; fail=1
+fi
+
 # (3a) no ivc_raw (no behavior).
 ADAMAS_ARRAY_BULK_OP_FACTS=1 "$COMPILER" --emit llvm-ir "$SRC" -o "$TMP_DIR/on" >/dev/null 2>/dev/null || true
 "$COMPILER" --emit llvm-ir "$SRC" -o "$TMP_DIR/off" >/dev/null 2>/dev/null || true
@@ -92,5 +117,6 @@ if [[ $fail -ne 0 ]]; then
   echo "tmp_dir: $TMP_DIR"; exit 1
 fi
 
-echo "ok: Cov ELIGIBLE (fully covered); Unc ineligible (Uncovered, fail-closed); no ivc_raw; gate-neutral (IR diff=0)"
+echo "ok: Cov ELIGIBLE + @buffer-gep strides (value+arith) + bulk logical_count; Unc/Esc ineligible, no stride marks;"
+echo "    strides inside Array only (outside=0); no missing logical_count; no ivc_raw; gate-neutral (IR diff=0)"
 exit 0

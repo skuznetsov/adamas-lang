@@ -423,3 +423,37 @@ behavior gate; gate-OFF byte-identical; `ivc_raw` only at eligible Array(C) site
 
 **Stop-signal honored:** if any row needs provenance/stride NOT already in the facts,
 STOP and extend the facts — do not add a second backend oracle.
+
+## 10. Facts extension — arith-gep stride + bulk logical_count (read-only, 2026-06-20)
+
+The §9 behavior attempt hit GPT's stop-signal: the facts did not cover (1) the
+pointer-ARITHMETIC geps (`@buffer + offset`) feeding `__adamas_ptr_move`/clear —
+proven by IR on `Array(Vec3)#delete_at`: `%r15 = getelementptr ptr, %r14, idx`
+(stride 8) + `__adamas_ptr_move(%r15, %r20, %r24, i32 8)` — and (2) the
+`logical_count` needed to rebuild byte counts. Per the stop-signal rule the partial
+behavior was stashed and the facts extended instead of adding a backend oracle.
+
+Added (read-only; gate `ADAMAS_ARRAY_BULK_OP_FACTS`):
+- `GetElementPtrDynamic#array_buffer_element_stride : UInt64?` — set for EVERY
+  @buffer-derived gep of an eligible C (value-access AND pointer-arith), via the
+  existing `buffer_roots` provenance (`gep.element_type == C` && `gep.base` traces to
+  a buffer root). Eligibility-baked (nil for ineligible). emit_gep_dynamic will read
+  ONLY this for the stride; `array_buffer_value` still decides load/store semantics.
+- `ExternCall#array_bulk_stride` / `Call#array_bulk_stride` (eligibility-baked) and
+  `…#array_bulk_logical_count : ValueId?` — the logical element count so the behavior
+  rebuilds `logical_count * stride` (never trusting the old const). Cases:
+  ptr_move/copy → count arg; memmove/memcpy/memset → non-const Mul operand;
+  malloc/realloc → non-const Mul operand; Pointer#clear → count arg; Pointer#
+  move_from/copy_from → count arg. A covered op with no extractable count fail-closes
+  to Uncovered.
+
+Verify + reducer (`inline_array_storage_facts_probe`): `Cov` ELIGIBLE with
+`stride-geps Cov` (value+arith) and every covered bulk op carrying a logical_count
+(`missing=0`); strides land ONLY inside `Array(...)` bodies (`outside=0`); `Unc`/`Esc`
+(ineligible) receive NO stride marks; `Vec3#delete_at` arith geps now strided
+(stop-signal site closed); gate ON vs OFF IR byte-identical; no `ivc_raw`.
+
+Behavior (§9) now has every fact it needs and resumes as a pure mechanical consumer:
+emit_gep_dynamic reads `array_buffer_element_stride`; emit_store/load key off
+`array_buffer_value`; emit_extern_call/emit_call read `array_bulk_stride` +
+`array_bulk_logical_count` + `array_bulk_op`. No backend provenance oracle.
