@@ -5,6 +5,39 @@ that must be reviewed before the first commit where LLVM reads the A′ marks �
 read already changes the Array(C) ABI (CAUTION-tier). Risk tier: **CAUTION**
 (serialization/layout + ABI change). Branch: `abi-struct-byvalue`.
 
+## PREFLIGHT FINDING (2026-06-20) — behavior is NOT one bounded diff yet
+
+Measuring the mutation-family lowering BEFORE writing any codegen fired GPT's
+stop-rule. Evidence chain:
+
+- `Array#delete_at`/`shift`/`insert`/`concat` move elements with
+  `(@buffer + i).move_from/copy_from(...)` (src/stdlib/array.cr:819, 854, 1029, 332).
+- `Pointer#move_from_impl`/`copy_from_impl` → `Intrinsics.memmove(self, src,
+  bytesize(count))` (src/stdlib/pointer.cr:262, 276).
+- `Pointer#bytesize(count)` = `count * sizeof(T)` → LLVM
+  `count * container_elem_storage_size_u64(T)` — **type-global** (llvm_backend.cr:
+  13774, 13807). That helper is shared with standalone `Pointer(T)` and
+  `StaticArray`, so it must NOT be flipped globally (GPT #3 / the refuted slice).
+
+Crucially, the memmove executes inside `Pointer(T)#move_from_impl` / `#bytesize`
+bodies — monomorphized per element T, but **NOT `Array(C)#` bodies**. So §2/§3's
+"Array-context provenance = the enclosing monomorphic `Array(C)#` body" does NOT
+reach the memmove byte-count: by the time control is in `Pointer(Vec3)#bytesize`,
+the Array identity is gone, and `Pointer(Vec3)#bytesize` is the SAME body whether
+the pointer is an `Array(Vec3)` `@buffer` or a standalone `Pointer(Vec3)`.
+
+**Consequence:** the durable `array_buffer_value` mark covers only the value
+Load/Store gep_dyn (push/`<<`/`[]`/unsafe_fetch). The mutation family has NO
+provenance. If `Array(Vec3)` stored inline (stride 12) while `bytesize` stayed
+type-global (8), the first `delete_at`/`shift`/`insert` would memmove the wrong byte
+count → heap corruption. A store/load-only flip is exactly the partial flip GPT
+forbids.
+
+**Decision: STOP before behavior; do the pre-authorized infrastructure commit for
+mutation-family coverage marking first** (see §8). This is the architectural
+non-uniformity the standalone slice hit earlier (struct buffer wants inline; the
+shared `Pointer(T)` byte-count path wants the existing type-global size).
+
 ## 0. Where we are (infrastructure already shipped, read-only)
 
 - `classify_container_elem_repr` / `leaf_storage_pod_struct?` — leaf-POD value
@@ -173,13 +206,50 @@ Static / neutrality checks:
 ## 7. Sequencing
 
 1. (this packet) plan + preflight guard reducer — review gate.
-2. Behavior commit: single gate runs annotation + verify (emits `[IVANNOT]`);
+2. **(NEXT, pre-authorized) Infrastructure: mutation-family coverage marking** — see
+   §8. Read-only first. Without it, behavior cannot be one bounded diff.
+3. Behavior commit: single gate runs annotation + verify (emits `[IVANNOT]`);
    `array_inline_stride` + the §3 family flip (store/load AND the MANDATORY
    memmove/delete_at/shift/insert/root_buffer family) + §4 heap-carrier load,
-   guarded by `array_buffer_value` && `inline_value_safe` (value sites) and by
-   monomorphic-`Array(C)#`-body + `inline_value_safe` (memmove/arith sites), with
-   fail-closed exclusion of any type reaching an uncovered path; all §5 reducers +
-   gate-OFF neutrality. One atomic commit (the whole Array storage family, not one
-   store/load site). A partial store/load-only flip is VULNERABLE and must not ship.
-3. Later (separate): stack fast path / SROA for the loaded carrier (the perf win),
+   guarded by `array_buffer_value` && `inline_value_safe` (value sites) and by the
+   §8 mutation-family marks (memmove/arith sites), with fail-closed exclusion of any
+   type reaching an uncovered path; all §5 reducers + gate-OFF neutrality. One
+   atomic commit (the whole Array storage family). A partial store/load-only flip is
+   VULNERABLE and must not ship.
+4. Later (separate): stack fast path / SROA for the loaded carrier (the perf win),
    and folding into the broader by-value struct ABI (C).
+
+## 8. NEXT infra commit — mutation-family coverage marking (read-only first)
+
+The value path already has a durable per-site mark (`array_buffer_value`). The
+mutation family (memmove / pointer-arith byte counts) has none, and its byte count
+is computed by the type-global `Pointer(T)#bytesize` — see PREFLIGHT FINDING. So the
+next infra commit must give the mutation family the SAME provenance discipline:
+
+- **Provenance to establish:** a `Pointer(C)` that is derived from an `Array(C)`
+  `@buffer` (via the static `@buffer` GEP, possibly through `+ index` pointer
+  arithmetic) and then flows into `move_from`/`copy_from`/`memmove`/`bytesize`. The
+  call site is inside the monomorphic `Array(C)#` body (delete_at/shift/insert/
+  concat/…), so the Array identity IS present AT THE CALL SITE — it is only lost once
+  control enters the shared `Pointer(T)#` body. Mark must therefore be attached at
+  the call site / the @buffer-derived pointer value, not inside `Pointer(T)#bytesize`.
+- **Read-only deliverable (matches the `array_buffer_value` pattern):** a new durable
+  mark (e.g. `array_buffer_derived` on the relevant MIR value/instruction, or a
+  per-call flag) set by an analysis that taints `@buffer`-derived `Pointer(C)`;
+  `verify` reports it; prove the mark lands 0 times outside an `Array(C)#` body, and
+  that it covers every delete_at/shift/insert/concat site for the safe-set types.
+- **Executable fail-closed (GPT #2):** refine the eligibility set to
+  `inline_value_safe && mutation_family_fully_covered(C)` — a separate behavior-
+  eligibility bit. If any mutation method used on `Array(C)` is NOT a marked,
+  monomorphic, covered site, C is excluded from inline storage. Text alone is
+  insufficient; this bit is the executable gate.
+- **Then** the behavior commit (step 3) can make BOTH the value sites (via
+  `array_buffer_value`) and the mutation sites (via the new mark) Array-context,
+  leaving `container_elem_storage_size_u64` / standalone `Pointer(T)` untouched.
+
+Open design question for review: whether the cleanest mark is (a) taint on the
+`Pointer(C)` value + an Array-context `bytesize`/`move_from` variant emitted only for
+tainted pointers, or (b) lowering the `@buffer`-derived arithmetic + memmove inline
+within the `Array(C)#` body so it never calls the shared `Pointer(T)#` path. (b) is
+more local but duplicates memmove logic; (a) needs taint to survive `+ index`. This
+choice should be settled before the infra commit.

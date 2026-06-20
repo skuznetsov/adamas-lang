@@ -159,7 +159,17 @@ buffer_ptr_arith uses an Array-context helper keyed on the monomorphic `Array(C)
 body (not type-global) + fail-closed exclusion; the single behavior gate emits
 `[IVANNOT]` so the guard's GATE re-point keeps mark evidence; copy-on-load reuses
 the existing `[i64 INT64_MAX header][payload]` carrier (raw+8), not malloc(payload).
-NEXT = behavior commit per the packet, owner-gated (NOT started).
+PREFLIGHT FINDING (measure-first, before any codegen): behavior is NOT one bounded
+diff. The mutation family (delete_at/shift/insert/concat) memmoves via
+`(@buffer+i).move_from` → `Pointer#bytesize(count)` = `count *
+container_elem_storage_size_u64(T)` — type-global (llvm_backend.cr:13774/13807),
+running inside shared `Pointer(T)#` bodies (NOT `Array(C)#`), so the durable
+`array_buffer_value` mark (value Load/Store only) does not reach it. Inline stride
+without mutation-family provenance = heap corruption on first delete_at/shift. This
+fires GPT's stop-rule. NEXT = pre-authorized infra commit (§8): mutation-family
+coverage marking (taint @buffer-derived Pointer(C) → mark memmove/arith sites,
+read-only first, prove 0 outside Array) + executable fail-closed eligibility bit;
+THEN the behavior flip. Behavior NOT started.
 
 **2026-06-20 — A′ DURABLE annotation (infrastructure-only, NO behavior) (`abi-struct-byvalue`).**
 Gate `ADAMAS_INLINE_VALUE_ANNOTATE`. Materializes the step-(c) safe-set IN MIR (not
