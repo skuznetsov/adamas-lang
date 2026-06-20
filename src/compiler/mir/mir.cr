@@ -215,6 +215,17 @@ module Adamas::MIR
     # path leaves it nil and no lowering site reads it.
     property container_elem_repr : ContainerElemRepr? = nil
 
+    # A' step (c→annotation): durable per-type "inline-value SAFE" flag. Set ONCE
+    # during HIR→MIR by the same {bv && !vd && !erased_flow} analysis the safe-set
+    # probe reports — true iff every observed access of this type as an Array
+    # element goes through the @buffer-base value path (no raw-Pointer value_derived
+    # access, and Array(T) never flows into a type-erased body). A later behavior
+    # slice will inline-store ONLY types with this flag AND only at the GEP sites
+    # marked array_buffer_value (see GetElementPtrDynamic). nil/false = not eligible;
+    # the gate that populates it is off by default, so the default path leaves it
+    # false and no lowering site reads it.
+    property inline_value_safe : Bool = false
+
     def initialize(@id, @kind, @name, @size, @alignment)
     end
 
@@ -1090,6 +1101,15 @@ module Adamas::MIR
     getter index : ValueId  # Dynamic index (ValueId instead of UInt32)
     getter element_type : TypeRef  # Type of elements being indexed
     getter element_byte_size : UInt64  # 0 = use default from element_type
+
+    # A' step (c→annotation): durable per-site provenance mark. Set ONCE during
+    # HIR→MIR by the safe-set analysis: true iff this gep_dyn is the ADDRESS of a
+    # Load/Store of its element type through the Array(C) @buffer-base chain
+    # (buffer_value). A later behavior slice inline-stores ONLY at marked sites,
+    # never re-deriving provenance by element type/name in LLVM (which is the
+    # refuted type-driven over-firing). false = not an Array @buffer value access;
+    # the gate that populates it is off by default and no lowering site reads it.
+    property array_buffer_value : Bool = false
 
     def initialize(id : ValueId, type : TypeRef, @base : ValueId, @index : ValueId, @element_type : TypeRef, @element_byte_size : UInt64 = 0_u64)
       super(id, type)

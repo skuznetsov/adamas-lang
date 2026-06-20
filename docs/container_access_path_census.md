@@ -219,3 +219,33 @@ wrongly exclude ≥1 type, and gate-neutrality (normalized IR diff = 0).
 erased path proven empirically absent for candidates; (d) negative reducer keeps
 0 `ivc_raw` (no codegen consumes the label on this base). Behavior slice (step 3)
 remains owner-gated.
+
+## A′ durable annotation — infrastructure-only, NO behavior (2026-06-20)
+
+Gate `ADAMAS_INLINE_VALUE_ANNOTATE`. Materializes the step-(c) safe-set IN the MIR
+instead of STDERR, so a later behavior slice CONSUMES persisted marks rather than
+re-deriving provenance by element type/name in LLVM (the refuted type-driven slice).
+
+**Same computation.** The step-(c) walk is refactored into a shared
+`compute_inline_value_safe_set(mark_provenance)`; the read-only probe calls it with
+`mark_provenance: false`, the annotation with `true`. One analysis, two consumers —
+no drift.
+
+**Two durable marks (both default false; gate OFF leaves them untouched):**
+- `MIR::Type#inline_value_safe` — set true for each safe-set type
+  (`bv && !vd && !erased_flow`). The per-type "inline-store eligible" flag.
+- `MIR::GetElementPtrDynamic#array_buffer_value` — set true on each `buffer_value`
+  gep_dyn (the Array(C) `@buffer`-base chain value access). The per-site provenance.
+
+**No behavior.** No lowering site reads either mark in this step. `verify_inline_value_annotation`
+re-reads the persisted marks in a separate pass for the regression.
+
+**Reducer (`regression_tests/inline_value_annotation_probe.sh`, reuses the step-(c)
+`.cr`):** `Vec2` SAFE-MARKED; `Vraw` not-marked (value_derived → not eligible — this
+doubles as the future behavior reducer's "unsafe types are not eligible" check);
+`array_buffer_value` marks land ONLY inside `Array(...)` bodies (inside=10,
+**outside=0** — the raw `Pointer(Vraw)` path is not marked as an Array buffer); the
+emitted IR carries no `ivc_raw` (no codegen reads the marks); and gate ON vs OFF
+LLVM IR is byte-identical (normalized). The next step (behavior) — inline-store ONLY
+at `array_buffer_value` sites whose element is `inline_value_safe` — remains
+owner-gated.

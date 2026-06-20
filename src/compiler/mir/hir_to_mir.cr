@@ -410,6 +410,15 @@ module Adamas
         if Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_INLINE_VALUE_SAFE_SET_PROBE")
           run_inline_value_safe_set_probe
         end
+        # A' annotation (infrastructure-only): persist the SAFE-SET as a durable
+        # Type#inline_value_safe flag + per-site GetElementPtrDynamic#array_buffer_value
+        # provenance, then verify the persisted marks. NO lowering site reads them
+        # yet ("same computation, durable annotation, no behavior"). Gate-OFF = no-op
+        # / byte-identical. See populate_inline_value_safe_set / verify_inline_value_annotation.
+        if Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_INLINE_VALUE_ANNOTATE")
+          populate_inline_value_safe_set
+          verify_inline_value_annotation
+        end
       end
 
       # Lower function bodies for a range of HIR functions (for parallel workers).
@@ -1375,8 +1384,15 @@ module Adamas
       # Under-inlining is acceptable; miscompiling is not. Distinguishing a
       # value_derived `Pointer(C)` that aliases an Array buffer (via to_unsafe) from
       # an unrelated one needs transitive provenance — deferred; v1 treats ANY
-      # value_derived access of C as disqualifying. STRICTLY read-only.
-      private def run_inline_value_safe_set_probe
+      # value_derived access of C as disqualifying.
+      #
+      # Shared by the read-only probe AND the durable annotation. Walks the
+      # fully-lowered MIR ONCE and returns the per-type signals + the derived
+      # safe_ids. With `mark_provenance: false` it is STRICTLY read-only; with
+      # `mark_provenance: true` it ALSO sets `GetElementPtrDynamic#array_buffer_value`
+      # on each buffer_value site (the only mutation — the durable per-site
+      # provenance a later behavior slice will consume instead of re-guessing in LLVM).
+      private def compute_inline_value_safe_set(mark_provenance : Bool)
         reg = @mir_module.type_registry
 
         ivc_ids = ::Set(TypeId).new
@@ -1495,6 +1511,9 @@ module Adamas
                   if value_access
                     if direct_chain
                       bv << celem.id
+                      # durable per-site provenance: this gep_dyn is an Array(C)
+                      # @buffer value access. Only mutation; read-only when off.
+                      gep.array_buffer_value = true if mark_provenance
                     else
                       vd << celem.id
                     end
@@ -1557,7 +1576,28 @@ module Adamas
           end
         end
 
-        # ── Report + the conservative v1 safe-set ──────────────────────────────
+        safe_ids = ::Set(TypeId).new
+        ivc_ids.each do |id|
+          safe_ids << id if bv.includes?(id) && !vd.includes?(id) && !erased_flow.includes?(id)
+        end
+
+        {ivc_ids: ivc_ids, ivc_names: ivc_names, bv: bv, vd: vd,
+         erased_flow: erased_flow, mega_union: mega_union, flows_into: flows_into,
+         safe_ids: safe_ids}
+      end
+
+      # ── A' STEP (c): READ-ONLY safe-set probe (reports the shared analysis) ─────
+      # Gate ADAMAS_INLINE_VALUE_SAFE_SET_PROBE. Does NOT mutate the MIR.
+      private def run_inline_value_safe_set_probe
+        d = compute_inline_value_safe_set(mark_provenance: false)
+        ivc_ids = d[:ivc_ids]
+        ivc_names = d[:ivc_names]
+        bv = d[:bv]
+        vd = d[:vd]
+        erased_flow = d[:erased_flow]
+        mega_union = d[:mega_union]
+        flows_into = d[:flows_into]
+
         # v1 SAFE-SET = bv && !vd && !erased_flow. The variant-based mega_union
         # signal is reported alongside but NOT used as a gate (it over-fires).
         safe = [] of String
@@ -1602,6 +1642,53 @@ module Adamas
           STDERR.puts "[SAFESET]   #{name} flows into:"
           flows_into[id].to_a.sort.each { |cn| STDERR.puts "[SAFESET]       #{cn}" }
         end
+        STDERR.flush
+      end
+
+      # ── A' ANNOTATION: DURABLE marks (infrastructure-only, NO behavior) ─────────
+      # Gate ADAMAS_INLINE_VALUE_ANNOTATE. Runs the SAME analysis with provenance
+      # marking ON and persists the per-type `inline_value_safe` flag onto the
+      # registry, plus `array_buffer_value` onto each buffer_value gep_dyn. NO
+      # lowering site reads either yet — this is the "same computation, durable
+      # annotation, no behavior" step. Gate OFF leaves both defaults (false) and is
+      # byte-identical. A later behavior slice inline-stores ONLY at sites marked
+      # `array_buffer_value` whose element type is `inline_value_safe`.
+      private def populate_inline_value_safe_set
+        reg = @mir_module.type_registry
+        d = compute_inline_value_safe_set(mark_provenance: true)
+        safe_ids = d[:safe_ids]
+        reg.types.each do |t|
+          t.inline_value_safe = true if safe_ids.includes?(t.id)
+        end
+      end
+
+      # Read back the PERSISTED annotation (a separate pass over the MIR, proving the
+      # marks survived population) and report it for the regression. Read-only.
+      private def verify_inline_value_annotation
+        reg = @mir_module.type_registry
+        ivc_types = reg.types.select { |t| classify_container_elem_repr(t).inline_value_copy? }
+        safe_types = ivc_types.select(&.inline_value_safe)
+        STDERR.puts "[IVANNOT] inline_value_safe types=#{safe_types.size} of #{ivc_types.size} InlineValueCopy candidates"
+        safe_types.map(&.name).sort.each { |n| STDERR.puts "[IVANNOT]   SAFE-MARKED #{n}" }
+        ivc_types.reject(&.inline_value_safe).map(&.name).sort.each { |n| STDERR.puts "[IVANNOT]   not-marked #{n}" }
+
+        inside = 0
+        outside = 0
+        @mir_module.functions.each do |func|
+          in_array = func.name.starts_with?("Array(")
+          func.blocks.each do |b|
+            b.instructions.each do |inst|
+              next unless inst.is_a?(MIR::GetElementPtrDynamic)
+              next unless inst.as(MIR::GetElementPtrDynamic).array_buffer_value
+              if in_array
+                inside += 1
+              else
+                outside += 1
+              end
+            end
+          end
+        end
+        STDERR.puts "[IVANNOT] array_buffer_value gep marks: inside Array(...) bodies=#{inside}  outside=#{outside} (outside MUST be 0)"
         STDERR.flush
       end
 

@@ -140,6 +140,23 @@ keep the two regimes distinct.
 
 ## Current Checkpoint
 
+**2026-06-20 — A′ DURABLE annotation (infrastructure-only, NO behavior) (`abi-struct-byvalue`).**
+Gate `ADAMAS_INLINE_VALUE_ANNOTATE`. Materializes the step-(c) safe-set IN MIR (not
+STDERR): `populate_inline_value_safe_set` runs the SAME `{bv && !vd && !erased_flow}`
+analysis (refactored into shared `compute_inline_value_safe_set(mark_provenance)`)
+and persists two durable marks — `MIR::Type#inline_value_safe` (per-type eligible
+flag) and `MIR::GetElementPtrDynamic#array_buffer_value` (per-site Array(C) @buffer
+value-access provenance). `verify_inline_value_annotation` reads them back in a
+separate pass. **NO lowering site reads either mark** ("same computation, durable
+annotation, no behavior" — guards against silently re-deriving provenance by
+type/name in LLVM = the refuted type-driven slice). Reducer
+`regression_tests/inline_value_annotation_probe.sh` (reuses the step-(c) .cr):
+Vec2 SAFE-MARKED, Vraw not-marked (value_derived → not eligible; doubles as the
+behavior reducer's "unsafe types not eligible"), array_buffer_value marks inside
+`Array(...)` bodies only (inside=10 outside=0), no `ivc_raw` in IR, gate ON vs OFF
+IR byte-identical. NEXT (still owner-gated, NOT this step): behavior slice that
+inline-stores ONLY at `array_buffer_value` sites whose elem is `inline_value_safe`.
+
 **2026-06-20 — Step (c): read-only per-type inline-value SAFE-SET shipped (`abi-struct-byvalue`).**
 `run_inline_value_safe_set_probe` (gate `ADAMAS_INLINE_VALUE_SAFE_SET_PROBE`).
 v1 SAFE-SET = `{ C | bv && !vd && !erased_flow }`. The erased gate is FLOW-based
