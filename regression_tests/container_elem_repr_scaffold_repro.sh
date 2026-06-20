@@ -1,20 +1,21 @@
 #!/usr/bin/env bash
-# Regression: the ContainerElemRepr classification SCAFFOLD (ABI storage slice).
+# Regression: the ContainerElemRepr classification PLUMBING (ABI storage slice).
 #
-# The scaffold adds a registry-backed three-way classifier
-#   PointerSlot | InlineAddress | InlineValueCopy
-# computed + logged under ADAMAS_INLINE_POD_CONTAINERS but NOT yet read by any
-# lowering site (container_elem_storage_size_u64 / emit_array_get / _set /
-# Pointer(T)#<< / unsafe_fetch are untouched). This reducer pins the
-# classification AND proves the gate is diagnostic-only:
+# The plumbing computes a registry-backed three-way classification
+#   ExistingLowering | InlineAddress | InlineValueCopy
+# ONCE during HIR->MIR and STORES it on Type#container_elem_repr; under
+# ADAMAS_INLINE_POD_CONTAINERS the stored label is logged. NO lowering site reads
+# it yet (container_elem_storage_size_u64 / emit_array_get / _set / Pointer(T)#<<
+# / unsafe_fetch are untouched). This reducer pins the classification AND proves
+# the gate is diagnostic-only:
 #
 #   gate ON  -> [ELEM_REPR] lines emitted; expected labels:
 #       Vec2 (8B leaf POD)            => InlineValueCopy
-#       Vec3 (12B leaf POD)           => InlineValueCopy   (>8 sizing path)
-#       Pair{Vec2,Vec2} (nested)      => PointerSlot        (carrier field)
-#       WithStr (String field)        => PointerSlot        (ref-owning)
+#       Vec3 (12B leaf POD)           => InlineValueCopy    (>8 sizing path)
+#       Pair{Vec2,Vec2} (nested)      => ExistingLowering   (carrier field)
+#       WithStr (String field)        => ExistingLowering   (ref-owning)
 #       Slice( / StaticArray( /
-#         Hash::Entry( families       => InlineAddress      (current behavior)
+#         Hash::Entry( families       => InlineAddress       (current behavior)
 #       any Union element             => NOT InlineValueCopy (fallback)
 #   gate OFF -> NO [ELEM_REPR] lines (byte-identical, diagnostic suppressed).
 set -euo pipefail
@@ -117,15 +118,15 @@ check_family_prefix() {
 
 check Vec2 InlineValueCopy
 check Vec3 InlineValueCopy
-check Pair PointerSlot
-check WithStr PointerSlot
+check Pair ExistingLowering
+check WithStr ExistingLowering
 
 check_family_prefix "Slice("
 check_family_prefix "StaticArray("
 check_family_prefix "Hash::Entry("
 
-# Union elements must be PointerSlot (the fallback) — neither InlineValueCopy nor
-# InlineAddress. The InlineAddress guard catches the family-name-on-union bug (a
+# Union elements must be ExistingLowering (the fallback) — neither InlineValueCopy
+# nor InlineAddress. The InlineAddress guard catches the family-name-on-union bug (a
 # union named `Slice(..) | Slice(UInt8)` must NOT inherit the Slice family repr).
 # Must have >=1 union line or the test is vacuous.
 union_lines="$(grep -E '^\[ELEM_REPR\] .* kind=Union ' "$LOG_ON" || true)"
@@ -134,9 +135,9 @@ if [[ -z "$union_lines" ]]; then
 else
   bad_union="$(grep -E '=> (InlineValueCopy|InlineAddress)' <<<"$union_lines" || true)"
   if [[ -n "$bad_union" ]]; then
-    echo "FAIL: union element(s) not classified PointerSlot:"; echo "$bad_union"; fail=1
+    echo "FAIL: union element(s) not classified ExistingLowering:"; echo "$bad_union"; fail=1
   else
-    echo "union elements: all PointerSlot (ok), count=$(grep -c '' <<<"$union_lines")"
+    echo "union elements: all ExistingLowering (ok), count=$(grep -c '' <<<"$union_lines")"
   fi
 fi
 

@@ -124,27 +124,33 @@ module Adamas::MIR
   #
   # Three-way classification of HOW a value of an element type lives inside a
   # container buffer (Array / Slice / Pointer(T)). Produced by a REGISTRY-BACKED
-  # classifier: a bare MIR::Type cannot answer it because the leaf-storage-POD
-  # test must resolve each Field.type_ref, and only the TypeRegistry holds that
-  # mapping. This enum is meant to become the SINGLE label the per-element
-  # lowering sites switch on, replacing today's scattered ad-hoc struct/family
-  # checks (container_elem_storage_size_u64, emit_array_get/_set, Pointer(T)#<<,
+  # classifier that ALSO needs the HIR lib-struct set (a bare MIR::Type cannot
+  # answer it: the leaf-storage-POD test must resolve each Field.type_ref through
+  # the TypeRegistry, and the lib-struct reject needs the HIR lib set — neither is
+  # reachable from LLVM). So the classification is computed ONCE during HIR→MIR
+  # and STORED on `Type#container_elem_repr` as a fixed ABI label; later phases
+  # (LLVM lowering) READ that label and never re-derive the HIR-only heuristic.
+  # This is the SINGLE label the per-element lowering sites will switch on,
+  # replacing today's scattered ad-hoc struct/family checks
+  # (container_elem_storage_size_u64, emit_array_get/_set, Pointer(T)#<<,
   # unsafe_fetch).
   #
-  # SCAFFOLD STEP (additive, behavior-neutral): the classifier is computed and
+  # PLUMBING STEP (additive, behavior-neutral): the label is computed + stored +
   # logged under the ADAMAS_INLINE_POD_CONTAINERS gate but is NOT yet read by any
-  # lowering site — none of the sites above are touched. A later behavior-changing
-  # commit wires InlineValueCopy (copy-on-store + escape-aware copy-on-load) into
-  # them.
+  # lowering site — none of the sites above are touched, and gate OFF stores
+  # nothing. A later gated behavior-changing commit wires InlineValueCopy
+  # (copy-on-store + escape-aware copy-on-load) into them as ONE atomic ABI slice.
   enum ContainerElemRepr
-    # Default / EXISTING lowering, left unchanged. For a plain user struct value
-    # or a class reference the slot holds an 8-byte pointer; for primitives / wide
-    # unions / primitive tuples the existing inline-by-value path applies. The
-    # classifier only POSITIVELY identifies the two inline-struct cases below, so
-    # everything else (nested-carrier structs like Pair{Vec2,Vec2}, ref-owning
-    # structs, unions, classes, primitives, tuples) falls here = "not the new
-    # value-copy struct ABI; keep current element lowering".
-    PointerSlot
+    # Default / EXISTING lowering, left unchanged — NOT "the slot is a pointer".
+    # The name is deliberately *not* `PointerSlot`: the existing element-sizing
+    # cascade (llvm_backend.cr container_elem_storage_size_u64_impl) stores
+    # primitives / wide unions / primitive tuples INLINE-BY-VALUE, while plain /
+    # nested-carrier / ref-owning structs and classes are pointer slots. So this
+    # arm means "the classifier did NOT positively pick one of the two inline
+    # cases below — keep whatever the existing per-element lowering already does".
+    # Lowering sites must treat it as a passthrough (do NOT branch on it as if it
+    # implied pointer storage), so primitive / union / tuple paths stay identical.
+    ExistingLowering
 
     # Inline storage where element ACCESS returns the slot ADDRESS (no load/copy)
     # by design — the already-implemented inline-container families (Slice( /
@@ -198,6 +204,16 @@ module Adamas::MIR
     getter element_type : Type?         # For arrays/pointers
     getter parent_type_id : TypeId?
     property is_closure : Bool = false
+
+    # Fixed container-element ABI label (ContainerElemRepr), set ONCE during
+    # HIR→MIR after the registry/sizes/fields have settled. Unlike `inline_value?`
+    # this CANNOT be a lazy self-memo: classifying it needs the TypeRegistry (to
+    # resolve field type_refs) and the HIR lib-struct set, neither of which a bare
+    # Type holds — so HIRToMIRLowering computes it and writes it here, and LLVM
+    # lowering only READS it (one classification, no lib-info loss, no drift). nil
+    # = not (yet) classified; the gate that populates it is off, so the default
+    # path leaves it nil and no lowering site reads it.
+    property container_elem_repr : ContainerElemRepr? = nil
 
     def initialize(@id, @kind, @name, @size, @alignment)
     end

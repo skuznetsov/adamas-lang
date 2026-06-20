@@ -298,6 +298,29 @@ Quad=true, WithString=false); dead-default reducer green; suite 131/131 + 36/36;
 (bench_struct_heap.cr) now classifies GC::Stats/Time::Instant/Pointer::Appender/DWARF::Register as
 pod=true.
 
+**2026-06-19 — ContainerElemRepr rename + stored-label PLUMBING SHIPPED** (`abi-struct-byvalue`; GPT
+GO behavior-neutral plumbing-before-codegen). Hardens the scaffold per GPT round-2 before any lowering
+change: (1) RENAME enum member `PointerSlot → ExistingLowering` — the fallback arm means "keep the
+existing per-element lowering", NOT "the slot is a pointer" (primitives/wide-unions/primitive-tuples
+are stored INLINE-by-value by the existing cascade `container_elem_storage_size_u64_impl`, so a literal
+`when PointerSlot` would corrupt them); lowering sites must treat it as a passthrough. (2) STORE the
+classification on `MIR::Type#container_elem_repr` (variant 1): classify ONCE during HIR→MIR via
+`populate_container_elem_repr` (registry + HIR lib-set in scope, run late after sizes settle) and have
+LLVM READ the stored label — LLVM has no `@hir_module.lib_structs`, and the lib reject is part of the
+leaf-gate, so re-deriving in LLVM would lose lib-info and drift (Vec3 stride). Renamed compute
+`container_elem_repr → classify_container_elem_repr`; census now READS the stored label. Still gated
+`ADAMAS_INLINE_POD_CONTAINERS` (default OFF), behavior-NEUTRAL. DoD MET: reducer green
+(Vec2/Vec3=InlineValueCopy, Pair/WithStr=ExistingLowering, families struct=InlineAddress, 410 unions
+all ExistingLowering, gate OFF no [ELEM_REPR]); gate-OFF `--emit llvm-ir` BYTE-IDENTICAL to `ae479948`
+(124 diff lines ALL non-det `stub_name` salts — prev-vs-prev same-binary AND cur-vs-prev both 124, 0
+non-stub, normalized 0). NEXT (behavior-changing, ONE atomic gated slice, requires s2b): sizing for
+InlineValueCopy + ALL store paths (emit_array_set, raw Array#<<:4453, Pointer(T)#<<:13837) + ALL load
+paths (emit_array_get:25121, unsafe_fetch:4499) together; copy-on-load v1 = heap-copy ALWAYS through
+the CURRENT carrier layout `[i64 header][payload]` via the strategy-aware allocator (llvm_backend.cr
+:17708-17721; ARC=refcount 1, GC=INT64_MAX sentinel, return base+8 — NOT malloc(payload), else
+rc_inc/rc_dec at ptr-8 corrupts); NO stack fast-path in v1. Reducers
+copy-on-store/load/double-store/realloc-stride (12B Vec3) + s2b green.
+
 **2026-06-19 — ContainerElemRepr classification SCAFFOLD SHIPPED** (`abi-struct-byvalue`; GPT GO
 scaffold-only). First implementation slice of the storage brief, behavior-NEUTRAL: adds MIR
 `ContainerElemRepr` enum (`PointerSlot | InlineAddress | InlineValueCopy`, mir.cr) + registry-backed

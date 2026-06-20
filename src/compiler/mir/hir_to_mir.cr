@@ -346,9 +346,13 @@ module Adamas
         if Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_STRUCT_BYVALUE_CENSUS")
           run_struct_byvalue_census
         end
-        # ABI rework storage-slice SCAFFOLD: diagnostic ContainerElemRepr census.
-        # Gate ON only logs the classification (no IR change); OFF byte-identical.
+        # ABI rework storage-slice PLUMBING: classify each element type ONCE here
+        # (registry + lib-set are available) and STORE the fixed ContainerElemRepr
+        # label on the MIR Type, so a later LLVM lowering phase READS one label
+        # instead of re-deriving the HIR-only heuristic. Gate ON also logs the
+        # stored label for the reducer; gate OFF stores nothing → byte-identical.
         if Adamas::LayoutContract.inline_pod_containers?
+          populate_container_elem_repr
           run_container_elem_repr_census
         end
         build_owned_return_set
@@ -862,16 +866,27 @@ module Adamas
       end
 
       # ── ABI rework storage slice: container-element repr classification ──────
+      # Classify ONCE here (registry + lib-set in scope) and STORE the label on
+      # the MIR Type so LLVM lowering reads one classification (variant 1 of the
+      # plumbing: no duplicated HIR heuristic in LLVM, no lib-info loss). Run late,
+      # after sizes/fields settle. Gate OFF stores nothing → byte-identical.
+      private def populate_container_elem_repr
+        @mir_module.type_registry.types.each do |type|
+          type.container_elem_repr = classify_container_elem_repr(type)
+        end
+      end
+
       # Registry-backed classifier (a bare MIR::Type cannot answer the leaf-storage
-      # POD test — Field.type_ref resolution needs the registry). Returns the
-      # SINGLE ContainerElemRepr label the future per-element lowering will switch
-      # on. SCAFFOLD: computed + logged only; no lowering site reads it yet.
-      private def container_elem_repr(type : Type) : ContainerElemRepr
+      # POD test — Field.type_ref resolution needs the registry, and the lib reject
+      # needs the HIR lib set). Returns the SINGLE ContainerElemRepr label the
+      # future per-element lowering will switch on; populate_container_elem_repr
+      # persists it on the Type.
+      private def classify_container_elem_repr(type : Type) : ContainerElemRepr
         # The inline cases apply ONLY to struct-kind types — mirror the existing
         # inline_container_struct_type? (llvm_backend.cr:2798) which gates on
         # kind.struct? BEFORE the name match. A union/other-kind type whose NAME
         # happens to start with a family prefix (e.g. `Slice(..) | Slice(UInt8)`)
-        # is NOT a family and must fall through to PointerSlot.
+        # is NOT a family and must fall through to ExistingLowering.
         if type.kind.struct?
           # Existing inline-container families keep their address-return behavior.
           return ContainerElemRepr::InlineAddress if Adamas::LayoutContract.inline_container_family?(type.name)
@@ -879,8 +894,8 @@ module Adamas
           return ContainerElemRepr::InlineValueCopy if leaf_storage_pod_struct?(type)
         end
         # Everything else (plain carrier struct, nested-carrier struct, ref-owning
-        # struct, union, class, primitive, tuple) -> existing lowering.
-        ContainerElemRepr::PointerSlot
+        # struct, union, class, primitive, tuple) -> existing per-element lowering.
+        ContainerElemRepr::ExistingLowering
       end
 
       # STORAGE-aware POD gate — STRICTER than struct_type_is_semantic_recursive_pod?:
@@ -916,14 +931,16 @@ module Adamas
           lib_set.any? { |ls| ls.ends_with?("::#{name}") || name.ends_with?("::#{ls.split("::").last}") }
       end
 
-      # SCAFFOLD diagnostic (gated ADAMAS_INLINE_POD_CONTAINERS): log the
-      # ContainerElemRepr label for every container-element-candidate type so the
-      # regression reducer can assert the classification WITHOUT any IR change.
+      # PLUMBING diagnostic (gated ADAMAS_INLINE_POD_CONTAINERS): log the STORED
+      # ContainerElemRepr label (set by populate_container_elem_repr) for every
+      # container-element-candidate type so the regression reducer can assert that
+      # the classification is persisted on the Type — WITHOUT any IR change.
       private def run_container_elem_repr_census
         @mir_module.type_registry.types.each do |type|
           next unless type.kind.struct? || type.kind.union? ||
                       Adamas::LayoutContract.inline_container_family?(type.name)
-          STDERR.puts "[ELEM_REPR] #{type.name} kind=#{type.kind} => #{container_elem_repr(type)}"
+          repr = type.container_elem_repr || ContainerElemRepr::ExistingLowering
+          STDERR.puts "[ELEM_REPR] #{type.name} kind=#{type.kind} => #{repr}"
         end
         STDERR.flush
       end

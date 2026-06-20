@@ -142,12 +142,12 @@ module Adamas
 
     # Env gate for the container-element inline value-copy ABI (ABI rework storage
     # slice). OFF (default) is byte-identical to the legacy container ABI. In the
-    # SCAFFOLD step ON ONLY enables the diagnostic ContainerElemRepr classification
-    # census (STDERR, no IR change) — no lowering site reads it yet; a later
-    # behavior-changing commit wires it into the element store/load. Independent of
-    # step4_inline_small_structs? only because v1 is leaf-storage-POD (no nested
-    # struct field whose repr would depend on the field-inline flip). Memoised — env
-    # is constant within a compile.
+    # PLUMBING step ON ONLY populates + logs the fixed ContainerElemRepr label on
+    # each MIR Type (STDERR census, no IR change) — no lowering site reads it yet;
+    # a later behavior-changing commit wires it into the element store/load as one
+    # atomic slice. Independent of step4_inline_small_structs? only because v1 is
+    # leaf-storage-POD (no nested struct field whose repr would depend on the
+    # field-inline flip). Memoised — env is constant within a compile.
     @@inline_pod_containers : Bool? = nil
 
     def self.inline_pod_containers? : Bool
