@@ -247,9 +247,78 @@ next infra commit must give the mutation family the SAME provenance discipline:
   `array_buffer_value`) and the mutation sites (via the new mark) Array-context,
   leaving `container_elem_storage_size_u64` / standalone `Pointer(T)` untouched.
 
-Open design question for review: whether the cleanest mark is (a) taint on the
-`Pointer(C)` value + an Array-context `bytesize`/`move_from` variant emitted only for
-tainted pointers, or (b) lowering the `@buffer`-derived arithmetic + memmove inline
-within the `Array(C)#` body so it never calls the shared `Pointer(T)#` path. (b) is
-more local but duplicates memmove logic; (a) needs taint to survive `+ index`. This
-choice should be settled before the infra commit.
+### 8.1 Design decision: (b′) call-site Array bulk-op marking/rewrite (GPT)
+
+Decision = **(b′)**, NOT inter-procedural taint (a). (a) would have to carry taint
+through `@buffer + index`, into `move_from`/`copy_from` args, then into the shared
+`Pointer(T)#bytesize` — requiring a hidden param / specialized clone, i.e. an
+inter-procedural taint ABI. That is broader than this slice and re-raises repr-flip
+risk. (b′): the Array identity and element type ARE present at the call site inside
+the monomorphic `Array(C)#` body, so we rewrite only the proven Array-buffer bulk ops
+there to a direct inline-stride op, never touching standalone `Pointer(T)`.
+
+**Verified MIR shape (grounds (b′)).** The bulk ops are already INLINED inside each
+monomorphic `Array(C)#` body as raw extern_calls — `@llvm.memmove.p0.p0.i64`,
+`@llvm.memcpy.*`, `@llvm.memset.p0.i64`, `@__adamas_malloc64` — not `Pointer#move_from`
+Calls. The family bodies exist as named monomorphic functions
+(`Array(Vec3)#delete_at$Int32`, `#concat$Array(Vec3)`, `#insert$…`, `#shift_when_not_empty`,
+`#shift_buffer_by$Int32`, `#resize_to_capacity$Int32`, `#increase_capacity`,
+`#root_buffer`, `#to_unsafe`, `#unshift$Vec3`, `#insert_elements_at$…`, …), so
+"is this op inside an `Array(C)#` body" is answerable by function name. (b′) =
+rewrite the byte-count/stride of those extern_calls within Array(C)# bodies.
+
+### 8.2 Full bulk-op surface (GPT #1 — bigger than move_from/copy_from)
+
+`src/stdlib/array.cr` routes element bytes through MANY bulk ops, all sized by the
+type-global element size today:
+- **move_from / move_to** (overlap memmove): :463, :528, :534, :819, :854, :1029,
+  :1071, :2183 — delete_at / shift / insert / unshift / rebalance.
+- **copy_from** (memcpy): :332, :333, :390, :394, :398, :523, :527, :535, :665, :884,
+  :1081, :1087, :1243, :1470, :1505, :1506, :2073, :2114 — concat / replace / dup /
+  rotate / shift-buffer.
+- **clear** (`Pointer#clear` = `memset(self,0,bytesize(count))`, pointer.cr:562/570):
+  :459, :464, :529, :687, :821, :856, :1209, :1342, :1380, :1467, :1550, :1588, :1875,
+  :1876, :1991, :2084, :2117, :2184 — ALSO type-global, must be covered.
+- **alloc** (`Pointer(T).malloc(capacity)` / `malloc(size, value)`): :122, :156, :2166,
+  :2186 — buffer allocation stride.
+- **elementwise** (`@buffer[i] = …`, `<=>`): :249, :1776, :1785 — the value `[]`/`[]=`
+  path, already covered by `array_buffer_value`.
+
+### 8.3 Heterogeneous / same-class guard (GPT #2 — verified)
+
+`Pointer#copy_from_impl` / `move_from_impl` (pointer.cr:258-287) branch on
+`self.class == source.class`:
+- **same class** → `Intrinsics.memcpy/memmove(self, src, bytesize(count))` — the
+  type-global byte count = the hazard (b′) rewrites.
+- **different class** → elementwise `self[i] = source[i]` — the value `[]`/`[]=` path
+  (per-element), already the `array_buffer_value` path. NOT a raw memcpy.
+
+So (b′) is valid ONLY where the call site proves SAME element representation
+(`Array(C)` ↔ `Array(C)`). For `Array(T|U).build` / union-widening concat, the path is
+heterogeneous (elementwise) — leave it to the value path OR fail-closed. Concrete
+leaf-POD `C` (the safe-set) is monomorphic, so `Array(C)` bulk ops are same-class; the
+census must PROVE this per type, not assume it.
+
+### 8.4 Read-only census categories + executable fail-closed (GPT #3, #4)
+
+A read-only `run_array_bulk_op_census` (new gate) walks each monomorphic `Array(C)#`
+body (C ∈ InlineValueCopy candidates) and classifies its bulk extern_calls:
+- `array_bulk_move_copy_same_elem` — memmove/memcpy whose stride is the element
+  storage size on the `@buffer` (covered: direct-byte rewrite is safe).
+- `array_bulk_clear` — memset on `@buffer` (covered).
+- `array_bulk_alloc` — `@buffer` malloc by capacity (covered).
+- `array_bulk_uncovered` / `heterogeneous_copy` — anything else (an elementwise/union
+  path, an op whose stride can't be tied to the element size, or a bulk op the rewrite
+  doesn't handle) → **excludes C**.
+
+Executable eligibility bit: `behavior_eligible(C) = inline_value_safe(C) &&
+no array_bulk_uncovered/heterogeneous op exists in any Array(C)# body it uses`. If any
+uncovered/heterogeneous bulk path exists for `Array(C)`, C is NOT inline-stored. This
+bit (not prose) gates the eventual behavior.
+
+### 8.5 Reducer (before behavior)
+
+`delete_at` / `shift` / `insert` / `clear` / `concat` on `Array(Vec3)` (12-byte, so
+stride ≠ pointer) are all classified covered for Vec3; PLUS a negative: a union /
+heterogeneous element Array (or `Array(T|U)`) shows `heterogeneous_copy` →
+`behavior_eligible=false`. Read-only / gate-OFF byte-identical.
