@@ -101,3 +101,65 @@ struct write (DWARF), 2 are erased Array(T) param.
 **Net:** A′ is tractable as a bounded slice via function-context gating; it is
 NOT the refuted type-driven slice. The remaining decision (ship A′ now vs go
 straight to C) is the owner's.
+
+## A′ provenance marker — read-only proof (step 2)
+
+Gate `ADAMAS_ARRAY_BUFFER_PROVENANCE_PROBE=1`, `run_array_buffer_provenance_probe`
+in `hir_to_mir.cr`. Refines the census's "enclosing-function-context" idea into a
+precise **buffer-base provenance** rule that does NOT depend on the function name.
+
+Mark rule (the `buffer_value` category): a candidate `GetElementPtrDynamic` G with
+`element_type C` is in the A′ mark set iff
+
+1. C is an InlineValueCopy candidate, AND
+2. `G.base` is defined by a `Load` whose `.ptr` is a static `GetElementPtr` of the
+   `@buffer` ivar on a receiver whose static type is `Array(C)` (string-parsed arg
+   AND `element_type` id both checked), AND
+3. G is the ADDRESS of a `Load`/`Store` of C (the value-access discriminator).
+
+Four categories separate the mark set from the look-alikes:
+
+```
+buffer_value     — (P) direct @buffer chain AND (V) value access  → THE A' MARK SET
+buffer_ptr_arith — (P) but NOT (V): root_buffer / shift_buffer_by / delete_at
+                   memmove pointer arithmetic (feeds ret / compaction; repr-agnostic)
+value_derived    — (V) but NOT (P): raw Pointer(C) indexed access with no @buffer
+                   chain (e.g. DWARF::LineNumbers, a bare Pointer(Vec2) in main)
+neither          — resize_to_capacity (realloc result stored as ptr), check_needs_resize
+```
+
+Results on `regression_tests/array_buffer_provenance_marker_probe.cr` (Array(Vec2)
+POSITIVE inline-buffer access + a NEGATIVE raw `Pointer(Vec2)[idx]` access in main):
+
+```
+buffer_value=8 buffer_ptr_arith=7 value_derived=3 neither=7
+A' MARK SET (buffer_value) sites OUTSIDE an Array(...) body = 0   <- THE invariant
+broader value-access raw GEPs OUTSIDE an Array(...) body         = 3 (NOT marked)
+
+buffer_value:  Array(Vec2)#push, Array(Vec2)#unsafe_fetch, Array(Range)#push/
+               delete_at/shift_when_not_empty, Array(Float::…UInt128)#push/
+               unsafe_fetch, Array(Float::…Power)#unsafe_fetch   — ALL Array(C)# bodies
+value_derived: Crystal::DWARF::LineNumbers#read_lnct_format, __adamas_main x2
+               (the raw Pointer(Vec2) store+load — correctly NOT marked)
+```
+
+**Proven (the GPT step-2 requirement):** the A′ mark set lands ONLY inside
+`Array(C)#` bodies — `buffer_value_outside_array = 0` even with a deliberate raw
+`Pointer(Vec2)` access present. The `IO#gets_peek`-class `Pointer(C)#value` blocker
+that sank the refuted type-driven slice is structurally excluded (no `Array(C)`
+@buffer chain → `value_derived`/`neither`, never `buffer_value`).
+
+**Read-only / gate-neutral:** the probe only writes STDERR; gate ON vs OFF LLVM IR
+is byte-identical once the pre-existing non-deterministic `@.stub_name_<hash>`
+symbols are normalized (normalized diff = 0; raw diff = the stub-name noise that
+also varies between two OFF compiles). Asserted by
+`regression_tests/array_buffer_provenance_marker_probe.sh`.
+
+**Still open before behavior (step 3):** (a) restore the leaf-gate narrowing so
+raw-pointer-field structs are NOT leaf-storage-POD; (b) NO global type-driven
+`Pointer(T)#<<`; (c) close the erased-`Indexable(T)#fetch`/`Enumerable(T)`
+reconciliation OR ship a per-type safe-set (only types with no erased access in
+the lowered module) — note an erased generic body's buffer GEP is `value_derived`
+(self typed `Indexable(T)`, not `Array(C)`), so it is NOT in `buffer_value` and
+would read the inline-stored buffer through the pointer-slot path unless
+reconciled; (d) the negative reducer above must keep producing 0 `ivc_raw`.

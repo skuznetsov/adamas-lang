@@ -140,6 +140,39 @@ keep the two regimes distinct.
 
 ## Current Checkpoint
 
+**2026-06-20 — A′ provenance marker: read-only proof shipped (`abi-struct-byvalue`).**
+Step 2 of the A′ plan. `run_array_buffer_provenance_probe` (gate
+`ADAMAS_ARRAY_BUFFER_PROVENANCE_PROBE`, default OFF, STDERR-only). Refines the
+census "function-context" idea into a precise **buffer-base provenance** rule that
+does NOT use the function name: a candidate `GetElementPtrDynamic` G (elem C, an
+InlineValueCopy candidate) is in the A′ mark set (`buffer_value`) iff (1) `G.base`
+= `Load(static GEP @buffer of a receiver typed `Array(C)`)` AND (2) G is the
+address of a `Load`/`Store` of C. Four categories split the mark set from
+look-alikes: `buffer_value` (mark) / `buffer_ptr_arith` (root_buffer / memmove
+ptr arithmetic) / `value_derived` (raw `Pointer(C)[i]`, no @buffer chain) /
+`neither` (resize realloc-ptr). **PROVEN:** on a probe mixing Array(Vec2) inline
+access + a deliberate raw `Pointer(Vec2)[idx]` access, `buffer_value` lands ONLY
+in `Array(C)#` bodies — **0 marks outside an Array body** — and the raw Pointer
+access is `value_derived`, NOT marked. The `IO#gets_peek` `Pointer(C)#value`
+blocker that sank the refuted type-driven slice is structurally excluded. Gate
+ON vs OFF LLVM IR byte-identical (normalized diff = 0). Regression:
+`regression_tests/array_buffer_provenance_marker_probe.{cr,sh}` (asserts the 0-
+outside invariant + positive Array(Vec2) marks + negative Pointer(Vec2) not
+marked + gate neutrality). Doc section: `docs/container_access_path_census.md`
+"A′ provenance marker — read-only proof". STILL OPEN before step-3 behavior:
+the 4 hard conditions below (leaf-gate narrowing; no global type-driven
+`Pointer(T)#<<`; erased `Indexable(T)#fetch`/`Enumerable(T)` reconciliation OR
+per-type safe-set — note an erased generic body's buffer GEP is `value_derived`
+(self typed `Indexable(T)`, not `Array(C)`) so it would read inline-stored bytes
+via the pointer-slot path unless reconciled; negative reducer stays 0 ivc_raw).
+Step-3 order (owner+GPT, NOT a green light yet — behavior must CONSUME exactly
+this provenance mark, not re-guess in LLVM by type/name): **(a) FIRST narrow the
+leaf gate** — `leaf_storage_pod_struct?` still admits `k.pointer?`; raw-pointer-
+field structs must go to `ExistingLowering`, with a reducer (Vec2/Vec3 →
+InlineValueCopy, struct-with-raw-pointer-field → NOT InlineValueCopy). **(c) THEN
+erased reconciliation / per-type safe-set** (else inline-store in `Array(C)#push`
++ pointer-slot read via erased `Indexable(T)#fetch` = repr mismatch).
+
 **2026-06-20 — Container access-path census shipped (`abi-struct-byvalue`).**
 Read-only diagnostic `run_container_access_census` (gate
 `ADAMAS_CONTAINER_ACCESS_CENSUS`, default OFF; gate-OFF IR byte-identical after

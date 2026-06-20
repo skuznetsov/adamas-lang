@@ -400,6 +400,11 @@ module Adamas
         if Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_CONTAINER_ACCESS_CENSUS")
           run_container_access_census
         end
+        # A' step 2: read-only Array-buffer provenance probe (proves 0 marks
+        # outside an Array buffer before any behavior change). Gate-OFF = no-op.
+        if Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_ARRAY_BUFFER_PROVENANCE_PROBE")
+          run_array_buffer_provenance_probe
+        end
       end
 
       # Lower function bodies for a range of HIR functions (for parallel workers).
@@ -1178,6 +1183,150 @@ module Adamas
         rest = name[(h + 1)..]
         d = rest.index('$')
         d ? rest[0...d] : rest
+      end
+
+      # ── A' STEP 2: READ-ONLY Array-buffer provenance probe ─────────────────────
+      # Gate ADAMAS_ARRAY_BUFFER_PROVENANCE_PROBE. Identifies which raw
+      # GetElementPtrDynamic sites over an InlineValueCopy-candidate element actually
+      # address an Array element buffer (Array.@buffer), via BUFFER-BASE PROVENANCE —
+      # NOT by element type (refuted) and NOT by enclosing-function name alone
+      # (too fragile). The mark rule, anchored on the verified MIR shape of
+      # Array(C)#push / #unsafe_fetch:
+      #
+      #   %b = gep   self, <@buffer off>     (static GEP of the @buffer ivar)
+      #   %p = load  %b                      (the Pointer(C) buffer)
+      #   %g = gep_dyn %p, %i  (elem = C)    <- MARK iff:
+      #
+      #     (1) C = gep_dyn.element_type is an InlineValueCopy candidate, AND
+      #     (2) gep_dyn.base is defined by a Load whose ptr is a static
+      #         GetElementPtr G, AND
+      #     (3) the STATIC type of G.base resolves to an `Array(...)` container
+      #         whose element type == C (string-parsed AND element_type-checked).
+      #
+      # A bare `Pointer(C)#value` (e.g. the IO#gets_peek `switch i32` blocker) has
+      # NO such Array-buffer chain, so it is NOT marked. The probe PROVES this: it
+      # reports every marked site (must all be inside an `Array(...)#` body) and
+      # every UNMARKED candidate gep_dyn (must include the Pointer#value sites), so
+      # we can confirm 0 marks land outside an Array buffer before any behavior
+      # change. STRICTLY read-only — no mutation, no ivc_raw/memcpy.
+      private def run_array_buffer_provenance_probe
+        reg = @mir_module.type_registry
+
+        ivc_ids = ::Set(TypeId).new
+        reg.types.each do |t|
+          ivc_ids << t.id if classify_container_elem_repr(t).inline_value_copy?
+        end
+
+        # Site categories (per candidate gep_dyn G with element_type C):
+        #   buffer_value      — base is the direct Load(static GEP @buffer of self)
+        #                       chain AND G is the ADDRESS of a Load/Store of C.
+        #                       The clean element-value buffer access (push/fetch).
+        #   buffer_ptr_arith  — direct @buffer chain but G is NOT a Load/Store-of-C
+        #                       address (e.g. root_buffer's @buffer-offset, feeds ret).
+        #   value_derived     — G IS a Load/Store-of-C address but base is NOT the
+        #                       direct chain (delete_at/shift via a derived buffer
+        #                       ptr) → needs transitive provenance to cover.
+        #   neither           — pointer juggling / non-Array (resize value, DWARF).
+        cat = Hash(String, Int32).new(0)
+        # buffer_value_outside_array is THE A' hazard: a site the A' rule WOULD mark
+        # (direct @buffer chain + value-access) that is NOT inside an Array(...) body.
+        # It MUST be 0. value_access_outside_array is the broader set (any value-access
+        # raw GEP over a candidate outside Array), kept only to surface non-Array
+        # struct GEP sites (e.g. DWARF) that the A' rule correctly does NOT mark.
+        buffer_value_outside_array = 0
+        value_access_outside_array = 0
+        sites = Hash(String, Hash(String, Int32)).new   # category -> {fn -> n}
+        bump = ->(c : String, fn : String) {
+          cat[c] += 1
+          (sites[c] ||= Hash(String, Int32).new(0))[fn] += 1
+        }
+
+        @mir_module.functions.each do |func|
+          in_array_body = func.name.starts_with?("Array(")
+          # value-id -> static type (params by index, then instruction results).
+          value_type = Hash(ValueId, TypeRef).new
+          func.params.each_with_index { |p, i| value_type[i.to_u32] = p.type }
+          def_map = Hash(ValueId, MIR::Value).new
+          # Reverse use maps: addr ValueId -> accessed element type (for the
+          # value-access discriminator). Load reads at .ptr (type=load.type);
+          # Store writes at .ptr the value whose type we resolve via value_type.
+          load_addr_type = Hash(ValueId, TypeRef).new
+          store_addr_type = Hash(ValueId, TypeRef).new
+          func.blocks.each do |b|
+            b.instructions.each do |inst|
+              def_map[inst.id] = inst
+              value_type[inst.id] = inst.type
+            end
+          end
+          func.blocks.each do |b|
+            b.instructions.each do |inst|
+              case inst
+              when MIR::Load  then load_addr_type[inst.ptr] = inst.type
+              when MIR::Store
+                vt = value_type[inst.value]?
+                store_addr_type[inst.ptr] = vt if vt
+              end
+            end
+          end
+
+          func.blocks.each do |b|
+            b.instructions.each do |inst|
+              next unless inst.is_a?(MIR::GetElementPtrDynamic)
+              gep = inst.as(MIR::GetElementPtrDynamic)
+              celem = gep.element_type
+              next unless ivc_ids.includes?(celem.id)
+
+              # (P) direct buffer-base chain: base = Load(static GEP @buffer of an
+              #     Array(C) self) with the Array element == C.
+              direct_chain = false
+              base_def = def_map[gep.base]?
+              if base_def.is_a?(MIR::Load)
+                ptr_def = def_map[base_def.as(MIR::Load).ptr]?
+                if ptr_def.is_a?(MIR::GetElementPtr)
+                  recv_ref = value_type[ptr_def.as(MIR::GetElementPtr).base]?
+                  if recv_ref && (recv_ty = reg.get(recv_ref)) && recv_ty.name.starts_with?("Array(")
+                    arg = census_extract_generic_arg(recv_ty.name, "Array")
+                    celem_name = reg.get(celem).try(&.name)
+                    direct_chain = !!((arg && celem_name && arg == celem_name) ||
+                                      (recv_ty.element_type.try(&.id) == celem.id))
+                  end
+                end
+              end
+
+              # (V) value-access discriminator: G is the ADDRESS of a Load/Store of C.
+              la = load_addr_type[gep.id]?
+              sa = store_addr_type[gep.id]?
+              value_access = (la && la.id == celem.id) || (sa && sa.id == celem.id)
+
+              c =
+                if direct_chain && value_access
+                  "buffer_value"
+                elsif direct_chain
+                  "buffer_ptr_arith"
+                elsif value_access
+                  "value_derived"
+                else
+                  "neither"
+                end
+              bump.call(c, func.name)
+              value_access_outside_array += 1 if value_access && !in_array_body
+              buffer_value_outside_array += 1 if c == "buffer_value" && !in_array_body
+            end
+          end
+        end
+
+        STDERR.puts "[ABUF_PROBE] candidate gep_dyn by category: " \
+                    "buffer_value=#{cat["buffer_value"]} buffer_ptr_arith=#{cat["buffer_ptr_arith"]} " \
+                    "value_derived=#{cat["value_derived"]} neither=#{cat["neither"]}"
+        STDERR.puts "[ABUF_PROBE] A' MARK SET (buffer_value) sites OUTSIDE an Array(...) body = #{buffer_value_outside_array} (THE A' hazard — MUST be 0)"
+        STDERR.puts "[ABUF_PROBE] broader value-access raw GEPs OUTSIDE an Array(...) body = #{value_access_outside_array} (non-Array struct sites the A' rule does NOT mark)"
+        ["buffer_value", "value_derived", "buffer_ptr_arith", "neither"].each do |c|
+          h = sites[c]?
+          next unless h
+          STDERR.puts "[ABUF_PROBE] #{c}:"
+          h.keys.sort.each { |fn| STDERR.puts "[ABUF_PROBE]   #{h[fn]}x  #{fn}" }
+        end
+        STDERR.flush
       end
 
       # Refine a ctor site's coarse flow bucket the same way the per-site census
