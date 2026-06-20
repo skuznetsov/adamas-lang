@@ -40,9 +40,11 @@ if [[ ! -f "$SRC" ]]; then
   exit 2
 fi
 
-# Compile under the gate (annotation today; behavior later).
+# Compile under the gate (annotation or behavior). ADAMAS_IVC_VERIFY forces the
+# [IVANNOT]/[ABIFACTS] evidence even under the behavior gate (where verify is
+# otherwise opt-in), so the not-marked/not-eligible assertions work for both gates.
 set +e
-env "$GATE=1" "$COMPILER" "$SRC" -o "$TMP_DIR/bin" >/dev/null 2>"$ANN_ERR"
+env "$GATE=1" ADAMAS_IVC_VERIFY=1 "$COMPILER" "$SRC" -o "$TMP_DIR/bin" >/dev/null 2>"$ANN_ERR"
 status=$?
 set -e
 if [[ $status -ne 0 ]]; then
@@ -81,10 +83,13 @@ if [[ "${outside:-x}" != "0" ]]; then
   fail=1
 fi
 
-# (4) no ivc_raw in the emitted IR (no inline-value codegen on this path).
-env "$GATE=1" "$COMPILER" --emit llvm-ir "$SRC" -o "$TMP_DIR/ir" >/dev/null 2>/dev/null || true
-if grep -q "ivc_raw" "$TMP_DIR/ir.ll"; then
-  echo "FAIL: ivc_raw present — inline-value codegen fired on the non-Array Pointer path"
+# (4) Disc must NOT be behavior-eligible (so no inline ABI on its non-Array Pointer
+# path). Under the behavior gate `ivc_raw` legitimately appears for OTHER eligible
+# stdlib types, so a global grep is wrong — the gate-agnostic invariant is that Disc
+# itself is never eligible (it has no Array(Disc) buffer_value access). Combined with
+# out=42 (1) and not-marked (2), this proves the path stays boxed.
+if grep -qE "^\[ABIFACTS\]   ELIGIBLE Disc " "$ANN_ERR"; then
+  echo "FAIL: Disc is behavior-ELIGIBLE but must stay boxed (non-Array Pointer path)"
   fail=1
 fi
 
@@ -93,5 +98,5 @@ if [[ $fail -ne 0 ]]; then
   exit 1
 fi
 
-echo "ok: non-Array Pointer(Disc) path stays boxed — out=42, Disc not-marked, array_buffer_value outside=0, no ivc_raw"
+echo "ok: non-Array Pointer(Disc) path stays boxed — out=42, Disc not-marked/not-eligible, array_buffer_value outside=0"
 exit 0

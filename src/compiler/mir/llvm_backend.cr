@@ -2131,6 +2131,17 @@ module Adamas::MIR
     # (not gep+0 alias) so that subsequent writes to the same buffer slot do not corrupt the
     # loaded value (the insertion-sort aliasing bug: v = unsafe_fetch(j) then unsafe_put(j,...)).
     @inline_tuple_gep_aliases : ::Set(ValueId) = ::Set(ValueId).new
+    # A' BEHAVIOR (two distinct concepts, GPT caveat):
+    #   strides     — EVERY @buffer-derived gep of an eligible C (value AND pointer-
+    #                 arith) → emit the byte GEP at C.size. Keyed by the durable
+    #                 GetElementPtrDynamic#array_buffer_element_stride fact.
+    #   value_slots — ONLY array_buffer_value geps (value Load/Store address) →
+    #                 memcpy-store / heap-carrier-load. Pointer-arith geps feeding
+    #                 move/copy/clear must NOT get heap-copy-load semantics, so they
+    #                 are deliberately excluded from this set.
+    @inline_value_gep_strides : Hash(ValueId, UInt64) = Hash(ValueId, UInt64).new
+    @inline_value_gep_value_slots : ::Set(ValueId) = ::Set(ValueId).new
+    @inline_value_array_storage : Bool = false
     # When a ptrtoint from a heap pointer to a small int (<64 bits) would truncate
     # the address, we skip emitting the ptrtoint and alias the result to the original
     # ptr. Downstream zext/inttoptr chain is also skipped. Maps ValueId → "ptr %name".
@@ -2550,6 +2561,7 @@ module Adamas::MIR
       @union_variant_entries = [] of UnionVariantInfoEntry
       @string_table = IO::Memory.new
       @string_offsets = {} of String => UInt32
+      @inline_value_array_storage = bootstrap_env_enabled?("ADAMAS_INLINE_VALUE_ARRAY_STORAGE", "ADAMAS_INLINE_VALUE_ARRAY_STORAGE")
       @reuse_function_block_buffer = bootstrap_env_enabled?("ADAMAS_LLVM_REUSE_BLOCK_BUFFER", "ADAMAS_LLVM_REUSE_BLOCK_BUFFER")
       @function_block_output = IO::Memory.new
       @debug_emit_anchors = bootstrap_env_enabled?("ADAMAS_DEBUG_EMIT", "ADAMAS_DEBUG_EMIT")
@@ -2723,6 +2735,14 @@ module Adamas::MIR
     @[AlwaysInline]
     private def pointer_word_bytes_u64 : UInt64
       pointer_sized_int_llvm_type == "i32" ? 4_u64 : 8_u64
+    end
+
+    # A' BEHAVIOR: true iff this element type is the inline-Array-storage target —
+    # the gate is on AND C is inline_array_storage_eligible (the composed fact). Pure
+    # fact read; never re-derives provenance. Used at the gep / array_get / array_set
+    # sites to switch the stride and the value/store/load ABI to the inline payload.
+    private def inline_value_array_elem?(elem_type : Type?) : Bool
+      @inline_value_array_storage && !elem_type.nil? && elem_type.inline_array_storage_eligible && elem_type.size > 0
     end
 
     private def container_elem_storage_size_u64(elem_type : Type?) : UInt64
@@ -13657,6 +13677,11 @@ module Adamas::MIR
       @current_func_blocks.clear
       @emitted_value_types.clear
       @emitted_value_names.clear
+      # A' BEHAVIOR: these are keyed by per-function ValueId, so they MUST be cleared
+      # per function or a gep id from an Array(C)# body leaks into another function
+      # (e.g. IO#gets_peek's %r7 → wrong carrier-load → `switch i32` on a ptr).
+      @inline_value_gep_strides.clear
+      @inline_value_gep_value_slots.clear
 
       # Populate block lookup for phi predecessor load emission
       func.blocks.each { |block| @current_func_blocks[block.id] = block }
@@ -17786,6 +17811,27 @@ module Adamas::MIR
     private def emit_load(inst : Load, name : String)
       type = @type_mapper.llvm_type(inst.type)
       ptr = value_ref(inst.ptr)
+
+      # A' BEHAVIOR: loading a C element from an inline Array(C) @buffer VALUE slot.
+      # Return a heap-carrier COPY in the V2 sentinel layout [i64 INT64_MAX][payload],
+      # handing back raw+8 — escape-safe and a genuine $Dnew-shaped struct pointer
+      # (rc_inc/rc_dec at ptr-8, GC scan). GPT #3: NOT malloc(payload), NOT the
+      # payload-only inline-tuple helper. Keyed on the value-slot set ONLY (pointer-
+      # arith geps are not value slots → never heap-copied here).
+      if @inline_value_gep_value_slots.includes?(inst.ptr)
+        if stride = @inline_value_gep_strides[inst.ptr]?
+          raw = "#{name}.ivc_raw"
+          total = stride + 8
+          emit "#{raw} = call ptr @__adamas_malloc64(i64 #{total}) ; ivc_raw load carrier"
+          emit "store i64 9223372036854775807, ptr #{raw}, align 8"
+          emit "#{name} = getelementptr i8, ptr #{raw}, i64 8"
+          emit "call void @llvm.memcpy.p0.p0.i64(ptr #{name}, ptr #{ptr}, i64 #{stride}, i1 false)"
+          @value_types[inst.id] = inst.type
+          record_emitted_type(name, "ptr")
+          return
+        end
+      end
+
       ptr_type_ref = @value_types[inst.ptr]?
       if ptr_type_ref && union_ptr_like?(ptr_type_ref)
         union_llvm = @type_mapper.llvm_type(ptr_type_ref)
@@ -17924,6 +17970,28 @@ module Adamas::MIR
     private def emit_store(inst : Store)
       ptr = value_ref(inst.ptr)
       val = value_ref(inst.value)
+
+      # A' BEHAVIOR: storing into an inline Array(C) @buffer VALUE slot — memcpy the C
+      # payload into the slot instead of `store ptr %value`. Keyed on the value-slot
+      # set (NOT the stride map: pointer-arith geps are not value slots). GPT #2: do
+      # not assume the value is a ptr; spill a non-ptr SSA value to an alloca first.
+      if (stride = @inline_value_gep_value_slots.includes?(inst.ptr) ? @inline_value_gep_strides[inst.ptr]? : nil)
+        if val == "null"
+          emit "call void @llvm.memset.p0.i64(ptr #{ptr}, i8 0, i64 #{stride}, i1 false) ; ivc_raw store-zero"
+        else
+          src_type = @emitted_value_types[val]? || @type_mapper.llvm_type(@value_types[inst.value]? || TypeRef::POINTER)
+          source_ptr = val
+          if src_type != "ptr"
+            tmp = "%r#{inst.id}.ivc_store_src"
+            emit "#{tmp} = alloca #{src_type}, align 8"
+            emit "store #{src_type} #{normalize_union_value(val, src_type)}, ptr #{tmp}"
+            source_ptr = tmp
+          end
+          emit "call void @llvm.memcpy.p0.p0.i64(ptr #{ptr}, ptr #{source_ptr}, i64 #{stride}, i1 false) ; ivc_raw store"
+        end
+        return
+      end
+
       # Look up the type of the value being stored
       val_type = @value_types[inst.value]? || TypeRef::POINTER
       val_type_str = @type_mapper.llvm_type(val_type)
@@ -18291,6 +18359,20 @@ module Adamas::MIR
               @ptr_aggregate_buffer_slots << inst.id
             end
           end
+        end
+      end
+
+      # A' BEHAVIOR: an @buffer-derived gep of an inline_array_storage_eligible C.
+      # Read ONLY the durable stride fact (no provenance re-derivation). EVERY such
+      # gep (value-access AND pointer-arith) strides by C.size; ONLY the value-access
+      # ones (array_buffer_value) join the value-slot set for memcpy-store / carrier-
+      # load — pointer-arith geps (move/copy/clear dest/src) must NOT, or they would
+      # wrongly heap-copy on load.
+      if @inline_value_array_storage
+        if ive_stride = inst.array_buffer_element_stride
+          struct_elem_size = ive_stride.to_i32
+          @inline_value_gep_strides[inst.id] = ive_stride
+          @inline_value_gep_value_slots << inst.id if inst.array_buffer_value
         end
       end
 
@@ -20810,6 +20892,53 @@ module Adamas::MIR
       @value_types[inst.id] = inst.type
     end
 
+    # A' BEHAVIOR: rewrite a Pointer(C)# bulk Call (clear/move_from/copy_from/move_to/
+    # copy_to) inside an Array(C)# body to a direct inline-stride op. Returns true if
+    # emitted (caller must return). clear → memset(recv,0,count*stride); move/copy →
+    # __adamas_ptr_move/ptr_copy with the inline stride.
+    private def emit_inline_array_bulk_call(inst : Call, raw_name : String?, name : String) : Bool
+      return false unless @inline_value_array_storage
+      stride = inst.array_bulk_stride
+      return false unless stride > 0
+      return false unless raw_name && raw_name.starts_with?("Pointer(")
+      lc = inst.array_bulk_logical_count
+      return false unless lc
+      m = raw_name.includes?('#') ? raw_name.split('#', 2)[1] : raw_name
+      m = m.split('$', 2)[0]
+      case m
+      when "clear"
+        return false unless inst.args.size >= 1
+        recv = value_ref(inst.args[0])
+        bytes = "#{name}.ivc_bytes"
+        emit "#{bytes} = mul i64 #{ivc_arg_as(lc, "i64")}, #{stride}"
+        emit "call void @llvm.memset.p0.i64(ptr #{recv}, i8 0, i64 #{bytes}, i1 false) ; ivc_raw bulk-call"
+        @void_values << inst.id
+        true
+      when "move_from", "copy_from"
+        return false unless inst.args.size >= 2
+        recv = value_ref(inst.args[0])
+        src = value_ref(inst.args[1])
+        cnt = ivc_arg_as(lc, "i32")
+        fn = m == "move_from" ? "__adamas_ptr_move" : "__adamas_ptr_copy"
+        emit "#{name} = call ptr (ptr, ptr, i32, i32, ...) @#{fn}(ptr #{recv}, ptr #{src}, i32 #{cnt}, i32 #{stride}) ; ivc_raw bulk-call"
+        @value_types[inst.id] = TypeRef::POINTER
+        record_emitted_type(name, "ptr")
+        true
+      when "move_to", "copy_to"
+        return false unless inst.args.size >= 2
+        recv = value_ref(inst.args[0])
+        tgt = value_ref(inst.args[1])
+        cnt = ivc_arg_as(lc, "i32")
+        fn = m == "move_to" ? "__adamas_ptr_move" : "__adamas_ptr_copy"
+        emit "#{name} = call ptr (ptr, ptr, i32, i32, ...) @#{fn}(ptr #{tgt}, ptr #{recv}, i32 #{cnt}, i32 #{stride}) ; ivc_raw bulk-call"
+        @value_types[inst.id] = TypeRef::POINTER
+        record_emitted_type(name, "ptr")
+        true
+      else
+        false
+      end
+    end
+
     private def emit_call(inst : Call, name : String, func : Function)
       # Look up callee function for name and param types
       callee_func = function_by_id(inst.callee)
@@ -20824,6 +20953,12 @@ module Adamas::MIR
                       undefined_name
                     end
       raw_callee_name = callee_func.try(&.name)
+
+      # A' BEHAVIOR: an Array(C) @buffer bulk op that lowers as a Pointer(C)# Call
+      # (clear / move_from / copy_from / …). Rewrite the CALL SITE to a direct
+      # inline-stride op (the memset/memmove inside Pointer(C)# would use the boxed
+      # bytesize). Pure fact consumer; gated/eligibility-baked.
+      return if emit_inline_array_bulk_call(inst, raw_callee_name, name)
 
       # Adamas::MIR::Array(T) is runtime-identical to top-level ::Array(T).
       # If self-host resolves calls through the MIR namespace alias, use the
@@ -22400,7 +22535,102 @@ module Adamas::MIR
       nil
     end
 
+    # A' BEHAVIOR: value_ref an operand and cast it to the target LLVM int/ptr type.
+    private def ivc_arg_as(id : ValueId, target : String) : String
+      v = value_ref(id)
+      t = @emitted_value_types[v]? || @type_mapper.llvm_type(@value_types[id]? || TypeRef::INT32)
+      return v if t == target
+      @cond_counter += 1
+      nm = "%ivc_cast.#{@cond_counter}"
+      if t == "ptr" && target.starts_with?('i')
+        emit "#{nm} = ptrtoint ptr #{v} to #{target}"
+        nm
+      elsif target == "ptr" && t.starts_with?('i')
+        emit "#{nm} = inttoptr #{t} #{v} to ptr"
+        nm
+      elsif t.starts_with?('i') && target.starts_with?('i')
+        fb = t[1..].to_i? || 64
+        tb = target[1..].to_i? || 64
+        if fb < tb
+          emit "#{nm} = sext #{t} #{v} to #{target}"
+          nm
+        elsif fb > tb
+          emit "#{nm} = trunc #{t} #{v} to #{target}"
+          nm
+        else
+          v
+        end
+      else
+        v
+      end
+    end
+
+    # A' BEHAVIOR: rewrite an Array(C) @buffer bulk extern_call to the inline element
+    # stride. Returns true if it emitted the call (and the caller must return). Builds
+    # the new byte count = logical_count * stride; never patches the old constant.
+    private def emit_inline_array_bulk_extern(inst : ExternCall, name : String) : Bool
+      return false unless @inline_value_array_storage
+      stride = inst.array_bulk_stride
+      return false unless stride > 0
+      ename = inst.extern_name
+
+      if ename == "__adamas_ptr_move" || ename == "__adamas_ptr_copy"
+        return false unless inst.args.size >= 3
+        dest = value_ref(inst.args[0])
+        src = value_ref(inst.args[1])
+        cnt = ivc_arg_as(inst.args[2], "i32")
+        emit "#{name} = call ptr (ptr, ptr, i32, i32, ...) @#{ename}(ptr #{dest}, ptr #{src}, i32 #{cnt}, i32 #{stride}) ; ivc_raw bulk-stride"
+        @value_types[inst.id] = TypeRef::POINTER
+        record_emitted_type(name, "ptr")
+        return true
+      end
+
+      lc = inst.array_bulk_logical_count
+      return false unless lc           # fail-closed: facts guarantee this for covered ops
+      bytes = "#{name}.ivc_bytes"
+      emit "#{bytes} = mul i64 #{ivc_arg_as(lc, "i64")}, #{stride}"
+
+      if ename.starts_with?("llvm.memset")
+        return false unless inst.args.size >= 2
+        dest = value_ref(inst.args[0])
+        valb = ivc_arg_as(inst.args[1], "i8")
+        emit "call void @llvm.memset.p0.i64(ptr #{dest}, i8 #{valb}, i64 #{bytes}, i1 false) ; ivc_raw bulk-stride"
+        @void_values << inst.id
+        return true
+      elsif ename.starts_with?("llvm.memmove") || ename.starts_with?("llvm.memcpy")
+        return false unless inst.args.size >= 2
+        dest = value_ref(inst.args[0])
+        src = value_ref(inst.args[1])
+        fn = ename.starts_with?("llvm.memmove") ? "llvm.memmove.p0.p0.i64" : "llvm.memcpy.p0.p0.i64"
+        emit "call void @#{fn}(ptr #{dest}, ptr #{src}, i64 #{bytes}, i1 false) ; ivc_raw bulk-stride"
+        @void_values << inst.id
+        return true
+      elsif ename == "__adamas_realloc64" || ename == "realloc" || ename == "__crystal_realloc64" ||
+            ename == "GC_realloc" || ename == "__adamas_gc_aware_realloc"
+        return false unless inst.args.size >= 1
+        oldp = value_ref(inst.args[0])
+        fn = (ename == "GC_realloc") ? "__adamas_gc_aware_realloc" : ename
+        emit "#{name} = call ptr @#{fn}(ptr #{oldp}, i64 #{bytes}) ; ivc_raw bulk-stride"
+        @value_types[inst.id] = TypeRef::POINTER
+        record_emitted_type(name, "ptr")
+        return true
+      elsif ename == "__adamas_malloc64" || ename == "malloc" || ename == "GC_malloc" || ename == "GC_malloc_atomic"
+        fn = (ename == "GC_malloc_atomic") ? "__adamas_malloc64" : ename
+        emit "#{name} = call ptr @#{fn}(i64 #{bytes}) ; ivc_raw bulk-stride"
+        @value_types[inst.id] = TypeRef::POINTER
+        record_emitted_type(name, "ptr")
+        return true
+      end
+
+      false
+    end
+
     private def emit_extern_call(inst : ExternCall, name : String)
+      # A' BEHAVIOR: an Array(C) @buffer bulk op with an inline stride fact — rebuild
+      # the byte count / size as logical_count * inline_stride (NEVER trusting the old
+      # const), or substitute the explicit elem_size arg. Pure fact consumer.
+      return if emit_inline_array_bulk_extern(inst, name)
+
       # Intercept __adamas_select_ptr(is_a_bool, obj) → select i1, ptr, ptr null
       # Used by as?() implementation: returns obj if type matches, null if not.
       if inst.extern_name == "__adamas_select_ptr" && inst.args.size == 2
@@ -24319,6 +24549,14 @@ module Adamas::MIR
       # and realloc. Struct element types still lower as opaque ptr values, but
       # Array(T) buffers store their bytes inline.
       elem_byte_size = container_elem_storage_size_u64(elem_mir_for_storage)
+      # A' BEHAVIOR: size an inline_array_storage_eligible literal buffer at the inline
+      # payload stride (C.size), matching gep/store/realloc. Otherwise `[] of Vec3`
+      # (capacity 4) under-allocates (cap*8) and the first grow/realloc drops each
+      # element's tail. Array literal ⇒ Array alloc by construction → fact read, not
+      # a provenance oracle.
+      if inline_value_array_elem?(elem_mir_for_storage)
+        elem_byte_size = elem_mir_for_storage.not_nil!.size
+      end
       inline_struct_element = inline_container_struct_type?(elem_mir_for_storage)
       inline_primitive_tuple_element = inline_primitive_tuple_type?(elem_mir_for_storage)
       inline_union_element = elem_mir_for_storage && elem_mir_for_storage.kind.union? && elem_mir_for_storage.size > pointer_word_bytes_u64
@@ -24620,6 +24858,14 @@ module Adamas::MIR
                   when "i128"       then 16
                   else                   8 # default for complex types
                   end
+      # A' BEHAVIOR: an inline_array_storage_eligible element buffer is sized at the
+      # inline payload stride (C.size), matching the gep/store/realloc sites. Without
+      # this the Array(C) buffer is under-allocated (cap*8) and grow/realloc drops the
+      # tail of each element. ArrayNew is an Array alloc by construction → reading the
+      # eligibility fact here is not a provenance oracle.
+      if (ive = @module.type_registry.get(inst.element_type_ref)) && inline_value_array_elem?(ive)
+        elem_size = ive.size.to_i32
+      end
 
       # Allocate proper Crystal Array object (24 bytes):
       #   offset 0:  type_id (i32), offset 4: @size (i32), offset 8: @capacity (i32),
@@ -25113,7 +25359,24 @@ module Adamas::MIR
             element_type = "ptr" if element_type == "void"
           end
         end
-        if elem_mir_for_stride && elem_mir_for_stride.kind.union? && elem_mir_for_stride.size > pointer_word_bytes_u64
+        if @inline_value_array_storage && (ive = elem_mir_for_stride) && inline_value_array_elem?(ive)
+          # A' BEHAVIOR: inline Array(C) element read (the `a[i]` array_get path, the
+          # main-inlined counterpart of unsafe_fetch). Stride by C.size and return a
+          # heap-carrier COPY [i64 INT64_MAX][payload] (raw+8) — escape-safe and a
+          # genuine $Dnew-shaped struct ptr. Reads the eligibility fact only.
+          stride = ive.size
+          emit "%#{base_name}.idx_i64 = sext i32 #{normalized_index} to i64"
+          emit "%#{base_name}.byte_off = mul i64 %#{base_name}.idx_i64, #{stride}"
+          emit "%#{base_name}.elem_ptr = getelementptr i8, ptr %#{base_name}.buf, i64 %#{base_name}.byte_off"
+          raw = "%#{base_name}.ivc_raw"
+          emit "#{raw} = call ptr @__adamas_malloc64(i64 #{stride + 8}) ; ivc_raw arrayget carrier"
+          emit "store i64 9223372036854775807, ptr #{raw}, align 8"
+          emit "#{name} = getelementptr i8, ptr #{raw}, i64 8"
+          emit "call void @llvm.memcpy.p0.p0.i64(ptr #{name}, ptr %#{base_name}.elem_ptr, i64 #{stride}, i1 false)"
+          @value_types[inst.id] = effective_element_type_ref
+          record_emitted_type(name, "ptr")
+          return
+        elsif elem_mir_for_stride && elem_mir_for_stride.kind.union? && elem_mir_for_stride.size > pointer_word_bytes_u64
           stride = elem_mir_for_stride.size
           emit "%#{base_name}.idx_i64 = sext i32 #{normalized_index} to i64"
           emit "%#{base_name}.byte_off = mul i64 %#{base_name}.idx_i64, #{stride}"
@@ -25398,7 +25661,30 @@ module Adamas::MIR
         else
           @array_element_type_refs[inst.array_value] = inst.element_type
         end
-        if elem_mir_for_stride && elem_mir_for_stride.kind.union? && elem_mir_for_stride.size > pointer_word_bytes_u64
+        if @inline_value_array_storage && (ive = elem_mir_for_stride) && inline_value_array_elem?(ive)
+          # A' BEHAVIOR: inline Array(C) element write (the `a[i] = v` array_set path,
+          # the main-inlined counterpart of push/<<). memcpy the C payload into the
+          # slot at C.size stride. Reads the eligibility fact only; non-ptr value
+          # spilled to an alloca first (GPT #2).
+          stride = ive.size
+          emit "%#{base_name}.idx_i64 = sext i32 #{normalized_index} to i64"
+          emit "%#{base_name}.byte_off = mul i64 %#{base_name}.idx_i64, #{stride}"
+          emit "%#{base_name}.elem_ptr = getelementptr i8, ptr %#{base_name}.buf, i64 %#{base_name}.byte_off"
+          if value == "null"
+            emit "call void @llvm.memset.p0.i64(ptr %#{base_name}.elem_ptr, i8 0, i64 #{stride}, i1 false) ; ivc_raw arrayset-zero"
+          else
+            src = value
+            vt = @emitted_value_types[value]? || actual_value_type
+            if vt != "ptr"
+              tmp = "%#{base_name}.ivc_set_src"
+              emit "#{tmp} = alloca #{vt}, align 8"
+              emit "store #{vt} #{normalize_union_value(value, vt)}, ptr #{tmp}"
+              src = tmp
+            end
+            emit "call void @llvm.memcpy.p0.p0.i64(ptr %#{base_name}.elem_ptr, ptr #{src}, i64 #{stride}, i1 false) ; ivc_raw arrayset"
+          end
+          return
+        elsif elem_mir_for_stride && elem_mir_for_stride.kind.union? && elem_mir_for_stride.size > pointer_word_bytes_u64
           stride = elem_mir_for_stride.size
           emit "%#{base_name}.idx_i64 = sext i32 #{normalized_index} to i64"
           emit "%#{base_name}.byte_off = mul i64 %#{base_name}.idx_i64, #{stride}"

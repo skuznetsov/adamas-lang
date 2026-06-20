@@ -140,6 +140,31 @@ keep the two regimes distinct.
 
 ## Current Checkpoint
 
+**2026-06-20 — A′ BEHAVIOR: inline-value Array(C) storage ABI (gate `ADAMAS_INLINE_VALUE_ARRAY_STORAGE`) (`abi-struct-byvalue`).**
+First slice where LLVM CONSUMES the A′ facts and changes the Array(C) ABI: a leaf-POD
+value struct is stored INLINE in the Array buffer (stride C.size), read back as an
+escape-safe heap-carrier copy, and the whole family (push/grow/realloc, [], delete_at/
+shift/insert/concat, clear) uses the inline stride. Pure mechanical fact consumer:
+emit_gep_dynamic reads `array_buffer_element_stride`; emit_store/load key off
+`array_buffer_value`+`@inline_value_gep_value_slots`; emit_extern_call/emit_call rebuild
+`logical_count*stride`; emit_array_get/set/new/literal read eligibility. Two sets
+(strides vs value-slots) so pointer-arith geps never get heap-copy-load. 4 impl bugs
+fixed: per-function ValueId set `.clear` (IO#gets_peek `switch i32` leak); array_new/
+literal cap*8 under-alloc; **facts populated POST-MIR-opt** (the optimizer clones geps
+and drops the durable props — cli.cr runs opt serially under the gate, populates, then
+disables per-worker opt); clear-dest arith gep non-V3 element_type (broadened buffer-
+gep marking). Surgical to_unsafe escape fix: exclude only COMPILER-SYNTHESIZED
+dispatchers (`@synthetic_abstract_dispatchers`), so V3 is eligible but a user
+`Box#to_unsafe{@a.to_unsafe}` stays caught. DoD: V3 genuinely flipped (ELIGIBLE,
+stride-geps=19, 26 ivc_raw in Array(V3)#, delete_at ptr_move i32 12, behavior-identical
+to legacy); wrapper-escape negative keeps WV ineligible; non-Array Pointer boxed;
+gate-OFF byte-identical (broader suite 138/138 + 36/36, 0 fail); all 8 A′ reducers
+green. v1 limit: positive target needs call-shaped Array usage (main-inlined-only
+arr[i]/arr[i]= gives bv=0 → ineligible, fail-closed; v2 may add bv-from-ArrayGet/Set).
+Reducers: inline_value_array_storage_behavior, inline_value_array_wrapper_escape_guard,
+inline_value_nonarray_pointer_guard (re-pointable to behavior gate). NEXT: C (by-value
+$Dnew/sret, stack-fast-path copy-on-load) and/or extend eligibility coverage.
+
 **2026-06-20 — A′ facts extension: arith-gep stride + bulk logical_count (read-only) (`abi-struct-byvalue`).**
 The behavior flip hit GPT's stop-signal (backend would have to re-derive provenance/
 stride for the pointer-arith geps feeding `__adamas_ptr_move` — `getelementptr ptr`

@@ -457,3 +457,44 @@ Behavior (§9) now has every fact it needs and resumes as a pure mechanical cons
 emit_gep_dynamic reads `array_buffer_element_stride`; emit_store/load key off
 `array_buffer_value`; emit_extern_call/emit_call read `array_bulk_stride` +
 `array_bulk_logical_count` + `array_bulk_op`. No backend provenance oracle.
+
+## 11. Behavior slice IMPLEMENTED + value-proxy correction (2026-06-20)
+
+First commit-candidate where LLVM consumes the facts and changes the Array(C) ABI
+(gate `ADAMAS_INLINE_VALUE_ARRAY_STORAGE`). Consumption (all gated): emit_gep_dynamic
+reads `array_buffer_element_stride`; emit_store/load key off `array_buffer_value` +
+`@inline_value_gep_value_slots`; emit_extern_call/emit_call rebuild
+`logical_count*stride` (ptr_move/copy elem_size; memmove/memcpy/memset/malloc/realloc;
+Pointer#clear/move_from call-site rewrite); emit_array_get/set/new/literal (the
+main-inlined Array ops) read eligibility → inline stride + carrier. Two sets per GPT:
+`@inline_value_gep_strides` (all buffer geps) vs `@inline_value_gep_value_slots`
+(only value-access → memcpy/carrier).
+
+**Pass-ordering fix (essential):** the MIR optimizer clones geps and drops the
+durable per-instruction facts, so the behavior facts are populated AFTER MIR opt —
+cli.cr runs MIR opt serially when the gate is on, then
+`populate_inline_value_array_storage_facts`, then disables per-worker opt so workers
+don't re-clobber.
+
+**VALUE-PROXY CORRECTION (GPT caught it):** the first behavior reducer only checked
+GLOBAL `ivc_raw` presence — which appeared on OTHER eligible stdlib types (Range,
+UInt128), NOT on the intended V3, while V3 was actually *ineligible*. Root: the
+`to_unsafe` escape rule fired on `Array(V3)#to_unsafe` calls from
+`Object#/Reference#to_unsafe` — which are NOT stdlib methods but COMPILER-SYNTHESIZED
+abstract dispatchers (`synthesize_abstract_method_dispatchers`). Fix (surgical, per
+GPT): record synthesized dispatcher names in `@synthetic_abstract_dispatchers` and
+exclude ONLY those hosts from the escape rule. A genuine user wrapper
+(`Box#leak { @a.to_unsafe }`) is never synthesized → still disqualifies (proven by
+`inline_value_array_wrapper_escape_guard`). The behavior reducer is now V3-SPECIFIC:
+asserts `ELIGIBLE V3` + `stride-geps V3` + ivc_raw INSIDE `Array(V3)#` fns +
+`delete_at` ptr_move `i32 12`.
+
+**v1 LIMITATION (GPT #4, not deferred silently):** the safe-set `bv` signal is
+detected from gep_dyn `buffer_value` inside monomorphic `Array(C)#` BODIES. A type
+used ONLY via main-inlined `arr[i]` / `arr[i]=` (ArrayGet/ArraySet, no
+`Array(C)#unsafe_fetch`/`#push` call bodies) yields `bv=0` → not in the safe-set →
+ineligible. So a positive target needs CALL-shaped Array usage (push/<</delete_at/…)
+for the bodies to exist. Adding `bv` detection for main-inlined ArrayGet/ArraySet is
+deferred to v2 (the behavior would still be correct there since emit_array_get/set
+read eligibility — but eligibility itself wouldn't be established without a body).
+This is a recognized v1 scoping limit, not a correctness hole.

@@ -92,6 +92,13 @@ module Adamas
       @current_slab_frame : Bool = false
       @current_block_param_id : HIR::ValueId?
       @class_children : ::Hash(String, ::Array(String))
+      # A' BEHAVIOR: names of COMPILER-SYNTHESIZED abstract-method dispatchers
+      # (e.g. "Object#to_unsafe", "Reference#to_unsafe") created by
+      # synthesize_abstract_method_dispatchers. The to_unsafe escape rule must NOT
+      # fail-close on `Array(C)#to_unsafe` calls made FROM these synthetic forwarders
+      # (they are RTA dispatch plumbing, not a real user escape) — but a genuine user
+      # `Box#to_unsafe` that forwards `@a.to_unsafe` is NOT synthesized → stays caught.
+      @synthetic_abstract_dispatchers : ::Set(String) = ::Set(String).new
 
       # Index: base_name (before "$") → first matching MIR function.
       # Eliminates O(N) linear scans during fuzzy call resolution.
@@ -428,6 +435,24 @@ module Adamas
           populate_array_bulk_op_facts
           verify_array_bulk_op_facts
         end
+        # A' BEHAVIOR gate: the facts the LLVM behavior slice consumes MUST be
+        # populated on the FINAL (post-MIR-opt) instructions — the MIR optimizer
+        # clones geps and drops the durable per-instruction stride/provenance
+        # properties. So population is NOT done here (pre-opt); the driver calls
+        # `populate_inline_value_array_storage_facts` AFTER MIR opt (see cli.cr).
+      end
+
+      # A' BEHAVIOR: populate the inline-Array-storage facts on the current (final)
+      # MIR. Called by the driver AFTER MIR optimization so the durable marks land on
+      # the instructions codegen actually emits (the optimizer would otherwise clone
+      # geps and drop the properties). Single entry point for the behavior gate.
+      def populate_inline_value_array_storage_facts(verify : Bool = false) : Nil
+        populate_inline_value_safe_set
+        populate_array_bulk_op_facts
+        if verify
+          verify_inline_value_annotation
+          verify_array_bulk_op_facts
+        end
       end
 
       # Lower function bodies for a range of HIR functions (for parallel workers).
@@ -547,6 +572,9 @@ module Adamas
         return nil if vd_candidates.empty?
 
         dispatch_func = @mir_module.create_function(func_name, ret_type)
+        # Durable synthetic-forwarder fact: this dispatcher is compiler-generated, so
+        # `Array(C)#to_unsafe` calls from inside it are dispatch plumbing, not escapes.
+        @synthetic_abstract_dispatchers << func_name
         param_values = [] of ValueId
         dispatch_func.add_param("recv", receiver_type)
         param_values << 0_u32
@@ -1732,11 +1760,16 @@ module Adamas
         # (#3) RAW to_unsafe escape: an `Array(C)#to_unsafe` Call OUTSIDE an Array(C)#
         # body hands the bare @buffer pointer to user/opaque code, which then aliases
         # the inline buffer with the legacy pointer-slot repr. value_derived only
-        # catches an explicit `ptr[i]`; a passed/returned pointer escapes it. So any
-        # to_unsafe call from a non-Array(C)# body disqualifies C (fail-closed).
+        # catches an explicit `ptr[i]`; a passed/returned pointer escapes it. So a
+        # to_unsafe call from a non-Array(C)# body disqualifies C (fail-closed) —
+        # EXCEPT when the host is a compiler-SYNTHESIZED abstract dispatcher (e.g.
+        # Object#to_unsafe / Reference#to_unsafe): those are RTA dispatch plumbing
+        # that merely forward, not a user escape. A genuine user wrapper
+        # (`Box#to_unsafe { @a.to_unsafe }`) is NOT synthesized → still disqualifies.
         to_unsafe_escaped = ::Set(TypeId).new
         @mir_module.functions.each do |func|
           host = func.name
+          next if @synthetic_abstract_dispatchers.includes?(host)
           func.blocks.each do |b|
             b.instructions.each do |inst|
               next unless inst.is_a?(MIR::Call)
@@ -1824,7 +1857,16 @@ module Adamas
                 # (a) every @buffer-derived gep_dyn of C (value-access AND pointer
                 # arithmetic) — record so the behavior slice strides it by C.size.
                 gep = inst.as(MIR::GetElementPtrDynamic)
-                if gep.element_type.id == cid && traces_to_array_c_buffer?(gep.base, def_map, buffer_roots)
+                # A gep whose base is (transitively) the Array(C) @buffer is C-strided
+                # regardless of its own element_type: pointer arithmetic on a C-buffer
+                # (`@buffer + index`, the move/clear dest/src) is always in C units.
+                # Keying on element_type.id == cid was too strict — the clear's
+                # `@buffer + size` arith gep can carry a Pointer(C) element_type and was
+                # missed, so its clear ran at the legacy stride and zeroed a live slot.
+                # We therefore mark ANY buffer-derived gep, EXCEPT one explicitly
+                # addressing Void (already byte-strided) — that is not C-element arith.
+                if traces_to_array_c_buffer?(gep.base, def_map, buffer_roots) &&
+                   gep.element_type.id != TypeRef::VOID.id
                   buffer_gep_sites << {gep, cid}
                 end
               end

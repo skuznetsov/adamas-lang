@@ -2645,6 +2645,27 @@ module Adamas
             log(options, out_io, "  Skipping MIR optimizations (--no-mir-opt)")
             timings["mir_opt"] = 0.0 if options.stats
           end
+
+          # A' BEHAVIOR: the inline-Array-storage facts must be populated on the FINAL
+          # (post-opt) MIR — the optimizer clones geps and drops the durable
+          # stride/provenance properties. If MIR opt was deferred to LLVM workers,
+          # run it serially here first, THEN populate the facts, THEN disable
+          # per-worker opt so workers don't re-optimize and re-clobber the marks.
+          inline_value_array_storage = BootstrapEnv.enabled?("ADAMAS_INLINE_VALUE_ARRAY_STORAGE")
+          if inline_value_array_storage
+            if options.mir_opt && workers_available
+              log(options, out_io, "  Inline-value Array storage: running MIR opt serially before facts")
+              mir_module.functions.each do |func|
+                next if func.blocks.all? { |block| block.instructions.empty? }
+                begin
+                  options.ltp_opt ? func.optimize_with_potential : func.optimize
+                rescue ex : IndexError
+                  raise "Index error in optimize for: #{func.name}\n#{ex.message}"
+                end
+              end
+            end
+            mir_lowering.populate_inline_value_array_storage_facts(verify: BootstrapEnv.enabled?("ADAMAS_IVC_VERIFY"))
+          end
           if options.stats
             mir_stage_ms = (timings["mir"]? || 0.0) + (timings["mir_opt"]? || 0.0)
             mir_details = [] of String
@@ -2712,7 +2733,11 @@ module Adamas
         # before LLVM emission, parallelizing MIR opt across fork workers.
         # This saves the serial MIR opt phase (skipped when workers do it).
         bootstrap_trace_puts "[STAGE2_TRACE] step5: flags6"; STDERR.flush
-        llvm_gen.worker_mir_opt = options.mir_opt
+        # A' BEHAVIOR: when inline-value Array storage is on, MIR opt already ran
+        # serially before facts population (above), so workers must NOT re-optimize
+        # (that would clone geps and drop the freshly-populated stride/provenance
+        # facts the behavior slice consumes).
+        llvm_gen.worker_mir_opt = options.mir_opt && !BootstrapEnv.enabled?("ADAMAS_INLINE_VALUE_ARRAY_STORAGE")
         llvm_gen.worker_ltp_opt = options.ltp_opt
         bootstrap_trace_puts "[STAGE2_TRACE] step5: flags7"; STDERR.flush
 
