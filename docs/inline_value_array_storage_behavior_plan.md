@@ -349,3 +349,25 @@ MoveCopySameElem]`; `Unc` (adds dup/reverse, which copy into a fresh non-self
 buffer) → ineligible `[… Uncovered]` — proving the refinement did NOT open a hole
 (GPT #5 fail-closed). No `ivc_raw`; gate-neutral. Standalone `Pointer(C)#value`
 stays boxed via the existing `inline_value_nonarray_pointer_guard`.
+
+### 8.7 Hardening before behavior (2026-06-20, GPT pre-behavior review)
+
+Three blocker-level fixes so the facts are safe for LLVM consumption:
+1. **Root-bound AllocRealloc.** A malloc/realloc is `AllocRealloc` ONLY if its
+   extern_call id is in `alloc_roots` (it provably reaches a Store into self.@buffer)
+   AND its size is strided. A strided local `Pointer(C).malloc` that is not a buffer
+   alloc is fail-closed (Uncovered), never silently rewritten as a buffer allocation.
+2. **Stronger stride proof.** `count_is_strided?` now requires a `count * CONST`
+   multiply (a constant operand = the legacy element size, verified = 8 for boxed
+   structs), not any runtime multiply; `__adamas_ptr_move/ptr_copy` require the
+   `elem_size` arg to be a compile-time constant. Rules out a spurious `i*j` being
+   mistaken for a stride.
+3. **Raw `to_unsafe` escape disqualifier.** An `Array(C)#to_unsafe` Call from OUTSIDE
+   an `Array(C)#` body hands the bare @buffer pointer to user/opaque code (passed /
+   returned), which `value_derived` does not catch. Any such escape disqualifies C
+   (fail-closed). Composed: `inline_array_storage_eligible(C) = inline_value_safe(C)
+   && no Heterogeneous/Uncovered op && no raw to_unsafe escape`.
+
+Reducer extended with `Esc` (raw `esc.to_unsafe` passed to an opaque `sink_ptr`) →
+ineligible despite all-covered per-site facts, proving the escape disqualifier. Cov
+stays ELIGIBLE; Unc stays ineligible (Uncovered). Read-only / gate-neutral preserved.

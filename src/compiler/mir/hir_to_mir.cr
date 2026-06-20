@@ -1725,6 +1725,29 @@ module Adamas
         # Types with any Heterogeneous/Uncovered bulk op → fail-closed.
         disqualified = ::Set(TypeId).new
 
+        # (#3) RAW to_unsafe escape: an `Array(C)#to_unsafe` Call OUTSIDE an Array(C)#
+        # body hands the bare @buffer pointer to user/opaque code, which then aliases
+        # the inline buffer with the legacy pointer-slot repr. value_derived only
+        # catches an explicit `ptr[i]`; a passed/returned pointer escapes it. So any
+        # to_unsafe call from a non-Array(C)# body disqualifies C (fail-closed).
+        to_unsafe_escaped = ::Set(TypeId).new
+        @mir_module.functions.each do |func|
+          host = func.name
+          func.blocks.each do |b|
+            b.instructions.each do |inst|
+              next unless inst.is_a?(MIR::Call)
+              cn = fid_to_name[inst.as(MIR::Call).callee]?
+              next unless cn && census_method_part(cn) == "to_unsafe"
+              el = census_extract_generic_arg(cn, "Array")
+              next unless el
+              ct = reg.get_by_name(el)
+              next unless ct && ivc_ids.includes?(ct.id)
+              host_is_same_array_body = host.starts_with?("Array(") && census_extract_generic_arg(host, "Array") == el
+              to_unsafe_escaped << ct.id unless host_is_same_array_body
+            end
+          end
+        end
+
         @mir_module.functions.each do |func|
           fname = func.name
           next unless fname.starts_with?("Array(")
@@ -1747,16 +1770,16 @@ module Adamas
             end
           end
 
-          # buffer_roots = every value that is provably the Array(C) @buffer pointer:
-          # the @buffer-ivar Load, a strictly-constrained Array(C)#to_unsafe/root_buffer
-          # Call result, and a fresh malloc/realloc buffer that becomes self.@buffer.
-          buffer_roots = compute_array_buffer_roots(func, def_map, array_c_params, elem, fid_to_name)
+          # buffer_roots = every value that is provably the Array(C) @buffer pointer;
+          # alloc_roots = the alloc/realloc extern_call ids that actually feed
+          # self.@buffer (root-bound AllocRealloc).
+          buffer_roots, alloc_roots = compute_array_buffer_roots(func, def_map, array_c_params, elem, fid_to_name)
 
           func.blocks.each do |b|
             b.instructions.each do |inst|
               if inst.is_a?(MIR::ExternCall)
                 ec = inst.as(MIR::ExternCall)
-                kind = classify_array_bulk_op(ec, def_map, buffer_roots)
+                kind = classify_array_bulk_op(ec, def_map, buffer_roots, alloc_roots)
                 next unless kind
                 ec.array_bulk_op = kind
                 disqualified << cid if kind.heterogeneous? || kind.uncovered?
@@ -1775,7 +1798,7 @@ module Adamas
 
         reg.types.each do |t|
           t.inline_array_storage_eligible =
-            safe_ids.includes?(t.id) && !disqualified.includes?(t.id)
+            safe_ids.includes?(t.id) && !disqualified.includes?(t.id) && !to_unsafe_escaped.includes?(t.id)
         end
       end
 
@@ -1784,14 +1807,16 @@ module Adamas
       # the byte count / size must trace to a stride multiply.
       private def classify_array_bulk_op(ec : MIR::ExternCall,
                                          def_map : Hash(ValueId, MIR::Value),
-                                         buffer_roots : ::Set(ValueId)) : MIR::ArrayBulkOpKind?
+                                         buffer_roots : ::Set(ValueId),
+                                         alloc_roots : ::Set(ValueId)) : MIR::ArrayBulkOpKind?
         name = ec.extern_name
         if name == "__adamas_ptr_move" || name == "__adamas_ptr_copy"
           # element-size-aware helper: (dest, src, count, elem_size). The stride is
-          # the explicit elem_size arg (the multiply is inside the helper), so the
-          # behavior rewrite just supplies the inline elem_size — no Mul to prove.
-          dst = ec.args[0]?; src = ec.args[1]?
+          # the explicit elem_size arg; require it to be a compile-time constant (the
+          # legacy element size the behavior slice will rewrite to the inline stride).
+          dst = ec.args[0]?; src = ec.args[1]?; esz = ec.args[3]?
           return nil unless dst && src
+          return MIR::ArrayBulkOpKind::Uncovered unless esz && const_operand?(esz, def_map)
           return MIR::ArrayBulkOpKind::Uncovered unless traces_to_array_c_buffer?(dst, def_map, buffer_roots)
           return MIR::ArrayBulkOpKind::Heterogeneous unless traces_to_array_c_buffer?(src, def_map, buffer_roots)
           MIR::ArrayBulkOpKind::MoveCopySameElem
@@ -1805,14 +1830,16 @@ module Adamas
           dst = ec.args[0]?; n = ec.args[2]?
           return nil unless dst && n
           (traces_to_array_c_buffer?(dst, def_map, buffer_roots) && count_is_strided?(n, def_map)) ? MIR::ArrayBulkOpKind::Clear : MIR::ArrayBulkOpKind::Uncovered
-        elsif name == "__adamas_malloc64" || name == "malloc" || name == "calloc" || name == "GC_malloc" || name == "GC_malloc_atomic"
+        elsif name == "__adamas_malloc64" || name == "malloc" || name == "calloc" || name == "GC_malloc" || name == "GC_malloc_atomic" ||
+              name == "__adamas_realloc64" || name == "realloc" || name == "__crystal_realloc64" || name == "GC_realloc" || name == "__adamas_gc_aware_realloc"
           sz = ec.args[-1]?
           return nil unless sz
-          count_is_strided?(sz, def_map) ? MIR::ArrayBulkOpKind::AllocRealloc : MIR::ArrayBulkOpKind::Uncovered
-        elsif name == "__adamas_realloc64" || name == "realloc" || name == "__crystal_realloc64" || name == "GC_realloc" || name == "__adamas_gc_aware_realloc"
-          sz = ec.args[-1]?
-          return nil unless sz
-          count_is_strided?(sz, def_map) ? MIR::ArrayBulkOpKind::AllocRealloc : MIR::ArrayBulkOpKind::Uncovered
+          # AllocRealloc ONLY for an alloc that provably becomes self.@buffer
+          # (root-bound) AND whose size is element-strided. A strided local
+          # Pointer(C).malloc that is NOT a buffer alloc is fail-closed (Uncovered),
+          # never silently treated as an Array buffer allocation.
+          return MIR::ArrayBulkOpKind::Uncovered unless count_is_strided?(sz, def_map)
+          alloc_roots.includes?(ec.id) ? MIR::ArrayBulkOpKind::AllocRealloc : MIR::ArrayBulkOpKind::Uncovered
         else
           nil
         end
@@ -1852,12 +1879,16 @@ module Adamas
       #   (c) a FRESH malloc/realloc buffer (strided size) that is then stored INTO
       #       self.@buffer of an Array(C) param (the create/grow path) — never an
       #       arbitrary Pointer(C).malloc.
+      # Returns {buffer_roots, alloc_roots}: the @buffer pointer roots, AND the
+      # subset that are the alloc/realloc extern_call ids actually feeding self.@buffer
+      # (so AllocRealloc is root-bound, not "any strided malloc in an Array body").
       private def compute_array_buffer_roots(func : MIR::Function,
                                              def_map : Hash(ValueId, MIR::Value),
                                              array_c_params : ::Set(ValueId),
                                              elem : String,
-                                             fid_to_name : Hash(FunctionId, String)) : ::Set(ValueId)
+                                             fid_to_name : Hash(FunctionId, String)) : {::Set(ValueId), ::Set(ValueId)}
         roots = ::Set(ValueId).new
+        alloc_roots = ::Set(ValueId).new
         gep_is_self_buffer = ->(ptr : ValueId) {
           g = def_map[ptr]?
           g.is_a?(MIR::GetElementPtr) && array_c_params.includes?(g.as(MIR::GetElementPtr).base) &&
@@ -1880,7 +1911,9 @@ module Adamas
           end
         end
         # (c) fresh buffers: a malloc/realloc (strided) whose result reaches a Store
-        # into self.@buffer. Walk Stores into @buffer, trace value back to the alloc.
+        # into self.@buffer. Walk Stores into @buffer, trace value back to the alloc;
+        # that alloc's id is BOTH a buffer root (provenance) and an alloc root (the
+        # only allocs the behavior slice may rewrite as Array buffer allocations).
         func.blocks.each do |b|
           b.instructions.each do |inst|
             next unless inst.is_a?(MIR::Store)
@@ -1888,10 +1921,11 @@ module Adamas
             next unless gep_is_self_buffer.call(st.ptr)
             if alloc = nearest_strided_alloc(st.value, def_map)
               roots << alloc
+              alloc_roots << alloc
             end
           end
         end
-        roots
+        {roots, alloc_roots}
       end
 
       # Backward-trace `start` to the nearest malloc/realloc extern_call result whose
@@ -1943,8 +1977,15 @@ module Adamas
         false
       end
 
-      # True iff `start`'s backward def-slice contains a multiply (count * stride) —
-      # the signature of an element-strided byte count / capacity, vs a fixed size.
+      # True iff `v` is a compile-time integer constant.
+      private def const_operand?(v : ValueId, def_map : Hash(ValueId, MIR::Value)) : Bool
+        def_map[v]?.is_a?(MIR::Constant)
+      end
+
+      # True iff `start`'s backward def-slice contains a `count * CONST` multiply —
+      # the signature of an element-strided byte count / capacity. Requiring a
+      # CONSTANT factor (the legacy element size) rules out a spurious runtime*runtime
+      # multiply being mistaken for a stride (GPT stride-proof hardening).
       private def count_is_strided?(start : ValueId,
                                     def_map : Hash(ValueId, MIR::Value)) : Bool
         seen = ::Set(ValueId).new
@@ -1957,7 +1998,10 @@ module Adamas
           break if steps > 4096
           d = def_map[v]?
           next unless d
-          return true if d.is_a?(MIR::BinaryOp) && d.as(MIR::BinaryOp).op == MIR::BinOp::Mul
+          if d.is_a?(MIR::BinaryOp) && d.as(MIR::BinaryOp).op == MIR::BinOp::Mul
+            bo = d.as(MIR::BinaryOp)
+            return true if const_operand?(bo.left, def_map) || const_operand?(bo.right, def_map)
+          end
           d.operands.each { |o| stack << o unless seen.includes?(o) }
         end
         false

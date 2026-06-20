@@ -45,7 +45,7 @@ if [[ $status -ne 0 ]]; then
 fi
 
 echo "compiler: $COMPILER"
-grep -E "ABIFACTS\]   (ELIGIBLE Cov|ineligible Unc)" "$ERR" || true
+grep -E "ABIFACTS\]   (ELIGIBLE Cov|ineligible Unc|ineligible Esc)" "$ERR" || true
 
 fail=0
 
@@ -65,6 +65,12 @@ if ! printf '%s' "$unc_line" | grep -qE "^\[ABIFACTS\]   ineligible Unc "; then
 fi
 if ! printf '%s' "$unc_line" | grep -qE "Uncovered|Heterogeneous"; then
   echo "FAIL: Unc ineligible but without an Uncovered/Heterogeneous reason"; fail=1
+fi
+
+# (2b) Esc ineligible — raw to_unsafe escape disqualifier (passed pointer, not vd).
+esc_line="$(grep -E "^\[ABIFACTS\]   (ELIGIBLE|ineligible) Esc " "$ERR" || true)"
+if ! printf '%s' "$esc_line" | grep -qE "^\[ABIFACTS\]   ineligible Esc "; then
+  echo "FAIL: Esc not ineligible — raw to_unsafe escape was not disqualified"; echo "  got: $esc_line"; fail=1
 fi
 
 # (3a) no ivc_raw (no behavior).
