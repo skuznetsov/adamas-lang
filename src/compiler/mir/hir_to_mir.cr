@@ -394,6 +394,12 @@ module Adamas
             STDERR.puts "  #{ms.round(1)}ms #{name}"
           end
         end
+        # READ-ONLY access-path census (A' vs C decision data). Runs on the
+        # FULLY-LOWERED MIR; strictly read-only, no Type/Value mutation, gate OFF
+        # = no-op (byte-identical). See run_container_access_census.
+        if Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_CONTAINER_ACCESS_CENSUS")
+          run_container_access_census
+        end
       end
 
       # Lower function bodies for a range of HIR functions (for parallel workers).
@@ -943,6 +949,235 @@ module Adamas
           STDERR.puts "[ELEM_REPR] #{type.name} kind=#{type.kind} => #{repr}"
         end
         STDERR.flush
+      end
+
+      # ── READ-ONLY access-path census (gate ADAMAS_CONTAINER_ACCESS_CENSUS) ──────
+      # Decision data for A' (provenance-first, Array-only inline-value-copy
+      # storage slice) vs C (full by-value struct ABI). Walks the FULLY-LOWERED
+      # MIR and buckets every access site that TOUCHES an InlineValueCopy-candidate
+      # element type by (read|store) x mechanism x provenance:
+      #
+      #   recoverable  — concrete Array(T) provenance at the site (ArrayGet/ArraySet
+      #                  carrying container_type, or a monomorphic Array(Concrete)#
+      #                  push/<</unsafe_fetch call). A local emit_array_get/set or
+      #                  per-call codegen patch CAN see the element type + container.
+      #   concrete_np  — concrete element type known but NO Array container identity
+      #                  (ArrayGet/ArraySet with container_type=nil, or a raw
+      #                  GetElementPtrDynamic Load/Store whose element_type is the
+      #                  candidate). Patchable per-GEP only with a provenance marker.
+      #   erased       — neither: a shared generic Indexable/Enumerable fetch whose
+      #                  return union merely INCLUDES the candidate, or an
+      #                  Array(T)-with-unresolved-param body. No element type / no
+      #                  container at the buffer-access site.
+      #
+      # A' falsifier (owner/GPT): if a significant fraction of candidate READS land
+      # in `erased`, the Array-only storage slice cannot be a small local codegen
+      # patch (would need MIR specialization / provenance transfer, i.e. closer to
+      # C). STRICTLY read-only — no Type/Value mutation, no ivc_raw/memcpy behavior;
+      # uses the pure classify_container_elem_repr (does NOT need labels populated).
+      private def run_container_access_census
+        reg = @mir_module.type_registry
+
+        # 1. InlineValueCopy candidate element types (pure classify; no mutation).
+        ivc_ids = ::Set(TypeId).new
+        ivc_names = ::Set(String).new
+        reg.types.each do |t|
+          if classify_container_elem_repr(t).inline_value_copy?
+            ivc_ids << t.id
+            ivc_names << t.name
+          end
+        end
+
+        # Helpers (procs so they can close over reg/ivc_*).
+        elem_name_candidate = ->(elem : String) {
+          ivc_names.includes?(elem) ||
+            ivc_names.any? { |n| n.ends_with?("::#{elem}") || elem.ends_with?("::#{n}") }
+        }
+        # Concrete (registry-known) but maybe-not-candidate element name?
+        elem_name_concrete = ->(elem : String) {
+          !reg.get_by_name(elem).nil? || elem_name_candidate.call(elem)
+        }
+        union_touches_candidate = ->(ref : TypeRef) {
+          ty = reg.get(ref)
+          if ty.nil?
+            false
+          elsif (vs = ty.variants)
+            vs.any? { |v| ivc_ids.includes?(v.id) }
+          else
+            ivc_ids.includes?(ty.id)
+          end
+        }
+
+        tally = Hash(String, Int32).new(0)
+        # elem-type -> {provenance bucket -> count} for READ sites only (A' table).
+        per_type_read = Hash(String, Hash(String, Int32)).new
+        bump_read = ->(elem : String, cat : String) {
+          (per_type_read[elem] ||= Hash(String, Int32).new(0))[cat] += 1
+        }
+        # concrete_np (raw-GEP / container-less) site -> enclosing function tally.
+        # Decides whether the no-provenance candidate accesses live in stdlib
+        # pointer internals (safe to leave on ExistingLowering under A') or in
+        # Array buffer read/write paths (an A' asymmetry hole). Keyed "fn :: kind".
+        np_site_funcs = Hash(String, Int32).new(0)
+
+        fid_to_name = Hash(FunctionId, String).new
+        @mir_module.functions.each { |f| fid_to_name[f.id] = f.name }
+
+        @mir_module.functions.each do |func|
+          # Resolve a Store/Load ptr to its defining instruction (per-function ids).
+          def_map = Hash(ValueId, MIR::Value).new
+          func.blocks.each do |b|
+            b.instructions.each { |inst| def_map[inst.id] = inst }
+          end
+
+          func.blocks.each do |b|
+            b.instructions.each do |inst|
+              case inst
+              when MIR::ArrayGet
+                next unless ivc_ids.includes?(inst.element_type.id)
+                ename = reg.get(inst.element_type).try(&.name) || "?"
+                if inst.container_type
+                  tally["read.array_get.container"] += 1
+                  bump_read.call(ename, "recoverable")
+                else
+                  tally["read.array_get.no_container"] += 1
+                  bump_read.call(ename, "concrete_np")
+                  np_site_funcs["#{func.name} :: array_get.no_container"] += 1
+                end
+              when MIR::ArraySet
+                next unless ivc_ids.includes?(inst.element_type.id)
+                if inst.container_type
+                  tally["store.array_set.container"] += 1
+                else
+                  tally["store.array_set.no_container"] += 1
+                  np_site_funcs["#{func.name} :: array_set.no_container"] += 1
+                end
+              when MIR::Load
+                gep = def_map[inst.ptr]?
+                if gep.is_a?(MIR::GetElementPtrDynamic) && ivc_ids.includes?(gep.element_type.id)
+                  ename = reg.get(gep.element_type).try(&.name) || "?"
+                  tally["read.raw_gep_load"] += 1
+                  bump_read.call(ename, "concrete_np")
+                  np_site_funcs["#{func.name} :: raw_gep_load"] += 1
+                end
+              when MIR::Store
+                gep = def_map[inst.ptr]?
+                if gep.is_a?(MIR::GetElementPtrDynamic) && ivc_ids.includes?(gep.element_type.id)
+                  tally["store.raw_gep_store"] += 1
+                  np_site_funcs["#{func.name} :: raw_gep_store"] += 1
+                end
+              when MIR::Call
+                cname = fid_to_name[inst.callee]?
+                next unless cname
+                m = census_method_part(cname)
+                next unless m
+                if elem = census_extract_generic_arg(cname, "Array")
+                  if elem_name_candidate.call(elem)
+                    case m
+                    when "push", "<<"
+                      tally["store.mono_array_push"] += 1
+                    when "unsafe_fetch", "fetch", "[]", "[]?", "at", "unsafe_index"
+                      tally["read.mono_array_fetch"] += 1
+                      bump_read.call(elem, "recoverable")
+                    end
+                  elsif !elem_name_concrete.call(elem)
+                    # Array(<unresolved generic param>)#... — erased Array body.
+                    case m
+                    when "push", "<<"
+                      tally["store.array_erased_param"] += 1
+                    when "unsafe_fetch", "fetch", "[]", "[]?", "at", "unsafe_index"
+                      if union_touches_candidate.call(inst.type)
+                        tally["read.array_erased_param"] += 1
+                        bump_read.call("(Array(T) erased)", "erased")
+                      end
+                    end
+                  end
+                elsif cname.starts_with?("Indexable") || cname.starts_with?("Enumerable")
+                  case m
+                  when "unsafe_fetch", "fetch", "[]", "[]?", "at", "unsafe_index"
+                    if union_touches_candidate.call(inst.type)
+                      tally["read.generic_indexable_fetch"] += 1
+                      ty = reg.get(inst.type)
+                      if ty && (vs = ty.variants)
+                        vs.each { |v| bump_read.call(v.name, "erased") if ivc_ids.includes?(v.id) }
+                      end
+                    end
+                  end
+                end
+              end
+            end
+          end
+        end
+
+        # ── Report ───────────────────────────────────────────────────────────
+        STDERR.puts "[ACCESS_CENSUS] InlineValueCopy candidate element types (#{ivc_names.size}):"
+        ivc_names.to_a.sort.each { |n| STDERR.puts "[ACCESS_CENSUS]   #{n}" }
+
+        STDERR.puts "[ACCESS_CENSUS] raw site buckets:"
+        tally.keys.sort.each { |k| STDERR.puts "[ACCESS_CENSUS]   #{k} = #{tally[k]}" }
+
+        # READ provenance summary (the A' falsifier).
+        read_recoverable = tally["read.array_get.container"] + tally["read.mono_array_fetch"]
+        read_concrete_np = tally["read.array_get.no_container"] + tally["read.raw_gep_load"]
+        read_erased = tally["read.generic_indexable_fetch"] + tally["read.array_erased_param"]
+        read_total = read_recoverable + read_concrete_np + read_erased
+
+        store_recoverable = tally["store.array_set.container"] + tally["store.mono_array_push"]
+        store_concrete_np = tally["store.array_set.no_container"] + tally["store.raw_gep_store"]
+        store_erased = tally["store.array_erased_param"]
+        store_total = store_recoverable + store_concrete_np + store_erased
+
+        pct = ->(n : Int32, d : Int32) { d == 0 ? "0.0" : (100.0 * n / d).round(1).to_s }
+        STDERR.puts "[ACCESS_CENSUS] READ provenance (total candidate reads=#{read_total}):"
+        STDERR.puts "[ACCESS_CENSUS]   recoverable_array_provenance = #{read_recoverable} (#{pct.call(read_recoverable, read_total)}%)"
+        STDERR.puts "[ACCESS_CENSUS]   concrete_elem_no_container   = #{read_concrete_np} (#{pct.call(read_concrete_np, read_total)}%)"
+        STDERR.puts "[ACCESS_CENSUS]   type_erased                  = #{read_erased} (#{pct.call(read_erased, read_total)}%)"
+        STDERR.puts "[ACCESS_CENSUS] STORE provenance (total candidate stores=#{store_total}):"
+        STDERR.puts "[ACCESS_CENSUS]   recoverable_array_provenance = #{store_recoverable} (#{pct.call(store_recoverable, store_total)}%)"
+        STDERR.puts "[ACCESS_CENSUS]   concrete_elem_no_container   = #{store_concrete_np} (#{pct.call(store_concrete_np, store_total)}%)"
+        STDERR.puts "[ACCESS_CENSUS]   type_erased                  = #{store_erased} (#{pct.call(store_erased, store_total)}%)"
+
+        STDERR.puts "[ACCESS_CENSUS] per-element READ table (elem | recoverable | concrete_np | erased):"
+        per_type_read.keys.sort.each do |elem|
+          h = per_type_read[elem]
+          STDERR.puts "[ACCESS_CENSUS]   #{elem} | #{h["recoverable"]? || 0} | #{h["concrete_np"]? || 0} | #{h["erased"]? || 0}"
+        end
+
+        STDERR.puts "[ACCESS_CENSUS] concrete_np site enclosing functions (A' asymmetry check):"
+        np_site_funcs.keys.sort.each { |k| STDERR.puts "[ACCESS_CENSUS]   #{np_site_funcs[k]}x  #{k}" }
+        STDERR.flush
+      end
+
+      # Balanced-paren extractor: census_extract_generic_arg("Array(Tuple(A,B))#x",
+      # "Array") -> "Tuple(A,B)". Returns nil if `name` does not start with
+      # `prefix(` or the parens are unbalanced. Read-only string helper.
+      private def census_extract_generic_arg(name : String, prefix : String) : String?
+        head = prefix + "("
+        return nil unless name.starts_with?(head)
+        start = head.size
+        depth = 1
+        j = start
+        while j < name.size
+          c = name[j]
+          if c == '('
+            depth += 1
+          elsif c == ')'
+            depth -= 1
+            return name[start...j] if depth == 0
+          end
+          j += 1
+        end
+        nil
+      end
+
+      # "Array(Vec2)#unsafe_fetch$Int32" -> "unsafe_fetch". Strips the receiver
+      # before '#' and the $-mangled suffix after the method name. Read-only.
+      private def census_method_part(name : String) : String?
+        h = name.index('#')
+        return nil unless h
+        rest = name[(h + 1)..]
+        d = rest.index('$')
+        d ? rest[0...d] : rest
       end
 
       # Refine a ctor site's coarse flow bucket the same way the per-site census

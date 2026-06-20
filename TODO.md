@@ -140,6 +140,27 @@ keep the two regimes distinct.
 
 ## Current Checkpoint
 
+**2026-06-20 — Container access-path census shipped (`abi-struct-byvalue`).**
+Read-only diagnostic `run_container_access_census` (gate
+`ADAMAS_CONTAINER_ACCESS_CENSUS`, default OFF; gate-OFF IR byte-identical after
+normalizing non-det `@.stub_name_<hash>`). Buckets every InlineValueCopy-candidate
+access by read|store × mechanism × provenance (recoverable / concrete_np / erased).
+Full table: `docs/container_access_path_census.md`. Decisive finding: the real
+Array element store/load is a raw `GetElementPtrDynamic`+Store/Load INSIDE the
+monomorphic `Array(Concrete)#push`/`#unsafe_fetch` body (symmetric), NOT
+ArrayGet/ArraySet and NOT the type-erased `Indexable#fetch` path (erased = 3.4%
+reads, 0 for Vec2/Vec3 → the erased-read falsifier did NOT fire). 35 candidates
+(Vec2/Vec3 + 33 stdlib value structs). **Decision (owner+GPT): A′ now, C later.**
+A′ next slice = a **read-only provenance marker FIRST** (function-context +
+buffer-base provenance: mark a raw GEP only if it addresses Array.@buffer, not any
+`Pointer(T)` inside an `Array(...)#` body; prove 0 marks outside Array buffers),
+THEN behavior (store/load by marker, heap-copy carrier on load). Hard conditions
+before behavior: (a) restore leaf-gate narrowing — raw-pointer-field structs
+(PointerLinkedList/Pointer::Appender) are NOT leaf-storage-POD; (b) no global
+type-driven `Pointer(T)#<<`; (c) close erased reconciliation OR ship v1 per-type
+safe-set (only types with no erased access in the lowered module); (d) reducer
+must include a NEGATIVE (IO#gets_peek / `Pointer(Range/Hasher)#value` → 0 ivc_raw).
+
 **2026-06-19 — ABI-rework + s2b GC fix MERGED to `main` and pushed.** Two
 revertable merge commits on `main` (now `71b707ff`, == `origin/main`):
 `d07b07d6` merges `abi-step4-inline-struct` (full ABI-rework series: LayoutContract
