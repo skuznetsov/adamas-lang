@@ -140,6 +140,25 @@ module Adamas
       result
     end
 
+    # Env gate for the container-element inline value-copy ABI (ABI rework storage
+    # slice). OFF (default) is byte-identical to the legacy container ABI. In the
+    # SCAFFOLD step ON ONLY enables the diagnostic ContainerElemRepr classification
+    # census (STDERR, no IR change) — no lowering site reads it yet; a later
+    # behavior-changing commit wires it into the element store/load. Independent of
+    # step4_inline_small_structs? only because v1 is leaf-storage-POD (no nested
+    # struct field whose repr would depend on the field-inline flip). Memoised — env
+    # is constant within a compile.
+    @@inline_pod_containers : Bool? = nil
+
+    def self.inline_pod_containers? : Bool
+      cached = @@inline_pod_containers
+      return cached unless cached.nil?
+      v = ::Adamas::Compiler::BootstrapEnv.get?("ADAMAS_INLINE_POD_CONTAINERS")
+      result = (v == "1" || v == "true" || v == "on")
+      @@inline_pod_containers = result
+      result
+    end
+
     # The container-element struct families with an implemented inline ABI
     # (mirrors llvm_backend.cr inline_container_struct_type?, :2796). Step 1c
     # replaces that runtime name match with this clause via the memo bit.

@@ -298,6 +298,26 @@ Quad=true, WithString=false); dead-default reducer green; suite 131/131 + 36/36;
 (bench_struct_heap.cr) now classifies GC::Stats/Time::Instant/Pointer::Appender/DWARF::Register as
 pod=true.
 
+**2026-06-19 — ContainerElemRepr classification SCAFFOLD SHIPPED** (`abi-struct-byvalue`; GPT GO
+scaffold-only). First implementation slice of the storage brief, behavior-NEUTRAL: adds MIR
+`ContainerElemRepr` enum (`PointerSlot | InlineAddress | InlineValueCopy`, mir.cr) + registry-backed
+classifier `container_elem_repr` / `leaf_storage_pod_struct?` / `mir_struct_is_lib?` (hir_to_mir.cr) +
+new gate `LayoutContract.inline_pod_containers?` (`ADAMAS_INLINE_POD_CONTAINERS`, default OFF). The
+classifier is COMPUTED + LOGGED only (`[ELEM_REPR]` census under the gate); NO lowering site reads it
+(container_elem_storage_size_u64 / emit_array_get / _set / Pointer(T)#<< / unsafe_fetch UNTOUCHED).
+GATE = leaf-storage-POD (every field primitive/enum/raw-ptr, no nested struct/tuple/union/ref, ≤16,
+non-union, non-lib), NOT semantic-POD. Family/leaf checks gated on `kind.struct?` (mirror
+inline_container_struct_type? :2798) so a union named `Slice(..)|..` is NOT misread as a family.
+DoD MET: reducer `container_elem_repr_scaffold_repro.sh` green (Vec2/Vec3=InlineValueCopy,
+Pair/WithStr=PointerSlot, Slice/StaticArray/Hash::Entry struct=InlineAddress, 410 unions all
+PointerSlot, gate OFF no [ELEM_REPR]); gate-OFF `--emit llvm-ir` BYTE-IDENTICAL to pre-step baseline
+(only non-det `stub_name_<hash>` salt churn — 124 diff lines both base-vs-base AND base-vs-cur,
+0 non-stub diffs, normalized identical); suite 131/131 + 36/36. s2b NOT required for scaffold (next
+behavior-changing store/load commit). NEXT (behavior-changing): wire InlineValueCopy into the store
+sites (Pointer(T)#<<:13837, raw Array#<<:4453, emit_array_new sizing) + copy-on-load
+(emit_array_get:25121, unsafe_fetch:4499), gated, with copy-on-store/load/double-store/realloc-stride
+(12B Vec3) reducers + s2b green.
+
 **2026-06-19 — Option C: placement-fusion census axis SHIPPED** (`abi-struct-byvalue`;
 `hir_to_mir.cr` +`run_struct_byvalue_fusion_census` + reducer `byvalue_fusion_site_census_repro.sh`).
 Second, read-only census axis (gated `ADAMAS_STRUCT_BYVALUE_CENSUS`, behavior-neutral): counts

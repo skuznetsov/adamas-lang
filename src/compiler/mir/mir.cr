@@ -119,6 +119,45 @@ module Adamas::MIR
   end
 
   # ═══════════════════════════════════════════════════════════════════════════
+  # CONTAINER ELEMENT REPRESENTATION (ABI rework — storage slice scaffold)
+  # ═══════════════════════════════════════════════════════════════════════════
+  #
+  # Three-way classification of HOW a value of an element type lives inside a
+  # container buffer (Array / Slice / Pointer(T)). Produced by a REGISTRY-BACKED
+  # classifier: a bare MIR::Type cannot answer it because the leaf-storage-POD
+  # test must resolve each Field.type_ref, and only the TypeRegistry holds that
+  # mapping. This enum is meant to become the SINGLE label the per-element
+  # lowering sites switch on, replacing today's scattered ad-hoc struct/family
+  # checks (container_elem_storage_size_u64, emit_array_get/_set, Pointer(T)#<<,
+  # unsafe_fetch).
+  #
+  # SCAFFOLD STEP (additive, behavior-neutral): the classifier is computed and
+  # logged under the ADAMAS_INLINE_POD_CONTAINERS gate but is NOT yet read by any
+  # lowering site — none of the sites above are touched. A later behavior-changing
+  # commit wires InlineValueCopy (copy-on-store + escape-aware copy-on-load) into
+  # them.
+  enum ContainerElemRepr
+    # Default / EXISTING lowering, left unchanged. For a plain user struct value
+    # or a class reference the slot holds an 8-byte pointer; for primitives / wide
+    # unions / primitive tuples the existing inline-by-value path applies. The
+    # classifier only POSITIVELY identifies the two inline-struct cases below, so
+    # everything else (nested-carrier structs like Pair{Vec2,Vec2}, ref-owning
+    # structs, unions, classes, primitives, tuples) falls here = "not the new
+    # value-copy struct ABI; keep current element lowering".
+    PointerSlot
+
+    # Inline storage where element ACCESS returns the slot ADDRESS (no load/copy)
+    # by design — the already-implemented inline-container families (Slice( /
+    # StaticArray( / Hash::Entry(). Current behavior; MUST stay unchanged.
+    InlineAddress
+
+    # NEW: inline storage with copy-on-store AND escape-aware copy-on-load — a
+    # leaf-storage-POD struct (every field primitive / enum / raw pointer; no
+    # nested struct / tuple / union / ref; size in 1..16; non-union; non-lib).
+    InlineValueCopy
+  end
+
+  # ═══════════════════════════════════════════════════════════════════════════
   # FIELD - Struct/class field definition
   # ═══════════════════════════════════════════════════════════════════════════
 

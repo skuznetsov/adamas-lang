@@ -346,6 +346,11 @@ module Adamas
         if Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_STRUCT_BYVALUE_CENSUS")
           run_struct_byvalue_census
         end
+        # ABI rework storage-slice SCAFFOLD: diagnostic ContainerElemRepr census.
+        # Gate ON only logs the classification (no IR change); OFF byte-identical.
+        if Adamas::LayoutContract.inline_pod_containers?
+          run_container_elem_repr_census
+        end
         build_owned_return_set
         total = @hir_module.functions.size
         STDERR.puts "    Pass 2: Lowering #{total} function bodies..." if progress
@@ -854,6 +859,73 @@ module Adamas
           STDERR.puts "[BYVAL_FUSION] ineligible (non-POD) per type:"
           fusion_nonpod.keys.sort.each { |t| STDERR.puts "[BYVAL_FUSION]   #{t} = #{fusion_nonpod[t]}" }
         end
+      end
+
+      # ── ABI rework storage slice: container-element repr classification ──────
+      # Registry-backed classifier (a bare MIR::Type cannot answer the leaf-storage
+      # POD test — Field.type_ref resolution needs the registry). Returns the
+      # SINGLE ContainerElemRepr label the future per-element lowering will switch
+      # on. SCAFFOLD: computed + logged only; no lowering site reads it yet.
+      private def container_elem_repr(type : Type) : ContainerElemRepr
+        # The inline cases apply ONLY to struct-kind types — mirror the existing
+        # inline_container_struct_type? (llvm_backend.cr:2798) which gates on
+        # kind.struct? BEFORE the name match. A union/other-kind type whose NAME
+        # happens to start with a family prefix (e.g. `Slice(..) | Slice(UInt8)`)
+        # is NOT a family and must fall through to PointerSlot.
+        if type.kind.struct?
+          # Existing inline-container families keep their address-return behavior.
+          return ContainerElemRepr::InlineAddress if Adamas::LayoutContract.inline_container_family?(type.name)
+          # NEW: leaf-storage-POD struct (<=16) -> inline value-copy element ABI.
+          return ContainerElemRepr::InlineValueCopy if leaf_storage_pod_struct?(type)
+        end
+        # Everything else (plain carrier struct, nested-carrier struct, ref-owning
+        # struct, union, class, primitive, tuple) -> existing lowering.
+        ContainerElemRepr::PointerSlot
+      end
+
+      # STORAGE-aware POD gate — STRICTER than struct_type_is_semantic_recursive_pod?:
+      # it does NOT recurse into struct fields, because a nested struct field is a
+      # POINTER carrier under the current field ABI (user_struct_inline? = size > 8),
+      # so an inline memcpy would copy pointers, not the nested bytes. A
+      # leaf-storage-POD struct has EVERY field a primitive / enum / raw pointer (no
+      # nested struct / tuple / union / ref / array / proc), size in 1..16,
+      # non-union (the kind guard), non-lib.
+      private def leaf_storage_pod_struct?(type : Type) : Bool
+        return false unless type.kind.struct?
+        return false if type.size == 0_u64 || type.size > 16_u64
+        return false if mir_struct_is_lib?(type)
+        fields = type.fields
+        return false unless fields
+        return false if fields.empty?
+        fields.all? do |f|
+          ft = @mir_module.type_registry.get(f.type_ref)
+          next false unless ft
+          k = ft.kind
+          # leaf scalar carriers only: primitive / enum / raw pointer.
+          k.primitive? || k.enum? || k.pointer?
+        end
+      end
+
+      # Lib (C ABI) struct detection at MIR-Type level (name membership in the HIR
+      # lib-struct set, mirroring hir_type_is_lib_struct?'s suffix matching).
+      private def mir_struct_is_lib?(type : Type) : Bool
+        lib_set = @hir_module.lib_structs
+        return false if lib_set.empty?
+        name = type.name
+        lib_set.includes?(name) ||
+          lib_set.any? { |ls| ls.ends_with?("::#{name}") || name.ends_with?("::#{ls.split("::").last}") }
+      end
+
+      # SCAFFOLD diagnostic (gated ADAMAS_INLINE_POD_CONTAINERS): log the
+      # ContainerElemRepr label for every container-element-candidate type so the
+      # regression reducer can assert the classification WITHOUT any IR change.
+      private def run_container_elem_repr_census
+        @mir_module.type_registry.types.each do |type|
+          next unless type.kind.struct? || type.kind.union? ||
+                      Adamas::LayoutContract.inline_container_family?(type.name)
+          STDERR.puts "[ELEM_REPR] #{type.name} kind=#{type.kind} => #{container_elem_repr(type)}"
+        end
+        STDERR.flush
       end
 
       # Refine a ctor site's coarse flow bucket the same way the per-site census
