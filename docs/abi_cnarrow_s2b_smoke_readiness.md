@@ -27,21 +27,36 @@ at the SAME startup point (the `[STAGE2_DEBUG] pass3 after lower_main` region) w
 
 ## Finding
 
-**The s2b startup SIGSEGV is PRE-EXISTING and gate-independent.** Baseline (no gates),
-A′-only, A′+C-narrow-a, and A′+all-three crash identically (139, same trace point). This
-is the long-documented s2b startup crash family (the two-heap GC hazard / startup
-segfault, see memory `s2b_startup_crash_rc_overfree_refuted`), unrelated to the inline-
-value-array ABI or the C-narrow slices.
+**The first s2b runtime failure is PRE-EXISTING and gate-independent.** Baseline (no
+gates), A′-only, A′+C-narrow-a, and A′+all-three crash identically (139, same trace point).
 
-So GPT's combined-gate-incompatibility worry is **NOT realised**: C-narrow-a/b add NO new
-self-host crash — they crash exactly where baseline does. The gated ABI does not break the
-self-host BUILD (all exit 0), and the runtime startup crash is the separate pre-existing
-issue that blocks ALL gate-ON self-host validation equally (it must be fixed independently;
-it is not a C-narrow regression).
+**ROOT (localized 2026-06-21 via lldb — NOT two-heap GC):** the crash is a NULL-deref in
+`String#split(Char, Nil, Bool)` (`ldr w2,[x9]`, x9=0) reached from
+`Dir::Globber#single_compile`'s `glob.split('/')` during the compiler's require-glob
+resolution (`parse_required_files` → `Dir.glob`). It is NOT the byte_at / two-heap-GC
+startup crash (that fix `e635fbc4` IS present; String layout is the correct
+`{ptr,i32,i32}`). It is also NOT optimization-induced (`--no-mir-opt --no-llvm-opt` s2b
+still crashes). It is a **context-specific base-codegen miscompile**: standalone
+`"a/b/c".split('/')` and standalone `Dir.glob(...)` both run clean on bin/adamas; only the
+full s2b self-build miscompiles this String#split. See memory
+`s2b_startup_crash_split_glob_localization`.
+
+So GPT's combined-gate-incompatibility worry is **NOT realised**, but the precise,
+evidence-bounded claim is narrower than "self-host-clean":
+
+> **C-narrow gates BUILD s2b (all exit 0) and do NOT change the first observed startup
+> crash** (baseline and all-gates configs hit the identical first failure). This does NOT
+> prove the gated s2b is runtime-clean after the Globber/split root cause is fixed — that
+> remains unverified and is the next gate before any default-ON discussion.
+
+The String#split/Globber crash blocks ALL gate-ON self-host validation equally; it must be
+fixed independently. It is not a C-narrow regression.
 
 ## Consequences
 
-- **C-narrow-a/b are self-host-clean** relative to baseline: no new crash, gated build OK.
+- **C-narrow-a/b build s2b and do not change the first observed startup crash** (NOT a
+  proof of gated-s2b runtime-cleanliness — that needs the Globber/split root cause fixed
+  and re-verified).
 - **Default-OFF is safe** (existing behavior byte-identical; verified across the reducer suite).
 - **Default-ON readiness is blocked by the pre-existing s2b startup crash**, NOT by C-narrow.
   A broader gate-ON suite + a working s2b smoke both require that pre-existing crash fixed
