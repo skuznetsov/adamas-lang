@@ -1,7 +1,9 @@
 # Struct-Value ABI — C design packet (C-narrow vs C-wide)
 
-Status: **PROPOSED. Census-grounded design packet for GPT review. No code beyond
-the read-only censuses.** Companion to `docs/abi_struct_value_sdd.md` (the layout
+Status: **PROPOSED. Census-grounded design packet. GPT review round 1 CLOSED (4
+blockers folded in; the recursive-POD "fix gate-1 first" blocker was REFUTED as stale —
+already fixed in-tree, §6 gate 1). No code beyond the read-only censuses.** Companion to
+`docs/abi_struct_value_sdd.md` (the layout
 ownership contract), `docs/inline_value_array_storage_behavior_plan.md` (the
 shipped A′ Array-storage slice), and the memory notes
 `struct_value_abi_gap_root_cause`, `mixed_memory_model_analysis`,
@@ -142,39 +144,60 @@ Scope: keep the pointer-carrier `$Dnew` ABI everywhere; add two local, gated rew
 
 ### C-narrow-a — push construct-in-place (placement-ctor fusion)
 
-At a `container << T.new(args)` where the ctor is the sole use of a fresh value, T is
-recursive-POD, and the push is a monomorphic `Array(T)#push/<<`, construct T's fields
-directly at `@buffer[size]` (ensure-capacity first), skipping the transient
-`T$Dnew` malloc + inline memcpy.
+At a `container << T.new(args)` where the COMPOSITE gate
+`inline_array_storage_eligible(T) && semantic_recursive_pod(T) && fresh sole-use ctor &&
+monomorphic Array(T)#push` holds (gate 1 + 1b §6 — storage-layout eligibility, NOT
+semantic-POD alone), construct T's fields directly at `@buffer[size]` (ensure-capacity
+first), skipping the transient `T$Dnew` malloc + inline memcpy.
 
-- **Coverage:** 5 removable fresh-ctor sites (prelude) + every `arr << T.new(...)` in
-  user struct-array code (the bench: 1M mallocs → 0).
+- **Coverage:** the fresh-ctor sites whose T is ALSO inline-array-storage-eligible (the
+  bench `Vec3`: 1M mallocs → 0). A semantic-POD-but-not-storage-eligible nested type
+  (`Pair{Vec2,Vec2}`) is OUT of this slice (→ C-wide / later).
 - **DoD:** on the `Array(Vec3)` bench, `Vec3$Dnew __adamas_malloc64` callsites in the
   push loop → 0; runtime checksum identical ON vs OFF; peak RSS approaches original;
   gate-OFF byte-identical; suite green.
-- **Falsifier:** a non-sole-use ctor (`v = Vec3.new(..); arr << v; use(v)`) must NOT
-  fuse (v still observable); a non-POD element (`arr << Box.new(str)`) must NOT fuse
-  (inner pointer ownership); a non-monomorphic / erased `Array(T)#<<` must NOT fuse.
-- **Risk:** LOW. Construct-in-buffer is sound (the buffer is heap, outlives the frame —
-  not stack promotion). Negative gates §6 fail-closed.
+- **Eligibility falsifier:** a non-sole-use ctor (`v = Vec3.new(..); arr << v; use(v)`) must
+  NOT fuse (v still observable); a non-POD element (`arr << Box.new(str)`) must NOT fuse
+  (inner pointer ownership); a non-monomorphic / erased `Array(T)#<<` must NOT fuse; a
+  semantic-POD-but-NOT-storage-eligible T must NOT fuse (gate 1b).
+- **Ordering / partial-init reducers (PRE-CODE, mandatory — construct-in-place can corrupt
+  Array invariants even with correct POD/layout gates):**
+  1. ctor args evaluated **once** and in Crystal source order (no double-eval of a
+     side-effecting arg when args are written directly into the slot);
+  2. capacity ensured (`@buffer` grown/realloc'd) **before** any slot write;
+  3. `size` incremented **only after** the slot is fully, successfully initialized;
+  4. partial init is **not observable** if the ctor/`initialize` path raises/aborts — IF
+     such a path exists in this compiler subset (else document its absence as the reason
+     the falsifier is vacuous).
+- **Risk:** LOW–MEDIUM. Construct-in-buffer is sound for lifetime (the buffer is heap,
+  outlives the frame — not stack promotion); the residual risk is Array-invariant
+  corruption (ordering/partial-init above) and the storage-layout gate. Negative gates §6
+  fail-closed.
 
 ### C-narrow-b — escape-conditioned direct-slot load
 
-At a `v = arr[i]` whose result is `stack_local` (read-only local consumption, proven
-by the load-side walk) AND no array mutation occurs between the load and the last use,
-read fields directly from `@buffer[i]` without materializing the A′ heap carrier.
+At a `v = arr[i]` whose result is `stack_local`, read fields directly from `@buffer[i]`
+without materializing the A′ heap carrier — but **v1 is BRUTALLY NARROW** (GPT blocker 4):
+eligible ONLY when, between the load and its last use, ALL hold: SAME basic block; uses are
+local field reads ONLY; **no calls**; **no Array writes** (`[]=`/push/`<<`/delete_at/shift/
+insert/concat/clear); **no aliases** of `arr` live. Anything else stays carrier-required.
+`recv_borrow` is **EXCLUDED from v1** — the census labels it an upper bound only (the callee
+is not yet proven borrow-only).
 
-- **Coverage:** the `stack_local` user loads (bench hot loop; 3–6 static sites per
-  workload but dynamically dominant).
+- **Coverage:** the strict same-block `stack_local` user loads (bench hot loop; few static
+  sites but dynamically dominant).
 - **DoD:** on the bench read loop, 0 heap-carrier (`[i64 INT64_MAX][payload]`) allocs;
   checksum identical; gate-OFF byte-identical; suite green.
-- **Falsifier:** a loaded value that escapes (`heap:returned`/`stored`/`passed`/
-  `union_wrapped`/`addr_taken`) must KEEP the carrier; an intervening `arr[i]=` or
-  `arr.push`/`delete_at` between load and use must KEEP the carrier (the slot may move
-  on realloc / be overwritten — the A′ copy-on-load no-alias invariant).
-- **Risk:** MEDIUM. Correctness hinges on the no-intervening-mutation condition and the
-  borrow-only proof for `recv_borrow` promotion (deferred — v1 covers only `stack_local`,
-  the fail-closed lower band).
+- **Carrier-REQUIRED falsifiers (must NOT promote in v1):**
+  ```
+  v = arr[i];  maybe_mutate(arr);  v.x      # intervening call → carrier
+  b = arr;  v = arr[i];  b << V3.new(...);  v.x   # alias write → carrier
+  v = arr[i];  arr.delete_at(0);  v.x        # array mutation (slot may move) → carrier
+  ```
+  Plus any escape (`heap:returned`/`stored`/`passed`/`union_wrapped`/`addr_taken`) → carrier.
+- **Risk:** MEDIUM. Correctness hinges on the brutally-narrow same-block no-mutation/no-alias
+  condition; widening (cross-block dataflow, borrow-only `recv_borrow` promotion) is deferred
+  v2 work, each behind its own proof.
 
 ---
 
@@ -211,12 +234,24 @@ A struct value is by-value-eligible ONLY if ALL hold; any unproven condition →
 pointer carrier / heap home (never optimistically inline):
 
 1. **Recursive-POD.** T transitively holds only value scalars/enums — no String, Array,
-   ref, ref-union, Proc, or **raw pointer field** (a memcpy would duplicate an owned
+   ref, ref-union, Proc, Tuple, or **raw pointer field** (a memcpy would duplicate an owned
    interior pointer with no retain/release → UAF/leak under ARC). Predicate
-   `struct_type_is_semantic_recursive_pod?`. ⚠️ **Open accuracy bug** (carried from
-   `inline_value_copy_container_abi_blocker`): nested-struct false-negative — `Pair{@a,@b:Vec2}`
-   wrongly reports non-POD. MUST be fixed before recursive-POD gates any real flip, or it
-   wrongly rejects the exact Particle/Pair nested-POD shape C targets.
+   `struct_type_is_semantic_recursive_pod_mir?` — DFS ANCESTOR-PATH `seen` (id removed on the
+   way back up), so two SIBLING fields of the same POD type are NOT mistaken for a cycle.
+   ✅ **Reducer green** (`recursive_pod_nested_sibling_repro.sh`, verified this session):
+   `Vec2` / `Pair{@a,@b:Vec2}` / `Quad` pod=true, `WithString` pod=false. (The earlier
+   "nested-struct false-negative" blocker note was STALE — already fixed in-tree; refuted by
+   reading the predicate + running the reducer.) **Caveat (→ gate 1b):** this answers
+   "bit-copyable in the FUTURE value ABI", NOT "current Array(T) storage is inline-compatible".
+1b. **Inline-array-storage-eligible (C-narrow-a/-b ONLY).** Semantic recursive-POD does NOT
+   imply the CURRENT Array(T) storage layout is inline. C-narrow's placement / direct-slot
+   rewrites require T to already be `inline_array_storage_eligible` (the A′ safe-set: leaf/value
+   type carrying the inline byte stride, monomorphic `Array(T)#` bodies, no erased flow). A
+   nested POD like `Pair{Vec2,Vec2}` can be semantic-POD yet NOT inline-storage-eligible today
+   → it belongs to C-wide or a later storage-layout expansion, NOT the first placement slice.
+   So the C-narrow-a gate is the CONJUNCTION `inline_array_storage_eligible(T) &&
+   semantic_recursive_pod(T) && fresh sole-use ctor && monomorphic Array(T)#push`, never
+   semantic-POD alone.
 2. **No pointer escape / address-taken.** `pointerof` / `to_unsafe` / `AddressOf` of the
    value → carrier. Load-side `heap:addr_taken`.
 3. **No user `to_unsafe` interior leak.** A user `Box#to_unsafe{@a.to_unsafe}` leaks an
@@ -246,15 +281,18 @@ pointer carrier / heap home (never optimistically inline):
 | self-host coverage | 0.4% container writes | small static / hot dynamic | ~86% struct traffic |
 | bench gap closed | store residual (1M→0 malloc) | load residual (0 carriers) | both + Particle-field allocs |
 | UAF/repr risk | LOW | MEDIUM | HIGH |
-| prerequisite | recursive-POD fix (gate 1) | no-intervening-mutation proof | LayoutContract consolidation (SDD step 1) |
+| prerequisite | `inline_array_storage_eligible` gate (1b) + ordering/partial-init reducers | brutally-narrow same-block no-mutation/no-alias | LayoutContract consolidation (SDD step 1) |
 | isolation | one gated rewrite | one gated rewrite | isolation branch, big-bang surface |
 
 **Recommendation (PROPOSED, owner/GPT decision):** land **C-narrow-a then -b** as
 low-risk, gated, bench-measurable confidence slices (each closes one A′ residual on the
 container workload, neither conflicts with C-wide), while treating **C-wide as the
 eventual root fix** for self-host struct traffic — sequenced AFTER the SDD step-1
-LayoutContract consolidation and the recursive-POD accuracy fix. Fix gate-1
-(nested-struct POD false-negative) FIRST regardless of branch order — it blocks both.
+LayoutContract consolidation. Gate the C-narrow slices on `inline_array_storage_eligible`
+(gate 1b — current storage layout), NOT semantic-POD alone; the recursive-POD detector is
+already green (the earlier "fix gate-1 first" blocker was stale, refuted this session). The
+real C-narrow-a pre-code work is the ordering/partial-init reducers (§4), and C-narrow-b
+v1 must be the brutally-narrow same-block form (no `recv_borrow`).
 
 ---
 
