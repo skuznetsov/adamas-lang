@@ -1597,6 +1597,15 @@ module Adamas::MIR
     getter element_type : TypeRef
     getter container_type : TypeRef?
 
+    # C-narrow-b: durable mark set ONLY on a main-inlined `arr[i]` whose loaded value
+    # is consumed exclusively by same-block local field reads, with no intervening
+    # call / Array mutation / alias write / escape (the brutally-narrow v1 in
+    # docs/abi_cnarrow_b_load_brief.md). A later behavior slice (gated, also requiring
+    # A' on) reads fields directly from the inline @buffer[i] slot instead of
+    # materializing the A' heap carrier. false = keep the carrier; set only under the
+    # C-narrow-b preflight/behavior gate; no lowering reads it yet.
+    property cnarrow_b_direct : Bool = false
+
     def initialize(id : ValueId, @element_type : TypeRef, @array_value : ValueId, @index_value : ValueId, @container_type : TypeRef? = nil)
       super(id, @element_type)
     end

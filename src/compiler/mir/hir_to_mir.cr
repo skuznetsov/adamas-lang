@@ -1793,6 +1793,171 @@ module Adamas
         STDERR.flush
       end
 
+      # ── C-narrow-b PREFLIGHT (behavior-neutral): direct-slot-load eligibility ─
+      # Gate ADAMAS_CNARROW_B_PREFLIGHT (=verbose lists sites). Marks a main-inlined
+      # `ArrayGet` (MIR::ArrayGet#cnarrow_b_direct) whose loaded value is consumed
+      # ONLY by same-block local field reads, with no intervening call / Array
+      # mutation / alias write / escape (the brutally-narrow v1, executable §2 of
+      # docs/abi_cnarrow_b_load_brief.md). Reason-coded; clears prior marks before
+      # re-marking (C-narrow-a pass-ordering lesson). BEHAVIOR-NEUTRAL: mutates A'
+      # facts + this mark under the gate, but no lowering reads them unless the
+      # C-narrow-b behavior gate is on (this gate does not enable it).
+      def populate_cnarrow_b_marks : Nil
+        populate_inline_value_safe_set
+        populate_array_bulk_op_facts
+        reg = @mir_module.type_registry
+        ivc_ids = ::Set(TypeId).new
+        reg.types.each { |t| ivc_ids << t.id if classify_container_elem_repr(t).inline_value_copy? }
+
+        # clear prior marks.
+        @mir_module.functions.each do |f|
+          f.blocks.each { |b| b.instructions.each { |i| i.as(MIR::ArrayGet).cnarrow_b_direct = false if i.is_a?(MIR::ArrayGet) } }
+        end
+
+        tally = Hash(String, Int32).new(0)
+        per_type = Hash(String, Hash(String, Int32)).new
+        marked = 0
+        verbose = Adamas::Compiler::BootstrapEnv.get?("ADAMAS_CNARROW_B_PREFLIGHT") == "verbose"
+
+        @mir_module.functions.each do |func|
+          uses = Hash(ValueId, Array(MIR::Value)).new
+          inst_block = Hash(ValueId, BlockId).new
+          inst_pos = Hash(ValueId, Int32).new
+          func.blocks.each do |b|
+            b.instructions.each_with_index do |inst, idx|
+              inst_block[inst.id] = b.id
+              inst_pos[inst.id] = idx
+              inst.operands.each { |op| (uses[op] ||= [] of MIR::Value) << inst }
+            end
+          end
+
+          func.blocks.each do |b|
+            b.instructions.each_with_index do |inst, idx|
+              next unless inst.is_a?(MIR::ArrayGet)
+              ag = inst.as(MIR::ArrayGet)
+              next unless ivc_ids.includes?(ag.element_type.id)
+              reason = cnarrow_b_arrayget_reason(ag, b, idx, uses, inst_block)
+              cname = reg.get(ag.element_type).try(&.name) || "?"
+              tally[reason] += 1
+              (per_type[cname] ||= Hash(String, Int32).new(0))[reason] += 1
+              if reason == "eligible"
+                ag.cnarrow_b_direct = true
+                marked += 1
+              end
+              STDERR.puts "[CNARROW_B] #{reason} type=#{cname} in=#{func.name}" if verbose
+            end
+          end
+        end
+
+        STDERR.puts "[CNARROW_B] direct-slot-load eligibility (v1 brutally-narrow: same-block local field reads only, no call/mutation/alias/escape):"
+        STDERR.puts "[CNARROW_B] inline-C ArrayGet sites = #{tally.values.sum} ; eligible(marked) = #{marked}"
+        tally.keys.sort.each { |r| STDERR.puts "[CNARROW_B]   #{r} = #{tally[r]}" }
+        STDERR.puts "[CNARROW_B] per-type (type | reason=count ...):"
+        per_type.keys.sort.each do |t|
+          STDERR.puts "[CNARROW_B]   #{t} | #{per_type[t].to_a.sort_by { |r, _| r }.map { |r, c| "#{r}=#{c}" }.join(" ")}"
+        end
+        STDERR.flush
+      end
+
+      # Reason-coded C-narrow-b eligibility for ONE inline-C `ArrayGet` (fail-closed).
+      private def cnarrow_b_arrayget_reason(ag : MIR::ArrayGet,
+                                            block : MIR::BasicBlock,
+                                            ag_pos : Int32,
+                                            uses : Hash(ValueId, Array(MIR::Value)),
+                                            inst_block : Hash(ValueId, BlockId)) : String
+        ct = @mir_module.type_registry.get(ag.element_type)
+        return "non_eligible_type" unless ct && ct.inline_array_storage_eligible
+
+        empty = [] of MIR::Value
+        same_block = ->(id : ValueId) { inst_block[id]? == block.id }
+
+        # R-closure: ArrayGet result + transparent Cast forwards, all same-block.
+        closure = ::Set(ValueId).new
+        closure << ag.id
+        frontier = [ag.id]
+        until frontier.empty?
+          v = frontier.pop
+          (uses[v]? || empty).each do |u|
+            next unless u.is_a?(MIR::Cast) && u.as(MIR::Cast).value == v
+            return "cross_block" unless same_block.call(u.id)
+            unless closure.includes?(u.id)
+              closure << u.id
+              frontier << u.id
+            end
+          end
+        end
+
+        # Validate every use of every closure member; collect the last field-load pos.
+        max_load_pos = ag_pos
+        closure.each do |v|
+          (uses[v]? || empty).each do |u|
+            next if u.is_a?(MIR::Cast) && u.as(MIR::Cast).value == v
+            return "cross_block" unless same_block.call(u.id)
+            case u
+            when MIR::GetElementPtr, MIR::GetElementPtrDynamic
+              base = u.is_a?(MIR::GetElementPtr) ? u.as(MIR::GetElementPtr).base : u.as(MIR::GetElementPtrDynamic).base
+              return "gep_index_use" unless base == v  # value used as an index, not a field base
+              loads = uses[u.id]? || empty
+              return "field_addr_unused" if loads.empty?
+              loads.each do |g|
+                return "field_addr_escape" unless g.is_a?(MIR::Load) && g.as(MIR::Load).ptr == u.id
+                return "cross_block" unless same_block.call(g.id)
+                gp = inst_pos_in(block, g.id)
+                max_load_pos = gp if gp > max_load_pos
+              end
+            when MIR::Load    then return "direct_load"
+            when MIR::Store   then return u.as(MIR::Store).value == v ? "stored" : "store_through"
+            when MIR::Call, MIR::IndirectCall then return "call"
+            when MIR::ExternCall  then return "extern_call"
+            when MIR::Phi         then return "phi"
+            when MIR::MemCopy     then return "memcopy"
+            when MIR::UnionWrap   then return "union_wrapped"
+            when MIR::AddressOf   then return "addr_taken"
+            when MIR::ArraySet    then return "array_set_value"
+            else                       return "unknown_use"
+            end
+          end
+        end
+
+        # Escape via the block's Return terminator.
+        term = block.terminator
+        if term.is_a?(MIR::Return) && (rv = term.value) && closure.includes?(rv)
+          return "returned"
+        end
+
+        # Order-based: between the ArrayGet and the last field load, forbid ANY call
+        # and any ArraySet on the source-array SSA closure.
+        if max_load_pos > ag_pos
+          a_closure = ::Set(ValueId).new
+          a_closure << ag.array_value
+          af = [ag.array_value]
+          until af.empty?
+            v = af.pop
+            (uses[v]? || empty).each do |u|
+              next unless u.is_a?(MIR::Cast) && u.as(MIR::Cast).value == v
+              unless a_closure.includes?(u.id)
+                a_closure << u.id
+                af << u.id
+              end
+            end
+          end
+          k = ag_pos + 1
+          while k < max_load_pos
+            mid = block.instructions[k]
+            return "intervening_call" if mid.is_a?(MIR::Call) || mid.is_a?(MIR::ExternCall) || mid.is_a?(MIR::IndirectCall)
+            return "intervening_mutation" if mid.is_a?(MIR::ArraySet) && a_closure.includes?(mid.as(MIR::ArraySet).array_value)
+            k += 1
+          end
+        end
+
+        "eligible"
+      end
+
+      private def inst_pos_in(block : MIR::BasicBlock, id : ValueId) : Int32
+        block.instructions.each_with_index { |i, idx| return idx if i.id == id }
+        -1
+      end
+
       # ── A' STEP 2: READ-ONLY Array-buffer provenance probe ─────────────────────
       # Gate ADAMAS_ARRAY_BUFFER_PROVENANCE_PROBE. Identifies which raw
       # GetElementPtrDynamic sites over an InlineValueCopy-candidate element actually

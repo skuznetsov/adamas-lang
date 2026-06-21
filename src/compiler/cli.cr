@@ -2671,6 +2671,12 @@ module Adamas
             if BootstrapEnv.enabled?("ADAMAS_CNARROW_A_PLACEMENT")
               mir_lowering.apply_cnarrow_a_placement
             end
+            # C-narrow-b read-only PREFLIGHT: mark direct-slot-load-eligible ArrayGets
+            # on the post-opt MIR (getters inlined to field GEP+Load here). Requires A'
+            # (this block) for the inline storage facts + the inline buffer slot.
+            if BootstrapEnv.enabled?("ADAMAS_CNARROW_B_PREFLIGHT")
+              mir_lowering.populate_cnarrow_b_marks
+            end
           end
           if options.stats
             mir_stage_ms = (timings["mir"]? || 0.0) + (timings["mir_opt"]? || 0.0)

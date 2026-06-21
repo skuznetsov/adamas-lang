@@ -29,22 +29,37 @@ This is a load-site optimization conditioned on the *consumption* (the load-side
 already classifies `stack_local` vs `heap_carrier`; C-narrow-b is a strictly narrower
 subset of `stack_local`).
 
-## 2. v1 is BRUTALLY NARROW (GPT caveat 2)
+## 2. v1 is BRUTALLY NARROW — as an EXECUTABLE MIR pattern (GPT caveats 2, 3)
 
 A load is C-narrow-b-eligible ONLY if ALL hold — any unproven condition ⇒ keep the
-A′ carrier (fail-closed):
+A′ carrier (fail-closed). Stated as MIR predicates over the `MIR::ArrayGet` result `R`
+(v1 source = `ArrayGet` only — see §4):
 
-- **same basic block**: every use of the loaded value is in the SAME block as the load.
-- **local field reads ONLY**: every use is a field read of the value (GEP + Load of the
-  carrier / the getter inlined to a field load).
-- **no calls**: the value is not passed to any call — including **NO `recv_borrow`**
-  (receiver-position is excluded in v1; it is the optimistic band, not proven borrow).
-- **no Array mutation** between the load and the last use: no `arr[i]=`/`push`/`<<`/
-  `delete_at`/`shift`/`insert`/`clear`/`concat` on the source array (the slot may move on
-  realloc or be overwritten).
-- **no alias writes**: no aliasing reference to the source array is written through
-  between the load and the last use (`b = arr; b << …`).
-- **no escape**: not returned / stored / union-wrapped / address-taken.
+**(a) Field-read-only USE pattern.** Every use of `R` (and of its transparent
+`Cast`/`Copy` forwards) is exactly the chain
+`R -> optional Cast/Copy -> field GEP (GetElementPtr/GetElementPtrDynamic, base ∈ R-closure)
+-> Load`, all in the SAME basic block as the `ArrayGet`. The field GEP's only use is the
+`Load`. **Any** other consumer of `R` or a forward — `Call`/`IndirectCall`/`ExternCall`
+(incl. receiver position = `recv_borrow`, excluded in v1), `Phi`, `Store`-as-value,
+`Return`, `MemCopy`, `UnionWrap`, `AddressOf`, `ArraySet`-value, or an unknown instruction
+— ⇒ **carrier** (reason `escape`/`call`/`phi`/`cross_use`).
+
+**(b) Same block.** Any use of `R` outside the `ArrayGet`'s block ⇒ **carrier**
+(`cross_block`).
+
+**(c) Order-based no-intervening-mutation.** Let `lo` = the `ArrayGet`'s index in the block
+and `hi` = the MAX index among the field-`Load` uses. Mutations BEFORE `lo` or AFTER `hi`
+are irrelevant. Strictly between `lo` and `hi`, FORBID: any `Call`/`ExternCall` (intervening
+call), and any **Array mutation** whose receiver is in the SSA closure of the source array
+`A = ArrayGet.array_value` (the closure = `A` + its `Cast`/`Copy` forwards/aliases). Array
+mutation = `ArraySet`, or a `Call` to `Array(C)#{push,<<,[]=,delete_at,shift,insert,unshift,
+clear,concat}` with a closure member as receiver. Any such site between `lo..hi` ⇒
+**carrier** (`intervening_call`/`intervening_mutation`).
+
+**(d) Alias closure must be PROVEN.** The source-array SSA closure is computed forward
+through `Cast`/`Copy` only. If `A` (or a forward) flows into an opaque/unknown instruction
+within `lo..hi` whose aliasing cannot be ruled out (e.g. passed to a call — already barred
+by the no-call rule), REJECT (`aliased`). Fail-closed: unproven ⇒ carrier.
 
 Widening (cross-block dataflow, `recv_borrow` with a proven borrow-only callee, loop-carried)
 is deferred v2, each behind its own proof.
@@ -58,13 +73,22 @@ pointer as a value (repr-flip). So: `ADAMAS_CNARROW_B_LOAD=1` WITHOUT
 The behavior hook is placed inside the A′ block (as C-narrow-a's is), so the coupling holds
 by construction.
 
-## 4. Fact to consume (no second oracle)
+## 4. Fact to consume + pass ordering (no second oracle; GPT caveats 1, 5)
 
-Mirror C-narrow-a: a durable MIR mark on the eligible load (`MIR::ArrayGet#cnarrow_b_direct`
-or the load instruction), computed POST-MIR-opt (the optimizer clones/drops pre-opt marks).
-The eligibility = the §2 conjunction over the load result's uses (an escape/use walk within
-the block), gated on the element type being `inline_array_storage_eligible`. The later
-behavior transform consumes the mark; it does NOT re-derive provenance/storage (GPT hard-stop).
+**Mark target = `MIR::ArrayGet#cnarrow_b_direct : Bool`, ONLY.** v1 handles the
+main-inlined `ArrayGet` (`arr[i]`). The raw `Load(gep_dyn)` and the `Call` to
+`Array(C)#unsafe_fetch`/`[]` accessors are a DIFFERENT provenance surface (the load is
+inside the accessor body, returned) — explicitly **future path**, not marked in v1.
+
+The eligibility = the §2 conjunction over the `ArrayGet` result's uses, gated on the
+element type being `inline_array_storage_eligible(C)`. The later behavior transform
+consumes the mark; it does NOT re-derive provenance/storage (GPT hard-stop).
+
+**Pass ordering = identical to C-narrow-a placement (GPT caveat 5).** The mark is
+populated POST-MIR-opt (the optimizer clones/moves instructions and drops pre-opt marks);
+`populate_cnarrow_b_marks` CLEARS all `cnarrow_b_direct = false` before re-marking from
+scratch; and per-worker MIR opt stays disabled after population (the A′ flow already sets
+`fused_parallel = false` inside the A′ block) so workers cannot re-clobber the marks.
 
 ## 5. Reducers (reducer-first; NO behavior yet)
 
@@ -73,11 +97,16 @@ with a reason code — `eligible` / `escapes:<why>` / `intervening_call` /
 `intervening_mutation` / `aliased` / `recv_borrow` / `cross_block` — and mark the eligible
 loads. Behavior-neutral (gate-OFF byte-identical).
 
-**Positive reducer — C-SPECIFIC (GPT caveat 3, the value-proxy lesson):** a clean
-`Array(V3)` same-block local-read loop. Assert: V3 load `eligible`; AND (once behavior
-lands) the carrier alloc (`[i64 INT64_MAX][payload]`) disappears SPECIFICALLY in the
-Array(V3) read path — NOT a global `ivc_raw`/carrier-count proxy. The behavior DoD greps
-the carrier in the V3 read block, not module-wide.
+**Positive reducer — C-SPECIFIC + MECHANICAL (GPT caveats 3, 4 — the value-proxy lesson):**
+a clean `Array(V3)` same-block local-read loop.
+- *Preflight stage (read-only):* emit `[CNARROW_B] eligible type=V3 in=<fn>`; the reducer
+  asserts the V3 `ArrayGet` is marked `cnarrow_b_direct` and the negatives are NOT —
+  no global counter.
+- *Behavior stage (later):* the signal is C-SPECIFIC, not a global ivc_raw count —
+  assert in the V3 read block's IR that the field reads are DIRECT slot loads off
+  `@buffer[i]` AND there is NO `ivc_raw` ArrayGet carrier for that marked V3 load (grep
+  scoped to the marked load's region, never module-wide). Exactly the check that catches
+  the earlier V3-ineligible value-proxy theater.
 
 **Negative reducers — MANDATORY (GPT caveat 4), each stays carrier-required:**
 - escape: `return arr[i]` / `sink << arr[i]` / `x = arr[i]; pass(x)` / union-wrap / `pointerof`.
