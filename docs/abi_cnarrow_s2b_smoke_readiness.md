@@ -36,10 +36,14 @@ gates), A′-only, A′+C-narrow-a, and A′+all-three crash identically (139, s
 resolution (`parse_required_files` → `Dir.glob`). It is NOT the byte_at / two-heap-GC
 startup crash (that fix `e635fbc4` IS present; String layout is the correct
 `{ptr,i32,i32}`). It is also NOT optimization-induced (`--no-mir-opt --no-llvm-opt` s2b
-still crashes). It is a **context-specific base-codegen miscompile**: standalone
-`"a/b/c".split('/')` and standalone `Dir.glob(...)` both run clean on bin/adamas; only the
-full s2b self-build miscompiles this String#split. See memory
-`s2b_startup_crash_split_glob_localization`.
+still crashes). It is a **context-specific nilable-`limit` miscompile in String#split**:
+standalone `Dir.glob(...)` no longer CRASHES on bin/adamas, but the family is NOT fully
+clean standalone — the minimal semantic reducer `string_split_default_nil_limit_repro.{cr,sh}`
+shows `"a/b/c/d".split('/')` (default nil limit) already returns the WRONG count (1, not 4)
+WITHOUT s2b/lldb. The full s2b self-build escalates the same nilable-limit family to a
+SIGSEGV: the inner `String#split$Char$$arity3_block` monomorphizes with `i32 %limit` (vs
+`ptr %limit` standalone) and the outer coerces its Nil limit via `load i32, ptr %limit` on a
+null ptr. See memory `s2b_startup_crash_split_glob_localization`.
 
 So GPT's combined-gate-incompatibility worry is **NOT realised**, but the precise,
 evidence-bounded claim is narrower than "self-host-clean":
