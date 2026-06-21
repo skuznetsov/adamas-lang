@@ -1493,9 +1493,13 @@ module Adamas
       # to C-wide / a later storage-layout expansion, never this first slice.
       # Reasons: eligible / not_pod / not_storage_eligible / not_sole_use / erased_push.
       # Storage eligibility reuses the SAME inline_array_storage_eligible flag the A'
-      # behavior gates on (populated here on the lowered MIR). Read-only for codegen:
-      # it sets the durable A' facts, which no lowering reads unless the A' behavior
-      # gate is on (this gate does not enable it) -> gate-OFF byte-identical.
+      # behavior gates on (populated here on the lowered MIR). BEHAVIOR-NEUTRAL (not
+      # strictly read-only): under the gate it MUTATES the durable A' MIR facts via
+      # populate_*, but no lowering site reads them unless the A' behavior gate is on
+      # (this gate does not enable it), so gate-OFF is byte-identical and gate-ON does
+      # not change codegen. erased_push is a FAIL-CLOSED reason carried for soundness;
+      # it is dormant here (this compiler monomorphizes container access). The behavior
+      # slice must placement ONLY on preflight-`eligible`, never re-derive erased/mono.
       private def run_cnarrow_a_preflight
         populate_inline_value_safe_set
         populate_array_bulk_op_facts

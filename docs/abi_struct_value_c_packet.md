@@ -2,7 +2,12 @@
 
 Status: **PROPOSED. Census-grounded design packet. GPT review round 1 CLOSED (4
 blockers folded in; the recursive-POD "fix gate-1 first" blocker was REFUTED as stale —
-already fixed in-tree, §6 gate 1). No code beyond the read-only censuses.** Companion to
+already fixed in-tree, §6 gate 1).** C-narrow-a **reducer/preflight packet SHIPPED**
+(`b929e23b`, gate `ADAMAS_CNARROW_A_PREFLIGHT`, BEHAVIOR-NEUTRAL — mutates A′ facts under
+gate but no lowering reads them; `erased_push` is a fail-closed dormant reason). C-narrow-a
+**placement implementation brief** = `docs/abi_cnarrow_a_placement_brief.md` (the behavior
+step: extend Shape-C stack-promotion to the A′-inline push transient; key open issue =
+eligibility-fact ordering, §3 there). Companion to
 `docs/abi_struct_value_sdd.md` (the layout
 ownership contract), `docs/inline_value_array_storage_behavior_plan.md` (the
 shipped A′ Array-storage slice), and the memory notes
