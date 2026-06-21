@@ -417,6 +417,13 @@ module Adamas
         if Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_STRUCT_BYVALUE_LOADSIDE_CENSUS")
           run_loadside_consumption_census
         end
+        # C-narrow-a PREFLIGHT: placement-ctor fusion eligibility with reason codes
+        # (eligible / not_pod / not_storage_eligible / not_sole_use / erased_push).
+        # Runs late (needs the lowered MIR for inline_array_storage_eligible). Read-only
+        # for codegen; gate-OFF = no-op (byte-identical). See run_cnarrow_a_preflight.
+        if Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_CNARROW_A_PREFLIGHT")
+          run_cnarrow_a_preflight
+        end
         # A' step 2: read-only Array-buffer provenance probe (proves 0 marks
         # outside an Array buffer before any behavior change). Gate-OFF = no-op.
         if Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_ARRAY_BUFFER_PROVENANCE_PROBE")
@@ -1471,6 +1478,123 @@ module Adamas
         STDERR.puts "[LOADSIDE]   stack_fast_path_eligible UPPER (+recv_borrow) = #{user_stack_local + user_recv_borrow}"
         STDERR.puts "[LOADSIDE]   heap_carrier_required (escapes)               = #{user_heap}"
         STDERR.flush
+      end
+
+      # ── C-narrow-a PREFLIGHT (read-only): placement-ctor fusion eligibility ──
+      # Gate ADAMAS_CNARROW_A_PREFLIGHT (=verbose lists every site). For every
+      # struct ctor whose result is pushed into a container, classify the
+      # C-narrow-a eligibility with a precise reason code. Per the GPT review
+      # round 1, the gate is the CONJUNCTION
+      #   inline_array_storage_eligible(T) && semantic_recursive_pod(T) &&
+      #   fresh sole-use ctor && monomorphic Array(T)#push
+      # NOT semantic-POD alone: a nested POD like Pair{Vec2,Vec2} is semantic-POD
+      # but NOT current-storage inline-eligible (leaf_storage_pod_struct? does not
+      # recurse into struct fields, which are pointer carriers today) -> it belongs
+      # to C-wide / a later storage-layout expansion, never this first slice.
+      # Reasons: eligible / not_pod / not_storage_eligible / not_sole_use / erased_push.
+      # Storage eligibility reuses the SAME inline_array_storage_eligible flag the A'
+      # behavior gates on (populated here on the lowered MIR). Read-only for codegen:
+      # it sets the durable A' facts, which no lowering reads unless the A' behavior
+      # gate is on (this gate does not enable it) -> gate-OFF byte-identical.
+      private def run_cnarrow_a_preflight
+        populate_inline_value_safe_set
+        populate_array_bulk_op_facts
+
+        tally = Hash(String, Int32).new(0)
+        per_type = Hash(String, Hash(String, Int32)).new
+        verbose = Adamas::Compiler::BootstrapEnv.get?("ADAMAS_CNARROW_A_PREFLIGHT") == "verbose"
+
+        @hir_module.functions.each do |func|
+          # per-function use index: value-id -> instructions that use it.
+          use_map = Hash(HIR::ValueId, Array(HIR::Value)).new
+          func.blocks.each do |b|
+            b.instructions.each do |inst|
+              hir_instruction_used_values(inst).each do |v|
+                (use_map[v] ||= [] of HIR::Value) << inst
+              end
+            end
+          end
+
+          func.blocks.each do |b|
+            b.instructions.each do |inst|
+              next unless inst.is_a?(HIR::Call)
+              ctor = inst.as(HIR::Call)
+              next unless struct_ctor_call?(ctor)
+              reason = cnarrow_a_site_reason(ctor, use_map)
+              next unless reason  # nil = ctor result not pushed into a container
+              tname = hir_type_name(ctor.type)
+              tally[reason] += 1
+              (per_type[tname] ||= Hash(String, Int32).new(0))[reason] += 1
+              STDERR.puts "[CNARROW_A] #{reason} type=#{tname} in=#{func.name}" if verbose
+            end
+          end
+        end
+
+        STDERR.puts "[CNARROW_A] placement-ctor fusion eligibility (gate = inline_array_storage_eligible && semantic_recursive_pod && fresh sole-use ctor && monomorphic Array(T)#push):"
+        STDERR.puts "[CNARROW_A] total container-pushed struct ctor sites = #{tally.values.sum}"
+        tally.keys.sort.each { |r| STDERR.puts "[CNARROW_A]   #{r} = #{tally[r]}" }
+        STDERR.puts "[CNARROW_A] per-type (type | reason=count ...):"
+        per_type.keys.sort.each do |t|
+          h = per_type[t]
+          STDERR.puts "[CNARROW_A]   #{t} | #{h.to_a.sort_by { |r, _| r }.map { |r, c| "#{r}=#{c}" }.join(" ")}"
+        end
+        STDERR.flush
+      end
+
+      # Classify ONE struct ctor's C-narrow-a eligibility (reason-coded, fail-closed).
+      # Returns nil if the ctor result is not pushed into a container (not a candidate).
+      #
+      # The ctor result is followed through transparent SSA `Copy` instructions: this
+      # compiler routes `v = T.new(..); arr << v; use(v)` through copies (the ctor
+      # result -> copy -> {push, field read}), so reuse — the not_sole_use hazard — is
+      # only visible across the copy-closure, not on the ctor result's direct uses.
+      private def cnarrow_a_site_reason(ctor : HIR::Call,
+                                        use_map : Hash(HIR::ValueId, Array(HIR::Value))) : String?
+        r = ctor.id
+        # copy-closure: r and every transitive Copy result that forwards it.
+        closure = ::Set(HIR::ValueId).new
+        closure << r
+        frontier = [r]
+        until frontier.empty?
+          v = frontier.pop
+          (use_map[v]? || ([] of HIR::Value)).each do |u|
+            next unless u.is_a?(HIR::Copy) && u.as(HIR::Copy).source == v
+            cid = u.id
+            unless closure.includes?(cid)
+              closure << cid
+              frontier << cid
+            end
+          end
+        end
+
+        # real (non-copy) uses of any closure member; push uses = container writes
+        # whose VALUE arg (not the receiver/array) is a closure member.
+        real_uses = 0
+        push_uses = [] of HIR::Call
+        closure.each do |v|
+          (use_map[v]? || ([] of HIR::Value)).each do |u|
+            next if u.is_a?(HIR::Copy) && u.as(HIR::Copy).source == v  # transparent forward
+            real_uses += 1
+            next unless u.is_a?(HIR::Call)
+            uc = u.as(HIR::Call)
+            next unless container_write_call?(uc)
+            value_in_closure = uc.args.any? { |a| closure.includes?(a) }
+            recv_is_value = uc.has_receiver? && closure.includes?(uc.receiver_value)
+            push_uses << uc if value_in_closure && !recv_is_value
+          end
+        end
+        return nil if push_uses.empty?
+        # (gate) fresh sole-use ctor — the closure has exactly ONE real use (the push).
+        return "not_sole_use" if real_uses > 1
+        push = push_uses.first
+        # (gate) monomorphic Array(T)#push — concrete element in the push method name.
+        elem = census_extract_generic_arg(push.method_name, "Array")
+        return "erased_push" if elem.nil? || @mir_module.type_registry.get_by_name(elem).nil?
+        # (gate) semantic recursive-POD, then current-storage inline eligibility.
+        return "not_pod" unless struct_type_is_semantic_recursive_pod?(ctor.type)
+        mt = @mir_module.type_registry.get(convert_type(ctor.type))
+        return "not_storage_eligible" unless mt && mt.inline_array_storage_eligible
+        "eligible"
       end
 
       # ── A' STEP 2: READ-ONLY Array-buffer provenance probe ─────────────────────
