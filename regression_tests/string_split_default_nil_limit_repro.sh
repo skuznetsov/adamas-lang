@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
-# KNOWN-BUG reproducer (currently FAILS): String#split(Char) with the default nil limit
-# returns 1 instead of the correct 4 -- the nilable-`limit` miscompile underlying the s2b
-# startup crash (memory: s2b_startup_crash_split_glob_localization). Asserts the CORRECT
-# behavior; will pass once the nilable-limit lowering is fixed.
+# KNOWN-BUG reproducer (currently FAILS): BUG 1 = String#split OVERLOAD MISDISPATCH.
+# `"a/b/c/d".split('/')` (only the Char arg) mis-resolves to the no-separator whitespace
+# overload `split(limit : Int32?)`, binding the Char '/' codepoint to `limit` -> 1 part
+# instead of 4. INDEPENDENT of Bug 2 (the nilable-limit collision that crashes s2b; see
+# string_split_int32_nil_limit_collision_repro). Fix target = overload resolution, NOT
+# backend. Asserts the CORRECT behavior (default=4); green once the overload bug is fixed.
+# See docs/string_split_overload_and_nil_limit_census.md.
 set -euo pipefail
 
 COMPILER="${1:-./bin/adamas}"
