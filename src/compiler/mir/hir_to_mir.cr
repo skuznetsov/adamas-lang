@@ -407,6 +407,16 @@ module Adamas
         if Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_CONTAINER_ACCESS_CENSUS")
           run_container_access_census
         end
+        # C-decision: read-only LOAD-SIDE CONSUMPTION census. The A' storage slice
+        # always returns a HEAP CARRIER on copy-on-load (escape-safe, never stack);
+        # the C decision (C-narrow = escape-conditioned direct-slot load only; C-wide
+        # = full by-value $Dnew/sret/call/return/union) turns on how many loaded
+        # struct values are consumed purely locally (stack-fast-path eligible) vs
+        # escape the frame (heap carrier mandatory). Fail-closed escape walk per load
+        # result. Gate-OFF = no-op (byte-identical). See run_loadside_consumption_census.
+        if Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_STRUCT_BYVALUE_LOADSIDE_CENSUS")
+          run_loadside_consumption_census
+        end
         # A' step 2: read-only Array-buffer provenance probe (proves 0 marks
         # outside an Array buffer before any behavior change). Gate-OFF = no-op.
         if Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_ARRAY_BUFFER_PROVENANCE_PROBE")
@@ -1241,6 +1251,226 @@ module Adamas
         rest = name[(h + 1)..]
         d = rest.index('$')
         d ? rest[0...d] : rest
+      end
+
+      # True if `name` is a container-INTERNAL accessor body (Array(C)#unsafe_fetch,
+      # Pointer(C)#value, …) rather than user/caller code. A load result inside such
+      # a body is trivially "returned" (the accessor exists to return it), which is a
+      # FALSE escape signal for the C decision — the decision-relevant consumption is
+      # what the CALLER does. We tag these so the headline number is user-level only.
+      private def container_internal_body?(name : String) : Bool
+        name.starts_with?("Array(") || name.starts_with?("Pointer(") ||
+          name.starts_with?("Slice(") || name.starts_with?("StaticArray(") ||
+          name.starts_with?("Deque(") || name.starts_with?("Indexable") ||
+          name.starts_with?("Enumerable") || name.starts_with?("Iterator")
+      end
+
+      # FAIL-CLOSED escape walk of one loaded struct value (`root`). Returns:
+      #   "stack_local"  — every (transitive) use is a local dereference: the value
+      #                    feeds field-address GEPs / transparent casts whose only
+      #                    further use is a Load (field read) or a slot write. A stack
+      #                    temporary / direct-slot read would suffice → C-narrow can
+      #                    drop the heap carrier here.
+      #   "recv_borrow"  — additionally passed in RECEIVER position (arg 0) to a call.
+      #                    Stack-eligible IFF the callee is borrow-only (doesn't store
+      #                    self / a field address) — UNPROVEN here, so reported as the
+      #                    OPTIMISTIC band (upper bound on stack eligibility).
+      #   "heap:<why>"   — escapes the frame: stored / returned / passed as a non-recv
+      #                    arg / address-taken / union-wrapped / phi-merged / unknown.
+      #                    A heap carrier (or full by-value call/return ABI = C-wide) is
+      #                    mandatory.
+      #
+      # Soundness note: the walk STOPS at a Load (treats field read as terminal-local).
+      # That is correct under POD VALUE semantics — the gated population is recursive
+      # POD, so reading a (possibly nested) field yields an INDEPENDENT value whose
+      # later escape does NOT extend the parent's lifetime. This is a census estimate,
+      # not the final eligibility gate; the real flip gate re-proves POD + escape.
+      private def classify_load_result_consumption(root : ValueId,
+                                                   uses : Hash(ValueId, Array(MIR::Value)),
+                                                   returns_value : Set(ValueId)) : String
+        worst = 0          # 0 = local, 1 = recv_borrow, 2 = heap escape
+        reason = "local"
+        escalate = ->(level : Int32, why : String) {
+          if level > worst
+            worst = level
+            reason = why
+          end
+          nil
+        }
+        visited = ::Set(ValueId).new
+        frontier = [root]
+        steps = 0
+        until frontier.empty?
+          v = frontier.pop
+          next if visited.includes?(v)
+          visited << v
+          steps += 1
+          if steps > 5000
+            escalate.call(2, "walk_cap")  # safety cap → fail-closed
+            break
+          end
+          escalate.call(2, "returned") if returns_value.includes?(v)
+          (uses[v]? || ([] of MIR::Value)).each do |u|
+            case u
+            when MIR::GetElementPtr        # field-address of the carrier — follow
+              frontier << u.id if u.base == v
+            when MIR::GetElementPtrDynamic
+              frontier << u.id if u.base == v
+            when MIR::Cast                 # transparent — follow
+              frontier << u.id if u.value == v
+            when MIR::Load                 # field read via v → local terminal
+              # no escalation
+            when MIR::Store
+              escalate.call(2, "stored") if u.value == v
+              # u.ptr == v: writing INTO the carrier's own slot → local
+            when MIR::GlobalStore
+              escalate.call(2, "stored_global") if u.value == v
+            when MIR::ArraySet
+              escalate.call(2, "stored_array") if u.value_id == v
+            when MIR::MemCopy
+              escalate.call(2, "memcopy")
+            when MIR::AddressOf
+              escalate.call(2, "addr_taken") if u.operand == v
+            when MIR::UnionWrap
+              escalate.call(2, "union_wrapped") if u.value == v
+            when MIR::Call
+              if u.args.size > 0 && u.args[0] == v && !u.args[1..].includes?(v)
+                escalate.call(1, "recv_borrow")
+              else
+                escalate.call(2, "passed_arg")
+              end
+            when MIR::IndirectCall
+              escalate.call(2, "passed_indirect")
+            when MIR::ExternCall
+              escalate.call(2, "passed_extern")
+            when MIR::Phi
+              escalate.call(2, "phi_merge")
+            else
+              escalate.call(2, "other")  # unknown use → fail-closed escape
+            end
+          end
+        end
+        case worst
+        when 0 then "stack_local"
+        when 1 then "recv_borrow"
+        else        "heap:#{reason}"
+        end
+      end
+
+      # ── C-DECISION: read-only LOAD-SIDE CONSUMPTION census ──────────────────
+      # Gate ADAMAS_STRUCT_BYVALUE_LOADSIDE_CENSUS. For every load of an
+      # InlineValueCopy element value — main-inlined ArrayGet, a Call to an
+      # Array(C)# accessor (unsafe_fetch/[]/…), or a raw Load(gep_dyn) — classify
+      # how the RESULT is consumed (classify_load_result_consumption) and report the
+      # stack-fast-path-eligible vs heap-carrier-required split. This is the decisive
+      # measurement that separates C-narrow (only the stack-eligible loads benefit)
+      # from C-wide (the rest need full by-value call/return/union ABI). STRICTLY
+      # read-only: reads MIR + writes STDERR; no Type/Value mutation → gate-OFF is
+      # byte-identical, gate-ON does not change codegen.
+      private def run_loadside_consumption_census
+        reg = @mir_module.type_registry
+        ivc_ids = ::Set(TypeId).new
+        reg.types.each { |t| ivc_ids << t.id if classify_container_elem_repr(t).inline_value_copy? }
+
+        fid_to_name = Hash(FunctionId, String).new
+        @mir_module.functions.each { |f| fid_to_name[f.id] = f.name }
+        fetch_methods = ::Set{"unsafe_fetch", "fetch", "[]", "[]?", "at", "unsafe_index", "first", "last"}
+
+        verdict_tally = Hash(String, Int32).new(0)
+        prov_x_verdict = Hash(String, Int32).new(0)
+        per_elem = Hash(String, Hash(String, Int32)).new
+        src_tally = Hash(String, Int32).new(0)
+        total = 0
+        user_total = 0
+        user_stack_local = 0
+        user_recv_borrow = 0
+        user_heap = 0
+
+        @mir_module.functions.each do |func|
+          in_container = container_internal_body?(func.name)
+
+          def_map = Hash(ValueId, MIR::Value).new
+          uses = Hash(ValueId, Array(MIR::Value)).new
+          returns_value = ::Set(ValueId).new
+          func.blocks.each do |b|
+            b.instructions.each do |inst|
+              def_map[inst.id] = inst
+              inst.operands.each { |op| (uses[op] ||= [] of MIR::Value) << inst }
+            end
+            t = b.terminator
+            returns_value << t.value.not_nil! if t.is_a?(MIR::Return) && t.value
+          end
+
+          func.blocks.each do |b|
+            b.instructions.each do |inst|
+              elem_name = nil
+              source = nil
+              case inst
+              when MIR::ArrayGet
+                if ivc_ids.includes?(inst.element_type.id)
+                  elem_name = reg.get(inst.element_type).try(&.name) || "?"
+                  source = inst.container_type ? "array_get_container" : "array_get_no_container"
+                end
+              when MIR::Load
+                gep = def_map[inst.ptr]?
+                if gep.is_a?(MIR::GetElementPtrDynamic) && ivc_ids.includes?(gep.element_type.id)
+                  elem_name = reg.get(gep.element_type).try(&.name) || "?"
+                  source = "raw_gep_load"
+                end
+              when MIR::Call
+                cname = fid_to_name[inst.callee]?
+                if cname
+                  m = census_method_part(cname)
+                  rty = reg.get(inst.type)
+                  if m && fetch_methods.includes?(m) && census_extract_generic_arg(cname, "Array") &&
+                     rty && ivc_ids.includes?(rty.id)
+                    elem_name = rty.name
+                    source = "call_accessor"
+                  end
+                end
+              end
+              next unless (en = elem_name) && (src = source)
+
+              verdict = classify_load_result_consumption(inst.id, uses, returns_value)
+              total += 1
+              src_tally[src] += 1
+              verdict_tally[verdict] += 1
+              prov_x_verdict["#{src}|#{verdict}"] += 1
+              (per_elem[en] ||= Hash(String, Int32).new(0))[verdict] += 1
+              unless in_container
+                user_total += 1
+                case verdict
+                when "stack_local" then user_stack_local += 1
+                when "recv_borrow" then user_recv_borrow += 1
+                else                    user_heap += 1
+                end
+              end
+            end
+          end
+        end
+
+        STDERR.puts "[LOADSIDE] InlineValueCopy candidate types = #{ivc_ids.size}"
+        STDERR.puts "[LOADSIDE] total load-result sites = #{total}"
+        STDERR.puts "[LOADSIDE] by source:"
+        src_tally.keys.sort.each { |k| STDERR.puts "[LOADSIDE]   #{k} = #{src_tally[k]}" }
+        STDERR.puts "[LOADSIDE] consumption verdict (all sites):"
+        verdict_tally.keys.sort.each { |k| STDERR.puts "[LOADSIDE]   #{k} = #{verdict_tally[k]}" }
+        STDERR.puts "[LOADSIDE] source|verdict:"
+        prov_x_verdict.keys.sort.each { |k| STDERR.puts "[LOADSIDE]   #{k} = #{prov_x_verdict[k]}" }
+        STDERR.puts "[LOADSIDE] per-element (elem | stack_local | recv_borrow | heap):"
+        per_elem.keys.sort.each do |e|
+          h = per_elem[e]
+          sl = h["stack_local"]? || 0
+          rb = h["recv_borrow"]? || 0
+          hp = h.sum { |k, v| k.starts_with?("heap") ? v : 0 }
+          STDERR.puts "[LOADSIDE]   #{e} | #{sl} | #{rb} | #{hp}"
+        end
+        STDERR.puts "[LOADSIDE] USER-LEVEL (excluding container-internal accessor bodies):"
+        STDERR.puts "[LOADSIDE]   user_total = #{user_total}"
+        STDERR.puts "[LOADSIDE]   stack_fast_path_eligible LOWER (stack_local)  = #{user_stack_local}"
+        STDERR.puts "[LOADSIDE]   stack_fast_path_eligible UPPER (+recv_borrow) = #{user_stack_local + user_recv_borrow}"
+        STDERR.puts "[LOADSIDE]   heap_carrier_required (escapes)               = #{user_heap}"
+        STDERR.flush
       end
 
       # ── A' STEP 2: READ-ONLY Array-buffer provenance probe ─────────────────────
