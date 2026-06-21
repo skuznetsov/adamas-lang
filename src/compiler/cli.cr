@@ -2665,6 +2665,12 @@ module Adamas
               end
             end
             mir_lowering.populate_inline_value_array_storage_facts(verify: BootstrapEnv.enabled?("ADAMAS_IVC_VERIFY"))
+            # C-narrow-a placement (Step 2): only when BOTH this gate AND A' are on
+            # (this block is already inside `if inline_value_array_storage`), so a
+            # stack transient is never produced for a legacy pointer-store push.
+            if BootstrapEnv.enabled?("ADAMAS_CNARROW_A_PLACEMENT")
+              mir_lowering.apply_cnarrow_a_placement
+            end
           end
           if options.stats
             mir_stage_ms = (timings["mir"]? || 0.0) + (timings["mir_opt"]? || 0.0)

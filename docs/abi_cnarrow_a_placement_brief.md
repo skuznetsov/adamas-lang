@@ -1,6 +1,14 @@
 # C-narrow-a placement — implementation brief (CAUTION, behavior)
 
-Status: **PROPOSED. Implementation design for GPT review BEFORE the codegen edit.**
+Status: **SHIPPED (Step 2; gated default OFF; GPT round-2 GO + round-3 mark-clearing
+hardening; local reducers green).** The
+callsite-local transform consumes the durable candidate mark POST-MIR-opt and replaces
+`Call @T.new` with `Alloc(Stack) + Call @T#initialize`, requiring BOTH gates. Verified on
+the V3 reducer: behavior-identical (legacy==A′==place), `V3$Dnew` call 1→0 (transient
+eliminated), `+1` stack alloc + `+1` initialize at the site, `placed` counter + fail-closed
+`skipped:<reason>`, A′-coupling guard (placement without A′ ⇒ 0), construct-invariants
+ON==OFF incl. partial-init-on-raise, negatives (Pair/Box/reused) not placed. (Below: the
+original PROPOSED design, now realized.)
 Companion to `docs/abi_struct_value_c_packet.md` (§4 C-narrow-a) and the shipped
 read-only preflight (`b929e23b`, gate `ADAMAS_CNARROW_A_PREFLIGHT`). GPT gave a
 CONDITIONAL GO for C-narrow-a behavior; this brief grounds the *how* in the actual

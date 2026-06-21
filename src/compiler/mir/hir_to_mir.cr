@@ -1624,6 +1624,15 @@ module Adamas
       private def populate_cnarrow_a_candidate_marks
         populate_inline_value_safe_set
         populate_array_bulk_op_facts
+        # Clear any PRIOR marks before re-marking from scratch. The debug candidate
+        # gate runs pre-opt while placement re-populates post-opt; a stale/cloned
+        # `true` mark from an earlier run must NOT survive if the site is no longer
+        # eligible (the optimizer could move/clone the Call). Mark from a clean slate.
+        @mir_module.functions.each do |f|
+          f.blocks.each do |b|
+            b.instructions.each { |i| i.as(MIR::Call).cnarrow_a_candidate = false if i.is_a?(MIR::Call) }
+          end
+        end
         reg = @mir_module.type_registry
         fid_to_name = Hash(FunctionId, String).new
         @mir_module.functions.each { |f| fid_to_name[f.id] = f.name }
@@ -1704,6 +1713,84 @@ module Adamas
           end
         end
         real_uses == 1 && found_push
+      end
+
+      # ── C-narrow-a BEHAVIOR (Step 2): callsite-local placement transform ─────
+      # Called from cli.cr POST-MIR-opt, ONLY when BOTH ADAMAS_CNARROW_A_PLACEMENT
+      # and ADAMAS_INLINE_VALUE_ARRAY_STORAGE are on (so the push is a by-value
+      # memcpy that does NOT retain the transient pointer → the stack temp is safe).
+      # Re-populates the candidate marks on the FINAL post-opt MIR (the optimizer
+      # clones/drops pre-opt marks — the A' clobber lesson, GPT cond 1), then for each
+      # marked allocator Call `T.new(args)` replaces it IN PLACE with a stack `Alloc`
+      # (reusing the value-id so the existing push consumes the stack ptr) + a Call to
+      # `T#initialize(stack_ptr, args)`, dropping the transient heap allocation. Does
+      # NOT touch the allocator body (flipping it would return a callee-stack pointer →
+      # UAF). FAIL-CLOSED (GPT cond 2): any site whose initializer / arity / struct
+      # shape is not exactly resolvable is SKIPPED (counter skipped:<reason>), left on
+      # the heap — never "fixed" by name.
+      def apply_cnarrow_a_placement : Nil
+        populate_cnarrow_a_candidate_marks
+        reg = @mir_module.type_registry
+        fid_to_func = Hash(FunctionId, MIR::Function).new
+        @mir_module.functions.each { |f| fid_to_func[f.id] = f }
+
+        marked = 0
+        placed = 0
+        skipped = Hash(String, Int32).new(0)
+
+        @mir_module.functions.each do |func|
+          # robust fresh value-id base (do not trust next_value_id post-opt). Params
+          # implicitly occupy value-ids 0..params.size-1; instruction ids start at
+          # params.size, so seeding with params.size and taking the instruction max
+          # gives a value-id above every existing one.
+          max_id = func.params.size.to_u32
+          func.blocks.each { |b| b.instructions.each { |i| max_id = i.id if i.id > max_id } }
+          fresh = max_id + 1_u32
+
+          func.blocks.each do |b|
+            idx = 0
+            while idx < b.instructions.size
+              inst = b.instructions[idx]
+              unless inst.is_a?(MIR::Call) && inst.as(MIR::Call).cnarrow_a_candidate
+                idx += 1
+                next
+              end
+              ctor = inst.as(MIR::Call)
+              marked += 1
+
+              alloc_func = fid_to_func[ctor.callee]?
+              unless alloc_func
+                skipped["no_alloc_func"] += 1; idx += 1; next
+              end
+              init_func = stack_promotable_struct_allocator_initializer(alloc_func)
+              unless init_func
+                skipped["no_initializer"] += 1; idx += 1; next
+              end
+              mir_type = reg.get(alloc_func.return_type)
+              unless mir_type && mir_type.kind.struct? && mir_type.size > 0_u64
+                skipped["no_struct_type"] += 1; idx += 1; next
+              end
+              unless init_func.params.size == ctor.args.size + 1
+                skipped["arity_mismatch"] += 1; idx += 1; next
+              end
+
+              # callsite-local: Call T.new(args) -> Alloc(Stack,T) [same id] + Call T#initialize(stack,args)
+              alloc = MIR::Alloc.new(ctor.id, TypeRef::POINTER, MemoryStrategy::Stack,
+                alloc_func.return_type, mir_type.size, mir_type.alignment)
+              alloc.no_alias = true
+              init_call = MIR::Call.new(fresh, init_func.return_type, init_func.id, [ctor.id] + ctor.args)
+              fresh += 1_u32
+              b.instructions[idx] = alloc
+              b.instructions.insert(idx + 1, init_call)
+              placed += 1
+              idx += 2  # past the alloc + the inserted init call
+            end
+          end
+        end
+
+        skip_str = skipped.to_a.sort_by { |k, _| k }.map { |k, v| "#{k}=#{v}" }.join(" ")
+        STDERR.puts "[CNARROW_A_PLACE] marked=#{marked} placed=#{placed} skipped=[#{skip_str}]"
+        STDERR.flush
       end
 
       # ── A' STEP 2: READ-ONLY Array-buffer provenance probe ─────────────────────
