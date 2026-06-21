@@ -1713,6 +1713,15 @@ module Adamas::MIR
     property array_bulk_stride : UInt32 = 0_u32
     property array_bulk_logical_count : ValueId? = nil
 
+    # C-narrow-a placement: durable shape+eligibility candidate mark on a struct
+    # ALLOCATOR call (`T.new$...`) whose result is the fresh sole-use value of a
+    # monomorphic `Array(T)#<<`/`#push`, where T is inline_array_storage_eligible +
+    # semantic_recursive_pod. A later behavior slice (gated, also requiring A' on)
+    # replaces this call-site with a stack alloc + in-place initialize (Shape-C),
+    # dropping the transient heap allocation. nil/false = not a placement candidate;
+    # set only under the candidate gate; no lowering reads it yet.
+    property cnarrow_a_candidate : Bool = false
+
     def initialize(id : ValueId, type : TypeRef, @callee : FunctionId, @args : Array(ValueId))
       super(id, type)
     end

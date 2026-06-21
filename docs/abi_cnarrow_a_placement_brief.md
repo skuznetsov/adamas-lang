@@ -52,34 +52,38 @@ treat a monomorphic `Array(T)#<<`/`#push` use of an `inline_array_storage_eligib
 T as a **borrow (non-leaking)**, and allow the ctor to promote despite the nominal
 `ArgEscape` when its ONLY escape is such a push.
 
-## 3. THE ORDERING PROBLEM (the real design decision — flag for review)
+## 3. THE ORDERING PROBLEM + the correct transform shape (GPT round-2)
 
 `inline_array_storage_eligible(T)` is computed by `populate_array_bulk_op_facts`,
 which needs the **fully lowered MIR** (`Array(T)#` bodies must exist). But the
-stack-promo decision is made **during** `lower_call` (HIR→MIR), *before* those
-bodies and facts exist. So the eligibility fact the gate must consume is NOT
-available at the decision point. Two sound resolutions (GPT hard-stop says: extend
-facts/preflight, do not re-derive blindly):
+stack-promo decision is made **during** `lower_call` (HIR→MIR), *before* those facts
+exist. Two corrections from the GPT round-2 review, both adopted:
 
-- **(A) Post-lowering MIR transform.** Keep lowering as-is (heap malloc); add a late
-  MIR pass (after `populate_array_bulk_op_facts`, same place the preflight runs) that
-  rewrites a heap-`malloc` transient → stack `alloca` when its sole consumer is an
-  A′-inline push of an eligible T. Pro: consumes the already-proven facts directly;
-  no during-lowering re-derivation. Con: a malloc→alloca rewrite on lowered MIR
-  (must also drop the matching memcpy-source indirection / fix the def-use).
-- **(B) Pre-pass eligibility mark.** Run a lighter storage-eligibility proxy BEFORE
-  lowering (leaf_storage_pod_struct? is registry-only and *is* available early), mark
-  the eligible ctor HIR calls, and have `lower_stack_local_struct_allocator_call`
-  consume the mark. Con: the proxy is weaker than the full
-  `inline_array_storage_eligible` (no bulk-coverage / to_unsafe-escape proof early) →
-  would need the full gate re-checked, risking a split oracle.
+**(i) It is NOT a "heap Alloc → stack Alloc" inside `T$Dnew`.** After normal lowering
+the CALLER has no heap Alloc — it has `Call @T.new(args)` (the allocator). Flipping the
+allocator BODY to alloca is UNSOUND: `T.new` would return a pointer to its own callee
+stack frame → UAF. The transform must be **CALLSITE-LOCAL** in the caller: replace the
+`Call @T.new(args)` with `Alloc(Stack, T)` + `T#initialize(stack_ptr, args)` (or the
+trivial-store path) — exactly what `lower_stack_local_struct_allocator_call` already
+emits — and rewrite the call's uses to the stack ptr (same value-id / explicit def-use).
 
-**Recommendation: (A) post-lowering transform** — it consumes the SAME facts the A′
-behavior and the preflight already prove (no second oracle, no early proxy), at the
-SAME pipeline point the preflight already runs. The preflight's `eligible` verdict
-(ctor↔push pair, sole-use via copy-closure) is the exact selector; persist it as a
-durable mark in the read-only preflight, then the transform consumes
-`preflight_eligible && inline_array_storage_eligible(T)`.
+**(ii) Reject (B) early-proxy.** A pre-lowering storage proxy (before bulk/to_unsafe
+facts) re-creates a split oracle. Use the real `inline_array_storage_eligible`.
+
+**Resolution = late callsite transform + durable MIR candidate mark (NOT @value_map).**
+The preflight only PRINTS; a late transform cannot consume its verdict without a durable
+mark, and must not rely on per-function lowering state. So:
+
+- **Step 1 (SHIPPED, behavior-neutral):** `populate_cnarrow_a_candidate_marks`
+  (gate `ADAMAS_CNARROW_A_CANDIDATE`) persists `MIR::Call#cnarrow_a_candidate` on the
+  allocator call of each eligible site, computed LATE = the full conjunction
+  (`inline_array_storage_eligible(T) && semantic_recursive_pod(T) && fresh sole-use
+  ctor (MIR cast-closure) && monomorphic Array(T)#<<`). Reducer
+  `cnarrow_a_candidate_mark.sh`: mark lands on Vec3, NOT Pair/Box/reused; gate-neutral.
+- **Step 2 (behavior, NEXT):** a late MIR transform consumes the durable mark and, when
+  `ADAMAS_CNARROW_A_PLACEMENT=1` AND A′ is on, does the callsite-local Call→Stack-alloc
+  +initialize rewrite. Must persist marks post-MIR-opt if the optimizer clones the Call
+  (same caveat the A′ facts hit — populate post-opt, cf. cli.cr).
 
 ## 4. Gate + fail-closed conditions
 
@@ -107,6 +111,14 @@ durable mark in the read-only preflight, then the transform consumes
 4. **Pair / reused / ref-owning / non-monomorphic do NOT get placement** → (2).
 5. **gate-OFF byte-identical** OR broader suite green → normalized IR diff + the
    139/139 + 36/36 suite at gate-OFF, plus s2b smoke unchanged.
+6. **A′-coupling guard (mandatory reducer)** → `ADAMAS_CNARROW_A_PLACEMENT=1` WITHOUT
+   `ADAMAS_INLINE_VALUE_ARRAY_STORAGE=1` ⇒ **0 placement** (else a stack pointer reaches
+   a legacy pointer-store push → the transient escapes → UAF). Dedicated reducer.
+
+**Infra Step 1 is SHIPPED + verified** (`populate_cnarrow_a_candidate_marks` +
+`cnarrow_a_candidate_mark.sh`): the durable mark lands on Vec3 (2 sole-use pushes), NOT
+on Pair (storage-ineligible) / Box (ref-owning→class) / reused (not sole-use); gate-OFF
+byte-identical. Only Step 2 (the gated callsite-local transform) remains.
 
 ## 6. Hard-stop adherence
 

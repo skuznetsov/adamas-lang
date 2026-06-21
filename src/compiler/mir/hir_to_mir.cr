@@ -424,6 +424,13 @@ module Adamas
         if Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_CNARROW_A_PREFLIGHT")
           run_cnarrow_a_preflight
         end
+        # C-narrow-a CANDIDATE MARK (behavior-neutral infra): persist a durable
+        # MIR::Call#cnarrow_a_candidate on eligible placement sites so a later behavior
+        # transform consumes the mark (not the per-function lowering state). Gate-OFF =
+        # no-op (byte-identical). See populate_cnarrow_a_candidate_marks.
+        if Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_CNARROW_A_CANDIDATE")
+          populate_cnarrow_a_candidate_marks
+        end
         # A' step 2: read-only Array-buffer provenance probe (proves 0 marks
         # outside an Array buffer before any behavior change). Gate-OFF = no-op.
         if Adamas::Compiler::BootstrapEnv.enabled?("ADAMAS_ARRAY_BUFFER_PROVENANCE_PROBE")
@@ -1599,6 +1606,104 @@ module Adamas
         mt = @mir_module.type_registry.get(convert_type(ctor.type))
         return "not_storage_eligible" unless mt && mt.inline_array_storage_eligible
         "eligible"
+      end
+
+      # ── C-narrow-a CANDIDATE MARK (behavior-neutral infra) ──────────────────
+      # Gate ADAMAS_CNARROW_A_CANDIDATE (=verbose lists sites). Persists a durable
+      # MIR mark (MIR::Call#cnarrow_a_candidate) on a struct ALLOCATOR call whose
+      # result is the fresh sole-use value of a monomorphic Array(T)#<</#push, where
+      # T is inline_array_storage_eligible + semantic_recursive_pod. This is the
+      # bridge GPT required: a later behavior transform can CONSUME this durable mark
+      # (it cannot read the per-function lowering @value_map post-lowering). The mark
+      # is computed LATE (after populate_array_bulk_op_facts so the storage flag is
+      # set), so it already distinguishes Vec3 (marked) from Pair (not storage
+      # eligible) / reused (not sole-use) / Box (ref-owning -> a class, not a struct
+      # ctor). BEHAVIOR-NEUTRAL: mutates the A' facts + this mark under the gate, but
+      # NO lowering site reads either unless the A' behavior gate is on (this gate
+      # does not enable it) -> gate-OFF byte-identical, gate-ON codegen unchanged.
+      private def populate_cnarrow_a_candidate_marks
+        populate_inline_value_safe_set
+        populate_array_bulk_op_facts
+        reg = @mir_module.type_registry
+        fid_to_name = Hash(FunctionId, String).new
+        @mir_module.functions.each { |f| fid_to_name[f.id] = f.name }
+
+        marked = 0
+        per_type = Hash(String, Int32).new(0)
+        verbose = Adamas::Compiler::BootstrapEnv.get?("ADAMAS_CNARROW_A_CANDIDATE") == "verbose"
+
+        @mir_module.functions.each do |func|
+          uses = Hash(ValueId, Array(MIR::Value)).new
+          func.blocks.each do |b|
+            b.instructions.each do |inst|
+              inst.operands.each { |op| (uses[op] ||= [] of MIR::Value) << inst }
+            end
+          end
+
+          func.blocks.each do |b|
+            b.instructions.each do |inst|
+              next unless inst.is_a?(MIR::Call)
+              ctor = inst.as(MIR::Call)
+              cname = fid_to_name[ctor.callee]?
+              next unless cname && cname.includes?(".new")            # allocator
+              rty = reg.get(ctor.type)
+              next unless rty && rty.kind.struct?
+              next unless rty.inline_array_storage_eligible           # storage gate
+              next unless struct_type_is_semantic_recursive_pod_mir?(ctor.type, ::Set(UInt32).new)
+              next unless cnarrow_a_sole_push_use?(ctor.id, uses, fid_to_name, rty.name)
+              ctor.cnarrow_a_candidate = true
+              marked += 1
+              per_type[rty.name] += 1
+              STDERR.puts "[CNARROW_A_MARK] candidate type=#{rty.name} in=#{func.name}" if verbose
+            end
+          end
+        end
+
+        STDERR.puts "[CNARROW_A_MARK] placement candidates marked = #{marked}"
+        per_type.keys.sort.each { |t| STDERR.puts "[CNARROW_A_MARK]   #{t} = #{per_type[t]}" }
+        STDERR.flush
+      end
+
+      # True iff ctor result `r` has EXACTLY one real (non-Cast-forward) MIR use and
+      # that use is a monomorphic `Array(<tname>)#<<`/`#push` Call with `r` (or its
+      # cast-forward) as the VALUE arg (args[1], not the receiver args[0]).
+      private def cnarrow_a_sole_push_use?(r : ValueId,
+                                           uses : Hash(ValueId, Array(MIR::Value)),
+                                           fid_to_name : Hash(FunctionId, String),
+                                           tname : String) : Bool
+        closure = ::Set(ValueId).new
+        closure << r
+        frontier = [r]
+        until frontier.empty?
+          v = frontier.pop
+          (uses[v]? || ([] of MIR::Value)).each do |u|
+            next unless u.is_a?(MIR::Cast) && u.as(MIR::Cast).value == v
+            cid = u.id
+            unless closure.includes?(cid)
+              closure << cid
+              frontier << cid
+            end
+          end
+        end
+
+        real_uses = 0
+        found_push = false
+        closure.each do |v|
+          (uses[v]? || ([] of MIR::Value)).each do |u|
+            next if u.is_a?(MIR::Cast) && u.as(MIR::Cast).value == v
+            real_uses += 1
+            next unless u.is_a?(MIR::Call)
+            uc = u.as(MIR::Call)
+            nm = fid_to_name[uc.callee]?
+            next unless nm
+            m = census_method_part(nm)
+            next unless m == "<<" || m == "push"
+            elem = census_extract_generic_arg(nm, "Array")
+            next unless elem == tname
+            found_push = true if uc.args.size >= 2 && closure.includes?(uc.args[1])
+          end
+        end
+        real_uses == 1 && found_push
       end
 
       # ── A' STEP 2: READ-ONLY Array-buffer provenance probe ─────────────────────
