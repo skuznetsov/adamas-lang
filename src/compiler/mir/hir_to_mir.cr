@@ -1894,9 +1894,8 @@ module Adamas
             next if u.is_a?(MIR::Cast) && u.as(MIR::Cast).value == v
             return "cross_block" unless same_block.call(u.id)
             case u
-            when MIR::GetElementPtr, MIR::GetElementPtrDynamic
-              base = u.is_a?(MIR::GetElementPtr) ? u.as(MIR::GetElementPtr).base : u.as(MIR::GetElementPtrDynamic).base
-              return "gep_index_use" unless base == v  # value used as an index, not a field base
+            when MIR::GetElementPtr   # STATIC field address only (v1)
+              return "gep_index_use" unless u.as(MIR::GetElementPtr).base == v
               loads = uses[u.id]? || empty
               return "field_addr_unused" if loads.empty?
               loads.each do |g|
@@ -1905,6 +1904,8 @@ module Adamas
                 gp = inst_pos_in(block, g.id)
                 max_load_pos = gp if gp > max_load_pos
               end
+            when MIR::GetElementPtrDynamic  # pointer arithmetic off the carrier, NOT a proven
+              return "dynamic_gep"          # field read -> carrier (GPT blocker 2, v1 fail-closed)
             when MIR::Load    then return "direct_load"
             when MIR::Store   then return u.as(MIR::Store).value == v ? "stored" : "store_through"
             when MIR::Call, MIR::IndirectCall then return "call"
@@ -1926,26 +1927,17 @@ module Adamas
         end
 
         # Order-based: between the ArrayGet and the last field load, forbid ANY call
-        # and any ArraySet on the source-array SSA closure.
+        # and ANY ArraySet. Forbidding *any* ArraySet (not just the source-array SSA
+        # closure) is fail-closed and robust to alias representation: there is no MIR
+        # Copy, so `b = arr` reuses the value-id and an aliased `b[i]=` is the same id,
+        # but a future repack must not open a hole (GPT blocker 1). A raw buffer Store
+        # only occurs inside Array(C)# bodies, not in user code between a load and use.
         if max_load_pos > ag_pos
-          a_closure = ::Set(ValueId).new
-          a_closure << ag.array_value
-          af = [ag.array_value]
-          until af.empty?
-            v = af.pop
-            (uses[v]? || empty).each do |u|
-              next unless u.is_a?(MIR::Cast) && u.as(MIR::Cast).value == v
-              unless a_closure.includes?(u.id)
-                a_closure << u.id
-                af << u.id
-              end
-            end
-          end
           k = ag_pos + 1
           while k < max_load_pos
             mid = block.instructions[k]
             return "intervening_call" if mid.is_a?(MIR::Call) || mid.is_a?(MIR::ExternCall) || mid.is_a?(MIR::IndirectCall)
-            return "intervening_mutation" if mid.is_a?(MIR::ArraySet) && a_closure.includes?(mid.as(MIR::ArraySet).array_value)
+            return "intervening_mutation" if mid.is_a?(MIR::ArraySet)
             k += 1
           end
         end

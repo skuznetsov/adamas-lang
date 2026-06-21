@@ -35,26 +35,27 @@ A load is C-narrow-b-eligible ONLY if ALL hold — any unproven condition ⇒ ke
 A′ carrier (fail-closed). Stated as MIR predicates over the `MIR::ArrayGet` result `R`
 (v1 source = `ArrayGet` only — see §4):
 
-**(a) Field-read-only USE pattern.** Every use of `R` (and of its transparent
-`Cast`/`Copy` forwards) is exactly the chain
-`R -> optional Cast/Copy -> field GEP (GetElementPtr/GetElementPtrDynamic, base ∈ R-closure)
+**(a) Field-read-only USE pattern.** Every use of `R` (and of its transparent `Cast`
+forwards — MIR has no `Copy`, so `b = arr`-style aliases reuse the value-id) is exactly
+the chain `R -> optional Cast -> STATIC field GEP (MIR::GetElementPtr, base ∈ R-closure)
 -> Load`, all in the SAME basic block as the `ArrayGet`. The field GEP's only use is the
-`Load`. **Any** other consumer of `R` or a forward — `Call`/`IndirectCall`/`ExternCall`
-(incl. receiver position = `recv_borrow`, excluded in v1), `Phi`, `Store`-as-value,
-`Return`, `MemCopy`, `UnionWrap`, `AddressOf`, `ArraySet`-value, or an unknown instruction
-— ⇒ **carrier** (reason `escape`/`call`/`phi`/`cross_use`).
+`Load`. A **`GetElementPtrDynamic`** off `R` is pointer arithmetic, NOT a proven field
+read ⇒ **carrier** (`dynamic_gep`, GPT v1 fail-closed). **Any** other consumer of `R` or a
+forward — `Call`/`IndirectCall`/`ExternCall` (incl. receiver position = `recv_borrow`,
+excluded in v1), `Phi`, `Store`-as-value, `Return`, `MemCopy`, `UnionWrap`, `AddressOf`,
+`ArraySet`-value, or an unknown instruction — ⇒ **carrier** (reason-coded).
 
 **(b) Same block.** Any use of `R` outside the `ArrayGet`'s block ⇒ **carrier**
 (`cross_block`).
 
 **(c) Order-based no-intervening-mutation.** Let `lo` = the `ArrayGet`'s index in the block
 and `hi` = the MAX index among the field-`Load` uses. Mutations BEFORE `lo` or AFTER `hi`
-are irrelevant. Strictly between `lo` and `hi`, FORBID: any `Call`/`ExternCall` (intervening
-call), and any **Array mutation** whose receiver is in the SSA closure of the source array
-`A = ArrayGet.array_value` (the closure = `A` + its `Cast`/`Copy` forwards/aliases). Array
-mutation = `ArraySet`, or a `Call` to `Array(C)#{push,<<,[]=,delete_at,shift,insert,unshift,
-clear,concat}` with a closure member as receiver. Any such site between `lo..hi` ⇒
-**carrier** (`intervening_call`/`intervening_mutation`).
+are irrelevant. Strictly between `lo` and `hi`, FORBID: any `Call`/`ExternCall`/`IndirectCall`
+(`intervening_call` — covers `push`/`<<`/`delete_at`/`shift`/`insert`/`clear`/`concat`, which
+all lower to a Call), and **any `ArraySet`** (`intervening_mutation`). Forbidding *any*
+`ArraySet` (not just on the source-array closure) is the fail-closed choice — robust to
+alias representation (GPT blocker 1); a raw buffer `Store` only occurs inside `Array(C)#`
+bodies, never in user code between a load and its field use. Any such site ⇒ **carrier**.
 
 **(d) Alias closure must be PROVEN.** The source-array SSA closure is computed forward
 through `Cast`/`Copy` only. If `A` (or a forward) flows into an opaque/unknown instruction
