@@ -25359,9 +25359,12 @@ module Adamas::MIR
             element_type = "ptr" if element_type == "void"
           end
         end
-        if @inline_value_array_storage && (ive = elem_mir_for_stride) && inline_value_array_elem?(ive)
+        if @inline_value_array_storage && !is_slice_container && (ive = elem_mir_for_stride) && inline_value_array_elem?(ive)
           # A' BEHAVIOR: inline Array(C) element read (the `a[i]` array_get path, the
-          # main-inlined counterpart of unsafe_fetch). Stride by C.size and return a
+          # main-inlined counterpart of unsafe_fetch). Array-ONLY: this is already the
+          # non-StaticArray branch (StaticArray returns earlier), and `!is_slice_container`
+          # excludes Slice — both keep their own InlineAddress repr, not this carrier ABI.
+          # Stride by C.size and return a
           # heap-carrier COPY [i64 INT64_MAX][payload] (raw+8) — escape-safe and a
           # genuine $Dnew-shaped struct ptr. Reads the eligibility fact only.
           stride = ive.size
@@ -25661,9 +25664,11 @@ module Adamas::MIR
         else
           @array_element_type_refs[inst.array_value] = inst.element_type
         end
-        if @inline_value_array_storage && (ive = elem_mir_for_stride) && inline_value_array_elem?(ive)
+        if @inline_value_array_storage && !is_slice_container && (ive = elem_mir_for_stride) && inline_value_array_elem?(ive)
           # A' BEHAVIOR: inline Array(C) element write (the `a[i] = v` array_set path,
-          # the main-inlined counterpart of push/<<). memcpy the C payload into the
+          # the main-inlined counterpart of push/<<). Array-ONLY: non-StaticArray
+          # branch (StaticArray returns earlier) and `!is_slice_container` excludes
+          # Slice. memcpy the C payload into the
           # slot at C.size stride. Reads the eligibility fact only; non-ptr value
           # spilled to an alloca first (GPT #2).
           stride = ive.size

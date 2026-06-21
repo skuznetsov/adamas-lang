@@ -1608,6 +1608,19 @@ module Adamas
                     end
                   end
                 end
+              # (3) MAIN-INLINED Array(C) element access (ArrayGet/ArraySet) — a
+              #     buffer_value access of C that has NO gep_dyn in an Array(C)# body
+              #     (the v1 limit). Array container ONLY (Slice/StaticArray carry the
+              #     InlineAddress repr, not the InlineValueCopy carrier ABI). This is
+              #     a structural Array-element access → bv; the other gates (vd /
+              #     erased_flow / bulk coverage / to_unsafe) still fail-close.
+              elsif inst.is_a?(MIR::ArrayGet) || inst.is_a?(MIR::ArraySet)
+                ct_ref = inst.is_a?(MIR::ArrayGet) ? inst.as(MIR::ArrayGet).container_type : inst.as(MIR::ArraySet).container_type
+                if ct_ref && (cont = reg.get(ct_ref)) && cont.name.starts_with?("Array(")
+                  if (ce = cont.element_type) && ivc_ids.includes?(ce.id)
+                    bv << ce.id
+                  end
+                end
               end
             end
           end

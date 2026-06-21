@@ -498,3 +498,24 @@ for the bodies to exist. Adding `bv` detection for main-inlined ArrayGet/ArraySe
 deferred to v2 (the behavior would still be correct there since emit_array_get/set
 read eligibility — but eligibility itself wouldn't be established without a body).
 This is a recognized v1 scoping limit, not a correctness hole.
+
+## 12. v1 limit CLOSED — main-inlined ArrayGet/ArraySet eligibility (2026-06-20)
+
+The §11 v1 limit (a type used only via main-inlined `arr[i]`/`arr[i]=` got bv=0 →
+ineligible) is now closed. `compute_inline_value_safe_set` additionally establishes
+`bv` from `ArrayGet`/`ArraySet` whose container resolves to `Array(C)` (Array ONLY —
+Slice/StaticArray carry the InlineAddress repr). Eligibility is no longer dependent
+on call-shaped Array usage; the other gates (vd / erased_flow / bulk coverage /
+to_unsafe escape) still fail-close.
+
+Hardening folded in: in `emit_array_get`/`emit_array_set` the carrier ABI fires only
+on genuine `Array(C)` containers. StaticArray is already excluded by the earlier
+`is_static_array` branch (it returns before reaching here); the new
+`!is_slice_container` guard additionally excludes `Slice`. Both keep their own
+InlineAddress repr (verified: 0 ivc_raw inside `Slice(Vec3)` functions;
+Slice/StaticArray-of-struct `.new` crashes are pre-existing, identical gate ON/OFF).
+
+Reducer `inline_value_array_main_inlined_probe.{cr,sh}`: `MW` used via push +
+main-inlined `arr[i]`/`arr[i]=` is now `ELIGIBLE`, inline-stored (ivc_raw inside
+`Array(MW)#` fns), behavior-identical to legacy. All 9 A' reducers green; broader
+gate-OFF suite 139/139 + 36/36, 0 fail.
