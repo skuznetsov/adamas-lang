@@ -519,3 +519,39 @@ Reducer `inline_value_array_main_inlined_probe.{cr,sh}`: `MW` used via push +
 main-inlined `arr[i]`/`arr[i]=` is now `ELIGIBLE`, inline-stored (ivc_raw inside
 `Array(MW)#` fns), behavior-identical to legacy. All 9 A' reducers green; broader
 gate-OFF suite 139/139 + 36/36, 0 fail.
+
+## 13. A' promotion gate — measurement (2026-06-20)
+
+Run before deciding default-ON / keep-gated / go-to-C. Binary = the committed
+`ac052945` behavior build.
+
+**Eligible types ([ABIFACTS], on the Particle bench):** 4 of 25 InlineValueCopy
+candidates — `Vec3` (the user target) + stdlib `Range(Int32,Int32)`,
+`Float::Printer::Dragonbox::WUInt::UInt128`, `Float::Printer::CachedPowers::Power`.
+
+**Robustness (gate ON, real stdlib):** combined suite 36/36, 0 fail with
+`ADAMAS_INLINE_VALUE_ARRAY_STORAGE=1` — the eligible stdlib types flip correctly in
+real code. Focused: all 9 A' reducers green. Broader gate-OFF: 139/139 + 36/36.
+
+**Perf (Particle bench, Array(Vec3), /usr/bin/time -l peak RSS):**
+- read-heavy (400k push + 3 read passes): OFF 20.7 MB / ON 59.4 MB; wall ~same.
+- push-only (400k push, no reads):        OFF 20.7 MB / ON 22.6 MB.
+
+**Verdict: A' v1 passes the covered correctness gates (focused reducers + combined
+suite gate-ON + broader suite gate-OFF), but is NOT a perf win — keep GATED.**
+(Scope note: full self-host `s2b` under the gate was NOT run, so this is robustness
+for the covered gated A' scope, not an unqualified "correctness-complete" claim. The
+keep-gated decision does not depend on s2b.)
+Two v1 costs explain the RSS regression: (1) copy-on-load returns a heap carrier, so
+read-heavy code mallocs one carrier per `a[i]` (1.2M reads -> +~24MB); (2) on push,
+`Vec3.new` still mallocs a transient `$Dnew` that push memcpy's into the inline buffer
+— A' changes the buffer LAYOUT (inline vs ptr) but does NOT remove the per-element
+allocation. Both costs are removed only by C: by-value `$Dnew`/sret (construct the
+struct value without a heap object) + a stack-fast-path copy-on-load (no carrier
+malloc when the loaded value does not escape). So A' is the bounded, fail-closed ABI
+scaffold + facts infrastructure; the perf payoff is the C front, which now has a
+verified base to build on.
+
+Promotion decision: do NOT default-ON; keep gated; the next lever is C (not widening
+A'). Optional heavier robustness check before any future default-ON: full self-host
+(s2b) under the gate — deferred, since the keep-gated decision does not hinge on it.
