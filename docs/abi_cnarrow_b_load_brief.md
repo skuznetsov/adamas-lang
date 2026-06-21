@@ -135,8 +135,30 @@ a clean `Array(V3)` same-block local-read loop.
   ADAMAS_CNARROW_B_LOAD=1` → s2b builds + runs clean): in the DoD AFTER C-narrow-b behavior
   / before any default-ON discussion — NOT a gate on building this read-only packet.
 
-## 7. NEXT
+## 7. RESULT (SHIPPED)
 
-Owner/GPT review of this design → build the read-only preflight + reducers (positive +
-negatives + A′-coupling) → GPT review → behavior transform (gated, post-opt, consuming the
-durable mark). Not C-wide; not s2b-first.
+Behavior transform shipped (gated `ADAMAS_CNARROW_B_LOAD`, requires A′): a marked
+`ArrayGet` returns the inline `@buffer[i]` slot address directly (`cnarrow_b direct slot`),
+no heap carrier. DoD reducer `cnarrow_b_load.sh` green: behavior identical (legacy==A′==load),
+direct-slot under A′+load only (0 without A′ = coupling), the eligible V3 read carrier gone
+while the recv_borrow carrier stays.
+
+**RSS measurement (Array(Vec3) 3M push+read, `/usr/bin/time -l`):**
+
+| config | push+read RSS |
+|---|---:|
+| OFF (legacy) | 120 MB |
+| A′ | 224 MB |
+| A′ + C-narrow-a | 132 MB |
+| **A′ + C-narrow-a + C-narrow-b** | **40 MB** |
+
+C-narrow-b drops the read path **132 → 40 MB (−70%)** — the 3M copy-on-load heap carriers
+(~92 MB, leak-to-exit) are eliminated; checksum identical. 40 MB equals the push-only
+number, i.e. **both A′ residuals (store + load) are now closed** and only the inline buffer
+(12 B/elem) remains — 3× below legacy (120 MB). Wall-time at 3M stays a secondary signal.
+
+## 8. NEXT
+
+C-narrow-a + C-narrow-b both shipped + gated default OFF. Before any default-ON discussion:
+s2b smoke under all three gates + broader suite (GPT). Then owner decides default-ON vs
+C-wide. v2 widening (cross-block, recv_borrow with proven borrow-only callee) deferred.

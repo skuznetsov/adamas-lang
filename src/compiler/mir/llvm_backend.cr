@@ -2142,6 +2142,10 @@ module Adamas::MIR
     @inline_value_gep_strides : Hash(ValueId, UInt64) = Hash(ValueId, UInt64).new
     @inline_value_gep_value_slots : ::Set(ValueId) = ::Set(ValueId).new
     @inline_value_array_storage : Bool = false
+    # C-narrow-b: when on (requires @inline_value_array_storage), a marked ArrayGet
+    # (cnarrow_b_direct) returns the inline @buffer[i] slot address directly instead
+    # of materializing the A' heap carrier — see docs/abi_cnarrow_b_load_brief.md.
+    @cnarrow_b_load : Bool = false
     # When a ptrtoint from a heap pointer to a small int (<64 bits) would truncate
     # the address, we skip emitting the ptrtoint and alias the result to the original
     # ptr. Downstream zext/inttoptr chain is also skipped. Maps ValueId → "ptr %name".
@@ -2562,6 +2566,7 @@ module Adamas::MIR
       @string_table = IO::Memory.new
       @string_offsets = {} of String => UInt32
       @inline_value_array_storage = bootstrap_env_enabled?("ADAMAS_INLINE_VALUE_ARRAY_STORAGE", "ADAMAS_INLINE_VALUE_ARRAY_STORAGE")
+      @cnarrow_b_load = bootstrap_env_enabled?("ADAMAS_CNARROW_B_LOAD", "ADAMAS_CNARROW_B_LOAD")
       @reuse_function_block_buffer = bootstrap_env_enabled?("ADAMAS_LLVM_REUSE_BLOCK_BUFFER", "ADAMAS_LLVM_REUSE_BLOCK_BUFFER")
       @function_block_output = IO::Memory.new
       @debug_emit_anchors = bootstrap_env_enabled?("ADAMAS_DEBUG_EMIT", "ADAMAS_DEBUG_EMIT")
@@ -25370,6 +25375,18 @@ module Adamas::MIR
           stride = ive.size
           emit "%#{base_name}.idx_i64 = sext i32 #{normalized_index} to i64"
           emit "%#{base_name}.byte_off = mul i64 %#{base_name}.idx_i64, #{stride}"
+          if @cnarrow_b_load && inst.cnarrow_b_direct
+            # C-narrow-b BEHAVIOR: direct-slot read — return the inline @buffer[i] slot
+            # address itself, with NO heap carrier (no malloc / memcpy). Downstream
+            # same-block static-GEP field reads then read directly from the buffer slot.
+            # Sound ONLY under the brutally-narrow preflight mark (same-block local field
+            # reads, no intervening call / Array mutation / escape -> the slot is stable).
+            # Reached only inside this A' inline path, so it is 0 without A' (coupling).
+            emit "#{name} = getelementptr i8, ptr %#{base_name}.buf, i64 %#{base_name}.byte_off ; cnarrow_b direct slot"
+            @value_types[inst.id] = effective_element_type_ref
+            record_emitted_type(name, "ptr")
+            return
+          end
           emit "%#{base_name}.elem_ptr = getelementptr i8, ptr %#{base_name}.buf, i64 %#{base_name}.byte_off"
           raw = "%#{base_name}.ivc_raw"
           emit "#{raw} = call ptr @__adamas_malloc64(i64 #{stride + 8}) ; ivc_raw arrayget carrier"
