@@ -823,6 +823,26 @@ module Adamas::HIR
 
     private alias BlockLoweringKey = {FunctionId, UInt64, UInt64}
 
+    # Durable shape-specialization record for per-shape block materialization
+    # (variant 1). A concrete-shape `_block` call target (e.g.
+    # `String#split$Char_Nil_Bool_block`) has no registered def of its own — only
+    # the shared arity block def (`String#split$Char$arity3_block`) is registered,
+    # and the yield registry / lookup canonicalize any shape name back to it. This
+    # record makes the shape a durable FACT the lowering machinery consumes:
+    # `source_def`/`arena` are the shared yield def used ONLY as source AST; the
+    # body is emitted under the requested shape name with `arg_types` as the
+    # concrete param ABI shape, so distinct shapes (Int32 limit -> i32, Nil limit ->
+    # ptr) become distinct functions instead of one canonicalized signature.
+    private struct BlockShapeSpecialization
+      getter canonical_yield_name : String
+      getter source_def : Adamas::Compiler::Frontend::DefNode
+      getter arena : Adamas::Compiler::Frontend::ArenaLike
+      getter arg_types : Array(TypeRef)
+
+      def initialize(@canonical_yield_name, @source_def, @arena, @arg_types)
+      end
+    end
+
     private struct DefParamStats
       getter param_count : Int32
       getter required : Int32
@@ -1878,6 +1898,7 @@ module Adamas::HIR
 
     # Functions that contain yield (candidates for inline)
     @yield_functions : Set(String)
+    @block_shape_specializations : Hash(String, BlockShapeSpecialization)
     # Functions whose explicit returns are all `return yield` (block-return-dependent).
     @yield_return_functions : Set(String)
     @yield_return_checked : Set(String)
@@ -4373,6 +4394,7 @@ module Adamas::HIR
       @function_def_overloads_cache = {} of String => Array(String)
       @function_def_overloads_cache_size = 0
       @yield_functions = Set(String).new
+      @block_shape_specializations = {} of String => BlockShapeSpecialization
       @yield_return_functions = Set(String).new
       @yield_return_checked = Set(String).new
       @as_question_results = Set(ValueId).new
@@ -4981,6 +5003,75 @@ module Adamas::HIR
       value = env_get("ADAMAS_LAZY_RTA")
       return true unless value
       value != "0" && value != "false"
+    end
+
+    # Per-shape block specialization (general): re-key an arity-collapsed block
+    # call target (e.g. `String#split$Char$arity3_block`) to the concrete
+    # callsite arg shape so distinct shapes do not share one block ABI signature.
+    # Without this, an untyped regular param bound to differing concrete types
+    # across call sites (e.g. an Int32 `limit` vs a Nil `limit`) collapses to one
+    # block function whose param repr is fixed by one caller; the other caller
+    # then coerces a mismatched value (e.g. a Nil `ptr` loaded as `i32` from a
+    # null pointer -> SIGSEGV). WIP / gated OFF by default while the per-shape
+    # MATERIALIZATION is incomplete (renaming the target alone is canonicalized
+    # back to the shared yield function, so distinct shapes are not yet emitted
+    # as distinct functions). Enable with ADAMAS_BLOCK_SHAPE_SPECIALIZE=1.
+    @[AlwaysInline]
+    private def block_shape_specialize_enabled? : Bool
+      value = env_get("ADAMAS_BLOCK_SHAPE_SPECIALIZE")
+      return false unless value
+      value != "0" && value != "false"
+    end
+
+    # Re-key an arity-collapsed block-call target (e.g. `String#split$Char$arity3_block`,
+    # which `lookup_block_function_def_for_call` returns because that is the only
+    # registered block def for a partially-typed overload) to the concrete callsite arg
+    # shape (e.g. `String#split$Char_Nil_Bool_block`). This must be applied at EVERY site
+    # that overwrites the call target from a block-def lookup, otherwise a later site
+    # re-collapses the shape back to the shared arity target. The shared yield-def is used
+    # only as the source AST; `lower_def`'s `full_name_override` emits the body under this
+    # requested shape name, so distinct shapes (Int32 limit -> `i32`, Nil limit -> `ptr`)
+    # become distinct functions instead of one shared signature fixed by whichever caller
+    # lowers first. Fail-closed: returns the original arity target when shape
+    # specialization is disabled, the shape is unknown (VOID args), the def has no untyped
+    # regular param, or the re-keyed name does not share the same base.
+    private def shape_keyed_block_target(
+      base_method_name : String,
+      block_arg_types : Array(TypeRef),
+      block_def : Adamas::Compiler::Frontend::DefNode,
+      arity_target : String,
+    ) : String
+      return arity_target unless block_shape_specialize_enabled?
+      return arity_target unless arity_target.includes?("$arity")
+      return arity_target if block_arg_types.empty?
+      return arity_target if block_arg_types.any? { |t| t == TypeRef::VOID }
+      return arity_target unless def_has_untyped_regular_param?(block_def)
+      shape_keyed = mangle_function_name(base_method_name, block_arg_types, true)
+      return arity_target if shape_keyed.empty? || shape_keyed == arity_target
+      return arity_target unless strip_type_suffix(shape_keyed) == strip_type_suffix(arity_target)
+      # Register the durable shape-specialization fact so lower_function_if_needed
+      # emits a distinct function under `shape_keyed` using the shared yield def as
+      # source AST. Fail-closed: without the source arena we cannot materialize, so
+      # keep the legacy arity target.
+      source_arena = @function_def_arenas[arity_target]?
+      return arity_target unless source_arena
+      @block_shape_specializations[shape_keyed] ||=
+        BlockShapeSpecialization.new(arity_target, block_def, source_arena, block_arg_types.dup)
+      shape_keyed
+    end
+
+    # True when `requested` is a concrete-shape `_block` specialization of an
+    # arity-collapsed block target `canonical` (same base; `requested` carries a
+    # typed suffix; `canonical` is the shared `$arity..._block` form). Used by
+    # lower_function_if_needed to emit the shape specialization as a DISTINCT
+    # function instead of canonicalizing the emit name to the shared yield body.
+    # Fail-closed (false) unless shape specialization is enabled.
+    private def requested_shape_keyed_block_specialization?(requested : String, canonical : String) : Bool
+      return false unless block_shape_specialize_enabled?
+      return false if requested == canonical
+      return false unless requested.ends_with?("_block")
+      return false unless canonical.includes?("$arity")
+      strip_type_suffix(requested) == strip_type_suffix(canonical)
     end
 
     private def env_filter_match_texts?(
@@ -52052,6 +52143,13 @@ module Adamas::HIR
           name = @pending_function_queue[idx]
           idx += 1
 
+          # Block shape specialization (variant 1, consumer #1): a recorded shape
+          # `_block` name must materialize as a distinct function. It is live by
+          # construction (produced from a concrete call site), so never RTA-defer or
+          # drop it — let it fall through to lower_function_if_needed, which consumes
+          # the record in the lookup and emits the body under the shape name.
+          is_block_shape = block_shape_specialize_enabled? && @block_shape_specializations.has_key?(name)
+
           # Skip stuck functions (max 3 attempts across all passes).
           # Use explicit nil fallback here: produced stage2 has hit this worklist
           # path before Hash.new(default) lookups were reliable enough for [].
@@ -52059,7 +52157,7 @@ module Adamas::HIR
           next if attempt_count >= 3
 
           # Lazy RTA: check if this function should be deferred
-          if lazy_rta
+          if lazy_rta && !is_block_shape
             owner_base = extract_owner_base_for_rta(name)
             rta_reason = ""
             should_keep = if owner_base.nil?
@@ -67559,6 +67657,19 @@ module Adamas::HIR
       target_name = name
       func_def = @function_defs[name]?
       arena = @function_def_arenas[name]?
+      # Block shape specialization (variant 1): a concrete-shape `_block` name has
+      # no registered def of its own; the shared yield def + arg ABI shape come from
+      # its durable record. Keep target_name = name so the body emits as a DISTINCT
+      # function instead of canonicalizing back to the shared arity block target.
+      # Fail-closed: only when enabled and the record + source def exist.
+      if func_def.nil? && block_shape_specialize_enabled?
+        if shape_spec = @block_shape_specializations[name]?
+          func_def = shape_spec.source_def
+          arena = shape_spec.arena
+          target_name = name
+          remember_callsite_arg_types(name, shape_spec.arg_types, has_block: true) if @pending_arg_types[name]?.nil?
+        end
+      end
       lookup_start_instant = Time.instant if env_has?("ADAMAS_PHASE_STATS")
       # Parse name once at the start - reuse for all lookups
       name_parts = parse_method_name(name)
@@ -69459,7 +69570,20 @@ module Adamas::HIR
         end
       end
 
-      materialized_name = materialize_requested_instance_wrapper ? name : resolved_target_name
+      materialized_name = if materialize_requested_instance_wrapper
+                            name
+                          elsif requested_shape_keyed_block_specialization?(name, resolved_target_name)
+                            # Per-shape block specialization (see shape_keyed_block_target):
+                            # emit the concrete-shape `_block` specialization as a DISTINCT
+                            # function under the requested shape name, using the shared yield
+                            # def (resolved_func_def) only as the source AST. Without this the
+                            # shape name canonicalizes back to the arity-collapsed block target
+                            # and distinct shapes (Int32 limit -> i32, Nil limit -> ptr) share
+                            # one signature fixed by whichever lowers first.
+                            name
+                          else
+                            resolved_target_name
+                          end
 
       # A function entry can exist as a declaration-only placeholder after a
       # call target was referenced before the body was materialized. Treat only
@@ -75644,17 +75768,21 @@ module Adamas::HIR
         # lookup to a real receiver owner.
         if !receiver_id || receiver_base_for_block_target
           if block_entry = lookup_block_function_def_for_call(base_method_name, call_args.size, block_target_arg_types, receiver_base_for_block_target)
+            # Per-shape block specialization (see shape_keyed_block_target): re-key the
+            # arity-collapsed block target to the concrete callsite arg shape so distinct
+            # shapes do not share one block ABI signature.
+            block_call_target = shape_keyed_block_target(base_method_name, block_target_arg_types, block_entry[1], block_entry[0])
             mangled_method_name = if receiver_id
                                     preserve_receiver_block_call_target(
                                       ctx.type_of(receiver_id),
                                       base_method_name,
                                       method_name,
-                                      block_entry[0],
+                                      block_call_target,
                                       block_target_arg_types,
                                       true
                                     )
                                   else
-                                    block_entry[0]
+                                    block_call_target
                                   end
             primary_mangled_name = mangled_method_name
           end
@@ -75865,32 +75993,37 @@ module Adamas::HIR
         if !receiver_id || receiver_base_for_canon
           typed_canon = lookup_block_function_def_for_call(base_method_name, call_args.size, arg_types, receiver_base_for_canon)
           if typed_canon
+            # Per-shape block specialization: keep the concrete callsite arg shape instead
+            # of collapsing back to the registered arity block target (this pass would
+            # otherwise undo the same re-key done at the earlier block-return-name site).
+            typed_canon_target = shape_keyed_block_target(base_method_name, arg_types, typed_canon[1], typed_canon[0])
             mangled_method_name = if receiver_id
                                     preserve_receiver_block_call_target(
                                       ctx.type_of(receiver_id),
                                       base_method_name,
                                       method_name,
-                                      typed_canon[0],
+                                      typed_canon_target,
                                       arg_types,
                                       true
                                     )
                                   else
-                                    typed_canon[0]
+                                    typed_canon_target
                                   end
             primary_mangled_name = mangled_method_name
           elsif count_distinct_block_overloads_arity_only(base_method_name, call_args.size, receiver_base_for_canon) == 1
             if fallback_canon = lookup_block_function_def_for_call(base_method_name, call_args.size, nil, receiver_base_for_canon)
+              fallback_canon_target = shape_keyed_block_target(base_method_name, arg_types, fallback_canon[1], fallback_canon[0])
               mangled_method_name = if receiver_id
                                       preserve_receiver_block_call_target(
                                         ctx.type_of(receiver_id),
                                         base_method_name,
                                         method_name,
-                                        fallback_canon[0],
+                                        fallback_canon_target,
                                         arg_types,
                                         true
                                       )
                                     else
-                                      fallback_canon[0]
+                                      fallback_canon_target
                                     end
               primary_mangled_name = mangled_method_name
             end
@@ -78385,11 +78518,19 @@ module Adamas::HIR
         ) : nil
         STDERR.puts "[M3I_SITE_SEEN] site=direct_block_entry name=#{base_method_name} readable=#{m3i_input ? 1 : 0}" if env_has?("ADAMAS_CALLSHAPE_ASSERT")
         if direct_block_entry = (m3i_input ? resolve_call_input(m3i_input) : nil)
+          # Per-shape block specialization (4th / emit-time site, see
+          # shape_keyed_block_target): re-key the emit-time block target to the
+          # concrete callsite arg shape BEFORE receiver preservation, mirroring the
+          # 3 resolution-time sites. Without this the emit-time lookup re-derives the
+          # arity-collapsed target and overwrites the shape-keyed mangled name at the
+          # `resolved_emit != mangled_method_name` reconciliation below, so the wrapper
+          # emits a call to the shared arity block (the distinct shape function then
+          # has no caller and is pruned). Gated/fail-closed inside shape_keyed_block_target.
           resolved_emit = preserve_receiver_block_call_target(
             ctx.type_of(receiver_id),
             base_method_name,
             method_name,
-            direct_block_entry[0],
+            shape_keyed_block_target(base_method_name, lookup_arg_types, direct_block_entry[1], direct_block_entry[0]),
             lookup_arg_types,
             true
           )
@@ -78398,7 +78539,7 @@ module Adamas::HIR
             ctx.type_of(receiver_id),
             base_method_name,
             method_name,
-            block_entry[0],
+            shape_keyed_block_target(base_method_name, lookup_arg_types, block_entry[1], block_entry[0]),
             lookup_arg_types,
             true
           )
@@ -78408,7 +78549,7 @@ module Adamas::HIR
               ctx.type_of(receiver_id),
               base_method_name,
               method_name,
-              block_entry[0],
+              shape_keyed_block_target(base_method_name, lookup_arg_types, block_entry[1], block_entry[0]),
               lookup_arg_types,
               true
             )

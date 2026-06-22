@@ -140,6 +140,22 @@ keep the two regimes distinct.
 
 ## Current Checkpoint
 
+**2026-06-21 — gated fix: String#split nilable-limit monomorphization collision (Bug 2), gate `ADAMAS_BLOCK_SHAPE_SPECIALIZE` (`abi-struct-byvalue`).**
+Per-shape block specialization: distinct `String#split$Char_Int32_Bool_block`(i32 limit) and
+`Char_Nil_Bool_block`(ptr limit) instead of one collapsed `$Char$arity3_block`. Root of the
+incomplete WIP was a 4th, emit-time block-target resolution site (`ast_to_hir.cr` ~78530) that
+re-derived the arity name and overwrote the shape-keyed `mangled_method_name`; fixed by re-keying
+its 3 branches through `shape_keyed_block_target` before `preserve_receiver_block_call_target`.
+Gate DEFAULT OFF (fully inert; suites identical OFF/ON: originals 148/148, combined 36/36). Gated
+reducer `string_split_int32_nil_limit_collision_repro.sh` (GATE=1 default) green: `int_limit=2
+nil_limit=4`; IR has the two distinct defines, no `inttoptr 2->ptr`, no `load i32,ptr %limit`.
+NOT default-on and NOT s2b-clean: gate-ON s2b now passes the Globber/String#split STARTUP crash
+(gate-OFF still dies there) and reaches a SEPARATE deterministic backend crash —
+`@value_def_block.clear` (Hash(UInt32,UInt64) @entries=-1) in `LLVMIRGenerator#emit_function`
+during codegen. That is the next frontier (fresh session; localize crash frame + Hash state +
+whether shape-block functions are the only HIR/MIR delta + minimal reducer). Bug 1 (single-Char
+`split('/')` overload misdispatch, `string_split_default_nil_limit_repro`) remains separate/open.
+
 **2026-06-20 — A′ BEHAVIOR: inline-value Array(C) storage ABI (gate `ADAMAS_INLINE_VALUE_ARRAY_STORAGE`) (`abi-struct-byvalue`).**
 First slice where LLVM CONSUMES the A′ facts and changes the Array(C) ABI: a leaf-POD
 value struct is stored INLINE in the Array buffer (stride C.size), read back as an

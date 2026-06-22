@@ -1,7 +1,18 @@
 # String#split — census + SDD brief (nilable-limit slice)
 
 Status: **READ-ONLY CENSUS DONE. 2026-06-21.** No compiler edits. This is the
-design/reducer-first slice GPT requested before any nilable-limit fix. The census
+design/reducer-first slice GPT requested before any nilable-limit fix.
+
+> **UPDATE 2026-06-21 — Bug 2 FIXED (gated, `ADAMAS_BLOCK_SHAPE_SPECIALIZE`, default OFF).**
+> Per-shape block specialization emits distinct `Char_Int32_Bool_block`(i32) / `Char_Nil_Bool_block`(ptr)
+> instead of one `$Char$arity3_block`; reducer `string_split_int32_nil_limit_collision_repro.sh`
+> green (`int_limit=2 nil_limit=4`), no `inttoptr 2->ptr` / `load i32,ptr %limit`. The collapse
+> root was a 4th, emit-time block-target site (`ast_to_hir.cr` ~78530). NOT default-on / NOT
+> s2b-clean: gate-ON s2b clears this Globber/split startup crash but hits a separate backend
+> `@value_def_block` crash in `LLVMIRGenerator#emit_function` (next frontier). **Bug 1 below is
+> still open.**
+
+The census
 **refutes the single-root framing** in `docs/abi_cnarrow_s2b_smoke_readiness.md` and
 memory `s2b_startup_crash_split_glob_localization`: the standalone wrong-count and the
 s2b SIGSEGV are **two distinct bugs**, not one nilable-limit lowering root.
