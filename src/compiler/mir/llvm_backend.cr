@@ -16,34 +16,49 @@
 require "./mir"
 require "../layout_probe"
 
+# Debug-only structural-size helpers that reopen the top-level builtin
+# containers. They MUST stay OUTSIDE `module Adamas::MIR`: an absolute
+# `class ::Hash(K, V)` written inside the module loses its `::` during name
+# extraction (definition_leaf_name_from_header_text) and is then re-qualified
+# with the enclosing namespace into a PHANTOM `Adamas::MIR::Hash` generic
+# template carrying only this method and no ivars. Monomorphizing that phantom
+# yields a size-4 / 0-ivar ClassInfo, so its `.new` under-allocates (12 bytes)
+# while the real ::Hash#initialize writes the full ~56-byte layout — corrupting
+# adjacent heap in the self-hosted compiler (the s2b @value_def_block backend
+# crash). Defining them at top level keeps the canonical ::Hash / ::Set /
+# ::Array. NOTE: the underlying central-resolver bug (an absolute `class ::X`
+# reopen inside a module must preserve the top-level base in definition
+# registration) is NOT fixed here — see TODO.md. This is a tactical self-host
+# unblock only.
+class ::Hash(K, V)
+  def adamas_debug_structural_bytes : Int64
+    entry_bytes = entries_capacity.to_i64 * sizeof(Entry(K, V)).to_i64
+    index_bytes = if indices_size <= MAX_INDICES_SIZE_LINEAR_SCAN
+                    0_i64
+                  elsif indices_size <= MAX_INDICES_BYTESIZE_1
+                    indices_size.to_i64
+                  elsif indices_size <= MAX_INDICES_BYTESIZE_2
+                    indices_size.to_i64 * 2_i64
+                  else
+                    indices_size.to_i64 * 4_i64
+                  end
+    entry_bytes + index_bytes
+  end
+end
+
+struct ::Set(T)
+  def adamas_debug_structural_bytes : Int64
+    @hash.adamas_debug_structural_bytes
+  end
+end
+
+class ::Array(T)
+  def adamas_debug_structural_bytes : Int64
+    @capacity.to_i64 * sizeof(T)
+  end
+end
+
 module Adamas::MIR
-  class ::Hash(K, V)
-    def adamas_debug_structural_bytes : Int64
-      entry_bytes = entries_capacity.to_i64 * sizeof(Entry(K, V)).to_i64
-      index_bytes = if indices_size <= MAX_INDICES_SIZE_LINEAR_SCAN
-                      0_i64
-                    elsif indices_size <= MAX_INDICES_BYTESIZE_1
-                      indices_size.to_i64
-                    elsif indices_size <= MAX_INDICES_BYTESIZE_2
-                      indices_size.to_i64 * 2_i64
-                    else
-                      indices_size.to_i64 * 4_i64
-                    end
-      entry_bytes + index_bytes
-    end
-  end
-
-  struct ::Set(T)
-    def adamas_debug_structural_bytes : Int64
-      @hash.adamas_debug_structural_bytes
-    end
-  end
-
-  class ::Array(T)
-    def adamas_debug_structural_bytes : Int64
-      @capacity.to_i64 * sizeof(T)
-    end
-  end
 
   # ═══════════════════════════════════════════════════════════════════════════
   # TYPE METADATA STRUCTURES (embedded in binary for debugger access)

@@ -6,6 +6,33 @@ Branch: `main` (ABI-rework + s2b GC fix merged & pushed); by-value Stage 0+ cens
 This is the active working backlog only. Historical detail is in git history,
 especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
+## 2026-06-22 — s2b phantom `Adamas::MIR::Hash` under-alloc: tactical fix landed; resolver bug A deferred
+
+- FIXED (tactical, this branch): self-host `@value_def_block` backend crash
+  (`emit_function` → `@value_def_block.clear` → `__bzero` @ `0x7fffffffffffffff`).
+  Root: the debug reopens `class ::Hash(K,V)` / `struct ::Set(T)` /
+  `class ::Array(T)` (adding `adamas_debug_structural_bytes`) were nested inside
+  `module Adamas::MIR` in `llvm_backend.cr`; the absolute `::` is stripped at name
+  extraction and the bare builtin base is re-qualified to a PHANTOM
+  `Adamas::MIR::Hash` generic template (no ivars) → size-4 ClassInfo →
+  `.new` under-allocates 12B while real `::Hash#initialize` writes ~56B →
+  adjacent-heap stomp. Fix = moved the 3 reopens to top level (outside the
+  module). Verified: 0 `Adamas::MIR::(Hash|Set|Array)` phantom symbols,
+  `@value_def_block` now real `::Hash(UInt32,UInt64)` (64B, type_id 2045),
+  `x=1` 5/5 EXIT 0, suites 148/148 + 36/36, `hash_dual_typeref_phantom_repro` PASS.
+- DEFERRED — central resolver bug (A): an absolute `class ::X` reopen written
+  *inside* a module must preserve the top-level base in definition registration.
+  `definition_leaf_name_from_header_text` (ast_to_hir.cr:6686) drops the `::`;
+  `qualified_nested_type_name` (:6977) and `resolve_class_name_for_definition`
+  (:45225) then re-qualify the bare builtin base with the enclosing namespace.
+  Needs a coordinated definition+reference fix; 5 narrow attempts failed (see
+  memory `s2b_value_def_block_phantom_hash_underalloc`). NOT fixed here.
+- NEW FRONTIER (surfaced by the fix, NOT a regression): s2b compiling a
+  non-trivial program stack-overflows (SIGBUS) in the `Array(T)#join` super-chain
+  recursion (`join → join_super_from_Enumerable → join_super_from_Indexable →
+  join`), crashing in `String::Builder#initialize`. Separate super-chain family
+  bug (cf. `super_chain_module_class_collision_fix`); do not bundle.
+
 ## Goal
 
 Reach a clean bootstrap corridor:
