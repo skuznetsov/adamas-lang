@@ -184,3 +184,45 @@ The census has already refuted the easy version (param+return-only): the live fr
 field-load + param + union + the `null_ptr?` contract. So A1 is **reducers + frontier-feed census
 first**, and the "first behavior slice" is likely **larger** than param+return — which is itself a
 reason to keep C1 gated/tactical until the structural-predicate-vs-allow-list question is answered.
+
+## 8. Bounded scope census (decision: tactical allow-list) — structural blanket is UNSAFE
+
+Decision (GPT): A1 = **Option 1, tactical gated allow-list**, not the structural blanket. The
+gate is `name ∈ {Adamas::HIR::TypeRef, Adamas::MIR::TypeRef, Adamas::Compiler::Frontend::ExprId}`
+**AND** `structural(single-field, offset 0, int)` — **fail-closed** (legacy `ptr` ABI) if the
+structural check fails for an allow-listed name. Claim wording is fixed: A1 = "tactical scalar ABI
+for three compiler-internal wrapper structs under a gate", **not** "transparent-wrapper ABI fixed";
+the durable structural scalar ABI stays future work.
+
+One-shot read-only census (probe `ADAMAS_WRAPPER_SCOPE_CENSUS`, run during the s2b build, then
+removed — not committed) enumerated **every** type the structural predicate matches:
+
+```
+13 distinct single-field-int structs matched:
+  ALLOW-LIST (3):  Adamas::HIR::TypeRef (@id:i32), Adamas::MIR::TypeRef (@id:i32),
+                   Adamas::Compiler::Frontend::ExprId (@index:i32)
+  NON-ALLOWLISTED (10):
+    Atomic(Bool) (@value:i1), Atomic(Int32) (@value:i32),
+      Atomic(Channel::SelectState) (@value:i32)   <-- CAS needs pointerof(@value); scalarizing breaks atomics
+    Crystal::System::Kqueue (@kq:i32)             <-- fd identity
+    Crystal::EventLoop::Polling::Arena::Index (@data:i64)
+    Crystal::MachO::Nlist64::Type (@value:i8), Time::MonthSpan (@value:i64)
+    Adamas::Compiler::Semantic::TypeId (@index:i32),
+      Adamas::Compiler::Semantic::SemanticTypeId (@id:i32),
+      Adamas::MIR::DwarfLocalShadowStoreBinding (@slot_id:i32)  <-- sibling id-wrappers (future work, not A1)
+```
+
+**Conclusion:** the structural predicate over-fires on **10** non-wrapper structs. `Atomic(T)` is
+the decisive falsifier of Option 2 — its single `i32`/`i1`/`i64` field is the target of atomic
+CAS, which operates on `pointerof(@value)`; a blanket "single-field-int ⇒ scalar ABI" would
+silently corrupt every atomic. This is the empirical proof that the allow-list (Option 1) is
+correct for A1, and it does **not** refute the allow-list (all 3 allow-listed names are present in
+the structural set, so the AND-gate fires for them).
+
+**Negative-test selection (risk 2, mandatory):** use `Atomic(Int32)` as the primary negative
+(real, address-semantic) **plus** a hermetic synthetic single-field-int struct outside the
+allow-list. The IR oracle for the negative reducer must assert the non-allow-listed type still
+emits the **legacy `ptr`** ABI at param/return/union — i.e. A1 does **not** scalarize arbitrary
+single-field-int structs. The sibling id-wrappers (`Semantic::TypeId`, `SemanticTypeId`,
+`DwarfLocalShadowStoreBinding`) are noted as the same *family* but are **out of A1 scope** (only the
+3 that demonstrably feed the s2b frontier) — they become future work once A1's durable form lands.
