@@ -37491,7 +37491,32 @@ module Adamas::HIR
                     is_union_or_nilable_type?(inst.type) &&
                     !is_union_or_nilable_type?(resolved_type)
 
-            block.instructions[idx] = Call.new(inst.id, resolved_type, inst.has_receiver? ? inst.receiver_value : nil, inst.method_name, inst.args, inst.block, inst.virtual)
+            # Pass a CONCRETE receiver (ValueId or literal nil) into the Call overload
+            # set instead of a `Nil | UInt32` union: s2b miscompiles the nilable-receiver
+            # argument so the receiver value lands in the following `method_name : String`
+            # slot (receiver 91 -> method_name 0x5b; nil -> 0x0), producing a corrupt
+            # Call.method_name that later faults in Hash#key_hash. Branching keeps every
+            # constructor argument single-typed across the bridge. (Root s2b union-arg ABI
+            # bug stays open — see TODO below.)
+            new_call =
+              if inst.has_receiver?
+                recv = inst.receiver_value
+                if block_id = inst.block
+                  Call.new(inst.id, resolved_type, recv, inst.method_name, inst.args, block_id, inst.virtual)
+                else
+                  Call.new(inst.id, resolved_type, recv, inst.method_name, inst.args, nil, inst.virtual)
+                end
+              else
+                if block_id = inst.block
+                  Call.new(inst.id, resolved_type, nil, inst.method_name, inst.args, block_id, inst.virtual)
+                else
+                  Call.new(inst.id, resolved_type, nil, inst.method_name, inst.args, nil, inst.virtual)
+                end
+              end
+            # TODO(s2b-union-arg-abi): root cause is s2b mislowering a `Nil | UInt32`
+            # argument followed by a `String` argument into the overloaded constructor;
+            # this branch-split is a tactical avoidance, not the ABI fix.
+            block.instructions[idx] = new_call
             value_types[inst.id] = resolved_type
             repaired_value_types[inst.id] = resolved_type
             repaired += 1
