@@ -177,3 +177,30 @@ opaque-pointer path resolves can `field_hir_type` become non-Unknown; only THEN 
 only for actuals proven PackedScalar/UnionPayload into a proven StructStorage formal (preceded by
 a `would_materialize_count + exact callsites` ledger). Param-prop classifier kept in the SDD as
 design; NOT committed (ledger-only / dead infra today).
+
+## 9. Slice-3 result (Pointer(T) producer-born facts) + would_materialize ledger — decisive wall
+
+Built (read-only, then removed) producer-born Pointer(T) element-type recovery: for an opaque-
+`Pointer` slot, recover the element type ONLY from the base value's producer fact (Alloc.alloc_type,
+GetElementPtrDynamic.element_type) — NO mangled strings / callee names / "looks like TypeRef".
+
+**Frontier:** `lower_field_store_to_ptr.field_hir_type` was `param_from(ptr_no_element_type(Pointer))`;
+now **`param_from(1 site : pointer_elem(unknown_reason : opaque_no_producer_fact))`** — the opaque
+Pointer's GEP base has NO producer-born element type (it is a param/opaque chain, not an Alloc or
+typed GEP). Per hard-stop #1 (element type unknown) -> no behavior.
+
+**would_materialize ledger (per-callsite, struct-storage formals):**
+`union_payload=2 · packed_scalar=0 · unknown=20`. The only actionable rows are 2 `UnionPayload`
+callers of `hir_type_is_lib_struct?.type` (`lower_pointer_realloc`, `lower_pointer_store`, via
+union_unwrap) — a DIFFERENT path, NOT the crashing `field_hir_type` (which is in the 20 Unknown).
+
+**Decisive meta-result (3 read-only facts slices):** the crashing `field_hir_type` path is Unknown
+at EVERY incremental producer-born layer — struct->ptr collapse (slice 1), opaque `Pointer(T)` with
+no producer element fact (slice 3), cross-boundary params (slice 2). Producer-born facts alone
+cannot recover it; doing so needs full inter-procedural TYPE propagation (the broad AbiFacts arc),
+not another local fact. And the only would_materialize-actionable rows (2 UnionPayload) are NOT the
+crash, so a behavior slice on the current facts CANNOT unblock the MIR frontier. Real options now:
+(A) the broad inter-procedural type-propagation AbiFacts arc (large, deliberate), or (B) re-examine
+a tactical frontier fix — now informed that `field_hir_type` is opaque/Unknown (NOT a recoverable
+PackedScalar), so a blind materialize would be wrong. Behavior still forbidden; recommend a review
+decision between (A) and (B) before more facts slices (diminishing returns confirmed empirically).
