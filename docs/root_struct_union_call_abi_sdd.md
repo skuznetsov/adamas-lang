@@ -204,3 +204,28 @@ crash, so a behavior slice on the current facts CANNOT unblock the MIR frontier.
 a tactical frontier fix — now informed that `field_hir_type` is opaque/Unknown (NOT a recoverable
 PackedScalar), so a blind materialize would be wrong. Behavior still forbidden; recommend a review
 decision between (A) and (B) before more facts slices (diminishing returns confirmed empirically).
+
+## 10. Tactical B attempted (TypeRef-id boundary split) — FALSIFIED; A is mandatory
+
+Tried the narrowest B (avoid the by-value `HIR::TypeRef` boundary by passing the primitive id):
+- B-preflight: `hir_type_is_lib_struct?` has 16 callers; `lower_field_store_to_ptr` routes
+  `field_hir_type` through ~8 by-value boundaries — already wide.
+- B.1 (local re-pack `field_hir_type = HIR::TypeRef.new(field_hir_type.id)` at function top):
+  crash MOVED from `hir_type_is_lib_struct?+84` to `lower_field_store_to_ptr+844` — reading
+  `field_hir_type.id` faults, proving the param arrives as a genuine null/opaque token (not a
+  recoverable packed scalar).
+- B.2 (change the param to `field_hir_type_id : UInt32`, read `field.type.id` in the caller
+  `lower_field_set`, reconstruct locally; 2 call sites updated): `hir_type_is_lib_struct?`
+  frontier CLEARED, but the crash MOVED again to `lower_field_set+388` — `field.type.id`
+  faults there too.
+
+So the crash moves UP the chain (`hir_type_is_lib_struct?` -> `lower_field_store_to_ptr` ->
+`lower_field_set`) and `.id` is **un-dereferenceable at every frame**: the TypeRef value is an
+opaque token that can be FORWARDED as a struct but not read (`.id`) anywhere — only the final
+consumer's deref faults. There is no clean boundary to split at. Per hard-stop #3 (crash moved
+more than once) and #1 (would need many helpers), **the chain cannot be split cleanly -> A is
+mandatory.** B reverted; tree clean. (Stage1 reads `field.type.id` fine — this is purely the
+self-hosted s2b struct-arg ABI, confirming the durable inter-procedural type-propagation /
+consistent-struct-ABI arc A is the only remaining lever.) Recommendation: open A as a separate
+deliberate arc (its own plan/Quadrumvirate, CAUTION-tier); do not attempt further tactical
+frontier splits on this chain.
