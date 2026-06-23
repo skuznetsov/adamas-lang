@@ -37722,6 +37722,37 @@ module Adamas::HIR
               next
             end
 
+            # Block-target preservation (fail-closed, narrow): never downgrade a call that
+            # already carries a proven, materializable block-overload target to the bare
+            # receiver method when this pass's own re-resolution collapsed back to the bare
+            # base. The bare name resolves to the non-block overload (the 1-arg
+            # Array(UInt32)#join), which re-enters the join super-chain and infinitely
+            # recurses. All conditions must hold (fail-closed): the old target is an explicit
+            # `..._block` / `...$block` overload; its owner matches the receiver after a
+            # comparison-only leading-`::` strip (the emitted symbol is never altered); this
+            # pass's re-lookup MISSED (corrected collapsed to the bare base — if it found a
+            # better typed target, repair_lookup_missed is false and we use it); the call has
+            # a block; and the old target is already known/materializable. If the owner
+            # genuinely changed to a different type the guard does not fire and the normal
+            # repair rewrite proceeds.
+            old_is_block_target = method_name_text.ends_with?("_block") || method_name_text.ends_with?("$block")
+            repair_lookup_missed = corrected_name == resolved_base || !corrected_name.includes?('$')
+            old_owner_norm = current_owner_base.lchop("::")
+            recv_owner_norm = receiver_base.lchop("::")
+            owner_matches_after_norm = !old_owner_norm.empty? && old_owner_norm == recv_owner_norm
+            old_target_known = @module.has_function?(method_name_text) ||
+                               @module.has_function_with_body?(method_name_text) ||
+                               @function_defs.has_key?(method_name_text) ||
+                               @function_types.has_key?(method_name_text) ||
+                               function_state(method_name_text).pending? ||
+                               function_state(method_name_text).in_progress? ||
+                               function_state(method_name_text).completed?
+            if old_is_block_target && owner_matches_after_norm && repair_lookup_missed && has_block_call && old_target_known
+              targets_to_lower << method_name_text unless @module.has_function_with_body?(method_name_text)
+              STDERR.puts "[CALL_REPAIR] preserved_block_target=#{method_name_text} would_downgrade_to=#{corrected_name}" if env_has?("DEBUG_CALL_REPAIR")
+              next
+            end
+
             return_type = get_function_return_type(corrected_name)
             if return_type == TypeRef::VOID
               if inferred = resolve_return_type_from_def(corrected_name, resolved_base, receiver_type)
