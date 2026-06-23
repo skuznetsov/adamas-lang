@@ -148,3 +148,32 @@ load + 2× union + 2× phi; **0 storage_addr**, and still Unknown after slot-val
 The struct-field slot-value classifier is kept in the SDD as the eventual consumer once values
 become field-backed, but it is NOT committed (it would be dead infra today). Behavior remains
 forbidden until `field_hir_type` is non-Unknown via (1)+(2).
+
+## 8. Slice-2 result — param formal-provenance propagation (read-only; traces the frontier)
+
+Built (read-only, then removed) an inter-procedural param-prop pass: a global call-site index
+(callee -> [(caller, call)]) + a cross-function classifier that resolves a callee param by
+merging its callers' actual provenances (value-proxy guard: same->bucket, mixed->Unknown
+(param_mixed:<buckets>), no callers->Unknown(no_callsite_fact); recursion/SCC -> Unknown(cycle)).
+A param's ValueId == its positional index in MIR. NO behavior; the ledger runs once before emit.
+
+**Frontier result (per-callsite, not global counts):**
+- `lower_field_store_to_ptr.field_hir_type` (param 5): was `param/no_def`; now
+  **`param_from(1 site : ptr_no_element_type(Pointer))`** — its single caller passes an
+  opaque-`Pointer` load. Still Unknown, but with an ACTIONABLE reason (not multiplied Unknown):
+  the remaining gap is the erased `Pointer(T)` element type. Per hard-stop #3 -> next slice =
+  Pointer(T) element-type facts.
+- `hir_type_is_lib_struct?.type` (param 1): **`param_mixed(Unknown / UnionPayload)` across 19
+  call sites** — some callers pass an unwrapped union payload directly into the struct-storage
+  formal (a concrete mismatch), the rest are Unknown (opaque-pointer / param). Mixed -> Unknown.
+
+So param-prop made real progress (resolved the dominant `field_hir_type` path to a concrete
+opaque-pointer root, and surfaced UnionPayload callers on the direct `type` param), without any
+behavior. Both frontier params are still Unknown -> hard-stop holds, no materialization.
+
+**Next (read-only): Pointer(T) element-type facts.** The MIR loses `Pointer(T)` to opaque
+`Pointer`; recover the element type at the producer (or fail-closed Unknown). Only after the
+opaque-pointer path resolves can `field_hir_type` become non-Unknown; only THEN behavior, and
+only for actuals proven PackedScalar/UnionPayload into a proven StructStorage formal (preceded by
+a `would_materialize_count + exact callsites` ledger). Param-prop classifier kept in the SDD as
+design; NOT committed (ledger-only / dead infra today).
