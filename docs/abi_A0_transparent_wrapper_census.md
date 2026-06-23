@@ -128,3 +128,59 @@ never lands without review (commit policy: A0 is doc-only).
   a final decision — A1's reducers are the deciding falsifier.
 - **"A implementation path is known"** — NOT yet supported: the param+return+union coupling means
   even C1 is a staged migration, and its first slice must be proven by reducers before it is trusted.
+
+## 7. A1 risk matrix (bridge points) — gate BEFORE any reducer/behavior
+
+Hostile review (GPT) flagged that the staged plan is VULNERABLE until the bridge points are
+enumerated and each changed one has a reducer or a fail-closed gate. This section is the census of
+those bridges for Candidate 1 (scalar). It is the gate: **no A1 behavior starts until every "bridge
+required" cell below has a reducer or an explicit fail-closed gate.**
+
+### Bridge-point table (C1 scalar ABI)
+| Bridge point | Current repr | A1 (C1) | Bridge required | Reducer (to author) |
+| --- | --- | --- | --- | --- |
+| **Call param** | `ptr` (+:21812 scalar→slot) | scalar `iN` | callee prologue: `iN` param → in-frame `%TypeRef` (store to a local alloca) so existing `.id`/struct reads stay valid | R1 two-frame `.id` |
+| **Return** | `ptr` | scalar `iN` | producer: in-frame `%TypeRef` → return `iN` (load `.id`) | R2 helper-returns-TypeRef |
+| **Union payload** `Nil|wrapper` | `%Name.union` aggregate, payload via struct→ptr | payload scalar `iN` | wrap/unwrap must place/read `iN`; discriminator unchanged | R3 `Nil\|TypeRef` cross+unwrap |
+| **Local alloca** | real `%TypeRef` (:211) | **unchanged** | **yes (both ways)** — param-scalar→local and local→return-scalar: this is the split-brain seam (risk 1) | R1+R2 transition checks |
+| **Field load/store** | `ptr`/InlineBytes (:17990) | **unchanged** locally | **yes** — the live frontier's wrapper ENTERS via `FieldSet.type` field-load (hir.cr:175); field-load→call must bridge `%TypeRef`→`iN` | R4 field-set chain (`/tmp/med.cr`) |
+| **Phi / cross-block** | `ptr`-uniform (+int_to_ptr) | scalar `iN` if a scalar wrapper crosses a block | maybe — only if a wrapper SSA spans blocks as scalar | R5 cross-block wrapper |
+| **`null_ptr?` guards** | `pointerof(@id).address == 0` | meaningless under scalar | **yes** — 94 call sites (incl. `sizeof(TypeRef)<=8 &&` at ast_to_hir.cr:5587); must become an id-sentinel test or keep storage on guarded paths (risk 5) | R6 call `null_ptr?`/`invalid?` on a wrapper |
+
+### What the census forces (revising §5)
+1. **The frontier's minimal coherent unit is NOT {param+return}.** Live code: the crashing wrapper
+   originates from a **field-load** (`FieldSet.type`) and the same signature carries a
+   `Nil | MIR::TypeRef` **union** param. So the smallest unit that could make the frontier coherent
+   is **{field-load → param} + the adjacent union**, not param+return. Deferring union (proposed A2)
+   would leave the frontier's own signature half-converted → "A1 green, s2b still dies" (risk 4
+   realized). **A1 must re-census, per concrete s2b IR, exactly which crossings feed THIS frontier
+   before committing to a unit.**
+2. **`null_ptr?` is not cleanup (risk 5).** 94 sites depend on `pointerof(@id)`; scalar ABI silently
+   flips them to always-false. A1 cannot touch param/return without simultaneously deciding the
+   `null_ptr?` contract (id-sentinel vs storage-on-guarded-paths). This is a behavior change that
+   needs R6 before any bridge lands.
+3. **Predicate is structural, not 3 names (risk 2).** `transparent_wrapper_struct_scalar_llvm_type`
+   already keys on shape (single field, offset 0, int field) and matches **more** than the 3
+   wrappers. A1 must EITHER (a) explicitly gate to a tactical 3-name allow-list and label it
+   tactical, OR (b) use the structural predicate **plus a negative-list** for single-field-int
+   structs where scalar ABI is unsafe (identity-bearing, pointer-aliased, or `null_ptr?`-guarded),
+   with negative tests. No silent middle ground.
+4. **Reducers must include an IR/signature oracle (risk 3).** Because the bug is s2b-only and
+   stage1 is always clean, a runtime-only reducer can be a value-proxy. Each A1 reducer must assert
+   the **emitted `.ll`** (param/return/union slot type changed as intended), not just program output.
+
+### Revised A1 DoD (test/docs only; no ABI code)
+- R1–R6 authored as **ABI-matrix falsifiers** (not generic smoke), each with an **IR oracle** + a
+  runtime check; red/diagnostic on current HEAD (not vacuous).
+- stage1 stays clean; the gated s2b oracle still reproduces the current frontier **before** behavior.
+- A separate **frontier-feed census** (item 1 above) resolved from real s2b IR → names the minimal
+  coherent unit; recorded back into this doc as "reducers result / chosen A1 unit".
+- No source behavior change in the reducer commit. Behavior begins only after the reducer packet
+  shows a viable, coherent gated unit (and the `null_ptr?` contract is decided).
+
+### Hostile verdict (self-applied)
+This plan is **VULNERABLE, not ROBUST**, until the reducer matrix proves a coherent staged unit.
+The census has already refuted the easy version (param+return-only): the live frontier couples
+field-load + param + union + the `null_ptr?` contract. So A1 is **reducers + frontier-feed census
+first**, and the "first behavior slice" is likely **larger** than param+return — which is itself a
+reason to keep C1 gated/tactical until the structural-predicate-vs-allow-list question is answered.
