@@ -117,3 +117,34 @@ combined 36/36; no stage1 behavior change; `85cde370`/`6a1662c4` intact.
 - Next artifact: this SDD → review (pick MIR-fact vs CallArgPlan carrier, and slice A vs B) →
   one narrow behavior slice. Do not attempt a generic inline-i32 / union ABI rewrite by
   intuition (that is the C-wide AbiFacts arc, not a small unblock).
+
+## 7. Slice-1 result — slot-VALUE contract built; data REPRIORITIZES the layers (no behavior)
+
+KEY correction adopted: a GEP yields a slot ADDRESS; the LOADED value's kind comes from the
+field/element DECLARED type (slot-value contract), not from the address's provenance. Built
+(read-only) `slot_value_kind` + `classify_loaded_value` with the negative guarantee
+(reference/String/Array/Hash/Pointer/Proc -> ObjectPtr; transparent-wrapper struct ->
+PackedScalar; only a non-wrapper struct -> StructStorageRef), plus a Pointer(T) element-slot
+case. NO behavior (read-only classifier + stderr ledger; IR byte-identical by construction).
+
+**Empirical bucket distribution across ALL struct-`ptr`-formal call args in the s2b build:**
+`param` 30 · `ptr_no_element_type` (opaque Pointer) 10 · `phi_mixed` 2 ·
+`UnionPayload(union_unwrap)` 2 · `call_ret` 1 · **resolvable struct-field load: 0**.
+
+So the slice-1 struct-field slot-value contract is correct but **never fires** for the relevant
+calls: the actuals are NOT struct-field loads. The 3-entity collapse is wider than assumed — it
+also erases **Pointer(T) -> opaque `Pointer`** (element type gone), and the DOMINANT carrier is
+**cross-boundary params (30×)**. The failing `field_hir_type` itself = 8× param + 6× opaque-ptr
+load + 2× union + 2× phi; **0 storage_addr**, and still Unknown after slot-value. Per hard-stop
+#4: NO behavior.
+
+**Reprioritized facts layers (the actual unblockers, both read-only):**
+1. **Param formal-provenance propagation (was "slice 2", now the FIRST real lever — 30× params):**
+   thread an actual's `PtrProvenance` into the callee's formal so a param resolves from its
+   caller(s); merge across call sites (Unknown on conflict).
+2. **Pointer(T) element-type facts (10× opaque `Pointer`):** the MIR loses `Pointer(T)`'s element
+   type to opaque `Pointer`; without it a `Load(Pointer)` cannot be classified. Either recover the
+   element type at the producer or fail-closed Unknown (never assume).
+The struct-field slot-value classifier is kept in the SDD as the eventual consumer once values
+become field-backed, but it is NOT committed (it would be dead infra today). Behavior remains
+forbidden until `field_hir_type` is non-Unknown via (1)+(2).
