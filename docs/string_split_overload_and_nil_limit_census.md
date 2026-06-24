@@ -204,3 +204,41 @@ match dominate the `param_count == arg_count` arity bonus **without** disturbing
 numeric coercion) rather than a flat additive bonus. The four hard-stop negatives
 (`split('/', 2)`, `split('/', remove_empty: true)`, `split(2)`, non-split numeric overloads) must be
 part of the next attempt's DoD before any commit.
+
+## LEDGER + REGRESSION DECOMPOSITION 2026-06-24 — selection fix is correct; it EXPOSES Bug 2 family
+
+Read-only per-candidate ledger in `resolve_call_tuple` (removed) + a recreated temp patch (un-skip
+named-only on exact positional match @ ~80790 + `score += 3` exact-match bonus), all isolated per
+caller. Key facts:
+
+**`split('/')` (1 Char arg) scoring (baseline):** the Char overload `String#split$Char$arity3` scores
+`pms=2 exact=1` + `req==arg_count` bonus `+1` = **3** but is **SKIPPED** (`prefer_non_named` &&
+`has_named_only`). The whitespace `String#split$Nil|Int32` scores `pms=1 lossy=1` + `param_count==
+arg_count` bonus `+2` = **3** and is the lone non-block CANDIDATE → selected; even when un-skipped
+the Char overload only **ties** (3 == 3) and the `param_count < best_param_count` tiebreak picks
+whitespace (pc 1 < 2). So the flip is: `param_count==arg_count (+2)` for the 1-param whitespace
+overload outweighs `exact type (pms 2 vs 1)` + `required==arg_count (+1)` for the 2-param Char
+overload.
+
+**The selection fix WORKS in isolation.** With (un-skip exact-match named-only) + (exact-match
+beats arity), each call selects correctly on its own:
+`split('/')`→`$Char$arity3` (=4), `split('/', 2)`→`$Char$arity3` (=2), `split("#")`→`$String$arity3`
+(=2). So this is **not** a selection regression.
+
+**The two "regressions" are MATERIALIZATION/monomorphization collisions the fix EXPOSES** (because
+it now routes `split(Char)` to the Char overload instead of whitespace):
+- `split('/', 2)` → 4 (limit dropped) when a nil-limit `split(Char)` coexists = **Bug 2** proper.
+  `ADAMAS_BLOCK_SHAPE_SPECIALIZE=1` (the gated Bug 2 fix) **corrects it → 2**.
+- `split("#")` (String) → 1 when ANY `split(Char)` coexists (proven by combo bisect:
+  str_alone=2, str+split('/')=1, str+split('/',2)=1, str+whitespace=2) = a **Bug 2 SIBLING**
+  (Char-separator and String-separator `$arity3` specializations collide). The gate does **NOT**
+  fix this one.
+
+**Conclusion / order (confirms the census's "Bug 2 first"):** the Bug 1 selection fix is sound but
+**premature** — landing it first re-routes `split(Char)` into the Char overload and exposes both the
+gated Bug 2 collision (Char nil/int limit) and an un-gated sibling (Char-sep vs String-sep). The
+materialization layer (general block-specialization / `$arity3` monomorphization arg-shape key, the
+Bug 2 direction (a)) must be fixed so coexisting Char/String/limit splits get distinct
+materializations, **then** the Bug 1 selection fix lands cleanly with all negatives green. DoD for
+the eventual Bug 1 commit must run the negatives in a **single coexisting program** (not isolated),
+since isolation hides the collisions.
