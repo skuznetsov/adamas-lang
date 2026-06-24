@@ -453,3 +453,18 @@ special-case. NOT implemented; it must be verified that the re-select keeps ever
 winner (IO::FileDescriptor, Hasher, IO#<<, the Bug 2 shape) unchanged and only flips the split case —
 the next step is to implement it and re-run the blast census (winner-unchanged check) + coexisting
 reducer + Bug 2 + suites, then Bug 1 selection.
+
+### FIX SHIPPED 2026-06-24 — re-select by requested suffix (commit `9d3e6abc`)
+
+Implemented the re-select in `lower_function_if_needed_impl`'s `mangled_prefix` candidate pass: when
+the requested name carries a concrete type suffix, score candidates against
+`parse_types_from_suffix(strip_mangled_suffix_flags(name_parts.suffix))` first; fail closed to the
+legacy all-`call_entries` pass on empty/VOID suffix or when no compatible suffix-scored candidate
+exists. Uses the mangled request name, never DefNode annotation text. DoD all green: winner-unchanged
+ledger (only `String#split$String_Nil_Bool` flips `$Char$arity3`→`$String$arity3`; IO::FileDescriptor,
+IO#<<, Hasher.reduce_num, Char split unchanged); coexisting `split("#")`=2 + `split('/', 2)`=2;
+emitted `String_Nil_Bool` wrapper has `ptr %separator` → `String_Nil_Bool_block`; Bug 2 reducer green
+under the gate; new regression `string_split_separator_materialization_collision_repro.sh`; **full
+suites ALL PASSED (36/36 combined + original, 0 fail)**. The str-sibling materialization collision is
+fixed; **Bug 1 (single-arg `split(Char)` selection) is now unblocked** (separate next commit, DoD in
+one coexisting program).
