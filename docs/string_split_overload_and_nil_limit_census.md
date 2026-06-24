@@ -286,3 +286,31 @@ wrapper's `separator` becomes `ptr` again and bridges to `String_Nil_Bool_block`
 (`split('/', 2)`) stays green; (c) no over-specialization blowup; (d) all four negatives + the two
 split reducers green in ONE coexisting program; (e) full 148/148 + 36/36. Only then the Bug 1
 selection patch lands.
+
+### CORRECTION 2026-06-24 (preflight FALSIFIED the shape_keyed_block_target fix target)
+
+The over-specialization preflight (instrument `shape_keyed_block_target`, gate ON, run the
+coexisting repro) **refutes** the "key lacks separator type" finding above:
+
+- The param spelled `block_arg_types` is actually the **method call `arg_types`** at every call site
+  (75813 `arg_types[0, call_args.size]`, 76055/78556 `arg_types`/`lookup_arg_types`) — so the
+  separator IS already `arg_types[0]` and the key already distinguishes it. Naming misled the prior
+  conclusion.
+- Probe (`[SKT]`) for `split('/', 2)` + `split("#")`: `shape_keyed_block_target` is invoked **only**
+  with **Char** separators — `args=[Char,Int32,Bool]` and `args=[Char,Nil,Bool]` — and **never** with
+  `[String,...]`. Each produces the correct distinct key (`Char_Int32_Bool_block`,
+  `Char_Nil_Bool_block`); none collapse here.
+
+So the separator is **already `Char`** in the `arg_types` handed to `shape_keyed_block_target` for the
+String split. The collapse is **UPSTREAM**: the String-separator **wrapper** `String_Nil_Bool` (no
+`_block`; a callsite specialization, distinct from the shape-spec `_block` materialization at
+`lower_function_if_needed_impl` ~67722) is materialized with a **`Char`/`i32` separator param**, and
+its internal yield then resolves with `[Char,Nil,Bool]` → `Char_Nil_Bool_block`. Extending
+`shape_keyed_block_target`'s key would patch the **wrong layer** (and the cardinality estimate there
+is moot).
+
+**Next read-only step (re-localize):** find where the callsite-specialized wrapper `String_Nil_Bool`
+acquires a `Char`/`i32` separator param instead of `String`/`ptr` — i.e. the wrapper materialization
+path (callsite specialization / `$arity3` source param-ABI reuse), upstream of
+`shape_keyed_block_target`. No fix until that site is named. Preflight cardinality census deferred
+(it targeted the falsified site).
