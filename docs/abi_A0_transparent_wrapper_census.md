@@ -288,3 +288,40 @@ Per hard-stop #2, `null_ptr?` is in-unit → contract first. Per hard-stop #3, a
 **derived from IR**, with the one elision misread explicitly retracted. **Recommendation: do NOT
 write reducers yet**; resolve sentinel-vs-corruption first, because it selects between a tactical
 guard fix (cheapest unblock) and the broad scalar-ABI arc.
+
+## 10. Sentinel-vs-corruption probe — verdict: CORRUPTION (guard fix refuted)
+
+Read-only, primitive-only, pointer-safe probes (always-on, because s2b ENV gates fail in the MIR
+phase; `null_ptr?` first, `.id` only when non-null), then removed (not committed). Compared
+stage1 vs gated-s2b on `/tmp/med.cr`, whose `Box` declares `@items : Array(UInt32)` (concrete).
+
+| Observation point | stage1 | gated s2b |
+| --- | --- | --- |
+| `[SVC]` `@items` at `lower_field_set` (the crashing field-set) | `type_null=false type_id=892` `foff=8` | **`type_null=true type_id=-1` `foff=0`** (crashes here) |
+| `[SVC2]` `@items` at the default-ivar-init loop (`class_info.ivars.each`) | `type_null=false type_id=892 off=8` | `type_null=false type_id=372 off=8` (non-null) |
+
+**Verdict: CORRUPTION, not a legit sentinel.** `@items` has a concrete declared type
+(`Array(UInt32)`); stage1 lowers it concretely (`892`); s2b lowers the *crashing* field-set with
+`type=null` **and** `field_offset=0` (both wrong; `field_name` is correct). Per GPT's rule
+(construction-time concrete → later null ⇒ corruption) and hard-stop #1: **NO guard fix** — a
+`null_ptr?` guard on `hir_type_is_lib_struct?` would **mask** a real miscompile. The guard
+temptation is refuted empirically.
+
+**Localization (narrows the producer):** there are TWO `@items` field-sets — the **default-ivar
+init** (`off=8`, type non-null `372`) and the **explicit `@items = [] of UInt32`** in
+`def initialize` (the crashing one: `foff=0`, `type=null`). They are distinct (different offsets).
+So the corruption is in the **explicit field-assignment lowering path** (not the
+`class_info.ivars` default-init loop, whose `@items` is non-null). Both `field_offset` and `type`
+are wrong for the crashing one, while `field_name` is correct → the bad values come from the
+**ivar lookup feeding the explicit-assignment FieldSet construction**, not the field store/read.
+
+(Aside: stage1 `type_id=892` vs s2b default-init `type_id=372` is a separate registry-id
+divergence; both non-null, not the crash — noted, not chased.)
+
+### Next (read-only): producer hunt for the explicit-assignment field-set
+Per hard-stop #1, the next step is to find the first writer that yields `field_offset=0`/`type=null`
+for the explicit `@items = …` assignment in s2b — i.e. trace the ivar resolution used by the
+explicit field-assignment lowering (distinct from `class_info.ivars.each`). This is **not** the
+transparent-wrapper param/return ABI arc as first framed — it is an upstream **value** corruption
+(the ivar's type/offset resolve wrong for an explicit assignment under self-host). The A scalar-ABI
+arc stays parked until the producer is known; behavior remains forbidden.
