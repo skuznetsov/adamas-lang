@@ -325,3 +325,44 @@ explicit field-assignment lowering (distinct from `class_info.ivars.each`). This
 transparent-wrapper param/return ABI arc as first framed — it is an upstream **value** corruption
 (the ivar's type/offset resolve wrong for an explicit assignment under self-host). The A scalar-ABI
 arc stays parked until the producer is known; behavior remains forbidden.
+
+## 11. Producer hunt — localized to a corrupt `@current_class` owner string
+
+Read-only, `@items`-filtered, pointer-safe probes (always-on; removed, not committed), stage1 vs
+gated-s2b on `/tmp/med.cr`. Traced the explicit `@items = [] of UInt32` assignment's metadata
+resolution (`ast_to_hir.cr` InstanceVar-assign handler ~90623/91623 → `FieldSet.new(…, ivar_type,
+…, ivar_offset)`):
+
+| Signal | stage1 | gated s2b |
+| --- | --- | --- |
+| `@current_class` at the assignment | `Box` | **`Box#initialize`** (method full-name!) |
+| `@class_info[@current_class]?` found | yes (`Box`) | **no** (`Box#initialize` not a class key) |
+| `ivars.index { @items }` | `0` | `-1` (lookup skipped — table not found) |
+| resolved `ivar_type` / `ivar_offset` | `892` / `8` | **`nil` / `0`** → bad FieldSet → null `field.type` |
+| `ctx.function.name` / `@current_method` | `Box#initialize` / `initialize` | same (both correct) |
+| `method_owner_from_name("Box#initialize")` | `Box` | **`Box`** (split works) |
+| `@class_info["Box"]?` (via mof) | found | **found** (table is correct) |
+
+**Root (localized):** the *only* defect is `@current_class = "Box#initialize"` (the full method
+name) instead of `"Box"` when lowering the explicit assignment under s2b. Everything else is
+correct: the class table has `Box`, `find_ivar_info`/`ivars.index` work, and
+`method_owner_from_name` strips correctly. Because `@current_class` carries the `#initialize`
+suffix, `@class_info[@current_class]?` (ast_to_hir.cr:90630) misses → the ivar lookup is skipped →
+`ivar_type`/`ivar_offset` fall back to `nil`/`0` → the FieldSet gets a null type → the downstream
+deref crashes. **This is not the wrapper ABI at all** — it is a corrupted owner string.
+
+**Not yet pinned:** the exact setter that assigns the un-stripped method name to `@current_class`.
+Ruled out by probe: `lower_def("initialize")` entry (never fires — body not lowered via `lower_def`
+here) and the method-inline path (`parse_method_name` @ ast_to_hir.cr:86466, never fires for this
+assignment). `@current_class == ctx.function.name` exactly, and all candidate setters inspected are
+save/restore-scoped — so the top hypotheses are (a) a **save/restore imbalance** (an `ensure`/`begin`
+restore miscompiled under s2b leaves `@current_class` at the method full-name) or (b) an
+owner-derivation that does **not** strip `#method` on the constructor-via-`.new` body-lowering path.
+`parse_method_name`'s `object_id`-keyed cache (ast_to_hir.cr:1073) is flagged as a fragile pattern
+under s2b string/GC lifetime, though it was not on this assignment's path.
+
+### Next (read-only): pin the `@current_class` setter
+Find where `@current_class` becomes the method full-name on the constructor body-lowering path
+(distinct from `lower_def`/inline). Per hard-stop, do **not** patch the ivar lookup (that would mask
+the s2b miscompile elsewhere); fix the owner string at its source. The wrapper-ABI A arc remains
+parked; behavior forbidden until the setter is pinned.
