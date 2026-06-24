@@ -417,3 +417,35 @@ vs `RESULT=2,Box,3,2`). Likely a sibling of the known `String#split` nilable-lim
 **This fully reframes the frontier:** it is a `String#split(Char)` codegen bug, not the
 transparent-wrapper ABI. The A0/A1 census remains a valid map of an adjacent ABI risk but is parked
 as not-the-root for this crash.
+
+## 13. Boundary ledger 2026-06-24 — first bad transition = `Nil | TypeRef` `||` unwrap (not transparent-wrapper)
+
+After the split fixes (`9d3e6abc` materialization, `7ca9ac4a` selection) the s2b owner-string chain is
+resolved (`init_base_name.split('#')`→Box, `@current_class`=Box, ivar lookup hits idx=0,
+`field_offset`=8 all confirmed in fresh gated s2b). The med.cr crash persisted at the same site, so a
+read-only 5-point boundary ledger tracked the explicit `@items = [] of UInt32` FieldSet's
+`HIR::TypeRef` from the assign source through HIR construction/append to the MIR consumer, stage1 vs
+s2b (fresh HEAD `7ca9ac4a`; stage1 `147c5aad`, s2b `1563fa1d`; gate ON; always-on `@items`-filtered
+probes, removed after; instruction id tracked).
+
+| point | site | stage1 | s2b |
+| --- | --- | --- | --- |
+| L1 | `field_type = ivar_type \|\| ctx.type_of(value_id)` (ast_to_hir.cr ~90819) | ivar_type=892, ctx_type_of=892, **field_type=892** | ivar_type=**429** (valid), ctx_type_of=**428** (valid), **field_type=NULL** |
+| L2 | `FieldSet#initialize`→`super`→`Value#initialize` store @type | in 892 / stored 892 | in null / stored null |
+| L3 | after `ctx.emit(field_set)` | 892 | null |
+| L5 | MIR `lower_field_set` | 892 | null |
+
+**First divergent boundary = L1 (directly observed, VERIFIED):** `field_type = ivar_type ||
+ctx.type_of(value_id)` where `ivar_type : TypeRef?` (i.e. `Nil | TypeRef`). In s2b BOTH operands are
+non-null valid TypeRefs (`ivar_type`=429, `ctx.type_of`=428), yet the result `field_type` is a
+**null-ptr** TypeRef. `ivar_type` is not nil, so `||` must return it (429); the s2b result is null.
+Everything downstream (L2 store, L3 append, L5 MIR read) faithfully carries the null — they are NOT
+the boundary. The ivar lookup is also NOT wrong (429 is a valid type).
+
+So the remaining frontier is **NOT the transparent-wrapper struct param/return ABI** (this census's
+A-arc) and **NOT** the ivar-type lookup. It is the **s2b `||` / truthy-unwrap of a `Nil | TypeRef`
+nilable union** mis-extracting the payload to null — the `Nil | T` union-ABI family
+(`TODO(s2b-union-arg-abi)`), now narrowed to the `||` operator on a nilable-union `TypeRef?` holding a
+non-nil payload. (stage1, real-Crystal-compiled, evaluates the same `||` correctly = 892.) Next
+read-only step: a minimal standalone `Nil | TypeRef`-like nilable-union `||` reducer compiled by s2b,
+to confirm the operator-level miscompile in isolation before any fix.
