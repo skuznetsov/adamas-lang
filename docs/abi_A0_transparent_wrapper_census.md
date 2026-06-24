@@ -449,3 +449,40 @@ nilable union** mis-extracting the payload to null — the `Nil | T` union-ABI f
 non-nil payload. (stage1, real-Crystal-compiled, evaluates the same `||` correctly = 892.) Next
 read-only step: a minimal standalone `Nil | TypeRef`-like nilable-union `||` reducer compiled by s2b,
 to confirm the operator-level miscompile in isolation before any fix.
+
+## 14. Reducer matrix + IR oracle 2026-06-24 — generic `||` REFUTED; it is transparent-wrapper nilable lowering
+
+Per hostile review (don't claim generic-`||` root without a falsifier). Reducer matrix compiled by
+**stage1** (the bug is stage1's V2 lowering, which s2b mis-executes), HEAD `a77f170d`:
+
+| reducer | shape | stage1 result |
+| --- | --- | --- |
+| R1 | `struct Wrap{id:UInt32}; x:Wrap?=Wrap.new(7); y=x\|\|Wrap.new(9); y.id` | **7** ✓ |
+| R2 | `x:Wrap?=nil; y=x\|\|Wrap.new(9)` | 9 ✓ |
+| R3 | `x:UInt32?=7; y=x\|\|9` | 7 ✓ |
+| R4 | `x:String?="a"; y=x\|\|"b"` | a ✓ |
+| R5 | `\|\|` with method-call else (`x\|\|make_default`) | 7 ✓ |
+| R6 | reassigned var (`w=nil; w=Wrap.new(7); w\|\|…`) | 7 ✓ |
+| R7 | source from struct-field read (`w:Wrap?=h.t`) | 7 ✓ |
+
+**Generic `Nil | Wrap` `||` is REFUTED** — every shape (incl. transparent single-`UInt32` wrapper
+`Wrap`, mirroring `TypeRef`) lowers correctly in stage1. So the L1 boundary is **context-specific**,
+not an operator-level `||` bug.
+
+**IR oracle** (stage1 `--emit llvm-ir` of `src/adamas.cr` = what s2b executes; extracted
+`AstToHir#lower_assign`): nilable values in `lower_assign` lower through **`i32` phi-slots +
+`inttoptr i32 … to ptr`** (`%rN.phi_slot = alloca i32; … ; %x.ptr = inttoptr i32 %x to ptr`) — the
+**transparent-wrapper `HIR::TypeRef` (i32 id ↔ ptr) representation**. The `field_type = ivar_type ||
+ctx.type_of(value_id)` result flows through this `i32`-phi-slot path and yields `0`→`ptr null`
+(matching L1's `field_type_null=true` / `inttoptr 0`), not `ivar_type`'s `429`.
+
+**Calibrated classification:**
+- L1 first bad transition: **VERIFIED**.
+- Generic `||`-on-`Nil|Wrap` root: **REFUTED** (R1–R7 pass in stage1).
+- Real family: **transparent-wrapper `HIR::TypeRef` nilable lowering** (this doc's A-arc) via the
+  `i32` phi-slot / `inttoptr` path in `lower_assign` — same `TODO(s2b-union-arg-abi)` /
+  wrapper-ABI family the MIR `hir_type_is_lib_struct?` and `key_hash` frontiers traced. **SUPPORTED/
+  PROPOSED**, IR-oracle-consistent; the exact phi/store that zeroes `field_type` for the `@items`
+  path is **not yet pinned** (next step: tie the specific `lower_assign` phi-slot to the field_type
+  `||`, e.g. via a marker reducer that builds a `TypeRef?` through the same multi-reassign + union
+  phi structure, or MIR-level instrumentation of the OR/phi for that value).
