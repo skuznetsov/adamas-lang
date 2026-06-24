@@ -68334,7 +68334,50 @@ module Adamas::HIR
                             else
                               name_parts.suffix ? suffix_param_count(name_parts.suffix.not_nil!) : nil
                             end
-          if callsite_by_arity && !callsite_by_arity.empty?
+          # Re-select fix (docs/string_split_overload_and_nil_limit_census.md): the legacy pass below
+          # scores candidates against ALL recorded call_entries and picks the global-best, ignoring
+          # the requested name's own type suffix — so a typed request like
+          # `String#split$String_Nil_Bool` can resolve to a `…$Char$arity3` def when a Char split
+          # coexists (its [Char,Int32,Bool] entry out-scores [String,Nil,Bool]). When the requested
+          # name carries a concrete type suffix, score candidates against THOSE parsed types only.
+          # Fail closed to the legacy all-call_entries pass when the suffix is empty/VOID or no
+          # compatible suffix-scored candidate exists. Uses the mangled request name, never DefNode
+          # annotation text. Generic — no per-method special-case.
+          req_suffix_types : Array(TypeRef)? = nil
+          if (sfx_for_reselect = name_parts.suffix)
+            __pst = parse_types_from_suffix(strip_mangled_suffix_flags(sfx_for_reselect))
+            req_suffix_types = __pst if !__pst.empty? && __pst.none? { |t| t == TypeRef::VOID }
+          end
+          if rst = req_suffix_types
+            overload_keys.each do |key|
+              next unless key.starts_with?(mangled_prefix)
+              def_node = @function_defs[key]?
+              next unless def_node
+              params = def_node.params
+              next unless params
+              param_count = count_params(params) { |p| !p.is_block && !named_only_separator?(p) }
+              has_splat = any_param?(params) { |p| p.is_splat && !named_only_separator?(p) }
+              has_double_splat = any_param?(params) { |p| p.is_double_splat }
+              required = params.count do |p|
+                !p.is_block && !named_only_separator?(p) && p.default_value.nil? && !p.is_splat && !p.is_double_splat
+              end
+              block_penalty = params.any?(&.is_block) ? 1 : 0
+              next if rst.size < required
+              next if rst.size > param_count && !has_splat && !has_double_splat
+              func_context = function_context_for_lookup_candidate(base_name, key)
+              next unless params_compatible_with_args?(def_node, rst, func_context)
+              score = params_match_score(def_node, rst, func_context)
+              score -= 1 if has_splat || has_double_splat
+              score -= block_penalty
+              if param_count < best_param_count || (param_count == best_param_count && score > best_score)
+                best_def = def_node
+                best_name = key
+                best_param_count = param_count
+                best_score = score
+              end
+            end
+          end
+          if !best_def && callsite_by_arity && !callsite_by_arity.empty?
             overload_keys.each do |key|
               next unless key.starts_with?(mangled_prefix)
               def_node = @function_defs[key]?
