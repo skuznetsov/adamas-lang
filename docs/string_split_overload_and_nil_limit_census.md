@@ -419,3 +419,37 @@ constrained to that suffix — e.g. score candidates against the **types parsed 
 (or filter overload keys whose suffix matches), rather than against unrelated recorded call-entries.
 Generic (no `String#split` special-case). NOT implemented; next step is to design + verify this typed
 constraint, then run the coexisting reducer + Bug 2 + suites, then Bug 1 selection.
+
+### BLAST-RADIUS MICRO-CENSUS 2026-06-24 — reject-guards REFUTED; fix shape = re-select, not reject
+
+Per hostile review, ran the read-only blast census on `mangled_prefix_typed_untyped` (instrument the
+winner-commit ~68393, log every typed `$`-request hit + candidate reject decisions) across coexisting
+split, alone split, and the Bug 2 shape, gate ON. The branch is **heavily and legitimately used** for
+typed-request → untyped/generic wrapper materializations. Tested four reject-guard shapes; **all are
+too broad**:
+
+| guard | rejects split? | false positives (legitimate) |
+| --- | --- | --- |
+| A exact-suffix-filter | yes | `IO::FileDescriptor#…$Int32→$Int32$arity3` (alias/untyped wrapper) |
+| B full `params_compatible_with_args?` vs suffix | yes | `IO::FileDescriptor#new$Int32`, `Hasher.reduce_num$Number→$Int32` (abstract) |
+| D leading-param incompat (`declared_type_match_score` nil) | yes | all of the above + `IO#<<$Char\|Number\|String→$arity1` (placeholder `_`) |
+| D′ alias-resolved + concrete-only + untyped-lead-exempt | yes | **still** `IO::FileDescriptor` (`Int32`-mangled name vs `Handle` def param — a mangling convention) |
+
+The census also surfaced **truncated `type_annotation` values** (`rement`, `Int`) — a separate
+string-slice artifact — which poison any annotation-based comparison. So a **reject guard is the wrong
+shape**: the branch's legitimate hits include name-vs-def type-convention gaps (Int32↔Handle),
+abstract requests (Number→Int32), unions, and placeholders; none of A/B/D/D′ separate them from the
+genuine split (String-name → Char-def) mismatch.
+
+**Refined fix shape (matches GPT's stated rule "score against requested suffix types first; fallback
+to legacy when suffix types are incomplete/VOID or def is intentionally untyped"):** when the
+requested `name` carries a concrete type suffix, the branch should **score candidates against
+`parse_types_from_suffix(suffix)` instead of iterating all recorded `call_entries`** — a **re-select**
+(not a reject). This re-picks `String$arity3` for `…$String_Nil_Bool` (its only suffix-matching
+candidate), while `IO::FileDescriptor`/`Hasher` re-pick their own correct wrappers (their suffix
+re-scores to the same winner). Legacy all-`call_entries` behavior is the fallback when the suffix is
+empty/VOID or the def is intentionally untyped. This is a typed-request invariant, not a `String#split`
+special-case. NOT implemented; it must be verified that the re-select keeps every current legitimate
+winner (IO::FileDescriptor, Hasher, IO#<<, the Bug 2 shape) unchanged and only flips the split case —
+the next step is to implement it and re-run the blast census (winner-unchanged check) + coexisting
+reducer + Bug 2 + suites, then Bug 1 selection.
