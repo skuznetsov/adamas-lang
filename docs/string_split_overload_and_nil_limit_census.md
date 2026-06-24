@@ -383,3 +383,39 @@ the ~9 `func_def = …` assignments at 68862–69035, and whether it is a direct
 collision or a fallback to a separator-blind canonical key) is **not yet pinned**. No fix proposed
 until the precise branch + key are named. The census prevented a patch on dead code; next step is a
 narrow per-branch `func_def`-origin probe for the `String#split$String_Nil_Bool` name.
+
+### ROOT VERIFIED 2026-06-24 — `mangled_prefix_typed_untyped` ignores the requested name's type suffix
+
+Step 1 registry snapshot (read-only) for `name = String#split$String_Nil_Bool`: `@function_defs[name]`
+= **nil** (the exact wrapper name is not a registry key); `overloads(base)` is **identical** ALONE
+vs COEXISTING and has **both** `…$Char$arity3` (Char) **and** `…$String$arity3` (String) as separate,
+correct entries. So the **registry is correct** — not a registration/key-ownership bug. The base
+lookup `func_def` is set by `lookup_branch = "mangled_prefix_typed_untyped"` (ast_to_hir.cr ~68404)
+in BOTH cases, yet returns `[String,…]` ALONE and `[Char,…]` COEXISTING.
+
+Step 2 per-candidate ledger (`[CAND]`) for that request — the branch's scoring loop (≈68370–68404)
+iterates **every** overload `key` × **every** recorded `call_entry` (`call_entries.each;
+call_arg_types = entry.types`), scores `params_match_score(def_node, call_arg_types, ctx)`, and keeps
+`param_count < best_param_count || (== && score > best_score)`:
+
+```
+ALONE:        key=String$arity3   entry=[String,Nil,Bool]  score=2  -> winner (String)
+COEXISTING:   key=Char$arity3     entry=[Char,Int32,Bool]  score=4  -> winner
+              key=String$arity3   entry=[String,Nil,Bool]  score=2  -> 2 !> 4, loses  (Char)
+```
+
+**Root (VERIFIED):** for a *typed* request name (`…$String_Nil_Bool`), this branch picks the overload
+with the **globally-highest `params_match_score` over ALL recorded call-entries**, **NOT** the overload
+whose mangled suffix matches the requested name's type (`String`). `Char$arity3` scored against *its
+own* `[Char,Int32,Bool]` call-entry = 4 beats `String$arity3` scored against `[String,Nil,Bool]` = 2,
+so the **String wrapper request resolves to the Char DefNode**. ALONE there is no Char call-entry, so
+String wins — hence the coexistence-only collapse. `params_compatible_with_args?` is already applied;
+it does not prevent this because the Char overload IS compatible with its own entry; the defect is that
+the requested name's suffix is ignored in candidate selection.
+
+**Fix layer (GPT hard-stop: prefix/overload-fallback → no local split guard; typed lookup):** when the
+requested `name` carries a type suffix, the `mangled_prefix_typed_untyped` candidate selection must be
+constrained to that suffix — e.g. score candidates against the **types parsed from the requested name**
+(or filter overload keys whose suffix matches), rather than against unrelated recorded call-entries.
+Generic (no `String#split` special-case). NOT implemented; next step is to design + verify this typed
+constraint, then run the coexisting reducer + Bug 2 + suites, then Bug 1 selection.
