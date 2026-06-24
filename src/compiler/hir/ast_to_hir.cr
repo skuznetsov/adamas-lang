@@ -80348,6 +80348,32 @@ module Adamas::HIR
     # structured CallResolutionInput, and delegate to the structured resolver.
     # Kept so the existing callers and the internal recursive calls below need no
     # changes. No CallShape mapping yet; no behavior change.
+    # Bug 1 helper: true when every present positional argument EXACTLY type-matches `def_node`'s
+    # corresponding positional parameter (declared_type_match_score == 2). Conservative: an untyped
+    # or only-numerically-compatible positional param does NOT qualify, so this never rescues a
+    # lossy coercion — it only marks a strictly type-exact overload (e.g. split(separator : Char, …))
+    # so it is not discarded by prefer_non_named, nor out-ranked on a score tie by a lossy non-named
+    # overload (split(limit : Int32?)).
+    private def overload_positional_types_exact_match?(name : String, def_node : Adamas::Compiler::Frontend::DefNode, arg_types : Array(TypeRef)?) : Bool
+      return false unless arg_types
+      return false if arg_types.empty?
+      call_index = 0
+      matched = 0
+      function_param_infos(def_node).each do |param|
+        next if param.is_block || named_only_separator?(param) || param.is_double_splat
+        break if call_index >= arg_types.size
+        arg_t = arg_types[call_index]
+        return false if arg_t == TypeRef::VOID
+        type_name = param.type_annotation
+        return false unless type_name
+        score = declared_type_match_score(arg_t, type_name)
+        return false unless score && score >= 2
+        matched += 1
+        call_index += 1 unless param.is_splat
+      end
+      matched >= 1 && matched >= arg_types.size
+    end
+
     private def lookup_function_def_for_call(
       func_name : String,
       arg_count : Int32,
@@ -80739,6 +80765,7 @@ module Adamas::HIR
       best_name : String? = nil
       best_param_count = Int32::MAX
       best_score = Int32::MIN
+      best_exact = false # Bug 1: whether `best` is a strictly type-exact positional match
       prefer_untyped = false
       positional_arg_count = if call_has_named_args && named_arg_names
                                count = arg_count - named_arg_names.not_nil!.size
@@ -80786,7 +80813,13 @@ module Adamas::HIR
           STDERR.puts "[CALL_LOOKUP_CAND] func=#{func_name} cand=#{name} skip=#{skip} block=#{stats.has_block} param_count=#{param_count_d} required=#{required_d} named_compat=#{compat_d} arg_count=#{arg_count}"
         end
         next if skip
-        next if prefer_non_named && stats.has_named_only
+        if prefer_non_named && stats.has_named_only
+          # Bug 1 (docs/string_split_overload_and_nil_limit_census.md): keep a named-only overload
+          # that EXACTLY type-matches the call args (e.g. split(separator : Char, ..., *,
+          # remove_empty)) rather than discarding it for a lossy non-named coercion
+          # (Char -> limit : Int32?). Only an exact positional type match is rescued.
+          next unless arg_types && !unknown_args && overload_positional_types_exact_match?(name, def_node, arg_types)
+        end
 
         if has_block
           next unless stats.has_block
@@ -80854,11 +80887,19 @@ module Adamas::HIR
           if debug_join_lookup
             STDERR.puts "[JOIN_LOOKUP] cand=#{name} compat=#{compatible} score=#{score} param_count=#{param_count} required=#{required} splat=#{has_splat} dsplat=#{has_double_splat} untyped=#{untyped_candidate}"
           end
-          if score > best_score || (score == best_score && param_count < best_param_count)
+          # Bug 1: a strictly type-exact positional match outranks a lossy coercion on a score tie,
+          # so split(separator : Char) beats split(limit : Int32?) for `split('/')` (both score 3,
+          # the lossy one previously won the param_count tiebreak). Only the score-tie ordering
+          # changes; a strictly higher score still wins regardless of exactness.
+          cand_exact = overload_positional_types_exact_match?(name, def_node, arg_types)
+          if score > best_score ||
+             (score == best_score && cand_exact && !best_exact) ||
+             (score == best_score && cand_exact == best_exact && param_count < best_param_count)
             best = def_node
             best_name = name
             best_param_count = param_count
             best_score = score
+            best_exact = cand_exact
           end
         else
           # For untyped calls, keep arity-first fallback behavior.
