@@ -366,3 +366,54 @@ Find where `@current_class` becomes the method full-name on the constructor body
 (distinct from `lower_def`/inline). Per hard-stop, do **not** patch the ivar lookup (that would mask
 the s2b miscompile elsewhere); fix the owner string at its source. The wrapper-ABI A arc remains
 parked; behavior forbidden until the setter is pinned.
+
+## 12. Setter pinned → TRUE ROOT: `String#split(Char)` returns the string unsplit
+
+The native HIR-construction backtrace (forced stop at the `@items` assignment; s2b runtime `caller`
+is empty, so a null-store fault + lldb unwind) showed the path is the **constructor `.new`
+allocator**, not `lower_def`:
+
+```
+lower_main → (box = Box.new) → lower_member_access → lower_static_member_access_call
+  → generate_allocator → lower_allocator_initializer_body → lower_method → … → lower_assign(@items)
+```
+
+`lower_allocator_initializer_body` computes the owner for the constructor body at
+`ast_to_hir.cr:29461` (and `:29922`):
+
+```crystal
+init_defining_class = init_base_name.split('#').first   # init_base_name = "Box#initialize"
+…
+lower_method(init_defining_class, …)   # lower_method sets @current_class = class_name (ast_to_hir.cr:31534)
+```
+
+Probe (stage1 vs gated-s2b): `"Box#initialize".split('#')` → stage1 `size=2 first=Box`; **s2b
+`size=1 first=Box#initialize`** (un-split). `method_owner_from_name` (uses `byte_slice`) = `Box` in
+both. So `init_defining_class = "Box#initialize"` under s2b → `lower_method` sets
+`@current_class = "Box#initialize"` → the ivar lookup miss cascades to the null FieldSet type.
+
+**TRUE ROOT (standalone, NOT s2b-specific, NOT the wrapper ABI):** V2 codegen for the
+`String#split(Char)` overload returns the string **unsplit** (a 1-element array). Confirmed by a
+standalone reducer compiled by stage1 itself (real-Crystal stage1 emitting V2 code):
+
+| call | V2 | correct |
+| --- | --- | --- |
+| `"Box#initialize".split('#')` | size 1, `["Box#initialize"]` | size 2 |
+| `"x,y,z".split(',')` | size 1 | size 3 |
+| `"Box#initialize".split("#")` (String overload) | size 2 ✓ | size 2 |
+
+The **`Char`-delimiter overload is broken; the `String`-delimiter overload works.** Regression:
+`regression_tests/string_split_char_delimiter_repro.sh` (FAILs on HEAD: `RESULT=1,Box#initialize,1,2`
+vs `RESULT=2,Box,3,2`). Likely a sibling of the known `String#split` nilable-limit family
+(commits `c5f26323`/`6bee81a3`/…), but a distinct overload (Char, no limit).
+
+### Fix candidates (no fix applied — awaiting steer)
+- **Root:** fix V2's `String#split(Char)` lowering/codegen so the Char delimiter splits. Unblocks
+  this frontier and any program using `split(Char)`.
+- **Tactical:** at the two call sites (`ast_to_hir.cr:29461`/`:29922`) use the working
+  `split("#")` (String overload) or `method_owner_from_name(init_base_name)` (`byte_slice`).
+  Narrow, but leaves the underlying `split(Char)` bug for other call sites.
+
+**This fully reframes the frontier:** it is a `String#split(Char)` codegen bug, not the
+transparent-wrapper ABI. The A0/A1 census remains a valid map of an adjacent ABI risk but is parked
+as not-the-root for this crash.
