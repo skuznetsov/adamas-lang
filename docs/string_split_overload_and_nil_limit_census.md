@@ -242,3 +242,47 @@ Bug 2 direction (a)) must be fixed so coexisting Char/String/limit splits get di
 materializations, **then** the Bug 1 selection fix lands cleanly with all negatives green. DoD for
 the eventual Bug 1 commit must run the negatives in a **single coexisting program** (not isolated),
 since isolation hides the collisions.
+
+## STR-SIBLING MATERIALIZATION LEDGER 2026-06-24 (read-only) — missing key dimension in the gate
+
+The Char-sep vs String-sep collision reproduces on **baseline** (no Bug 1 patch) via
+`split('/', 2)` (already routes to the Char overload) + `split("#")`. Minimal:
+`a = "a/b/c/d".split('/', 2); puts "x#y".split("#").size` → **`str=1`** with
+`ADAMAS_BLOCK_SHAPE_SPECIALIZE=1` (gate ON); `split("#")` alone = 2.
+
+**Materialization chain (LLVM IR, `--emit llvm-ir`):**
+
+| | `split("#")` ALONE | `split("#")` + `split('/', 2)` |
+| --- | --- | --- |
+| String wrapper define | `String$Hsplit$$String_Nil_Bool(ptr %self, **ptr %separator**, …)` | `…(ptr %self, **i32 %separator**, …)` |
+| call site | `…(ptr @.str, **ptr @.str.50**, ptr null, i1 0)` | `…(ptr @.str, **i32 %load_from_ptr**, ptr null, i1 0)` |
+| inner yield target | `→ String$Hsplit$$String_Nil_Bool_block` (ptr sep) | `→ **String$Hsplit$$Char_Nil_Bool_block**` (i32 sep) |
+
+So when a Char-separator split coexists, the **String-separator wrapper's `separator` param repr
+collapses `ptr`→`i32`** and its inner yield bridges to the **Char** block (`Char_Nil_Bool_block`,
+`i32 %separator`). The String `"#"` is then passed/loaded as an `i32` (a Char codepoint) → wrong
+split → size 1.
+
+**Exact collapse boundary:** `shape_keyed_block_target` (ast_to_hir.cr:5038), key =
+`shape_keyed = mangle_function_name(base_method_name, block_arg_types, true)` (line 5049).
+`block_arg_types` are the **block's yield types** (the split pieces — `String` for BOTH Char-sep and
+String-sep splits). The method's **separator parameter type (Char vs String) is NOT in the key**, so
+Char-sep and String-sep map to the **same** `@block_shape_specializations[shape_keyed]` entry (line
+5058) and share one inner-block materialization — the first-registered (Char) wins, and the String
+wrapper inherits its `i32 %separator`.
+
+**Gate ON/OFF:** gate ON fixes Bug 2 proper (the inner block's **limit** repr Int32-vs-Nil, which the
+key distinguishes) — `split('/', 2)` → 2. It does **not** fix the separator collapse (`str` stays 1),
+because the key omits the separator type. This is **NOT a different materialization layer** — it is a
+**missing key dimension in the gate's own `shape_keyed_block_target`** (answers adversary "key lacks
+separator type / base method identity").
+
+**Proposed generic fix target (NOT implemented):** extend the `shape_keyed_block_target` shape key
+(line 5049) to incorporate the **method's positional parameter types** (the separator), not just the
+block yield types — e.g. key on `mangle(base_method_name, method_positional_arg_types +
+block_arg_types, true)`. Generic (no `String#split` special-case); it is the same gate function, so it
+also subsumes Bug 2 proper. Next step (one generic materialization fix) must verify: (a) the String
+wrapper's `separator` becomes `ptr` again and bridges to `String_Nil_Bool_block`; (b) Bug 2 proper
+(`split('/', 2)`) stays green; (c) no over-specialization blowup; (d) all four negatives + the two
+split reducers green in ONE coexisting program; (e) full 148/148 + 36/36. Only then the Bug 1
+selection patch lands.
