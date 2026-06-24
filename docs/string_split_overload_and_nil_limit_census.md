@@ -164,3 +164,43 @@ bash regression_tests/string_split_default_nil_limit_repro.sh ./bin/adamas
 
 Bugs 1 and 2 are independent; keep them in separate commits (do not bundle with the
 already-shipped C-narrow arc).
+
+## CORRECTION 2026-06-24 — Bug 1 localization MOVED; fix attempt regressed (reverted)
+
+Bug 1 is now proven to **feed the s2b self-host crash** (not just a standalone wrong-count): a
+single Char-arg split inside the compiler's own `lower_allocator_initializer_body`
+(`ast_to_hir.cr:29461` `init_defining_class = init_base_name.split('#').first`) returns the unsplit
+full method name `Box#initialize`, so `lower_method` sets `@current_class = "Box#initialize"`, the
+ivar lookup misses, and `@items = [] of UInt32` gets a null FieldSet type → MIR
+`hir_type_is_lib_struct?` deref crash. Full chain + reducer:
+`regression_tests/string_split_char_delimiter_repro.sh`, `docs/abi_A0_transparent_wrapper_census.md`
+§12.
+
+**The §48 localization (`resolve_untyped_overload` / `prefer_non_named` / `has_named_only`) is
+STALE.** Probe (always-on, full compile): `resolve_untyped_overload` is **never called for split**.
+`split('/')` resolves through the **M3/M4 typed resolver** `lookup_function_def_for_call` →
+`resolve_call_input` → `resolve_call_resolution` → **`resolve_call_tuple`** (ast_to_hir.cr ~80308).
+`ADAMAS_RESOLUTION_ASSERT=1` confirms it selects `String#split$Nil | Int32` (the whitespace
+`split(limit : Int32?)` overload, Char→limit) for `split('/')`.
+
+The SAME `next if prefer_non_named && stats.has_named_only` skip exists in `resolve_call_tuple`'s
+candidate loop (~80746), and there `arg_types` is already local. But un-skipping the Char overload
+is **not sufficient**: the typed scoring (~80799–80853) then flips on
+`score += 2 if param_count == arg_count` (~80839), which rewards the whitespace overload (1 param ==
+1 arg) over the Char overload (2 params: separator+limit), **outweighing** the type-exactness
+(`params_match_score`: Char→separator:Char = 2 vs Char→limit:Int32? = 1).
+
+**Fix attempt (REVERTED, hard-stop #5):** (a) don't skip a named-only overload whose positional
+params EXACTLY type-match (`declared_type_match_score == 2`); (b) `score += 3` for a full positional
+exact match. Result: target FIXED (`split('/')`=4, `"Box#initialize".split('#')[0]`=Box, frontier
+chain resolved), but it **REGRESSED** two split shapes — `split('/', 2)` → 4 (limit dropped) and
+`split("#")` (String overload) → 1. The flat exact-match bonus disturbs broad selection
+(GPT hard-stop #5). Reverted; tree clean.
+
+**Open: a surgical scoring fix in `resolve_call_tuple`** that makes a strictly type-exact positional
+match dominate the `param_count == arg_count` arity bonus **without** disturbing the 2-arg Char
+(`split('/', 2)`) or String-separator (`split("#")`) shapes — likely a comparison-level priority
+(exact-match as a higher sort key than the arity bonus, applied only when the alternative is a lossy
+numeric coercion) rather than a flat additive bonus. The four hard-stop negatives
+(`split('/', 2)`, `split('/', remove_empty: true)`, `split(2)`, non-split numeric overloads) must be
+part of the next attempt's DoD before any commit.
