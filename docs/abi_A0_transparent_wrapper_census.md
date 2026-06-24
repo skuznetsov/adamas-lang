@@ -226,3 +226,65 @@ emits the **legacy `ptr`** ABI at param/return/union — i.e. A1 does **not** sc
 single-field-int structs. The sibling id-wrappers (`Semantic::TypeId`, `SemanticTypeId`,
 `DwarfLocalShadowStoreBinding`) are noted as the same *family* but are **out of A1 scope** (only the
 3 that demonstrably feed the s2b frontier) — they become future work once A1's durable form lands.
+
+## 9. Frontier-feed census from real s2b IR (no reducers) — names the unit + one retraction
+
+Derived from the actual s2b LLVM IR (`bin/adamas src/adamas.cr --emit llvm-ir`, gated), not source
+shape. The HIR::TypeRef value flow through the crashing chain:
+
+| Step | IR fact | boundary kind | repr |
+| --- | --- | --- | --- |
+| `Value#initialize` (super of FieldSet) | `store ptr %type, [self+8]` | field-**store** | `ptr` |
+| `FieldSet.new`/`$Dnew` | `%r13 = [malloc(12)+8]` default written first; `super`/initialize overwrites @type with `ptr %type` | field-store (default+override) | `ptr` |
+| `lower_field_set` | `%r30 = load ptr, [field+8]` → arg6 of `lower_field_store_to_ptr` | field-**load** + **param** | `ptr` |
+| `lower_field_store_to_ptr` | `call …hir_type_is_lib_struct?(ptr %self, ptr %field_hir_type)` — **pure passthrough** (also to `==`, `convert_type`, `static_array?`, `inline_memcopy?`) | **param** | `ptr` |
+| `hir_type_is_lib_struct?` | `%r2 = getelementptr [%type+0]; %r3 = load i32, [%r2]` — **derefs** | consumer read (`.id`) | deref `ptr`→`i32` |
+| `TypeRef#==` (same passthrough) | guarded by `null_ptr?` (hir.cr:132) → returns early, **survives** | consumer read | guarded |
+
+### Retraction (intellectual honesty)
+An intermediate reading — "`FieldSet.initialize` elides the `@id`/`@type` stores" — was **WRONG and is
+retracted.** `FieldSet < Value`; `initialize(id, type, @object, …)` passes `id`/`type` to
+`super` → `Value#initialize`, which stores them **correctly** (`store i32 %id, [self+4]`;
+`store ptr %type, [self+8]`). The 4 stores visible in `FieldSet.initialize` are its own 4 fields.
+There is **no store elision.** (Verify-before-claim caught this before it shipped.)
+
+### What the IR actually shows (robust)
+- HIR::TypeRef crosses **uniformly and consistently as `ptr`**: field-store, field-load, and param
+  are all `ptr`; stores/loads match — no misalignment, no elision.
+- The runtime fault is a **null `ptr`** value reaching a consumer that **derefs without a guard**.
+  `TypeRef#==` survives the same null via its `null_ptr?` guard; `hir_type_is_lib_struct?` lacks the
+  guard and derefs `[null+0]` → SIGSEGV. So `null_ptr?` is **load-bearing IN-UNIT**, not a mere
+  global hazard (this **revises §7**, which had it as only-global).
+- The adjacent `Nil | MIR::TypeRef` union (`obj_mir_type`) is passed correctly **by-value**
+  (`%…union`) and is **not** on the `field_hir_type` crash path.
+- **No wrapper return** anywhere in the chain (`i32`/`i32`/`i1`).
+
+### minimal_unit / excluded (answer to the census)
+- **minimal_unit = { field-storage(`ptr`), param(`ptr`), `null_ptr?`-guard contract }** for
+  HIR::TypeRef. Field-storage is **type-driven and broad** (every HIR object with a TypeRef field,
+  via `Value#initialize`), so it is **not** a localized slice.
+- **excluded_bridge_points = { return** (no wrapper return feeds this frontier)**, union**
+  (passed correctly by-value, not on the crash path)**, phi** (not observed in the chain) **}.**
+- **`null_ptr?` is IN-UNIT** ⇒ per hard-stop, no behavior until its contract is decided.
+
+### The prior question that blocks reducers (must resolve first)
+The fault is a **null `ptr`** reaching an **unguarded deref**. Two readings remain open and the IR
+alone does not separate them:
+1. **Legit sentinel** — the null `ptr` *is* the NIL/VOID TypeRef representation; the real defect is
+   that `hir_type_is_lib_struct?` (and the `lower_field_store_to_ptr` chain) **omit the `null_ptr?`
+   guard** that `==` has. Fix = add the guard (one/few functions), tactical, no ABI change.
+2. **Corruption** — `field.type` *should* be a real type here and was nulled upstream; a guard would
+   **mask** a real miscompile. Fix = the upstream value, or the scalar ABI.
+
+These imply opposite fixes. **Writing R1–R6 scalar-ABI reducers now would be architecture theater**
+until this is resolved. Next read-only step: trace whether the crashing `field.type` is expected to
+be a concrete type (corruption) or legitimately empty (sentinel) for med.cr's field-set — by the
+HIR `field_set` node's declared type at construction vs. its runtime null — before choosing any fix.
+
+### Verdict (calibrated)
+Per hard-stop #1, the unit is **field + param + null_ptr? together** (broad, type-driven), not a
+small param/return slice — **too large for a casual A1**, exactly as the hostile review warned.
+Per hard-stop #2, `null_ptr?` is in-unit → contract first. Per hard-stop #3, all of the above is
+**derived from IR**, with the one elision misread explicitly retracted. **Recommendation: do NOT
+write reducers yet**; resolve sentinel-vs-corruption first, because it selects between a tactical
+guard fix (cheapest unblock) and the broad scalar-ABI arc.
