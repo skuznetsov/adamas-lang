@@ -356,3 +356,30 @@ separator-blind `$arityN` slot from supplying a wrong-separator def to `lower_me
 implement + verify in a coexisting reducer (String wrapper regains `ptr %separator` →
 `String_Nil_Bool_block`; Char paths unchanged; Bug 2 stays green; 148/148 + 36/36) — **then** Bug 1
 selection.
+
+### WOULD-REJECT CENSUS 2026-06-24 — arity-fallback FALSIFIED; root is the base def lookup
+
+The would-reject census (instrument BOTH arity-mismatch fallback sites — early ~69208, late
+~69772 — log every `@function_defs[arity_key]?` adoption with full
+`params_compatible_with_args?` + leading-param vs full-compat reject) **fired ZERO times** for
+`split("#")` / `split('/', 2)` (alone or coexisting, gate ON). So **the arity-mismatch fallback is
+not on the split path at all** — the prior "root = `69778` separator-blind `$arityN`" is **refuted**
+(the proposed guard would have patched dead code for this bug).
+
+Re-localized with the stage1 `caller` chain (real-Crystal stage1, so `caller` works):
+`lower_method ← lower_function_if_needed_impl:69822 ← lower_function_if_needed ←
+process_pending_lower_functions ← lower_missing_call_targets ← flush_pending_functions`. The
+`resolved_func_def` passed there is **already Char**, set by the **base lookup**
+`resolved_func_def = func_def || return` (ast_to_hir.cr:69100), before any arity-fallback.
+
+Pinned: a probe at 69100 for `name=String#split$String_Nil_Bool` shows
+`base_func_def_params=[String,…]` **ALONE** vs **`[Char,…]` COEXISTING**. So the **base name→def
+resolution (`func_def`, one of the lookups at ~68862–69035) maps the String wrapper name to the
+Char DefNode** when the Char split coexists — a **base def-registry / canonical-key collision**,
+upstream of the arity-fallback (dead here) and of `shape_keyed_block_target` (retracted).
+
+**Status:** root LAYER corrected to the base `func_def` lookup; the exact lookup branch (which of
+the ~9 `func_def = …` assignments at 68862–69035, and whether it is a direct `@function_defs[name]`
+collision or a fallback to a separator-blind canonical key) is **not yet pinned**. No fix proposed
+until the precise branch + key are named. The census prevented a patch on dead code; next step is a
+narrow per-branch `func_def`-origin probe for the `String#split$String_Nil_Bool` name.
