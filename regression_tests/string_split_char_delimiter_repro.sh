@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
-# Regression: String#split(Char) returns the string UNSPLIT in V2 codegen.
+# Regression: single-arg String#split(Char) MISDISPATCHES to the whitespace
+# overload split(limit : Int32? = nil) -- an instance of Bug 1 in
+# docs/string_split_overload_and_nil_limit_census.md (overload resolution, NOT
+# codegen of the Char overload).
 #
-# `"Box#initialize".split('#')` yields a 1-element array ["Box#initialize"]
-# instead of ["Box", "initialize"]. The Char-delimiter overload is broken; the
-# String-delimiter overload (`split("#")`) works. This is the ROOT of the s2b
-# self-host crash in hir_type_is_lib_struct?: the self-hosted compiler computes
+# `"Box#initialize".split('#')` binds '#' (codepoint 35) to `limit : Int32?` of the
+# no-separator overload and whitespace-splits, yielding a 1-element array
+# ["Box#initialize"] instead of ["Box", "initialize"]. The String-delimiter
+# overload (`split("#")`) is unaffected and splits correctly (control). This is
+# the ROOT of the s2b self-host crash in hir_type_is_lib_struct?: the self-hosted
+# compiler computes
 # `init_base_name.split('#').first` (ast_to_hir.cr lower_allocator_initializer_body
 # ~29461/29922) to get the owner class for a constructor body; the broken split
 # returns the full method name "Box#initialize" instead of "Box", so
