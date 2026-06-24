@@ -314,3 +314,45 @@ acquires a `Char`/`i32` separator param instead of `String`/`ptr` — i.e. the w
 path (callsite specialization / `$arity3` source param-ABI reuse), upstream of
 `shape_keyed_block_target`. No fix until that site is named. Preflight cardinality census deferred
 (it targeted the falsified site).
+
+### FIRST-DIVERGENCE LEDGER 2026-06-24 — root NAMED: separator-blind `$arityN` def-slot reuse
+
+Read-only 5-stage ledger (probes, removed), `split("#")` ALONE vs `split("#") + split('/', 2)`
+COEXISTING, gate ON:
+
+| Stage | ALONE | COEXISTING |
+| --- | --- | --- |
+| 1 resolver → String wrapper | selects `…$String_Nil_Bool`, args `[String,Nil,Bool]` | same (String) ✓ |
+| 2 `remember_callsite_arg_types` (`[RCAT]`) | wrapper `String_Nil_Bool ← [String,Nil,Bool]`; inner `String_Nil_Bool_block ← [String,Nil,Bool]` | wrapper `String_Nil_Bool ← [String,Nil,Bool]` ✓; **`String_Nil_Bool_block` ABSENT; `Char_Nil_Bool_block ← [Char,Nil,Bool]` present** |
+| 3/4 `lower_method` (`[LM]`) | `call_arg_types=[String,Nil,Bool] def_param_anns=[String,?,?,?]` ✓ | **`call_arg_types=[String,Nil,Bool] def_param_anns=[Char,?,?,?]`** ← DIVERGES |
+| 5 emitted wrapper define / yield | `ptr %separator` → `String_Nil_Bool_block` | `i32 %separator` → `Char_Nil_Bool_block` |
+
+**First divergence = stage 3/4:** `lower_method` is invoked for the String wrapper with the **correct
+`call_arg_types=[String,Nil,Bool]`** but the **wrong DefNode** (the Char-separator overload,
+`def_param_anns=[Char,…]`). The wrapper is HIR-correct (stage 1/2 String); only the **DefNode chosen
+for materialization** is Char.
+
+**Root, exact site:** `ast_to_hir.cr:69772–69792` (demand-driven materialization, the "Arity mismatch
+fix"). When the base-name lookup found a wrong-arity overload, it falls back to
+`arity_key = "#{strip_type_suffix(target_name)}$arity#{expected_arity}"` (line 69778) — which
+**strips the separator type** → `"String#split$arity3"` — and sets
+`resolved_func_def = @function_defs[arity_key]?` (69779; or the generic `template_arity`, 69788–69790).
+That `$arity3` def slot is **shared by the Char-sep and String-sep overloads (both arity 3)**: ALONE
+it holds the String def; COEXISTING the Char split owns it, so the String wrapper resolves to the
+**Char DefNode** → materialized with `i32 %separator`, bridging to `Char_Nil_Bool_block`.
+
+This is a **def-registry key-ownership collision** (GPT hard-stop branch: "pending types String but
+materialized signature Char → fix the materialization def selection"), upstream of both
+`shape_keyed_block_target` (correctly retracted) and Bug 1 selection. The earlier "wrapper inherits
+Char from `$arity3`" hypothesis is now **confirmed with the exact mechanism**: not the `$arity3`
+*source* materialization, but the arity-mismatch *fallback* (69778) resolving the def via a
+**separator-blind `$arityN` key**.
+
+**Proposed generic fix target (NOT implemented):** at 69779/69790, after resolving
+`resolved_func_def` from the separator-blind `arity_key`, **verify its leading positional parameter
+type is compatible with `call_arg_types[0]`** (the separator); if not, do not adopt it (keep the
+separator-matching def / fall through). Generic (no `String#split` special-case); it stops a
+separator-blind `$arityN` slot from supplying a wrong-separator def to `lower_method`. Next step:
+implement + verify in a coexisting reducer (String wrapper regains `ptr %separator` →
+`String_Nil_Bool_block`; Char paths unchanged; Bug 2 stays green; 148/148 + 36/36) — **then** Bug 1
+selection.
