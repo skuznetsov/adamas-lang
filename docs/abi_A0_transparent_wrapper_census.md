@@ -656,3 +656,39 @@ that doesn't dominate the `||` use, or `then_value=left_id` reuse should re-mate
 Candidate fix shape (case i): make the `||` truthy value dominate its phi edge — re-emit/unwrap in the
 then-predecessor block, or spill on the then-path. No fix yet (hard stops: no backend filter weakening,
 no `.not_nil!`, no pred-load insertion without slot-store dominance, no broad wrapper ABI).
+
+## 19. Provenance probe 2026-06-24 — decision case 1: narrowed local-binding escapes its dominance region
+
+Read-only HIR provenance ledger (gated `ADAMAS_PROV_PROBE`, captured during s2b build; reverted). Aimed
+at *why* `lower_expr(node.left)` for `ivar_type || …` yields a value in a non-dominating block.
+
+**Findings:**
+- **`[PROV] SHORTCIRC`** (the `ivar_type ||`): `left_id` is a **fresh value ≠ `lookup_local("ivar_type")`**
+  (`same=false` in all 4 instances), `left_type=1145` = TypeRef (**already non-union / narrowed**).
+- **`[PROV] TRUTHY_NARROW name=ivar_type`**: `ivar_type` is **heavily truthy-narrowed** — rebound to
+  UnionUnwraps in blocks 259, 296, 332, 338, 356.
+
+**Mechanism (the `same=false` explained):** `lower_identifier` (ast_to_hir.cr:57727-57729) emits a
+**`Copy` of the local binding** for any identifier read → `left_id = Copy(lookup_local("ivar_type"))`.
+`lower_copy` (hir_to_mir.cr:9763) **elides the Copy** in MIR (returns the source's MIR value unless
+slot-backed). So the chain is:
+```
+apply_truthy_narrowing → ctx.register_local("ivar_type", UnionUnwrap)   [in a narrowing branch]
+  → lower_identifier emits Copy(narrowed local) at the ||              [left_id, a fresh Copy id]
+  → lower_copy elides → MIR r1432 (the narrowed UnionUnwrap)           [flows to the phi]
+```
+So `r1432` (the phi's truthy incoming) **is** the narrowed `ivar_type` binding, and its def block (the
+narrowing branch, MIR 357) does not dominate the `||` merge/edge (358/368).
+
+**Decision = case 1 (GPT table): stale narrowed-local binding escaping its dominance region.** A
+truthy/is_a narrowing rebinds `ivar_type` to a branch-local UnionUnwrap; that binding survives a CFG
+merge (the 339→356 bypass) into the `||`, where its defining branch no longer dominates — confirming
+the "truthy-narrowing / local-environment leak across a CFG merge" suspect. Not the backend, not
+`then_value=left_id` reuse per se (the reuse is a Copy of an already-leaked binding).
+
+**Next localization (fix-site):** the locals snapshot/restore or merge that should reset `ivar_type`
+to a phi/union when control leaves the narrowing's dominance region (GPT ledger #3/#4 —
+`save_locals`/`restore_locals`, `merge_branch_locals`). Candidate fix shape: on a CFG merge where only
+one predecessor narrowed a local, the merged binding must be a phi/the original union, not the
+branch-local UnionUnwrap — i.e. bound the narrowed binding's lifetime to its dominance region. No fix
+yet (hard stops hold).
