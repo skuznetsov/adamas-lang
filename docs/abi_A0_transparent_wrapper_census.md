@@ -692,3 +692,40 @@ to a phi/union when control leaves the narrowing's dominance region (GPT ledger 
 one predecessor narrowed a local, the merged binding must be a phi/the original union, not the
 branch-local UnionUnwrap — i.e. bound the narrowed binding's lifetime to its dominance region. No fix
 yet (hard stops hold).
+
+## 20. Merge/narrowing ledger 2026-06-24 — FIX-SITE = `lower_short_circuit_condition` unbounded narrowing
+
+Read-only ledger (gated `ADAMAS_MERGE_PROBE`, ivar_type-filtered, s2b build; reverted). Instrumented
+`apply_truthy_narrowing`, both merge functions (SAME/PHI branches + a MODIFIED-but-EXCLUDED `[SKIP]`
+guard), and the `||` `lookup_local`, correlated by value id.
+
+**Findings:**
+- **`[SC]`** (the `ivar_type ||`): `lookup_local("ivar_type")` = the **raw narrowing output** (`980` at
+  block 297, `1379` at block 357) — **not a merge phi**.
+- **`[SKIP_BR]`/`[SKIP_IF]` = 0**: `ivar_type` is **never** modified-but-excluded from a merge ⇒ the
+  **merge-skip hypothesis is REFUTED** (the merge machinery builds phis for `ivar_type` correctly —
+  observed phis 1256/1071/1085/1172/1221/…).
+- **`[NARROW]` + `caller`**: the two **broken** narrowings (`→980`, `→1379`, read by the broken `||`s)
+  come from **`lower_short_circuit_condition`** (ast_to_hir.cr:60153); the **working** narrowings
+  (259/332/338) come from **`lower_if`** (61576).
+
+**Root mechanism (fix-site = `lower_short_circuit_condition`, ast_to_hir.cr:60090-60161):** for an
+`&&`/`||` used as a *condition*, it does `ctx.current_block = rhs_block; apply_truthy_narrowing(ctx,
+truthy_targets)` (60108/60113/60133/60144/**60153**/60158) — narrows `ivar_type` to a UnionUnwrap and
+registers it **globally** in the ctx local table, with **no `save_locals`/`restore_locals`/merge**
+around it. When the condition is a multi-term `&&`/`||` chain, the then-body is reached via several
+paths (MIR CFG: the `||`-cond block `358 pred=360,362`; the unwrap block `357` is only one path), so
+the `rhs_block` narrowing **does not dominate** the then-body, and the body's `ivar_type || …` reads
+the non-dominating binding → dropped to `null` in s2b.
+
+**Contrast (why `lower_if` is safe):** `lower_if` (61564-61580) `save_locals` *before* branches, sets
+`current_block = then_block`, narrows **in then_block** (dominates the body), saves `then_locals`, and
+later merges/restores — so its narrowing is bounded to the then-branch. `lower_short_circuit_condition`
+has no such save/restore/merge boundary.
+
+**Decision (GPT table): case 1 — stale narrowed-local binding escaping its dominance region**, exact
+site = `lower_short_circuit_condition`'s unbounded condition-narrowing (NOT a merge-skip; SKIP=0).
+**VERIFIED** by caller attribution + the `lower_if` contrast + the MIR CFG. Candidate fix shape (to
+discuss, not yet applied): bound the condition-narrowing — narrow in the actual dominating then-block,
+or save/restore around `lower_short_circuit_condition` so the narrowed binding does not leak past the
+condition's true-region. Hard stops hold (no fix yet, no backend, no `.not_nil!`, no wrapper ABI).
