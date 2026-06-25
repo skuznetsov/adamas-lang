@@ -522,3 +522,45 @@ observed). Not yet named: the **Or-node lowering site** (HIR→MIR Or / MIR→LL
 on the truthy edge for this context — that is the fix-target, the next read-only step (instrument the
 Or/short-circuit lowering for this `||`, compare to the green R1 path). No fix until that site is
 named; no `.not_nil!` / MIR guard / broad ABI patch.
+
+## 16. HIR→MIR→LLVM ledger 2026-06-24 — exact layer NAMED: backend cross-block phi-incoming drop (NOT wrapper-scalar ABI)
+
+Full 4-layer ledger for `field_type = ivar_type || ctx.type_of(value_id)` (all probes filtered to
+`lower_assign`, captured during the s2b build = stage1 lowering adamas.cr; reverted; tree clean):
+
+| layer | probe | result |
+| --- | --- | --- |
+| 1-2 HIR (`lower_short_circuit`/`unwrap_non_nil_to_block`) | `[UNWRAP]`/`[PHI]` | **CORRECT** — emits `UnionUnwrap unwrap_id=1881` (non_nil_type=TypeRef); HIR phi then=1881, else=1884, **both valid, NOT null** |
+| 3 HIR→MIR (`resolve_pending_phis`/`get_value`) | `DEBUG_GET_VALUE` | **CORRECT** — 0 UNMAPPED in lower_assign; UnionUnwrap maps to a valid MIR value |
+| 4 MIR→LLVM (`phi_incoming_format`) | `[PIF]`/`ADAMAS_NULL_PHI_TRACE` | env-traced ptr-null sites: **0** in lower_assign; the field_type ptr-phi incoming **never reaches** `phi_incoming_format` |
+| 4 MIR→LLVM (`emit_phi` filter) | `[DROP]` | **THE SITE** — see below |
+
+**Exact site (VERIFIED):** `emit_phi`'s "Filter pass-through incomings where the value is defined in a
+different block" pass, `llvm_backend.cr:20494-20505`:
+```
+[DROP] func=lower_assign phi=%r1482 val=r1432 def=UnionUnwrap val_type=ptr phi_type=ptr def_block=357 inc_block=368 entry=0 has_predload=false
+```
+`%r1482` is exactly the IR phi from §15 (inc_block=368 = the `[null, %bb368]` edge). The UnionUnwrap
+`r1432` is dropped because `def_block(357) != inc_block(368)`, it is **not** the entry block (the only
+case the filter exempts, line 20499 *"Entry block values dominate all other blocks — safe to reference
+directly"*), and **no `@phi_predecessor_loads` entry exists** (`has_predload=false`). The dropped edge
+goes to `missing_preds`, then `default_phi_value` (`20510`, ptr→`"null"`) fills it. Two phis hit it for
+the same UnionUnwrap (`%r1461`@edge 365, `%r1482`@edge 368).
+
+**CALIBRATION CORRECTION — NOT the transparent-wrapper scalar ABI.** `val_type=ptr` **equals**
+`phi_type=ptr` ⇒ there is **no** i32↔ptr mismatch; §13/§15's "i32 phi-slot / inttoptr / transparent
+wrapper" framing was a **misbinding** (exactly the IR-oracle hazard flagged). The real root is a
+**cross-block SSA / phi-predecessor-load gap**: a phi incoming defined in a **non-entry dominating
+block** (357 dominates 368) is conservatively dropped to `null` because the filter's dominance
+exemption is entry-block-only and the spill/reload (`@phi_predecessor_loads`) was not registered for
+this UnionUnwrap. The TypeRef/union link is only that this control-flow shape puts the `UnionUnwrap`
+in a separate block from its phi edges; R1 (standalone) keeps them in one block, so it never drops.
+
+**Claim calibration:** decision-table **row 3 CONFIRMED** (MIR incoming correct, LLVM phi gets null →
+backend phi predecessor conversion). Exact site **VERIFIED** (`emit_phi` filter `20494` +
+`default_phi_value` `20510`, `[DROP]` log, phi-id match to §15). Fix-target = either (a) register the
+predecessor-load/slot for cross-block UnionUnwrap phi incomings, or (b) widen the filter's
+direct-reference exemption from entry-only to any dominating def_block. **Open question before any
+fix:** why `@phi_predecessor_loads` misses this value, and whether (b) is sound for all dominating
+blocks. No fix yet (hard stops): no `.not_nil!`, no MIR/`hir_type_is_lib_struct?` guard, no broad
+wrapper ABI rewrite.
