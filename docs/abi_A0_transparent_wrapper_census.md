@@ -610,3 +610,49 @@ stores `r1432`'s slot — distinguishes (i) malformed-phi from (ii) over-conserv
 **Claim calibration:** fix (b) **REFUTED** (census, 0 candidate rows, @items `dom=false`). Backend
 filter drop **correct** (dominance-valid). Root **redirected upstream** to the `||`/UnionUnwrap block
 structure (non-dominating phi incoming) — PROPOSED, not yet localized. No fix (hard stops hold).
+
+## 18. CFG + slot-store-reachability probe 2026-06-24 — case (i): truthy value in a non-dominating block
+
+Read-only CFG + slot probe (gated `ADAMAS_CFG_PROBE`, lower_assign only; reverted; tree clean). Dumped
+every UnionUnwrap-incoming phi + per-edge def_block/slot/predload/dominance, plus the block CFG.
+
+**Broken vs green UnionUnwrap phis — one structural difference:**
+| phi | edge | unwrap val | def_block | edge_block | predload | dom(def,edge) |
+| --- | --- | --- | --- | --- | --- | --- |
+| **r1482 (broken)** | then | r1432 | **357** | **368** | no | **false** |
+| **r1461 (broken)** | then | r1432 | **357** | **365** | no | **false** |
+| r1499 (green) | — | r1497 | 373 | 373 | yes | true |
+| r1510 (green) | — | r1510 | 376 | 376 | yes | true |
+| r1574 (green) | — | r1574 | 394 | 394 | yes | true |
+
+Every **green** UnionUnwrap phi has **`def_block == edge_block`** — the unwrap is computed *in* the phi's
+predecessor block. The **broken** ones reuse `r1432` defined in **357** while the phi edge is **368/365**.
+
+**CFG around the broken phi:**
+```
+block=357 term=Branch succ=355,356 pred=339      ; r1432 (UnionUnwrap) defined HERE
+block=356 term=Jump   succ=354     pred=339,357  ; reachable from 339 directly, BYPASSING 357
+block=358 term=Branch succ=368,369 pred=360,362  ; the || condition (payload != null)
+block=368 term=Jump   succ=370     pred=358      ; then-edge (phi reads r1432)
+block=370 (phi r1482) pred=368,369
+```
+The path `339 → 356 → 354 → … → 358 → 368` reaches the `||` then-edge **without** passing through 357
+(`356 pred=339,357`). So `r1432` is **not defined on all paths to 368** ⇒ 357 does not dominate 368 ⇒
+the phi cannot legally reference it ⇒ `null`.
+
+**Slot-store-reachability (the fork answer):** `r1432`'s slot is stored at def block 357; 357 **reaches**
+368 (on the 357-path) but does **not dominate** it (the 339→356 path bypasses it, leaving the slot at
+null-init). Loading on edge 368 would leak null on the bypass path ⇒ the prepass dominance gate
+(14430) is **correct** ⇒ **case (ii) over-conservative-gate RULED OUT.**
+
+**Verdict = case (i): HIR lowering placed the truthy value in a non-dominating block.** The `||` truthy
+operand `r1432` (the unwrapped `ivar_type` payload) is computed in block 357, but the `||` condition
+(358) and then-edge (368) are reached via a merge (354) that is also reachable from 339 bypassing 357.
+Green `||`s materialize the unwrap in the then-predecessor block (def==edge); the broken one reuses a
+pre-computed value from a non-dominating earlier block. **Next localization:** why `ivar_type`/its
+`unwrap_non_nil_to_block` yields a value defined in 357 (a nested-narrowing/VOID-check branch) rather
+than in the `||` then-block — i.e. whether `lower_expr(node.left)` produced the UnionUnwrap in a branch
+that doesn't dominate the `||` use, or `then_value=left_id` reuse should re-materialize in then_exit.
+Candidate fix shape (case i): make the `||` truthy value dominate its phi edge — re-emit/unwrap in the
+then-predecessor block, or spill on the then-path. No fix yet (hard stops: no backend filter weakening,
+no `.not_nil!`, no pred-load insertion without slot-store dominance, no broad wrapper ABI).
