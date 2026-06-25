@@ -60079,6 +60079,49 @@ module Adamas::HIR
       end
     end
 
+    # Apply a condition-context truthy/falsy narrowing only for the duration of
+    # lowering the RHS condition, then restore the narrowed targets to their
+    # pre-narrowing bindings. Without this, `lower_short_circuit_condition`
+    # registers the branch-local `UnionUnwrap` globally; because the RHS is lowered
+    # in an intermediate `rhs_block` that does not dominate the enclosing if/while
+    # then-body, the stale narrowed binding leaks into consumers (e.g. a later
+    # `x || default`) that read it along a path where it is undefined -> the backend
+    # drops the non-dominating phi incoming to `null`. The enclosing `lower_if`
+    # re-applies the narrowing inside its (dominating) then_block, so scoping here
+    # does not lose the then-body narrowing.
+    private def with_scoped_condition_narrowing(ctx : LoweringContext, targets : Array(String), &)
+      if targets.empty?
+        yield
+        return
+      end
+      prev = {} of String => ValueId
+      targets.each do |name|
+        if v = ctx.lookup_local(name)
+          prev[name] = v
+        end
+      end
+      apply_truthy_narrowing(ctx, targets)
+      narrowed = {} of String => ValueId
+      targets.each do |name|
+        if v = ctx.lookup_local(name)
+          narrowed[name] = v
+        end
+      end
+      yield
+      # Restore each target to its pre-narrowing binding, but only if the RHS lowering
+      # did not rebind it to a different id (preserve genuine RHS reassignments and
+      # RHS-created locals; do not clobber).
+      targets.each do |name|
+        pv = prev[name]?
+        nv = narrowed[name]?
+        next unless pv && nv
+        next if pv == nv # narrowing was a no-op; nothing to restore
+        if ctx.lookup_local(name) == nv
+          ctx.register_local(name, pv)
+        end
+      end
+    end
+
     # Lower short-circuiting || and && for condition context (branches directly).
     private def lower_short_circuit_condition(
       ctx : LoweringContext,
@@ -60098,13 +60141,15 @@ module Adamas::HIR
             if op_str == "&&"
               lower_short_circuit_condition(ctx, left_node, rhs_block, else_block)
               ctx.current_block = rhs_block
-              apply_truthy_narrowing(ctx, truthy_targets)
-              lower_condition_branch(ctx, node.right, then_block, else_block)
+              with_scoped_condition_narrowing(ctx, truthy_targets) do
+                lower_condition_branch(ctx, node.right, then_block, else_block)
+              end
             else
               lower_short_circuit_condition(ctx, left_node, then_block, rhs_block)
               ctx.current_block = rhs_block
-              apply_truthy_narrowing(ctx, falsy_targets)
-              lower_condition_branch(ctx, node.right, then_block, else_block)
+              with_scoped_condition_narrowing(ctx, falsy_targets) do
+                lower_condition_branch(ctx, node.right, then_block, else_block)
+              end
             end
             return
           end
@@ -60123,8 +60168,9 @@ module Adamas::HIR
           if static_left
             ctx.terminate(Jump.new(rhs_block))
             ctx.current_block = rhs_block
-            apply_truthy_narrowing(ctx, truthy_targets)
-            lower_condition_branch(ctx, node.right, then_block, else_block)
+            with_scoped_condition_narrowing(ctx, truthy_targets) do
+              lower_condition_branch(ctx, node.right, then_block, else_block)
+            end
           else
             ctx.terminate(Jump.new(else_block))
           end
@@ -60134,8 +60180,9 @@ module Adamas::HIR
           else
             ctx.terminate(Jump.new(rhs_block))
             ctx.current_block = rhs_block
-            apply_truthy_narrowing(ctx, falsy_targets)
-            lower_condition_branch(ctx, node.right, then_block, else_block)
+            with_scoped_condition_narrowing(ctx, falsy_targets) do
+              lower_condition_branch(ctx, node.right, then_block, else_block)
+            end
           end
         end
         return
@@ -60143,13 +60190,15 @@ module Adamas::HIR
       if op_str == "&&"
         ctx.terminate(Branch.new(left_cond, rhs_block, else_block))
         ctx.current_block = rhs_block
-        apply_truthy_narrowing(ctx, truthy_targets)
-        lower_condition_branch(ctx, node.right, then_block, else_block)
+        with_scoped_condition_narrowing(ctx, truthy_targets) do
+          lower_condition_branch(ctx, node.right, then_block, else_block)
+        end
       else
         ctx.terminate(Branch.new(left_cond, then_block, rhs_block))
         ctx.current_block = rhs_block
-        apply_truthy_narrowing(ctx, falsy_targets)
-        lower_condition_branch(ctx, node.right, then_block, else_block)
+        with_scoped_condition_narrowing(ctx, falsy_targets) do
+          lower_condition_branch(ctx, node.right, then_block, else_block)
+        end
       end
     end
 
