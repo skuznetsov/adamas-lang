@@ -486,3 +486,39 @@ ctx.type_of(value_id)` result flows through this `i32`-phi-slot path and yields 
   path is **not yet pinned** (next step: tie the specific `lower_assign` phi-slot to the field_type
   `||`, e.g. via a marker reducer that builds a `TypeRef?` through the same multi-reassign + union
   phi structure, or MIR-level instrumentation of the OR/phi for that value).
+
+## 15. SSA producer PINNED 2026-06-24 — `||` non-nil branch feeds `null` (payload-extraction)
+
+Pin-site DoD (fresh HEAD `bb65df5a`; stage1 `7cee264e`, s2b `2c487c99`; gate ON; L1 re-reproduced:
+s2b `ivar_type_id=428` valid, `field_type_null=true`). Bound the exact explicit-`@items` `field_type`
+with a `@[NoInline] __pin_ft(field_type)` marker before `FieldSet.new`, emitted stage1's LLVM IR
+(`AstToHir#lower_assign`), and traced the SSA backward from the marker (reverted after):
+
+```
+%r1432       = load ptr, %r1432.payload_ptr        ; ivar_type = the Nil|TypeRef UNION PAYLOAD
+%r1479       = icmp ne (ptrtoint %r1432) , 0        ; condition: payload != null  (truthy)
+               br i1 %r1479, label %bb368, label %bb369
+bb368:                                              ; NON-NIL branch (payload != null)
+bb369:  %r1481 = call ctx.type_of(value_id)         ; else branch (correct)
+%r1482 = phi ptr [ %r1481.phi_load.369, %bb369 ], [ null, %bb368 ]   ; <-- the || result
+        ... store %r1482 -> load -> __pin_ft -> FieldSet.new(type=%r1482)
+```
+
+**Pinned producer (VERIFIED, directly observed):** the `||` phi `%r1482` feeds the **non-nil branch
+(`%bb368`) a literal `null`** instead of the truthy operand `%r1432` (the union payload = `ivar_type`).
+For `@items`, `ivar_type`=428 is non-null → `%r1479` true → `%bb368` → `field_type = null`. The else
+branch (`%bb369` = `ctx.type_of`) is correct; the receiver-corrupting branch is the **non-nil edge**.
+
+**Decision table (GPT) → row 1:** *"selected non-nil branch stores 0 despite `ivar_type` non-null →
+bug in nilable truthiness/payload extraction for `TypeRef?`."* The `a || b` lowering, when `a` is a
+`Nil | TypeRef` union, emits the truthy/non-nil phi edge as `null` rather than `a`'s payload.
+
+**Green control (R1, standalone):** `x : Wrap? = Wrap.new(7); y = x || Wrap.new(9)` → 7, and r1.ll
+shows the SAME `%Nil$_$OR$_Wrap.union` type — so the bug is **not** the union representation; it is
+context-specific to `lower_assign`'s `||` Or-node lowering (the non-nil phi edge filled with `null`).
+
+**Claim calibration:** SSA producer **VERIFIED** (the `[null, %bb368]` non-nil edge directly
+observed). Not yet named: the **Or-node lowering site** (HIR→MIR Or / MIR→LLVM phi) that emits `null`
+on the truthy edge for this context — that is the fix-target, the next read-only step (instrument the
+Or/short-circuit lowering for this `||`, compare to the green R1 path). No fix until that site is
+named; no `.not_nil!` / MIR guard / broad ABI patch.
