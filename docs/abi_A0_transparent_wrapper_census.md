@@ -564,3 +564,49 @@ direct-reference exemption from entry-only to any dominating def_block. **Open q
 fix:** why `@phi_predecessor_loads` misses this value, and whether (b) is sound for all dominating
 blocks. No fix yet (hard stops): no `.not_nil!`, no MIR/`hir_type_is_lib_struct?` guard, no broad
 wrapper ABI rewrite.
+
+## 17. Would-change census 2026-06-24 — fix (b) REFUTED; bug is UPSTREAM (non-dominating phi incoming)
+
+Before patching, ran the read-only would-change census on the `emit_phi` cross-block filter (gated
+`ADAMAS_PHI_FILTER_CENSUS`, global over the whole s2b build; reverted; tree clean). For every filter
+case (`def_block && def_block != inc_block && !predload`) logged dominance + current/proposed action.
+
+Hostile-review premise (GPT): `prepass_collect_phi_predecessor_loads` (llvm_backend.cr:14430) gates on
+`def_block == pred || block_dominates?(def_block, pred)`, while the `emit_phi` filter (20499) exempts
+only `def_block == entry` — so fix (b) = make the filter use the same `block_dominates?` predicate.
+
+**Census result (3530 rows):**
+| bucket | count |
+| --- | --- |
+| entry keep (`entry=true`) | 1858 |
+| **dominates non-entry, currently dropped (candidate-fix rows)** | **0** |
+| non-dominating, dropped (must stay) | 1672 |
+
+**The @items rows:**
+```
+phi=%r1482 val=r1432 class=UnionUnwrap defb=357 incb=368 entry=false dom=FALSE cur=drop prop=drop
+phi=%r1461 val=r1432 class=UnionUnwrap defb=357 incb=365 entry=false dom=FALSE cur=drop prop=drop
+```
+
+**Fix (b) REFUTED.** `block_dominates?(357,368)=false` — the UnionUnwrap `r1432`'s def block does **not**
+dominate the phi's then-edge. So a dominance-aware filter would keep `prop=drop` for @items (no change),
+and there are **0** candidate-fix rows build-wide. `block_dominates?` is a real dominator in/out-time
+check (15462) and `prepass_compute_dominance` (13725) runs **before** `emit_blocks` (14098), so the
+result is valid. The 0/3530 is *expected*: dominating cross-block values get predecessor-loads from the
+prepass and bypass this filter branch (`!predload`); only non-dominating values reach it. So the filter's
+drop is **dominance-correct** — referencing `r1432` on edge 368 would be invalid SSA (no reaching def;
+the slot holds only null-init on that path, per the prepass comment at 14426-14429).
+
+**Redirect — the bug is UPSTREAM of the backend filter.** The lowering produced a phi (`%r1482`, the
+`||` result) whose truthy-payload incoming (`r1432`, block 357) does **not** dominate / reach its
+then-edge (block 368). Two upstream candidates: (i) the `||` lowering (`lower_short_circuit` / its MIR
+block structure) builds a malformed phi that reads `r1432` on an edge it doesn't reach — should
+restructure so the truthy value dominates the merge edge; or (ii) `r1432` is slot-backed and its slot
+**is** stored on the then-path before 368, in which case the prepass's original-def dominance gate
+(14430) is too conservative for slot-backed values (it should test slot-store reachability, not
+original-def dominance). Next read-only step: determine whether the then-path leading to block 368
+stores `r1432`'s slot — distinguishes (i) malformed-phi from (ii) over-conservative slot gate.
+
+**Claim calibration:** fix (b) **REFUTED** (census, 0 candidate rows, @items `dom=false`). Backend
+filter drop **correct** (dominance-valid). Root **redirected upstream** to the `||`/UnionUnwrap block
+structure (non-dominating phi incoming) — PROPOSED, not yet localized. No fix (hard stops hold).
