@@ -729,3 +729,26 @@ site = `lower_short_circuit_condition`'s unbounded condition-narrowing (NOT a me
 discuss, not yet applied): bound the condition-narrowing — narrow in the actual dominating then-block,
 or save/restore around `lower_short_circuit_condition` so the narrowed binding does not leak past the
 condition's true-region. Hard stops hold (no fix yet, no backend, no `.not_nil!`, no wrapper ABI).
+
+## 21. FIX SHIPPED 2026-06-25 — `with_scoped_condition_narrowing` (`0c32ae9d`)
+
+Scoped-narrowing fix (GPT-approved shape; not whole-snapshot restore). New helper
+`with_scoped_condition_narrowing(ctx, targets, &)` in ast_to_hir.cr: records each target's pre-narrowing
+binding, applies the narrowing, lowers the RHS condition (yield), then restores each target to its
+pre-narrowing binding **only if** its current binding is still the narrowing-produced id (preserving
+genuine RHS reassignments and RHS-created locals — no whole-snapshot `restore_locals`). Wrapped all six
+`apply_truthy_narrowing` sites in `lower_short_circuit_condition` (nested-left, static-left, non-static;
+truthy and falsy). The enclosing `lower_if` independently re-narrows in its dominating then_block
+(`non_nil_narrowing_targets` handles `&&`/`||`), so the then-body narrowing is preserved.
+
+Reducer: `regression_tests/short_circuit_condition_narrowing_leak.cr` (`if x && cond; end; y = x ||
+default; y.id`) — SIGSEGV(139) before, RESULT=7 after; the `||` phi no longer has a `[null, bbN]` edge.
+
+**DoD (all green):** (1) leak reducer RESULT=7; (2) lower_assign `||` has **0** null-incoming ptr phis
+(was 1, the `[null, %bb368]` of §15); (3) gated s2b med.cr advances **past** the
+`hir_type_is_lib_struct?` frontier — the original SIGSEGV(139, addr 0x0) is gone; s2b now reaches a new
+downstream frontier (EXIT 134 after stage2 enum registration); (4) suites **148/148 + 36/36**; (5) RHS
+still sees the narrowed local (`x.id` inside `x && x.id > 5` → 1); (6) RHS-created locals survive (`z`
+assigned in the RHS → preserved). Backend `emit_phi` cross-block filter left untouched (it was
+dominance-correct, §17). Root of the s2b `hir_type_is_lib_struct?` family (this doc's A-arc /
+`TODO(s2b-union-arg-abi)`) **resolved at the HIR narrowing-lifetime layer**, not the wrapper ABI.
