@@ -1,6 +1,6 @@
 # LANDMARKS
 
-Updated: 2026-05-06
+Updated: 2026-06-26
 Context: compiler/bootstrap/stage2-stability
 
 This file is the active working set only. Historical landmarks before this
@@ -37,6 +37,24 @@ and delegates to the concrete overload otherwise. Evidence: the old post-dirname
 s2b fails `stage2_yield_return_block_call_materialization_repro.sh` on the exact
 stub; the fixed s2b passes that guard and moves to the separate
 `AstToHir#lower_block_to_proc(...)` stub frontier.
+
+[LM-S2B-LOWER-BLOCK-TO-PROC-MATERIALIZATION|verified 2026-06-26 {F:0.83 G:0.42 R:0.84}]:
+Produced s2b's full-prelude `puts 42` corridor no longer aborts on the
+`AstToHir#lower_block_to_proc` undefined-extern stub. The registered helper def
+was visible in the overload index, but resolver rejected it because self-hosted
+callsite inference widened `block_arena_for_proc` from the declared
+`Frontend::ArenaLike` contract to `Nil | ArenaLike | String` / pointer-erased
+forms. Fix: explicitly type the three local `block_arena_for_proc` bindings as
+`Adamas::Compiler::Frontend::ArenaLike`, preserving the existing arena-selection
+expression while restoring the helper's materialization signature. Evidence:
+old post-yield s2b fails
+`regression_tests/stage2_lower_block_to_proc_materialization_repro.sh` on the
+exact stub; fixed s2b passes it, contains no `STUB CALLED` string for
+`lower_block_to_proc`, keeps the yield-return guard green, and compiles/runs
+no-prelude `x = 1`; stage1 suites pass 149/149 + 36/36. Next frontier is later
+MIR lowering, not block/proc materialization: full-prelude `puts 42` crashes in
+`HIRToMIRLowering#set_block_map` via `mir_block_for` ->
+`resolve_pending_phis` -> `lower_function_body`.
 
 [LM-M4i0|verified]: Fresh RELEASE stage1 SIGSEGV'd in the recursive-descent parser
 (`parse_block_body_with_optional_rescue`) while building s2b. Root: `crystal build`

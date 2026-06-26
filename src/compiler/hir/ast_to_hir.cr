@@ -78562,7 +78562,7 @@ module Adamas::HIR
           block_id ||= lower_block_to_block_id(ctx, blk_node, block_param_types_for_proc)
           if block_id
             owner_arena = call_arena
-            block_arena_for_proc = @block_node_arenas[blk_node.object_id]? || resolve_arena_for_block(blk_node, owner_arena) || owner_arena
+            block_arena_for_proc : Adamas::Compiler::Frontend::ArenaLike = @block_node_arenas[blk_node.object_id]? || resolve_arena_for_block(blk_node, owner_arena) || owner_arena
             heap_block_proc = block_arg_requires_heap_proc?(mangled_method_name, base_method_name, method_name)
             if block_return_name.nil?
               block_return_name = inline_block_return_type_name(blk_node, block_param_types_for_proc, @current_class)
@@ -86248,7 +86248,7 @@ module Adamas::HIR
         # Match normal non-inline call ABI for block calls: always materialize proc callback.
         # Heuristic param-count checks are insufficient because hidden block-callback plumbing
         # is not reliably represented in lowered function params for all yield paths.
-        block_arena_for_proc = @block_node_arenas[block.object_id]? || resolve_arena_for_block(block, caller_arena) || caller_arena
+        block_arena_for_proc : Adamas::Compiler::Frontend::ArenaLike = @block_node_arenas[block.object_id]? || resolve_arena_for_block(block, caller_arena) || caller_arena
         heap_block_proc = block_arg_requires_heap_proc?(inline_key, base_inline_name)
         expected_block_proc_return_type = nil.as(TypeRef?)
         if inline_def = @function_defs[inline_key]?
@@ -86757,7 +86757,7 @@ module Adamas::HIR
                   # &block parameter: convert the caller's block to a Proc and bind it.
                   # Without this, methods that store blocks as Procs (e.g., OptionParser#on)
                   # would receive null instead of a valid function pointer.
-                  block_arena_for_proc = @block_node_arenas[block.object_id]? || resolve_arena_for_block(block, caller_arena) || caller_arena
+                  block_arena_for_proc : Adamas::Compiler::Frontend::ArenaLike = @block_node_arenas[block.object_id]? || resolve_arena_for_block(block, caller_arena) || caller_arena
                   # Block literals capture the caller's lexical environment, not the
                   # temporary inline callee locals. Restore the full caller snapshot
                   # while materializing the Proc so capture detection sees outer writes.

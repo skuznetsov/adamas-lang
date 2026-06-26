@@ -1,6 +1,6 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-06-19
+Updated: 2026-06-26
 Branch: `main` (ABI-rework + s2b GC fix merged & pushed); by-value Stage 0+ census + eligibility predicate on `abi-struct-byvalue` (`b16bf758`)
 
 This is the active working backlog only. Historical detail is in git history,
@@ -85,6 +85,31 @@ Working policy:
   abort in `AstToHir#lower_block_to_proc(...)`. This is a separate
   block/proc materialization-demand frontier; do not bundle it with the
   yield-return wrapper fix.
+
+## 2026-06-26 — fixed s2b lower_block_to_proc arena type materialization
+
+- FIXED: produced s2b no longer aborts in `lower_main` on
+  `STUB CALLED: Adamas::HIR::AstToHir#lower_block_to_proc...`. Root: the source
+  helper signature requires `block_arena : Frontend::ArenaLike`, but self-hosted
+  lowering inferred the local `block_arena_for_proc` at the three materialization
+  callsites as wider unions such as `Nil | ArenaLike | String` or pointer-erased
+  forms. Resolver saw the registered overload but rejected it as incompatible,
+  then queued/stubbed the call-symbol. Fix: add explicit `ArenaLike` local
+  annotations at the three `lower_block_to_proc` callsites. This preserves the
+  runtime arena selection expression and only restores the declared helper
+  contract for call-symbol materialization.
+- Regression: `regression_tests/stage2_lower_block_to_proc_materialization_repro.sh`
+  is red on the post-yield s2b (exact `lower_block_to_proc` stub) and green once
+  the arena local is constrained. The guard is intentionally focused: it accepts
+  the downstream full-prelude failure after the stub frontier moves.
+- Verified: stage1 build; old-s2b red/new-s2b green focused guard; existing
+  yield-return guard remains green; fresh s2b compiles and runs no-prelude
+  `x = 1`; full stage1 suites pass 149/149 originals + 36/36 combined.
+- NEW FRONTIER: full-prelude `puts 42` now passes `lower_main` and crashes later
+  in MIR lowering: `HIRToMIRLowering#set_block_map` called from
+  `mir_block_for` -> `resolve_pending_phis` -> `lower_function_body`. Treat this
+  as a separate HIR->MIR block-map/phi frontier, not as a block/proc
+  materialization bug.
 
 ## 2026-06-25 — fixed HIR RTA pruning of materialized target symbols
 
