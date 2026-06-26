@@ -7566,35 +7566,6 @@ module Adamas::HIR
       constant_literal_value_from_source_name(const_name, arena)
     end
 
-    private def resolve_constant_value_from_source(
-      node : Adamas::Compiler::Frontend::ConstantNode,
-      arena : Adamas::Compiler::Frontend::ArenaLike,
-    ) : Int64?
-      source = source_for_arena(arena)
-      if source.nil?
-        if path = source_path_for(arena)
-          if File.file?(path)
-            source = File.read(path)
-          end
-        end
-      end
-      return nil unless source
-
-      snippet = slice_source_for_span(node.span, source)
-      return nil unless snippet
-
-      text = strip_single_line_comments(snippet).strip
-      return nil if text.empty?
-
-      eq_index = text.index('=')
-      return nil unless eq_index
-
-      rhs = text.byte_slice(eq_index + 1, text.bytesize - eq_index - 1).strip
-      return nil if rhs.empty?
-
-      resolve_enum_member_value_text(rhs)
-    end
-
     # Look up a constant name in @constant_literal_values and return its i64 value.
     private def constant_literal_value_for_name(full_name : String) : Adamas::Compiler::Semantic::MacroValue?
       if literal = @constant_literal_values[full_name]?
@@ -7830,14 +7801,36 @@ module Adamas::HIR
       return if @lazy_enum_indexed_dirs.includes?(dir)
       @lazy_enum_indexed_dirs << dir
 
-      Dir.glob(File.join(dir, "*.cr")).each do |cr_file|
+      Dir.each_child(dir) do |entry|
+        next unless entry.ends_with?(".cr")
+        cr_file = File.join(dir, entry)
         next if loaded_paths.includes?(cr_file)
         next unless File.exists?(cr_file)
         source = File.read(cr_file)
 
-        source.scan(/(?:^|\n)\s*enum\s+([A-Za-z_][A-Za-z0-9_]*)/) do |match|
-          enum_name = match[1]?
-          next unless enum_name
+        source.each_line do |line|
+          stripped = strip_single_line_comments(line).lstrip
+          next unless stripped.starts_with?("enum ")
+
+          rest = stripped.byte_slice(5, stripped.bytesize - 5).lstrip
+          next if rest.empty?
+
+          first = rest.byte_at(0)
+          first_is_ident = (first >= 65 && first <= 90) || (first >= 97 && first <= 122) || first == 95
+          next unless first_is_ident
+
+          name_len = 1
+          while name_len < rest.bytesize
+            ch = rest.byte_at(name_len)
+            is_ident = (ch >= 65 && ch <= 90) ||
+                       (ch >= 97 && ch <= 122) ||
+                       (ch >= 48 && ch <= 57) ||
+                       ch == 95
+            break unless is_ident
+            name_len += 1
+          end
+
+          enum_name = rest.byte_slice(0, name_len)
 
           files = @lazy_enum_candidate_files[enum_name]?
           if files
@@ -22579,9 +22572,34 @@ module Adamas::HIR
 
     private def extract_member_from_constant(node : Adamas::Compiler::Frontend::ConstantNode, members : Hash(String, Int64))
       member_name = (safe_slice_to_string(node.name) || "")
-      value = members.values.max? || -1_i64
+      # Avoid the generic Hash#values -> Enumerable#max? corridor here: produced
+      # stage2 has exposed comparison instability while registering macro-added
+      # enum members (Signal). A direct Int64 scan keeps the bootstrap path local.
+      value = -1_i64
+      members.each do |_name, member_value|
+        value = member_value if member_value > value
+      end
       value += 1
-      resolved = resolve_constant_value_from_source(node, @arena)
+      resolved = nil.as(Int64?)
+      source = source_for_arena(@arena)
+      if source.nil?
+        if path = source_path_for(@arena)
+          if File.file?(path)
+            source = File.read(path)
+          end
+        end
+      end
+      if source
+        if snippet = slice_source_for_span(node.span, source)
+          text = strip_single_line_comments(snippet).strip
+          if !text.empty?
+            if eq_index = text.index('=')
+              rhs = text.byte_slice(eq_index + 1, text.bytesize - eq_index - 1).strip
+              resolved = resolve_enum_member_value_text(rhs) unless rhs.empty?
+            end
+          end
+        end
+      end
       if resolved.nil? && !node.value.null_ptr? && !node.value.invalid?
         resolved = resolve_enum_member_value(node.value)
       end
@@ -50933,6 +50951,7 @@ module Adamas::HIR
       old_arena = @arena
       STDERR.puts "[LOWER_MAIN_FRONTIER] before_deferred lazy=#{@lazy_classvar_init_active}" if lower_main_frontier
       bootstrap_trace_puts "[STAGE2_TRACE] lower_main: start, lazy=#{@lazy_classvar_init_active}"
+      initialized_runtime_top_level_constants = Set(String).new
       if @lazy_classvar_init_active
         # LAZY MODE: Record classvar inits for on-demand initialization.
         # Init functions will be created when classvars are first accessed (ClassVarGet).
@@ -50962,7 +50981,6 @@ module Adamas::HIR
         if env_has?("DEBUG_DEFERRED_CONST")
           STDERR.puts "[DEFERRED_CONST] Processing #{@deferred_constant_inits.size} deferred constants"
         end
-        initialized_runtime_top_level_constants = [] of String
         @deferred_constant_inits.each do |entry|
           owner = entry.owner
           const_name = entry.name
@@ -50974,7 +50992,7 @@ module Adamas::HIR
             if initialized_runtime_top_level_constants.includes?(const_name)
               next
             end
-            initialized_runtime_top_level_constants << const_name
+            initialized_runtime_top_level_constants.add(const_name)
           end
           @arena = init_arena
           old_class = @current_class
@@ -51055,7 +51073,6 @@ module Adamas::HIR
             STDERR.puts "[DEFERRED_CONST]   #{entry.owner}::#{entry.name}"
           end
         end
-        initialized_runtime_top_level_constants = [] of String
         @deferred_constant_inits.each do |entry|
           owner = entry.owner
           const_name = entry.name
@@ -51067,7 +51084,7 @@ module Adamas::HIR
             if initialized_runtime_top_level_constants.includes?(const_name)
               next
             end
-            initialized_runtime_top_level_constants << const_name
+            initialized_runtime_top_level_constants.add(const_name)
           end
           @arena = init_arena
           old_class = @current_class
@@ -51128,6 +51145,32 @@ module Adamas::HIR
         # Switch arena context for this expression
         @arena = arena
         STDERR.puts "[LOWER_MAIN_FRONTIER] arena_set" if lower_main_frontier
+        skipped_runtime_const = nil.as(String?)
+        unless initialized_runtime_top_level_constants.empty?
+          visible_id = unwrap_visibility_expr_id(arena, expr_id)
+          if !(visible_id.null_ptr? || visible_id.invalid?) &&
+             visible_id.index >= 0 &&
+             visible_id.index < arena.size
+            node = arena[visible_id]
+            if node.is_a?(Adamas::Compiler::Frontend::ConstantNode)
+              const_name = safe_slice_to_string(node.name)
+              if const_name &&
+                 initialized_runtime_top_level_constants.includes?(const_name) &&
+                 runtime_deferred_top_level_constant?(nil, const_name)
+                # Keep this skip scoped to stdlib bootstrap constants. User code
+                # that deliberately reassigns one of these top-level constants
+                # should still be lowered normally.
+                if (path = source_path_for(arena)) && path.ends_with?("src/stdlib/kernel.cr")
+                  skipped_runtime_const = const_name
+                end
+              end
+            end
+          end
+        end
+        if skipped_const = skipped_runtime_const
+          STDERR.puts "[LOWER_MAIN_FRONTIER] skip_runtime_deferred_const #{skipped_const}" if lower_main_frontier
+          next
+        end
         if debug_main && !slow_only
           node = @arena[expr_id]
           snippet = nil
@@ -70560,13 +70603,10 @@ module Adamas::HIR
       end
       call_arena : Adamas::Compiler::Frontend::ArenaLike = @arena
       call_named_arg_names = named_arg_names_for(node.named_args)
-      if @current_class && @current_method
-        scope = "#{@current_class}##{@current_method}|#{@current_method_is_class ? 1 : 0}|#{type_param_map_debug_string}"
-        if scope != @callsite_method_cache_scope
-          @callsite_method_cache.clear
-          @callsite_method_cache_scope = scope
-        end
-      elsif @callsite_method_cache_scope
+      # Stage2 self-hosting has shown unstable nilable-ivar payloads while
+      # constructing this cache's string scope key. The cache is only a lookup
+      # accelerator, so keep it disabled rather than risk corrupting lowering.
+      if @callsite_method_cache_scope
         @callsite_method_cache.clear
         @callsite_method_cache_scope = nil
       end
@@ -70724,7 +70764,6 @@ module Adamas::HIR
       full_method_name : String? = nil
       static_class_name : String? = nil
       proc_return_type_name : String? = nil
-      cached_callsite_key : String? = nil
       top_level_bare_call_target : String? = nil
       explicit_self_receiver = false
       prefer_allocator_new_call = false
@@ -71968,13 +72007,7 @@ module Adamas::HIR
           if !path_receiver_class_name_found && class_name_str.nil? && receiver_id
             receiver_type = ctx.type_of(receiver_id)
             if receiver_type != TypeRef::VOID
-              arg_types_for_cache = call_args.empty? ? [] of TypeRef : infer_arg_types_for_call(call_args, @current_class)
-              cache_key = callsite_cache_key(receiver_type, method_name, arg_types_for_cache, has_block_call)
-              if cached = @callsite_method_cache[cache_key]?
-                full_method_name = cached
-              else
-                cached_callsite_key = cache_key
-              end
+              # @callsite_method_cache intentionally disabled above.
             end
           end
 
@@ -74562,9 +74595,7 @@ module Adamas::HIR
           end
         end
       end
-      if cached_callsite_key && receiver_id && base_method_name.includes?('#')
-        @callsite_method_cache[cached_callsite_key] = base_method_name
-      end
+      # @callsite_method_cache intentionally disabled near lower_call entry.
       if receiver_id.nil? && full_method_name.nil? && method_name == "main" && @top_level_main_defined
         base_method_name = TOP_LEVEL_MAIN_BASE
       end
@@ -95639,6 +95670,11 @@ module Adamas::HIR
     end
 
     private def resolved_type_name_cache_get(name : String) : String?
+      # Stage2 self-hosting can carry unstable String payloads in contextual
+      # cache keys (`@current_class` / namespace override), which makes the
+      # cache's Hash keying crash before type resolution runs. This cache is a
+      # resolver accelerator only; keep it disabled on the bootstrap path.
+      return nil
       if ctx = current_type_name_context_key
         if @resolved_type_name_last_entry_ctx == ctx && @resolved_type_name_last_entry_name_id == name.object_id
           if value = @resolved_type_name_last_entry_value
@@ -95687,6 +95723,10 @@ module Adamas::HIR
     end
 
     private def resolved_type_name_cache_set(name : String, value : String) : Nil
+      # See resolved_type_name_cache_get: avoid contextual cache-key hashing in
+      # generated stage2 until the underlying String/context lifetime issue is
+      # removed.
+      return
       if ctx = current_type_name_context_key
         map = nil
         if @resolved_type_name_cache_last_ctx_key == ctx

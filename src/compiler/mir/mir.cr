@@ -1324,10 +1324,14 @@ module Adamas::MIR
   class Phi < Value
     # (BlockId, ValueId) - which value comes from which predecessor block
     getter incoming : Array(Tuple(BlockId, ValueId))
+    getter incoming_blocks : Array(BlockId)
+    getter incoming_values : Array(ValueId)
 
     def initialize(id : ValueId, type : TypeRef)
       super(id, type)
       @incoming = [] of Tuple(BlockId, ValueId)
+      @incoming_blocks = [] of BlockId
+      @incoming_values = [] of ValueId
     end
 
     # Add an incoming value from a predecessor block.
@@ -1336,17 +1340,35 @@ module Adamas::MIR
     # Wrong:     phi.add_incoming(block_id, val_id)  # compile error
     def add_incoming(*, from block : BlockId, value : ValueId)
       @incoming << {block, value}
+      @incoming_blocks << block
+      @incoming_values << value
+    end
+
+    def incoming_size : Int32
+      @incoming_blocks.size
+    end
+
+    def incoming_block_at(index : Int32) : BlockId
+      @incoming_blocks.unsafe_fetch(index)
+    end
+
+    def incoming_value_at(index : Int32) : ValueId
+      @incoming_values.unsafe_fetch(index)
     end
 
     def operands : Array(ValueId)
-      @incoming.map { |(_, v)| v }
+      @incoming_values.dup
     end
 
     def to_s(io : IO) : Nil
       io << "%" << @id << " = phi "
-      @incoming.each_with_index do |(block, val), idx|
+      idx = 0
+      while idx < @incoming_blocks.size
+        block = @incoming_blocks.unsafe_fetch(idx)
+        val = @incoming_values.unsafe_fetch(idx)
         io << ", " if idx > 0
         io << "[block." << block << ": %" << val << "]"
+        idx += 1
       end
       io << " : " << @type
     end
@@ -1956,7 +1978,14 @@ module Adamas::MIR
     end
 
     def successors : Array(BlockId)
-      @cases.map { |(_, b)| b } << @default_block
+      successors = Array(BlockId).new(@cases.size + 1)
+      idx = 0
+      while idx < @cases.size
+        successors << @cases.unsafe_fetch(idx)[1]
+        idx += 1
+      end
+      successors << @default_block
+      successors
     end
 
     def to_s(io : IO) : Nil

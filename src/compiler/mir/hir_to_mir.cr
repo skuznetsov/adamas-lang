@@ -77,7 +77,8 @@ module Adamas
       @block_map : ::Array(BlockId?)
 
       # Pending phi nodes that need incoming resolution after all blocks are lowered
-      @pending_phis : ::Array(Tuple(Phi, HIR::Phi))
+      @pending_mir_phis : ::Array(Phi)
+      @pending_hir_phis : ::Array(HIR::Phi)
 
       # Stack slots (mutable locals / block params) that require loads on reads
       @stack_slot_values : ::Set(ValueId)
@@ -205,8 +206,9 @@ module Adamas
         STDERR.puts "[MIR_INIT] hir_value_types" if trace
         @block_map = [] of BlockId?
         STDERR.puts "[MIR_INIT] block_map" if trace
-        @pending_phis = [] of Tuple(Phi, HIR::Phi)
-        STDERR.puts "[MIR_INIT] pending_phis" if trace
+        @pending_mir_phis = [] of Phi
+        @pending_hir_phis = [] of HIR::Phi
+        STDERR.puts "[MIR_INIT] pending_phi arrays" if trace
         @stack_slot_values = ::Set(ValueId).new
         STDERR.puts "[MIR_INIT] stack_slot_values" if trace
         @stack_slot_types = {} of ValueId => TypeRef
@@ -4336,7 +4338,8 @@ module Adamas
         end
         @hir_constant_values = ::Set(HIR::ValueId).new
         @block_map = [] of BlockId?
-        @pending_phis = [] of Tuple(Phi, HIR::Phi)
+        @pending_mir_phis = [] of Phi
+        @pending_hir_phis = [] of HIR::Phi
         @stack_slot_values = ::Set(ValueId).new
         @stack_slot_types = {} of ValueId => TypeRef
         @inline_struct_ptrs = ::Set(HIR::ValueId).new
@@ -4600,12 +4603,26 @@ module Adamas
         builder = @builder.not_nil!
         original_block = builder.current_block
 
-        @pending_phis.each do |(mir_phi, hir_phi)|
+        pending_idx = 0
+        while pending_idx < @pending_mir_phis.size
+          mir_phi = @pending_mir_phis.unsafe_fetch(pending_idx)
+          hir_phi = @pending_hir_phis.unsafe_fetch(pending_idx)
+          pending_idx += 1
           mir_phi_type = mir_phi.type
           is_phi_union = is_union_type?(mir_phi_type)
           union_descriptor = is_phi_union ? @mir_module.get_union_descriptor(mir_phi_type) : nil
 
-          hir_phi.incoming.each do |(hir_block, hir_value)|
+          incoming_idx = 0
+          while incoming_idx < hir_phi.incoming_size
+            hir_block = hir_phi.incoming_block_at(incoming_idx)
+            hir_value = hir_phi.incoming_value_at(incoming_idx)
+            incoming_idx += 1
+            if invalid_hir_block_id?(hir_block)
+              if ENV["ADAMAS_INVALID_PHI_TRACE"]?
+                STDERR.puts "[INVALID_PHI_INCOMING] func=#{@current_lowering_func_name} phi=#{hir_phi.id} hir_block=#{hir_block} blocks=#{@current_hir_func.try(&.blocks.size) || 0}"
+              end
+              next
+            end
             mir_block = mir_block_for(hir_block)
             mir_value = get_value(hir_value)
 
@@ -4613,13 +4630,34 @@ module Adamas
               if hir_type = @hir_value_types[hir_value]?
                 incoming_mir_type = convert_type(hir_type)
                 if incoming_mir_type == TypeRef::VOID || incoming_mir_type == TypeRef::NIL
-                  if nil_variant = union_descriptor.variants.find { |v| v.type_ref == TypeRef::NIL }
+                  nil_variant = nil.as(UnionVariantDescriptor?)
+                  variant_idx = 0
+                  variants = union_descriptor.variants
+                  while variant_idx < variants.size
+                    variant = variants.unsafe_fetch(variant_idx)
+                    variant_idx += 1
+                    if variant.type_ref == TypeRef::NIL
+                      nil_variant = variant
+                      break
+                    end
+                  end
+                  if nil_variant
                     builder.current_block = mir_block
                     nil_val = builder.const_nil
                     mir_value = builder.union_wrap(nil_val, nil_variant.type_id, mir_phi_type)
                   end
                 elsif !is_union_type?(incoming_mir_type)
-                  variant = union_descriptor.variants.find { |v| v.type_ref == incoming_mir_type }
+                  variant = nil.as(UnionVariantDescriptor?)
+                  variant_idx = 0
+                  variants = union_descriptor.variants
+                  while variant_idx < variants.size
+                    candidate = variants.unsafe_fetch(variant_idx)
+                    variant_idx += 1
+                    if candidate.type_ref == incoming_mir_type
+                      variant = candidate
+                      break
+                    end
+                  end
                   if variant
                     builder.current_block = mir_block
                     mir_value = builder.union_wrap(mir_value, variant.type_id, mir_phi_type)
@@ -6292,8 +6330,8 @@ module Adamas
           # Avoid Array#map here during bootstrap. Stage2 can produce a null
           # Array object for empty map results in this hot call-lowering path;
           # explicit construction keeps the MIR argument carrier concrete.
-          args = ::Array(ValueId).new(call.args.size)
-          call.args.each { |arg| args << get_value(arg) }
+          explicit_args = ::Array(ValueId).new(call.args.size)
+          call.args.each { |arg| explicit_args << get_value(arg) }
         rescue ex : IndexError
           raise "Index error getting args for call to #{call.method_name}: #{ex.message}"
         end
@@ -6302,8 +6340,8 @@ module Adamas
            call.method_name.includes?('.') &&
            !call.method_name.includes?('#')
           if exact_static_func = @mir_module.get_function(call.method_name)
-            if exact_static_func.params.size == args.size
-              coerced_args = coerce_call_args(builder, args, call.args, exact_static_func)
+            if exact_static_func.params.size == explicit_args.size
+              coerced_args = coerce_call_args(builder, explicit_args, call.args, exact_static_func)
               call_return_type = exact_static_func.return_type
               hir_call_return_type = convert_type(call.type)
               if is_union_type?(hir_call_return_type) && !is_union_type?(exact_static_func.return_type)
@@ -6316,10 +6354,16 @@ module Adamas
           end
         end
 
-        # Add receiver as first arg if present
+        # Build final MIR args without reassigning the local across the receiver
+        # branch. Stage2 currently miscompiles the previous "args = with_receiver"
+        # merge on receiverless calls in this hot path.
+        args_capacity = explicit_args.size
+        args_capacity += 1 if call.has_receiver?
+        args = ::Array(ValueId).new(args_capacity)
         if call.has_receiver?
-          args.unshift(get_value(call.receiver_value))
+          args << get_value(call.receiver_value)
         end
+        explicit_args.each { |arg| args << arg }
         if debug_virtual && call.virtual
           recv_type = call.has_receiver? ? @hir_value_types[call.receiver_value]? : nil
           recv_type_name = hir_type_name(recv_type)
@@ -9751,7 +9795,8 @@ module Adamas
 
         # Defer incoming resolution until all blocks are lowered
         # This handles forward references from loop bodies
-        @pending_phis << {mir_phi, hir_phi}
+        @pending_mir_phis << mir_phi
+        @pending_hir_phis << hir_phi
 
         mir_phi.id
       end
@@ -10717,6 +10762,20 @@ module Adamas
       # ─────────────────────────────────────────────────────────────────────────
 
       private def mir_block_for(hir_block_id : HIR::BlockId) : BlockId
+        if invalid_hir_block_id?(hir_block_id)
+          mir_func = @current_mir_func.not_nil!
+          builder = @builder.not_nil!
+          synthetic = mir_func.create_block
+          if ::Adamas::Compiler::BootstrapEnv.get?("ADAMAS_STAGE2_DEBUG") == "1" || ENV["ADAMAS_INVALID_PHI_TRACE"]?
+            STDERR.puts "[MIR_INVALID_BLOCK] func=#{@current_lowering_func_name} hir_block=#{hir_block_id} blocks=#{@current_hir_func.try(&.blocks.size) || 0} synthetic=#{synthetic}"
+          end
+          saved_block = builder.current_block
+          builder.current_block = synthetic
+          builder.unreachable
+          builder.current_block = saved_block
+          return synthetic
+        end
+
         if mapped = get_block_map(hir_block_id)
           return mapped
         end
@@ -10736,6 +10795,14 @@ module Adamas
         builder.current_block = saved_block
 
         synthetic
+      end
+
+      @[AlwaysInline]
+      private def invalid_hir_block_id?(hir_block_id : HIR::BlockId) : Bool
+        if hir_func = @current_hir_func
+          return hir_block_id.to_u64 >= hir_func.blocks.size.to_u64
+        end
+        false
       end
 
       @[AlwaysInline]

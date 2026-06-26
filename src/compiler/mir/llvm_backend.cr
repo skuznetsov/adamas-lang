@@ -2460,8 +2460,10 @@ module Adamas::MIR
     @zext_value_names : Hash(ValueId, String) = {} of ValueId => String  # Extended value names
 
     # Phi predecessor loads: for cross-block values in phi incomings, we emit loads
-    # in predecessor blocks before terminators. Maps (pred_block, value_id) -> loaded_name
-    @phi_predecessor_loads : Hash({BlockId, ValueId}, String) = {} of {BlockId, ValueId} => String
+    # in predecessor blocks before terminators. Maps packed (pred_block, value_id)
+    # to loaded_name. Keep this map off Tuple keys: generated stage2 has exposed
+    # Tuple(UInt32, UInt32)#== instability while mutating this hot backend map.
+    @phi_predecessor_loads : Hash(UInt64, String) = {} of UInt64 => String
 
     # Phi predecessor conversions: for fixed-type values (params, ExternCalls) that need
     # type conversion for phi compatibility. Maps (pred_block, value_id) -> (converted_name, from_bits, to_bits)
@@ -3124,6 +3126,7 @@ module Adamas::MIR
       STDERR.puts "  [LLVM] emit_undefined_extern_declarations..." if @progress
       tail_t0 = Time.instant if tail_stats
       emit_io_file_descriptor_new_int32_fallback_if_needed
+      emit_macro_condition_runtime_helpers_if_needed
       if tail_stats
         bootstrap_trace_puts "[LLVM_TAIL_GEN] phase=io_fd_new_fallback_pre_externs ms=#{(Time.instant - tail_t0.not_nil!).total_milliseconds.round(1)} out=#{@output.pos}"
       end
@@ -3675,6 +3678,28 @@ module Adamas::MIR
       emit_raw "}\n\n"
       @emitted_functions << name
       @emitted_function_return_types[name] = "ptr"
+    end
+
+    private def emit_macro_condition_runtime_helpers_if_needed : Nil
+      emit_macro_condition_runtime_helper_if_needed(
+        "flag$Q$$Symbol",
+        "flag?(Symbol)"
+      )
+      emit_macro_condition_runtime_helper_if_needed(
+        "Crystal$CCEventLoop$Dhas_constant$Q$$Symbol",
+        "Crystal::EventLoop.has_constant?(Symbol)"
+      )
+    end
+
+    private def emit_macro_condition_runtime_helper_if_needed(name : String, label : String) : Nil
+      return if @emitted_functions.includes?(name)
+
+      emit_raw "\n; #{label} — macro condition already resolved at compile time\n"
+      emit_raw "define i1 @#{name}(i32 %sym_id) {\n"
+      emit_raw "  ret i1 0\n"
+      emit_raw "}\n\n"
+      @emitted_functions << name
+      @emitted_function_return_types[name] = "i1"
     end
 
     private def emit_missing_crystal_function_stubs
@@ -5286,12 +5311,22 @@ module Adamas::MIR
                      (0...arg_count).map { |i| "ptr %arg#{i}" }.join(", ")
                    end
 
+      if name == "new$$Pointer$LUInt8$R"
+        return String.build do |io|
+          io << "; bootstrap bridge for bare String.new(UInt8*) startup lowering: " << name << "\n"
+          io << "define ptr @" << name << "(" << param_list << ") {\n"
+          io << "  %r = call ptr @__adamas_runtime_string_from_cstr(ptr %arg0)\n"
+          io << "  ret ptr %r\n"
+          io << "}\n"
+        end
+      end
+
       # Bootstrap bridge: full-prelude synthetic main can currently degrade
       # `Exception::CallStack.skip(__FILE__)` into `Int32#skip(String)` after HIR
       # lowering has already selected the correct class method. Treat this metadata
       # call as a no-op here so bootstrap can advance, while no-prelude tests still
       # verify the real `Exception::CallStack.skip` emission path.
-      if name.starts_with?("Int32$Hskip$$")
+      if name == "skip$String" || name.starts_with?("Int32$Hskip$$")
         return String.build do |io|
           io << "; bootstrap no-op for mis-lowered Exception::CallStack.skip: " << name << "\n"
           io << "define " << return_type << " @" << name << "(" << param_list << ") {\n"
@@ -5324,7 +5359,7 @@ module Adamas::MIR
         end
       end
 
-      if name.starts_with?("Int32$Hfrom_stdio$$")
+      if name == "from_stdio$Int32" || name.starts_with?("Int32$Hfrom_stdio$$")
         return String.build do |io|
           io << "; bootstrap no-op for duplicate stdio constant initializer: " << name << "\n"
           io << "define " << return_type << " @" << name << "(" << param_list << ") {\n"
@@ -13661,7 +13696,12 @@ module Adamas::MIR
 
     private def emit_function(func : Function)
       mangled_name = mangle_function_name(func.name)
-      emit_function_trace = bootstrap_env_enabled?("ADAMAS_EMIT_FUNCTION_TRACE", "ADAMAS_EMIT_FUNCTION_TRACE") && func.name == "__adamas_main"
+      emit_function_trace_filter = ::Adamas::Compiler::BootstrapEnv.get?("ADAMAS_EMIT_FUNCTION_TRACE")
+      emit_function_trace = if emit_function_trace_filter && !emit_function_trace_filter.empty?
+                              emit_function_trace_filter == "1" ? func.name == "__adamas_main" : func.name.includes?(emit_function_trace_filter)
+                            else
+                              false
+                            end
 
       if emit_builtin_override(func)
         # Builtin overrides emit raw LLVM directly and can return before the regular
@@ -14099,7 +14139,7 @@ module Adamas::MIR
       block_idx = 0
       blocks = func.blocks
       while block_idx < blocks.size
-        emit_block(blocks.unsafe_fetch(block_idx), func)
+        emit_block(blocks.unsafe_fetch(block_idx), func, emit_function_trace)
         block_idx += 1
       end
 
@@ -14215,6 +14255,13 @@ module Adamas::MIR
     end
 
     # Emit all Alloc instructions at function entry for dominance.
+    private def llvm_zero_initializer_for(llvm_type : String) : String
+      return "0.0" if llvm_type == "float" || llvm_type == "double"
+      return "0" if llvm_type.bytesize > 0 && llvm_type.byte_at(0) == 105_u8 # 'i'
+      return "zeroinitializer" if llvm_type.byte_index(".union")
+      "0"
+    end
+
     private def emit_hoisted_allocas(func : Function) : Array(String)
       emitted_names = [] of String
       func.blocks.each do |block|
@@ -14290,12 +14337,7 @@ module Adamas::MIR
             if phi_llvm_type == "ptr"
               emit_raw "  store ptr null, ptr #{shared_slot}\n"
             else
-              init_val = case phi_llvm_type
-                         when "float", "double" then "0.0"
-                         when .starts_with?('i') then "0"
-                         when .includes?(".union") then "zeroinitializer"
-                         else "0"
-                         end
+              init_val = llvm_zero_initializer_for(phi_llvm_type)
               emit_raw "  store #{phi_llvm_type} #{init_val}, ptr #{shared_slot}\n"
             end
           end
@@ -14391,12 +14433,7 @@ module Adamas::MIR
             emit_raw "  store ptr null, ptr #{slot_name}\n"
           end
         else
-          init_val = case llvm_type
-                     when "float", "double" then "0.0"
-                     when .starts_with?('i') then "0"
-                     when .includes?(".union") then "zeroinitializer"
-                     else "0"
-                     end
+          init_val = llvm_zero_initializer_for(llvm_type)
           emit_raw "  store #{llvm_type} #{init_val}, ptr #{slot_name}\n"
         end
       end
@@ -14420,8 +14457,10 @@ module Adamas::MIR
             slot_name = @cross_block_slots[val_id]?
             next unless slot_name
 
+            key = phi_predecessor_load_key(pred_block_id, val_id)
+
             # Don't add duplicate entries
-            next if @phi_predecessor_loads.has_key?({pred_block_id, val_id})
+            next if @phi_predecessor_loads.has_key?(key)
 
             # Gate on reaching definition: only include predecessor load if
             # the value's defining block dominates the predecessor block.
@@ -14435,7 +14474,7 @@ module Adamas::MIR
 
             # Record that this predecessor block needs to emit a load for this value
             load_name = "r#{val_id}.phi_load.#{pred_block_id}"
-            @phi_predecessor_loads[{pred_block_id, val_id}] = load_name
+            @phi_predecessor_loads[key] = load_name
           end
         end
       end
@@ -15914,7 +15953,10 @@ module Adamas::MIR
       end
     end
 
-    private def emit_block(block : BasicBlock, func : Function)
+    private def emit_block(block : BasicBlock, func : Function, emit_function_trace : Bool = false)
+      if emit_function_trace
+        STDERR.puts "[EMIT_BLOCK_TRACE] func=#{func.name} block=#{block.id} phase=start insts=#{block.instructions.size} term=#{block.terminator.class.name}"
+      end
       emit_raw "#{block_label(block.id)}:\n"
       @indent = 1
       @current_block_id = block.id
@@ -15945,7 +15987,14 @@ module Adamas::MIR
       @deferred_phi_debug_shadow_stores.clear
       phi_idx = 0
       while phi_idx < phi_insts.size
-        emit_instruction(phi_insts.unsafe_fetch(phi_idx), func)
+        phi_inst = phi_insts.unsafe_fetch(phi_idx)
+        if emit_function_trace
+          STDERR.puts "[EMIT_BLOCK_TRACE] func=#{func.name} block=#{block.id} phase=phi_pre id=#{phi_inst.id} kind=#{phi_inst.class.name}"
+        end
+        emit_instruction(phi_inst, func)
+        if emit_function_trace
+          STDERR.puts "[EMIT_BLOCK_TRACE] func=#{func.name} block=#{block.id} phase=phi_post id=#{phi_inst.id}"
+        end
         phi_idx += 1
       end
       @in_phi_block = false
@@ -15989,7 +16038,13 @@ module Adamas::MIR
       non_phi_idx = 0
       while non_phi_idx < non_phi_insts.size
         inst = non_phi_insts.unsafe_fetch(non_phi_idx)
+        if emit_function_trace
+          STDERR.puts "[EMIT_BLOCK_TRACE] func=#{func.name} block=#{block.id} phase=inst_pre id=#{inst.id} kind=#{inst.class.name}"
+        end
         emit_instruction(inst, func)
+        if emit_function_trace
+          STDERR.puts "[EMIT_BLOCK_TRACE] func=#{func.name} block=#{block.id} phase=inst_post id=#{inst.id}"
+        end
         unless flushed_phi_debug_values
           flush_deferred_phi_debug_values
           flushed_phi_debug_values = true
@@ -16025,7 +16080,13 @@ module Adamas::MIR
       unless flushed_phi_debug_values
         flush_deferred_phi_debug_values
       end
+      if emit_function_trace
+        STDERR.puts "[EMIT_BLOCK_TRACE] func=#{func.name} block=#{block.id} phase=term_pre kind=#{block.terminator.class.name}"
+      end
       emit_terminator(block.terminator)
+      if emit_function_trace
+        STDERR.puts "[EMIT_BLOCK_TRACE] func=#{func.name} block=#{block.id} phase=term_post"
+      end
       @indent = 0
       @current_block_id = nil
     end
@@ -16034,12 +16095,28 @@ module Adamas::MIR
       "bb#{block_id}"
     end
 
+    @[AlwaysInline]
+    private def phi_predecessor_load_key(block_id : BlockId, value_id : ValueId) : UInt64
+      (block_id.to_u64 << 32) | value_id.to_u64
+    end
+
+    @[AlwaysInline]
+    private def phi_predecessor_load_key_block(key : UInt64) : BlockId
+      (key >> 32).to_u32
+    end
+
+    @[AlwaysInline]
+    private def phi_predecessor_load_key_value(key : UInt64) : ValueId
+      (key & 0xFFFF_FFFF_u64).to_u32
+    end
+
     # Emit loads from slots for cross-block values used in phi nodes
     # The prepass already identified which (pred_block, val) pairs need loads
     # Now we emit the actual load instructions for this block
     private def emit_phi_predecessor_loads(block : BasicBlock)
-      @phi_predecessor_loads.each do |(key, load_name)|
-        pred_block_id, val_id = key
+      @phi_predecessor_loads.each do |key, load_name|
+        pred_block_id = phi_predecessor_load_key_block(key)
+        val_id = phi_predecessor_load_key_value(key)
         # Only emit loads for THIS block
         next unless pred_block_id == block.id
 
@@ -18853,6 +18930,7 @@ module Adamas::MIR
         # AND the MIR type is not a Pointer kind (actual Crystal Pointer(T)).
         left_is_heap_ptr = false
         right_is_heap_ptr = false
+        pointer_width_arithmetic = false
         if is_arithmetic && operand_type_str == "ptr"
           left_mir = @module.type_registry.get(operand_type) if operand_type
           is_packed = @inttoptr_value_ids.includes?(inst.left)
@@ -18870,6 +18948,7 @@ module Adamas::MIR
         # For heap-allocated primitives, keep the natural result width (e.g. i32).
         if (operand_type_str == "ptr" && !left_is_heap_ptr) || (right_type_str == "ptr" && !right_is_heap_ptr)
           int_type = pointer_sized_int_llvm_type
+          pointer_width_arithmetic = is_arithmetic
         end
 
         if operand_type_str == "ptr"
@@ -18892,6 +18971,11 @@ module Adamas::MIR
           end
           right = "%binop#{inst.id}.right"
           right_type_str = int_type
+        end
+
+        if pointer_width_arithmetic && !convert_result_to_ptr
+          result_type = int_type
+          @value_types[inst.id] = int_type == "i64" ? TypeRef::INT64 : TypeRef::INT32
         end
 
         # Handle void operands - replace with 0 of appropriate type (value was likely never defined)
@@ -20119,7 +20203,7 @@ module Adamas::MIR
         end
       end
       # Check for predecessor-loaded value (for cross-block SSA fix)
-      if pred_load_name = @phi_predecessor_loads[{block, val}]?
+      if pred_load_name = @phi_predecessor_loads[phi_predecessor_load_key(block, val)]?
         # CRITICAL: Use the SLOT ALLOCATION TYPE, not @value_types[val]
         # @value_types may be updated during emission (e.g., nil constant → ptr),
         # but the slot was allocated with the prepass type. The load will use the slot type.
@@ -20181,11 +20265,10 @@ module Adamas::MIR
       nil  # Let caller handle normally (type mismatch handling)
     end
 
-    private def phi_has_bool_mismatched_incoming?(incoming_pairs : Array(Tuple(BlockId, ValueId))) : Bool
+    private def phi_has_bool_mismatched_incoming?(incoming_values : Array(ValueId)) : Bool
       idx = 0
-      while idx < incoming_pairs.size
-        pair = incoming_pairs.unsafe_fetch(idx)
-        val = pair[1]
+      while idx < incoming_values.size
+        val = incoming_values.unsafe_fetch(idx)
         val_type = @value_types[val]?
         val_type_str = val_type ? @type_mapper.llvm_type(val_type) : nil
         return true if val_type_str && val_type_str != "i1" && val_type_str != "void"
@@ -20194,11 +20277,10 @@ module Adamas::MIR
       false
     end
 
-    private def phi_has_int_mismatched_incoming?(incoming_pairs : Array(Tuple(BlockId, ValueId)), phi_bits : Int32) : Bool
+    private def phi_has_int_mismatched_incoming?(incoming_values : Array(ValueId), phi_bits : Int32) : Bool
       idx = 0
-      while idx < incoming_pairs.size
-        pair = incoming_pairs.unsafe_fetch(idx)
-        val = pair[1]
+      while idx < incoming_values.size
+        val = incoming_values.unsafe_fetch(idx)
         val_type = @value_types[val]?
         if !val_type
           val_emitted = @value_names.has_key?(val)
@@ -20224,11 +20306,10 @@ module Adamas::MIR
       false
     end
 
-    private def phi_has_ptr_incompatible_incoming?(incoming_pairs : Array(Tuple(BlockId, ValueId))) : Bool
+    private def phi_has_ptr_incompatible_incoming?(incoming_values : Array(ValueId)) : Bool
       idx = 0
-      while idx < incoming_pairs.size
-        pair = incoming_pairs.unsafe_fetch(idx)
-        val = pair[1]
+      while idx < incoming_values.size
+        val = incoming_values.unsafe_fetch(idx)
         val_type = @value_types[val]?
         if val_type
           val_type_str = @type_mapper.llvm_type(val_type)
@@ -20242,11 +20323,10 @@ module Adamas::MIR
       false
     end
 
-    private def phi_has_non_union_incoming?(incoming_pairs : Array(Tuple(BlockId, ValueId))) : Bool
+    private def phi_has_non_union_incoming?(incoming_values : Array(ValueId)) : Bool
       idx = 0
-      while idx < incoming_pairs.size
-        pair = incoming_pairs.unsafe_fetch(idx)
-        val = pair[1]
+      while idx < incoming_values.size
+        val = incoming_values.unsafe_fetch(idx)
         val_type = @value_types[val]?
         val_llvm_type = val_type ? @type_mapper.llvm_type(val_type) : nil
         return true if val_llvm_type && !val_llvm_type.includes?(".union")
@@ -20255,11 +20335,10 @@ module Adamas::MIR
       false
     end
 
-    private def phi_has_different_union_incoming?(incoming_pairs : Array(Tuple(BlockId, ValueId)), phi_type : String) : Bool
+    private def phi_has_different_union_incoming?(incoming_values : Array(ValueId), phi_type : String) : Bool
       idx = 0
-      while idx < incoming_pairs.size
-        pair = incoming_pairs.unsafe_fetch(idx)
-        val = pair[1]
+      while idx < incoming_values.size
+        val = incoming_values.unsafe_fetch(idx)
         val_type = @value_types[val]?
         val_llvm_type = val_type ? @type_mapper.llvm_type(val_type) : nil
         return true if val_llvm_type && val_llvm_type.includes?(".union") && val_llvm_type != phi_type
@@ -20413,17 +20492,35 @@ module Adamas::MIR
       # Use MIR type for phi - don't upgrade to union as downstream code expects original type
       phi_type = @type_mapper.llvm_type(inst.type)
       prepass_type_ref = @value_types[inst.id]?
+      phi_trace = ::Adamas::Compiler::BootstrapEnv.get?("ADAMAS_EMIT_PHI_TRACE")
+      trace_phi = phi_trace && !phi_trace.empty?
+      if trace_phi
+        STDERR.puts "[PHI_TRACE] func=#{@current_func_name} phi=#{inst.id} stage=start type=#{phi_type} incoming=#{inst.incoming_size} current_block=#{@current_block_id || 0_u32}"
+      end
 
       # Helper lambda for safe block name lookup
       block_name = ->(block_id : BlockId) {
         "bb#{block_id}"
       }
 
-      incoming_pairs = inst.incoming
+      incoming_blocks = [] of BlockId
+      incoming_values = [] of ValueId
+      incoming_idx = 0
+      while incoming_idx < inst.incoming_size
+        incoming_blocks << inst.incoming_block_at(incoming_idx)
+        incoming_values << inst.incoming_value_at(incoming_idx)
+        incoming_idx += 1
+      end
+      if trace_phi
+        STDERR.puts "[PHI_TRACE] func=#{@current_func_name} phi=#{inst.id} stage=copied incoming_blocks=#{incoming_blocks.size} incoming_values=#{incoming_values.size}"
+      end
       missing_preds = [] of BlockId
       if current_block_id = @current_block_id
         if cur_block = @current_func_blocks[current_block_id]?
           preds = cur_block.predecessors
+          if trace_phi
+            STDERR.puts "[PHI_TRACE] func=#{@current_func_name} phi=#{inst.id} stage=preds current_block=#{current_block_id} preds=#{preds.size}"
+          end
           if preds.any?
             # Double-validate predecessors: check both computed preds AND
             # that the block's terminator actually targets us. This catches
@@ -20436,39 +20533,64 @@ module Adamas::MIR
               end
             end
             incoming_map = {} of BlockId => ValueId
-            inst.incoming.each { |(block_id, val)| incoming_map[block_id] = val }
-            incoming_pairs = [] of Tuple(BlockId, ValueId)
+            incoming_idx = 0
+            while incoming_idx < incoming_blocks.size
+              incoming_map[incoming_blocks.unsafe_fetch(incoming_idx)] = incoming_values.unsafe_fetch(incoming_idx)
+              incoming_idx += 1
+            end
+            incoming_blocks = [] of BlockId
+            incoming_values = [] of ValueId
             validated_preds.each do |pred|
               if val = incoming_map[pred]?
-                incoming_pairs << {pred, val}
+                incoming_blocks << pred
+                incoming_values << val
               else
                 missing_preds << pred
               end
             end
+            if trace_phi
+              STDERR.puts "[PHI_TRACE] func=#{@current_func_name} phi=#{inst.id} stage=validated preds=#{validated_preds.size} incoming=#{incoming_blocks.size} missing=#{missing_preds.size}"
+            end
           else
             # No predecessors computed — validate incoming blocks by checking
             # if each block's terminator actually targets the current block.
-            filtered = [] of Tuple(BlockId, ValueId)
-            inst.incoming.each do |(block_id, val)|
+            filtered_blocks = [] of BlockId
+            filtered_values = [] of ValueId
+            incoming_idx = 0
+            while incoming_idx < incoming_blocks.size
+              block_id = incoming_blocks.unsafe_fetch(incoming_idx)
+              val = incoming_values.unsafe_fetch(incoming_idx)
+              incoming_idx += 1
               if pred_block = @current_func_blocks[block_id]?
                 succs = pred_block.terminator.successors
                 if succs.includes?(current_block_id)
-                  filtered << {block_id, val}
+                  filtered_blocks << block_id
+                  filtered_values << val
                 end
               else
-                filtered << {block_id, val}
+                filtered_blocks << block_id
+                filtered_values << val
               end
             end
-            incoming_pairs = filtered
+            incoming_blocks = filtered_blocks
+            incoming_values = filtered_values
+            if trace_phi
+              STDERR.puts "[PHI_TRACE] func=#{@current_func_name} phi=#{inst.id} stage=filtered_no_preds incoming=#{incoming_blocks.size}"
+            end
           end
         end
       end
 
       # Filter pass-through incomings where the value is defined in a different block
       # and we don't have a predecessor load. These produce invalid IR (undefined %rN).
-      if incoming_pairs.size > 0
-        filtered = [] of Tuple(BlockId, ValueId)
-        incoming_pairs.each do |(block_id, val_id)|
+      if incoming_blocks.size > 0
+        filtered_blocks = [] of BlockId
+        filtered_values = [] of ValueId
+        incoming_idx = 0
+        while incoming_idx < incoming_blocks.size
+          block_id = incoming_blocks.unsafe_fetch(incoming_idx)
+          val_id = incoming_values.unsafe_fetch(incoming_idx)
+          incoming_idx += 1
           def_inst = find_def_inst(val_id)
           val_type = @value_types[val_id]?
           if val_type == TypeRef::VOID && phi_type != "void"
@@ -20485,7 +20607,7 @@ module Adamas::MIR
             next
           end
           def_block = @value_def_block[val_id]?
-          if def_block && def_block != block_id && !@phi_predecessor_loads.has_key?({block_id, val_id})
+          if def_block && def_block != block_id && !@phi_predecessor_loads.has_key?(phi_predecessor_load_key(block_id, val_id))
             # Entry block values dominate all other blocks — safe to reference directly
             # (they are excluded from cross_block_values/slots for efficiency,
             # but are always available in LLVM IR)
@@ -20496,9 +20618,14 @@ module Adamas::MIR
               next
             end
           end
-          filtered << {block_id, val_id}
+          filtered_blocks << block_id
+          filtered_values << val_id
         end
-        incoming_pairs = filtered
+        incoming_blocks = filtered_blocks
+        incoming_values = filtered_values
+        if trace_phi
+          STDERR.puts "[PHI_TRACE] func=#{@current_func_name} phi=#{inst.id} stage=filtered_cross_block incoming=#{incoming_blocks.size} missing=#{missing_preds.size}"
+        end
       end
       default_phi_value = ->(llvm_type : String) do
         if llvm_type == "ptr"
@@ -20522,24 +20649,36 @@ module Adamas::MIR
       # If an incoming value is a UnionUnwrap payload and the phi expects the original union,
       # use the union value instead of the payload ptr to avoid ptr-typed phi mismatches.
       if phi_type.includes?(".union")
-        incoming_pairs = incoming_pairs.map do |(block, val)|
+        normalized_blocks = [] of BlockId
+        normalized_values = [] of ValueId
+        incoming_idx = 0
+        while incoming_idx < incoming_blocks.size
+          block = incoming_blocks.unsafe_fetch(incoming_idx)
+          val = incoming_values.unsafe_fetch(incoming_idx)
+          incoming_idx += 1
           if def_inst = find_def_inst(val)
             if def_inst.is_a?(UnionUnwrap)
               union_val = def_inst.union_value
               union_type_ref = @value_types[union_val]?
               union_llvm_type = union_type_ref ? @type_mapper.llvm_type(union_type_ref) : nil
               if union_llvm_type == phi_type
-                {block, union_val}
+                normalized_blocks << block
+                normalized_values << union_val
               else
-                {block, val}
+                normalized_blocks << block
+                normalized_values << val
               end
             else
-              {block, val}
+              normalized_blocks << block
+              normalized_values << val
             end
           else
-            {block, val}
+            normalized_blocks << block
+            normalized_values << val
           end
         end
+        incoming_blocks = normalized_blocks
+        incoming_values = normalized_values
       end
 
       # Enable phi mode to prevent value_ref from emitting loads
@@ -20550,21 +20689,27 @@ module Adamas::MIR
       # Note: prepass_type_ref already retrieved above
       if prepass_type_ref == TypeRef::POINTER && phi_type.includes?(".union")
         # Prepass determined this union phi should be ptr - emit as ptr phi
-        incoming = incoming_pairs.map do |(block, val)|
+        incoming = [] of String
+        incoming_idx = 0
+        while incoming_idx < incoming_blocks.size
+          block = incoming_blocks.unsafe_fetch(incoming_idx)
+          val = incoming_values.unsafe_fetch(incoming_idx)
+          incoming_idx += 1
           # Check for predecessor load first (cross-block SSA fix)
           if pred_ref = phi_incoming_ref(block, val, "ptr")
-            next "[#{pred_ref}, %#{block_name.call(block)}]"
+            incoming << "[#{pred_ref}, %#{block_name.call(block)}]"
+            next
           end
             val_type = @value_types[val]?
             val_type_str = val_type ? @type_mapper.llvm_type(val_type) : nil
             if val_type_str && val_type_str.includes?(".union")
               if extract_info = @phi_union_to_ptr_extracts[{block, val}]?
-                "[%#{extract_info[0]}, %#{block_name.call(block)}]"
+                incoming << "[%#{extract_info[0]}, %#{block_name.call(block)}]"
               else
                 if ENV["ADAMAS_NULL_PHI_TRACE"]?
                   STDERR.puts "[NULL_PHI] func=#{@current_func_name} phi=#{name} val=r#{val} type=#{val_type_str} def=? reason=prepass_union_no_extract block=#{block}"
                 end
-                "[null, %#{block_name.call(block)}]"
+                incoming << "[null, %#{block_name.call(block)}]"
               end
             elsif val_type_str && val_type_str.starts_with?('i') && !val_type_str.includes?(".union")
               # Int value can't be used in ptr phi - use null
@@ -20573,7 +20718,7 @@ module Adamas::MIR
                 def_kind = def_inst_trace ? def_inst_trace.class.name.split("::").last : "?"
                 STDERR.puts "[NULL_PHI] func=#{@current_func_name} phi=#{name} val=r#{val} type=#{val_type_str} def=#{def_kind} reason=prepass_int_in_ptr_phi block=#{block}"
               end
-              "[null, %#{block_name.call(block)}]"
+              incoming << "[null, %#{block_name.call(block)}]"
           else
             # Check if value was emitted before using value_ref
             val_emitted = @value_names.has_key?(val)
@@ -20585,10 +20730,10 @@ module Adamas::MIR
                 def_kind = def_inst_trace ? def_inst_trace.class.name.split("::").last : "?"
                 STDERR.puts "[NULL_PHI] func=#{@current_func_name} phi=#{name} val=r#{val} type=#{val_type_str} def=#{def_kind} reason=prepass_undef_in_ptr_phi block=#{block}"
               end
-              "[null, %#{block_name.call(block)}]"
+              incoming << "[null, %#{block_name.call(block)}]"
             else
               ref = value_ref(val)
-              "[#{ref}, %#{block_name.call(block)}]"
+              incoming << "[#{ref}, %#{block_name.call(block)}]"
             end
           end
         end
@@ -20606,6 +20751,9 @@ module Adamas::MIR
       if phi_type == "void"
         phi_type = "ptr"
         @value_types[inst.id] = TypeRef::POINTER
+        if trace_phi
+          STDERR.puts "[PHI_TRACE] func=#{@current_func_name} phi=#{inst.id} stage=void_to_ptr"
+        end
         # Fall through to the normal ptr phi handling below
       end
 
@@ -20617,41 +20765,47 @@ module Adamas::MIR
 
       # Check if i1 phi has type-mismatched incoming values (union, ptr, larger int, float)
       if is_bool_type
-        has_mismatched_incoming = phi_has_bool_mismatched_incoming?(incoming_pairs)
+        has_mismatched_incoming = phi_has_bool_mismatched_incoming?(incoming_values)
         if has_mismatched_incoming
-          incoming = incoming_pairs.map do |(block, val)|
+          incoming = [] of String
+          incoming_idx = 0
+          while incoming_idx < incoming_blocks.size
+            block = incoming_blocks.unsafe_fetch(incoming_idx)
+            val = incoming_values.unsafe_fetch(incoming_idx)
+            incoming_idx += 1
             # Check for predecessor load first (cross-block SSA fix) - but only if types match
             pred_ref = phi_incoming_ref(block, val, "i1")
             if pred_ref
-              next "[#{pred_ref}, %#{block_name.call(block)}]"
+              incoming << "[#{pred_ref}, %#{block_name.call(block)}]"
+              next
             end
             val_type = @value_types[val]?
             val_type_str = val_type ? @type_mapper.llvm_type(val_type) : nil
             if val_type_str && val_type_str.includes?(".union")
               # Union value - use 0 (false) as default
-              "[0, %#{block_name.call(block)}]"
+              incoming << "[0, %#{block_name.call(block)}]"
             elsif val_type_str == "ptr" || val_type_str == "void"
               # Ptr/void value flowing into i1 phi - use 0 (type mismatch)
-              "[0, %#{block_name.call(block)}]"
+              incoming << "[0, %#{block_name.call(block)}]"
             elsif val_type_str && val_type_str.starts_with?('i') && val_type_str != "i1"
               # Larger int (i8, i16, i32, i64) flowing into i1 phi - use 0 (type mismatch)
               # Can't truncate in phi node, so use 0 as safe default
-              "[0, %#{block_name.call(block)}]"
+              incoming << "[0, %#{block_name.call(block)}]"
             elsif val_type_str == "float" || val_type_str == "double"
               # Float/double value flowing into i1 phi - use 0 (type mismatch)
-              "[0, %#{block_name.call(block)}]"
+              incoming << "[0, %#{block_name.call(block)}]"
             else
               # Check if value was emitted before using value_ref
               val_emitted = @value_names.has_key?(val)
               val_is_const = @constant_values.has_key?(val)
               if !val_emitted && !val_is_const
                 # Undefined value in bool phi - use 0
-                "[0, %#{block_name.call(block)}]"
+                incoming << "[0, %#{block_name.call(block)}]"
               else
                 ref = value_ref(val)
                 # Guard against null and float literals for non-ptr phi
                 ref = "0" if ref == "null" || ref.includes?('.')
-                "[#{ref}, %#{block_name.call(block)}]"
+                incoming << "[#{ref}, %#{block_name.call(block)}]"
               end
             end
           end
@@ -20669,19 +20823,25 @@ module Adamas::MIR
       # 3) values with no type (forward references to calls)
       if is_int_type
         phi_bits = phi_type[1..-1].to_i? || 32
-        has_mismatched_int_incoming = phi_has_int_mismatched_incoming?(incoming_pairs, phi_bits)
+        has_mismatched_int_incoming = phi_has_int_mismatched_incoming?(incoming_values, phi_bits)
         if has_mismatched_int_incoming
-          incoming = incoming_pairs.map do |(block, val)|
+          incoming = [] of String
+          incoming_idx = 0
+          while incoming_idx < incoming_blocks.size
+            block = incoming_blocks.unsafe_fetch(incoming_idx)
+            val = incoming_values.unsafe_fetch(incoming_idx)
+            incoming_idx += 1
             # Check for predecessor load first (cross-block SSA fix)
             if pred_ref = phi_incoming_ref(block, val, phi_type)
-              next "[#{pred_ref}, %#{block_name.call(block)}]"
+              incoming << "[#{pred_ref}, %#{block_name.call(block)}]"
+              next
             end
             val_type = @value_types[val]?
             val_type_str = val_type ? @type_mapper.llvm_type(val_type) : nil
             if val_type_str && val_type_str.includes?(".union")
               # Union value flowing into int phi - use 0 as default
               # This happens with e.g. String#index returning Int32|Nil
-              "[0, %#{block_name.call(block)}]"
+              incoming << "[0, %#{block_name.call(block)}]"
             elsif val_type_str && val_type_str.starts_with?('i') && !val_type_str.includes?(".union")
               val_bits = val_type_str[1..-1].to_i? || 32
               if val_bits != phi_bits
@@ -20689,36 +20849,36 @@ module Adamas::MIR
                 # First check for predecessor conversion (for params and fixed-type values)
                 if pred_conv = @phi_predecessor_conversions[{block, val}]?
                   conv_name, _, _ = pred_conv
-                  "[%#{conv_name}, %#{block_name.call(block)}]"
+                  incoming << "[%#{conv_name}, %#{block_name.call(block)}]"
                 elsif @phi_zext_conversions.has_key?(val)
                   # Construct the expected zext name (will be emitted by emit_extern_call)
                   zext_name = "%r#{val}.zext"
-                  "[#{zext_name}, %#{block_name.call(block)}]"
+                  incoming << "[#{zext_name}, %#{block_name.call(block)}]"
                 else
                   # No conversion planned - use 0 as fallback
-                  "[0, %#{block_name.call(block)}]"
+                  incoming << "[0, %#{block_name.call(block)}]"
                 end
               else
                 ref = value_ref(val)
                 ref = "0" if ref == "null"
-                "[#{ref}, %#{block_name.call(block)}]"
+                incoming << "[#{ref}, %#{block_name.call(block)}]"
               end
             elsif val_type_str == "float" || val_type_str == "double"
               # Float/double value flowing into int phi - use 0 as fallback
-              "[0, %#{block_name.call(block)}]"
+              incoming << "[0, %#{block_name.call(block)}]"
             elsif val_type_str.nil? || val_type_str == "void" || val_type_str == "ptr"
               # No type, void, or ptr value flowing into int phi - use 0
-              "[0, %#{block_name.call(block)}]"
+              incoming << "[0, %#{block_name.call(block)}]"
             else
               # Check if value was emitted
               val_emitted = @value_names.has_key?(val)
               val_is_const = @constant_values.has_key?(val)
               if !val_emitted && !val_is_const
-                "[0, %#{block_name.call(block)}]"
+                incoming << "[0, %#{block_name.call(block)}]"
               else
                 ref = value_ref(val)
                 ref = "0" if ref == "null"
-                "[#{ref}, %#{block_name.call(block)}]"
+                incoming << "[#{ref}, %#{block_name.call(block)}]"
               end
             end
           end
@@ -20734,60 +20894,78 @@ module Adamas::MIR
       # Check if ptr phi has incompatible incoming (union, int, float) - use null for them
       # Can't extract/convert in current block for phi, so use null (lossy but compiles)
       if is_ptr_type
-        has_incompatible_incoming = phi_has_ptr_incompatible_incoming?(incoming_pairs)
+        if trace_phi
+          STDERR.puts "[PHI_TRACE] func=#{@current_func_name} phi=#{inst.id} stage=ptr_check incoming=#{incoming_values.size}"
+        end
+        has_incompatible_incoming = phi_has_ptr_incompatible_incoming?(incoming_values)
+        if trace_phi
+          STDERR.puts "[PHI_TRACE] func=#{@current_func_name} phi=#{inst.id} stage=ptr_check_done incompatible=#{has_incompatible_incoming}"
+        end
         if has_incompatible_incoming
-          incoming = incoming_pairs.map do |(block, val)|
+          incoming = [] of String
+          incoming_idx = 0
+          while incoming_idx < incoming_blocks.size
+            block = incoming_blocks.unsafe_fetch(incoming_idx)
+            val = incoming_values.unsafe_fetch(incoming_idx)
+            incoming_idx += 1
+            if trace_phi
+              STDERR.puts "[PHI_TRACE] func=#{@current_func_name} phi=#{inst.id} stage=ptr_incoming idx=#{incoming_idx} block=#{block} val=#{val}"
+            end
             # Check for predecessor load first (cross-block SSA fix)
             if pred_ref = phi_incoming_ref(block, val, "ptr")
-              next "[#{pred_ref}, %#{block_name.call(block)}]"
-            end
-            val_type = @value_types[val]?
-            val_type_str = val_type ? @type_mapper.llvm_type(val_type) : nil
-            if val_type_str && val_type_str.includes?(".union")
-              if extract_info = @phi_union_to_ptr_extracts[{block, val}]?
-                "[%#{extract_info[0]}, %#{block_name.call(block)}]"
-              else
-                if ENV["ADAMAS_NULL_PHI_TRACE"]?
-                  STDERR.puts "[NULL_PHI] func=#{@current_func_name} phi=#{name} val=r#{val} type=#{val_type_str} def=? reason=union_no_extract block=#{block}"
-                end
-                "[null, %#{block_name.call(block)}]"
-              end
-            elsif val_type_str && val_type_str.starts_with?('i') && !val_type_str.includes?(".union")
-              # Int value in ptr phi - use null
-              if ENV["ADAMAS_NULL_PHI_TRACE"]?
-                def_inst_trace = find_def_inst(val)
-                def_kind = def_inst_trace ? def_inst_trace.class.name.split("::").last : "?"
-                STDERR.puts "[NULL_PHI] func=#{@current_func_name} phi=#{name} val=r#{val} type=#{val_type_str} def=#{def_kind} reason=int_in_ptr_phi block=#{block}"
-              end
-              "[null, %#{block_name.call(block)}]"
-            elsif val_type_str == "float" || val_type_str == "double"
-              # Float/double value in ptr phi - use null
-              "[null, %#{block_name.call(block)}]"
-            elsif val_type_str == "void"
-              # Void value (from void call) can't be used in ptr phi - use null
-              if ENV["ADAMAS_NULL_PHI_TRACE"]?
-                STDERR.puts "[NULL_PHI] func=#{@current_func_name} phi=#{name} val=r#{val} type=void reason=void_in_ptr_phi block=#{block}"
-              end
-              "[null, %#{block_name.call(block)}]"
+              incoming << "[#{pred_ref}, %#{block_name.call(block)}]"
             else
-              # Check if value was emitted before using value_ref
-              val_emitted = @value_names.has_key?(val)
-              val_is_const = @constant_values.has_key?(val)
-              if !val_emitted && !val_is_const
-                # Undefined value in ptr phi - use null
+              val_type = @value_types[val]?
+              val_type_str = val_type ? @type_mapper.llvm_type(val_type) : nil
+              if val_type_str && val_type_str.includes?(".union")
+                if extract_info = @phi_union_to_ptr_extracts[{block, val}]?
+                  incoming << "[%#{extract_info[0]}, %#{block_name.call(block)}]"
+                else
+                  if ENV["ADAMAS_NULL_PHI_TRACE"]?
+                    STDERR.puts "[NULL_PHI] func=#{@current_func_name} phi=#{name} val=r#{val} type=#{val_type_str} def=? reason=union_no_extract block=#{block}"
+                  end
+                  incoming << "[null, %#{block_name.call(block)}]"
+                end
+              elsif val_type_str && val_type_str.starts_with?('i') && !val_type_str.includes?(".union")
+                # Int value in ptr phi - use null
                 if ENV["ADAMAS_NULL_PHI_TRACE"]?
                   def_inst_trace = find_def_inst(val)
                   def_kind = def_inst_trace ? def_inst_trace.class.name.split("::").last : "?"
-                  STDERR.puts "[NULL_PHI] func=#{@current_func_name} phi=#{name} val=r#{val} type=#{val_type_str} def=#{def_kind} reason=undef_in_ptr_phi block=#{block}"
+                  STDERR.puts "[NULL_PHI] func=#{@current_func_name} phi=#{name} val=r#{val} type=#{val_type_str} def=#{def_kind} reason=int_in_ptr_phi block=#{block}"
                 end
-                "[null, %#{block_name.call(block)}]"
+                incoming << "[null, %#{block_name.call(block)}]"
+              elsif val_type_str == "float" || val_type_str == "double"
+                # Float/double value in ptr phi - use null
+                incoming << "[null, %#{block_name.call(block)}]"
+              elsif val_type_str == "void"
+                # Void value (from void call) can't be used in ptr phi - use null
+                if ENV["ADAMAS_NULL_PHI_TRACE"]?
+                  STDERR.puts "[NULL_PHI] func=#{@current_func_name} phi=#{name} val=r#{val} type=void reason=void_in_ptr_phi block=#{block}"
+                end
+                incoming << "[null, %#{block_name.call(block)}]"
               else
-                ref = value_ref(val)
-                "[#{ref}, %#{block_name.call(block)}]"
+                # Check if value was emitted before using value_ref
+                val_emitted = @value_names.has_key?(val)
+                val_is_const = @constant_values.has_key?(val)
+                if !val_emitted && !val_is_const
+                  # Undefined value in ptr phi - use null
+                  if ENV["ADAMAS_NULL_PHI_TRACE"]?
+                    def_inst_trace = find_def_inst(val)
+                    def_kind = def_inst_trace ? def_inst_trace.class.name.split("::").last : "?"
+                    STDERR.puts "[NULL_PHI] func=#{@current_func_name} phi=#{name} val=r#{val} type=#{val_type_str} def=#{def_kind} reason=undef_in_ptr_phi block=#{block}"
+                  end
+                  incoming << "[null, %#{block_name.call(block)}]"
+                else
+                  ref = value_ref(val)
+                  incoming << "[#{ref}, %#{block_name.call(block)}]"
+                end
               end
             end
           end
           append_missing.call(incoming, "ptr")
+          if trace_phi
+            STDERR.puts "[PHI_TRACE] func=#{@current_func_name} phi=#{inst.id} stage=ptr_emit entries=#{incoming.size} missing=#{missing_preds.size}"
+          end
           emit "#{name} = phi ptr #{join_phi_incoming_entries(incoming)}"
           record_emitted_type(name, "ptr")
           @value_types[inst.id] = TypeRef::POINTER
@@ -20802,17 +20980,23 @@ module Adamas::MIR
         # Check if any incoming value is a non-union type (including ptr) when phi expects union
         # OR if any incoming value is a DIFFERENT union type
         # This happens when MIR doesn't properly wrap values in unions before phi
-        has_non_union_incoming = phi_has_non_union_incoming?(incoming_pairs)
+        has_non_union_incoming = phi_has_non_union_incoming?(incoming_values)
         # Also check for different union types (e.g., UInt8___Nil.union vs String___Nil.union)
-        has_different_union_incoming = phi_has_different_union_incoming?(incoming_pairs, phi_type)
+        has_different_union_incoming = phi_has_different_union_incoming?(incoming_values, phi_type)
         if has_non_union_incoming || has_different_union_incoming
           # Emit union phi with proper conversion for mismatched incoming values
           # For different union types: defer alloca+store+load reinterpret to predecessor block
           # For non-union types: use zeroinitializer (nil case)
-          incoming = incoming_pairs.map do |(block, val)|
+          incoming = [] of String
+          incoming_idx = 0
+          while incoming_idx < incoming_blocks.size
+            block = incoming_blocks.unsafe_fetch(incoming_idx)
+            val = incoming_values.unsafe_fetch(incoming_idx)
+            incoming_idx += 1
             # Check for predecessor load first (cross-block SSA fix)
             if pred_ref = phi_incoming_ref(block, val, phi_type)
-              next "[#{pred_ref}, %#{block_name.call(block)}]"
+              incoming << "[#{pred_ref}, %#{block_name.call(block)}]"
+              next
             end
             val_type = @value_types[val]?
             val_type_str = val_type ? @type_mapper.llvm_type(val_type) : nil
@@ -20831,7 +21015,7 @@ module Adamas::MIR
               ref = value_ref(val)
               # If value_ref returned "null", convert to zeroinitializer for union
               ref = "zeroinitializer" if ref == "null"
-              "[#{ref}, %#{block_name.call(block)}]"
+              incoming << "[#{ref}, %#{block_name.call(block)}]"
             elsif effective_val_type && effective_val_type.includes?(".union") && effective_val_type != phi_type
               # Different union type - defer reinterpret to predecessor block
               existing = @phi_union_to_union_converts[{block, val}]?
@@ -20843,10 +21027,10 @@ module Adamas::MIR
                 arr = @phi_union_to_union_converts[{block, val}] ||= [] of {String, String, String}
                 arr << {convert_name, effective_val_type, phi_type}
               end
-              "[%#{convert_name}, %#{block_name.call(block)}]"
+              incoming << "[%#{convert_name}, %#{block_name.call(block)}]"
             else
               # Non-union type mismatch - use zeroinitializer (nil case)
-              "[zeroinitializer, %#{block_name.call(block)}]"
+              incoming << "[zeroinitializer, %#{block_name.call(block)}]"
             end
           end
           append_missing.call(incoming, phi_type)
@@ -20860,10 +21044,9 @@ module Adamas::MIR
 
       incoming = [] of String
       incoming_idx = 0
-      while incoming_idx < incoming_pairs.size
-        pair = incoming_pairs.unsafe_fetch(incoming_idx)
-        block = pair[0]
-        val = pair[1]
+      while incoming_idx < incoming_blocks.size
+        block = incoming_blocks.unsafe_fetch(incoming_idx)
+        val = incoming_values.unsafe_fetch(incoming_idx)
         incoming << fallback_phi_incoming_entry(block, val, phi_type, is_union_type, is_ptr_type, is_int_type, is_bool_type, is_float_type, name)
         incoming_idx += 1
       end
@@ -24525,24 +24708,27 @@ module Adamas::MIR
 
     private def emit_array_literal(inst : ArrayLiteral, name : String)
       base_name = name.lstrip('%')
-      element_type = @type_mapper.llvm_type(inst.element_type)
+      inst_element_type = inst.element_type
+      element_type = @type_mapper.llvm_type(inst_element_type)
       # Void is not valid for array elements - use ptr instead
       element_type = "ptr" if element_type == "void"
       size = inst.size
-      array_type_id = array_runtime_type_id_for_element(inst.element_type)
+      array_type_id = array_runtime_type_id_for_element(inst_element_type)
 
       # For empty array literals (size 0), try to call Array(T).new(0) constructor
       # to get a proper heap-allocated Array object. This is critical when the
       # array escapes (e.g. stored in classvars) since stack alloca would be invalid.
       if size == 0
         # Construct the Array(T).new(Int32) constructor name from element type
-        elem_type_obj = @module.type_registry.get(inst.element_type)
+        elem_type_obj = @module.type_registry.get(inst_element_type)
         elem_name = elem_type_obj.try(&.name)
         if elem_name && !elem_name.empty? && elem_name != "Unknown" && elem_name != "Void"
           array_class_name = "Array(#{elem_name})"
           ctor_name = @type_mapper.mangle_name(array_class_name + ".new") + "$$Int32"
-          # Check if this constructor exists in the module
-          ctor_func = @module.functions.find { |f| mangle_function_name(f.name) == ctor_name }
+          # Check if this constructor exists in the module. Use the backend's
+          # prebuilt name index instead of scanning @module.functions with a block:
+          # stage2 has exposed block/array scan fragility in this hot path.
+          ctor_func = @func_by_name[ctor_name]?
           if ctor_func
             emit "#{name} = call ptr @#{ctor_name}(i32 0)"
             @called_crystal_functions[ctor_name] ||= {"ptr", 1, ["i32"] of String}
@@ -24553,7 +24739,7 @@ module Adamas::MIR
               emit "store i32 #{array_type_id}, ptr %#{base_name}.tid_fix_ptr"
             end
             @array_info[inst.id] = {element_type, size}
-            @array_element_type_refs[inst.id] = inst.element_type
+            @array_element_type_refs[inst.id] = inst_element_type
             return
           end
         end
@@ -26678,9 +26864,23 @@ module Adamas::MIR
         @indent += 1
         # Deduplicate case values — LLVM requires unique switch case values.
         # MIR may produce duplicates when multiple subtypes share the same type_id.
-        seen_cases = ::Set(Int64).new
-        term.cases.each do |(case_val, block)|
-          next if seen_cases.includes?(case_val)
+        seen_cases = [] of Int64
+        case_idx = 0
+        while case_idx < term.cases.size
+          switch_case = term.cases.unsafe_fetch(case_idx)
+          case_val = switch_case[0]
+          block = switch_case[1]
+          case_idx += 1
+          seen = false
+          seen_idx = 0
+          while seen_idx < seen_cases.size
+            if seen_cases.unsafe_fetch(seen_idx) == case_val
+              seen = true
+              break
+            end
+            seen_idx += 1
+          end
+          next if seen
           seen_cases << case_val
           emit "#{val_llvm_type} #{case_val}, label %#{block_label(block)}"
         end

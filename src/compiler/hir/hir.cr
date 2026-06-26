@@ -1230,22 +1230,51 @@ module Adamas::HIR
   # Phi node (for SSA, used minimally in HIR, more in MIR)
   class Phi < Value
     getter incoming : Array(Tuple(BlockId, ValueId))
+    getter incoming_blocks : Array(BlockId)
+    getter incoming_values : Array(ValueId)
 
     def initialize(id : ValueId, type : TypeRef, @incoming : Array(Tuple(BlockId, ValueId)) = [] of Tuple(BlockId, ValueId))
       super(id, type)
+      @incoming_blocks = [] of BlockId
+      @incoming_values = [] of ValueId
+      incoming_idx = 0
+      while incoming_idx < @incoming.size
+        pair = @incoming.unsafe_fetch(incoming_idx)
+        @incoming_blocks << pair[0]
+        @incoming_values << pair[1]
+        incoming_idx += 1
+      end
     end
 
     def add_incoming(block : BlockId, value : ValueId)
       @incoming << {block, value}
+      @incoming_blocks << block
+      @incoming_values << value
+    end
+
+    def incoming_size : Int32
+      @incoming_blocks.size
+    end
+
+    def incoming_block_at(index : Int32) : BlockId
+      @incoming_blocks.unsafe_fetch(index)
+    end
+
+    def incoming_value_at(index : Int32) : ValueId
+      @incoming_values.unsafe_fetch(index)
     end
 
     def to_s(io : IO) : Nil
       io << "%" << @id << " = phi "
       first = true
-      @incoming.each do |(blk, val)|
+      incoming_idx = 0
+      while incoming_idx < @incoming_blocks.size
+        blk = @incoming_blocks.unsafe_fetch(incoming_idx)
+        val = @incoming_values.unsafe_fetch(incoming_idx)
         io << ", " unless first
         io << "[block." << blk << ": %" << val << "]"
         first = false
+        incoming_idx += 1
       end
       io << " : " << @type.id
     end

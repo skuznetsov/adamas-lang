@@ -3964,6 +3964,26 @@ module Adamas
                   else
                     macro_literal_require_texts(arena, node, Runtime.target_flags)
                   end
+          found_require_text = false
+          texts.each do |text|
+            if text.includes?("require")
+              found_require_text = true
+              break
+            end
+          end
+          if !found_require_text && raw_text && raw_text.includes?("require") && !raw_text.includes?("{%")
+            texts = [raw_text]
+            found_require_text = true
+          end
+          unless found_require_text
+            fallback_texts = macro_literal_require_texts(arena, node, Runtime.target_flags)
+            fallback_texts.each do |text|
+              if text.includes?("require")
+                texts = fallback_texts
+                break
+              end
+            end
+          end
           texts.each do |text|
             next unless text.includes?("require")
             scan_source_require_literals(text) do |req_path|
@@ -4246,15 +4266,30 @@ module Adamas
             end
           end
         when Frontend::MacroLiteralNode
-          texts = if raw_text = extract_span_text(node.span, source)
+          raw_text = extract_span_text(node.span, source)
+          texts = if raw_text
                     macro_literal_texts_from_raw(raw_text, Runtime.target_flags)
                   else
                     macro_literal_active_texts(arena, node, Runtime.target_flags, source)
                   end
+          if texts.empty? && raw_text && raw_text.includes?("@[Link") && !raw_text.includes?("{%")
+            texts = [raw_text]
+          end
+          expr_libraries = [] of String
           texts.each do |text|
             extract_link_libraries_from_text(text).each do |lib_name|
-              libraries << lib_name
+              expr_libraries << lib_name unless expr_libraries.includes?(lib_name)
             end
+          end
+          if expr_libraries.empty? && raw_text && raw_text.includes?("@[Link")
+            macro_literal_active_texts(arena, node, Runtime.target_flags, source).each do |text|
+              extract_link_libraries_from_text(text).each do |lib_name|
+                expr_libraries << lib_name unless expr_libraries.includes?(lib_name)
+              end
+            end
+          end
+          expr_libraries.each do |lib_name|
+            libraries << lib_name
           end
         end
       end
@@ -5138,12 +5173,25 @@ module Adamas
 
       private def extract_link_libraries_from_text(text : String) : Array(String)
         libraries = [] of String
-        text.scan(/@\[\s*Link\s*\((.*?)\)\s*\]/m) do |match|
-          args_text = match[1]
-          parse_link_annotation_args(args_text).each do |entry|
-            libraries << entry
+        offset = 0
+        while offset < text.bytesize
+          link_start = text.index("@[Link", offset)
+          break unless link_start
+
+          open_paren = text.index("(", link_start)
+          close_paren = text.index(")", link_start)
+          close_bracket = text.index("]", link_start)
+          if open_paren && close_paren && close_bracket && open_paren < close_paren && close_paren < close_bracket
+            args_text = text.byte_slice(open_paren + 1, close_paren - open_paren - 1)
+            parse_link_annotation_args(args_text).each do |entry|
+              libraries << entry
+            end
+            offset = close_bracket + 1
+          else
+            offset = link_start + 2
           end
         end
+
         libraries
       end
 
@@ -5167,7 +5215,42 @@ module Adamas
           end
         end
 
+        add_named_link_arg_from_text(libraries, text, "pkg_config", "pkg_config:")
+        add_named_link_arg_from_text(libraries, text, "framework", "framework:")
+        add_named_link_arg_from_text(libraries, text, "dll", "dll:")
+
         libraries
+      end
+
+      private def add_named_link_arg_from_text(
+        libraries : Array(String),
+        text : String,
+        key : String,
+        prefix : String
+      ) : Nil
+        marker = "#{key}:"
+        marker_index = text.index(marker)
+        return unless marker_index
+
+        cursor = marker_index + marker.bytesize
+        while cursor < text.bytesize
+          ch = text[cursor]
+          break unless ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r'
+          cursor += 1
+        end
+        return if cursor >= text.bytesize
+
+        quote = text[cursor]
+        return unless quote == '"' || quote == '\''
+
+        value_start = cursor + 1
+        value_end = text.index(quote.to_s, value_start)
+        return unless value_end
+        return if value_end <= value_start
+
+        value = text.byte_slice(value_start, value_end - value_start)
+        entry = "#{prefix}#{value}"
+        libraries << entry unless libraries.includes?(entry)
       end
 
       private def split_link_annotation_args(text : String) : Array(String)
