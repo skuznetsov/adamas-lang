@@ -6776,6 +6776,44 @@ WBA framing:
 
 Trust: {F/G/R: 0.88/0.50/0.89} [verified]
 
+### LM-624 - Runtime object headers must use MIR type ids
+
+`set_crystal_type_id` object-header writers must bake MIR/runtime type ids, not
+raw HIR `TypeRef#id` values. The explicit `ClassName.set_crystal_type_id(ptr)`
+path and the bare `set_crystal_type_id(ptr)` path are separate HIR lowering
+branches; the bare call can otherwise resolve through inherited
+`Object#set_crystal_type_id` and stamp Object's runtime id into the target
+class header.
+
+Evidence:
+
+- `crystal build src/adamas.cr -o /tmp/adamas_stage1_bare_setid2 --error-trace`
+  -> exit 0.
+- `regression_tests/set_crystal_type_id_hir_mir_id_repro.sh
+  /tmp/adamas_stage1_bare_setid2` -> `built_hdr=16`,
+  `user_explicit=911 OK`, `user_bare=911 OK`.
+- Standalone reducer `/tmp/bare_setid_repro.cr` changed from
+  `911 / 576 / 911 / false / true` to `911 / 911 / 911 / true / true`.
+- LLVM IR oracle for `BareSetId.allocate_bare` stores `i32 911` directly and no
+  longer calls `Object#set_crystal_type_id`.
+- `regression_tests/run_all_suites.sh /tmp/adamas_stage1_bare_setid2 4` ->
+  149/149 original + 36/36 combined, all passed.
+- Clean staged-slice worktree build
+  `/tmp/adamas_stage1_bare_setid_slice` passed
+  `set_crystal_type_id_hir_mir_id_repro.sh` and
+  `array_sort_runtime_type_id_repro.sh`.
+
+Adversary notes:
+
+- This closes a runtime-header writer leak only. It does not claim to solve the
+  separate M4i6h tuple/type-descriptor frontier or the current s2b full-prelude
+  RSS blow-up.
+- `crystal_type_id` query sites still need separate semantic review before
+  converting raw ids, because a type-literal query is not automatically the
+  same contract as an object-header write.
+
+Trust: {F/G/R: 0.88/0.46/0.90} [verified]
+
 ### LM-663 - Primitive tuple containers use inline slots consistently
 
 Primitive/enum-only tuple containers now use a single inline byte-slot ABI

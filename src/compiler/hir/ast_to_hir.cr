@@ -70904,6 +70904,27 @@ module Adamas::HIR
           STDERR.puts "[SET_CRYSTAL_TYPE_ID] current_class=#{@current_class || "nil"} current_method=#{@current_method || "nil"} class_method=#{@current_method_is_class} func=#{ctx.function.name}"
         end
 
+        # Bare `set_crystal_type_id(ptr)` must be bound to the lexical class
+        # before inherited class-method lookup can rewrite it to
+        # `Object#set_crystal_type_id`. Once it is lowered as Object's helper the
+        # backend only sees Object and stamps Object's runtime id into the header.
+        if method_name == "set_crystal_type_id" && call_args.size == 1 &&
+           node.named_args.nil? && block_expr.nil? && block_pass_expr.nil? &&
+           (current = @current_class)
+          class_type_ref = type_ref_for_name(current)
+          if class_type_ref != TypeRef::VOID
+            ptr_id = lower_expr(ctx, call_args[0])
+            runtime_type_id = MIR::TypeRef.from_hir(class_type_ref).id.to_i64
+            type_id_lit = Literal.new(ctx.next_id, TypeRef::INT32, runtime_type_id)
+            ctx.emit(type_id_lit)
+            ctx.register_type(type_id_lit.id, TypeRef::INT32)
+            store = PointerStore.new(ctx.next_id, TypeRef::VOID, ptr_id, type_id_lit.id)
+            ctx.emit(store)
+            ctx.register_type(store.id, TypeRef::VOID)
+            return ptr_id
+          end
+        end
+
         # Check if this is a macro call - expand inline instead of generating Call.
         # Skip spawn macro when lowering SpawnNode-generated calls (block + no args).
         unless method_name == "spawn" && block_expr && call_args.empty? && node.named_args.nil?
@@ -71112,7 +71133,11 @@ module Adamas::HIR
               class_type_ref = type_ref_for_name(current)
               if class_type_ref != TypeRef::VOID
                 ptr_id = lower_expr(ctx, call_args[0])
-                type_id_lit = Literal.new(ctx.next_id, TypeRef::INT32, class_type_ref.id.to_i64)
+                # Runtime object headers store MIR/runtime type ids, not raw HIR
+                # TypeRef ids. Keep bare `set_crystal_type_id(ptr)` aligned with
+                # the explicit `ClassName.set_crystal_type_id(ptr)` intrinsic.
+                runtime_type_id = MIR::TypeRef.from_hir(class_type_ref).id.to_i64
+                type_id_lit = Literal.new(ctx.next_id, TypeRef::INT32, runtime_type_id)
                 ctx.emit(type_id_lit)
                 ctx.register_type(type_id_lit.id, TypeRef::INT32)
                 store = PointerStore.new(ctx.next_id, TypeRef::VOID, ptr_id, type_id_lit.id)

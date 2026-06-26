@@ -20,8 +20,10 @@
 #
 # Assertions:
 #   1. A `String.build` result has the canonical runtime String header (16).
-#   2. A user class stamped via `set_crystal_type_id` matches the header a
-#      normally-allocated instance of the same class carries.
+#   2. A user class stamped via explicit `ClassName.set_crystal_type_id` matches
+#      the header a normally-allocated instance of the same class carries.
+#   3. A user class stamped via bare `set_crystal_type_id` inside a class method
+#      uses the same runtime id. The bare path has its own HIR lowering branch.
 set -euo pipefail
 
 COMPILER="${1:-./bin/adamas}"
@@ -44,6 +46,18 @@ trap cleanup EXIT
 cat >"$SRC" <<'CR'
 class TidProbe
   @x : Int32 = 0
+
+  def self.allocate_bare : Pointer(Void)
+    p = Pointer(Void).malloc(16)
+    set_crystal_type_id(p)
+    p
+  end
+
+  def self.allocate_explicit : Pointer(Void)
+    p = Pointer(Void).malloc(16)
+    TidProbe.set_crystal_type_id(p)
+    p
+  end
 end
 
 def hdr32(p : Void*) : Int32
@@ -56,15 +70,17 @@ built = String.build { |io| io << "hello" }
 built_hdr = hdr32(built.as(Void*))
 
 # A normally-allocated instance carries the MIR runtime id; a raw buffer stamped
-# by set_crystal_type_id must carry the identical id.
+# by explicit or bare set_crystal_type_id must carry the identical id.
 a = TidProbe.new
 a_norm = hdr32(a.as(Void*))
-buf = Pointer(UInt8).malloc(16)
-TidProbe.set_crystal_type_id(buf)
-a_set = buf.as(Pointer(Int32)).value
+explicit = TidProbe.allocate_explicit
+bare = TidProbe.allocate_bare
+a_explicit = explicit.as(Pointer(Int32)).value
+a_bare = bare.as(Pointer(Int32)).value
 
 STDERR.puts "built_hdr=#{built_hdr}"
-STDERR.puts "user_norm=#{a_norm} user_set=#{a_set} #{a_norm == a_set ? "OK" : "MISMATCH"}"
+STDERR.puts "user_norm=#{a_norm} user_explicit=#{a_explicit} #{a_norm == a_explicit ? "OK" : "MISMATCH"}"
+STDERR.puts "user_norm=#{a_norm} user_bare=#{a_bare} #{a_norm == a_bare ? "OK" : "MISMATCH"}"
 STDERR.flush
 STDOUT.flush
 CR
@@ -93,13 +109,13 @@ echo "output:"
 printf '%s\n' "$stderr_text"
 
 built_hdr="$(printf '%s\n' "$stderr_text" | sed -n 's/^built_hdr=\([0-9-]*\).*/\1/p')"
-user_match="$(printf '%s\n' "$stderr_text" | grep -c 'user_norm=.* OK' || true)"
+user_matches="$(printf '%s\n' "$stderr_text" | grep -c 'user_norm=.* OK' || true)"
 
-if [[ "$built_hdr" == "16" && "$user_match" == "1" ]]; then
-  echo "fixed: set_crystal_type_id stamps MIR runtime ids (String=16, user==normal)"
+if [[ "$built_hdr" == "16" && "$user_matches" == "2" ]]; then
+  echo "fixed: set_crystal_type_id stamps MIR runtime ids (String=16, explicit/bare user==normal)"
   exit 0
 fi
 
-echo "FAIL: expected built_hdr=16 and user_norm==user_set"
+echo "FAIL: expected built_hdr=16 and user_norm==user_explicit==user_bare"
 cat "$RUN_OUT"
 exit 1
