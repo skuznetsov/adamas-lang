@@ -56,6 +56,24 @@ MIR lowering, not block/proc materialization: full-prelude `puts 42` crashes in
 `HIRToMIRLowering#set_block_map` via `mir_block_for` ->
 `resolve_pending_phis` -> `lower_function_body`.
 
+[LM-S3B-ARRAY-SORT-RUNTIME-TYPE-ID|verified 2026-06-26 {F:0.86 G:0.50 R:0.86}]:
+Produced s3b's nested macro wildcard require path no longer loses the resolved
+`Array(String)` in the source fallback. Root was not macro scanning, wildcard
+resolution, or `case when Array` selection by itself. `files.sort` lowered
+through `__adamas_sort_string_array_dup` with the raw HIR `Array(String)`
+TypeRef id as the new object's header (`161` in the repro), while other Array
+allocation paths and all-ref union type checks used the MIR/runtime id (`181`).
+The sorted array therefore failed `String | Array(String) | Nil` dispatch and
+the fallback dropped the required file. Fix: when HIR bakes the runtime header
+literal for the sort dup helper, translate via `MIR::TypeRef.from_hir(arr_type)`.
+Evidence: `array_sort_runtime_type_id_repro.sh` red->green (`181 -> 181`,
+`CASE=Array`); small LLVM oracle emits
+`@__adamas_sort_string_array_dup(..., i32 181)`; produced compiler parses
+`/tmp/adamas_parser_tail_probe/macro_nested_event_tail.cr` and loads
+`macro_reqs/loaded.cr` (`Files: 262`); suites pass 149/149 + 36/36. Residual
+risk: other HIR code paths that bake runtime object headers from raw
+`TypeRef.id` remain candidates and should be audited before generalizing.
+
 [LM-M4i0|verified]: Fresh RELEASE stage1 SIGSEGV'd in the recursive-descent parser
 (`parse_block_body_with_optional_rescue`) while building s2b. Root: `crystal build`
 links with the bundled `ld64.lld`, which IGNORES `-Wl,-stack_size` ("not yet

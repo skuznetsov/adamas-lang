@@ -49896,6 +49896,56 @@ module Adamas::HIR
       -1
     end
 
+    private def generic_base_type_match?(variant_name : String, check_name : String) : Bool
+      return false if variant_name.empty? || check_name.empty?
+      return false if check_name.includes?('(') || check_name.includes?('|') ||
+                      check_name == "Nil" || check_name == "Void"
+      variant_name.starts_with?(check_name) &&
+        variant_name.size > check_name.size &&
+        variant_name[check_name.size] == '('
+    end
+
+    # Type tests on union subjects need one extra direct-member shape:
+    # `Array(String)` is a direct union member for a `when Array` / `is_a?(Array)`
+    # check. Keep this separate from get_union_member_variant_id so ordinary
+    # union wrapping still requires exact values and does not inherit broad
+    # base-name fallbacks.
+    private def get_union_member_variant_for_type_check(
+      union_type : TypeRef,
+      check_type : TypeRef
+    ) : {Int32, TypeRef}?
+      exact_id = get_union_member_variant_id(union_type, check_type)
+      return {exact_id, check_type} if exact_id >= 0
+
+      check_name = get_type_name_from_ref(check_type)
+      return nil if check_name.empty?
+      ensure_union_descriptor_for_type_ref(union_type)
+      mir_union_ref = hir_to_mir_type_ref(union_type)
+      if descriptor = @union_descriptors[mir_union_ref]?
+        descriptor.variants.each do |variant|
+          variant_name = variant.full_name
+          next if variant_name == "Nil" || variant_name == "Void"
+          if generic_base_type_match?(variant_name, check_name)
+            return {variant.type_id, mir_to_hir_type_ref(variant.type_ref)}
+          end
+        end
+      end
+
+      if type_desc = @module.get_type_descriptor(union_type)
+        if type_desc.kind == TypeKind::Union
+          variant_names = split_union_type_name(type_desc.name)
+          variant_names.each_with_index do |variant_name, idx|
+            next if variant_name == "Nil" || variant_name == "Void"
+            if generic_base_type_match?(variant_name, check_name)
+              return {idx, type_ref_for_name(variant_name)}
+            end
+          end
+        end
+      end
+
+      nil
+    end
+
     private def pointer_like_union_variant_id(union_type : TypeRef) : Int32?
       mir_union_ref = hir_to_mir_type_ref(union_type)
       descriptor = @union_descriptors[mir_union_ref]?
@@ -60598,11 +60648,11 @@ module Adamas::HIR
         # statically compatible with String and leaves `v` wide, which can
         # store a tagged union into pointer-backed `String?` fields.
         if is_union_type?(local_type)
-          variant_id = get_union_member_variant_id(local_type, target_type)
-          if variant_id >= 0
-            unwrap = UnionUnwrap.new(ctx.next_id, target_type, local_id, variant_id, false)
+          if match = get_union_member_variant_for_type_check(local_type, target_type)
+            variant_id, matched_type = match
+            unwrap = UnionUnwrap.new(ctx.next_id, matched_type, local_id, variant_id, false)
             ctx.emit(unwrap)
-            ctx.register_type(unwrap.id, target_type)
+            ctx.register_type(unwrap.id, matched_type)
             ctx.register_local(name, unwrap.id)
             next
           end
@@ -60737,8 +60787,8 @@ module Adamas::HIR
 
       value_type = ctx.type_of(value_id)
       if is_union_type?(value_type)
-        variant_id = get_union_member_variant_id(value_type, check_type)
-        if variant_id >= 0
+        if match = get_union_member_variant_for_type_check(value_type, check_type)
+          variant_id, _ = match
           union_is = UnionIs.new(ctx.next_id, value_id, variant_id, value_type)
           ctx.emit(union_is)
           ctx.register_type(union_is.id, TypeRef::BOOL)
@@ -64099,8 +64149,8 @@ module Adamas::HIR
           subject_type = ctx.type_of(subject_id)
           # If subject is union type, use UnionIs
           if is_union_type?(subject_type)
-            variant_id = get_union_member_variant_id(subject_type, check_type)
-            if variant_id >= 0
+            if match = get_union_member_variant_for_type_check(subject_type, check_type)
+              variant_id, _ = match
               union_is = UnionIs.new(ctx.next_id, subject_id, variant_id, subject_type)
               ctx.emit(union_is)
               return union_is.id
@@ -64231,8 +64281,8 @@ module Adamas::HIR
 
           # If subject is union type, use UnionIs
           if is_union_type?(subject_type)
-            variant_id = get_union_member_variant_id(subject_type, check_type)
-            if variant_id >= 0
+            if match = get_union_member_variant_for_type_check(subject_type, check_type)
+              variant_id, _ = match
               union_is = UnionIs.new(ctx.next_id, subject_id, variant_id, subject_type)
               ctx.emit(union_is)
               return union_is.id
@@ -64619,8 +64669,8 @@ module Adamas::HIR
 
           # If subject is union type, use UnionIs
           if is_union_type?(subject_type)
-            variant_id = get_union_member_variant_id(subject_type, check_type)
-            if variant_id >= 0
+            if match = get_union_member_variant_for_type_check(subject_type, check_type)
+              variant_id, _ = match
               union_is = UnionIs.new(ctx.next_id, subject_id, variant_id, subject_type)
               ctx.emit(union_is)
               return union_is.id
@@ -64776,7 +64826,7 @@ module Adamas::HIR
               if type_name
                 target_ref = type_ref_for_name(type_name)
                 should_narrow = if subj_is_union
-                                  get_union_member_variant_id(subj_type, target_ref) >= 0
+                                  !get_union_member_variant_for_type_check(subj_type, target_ref).nil?
                                 else
                                   true
                                 end
@@ -84922,9 +84972,12 @@ module Adamas::HIR
       helper = array_sort_intrinsic_helper_for_value(ctx, array_id, dup: true)
       return nil unless helper
 
-      # Pass the array's type_id so the dup helper can set it in the new array header
+      # Pass the runtime type_id so the dup helper preserves the Array(T) object
+      # header. HIR and MIR/runtime ids intentionally differ; raw HIR ids must
+      # not be written into runtime headers.
       arr_type = ctx.type_of(array_id)
-      type_id_lit = Literal.new(ctx.next_id, TypeRef::INT32, arr_type.id.to_i64)
+      runtime_type_id = MIR::TypeRef.from_hir(arr_type).id.to_i64
+      type_id_lit = Literal.new(ctx.next_id, TypeRef::INT32, runtime_type_id)
       ctx.emit(type_id_lit)
       ctx.register_type(type_id_lit.id, TypeRef::INT32)
 
@@ -94730,9 +94783,9 @@ module Adamas::HIR
       value_type = ctx.type_of(value_id)
       if is_union_type?(value_type)
         # Get the variant_type_id for the check_type within this union
-        variant_id = get_union_member_variant_id(value_type, check_type)
-        if variant_id >= 0
-          union_is = UnionIs.new(ctx.next_id, value_id, variant_id)
+        if match = get_union_member_variant_for_type_check(value_type, check_type)
+          variant_id, _ = match
+          union_is = UnionIs.new(ctx.next_id, value_id, variant_id, value_type)
           ctx.emit(union_is)
           return union_is.id
         end
