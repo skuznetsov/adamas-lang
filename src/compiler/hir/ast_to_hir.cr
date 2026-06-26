@@ -2233,6 +2233,14 @@ module Adamas::HIR
       @rta_called_methods << name
     end
 
+    private def record_materialization_keepalive_candidate(requested_name : String, target_name : String, materialized_name : String) : Nil
+      return if requested_name.empty? || target_name.empty?
+      return if requested_name == target_name
+      return unless materialized_name == target_name
+
+      @module.mark_materialization_keepalive_function(target_name)
+    end
+
     private def same_owner_class_method_exact_demand?(name : String) : Bool
       current_class = @current_class
       return false unless current_class
@@ -69824,6 +69832,7 @@ module Adamas::HIR
               if resolved_parts.method == "in?" && target_name.starts_with?("Object#")
                 override = nil
               end
+              record_materialization_keepalive_candidate(name, target_name, override || target_name)
               # M4c0 (diagnostic-only): the materialization-binding decision. Logs the
               # requested/target/materialize names + the selected def's required vs the
               # expected arg count. MAT_BINDING_DANGEROUS = a BARE requested family name

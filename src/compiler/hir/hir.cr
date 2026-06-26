@@ -1823,6 +1823,7 @@ module Adamas::HIR
     getter class_parents : Hash(String, String?)
     getter module_includers : Hash(String, Array(String))
     getter virtual_dispatch_target_functions : Set(String)
+    getter materialization_keepalive_functions : Set(String)
     getter lib_names : Set(String)
     getter lib_structs : Set(String)
     getter primitive_methods : Hash(String, String)
@@ -1858,6 +1859,7 @@ module Adamas::HIR
       @class_parents = {} of String => String?
       @module_includers = {} of String => Array(String)
       @virtual_dispatch_target_functions = Set(String).new
+      @materialization_keepalive_functions = Set(String).new
       @lib_names = Set(String).new
       @lib_structs = Set(String).new
       @primitive_methods = {} of String => String
@@ -1890,6 +1892,7 @@ module Adamas::HIR
       @method_effects = {} of String => MethodEffectSummary
       @class_parents = {} of String => String?
       @module_includers = {} of String => Array(String)
+      @materialization_keepalive_functions = Set(String).new
       @lib_names = Set(String).new
       @lib_structs = Set(String).new
       @primitive_methods = {} of String => String
@@ -1955,6 +1958,10 @@ module Adamas::HIR
 
     def mark_virtual_dispatch_target_function(name : String) : Nil
       @virtual_dispatch_target_functions << name
+    end
+
+    def mark_materialization_keepalive_function(name : String) : Nil
+      @materialization_keepalive_functions << name unless name.empty?
     end
 
     def register_primitive(name : String, kind : String) : Nil
@@ -2395,6 +2402,12 @@ module Adamas::HIR
         end
       end
       @virtual_dispatch_target_functions.each do |target|
+        if func_by_name.has_key?(target) && !reachable.includes?(target)
+          reachable << target
+          worklist << target
+        end
+      end
+      @materialization_keepalive_functions.each do |target|
         if func_by_name.has_key?(target) && !reachable.includes?(target)
           reachable << target
           worklist << target

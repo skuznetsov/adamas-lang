@@ -47,6 +47,24 @@ Working policy:
 - Use `s1 -> s2b` as the main integration gate.
 - Run `s1 -> s5b` rarely, after `s1 -> s2b` is clean.
 
+## 2026-06-25 — fixed HIR RTA pruning of materialized target symbols
+
+- FIXED: self-compiled compiler IR no longer emits the aborting
+  `Hash(UInt64, NamedTuple(class_name:String?, method_name:String?, is_class:Bool))#[]=`
+  undefined-extern stub. Root was not a backend-forwarder gap: `lower_function_if_needed`
+  could materialize a body under the resolved target symbol while the call path
+  still used a related requested symbol, and HIR RTA pruned the unreferenced
+  target body before MIR. Fix: when materialization chooses the target symbol
+  for a distinct requested name, mark that target as a materialization keepalive
+  root in `HIR::Module.reachable_function_names`.
+- Regression: `regression_tests/hash_named_tuple_index_assign_materialization_repro.sh`
+  builds self-IR through `run_safe` and fails on any matching abort stub.
+- Verified: stage1 build; focused Hash/NamedTuple self-IR regression; split
+  materialization + `split(Char)` + short-circuit-narrowing guards; full suites
+  149/149 originals + 36/36 combined. Fresh s2b builds and compiles a no-prelude
+  `x = 1` smoke; full-prelude `med.cr` now reaches a separate early
+  `error: Unreachable` while loading prelude, not the old Hash#[]= abort stub.
+
 ## Open Design Constraints
 
 - Do not solve block/proc or generic-container demand bugs with fixed nesting
