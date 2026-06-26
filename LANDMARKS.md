@@ -12,6 +12,21 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-S2B-FULL-PRELUDE-DIRNAME|verified 2026-06-25 {F:0.82 G:0.45 R:0.85}]:
+Produced s2b's full-prelude `puts 42` corridor no longer dies in the
+`indexable.cr` wildcard require path. Probe showed `safe_dirname(abs_path)` for
+`src/stdlib/indexable.cr` returned `.../src/stdlib/indexable.` because
+self-hosted `String#rindex('/')` returned the final `.cr` byte position, not the
+last slash. The malformed base dir made `resolve_wildcard_require("./indexable/*")`
+look in `indexable./indexable`, return nil, and fall into the stage2-broken
+`Dir.glob` source fallback (`error: Unreachable`). Fix: CLI path helpers use a
+manual byte reverse separator scan. Evidence: old s2b fails
+`regression_tests/stage2_full_prelude_wildcard_require_repro.sh` on
+`Unreachable`; fixed s2b resolves `./indexable/*` to
+`src/stdlib/indexable/mutable.cr`. Next frontier is separate:
+`STUB CALLED: Adamas::HIR::AstToHir#yield_return_function_for_block_call?...`
+during `lower_main`.
+
 [LM-M4i0|verified]: Fresh RELEASE stage1 SIGSEGV'd in the recursive-descent parser
 (`parse_block_body_with_optional_rescue`) while building s2b. Root: `crystal build`
 links with the bundled `ld64.lld`, which IGNORES `-Wl,-stack_size` ("not yet

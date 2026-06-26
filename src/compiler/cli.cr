@@ -930,17 +930,28 @@ module Adamas
       # Inline basename logic using string operations.
       private def safe_basename(path : String) : String
         return "" if path.empty?
-        last_sep = path.rindex('/')
+        last_sep = last_path_separator_index(path)
         last_sep ? path.byte_slice(last_sep + 1) : path
       end
 
       # V2 workaround: File.dirname calls Path.new which has dispatch bug.
       private def safe_dirname(path : String) : String
         return "." if path.empty?
-        last_sep = path.rindex('/')
+        last_sep = last_path_separator_index(path)
         return "." unless last_sep
         return "/" if last_sep == 0
         path.byte_slice(0, last_sep)
+      end
+
+      # V2 workaround: String#rindex(Char) can misresolve under self-hosting
+      # and return a non-separator position. Keep path splitting byte-local.
+      private def last_path_separator_index(path : String) : Int32?
+        i = path.bytesize - 1
+        while i >= 0
+          return i if path.byte_at(i) == '/'.ord.to_u8
+          i -= 1
+        end
+        nil
       end
 
       {% if flag?(:debug_hooks) %}

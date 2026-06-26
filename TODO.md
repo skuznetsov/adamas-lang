@@ -47,6 +47,26 @@ Working policy:
 - Use `s1 -> s2b` as the main integration gate.
 - Run `s1 -> s5b` rarely, after `s1 -> s2b` is clean.
 
+## 2026-06-25 — fixed s2b full-prelude wildcard base-dir corruption
+
+- FIXED: produced s2b no longer falls into `error: Unreachable` while resolving
+  stdlib `indexable.cr`'s `require "./indexable/*"`. Root: `safe_dirname`
+  still depended on `String#rindex('/')`; under self-hosting that call returned
+  the final `.cr` byte position for `.../indexable.cr`, producing
+  `.../src/stdlib/indexable.` as `base_dir`. The primary wildcard resolver then
+  looked for `indexable./indexable`, returned nil, and the source fallback
+  reached the stage2-broken `Dir.glob` path. Fix: split CLI paths with a
+  byte-local reverse separator scan instead of `String#rindex(Char)`.
+- Regression: `regression_tests/stage2_full_prelude_wildcard_require_repro.sh`
+  is a focused s2b guard. It is red on the old s2b (`Warning: Could not resolve
+  require './indexable/*'` / `error: Unreachable`) and green when
+  `./indexable/*` resolves to `src/stdlib/indexable/mutable.cr`.
+- NEW FRONTIER: the same full-prelude `puts 42` corridor now passes parsing and
+  HIR setup, then aborts in `lower_main` with
+  `STUB CALLED: Adamas::HIR::AstToHir#yield_return_function_for_block_call?...`.
+  This is a separate materialization/demand frontier; do not bundle it with the
+  path helper fix.
+
 ## 2026-06-25 — fixed HIR RTA pruning of materialized target symbols
 
 - FIXED: self-compiled compiler IR no longer emits the aborting
@@ -62,8 +82,8 @@ Working policy:
 - Verified: stage1 build; focused Hash/NamedTuple self-IR regression; split
   materialization + `split(Char)` + short-circuit-narrowing guards; full suites
   149/149 originals + 36/36 combined. Fresh s2b builds and compiles a no-prelude
-  `x = 1` smoke; full-prelude `med.cr` now reaches a separate early
-  `error: Unreachable` while loading prelude, not the old Hash#[]= abort stub.
+  `x = 1` smoke. The later `error: Unreachable` frontier is superseded by the
+  path-helper fix above.
 
 ## Open Design Constraints
 
