@@ -67,6 +67,25 @@ Working policy:
   This is a separate materialization/demand frontier; do not bundle it with the
   path helper fix.
 
+## 2026-06-26 — fixed s2b yield-return block-call nilable wrapper materialization
+
+- FIXED: produced s2b no longer aborts in `lower_main` on
+  `STUB CALLED: Adamas::HIR::AstToHir#yield_return_function_for_block_call?...`.
+  Root: source registration only had the concrete first-argument overload
+  (`mangled_name : String`), while the self-hosted call demand used
+  `mangled_name : String?`. The materializer could not find a DefNode for the
+  nilable wrapper and emitted an undefined-extern stub. Fix: add the explicit
+  `String?` overload that fail-closes on nil and delegates to the concrete
+  overload when present.
+- Regression: `regression_tests/stage2_yield_return_block_call_materialization_repro.sh`
+  is red on the post-dirname s2b and green once the nilable wrapper is
+  materialized. It is intentionally focused: downstream full-prelude compilation
+  may still fail after this frontier has moved.
+- NEW FRONTIER: the same full-prelude `puts 42` corridor now reaches a later
+  abort in `AstToHir#lower_block_to_proc(...)`. This is a separate
+  block/proc materialization-demand frontier; do not bundle it with the
+  yield-return wrapper fix.
+
 ## 2026-06-25 — fixed HIR RTA pruning of materialized target symbols
 
 - FIXED: self-compiled compiler IR no longer emits the aborting

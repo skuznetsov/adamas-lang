@@ -27,6 +27,17 @@ manual byte reverse separator scan. Evidence: old s2b fails
 `STUB CALLED: Adamas::HIR::AstToHir#yield_return_function_for_block_call?...`
 during `lower_main`.
 
+[LM-S2B-YIELD-BLOCK-CALL-MATERIALIZATION|verified 2026-06-26 {F:0.82 G:0.40 R:0.82}]:
+Produced s2b's full-prelude `puts 42` corridor no longer aborts on the
+`AstToHir#yield_return_function_for_block_call?` undefined-extern stub. Source
+registration had the concrete `mangled_name : String` overload, but self-hosted
+materialization demanded the `mangled_name : String?` wrapper form and could not
+find a DefNode. Fix: add an explicit nilable overload that returns false for nil
+and delegates to the concrete overload otherwise. Evidence: the old post-dirname
+s2b fails `stage2_yield_return_block_call_materialization_repro.sh` on the exact
+stub; the fixed s2b passes that guard and moves to the separate
+`AstToHir#lower_block_to_proc(...)` stub frontier.
+
 [LM-M4i0|verified]: Fresh RELEASE stage1 SIGSEGV'd in the recursive-descent parser
 (`parse_block_body_with_optional_rescue`) while building s2b. Root: `crystal build`
 links with the bundled `ld64.lld`, which IGNORES `-Wl,-stack_size` ("not yet

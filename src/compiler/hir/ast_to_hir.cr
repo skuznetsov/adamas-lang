@@ -40843,6 +40843,20 @@ module Adamas::HIR
       false
     end
 
+    private def yield_return_function_for_block_call?(
+      mangled_name : String?,
+      base_name : String,
+      arg_count : Int32,
+      arg_types : Array(TypeRef)? = nil,
+      receiver_base : String? = nil,
+    ) : Bool
+      if concrete_name = mangled_name
+        yield_return_function_for_block_call?(concrete_name, base_name, arg_count, arg_types, receiver_base)
+      else
+        false
+      end
+    end
+
     private def yield_function_name_for(method_name : String) : String?
       @yield_name_cache.fetch(method_name) do
         result = yield_function_name_for_uncached(method_name)
