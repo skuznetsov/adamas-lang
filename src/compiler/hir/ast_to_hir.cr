@@ -11952,6 +11952,39 @@ module Adamas::HIR
       false
     end
 
+    private def should_use_exact_call_type_for_annotation?(type_ann : String?, call_type : TypeRef) : Bool
+      return false unless type_ann
+      return false if call_type == TypeRef::VOID
+
+      ann_name = ascii_strip(type_ann.not_nil!)
+      return false if ann_name.empty?
+      call_name = get_type_name_from_ref(call_type)
+      return false if call_name.empty? || call_name == "Void" || call_name == "Unknown"
+
+      raw_name = absolute_name_prefix_bytes?(ann_name) ? strip_absolute_name_prefix(ann_name) : ann_name
+      return true if exact_call_type_required_for_annotation_name?(raw_name, call_name)
+
+      resolved_name = resolve_contextual_type_alias_name(ann_name) || ann_name
+      resolved_name = resolve_type_alias_chain(resolved_name)
+      resolved_name = strip_absolute_name_prefix(resolved_name) if absolute_name_prefix_bytes?(resolved_name)
+      exact_call_type_required_for_annotation_name?(resolved_name, call_name)
+    end
+
+    private def exact_call_type_required_for_annotation_name?(annotation_name : String, call_name : String) : Bool
+      case strip_generic_args(annotation_name)
+      when "Number"
+        numeric_primitive_class_name?(call_name) || call_name == "Int" || call_name == "Float"
+      when "Int"
+        primitive_template_owner(call_name) == "Int"
+      when "Float"
+        primitive_template_owner(call_name) == "Float"
+      when "Int::Primitive", "Int::Signed", "Int::Unsigned"
+        primitive_template_owner(call_name) == "Int"
+      else
+        false
+      end
+    end
+
     private def specialized_runtime_param_types?(full_name_override : String?) : Bool
       if override_name = full_name_override
         return override_name.includes?('$')
@@ -21066,8 +21099,11 @@ module Adamas::HIR
                 end
               end
             when Adamas::Compiler::Frontend::DefNode
-              safe_str_guard(member.name, "next")
+              unless safe_slice_guard?(member.name)
+                next unless def_receiver_is_self_from_node(member, @arena)
+              end
               method_name = def_method_name_from_node(member, @arena) || ""
+              next if method_name.empty?
               # In Crystal, `def self.foo` defines a module (class) method,
               # while `def foo` defines an instance method meant to be mixed in via `include`.
               debug_receiver_probe("OWNER_RECV_MOD", module_name, method_name, member.receiver)
@@ -25620,7 +25656,9 @@ module Adamas::HIR
             param_name = param_name.lstrip('@')
           end
           type_ann_str : String? = nil
-          param_type = if (ta = param.type_annotation) && (type_ann_str = safe_slice_to_string(ta))
+          raw_type_ann_str : String? = nil
+          param_type = if (ta = param.type_annotation) && (raw_type_ann_str = safe_slice_to_string(ta))
+                         type_ann_str = raw_type_ann_str
                          if contextual_alias = resolve_contextual_type_alias_name(type_ann_str)
                            type_ann_str = contextual_alias
                          end
@@ -25697,7 +25735,8 @@ module Adamas::HIR
           end
           exact_runtime_param_type = if use_specialized_runtime_param_types &&
                                         !param.is_block && !param.is_splat && !param.is_double_splat &&
-                                        should_use_exact_call_type_for_local_inference?(param_type, call_type_for_param)
+                                        (should_use_exact_call_type_for_local_inference?(param_type, call_type_for_param) ||
+                                         should_use_exact_call_type_for_annotation?(raw_type_ann_str || type_ann_str, call_type_for_param))
                                        call_type_for_param
                                      else
                                        param_type
@@ -30155,8 +30194,11 @@ module Adamas::HIR
           if alt_params = matched_init_def.params
             alt_init_params = [] of {String, TypeRef}
             param_idx = 0
+            call_arg_size = type_ref_array_size_or_zero(call_arg_types)
+            done_regular_params = false
             with_arena(matched_init_arena.not_nil!) do
               each_param(alt_params) do |p|
+                next if done_regular_params
                 next if named_only_separator?(p)
                 pname = (nm = p.name) ? (safe_slice_to_string(nm) || "arg#{param_idx}") : "arg#{param_idx}"
                 pname = pname.lstrip('@')
@@ -30169,7 +30211,11 @@ module Adamas::HIR
                   block_param_info = {pname, ptype}
                   next
                 end
-                break if param_idx >= call_arg_types.size
+                unless param_idx < call_arg_size
+                  done_regular_params = true
+                  next
+                end
+                call_arg_type = type_ref_array_fetch_or_void(call_arg_types, param_idx)
                 ptype = if ta = p.type_annotation
                           ta_str = safe_slice_to_string(ta) || ""
                           resolved = annotation_type_ref(ta_str, class_name)
@@ -30184,7 +30230,7 @@ module Adamas::HIR
                             resolved
                           end
                         else
-                          call_arg_types[param_idx]
+                          call_arg_type
                         end
                 alt_init_params << {pname, ptype}
                 param_idx += 1
@@ -30228,9 +30274,16 @@ module Adamas::HIR
             if alt_params = alt_def.params
               alt_init_params = [] of {String, TypeRef}
               param_idx = 0
+              call_arg_size = type_ref_array_size_or_zero(call_arg_types)
+              done_regular_params = false
               each_param(alt_params) do |p|
+                next if done_regular_params
                 next if p.is_block || named_only_separator?(p)
-                break if param_idx >= call_arg_types.size
+                unless param_idx < call_arg_size
+                  done_regular_params = true
+                  next
+                end
+                call_arg_type = type_ref_array_fetch_or_void(call_arg_types, param_idx)
                 pname = (nm = p.name) ? (safe_slice_to_string(nm) || "arg#{param_idx}") : "arg#{param_idx}"
                 pname = pname.lstrip('@')
                 ptype = if ta = p.type_annotation
@@ -30246,7 +30299,7 @@ module Adamas::HIR
                             resolved
                           end
                         else
-                          call_arg_types[param_idx]
+                          call_arg_type
                         end
                 alt_init_params << {pname, ptype}
                 param_idx += 1
@@ -31604,9 +31657,11 @@ module Adamas::HIR
             param_name = param_name.lstrip('@')
           end
           type_ann_str : String? = nil
+          raw_type_ann_str : String? = nil
           param_type = TypeRef::VOID
           if ta = param.type_annotation
             if type_ann_value = safe_slice_to_string(ta)
+              raw_type_ann_str = type_ann_value
               if contextual_alias = resolve_contextual_type_alias_name(type_ann_value)
                 type_ann_value = contextual_alias
               end
@@ -31741,7 +31796,8 @@ module Adamas::HIR
           end
           exact_runtime_param_type = if use_specialized_runtime_param_types &&
                                         !param.is_block && !param.is_splat && !param.is_double_splat &&
-                                        should_use_exact_call_type_for_local_inference?(param_type, call_type_for_param)
+                                        (should_use_exact_call_type_for_local_inference?(param_type, call_type_for_param) ||
+                                         should_use_exact_call_type_for_annotation?(raw_type_ann_str || type_ann_str, call_type_for_param))
                                        call_type_for_param
                                      else
                                        param_type
@@ -61227,6 +61283,11 @@ module Adamas::HIR
       right_type = ctx.type_of(right)
       left_type = ctx.type_of(left)
 
+      if (op == "==" || op == "!=" || op == "===") &&
+         (tuple_cmp = lower_tuple_equality_intrinsic(ctx, left, left_type, right, right_type, op))
+        return tuple_cmp
+      end
+
       # Intercept =~ with Regex → runtime regex match (returns Bool)
       if op == "=~"
         left_name = (left_type == TypeRef::VOID || left_type == TypeRef::STRING || left_type == TypeRef::POINTER) ? "" : get_type_name_from_ref(left_type)
@@ -61992,9 +62053,17 @@ module Adamas::HIR
 
       begin
         merged_stack.each_index do |idx|
-          pre_locals = pre_inline_caller_locals[idx]? || ({} of String => ValueId)
+          pre_locals = if idx < pre_inline_caller_locals.size
+                         pre_inline_caller_locals.unsafe_fetch(idx)
+                       else
+                         {} of String => ValueId
+                       end
           branch_locals_info = branch_inline_info.map do |(exit_block, inline_snapshot)|
-            locals = inline_snapshot[idx]? || pre_locals
+            locals = if idx < inline_snapshot.size
+                       inline_snapshot.unsafe_fetch(idx)
+                     else
+                       pre_locals
+                     end
             {exit_block, locals}
           end
 
@@ -71583,13 +71652,13 @@ module Adamas::HIR
              (obj_kind == Adamas::Compiler::Frontend::NodeKind::Self ||
              obj_kind == Adamas::Compiler::Frontend::NodeKind::ImplicitObj ||
              (obj_kind == Adamas::Compiler::Frontend::NodeKind::Identifier &&
-             (safe_slice_to_string(obj_node.unsafe_as(Adamas::Compiler::Frontend::IdentifierNode).name) || "") == "self"))
+             identifier_name_text(obj_node.unsafe_as(Adamas::Compiler::Frontend::IdentifierNode), call_arena) == "self"))
             force_instance_receiver = true
           end
           type_param_receiver_name : String? = nil
           if obj_kind == Adamas::Compiler::Frontend::NodeKind::Identifier
             identifier_node = obj_node.unsafe_as(Adamas::Compiler::Frontend::IdentifierNode)
-            name = (safe_slice_to_string(identifier_node.name) || "")
+            name = identifier_name_text(identifier_node, call_arena)
             if name != "self"
               if local_id = ctx.lookup_local(name)
                 force_instance_receiver = true
@@ -71721,7 +71790,7 @@ module Adamas::HIR
             end
           elsif !force_instance_receiver && obj_kind == Adamas::Compiler::Frontend::NodeKind::Identifier
             identifier_node = obj_node.unsafe_as(Adamas::Compiler::Frontend::IdentifierNode)
-            name = (safe_slice_to_string(identifier_node.name) || "")
+            name = identifier_name_text(identifier_node, call_arena)
             if ctx.lookup_local(name).nil? || name[0]?.try(&.uppercase?)
               if @module.is_lib?(name)
                 class_name_str = name
@@ -72961,23 +73030,22 @@ module Adamas::HIR
       # wrapper and directly call IO#puts/print(Type) on STDOUT. This avoids the problem
       # where puts$splat is compiled once for the first call's type and reused incorrectly
       # for different types in the same program.
+      _puts_like = method_name == "puts" || method_name == "print"
       # V2 bootstrap: receiver_id.nil? is broken for UInt32? in s2b — nil union has non-zero
       # type_id so "is 8-byte value nonzero" incorrectly returns true. Use `(x||0)==0` instead:
       # for nil (broken nil-check), || short-circuits with unwrapped payload=0; for Some(n>0),
       # || returns n. This correctly catches nil and zombie-nil without raw memory reads.
-      _puts_recv_nil = (receiver_id || 0_u32) == 0_u32
-      _puts_fmn_ok = full_method_name.nil? || full_method_name == method_name
+      _puts_recv_nil = _puts_like && ((receiver_id || 0_u32) == 0_u32)
+      _puts_fmn_ok = _puts_like && (full_method_name.nil? || full_method_name == method_name)
       # V2 bootstrap: block_expr.nil? is zombie-broken for ExprId? (struct-pointer union) in s2b.
       # Use node.has_block? (reads @has_block : Bool directly, avoids nilable ExprId? zombie).
-      _puts_no_block = !node.has_block?
-      if env_has?("DEBUG_PUTS_INTERCEPT") && (method_name == "puts" || method_name == "print")
+      _puts_no_block = _puts_like && !node.has_block?
+      if env_has?("DEBUG_PUTS_INTERCEPT") && _puts_like
         STDERR.puts "[PUTS_EARLY] recv_nil=#{_puts_recv_nil} fmn_ok=#{_puts_fmn_ok} no_block=#{_puts_no_block} method=#{method_name} call_args=#{call_args.size}"
         # V2 bootstrap diagnostic: check if TypeRef constants have correct ids in s2b
         STDERR.puts "[PUTS_CONST] VOID_id=#{TypeRef::VOID.id} INT32_id=#{TypeRef::INT32.id} STRING_id=#{TypeRef::STRING.id}"
       end
-      if _puts_recv_nil && (method_name == "puts" || method_name == "print") &&
-         call_args.size == 1 && _puts_no_block &&
-         _puts_fmn_ok
+      if _puts_recv_nil && call_args.size == 1 && _puts_no_block && _puts_fmn_ok
         # V2 bootstrap NumberNode fast path: use NumberKind.value (raw enum int) to select extern.
         # Avoids TypeRef constant comparison entirely — TypeRef constants may be broken in s2b.
         _puts_arg0_node = with_arena(call_arena) { @arena[call_args[0]] }
@@ -73235,9 +73303,9 @@ module Adamas::HIR
         inline_stack = @inline_yield_name_stack.join(" -> ")
         @last_splat_context = "func=#{ctx.function.name} method=#{method_name} class=#{@current_class || ""} inline=#{inline_stack} arena=#{call_arena.class}:#{call_arena.size} span=#{span.start_line}:#{span.start_column}-#{span.end_line}:#{span.end_column} snippet=\"#{snippet || ""}\""
       end
-      has_splat = with_arena(call_arena) do
-        call_args.any? { |arg_id| @arena[arg_id].is_a?(Adamas::Compiler::Frontend::SplatNode) }
-      end
+      # `call_args` belong to `call_arena`; direct indexing avoids an otherwise
+      # unnecessary block capture of call-resolution locals in generated stage2.
+      has_splat = call_args.any? { |arg_id| call_arena[arg_id].is_a?(Adamas::Compiler::Frontend::SplatNode) }
       lexical_method_name = if callee_kind == Adamas::Compiler::Frontend::NodeKind::Identifier
                               identifier_call_name_text(node, call_arena)
                             else
@@ -73496,6 +73564,23 @@ module Adamas::HIR
       if method_name == "includes?" && receiver_id && args.size == 1
         recv_type = ctx.type_of(receiver_id)
         if lowered = lower_tuple_includes_intrinsic(ctx, receiver_id, recv_type, args[0])
+          return lowered
+        end
+      end
+
+      # Concrete Tuple#hash(hasher): inline the same element-wise operation as
+      # stdlib's macro body. The generic Tuple#hash body is shared across tuple
+      # shapes in V2 and can be materialized with an empty/stale T map.
+      if method_name == "hash" && receiver_id && args.size == 1
+        recv_type = ctx.type_of(receiver_id)
+        if lowered = lower_tuple_hash_with_hasher_intrinsic(ctx, receiver_id, recv_type, args[0])
+          return lowered
+        end
+      end
+
+      if method_name == "hash" && receiver_id && args.empty?
+        recv_type = ctx.type_of(receiver_id)
+        if lowered = lower_tuple_hash_result_intrinsic(ctx, receiver_id, recv_type)
           return lowered
         end
       end
@@ -90282,6 +90367,16 @@ module Adamas::HIR
       args, _, _ = apply_default_args(ctx, [] of ValueId, member_name, base_method_name, false, false)
       arg_types = args.map { |arg_id| ctx.type_of(arg_id) }
 
+      # Concrete Tuple#hash with no explicit parentheses reaches this
+      # MemberAccessNode path (`tuple.hash`), not lower_call. Keep it aligned
+      # with the CallNode Tuple#hash intercept so mixed-type tuples don't fall
+      # through to the shared generic Tuple#hash body.
+      if member_name == "hash" && args.empty?
+        if lowered = lower_tuple_hash_result_intrinsic(ctx, object_id, receiver_type)
+          return lowered
+        end
+      end
+
       actual_name = if resolved_method_name
                       mangled_name = mangle_function_name(resolved_method_name, arg_types)
                       if @function_types.has_key?(mangled_name) || @module.has_function?(mangled_name)
@@ -94688,6 +94783,343 @@ module Adamas::HIR
       end
 
       result_id || emit_bool_literal(ctx, false)
+    end
+
+    private def concrete_tuple_element_types(tuple_type : TypeRef) : Array(TypeRef)?
+      desc = @module.get_type_descriptor(tuple_type)
+      return nil unless desc
+      return nil unless desc.kind == TypeKind::Tuple || desc.name.starts_with?("Tuple(")
+
+      desc.type_params.reject { |type| type == TypeRef::VOID }
+    end
+
+    private def lower_tuple_equality_intrinsic(
+      ctx : LoweringContext,
+      left_id : ValueId,
+      left_type : TypeRef,
+      right_id : ValueId,
+      right_type : TypeRef,
+      op : String,
+    ) : ValueId?
+      return nil unless op == "==" || op == "!=" || op == "==="
+      return nil if is_union_or_nilable_type?(left_type) || is_union_or_nilable_type?(right_type)
+
+      left_elems = concrete_tuple_element_types(left_type)
+      right_elems = concrete_tuple_element_types(right_type)
+      return nil unless left_elems && right_elems
+
+      if left_elems.size != right_elems.size
+        eq = emit_bool_literal(ctx, false)
+        if op == "!="
+          neg = UnaryOperation.new(ctx.next_id, TypeRef::BOOL, UnaryOp::Not, eq)
+          ctx.emit(neg)
+          ctx.register_type(neg.id, TypeRef::BOOL)
+          return neg.id
+        end
+        return eq
+      end
+
+      result_id = emit_bool_literal(ctx, true)
+      idx = 0
+      while idx < left_elems.size
+        idx_lit = Literal.new(ctx.next_id, TypeRef::INT32, idx.to_i64)
+        ctx.emit(idx_lit)
+        ctx.register_type(idx_lit.id, TypeRef::INT32)
+
+        left_elem_type = left_elems.unsafe_fetch(idx)
+        right_elem_type = right_elems.unsafe_fetch(idx)
+        left_elem = IndexGet.new(ctx.next_id, left_elem_type, left_id, idx_lit.id)
+        ctx.emit(left_elem)
+        ctx.register_type(left_elem.id, left_elem_type)
+        right_elem = IndexGet.new(ctx.next_id, right_elem_type, right_id, idx_lit.id)
+        ctx.emit(right_elem)
+        ctx.register_type(right_elem.id, right_elem_type)
+
+        elem_eq = lower_value_equality_intrinsic(ctx, left_elem.id, right_elem.id)
+        combined = BinaryOperation.new(ctx.next_id, TypeRef::BOOL, BinaryOp::And, result_id, elem_eq)
+        ctx.emit(combined)
+        ctx.register_type(combined.id, TypeRef::BOOL)
+        result_id = combined.id
+        idx += 1
+      end
+
+      if op == "!="
+        neg = UnaryOperation.new(ctx.next_id, TypeRef::BOOL, UnaryOp::Not, result_id)
+        ctx.emit(neg)
+        ctx.register_type(neg.id, TypeRef::BOOL)
+        return neg.id
+      end
+
+      result_id
+    end
+
+    private def lower_value_equality_intrinsic(ctx : LoweringContext, left_id : ValueId, right_id : ValueId) : ValueId
+      left_type = ctx.type_of(left_id)
+      right_type = ctx.type_of(right_id)
+
+      if left_type == TypeRef::NIL && right_type == TypeRef::NIL
+        return emit_bool_literal(ctx, true)
+      elsif left_type == TypeRef::NIL || right_type == TypeRef::NIL
+        return emit_bool_literal(ctx, false)
+      end
+
+      if left_type == right_type
+        if nilable = single_nilable_variant_info(left_type)
+          return lower_same_nilable_equality_intrinsic(ctx, left_id, right_id, nilable[0], nilable[1], nilable[2])
+        end
+
+        if left_type == TypeRef::STRING
+          call = Call.new(ctx.next_id, TypeRef::BOOL, left_id, "__adamas_string_eq", [right_id])
+          ctx.emit(call)
+          ctx.register_type(call.id, TypeRef::BOOL)
+          return call.id
+        end
+
+        if numeric_primitive?(left_type) || left_type == TypeRef::BOOL || left_type == TypeRef::CHAR ||
+           left_type == TypeRef::SYMBOL || left_type == TypeRef::POINTER
+          eq = BinaryOperation.new(ctx.next_id, TypeRef::BOOL, BinaryOp::Eq, left_id, right_id)
+          ctx.emit(eq)
+          ctx.register_type(eq.id, TypeRef::BOOL)
+          return eq.id
+        end
+
+        if tuple_eq = lower_tuple_equality_intrinsic(ctx, left_id, left_type, right_id, right_type, "==")
+          return tuple_eq
+        end
+      end
+
+      emit_binary_call(ctx, left_id, "==", right_id)
+    end
+
+    private def single_nilable_variant_info(type_ref : TypeRef) : {TypeRef, Int32, Int32}?
+      desc = @module.get_type_descriptor(type_ref)
+      return nil unless desc && desc.kind == TypeKind::Union
+
+      nil_variant_id = get_union_variant_id(type_ref, TypeRef::NIL)
+      return nil if nil_variant_id < 0
+
+      non_nil_type = TypeRef::VOID
+      non_nil_variant_id = -1
+      extra_non_nil = false
+      split_union_type_name(desc.name).each do |variant_name|
+        next if variant_name == "Nil"
+        variant_ref = type_ref_for_name(variant_name)
+        next if variant_ref == TypeRef::VOID
+        if non_nil_variant_id >= 0
+          extra_non_nil = true
+          break
+        end
+        non_nil_type = variant_ref
+        non_nil_variant_id = get_union_variant_id(type_ref, variant_ref)
+      end
+
+      return nil if extra_non_nil || non_nil_type == TypeRef::VOID || non_nil_variant_id < 0
+      {non_nil_type, nil_variant_id, non_nil_variant_id}
+    end
+
+    private def lower_same_nilable_equality_intrinsic(
+      ctx : LoweringContext,
+      left_id : ValueId,
+      right_id : ValueId,
+      non_nil_type : TypeRef,
+      nil_variant_id : Int32,
+      non_nil_variant_id : Int32,
+    ) : ValueId
+      left_nil = UnionIs.new(ctx.next_id, left_id, nil_variant_id)
+      ctx.emit(left_nil)
+      ctx.register_type(left_nil.id, TypeRef::BOOL)
+
+      pre_branch = ctx.save_locals
+      left_nil_block = ctx.create_block
+      left_value_block = ctx.create_block
+      merge_block = ctx.create_block
+      ctx.terminate(Branch.new(left_nil.id, left_nil_block, left_value_block))
+
+      ctx.current_block = left_nil_block
+      ctx.restore_locals(pre_branch)
+      right_nil_when_left_nil = UnionIs.new(ctx.next_id, right_id, nil_variant_id)
+      ctx.emit(right_nil_when_left_nil)
+      ctx.register_type(right_nil_when_left_nil.id, TypeRef::BOOL)
+      left_nil_exit = ctx.current_block
+      ctx.terminate(Jump.new(merge_block))
+
+      ctx.current_block = left_value_block
+      ctx.restore_locals(pre_branch)
+      left_value = UnionUnwrap.new(ctx.next_id, non_nil_type, left_id, non_nil_variant_id, false)
+      ctx.emit(left_value)
+      ctx.register_type(left_value.id, non_nil_type)
+      right_nil = UnionIs.new(ctx.next_id, right_id, nil_variant_id)
+      ctx.emit(right_nil)
+      ctx.register_type(right_nil.id, TypeRef::BOOL)
+
+      right_nil_block = ctx.create_block
+      both_value_block = ctx.create_block
+      ctx.terminate(Branch.new(right_nil.id, right_nil_block, both_value_block))
+
+      ctx.current_block = right_nil_block
+      ctx.restore_locals(pre_branch)
+      false_lit = emit_bool_literal(ctx, false)
+      right_nil_exit = ctx.current_block
+      ctx.terminate(Jump.new(merge_block))
+
+      ctx.current_block = both_value_block
+      ctx.restore_locals(pre_branch)
+      right_value = UnionUnwrap.new(ctx.next_id, non_nil_type, right_id, non_nil_variant_id, false)
+      ctx.emit(right_value)
+      ctx.register_type(right_value.id, non_nil_type)
+      value_eq = lower_value_equality_intrinsic(ctx, left_value.id, right_value.id)
+      both_value_exit = ctx.current_block
+      ctx.terminate(Jump.new(merge_block))
+
+      ctx.current_block = merge_block
+      phi = Phi.new(ctx.next_id, TypeRef::BOOL)
+      phi.add_incoming(left_nil_exit, right_nil_when_left_nil.id)
+      phi.add_incoming(right_nil_exit, false_lit)
+      phi.add_incoming(both_value_exit, value_eq)
+      ctx.emit(phi)
+      ctx.register_type(phi.id, TypeRef::BOOL)
+      phi.id
+    end
+
+    private def lower_tuple_hash_with_hasher_intrinsic(
+      ctx : LoweringContext,
+      tuple_id : ValueId,
+      tuple_type : TypeRef,
+      hasher_id : ValueId,
+    ) : ValueId?
+      return nil if is_union_or_nilable_type?(tuple_type)
+      elems = concrete_tuple_element_types(tuple_type)
+      return nil unless elems
+
+      current_hasher = hasher_id
+      idx = 0
+      while idx < elems.size
+        idx_lit = Literal.new(ctx.next_id, TypeRef::INT32, idx.to_i64)
+        ctx.emit(idx_lit)
+        ctx.register_type(idx_lit.id, TypeRef::INT32)
+
+        elem_type = elems.unsafe_fetch(idx)
+        elem = IndexGet.new(ctx.next_id, elem_type, tuple_id, idx_lit.id)
+        ctx.emit(elem)
+        ctx.register_type(elem.id, elem_type)
+
+        current_hasher = lower_value_hash_with_hasher(ctx, elem.id, current_hasher)
+        idx += 1
+      end
+
+      current_hasher
+    end
+
+    private def lower_tuple_hash_result_intrinsic(
+      ctx : LoweringContext,
+      tuple_id : ValueId,
+      tuple_type : TypeRef,
+    ) : ValueId?
+      return nil unless concrete_tuple_element_types(tuple_type)
+
+      hasher_type = type_ref_for_name("Crystal::Hasher")
+      hasher_type = TypeRef::POINTER if hasher_type == TypeRef::VOID
+      zero_a = Literal.new(ctx.next_id, TypeRef::UINT64, 0_i64)
+      ctx.emit(zero_a)
+      ctx.register_type(zero_a.id, TypeRef::UINT64)
+      zero_b = Literal.new(ctx.next_id, TypeRef::UINT64, 0_i64)
+      ctx.emit(zero_b)
+      ctx.register_type(zero_b.id, TypeRef::UINT64)
+
+      ctor_name = mangle_function_name("Crystal::Hasher.new", [TypeRef::UINT64, TypeRef::UINT64])
+      remember_callsite_arg_types(ctor_name, [TypeRef::UINT64, TypeRef::UINT64])
+      lower_function_if_needed(ctor_name)
+      hasher = Call.new(ctx.next_id, hasher_type, nil, ctor_name, [zero_a.id, zero_b.id])
+      ctx.emit(hasher)
+      ctx.register_type(hasher.id, hasher_type)
+
+      hashed = lower_tuple_hash_with_hasher_intrinsic(ctx, tuple_id, tuple_type, hasher.id) || hasher.id
+      result_name = "Crystal::Hasher#result"
+      lower_function_if_needed(result_name)
+      result_call = Call.new(ctx.next_id, TypeRef::UINT64, hashed, result_name, [] of ValueId)
+      ctx.emit(result_call)
+      ctx.register_type(result_call.id, TypeRef::UINT64)
+      result_call.id
+    end
+
+    private def lower_value_hash_with_hasher(ctx : LoweringContext, value_id : ValueId, hasher_id : ValueId) : ValueId
+      value_type = ctx.type_of(value_id)
+      if tuple_hash = lower_tuple_hash_with_hasher_intrinsic(ctx, value_id, value_type, hasher_id)
+        return tuple_hash
+      end
+
+      if nilable = single_nilable_variant_info(value_type)
+        non_nil_type, nil_variant_id, non_nil_variant_id = nilable
+        is_nil = UnionIs.new(ctx.next_id, value_id, nil_variant_id)
+        ctx.emit(is_nil)
+        ctx.register_type(is_nil.id, TypeRef::BOOL)
+
+        pre_branch = ctx.save_locals
+        nil_block = ctx.create_block
+        value_block = ctx.create_block
+        merge_block = ctx.create_block
+        ctx.terminate(Branch.new(is_nil.id, nil_block, value_block))
+
+        ctx.current_block = nil_block
+        ctx.restore_locals(pre_branch)
+        nil_lit = Literal.new(ctx.next_id, TypeRef::NIL, nil)
+        ctx.emit(nil_lit)
+        ctx.register_type(nil_lit.id, TypeRef::NIL)
+        nil_hash = lower_non_union_value_hash_with_hasher(ctx, nil_lit.id, hasher_id)
+        nil_exit = ctx.current_block
+        ctx.terminate(Jump.new(merge_block))
+
+        ctx.current_block = value_block
+        ctx.restore_locals(pre_branch)
+        unwrapped = UnionUnwrap.new(ctx.next_id, non_nil_type, value_id, non_nil_variant_id, false)
+        ctx.emit(unwrapped)
+        ctx.register_type(unwrapped.id, non_nil_type)
+        value_hash = lower_value_hash_with_hasher(ctx, unwrapped.id, hasher_id)
+        value_exit = ctx.current_block
+        ctx.terminate(Jump.new(merge_block))
+
+        ctx.current_block = merge_block
+        hasher_type = ctx.type_of(hasher_id)
+        phi = Phi.new(ctx.next_id, hasher_type)
+        phi.add_incoming(nil_exit, nil_hash)
+        phi.add_incoming(value_exit, value_hash)
+        ctx.emit(phi)
+        ctx.register_type(phi.id, hasher_type)
+        return phi.id
+      end
+
+      lower_non_union_value_hash_with_hasher(ctx, value_id, hasher_id)
+    end
+
+    private def lower_non_union_value_hash_with_hasher(ctx : LoweringContext, value_id : ValueId, hasher_id : ValueId) : ValueId
+      value_type = ctx.type_of(value_id)
+      hasher_type = ctx.type_of(hasher_id)
+      if hasher_type == TypeRef::VOID
+        inferred_hasher = type_ref_for_name("Crystal::Hasher")
+        hasher_type = inferred_hasher == TypeRef::VOID ? TypeRef::POINTER : inferred_hasher
+        ctx.register_type(hasher_id, hasher_type)
+      end
+
+      type_desc = @module.get_type_descriptor(value_type)
+      owner = type_desc.try(&.name) || primitive_class_name(value_type) || get_type_name_from_ref(value_type)
+      owner = normalize_method_owner_name(owner)
+      base_method_name = owner.empty? ? "hash" : "#{owner}#hash"
+      primary_mangled_name = mangle_function_name(base_method_name, [hasher_type])
+      resolved_name = resolve_method_call(ctx, value_id, "hash", [hasher_type], false)
+
+      remember_callsite_arg_types(primary_mangled_name, [hasher_type])
+      if resolved_name != primary_mangled_name
+        remember_callsite_arg_types(resolved_name, [hasher_type])
+      end
+      lower_function_if_needed(primary_mangled_name)
+      if resolved_name != primary_mangled_name
+        lower_function_if_needed(resolved_name)
+      end
+      call_target = prefer_primary_call_target(resolved_name, primary_mangled_name, [hasher_type])
+      call = Call.new(ctx.next_id, hasher_type, value_id, call_target, [hasher_id])
+      ctx.emit(call)
+      ctx.register_type(call.id, hasher_type)
+      call.id
     end
 
     private def tuple_includes_static_mismatch?(elem_type : TypeRef, needle_type : TypeRef) : Bool

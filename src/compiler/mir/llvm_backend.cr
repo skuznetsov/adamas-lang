@@ -19363,10 +19363,21 @@ module Adamas::MIR
           # For shift ops the left operand determines value width; is_shift_op gates
           # the widen-then-trunc path in the left-normalization branch below.
           is_shift_op = op == "ashr" || op == "lshr" || op == "shl"
+          is_div_rem_op = op == "sdiv" || op == "udiv" || op == "srem" || op == "urem"
 
-          # Normalize operands to MIR result type.
-          # MIR type is authoritative for arithmetic result width (for example UInt8 += 1).
+          # Normalize operands to the operation width. MIR result type remains
+          # authoritative for the final value width, but div/rem must evaluate
+          # in a width that can represent the divisor. Otherwise
+          # Int32#remainder(Int64) truncates the Int64 divisor before srem.
           result_bits = result_type[1..].to_i? || 32
+          if is_div_rem_op
+            op_bits = {result_bits, operand_bits, right_bits_val}.max
+            if op_bits > result_bits
+              narrow_result_type = result_type
+              result_type = "i#{op_bits}"
+              result_bits = op_bits
+            end
+          end
           if left_runtime_type.starts_with?('i') && left_runtime_type != result_type
             operand_bits = left_runtime_type[1..].to_i? || 32
             if operand_bits < result_bits
@@ -19412,8 +19423,8 @@ module Adamas::MIR
           record_emitted_type(name, "ptr")
         else
           if narrow = narrow_result_type
-            # Shift op: emit at the wider type then trunc to the MIR result width
-            wide_name = "%binop#{inst.id}.wide_shift"
+            # Shift/div/rem op: emit at the wider type then truncate to the MIR result width.
+            wide_name = "%binop#{inst.id}.wide_int"
             emit "#{wide_name} = #{op} #{result_type} #{left}, #{right}"
             emit "#{name} = trunc #{result_type} #{wide_name} to #{narrow}"
             result_type = narrow

@@ -6187,6 +6187,13 @@ module Adamas
         inline_primitive_tuple_type?(mir_type)
       end
 
+      private def hir_type_is_tuple_container?(type : Adamas::HIR::TypeRef?) : Bool
+        return false unless type
+        desc = @hir_module.get_type_descriptor(type)
+        return false unless desc
+        desc.kind == HIR::TypeKind::Tuple || desc.kind == HIR::TypeKind::NamedTuple
+      end
+
       # Resolve MIR element type for HIR Pointer(T).
       private def pointer_element_mir_type(pointer_hir_type : Adamas::HIR::TypeRef?) : TypeRef?
         return nil unless pointer_hir_type
@@ -6240,7 +6247,7 @@ module Adamas
         if obj_hir_type = @hir_value_types[idx.object]?
           if hir_type_is_array_container?(obj_hir_type) || hir_type_is_slice_container?(obj_hir_type)
             container_type = convert_type(obj_hir_type)
-          elsif hir_type_is_inline_pointer_tuple?(obj_hir_type)
+          elsif hir_type_is_tuple_container?(obj_hir_type)
             container_type = convert_type(obj_hir_type)
           end
         end
