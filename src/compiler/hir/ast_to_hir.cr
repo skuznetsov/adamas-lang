@@ -77244,6 +77244,32 @@ module Adamas::HIR
       # Slice#[](Range), which lowers `idx` via inttoptr and corrupts ABI
       # (stage2 parser crash in `token_slice[0]`).
       if receiver_id && method_name == "[]" && args.size == 1
+        # Array element access can also arrive as a CallNode when the parser
+        # expands block shorthand (`&.[0]`) to `__arg0.[](0)`. Keep the same
+        # element-access semantics as IndexNode lowering and do not let overload
+        # resolution choose Array#[](Range) for an Int32 argument.
+        if array_intrinsic_receiver?(ctx, receiver_id)
+          index_arg_id = args[0]
+          index_arg_type = ctx.type_of(index_arg_id)
+          index_arg_type_name = get_type_name_from_ref(index_arg_type)
+          index_arg_desc = @module.get_type_descriptor(index_arg_type)
+          index_arg_is_range = index_arg_desc.try(&.name).try(&.starts_with?("Range")) ||
+                               index_arg_type_name.starts_with?("Range")
+          if arg_expr_id = call_args.first?
+            arg_node = call_arena[arg_expr_id]
+            index_arg_is_range ||= arg_node.is_a?(Adamas::Compiler::Frontend::RangeNode)
+          end
+
+          unless index_arg_is_range
+            element_type = array_element_type_for_value(ctx, receiver_id, TypeRef::POINTER)
+            element_type = TypeRef::POINTER if element_type == TypeRef::VOID
+            index_get = IndexGet.new(ctx.next_id, element_type, receiver_id, index_arg_id)
+            ctx.emit(index_get)
+            ctx.register_type(index_get.id, element_type)
+            return index_get.id
+          end
+        end
+
         slice_receiver_id = receiver_id
         slice_receiver_type = ctx.type_of(slice_receiver_id)
         slice_desc = @module.get_type_descriptor(slice_receiver_type)

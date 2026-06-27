@@ -1,10 +1,47 @@
 # Crystal V2 Bootstrap TODO
 
 Updated: 2026-06-27
-Branch: `work/s2b-s3b-escape-summary-frontier`
+Branch: `work/s3-range-slice-frontier`
 
 This is the active working backlog only. Historical detail is in git history,
 especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
+
+## 2026-06-27 — fixed block-shorthand Array index dispatch
+
+- FIXED: `parsed.map(&.[0])` and `parsed.map(&.[i])` no longer lower the
+  synthetic `__arg0.[](idx)` CallNode to `Array(T)#[](Range)` while passing an
+  `Int32` index as the Range pointer. The bug surfaced in s3 while compiling
+  `src/adamas.cr`: `AstToHir#try_unify_tuple_variant_names` used
+  `parsed.map(&.[i]).uniq`, and the generated s2 called
+  `Array(String)#[](Range)` with an integer index, crashing in `Range#begin`.
+- Root: parser block shorthand expands `&.[idx]` into a CallNode, not an
+  IndexNode. The existing IndexNode path already treated `Array#[](non-Range)`
+  as direct element access, but the CallNode path went through overload
+  resolution and selected the Range overload despite `arg_types=Int32`.
+  Fix: in `lower_call`, for `Array`/`StaticArray` receivers, `[]`, one arg, and
+  an argument that is not Range by AST or TypeRef, emit the same `IndexGet`
+  element access as IndexNode lowering.
+- Regression guard: `regression_tests/block_shorthand_array_index_repro.sh`
+  covers literal shorthand, local-index shorthand, explicit block indexing, and
+  direct Range slicing.
+- Verified for this slice:
+  `regression_tests/block_shorthand_array_index_repro.sh
+  /tmp/adamas_array_shorthand_fix`;
+  `regression_tests/stage2_indexable_range_materialization_repro.sh
+  /tmp/adamas_array_shorthand_fix`;
+  `regression_tests/arc_unionwrap_cross_block_owned_return_repro.sh
+  /tmp/adamas_array_shorthand_fix`; and
+  `regression_tests/run_all_suites.sh /tmp/adamas_array_shorthand_fix 4`
+  passed originals 151/151 + combined 36/36.
+- Bootstrap status: fixed stage1 builds s2 successfully:
+  `scripts/run_safe.sh /tmp/adamas_array_shorthand_fix 900 12288
+  src/adamas.cr -o /tmp/adamas_array_shorthand_s2` exits 0. Fresh s2 then gets
+  past the previous `Range#begin`/`try_unify_tuple_variant_names` crash, but s3
+  still fails with a separate `Bus error` in `Slice(UInt8).cmp` called from
+  `Slice(Tuple(String, Int32)).merge_sort!` /
+  `Array(Tuple(String, Int32))#sort!` inside
+  `AstToHir#resolve_union_method_call`. Treat that as the next frontier; do not
+  conflate it with Array Range slicing.
 
 ## 2026-06-27 — fixed enum-member generic inference for filled arrays
 

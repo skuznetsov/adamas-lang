@@ -12,6 +12,31 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-S3B-BLOCK-SHORTHAND-ARRAY-INDEX-DISPATCH|verified 2026-06-27 {F:0.88 G:0.50 R:0.88}]:
+Generated s2 no longer crashes in `Range#begin` while compiling
+`AstToHir#try_unify_tuple_variant_names`. Root was CallNode overload dispatch:
+the parser expands block shorthand `&.[idx]` into `__arg0.[](idx)`, so
+`parsed.map(&.[i])` bypassed IndexNode lowering. Trace showed the argument type
+was already `Int32`, but the CallNode resolver selected
+`Array(String)#[](Range)` and passed the integer index as a Range pointer. Fix:
+for `Array`/`StaticArray` receivers in `lower_call`, `[]`, one argument, and an
+argument that is not Range by AST or TypeRef, emit the same `IndexGet` element
+access used by IndexNode lowering. Evidence:
+`regression_tests/block_shorthand_array_index_repro.sh
+/tmp/adamas_array_shorthand_fix` passes; Range materialization and prior
+UnionWrap ARC guards pass; originals 151/151 + combined 36/36 pass; fixed
+stage1 builds `/tmp/adamas_array_shorthand_s2`.
+
+[LM-S3B-SORT-CMP-PROC-FRONTIER|verified-boundary 2026-06-27 {F:0.73 G:0.35 R:0.78}]:
+After `LM-S3B-BLOCK-SHORTHAND-ARRAY-INDEX-DISPATCH`, fresh s2 gets past the old
+`Range#begin` crash but still fails the s3 build with `Bus error` after
+`lower_main` starts. lldb shows the new boundary is
+`Slice(UInt8).cmp(Tuple(String, Int32), Tuple(String, Int32), Proc)` called from
+`Slice(Tuple(String, Int32)).merge_sort!` /
+`Array(Tuple(String, Int32))#sort!` inside
+`AstToHir#resolve_union_method_call`. Treat this as a separate sort/comparator
+Proc or call-target ABI frontier; do not conflate it with Array Range slicing.
+
 [LM-S2B-ENUM-MEMBER-GENERIC-INFERENCE|verified 2026-06-27 {F:0.89 G:0.55 R:0.88}]:
 Generated s2b no longer crashes the no-prelude smoke in
 `Adamas::HIR::EscapeAnalyzer#build_summary` after `lower_main`. Root was
