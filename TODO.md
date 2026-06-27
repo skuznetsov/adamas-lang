@@ -43,6 +43,46 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   `AstToHir#resolve_union_method_call`. Treat that as the next frontier; do not
   conflate it with Array Range slicing.
 
+## 2026-06-27 — fixed sort comparator Proc carrier through s2
+
+- FIXED: the post-Array-shorthand s2 no longer crashes in the
+  `Array(Tuple(String, Int32))#sort!` / `Slice(UInt8).cmp(..., Proc)` corridor
+  while compiling `src/adamas.cr` toward s3. The old crash was a double-carrier
+  Proc bug: `Array#sort!(&block)` forwarded a materialized Proc object into
+  `Slice#sort!(&block)`, which wrapped it again; `Slice(UInt8).cmp` then loaded
+  the inner Proc object pointer as if it were a function pointer.
+- Root slice: block-suffix calls now forward the raw callback carrier to callee
+  block parameters. Raw callback materialization remains reserved for ordinary
+  `Proc` / `Proc?` parameters, and the raw-proc coercion path now skips callee
+  parameters that are real block parameters.
+- Second boundary in the same corridor: once the carrier was correct,
+  `Slice(UInt8).cmp(v1, v2, block)` still lowered `block.call(v1, v2)` as
+  `void` because the comparator parameter is bare `Proc` and loses return
+  shape. This slice recovers the stdlib comparator contract for
+  `Slice(UInt8).cmp` as `Int32`; this is not a general erased-Proc return
+  inference fix.
+- Regression guard: `regression_tests/sort_by_tuple_key_runtime_repro.sh` now
+  fails on crash/non-zero exit or wrong output and requires the sorted output
+  `1,2,3`.
+- Verified for this slice: `regression_tests/sort_by_tuple_key_runtime_repro.sh
+  /tmp/adamas_block_proc_cmp_fix` passes; block-shorthand Array index,
+  stage2 indexable Range materialization, and ARC UnionWrap cross-block guards
+  pass; `regression_tests/run_all_suites.sh /tmp/adamas_block_proc_cmp_fix 4`
+  passes originals 151/151 + combined 36/36; static LLVM IR shows
+  `Array#sort!$block` forwarding raw `%block` to `Slice#sort!$block`,
+  `Slice#sort!$block` materializing exactly one Proc for `merge_sort!`, and
+  `Slice(UInt8).cmp(..., Proc)` calling the comparator as `i32` and returning
+  that `i32`.
+- Bootstrap status: fixed stage1 builds s2 successfully:
+  `scripts/run_safe.sh /tmp/adamas_block_proc_cmp_fix 900 12288 src/adamas.cr
+  -o /tmp/adamas_block_proc_s2` exits 0. Fresh s2 gets past the previous
+  sort/comparator crash, then s2->s3 fails later with `SIGSEGV` in
+  `AstToHir#inline_try_with_block` after `pass3 after lower_main call`.
+  Disabling try inline changes the failure to
+  `STUB CALLED: Adamas::HIR::AstToHir::class_name:String#empty?`, so the new
+  frontier is not yet root-classified; do not conflate it with the closed
+  sort/Proc carrier slice.
+
 ## 2026-06-27 — fixed enum-member generic inference for filled arrays
 
 - FIXED: generated `s2b` no longer crashes the no-prelude smoke in

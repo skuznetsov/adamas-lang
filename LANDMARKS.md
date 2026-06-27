@@ -27,15 +27,39 @@ access used by IndexNode lowering. Evidence:
 UnionWrap ARC guards pass; originals 151/151 + combined 36/36 pass; fixed
 stage1 builds `/tmp/adamas_array_shorthand_s2`.
 
-[LM-S3B-SORT-CMP-PROC-FRONTIER|verified-boundary 2026-06-27 {F:0.73 G:0.35 R:0.78}]:
-After `LM-S3B-BLOCK-SHORTHAND-ARRAY-INDEX-DISPATCH`, fresh s2 gets past the old
-`Range#begin` crash but still fails the s3 build with `Bus error` after
-`lower_main` starts. lldb shows the new boundary is
-`Slice(UInt8).cmp(Tuple(String, Int32), Tuple(String, Int32), Proc)` called from
-`Slice(Tuple(String, Int32)).merge_sort!` /
-`Array(Tuple(String, Int32))#sort!` inside
-`AstToHir#resolve_union_method_call`. Treat this as a separate sort/comparator
-Proc or call-target ABI frontier; do not conflate it with Array Range slicing.
+[LM-S3B-SORT-CMP-PROC-CARRIER|verified 2026-06-27 {F:0.88 G:0.42 R:0.88}]:
+After `LM-S3B-BLOCK-SHORTHAND-ARRAY-INDEX-DISPATCH`, fresh s2 no longer fails
+the s3 build in `Slice(UInt8).cmp(Tuple(String, Int32), Tuple(String, Int32),
+Proc)` called from `Slice(Tuple(String, Int32)).merge_sort!` /
+`Array(Tuple(String, Int32))#sort!`. Root had two parts. First, block-suffix
+calls double-wrapped block carriers: `Array#sort!(&block)` materialized a Proc
+object and passed it to `Slice#sort!(&block)`, which wrapped it again; the final
+comparator loaded a Proc object pointer as if it were a function pointer. Fix:
+forward raw callbacks to callee block parameters and reserve Proc
+materialization for ordinary `Proc` / `Proc?` parameters. Second, the
+comparator's bare `Proc` parameter erased its return shape, so
+`block.call(v1, v2)` lowered as `void` and `cmp` returned zero for every pair.
+This slice recovers the stdlib `Slice(UInt8).cmp` comparator return contract as
+`Int32`; it is not a global erased-Proc return inference fix. Evidence:
+`regression_tests/sort_by_tuple_key_runtime_repro.sh
+/tmp/adamas_block_proc_cmp_fix` passes with output `1,2,3`; block-shorthand
+Array index, stage2 Range materialization, and ARC UnionWrap guards pass;
+originals 151/151 + combined 36/36 pass; static LLVM IR shows raw `%block`
+forwarding to `Slice#sort!$block`, exactly one Proc materialization before
+`merge_sort!`, and `Slice(UInt8).cmp(..., Proc)` calling and returning `i32`.
+
+[LM-S3B-INLINE-TRY-BLOCK-FRONTIER|verified-boundary 2026-06-27 {F:0.72 G:0.30 R:0.78}]:
+After `LM-S3B-SORT-CMP-PROC-CARRIER`, fixed stage1 builds
+`/tmp/adamas_block_proc_s2`, and that s2 gets past the previous sort/comparator
+crash. The next s2->s3 frontier is separate: `scripts/run_safe.sh
+/tmp/adamas_block_proc_s2 900 12288 src/adamas.cr -o /tmp/adamas_block_proc_s3`
+exits 139 after `pass3 after lower_main call`; lldb stops in
+`Adamas::HIR::AstToHir#inline_try_with_block` from `lower_call` during
+`process_pending_lower_functions`. A falsifier run with
+`ADAMAS_DISABLE_TRY_INLINE=1` changes the failure to `STUB CALLED:
+Adamas::HIR::AstToHir::class_name:String#empty?`, so `inline_try_with_block` is
+a verified boundary but not yet a verified root. Do not fold this frontier back
+into sort/Proc carrier or Array Range slicing.
 
 [LM-S2B-ENUM-MEMBER-GENERIC-INFERENCE|verified 2026-06-27 {F:0.89 G:0.55 R:0.88}]:
 Generated s2b no longer crashes the no-prelude smoke in

@@ -71437,6 +71437,13 @@ module Adamas::HIR
                   proc_ret = proc_recv_desc.type_params.last
                   proc_call_return = proc_ret if proc_ret != TypeRef::VOID
                 end
+                if proc_call_return == TypeRef::VOID
+                  hinted_return = proc_materialize_hint_return_type(ctx)
+                  proc_call_return = hinted_return unless hinted_return == TypeRef::VOID || hinted_return == TypeRef::NIL
+                end
+                if proc_call_return == TypeRef::VOID
+                  proc_call_return = contextual_bare_proc_call_return_type(ctx) || proc_call_return
+                end
                 proc_call = Call.new(ctx.next_id, proc_call_return, proc_recv_id, "Proc#call", proc_call_args)
                 ctx.emit(proc_call)
                 ctx.register_type(proc_call.id, proc_call_return)
@@ -78874,9 +78881,10 @@ module Adamas::HIR
       end
 
       # Block forwarding: when the caller has &block and the callee expects a
-      # block parameter, forward the proc value as the last argument.  Without
-      # this, the proc stays in a dead inline-yield block and the callee receives
-      # null.  Accept the same block suffix forms as the resolver/mangler:
+      # block parameter, forward the raw callback value as the last argument.
+      # Proc materialization is reserved for ordinary Proc parameters; wrapping
+      # here would double-wrap chains such as Array#sort!(&block) -> Slice#sort!(&block).
+      # Accept the same block suffix forms as the resolver/mangler:
       # bare `$block`, typed `_block`, and arity/splat variants.
       block_suffix = method_suffix(mangled_method_name)
       if block_pass_expr && block_suffix && suffix_has_block_flag?(block_suffix)
@@ -78887,20 +78895,10 @@ module Adamas::HIR
                              s ? s.lstrip('@') : nil
                            else
                              nil
-                           end
+        end
         if block_local_name
           if block_val = ctx.lookup_local(block_local_name)
-            nil_env = Literal.new(ctx.next_id, TypeRef::POINTER, nil)
-            ctx.emit(nil_env)
-            ctx.register_type(nil_env.id, TypeRef::POINTER)
-
-            proc_type = ctx.type_of(block_val)
-            proc_type = TypeRef::POINTER if proc_type == TypeRef::VOID
-            forwarded_proc = MakeProc.new(ctx.next_id, proc_type, block_val, nil_env.id)
-            ctx.emit(forwarded_proc)
-            ctx.register_type(forwarded_proc.id, proc_type)
-
-            args = args + [forwarded_proc.id] unless args.includes?(forwarded_proc.id)
+            args = args + [block_val] unless args.includes?(block_val)
           end
         end
       end
@@ -79131,7 +79129,8 @@ module Adamas::HIR
       emit_method_name : String,
     ) : Array(ValueId)
       return args if args.empty?
-      target_types = if callee = @module.function_by_name(emit_method_name)
+      callee = @module.function_by_name(emit_method_name)
+      target_types = if callee
                        callee.params.map(&.type)
                      elsif suffix = method_suffix(emit_method_name)
                        parse_types_from_suffix(strip_mangled_suffix_flags(suffix))
@@ -79147,6 +79146,10 @@ module Adamas::HIR
         raw_proc_source = raw_proc_callback_source(ctx, arg_id)
         raw_proc = !raw_proc_source.nil?
         next unless raw_proc
+        if callee && idx < callee.params.size
+          target_param = callee.params.unsafe_fetch(idx)
+          next if target_param.is_block || raw_block_callback_param?(callee, target_param)
+        end
         target_type = idx < target_types.size ? target_types[idx] : TypeRef::VOID
         value_type = ctx.type_of(arg_id)
         suffix_part = idx < suffix_parts.size ? suffix_parts[idx] : nil
@@ -89144,6 +89147,13 @@ module Adamas::HIR
               proc_ret = proc_recv_desc.type_params.last
               proc_call_return = proc_ret if proc_ret != TypeRef::VOID
             end
+            if proc_call_return == TypeRef::VOID
+              hinted_return = proc_materialize_hint_return_type(ctx)
+              proc_call_return = hinted_return unless hinted_return == TypeRef::VOID || hinted_return == TypeRef::NIL
+            end
+            if proc_call_return == TypeRef::VOID
+              proc_call_return = contextual_bare_proc_call_return_type(ctx) || proc_call_return
+            end
             proc_call = Call.new(ctx.next_id, proc_call_return, proc_recv_id, "Proc#call", proc_call_args)
             ctx.emit(proc_call)
             ctx.register_type(proc_call.id, proc_call_return)
@@ -94232,6 +94242,15 @@ module Adamas::HIR
         end
       end
       base
+    end
+
+    # Bare `Proc` parameters erase their return type. Most call sites can keep
+    # that unknown, but stdlib's Slice(UInt8).cmp comparator is specified to
+    # return Int32 and feeds sort/merge decisions directly. Without this scoped
+    # fallback, `block.call(v1, v2)` lowers as void and cmp returns 0 for every
+    # pair.
+    private def contextual_bare_proc_call_return_type(ctx : LoweringContext) : TypeRef?
+      strip_type_suffix(ctx.function.name) == "Slice(UInt8).cmp" ? TypeRef::INT32 : nil
     end
 
     # Convert a BlockNode into a Proc (FuncPointer). This is used when a method

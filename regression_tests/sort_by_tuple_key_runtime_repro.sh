@@ -90,15 +90,16 @@ cat "$RUN_LOG"
 stdout_text="$(awk '/^=== STDOUT ===/{flag=1;next}/^=== STDERR ===/{flag=0}flag' "$RUN_LOG" | tr -d '\r')"
 expected='1,2,3'
 
-if [[ $run_status -eq 0 ]] && [[ "$stdout_text" == "$expected" ]]; then
-  echo "not reproduced"
+if [[ $run_status -ne 0 ]]; then
+  echo "FAIL: sort_by! tuple-key sample crashed or exited non-zero" >&2
   exit 1
 fi
 
-if [[ $run_status -eq 139 ]] || grep -Eq 'Segmentation fault|Segfault|signal 11|status: 139|exit 139|EXC_BAD_ACCESS' "$RUN_LOG"; then
-  echo "reproduced: sort_by! tuple-key sample crashes at runtime"
-  exit 0
+if [[ "$stdout_text" != "$expected" ]]; then
+  echo "FAIL: unexpected sort_by! tuple-key output" >&2
+  echo "expected: $expected" >&2
+  echo "actual: $stdout_text" >&2
+  exit 1
 fi
 
-echo "reproduced: unexpected sort_by! tuple-key signature"
-exit 0
+echo "sort_by_tuple_key_runtime_ok"
