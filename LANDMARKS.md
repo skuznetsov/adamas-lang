@@ -1,6 +1,6 @@
 # LANDMARKS
 
-Updated: 2026-06-26
+Updated: 2026-06-27
 Context: compiler/bootstrap/stage2-stability
 
 This file is the active working set only. Historical landmarks before this
@@ -11,6 +11,23 @@ checkpoint remain recoverable from git history, especially:
   `d43826fdcc2277b6075026244764a84d0069d1a30b675642b603f3511b14a1e5`
 
 ## Active Bootstrap Gate
+
+[LM-S2B-ENUM-MEMBER-GENERIC-INFERENCE|verified 2026-06-27 {F:0.89 G:0.55 R:0.88}]:
+Generated s2b no longer crashes the no-prelude smoke in
+`Adamas::HIR::EscapeAnalyzer#build_summary` after `lower_main`. Root was
+producer-side generic type inference: `Array.new(param_count,
+LifetimeTag::StackLocal)` inferred `Array(LifetimeTag::StackLocal)`, a singleton
+enum-member owner, instead of `Array(LifetimeTag)`. The generated
+`Array(LifetimeTag::StackLocal).new(Int32, LifetimeTag)` constructor called an
+initializer body that accepted only `self`, zeroed size/capacity, and left
+`@buffer = null`; `build_summary` then wrote into that null buffer. Fix:
+`infer_type_name_from_node(PathNode)` canonicalizes registered enum member paths
+to the declaring enum before generic constructor inference. Evidence:
+`regression_tests/enum_member_array_new_repro.sh bin/adamas` passes; originals
+151/151 + combined 36/36 pass; ASAN bootstrap
+`/tmp/adamas_bootstrap_enum_owner_fix` builds s2 and both s2 smokes pass; static
+IR shows `EscapeSummary#initialize` now calls `Array(LifetimeTag).new(Int32,
+LifetimeTag)`.
 
 [LM-S2B-FILLED-ARRAY-FASTPATH-OVERREACH|verified 2026-06-26 {F:0.88 G:0.45 R:0.86}]:
 Produced s2b no longer hits the ASAN heap-buffer-overflow in

@@ -49196,6 +49196,19 @@ module Adamas::HIR
         "Nil"
       when Adamas::Compiler::Frontend::PathNode
         full_name = resolve_path_string_in_context(collect_path_string(node))
+        # Enum members are values of their declaring enum, not singleton generic
+        # type arguments. Without this, Array.new(size, SomeEnum::Member)
+        # specializes as Array(SomeEnum::Member) and can materialize the wrong
+        # constructor body.
+        if (idx = full_name.rindex("::")) && idx + 2 < full_name.bytesize
+          enum_prefix = full_name[0, idx]
+          enum_member = full_name[(idx + 2)..]
+          if enum_name = resolve_enum_name(enum_prefix)
+            if members = @enum_info.try(&.[enum_name]?)
+              return enum_name if members.has_key?(enum_member)
+            end
+          end
+        end
         # Check if this is a constant — if so, return the constant's value type, not its name
         if resolved = resolve_constant_name_in_context(full_name)
           if const_type = @constant_types[resolved]?

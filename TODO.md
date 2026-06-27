@@ -1,10 +1,40 @@
 # Crystal V2 Bootstrap TODO
 
 Updated: 2026-06-27
-Branch: `work/s2b-s3b-plain-smoke-heap-frontier`
+Branch: `work/s2b-s3b-escape-summary-frontier`
 
 This is the active working backlog only. Historical detail is in git history,
 especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
+
+## 2026-06-27 — fixed enum-member generic inference for filled arrays
+
+- FIXED: generated `s2b` no longer crashes the no-prelude smoke in
+  `Adamas::HIR::EscapeAnalyzer#build_summary` after `lower_main`. The first bad
+  producer was `EscapeSummary#initialize`: `Array.new(param_count,
+  LifetimeTag::StackLocal)` inferred the generic owner as
+  `Array(LifetimeTag::StackLocal)` instead of `Array(LifetimeTag)`. That
+  singleton-member array materialized `initialize(Int32, LifetimeTag)` as a
+  no-arg zeroing body, leaving `@buffer = null`; `build_summary` then wrote the
+  first parameter lifetime into that null buffer.
+- Root: `infer_type_name_from_node(PathNode)` treated enum member paths as type
+  names when generic constructors inferred type arguments from AST nodes. Enum
+  members are values of their declaring enum, so `SomeEnum::Member` now
+  canonicalizes to `SomeEnum` when the path matches a registered enum member.
+- Regression guard: `regression_tests/enum_member_array_new_repro.sh` covers
+  `Array.new(size, Enum::Member)` and verifies the array is usable as
+  `Array(Enum)`.
+- Verified for this slice: `crystal build src/adamas.cr -o bin/adamas
+  --error-trace`; `regression_tests/enum_member_array_new_repro.sh
+  bin/adamas`; `regression_tests/array_filled_pointer_value_dup_repro.sh
+  bin/adamas`; `regression_tests/hash_block_shape_default_proc_repro.sh
+  bin/adamas`; `regression_tests/run_all_suites.sh bin/adamas 4` passed
+  originals 151/151 + combined 36/36. ASAN bootstrap
+  `scripts/bootstrap_chain.sh --stages 2 --out
+  /tmp/adamas_bootstrap_enum_owner_fix --timeout 900 --mem 12288` builds s2 and
+  both s2 plain and no-prelude smokes pass. Static IR check shows
+  `EscapeSummary#initialize` now calls
+  `Array(Adamas::HIR::LifetimeTag).new(Int32, LifetimeTag)`, whose initializer
+  allocates/fills the buffer for non-zero size.
 
 ## 2026-06-22 — s2b phantom `Adamas::MIR::Hash` under-alloc: tactical fix landed; resolver bug A deferred
 
