@@ -6,16 +6,18 @@ Branch: `work/s3-range-slice-frontier`
 This is the active working backlog only. Historical detail is in git history,
 especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
-## 2026-06-27 — architecture stop-rule checkpoint: do not merge current batch yet
+## 2026-06-27 — architecture stop-rule checkpoint: do not merge current branch yet
 
-- CURRENT STATUS: branch `work/s3-range-slice-frontier` still has a broad
-  uncommitted batch (`ast_to_hir.cr`, `hir_to_mir.cr`, `llvm_backend.cr`, plus
-  focused frontend/debug changes). It is not merge-ready. A fresh stage1 build
-  produces a fresh s2, and the escaped-interpolation parser regression now
-  passes under both stage1 and that generated s2:
+- CURRENT STATUS: branch `work/s3-range-slice-frontier` is still not
+  merge-ready, but the previous broad dirty batch has been cut down. Stale
+  `ADAMAS_*_LEDGER` probes, an unbacked `lower_field_get` Void guard, stale
+  backend bootstrap rewrites, and a misleading `stage2_try_inline...` repro were
+  removed instead of being carried forward. A fresh stage1 build produces a
+  fresh s2, and the escaped-interpolation parser regression now passes under
+  both stage1 and that generated s2:
   `regression_tests/stage2_escaped_interpolation_string_parser_repro.sh
-  /tmp/adamas_frontend_slice` and the same script with
-  `/tmp/adamas_frontend_slice_s2`. However, generated s2 compiling minimal
+  /tmp/adamas_cleaned_batch` and the same script with
+  `/tmp/adamas_cleaned_batch_s2`. However, generated s2 compiling minimal
   full-prelude `puts "x"` still exits 139 during compilation after
   `pass3 after lower_main call`; fresh lldb stops in
   `Adamas::MIR::HIRToMIRLowering#lower_field_get(HIR::FieldGet)`. Treat this
@@ -23,6 +25,12 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 - HARD BOUNDARY: keep `BlockOwner`. Do not revert `@block_owner` back to
   `NamedTuple` or positional `Tuple`; that rollback re-enters an already
   observed materialization/key-shape trap.
+- FIXED: `case x; when StructConstant` now uses Crystal's
+  `condition === subject` semantics for non-primitive conditions instead of raw
+  storage/pointer equality. The focused guard is
+  `regression_tests/struct_constant_case_equality_repro.sh`; it is red on
+  baseline `d623f52f` (`case=miss`) and green on the fixed compiler
+  (`case=hit`). Primitive scalar case comparisons still use raw `Eq`.
 - FRONTEND SLICE CLOSED: s2 previously parsed `String#dump_or_inspect_unquoted`
   incorrectly because the two-pass `lex_string` fast path treated escaped
   `\\\#{` as real interpolation and swallowed the rest of the class body.

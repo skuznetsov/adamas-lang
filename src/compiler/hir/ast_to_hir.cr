@@ -4206,6 +4206,15 @@ module Adamas::HIR
     @assigned_vars_stack : Array(Set(String)) = [] of Set(String)
     # Track virtual targets so newly-registered subclasses can be lowered later.
     record VirtualTarget, method_name : String, arg_types : Array(TypeRef), has_block : Bool, has_splat : Bool
+    class BlockOwner
+      getter class_name : String?
+      getter method_name : String?
+      getter is_class : Bool
+
+      def initialize(@class_name : String?, @method_name : String?, @is_class : Bool)
+      end
+    end
+
     @virtual_targets_by_parent : Hash(String, Array(VirtualTarget)) = {} of String => Array(VirtualTarget)
     @virtual_targets_recorded : Set(String) = Set(String).new
     # Dedup replay work at the (child, parent, method, args_hash, flags) grain:
@@ -4258,7 +4267,7 @@ module Adamas::HIR
     # Map block node object ids to the arena they were created in.
     @block_node_arenas : Hash(UInt64, Adamas::Compiler::Frontend::ArenaLike) = {} of UInt64 => Adamas::Compiler::Frontend::ArenaLike
     # Map block node object ids to their defining scope (class/method).
-    @block_owner : Hash(UInt64, {class_name: String?, method_name: String?, is_class: Bool}) = {} of UInt64 => {class_name: String?, method_name: String?, is_class: Bool}
+    @block_owner : Hash(UInt64, BlockOwner) = {} of UInt64 => BlockOwner
     @block_owner_self_ids : Hash(UInt64, ValueId) = {} of UInt64 => ValueId
     # Map block node object ids to the function being lowered when the block was registered.
     # Used to detect whether a `return` inside a yield block should exit the current function.
@@ -4569,7 +4578,7 @@ module Adamas::HIR
       @top_level_main_defined = false
       @block_captures = {} of BlockId => Array(CapturedVar)
       @block_node_arenas = {} of UInt64 => Adamas::Compiler::Frontend::ArenaLike
-      @block_owner = {} of UInt64 => {class_name: String?, method_name: String?, is_class: Bool}
+      @block_owner = {} of UInt64 => BlockOwner
       @block_owner_self_ids = {} of UInt64 => ValueId
       @block_owner_function_ids = {} of UInt64 => FunctionId
       @block_lowering_cache = {} of BlockLoweringKey => BlockId
@@ -64140,6 +64149,48 @@ module Adamas::HIR
       nil_lit.id
     end
 
+    private def raw_case_equality_type?(type_ref : TypeRef) : Bool
+      case type_ref.id
+      when TypeRef::NIL.id,
+           TypeRef::BOOL.id,
+           TypeRef::INT8.id,
+           TypeRef::INT16.id,
+           TypeRef::INT32.id,
+           TypeRef::INT64.id,
+           TypeRef::INT128.id,
+           TypeRef::UINT8.id,
+           TypeRef::UINT16.id,
+           TypeRef::UINT32.id,
+           TypeRef::UINT64.id,
+           TypeRef::UINT128.id,
+           TypeRef::FLOAT32.id,
+           TypeRef::FLOAT64.id,
+           TypeRef::CHAR.id,
+           TypeRef::SYMBOL.id
+        true
+      else
+        false
+      end
+    end
+
+    private def emit_case_equality_fallback(ctx : LoweringContext, subject_id : ValueId, cond_expr : ExprId) : ValueId
+      cond_val = lower_expr(ctx, cond_expr)
+      subject_type = ctx.type_of(subject_id)
+      cond_type = ctx.type_of(cond_val)
+
+      if raw_case_equality_type?(subject_type) && raw_case_equality_type?(cond_type) && subject_type == cond_type
+        eq = BinaryOperation.new(ctx.next_id, TypeRef::BOOL, BinaryOp::Eq, subject_id, cond_val)
+        ctx.emit(eq)
+        ctx.register_type(eq.id, TypeRef::BOOL)
+        return eq.id
+      end
+
+      # Crystal case semantics are `condition === subject`. For non-primitive
+      # values, raw Eq compares storage/pointers and bypasses user equality,
+      # breaking struct constants such as `when TypeRef::STRING`.
+      emit_binary_call(ctx, cond_val, "===", subject_id)
+    end
+
     # Emit comparison for case/when using appropriate === semantics
     # Returns ValueId of boolean result
     private def emit_case_comparison(ctx : LoweringContext, subject_id : ValueId, cond_expr : ExprId, subject_expr_id : ExprId? = nil) : ValueId
@@ -64259,10 +64310,7 @@ module Adamas::HIR
           is_a.id
         else
           # Constant value - equality
-          cond_val = lower_expr(ctx, cond_expr)
-          eq = BinaryOperation.new(ctx.next_id, TypeRef::BOOL, BinaryOp::Eq, subject_id, cond_val)
-          ctx.emit(eq)
-          eq.id
+          emit_case_equality_fallback(ctx, subject_id, cond_expr)
         end
       when Adamas::Compiler::Frontend::RangeNode
         # Range: call Range#=== or Range#includes?
@@ -64391,10 +64439,7 @@ module Adamas::HIR
           is_a.id
         else
           # Variable - equality
-          cond_val = lower_expr(ctx, cond_expr)
-          eq = BinaryOperation.new(ctx.next_id, TypeRef::BOOL, BinaryOp::Eq, subject_id, cond_val)
-          ctx.emit(eq)
-          eq.id
+          emit_case_equality_fallback(ctx, subject_id, cond_expr)
         end
       when Adamas::Compiler::Frontend::MemberAccessNode
         # Check for implicit receiver pattern: .method? → subject.method?
@@ -64560,10 +64605,7 @@ module Adamas::HIR
           return call.id
         else
           # Non-implicit receiver: lower normally and compare
-          cond_val = lower_expr(ctx, cond_expr)
-          eq = BinaryOperation.new(ctx.next_id, TypeRef::BOOL, BinaryOp::Eq, subject_id, cond_val)
-          ctx.emit(eq)
-          eq.id
+          emit_case_equality_fallback(ctx, subject_id, cond_expr)
         end
       when Adamas::Compiler::Frontend::CallNode
         # Check for implicit receiver pattern: .method?() → subject.method?()
@@ -64751,10 +64793,7 @@ module Adamas::HIR
         end
 
         # Default: lower the call expression and compare
-        cond_val = lower_expr(ctx, cond_expr)
-        eq = BinaryOperation.new(ctx.next_id, TypeRef::BOOL, BinaryOp::Eq, subject_id, cond_val)
-        ctx.emit(eq)
-        eq.id
+        emit_case_equality_fallback(ctx, subject_id, cond_expr)
       when Adamas::Compiler::Frontend::GenericNode
         # Generic type like Tuple(X, Y), Array(Int32), etc.
         # In case/in this is a type check: subject.is_a?(GenericType)
@@ -64779,18 +64818,10 @@ module Adamas::HIR
           is_a.id
         else
           # Fallback: equality
-          cond_val = lower_expr(ctx, cond_expr)
-          eq = BinaryOperation.new(ctx.next_id, TypeRef::BOOL, BinaryOp::Eq, subject_id, cond_val)
-          ctx.emit(eq)
-          eq.id
+          emit_case_equality_fallback(ctx, subject_id, cond_expr)
         end
       else
-        # Default: call === method (when we have method calls working)
-        # For now, fall back to equality
-        cond_val = lower_expr(ctx, cond_expr)
-        eq = BinaryOperation.new(ctx.next_id, TypeRef::BOOL, BinaryOp::Eq, subject_id, cond_val)
-        ctx.emit(eq)
-        eq.id
+        emit_case_equality_fallback(ctx, subject_id, cond_expr)
       end
     end
 
@@ -87021,11 +87052,7 @@ module Adamas::HIR
       # making `block_owned_by_current_fn` false for subsequent instantiations, which
       # broke non-local returns (return inside block jumped to inline exit instead of
       # doing a real method return).
-      @block_owner[block.object_id] = {
-        class_name:  old_current_class,
-        method_name: old_current_method,
-        is_class:    old_current_method_is_class || false,
-      }
+      @block_owner[block.object_id] = BlockOwner.new(old_current_class, old_current_method, old_current_method_is_class || false)
       @block_owner_function_ids[block.object_id] = ctx.function.id
       if self_id = caller_locals["self"]?
         @block_owner_self_ids[block.object_id] = self_id
@@ -87403,9 +87430,9 @@ module Adamas::HIR
         block_owned_by_current_fn = (owner_fn_id == ctx.function.id)
         # Keep lexical fallback only when function id ownership is unavailable.
         if !block_owned_by_current_fn && owner_fn_id.nil? && owner
-          owner_method = owner[:method_name]
-          owner_class = owner[:class_name]
-          owner_is_class = owner[:is_class]
+          owner_method = owner.method_name
+          owner_class = owner.class_name
+          owner_is_class = owner.is_class
           method_matches = owner_method.nil? || owner_method.empty? || owner_method == @current_method
           block_owned_by_current_fn = owner_class == @current_class &&
                                       method_matches &&
@@ -87533,8 +87560,8 @@ module Adamas::HIR
         caller_locals_index = @inline_caller_locals_stack.size - 1
         resolved_by_fn = false
         if owner_fn_id
-          owner_class = owner ? owner[:class_name] : nil
-          owner_method = owner ? owner[:method_name] : nil
+          owner_class = owner ? owner.class_name : nil
+          owner_method = owner ? owner.method_name : nil
           owner_has_lexical = (owner_class && !owner_class.empty?) || (owner_method && !owner_method.empty?)
 
           if owner_has_lexical
@@ -87566,8 +87593,8 @@ module Adamas::HIR
         if owner && !resolved_by_fn
           matched = false
           (@inline_caller_class_stack.size - 1).downto(0) do |idx|
-            next unless @inline_caller_class_stack[idx]? == owner[:class_name]
-            owner_method = owner[:method_name]
+            next unless @inline_caller_class_stack[idx]? == owner.class_name
+            owner_method = owner.method_name
             stack_method = @inline_caller_method_stack[idx]?
             if owner_method.nil? || owner_method.empty? || stack_method == owner_method
               caller_locals_index = idx
@@ -87577,7 +87604,7 @@ module Adamas::HIR
           end
           if !matched
             (@inline_caller_class_stack.size - 1).downto(0) do |idx|
-              next unless @inline_caller_class_stack[idx]? == owner[:class_name]
+              next unless @inline_caller_class_stack[idx]? == owner.class_name
               caller_locals_index = idx
               break
             end
@@ -87602,9 +87629,9 @@ module Adamas::HIR
                        caller_locals["self"] = owner_self_id
                      end
                    end
-                   caller_class = owner ? owner[:class_name] : @inline_caller_class_stack.last?
-                   caller_method = owner ? owner[:method_name] : @inline_caller_method_stack.last?
-                   caller_is_class = owner ? owner[:is_class] : (@inline_caller_method_is_class_stack.last? || false)
+                   caller_class = owner ? owner.class_name : @inline_caller_class_stack.last?
+                   caller_method = owner ? owner.method_name : @inline_caller_method_stack.last?
+                   caller_is_class = owner ? owner.is_class : (@inline_caller_method_is_class_stack.last? || false)
                    if env_get("DEBUG_INLINE_CALLER")
                      owner_flag = owner ? "owner" : "caller"
                      STDERR.puts "[INLINE_CALLER] #{owner_flag}=#{caller_class}##{caller_method} depth=#{@inline_yield_block_body_depth}"
@@ -92675,11 +92702,7 @@ module Adamas::HIR
 
       saved_block = ctx.current_block
       @block_node_arenas[node.object_id] = @arena
-      @block_owner[node.object_id] = {
-        class_name:  @current_class,
-        method_name: @current_method,
-        is_class:    @current_method_is_class,
-      }
+      @block_owner[node.object_id] = BlockOwner.new(@current_class, @current_method, @current_method_is_class)
       @block_owner_function_ids[node.object_id] = ctx.function.id
       if ctx.lookup_local("self").nil?
         param = find_self_param(ctx.function)
@@ -94127,9 +94150,9 @@ module Adamas::HIR
       saved_method = @current_method
       saved_method_is_class = @current_method_is_class
       if owner = @block_owner[node.object_id]?
-        @current_class = owner[:class_name]
-        @current_method = owner[:method_name]
-        @current_method_is_class = owner[:is_class]
+        @current_class = owner.class_name
+        @current_method = owner.method_name
+        @current_method_is_class = owner.is_class
       end
       saved_typeof_locals = @current_typeof_locals
       saved_typeof_local_names = @current_typeof_local_names
@@ -94325,21 +94348,17 @@ module Adamas::HIR
         # to the inlined callee, while the block itself is lexically owned by the
         # caller. Using callee owner here breaks ivar resolution inside block procs
         # (e.g. @tokens resolved against wrong class, then degraded to offset=0).
-        lexical_owner_class = previous_owner[:class_name]
-        lexical_owner_method = previous_owner[:method_name]
+        lexical_owner_class = previous_owner.class_name
+        lexical_owner_method = previous_owner.method_name
         if lexical_owner_class || lexical_owner_method
           owner_class = lexical_owner_class
           owner_method = lexical_owner_method
-          owner_is_class = previous_owner[:is_class]
+          owner_is_class = previous_owner.is_class
         elsif owner_class.nil? && owner_method.nil?
-          owner_is_class = previous_owner[:is_class]
+          owner_is_class = previous_owner.is_class
         end
       end
-      @block_owner[block_node.object_id] = {
-        class_name:  owner_class,
-        method_name: owner_method,
-        is_class:    owner_is_class,
-      }
+      @block_owner[block_node.object_id] = BlockOwner.new(owner_class, owner_method, owner_is_class)
       @block_owner_function_ids[block_node.object_id] = ctx.function.id
       owner_self_id = ctx.lookup_local("self") || @block_owner_self_ids[block_node.object_id]?
       if owner_self_id.nil?
@@ -94618,9 +94637,9 @@ module Adamas::HIR
       saved_method = @current_method
       saved_method_is_class = @current_method_is_class
       if owner = @block_owner[block_node.object_id]?
-        @current_class = owner[:class_name]
-        @current_method = owner[:method_name]
-        @current_method_is_class = owner[:is_class]
+        @current_class = owner.class_name
+        @current_method = owner.method_name
+        @current_method_is_class = owner.is_class
       end
       saved_typeof_locals = @current_typeof_locals
       saved_typeof_local_names = @current_typeof_local_names

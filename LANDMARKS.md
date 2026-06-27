@@ -12,22 +12,38 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
-[LM-S2S3-ARCH-STOPRULE-CURRENT-BATCH|verified-boundary 2026-06-27 {F:0.82 G:0.62 R:0.86}]:
-Current `work/s3-range-slice-frontier` working tree is not merge-ready. It
-contains a broad uncommitted batch across HIR, MIR lowering, and LLVM backend,
-plus focused frontend/debug oracle changes. The batch
-contains useful aligned pieces, including the `BlockOwner` owner-metadata
-boundary, which must not be reverted to `NamedTuple` or positional `Tuple`.
-The latest focused frontend slice is green under fresh stage1 and fresh s2, but
-the bootstrap gate is still red: generated s2 compiling minimal full-prelude
-`puts "x"` exits 139 after `pass3 after lower_main call`, and fresh lldb stops
-in `Adamas::MIR::HIRToMIRLowering#lower_field_get(HIR::FieldGet)`. The current
-frontier is therefore not "parser fixed means s2 clean" and not "merge to
-main"; the next slice must localize the HIR `FieldGet` producer/consumer
-boundary before any behavior patch. Backend repair paths touched by the batch
-must be classified with `CodePathStatus` before expansion or deletion. Spark
-scout should use GPT Codex Spark xHigh if/when available; do not use Claude as
-scout on this project for now.
+[LM-S2S3-ARCH-STOPRULE-CURRENT-BATCH|verified-boundary 2026-06-27 {F:0.84 G:0.62 R:0.88}]:
+Current `work/s3-range-slice-frontier` is not merge-ready. The previous broad
+dirty batch was reduced before continuing: stale `ADAMAS_*_LEDGER` probes, an
+unbacked `lower_field_get` Void guard, stale backend bootstrap rewrites, and a
+misclassified `stage2_try_inline...` repro were removed instead of being carried
+forward. The `BlockOwner` owner-metadata boundary remains load-bearing and must
+not be reverted to `NamedTuple` or positional `Tuple`. Fresh stage1
+`/tmp/adamas_cleaned_batch` builds, originals 151/151 + combined 36/36 pass,
+and fresh s2 `/tmp/adamas_cleaned_batch_s2` builds. The bootstrap gate is still
+red: generated s2 compiling minimal full-prelude `puts "x"` exits 139 after
+`pass3 after lower_main call`; fresh lldb stops in
+`Adamas::MIR::HIRToMIRLowering#lower_field_get(HIR::FieldGet) + 3448`
+(`ldr w8, [x8]`, address `0x300000000`). The current frontier is therefore not
+"parser fixed means s2 clean" and not "merge to main"; the next slice must
+localize the HIR `FieldGet` producer/consumer boundary before any behavior
+patch. Backend repair paths must be classified with `CodePathStatus` before
+expansion or deletion. Spark scout should use GPT Codex Spark xHigh if/when
+available; do not use Claude as scout on this project for now.
+
+[LM-HIR-CASE-STRUCT-CONSTANT-VALUE-SEMANTICS|verified 2026-06-27 {F:0.86 G:0.46 R:0.88}]:
+`case x; when StructConstant` now follows Crystal's `condition === subject`
+semantics for non-primitive conditions instead of raw storage/pointer equality.
+Baseline `d623f52f` compiles and runs the focused reducer but prints
+`eq=true` / `case=miss`; fixed compiler prints `eq=true` / `case=hit`. Guard:
+`regression_tests/struct_constant_case_equality_repro.sh`. Implementation keeps
+raw `Eq` for primitive scalar same-type cases and routes non-primitive fallback
+through `emit_binary_call(ctx, condition, "===", subject)`. Evidence:
+`crystal build src/adamas.cr -o /tmp/adamas_cleaned_batch --error-trace`;
+focused reducer passes; `regression_tests/run_all_suites.sh
+/tmp/adamas_cleaned_batch 4` passes originals 151/151 + combined 36/36. Scope:
+HIR case lowering only; it does not move the current `lower_field_get` s2
+frontier.
 
 [LM-S2S3-ESCAPED-INTERP-STRING-PARSER|verified 2026-06-27 {F:0.88 G:0.36 R:0.90}]:
 Fresh s2 no longer truncates a class body when a string literal contains an

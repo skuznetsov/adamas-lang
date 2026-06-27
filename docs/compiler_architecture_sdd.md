@@ -22,12 +22,15 @@ override seam). A later `work/s3-range-slice-frontier` checkpoint exposed an
 stale after the escaped-interpolation parser fix. The current verified red is
 earlier in the pipeline: a fresh s2 compiler builds, but compiling minimal
 full-prelude `puts "x"` exits 139 after `lower_main`, with lldb stopping in
-`HIRToMIRLowering#lower_field_get(HIR::FieldGet)`. Treat this as a fresh
-producer/consumer boundary until a ledger names the exact HIR FieldGet and its
-metadata divergence. The deeper architectural issue is still that symbol
-identity, type-param authority, type identity, materialization ownership, and
-field/layout facts are inferred from mutable process state and rendered strings
-instead of from owned typed facts.
+`HIRToMIRLowering#lower_field_get(HIR::FieldGet)`. A subsequent dirty-batch
+audit removed stale `ADAMAS_*_LEDGER` probes, an unbacked `lower_field_get`
+consumer guard, stale backend bootstrap rewrites, and a misclassified
+`stage2_try_inline...` repro; none of those is the active fix path. Treat the
+remaining crash as a fresh producer/consumer boundary until a ledger names the
+exact HIR FieldGet and its metadata divergence. The deeper architectural issue
+is still that symbol identity, type-param authority, type identity,
+materialization ownership, and field/layout facts are inferred from mutable
+process state and rendered strings instead of from owned typed facts.
 
 Bounded context: Crystal V2 compiler architecture:
 
