@@ -35,6 +35,17 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   `EscapeSummary#initialize` now calls
   `Array(Adamas::HIR::LifetimeTag).new(Int32, LifetimeTag)`, whose initializer
   allocates/fills the buffer for non-zero size.
+- CURRENT FRONTIER: one stage deeper, ASAN
+  `scripts/bootstrap_chain.sh --stages 3 --out
+  /tmp/adamas_bootstrap_enum_owner_fix_s3 --timeout 900 --mem 12288` gets
+  through s1 and s2 (both smokes green), then fails the s3 build during module
+  registration (`module register idx=151/268`) in
+  `Adamas::Compiler::Frontend::ExprId#invalid?`. `ExprId` is a 4-byte struct,
+  but generated `invalid?` has signature `(ptr %self)` and the crashing receiver
+  is `0x000c00001102`, a non-null scalar-looking value. Treat this as the next
+  by-value `ExprId`/struct-call ABI frontier; do not patch `invalid?` with a
+  broader guard, because the immediate problem is an invalid call/receiver
+  representation.
 
 ## 2026-06-22 — s2b phantom `Adamas::MIR::Hash` under-alloc: tactical fix landed; resolver bug A deferred
 

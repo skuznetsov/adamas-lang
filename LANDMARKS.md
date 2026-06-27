@@ -29,6 +29,17 @@ to the declaring enum before generic constructor inference. Evidence:
 IR shows `EscapeSummary#initialize` now calls `Array(LifetimeTag).new(Int32,
 LifetimeTag)`.
 
+[LM-S3B-EXPRID-INVALID-STRUCT-ABI-FRONTIER|verified-boundary 2026-06-27 {F:0.78 G:0.42 R:0.82}]:
+After the enum-member inference fix, ASAN `--stages 3` bootstrap advances past
+s2: stage1 and stage2 builds succeed and both s2 smokes pass. The first s3
+frontier is a build crash during module registration (`idx=151/268`) in
+`Adamas::Compiler::Frontend::ExprId#invalid?`. `ExprId` is a 4-byte struct
+(`{Int32}`), but generated s2 emits `invalid?` as `define i1 ... (ptr %self)`;
+the crashing receiver is `0x000c00001102`, a non-null scalar-looking value.
+This is a next-slice by-value struct-call/receiver representation frontier, not
+an `EscapeSummary`/filled-array regression. Do not widen the `invalid?` null
+guard; localize the call producer or struct ABI boundary first.
+
 [LM-S2B-FILLED-ARRAY-FASTPATH-OVERREACH|verified 2026-06-26 {F:0.88 G:0.45 R:0.86}]:
 Produced s2b no longer hits the ASAN heap-buffer-overflow in
 `Array(Adamas::HIR::TypeRef)#dup` caused by `Array.new(size, value)` routing
