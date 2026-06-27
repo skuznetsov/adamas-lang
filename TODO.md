@@ -6,6 +6,40 @@ Branch: `work/s3-range-slice-frontier`
 This is the active working backlog only. Historical detail is in git history,
 especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
 
+## 2026-06-27 — architecture stop-rule checkpoint: do not merge current batch yet
+
+- CURRENT STATUS: branch `work/s3-range-slice-frontier` has a broad uncommitted
+  batch (`ast_to_hir.cr`, `hir_to_mir.cr`, `llvm_backend.cr`, plus
+  `stage2_try_inline_block_proc_repro.sh`). It is not merge-ready. The focused
+  `try` regression passes under a stage1-built compiler, and a fresh s2 build
+  can be produced, but the s2-compiled minimal full-prelude program `puts "x"`
+  still crashes at runtime in `IO#<<(String) -> Reference#to_s -> IO#<<(String)`
+  recursion. Treat this as the current red evidence; do not claim s2/s3 green.
+- HARD BOUNDARY: keep `BlockOwner`. Do not revert `@block_owner` back to
+  `NamedTuple` or positional `Tuple`; that rollback re-enters an already
+  observed materialization/key-shape trap.
+- ARCHITECTURE STOP-RULE: the current red `IO#<<$String`/`String`-as-`Unknown`
+  evidence is another member of the call/materialization/type-identity family,
+  not proof that `IO#<<` needs a local patch. Before the next behavior change,
+  execute `docs/compiler_architecture_sdd.md` Slice 0 / Phase 2a:
+  StateScope + materialization identity ledger for the active call path.
+- REQUIRED NEXT SLICE (read-only/default-off first):
+  record requested symbol, selected target symbol, selected DefNode,
+  materialized symbol, emitted call symbol, ambient type-param map, target map,
+  callsite arg types, and selected state authority for `IO#<<$String` and the
+  existing `Hash(UInt64, NamedTuple)#[]=` falsifier family. The slice succeeds
+  only if it names the first divergence without changing emitted code.
+- DEAD-CODE/BLOAT TRACK: classify backend fallback and repair paths touched by
+  the current batch (`emit_dead_code_stub`, `lookup_module_function_for_extern`,
+  `fixup_call_arg_types`, `emit_functions_parallel` bootstrap workarounds) using
+  `CodePathStatus` before deleting or expanding them. Backend fixes that
+  re-resolve source-level semantics are not architecture fixes unless a
+  materialization boundary says they are the owner.
+- MERGE RULE: merge to `main` only after the current batch is either split into
+  verified commits or replaced by a smaller Slice-0-ledger change, and after
+  fresh stage1, fresh s2, direct `puts "x"`, `String#empty?`, and
+  `stage2_try_inline_block_proc_repro.sh` all pass under the declared compiler.
+
 ## 2026-06-27 — fixed block-shorthand Array index dispatch
 
 - FIXED: `parsed.map(&.[0])` and `parsed.map(&.[i])` no longer lower the

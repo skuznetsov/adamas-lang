@@ -12,6 +12,26 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-S2S3-ARCH-STOPRULE-CURRENT-BATCH|verified-boundary 2026-06-27 {F:0.78 G:0.62 R:0.80}]:
+Current `work/s3-range-slice-frontier` working tree is not merge-ready. It
+contains a broad uncommitted batch across HIR, MIR lowering, and LLVM backend,
+plus `regression_tests/stage2_try_inline_block_proc_repro.sh`. The batch
+contains useful aligned pieces, including the `BlockOwner` owner-metadata
+boundary, which must not be reverted to `NamedTuple` or positional `Tuple`.
+However, the latest focused verification still has red s2 evidence: a fresh
+s2-built compiler can be produced, but compiling and running minimal
+full-prelude `puts "x"` with that s2 crashes in recursive
+`IO#<<(String) -> Reference#to_s -> IO#<<(String)`. The current frontier is
+therefore not "try inline fixed" and not "merge to main"; it is an architecture
+stop-rule case under `docs/compiler_architecture_sdd.md`: before the next
+behavior patch, add a read-only/default-off StateScope + materialization
+identity ledger that ties requested symbol, target symbol, selected DefNode,
+materialized symbol, emitted call symbol, ambient map, target map, callsite arg
+types, and state authority. Backend repair paths touched by the batch must be
+classified with `CodePathStatus` before expansion or deletion. Spark scout was
+requested but unavailable due the `gpt-5.3-codex-spark` usage limit; do not
+treat independent scout review as completed.
+
 [LM-S3B-BLOCK-SHORTHAND-ARRAY-INDEX-DISPATCH|verified 2026-06-27 {F:0.88 G:0.50 R:0.88}]:
 Generated s2 no longer crashes in `Range#begin` while compiling
 `AstToHir#try_unify_tuple_variant_names`. Root was CallNode overload dispatch:
