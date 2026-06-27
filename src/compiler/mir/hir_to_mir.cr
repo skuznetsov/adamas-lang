@@ -4559,6 +4559,7 @@ module Adamas
               sources = case inst
                         when HIR::Copy then [inst.source]
                         when HIR::Cast then [inst.value]
+                        when HIR::UnionWrap then [inst.value]
                         else                [] of HIR::ValueId
                         end
               sources.each do |src|
