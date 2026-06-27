@@ -47,6 +47,36 @@ Working policy:
 - Use `s1 -> s2b` as the main integration gate.
 - Run `s1 -> s5b` rarely, after `s1 -> s2b` is clean.
 
+## 2026-06-26 — fixed tuple/hash bootstrap frontiers; next s2b frontier named
+
+- FIXED: mixed tuple equality/hash and Hash tuple keys with nilable fields no
+  longer miscompile under stage1 V2. Two root causes were removed:
+  (1) mixed tuple element comparison/hash now lowers element-wise instead of
+  routing scalar elements through String equality/hash shapes; (2) tuple
+  container provenance is preserved through HIR -> MIR `IndexGet`, so Hash
+  tuple keys are not read with Array `size/buffer` layout.
+- FIXED: `Int32#remainder(Int64)` / `Crystal::Hasher.reduce_num(Int32)` no
+  longer truncates the large Int64 modulus before `srem`; div/rem now evaluate
+  in an operation width wide enough for both operands, then truncate to the MIR
+  result width.
+- Regression guards:
+  `regression_tests/tuple_equality_hash_repro.sh`,
+  `regression_tests/hash_tuple_key_nilable_field_repro.sh`,
+  `regression_tests/int_remainder_mixed_width_repro.sh`, and
+  `regression_tests/stage2_indexable_range_materialization_repro.sh`.
+- Verified: `crystal build src/adamas.cr -o /tmp/adamas_commit_candidate
+  --error-trace`; focused guards above; existing
+  `hash_named_tuple_index_assign_materialization_repro.sh`;
+  `regression_tests/run_all_suites.sh /tmp/adamas_commit_candidate 4` passed
+  originals 151/151 + combined 36/36.
+- CURRENT FRONTIER: fresh `scripts/bootstrap_chain.sh --stages 2 --out
+  /tmp/adamas_bootstrap_d48a73dc_s2 --timeout 900 --mem 12288` builds s2b and
+  passes the plain smoke, but the generated s2b fails the no-prelude smoke with
+  `STUB CALLED:
+  Adamas::MIR::LLVMIRGenerator#interpolation_i32_arg(String, UInt32, String,
+  Int32, <large union>)`. Do not attempt s3b until this
+  `interpolation_i32_arg` materialization frontier is reduced.
+
 ## 2026-06-25 — fixed s2b full-prelude wildcard base-dir corruption
 
 - FIXED: produced s2b no longer falls into `error: Unreachable` while resolving
