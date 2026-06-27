@@ -6814,6 +6814,54 @@ Adversary notes:
 
 Trust: {F/G/R: 0.88/0.46/0.90} [verified]
 
+### LM-625 - Stage2 interpolation helper materializes under the TypeRef boundary
+
+Generated `s2b` no longer aborts the no-prelude interpolation smoke on
+`Adamas::MIR::LLVMIRGenerator#interpolation_i32_arg(String, UInt32, String,
+Int32, <large union>)`. The direct boundary was the call into
+`interpolation_i32_arg(..., hint_type : TypeRef?)`: `part_type` is compiler
+metadata whose helper contract is `Nil | MIR::TypeRef`, but self-hosting could
+record the callsite hint argument as a large value-domain union. The call sites
+now assert the helper boundary with `part_type.as(TypeRef?)`, causing the
+materialized helper to use the declared `Nil | TypeRef` shape.
+
+Evidence:
+
+- Host probe of `remember_callsite_arg_types` showed the fifth
+  `interpolation_i32_arg` argument being recorded as the large value-domain
+  union before lookup, while the exact `Nil | TypeRef` helper lookup existed.
+- A simple `TypeRef::CHAR` reducer and a Hash/branch `TypeRef?` flow reducer
+  both materialized the exact `TypeRef` helper, so the minimal source shape was
+  not enough to reproduce the bug.
+- A local `part_type : TypeRef?` annotation was tested and did not change the
+  self-hosted helper symbol; explicit boundary casts did.
+- `regression_tests/p2_generated_stage2_no_prelude_interp.sh
+  /tmp/adamas_interp_cast_out` passed after the guard was updated from stale
+  `--no-codegen` parse-only checking to the current compile-and-run no-prelude
+  contract.
+- `scripts/bootstrap_chain.sh --stages 2 --out
+  /tmp/adamas_bootstrap_interp_cast_s2_current --timeout 900 --mem 12288`
+  built s2, and the s2 no-prelude smoke passed. The stage2 IR contains a real
+  `interpolation_i32_arg(..., Nil | TypeRef)` body and no live old huge-union
+  abort stub.
+- The same bootstrap run did not prove full `s1 -> s2b` green: the first
+  full-prelude plain smoke hit `EXIT 133`. A direct rerun passed once, but a
+  repeated plain smoke reproduced the trap; lldb stopped in
+  `libsystem_malloc` from `__adamas_file_read ->
+  AstToHir#constant_source_text -> record_constant_definition` during
+  module/class registration. Treat that as the next full-prelude frontier, not
+  as part of the interpolation helper fix.
+
+Adversary notes:
+
+- This is a focused helper-boundary fix, not a global proof that all
+  compiler-metadata value-domain pollution is solved.
+- Do not replace it with a backend undefined-extern/stub rescue. The
+  discriminating evidence places the bad shape at callsite recording, before
+  backend stub emission.
+
+Trust: {F/G/R: 0.88/0.44/0.88} [verified]
+
 ### LM-663 - Primitive tuple containers use inline slots consistently
 
 Primitive/enum-only tuple containers now use a single inline byte-slot ABI

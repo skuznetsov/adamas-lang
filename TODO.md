@@ -47,6 +47,46 @@ Working policy:
 - Use `s1 -> s2b` as the main integration gate.
 - Run `s1 -> s5b` rarely, after `s1 -> s2b` is clean.
 
+## 2026-06-26 — fixed s2b no-prelude interpolation helper materialization
+
+- FIXED: fresh generated `s2b` no longer aborts the no-prelude interpolation
+  smoke on `STUB CALLED:
+  Adamas::MIR::LLVMIRGenerator#interpolation_i32_arg(String, UInt32, String,
+  Int32, <large union>)`. The immediate boundary was the backend helper call
+  sites: `part_type` is a compiler metadata value whose source contract is
+  `Nil | MIR::TypeRef`, but V2 could record the callsite hint argument as a
+  large value-domain union under self-hosting. Each call into
+  `interpolation_i32_arg(..., hint_type : TypeRef?)` now asserts that boundary
+  contract with `part_type.as(TypeRef?)`, so the requested helper symbol is
+  materialized as `Nil | TypeRef` instead of as a live huge-union abort stub.
+- Scope: this is a focused frontier fix, not a global cure for value-domain
+  pollution around compiler metadata values. A local annotation on `part_type`
+  was tested and did not change the self-hosted helper symbol; the residual
+  root-family remains "why V2 admits value-domain unions for TypeRef metadata
+  flow". Do not generalize this slice into a backend stub rescue.
+- Regression guard: `regression_tests/p2_generated_stage2_no_prelude_interp.sh`
+  now reports this exact `interpolation_i32_arg` stub separately when it
+  regresses.
+- Verified for this slice: `crystal build src/adamas.cr -o
+  /tmp/adamas_interp_cast_out --error-trace`;
+  `regression_tests/p2_generated_stage2_no_prelude_interp.sh
+  /tmp/adamas_interp_cast_out`; `regression_tests/run_all_suites.sh
+  /tmp/adamas_interp_cast_out 4` passed originals 151/151 + combined 36/36.
+  Fresh `scripts/bootstrap_chain.sh --stages 2 --out
+  /tmp/adamas_bootstrap_interp_cast_s2_current --timeout 900 --mem 12288`
+  builds s2 and the s2 no-prelude smoke passes. Static IR check on
+  `/tmp/adamas_bootstrap_interp_cast_s2_current/cv2_s2.ll` shows the real
+  `interpolation_i32_arg(String, UInt32, String, Int32, Nil | TypeRef)` body
+  and no old live huge-union stub.
+- CURRENT FRONTIER: the same fresh bootstrap-chain run built s2 but its first
+  full-prelude plain smoke hit a separate `EXIT 133` / `EXC_BREAKPOINT` in
+  `libsystem_malloc`, with lldb showing
+  `__adamas_file_read -> AstToHir#constant_source_text ->
+  record_constant_definition` during module/class registration. A direct plain
+  rerun can pass, but a repeated smoke reproduced the trap, so do not claim
+  full `s1 -> s2b` green or attempt `s3b` until this full-prelude
+  `constant_source_text`/file-read memory frontier is reduced.
+
 ## 2026-06-26 — fixed tuple/hash bootstrap frontiers; next s2b frontier named
 
 - FIXED: mixed tuple equality/hash and Hash tuple keys with nilable fields no
@@ -69,7 +109,8 @@ Working policy:
   `hash_named_tuple_index_assign_materialization_repro.sh`;
   `regression_tests/run_all_suites.sh /tmp/adamas_commit_candidate 4` passed
   originals 151/151 + combined 36/36.
-- CURRENT FRONTIER: fresh `scripts/bootstrap_chain.sh --stages 2 --out
+- PREVIOUS FRONTIER (closed by the section above): fresh
+  `scripts/bootstrap_chain.sh --stages 2 --out
   /tmp/adamas_bootstrap_d48a73dc_s2 --timeout 900 --mem 12288` builds s2b and
   passes the plain smoke, but the generated s2b fails the no-prelude smoke with
   `STUB CALLED:

@@ -26011,12 +26011,12 @@ module Adamas::MIR
           string_parts << part_ref
         elsif part_type == TypeRef::CHAR
           # Convert char (i32 codepoint) to string
-          char_arg = interpolation_i32_arg(part_ref, part_id, base_name, idx, part_type)
+          char_arg = interpolation_i32_arg(part_ref, part_id, base_name, idx, part_type.as(TypeRef?))
           emit "%#{base_name}.conv#{idx} = call ptr @__adamas_char_to_string(i32 #{char_arg})"
           string_parts << "%#{base_name}.conv#{idx}"
         elsif part_type == TypeRef::INT32 || part_type == TypeRef::UINT32
           # Convert int32 to string
-          int_arg = interpolation_i32_arg(part_ref, part_id, base_name, idx, part_type)
+          int_arg = interpolation_i32_arg(part_ref, part_id, base_name, idx, part_type.as(TypeRef?))
           emit "%#{base_name}.conv#{idx} = call ptr @__adamas_int_to_string(i32 #{int_arg})"
           string_parts << "%#{base_name}.conv#{idx}"
         elsif part_type == TypeRef::INT64 || part_type == TypeRef::UINT64
@@ -26046,7 +26046,7 @@ module Adamas::MIR
           # Check actual LLVM type - might be i32 (enum/symbol) that needs conversion
           part_llvm_type = part_type ? @type_mapper.llvm_type(part_type) : "ptr"
           if part_llvm_type == "i32"
-            int_arg = interpolation_i32_arg(part_ref, part_id, base_name, idx, part_type)
+            int_arg = interpolation_i32_arg(part_ref, part_id, base_name, idx, part_type.as(TypeRef?))
             emit "%#{base_name}.conv#{idx} = call ptr @__adamas_int_to_string(i32 #{int_arg})"
             string_parts << "%#{base_name}.conv#{idx}"
           elsif part_llvm_type == "i64"
@@ -26092,7 +26092,7 @@ module Adamas::MIR
               # Slot is a primitive — use the primitive conversion path instead of union
               case actual_slot_type
               when "i32"
-                int_arg = interpolation_i32_arg(part_ref, part_id, base_name, idx, part_type)
+                int_arg = interpolation_i32_arg(part_ref, part_id, base_name, idx, part_type.as(TypeRef?))
                 emit "%#{base_name}.conv#{idx} = call ptr @__adamas_int_to_string(i32 #{int_arg})"
               when "i64"
                 emit "%#{base_name}.conv#{idx} = call ptr @__adamas_int64_to_string(i64 #{part_ref})"
