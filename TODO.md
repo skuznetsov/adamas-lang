@@ -1,7 +1,7 @@
 # Crystal V2 Bootstrap TODO
 
-Updated: 2026-06-26
-Branch: `main` (ABI-rework + s2b GC fix merged & pushed); by-value Stage 0+ census + eligibility predicate on `abi-struct-byvalue` (`b16bf758`)
+Updated: 2026-06-27
+Branch: `work/s2b-s3b-plain-smoke-heap-frontier`
 
 This is the active working backlog only. Historical detail is in git history,
 especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
@@ -116,19 +116,35 @@ Working policy:
   dereferences null (`READ` from zero page, exit 134). The prior
   `constant_source_text`/file-read frontier is therefore stale for this branch;
   do not keep debugging it without re-reproduction.
-- Follow-up localization (read-only, not fixed): a standalone
-  `Hash(String, Int32).new(0); h["missing"]` reducer aborts under stage1 output,
-  and `Hash(String, Int32).new { 0 }` aborts too, while
-  `Hash(String, Int32).new(initial_capacity: 0)` works. The generated allocator
-  body for `Hash(String, Int32).new$Proc_Nil` calls
-  `Hash#initialize$Proc_Nil` with no args, so the default block is lost. A
-  rejected probe that made allocator initialize lookup accept the named-only
-  `initial_capacity` path did forward args and store `@block`, but then
-  `Hash#[]` jumped through garbage because the stored block payload was a raw
-  `__crystal_block_proc_N` function pointer, not a heap Proc object. Therefore
-  the live root family is allocator/default-arg handling for Hash default
-  providers plus block-to-Proc materialization, not a local `Hash#[]` or
-  `@phase0_body_infer_counts` patch.
+- CLOSED FOLLOW-UP (`bf67d667`): standalone `Hash(String, Int32).new(0)`,
+  `Hash(String, Int32).new { ... }`, and `Hash(String, String).new("x")`
+  default-provider reducers now compile and run. Root: generated allocator
+  lookup could miss `Hash#initialize(block : Proc?, *, initial_capacity)` and
+  raw block callbacks passed as Proc/Proc? arguments were not materialized as
+  heap Proc objects. Fix: retry allocator initialize lookup with named-only
+  compatibility after the positional miss, materialize raw callback values at
+  Proc/Proc? call boundaries, and preserve raw callback carrier provenance for
+  Proc-typed block-wrapper parameters. Regression guard:
+  `regression_tests/hash_default_provider_proc_repro.sh`.
+- Verified for this slice: `crystal build src/adamas.cr -o bin/adamas
+  --error-trace`; `regression_tests/hash_default_provider_proc_repro.sh
+  bin/adamas`; `regression_tests/array_filled_pointer_value_dup_repro.sh
+  bin/adamas`; stateful closure Hash default-provider smoke; and
+  `regression_tests/run_all_suites.sh bin/adamas 4` passed originals 151/151 +
+  combined 36/36.
+- CURRENT FRONTIER: ASAN
+  `scripts/bootstrap_chain.sh --stages 2 --out
+  /tmp/adamas_bootstrap_hash_default_fix --timeout 900 --mem 12288` now builds
+  s2, but s2 plain/no-prelude smokes still fail in a sibling Hash constructor
+  materialization case. In `cv2_s2.ll`,
+  `Hash(Adamas::Compiler::Semantic::DefIdentity, Int32).new(Int32, Nil)` now
+  correctly builds a heap Proc default provider, then calls
+  `new$block$arity1` after loading `initial_capacity` from a null Nil pointer.
+  The target `new$block$arity1` body was materialized with an `Int32`
+  initial-capacity parameter and reused for the default-value path where
+  `initial_capacity` is Nil. Treat this as an arity-only block-wrapper
+  call-shape/materialization collision, not as the raw Proc/default-provider
+  root fixed by `bf67d667`.
 
 ## 2026-06-26 — fixed tuple/hash bootstrap frontiers; next s2b frontier named
 
