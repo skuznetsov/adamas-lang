@@ -30186,7 +30186,11 @@ module Adamas::HIR
 
       if init_base = resolve_method_with_inheritance(class_name, "initialize")
         STDERR.puts "[ALLOC_OVERLOAD_TRACE] init_base=#{init_base}" if trace_allocator_overload
-        if init_match = lookup_function_def_for_call(init_base, call_arg_types.size, call_has_block, call_arg_types, false, call_has_named_args)
+        init_match = lookup_function_def_for_call(init_base, call_arg_types.size, call_has_block, call_arg_types, false, call_has_named_args)
+        if init_match.nil? && !call_has_named_args && call_arg_types.size > 0
+          init_match = lookup_function_def_for_call(init_base, call_arg_types.size, call_has_block, call_arg_types, false, true)
+        end
+        if init_match
           matched_init_name = init_match[0]
           matched_init_def = init_match[1]
           matched_init_arena = @function_def_arenas[matched_init_name]? || resolve_arena_for_def(matched_init_def, @arena)
@@ -79010,6 +79014,7 @@ module Adamas::HIR
           STDERR.puts "[CALL_EMIT] site=lower_call emit=#{emit_method_name} mangled=#{mangled_method_name} base=#{base_method_name} recv_type=#{recv_t} virtual=#{call_virtual} ret=#{get_type_name_from_ref(return_type)} block=#{block_id ? 1 : 0} caller=#{ctx.function.name}"
         end
       end
+      args = coerce_raw_proc_call_args_to_function_params(ctx, args, emit_method_name)
       # V2 bootstrap: `receiver_id.nil?` can be miscompiled for UInt32? zombie-nil
       # in stage2. Truthiness keeps real ValueId(0) receivers distinct from nil.
       call = if receiver_id
@@ -79069,6 +79074,76 @@ module Adamas::HIR
         STDERR.puts "[CALL_TRACE] stage=after_emit method=#{method_name} mangled=#{mangled_method_name} recv_type=#{recv_type_name} virtual=#{call_virtual}"
       end
       call.id
+    end
+
+    private def coerce_raw_proc_call_args_to_function_params(
+      ctx : LoweringContext,
+      args : Array(ValueId),
+      emit_method_name : String,
+    ) : Array(ValueId)
+      return args if args.empty?
+      target_types = if callee = @module.function_by_name(emit_method_name)
+                       callee.params.map(&.type)
+                     elsif suffix = method_suffix(emit_method_name)
+                       parse_types_from_suffix(strip_mangled_suffix_flags(suffix))
+                     else
+                       [] of TypeRef
+                     end
+      suffix_parts = raw_call_suffix_parts(emit_method_name)
+      return args if target_types.empty? && suffix_parts.empty?
+
+      coerced_args = args
+      args.each_with_index do |arg_id, idx|
+        break if idx >= args.size
+        next unless raw_proc_callback_value?(ctx, arg_id)
+        target_type = idx < target_types.size ? target_types[idx] : TypeRef::VOID
+        value_type = ctx.type_of(arg_id)
+        suffix_part = idx < suffix_parts.size ? suffix_parts[idx] : nil
+        suffix_wants_proc = suffix_part ? suffix_type_part_is_proc?(suffix_part) : false
+        proc_target = proc_materialization_type_for(value_type, target_type)
+        next unless proc_type_ref?(target_type) || proc_target || suffix_wants_proc
+        if coerced_args.same?(args)
+          coerced_args = args.dup
+        end
+        coerced_args[idx] = if target_type != TypeRef::VOID && !suffix_wants_proc
+                              coerce_value_to_type(ctx, arg_id, target_type)
+                            else
+                              materialize_raw_proc_callback(ctx, arg_id, proc_target || value_type)
+                            end
+      end
+
+      coerced_args
+    end
+
+    private def raw_call_suffix_parts(emit_method_name : String) : Array(String)
+      suffix = method_suffix(emit_method_name)
+      return [] of String unless suffix
+      suffix = strip_mangled_suffix_flags(suffix)
+      return [] of String if suffix.empty?
+
+      parts = [] of String
+      start = 0
+      idx = 0
+      paren_depth = 0
+      while idx < suffix.bytesize
+        byte = suffix.to_unsafe[idx]
+        if byte == '('.ord
+          paren_depth += 1
+        elsif byte == ')'.ord
+          paren_depth -= 1
+        elsif byte == '_'.ord && paren_depth <= 0
+          parts << suffix.byte_slice(start, idx - start) if idx > start
+          start = idx + 1
+        end
+        idx += 1
+      end
+      parts << suffix.byte_slice(start, suffix.bytesize - start) if suffix.bytesize > start
+      parts
+    end
+
+    private def suffix_type_part_is_proc?(part : String) : Bool
+      type_name = unmangle_suffix_type_part(part)
+      type_name == "Proc" || type_name.starts_with?("Proc(")
     end
 
     # Union arg dispatch: when an arg is union with distinct typed overloads
@@ -80354,6 +80429,16 @@ module Adamas::HIR
       return value_id if target_type == TypeRef::VOID
       value_type = ctx.type_of(value_id)
       return value_id if null_type_ref?(value_type)
+
+      if raw_proc_callback_value?(ctx, value_id)
+        if proc_type = proc_materialization_type_for(value_type, target_type)
+          materialized = materialize_raw_proc_callback(ctx, value_id, proc_type)
+          return materialized if proc_type == target_type
+          value_id = materialized
+          value_type = ctx.type_of(value_id)
+        end
+      end
+
       return value_id if value_type == target_type || value_type == TypeRef::VOID
 
       if needs_union_coercion?(value_type, target_type)
@@ -80395,6 +80480,71 @@ module Adamas::HIR
       end
 
       value_id
+    end
+
+    private def raw_proc_callback_value?(ctx : LoweringContext, value_id : ValueId) : Bool
+      seen = Set(ValueId).new
+      current = value_id
+      loop do
+        return false if seen.includes?(current)
+        seen.add(current)
+        if param = ctx.function.params.find { |candidate| candidate.id == current }
+          return param.is_block || raw_block_callback_param?(ctx.function, param)
+        end
+        value = ctx.value_for(current)
+        case value
+        when Parameter
+          return value.is_block || raw_block_callback_param?(ctx.function, value)
+        when FuncPointer
+          return true
+        when Copy
+          current = value.source
+        when Cast
+          current = value.value
+        else
+          return false
+        end
+      end
+    end
+
+    private def proc_type_ref?(type_ref : TypeRef) : Bool
+      desc = @module.get_type_descriptor(type_ref)
+      !!(desc && (desc.kind == TypeKind::Proc || desc.name == "Proc" || desc.name.starts_with?("Proc(")))
+    end
+
+    private def raw_block_callback_param?(function : Function, param : Parameter) : Bool
+      return false unless param.name == "block"
+      return false unless proc_type_ref?(param.type)
+      suffix = method_suffix(function.name)
+      !!(suffix && suffix_has_block_flag?(suffix))
+    end
+
+    private def proc_materialization_type_for(value_type : TypeRef, target_type : TypeRef) : TypeRef?
+      return target_type if proc_type_ref?(target_type)
+
+      target_desc = @module.get_type_descriptor(target_type)
+      return nil unless target_desc && target_desc.kind == TypeKind::Union
+
+      if proc_type_ref?(value_type) && get_union_variant_id(target_type, value_type) >= 0
+        return value_type
+      end
+
+      target_desc.type_params.find { |member| proc_type_ref?(member) }
+    end
+
+    private def materialize_raw_proc_callback(
+      ctx : LoweringContext,
+      value_id : ValueId,
+      proc_type : TypeRef,
+    ) : ValueId
+      nil_env = Literal.new(ctx.next_id, TypeRef::POINTER, nil)
+      ctx.emit(nil_env)
+      ctx.register_type(nil_env.id, TypeRef::POINTER)
+
+      make_proc = MakeProc.new(ctx.next_id, proc_type, value_id, nil_env.id)
+      ctx.emit(make_proc)
+      ctx.register_type(make_proc.id, proc_type)
+      make_proc.id
     end
 
     # Route try_coerce_tuple_to_tuple emission into a specific block. Used by

@@ -238,6 +238,13 @@ module Adamas
         !!(desc && (desc.kind == HIR::TypeKind::Proc || desc.name == "Proc" || desc.name.starts_with?("Proc(")))
       end
 
+      private def raw_block_callback_param?(func : HIR::Function, param : HIR::Parameter) : Bool
+        return false unless param.name == "block"
+        return false unless hir_proc_type?(param.type)
+        name = func.name
+        name.includes?("$block") || name.includes?("_block")
+      end
+
       private def classvar_carrier_key(class_name : String, var_name : String) : String
         HIRToMIRLowering.class_var_global_name(class_name, var_name)
       end
@@ -248,7 +255,9 @@ module Adamas
         @hir_module.functions.each do |func|
           local_carriers = {} of HIR::ValueId => ProcCarrier
           func.params.each do |param|
-            local_carriers[param.id] = ProcCarrier::RawFnptrCallback if param.is_block
+            if param.is_block || raw_block_callback_param?(func, param)
+              local_carriers[param.id] = ProcCarrier::RawFnptrCallback
+            end
           end
 
           func.blocks.each do |block|
@@ -4369,6 +4378,9 @@ module Adamas
         # Record HIR value types for cast lowering
         hir_func.params.each do |param|
           @hir_value_types[param.id] = param.type
+          if param.is_block || raw_block_callback_param?(hir_func, param)
+            @hir_value_carriers[param.id] = ProcCarrier::RawFnptrCallback
+          end
         end
         hir_func.blocks.each do |hir_block|
           blk_scope = hir_block.scope
