@@ -10059,41 +10059,43 @@ module Adamas
         if descriptor = @mir_module.get_union_descriptor(union_type)
           hir_value_type = @hir_value_types[wrap.value]? || HIR::TypeRef::POINTER
           mir_value_type = convert_type(hir_value_type)
-          matched_variant : UnionVariantDescriptor? = nil
-          variant_idx = 0
-          variants = descriptor.variants
-          while variant_idx < variants.size
-            variant = variants.unsafe_fetch(variant_idx)
-            if variant.type_ref == mir_value_type
-              matched_variant = variant
-              break
-            end
-            variant_idx += 1
-          end
-          if matched_variant
-            variant_type_id = matched_variant.type_id
-          elsif mir_value_type == TypeRef::POINTER
-            pointer_like_count = 0
-            pointer_like_type_id = -1
+          if variant_type_id <= 0
+            matched_variant : UnionVariantDescriptor? = nil
             variant_idx = 0
+            variants = descriptor.variants
             while variant_idx < variants.size
               variant = variants.unsafe_fetch(variant_idx)
-              if variant.type_ref != TypeRef::NIL && variant.type_ref != TypeRef::VOID
-                is_pointer_like = if variant.type_ref == TypeRef::POINTER || variant.type_ref == TypeRef::STRING
-                                    true
-                                  else
-                                    runtime_pointer_like_union_variant?(@mir_module.type_registry.get(variant.type_ref))
-                                  end
-                if is_pointer_like
-                  pointer_like_count += 1
-                  pointer_like_type_id = variant.type_id
-                end
+              if variant.type_ref == mir_value_type
+                matched_variant = variant
+                break
               end
               variant_idx += 1
             end
+            if matched_variant
+              variant_type_id = matched_variant.type_id
+            elsif mir_value_type == TypeRef::POINTER
+              pointer_like_count = 0
+              pointer_like_type_id = -1
+              variant_idx = 0
+              while variant_idx < variants.size
+                variant = variants.unsafe_fetch(variant_idx)
+                if variant.type_ref != TypeRef::NIL && variant.type_ref != TypeRef::VOID
+                  is_pointer_like = if variant.type_ref == TypeRef::POINTER || variant.type_ref == TypeRef::STRING
+                                      true
+                                    else
+                                      runtime_pointer_like_union_variant?(@mir_module.type_registry.get(variant.type_ref))
+                                    end
+                  if is_pointer_like
+                    pointer_like_count += 1
+                    pointer_like_type_id = variant.type_id
+                  end
+                end
+                variant_idx += 1
+              end
 
-            if pointer_like_count == 1
-              variant_type_id = pointer_like_type_id
+              if pointer_like_count == 1
+                variant_type_id = pointer_like_type_id
+              end
             end
           end
         end

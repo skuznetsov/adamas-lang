@@ -3450,6 +3450,27 @@ StaticArray-by-value FIELD store fix (2026-06-16, SHIPPED — a clean #4-adjacen
    Produced s2 still builds, but full-prelude `puts 42` still exits 139 after
    reaching later `Float` module registration; localize that remaining
    memory-corruption frontier before widening to s3b.
+
+   M4i6i (FIXED/VERIFIED advance, 2026-06-27): the Hash default-provider
+   block-wrapper frontier is advanced. Root was a three-part shape/materialization
+   mismatch: block wrapper specialization was still opt-in, allocator `.new`
+   fallback could keep arity-only initializer names even when typed call args
+   were available, and raw block callbacks materialized as heap `Proc` values
+   were passed bare to `Nil | Proc(...)` parameters instead of being wrapped as
+   the non-nil union arm. Fix: enable block shape specialization by default
+   (still disableable with `ADAMAS_BLOCK_SHAPE_SPECIALIZE=0`), preserve typed
+   allocator initializer names when an arity match has exact typed args, trace
+   raw callback sources through `Copy`/`Cast`/`UnionWrap`, materialize them as
+   heap Proc objects, and immediately coerce materialized Proc values to the
+   target union when needed. The raw callback source walker is bounded and
+   allocation-free to avoid self-host `Set(ValueId)`/block iterator fragility.
+   Evidence: new `hash_block_shape_default_proc_repro.sh` prints `A=1`/`B=0`;
+   `hash_default_provider_proc_repro.sh` green; pointer-filled Array negative
+   control green; full suites green (`151/151` originals + `36/36` combined);
+   ASAN stage2 bootstrap builds and full-prelude plain smoke now passes. Remaining
+   frontier is generated-stage2 no-prelude smoke:
+   `EscapeAnalyzer#build_summary` null write under ASAN. Do not claim s2b/s3b
+   green until that no-prelude frontier is localized.
 2. Root-cause the remaining full-prelude nested-class return-inference crash
    under generated stage2. Current evidence: stale parameter slice frontiers are
    advanced through source-backed initializer capture, source-prefiltered

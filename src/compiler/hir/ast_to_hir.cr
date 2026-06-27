@@ -5023,11 +5023,11 @@ module Adamas::HIR
     # null pointer -> SIGSEGV). WIP / gated OFF by default while the per-shape
     # MATERIALIZATION is incomplete (renaming the target alone is canonicalized
     # back to the shared yield function, so distinct shapes are not yet emitted
-    # as distinct functions). Enable with ADAMAS_BLOCK_SHAPE_SPECIALIZE=1.
+    # as distinct functions). Disable with ADAMAS_BLOCK_SHAPE_SPECIALIZE=0.
     @[AlwaysInline]
     private def block_shape_specialize_enabled? : Bool
       value = env_get("ADAMAS_BLOCK_SHAPE_SPECIALIZE")
-      return false unless value
+      return true unless value
       value != "0" && value != "false"
     end
 
@@ -30494,6 +30494,13 @@ module Adamas::HIR
       if init_base_name
         init_param_types = allocator_initializer_param_types(class_name, allocator_params, call_arg_types)
         init_name = matched_init_name || mangle_function_name(init_base_name, init_param_types, call_has_block)
+        if matched_init_name && matched_init_name.not_nil!.includes?("$arity") &&
+           !init_param_types.empty? && init_param_types.none? { |t| t == TypeRef::VOID }
+          typed_init_name = mangle_function_name(init_base_name, init_param_types, call_has_block)
+          if !typed_init_name.empty? && strip_type_suffix(typed_init_name) == strip_type_suffix(matched_init_name.not_nil!)
+            init_name = typed_init_name
+          end
+        end
         if trace_allocator_overload
           init_type_names = init_param_types.map { |t| "#{get_type_name_from_ref(t)}(#{t.id})" }
           STDERR.puts "[ALLOC_OVERLOAD_TRACE] emit_init base=#{init_base_name} init=#{init_name} types=#{init_type_names.join(",")} matched=#{matched_init_name || "nil"} has_def=#{@function_defs.has_key?(init_name)} has_func=#{@module.has_function?(init_name)}"
@@ -49818,7 +49825,6 @@ module Adamas::HIR
     # IMPORTANT: variant array index is not guaranteed to match runtime type_id.
     private def get_union_variant_id(union_type : TypeRef, value_type : TypeRef) : Int32
       return -1 if null_type_ref?(union_type) || null_type_ref?(value_type)
-
       ensure_union_descriptor_for_type_ref(union_type)
       mir_union_ref = hir_to_mir_type_ref(union_type)
       if descriptor = @union_descriptors[mir_union_ref]?
@@ -49826,6 +49832,10 @@ module Adamas::HIR
         # First: exact TypeRef match
         descriptor.variants.each do |variant|
           if variant.type_ref == mir_value_ref
+            if value_type != TypeRef::NIL && value_type != TypeRef::VOID &&
+               (variant.full_name == "Nil" || variant.full_name == "Void")
+              next
+            end
             return variant.type_id
           end
         end
@@ -79095,7 +79105,9 @@ module Adamas::HIR
       coerced_args = args
       args.each_with_index do |arg_id, idx|
         break if idx >= args.size
-        next unless raw_proc_callback_value?(ctx, arg_id)
+        raw_proc_source = raw_proc_callback_source(ctx, arg_id)
+        raw_proc = !raw_proc_source.nil?
+        next unless raw_proc
         target_type = idx < target_types.size ? target_types[idx] : TypeRef::VOID
         value_type = ctx.type_of(arg_id)
         suffix_part = idx < suffix_parts.size ? suffix_parts[idx] : nil
@@ -79108,7 +79120,12 @@ module Adamas::HIR
         coerced_args[idx] = if target_type != TypeRef::VOID && !suffix_wants_proc
                               coerce_value_to_type(ctx, arg_id, target_type)
                             else
-                              materialize_raw_proc_callback(ctx, arg_id, proc_target || value_type)
+                              materialized = materialize_raw_proc_callback(ctx, raw_proc_source || arg_id, proc_target || value_type)
+                              if target_type != TypeRef::VOID && proc_target && proc_target != target_type
+                                coerce_value_to_type(ctx, materialized, target_type)
+                              else
+                                materialized
+                              end
                             end
       end
 
@@ -80430,9 +80447,9 @@ module Adamas::HIR
       value_type = ctx.type_of(value_id)
       return value_id if null_type_ref?(value_type)
 
-      if raw_proc_callback_value?(ctx, value_id)
+      if raw_proc_source = raw_proc_callback_source(ctx, value_id)
         if proc_type = proc_materialization_type_for(value_type, target_type)
-          materialized = materialize_raw_proc_callback(ctx, value_id, proc_type)
+          materialized = materialize_raw_proc_callback(ctx, raw_proc_source, proc_type)
           return materialized if proc_type == target_type
           value_id = materialized
           value_type = ctx.type_of(value_id)
@@ -80483,28 +80500,43 @@ module Adamas::HIR
     end
 
     private def raw_proc_callback_value?(ctx : LoweringContext, value_id : ValueId) : Bool
-      seen = Set(ValueId).new
+      !raw_proc_callback_source(ctx, value_id).nil?
+    end
+
+    private def raw_proc_callback_source(ctx : LoweringContext, value_id : ValueId) : ValueId?
       current = value_id
-      loop do
-        return false if seen.includes?(current)
-        seen.add(current)
-        if param = ctx.function.params.find { |candidate| candidate.id == current }
-          return param.is_block || raw_block_callback_param?(ctx.function, param)
+      depth = 0
+      while depth < 16
+        params = ctx.function.params
+        param_idx = 0
+        while param_idx < params.size
+          param = params.unsafe_fetch(param_idx)
+          if param.id == current
+            return current if param.is_block || raw_block_callback_param?(ctx.function, param)
+            return nil
+          end
+          param_idx += 1
         end
+
         value = ctx.value_for(current)
         case value
         when Parameter
-          return value.is_block || raw_block_callback_param?(ctx.function, value)
+          return current if value.is_block || raw_block_callback_param?(ctx.function, value)
+          return nil
         when FuncPointer
-          return true
+          return current
         when Copy
           current = value.source
         when Cast
           current = value.value
+        when UnionWrap
+          current = value.value
         else
-          return false
+          return nil
         end
+        depth += 1
       end
+      nil
     end
 
     private def proc_type_ref?(type_ref : TypeRef) : Bool
@@ -80529,7 +80561,27 @@ module Adamas::HIR
         return value_type
       end
 
-      target_desc.type_params.find { |member| proc_type_ref?(member) }
+      if member = target_desc.type_params.find { |candidate| proc_type_ref?(candidate) }
+        return member
+      end
+
+      ensure_union_descriptor_for_type_ref(target_type)
+      if descriptor = @union_descriptors[hir_to_mir_type_ref(target_type)]?
+        descriptor.variants.each do |variant|
+          if variant.full_name == "Proc" || variant.full_name.starts_with?("Proc(")
+            return mir_to_hir_type_ref(variant.type_ref)
+          end
+        end
+      end
+
+      split_union_type_name(target_desc.name).each do |variant_name|
+        if variant_name == "Proc" || variant_name.starts_with?("Proc(")
+          ref = type_ref_for_name(variant_name)
+          return ref unless ref == TypeRef::VOID
+        end
+      end
+
+      nil
     end
 
     private def materialize_raw_proc_callback(
@@ -98377,6 +98429,14 @@ module Adamas::HIR
       variants = [] of MIR::UnionVariantDescriptor
       max_size = 0
       max_align = 4 # Minimum alignment for type_id
+      has_nil_variant = false
+      resolved_variant_names.each do |variant_name|
+        if variant_name == "Nil" || variant_name == "Void"
+          has_nil_variant = true
+          break
+        end
+      end
+      next_non_nil_variant_id = has_nil_variant ? 1 : 0
 
       variant_refs.each_with_index do |vref, idx|
         # Convert HIR::TypeRef to MIR::TypeRef using proper ID mapping
@@ -98412,8 +98472,15 @@ module Adamas::HIR
         max_size = {max_size, vsize}.max
         max_align = {max_align, valign}.max
 
+        variant_type_id = if resolved_variant_names[idx] == "Nil" || resolved_variant_names[idx] == "Void"
+                            0
+                          else
+                            assigned = next_non_nil_variant_id
+                            next_non_nil_variant_id += 1
+                            assigned
+                          end
         variants << MIR::UnionVariantDescriptor.new(
-          type_id: idx,
+          type_id: variant_type_id,
           type_ref: mir_type_ref,
           full_name: resolved_variant_names[idx],
           size: vsize,
