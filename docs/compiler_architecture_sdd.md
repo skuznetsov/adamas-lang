@@ -17,14 +17,17 @@ could be emitted under the requested call symbol while the body was
 materialized under a different target symbol. The proximate cause was an
 ambient `@type_param_map` leak into a naming/materialization decision
 (`def_has_untyped_regular_param?` at the `lower_function_if_needed_impl`
-override seam). The current `work/s3-range-slice-frontier` checkpoint exposes a
-related self-hosting symptom: an s2-built compiler can compile minimal
-full-prelude `puts "x"`, but the produced binary recurses through
-`IO#<<(String) -> Reference#to_s -> IO#<<(String)` instead of using the String
-specialization. Treat this as another call/materialization/type-identity
-boundary until a ledger proves otherwise. The deeper architectural issue is
-that symbol identity, type-param authority, type identity, and materialization
-ownership are still inferred from mutable process state and rendered strings.
+override seam). A later `work/s3-range-slice-frontier` checkpoint exposed an
+`IO#<<(String) -> Reference#to_s` runtime recursion, but that evidence is now
+stale after the escaped-interpolation parser fix. The current verified red is
+earlier in the pipeline: a fresh s2 compiler builds, but compiling minimal
+full-prelude `puts "x"` exits 139 after `lower_main`, with lldb stopping in
+`HIRToMIRLowering#lower_field_get(HIR::FieldGet)`. Treat this as a fresh
+producer/consumer boundary until a ledger names the exact HIR FieldGet and its
+metadata divergence. The deeper architectural issue is still that symbol
+identity, type-param authority, type identity, materialization ownership, and
+field/layout facts are inferred from mutable process state and rendered strings
+instead of from owned typed facts.
 
 Bounded context: Crystal V2 compiler architecture:
 

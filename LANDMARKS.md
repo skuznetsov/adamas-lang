@@ -12,25 +12,94 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
-[LM-S2S3-ARCH-STOPRULE-CURRENT-BATCH|verified-boundary 2026-06-27 {F:0.78 G:0.62 R:0.80}]:
+[LM-S2S3-ARCH-STOPRULE-CURRENT-BATCH|verified-boundary 2026-06-27 {F:0.82 G:0.62 R:0.86}]:
 Current `work/s3-range-slice-frontier` working tree is not merge-ready. It
 contains a broad uncommitted batch across HIR, MIR lowering, and LLVM backend,
-plus `regression_tests/stage2_try_inline_block_proc_repro.sh`. The batch
+plus focused frontend/debug oracle changes. The batch
 contains useful aligned pieces, including the `BlockOwner` owner-metadata
 boundary, which must not be reverted to `NamedTuple` or positional `Tuple`.
-However, the latest focused verification still has red s2 evidence: a fresh
-s2-built compiler can be produced, but compiling and running minimal
-full-prelude `puts "x"` with that s2 crashes in recursive
-`IO#<<(String) -> Reference#to_s -> IO#<<(String)`. The current frontier is
-therefore not "try inline fixed" and not "merge to main"; it is an architecture
-stop-rule case under `docs/compiler_architecture_sdd.md`: before the next
-behavior patch, add a read-only/default-off StateScope + materialization
-identity ledger that ties requested symbol, target symbol, selected DefNode,
-materialized symbol, emitted call symbol, ambient map, target map, callsite arg
-types, and state authority. Backend repair paths touched by the batch must be
-classified with `CodePathStatus` before expansion or deletion. Spark scout was
-requested but unavailable due the `gpt-5.3-codex-spark` usage limit; do not
-treat independent scout review as completed.
+The latest focused frontend slice is green under fresh stage1 and fresh s2, but
+the bootstrap gate is still red: generated s2 compiling minimal full-prelude
+`puts "x"` exits 139 after `pass3 after lower_main call`, and fresh lldb stops
+in `Adamas::MIR::HIRToMIRLowering#lower_field_get(HIR::FieldGet)`. The current
+frontier is therefore not "parser fixed means s2 clean" and not "merge to
+main"; the next slice must localize the HIR `FieldGet` producer/consumer
+boundary before any behavior patch. Backend repair paths touched by the batch
+must be classified with `CodePathStatus` before expansion or deletion. Spark
+scout should use GPT Codex Spark xHigh if/when available; do not use Claude as
+scout on this project for now.
+
+[LM-S2S3-ESCAPED-INTERP-STRING-PARSER|verified 2026-06-27 {F:0.88 G:0.36 R:0.90}]:
+Fresh s2 no longer truncates a class body when a string literal contains an
+escaped interpolation opener such as `io << "\\\#{"`. Root was frontend
+`lex_string`: the previous two-pass pre-scan/fast path missed the escape in
+self-hosted execution, then treated the escaped `#{` as real interpolation and
+scanned to EOF, swallowing following methods. Fix slice: `lex_string` now uses
+one processed scanner for all string literals, sets interpolation only in that
+scanner, and retains processed slices through `StringPool`; the parsed-class
+debug oracle now avoids stage2-unsafe varargs and only walks members when
+explicitly requested. Evidence: `crystal build src/adamas.cr -o
+/tmp/adamas_frontend_slice --error-trace` succeeds;
+`regression_tests/stage2_escaped_interpolation_string_parser_repro.sh
+/tmp/adamas_frontend_slice` passes; fresh s2 built with `scripts/run_safe.sh
+/tmp/adamas_frontend_slice 900 12288 src/adamas.cr -o
+/tmp/adamas_frontend_slice_s2` exits 0; the same regression passes under
+`/tmp/adamas_frontend_slice_s2`. Scope: parser/frontend self-application only;
+it does not clear the current `lower_field_get` bootstrap frontier.
+
+[LM-S2S3-LOWER-FIELD-GET-PUTS-X-FRONTIER|verified-boundary 2026-06-27 {F:0.80 G:0.30 R:0.86}]:
+After the escaped-interpolation frontend fix, generated s2 still cannot compile
+minimal full-prelude `puts "x"`. `scripts/run_safe.sh
+/tmp/adamas_frontend_slice_s2 120 2048 /tmp/adamas_puts_x.cr -o
+/tmp/adamas_puts_x_frontend_slice` exits 139 after `pass3 after lower_main
+call`. Fresh lldb on the same compiler/input stops at
+`Adamas::MIR::HIRToMIRLowering#lower_field_get(HIR::FieldGet) + 3480`
+(`ldr w8, [x8]`, address `0x300000000`), called from `lower_value`,
+`lower_block`, `lower_function_body`, and `lower_all_bodies`. This is the
+current active red boundary. Do not continue from the older `IO#<<` runtime
+recursion row without re-observing it; first localize the exact HIR FieldGet
+producer, field metadata, and stage1-vs-s2 divergence.
+
+[LM-S2S3-STATE-SCOPE-LEDGER-IO-SHIFT|stale-boundary 2026-06-27 {F:0.84 G:0.30 R:0.55}]:
+STALE after `LM-S2S3-ESCAPED-INTERP-STRING-PARSER`; reverify before using as
+the active frontier.
+Default-off `ADAMAS_STATE_SCOPE_LEDGER` was added as the Slice-0
+StateScope/materialization identity ledger. Fresh stage1 and fresh s2 builds
+both succeed with the ledger compiled in but disabled by default. With the
+ledger enabled for `IO#<<,String#to_s,Reference#to_s` on minimal full-prelude
+`puts "x"`, stage1 emits the expected body edge:
+`IO#<<$String -> String#to_s$IO`, and materializes `String#to_s$IO`.
+Fresh s2 materializes `IO#<<$String` itself under the correct requested/target
+symbol with `call_arg_types=String`, but the body edge diverges:
+`IO#<<$String -> Reference#to_s$IO`, with `selected_target=-` /
+`selected_def=-`. Existing `DEBUG_PARAM_TYPES` narrows the producer boundary:
+stage1 lowers `IO#<<$String param=obj` as `String(id=15)`, while fresh s2 lowers
+the same parameter as `Unknown(id=15)`. The produced binary still exits 138
+(Bus error). This reclassifies the active `puts "x"` frontier away from a
+materialized-symbol-vs-call-symbol body mismatch and toward TypeRef descriptor
+loss during method-parameter registration/lowering in s2. Do not patch `IO#<<`
+locally or add a backend rescue; this row should not drive the next slice unless
+the same runtime recursion is re-observed on the current tree.
+
+[LM-S2S3-TYPEREF-NEW-CASE-IDENTITY|stale-boundary 2026-06-27 {F:0.88 G:0.25 R:0.55}]:
+STALE after `LM-S2S3-ESCAPED-INTERP-STRING-PARSER`; reverify before using as
+the active frontier.
+Default-off `ADAMAS_TYPEREF_ID_LEDGER` refined the active `puts "x"` frontier
+below descriptor lookup. In stage1, `IO#<<$String param=obj` has
+`id=15`, `string_id=15`, `eq_string=1`, `case_string=1`, and
+`clone_case_string=1` both before and after parameter registration. In fresh
+s2, the incoming callsite type is still case-matchable
+(`call id=15`, `case_string=1`, `name=String`), but reconstructing the same id
+with `TypeRef.new(15)` yields `clone_case_string=0`. The untyped-parameter
+path uses `type_ref_array_fetch_or_void`, which reconstructs call types through
+`TypeRef.new(type_ref_array_id_or_void(...))`; the selected parameter is
+therefore `== TypeRef::STRING` and `id == TypeRef::STRING.id`, but
+`case selected when TypeRef::STRING` fails and `get_type_name_from_ref` returns
+`Unknown`. The s2-produced `puts "x"` binary still exits 138. This refutes the
+descriptor-loss framing for this boundary and points at primitive `TypeRef`
+case/`===` identity for constructed values under self-hosting. Do not patch
+`IO#<<`, do not add backend rescue, and do not change descriptor registry for
+this symptom without a lower falsifier if it reappears.
 
 [LM-S3B-BLOCK-SHORTHAND-ARRAY-INDEX-DISPATCH|verified 2026-06-27 {F:0.88 G:0.50 R:0.88}]:
 Generated s2 no longer crashes in `Range#begin` while compiling

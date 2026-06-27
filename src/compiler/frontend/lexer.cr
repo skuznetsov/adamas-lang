@@ -36,7 +36,7 @@ module Adamas
           @offset = 0
           @line = 1
           @column = 1
-          @processed_strings = [] of Bytes # Phase 54: storage for escape-processed strings
+          @processed_strings = [] of Bytes # Phase 54: retained views; StringPool owns processed-token storage
           @last_token_kind = nil           # Phase 57: for regex vs division disambiguation
           @at_statement_start = true       # Phase 57: Start of file is statement start
           @whitespace_before = false       # Track if whitespace preceded current token
@@ -53,6 +53,12 @@ module Adamas
         private def debug(& : -> String)
           return unless @@lexer_debug_enabled
           STDERR.puts yield
+        end
+
+        private def retain_processed_slice(slice : Slice(UInt8)) : Slice(UInt8)
+          retained = @string_pool.intern(slice)
+          @processed_strings << retained
+          retained
         end
 
         private def emit_diagnostic(message : String, span : Span)
@@ -144,12 +150,12 @@ module Adamas
                       advance
                       bytes_consumed += 1
 
-                      while @offset < @rope.size && current_byte != SINGLE_QUOTE && bytes_consumed < 4
+                      while @offset < @byte_size && current_byte != 0x27_u8 && bytes_consumed < 4
                         advance
                         bytes_consumed += 1
                       end
 
-                      if @offset < @rope.size && current_byte == SINGLE_QUOTE
+                      if @offset < @byte_size && current_byte == 0x27_u8
                         advance
                       end
 
@@ -162,31 +168,37 @@ module Adamas
                       start_offset, start_line, start_column = capture_position
                       advance # Skip opening '
 
-                      if @offset >= @rope.size
+                      if @offset >= @byte_size
                         Token.new(Token::Kind::Char, Slice(UInt8).new(0), build_span(start_offset, start_line, start_column))
                       else
                         buffer = IO::Memory.new
                         advance # Skip backslash
 
-                        if @offset >= @rope.size
+                        if @offset >= @byte_size
                           Token.new(Token::Kind::Char, Slice(UInt8).new(0), build_span(start_offset, start_line, start_column))
                         else
+                          simple_escape_close_offset = -1
                           case current_byte
                           when 'n'.ord.to_u8
                             buffer.write_byte '\n'.ord.to_u8
                             advance
+                            simple_escape_close_offset = start_offset + 3
                           when 't'.ord.to_u8
                             buffer.write_byte '\t'.ord.to_u8
                             advance
+                            simple_escape_close_offset = start_offset + 3
                           when 'r'.ord.to_u8
                             buffer.write_byte '\r'.ord.to_u8
                             advance
+                            simple_escape_close_offset = start_offset + 3
                           when '\\'.ord.to_u8
                             buffer.write_byte '\\'.ord.to_u8
                             advance
+                            simple_escape_close_offset = start_offset + 3
                           when '\''.ord.to_u8
                             buffer.write_byte '\''.ord.to_u8
                             advance
+                            simple_escape_close_offset = start_offset + 3
                           when 'u'.ord.to_u8
                             advance
                             if current_byte == '{'.ord.to_u8
@@ -232,12 +244,21 @@ module Adamas
                             end
                           end
 
-                          if @offset < @rope.size && current_byte == SINGLE_QUOTE
-                            advance
+                          if simple_escape_close_offset >= 0
+                            if @offset == simple_escape_close_offset
+                              if @offset < @byte_size
+                                advance
+                              end
+                            end
                           end
 
-                          processed_bytes = buffer.to_slice
-                          @processed_strings << processed_bytes
+                          if @offset < @byte_size
+                            if current_byte == 0x27_u8
+                              advance
+                            end
+                          end
+
+                          processed_bytes = retain_processed_slice(buffer.to_slice)
                           Token.new(
                             Token::Kind::Char,
                             processed_bytes,
@@ -1280,210 +1301,19 @@ module Adamas
           @column += 1
           from = @offset
           has_interpolation = false
-          has_escapes = false
           allow_macro_interpolation = macro_string_context?
-
-          # Phase 54: Check if string contains escapes or interpolation.
-          # Track interpolation depth so embedded quotes inside #{...} or,
-          # in macro bodies, {{...}} don't terminate scanning.
-          scan_offset = @offset
-          interpolation_mode = 0_i8 # 0=none, 1=#{...}, 2={{...}} in macro bodies
-          interpolation_depth = 0
           heredoc_inside_interpolation = false
-          while scan_offset < @rope.size
-            byte = @rope.bytes[scan_offset]
-
-            if interpolation_mode == 0 && byte == DOUBLE_QUOTE
-              break
-            end
-
-            if interpolation_mode == 0 && byte == HASH && scan_offset + 1 < @rope.size && @rope.bytes[scan_offset + 1] == LEFT_BRACE
-              has_interpolation = true
-              interpolation_mode = 1
-              interpolation_depth = 1
-              scan_offset += 2
-              next
-            end
-
-            if allow_macro_interpolation && interpolation_mode == 0 && byte == LEFT_BRACE && scan_offset + 1 < @rope.size && @rope.bytes[scan_offset + 1] == LEFT_BRACE
-              has_interpolation = true
-              interpolation_mode = 2
-              interpolation_depth = 1
-              scan_offset += 2
-              next
-            end
-
-            if interpolation_mode != 0
-              if byte == DOUBLE_QUOTE || byte == SINGLE_QUOTE
-                quote = byte
-                scan_offset += 1
-                while scan_offset < @rope.size
-                  b = @rope.bytes[scan_offset]
-                  if b == '\\'.ord.to_u8 && scan_offset + 1 < @rope.size
-                    scan_offset += 2
-                    next
-                  end
-                  scan_offset += 1
-                  break if b == quote
-                end
-                next
-              end
-              # Detect heredoc start within interpolation for diagnostics
-              if byte == '<'.ord.to_u8 && scan_offset + 2 < @rope.size && @rope.bytes[scan_offset + 1] == '<'.ord.to_u8 && @rope.bytes[scan_offset + 2] == '-'.ord.to_u8
-                heredoc_inside_interpolation = true
-              end
-              if interpolation_mode == 1
-                if byte == LEFT_BRACE
-                  interpolation_depth += 1
-                elsif byte == RIGHT_BRACE
-                  interpolation_depth -= 1
-                  interpolation_mode = 0 if interpolation_depth == 0
-                end
-              elsif allow_macro_interpolation
-                if byte == LEFT_BRACE && scan_offset + 1 < @rope.size && @rope.bytes[scan_offset + 1] == LEFT_BRACE
-                  interpolation_depth += 1
-                  scan_offset += 2
-                  next
-                elsif byte == RIGHT_BRACE && scan_offset + 1 < @rope.size && @rope.bytes[scan_offset + 1] == RIGHT_BRACE
-                  interpolation_depth -= 1
-                  scan_offset += 2
-                  interpolation_mode = 0 if interpolation_depth == 0
-                  next
-                end
-              end
-              scan_offset += 1
-              next
-            end
-
-            if byte == '\\'.ord.to_u8
-              has_escapes = true
-              scan_offset += 2 # Skip backslash AND the escaped character (e.g., \" \n \t \\)
-              next
-            end
-            scan_offset += 1
-          end
-
-          # Emit diagnostic if we already saw heredoc opener inside interpolation during scan
-          if heredoc_inside_interpolation
-            emit_diagnostic("heredoc cannot be used inside interpolation", build_span(start_offset, start_line, start_column))
-          end
-
-          # If no escapes, use original fast path
-          if !has_escapes
-            interpolation_mode_fast = 0_i8
-            interpolation_depth_fast = 0
-            while @offset < @rope.size
-              if interpolation_mode_fast == 0 && current_byte == DOUBLE_QUOTE
-                break
-              end
-
-              if interpolation_mode_fast == 0 && current_byte == HASH && @offset + 1 < @rope.size && @rope.bytes[@offset + 1] == LEFT_BRACE
-                if @offset + 4 < @rope.size && @rope.bytes[@offset + 2] == '<'.ord.to_u8 && @rope.bytes[@offset + 3] == '<'.ord.to_u8 && @rope.bytes[@offset + 4] == '-'.ord.to_u8
-                  heredoc_inside_interpolation = true
-                end
-                interpolation_mode_fast = 1
-                interpolation_depth_fast = 1
-                @offset += 2
-                @column += 2
-                next
-              elsif allow_macro_interpolation && interpolation_mode_fast == 0 && current_byte == LEFT_BRACE && @offset + 1 < @rope.size && @rope.bytes[@offset + 1] == LEFT_BRACE
-                interpolation_mode_fast = 2
-                interpolation_depth_fast = 1
-                @offset += 2
-                @column += 2
-                next
-              elsif interpolation_mode_fast != 0
-                if current_byte == DOUBLE_QUOTE || current_byte == SINGLE_QUOTE
-                  quote = current_byte
-                  @offset += 1
-                  @column += 1
-                  while @offset < @rope.size
-                    b = current_byte
-                    if b == '\\'.ord.to_u8 && @offset + 1 < @rope.size
-                      @offset += 2
-                      @column += 2
-                      next
-                    end
-                    @offset += 1
-                    if b == NEWLINE
-                      @line += 1
-                      @column = 1
-                    else
-                      @column += 1
-                    end
-                    break if b == quote
-                  end
-                  next
-                end
-                if current_byte == '<'.ord.to_u8 && @offset + 2 < @rope.size && @rope.bytes[@offset + 1] == '<'.ord.to_u8 && @rope.bytes[@offset + 2] == '-'.ord.to_u8
-                  heredoc_inside_interpolation = true
-                end
-                if interpolation_mode_fast == 1
-                  interpolation_depth_fast += 1 if current_byte == LEFT_BRACE
-                  if current_byte == RIGHT_BRACE
-                    interpolation_depth_fast -= 1
-                    interpolation_mode_fast = 0 if interpolation_depth_fast == 0
-                  end
-                elsif allow_macro_interpolation
-                  if current_byte == LEFT_BRACE && @offset + 1 < @rope.size && @rope.bytes[@offset + 1] == LEFT_BRACE
-                    interpolation_depth_fast += 1
-                    @offset += 2
-                    @column += 2
-                    next
-                  elsif current_byte == RIGHT_BRACE && @offset + 1 < @rope.size && @rope.bytes[@offset + 1] == RIGHT_BRACE
-                    interpolation_depth_fast -= 1
-                    @offset += 2
-                    @column += 2
-                    interpolation_mode_fast = 0 if interpolation_depth_fast == 0
-                    next
-                  end
-                end
-                byte = current_byte
-                @offset += 1
-                if byte == NEWLINE
-                  @line += 1
-                  @column = 1
-                else
-                  @column += 1
-                end
-                next
-              end
-
-              byte = current_byte
-              @offset += 1
-              if byte == NEWLINE
-                @line += 1
-                @column = 1
-              else
-                @column += 1
-              end
-            end
-            if @offset < @rope.size # closing quote
-              @offset += 1
-              @column += 1
-            end
-
-            kind = has_interpolation ? Token::Kind::StringInterpolation : Token::Kind::String
-            if heredoc_inside_interpolation
-              emit_diagnostic("heredoc cannot be used inside interpolation", build_span(start_offset, start_line, start_column))
-            end
-            return Token.new(
-              kind,
-              bytes_range(from, @offset - 1),
-              build_span(start_offset, start_line, start_column)
-            )
-          end
 
           # Phase 54: Process escape sequences
-          processed = Bytes.new(scan_offset - from) # Allocate with estimated size
           buffer = IO::Memory.new
           interpolation_mode_processed = 0_i8
           interpolation_depth_processed = 0
 
-          while @offset < @rope.size
+          while @offset < @byte_size
             break if interpolation_mode_processed == 0 && current_byte == DOUBLE_QUOTE
 
-            if interpolation_mode_processed == 0 && current_byte == HASH && @offset + 1 < @rope.size && @rope.bytes[@offset + 1] == LEFT_BRACE
+            if interpolation_mode_processed == 0 && current_byte == HASH && @offset + 1 < @byte_size && @bytes_ptr[@offset + 1] == LEFT_BRACE
+              has_interpolation = true
               buffer.write_byte(current_byte)
               advance(1)
               buffer.write_byte(current_byte)
@@ -1491,7 +1321,8 @@ module Adamas
               interpolation_mode_processed = 1
               interpolation_depth_processed = 1
               next
-            elsif allow_macro_interpolation && interpolation_mode_processed == 0 && current_byte == LEFT_BRACE && @offset + 1 < @rope.size && @rope.bytes[@offset + 1] == LEFT_BRACE
+            elsif allow_macro_interpolation && interpolation_mode_processed == 0 && current_byte == LEFT_BRACE && @offset + 1 < @byte_size && @bytes_ptr[@offset + 1] == LEFT_BRACE
+              has_interpolation = true
               buffer.write_byte(current_byte)
               advance(1)
               buffer.write_byte(current_byte)
@@ -1504,10 +1335,10 @@ module Adamas
                 quote = current_byte
                 buffer.write_byte(current_byte)
                 advance(1)
-                while @offset < @rope.size
+                while @offset < @byte_size
                   b = current_byte
                   buffer.write_byte(b)
-                  if b == '\\'.ord.to_u8 && @offset + 1 < @rope.size
+                  if b == '\\'.ord.to_u8 && @offset + 1 < @byte_size
                     advance(1)
                     buffer.write_byte(current_byte)
                     advance(1)
@@ -1518,7 +1349,7 @@ module Adamas
                 end
                 next
               end
-              if current_byte == '<'.ord.to_u8 && @offset + 2 < @rope.size && @rope.bytes[@offset + 1] == '<'.ord.to_u8 && @rope.bytes[@offset + 2] == '-'.ord.to_u8
+              if current_byte == '<'.ord.to_u8 && @offset + 2 < @byte_size && @bytes_ptr[@offset + 1] == '<'.ord.to_u8 && @bytes_ptr[@offset + 2] == '-'.ord.to_u8
                 heredoc_inside_interpolation = true
               end
               if interpolation_mode_processed == 1
@@ -1529,14 +1360,14 @@ module Adamas
                   interpolation_mode_processed = 0 if interpolation_depth_processed == 0
                 end
               elsif allow_macro_interpolation
-                if current_byte == LEFT_BRACE && @offset + 1 < @rope.size && @rope.bytes[@offset + 1] == LEFT_BRACE
+                if current_byte == LEFT_BRACE && @offset + 1 < @byte_size && @bytes_ptr[@offset + 1] == LEFT_BRACE
                   interpolation_depth_processed += 1
                   buffer.write_byte(current_byte)
                   advance(1)
                   buffer.write_byte(current_byte)
                   advance(1)
                   next
-                elsif current_byte == RIGHT_BRACE && @offset + 1 < @rope.size && @rope.bytes[@offset + 1] == RIGHT_BRACE
+                elsif current_byte == RIGHT_BRACE && @offset + 1 < @byte_size && @bytes_ptr[@offset + 1] == RIGHT_BRACE
                   interpolation_depth_processed -= 1
                   buffer.write_byte(current_byte)
                   advance(1)
@@ -1551,7 +1382,7 @@ module Adamas
               next
             end
 
-            if current_byte == '\\'.ord.to_u8 && @offset + 1 < @rope.size
+            if current_byte == '\\'.ord.to_u8 && @offset + 1 < @byte_size
               # Escape sequence
               advance(1) # Skip backslash
               case current_byte
@@ -1628,11 +1459,10 @@ module Adamas
             end
           end
 
-          advance(1) if @offset < @rope.size # closing quote
+          advance(1) if @offset < @byte_size # closing quote
 
           # Store processed string
-          processed_bytes = buffer.to_slice
-          @processed_strings << processed_bytes
+          processed_bytes = retain_processed_slice(buffer.to_slice)
 
           # Return token with processed string
           kind = has_interpolation ? Token::Kind::StringInterpolation : Token::Kind::String
@@ -1762,8 +1592,7 @@ module Adamas
           end
 
           advance if @offset < @rope.size # consume closing backtick
-          processed = buffer.to_slice
-          @processed_strings << processed
+          processed = retain_processed_slice(buffer.to_slice)
           kind = has_interpolation ? Token::Kind::StringInterpolation : Token::Kind::String
           Token.new(
             kind,
@@ -1852,8 +1681,7 @@ module Adamas
           end
 
           # Store pattern + flags together
-          processed_bytes = buffer.to_slice
-          @processed_strings << processed_bytes
+          processed_bytes = retain_processed_slice(buffer.to_slice)
 
           Token.new(
             Token::Kind::Regex,
@@ -1868,28 +1696,34 @@ module Adamas
           advance # Skip opening '
 
           # Character literals must have exactly one character or escape sequence
-          if @offset >= @rope.size
+          if @offset >= @byte_size
             # TODO: Error - empty character literal
             return Token.new(Token::Kind::Char, Slice(UInt8).new(0), build_span(start_offset, start_line, start_column))
           end
 
           # Check if it's an escape sequence
-          if current_byte == '\\'.ord.to_u8 && @offset + 1 < @rope.size
+          if current_byte == '\\'.ord.to_u8 && @offset + 1 < @byte_size
             # Process escape sequence
             buffer = IO::Memory.new
             advance # Skip backslash
+            simple_escape_close_offset = -1
 
             case current_byte
             when 'n'.ord.to_u8
               buffer.write_byte '\n'.ord.to_u8
+              simple_escape_close_offset = start_offset + 3
             when 't'.ord.to_u8
               buffer.write_byte '\t'.ord.to_u8
+              simple_escape_close_offset = start_offset + 3
             when 'r'.ord.to_u8
               buffer.write_byte '\r'.ord.to_u8
+              simple_escape_close_offset = start_offset + 3
             when '\\'.ord.to_u8
               buffer.write_byte '\\'.ord.to_u8
+              simple_escape_close_offset = start_offset + 3
             when '\''.ord.to_u8
               buffer.write_byte '\''.ord.to_u8
+              simple_escape_close_offset = start_offset + 3
             when 'u'.ord.to_u8
               # Phase 58: Unicode escapes \uXXXX or \u{XXXX}
               advance
@@ -1917,13 +1751,14 @@ module Adamas
               end
               # Don't advance again - helper methods already did
               # Jump directly to closing quote check
-              if @offset < @rope.size && current_byte == SINGLE_QUOTE
-                advance
+              if @offset < @byte_size
+                if current_byte == 0x27_u8
+                  advance
+                end
               end
 
               # Store processed character
-              processed_bytes = buffer.to_slice
-              @processed_strings << processed_bytes
+              processed_bytes = retain_processed_slice(buffer.to_slice)
 
               return Token.new(
                 Token::Kind::Char,
@@ -1943,13 +1778,14 @@ module Adamas
               end
               # Don't advance again - helper method already did
               # Jump directly to closing quote check
-              if @offset < @rope.size && current_byte == SINGLE_QUOTE
-                advance
+              if @offset < @byte_size
+                if current_byte == 0x27_u8
+                  advance
+                end
               end
 
               # Store processed character
-              processed_bytes = buffer.to_slice
-              @processed_strings << processed_bytes
+              processed_bytes = retain_processed_slice(buffer.to_slice)
 
               return Token.new(
                 Token::Kind::Char,
@@ -1969,13 +1805,14 @@ module Adamas
                 end
                 # Don't advance again - helper method already did
                 # Jump directly to closing quote check
-                if @offset < @rope.size && current_byte == SINGLE_QUOTE
-                  advance
+                if @offset < @byte_size
+                  if current_byte == 0x27_u8
+                    advance
+                  end
                 end
 
                 # Store processed character
-                processed_bytes = buffer.to_slice
-                @processed_strings << processed_bytes
+                processed_bytes = retain_processed_slice(buffer.to_slice)
 
                 return Token.new(
                   Token::Kind::Char,
@@ -1990,14 +1827,23 @@ module Adamas
             end
             advance
 
+            if simple_escape_close_offset >= 0
+              if @offset == simple_escape_close_offset
+                if @offset < @byte_size
+                  advance
+                end
+              end
+            end
+
             # Expect closing '
-            if @offset < @rope.size && current_byte == SINGLE_QUOTE
-              advance
+            if @offset < @byte_size
+              if current_byte == 0x27_u8
+                advance
+              end
             end
 
             # Store processed character
-            processed_bytes = buffer.to_slice
-            @processed_strings << processed_bytes
+            processed_bytes = retain_processed_slice(buffer.to_slice)
 
             return Token.new(
               Token::Kind::Char,
@@ -2012,13 +1858,13 @@ module Adamas
             advance
             bytes_consumed += 1
             # Consume continuation bytes (max 3 more) until we hit closing quote or rope end
-            while @offset < @rope.size && current_byte != SINGLE_QUOTE && bytes_consumed < 4
+            while @offset < @byte_size && current_byte != 0x27_u8 && bytes_consumed < 4
               advance
               bytes_consumed += 1
             end
 
             # Expect closing '
-            if @offset < @rope.size && current_byte == SINGLE_QUOTE
+            if @offset < @byte_size && current_byte == 0x27_u8
               advance
             end
 
@@ -2629,8 +2475,7 @@ module Adamas
               end
             end
 
-            processed = regex_buffer.to_slice
-            @processed_strings << processed
+            processed = retain_processed_slice(regex_buffer.to_slice)
             return Token.new(Token::Kind::Regex, processed, build_span(start_offset, start_line, start_column))
           when 'w'
             # %w(...) - word array

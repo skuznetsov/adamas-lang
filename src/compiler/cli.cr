@@ -408,17 +408,18 @@ module Adamas
         c : Int32? = nil,
       ) : Nil
         return unless env_enabled?("ADAMAS_TRACE_STDERR")
-        Crystal::System.print_error "[PARSED_CLASS] phase=%s", phase
-        Crystal::System.print_error " file=%s", abs_path
-        Crystal::System.print_error " key=%s", key
-        Crystal::System.print_error " a=%d", a
-        if value = b
-          Crystal::System.print_error " b=%d", value
-        end
-        if value = c
-          Crystal::System.print_error " c=%d", value
-        end
-        Crystal::System.print_error "\n"
+        STDERR.puts(String.build do |io|
+          io << "[PARSED_CLASS] phase=" << phase
+          io << " file=" << abs_path
+          io << " key=" << key
+          io << " a=" << a
+          if value = b
+            io << " b=" << value
+          end
+          if value = c
+            io << " c=" << value
+          end
+        end)
       end
 
       private def trace_parsed_class_state(
@@ -449,31 +450,28 @@ module Adamas
 
         body = node.body || [] of Frontend::ExprId
         trace_parsed_class_line(phase, abs_path, "class_body", node.span.start_offset, body.size)
+        return unless env_enabled?("ADAMAS_TRACE_PARSED_CLASS_MEMBERS")
         i = 0
         while i < body.size
           member_id = body.unsafe_fetch(i)
           if member_id.index >= 0 && member_id.index < arena.size
             member = arena[member_id]
             trace_parsed_class_line(phase, abs_path, "member", i, member_id.index, Frontend.node_kind(member).value)
-            if env_enabled?("ADAMAS_TRACE_PARSED_CLASS_MEMBERS")
-              case member
-              when Frontend::DefNode
-                name = slice_to_string(member.name) || "(nil)"
-                  trace_parsed_class_line(
-                    phase,
-                    abs_path,
-                    "def",
-                    i,
-                    member.span.start_line,
-                    member.params ? 1 : 0
-                  )
-                Crystal::System.print_error "[PARSED_CLASS_MEMBER] phase=%s file=%s class=%s kind=def index=%d line=%d name=%s\n",
-                  phase, abs_path, filter, i, member.span.start_line, name
-              when Frontend::MacroDefNode
-                name = slice_to_string(member.name) || "(nil)"
-                Crystal::System.print_error "[PARSED_CLASS_MEMBER] phase=%s file=%s class=%s kind=macro index=%d line=%d name=%s\n",
-                  phase, abs_path, filter, i, member.span.start_line, name
-              end
+            case member
+            when Frontend::DefNode
+              name = slice_to_string(member.name) || "(nil)"
+                trace_parsed_class_line(
+                  phase,
+                  abs_path,
+                  "def",
+                  i,
+                  member.span.start_line,
+                  member.params ? 1 : 0
+                )
+              STDERR.puts String.build { |io| io << "[PARSED_CLASS_MEMBER] phase=" << phase << " file=" << abs_path << " class=" << filter << " kind=def index=" << i << " line=" << member.span.start_line << " name=" << name }
+            when Frontend::MacroDefNode
+              name = slice_to_string(member.name) || "(nil)"
+              STDERR.puts String.build { |io| io << "[PARSED_CLASS_MEMBER] phase=" << phase << " file=" << abs_path << " class=" << filter << " kind=macro index=" << i << " line=" << member.span.start_line << " name=" << name }
             end
             if member.is_a?(Frontend::DefNode) && slice_equals_string?(member.name, "initialize")
               if body_view = member.body
@@ -525,32 +523,28 @@ module Adamas
           body = node.body || [] of Frontend::ExprId
           should_trace = filter == "*" || slice_equals_string?(node.name, filter)
           trace_parsed_class_line(phase, abs_path, "class_body", expr_id.index, body.size) if should_trace
-          if should_trace
+          if should_trace && env_enabled?("ADAMAS_TRACE_PARSED_CLASS_MEMBERS")
             i = 0
             while i < body.size
               member_id = body.unsafe_fetch(i)
               if member_id.index >= 0 && member_id.index < arena.size
                 member = arena[member_id]
                 trace_parsed_class_line(phase, abs_path, "member", i, member_id.index, Frontend.node_kind(member).value)
-                if env_enabled?("ADAMAS_TRACE_PARSED_CLASS_MEMBERS")
-                  case member
-                  when Frontend::DefNode
-                    name = slice_to_string(member.name) || "(nil)"
-                    trace_parsed_class_line(
-                      phase,
-                      abs_path,
-                      "def",
-                      i,
-                      member.span.start_line,
-                      member.params ? 1 : 0
-                    )
-                    Crystal::System.print_error "[PARSED_CLASS_MEMBER] phase=%s file=%s class=%s kind=def index=%d line=%d name=%s\n",
-                      phase, abs_path, filter, i, member.span.start_line, name
-                  when Frontend::MacroDefNode
-                    name = slice_to_string(member.name) || "(nil)"
-                    Crystal::System.print_error "[PARSED_CLASS_MEMBER] phase=%s file=%s class=%s kind=macro index=%d line=%d name=%s\n",
-                      phase, abs_path, filter, i, member.span.start_line, name
-                  end
+                case member
+                when Frontend::DefNode
+                  name = slice_to_string(member.name) || "(nil)"
+                  trace_parsed_class_line(
+                    phase,
+                    abs_path,
+                    "def",
+                    i,
+                    member.span.start_line,
+                    member.params ? 1 : 0
+                  )
+                  STDERR.puts String.build { |io| io << "[PARSED_CLASS_MEMBER] phase=" << phase << " file=" << abs_path << " class=" << filter << " kind=def index=" << i << " line=" << member.span.start_line << " name=" << name }
+                when Frontend::MacroDefNode
+                  name = slice_to_string(member.name) || "(nil)"
+                  STDERR.puts String.build { |io| io << "[PARSED_CLASS_MEMBER] phase=" << phase << " file=" << abs_path << " class=" << filter << " kind=macro index=" << i << " line=" << member.span.start_line << " name=" << name }
                 end
                 if member.is_a?(Frontend::DefNode) && slice_equals_string?(member.name, "initialize")
                   if body_view = member.body
