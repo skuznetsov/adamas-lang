@@ -28,6 +28,21 @@ past the old `Array(TypeRef)#dup` heap overflow. Next frontier is separate:
 stage2 smoke now null-derefs in
 `Hash(Adamas::Compiler::Semantic::DefIdentity, Int32).new(Int32, Nil)`.
 
+[LM-S2B-HASH-DEFAULT-PROVIDER-FRONTIER|verified-boundary 2026-06-26 {F:0.82 G:0.55 R:0.78}]:
+Current post-filled-array stage2 smoke frontier is in the Hash default provider
+path, not in source reads or `Array#dup`. The s2 no-prelude smoke crashes in
+`Hash(Adamas::Compiler::Semantic::DefIdentity, Int32).new(Int32, Nil)` while
+constructing `AstToHir`. A standalone stage1-compiled reducer shows the family:
+`Hash(String, Int32).new(0)` and `Hash(String, Int32).new { 0 }` abort on a
+missing-key lookup, but `Hash(String, Int32).new(initial_capacity: 0)` works.
+IR boundary: `Hash(String, Int32).new$Proc_Nil` calls
+`Hash#initialize$Proc_Nil` with no args, so `@block` remains nil. A rejected
+named-only allocator lookup probe made the initializer receive and store the
+block, but `Hash#[]` then jumped through a raw `__crystal_block_proc_N` pointer
+because `@block : Proc?` expects a heap Proc object. Do not patch the
+`@phase0_body_infer_counts` field or `Hash#[]`; next fix must address
+initializer/default-arg forwarding together with block-to-Proc materialization.
+
 [LM-S2B-FULL-PRELUDE-DIRNAME|verified 2026-06-25 {F:0.82 G:0.45 R:0.85}]:
 Produced s2b's full-prelude `puts 42` corridor no longer dies in the
 `indexable.cr` wildcard require path. Probe showed `safe_dirname(abs_path)` for

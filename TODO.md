@@ -116,6 +116,19 @@ Working policy:
   dereferences null (`READ` from zero page, exit 134). The prior
   `constant_source_text`/file-read frontier is therefore stale for this branch;
   do not keep debugging it without re-reproduction.
+- Follow-up localization (read-only, not fixed): a standalone
+  `Hash(String, Int32).new(0); h["missing"]` reducer aborts under stage1 output,
+  and `Hash(String, Int32).new { 0 }` aborts too, while
+  `Hash(String, Int32).new(initial_capacity: 0)` works. The generated allocator
+  body for `Hash(String, Int32).new$Proc_Nil` calls
+  `Hash#initialize$Proc_Nil` with no args, so the default block is lost. A
+  rejected probe that made allocator initialize lookup accept the named-only
+  `initial_capacity` path did forward args and store `@block`, but then
+  `Hash#[]` jumped through garbage because the stored block payload was a raw
+  `__crystal_block_proc_N` function pointer, not a heap Proc object. Therefore
+  the live root family is allocator/default-arg handling for Hash default
+  providers plus block-to-Proc materialization, not a local `Hash#[]` or
+  `@phase0_body_infer_counts` patch.
 
 ## 2026-06-26 — fixed tuple/hash bootstrap frontiers; next s2b frontier named
 
