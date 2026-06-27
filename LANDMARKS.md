@@ -12,6 +12,22 @@ checkpoint remain recoverable from git history, especially:
 
 ## Active Bootstrap Gate
 
+[LM-S2B-FILLED-ARRAY-FASTPATH-OVERREACH|verified 2026-06-26 {F:0.88 G:0.45 R:0.86}]:
+Produced s2b no longer hits the ASAN heap-buffer-overflow in
+`Array(Adamas::HIR::TypeRef)#dup` caused by `Array.new(size, value)` routing
+pointer-valued arrays through `__adamas_array_new_filled_i32`. The i32 helper
+hardcodes 4-byte stride and `Array(Int32)` runtime id; a pointer-valued
+`Array(String).new(2, "x")` standalone reducer allocated only 8 bytes for two
+elements and `dup` copied 16 bytes. Fix: the HIR fast-path now uses filled-array
+helpers only for their exact supported element types (`Bool`, `Int32`) and lets
+all other element types lower through the normal `Array(T).new` path. Evidence:
+ASAN reducer `regression_tests/array_filled_pointer_value_dup_repro.sh
+bin/adamas` passes; focused Bool/Int32/String filled-array smoke passes;
+originals 151/151 + combined 36/36 pass; ASAN bootstrap builds s2 and advances
+past the old `Array(TypeRef)#dup` heap overflow. Next frontier is separate:
+stage2 smoke now null-derefs in
+`Hash(Adamas::Compiler::Semantic::DefIdentity, Int32).new(Int32, Nil)`.
+
 [LM-S2B-FULL-PRELUDE-DIRNAME|verified 2026-06-25 {F:0.82 G:0.45 R:0.85}]:
 Produced s2b's full-prelude `puts 42` corridor no longer dies in the
 `indexable.cr` wildcard require path. Probe showed `safe_dirname(abs_path)` for

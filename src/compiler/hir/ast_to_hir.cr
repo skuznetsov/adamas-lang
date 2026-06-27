@@ -73769,7 +73769,9 @@ module Adamas::HIR
         STDERR.puts "[CALL_TRACE] stage=after_double_splat method=#{method_name} args=#{args.size} receiver=#{!!receiver_id} full=#{full_method_name || ""}"
       end
 
-      # Array.new(size, value) intercept → runtime helper for filled array
+      # Array.new(size, value) intercept -> runtime helper for filled array.
+      # These helpers hardcode both the element stride and Array(T) runtime id,
+      # so only use them for the exact element types they implement.
       if method_name == "new" && args.size == 2
         owner = static_class_name || class_name_str
         if owner && (owner == "Array" || owner.starts_with?("Array("))
@@ -73778,17 +73780,18 @@ module Adamas::HIR
           value_type = ctx.type_of(value_id)
           helper_name = if value_type == TypeRef::BOOL
                           "__adamas_array_new_filled_bool"
-                        else
+                        elsif value_type == TypeRef::INT32
                           "__adamas_array_new_filled_i32"
                         end
-          # Determine the element type name for proper array type
-          elem_name = element_type_for_type_name(owner) || get_type_name_from_ref(value_type)
-          arr_type_name = "Array(#{elem_name})"
-          arr_type = type_ref_for_name(arr_type_name) || TypeRef::POINTER
-          ext_call = ExternCall.new(ctx.next_id, arr_type, helper_name, [size_id, value_id])
-          ctx.emit(ext_call)
-          ctx.register_type(ext_call.id, arr_type)
-          return ext_call.id
+          if helper_name
+            elem_name = element_type_for_type_name(owner) || get_type_name_from_ref(value_type)
+            arr_type_name = "Array(#{elem_name})"
+            arr_type = type_ref_for_name(arr_type_name) || TypeRef::POINTER
+            ext_call = ExternCall.new(ctx.next_id, arr_type, helper_name, [size_id, value_id])
+            ctx.emit(ext_call)
+            ctx.register_type(ext_call.id, arr_type)
+            return ext_call.id
+          end
         end
       end
 

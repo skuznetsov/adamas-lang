@@ -87,6 +87,36 @@ Working policy:
   full `s1 -> s2b` green or attempt `s3b` until this full-prelude
   `constant_source_text`/file-read memory frontier is reduced.
 
+## 2026-06-26 — fixed over-broad filled-array helper fast-path; next smoke frontier named
+
+- FIXED: `Array.new(size, value)` no longer routes every non-Bool value through
+  the Int32 filled-array helper. That helper hardcodes 4-byte element stride and
+  the `Array(Int32)` runtime type id, so pointer-valued arrays such as
+  `Array(String).new(2, "x")` received an 8-byte backing buffer for two pointer
+  elements. A later `Array#dup` copied 16 bytes and ASAN reported a
+  heap-buffer-overflow in `__adamas_ptr_copy`.
+- Root: the HIR call fast-path in `ast_to_hir.cr` treated
+  `Array.new(size, value)` as a generic filled-array constructor but selected
+  only `__adamas_array_new_filled_bool` or `__adamas_array_new_filled_i32`.
+  The helper contract was narrower than the call intercept. Fix: use the
+  helpers only for their exact element types (`Bool`, `Int32`) and let all other
+  element types use the normal `Array(T).new` materialization path.
+- Regression guard: `regression_tests/array_filled_pointer_value_dup_repro.sh`
+  compiles and runs `Array(String).new(2, "x").dup` under ASAN.
+- Verified for this slice: `crystal build src/adamas.cr -o bin/adamas
+  --error-trace`; `regression_tests/array_filled_pointer_value_dup_repro.sh
+  bin/adamas`; focused `Array(Int32)`/`Array(Bool)`/`Array(String)` smoke;
+  `regression_tests/run_all_suites.sh bin/adamas 4` passed originals 151/151 +
+  combined 36/36.
+- Bootstrap status: ASAN `scripts/bootstrap_chain.sh --stages 2 --out
+  /tmp/adamas_bootstrap_plain_asan_arrayfix --timeout 900 --mem 12288` builds
+  s2. The old `Array(HIR::TypeRef)#dup` heap-buffer-overflow is gone. Both s2
+  plain and no-prelude smokes now stop at a new separate frontier:
+  `Hash(Adamas::Compiler::Semantic::DefIdentity, Int32).new(Int32, Nil)`
+  dereferences null (`READ` from zero page, exit 134). The prior
+  `constant_source_text`/file-read frontier is therefore stale for this branch;
+  do not keep debugging it without re-reproduction.
+
 ## 2026-06-26 — fixed tuple/hash bootstrap frontiers; next s2b frontier named
 
 - FIXED: mixed tuple equality/hash and Hash tuple keys with nilable fields no
