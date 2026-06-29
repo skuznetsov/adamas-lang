@@ -7280,6 +7280,66 @@ WBA framing:
 
 Trust: {F/G/R: 0.88/0.50/0.89} [verified]
 
+### LM-665 - Generated s2 preserves nested static method owner during body registration
+
+Generated s2 now registers a nested static method body under the same owner
+symbol used by the call. The failing no-prelude shape was:
+
+```crystal
+class Exception
+  class CallStack
+    def self.skip(path : String) : Nil
+    end
+  end
+end
+
+Exception::CallStack.skip("x")
+```
+
+Before this fix, generated s2 lowered the call to
+`Exception::CallStack.skip$String`, but `register_concrete_class` registered the
+body as `Exception::.skip$String`. The exact-call symbol had no body and the
+compiled binary aborted in the backend dead-code stub for
+`Exception$CCCallStack$Dskip$$String`.
+
+Root cause: `resolve_class_name_for_definition` mixed byte offsets and
+self-host-fragile range slicing. It used `rindex("::")` to find the owner/leaf
+boundary, then sliced the leaf through `name[(idx + 2)..]`; generated s2 could
+turn `Exception::CallStack` into `Exception::`. The fix byte-slices both owner
+and leaf from the same byte-offset coordinate system.
+
+Evidence:
+
+- Fresh generated s2 before the fix logged
+  `DEBUG_METHOD_REGISTER class=Exception:: method=skip full=Exception::.skip$String`
+  while the HIR call was `Exception::CallStack.skip$String`.
+- Fresh fixed generated s2 logs
+  `DEBUG_METHOD_REGISTER class=Exception::CallStack method=skip full=Exception::CallStack.skip$String`;
+  HIR contains both `call Exception::CallStack.skip$String` and
+  `func @Exception::CallStack.skip$String`.
+- `regression_tests/nested_class_static_method_registration_repro.sh
+  /tmp/adamas_nested_class_byteslice_stage1` -> PASS.
+- `regression_tests/nested_class_static_method_registration_repro.sh
+  /tmp/adamas_nested_class_byteslice_s2` -> PASS.
+- `regression_tests/run_all_suites.sh
+  /tmp/adamas_nested_class_byteslice_stage1 4` -> 152/152 originals and 36/36
+  combined, all passed.
+
+Adversary notes:
+
+- This is not a generic materialization-forwarder or backend-stub fix. It fixes
+  the producer-side class-name split that created the sibling symbol.
+- The old byte-slice attempt was insufficient before the value short-circuit
+  narrowing fix because the call owner was still corrupted earlier. After that
+  owner chain was fixed, this slice is necessary and sufficient for the nested
+  static method body/call mismatch.
+- Fresh fixed s2 compiling `src/adamas.cr` still aborts before producing s3,
+  now at `STUB CALLED:
+  Adamas::HIR::AstToHir#try_resolve_simple_default(...)`; do not claim s2->s3
+  or s3b green from this landmark.
+
+Trust: {F/G/R: 0.87/0.38/0.88} [verified for the named no-prelude self-host shape]
+
 ### LM-624 - Runtime object headers must use MIR type ids
 
 `set_crystal_type_id` object-header writers must bake MIR/runtime type ids, not

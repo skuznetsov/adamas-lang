@@ -45848,8 +45848,9 @@ module Adamas::HIR
       end
       if name.includes?("::")
         if idx = name.rindex("::")
-          owner = name[0, idx]
-          leaf = name[(idx + 2)..]
+          owner = name.byte_slice(0, idx)
+          leaf_start = idx + 2
+          leaf = name.byte_slice(leaf_start, name.bytesize - leaf_start)
           if leaf && !owner.empty?
             owner = strip_generic_args(owner)
             return normalize_missing_generic_parens("#{owner}::#{leaf}")

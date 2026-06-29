@@ -242,6 +242,23 @@ especially `65eb6f62^:TODO.md`. Reusable evidence lives in `LANDMARKS.md`.
   nested static method body registration/materialization for the already-correct
   call symbol, not owner-loss, `v2_string_readable?`, raw-pointer lowering,
   exact-target rebinding, or another local resolver carrier.
+- 2026-06-29 UPDATE: the nested static class-method body registration sibling
+  is fixed. After the value short-circuit narrowing fix, generated s2 already
+  lowered `Exception::CallStack.skip("x")` to the correct call symbol
+  `Exception::CallStack.skip$String`, but registered the nested body as
+  `Exception::.skip$String`; the generated binary then aborted in the backend
+  stub for the correct call symbol. Root was mixed String indexing in
+  `resolve_class_name_for_definition`: `rindex("::")` is consumed as a byte
+  offset, but the leaf was sliced through the self-host-fragile range path.
+  The fix uses byte slices for both owner and leaf. Guard:
+  `regression_tests/nested_class_static_method_registration_repro.sh`. Fresh
+  fixed s2 no-prelude HIR now contains both call and body under
+  `Exception::CallStack.skip$String`, and the generated no-prelude binary exits
+  0. Full stage1 suites pass (`152/152` originals + `36/36` combined). Residual
+  frontier: fresh fixed s2 compiling `src/adamas.cr` still aborts before
+  producing s3, now at
+  `STUB CALLED: Adamas::HIR::AstToHir#try_resolve_simple_default(...)`. Treat
+  that as the active frontier; do not claim green s2->s3/s3b.
 - HARD BOUNDARY: keep `BlockOwner`. Do not revert `@block_owner` back to
   `NamedTuple` or positional `Tuple`; that rollback re-enters an already
   observed materialization/key-shape trap.
